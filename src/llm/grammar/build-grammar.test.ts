@@ -1010,6 +1010,7 @@ describe("the base grammar's vocabulary", () => {
   // Remove a name here when the grammar learns it.
   const NOT_YET_IN_GRAMMAR = new Set([
     "browser.annotate",
+    "browser.scenario",
     "browser.screenshot",
     "browser.site_tools",
     "github.issue.comment",
@@ -1043,6 +1044,8 @@ describe("the base grammar's vocabulary", () => {
       "os.screen.click",
       "os.screen.type",
       "os.screen.key",
+      "os.screen.elements",
+      "os.screen.press",
     ]) {
       const call = `[{"tool":"${name}","args":{}}]`;
       expect(gbnfAccepts(grammar, "root", call), name).toBe(true);

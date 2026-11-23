@@ -22,10 +22,13 @@
  * is exactly the point. A wholly empty native-tools completion is
  * overwhelmingly a stop-token or chat-template misfire (the model
  * closed the turn before emitting anything), not a considered decision
- * about the prompt; naming it in the prompt is the one lever we have,
- * and there is no cap to raise the way `truncation-recovery` raises
- * one. If the second attempt is empty too the fault is in the link, not
- * in the wording, and the turn is owed the failure.
+ * about the prompt; naming it in the prompt is one lever, and there is
+ * no cap to raise the way `truncation-recovery` raises one. The other
+ * lever is time: on a cloud link the silence may be the service, not
+ * the model (a hypothesis), so the loop waits
+ * {@link emptyCompletionRetryDelayMs} before the re-ask (ATO-1676). If
+ * the second attempt is empty too the fault
+ * is in the link, not in the wording, and the turn is owed the failure.
  */
 
 import { ModelError } from "../../llm/index.js";
@@ -62,6 +65,40 @@ import { ModelError } from "../../llm/index.js";
  * with no completion of any kind between them.
  */
 export const EMPTY_COMPLETION_RECOVERY_BUDGET = 1;
+
+/** First retry's wait, and the doubling base after it (ATO-1676). */
+export const EMPTY_COMPLETION_RETRY_BASE_DELAY_MS = 500;
+
+/** No single wait is longer than this, whatever the budget becomes. */
+export const EMPTY_COMPLETION_RETRY_MAX_DELAY_MS = 8_000;
+
+/**
+ * How long the loop waits before re-asking after the `attempt`-th empty
+ * completion in a run (1-based), ATO-1676.
+ *
+ * Without it the re-ask went out the moment the empty answer landed.
+ * The hypothesis, not yet confirmed by data: some wholly empty answers
+ * from a cloud link come from the service rather than the prompt, for
+ * example a backend that closes the stream before the first token, or a
+ * service that abandons its own generation with `finish_reason: "error"`
+ * on the first event (left to end as an empty completion on purpose,
+ * `openai-stream-consumer.ts`). If so, a request sent back in the same
+ * instant is likely to meet the same condition, and a short wait gives
+ * it a chance to clear.
+ *
+ * A short exponential backoff, the usual client retry shape. No jitter:
+ * one person's session sends one retry, so there is no herd to spread.
+ * Applies to every native-tools link, local ones included. The wait is
+ * wall time, so it counts toward the task's duration ceiling
+ * (`durationCeilingMs` is read off the clock), adding at most 500 ms.
+ */
+export function emptyCompletionRetryDelayMs(attempt: number): number {
+  const exponent = Math.max(0, Math.floor(attempt) - 1);
+  return Math.min(
+    EMPTY_COMPLETION_RETRY_BASE_DELAY_MS * 2 ** exponent,
+    EMPTY_COMPLETION_RETRY_MAX_DELAY_MS,
+  );
+}
 
 /**
  * Is this the wholly-empty native-tools completion described above?
@@ -173,7 +210,10 @@ export function composeEmptyCompletionNotice(
  * design), so the rewritten sentence above only ever reaches the
  * operator's terminal.
  */
-export function repeatedEmptyCompletionError(err: ModelError): ModelError {
+export function repeatedEmptyCompletionError(
+  err: ModelError,
+  opts: { cloud?: boolean } = {},
+): ModelError {
   return new ModelError(
     err.reason,
     `the model returned an empty completion twice in a row (no text, no reasoning, no tool call); last attempt: ${err.message}`,
@@ -181,6 +221,8 @@ export function repeatedEmptyCompletionError(err: ModelError): ModelError {
       cause: err,
       ...(err.transport !== undefined ? { transport: err.transport } : {}),
       ...(err.stage !== undefined ? { stage: err.stage } : {}),
+      // ATO-1578: on a cloud link the failure offers another model, not "Retry".
+      ...(opts.cloud === true ? { repeatedOnCloud: true } : {}),
     },
   );
 }

@@ -26,18 +26,26 @@ import {
  *
  * Answers:
  *   GET    /api/memory/notes               → { notes: NoteJson[] }
- *   PATCH  /api/memory/notes/{id}  {text}  → { note: NoteJson }
+ *   PATCH  /api/memory/notes/{id}  {text?, disabled?} → { note: NoteJson }
  *   DELETE /api/memory/notes/{id}          → { removed: true, id }
  *   GET    /api/memory/profile             → { facts: FactJson[] }
- *   PATCH  /api/memory/profile/{key} {value} → { fact: FactJson }
+ *   PATCH  /api/memory/profile/{key} {value?, disabled?} → { fact: FactJson }
  *   DELETE /api/memory/profile/{key}       → { removed: true, key }
  *   GET    /api/memory/profile/{key}/history → { key, versions: FactJson[] }
  * `400` for a bad id or body, `404` for an unknown id or key. Edits
  * and deletions made here are journaled as the person's (ATO-1059) and
  * can be undone through route-memory-history.ts.
+ *
+ * `disabled: true` turns one entry off without deleting it (ATO-1124):
+ * it stays in these lists with `disabled: true` but is left out of
+ * recall, search, the prompt and consolidation until `disabled: false`.
  */
 
-type NoteJson = MemoryEntry;
+type NoteJson = Omit<MemoryEntry, "disabledAt"> & { disabled: boolean; disabledAt: number | null };
+
+function noteJson(entry: MemoryEntry): NoteJson {
+  return { ...entry, disabled: entry.disabledAt !== undefined, disabledAt: entry.disabledAt ?? null };
+}
 
 export interface FactJson {
   id: number;
@@ -49,6 +57,9 @@ export interface FactJson {
   updatedAt: number;
   supersedes: number | null;
   supersededBy: number | null;
+  /** ATO-1124. Turned off by the person: listed, never in the prompt. */
+  disabled: boolean;
+  disabledAt: number | null;
 }
 
 export function factJson(fact: ProfileFact): FactJson {
@@ -62,6 +73,8 @@ export function factJson(fact: ProfileFact): FactJson {
     updatedAt: fact.updatedAt,
     supersedes: fact.supersedes,
     supersededBy: fact.supersededBy,
+    disabled: fact.disabledAt !== undefined,
+    disabledAt: fact.disabledAt ?? null,
   };
 }
 
@@ -87,6 +100,13 @@ async function readObjectBody(
   return body as Record<string, unknown>;
 }
 
+/** `disabled` from a PATCH body: a boolean, absent, or an error message. */
+function readDisabled(body: Record<string, unknown>): boolean | undefined | string {
+  if (body.disabled === undefined) return undefined;
+  if (typeof body.disabled !== "boolean") return "disabled must be a boolean";
+  return body.disabled;
+}
+
 function validationMessage(err: unknown): string | null {
   if (err instanceof MemoryValidationError || err instanceof ProfileValidationError) {
     return `${err.field}: ${err.message}`;
@@ -97,7 +117,7 @@ function validationMessage(err: unknown): string | null {
 /**
  * `GET /api/memory/notes?limit=<1..200>&includeArchived=1` — notes,
  * newest first. Notes folded into a consolidated one are left out unless
- * `includeArchived=1`.
+ * `includeArchived=1`. Turned-off notes are listed, `disabled: true`.
  */
 export function createListMemoryNotesHandler(): HttpHandler {
   return async (req, res, ctx) => {
@@ -108,15 +128,20 @@ export function createListMemoryNotesHandler(): HttpHandler {
       sendError(res, 400, openaiError(`limit must be an integer 1..${MEMORY_LIST_MAX_LIMIT}`));
       return;
     }
-    const notes: NoteJson[] = ctx.runtime.notesStore.list({
-      limit,
-      excludeArchived: params.get("includeArchived") !== "1",
-    });
+    const notes: NoteJson[] = ctx.runtime.notesStore
+      .list({
+        limit,
+        excludeArchived: params.get("includeArchived") !== "1",
+      })
+      .map(noteJson);
     sendJson(res, 200, { notes });
   };
 }
 
-/** `PATCH /api/memory/notes/{id}` `{ text }` — replace a note's text. */
+/**
+ * `PATCH /api/memory/notes/{id}` `{ text?, disabled? }` — replace a
+ * note's text, and/or turn it off or on (ATO-1124). At least one field.
+ */
 export function createEditMemoryNoteHandler(): HttpHandler {
   return async (req, res, ctx) => {
     const id = parseNoteId(ctx.params.id);
@@ -129,13 +154,27 @@ export function createEditMemoryNoteHandler(): HttpHandler {
       sendError(res, 400, openaiError(body));
       return;
     }
-    if (typeof body.text !== "string") {
+    const toggle = readDisabled(body);
+    if (typeof toggle === "string") {
+      sendError(res, 400, openaiError(toggle));
+      return;
+    }
+    if (body.text !== undefined && typeof body.text !== "string") {
       sendError(res, 400, openaiError("text must be a string"));
       return;
     }
-    let note: NoteJson | null;
+    if (body.text === undefined && toggle === undefined) {
+      sendError(res, 400, openaiError("text or disabled is required"));
+      return;
+    }
+    let note: MemoryEntry | null;
     try {
-      note = ctx.runtime.notesStore.updateContent(id, body.text, undefined, "user");
+      const store = ctx.runtime.notesStore;
+      note =
+        typeof body.text === "string"
+          ? store.updateContent(id, body.text, undefined, "user")
+          : store.get(id);
+      if (note !== null && toggle !== undefined) note = store.setDisabled(id, toggle);
     } catch (err) {
       const message = validationMessage(err);
       if (message === null) throw err;
@@ -146,7 +185,7 @@ export function createEditMemoryNoteHandler(): HttpHandler {
       sendError(res, 404, openaiError(`note not found: ${id}`));
       return;
     }
-    sendJson(res, 200, { note });
+    sendJson(res, 200, { note: noteJson(note) });
   };
 }
 
@@ -174,9 +213,10 @@ export function createListProfileFactsHandler(): HttpHandler {
 }
 
 /**
- * `PATCH /api/memory/profile/{key}` `{ value }` — a new version of an
- * existing fact; the old one stays in its history. Pinned and keywords
- * are kept. A name the person typed here is their own words, so it is
+ * `PATCH /api/memory/profile/{key}` `{ value?, disabled? }` — a new
+ * version of an existing fact; the old one stays in its history. Pinned,
+ * keywords and the on/off state are kept; `disabled` turns the fact off
+ * or on without a new version (ATO-1124). A name the person typed here is their own words, so it is
  * stored as grounded (ATO-199) and shows in the prompt straight away.
  */
 export function createEditProfileFactHandler(): HttpHandler {
@@ -191,8 +231,17 @@ export function createEditProfileFactHandler(): HttpHandler {
       sendError(res, 400, openaiError(body));
       return;
     }
-    if (typeof body.value !== "string") {
+    const toggle = readDisabled(body);
+    if (typeof toggle === "string") {
+      sendError(res, 400, openaiError(toggle));
+      return;
+    }
+    if (body.value !== undefined && typeof body.value !== "string") {
       sendError(res, 400, openaiError("value must be a string"));
+      return;
+    }
+    if (body.value === undefined && toggle === undefined) {
+      sendError(res, 400, openaiError("value or disabled is required"));
       return;
     }
     const store = ctx.runtime.profileStore;
@@ -202,11 +251,19 @@ export function createEditProfileFactHandler(): HttpHandler {
         sendError(res, 404, openaiError(`profile fact not found: ${key}`));
         return;
       }
-      const fact = store.set(current.key, body.value, {
-        pinned: current.pinned,
-        keywords: current.keywords,
-        ...(isNameProfileKey(current.key) ? { nameGrounding: "grounded" as const } : {}),
-      });
+      let fact: ProfileFact | null =
+        typeof body.value === "string"
+          ? store.set(current.key, body.value, {
+              pinned: current.pinned,
+              keywords: current.keywords,
+              ...(isNameProfileKey(current.key) ? { nameGrounding: "grounded" as const } : {}),
+            })
+          : current;
+      if (toggle !== undefined) fact = store.setDisabled(current.key, toggle);
+      if (fact === null) {
+        sendError(res, 404, openaiError(`profile fact not found: ${key}`));
+        return;
+      }
       sendJson(res, 200, { fact: factJson(fact) });
     } catch (err) {
       const message = validationMessage(err);

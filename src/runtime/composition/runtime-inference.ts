@@ -8,7 +8,7 @@ import type { CompletionResult } from "../../llm/llama-server-client.js";
 import { ProviderRegistry, resolveLlmConfig, type LlmProvider } from "../../llm/provider/index.js";
 import { resolveActiveToolTransport } from "../../llm/provider/registry/resolve-tool-transport.js";
 import { modelWantsStrictTools } from "../../llm/provider/model-strict-tools.js";
-import { resolveRunMode, type ResolvedRunMode } from "../../llm/run-mode/index.js";
+import { fusionLinkModel, resolveRunMode, type ResolvedRunMode } from "../../llm/run-mode/index.js";
 import { sanitizeModelAlias } from "../../analytics/index.js";
 import { completionUsageForTurn, generationMsFor, type TurnUsageMeter } from "../../analytics/index.js";
 import type { CostAccumulator } from "../../llm/provider/cost-accumulator.js";
@@ -373,7 +373,7 @@ export function connectRuntimeFallback(
     return {
       local:
         entry === undefined || entry.kind === "llama-server" || isLocalServerUrl(entry.baseUrl ?? entry.url),
-      plan: entry?.kind === "subscription-cli",
+      plan: entry?.kind === "subscription-cli" || entry?.kind === "subscription-oauth",
     };
   };
   // ATO-649: fold a metered completion into today's total. Before the
@@ -541,12 +541,25 @@ export function connectRuntimeFallback(
     },
   });
 
+  // Read live like the run mode everywhere else: a switch out of Fusion
+  // stops the orchestrator's model at the next request.
+  const orchestratorLinkModel = (providerId: string): string | undefined => {
+    const fresh = getConfig();
+    return fusionLinkModel(
+      resolveRunMode(resolveLlmConfig(fresh), { managedModelId: fresh.localModels.managed.modelId }),
+      providerId,
+    );
+  };
+
   const fallbackSeamDeps: FallbackSeamDeps = {
     fallbackChain,
-    resolveSlice: (providerId, model) => {
+    resolveSlice: (providerId, pinnedModel) => {
       const { provider, transport, isLlamaServer } = resolveActiveLlmSlice(providerId);
       const slice = { provider, transport, contextWindow: (isLlamaServer ? profileManager?.getProfile().contextWindow : undefined)
         ?? deps.resolveCatalogContextWindow?.(providerId) ?? null };
+      // ATO-1560: an unpinned request on Fusion's orchestrator leg asks
+      // for the orchestrator's chosen model, not the entry's default.
+      const model = pinnedModel ?? (isLlamaServer ? undefined : orchestratorLinkModel(providerId));
       if (model === undefined || isLlamaServer || !deps.providerRegistry) return slice;
       // ATO-1148: a turn on a project's own cloud model asks the pinned
       // provider's copy built for that model; the config and the active

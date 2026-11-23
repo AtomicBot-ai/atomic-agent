@@ -1,7 +1,9 @@
 # Scoop and winget
 
-Status: current
+Status: paused (18.11.2026)
 Owner: scripts/
+
+> **Paused.** Homebrew and npm are the only package catalogs for now (ATO-1007). `windows-packages.yml` no longer runs on `release: published`; Scoop and winget return once the bucket token and the winget account exist and that trigger is restored. Nothing below is published until then.
 
 ```powershell
 scoop bucket add atomicbot https://github.com/AtomicBot-ai/scoop-bucket

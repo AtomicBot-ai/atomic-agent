@@ -1,3 +1,4 @@
+import { ChatgptSignInRequiredError } from "../provider/subscription-oauth/oauth-errors.js";
 import { describe, it, expect } from "vitest";
 import { LlamaServerError } from "../llama-server-client.js";
 import { ToolCallParseError } from "../grammar/tool-call-grammar.js";
@@ -147,6 +148,10 @@ describe("classifyFailure — subscription-CLI providers", () => {
   it("maps a signed-out CLI to transport, not tool", () => {
     const err = new SubscriptionCliAuthError("codex", "Run /login.");
     expect(classifyFailure(err)).toBe("transport");
+  });
+
+  it("maps a missing or expired ChatGPT sign-in to transport, like a signed-out CLI (ATO-1453)", () => {
+    expect(classifyFailure(new ChatgptSignInRequiredError("no_tokens"))).toBe("transport");
   });
 
   it("still treats a failed CLI invocation as a tool failure", () => {

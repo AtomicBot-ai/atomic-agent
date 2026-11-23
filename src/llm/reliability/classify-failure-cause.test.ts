@@ -9,6 +9,7 @@ import { LlamaServerError } from "../llama-server-client.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { parseProviderErrorBody } from "../provider/openai/parse-provider-error-body.js";
 import { SubscriptionCliNotInstalledError } from "../provider/subscription-cli/subscription-cli-errors.js";
+import { ChatgptSignInRequiredError } from "../provider/subscription-oauth/oauth-errors.js";
 import { classifyFailureCause } from "./classify-failure-cause.js";
 import type { FailureAction, FailureCauseId } from "./failure-catalog.js";
 import {
@@ -165,6 +166,19 @@ const SAMPLES: ReadonlyArray<
   ],
   ["a 429 rate limit", stepFailure(http(429, "slow down")), "rate_limited", "retry"],
   ["an empty completion", new ModelError("empty", "model returned empty content"), "empty_response", "retry"],
+  // ATO-1578: the agent already re-asked once; a cloud model offers another model.
+  [
+    "an empty completion twice in a row on a cloud model",
+    new ModelError("empty", "empty twice", { cause: new ModelError("empty", "empty"), repeatedOnCloud: true }),
+    "empty_response_repeated",
+    "switch-model",
+  ],
+  [
+    "an empty completion twice in a row on a local model",
+    new ModelError("empty", "empty twice", { cause: new ModelError("empty", "empty") }),
+    "empty_response",
+    "retry",
+  ],
   [
     "a 402 for an empty balance",
     new TransportError("openrouter rejected the request (402)", 402, URL),
@@ -196,6 +210,12 @@ const SAMPLES: ReadonlyArray<
     ),
     "provider_error_mid_reply",
     "retry",
+  ],
+  [
+    "a missing or expired ChatGPT sign-in (ATO-1453)",
+    new ChatgptSignInRequiredError("no_tokens"),
+    "provider_setup",
+    "none",
   ],
   [
     "a subscription CLI that is not installed",

@@ -644,6 +644,19 @@ export class AgentLoop {
             ...(options.providerId !== undefined && options.model !== undefined
               ? { model: options.model }
               : {}),
+            turnId: `${state.id}#${turnIndex}@${turnStartedAt}`,
+            // A tool that runs paid turns of its own (subagent.run) adds
+            // their spend here, so the ceiling check before the next step
+            // counts it (ATO-1670). Only with a ceiling set.
+            ...(costCeilingUsd > 0
+              ? {
+                  turnSpend: {
+                    ceilingUsd: costCeilingUsd,
+                    spentUsd: () => turn.spendUsd,
+                    add: (usd: number) => recordCompactionSpend(turn, usd),
+                  },
+                }
+              : {}),
             llmComplete: this.deps.llmComplete,
             ...(this.deps.llmCompleteStream
               ? { llmCompleteStream: this.deps.llmCompleteStream }
@@ -1247,7 +1260,20 @@ export class AgentLoop {
           }, this.deps, (sessionId) => this.flushSteering(sessionId));
         }
         if (decision.kind === "retry_same") { i -= 1; continue; }
-        if (decision.kind === "retry_next") continue;
+        if (decision.kind === "retry_next") {
+          // The empty-answer re-ask waits a moment first (ATO-1676), in
+          // case the empty answer was the service and not the model.
+          if (decision.delayMs !== undefined && decision.delayMs > 0) {
+            await abortableSleep(decision.delayMs, options.signal);
+            if (options.signal.aborted) {
+              // Stopped during the wait: closed once below the loop, as
+              // the outage park does.
+              turn.reason = "cancelled";
+              break;
+            }
+          }
+          continue;
+        }
         if (decision.kind === "stop") break;
         if (contextExhausted !== undefined && decision.runError === contextExhausted) {
           this.deps.logger?.warn("conversation does not fit the model's context window after overflow compaction; ending the turn", {

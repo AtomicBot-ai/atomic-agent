@@ -9,6 +9,7 @@ import type { ToolCallPayload } from "../../llm/grammar/tool-call-grammar.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
 import { compressToolResult, fullToolResult } from "../../compressor/result-compressor.js";
 import { knownSecretsFromEnv, maskSecretsDeep } from "../../error-reporting/secret-detector.js";
+import { withoutMcpAppPage } from "../../mcp/mcp-apps.js";
 import { evidenceMarks } from "./step-evidence.js";
 import type { SessionState } from "../../session/session-state.js";
 import { rememberConversationPackStart, recordLoadedTool, recordLatestResult, recordTurn, recordLoadedSkill, recordWorldSnapshot, recordPlan } from "../../session/session-state.js";
@@ -155,8 +156,11 @@ export function commitStepBatch(args: StepCommitArgs): StepOutcome {
       // the prompt-bound details were masked on the way in (ATO-1077),
       // so the rest is masked here (ATO-1176). The state effects below
       // still read the result as the tool wrote it.
+      // An MCP App's page (`details.mcpApp`, ATO-1135, up to 4 MB) is
+      // for the live `tool_result` frame only; the session file does not
+      // need a copy of it.
       ...(result.details !== undefined
-        ? { details: maskSecretsDeep(result.details, knownSecretsFromEnv()) }
+        ? { details: maskSecretsDeep(withoutMcpAppPage(result.details), knownSecretsFromEnv()) }
         : {}),
     });
     nextSession = applyStateEffects(nextSession, result, modelMode);

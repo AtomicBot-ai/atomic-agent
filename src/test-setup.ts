@@ -24,3 +24,9 @@ if (!process.env.ATOMIC_AGENT_SHARED_SKILLS_DIR) {
     "missing",
   );
 }
+
+/**
+ * Never fetch a developer's real organization policy (ATO-587) from a
+ * test: the loader tests pass their own env.
+ */
+delete process.env.ATOMIC_POLICY_URL;

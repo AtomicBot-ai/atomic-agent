@@ -449,6 +449,31 @@ export function setFallbackChainInConfig(
   resetConfigCache();
 }
 
+/**
+ * Persist `llm.fallback.appendLocal` alone, keeping the declared chain
+ * and every timing knob as they are (ATO-1461: "Turn off" on the one-time
+ * last-resort question). Writes the file at `path`, the live config's own
+ * file by default. A file with no `llm` block has nothing to turn off.
+ */
+export function setFallbackAppendLocalInConfig(
+  appendLocal: boolean,
+  path: string = getConfig().paths.userConfigFile,
+): void {
+  const file = ensureUserConfigFileSync(path);
+  if (file.llm === undefined) return;
+  const llm = file.llm;
+  const validated = parseLlmFallbackConfig(
+    { ...llm.fallback, appendLocal },
+    new Set(llm.providers.map((p) => p.id)),
+    "llm.fallback",
+  );
+  writeUserConfigFileSync(path, {
+    ...file,
+    llm: { ...llm, fallback: validated },
+  });
+  resetConfigCache();
+}
+
 export function wrapLlmConfigError(err: unknown): string {
   if (
     err instanceof LlmAddProviderError ||

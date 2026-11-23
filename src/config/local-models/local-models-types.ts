@@ -15,8 +15,11 @@ export type LocalTemplateSetting = "auto" | "on" | "off";
 export interface UserManagedLocalLlmConfig {
   /** Managed process owner. Default `"atomic-core"`; files before v77 migrate to it (llama.cpp stays selectable). */
   engine?: "llama-server" | "atomic-core";
+  /** Id of the local model the managed chat daemon loads, from the catalog or `customModels`. `null` (default) means none has been chosen yet. */
   modelId: string | null;
+  /** Loopback port the managed chat daemon listens on; in `managed` mode the agent talks to `http://127.0.0.1:<port>`. Default `19091`. */
   port: number;
+  /** Folder for the managed backends, downloaded models and their state files. `null` (default) uses `<stateDir>/models`, for example `~/.atomic-agent/models`. */
   dataDirOverride: string | null;
   /**
    * When true, managed-mode start (TUI auto-start / `s`, CLI
@@ -189,6 +192,7 @@ export interface UserManagedLocalLlmConfig {
  * var, when set, wins over this file value (operator override).
  */
 export interface LocalModelDownloadConfig {
+  /** Parallel HTTP range requests one model or backend file is split across, 1 to 64. Default `16`; `1` downloads in a single stream. `ATOMIC_AGENT_DOWNLOAD_CONNECTIONS` wins when set. */
   connections: number;
   /**
    * Origin that serves Hugging Face for this install (config v53), e.g.
@@ -219,9 +223,11 @@ export interface LocalModelDownloadConfig {
  * no hybrid recall — observably identical to phase 1A.
  */
 export interface UserManagedEmbeddingLlmConfig {
+  /** Master switch for the managed embeddings daemon. Hybrid recall also needs `memory.embeddings.enabled` and a chosen `modelId`; when off, recall is keyword-only. Default `false`. */
   enabled: boolean;
   /** `EmbeddingModelId` from the catalog, or `null` when not chosen. */
   modelId: string | null;
+  /** Loopback port the managed embeddings daemon listens on. Default `19092`. */
   port: number;
   /** Base URL of the embedding-only llama-server. */
   url: string;
@@ -325,6 +331,7 @@ export interface LocalModelsValueSources {
 }
 
 export interface UserLocalModelsConfig {
+  /** Base URL of the External llama-server the agent talks to when `mode` is `external`; `managed` mode uses `managed.port` instead. Default `http://127.0.0.1:9931`. */
   url: string;
   mode: LocalLlmMode;
   /**

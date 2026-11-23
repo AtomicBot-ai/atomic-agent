@@ -27,7 +27,7 @@ import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
 import type { UserLlmFileConfig } from "./llm-config.js";
 import { emitConfigNoticeOnce } from "./config-primitives.js";
 import { cloneExtraChannelsConfig } from "./extra-channel-config.js";
-import { OFFLINE_ENV } from "./network-config.js";
+import { OFFLINE_ENV, parseProxyUrl, PROXY_ENV } from "./network-config.js";
 import { DEFAULT_MAX_AUDIO_BYTES } from "./tool-config.js";
 import type {
   LocalModelsValueSource,
@@ -39,6 +39,12 @@ import type {
 function readEnv(key: string): string | undefined {
   const value = process.env[key];
   return value && value.length > 0 ? value : undefined;
+}
+
+/** `ATOMIC_AGENT_PROXY`, checked like `network.proxy.url` (ATO-87). */
+function readProxyEnv(): string | undefined {
+  const raw = readEnv(PROXY_ENV);
+  return raw === undefined ? undefined : parseProxyUrl(raw, PROXY_ENV);
 }
 
 /** Env override of `localModels.completionMaxTokens` (wins over the file, ATO-922). */
@@ -493,6 +499,7 @@ export function loadConfig(): AtomicAgentConfig {
       taps: user.skills.taps,
       clawhub: user.skills.clawhub,
       ...(user.skills.eval ? { eval: user.skills.eval } : {}),
+      ...(user.skills.selfLearning ? { selfLearning: user.skills.selfLearning } : {}),
     },
     http: {
       enabled: user.http.enabled,
@@ -500,6 +507,7 @@ export function loadConfig(): AtomicAgentConfig {
       hostAllowlist: user.http.hostAllowlist,
       maxResponseBytes: user.http.maxResponseBytes,
       defaultTimeoutMs: user.http.defaultTimeoutMs,
+      urlDataGuard: user.http.urlDataGuard,
     },
     web: {
       search: { ...user.web.search },
@@ -628,6 +636,15 @@ export function loadConfig(): AtomicAgentConfig {
     // off: a file that says offline stays offline whatever the shell has.
     network: {
       offline: user.network.offline || readBool(OFFLINE_ENV, false),
+      // ATO-87: `ATOMIC_AGENT_PROXY` wins over the file for this process.
+      proxy: {
+        url: readProxyEnv() ?? user.network.proxy.url,
+        noProxy: [...user.network.proxy.noProxy],
+      },
+    },
+    // ATO-599: Privacy Shield, read by the cloud provider adapters.
+    privacy: {
+      shield: { enabled: user.privacy.shield.enabled },
     },
     memory: {
       profile: {
@@ -765,6 +782,8 @@ export function loadConfig(): AtomicAgentConfig {
       showSteps: user.tui.showSteps,
       nextStepSuggestions: user.tui.nextStepSuggestions,
       vimMode: user.tui.vimMode,
+      language: user.tui.language,
+      verboseSteps: user.tui.verboseSteps,
       notify: { ...user.tui.notify },
       onboarding: { ...user.tui.onboarding },
       sessionRail: {

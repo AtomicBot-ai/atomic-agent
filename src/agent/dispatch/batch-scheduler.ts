@@ -1,6 +1,6 @@
 import type { BatchLoopSignal, BatchCallInput, BatchExecutionContext, BatchExecutionResult, BatchCallResult } from "./batch-contract.js";
 import { refuseUnregisteredTool } from "../policies/unknown-tool.js";
-import { refuseBeforeDispatch, skillAlreadyLoadedResult, runFinalStepGate, runPlanModeGate, runFusionOrchestratorGate, runSyncLoopGate, observeReadCoverage } from "./batch-gates.js";
+import { refuseBeforeDispatch, refuseByOrgPolicy, skillAlreadyLoadedResult, runFinalStepGate, runPlanModeGate, runFusionOrchestratorGate, runSyncLoopGate, observeReadCoverage } from "./batch-gates.js";
 
 
 
@@ -22,6 +22,7 @@ import {
 } from "../../approval/approval-ledger.js";
 import { runWithApprovalWorkdir } from "../../approval/approval-workdir.js";
 import { activeToolHooks, runWithToolHooks } from "../../hooks/hook-engine.js";
+import { activePolicy } from "../../policy/policy-active.js";
 import {
   isParallelWithinGroup,
   resourceClassFor,
@@ -260,6 +261,9 @@ export async function executeBatch(
           : {}),
         ...(ctx.incognito === true ? { incognito: true } : {}),
         ...(ctx.providerId !== undefined ? { providerId: ctx.providerId } : {}),
+        ...(ctx.model !== undefined ? { model: ctx.model } : {}),
+        ...(ctx.turnId !== undefined ? { turnId: ctx.turnId } : {}),
+        ...(ctx.turnSpend !== undefined ? { turnSpend: ctx.turnSpend } : {}),
         ...(ctx.tracker ? { fileVersions: ctx.tracker.fileVersions } : {}),
       }));
     } catch (err) {
@@ -333,7 +337,7 @@ export async function executeBatch(
     const refusal =
       input.resourceClass === "terminal"
         ? null
-        : refuseBeforeDispatch(input.call);
+        : (refuseBeforeDispatch(input.call) ?? refuseByOrgPolicy(input.call, activePolicy()));
     // Collects the approvals this call raises, whatever async context the
     // verdict arrives from (an HTTP resolve, a Telegram button). A denial
     // throws out of the tool and `invokeRegistry` turns it into an error

@@ -10,7 +10,13 @@ export interface TokenRequest {
   params: Record<string, string>;
   now: Clock;
   signal?: AbortSignal;
+  /** Body encoding; `form` (RFC 6749) unless the endpoint wants JSON, as Codex's refresh does. */
+  encoding?: TokenEncoding;
+  /** Extra request headers (Codex sends `originator`). */
+  headers?: Record<string, string>;
 }
+
+export type TokenEncoding = "form" | "json";
 
 /** Parsed outcome of a token endpoint call: tokens, or the OAuth error id. */
 export type TokenResult =
@@ -23,16 +29,19 @@ export async function postForm(
   url: string,
   params: Record<string, string>,
   signal?: AbortSignal,
+  options: { encoding?: TokenEncoding; headers?: Record<string, string> } = {},
 ): Promise<{ status: number; ok: boolean; body: unknown }> {
+  const json = options.encoding === "json";
   let response;
   try {
     response = await fetchImpl(url, {
       method: "POST",
       headers: {
-        "content-type": "application/x-www-form-urlencoded",
+        ...options.headers,
+        "content-type": json ? "application/json" : "application/x-www-form-urlencoded",
         accept: "application/json",
       },
-      body: new URLSearchParams(params).toString(),
+      body: json ? JSON.stringify(params) : new URLSearchParams(params).toString(),
       ...(signal ? { signal } : {}),
     });
   } catch {
@@ -57,6 +66,10 @@ export async function requestToken(req: TokenRequest): Promise<TokenResult> {
     req.url,
     req.params,
     req.signal,
+    {
+      ...(req.encoding ? { encoding: req.encoding } : {}),
+      ...(req.headers ? { headers: req.headers } : {}),
+    },
   );
   if (!ok) {
     const error = isRecord(body) ? body.error : undefined;

@@ -469,3 +469,25 @@ describe("audio input through the built-in factories (ATO-497)", () => {
     expect(deaf.capabilities.audioSource).toBe("unknown");
   });
 });
+
+describe("the experimental subscription-oauth kind (ATO-1453)", () => {
+  it("is registered and builds the ChatGPT sign-in provider from the state dir", async () => {
+    registerBuiltInProviderKinds();
+    const factory = getProviderFactory("subscription-oauth");
+    expect(factory).toBeDefined();
+    const stateDir = mkdtempSync(join(tmpdir(), "oauth-factory-"));
+    try {
+      const provider = await factory!({
+        config: { paths: { stateDir } } as unknown as AtomicAgentConfig,
+        entry: { id: "chatgpt-sub", kind: "subscription-oauth", defaultChatModel: "gpt-x" },
+        logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+      });
+      expect(provider.name).toMatch(/experimental/i);
+      expect(provider.chatModelId).toBe("gpt-x");
+      // Not signed in yet: health says so without sending anything.
+      await expect(provider.health()).resolves.toMatchObject({ reachable: false });
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+});

@@ -1,12 +1,15 @@
 import { existsSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
+import type { ApprovalRule } from "../approval/approval-rules.js";
 import {
   getApprovalRulesPath,
   getProjectApprovalRulesPath,
 } from "../approval/approval-rules-store.js";
+import { parseManualApprovalRule } from "../approval/manual-approval-rule.js";
 import { openaiError } from "./openai-errors.js";
 import {
+  readJsonBody,
   sendError,
   sendJson,
   type HandlerContext,
@@ -91,5 +94,53 @@ export function createDeleteApprovalRuleHandler(): HttpHandler {
       return;
     }
     sendJson(res, 200, { removed: true, id });
+  };
+}
+
+/**
+ * `POST /api/approval-rules` — add a rule by hand (ATO-1011), like
+ * Claude Code's `/permissions`: `{ decision, tool?, category?,
+ * commandPrefix?, path?, project?, origin?, note? }`. `{ decision:
+ * "allow", commandPrefix: ["git", "status"] }` is a shell command rule.
+ * The rule goes to the global file through the same store "Allow
+ * always" writes to, so the gate applies it from the next request. An
+ * allow that "Allow always" could not save (a write in the home folder,
+ * a dangerous command, a secret file, a browser submit, a shell or HTTP
+ * allow without its command or site) is `400` with the reason. An
+ * identical rule already saved is returned as is (`created: false`).
+ */
+export function createAddApprovalRuleHandler(): HttpHandler {
+  return async (req, res, ctx) => {
+    const store = ctx.runtime.approvals.getRules();
+    if (store === undefined) {
+      sendError(res, 503, openaiError("approval rules are not available"));
+      return;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(req);
+    } catch (err) {
+      sendError(res, 400, openaiError(err instanceof Error ? err.message : "invalid body"));
+      return;
+    }
+    const parsed = parseManualApprovalRule(body);
+    if (typeof parsed === "string") {
+      sendError(res, 400, openaiError(parsed));
+      return;
+    }
+    const before = new Set(store.list().map((r) => r.id));
+    let rule: ApprovalRule;
+    try {
+      rule = store.add(parsed);
+    } catch (err) {
+      sendError(
+        res,
+        500,
+        openaiError(err instanceof Error ? err.message : "could not save the rule"),
+      );
+      return;
+    }
+    const created = !before.has(rule.id);
+    sendJson(res, created ? 201 : 200, { rule, created });
   };
 }

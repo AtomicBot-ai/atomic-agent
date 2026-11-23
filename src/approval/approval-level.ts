@@ -70,6 +70,13 @@ export type ApprovalCategory =
    * `browser_commit`; a session grant covers one site.
    */
   | "browser_site_tool"
+  /**
+   * The agent hands the browser to the person for one step (`browser.act`
+   * `take_over`, ATO-508): a login, a password, a captcha. The answer
+   * means "I did it, carry on", so only a person can give it: no level,
+   * grant, rule or reviewer answers it (`null` below), bypass included.
+   */
+  | "browser_take_over"
   | "trust_config"
   /**
    * Publishing under the operator's name — a pull request, an issue, a
@@ -118,7 +125,8 @@ export type ApprovalCategory =
   | "paid_generation"
   /**
    * Driving the operator's real mouse and keyboard (`os.screen.click`,
-   * `os.screen.type`, `os.screen.key`, ATO-525). Level 4 beside `shell`:
+   * `os.screen.type`, `os.screen.key`, ATO-525), or pressing a control
+   * through Accessibility (`os.screen.press`, ATO-530). Level 4 beside `shell`:
    * a click or a keystroke in an arbitrary app can do anything the
    * operator could do there, so it never goes quiet below the rung where
    * a shell command does.
@@ -216,6 +224,8 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel | null> = 
   screen_control: 4,
   browser_nonweb: 5,
   browser_secret: 5,
+  // Never: "I did the step in the browser" is only the person's to say.
+  browser_take_over: null,
   trust_config: 5,
   state_secret: 5,
   email: 5,
@@ -299,6 +309,8 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   browser_offsite: true,
   // "Let this site's own tools run in this chat": per site (`site-grants.ts`).
   browser_site_tool: true,
+  // Each hand-over is its own step for the person to do.
+  browser_take_over: false,
   trust_config: false,
   // The read-side twin of `trust_config`: "read my API keys for the
   // rest of the session" is never a standing answer, and a `shell`
@@ -359,6 +371,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   browser_secret: "browser · password or payment",
   browser_offsite: "browser · site outside the allow-list",
   browser_site_tool: "browser · the site's own tool",
+  browser_take_over: "browser · your turn",
   trust_config: "agent trust config",
   state_secret: "agent secret file",
   email: "e-mail send",

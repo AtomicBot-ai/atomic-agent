@@ -81,3 +81,17 @@ export function persistUserTuiVimMode(vimMode: boolean): void {
   writeUserConfigFileSync(path, validated);
   resetConfigCache();
 }
+
+/**
+ * Persist verbose step notes into `tui.verboseSteps` (ATO-34, `/verbose`).
+ * Same read → merge → validate → write → reset cycle as the theme; the
+ * live `TuiState.verboseSteps` flip is the caller's job.
+ */
+export function persistUserTuiVerboseSteps(verboseSteps: boolean): void {
+  const path = getConfig().paths.userConfigFile;
+  const prev = ensureUserConfigFileSync(path);
+  const draft = { ...prev, tui: { ...prev.tui, verboseSteps } };
+  const validated = parseUserConfigFile(draft);
+  writeUserConfigFileSync(path, validated);
+  resetConfigCache();
+}

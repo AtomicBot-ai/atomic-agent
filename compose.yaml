@@ -1,0 +1,32 @@
+# Atomic Agent on your own server (ATO-595). See docs/user/self-host.md.
+#
+#   1. Put ATOMIC_AGENT_API_KEY=<a long random string> (16+ characters) and
+#      your provider key(s), e.g. ANTHROPIC_API_KEY=..., in a .env file next
+#      to this one.
+#   2. docker compose up -d
+#   3. Connect the desktop app or open http://<server>:8787/panel on a phone.
+#
+# The port is published on 127.0.0.1 only. Reach it through Tailscale, an SSH
+# tunnel or a reverse proxy with TLS; change it to "8787:8787" only on a
+# private network you trust.
+services:
+  agent:
+    build: .
+    image: atomic-agent:local
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ATOMIC_AGENT_API_KEY: ${ATOMIC_AGENT_API_KEY:?set ATOMIC_AGENT_API_KEY (16+ characters) in .env}
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      # config.json, .env, sessions, memory, skills, channel state.
+      - atomic-data:/data
+      # The agent's working folder for files and shell commands.
+      - atomic-work:/work
+
+volumes:
+  atomic-data:
+  atomic-work:

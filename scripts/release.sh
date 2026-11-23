@@ -9,7 +9,7 @@
 #   ./scripts/release.sh 1.2.3        # explicit version
 #
 # The script will:
-#   1. Update version in package.json
+#   1. Update version in package.json and package-lock.json (nothing else)
 #   2. Create a commit: "atomic-agent: release v<version>"
 #   3. Create an annotated git tag: v<version>
 #
@@ -72,30 +72,20 @@ fi
 
 echo "Bumping: $CURRENT → $NEW_VERSION (tag: $TAG)"
 
-# Update version in package.json using node (preserves formatting).
-node -e "
-  const fs = require('fs');
-  const path = '$PKG';
-  const raw = fs.readFileSync(path, 'utf-8');
-  const updated = raw.replace(
-    /\"version\":\s*\"[^\"]+\"/,
-    '\"version\": \"$NEW_VERSION\"'
-  );
-  fs.writeFileSync(path, updated);
-"
+# Write the new version into package.json and package-lock.json, and only
+# that: no `npm install`, which re-resolves the lock with the local npm and
+# dropped the Linux packages' libc fields on a Mac (ATO-1641).
+(cd "$APP_DIR" && npx --no-install tsx scripts/bump-version.ts "$APP_DIR" "$NEW_VERSION")
 
 # Verify the change.
 VERIFY=$(node -p "require('$PKG').version")
-if [[ "$VERIFY" != "$NEW_VERSION" ]]; then
-  echo "Error: version update failed (got $VERIFY, expected $NEW_VERSION)"
+VERIFY_LOCK=$(node -p "const l = require('$APP_DIR/package-lock.json'); l.version + ' ' + l.packages[''].version")
+if [[ "$VERIFY" != "$NEW_VERSION" || "$VERIFY_LOCK" != "$NEW_VERSION $NEW_VERSION" ]]; then
+  echo "Error: version update failed (package.json $VERIFY, package-lock.json $VERIFY_LOCK, expected $NEW_VERSION)"
   exit 1
 fi
 
-echo "Updated package.json → $NEW_VERSION"
-
-# Sync package-lock.json with the new version.
-echo "Running npm install to update package-lock.json..."
-(cd "$APP_DIR" && npm install --package-lock-only)
+echo "Updated package.json and package-lock.json → $NEW_VERSION"
 
 # Commit and tag.
 git add "$PKG" "$APP_DIR/package-lock.json"

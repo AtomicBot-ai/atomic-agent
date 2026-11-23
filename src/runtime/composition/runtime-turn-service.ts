@@ -37,6 +37,7 @@ import { captureModelModePolicy, resolveModelMode, type ModelModePolicy } from "
 import type { GoalSpec, GoalState } from "../../agent/goal/index.js";
 import { createRuntimeGoalRunner } from "./runtime-goal.js";
 import { createNextStepSuggester } from "./runtime-next-step.js";
+import type { createExperienceReviewer } from "./runtime-experience-review.js";
 import { routeTurnProvider } from "./runtime-turn-router.js";
 import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
 import { surfaceShowsQuestions, withAskUserVisibility } from "../../tools/conversation/ask-user-surface.js";
@@ -122,6 +123,11 @@ export interface RuntimeTurnDependencies {
    * (ATO-1093). Omitted (tests, embedders): the suggestion is only stored.
    */
   emitEvent?: (sessionId: string, event: AgentLoopEvent) => void;
+  /**
+   * Self-learning after a long turn (ATO-67,
+   * `runtime-experience-review.ts`). Omitted (tests, embedders): no review.
+   */
+  experienceReview?: Pick<ReturnType<typeof createExperienceReviewer>, "maybeReview">;
   lifecycle: { isShutdown(): boolean };
   logger: StructuredLogger;
 }
@@ -213,7 +219,7 @@ export function createRuntimeTurnService(
    * active provider inside `resolveActiveLlmSlice` — for a fusion worker
    * that means silently running on the cloud leg.
    */
-  const assertKnownProvider = (providerId: string | undefined, model?: string): void => {
+  const assertKnownProvider = (providerId: string | undefined, model?: string, origin?: TurnOrigin): void => {
     if (providerId === undefined) {
       if (model !== undefined) {
         throw new Error("a per-turn model needs the provider it runs on (providerId)");
@@ -229,7 +235,13 @@ export function createRuntimeTurnService(
     // ATO-1148: a project's own model is a cloud choice. A local model
     // is one per agent (one server, one loaded GGUF), so a per-turn
     // model on a local link is refused rather than silently ignored.
-    const refusal = perTurnModelRefusal(resolveLlmConfig(getConfig()), providerId, model);
+    // A Fusion turn's role model may be on LM Studio / Ollama (ATO-1560).
+    const refusal = perTurnModelRefusal(
+      resolveLlmConfig(getConfig()),
+      providerId,
+      model,
+      origin === "fusion" || origin === "subagent" ? { localServer: "allow" } : {},
+    );
     if (refusal !== null) throw new Error(refusal);
   };
 
@@ -435,7 +447,7 @@ export function createRuntimeTurnService(
       questions?: boolean;
     } = {},
   ): Promise<RunTurnResult> => {
-    assertKnownProvider(runOptions.providerId, runOptions.model);
+    assertKnownProvider(runOptions.providerId, runOptions.model, runOptions.origin);
     // A fusion worker session is throwaway: no recorder, no trace pin, no
     // memory, and — at the end — no save. The parent session's turn
     // owns the durable record of what the worker did.
@@ -689,6 +701,14 @@ export function createRuntimeTurnService(
         if (!stoppedForMoney(result.stopCause)) {
           nextStep.maybeSuggest(finished, runOptions.origin);
         }
+        // Self-learning (ATO-67): same contract, gated on the turn's
+        // length, origin and ending inside the reviewer.
+        deps.experienceReview?.maybeReview(finished, {
+          result,
+          origin: runOptions.origin,
+          ...(runOptions.answerChannel !== undefined ? { answerChannel: runOptions.answerChannel } : {}),
+          ...(runOptions.memoryReadOnly === true ? { memoryReadOnly: true } : {}),
+        });
         // `finish` ended the whole session: its kept jobs go with it.
         if (finished.status === "completed") shellJobs.endSession(session.id);
         return { ...result, session: finished };
@@ -828,7 +848,7 @@ export function createRuntimeTurnService(
     }
     // Before the queue, so a bad pin rejects now rather than after
     // waiting behind whatever is running on the session.
-    assertKnownProvider(runOptions.providerId, runOptions.model);
+    assertKnownProvider(runOptions.providerId, runOptions.model, runOptions.origin);
     const origin = runOptions.origin ?? "cli";
     const submission = {
       sessionId: session.id,
@@ -866,8 +886,9 @@ export function createRuntimeTurnService(
     // and also fires the one-time `first_message_sent`.
     // A fusion worker turn is excluded for the same reason: it is the
     // orchestrator fanning out, not a person; the parent session's turn
-    // is the one `message_sent` and the meter already count.
-    if (origin === "scheduler" || origin === "fusion") {
+    // is the one `message_sent` and the meter already count. A subagent
+    // worker turn is the same kind of turn (ATO-1669).
+    if (origin === "scheduler" || origin === "fusion" || origin === "subagent") {
       return turnController.enqueue(submission);
     }
     const startedAt = Date.now();

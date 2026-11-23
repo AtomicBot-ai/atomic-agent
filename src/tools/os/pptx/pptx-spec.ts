@@ -1,3 +1,5 @@
+import { parseChartSpec, type ChartSpec } from "../ooxml/ooxml-chart.js";
+
 /**
  * The deck a model asks `os.fs.write_pptx` for, validated. Everything
  * the builder needs is decided here — limits, theme name, bullet levels
@@ -13,6 +15,9 @@ export const MAX_TEXT_CHARS = 2_000;
 export const MAX_NOTES_CHARS = 20_000;
 /** Deepest bullet level PowerPoint shows by default styles (0-based). */
 export const MAX_BULLET_LEVEL = 4;
+/** A slide table is read at a glance: past this it belongs in a spreadsheet. */
+export const MAX_TABLE_ROWS = 30;
+export const MAX_TABLE_COLS = 12;
 
 export interface PptxBullet {
   text: string;
@@ -26,6 +31,9 @@ export interface PptxSlideSpec {
   bullets: PptxBullet[];
   /** Path as the model wrote it; resolved against the working dir by the tool. */
   image?: string;
+  /** Rows of cells; the first row is the header. Every row has the same number of cells. */
+  table?: string[][];
+  chart?: ChartSpec;
   notes?: string;
 }
 
@@ -110,13 +118,62 @@ function parseSlide(entry: unknown, index: number): PptxSlideSpec {
   const subtitle = optionalString(raw, "subtitle", where);
   const image = optionalString(raw, "image", where);
   const notes = optionalString(raw, "notes", where, MAX_NOTES_CHARS);
+  const table = raw.table === undefined || raw.table === null ? undefined : parseTable(raw.table, where);
+  const chart =
+    raw.chart === undefined || raw.chart === null ? undefined : parseChartSpec(raw.chart, `${TOOL}: ${where}chart.`);
+  // One picture, table or chart per slide: it takes the right half next
+  // to the bullets, or the whole body without them.
+  const visuals = [image, table, chart].filter((v) => v !== undefined).length;
+  if (visuals > 1) {
+    throw new Error(
+      `${TOOL}: slides[${index}] has more than one of image, table and chart; put each on its own slide`,
+    );
+  }
   return {
     title: title.trim(),
     bullets,
     ...(subtitle === undefined ? {} : { subtitle }),
     ...(image === undefined ? {} : { image }),
+    ...(table === undefined ? {} : { table }),
+    ...(chart === undefined ? {} : { chart }),
     ...(notes === undefined ? {} : { notes }),
   };
+}
+
+/**
+ * `[["Region", "Q3"], ["EU", 12]]`: the first row is the header. Numbers
+ * and booleans are written as text, a null cell is empty, and short
+ * rows are padded so the grid stays rectangular.
+ */
+export function parseTable(raw: unknown, where: string): string[][] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new Error(`${TOOL}: ${where}table must be a non-empty array of rows (the first row is the header)`);
+  }
+  if (raw.length > MAX_TABLE_ROWS) {
+    throw new Error(
+      `${TOOL}: ${where}table has ${raw.length} rows; at most ${MAX_TABLE_ROWS} per slide; split it or attach a spreadsheet`,
+    );
+  }
+  const rows = raw.map((row: unknown, r: number) => {
+    if (!Array.isArray(row)) throw new Error(`${TOOL}: ${where}table[${r}] must be an array of cells`);
+    if (row.length > MAX_TABLE_COLS) {
+      throw new Error(`${TOOL}: ${where}table[${r}] has ${row.length} cells; at most ${MAX_TABLE_COLS} columns`);
+    }
+    return row.map((value: unknown, c: number) => {
+      if (value === null || value === undefined) return "";
+      if (typeof value === "string") {
+        if (value.length > MAX_TEXT_CHARS) {
+          throw new Error(`${TOOL}: ${where}table[${r}][${c}] is longer than ${MAX_TEXT_CHARS} characters`);
+        }
+        return value;
+      }
+      if (typeof value === "number" || typeof value === "boolean") return String(value);
+      throw new Error(`${TOOL}: ${where}table[${r}][${c}] must be text or a number`);
+    });
+  });
+  const width = Math.max(...rows.map((row) => row.length));
+  if (width === 0) throw new Error(`${TOOL}: ${where}table has no cells`);
+  return rows.map((row) => [...row, ...Array<string>(width - row.length).fill("")]);
 }
 
 export function parseAccentColor(value: string): string {

@@ -3,6 +3,7 @@ import {
   createInitialOfflinePanelState,
   type OfflinePanelState,
 } from "./offline-mode.js";
+import { createInitialShieldPanelState, type ShieldPanelState } from "./privacy-shield.js";
 
 /**
  * UI state for the TUI "Privacy" tab: the anonymous-analytics opt-out
@@ -35,6 +36,11 @@ export interface PrivacyPanelState {
    * when the running agent has no kill switch.
    */
   offline: OfflinePanelState;
+  /**
+   * Privacy Shield (ATO-1082): masking before cloud models and the
+   * agent's "masked N" counter. `supported: false` without the control.
+   */
+  shield: ShieldPanelState;
 }
 
 export function createInitialPrivacyPanelState(): PrivacyPanelState {
@@ -45,5 +51,6 @@ export function createInitialPrivacyPanelState(): PrivacyPanelState {
     lastError: null,
     sessionGrants: { categories: [], shapes: [] },
     offline: createInitialOfflinePanelState(),
+    shield: createInitialShieldPanelState(),
   };
 }

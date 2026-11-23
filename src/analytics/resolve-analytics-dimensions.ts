@@ -41,8 +41,8 @@ export interface AnalyticsDimensions {
  * Every install channel value that may leave the machine. `deb`, `rpm` and
  * `aur` are the terminal's own Linux packages as well as the desktop's deb;
  * the surface dimension tells them apart. `npm`, `homebrew`, `scoop` and
- * `winget` are the package managers `src/update/install-source.ts` knows by
- * the binary's path.
+ * `winget` are the package managers, `mise` and `aqua` the tool managers,
+ * that `src/update/install-source.ts` knows by the binary's path.
  */
 export const INSTALL_CHANNELS = [
   "curl_sh",
@@ -57,6 +57,8 @@ export const INSTALL_CHANNELS = [
   "homebrew",
   "scoop",
   "winget",
+  "mise",
+  "aqua",
   "unknown",
 ] as const;
 export type InstallChannel = (typeof INSTALL_CHANNELS)[number];

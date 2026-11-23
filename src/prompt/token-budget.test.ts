@@ -102,6 +102,15 @@ describe("computeEffectiveConversationCap", () => {
     completionMaxTokens: 4096,
   };
 
+  it("subtracts the native tool schemas sent beside the text (ATO-1678)", () => {
+    const window = { ...base, contextWindow: 48_000, autoFill: true };
+    // 38 992 without them (see below); the schemas take their share.
+    expect(
+      computeEffectiveConversationCap({ ...window, toolSchemaTokens: 7_000 }),
+    ).toBe(31_992);
+    expect(computeEffectiveConversationCap(window)).toBe(38_992);
+  });
+
   /**
    * The report this behaviour came from: `llama-server -c 48000`, and
    * the composer reads `32k`. Nothing is broken — 32k is

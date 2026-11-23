@@ -1,5 +1,6 @@
 import { getAppVersion } from "../version.js";
 import { isNewerVersion } from "./compare-semver.js";
+import { isOfflineNetwork } from "../llm/offline-network.js";
 import {
   parseUpdatePolicy,
   requiredUpdateReason,
@@ -117,6 +118,15 @@ export async function checkForAppUpdate(opts?: {
     tag = cache.tag;
     policy = cache.policy;
   } else {
+    // ATO-1085: offline mode never asks GitHub. A cached answer above is
+    // still used; otherwise the caller gets the usual check error (the
+    // start-up check swallows it, `update` prints it).
+    if (isOfflineNetwork()) {
+      throw new AppUpdateCheckError(
+        "Offline mode is on, so the update check was skipped. Turn offline mode off to check for updates.",
+        null,
+      );
+    }
     ({ tag, policy } = await fetchLatestRelease(repo, fetchImpl));
     cache = { repo, fetchedAt: Date.now(), tag, policy };
   }

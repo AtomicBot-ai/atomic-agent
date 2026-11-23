@@ -499,6 +499,32 @@ describe("TaskRunner", () => {
     expect(store.get(created.id)?.status).toBe("completed");
   });
 
+  it("create with startPaused never auto-drains: the task waits to be started (ATO-601)", async () => {
+    const { runtime, calls } = fakeRuntime();
+    const runner = new TaskRunner({
+      store,
+      runtime,
+      sessionLoader: fakeSessionLoader(session),
+      defaultMaxSteps: 5,
+      backoff: { initialMs: 1, maxMs: 10 },
+      enabled: true,
+      runOnCreate: true,
+      sleep: async () => undefined,
+    });
+    const created = runner.create({
+      sessionId: session.id,
+      userMessage: "from a mail",
+      origin: "scheduler",
+      maxAttempts: 1,
+      startPaused: true,
+    });
+    expect(created.status).toBe("paused");
+    await runner.drainPending();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls).toHaveLength(0);
+    expect(store.get(created.id)?.status).toBe("paused");
+  });
+
   it("stamps wakeReason on session.metadata before runTurn", async () => {
     let observed: unknown = undefined;
     const runtime: TaskRunnerRuntime = {

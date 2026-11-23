@@ -1,5 +1,7 @@
 export {
   buildOsFsReadDocumentTool,
+  detectFormat as detectDocumentFormat,
+  resolveExtractor as resolveDocumentExtractor,
   type ReadDocumentOptions,
 } from "./read-document.js";
 export type {

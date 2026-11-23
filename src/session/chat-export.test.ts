@@ -27,7 +27,8 @@ describe("chat export (ATO-1054)", () => {
     expect(parseChatExportFormat("MD")).toBe("markdown");
     expect(parseChatExportFormat("word")).toBe("docx");
     expect(parseChatExportFormat("htm")).toBe("html");
-    expect(parseChatExportFormat("pdf")).toBeNull();
+    expect(parseChatExportFormat("PDF")).toBe("pdf");
+    expect(parseChatExportFormat("rtf")).toBeNull();
   });
 
   it("writes the conversation, one line per tool step, and leaves reasoning out", () => {

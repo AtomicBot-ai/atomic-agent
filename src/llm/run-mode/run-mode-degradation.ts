@@ -22,6 +22,6 @@ export function describeRunModeDegradation(
     case "no-second-provider":
       // Either leg may be cloud or local; what fusion cannot do is run
       // both of them on the same provider.
-      return "Fusion needs two providers — one to orchestrate and one to run the workers. Only one is configured. Add another in Manage → LLM (or /llm).";
+      return "Fusion needs two providers: one to orchestrate and one to run the workers. Only one is configured. Add another in Manage → LLM (or /llm).";
   }
 }

@@ -67,7 +67,7 @@ export async function configCommand(
         process.stdout.write(`${getConfig().paths.userConfigFile}\n`);
         return 0;
       case "secrets":
-        return handleSecrets(args.slice(1));
+        return await handleSecrets(args.slice(1), undefined, stdin);
       default:
         process.stderr.write(`unknown subcommand: ${sub}\n`);
         process.stderr.write(HELP);

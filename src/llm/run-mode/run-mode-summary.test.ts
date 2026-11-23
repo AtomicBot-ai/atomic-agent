@@ -27,6 +27,20 @@ describe("describeRunMode", () => {
     ).toContain("1 worker on local-llama");
   });
 
+  it("says where stuck workers escalate when automatic escalation is on, also on one provider with two models (ATO-1561)", () => {
+    const sameProvider: ResolvedRunMode = {
+      ...base,
+      workerProviderId: "openrouter",
+      workerModel: "model-b",
+      escalation: { providerId: "openrouter", model: "anthropic/claude-sonnet-4.5", auto: true, replace: false, maxUsd: 0.25 },
+    };
+    expect(describeRunMode(sameProvider)).toContain(
+      "; stuck workers escalate to openrouter (anthropic/claude-sonnet-4.5)",
+    );
+    expect(describeRunMode({ ...sameProvider, escalation: { ...sameProvider.escalation!, auto: false } })).not.toContain("escalate");
+    expect(describeRunMode(base)).not.toContain("escalate");
+  });
+
   it("describes a plain mode by its active provider", () => {
     expect(
       describeRunMode({

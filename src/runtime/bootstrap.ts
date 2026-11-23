@@ -9,6 +9,7 @@ import { createBackgroundCompaction } from "./compaction-background.js";
 import { createCompactionTokenCounter } from "./compaction-token-counter.js";
 import { createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills, recurringTaskTexts, startRuntimeSkillCurator } from "./composition/runtime-skills.js";
+import { createExperienceReviewer } from "./composition/runtime-experience-review.js";
 import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, registerRuntimeImageTools, registerRuntimeVideoTools, registerRuntimeAudioTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
 import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeSessionFactories } from "./composition/runtime-session-services.js";
 import { createInterruptedTurns } from "./interrupted-turns.js";
@@ -16,8 +17,10 @@ import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition
 import { createIncognitoSessions } from "./incognito-sessions.js";
 import { createRuntimeKeepAwake, createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
 import { connectRuntimeChannels } from "./composition/runtime-channels.js";
+import { createRuntimeImapTrigger } from "./composition/runtime-imap-trigger.js";
 import { createRuntimeMailTrigger } from "./composition/runtime-mail-trigger.js";
 import { createOfflineModeControl } from "./composition/runtime-offline-mode.js";
+import { createPrivacyShieldControl } from "./composition/runtime-privacy-shield.js";
 import { holdWhileRunning } from "../scheduler/index.js";
 import type { AgentRuntime, CreateAgentRuntimeOptions } from "./runtime-contract.js";
 export type { AgentRuntime, CreateAgentRuntimeOptions, MemoryEmbeddingReconnect, RuntimeEventHandlers } from "./runtime-contract.js";
@@ -28,6 +31,7 @@ import { prepareRuntimeLocalProfile, connectRuntimeLocalProfile } from "./compos
 import { connectRuntimeProviders, createRuntimeModelContext, connectRuntimeFallback, createRuntimeProviderReloads, catalogWindowOf } from "./composition/runtime-inference.js";
 import { modelWantsStrictTools } from "../llm/provider/model-strict-tools.js";
 import { createRuntimeMemoryStores } from "./composition/runtime-memory-stores.js";
+import { createRuntimeFileIndex } from "./composition/runtime-file-index.js";
 import { createMemoryEmbeddingSwitch } from "./composition/runtime-memory-embedding-switch.js";
 import { createRuntimeMemoryServices, createRuntimeMemoryConsolidator } from "./composition/runtime-memory-services.js";
 import { sessionGroundingSource } from "../memory/name-grounding.js";
@@ -49,6 +53,7 @@ import { SwarmRegistry } from "../channels/swarm/index.js";
 import type { ChannelRegistry } from "../channels/channel-registry.js";
 
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
+import { setPrivacyShieldEnabled } from "../privacy/index.js";
 
 import { ApprovalGate } from "../approval/approval-gate.js";
 import { ApprovalRulesStore } from "../approval/approval-rules-store.js";
@@ -62,6 +67,7 @@ import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import type { BrowserExtractModelRef } from "../tools/browser/extract-request.js";
 import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
+import { FileCheckpointStore, fileCheckpointsRoot } from "../tools/os/fs/fs-checkpoint-store.js";
 import { ToolOutputSpill } from "../tools/index.js";
 import { registerSessionTools } from "../tools/sessions/index.js";
 import {
@@ -86,6 +92,7 @@ import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
 import { isLocalLinkWithoutModel } from "./local-link-availability.js";
 import { explainLocalEngineState, readLocalEngineState } from "./local-engine-state.js";
+import { isCloudLink } from "./cloud-link.js";
 import { createLocalOutOfMemoryPort, type LocalModelRestarter } from "./local-out-of-memory.js";
 import { createRuntimePromptPreview, buildRuntimePromptInput } from "./composition/runtime-prompt-preview.js";
 import { captureModelModePolicy, resolveModelMode } from "../llm/model-mode.js";
@@ -107,6 +114,7 @@ import { TurnUsageMeter } from "../analytics/index.js";
 
 import { installGlobalErrorHandlers } from "../error-reporting/index.js";
 import { ToolHookEngine, installToolHooks } from "../hooks/index.js";
+import { activePolicy, installPolicy, loadPolicy, policyRuleMatch } from "../policy/index.js";
 
 /**
  * One-stop factory that wires the whole agent runtime. Both the CLI
@@ -126,6 +134,8 @@ export async function createAgentRuntime(
   // unreachable, and turned a wedged llama-server into a bare
   // `fetch failed` at 306 s. See `installTransportDeadlines`.
   installTransportDeadlines(config);
+  // ATO-1081: Privacy Shield, read per cloud request by the providers.
+  setPrivacyShieldEnabled(config.privacy?.shield.enabled === true);
   const workingDir = resolve(options.workingDir);
 
   const observability = createRuntimeObservability(config, options);
@@ -147,6 +157,7 @@ export async function createAgentRuntime(
     reportModelConfigured,
     reportLocalEngineFailed,
     reportUiAction,
+    reportUpdateChecked,
     interviewInviteIdentity,
     reportInterviewInvite,
   } = observability.createControls();
@@ -227,6 +238,18 @@ export async function createAgentRuntime(
     stateDir: config.paths.stateDir,
     warn: (message, fields) => logger.warn(message, fields),
   }));
+  // Admin policy (ATO-587): `<stateDir>/policy.json`, the machine-wide
+  // file and `ATOMIC_POLICY_URL` (short timeout, last good copy when
+  // offline; never blocks the start). Its deny / ask reach the gate as
+  // rules; the dispatcher, the MCP manager and the skill registry read it too.
+  const orgPolicy = await loadPolicy({ stateDir: config.paths.stateDir });
+  installPolicy(orgPolicy);
+  for (const source of orgPolicy.sources) {
+    if (source.state === "invalid" || source.state === "unreachable" || source.state === "cached") {
+      logger.warn("policy: source not loaded fresh", { ...source });
+    }
+  }
+  approvals.setOrgPolicy((request) => policyRuleMatch(activePolicy(), request));
   // Tools are registered with `approvalRequired: true` unconditionally;
   // the gate's approval level carries the boot-time value instead. Every
   // request reaches the gate with its category and the gate decides
@@ -344,6 +367,9 @@ export async function createAgentRuntime(
     },
   });
 
+  // ATO-1621: "My files", its own SQLite file; embeds with memory's model.
+  const fileIndex = createRuntimeFileIndex({ config, notesStore, logger });
+
   const sessionStore = prepareRuntimeSessionStore(config, logger);
   // The commands `os.shell.run` detached at the default timeout (F47).
   // One registry for the runtime, so the turn-end (`executeTurn`),
@@ -358,7 +384,10 @@ export async function createAgentRuntime(
   // sessions that are gone (fusion workers are never stored) swept here.
   const toolOutputSpill = new ToolOutputSpill();
   toolOutputSpill.sweepStale();
-  installRuntimeSessionDelete(sessionStore, dropRecorder, shellJobs, toolOutputSpill);
+  installRuntimeSessionDelete(
+    sessionStore, dropRecorder, shellJobs, toolOutputSpill,
+    new FileCheckpointStore(fileCheckpointsRoot(config.paths.stateDir)),
+  );
 
   // `browser.extract` calls the model (ATO-699); the completer is built
   // further down, so the tool reads it through this ref per call.
@@ -393,6 +422,7 @@ export async function createAgentRuntime(
     resolvePreviousReply: (id) => turnPreviousReplies.get(id),
     canAskUser: (id) => !turnsWithoutQuestions.has(id),
     declaredInputs, shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, browserBackend,
+    ...(fileIndex ? { fileIndex } : {}),
     // Only the terminal UI has an `/integrations` screen that saves an Exa
     // key into this process; every other entry point keeps the desktop /
     // `.env` advice (ATO-345).
@@ -683,6 +713,10 @@ export async function createAgentRuntime(
       const config = getConfig();
       return readLocalEngineState(providerId, config, resolveLlmConfig(config).activeTextProvider);
     },
+    // Two empty answers in a row from a cloud model offer another model
+    // instead of "Retry" (ATO-1578). Read live, like the engine state.
+    isCloudLink: (providerId: string | undefined) =>
+      isCloudLink(providerId, resolveLlmConfig(getConfig())),
     // The same reading with why, so the turn's error report says what the
     // wait decided on (ATO-1432).
     explainLocalEngineState: (providerId: string | undefined) => {
@@ -893,6 +927,18 @@ export async function createAgentRuntime(
   // ATO-592: `while-working` holds a sleep inhibitor while any turn runs
   // (chat, Telegram, a task); off by default.
   const keepAwake = createRuntimeKeepAwake({ config, logger });
+  // Self-learning (ATO-67): after a long turn, one background review may
+  // save a skill; `skills.selfLearning.enabled` (default on) turns it off.
+  const experienceReview = createExperienceReviewer({
+    getConfig, llmComplete, slotManager,
+    resolveTransport: () => resolveActiveLlmSlice().transport,
+    skillRegistry, refreshSkills,
+    pending: turnState.pendingSessionNamings,
+    isShutdown: () => lifecycle.isShutdown(),
+    // A turn that read outside content only drafts a skill for approval (prompt injection).
+    outsideContentSources: (sessionId) => approvals.outsideContentSources(sessionId),
+    logger,
+  });
   const turnService = createRuntimeTurnService(config, {
     sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies, turnsWithoutQuestions },
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
@@ -900,6 +946,7 @@ export async function createAgentRuntime(
     traces, telemetry: { observability, analyticsStateStore, turnUsageMeter, sessionUsage, metrics },
     state: turnState, lifecycle, logger,
     emitEvent: emitAgentLoopEventFor,
+    experienceReview,
   });
   const { steer, controlGoal } = turnService;
   const runQueuedTurn = holdWhileRunning(keepAwake, turnService.runTurn);
@@ -942,9 +989,13 @@ export async function createAgentRuntime(
   const mailTrigger = createRuntimeMailTrigger({
     config, taskRunner, taskStore, sessionStore, createSession, webhookSessionStore, logger,
   });
+  const imapTrigger = createRuntimeImapTrigger({
+    config, taskRunner, createSession, webhookSessionStore, logger,
+  });
+  const sidecars = [mailTrigger, imapTrigger].filter((s): s is NonNullable<typeof s> => s !== null);
   const scheduler = createRuntimeScheduler({
     config, taskRunner, logger, metrics, resolveTelegram: () => telegramChannelForShutdown,
-    ...(mailTrigger ? { sidecars: [mailTrigger] } : {}),
+    ...(sidecars.length > 0 ? { sidecars } : {}),
   });
   const consolidatorJob = createRuntimeMemoryConsolidator({
     config, notesStore, linkStore, lessonStore, procedureStore, voteStore,
@@ -1032,6 +1083,8 @@ export async function createAgentRuntime(
           error: err instanceof Error ? err.message : String(err),
         }),
     }),
+    // ATO-1082: Privacy Shield's live switch and "masked N" counter.
+    privacyShield: createPrivacyShieldControl(),
     mcpManager,
     providerRegistry,
     capabilities,
@@ -1118,6 +1171,7 @@ export async function createAgentRuntime(
       await profileManager?.refresh();
     },
     reconnectMemoryEmbeddings: () => memoryEmbeddings.reconnect(),
+    ...(fileIndex ? { fileIndex } : {}),
     setApprovalHandlerForSession: (sessionId, handler) =>
       approvalRouter.setForSession(sessionId, handler),
     setAnalyticsEnabled,
@@ -1125,6 +1179,7 @@ export async function createAgentRuntime(
     reportModelConfigured,
     reportLocalEngineFailed,
     reportUiAction,
+    reportUpdateChecked,
     interviewInviteIdentity,
     reportInterviewInvite,
     setLocalModelRestarter: (restarter: LocalModelRestarter | null) => {
@@ -1136,7 +1191,11 @@ export async function createAgentRuntime(
     setPlanMode: (on: boolean) => {
       planMode = on;
     },
-    shutdown,
+    // The file index stops after the rest; it holds no session state.
+    shutdown: async () => {
+      await shutdown();
+      await fileIndex?.close();
+    },
   } as AgentRuntime & {
     telegramChannel: TelegramChannel | null;
     discordChannel: DiscordChannel | null;

@@ -32,6 +32,14 @@ export interface ModelErrorOptions extends LlmFailureOptions {
    * retrying with a larger cap and retrying with a smaller prompt.
    */
   truncation?: TruncationDetail;
+  /**
+   * For `reason === "empty"`: the turn already spent its one re-ask
+   * (`repeatedEmptyCompletionError`) and the link that answered empty
+   * twice is a cloud provider (ATO-1578). Asking it a third time almost
+   * always gives a third empty answer, so the failure offers another
+   * model instead of "Retry".
+   */
+  repeatedOnCloud?: boolean;
 }
 
 /**
@@ -146,6 +154,9 @@ export class ModelError extends LlmFailure {
   /** Present for `truncated`: the wall the reply hit and the counts behind it. */
   readonly truncation?: TruncationDetail;
 
+  /** See `ModelErrorOptions.repeatedOnCloud`. */
+  readonly repeatedOnCloud?: boolean;
+
   constructor(
     readonly reason: ModelFailureReason,
     message: string,
@@ -161,6 +172,9 @@ export class ModelError extends LlmFailure {
     }
     if (options?.truncation !== undefined) {
       this.truncation = options.truncation;
+    }
+    if (options?.repeatedOnCloud === true) {
+      this.repeatedOnCloud = true;
     }
   }
 }

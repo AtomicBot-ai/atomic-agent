@@ -17,6 +17,7 @@ import { imessageChannelDefinition } from "./imessage/index.js";
 import { MATRIX_CHANNEL } from "./matrix/index.js";
 import { GOOGLE_CHAT_CHANNEL } from "./googlechat/index.js";
 import { msteamsChannelDefinition } from "./msteams/index.js";
+import { WHATSAPP_CHANNEL } from "./whatsapp/index.js";
 
 export const EXTRA_CHANNELS: readonly ChannelDefinition[] = [
   SIGNAL_CHANNEL,
@@ -25,4 +26,5 @@ export const EXTRA_CHANNELS: readonly ChannelDefinition[] = [
   MATRIX_CHANNEL,
   GOOGLE_CHAT_CHANNEL,
   msteamsChannelDefinition,
+  WHATSAPP_CHANNEL,
 ];

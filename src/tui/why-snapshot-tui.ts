@@ -1,5 +1,7 @@
+import { formatUsd } from "../llm/provider/usage-cost.js";
 import { describeToolCall } from "../tools/describe-tool-call.js";
 import { resultSizeLabel, stepArgsLabel } from "./chat/step-note.js";
+import { knownStepCostUsd } from "./step-spend.js";
 import type { ToolCardEntry, TuiState } from "./tui-state.js";
 
 /**
@@ -7,12 +9,13 @@ import type { ToolCardEntry, TuiState } from "./tui-state.js";
  * from what the TUI already holds for the visible session: the last
  * finished tool card (live turn first, then the newest finished turn),
  * the model's reasoning text when it gave any, and the last model
- * call's token counts. Nothing is invented: a part the data does not
- * carry is said to be missing.
+ * call's token counts, and the step's dollar cost when every model call
+ * of it was priced. Nothing is invented: a part the data does not carry
+ * is said to be missing, and a cost nobody priced is not shown at all.
  */
 export type WhyState = Pick<
   TuiState,
-  "messages" | "streamingToolCards" | "reasoning" | "metrics"
+  "messages" | "streamingToolCards" | "reasoning" | "metrics" | "stepSpend"
 >;
 
 const WHY_REASONING_LIMIT = 240;
@@ -31,6 +34,8 @@ interface LastStep {
   reasoning: string | null;
   /** `true` when the reasoning is the turn's last block, not this step's own. */
   reasoningIsTurnLevel: boolean;
+  /** `true` when the step belongs to the turn still running. */
+  live: boolean;
 }
 
 /** The newest finished step: the running turn's, else the last finished turn's. */
@@ -45,6 +50,7 @@ export function findLastStep(state: WhyState): LastStep | null {
       card: live,
       reasoning: own.length > 0 ? own.join(" ") : null,
       reasoningIsTurnLevel: false,
+      live: true,
     };
   }
   for (let i = state.messages.length - 1; i >= 0; i -= 1) {
@@ -62,6 +68,7 @@ export function findLastStep(state: WhyState): LastStep | null {
       card,
       reasoning: last ?? null,
       reasoningIsTurnLevel: last !== undefined,
+      live: false,
     };
   }
   return null;
@@ -88,6 +95,20 @@ function tokensLine(metrics: WhyState["metrics"]): string {
     : "Tokens: not reported for this turn";
 }
 
+/**
+ * The step's dollar cost, or `null` when it is not known. A running
+ * step reads the live per-step spend (a later call in the same step,
+ * such as a delegated worker's, is then included); a finished one reads
+ * what was stamped on its card. Local, plan-billed and unpriced steps
+ * are `null`: no line rather than `$0.00` or a guess.
+ */
+export function stepCostUsd(state: WhyState, last: LastStep): number | null {
+  if (last.live) {
+    return knownStepCostUsd(state.stepSpend[last.card.stepIndex]);
+  }
+  return last.card.stepCostUsd ?? null;
+}
+
 /** The text `/why` prints into the chat log. */
 export function formatWhy(state: WhyState): string {
   const last = findLastStep(state);
@@ -108,6 +129,8 @@ export function formatWhy(state: WhyState): string {
     `Result: ${card.status === "ok" ? "ok" : "failed"}${duration} · ${resultSizeLabel(card.summary)}${card.truncated ? " (truncated)" : ""}`,
     tokensLine(state.metrics),
   ];
+  const cost = stepCostUsd(state, last);
+  if (cost !== null) lines.push(`Cost (this step): ${formatUsd(cost)}`);
   if (last.reasoning !== null) {
     const label = last.reasoningIsTurnLevel
       ? "Why (the model's last reasoning in that turn)"

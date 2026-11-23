@@ -397,6 +397,8 @@ export class ApprovalGate {
 
   /** Saved allow / ask / deny rules (`approval-rules.ts`); none until `setRules`. */
   private rules: ApprovalRulesSource | undefined;
+  /** Admin policy check (`src/policy/`, ATO-587); none until `setOrgPolicy`. */
+  private orgPolicy: ((request: RuleCheck) => RuleMatch | null) | undefined;
   /** The rule the last `grant: "always"` saved, for the host that asked. */
   private lastAlwaysRule: { approvalId: string; rule: ApprovalRule } | null = null;
   /** Smart approval (step 7 of `request`); unset = never consulted. */
@@ -427,6 +429,14 @@ export class ApprovalGate {
   /** Install (or with `undefined`, remove) the saved approval rules. */
   setRules(store: ApprovalRulesSource | undefined): void {
     this.rules = store;
+  }
+
+  /**
+   * Install (or with `undefined` remove) the admin policy. Its deny and
+   * ask stand above saved rules; a saved deny still wins over its ask.
+   */
+  setOrgPolicy(check: ((request: RuleCheck) => RuleMatch | null) | undefined): void {
+    this.orgPolicy = check;
   }
 
   /** The installed rules store, for hosts that list or delete rules. */
@@ -484,6 +494,15 @@ export class ApprovalGate {
   holdsForOutsideContent(sessionId: string, category: ApprovalCategory): boolean {
     if (!isTaintSensitive(category) || !this.taintReview()) return false;
     return this.taint.sources(sessionId).length > 0;
+  }
+
+  /**
+   * The outside sources `sessionId` read in its running (or just ended)
+   * turn, whatever `agent.taintReview` says; empty when it read none.
+   * Self-learning skips a turn with any (ATO-67).
+   */
+  outsideContentSources(sessionId: string): readonly string[] {
+    return this.taint.sources(sessionId);
   }
 
   /** Forget the outside content of `sessionId`'s last turn; called when a turn starts. */
@@ -868,6 +887,16 @@ export class ApprovalGate {
    * cannot be read never blocks a request; it is as if it had no rules.
    */
   private matchRule(request: RuleCheck): RuleMatch | null {
+    const own = this.matchSavedRule(request);
+    if (own?.decision === "deny" || this.orgPolicy === undefined) return own;
+    try {
+      return this.orgPolicy(request) ?? own;
+    } catch {
+      return own;
+    }
+  }
+
+  private matchSavedRule(request: RuleCheck): RuleMatch | null {
     const store = this.rules;
     if (store === undefined) return null;
     try {

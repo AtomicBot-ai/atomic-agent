@@ -17,6 +17,10 @@ import { parseModelModeCommand, MODEL_MODE_USAGE, type ModelModeCommand } from "
 import { parseGoalCommand, type GoalCommand } from "./goal-command.js";
 import { compactionInstructionsError, normalizeCompactionInstructions } from "../../runtime/compaction-instructions.js";
 import { parsePersonaCommand, type PersonaCommand } from "./persona-command.js";
+import { describeThinkLevel, parseThinkCommand } from "./think-command.js";
+import type { ReasoningLevel } from "../../llm/reasoning-levels.js";
+import { parseLearnCommand, type LearnCommand } from "../../skills/learning/learn-command.js";
+import { parseExportCommand, type ChatExportRequest } from "./export-command.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -44,6 +48,16 @@ export interface SlashDispatchResult {
   readonly goalCommand?: GoalCommand;
   /** `/persona …` (ATO-54): the submit path writes the config and reports. */
   readonly personaCommand?: PersonaCommand;
+  /** `/learn …` (ATO-67): the skills orchestrator lists or undoes learned skills. */
+  readonly learnCommand?: LearnCommand;
+  /**
+   * `/think <level>` (ATO-490): the caller hands the level to the
+   * orchestrator, which sends it on the next turns; the action in
+   * `actions` updates the composer readout.
+   */
+  readonly reasoningLevel?: ReasoningLevel;
+  /** Bare `/think`: the caller says the level in force (it holds the state). */
+  readonly thinkShow?: boolean;
   /**
    * `/enhance <text>`: the draft to rewrite. The buffer is left holding
    * the draft itself, and the caller hands the rewrite back to it.
@@ -76,6 +90,8 @@ export interface SlashDispatchResult {
   readonly triggerSessionPicker: boolean;
   /** `/rewind` (ATO-1057): ask the orchestrator to open the rewind picker. */
   readonly triggerRewindPicker?: boolean;
+  /** `/export [format] [path]` (ATO-1054): the orchestrator writes the open chat. */
+  readonly chatExport?: ChatExportRequest;
   /** When true the caller should ask the orchestrator to start a fresh session. */
   readonly triggerSessionNew: boolean;
   /** With `triggerSessionNew`: start the session in its own git worktree (`/new worktree`). */
@@ -441,6 +457,17 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
     }
     case "persona":
       return pureActions([], { personaCommand: parsePersonaCommand(parsed.args) });
+    case "think": {
+      const think = parseThinkCommand(parsed.args);
+      if (think.kind === "show") return pureActions([], { thinkShow: true });
+      if (think.kind === "error") return pureActions([], { systemMessage: think.message });
+      return pureActions([{ type: "reasoning_level_set", level: think.level }], {
+        reasoningLevel: think.level,
+        systemMessage: describeThinkLevel(think.level, think.fromOff === true),
+      });
+    }
+    case "learn":
+      return pureActions([], { learnCommand: parseLearnCommand(parsed.args) });
     case "enhance":
       // Opt-in and never sends: the draft goes back into the composer
       // right away, and the rewrite replaces it there for review.
@@ -521,6 +548,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return pureActions([], { triggerSessionNew: true });
     case "rewind":
       return pureActions([], { triggerRewindPicker: true });
+    case "export":
+      return pureActions([], { chatExport: parseExportCommand(parsed.args) });
     case "incognito":
       return pureActions([], { triggerIncognitoSession: true });
     case "window":

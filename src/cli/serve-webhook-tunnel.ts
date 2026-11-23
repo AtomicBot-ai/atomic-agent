@@ -96,6 +96,12 @@ export interface StartWebhookTunnelOptions {
   runtime: AgentRuntime;
   request: TunnelRequest;
   preflight: Extract<TunnelPreflight, { ok: true }>;
+  /**
+   * Serve's own API key. The gateway's routes check each binding's secret
+   * or signature instead and never ask for it, but serve builds no
+   * listener without a key.
+   */
+  apiKey: string;
   approvalBus: ApprovalBus;
   completionRegistry: CompletionRegistry;
   write: (line: string) => void;
@@ -109,11 +115,7 @@ export async function startWebhookTunnel(options: StartWebhookTunnelOptions): Pr
     runtime: options.runtime,
     host: "127.0.0.1",
     port: 0,
-    apiKey: null,
-    // The public tunnel host and senders' own body types would trip the
-    // keyless loopback guard (ATO-1495); each binding's secret and
-    // signature check stands in for it here.
-    loopbackGuard: false,
+    apiKey: options.apiKey,
     routes: buildTunnelRouteTable(),
     approvalBus: options.approvalBus,
     completionRegistry: options.completionRegistry,

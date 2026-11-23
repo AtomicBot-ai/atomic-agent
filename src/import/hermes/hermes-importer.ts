@@ -1,7 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import {
+  ensureUserConfigFileSync,
+  parseUserConfigFile,
+  resetConfigCache,
+  writeUserConfigFileSync,
+} from "../../config/index.js";
+import { ConfigValidationError } from "../../config/config-validation-error.js";
 import { setDotenvKey } from "../../config/dotenv-writer.js";
+import type { McpServerConfig } from "../../mcp/mcp-types.js";
 import type { SessionStore } from "../../session/index.js";
 import type { SessionState } from "../../session/session-state.js";
 import { TaskStore } from "../../tasks/index.js";
@@ -12,6 +20,14 @@ import {
 } from "../import-report.js";
 import { groupHintFromCwd, withGroupHint } from "../grouping.js";
 import { reconcileImportedSession } from "../reconcile-session.js";
+import {
+  buildHermesPluginMcpServer,
+  discoverHermesPlugins,
+  hermesPluginsDir,
+  hermesShimInstallPath,
+  installHermesShim,
+  resolveTrustedPlugins,
+} from "./hermes-plugins.js";
 import type { HermesSource } from "./hermes-source.js";
 import type { ImportOptionId } from "./import-options.js";
 import { mapHermesCronJob } from "./map-cron.js";
@@ -30,6 +46,18 @@ export interface HermesImporterDeps {
   workingDirFallback: string;
   /** Injectable clock for deterministic past-detection. */
   now?: () => number;
+  /**
+   * `plugins` option (ATO-953): Hermes home holding `plugins/`, the config
+   * file that receives the bridged MCP entries, and the plugins the user
+   * trusted by key or manifest name. Untrusted plugins are only reported.
+   */
+  sourceDir?: string;
+  userConfigFile?: string;
+  trustedPlugins?: readonly string[];
+  /** Python interpreter for the bridge (default python3 / python). */
+  pythonCommand?: string;
+  /** Copies the shim into the state dir; injectable for tests. */
+  installShim?: (stateDir: string) => string;
 }
 
 export interface ImportRunOptions {
@@ -64,6 +92,9 @@ export class HermesImporter {
     }
     if (selected.has("secrets")) {
       this.importSecrets(items, options);
+    }
+    if (selected.has("plugins")) {
+      this.importPlugins(items, options);
     }
 
     return buildReport(items, options.execute);
@@ -245,6 +276,154 @@ export class HermesImporter {
       }
       items.push({ ...base, reason: "overwritten" });
     }
+  }
+
+  /**
+   * Register each trusted Hermes Python plugin as a stdio MCP server that
+   * runs the bundled shim. Name collisions never overwrite (same rule as
+   * the Claude Code MCP import); one config write for the whole batch.
+   */
+  private importPlugins(
+    items: ImportItemResult<ImportOptionId>[],
+    options: ImportRunOptions,
+  ): void {
+    const { sourceDir, userConfigFile } = this.deps;
+    const trusted = (this.deps.trustedPlugins ?? [])
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+    if (!sourceDir || !userConfigFile) {
+      items.push({
+        kind: "plugins",
+        status: "error",
+        reason: "plugin bridge not configured for this import",
+      });
+      return;
+    }
+    const plugins = discoverHermesPlugins(sourceDir);
+    const resolution = resolveTrustedPlugins(plugins, trusted);
+    for (const name of resolution.unmatched) {
+      items.push({
+        kind: "plugins",
+        source: name,
+        status: "skipped",
+        reason: `no Python plugin named ${JSON.stringify(name)} in ${hermesPluginsDir(sourceDir)}`,
+      });
+    }
+    for (const { name, keys } of resolution.ambiguous) {
+      items.push({
+        kind: "plugins",
+        source: name,
+        status: "skipped",
+        reason: `ambiguous: ${keys.length} plugins declare name ${JSON.stringify(name)} (${keys.join(", ")}); trust one by folder, e.g. --trust-plugin ${keys[0]}`,
+      });
+    }
+    if (plugins.length === 0) {
+      items.push({
+        kind: "plugins",
+        status: "skipped",
+        reason: `no Python plugins in ${hermesPluginsDir(sourceDir)}`,
+      });
+      return;
+    }
+
+    const prev = ensureUserConfigFileSync(userConfigFile);
+    const existingNames = new Set(prev.mcp.servers.map((s) => s.name));
+    const shimPath = hermesShimInstallPath(this.deps.stateDir);
+    const toAppend: McpServerConfig[] = [];
+    for (const plugin of plugins) {
+      const base: ImportItemResult<ImportOptionId> = {
+        kind: "plugins",
+        source: plugin.key,
+        status: "migrated",
+      };
+      if (!resolution.trustedKeys.has(plugin.key)) {
+        items.push({
+          ...base,
+          status: "skipped",
+          reason: `not trusted; runs local Python, re-run with --trust-plugin ${plugin.key}`,
+        });
+        continue;
+      }
+      const built = buildHermesPluginMcpServer(plugin, {
+        shimPath,
+        hermesHome: sourceDir,
+        ...(this.deps.pythonCommand
+          ? { pythonCommand: this.deps.pythonCommand }
+          : {}),
+      });
+      if (built.kind === "skip") {
+        items.push({ ...base, status: "skipped", reason: built.reason });
+        continue;
+      }
+      const destination = built.server.name;
+      if (
+        existingNames.has(destination) ||
+        toAppend.some((s) => s.name === destination)
+      ) {
+        items.push({
+          ...base,
+          destination,
+          status: "skipped",
+          reason: "server with this name already configured",
+        });
+        continue;
+      }
+      toAppend.push(built.server);
+      const envNote = this.requiredEnvNote(plugin.requiredEnv, sourceDir);
+      items.push({
+        ...base,
+        destination,
+        ...(envNote ? { reason: envNote } : {}),
+      });
+    }
+    if (!options.execute || toAppend.length === 0) return;
+    try {
+      (this.deps.installShim ?? installHermesShim)(this.deps.stateDir);
+      const nextMcp = {
+        ...prev.mcp,
+        servers: [...prev.mcp.servers, ...toAppend],
+      };
+      const validated = parseUserConfigFile({ ...prev, mcp: nextMcp });
+      writeUserConfigFileSync(userConfigFile, validated);
+      resetConfigCache();
+    } catch (err) {
+      const reason =
+        err instanceof ConfigValidationError
+          ? `${err.field}: ${err.message}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      for (const item of items) {
+        if (item.kind === "plugins" && item.status === "migrated") {
+          item.status = "error";
+          item.reason = `plugin bridge setup failed: ${reason}`;
+        }
+      }
+    }
+  }
+
+  /**
+   * Tell the user which keys a bridged plugin needs. The shim exports these
+   * names (and only these) from `<HERMES_HOME>/.env` when they are not set,
+   * like Hermes does; tools whose keys are missing stay hidden.
+   */
+  private requiredEnvNote(
+    required: readonly string[],
+    sourceDir: string,
+  ): string | null {
+    if (required.length === 0) return null;
+    let found: Map<string, string>;
+    try {
+      found = this.deps.source.readEnvKeys(required);
+    } catch {
+      found = new Map();
+    }
+    const missing = required.filter((name) => !found.get(name));
+    const envFile = join(sourceDir, ".env");
+    const base = `needs env ${required.join(", ")} (read from ${envFile})`;
+    return missing.length === 0
+      ? base
+      : `${base}; not set there: ${missing.join(", ")}, tools that need them stay hidden until added`;
   }
 }
 

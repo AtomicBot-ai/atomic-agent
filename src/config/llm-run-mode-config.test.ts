@@ -443,3 +443,38 @@ describe("taskTree (ATO-940)", () => {
     }
   });
 });
+
+describe("agentProfiles (ATO-1667)", () => {
+  it("parses the map as a sibling of fusion and keeps it through a provider scrub", () => {
+    const parsed = parseLlmRunModeConfig(
+      {
+        mode: "fusion",
+        fusion: { workerProvider: "local-llama" },
+        agentProfiles: { reviewer: { prompt: "Find bugs.", model: "review" } },
+      },
+      providers,
+      "llm.runMode",
+    );
+    expect(parsed.agentProfiles).toEqual({
+      reviewer: { prompt: "Find bugs.", model: "review" },
+    });
+    expect(parsed.fusion).toEqual({ workerProvider: "local-llama" });
+    expect(scrubRunModeProviderPins(parsed, "local-llama")?.agentProfiles).toEqual(
+      parsed.agentProfiles,
+    );
+  });
+
+  it("leaves the key out when absent or null, and skips a bad entry without failing the block", () => {
+    expect(parseLlmRunModeConfig({ agentProfiles: null }, providers, "llm.runMode")).toEqual({});
+    expect(
+      parseLlmRunModeConfig(
+        { mode: "fusion", agentProfiles: { "bad name": { prompt: "x" }, good: { prompt: "y" } } },
+        providers,
+        "llm.runMode",
+      ),
+    ).toEqual({ mode: "fusion", agentProfiles: { good: { prompt: "y" } } });
+    expect(() =>
+      parseLlmRunModeConfig({ agentProfiles: ["good"] }, providers, "llm.runMode"),
+    ).toThrow("llm.runMode.agentProfiles");
+  });
+});

@@ -11,6 +11,7 @@ import { chromeTheme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { handleComposerSwitchKey } from "./composer-switch-key-bindings.js";
 import { SwitchRow } from "./composer-switch-popup-row.js";
+import { switchRowsShowBrands } from "./composer-switch-row-brand.js";
 import {
   clampComposerSwitchCursor,
   selectComposerSwitchRows,
@@ -69,6 +70,9 @@ export function ComposerSwitchPopup({
   const inner = width - 2;
 
   const rows = selectComposerSwitchRows(state, open.kind);
+  // One answer for the whole list, so the label column does not move as
+  // the window scrolls past rows with and without a brand (ATO-1635).
+  const brandSlot = switchRowsShowBrands(rows);
   const cursor = clampComposerSwitchCursor(state, open.cursor);
   // Optional chrome, shed when the pane cannot hold it: the two border
   // rows and one body row are the floor, and past that the hairline
@@ -117,6 +121,7 @@ export function ComposerSwitchPopup({
           selected={start + idx === cursor}
           rowIndex={start + idx}
           onActivate={onActivate}
+          brandSlot={brandSlot}
         />
       ))}
       {rows.length === 0 ? (

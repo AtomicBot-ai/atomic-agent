@@ -9,7 +9,13 @@ import {
   recordTurn,
   type SessionState,
 } from "./session-state.js";
-import { planLastTurnRollback, truncateSessionAt } from "./session-truncate.js";
+import {
+  listPreviousReplies,
+  planLastTurnRollback,
+  planRestorePreviousReply,
+  truncateSessionAt,
+} from "./session-truncate.js";
+import { PREVIOUS_REPLIES_CAP, readPreviousReplies } from "./session-previous-replies.js";
 
 const user = (text: string, at: number, steered = false): ConversationTurn =>
   steered ? { kind: "user", text, steered: true, at } : { kind: "user", text, at };
@@ -359,5 +365,210 @@ describe("planLastTurnRollback", () => {
   it("refuses two answers after one prompt", () => {
     const state = turn(fresh(), user("a", 1), reply("b", 2), reply("c", 3));
     expect(planLastTurnRollback(state)).toEqual({ ok: false, code: "turn_unrecognized" });
+  });
+});
+
+describe("previous replies kept by a regenerate (ATO-864)", () => {
+  it("keeps the answer taken back beside the transcript, not in it", () => {
+    let state = turn(fresh(), user("first", 1), reply("one", 2));
+    state = turn(state, user("Hello", 3), reply("Hi!", 4));
+    const plan = planLastTurnRollback(state);
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.previousReplies).toBe(1);
+    expect(plan.state.turns.map((t) => t.kind)).toEqual(["user", "assistant_reply"]);
+    expect(plan.state.previousReplies?.priorQuestions).toBe(1);
+    expect(plan.state.previousReplies?.prompt.text).toBe("Hello");
+    expect(plan.state.previousReplies?.replies.map((r) => r.reply.text)).toEqual(["Hi!"]);
+  });
+
+  it("does not keep a failed turn's record, a stop marker or a reply with files", () => {
+    const failed = {
+      ...turn(fresh(), user("hello", 1), reply("(this turn failed before it could answer — x: y. Nothing from it took effect.)", 2)),
+      status: "failed" as const,
+    };
+    const plan = planLastTurnRollback(failed);
+    expect(plan.ok && plan.previousReplies).toBe(0);
+    expect(plan.ok && plan.state.previousReplies).toBeUndefined();
+
+    const noAnswer = { ...turn(fresh(), user("hello", 1)), status: "failed" as const };
+    const none = planLastTurnRollback(noAnswer);
+    expect(none.ok && none.state.previousReplies).toBeUndefined();
+  });
+
+  it("collects every try of the same question and caps the list", () => {
+    let state = turn(fresh(), user("Hello", 1), reply("try 0", 2));
+    for (let i = 1; i <= 12; i += 1) {
+      const plan = planLastTurnRollback(state);
+      if (!plan.ok) throw new Error(plan.code);
+      state = turn(plan.state, user("Hello", 10 + i), reply(`try ${i}`, 20 + i));
+    }
+    const replies = state.previousReplies?.replies.map((r) => r.reply.text) ?? [];
+    expect(replies).toHaveLength(PREVIOUS_REPLIES_CAP);
+    expect(replies[replies.length - 1]).toBe("try 11");
+    expect(replies).not.toContain("try 12");
+  });
+
+  it("replaces the record when another question is regenerated", () => {
+    let state = turn(fresh(), user("A", 1), reply("a1", 2));
+    let plan = planLastTurnRollback(state);
+    if (!plan.ok) throw new Error(plan.code);
+    state = turn(plan.state, user("A", 3), reply("a2", 4));
+    state = turn(state, user("B", 5), reply("b1", 6));
+    plan = planLastTurnRollback(state);
+    if (!plan.ok) throw new Error(plan.code);
+    expect(plan.state.previousReplies?.prompt.text).toBe("B");
+    expect(plan.state.previousReplies?.replies.map((r) => r.reply.text)).toEqual(["b1"]);
+  });
+
+  it("a cut further back than the kept question drops the kept answers", () => {
+    let state = turn(fresh(), user("A", 1), reply("a", 2));
+    state = turn(state, user("B", 3), reply("b1", 4));
+    const plan = planLastTurnRollback(state);
+    if (!plan.ok) throw new Error(plan.code);
+    expect(plan.state.previousReplies).toBeDefined();
+    expect(truncateSessionAt(plan.state, 0).state.previousReplies).toBeUndefined();
+    // A cut at the kept question's own place keeps them.
+    expect(truncateSessionAt(plan.state, 2).state.previousReplies).toBeDefined();
+  });
+
+  it("lists nothing once the chat moved past the question", () => {
+    let state = turn(fresh(), user("A", 1), reply("a1", 2));
+    const plan = planLastTurnRollback(state);
+    if (!plan.ok) throw new Error(plan.code);
+    expect(listPreviousReplies(plan.state)).toMatchObject({ question: "A", questionStored: false });
+    state = turn(plan.state, user("A", 3), reply("a2", 4));
+    expect(listPreviousReplies(state)).toMatchObject({ question: "A", questionStored: true });
+    state = turn(state, user("next", 5), reply("n", 6));
+    expect(listPreviousReplies(state).replies).toEqual([]);
+    expect(planRestorePreviousReply(state)).toEqual({ ok: false, code: "no_previous_reply" });
+    // Same position, different text: not the kept question either.
+    const other = turn(plan.state, user("something else", 3), reply("x", 4));
+    expect(listPreviousReplies(other).replies).toEqual([]);
+  });
+});
+
+describe("planRestorePreviousReply (ATO-864)", () => {
+  /** "first" answered, then "Hello" answered "old", regenerated to `newRows`. */
+  function regenerated(...newRows: ConversationTurn[]): SessionState {
+    let state = turn(fresh(), user("first", 1), reply("one", 2));
+    state = turn(state, user("Hello", 3), reply("old", 4));
+    const plan = planLastTurnRollback(state);
+    if (!plan.ok) throw new Error(plan.code);
+    return newRows.length === 0 ? plan.state : turn(plan.state, user("Hello", 5), ...newRows);
+  }
+
+  it("swaps the new answer for the old one and keeps the new one in turn", () => {
+    const state = regenerated(reply("new", 6));
+    const plan = planRestorePreviousReply(state);
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.text).toBe("old");
+    expect(plan.previousReplies).toBe(1);
+    const rows = plan.state.turns.map((t) => (t.kind === "user" || t.kind === "assistant_reply" ? t.text : t.kind));
+    expect(rows).toEqual(["first", "one", "Hello", "old"]);
+    expect(plan.state.previousReplies?.replies.map((r) => r.reply.text)).toEqual(["new"]);
+    // Every counter as if "old" had been the only answer.
+    expect(plan.state.turnCount).toBe(2);
+    expect(plan.state.macroTurnStarts).toEqual([2, 4]);
+    expect(plan.state.status).toBe("pending");
+    expect(plan.state.lastError).toBeNull();
+    expect(plan.state.contextUsage).toBeUndefined();
+    // And back again.
+    const again = planRestorePreviousReply(plan.state);
+    expect(again.ok && again.text).toBe("new");
+    expect(again.ok && again.state.previousReplies?.replies.map((r) => r.reply.text)).toEqual(["old"]);
+  });
+
+  it("puts the old answer back over a new try that failed, and drops the failure record", () => {
+    const state = {
+      ...regenerated(reply("(this turn failed before it could answer — net: down. Nothing from it took effect.)", 6)),
+      status: "failed" as const,
+      lastError: "network",
+    };
+    const plan = planRestorePreviousReply(state);
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.state.turns.map((t) => t.kind === "assistant_reply" && t.text)).toContain("old");
+    expect(plan.state.turns).toHaveLength(4);
+    expect(plan.state.previousReplies).toBeUndefined();
+    expect(plan.previousReplies).toBe(0);
+    expect(plan.state.status).toBe("pending");
+    expect(plan.state.lastError).toBeNull();
+    expect(plan.state.turnCount).toBe(2);
+    expect(plan.state.macroTurnStarts).toEqual([2, 4]);
+  });
+
+  it("puts the question back too when the new try never reached the store", () => {
+    const state = regenerated();
+    expect(state.turns).toHaveLength(2);
+    const plan = planRestorePreviousReply(state);
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    const rows = plan.state.turns.map((t) => (t.kind === "user" || t.kind === "assistant_reply" ? t.text : t.kind));
+    expect(rows).toEqual(["first", "one", "Hello", "old"]);
+    expect(plan.state.turnCount).toBe(2);
+    expect(plan.state.macroTurnStarts).toEqual([2, 4]);
+  });
+
+  it("refuses to swap out a new answer that ran tools", () => {
+    const state = regenerated(call(6), result(7), reply("done", 8));
+    expect(planRestorePreviousReply(state)).toEqual({ ok: false, code: "turn_has_tools" });
+  });
+
+  it("refuses a stopped new try, a running chat and a bad index", () => {
+    expect(planRestorePreviousReply(regenerated(stoppedTurnMarker(6)))).toEqual({ ok: false, code: "turn_stopped" });
+    expect(planRestorePreviousReply({ ...regenerated(reply("new", 6)), status: "running" }))
+      .toEqual({ ok: false, code: "turn_in_progress" });
+    expect(planRestorePreviousReply(regenerated(reply("new", 6)), 3)).toEqual({ ok: false, code: "bad_index" });
+    expect(planRestorePreviousReply(fresh())).toEqual({ ok: false, code: "no_previous_reply" });
+  });
+
+  it("refuses when the new try was compacted", () => {
+    const state = regenerated(reply("new", 6));
+    const compacted = {
+      ...state,
+      compaction: { coveredThrough: 4 } as unknown as NonNullable<SessionState["compaction"]>,
+    };
+    expect(planRestorePreviousReply(compacted)).toEqual({ ok: false, code: "turn_compacted" });
+  });
+
+  it("drops the packer cut, the rolling summary and the cloud mirror past the swapped turn", () => {
+    const base = regenerated(reply("new", 6));
+    const state: SessionState = {
+      ...base,
+      conversationPackStart: { index: 2, at: 1, boundBy: "tokens" },
+      rollingSummary: { coveredThrough: 4 } as unknown as NonNullable<SessionState["rollingSummary"]>,
+    };
+    const plan = planRestorePreviousReply(state);
+    if (!plan.ok) throw new Error(plan.code);
+    expect(plan.state.conversationPackStart).toBeUndefined();
+    expect(plan.state.rollingSummary).toBeUndefined();
+  });
+
+  it("picks a given earlier answer by index", () => {
+    let state = regenerated(reply("second", 6));
+    const plan = planLastTurnRollback(state);
+    if (!plan.ok) throw new Error(plan.code);
+    state = turn(plan.state, user("Hello", 7), reply("third", 8));
+    expect(listPreviousReplies(state).replies.map((r) => r.reply.text)).toEqual(["old", "second"]);
+    const restored = planRestorePreviousReply(state, 0);
+    if (!restored.ok) throw new Error(restored.code);
+    expect(restored.text).toBe("old");
+    expect(restored.state.previousReplies?.replies.map((r) => r.reply.text)).toEqual(["second", "third"]);
+  });
+});
+
+describe("readPreviousReplies (ATO-864)", () => {
+  it("drops a malformed record and keeps a good one", () => {
+    expect(readPreviousReplies(null)).toBeUndefined();
+    expect(readPreviousReplies({ prompt: { kind: "user", text: "x", at: 1 }, priorQuestions: -1, replies: [] })).toBeUndefined();
+    expect(readPreviousReplies({ prompt: { kind: "user", text: "x", at: 1 }, priorQuestions: 0, replies: [{ nope: 1 }] })).toBeUndefined();
+    const good = readPreviousReplies({
+      prompt: { kind: "user", text: "x", at: 1 },
+      priorQuestions: 0,
+      replies: [{ reply: { kind: "assistant_reply", text: "y", at: 2 }, replacedAt: 3 }],
+    });
+    expect(good?.replies).toHaveLength(1);
   });
 });

@@ -10,8 +10,8 @@
  * its sha256) and names the command that starts the agent speaking ACP over
  * stdio. The registry's CI also launches the agent and calls `initialize`:
  * it must answer with `authMethods` holding one `agent` or `terminal`
- * method (`AUTHENTICATION.md`). That ACP server is ATO-543; until it ships
- * an entry would fail that check, so nothing here is submitted.
+ * method (`AUTHENTICATION.md`). `atomic-agent acp` (ATO-543) answers with
+ * a `terminal` method; only a release that ships it can be submitted.
  */
 import { BUNDLE_TARGETS, type BundleTarget } from "./bundle-targets.js";
 

@@ -56,7 +56,7 @@ describe("AtomicMailTrigger (ATO-601)", () => {
   let readiness: AtomicMailReadiness;
   let bindings: Record<string, WebhookConfig>;
   let tasks: Map<string, MailTriggerTask>;
-  let created: Array<{ binding: string; userMessage: string; sessionId: string | null }>;
+  let created: Array<{ binding: string; userMessage: string; sessionId: string | null; startPaused: boolean }>;
   let send: Mock<AtomicMailService["send"]>;
   let listInboxForTrigger: Mock<AtomicMailService["listInboxForTrigger"]>;
   let trigger: AtomicMailTrigger;
@@ -313,6 +313,74 @@ describe("AtomicMailTrigger (ATO-601)", () => {
       tasks.set("t-1", { status: "completed", sessionId: "s" });
       await trigger.tick(60_000 + REPLY_CHECK_MS);
       expect(send).not.toHaveBeenCalled();
+    });
+  });
+  describe("who starts at once (decided 18.11.2026)", () => {
+    it("starts mail from the owner's verified address; any other allowed sender waits", async () => {
+      bindings = { inbox: binding({ allowedSenders: ["boss@example.com"] }) };
+      await trigger.tick(0);
+      arrive(
+        mail("from-boss"),
+        mail("from-owner", {
+          fromEmail: "owner@example.com",
+          authResults: "mx.atomicmail.ai; dmarc=pass header.from=example.com",
+        }),
+      );
+      await trigger.tick(60_000);
+      expect(created).toHaveLength(2);
+      const byText = (t: string) => created.find((c) => c.userMessage.includes(t)) as { startPaused: boolean };
+      expect(byText("text from-boss").startPaused).toBe(true);
+      // The owner needs no allowedSenders entry: their own address is allowed.
+      expect(byText("text from-owner").startPaused).toBe(false);
+      expect(logInfo).toHaveBeenCalledWith(
+        "mail trigger: task created, waiting to be started",
+        expect.objectContaining({ binding: "inbox" }),
+      );
+    });
+
+    it("an unverified owner starts nothing: every task waits", async () => {
+      readiness = {
+        level: "unverified",
+        address: OWN,
+        ownerEmail: "boss@example.com",
+        pendingUntil: null,
+      };
+      await trigger.tick(0);
+      arrive(mail("m1"));
+      await trigger.tick(60_000);
+      expect(created).toHaveLength(1);
+      expect((created[0] as { startPaused: boolean }).startPaused).toBe(true);
+    });
+
+    it("autoStartSenders replaces the default and also allows those senders", async () => {
+      bindings = {
+        inbox: binding({ allowedSenders: ["boss@example.com"], autoStartSenders: ["@corp.io"] }),
+      };
+      await trigger.tick(0);
+      arrive(
+        mail("from-boss"),
+        mail("from-corp", {
+          fromEmail: "me@corp.io",
+          authResults: "mx.atomicmail.ai; dmarc=pass header.from=corp.io",
+        }),
+        mail("from-owner", {
+          fromEmail: "owner@example.com",
+          authResults: "mx.atomicmail.ai; dmarc=pass header.from=example.com",
+        }),
+      );
+      await trigger.tick(60_000);
+      const paused = Object.fromEntries(
+        created.map((c) => [c.userMessage.match(/text (from-\w+)/)?.[1], (c as { startPaused: boolean }).startPaused]),
+      );
+      expect(paused).toEqual({ "from-boss": true, "from-corp": false });
+    });
+
+    it("autoStartSenders: [] makes every mail task wait", async () => {
+      bindings = { inbox: binding({ autoStartSenders: [] }) };
+      await trigger.tick(0);
+      arrive(mail("m1"));
+      await trigger.tick(60_000);
+      expect((created[0] as { startPaused: boolean }).startPaused).toBe(true);
     });
   });
 });

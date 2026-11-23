@@ -1,3 +1,6 @@
+import { mkdtemp, open, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import {
   runCommand as defaultRunCommand,
@@ -32,6 +35,14 @@ const TOOL_NAME = "os.web.fetch";
 const DEFAULT_TIMEOUT_MS = 30_000;
 import { describeChallenge, detectChallenge } from "./web-fetch-challenge.js";
 import {
+  checkUrlSend,
+  DEFAULT_URL_DATA_GUARD,
+  noteUrlSendAllowed,
+  urlSendReason,
+  type UrlSendSites,
+} from "./url-data-guard.js";
+import { maskUrlSecrets } from "./http-request-preview.js";
+import {
   describeReadVia,
   readPastWall,
   type PageRenderer,
@@ -39,6 +50,8 @@ import {
 } from "./web-fetch-ladder.js";
 
 const MAX_RESPONSE_BYTES = 2_000_000;
+/** How much a `binaryBody` request may write to disk before curl stops. */
+const MAX_BINARY_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 const DEFAULT_MAX_CHARS = 50_000;
 const MAX_CHARS_CAP = 50_000;
@@ -89,7 +102,7 @@ export interface OsWebFetchOptions {
    * working — when absent `DEFAULT_FETCH_CONFIG` applies, which reproduces the
    * pre-v38 30s budget.
    */
-  config?: Pick<AtomicAgentConfig, "web">;
+  config?: Pick<AtomicAgentConfig, "web"> & Partial<Pick<AtomicAgentConfig, "http">>;
   /** Injectable sleep so retry-backoff tests do not wait in real time. */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   /**
@@ -98,6 +111,8 @@ export interface OsWebFetchOptions {
    * (`ApprovalGate.holdsForOutsideContent`, ATO-618). Absent: never asks.
    */
   dangerous?: DangerousToolOptions;
+  /** Sites a chat already used under `http.urlDataGuard: "strict"` (ATO-1377). Defaults to the shared store. */
+  urlSendSites?: UrlSendSites;
   /** Injectable Defuddle runner so extractor tests need no real package. */
   runDefuddle?: DefuddleRunner;
   /**
@@ -124,6 +139,8 @@ interface CurlResponse {
   truncated: boolean;
   /** Seconds parsed from a `Retry-After` response header, when present. */
   retryAfterMs: number | null;
+  /** The raw bytes, set only for a `binaryBody` request (`body` is then empty). */
+  bodyBytes?: Buffer;
 }
 
 export interface FetchOutcome {
@@ -138,6 +155,11 @@ export interface FetchOutcome {
    * that was not requested. `finalUrl`/`status` are then the redirecting page.
    */
   refusedRedirect?: string;
+  /**
+   * The body exactly as sent, for a `binaryBody` request (gzipped sitemaps,
+   * ATO-970). `body` is empty then: the bytes are not text yet.
+   */
+  bodyBytes?: Buffer;
 }
 
 export function buildOsWebFetchTool(
@@ -179,19 +201,36 @@ export function buildOsWebFetchTool(
       // After outside content a GET's URL alone can carry data out
       // (`https://x/?d=<secret>`), so a held session asks first (ATO-618).
       const gate = options.dangerous;
-      if (gate?.approvals.holdsForOutsideContent(ctx.sessionId, "http") === true) {
+      // ATO-1377: an address that carries a lot of data (or, under
+      // `"strict"`, the chat's first request to a site) asks like a POST
+      // on every session, held or not.
+      const urlCheck =
+        gate === undefined
+          ? null
+          : checkUrlSend(
+              options.config?.http?.urlDataGuard ?? DEFAULT_URL_DATA_GUARD,
+              args.url,
+              ctx.sessionId,
+              options.urlSendSites,
+            );
+      if (
+        gate !== undefined &&
+        (urlCheck !== null || gate.approvals.holdsForOutsideContent(ctx.sessionId, "http"))
+      ) {
+        const shownUrl = maskUrlSecrets(args.url);
         await requireApproval(
           gate,
           {
             sessionId: ctx.sessionId,
             tool: TOOL_NAME,
-            category: "http",
-            reason: `GET ${args.url}`,
-            affectedResources: [args.url],
+            category: urlCheck !== null ? "http_write" : "http",
+            reason: urlCheck !== null ? urlSendReason(shownUrl, urlCheck) : `GET ${args.url}`,
+            affectedResources: [urlCheck !== null ? shownUrl : args.url],
             grantKey: urlOrigin(args.url),
           },
           ctx.signal,
         );
+        if (urlCheck !== null) noteUrlSendAllowed(urlCheck, ctx.sessionId, options.urlSendSites);
       }
       let outcome: FetchOutcome;
       try {
@@ -412,6 +451,8 @@ interface FetchWithGuardOptions {
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   /** Pacing hooks for callers that limit their own traffic (`os.web.crawl`). */
   hooks?: FetchRequestHooks;
+  /** Keep the body as bytes (see `FetchRawPageOptions.binaryBody`). */
+  binaryBody?: boolean;
 }
 
 /**
@@ -435,6 +476,14 @@ export interface FetchRawPageOptions {
   timeoutMs?: number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   hooks?: FetchRequestHooks;
+  /**
+   * Return the body as raw bytes in `bodyBytes` instead of text (ATO-970,
+   * `.xml.gz` sitemaps). curl writes it to a private temp file and does not
+   * decode `Content-Encoding` itself (it only asks for gzip), so the caller
+   * unpacks it with its own size cap and a gzip bomb never reaches the disk
+   * at full size. The download is capped at the same 2 MB as text.
+   */
+  binaryBody?: boolean;
 }
 
 /**
@@ -455,6 +504,7 @@ export function fetchRawPage(
     timeoutMs: options.timeoutMs ?? fetchCfg.timeoutMs,
     sleep: options.sleep ?? defaultSleep,
     hooks: options.hooks,
+    binaryBody: options.binaryBody,
   });
 }
 
@@ -504,6 +554,7 @@ async function fetchWithGuard(
           truncated: res.truncated,
           redirectChain: chain,
           refusedRedirect: nextUrl.toString(),
+          ...(res.bodyBytes ? { bodyBytes: res.bodyBytes } : {}),
         };
       }
       currentUrl = nextUrl;
@@ -516,6 +567,7 @@ async function fetchWithGuard(
       body: res.body,
       truncated: res.truncated,
       redirectChain: chain,
+      ...(res.bodyBytes ? { bodyBytes: res.bodyBytes } : {}),
     };
   }
 }
@@ -614,6 +666,7 @@ async function curlOnce(
   pinnedIps: readonly string[],
   opts: FetchWithGuardOptions,
 ): Promise<CurlResponse> {
+  if (opts.binaryBody === true) return curlOnceBinary(url, pinnedIps, opts);
   const curlArgs = buildCurlArgs(url, pinnedIps, opts);
   let result: CommandResult;
   try {
@@ -638,10 +691,70 @@ async function curlOnce(
   return { ...parseCurlMeta(result.stdout), truncated: result.truncated };
 }
 
+/**
+ * `curlOnce` for a `binaryBody` request: the body goes to a file in a fresh
+ * private temp dir (`-o`), stdout carries only the `-w` meta line, and the
+ * file is read back as bytes and removed. Only the first 2 MB are read
+ * back (the rest is marked truncated); `--max-filesize` is a 50 MB disk
+ * guard on top.
+ */
+async function curlOnceBinary(
+  url: URL,
+  pinnedIps: readonly string[],
+  opts: FetchWithGuardOptions,
+): Promise<CurlResponse> {
+  const dir = await mkdtemp(join(tmpdir(), "atomic-web-"));
+  const bodyPath = join(dir, "body");
+  try {
+    const curlArgs = buildCurlArgs(url, pinnedIps, opts, bodyPath);
+    let result: CommandResult;
+    try {
+      result = await runCurl(opts.runCommand, curlArgs, {
+        cwd: opts.cwd,
+        timeoutMs: opts.timeoutMs + 2_000,
+        signal: opts.signal,
+        maxOutputBytes: 64 * 1024,
+      });
+    } catch (err) {
+      if (isCurlMissingError(err)) throw new CurlUnavailableError();
+      throw err;
+    }
+    if (result.exitCode !== 0) {
+      throw new CurlFailedError(
+        `${TOOL_NAME}: ${formatCurlError(result)}`,
+        result.exitCode ?? -1,
+      );
+    }
+    let bytes: Buffer = Buffer.alloc(0);
+    let truncated = false;
+    try {
+      // Read at most the cap: an older curl without a Content-Length to
+      // check may have written past `--max-filesize`.
+      const file = await open(bodyPath, "r");
+      try {
+        const size = (await file.stat()).size;
+        const want = Math.min(size, MAX_RESPONSE_BYTES);
+        bytes = Buffer.alloc(want);
+        const { bytesRead } = await file.read(bytes, 0, want, 0);
+        bytes = bytes.subarray(0, bytesRead);
+        truncated = size > MAX_RESPONSE_BYTES;
+      } finally {
+        await file.close();
+      }
+    } catch {
+      // No file: an empty body (a 204, or a redirect without one).
+    }
+    return { ...parseCurlMeta(result.stdout), body: "", bodyBytes: bytes, truncated };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 function buildCurlArgs(
   url: URL,
   pinnedIps: readonly string[],
   opts: Pick<FetchWithGuardOptions, "fetchCfg" | "timeoutMs">,
+  binaryBodyPath?: string,
 ): string[] {
   const host = url.hostname.replace(/^\[|\]$/g, "");
   const port = url.port || (url.protocol === "https:" ? "443" : "80");
@@ -672,7 +785,22 @@ function buildCurlArgs(
     // hands back bytes the extractor reads as binary noise — and some
     // hosts behave differently for a client that claims no encoding
     // support at all, since no browser has looked like that in years.
-    "--compressed",
+    // A binary body (ATO-970) is kept as sent: only gzip is offered, curl
+    // does not unpack it, and the caller unzips it under its own cap.
+    ...(binaryBodyPath === undefined
+      ? ["--compressed"]
+      : [
+          "-H",
+          "Accept-Encoding: gzip",
+          // A disk guard, not the cap: the read below keeps the first
+          // MAX_RESPONSE_BYTES and marks the rest truncated, so a big
+          // uncompressed sitemap still yields its first entries. 50 MB is
+          // the sitemap protocol's own size limit.
+          "--max-filesize",
+          String(MAX_BINARY_DOWNLOAD_BYTES),
+          "-o",
+          binaryBodyPath,
+        ]),
     "-H",
     "Accept: text/markdown, text/html;q=0.9, */*;q=0.1",
     "-H",

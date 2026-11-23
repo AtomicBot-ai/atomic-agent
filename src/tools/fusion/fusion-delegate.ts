@@ -17,6 +17,7 @@ import { getConfig } from "../../config/index.js";
 import { workerReplyAllowance } from "../../local-llm/server/worker-slots.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { parseDelegateArgs } from "./delegate-args.js";
+import { FusionBudgetStopError } from "./fusion-stop-errors.js";
 import {
   applyCheckOutcomes,
   applyContractFindings,
@@ -62,7 +63,14 @@ import {
   renderSplitInstructions,
 } from "./task-tree.js";
 import type { FusionRunRecorder, FusionRunStore } from "./run-checkpoint.js";
-import { outcomeRowFor, type FusionOutcomeLog } from "./outcome-log.js";
+import {
+  cleanModelLabel,
+  outcomeRowFor,
+  type FusionOutcomeLog,
+} from "./outcome-log.js";
+import { renderLegSpeedLine, workerSpeedSample } from "./leg-speed.js";
+import { fanoutPathReport, renderPathLine } from "./critical-path.js";
+import { workerInheritsWorkspace } from "./worker-workspace.js";
 import {
   planResume,
   readResumeRequest,
@@ -111,9 +119,12 @@ import {
   delegateOutcome,
   fanoutSpend,
   formatDelegateOutput,
+  taskSpendUsd,
   type WorkerPricing,
   type WorkerTaskResult,
 } from "./worker-result.js";
+import { reconcileWorkerLabel, SaidOnce } from "./served-model-label.js";
+import { describeCostEstimate, estimateTaskCostUsd } from "./cost-estimate.js";
 
 export const FUSION_DELEGATE_TOOL = "fusion.delegate";
 
@@ -127,6 +138,12 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
   slotManager: Pick<SlotManager, "poolSize">;
   /** Live read — the operator can leave fusion mid-turn. */
   resolveRunMode: () => ResolvedRunMode;
+  /**
+   * The model a llama.cpp server that is not this agent's own serves
+   * (`GET /props`, ATO-1562), or null for any other leg and when the
+   * server does not say. Absent (tests, embedders): labels as before.
+   */
+  servedModelOf?: (providerId: string) => Promise<string | null>;
   /** Does the worker leg keep KV-cache affinity per slot? */
   workerSupportsSlotAffinity: (providerId: string) => boolean;
   /** The fallback seam's `prepareLink`: warm the local backend once. */
@@ -305,6 +322,7 @@ export function buildFusionDelegateTool(
     localLegHealth: input.localLegHealth ?? new LocalLegHealth(),
   };
   const turnBudget = deps.turnBudget ?? new FusionTurnBudget();
+  const mismatchesSaid = new SaidOnce();
   return {
     name: FUSION_DELEGATE_TOOL,
     description:
@@ -358,15 +376,40 @@ export function buildFusionDelegateTool(
         turnBudget.addWorkerSpend(ctx.sessionId, resume.carriedSpendUsd);
       }
 
-      // Labels, never guesses: the resolver's pin when it has one, the
-      // provider id when it does not. Both legs are read from the same
-      // live `mode` the fan-out is about to run on.
-      const workerModel = mode.workerModel ?? workerProviderId;
+      // Labels, never guesses: what a foreign llama.cpp server says it
+      // serves (ATO-1562), else the resolver's pin when it has one, else
+      // the provider id. Both legs are read from the same live `mode` the
+      // fan-out is about to run on.
+      const servedModel =
+        deps.servedModelOf === undefined
+          ? null
+          : await deps.servedModelOf(workerProviderId).catch(() => null);
+      const workerLabel = reconcileWorkerLabel(
+        mode.workerModelPinned === true ? mode.workerModel : null,
+        servedModel,
+      );
+      const workerModel = workerLabel.label ?? mode.workerModel ?? workerProviderId;
+      // Said in the fan-out's result once per session and pair, not on
+      // every fan-out; marked said only when a result carries it.
+      const sayModelMismatch = (): string => {
+        if (workerLabel.mismatch === undefined) return "";
+        if (!mismatchesSaid.add(ctx.sessionId, workerLabel.mismatch)) return "";
+        deps.logger.warn("fusion: the worker server serves another model than the one selected", {
+          providerId: workerProviderId,
+          selected: mode.workerModel,
+          served: servedModel,
+        });
+        return `\n\n${workerLabel.mismatch}`;
+      };
       // Models by role and node (ATO-943): where each task runs, decided
       // before anything starts. A model name outside the allowed list
       // refuses the call; without `roles` every task is on the worker
       // leg, as before.
-      const workerLegRef = { providerId: workerProviderId, model: workerModel };
+      const workerLegRef = {
+        providerId: workerProviderId,
+        model: workerModel,
+        ...(mode.workerTurnModel === undefined ? {} : { turnModel: mode.workerTurnModel }),
+      };
       // Subagent profiles (ATO-566): applied before the legs are picked,
       // since a profile's model can set the task's role.
       let profileReports: AppliedProfileReport[] = [];
@@ -745,7 +788,7 @@ export function buildFusionDelegateTool(
       const stopForBudget = (stop: TurnBudgetStop): void => {
         if (stoppedBy !== undefined) return;
         stoppedBy = stop;
-        budgetAbort.abort(new Error(stop.message));
+        budgetAbort.abort(new FusionBudgetStopError(stop));
       };
       const timeLeft = capped
         ? turnBudget.timeLeftMs(ctx.sessionId, limits)
@@ -951,6 +994,17 @@ export function buildFusionDelegateTool(
             breaker.observe(result);
             checkpoint.onTaskFinished?.(result);
             logOutcome(result);
+            // What this leg really did, for the next plan (ATO-1583).
+            const sample = awaitsExpansion(result)
+              ? null
+              : workerSpeedSample(result);
+            if (sample !== null) {
+              turnBudget.noteSpeed(
+                ctx.sessionId,
+                `${leg} ${cleanModelLabel(result.model ?? model)}`,
+                sample,
+              );
+            }
           },
         };
       };
@@ -1029,7 +1083,20 @@ export function buildFusionDelegateTool(
           // Workers run in the parent's folder in every model mode, so a
           // live folder switch reaches them too (#1121). Only cloud
           // workers inherit the parent's workspace.
-          { ...workerDeps, workingDir: ctx.workingDir, ...(ctx.modelMode === "cloud" ? { inheritWorkspace: true } : {}) },
+          {
+            ...workerDeps,
+            workingDir: ctx.workingDir,
+            // A cloud worker inherits the parent's workspace; a local one
+            // gets its own folder's skills once the session left the
+            // startup folder (ATO-1601).
+            ...(workerInheritsWorkspace({
+              modelMode: ctx.modelMode,
+              sessionDir: ctx.workingDir,
+              startupDir: deps.workingDir,
+            })
+              ? { inheritWorkspace: true }
+              : {}),
+          },
           {
             ...(originalRequest === undefined ? {} : { originalRequest }),
             ...(contract === undefined ? {} : { contract }),
@@ -1038,6 +1105,8 @@ export function buildFusionDelegateTool(
             maxWorkers,
             providerId: workerProviderId,
             workerModel,
+            // ATO-1560: the workers run on the model they are shown with.
+            ...(mode.workerTurnModel === undefined ? {} : { turnModel: mode.workerTurnModel }),
             workerMaxSteps: mode.workerMaxSteps,
             workerTimeoutMs: mode.workerTimeoutMs,
             localTokensPerSecond,
@@ -1063,7 +1132,7 @@ export function buildFusionDelegateTool(
       // A role model's leg (ATO-943): its own provider, label, price and
       // width. A cloud leg takes the cloud cap; a second local server is
       // one at a time, since its slots are nobody's measurement. The
-      // escalation target is dropped where it is this very provider.
+      // escalation target is dropped where it is this very model.
       const rolePricing = new Map(
         [...roleLegs.values()].map((leg) => [
           leg.providerId,
@@ -1089,7 +1158,20 @@ export function buildFusionDelegateTool(
         );
         const onlyRole = roles.size === 1 ? [...roles][0] : "-";
         return runWorkerTasks(
-          { ...workerDeps, workingDir: ctx.workingDir, ...(ctx.modelMode === "cloud" ? { inheritWorkspace: true } : {}) },
+          {
+            ...workerDeps,
+            workingDir: ctx.workingDir,
+            // A cloud worker inherits the parent's workspace; a local one
+            // gets its own folder's skills once the session left the
+            // startup folder (ATO-1601).
+            ...(workerInheritsWorkspace({
+              modelMode: ctx.modelMode,
+              sessionDir: ctx.workingDir,
+              startupDir: deps.workingDir,
+            })
+              ? { inheritWorkspace: true }
+              : {}),
+          },
           {
             ...(originalRequest === undefined ? {} : { originalRequest }),
             ...(contract === undefined ? {} : { contract }),
@@ -1107,6 +1189,7 @@ export function buildFusionDelegateTool(
             providerId: leg.providerId,
             workerModel:
               onlyRole === "-" ? leg.model : `${leg.model} (${onlyRole})`,
+            ...(leg.turnModel === undefined ? {} : { turnModel: leg.turnModel }),
             workerMaxSteps: mode.workerMaxSteps,
             workerTimeoutMs: mode.workerTimeoutMs,
             localTokensPerSecond: null,
@@ -1120,7 +1203,10 @@ export function buildFusionDelegateTool(
             writeScope,
             signal: runSignal,
             ...guardOptionsFor(leg.providerId, pricing, leg.model, tasks),
-            ...(escalationTarget?.providerId === leg.providerId
+            // Dropped only where the target is this leg's own model: a
+            // second model on the same provider still escalates (ATO-1561).
+            ...(escalationTarget?.providerId === leg.providerId &&
+            (escalationTarget.model ?? escalationTarget.providerId) === leg.model
               ? {}
               : escalationOptions),
             ...(briefSuffix === undefined ? {} : { briefSuffix }),
@@ -1236,6 +1322,8 @@ export function buildFusionDelegateTool(
         return expanded;
       };
 
+      // The fan-out's wall clock, for the critical-path line (ATO-1586).
+      const fanoutStartedAt = Date.now();
       let results: WorkerTaskResult[];
       try {
         // A resume starts with what finished before the restart, and with
@@ -1604,6 +1692,43 @@ export function buildFusionDelegateTool(
             : { ...r, notes: [...(r.notes ?? []), warning] };
         });
       }
+      // The cost forecast beside the actual spend (ATO-1585), for every
+      // task with an output estimate on a priced leg. Advisory only.
+      const pricingFor = (taskId: string): WorkerPricing | undefined => {
+        const leg = taskLegs.get(taskId);
+        if (leg === undefined || leg.isWorkerLeg) return workerPricing;
+        return rolePricing.get(leg.providerId);
+      };
+      const costEstimates: {
+        id: string;
+        estimateUsd: number;
+        actualUsd: number | null;
+      }[] = [];
+      const taskById = new Map(parsed.tasks.map((t) => [t.id, t]));
+      results = results.map((r) => {
+        const task = taskById.get(r.id);
+        const pricing = pricingFor(r.id);
+        if (task === undefined || pricing === undefined) return r;
+        const estimateUsd = estimateTaskCostUsd(
+          {
+            ...task,
+            briefChars:
+              task.instructions.length + (task.deliverable?.length ?? 0),
+          },
+          pricing,
+        );
+        if (estimateUsd === null) return r;
+        const actualUsd =
+          r.usage === undefined ? null : taskSpendUsd(r, pricing);
+        costEstimates.push({ id: r.id, estimateUsd, actualUsd });
+        return {
+          ...r,
+          notes: [
+            ...(r.notes ?? []),
+            describeCostEstimate(estimateUsd, actualUsd),
+          ],
+        };
+      });
       const estimates = estimateRows(
         parsed.tasks,
         results,
@@ -1611,6 +1736,20 @@ export function buildFusionDelegateTool(
         maxWorkers,
       );
       const estimateNote = renderEstimateBlock(estimates);
+      // Critical path, total work and idle local slot time (ATO-1586).
+      // Report only; tasks carried over from before a restart did not run
+      // in this fan-out's clock.
+      const carriedIds = new Set(resume?.carried.map((r) => r.id) ?? []);
+      const pathReport = fanoutPathReport({
+        tasks: results.filter((r) => !carriedIds.has(r.id)),
+        dependencies: plan.dependencies,
+        wallMs: Date.now() - fanoutStartedAt,
+        localSlots: Number.isFinite(poolSize)
+          ? Math.min(maxWorkers, poolSize)
+          : null,
+        isLocal: (id) => taskLegs.get(id)?.isWorkerLeg !== false,
+      });
+      const pathNote = renderPathLine(pathReport);
 
       // Where each task ran (ATO-943): the model and role on the row, and
       // a note when it is not the worker leg or not where it asked to be.
@@ -1730,7 +1869,7 @@ export function buildFusionDelegateTool(
             roleSpendUsd > 0
               ? `\n\nRole models cost ${formatUsd(roleSpendUsd)} this fan-out.`
               : ""
-          }${treeNote}${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${resumeNote}${budgetNote}${breakerNote}`,
+          }${sayModelMismatch()}${renderLegSpeedLine(turnBudget.speeds(ctx.sessionId))}${pathNote}${treeNote}${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${resumeNote}${budgetNote}${breakerNote}`,
           details: {
             tasks: results,
             outcome,
@@ -1746,6 +1885,19 @@ export function buildFusionDelegateTool(
             ...(judgeSpendUsd > 0 ? { judgeSpendUsd } : {}),
             ...(roleSpendUsd > 0 ? { roleSpendUsd } : {}),
             ...(estimates.length === 0 ? {} : { estimates }),
+            ...(costEstimates.length === 0 ? {} : { costEstimates }),
+            ...(pathReport.critical.path.length === 0
+              ? {}
+              : {
+                  criticalPath: {
+                    tasks: pathReport.critical.path,
+                    ms: pathReport.critical.ms,
+                    totalWorkMs: pathReport.totalWorkMs,
+                    ...(pathReport.idleLocalSlotMs === null
+                      ? {}
+                      : { idleLocalSlotMs: pathReport.idleLocalSlotMs }),
+                  },
+                }),
             ...(fit.oversized.length === 0
               ? {}
               : { oversizedTasks: fit.oversized }),

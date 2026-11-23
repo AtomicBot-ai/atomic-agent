@@ -76,6 +76,10 @@ export const ENV_SETTINGS: readonly EnvSetting[] = [
   env("ATOMIC_AGENT_LOOP_WANDERING_ESCALATION", ENV_DEFAULTS.LOOP_WANDERING_ESCALATION, "Calls with varied arguments to one tool before the agent is made to reply."),
   env("ATOMIC_AGENT_REPLY_POLISH", true, "Clean up the final reply before a chat surface shows it."),
 
+  // Safe Mode: the OS sandbox around the agent's shell commands (ATO-469, ATO-472).
+  env("ATOMIC_AGENT_SANDBOX", "off", "Set to workspace to run the agent's shell commands in the OS sandbox: writes only in the working folder, temp and download caches, no reads of credential folders or the state directory. Where no sandbox exists (Windows, Linux without bwrap) commands are refused. Unset or any other value: off."),
+  env("ATOMIC_AGENT_SANDBOX_NETWORK", "off", "Set to on to let commands inside the Safe Mode sandbox reach the network; loopback always works. Unset or any other value: no network inside the sandbox."),
+
   // Browser tools.
   env("ATOMIC_AGENT_BROWSER_ENABLED", ENV_DEFAULTS.BROWSER_ENABLED, "Register the browser tools."),
   env("ATOMIC_AGENT_BROWSER_CHANNEL", ENV_DEFAULTS.BROWSER_CHANNEL, "Browser to launch: chrome, msedge or chromium."),
@@ -103,11 +107,19 @@ export const ENV_SETTINGS: readonly EnvSetting[] = [
   env("ATOMIC_AGENT_SESSION_TOOLS_ENABLED", ENV_DEFAULTS.SESSION_TOOLS_ENABLED, "Let the agent list, read and message its other sessions (the sessions.* tools)."),
   env("ATOMIC_AGENT_TASKS_KEEP_AWAKE", null, "Keep the computer awake for tasks and turns: off or while-working. Unset or any other value: off."),
 
+  // Next-step suggestions from a separate model (ATO-1097).
+  env("ATOMIC_AGENT_NEXT_STEP_URL", null, "OpenAI-compatible server (a second llama-server, LM Studio, Ollama) that writes the next-step suggestion instead of the chat model, e.g. http://127.0.0.1:8081/v1. Only used while tui.nextStepSuggestions is on. Unset: the chat model writes it."),
+  env("ATOMIC_AGENT_NEXT_STEP_MODEL", null, "Model name sent to ATOMIC_AGENT_NEXT_STEP_URL. Unset: no model name is sent."),
+  env("ATOMIC_AGENT_NEXT_STEP_API_KEY", null, "Bearer key sent to ATOMIC_AGENT_NEXT_STEP_URL. Unset: none."),
+
   // Persona, network and server.
   env("ATOMIC_AGENT_PERSONA", null, "Persona name to use for this process, above every config.json setting."),
+  env("ATOMIC_AGENT_LANG", null, "Interface language of the terminal UI when `tui.language` is `auto`: en or ru. Unset: taken from LC_ALL, LC_MESSAGES or LANG, else English."),
   env("ATOMIC_AGENT_OFFLINE", null, "Set to 1 to turn offline mode on for this process, whatever config.json says. It cannot be turned off for a running process."),
+  env("ATOMIC_AGENT_PROXY", null, "Send the agent's web traffic through this HTTP(S) proxy, as `network.proxy.url` does. Wins over the config value when set.", "network.proxy.url"),
   env("ATOMIC_AGENT_ALLOWED_ORIGINS", null, "Comma-separated web origins that may call a keyless local `serve`, besides loopback ones."),
   env("ATOMIC_AGENT_MODEL_CATALOG_URL", null, "URL of the extra local-model catalog JSON. Unset: the catalog hosted on atomicagent.io."),
+  env("ATOMIC_AGENT_RERANK_URL", null, "Local reranker (llama-server /v1/rerank style) that re-orders My files search hits. Unset: off. Only a server on this machine or the local network is used."),
 
   // Channels and media.
   env("ATOMIC_AGENT_TELEGRAM_STREAM_REPLIES", null, "Stream Telegram replies into the owner's DM (private) or not (off). Wins over telegram.streamReplies when set."),
@@ -135,6 +147,7 @@ export const INTERNAL_ENV_NAMES: ReadonlyMap<string, string> = new Map([
   ["ATOMIC_AGENT_GIT_CREDENTIAL", "set only on the git child process to pass the GitHub token"],
   ["ATOMIC_AGENT_SURFACE", "set by the desktop app on the agent it starts"],
   ["ATOMIC_AGENT_DESKTOP_VERSION", "set by the desktop app on the agent it starts"],
+  ["ATOMIC_AGENT_MCP_APPS_UI", "set by the desktop app on the agent it starts, which draws MCP Apps pages"],
   ["ATOMIC_AGENT_INSTALL_CHANNEL", "set by installers for analytics"],
   ["ATOMIC_AGENT_INSTALL_ID_FILE", "the shared analytics install id file, passed through by the desktop app"],
   ["ATOMIC_AGENT_TEAM", "marks team test runs in analytics"],

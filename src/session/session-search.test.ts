@@ -249,6 +249,13 @@ describe("SessionStore.searchTranscripts", () => {
     expect(classifySessionForSearch({ id: "x", incognitoType: "object", metadata: null })).toBeNull();
   });
 
+  it("labels an A2A peer's session as a task session, like an HTTP task (ATO-693)", () => {
+    const row = (source: string) => ({ id: "x", incognitoType: null, metadata: JSON.stringify({ source }) });
+    expect(classifySessionForSearch(row("a2a"))).toBe("task");
+    expect(classifySessionForSearch(row("http-task"))).toBe("task");
+    expect(classifySessionForSearch(row("somewhere-else"))).toBe("chat");
+  });
+
   it("deleting a session before any search does not need the index", () => {
     session("s", [{ kind: "user", text: "x", at: 1 }]);
     expect(() => store.delete("s")).not.toThrow();

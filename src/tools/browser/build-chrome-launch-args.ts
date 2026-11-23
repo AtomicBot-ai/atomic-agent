@@ -42,6 +42,11 @@ export interface BuildChromeLaunchArgsInput {
    * still load. Applies to the Chrome the agent starts, for its life.
    */
   offline?: boolean;
+  /**
+   * The user's proxy flags (ATO-87, `chromeProxyArgs`). Ignored while
+   * `offline` is on: offline wins, nothing is sent.
+   */
+  proxyArgs?: readonly string[];
   /** Extra raw flags appended verbatim; caller is responsible for safety. */
   extraArgs?: readonly string[];
   /** Platform override for deterministic tests. Defaults to process.platform. */
@@ -93,6 +98,8 @@ export function buildChromeLaunchArgs(
   }
   if (input.offline) {
     args.push("--proxy-server=http://127.0.0.1:9");
+  } else if (input.proxyArgs && input.proxyArgs.length > 0) {
+    args.push(...input.proxyArgs);
   }
   if (input.extraArgs && input.extraArgs.length > 0) {
     args.push(...input.extraArgs);

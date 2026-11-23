@@ -132,8 +132,9 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       {
         action: {
           type: "string",
-          enum: ["select", "upload", "back", "forward", "key", "hover", "dialog", "wait"],
+          enum: ["select", "upload", "back", "forward", "key", "hover", "dialog", "wait", "take_over"],
         },
+        reason: stringSchema,
         ref: stringSchema,
         values: { type: "array", items: stringSchema },
         paths: { type: "array", items: stringSchema },
@@ -181,6 +182,18 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       {
         action: { type: "string", enum: ["start", "read", "stop"] },
         crops: booleanSchema,
+      },
+      ["action"],
+    ),
+  ],
+  [
+    "browser.scenario",
+    obj(
+      {
+        action: { type: "string", enum: ["start", "stop", "cancel", "run", "list", "delete"] },
+        name: stringSchema,
+        params: { type: "object" },
+        timeoutMs: numberSchema,
       },
       ["action"],
     ),
@@ -665,6 +678,10 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       radius: numberSchema,
     }),
   ],
+  [
+    "files.search",
+    obj({ query: stringSchema, folder: stringSchema, topK: numberSchema }, ["query"]),
+  ],
 
   // ── tasks ────────────────────────────────────────────────────────────────
   [
@@ -950,6 +967,34 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
         confirm: { ...stringArraySchema, maxItems: 16 },
       },
       [],
+    ),
+  ],
+  // ── subagent (ATO-1670) ──────────────────────────────────────────────────
+  // Item bounds as on fusion.delegate: they keep the nested task objects
+  // off the strict native path, and `parseSubagentArgs` still refuses an
+  // over-cap call in words. 4 = SUBAGENT_MAX_CHILDREN_PER_CALL.
+  [
+    "subagent.run",
+    obj(
+      {
+        tasks: {
+          type: "array",
+          minItems: 1,
+          maxItems: 4,
+          items: obj(
+            {
+              id: stringSchema,
+              title: stringSchema,
+              instructions: stringSchema,
+              profile: stringSchema,
+              deliverable: stringSchema,
+              files: stringArraySchema,
+            },
+            ["id", "instructions"],
+          ),
+        },
+      },
+      ["tasks"],
     ),
   ],
   ["verify.syntax", obj({ files: stringArraySchema }, ["files"])],

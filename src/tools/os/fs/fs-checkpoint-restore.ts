@@ -127,6 +127,8 @@ function changesFilesUnseen(tool: string): boolean {
   if (tool.startsWith("os.shell.")) return true;
   if (tool === "os.fs.archive.extract") return true;
   if (tool === "fusion.delegate") return true;
+  // A subagent may write files the restore did not see (ATO-1670).
+  if (tool === "subagent.run") return true;
   if (tool.startsWith("os.git.")) return !READ_ONLY_GIT.has(tool);
   return false;
 }

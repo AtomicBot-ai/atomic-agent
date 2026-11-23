@@ -69,13 +69,14 @@ describe("gated-call approval categories", () => {
   });
 
   it("keeps os.screen.* in one serial class; input asks as screen_control, the capture as screen_capture", () => {
-    for (const name of ["os.screen.capture", "os.screen.click", "os.screen.type", "os.screen.key"]) {
+    for (const name of ["os.screen.capture", "os.screen.click", "os.screen.type", "os.screen.key", "os.screen.elements", "os.screen.press"]) {
       expect(resourceClassFor(name), name).toBe("approval_gated");
     }
     expect(approvalCategoriesFor("os.screen.capture")).toEqual(["screen_capture"]);
+    expect(approvalCategoriesFor("os.screen.elements")).toEqual(["screen_capture"]);
     expect(gatedCallRunsUnattended("os.screen.capture", { level: 2 })).toBe(false);
     expect(gatedCallRunsUnattended("os.screen.capture", { level: 3 })).toBe(true);
-    for (const name of ["os.screen.click", "os.screen.type", "os.screen.key"]) {
+    for (const name of ["os.screen.click", "os.screen.type", "os.screen.key", "os.screen.press"]) {
       expect(approvalCategoriesFor(name)).toEqual(["screen_control"]);
       expect(gatedCallRunsUnattended(name, { level: 3 }), name).toBe(false);
       expect(gatedCallRunsUnattended(name, { level: 4 }), name).toBe(true);
@@ -121,6 +122,12 @@ describe("gated-call approval categories", () => {
     expect(gatedCallRunsUnattended("never.heard.of.this", { level: 5 })).toBe(
       false,
     );
+  });
+
+  it("keeps subagent.run solo at every level, like the fan-out (ATO-1670)", () => {
+    expect(resourceClassFor("subagent.run")).toBe("approval_gated");
+    expect(isSoloRegardlessOfApproval("subagent.run")).toBe(true);
+    expect(gatedCallRunsUnattended("subagent.run", { level: 5 })).toBe(false);
   });
 
   it("treats a gated MCP tool as category `other`", () => {

@@ -111,6 +111,7 @@ describe("uncoveredToolCalls", () => {
         call("os.git.commit"),
         call("os.fs.archive.extract"),
         call("fusion.delegate"),
+        call("subagent.run"),
         call("os.fs.docx"),
         call("os.fs.xlsx"),
         call("os.fs.write_pptx"),
@@ -121,6 +122,7 @@ describe("uncoveredToolCalls", () => {
       { tool: "os.git.commit", count: 1 },
       { tool: "os.fs.archive.extract", count: 1 },
       { tool: "fusion.delegate", count: 1 },
+      { tool: "subagent.run", count: 1 },
     ]);
   });
 });

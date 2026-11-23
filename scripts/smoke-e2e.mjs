@@ -20,6 +20,10 @@ const sandbox = await mkdtemp(join(tmpdir(), "atomic-e2e-state-"));
 // with the network tripwire. Any attempt to reach a host that is not this
 // machine is refused before it leaves and logged here; the last check
 // requires the log to be empty.
+// ATO-1507: and the run is in offline mode (ATO-1084), from the config
+// file and the environment, so the check is "zero requests out while
+// offline mode is on": the agent refuses anything but loopback, and the
+// tripwire still catches whatever bypasses its HTTP pool.
 const egressLog = join(sandbox, "egress.ndjson");
 const tripwire = `--import=${pathToFileURL(join(root, "scripts/net-intercept-preload.mjs")).href}`;
 const state = join(sandbox, "state");
@@ -29,7 +33,7 @@ await mkdir(cwd);
 await writeFile(join(cwd, "one.txt"), "E2E-FILE-ONE-9237\n");
 await writeFile(join(cwd, "two.txt"), "E2E-FILE-TWO-7711\n");
 
-const report = { node: process.version, backend: "scripted loopback llama HTTP/SSE", checks: [], requests: [] };
+const report = { node: process.version, backend: "scripted loopback llama HTTP/SSE", offline: true, checks: [], requests: [] };
 const manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 let queue = [];
 let scenario = "startup";
@@ -47,7 +51,7 @@ const cliChildren = new Set();
 const childEnv = (stateDir) => ({ PATH: process.env.PATH, LANG: "en_US.UTF-8", ATOMIC_AGENT_STATE_DIR: stateDir,
   ATOMIC_AGENT_GRAMMARS_DIR: join(root, "grammars"), ATOMIC_AGENT_BROWSER_ENABLED: "false",
   ATOMIC_AGENT_LLAMA_COMPLETION_RETRIES: "0", ATOMIC_AGENT_LLAMA_HEALTH_RETRIES: "0",
-  NODE_OPTIONS: tripwire, ATOMIC_AGENT_NET_INTERCEPT_LOG: egressLog });
+  NODE_OPTIONS: tripwire, ATOMIC_AGENT_NET_INTERCEPT_LOG: egressLog, ATOMIC_AGENT_OFFLINE: "1" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(predicate, label, timeout = 15000) {
   const deadline = Date.now() + timeout;
@@ -190,6 +194,7 @@ try {
   config.localModels.mode = "external";
   config.agent.approvalLevel = 1;
   config.analytics.enabled = false;
+  config.network = { ...config.network, offline: true };
   for (const feature of Object.values(config.memory)) {
     if (feature && typeof feature === "object" && "enabled" in feature) feature.enabled = false;
   }
@@ -331,7 +336,7 @@ try {
     assert.match(result.stdout, /E2E-CLI-READ-OK/);
     assert.match(inferences("cli-read")[1].body.prompt, /E2E-FILE-ONE-9237/);
   });
-  await check("nothing tried to reach a host outside this machine", async () => {
+  await check("offline mode on: nothing tried to reach a host outside this machine", async () => {
     const attempts = (await readFile(egressLog, "utf8").catch(() => "")).split("\n").filter(Boolean).map((line) => JSON.parse(line));
     report.egress = attempts;
     assert.deepEqual(attempts.map((a) => `${a.kind} ${a.host}${a.port ? `:${a.port}` : ""}`), [],

@@ -1,4 +1,10 @@
 import type { BreakerTrip } from "./failure-breaker.js";
+import {
+  addSpeedSample,
+  legSpeeds,
+  type LegSpeed,
+  type LegSpeedSample,
+} from "./leg-speed.js";
 
 /**
  * The per-turn caps of a fusion run (ATO-947): money and wall-clock time.
@@ -44,6 +50,8 @@ interface TurnState {
   tasks: number;
   /** Every failure breaker that tripped this turn (ATO-1406). */
   trips: BreakerTrip[];
+  /** Measured output speed per leg and model this turn (ATO-1583). */
+  speeds: Map<string, LegSpeedSample>;
 }
 
 /**
@@ -80,6 +88,7 @@ export class FusionTurnBudget {
       rounds: 0,
       tasks: 0,
       trips: [],
+      speeds: new Map(),
     });
   }
 
@@ -96,6 +105,7 @@ export class FusionTurnBudget {
         rounds: 0,
         tasks: 0,
         trips: [],
+        speeds: new Map(),
       };
       this.turns.set(sessionId, state);
     }
@@ -168,6 +178,18 @@ export class FusionTurnBudget {
 
   trips(sessionId: string): readonly BreakerTrip[] {
     return this.turns.get(sessionId)?.trips ?? [];
+  }
+
+  /** Add one finished task's measured output to its leg (ATO-1583). */
+  noteSpeed(sessionId: string, label: string, sample: LegSpeedSample): void {
+    const speeds = this.turn(sessionId).speeds;
+    speeds.set(label, addSpeedSample(speeds.get(label), sample));
+  }
+
+  /** Each leg's average speed so far this turn, in first-seen order. */
+  speeds(sessionId: string): LegSpeed[] {
+    const state = this.turns.get(sessionId);
+    return state === undefined ? [] : legSpeeds(state.speeds);
   }
 
   workerSpend(sessionId: string): number {

@@ -15,6 +15,7 @@ This area owns inference protocols and model profiles. Read [AGENTS.md](AGENTS.m
 - [slot-manager.ts](slot-manager.ts)
 - [toolcall-bench/](toolcall-bench/index.ts): the fixed tool-call reliability prompts, their scoring, and asking one question to several models (`models toolcall-bench`, `models ask`)
 - [transport-deadlines.ts](transport-deadlines.ts) and [offline-network.ts](offline-network.ts): the process-wide HTTP pool and the offline-mode kill switch composed into it ([offline mode](docs/offline-network.md), ATO-1084)
+- [openai-privacy-shield.ts](provider/openai/openai-privacy-shield.ts): Privacy Shield on the cloud wire (ATO-1081). Every cloud provider is an `OpenAiProvider`; with `privacy.shield.enabled` its body `messages` go out masked by the session vault and the reply, reasoning and tool-call arguments come back unmasked, streamed chunks included. Never for a server on this machine or the local network ([privacy shield](../privacy/README.md)).
 
 ## Ownership and dependencies
 

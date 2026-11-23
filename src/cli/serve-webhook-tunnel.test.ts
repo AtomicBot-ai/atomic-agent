@@ -124,6 +124,7 @@ describe("startWebhookTunnel gateway (ATO-625)", () => {
       runtime: harness.runtime,
       request: { mode: "quick" },
       preflight: { ok: true, binary: "cloudflared", reachable: ["gh", "pay", "std"], withoutSecret: ["open"] },
+      apiKey: "serve-key-0123456789abcdef",
       approvalBus: harness.approvalBus,
       completionRegistry: harness.completionRegistry,
       write: (line) => lines.push(line),

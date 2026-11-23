@@ -379,3 +379,29 @@ describe("buildNativeMessages: reasoning the service requires back (ATO-1397)", 
     expect(calls.map((m) => m.reasoning_content)).toEqual(["", newer]);
   });
 });
+
+describe("buildNativeMessages: a reply with no text (ATO-1575)", () => {
+  it("sends no assistant message with empty content and keeps the rest in order", () => {
+    const prompt: PromptMessages = {
+      system: "sys",
+      droppedSummary: null,
+      turns: [
+        { kind: "user", text: "hi" },
+        { kind: "assistant_reply", text: "" },
+        { kind: "user", text: "again" },
+        { kind: "assistant_reply", text: "  \n" },
+        { kind: "user", text: "third" },
+        { kind: "assistant_reply", text: "ok" },
+      ],
+      tail: "",
+    };
+    const out = buildNativeMessages(prompt, { nameEscape: (n) => n });
+    expect(out.map((m) => [m.role, m.content])).toEqual([
+      ["system", "sys"],
+      ["user", "hi"],
+      ["user", "again"],
+      ["user", "third"],
+      ["assistant", "ok"],
+    ]);
+  });
+});
