@@ -2752,6 +2752,10 @@ function chatDot(s) {
   if (!s) return ['empty', ''];
   const seen = PREFS.seen[s.id];
   const unread = !(seen >= 0) || (s.updatedAt || 0) > seen;
+  // ATO-1697: a chat left in the background whose turn stopped on an approval
+  // still counts as running, so the pulsing dot hid the wait. Off screen, the
+  // wait wins; the chat on screen shows its card and keeps the running dot.
+  if (PENDING_APPROVALS.has(s.id) && !approvalOnScreen(s.id)) return ['filled', 'waiting for your approval', 'tone-amber'];
   for (const sid of RUNNING.values()) if (sid === s.id) return ['running', 'the agent is running here — wait'];
   // The third element is presentation only: the Soft Tactile status grammar
   // draws waiting-for-you amber and failed red (sidebar dot tone classes).
