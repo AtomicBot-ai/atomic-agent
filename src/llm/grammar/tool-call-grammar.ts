@@ -47,6 +47,13 @@ export interface ToolCallPayload {
   tool: string;
   args: Record<string, unknown>;
   reasoning?: string;
+  /**
+   * Gemini 3's thought signature of the step (ATO-1680), on every call
+   * of the batch like `reasoning`, so it survives a call being taken out
+   * (a progress note) or reordered; the transcript keeps it once, on the
+   * step's first recorded call.
+   */
+  thoughtSignature?: string;
 }
 
 /**

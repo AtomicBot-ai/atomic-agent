@@ -1,5 +1,9 @@
 import { estimateTokens } from "../../../prompt/token-budget.js";
 import type { PromptMessages, PromptTurn } from "../completion-types.js";
+import {
+  SKIP_THOUGHT_SIGNATURE,
+  thoughtSignatureExtraContent,
+} from "../gemini/gemini-thought-signature.js";
 
 /**
  * The prompt as real chat messages for a native-tools provider.
@@ -65,6 +69,14 @@ export interface NativeMessageOptions {
    * does. Absent, no cap.
    */
   reasoningBudget?: number;
+  /**
+   * Google's Gemini endpoint: every assistant tool-call message hands the
+   * step's thought signature back on its first call as
+   * `extra_content.google.thought_signature`, or the documented skip
+   * value when the history has none (ATO-1680). Gemini 3 refuses a tool
+   * history without it; every other service gets no such field.
+   */
+  thoughtSignatures?: boolean;
 }
 
 /**
@@ -147,6 +159,18 @@ export function buildNativeMessages(
   // nothing, unless the service requires the field.
   const missingReasoning = options.reasoningRequired === true ? "" : undefined;
 
+  // A call's own signature always goes back; the first call of a
+  // message without one gets the skip value, the rest of a parallel set
+  // go bare, as Gemini sent them.
+  const signatureField = (
+    turn: Extract<PromptTurn, { kind: "assistant_tool_call" }>,
+    first: boolean,
+  ): { extra_content?: ReturnType<typeof thoughtSignatureExtraContent> } => {
+    if (options.thoughtSignatures !== true) return {};
+    const signature = turn.thoughtSignature ?? (first ? SKIP_THOUGHT_SIGNATURE : undefined);
+    return signature !== undefined ? { extra_content: thoughtSignatureExtraContent(signature) } : {};
+  };
+
   const flushOrphans = (): void => {
     if (orphanLines.length === 0) return;
     out.push({ role: "user", content: orphanLines.join("\n") });
@@ -182,7 +206,8 @@ export function buildNativeMessages(
         if (turn.callId && pending.length > 0 && out[out.length - 1]?.role === "assistant") {
           const previous = out[out.length - 1]!;
           (previous.tool_calls as unknown[]).push({ id: turn.callId, type: "function",
-            function: { name: options.nameEscape(turn.tool), arguments: JSON.stringify(turn.args) } });
+            function: { name: options.nameEscape(turn.tool), arguments: JSON.stringify(turn.args) },
+            ...signatureField(turn, false) });
           pending.push(turn.callId);
           break;
         }
@@ -205,6 +230,7 @@ export function buildNativeMessages(
                 name: options.nameEscape(turn.tool),
                 arguments: JSON.stringify(turn.args),
               },
+              ...signatureField(turn, true),
             },
           ],
         });
