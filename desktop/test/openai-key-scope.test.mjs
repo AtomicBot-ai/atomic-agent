@@ -1,16 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { createRequire } from 'node:module';
-import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const require = createRequire(import.meta.url);
 
 // An empty state folder: resolveKeyValue also reads <stateDir>/.env and the keychain
 // cache, and the real ~/.atomic-agent must not decide these answers.
-process.env.ATOMIC_AGENT_STATE_DIR = mkdtempSync(join(tmpdir(), 'ato1703-state-'));
+const stateDir = mkdtempSync(join(tmpdir(), 'ato1703-state-'));
+process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+process.on('exit', () => rmSync(stateDir, { recursive: true, force: true }));
 
 // ATO-1703: the shared OpenAI key only goes to OpenAI itself or this machine,
 // the same rule as the agent's resolve-llm-api-key.ts.
@@ -21,6 +22,15 @@ function withEnv(vars, fn) {
   for (const n of SHARED) delete process.env[n];
   Object.assign(process.env, vars);
   try { return fn(); } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+}
+
+async function withEnvAsync(vars, fn) {
+  const saved = Object.fromEntries(SHARED.map((n) => [n, process.env[n]]));
+  for (const n of SHARED) delete process.env[n];
+  Object.assign(process.env, vars);
+  try { return await fn(); } finally {
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 }
@@ -94,4 +104,17 @@ test('an entry\'s own variable is authoritative: no fallback to the shared ones'
   withEnv({OPENAI_COMPAT_API_KEY: 'compat-key'}, () => {
     assert.equal(resolveKeyValue({...compat('https://llm.example.com'), apiKeyEnvVar: 'ATO1703_UNSET_KEY'}), null);
   });
+});
+
+test('the codex billing warning still sees OPENAI_API_KEY (subscription-cli, no address)', async () => {
+  const { providerKeyPresent } = require('../out/main/agent-cli.js');
+  await withEnvAsync({OPENAI_API_KEY: 'sk-real'}, async () => {
+    const r = await providerKeyPresent({kind: 'subscription-cli', apiKeyEnvVar: 'OPENAI_API_KEY'});
+    assert.deepEqual(r, {ok: true, present: true});
+  });
+});
+
+test('Settings smoke keyNames gates an entry\'s own OpenAI variable', () => {
+  const src = readFileSync(new URL('../main/main.ts', import.meta.url), 'utf8');
+  assert.match(src, /p\.apiKeyEnvVar \? \(mayUseKeyVariable\(p, p\.apiKeyEnvVar\)/);
 });

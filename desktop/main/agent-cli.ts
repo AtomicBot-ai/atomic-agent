@@ -1654,6 +1654,9 @@ const OPENAI_KEY_VARIABLES = new Set(["OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API
 /** The agent's mayUseKeyVariable: naming an OpenAI variable as the entry's own is no way around the rule. */
 export function mayUseKeyVariable(entry: ProviderEntry, name: string): boolean {
   if (!OPENAI_KEY_VARIABLES.has(name)) return true;
+  // The codex CLI on this machine reads OPENAI_API_KEY itself; the app only asks
+  // whether it is set (the per-token billing warning) and sends it nowhere.
+  if (entry.kind === "subscription-cli") return true;
   if (entry.baseUrl) return mayReceiveOpenAiKey(entry.baseUrl);
   return entry.kind === undefined || entry.kind === "openai-compatible" || entry.kind === "qwen-openai-compatible";
 }
