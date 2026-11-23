@@ -27603,7 +27603,17 @@ function llmKeyEnvNames(p) {
   if (p.kind === 'gemini') return ['GEMINI_API_KEY'];
   if (p.kind === 'openai-compatible' || p.kind === 'qwen-openai-compatible') {
     if (typeof lanIsOtherComputerUrl === 'function' && lanIsOtherComputerUrl(p.baseUrl)) return [];
-    return ['OPENAI_COMPAT_API_KEY', 'OPENAI_API_KEY', 'ATOMIC_AGENT_OPENAI_API_KEY'];
+    /* ATO-1703 (agent-cli.ts mayReceiveOpenAiKey): the OpenAI variables only go to
+       OpenAI's own API, this machine, or an entry with no address. */
+    let openAiOk = !p.baseUrl;
+    if (!openAiOk) {
+      try {
+        const u = new URL(p.baseUrl);
+        const h = u.hostname.toLowerCase();
+        openAiOk = u.origin === 'https://api.openai.com' || h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]' || h === '0.0.0.0' || h.endsWith('.localhost');
+      } catch (_) { openAiOk = false; }
+    }
+    return openAiOk ? ['OPENAI_COMPAT_API_KEY', 'OPENAI_API_KEY', 'ATOMIC_AGENT_OPENAI_API_KEY'] : ['OPENAI_COMPAT_API_KEY'];
   }
   return [];
 }

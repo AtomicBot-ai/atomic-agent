@@ -115,6 +115,7 @@ import {
   providerIsUsable,
   isKeylessLocalProviderEntry,
   readsSharedCompatKey,
+  sharedCompatKeyNames,
   configSetWhole,
   explainConfigWriteFailure,
   managedDataDir,
@@ -8777,7 +8778,8 @@ async function settingsTestPartC(
   const stateDir = (await js<{ data?: { paths?: { stateDir?: string } } }>("window.atomic.capabilities()")).data?.paths?.stateDir ?? "";
   const keyNames = (p: Provider): string[] => p.apiKeyEnvVar ? [p.apiKeyEnvVar] : p.kind === "openrouter" ? ["OPENROUTER_API_KEY"] : p.kind === "aimlapi" ? ["AIMLAPI_API_KEY"] : p.kind === "gemini" ? ["GEMINI_API_KEY"]
     // ATO-1550: not for a server on another computer on this network (ATO-1066): the app never sends it the shared key.
-    : readsSharedCompatKey(p) ? ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"] : [];
+    // ATO-1703: and the OpenAI variables only for OpenAI itself or this machine.
+    : readsSharedCompatKey(p) ? sharedCompatKeyNames(p) : [];
   const dotenv = stateDir ? dotenvKeys(stateDir).keys : [];
   const realKey = (p: Provider) => p.kind === "subscription-cli" || !!(p.apiKey && p.apiKey.length) || keyNames(p).some((n) => envPresent([n]).length > 0 || dotenv.includes(n));
   // A server on this Mac (Atomic Chat, Ollama, LM Studio, a loopback endpoint) has no key at all, and (ATO-1066,

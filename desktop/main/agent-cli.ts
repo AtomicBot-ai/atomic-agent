@@ -1632,6 +1632,29 @@ export function readsSharedCompatKey(entry: ProviderEntry): boolean {
   return !isOtherComputerOnNetworkUrl(entry.baseUrl ?? "");
 }
 
+/**
+ * The agent's resolve-llm-api-key.ts mayReceiveOpenAiKey (ATO-1703): OPENAI_API_KEY and
+ * ATOMIC_AGENT_OPENAI_API_KEY go only to OpenAI's own API, this machine, or an entry with
+ * no baseUrl. A config.json from somewhere else could otherwise name its own server and
+ * receive the user's real OpenAI key. OPENAI_COMPAT_API_KEY still goes to any compat server.
+ */
+export function mayReceiveOpenAiKey(baseUrl: string | undefined): boolean {
+  if (baseUrl === undefined || baseUrl.length === 0) return true;
+  if (isLocalProviderUrl(baseUrl)) return true;
+  try {
+    const url = new URL(baseUrl);
+    return url.origin === "https://api.openai.com" || url.hostname.toLowerCase().endsWith(".localhost");
+  } catch { return false; }
+}
+
+/** The shared variables the agent reads a compat entry's key from, in its `??` order. */
+export function sharedCompatKeyNames(entry: ProviderEntry): string[] {
+  if (!readsSharedCompatKey(entry)) return [];
+  return mayReceiveOpenAiKey(entry.baseUrl)
+    ? ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"]
+    : ["OPENAI_COMPAT_API_KEY"];
+}
+
 /** The variables the agent reads this entry's key from, in its order (resolve-llm-api-key.ts). */
 function keyVarNames(entry: ProviderEntry): string[] {
   const names: string[] = [];
@@ -1639,9 +1662,7 @@ function keyVarNames(entry: ProviderEntry): string[] {
   if (entry.kind === "openrouter") names.push("OPENROUTER_API_KEY");
   if (entry.kind === "aimlapi") names.push("AIMLAPI_API_KEY");
   if (entry.kind === "gemini") names.push("GEMINI_API_KEY");
-  if (readsSharedCompatKey(entry)) {
-    names.push("OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY");
-  }
+  names.push(...sharedCompatKeyNames(entry));
   return names;
 }
 
@@ -2877,7 +2898,7 @@ export function providerKeyInvalid(entry: ProviderEntry, names: KeyEnvNames = ke
   else if (entry.kind === "aimlapi") name = "AIMLAPI_API_KEY";
   else if (entry.kind === "gemini") name = "GEMINI_API_KEY";
   else if (readsSharedCompatKey(entry)) {
-    name = ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"].find((n) => names.present.has(n));
+    name = sharedCompatKeyNames(entry).find((n) => names.present.has(n));
   }
   return !!name && names.badChars.has(name);
 }
@@ -2893,7 +2914,7 @@ export function providerHasKey(entry: ProviderEntry, names: KeyEnvNames = keyNam
   if (entry.kind === "aimlapi") return names.nonEmpty.has("AIMLAPI_API_KEY");
   if (entry.kind === "gemini") return names.nonEmpty.has("GEMINI_API_KEY");
   if (readsSharedCompatKey(entry)) {
-    const first = ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"].find((n) => names.present.has(n));
+    const first = sharedCompatKeyNames(entry).find((n) => names.present.has(n));
     return first !== undefined && names.nonEmpty.has(first);
   }
   return false;
