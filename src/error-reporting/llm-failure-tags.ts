@@ -137,6 +137,7 @@ const ENGINE_LIVENESS_REASONS: ReadonlySet<string> = new Set([
   "lock_unreadable",
   "lock_probe_failed",
   "pid_unreadable",
+  "start_pending",
 ]);
 const ENGINE_WAIT_VERDICTS: ReadonlySet<string> = new Set(["alive", "dead", "unknown", "atomic_chat_app"]);
 const ENGINE_WAIT_REASONS: ReadonlySet<string> = new Set([
