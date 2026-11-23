@@ -132,11 +132,17 @@ export function effectiveToolDescriptors(
     // exact rather than approximated.
     github: { connected: resolveGithubToken(undefined, env) !== null },
     fusion: { enabled: config.llm?.runMode?.mode === "fusion" },
+    // The runtime's live gate reads the effective mode; the configured
+    // one is the same approximation the fusion gate above makes.
+    subagent: { enabled: config.llm?.runMode?.mode !== "fusion" },
     image: { available: openRouterImageKey(config, env) !== undefined },
     video: { available: openRouterImageKey(config, env) !== undefined },
     screen: {
-      enabled: config.tools?.screen?.enabled === true && platform === "darwin",
+      enabled:
+        config.tools?.screen?.enabled === true &&
+        (platform === "darwin" || platform === "win32" || platform === "linux"),
       point: config.tools?.screen?.point === true && platform === "darwin",
+      control: platform === "darwin",
     },
   });
 }

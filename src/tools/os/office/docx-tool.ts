@@ -1,12 +1,15 @@
-import { extname } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { basename, extname } from "node:path";
 
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import { resolveUserPath } from "../expand-home.js";
 import type { FsDangerousToolOptions } from "../fs/fs-require-approval.js";
+import { MAX_IMAGE_BYTES, sniffImage } from "../pptx/pptx-image.js";
+import { REVISION_AUTHOR, type DocImageInput, type Revision } from "./docx-blocks.js";
 import { appendToDocx, createDocx } from "./docx-package.js";
 import { replaceInDocx } from "./docx-replace.js";
-import { parseBlocks } from "./docx-xml.js";
+import { parseBlocks, type DocBlock } from "./docx-xml.js";
 import { OS_FS_DOCX_CONTRACT } from "./office-contracts.js";
 import { commitOfficeFile, given, optionalString, readExisting } from "./office-write.js";
 
@@ -25,6 +28,8 @@ interface DocxArgs {
   replaceWith: string;
   all: boolean;
   overwrite: boolean;
+  /** Write the edit as Word tracked changes by "Atomic Agent" (append, replace). */
+  track: boolean;
 }
 
 export function parseDocxArgs(raw: Record<string, unknown>): DocxArgs {
@@ -59,6 +64,10 @@ export function parseDocxArgs(raw: Record<string, unknown>): DocxArgs {
   // An empty replacement is a real request (delete the text), so only
   // null or a missing field fall back to it.
   const replaceWith = typeof raw.replaceWith === "string" ? raw.replaceWith : "";
+  const track = raw.track === true;
+  if (track && op === "create") {
+    throw new Error(`${TOOL}: track applies to append and replace (a new document has nothing to compare against)`);
+  }
   return {
     path,
     op,
@@ -67,7 +76,35 @@ export function parseDocxArgs(raw: Record<string, unknown>): DocxArgs {
     replaceWith,
     all: raw.all !== false,
     overwrite: raw.overwrite === true,
+    track,
   };
+}
+
+/** Read and check every picture the blocks embed, before anything is asked. */
+async function loadImages(blocks: readonly DocBlock[], workingDir: string): Promise<Map<string, DocImageInput>> {
+  const images = new Map<string, DocImageInput>();
+  for (const block of blocks) {
+    if (block.kind !== "image" || block.path === undefined || images.has(block.path)) continue;
+    const path = resolveUserPath(block.path, workingDir);
+    let size: number;
+    try {
+      const info = await stat(path);
+      if (!info.isFile()) throw new Error("not a file");
+      size = info.size;
+    } catch {
+      throw new Error(`${TOOL}: no picture at ${block.path}`);
+    }
+    if (size > MAX_IMAGE_BYTES) {
+      throw new Error(`${TOOL}: ${block.path} is larger than ${MAX_IMAGE_BYTES / (1024 * 1024)} MB`);
+    }
+    const data = await readFile(path);
+    const info = sniffImage(data);
+    if (info === null) {
+      throw new Error(`${TOOL}: ${block.path} is not a PNG, JPEG or GIF picture (convert it first)`);
+    }
+    images.set(block.path, { data, info, name: basename(path) });
+  }
+  return images;
 }
 
 export function buildOsFsDocxTool(options: FsDangerousToolOptions): ToolDefinition {
@@ -79,7 +116,18 @@ export function buildOsFsDocxTool(options: FsDangerousToolOptions): ToolDefiniti
       const args = parseDocxArgs(rawArgs);
       const absolute = resolveUserPath(args.path, ctx.workingDir);
       const existing = await readExisting(absolute, TOOL);
-      const blocks = parseBlocks(args.blocks);
+      let blocks: DocBlock[];
+      try {
+        blocks = parseBlocks(args.blocks);
+      } catch (err) {
+        throw new Error(`${TOOL}: ${(err as Error).message}`);
+      }
+      const images = await loadImages(blocks, ctx.workingDir);
+      // One author and time for the whole edit, the way Word stamps a save.
+      const now = new Date();
+      const revision = (): Revision | undefined =>
+        args.track ? { author: REVISION_AUTHOR, date: now, nextId: 1 } : undefined;
+      const trackNote = args.track ? ` as tracked changes by ${REVISION_AUTHOR}` : "";
 
       // Built twice when the file changes under the approval prompt: once
       // from the bytes read now (for the card), again from the bytes on
@@ -92,7 +140,7 @@ export function buildOsFsDocxTool(options: FsDangerousToolOptions): ToolDefiniti
             );
           }
           return {
-            data: await createDocx(blocks),
+            data: await createDocx(blocks, { images }),
             reason: `${current === null ? "create" : "replace"} Word document ${absolute} (${blocks.length} paragraphs)`,
             done: `${current === null ? "created" : "replaced"} ${absolute} with ${blocks.length} paragraphs`,
             details: { paragraphs: blocks.length },
@@ -103,15 +151,24 @@ export function buildOsFsDocxTool(options: FsDangerousToolOptions): ToolDefiniti
         }
         if (args.op === "append") {
           return {
-            data: await wrapDocxError(() => appendToDocx(current, blocks), absolute),
-            reason: `append ${blocks.length} paragraphs to ${absolute}`,
-            done: `appended ${blocks.length} paragraphs to ${absolute}`,
-            details: { paragraphs: blocks.length },
+            data: await wrapDocxError(() => {
+              const rev = revision();
+              return appendToDocx(current, blocks, { images, ...(rev === undefined ? {} : { revision: rev }) });
+            }, absolute),
+            reason: `append ${blocks.length} paragraphs to ${absolute}${trackNote}`,
+            done: `appended ${blocks.length} paragraphs to ${absolute}${trackNote}`,
+            details: { paragraphs: blocks.length, ...(args.track ? { tracked: true } : {}) },
           };
         }
         const find = args.find ?? "";
         const outcome = await wrapDocxError(
-          () => replaceInDocx(current, find, args.replaceWith, { all: args.all }),
+          () => {
+            const rev = revision();
+            return replaceInDocx(current, find, args.replaceWith, {
+              all: args.all,
+              ...(rev === undefined ? {} : { revision: rev }),
+            });
+          },
           absolute,
         );
         if (outcome.count === 0) {
@@ -121,9 +178,9 @@ export function buildOsFsDocxTool(options: FsDangerousToolOptions): ToolDefiniti
         }
         return {
           data: outcome.data,
-          reason: `replace ${outcome.count} × ${JSON.stringify(find)} in ${absolute}`,
-          done: `replaced ${outcome.count} occurrence${outcome.count === 1 ? "" : "s"} of ${JSON.stringify(find)} in ${absolute}`,
-          details: { replacements: outcome.count, parts: outcome.parts },
+          reason: `replace ${outcome.count} × ${JSON.stringify(find)} in ${absolute}${trackNote}`,
+          done: `replaced ${outcome.count} occurrence${outcome.count === 1 ? "" : "s"} of ${JSON.stringify(find)} in ${absolute}${trackNote}`,
+          details: { replacements: outcome.count, parts: outcome.parts, ...(args.track ? { tracked: true } : {}) },
         };
       };
       let edit = await build(existing);

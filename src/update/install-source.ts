@@ -22,6 +22,10 @@ import { readFileSync } from "node:fs";
  * replaces it and their uninstall removes it, so a self-update would only be
  * undone (or fight the manager's own bookkeeping). They leave no marker; the
  * binary's path says which one installed it ({@link managerForPath}).
+ * The tool managers mise and aqua are the same case: they unpack the release
+ * archive into a versioned directory of their own and pin that version, so
+ * a self-update would swap the binary behind their back and they would go on
+ * reporting the old version (ATO-1485).
  */
 export const PACKAGE_DIR = "/usr/lib/atomic-agent";
 export const PACKAGED_BINARY = `${PACKAGE_DIR}/atomic-agent`;
@@ -35,7 +39,14 @@ export const LINUX_PACKAGE_SOURCES = ["deb", "rpm", "aur"] as const;
  * binary (no marker: none of them runs a script of ours at install time
  * that every one of them would honour). See {@link MANAGED_PATHS}.
  */
-export const MANAGER_SOURCES = ["npm", "homebrew", "scoop", "winget"] as const;
+export const MANAGER_SOURCES = [
+  "npm",
+  "homebrew",
+  "scoop",
+  "winget",
+  "mise",
+  "aqua",
+] as const;
 
 export const INSTALL_SOURCES = [...LINUX_PACKAGE_SOURCES, ...MANAGER_SOURCES] as const;
 export type InstallSource = (typeof INSTALL_SOURCES)[number];
@@ -49,6 +60,8 @@ const LABELS: Record<InstallSource, string> = {
   homebrew: "Homebrew (the atag formula)",
   scoop: "Scoop (the atomic-agent manifest)",
   winget: "winget (AtomicBot.AtomicAgent.CLI)",
+  mise: "mise (the github:AtomicBot-ai/atomic-agent tool)",
+  aqua: "aqua (the AtomicBot-ai/atomic-agent package)",
 };
 
 const UPGRADE: Record<InstallSource, string> = {
@@ -59,6 +72,8 @@ const UPGRADE: Record<InstallSource, string> = {
   homebrew: "brew update && brew upgrade atag",
   scoop: "scoop update atomic-agent",
   winget: "winget upgrade AtomicBot.AtomicAgent.CLI",
+  mise: "mise upgrade",
+  aqua: "raise the AtomicBot-ai/atomic-agent version in aqua.yaml, then run aqua install",
 };
 
 const REMOVE: Record<InstallSource, string> = {
@@ -69,6 +84,8 @@ const REMOVE: Record<InstallSource, string> = {
   homebrew: "brew uninstall atag",
   scoop: "scoop uninstall atomic-agent",
   winget: "winget uninstall AtomicBot.AtomicAgent.CLI",
+  mise: "remove the tool from mise.toml, then run mise prune",
+  aqua: "remove AtomicBot-ai/atomic-agent from aqua.yaml, then run aqua rm AtomicBot-ai/atomic-agent",
 };
 
 /**
@@ -84,6 +101,11 @@ const REMOVE: Record<InstallSource, string> = {
  *   scoop    <root>/apps/atomic-agent/<version|current>/atomic-agent.exe
  *   winget   .../WinGet/Packages/AtomicBot.AtomicAgent.CLI_<source>/atomic-agent.exe,
  *            or its alias under .../WinGet/Links/
+ *   mise     <data dir>/installs/<backend>-atomicbot-ai-atomic-agent/<version>/[<slug>/]atomic-agent[.exe]
+ *            (the tool `github:AtomicBot-ai/atomic-agent`, or `ubi:`/`aqua:`;
+ *            the data dir is ~/.local/share/mise, %LOCALAPPDATA%\mise or $MISE_DATA_DIR)
+ *   aqua     <root>/pkgs/github_release/github.com/AtomicBot-ai/atomic-agent/<tag>/<asset>/[<slug>/]atomic-agent[.exe]
+ *            (the root is ~/.local/share/aquaproj-aqua, %LOCALAPPDATA%\aquaproj-aqua or $AQUA_ROOT_DIR)
  */
 const MANAGED_PATHS: ReadonlyArray<{
   source: ManagerSource;
@@ -110,6 +132,18 @@ const MANAGED_PATHS: ReadonlyArray<{
     platforms: ["win32"],
     pattern:
       /\/winget\/(packages\/atomicbot\.atomicagent\.cli_[^/]+\/atomic-agent|links\/(atomic-agent|atag))\.exe$/i,
+  },
+  {
+    source: "mise",
+    platforms: ["darwin", "linux", "win32"],
+    pattern:
+      /\/installs\/(github|ubi|aqua)-atomicbot-ai-atomic-agent\/[^/]+\/(.+\/)?atomic-agent(\.exe)?$/i,
+  },
+  {
+    source: "aqua",
+    platforms: ["darwin", "linux", "win32"],
+    pattern:
+      /\/pkgs\/github_release\/github\.com\/atomicbot-ai\/atomic-agent\/[^/]+\/(.+\/)?atomic-agent(\.exe)?$/i,
   },
 ];
 

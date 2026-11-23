@@ -17,6 +17,7 @@ import { MouseProvider } from "../mouse/mouse-context.js";
 import type { TuiMouseEvent } from "../mouse/mouse-event.js";
 import { MouseTargetRegistry } from "../mouse/mouse-registry.js";
 import { visibleKindRows } from "./providers-wizard-phases.js";
+import { brandBadgeText, providerBrand } from "../brand/brand-badges.js";
 import { fakeSession } from "../test-fixtures.js";
 import type { TuiAction } from "../tui-action.js";
 import { createInitialTuiState } from "../tui-state.js";
@@ -128,7 +129,10 @@ describe("CloudProviderOnboarding mouse", () => {
       .frame()
       .split("\n")
       .find((line) => line.includes(second.label));
-    expect(row).toContain(`> ${second.label}`);
+    // The brand slot (ATO-1635) sits between the cursor mark and the label.
+    expect(row).toContain(
+      `> ${brandBadgeText(providerBrand(second.id))} ${second.label}`,
+    );
     // ...and nothing wizard-shaped leaked into the store's slice.
     expect(
       view.actions.every(

@@ -48,3 +48,4 @@ export {
   resolveStartupTheme,
 } from "./theme/detect-terminal-background.js";
 export type { TerminalBackgroundMode } from "./theme/detect-terminal-background.js";
+export { openUrlInBrowser } from "./open-url.js";

@@ -148,6 +148,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "skill subcommand: `/skill enable <name>` | `/skill disable <name>`",
   },
+  // Added with self-learning (ATO-67).
+  {
+    name: "learn",
+    description:
+      "skills the agent learned by itself after long tasks: `/learn` lists them · `/learn undo <id>` takes one back · `/learn show <id>` reads a draft pending review · `/learn approve|discard <id>` for it",
+  },
   {
     name: "memory",
     description:
@@ -177,6 +183,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "open chat model picker · subcommands: pull <id> | use <id> | status | <base-url>",
     aliases: ["models", "local"],
+  },
+  // Added with the reasoning level (ATO-490).
+  {
+    name: "think",
+    description:
+      "how hard the model thinks on the next turns: `/think` shows the level · `/think auto|low|medium|high` sets it for this window",
   },
   {
     name: "tasks",
@@ -308,6 +320,12 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "rewind",
     description:
       "take the chat back to an earlier message of yours and edit it; files the agent changed stay as they are",
+  },
+  // ATO-1054.
+  {
+    name: "export",
+    description:
+      "save this chat as a file: `/export` writes Markdown to the current folder · `/export md|docx|pdf|html [path]`",
   },
   // Added with the plugin loader (ATO-954).
   {

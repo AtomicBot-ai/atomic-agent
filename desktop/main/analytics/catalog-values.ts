@@ -80,7 +80,7 @@ export const SLASH_COMMANDS = [
   "dump", "report", "help", "tools", "theme", "onboarding", "setup", "clear", "abort", "quit", "debug", "chat",
   "runmode", "observe", "manage", "feed", "logs", "reasoning", "world", "expand", "collapse", "session",
   "sessions", "new", "skills", "skill", "memory", "llm", "mcp", "model", "tasks", "task", "telegram",
-  "import", "privacy", "analytics", "compact", "feedback", "unknown",
+  "import", "privacy", "analytics", "compact", "btw", "incognito", "feedback", "unknown",
 ] as const;
 /** Every approval category the agent can send (src/approval/approval-level.ts
     APPROVAL_CATEGORY_LABELS), not only the renderer's CATS (the ones the
@@ -92,7 +92,7 @@ export const APPROVAL_CATEGORIES = [
   "git_remote", "fusion_fanout", "browser_nonweb", "browser_commit", "browser_secret", "browser_offsite",
   "trust_config", "state_secret", "email", "fs_read_outside", "paid_generation", "screen_control", "screen_capture",
   "local_model_restart", "hook_ask", "http_write", "browser_site_tool", "user_question",
-    "session_cross", "other",
+    "session_cross", "browser_take_over", "other",
 ] as const;
 export const SETTINGS_PANES = [
   "general", "models", "mcp", "telegram", "composio", "memory", "tasks", "webhooks", "skills", "privacy", "import", "diagnostics",

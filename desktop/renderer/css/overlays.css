@@ -98,12 +98,19 @@
 
 /* ATO-1156: Continue from Claude Code / Codex: agent switch, then session rows with a Continue button each. */
 .sheet-handoff .seg{margin:0 6px 8px}
+/* ATO-1633: the agent's mark leads its choice. */
+.sheet-handoff .handoffseg .logo{margin-left:-6px}
 .sheet-handoff .sd-cap{margin:0 12px 8px;font-size:var(--fs-cap);color:var(--ink-2)}
 .handoffrows > .row{display:flex;align-items:center;gap:12px;padding:7px 12px}
 .handoffrows > .row .main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
 .handoffrows > .row .t{font-size:var(--fs-ui);font-weight:500;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .handoffrows > .row .s{font-size:var(--fs-label);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .handoffrows > .row .btn .tk-spin{margin-right:6px}
+/* ATO-1014: Hand off to Claude Code / Codex (handoff-out.js). */
+.sheet-hout .seg{margin:0 6px 8px}
+.sheet-hout .sd-cap{margin:0 12px 8px;font-size:var(--fs-cap);color:var(--ink-2)}
+.sheet-hout .hout-file{margin:0 12px 6px;font-size:var(--fs-label);color:var(--ink-2);overflow-wrap:anywhere}
+.sheet-hout .hout-preview{margin:0 12px 8px;padding:8px 10px;max-height:240px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-label);border-radius:var(--r-well);background:var(--panel-2);color:var(--ink);font-family:var(--font-mono);line-height:1.5}
 
 /* ATO-1466: Report an issue: the text, two switches, and what the app adds under the text. */
 .sheet-bugrep .sd-cap{margin:0 12px 8px;font-size:var(--fs-cap);color:var(--ink-2)}

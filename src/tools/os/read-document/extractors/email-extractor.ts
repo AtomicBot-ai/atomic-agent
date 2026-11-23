@@ -18,8 +18,8 @@ import { decodeBytes } from "./text-decode.js";
  * - attached messages (`message/rfc822`, i.e. forwards) are rendered
  *   recursively.
  *
- * Outlook `.msg` is a different, binary (OLE2) container and is not
- * handled here.
+ * Outlook `.msg` is a different, binary (OLE2) container: see
+ * `msg-extractor.ts`, which renders it in the same shape.
  */
 const SHOWN_HEADERS = ["from", "to", "cc", "date", "subject"] as const;
 const MAX_DEPTH = 8;
@@ -92,13 +92,13 @@ function splitMbox(raw: string): string[] {
 
 // ---------------------------------------------------------------- parsing
 
-interface Part {
+export interface Part {
   headers: Map<string, string>;
   /** Body as a latin1 "binary" string: one char per byte, still encoded. */
   body: string;
 }
 
-function splitPart(raw: string): Part {
+export function splitPart(raw: string): Part {
   const firstLine = /^[^\r\n]*/.exec(raw)?.[0] ?? "";
   // A file that does not open with a header line is treated as a bare
   // text body (some tools save just the message text with a .eml name).
@@ -119,12 +119,12 @@ function splitPart(raw: string): Part {
   return { headers, body };
 }
 
-interface HeaderValue {
+export interface HeaderValue {
   value: string;
   params: Record<string, string>;
 }
 
-function parseStructuredHeader(raw: string | undefined): HeaderValue {
+export function parseStructuredHeader(raw: string | undefined): HeaderValue {
   if (!raw) return { value: "", params: {} };
   const semi = raw.indexOf(";");
   const value = (semi === -1 ? raw : raw.slice(0, semi)).trim().toLowerCase();
@@ -212,7 +212,7 @@ function qpBytes(value: string): Uint8Array {
   return Uint8Array.from(out);
 }
 
-function decodeTransfer(body: string, encoding: string | undefined): Uint8Array {
+export function decodeTransfer(body: string, encoding: string | undefined): Uint8Array {
   const enc = (encoding ?? "").trim().toLowerCase();
   if (enc === "base64") return Buffer.from(body.replace(/[^A-Za-z0-9+/=]/g, ""), "base64");
   if (enc === "quoted-printable") return qpBytes(body.replace(/=\r?\n/g, ""));
@@ -302,7 +302,7 @@ function isAttachment(part: Part): boolean {
   return parseStructuredHeader(part.headers.get("content-disposition")).value === "attachment";
 }
 
-function splitMultipart(body: string, boundary: string): string[] {
+export function splitMultipart(body: string, boundary: string): string[] {
   const delimiter = `--${boundary}`;
   const parts: string[] = [];
   let current: string[] | null = null;
@@ -330,7 +330,7 @@ function capitalise(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
-function formatSize(bytes: number): string {
+export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;

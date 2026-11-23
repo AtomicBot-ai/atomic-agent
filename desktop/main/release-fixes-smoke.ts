@@ -192,13 +192,15 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
     const dir = mkdtempSync(join(tmpdir(), "aa-t04-"));
     try {
       const env = { ...process.env, ATOMIC_AGENT_STATE_DIR: dir };
-      const set = bin ? spawnSync(bin, ["config", "set", "localModels.mode", "managed"], { env, encoding: "utf8", timeout: 60_000 }) : null;
-      const st = bin ? spawnSync(bin, ["models", "status"], { env, encoding: "utf8", timeout: 60_000 }) : null;
+      // ATO-1568: a cold `atag` start next to two busy model servers took
+      // longer than 60 s now and then; a timeout reads as a failed status.
+      const set = bin ? spawnSync(bin, ["config", "set", "localModels.mode", "managed"], { env, encoding: "utf8", timeout: 180_000 }) : null;
+      const st = bin ? spawnSync(bin, ["models", "status"], { env, encoding: "utf8", timeout: 180_000 }) : null;
       const out = st ? `${st.stdout}${st.stderr}` : "";
       check(
         "T04: models status on a server that never started exits 0 with no ENOENT",
         !!st && set?.status === 0 && st.status === 0 && /mode:\s+managed/.test(st.stdout) && /health:/.test(st.stdout) && !/ENOENT|llama-server\.log/.test(out),
-        bin ? `exit ${st?.status}; ${JSON.stringify(out.slice(-240))}` : "no agent binary resolved",
+        bin ? `exit ${st?.status}${st?.error ? ` (${st.error.message})` : ""}; ${JSON.stringify(out.slice(-240))}` : "no agent binary resolved",
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });

@@ -42,3 +42,34 @@ test("the manual command is off while a turn runs, while compacting, and before 
   assert.notEqual(C.compactBlockedReason({ ...ready, sessionId: "waiting-123" }), "");
   assert.notEqual(C.compactBlockedReason({ ...ready, supported: false }), "");
 });
+
+// ATO-661: `/compact <what to keep>`, as Claude Code's `/compact [instructions]`.
+test("the words after /compact are what to keep; none is a plain compaction", () => {
+  assert.deepEqual(C.compactInstructionsFrom(["keep", "the", "API", "design"]), { ok: true, text: "keep the API design" });
+  assert.deepEqual(C.compactInstructionsFrom([]), { ok: true, text: "" });
+  assert.deepEqual(C.compactInstructionsFrom(["", " "]), { ok: true, text: "" });
+});
+
+test("a keep text over the agent's 2000-character limit is refused with the usage", () => {
+  const r = C.compactInstructionsFrom(["x".repeat(C.COMPACT_INSTRUCTIONS_MAX + 1)]);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /too long/);
+  assert.ok(r.error.includes(C.COMPACT_USAGE));
+  assert.equal(C.compactInstructionsFrom(["x".repeat(C.COMPACT_INSTRUCTIONS_MAX)]).ok, true);
+});
+
+test("the running row says what is kept, clipped", () => {
+  assert.equal(C.compactingLineFor(""), C.COMPACTING_LINE);
+  assert.equal(C.compactingLineFor("keep  the\nAPI"), C.COMPACTING_LINE + " Keeping: keep the API");
+  const long = C.compactingLineFor("y".repeat(500));
+  assert.ok(long.length < C.COMPACTING_LINE.length + 140);
+  assert.ok(long.endsWith("…"));
+});
+
+test("a compacted line carries the agent's note, such as instructions not applied", () => {
+  const r = C.compactionResultLine({ status: "compacted", tokens_before: 30000, tokens_after: 9500,
+    message: "Your compaction instructions were not applied: the checkpoint was extracted without a model call." });
+  assert.equal(r.sev, "");
+  assert.equal(r.text, "Conversation compacted: ~30k → ~9.5k tokens. Your compaction instructions were not applied: the checkpoint was extracted without a model call");
+  assert.ok(!C.COMPACT_USAGE.includes("—"));
+});

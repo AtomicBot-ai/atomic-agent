@@ -8,6 +8,9 @@ import type { SkillRegistry } from "../skills/skill-registry.js";
 import { buildMcpServeTools } from "./mcp-server-tools.js";
 import { createMcpServeServer, MCP_SERVE_REFUSAL } from "./mcp-server-bridge.js";
 import { buildMcpServeApprovals } from "./mcp-server-command.js";
+import { mergePolicySources } from "../policy/policy-loader.js";
+import { parsePolicyFile } from "../policy/policy-schema.js";
+import type { EffectivePolicy } from "../policy/policy-evaluator.js";
 
 const noSkills = {
   list: () => [],
@@ -76,4 +79,73 @@ describe("buildMcpServeApprovals (ATO-549)", () => {
     },
     5000,
   );
+});
+
+// ATO-587 review: `mcp-server --allow-exec` serves os.shell.run outside
+// the runtime, so it must apply the admin policy itself, at the gate and
+// before the call (for commands the guard deems safe, which never ask).
+describe("mcp-server under an organization policy (ATO-587)", () => {
+  let tmp: string;
+  let client: Client | undefined;
+
+  function systemPolicy(rules: unknown[]): EffectivePolicy {
+    return mergePolicySources([{
+      status: { kind: "system", location: "test", state: "loaded" },
+      file: parsePolicyFile({ rules }),
+    }]);
+  }
+
+  async function connect(policy: EffectivePolicy, level: 1 | 5): Promise<Client> {
+    const approvals = buildMcpServeApprovals(
+      { agent: { approvalLevel: level }, paths: { stateDir: tmp } },
+      () => undefined,
+      () => policy,
+    );
+    const toolSet = buildMcpServeTools(
+      { allowWrite: false, allowExec: true, tools: [] },
+      { notesRecallDefaultK: 5, notesMaxContentChars: 2000, skillRegistry: noSkills, approvals },
+    );
+    const server = createMcpServeServer({ toolSet, workingDir: tmp, version: "0.0.0-test", orgPolicy: () => policy });
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverSide);
+    client = new Client({ name: "test-client", version: "1.0.0" });
+    await client.connect(clientSide);
+    return client;
+  }
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "atomic-agent-mcp-serve-policy-"));
+  });
+
+  afterEach(async () => {
+    await client?.close();
+    client = undefined;
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a denied command before it runs, even at full trust", async () => {
+    const c = await connect(systemPolicy([{ action: "shell", resource: "touch *", effect: "deny" }]), 5);
+    const target = join(tmp, "denied");
+    const result = await c.callTool({ name: "os_shell_run", arguments: { cmd: "touch", args: [target] } });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain("organization's policy");
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a command the policy says to ask about, since nobody can answer", async () => {
+    const c = await connect(systemPolicy([{ action: "shell", resource: "touch *", effect: "ask" }]), 5);
+    const target = join(tmp, "asked");
+    const result = await c.callTool({ name: "os_shell_run", arguments: { cmd: "touch", args: [target] } });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain(MCP_SERVE_REFUSAL);
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")("still runs a command the policy does not cover", async () => {
+    const c = await connect(systemPolicy([{ action: "shell", resource: "rm *", effect: "deny" }]), 5);
+    const target = join(tmp, "allowed");
+    const result = await c.callTool({ name: "os_shell_run", arguments: { cmd: "touch", args: [target] } });
+    expect(result.isError).toBeFalsy();
+    expect(existsSync(target)).toBe(true);
+  });
 });

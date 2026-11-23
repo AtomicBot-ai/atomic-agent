@@ -131,11 +131,19 @@ export interface CoreUpdateCheck {
   updateAvailable: boolean;
   requiresAgentUpdate: boolean;
 }
-export async function checkCoreUpdate(dataDir: string, request: typeof fetch = fetch, force = false): Promise<CoreUpdateCheck> {
-  const cachePath = join(coreRoot(dataDir), "release-check.json");
-  const cached = readCoreJson<{ checkedAt: number; latestVersion: string }>(cachePath);
-  let latestVersion = cached && Date.now() - cached.checkedAt < 6 * 60 * 60_000 && /^\d+\.\d+\.\d+$/.test(cached.latestVersion) ? cached.latestVersion : null;
-  if (!latestVersion || force) {
+/** How long a successful release check answers for. */
+const CORE_RELEASE_CHECK_TTL_MS = 6 * 60 * 60_000;
+/**
+ * How long a failed release check (offline, GitHub rate limit, timeout)
+ * holds off the next one (ATO-339). The Models panel asks on every
+ * refresh, so without it an offline machine waited out a 15 s timeout
+ * against GitHub each time.
+ */
+export const CORE_RELEASE_CHECK_RETRY_MS = 30 * 60_000;
+
+interface CoreReleaseCheckCache { checkedAt: number; latestVersion: string; failedAt?: number }
+
+async function fetchLatestCoreVersion(request: typeof fetch): Promise<string> {
   const response = await request(`https://api.github.com/repos/${CORE_REPO}/releases/latest`, {
     headers: { Accept: "application/vnd.github+json", "User-Agent": "atomic-agent" },
     signal: AbortSignal.timeout(15_000),
@@ -143,9 +151,36 @@ export async function checkCoreUpdate(dataDir: string, request: typeof fetch = f
   if (!response.ok) throw new Error(`Could not check Atomic Core updates (${response.status}).`);
   const value = await response.json() as { tag_name?: unknown };
   if (typeof value.tag_name !== "string" || !/^v?\d+\.\d+\.\d+$/.test(value.tag_name)) throw new Error("Atomic Core release information is invalid.");
-  latestVersion = value.tag_name.replace(/^v/, "");
-  writeCoreJson(cachePath, { checkedAt: Date.now(), latestVersion });
+  return value.tag_name.replace(/^v/, "");
+}
+
+/**
+ * Whether the installed Core is the one this build ships, and whether a
+ * newer Core needs a newer Agent. Only `requiresAgentUpdate` needs the
+ * network; `updateAvailable` is answered from disk.
+ *
+ * `force` (`models engine check`) always asks GitHub and reports a
+ * failure. Otherwise a failed check is remembered for
+ * `CORE_RELEASE_CHECK_RETRY_MS` and the answer falls back to the last
+ * known release (or the shipped version), instead of throwing.
+ */
+export async function checkCoreUpdate(dataDir: string, request: typeof fetch = fetch, force = false): Promise<CoreUpdateCheck> {
+  const cachePath = join(coreRoot(dataDir), "release-check.json");
+  const cached = readCoreJson<CoreReleaseCheckCache>(cachePath);
+  const known = cached && typeof cached.latestVersion === "string" && /^\d+\.\d+\.\d+$/.test(cached.latestVersion) ? cached.latestVersion : null;
+  const now = Date.now();
+  let latestVersion = known && typeof cached?.checkedAt === "number" && now - cached.checkedAt < CORE_RELEASE_CHECK_TTL_MS ? known : null;
+  const recentlyFailed = typeof cached?.failedAt === "number" && now - cached.failedAt >= 0 && now - cached.failedAt < CORE_RELEASE_CHECK_RETRY_MS;
+  if (force || (!latestVersion && !recentlyFailed)) {
+    try {
+      latestVersion = await fetchLatestCoreVersion(request);
+      writeCoreJson(cachePath, { checkedAt: Date.now(), latestVersion });
+    } catch (err) {
+      if (force) throw err;
+      writeCoreJson(cachePath, { checkedAt: cached?.checkedAt ?? 0, latestVersion: known ?? CORE_VERSION, failedAt: Date.now() });
+    }
   }
+  latestVersion ??= known ?? CORE_VERSION;
   const version = activeCoreVersion(dataDir);
   const currentVersion = isCoreInstalled(dataDir, version) ? version : null;
   return { currentVersion, compatibleVersion: CORE_VERSION, latestVersion,

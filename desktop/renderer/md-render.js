@@ -161,6 +161,9 @@ function mdrLinkToken(t, ctx, card) {
      whether it is a file to offer a chip for (main checks it). Anything else
      (javascript:, data:, mailto:, a relative name, `handlers[name](event)`
      in prose) is shown exactly as written: no link, nothing lost. */
+  // ATO-1628: `files.search`'s citation (`file://…#page=N` / `#t=S`) is a chip of its own (citation-chip.js).
+  const cite = typeof citeChipFromLink === 'function' && t.type === 'link' ? citeChipFromLink(t.href, t.text) : '';
+  if (cite) { const at = ctx.held.length; ctx.held.push(cite); return '\u0000' + at + '\u0000'; }
   const local = String(t.href || '').replace(/^file:\/\//i, '');
   if (/^(?:~\/|\/|[A-Za-z]:[\\/])/.test(local)) {
     const text = mdrEsc(t.text), loc = mdrEsc(local);

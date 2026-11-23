@@ -7,6 +7,14 @@ import type Database from "better-sqlite3";
  * without wiping the rest. Profile edits need no row here: every
  * `ProfileStore.set` already keeps the old version (`history(key)`).
  *
+ * The store's own housekeeping is journaled too, as the agent's change:
+ *  - `evict`: a note or an unpinned profile fact dropped over the cap;
+ *  - `merge`: a new note folded into a near-duplicate one (dedup), the
+ *    folded write kept in `before.absorbed`;
+ *  - `archive`: a note hidden by consolidation into a lesson (`after`
+ *    is the lesson id);
+ *  - `create` / `deprecate`: a lesson or a procedure written or retired.
+ *
  * The table is created in place (`CREATE TABLE IF NOT EXISTS`), not
  * behind a `MEMORY_SCHEMA_VERSION` bump: a bump would stop an older
  * desktop or terminal build sharing the state dir from opening
@@ -14,15 +22,19 @@ import type Database from "better-sqlite3";
  * Older builds never touch the table, so their changes are simply not
  * journaled.
  *
- * Not journaled: overflow eviction, dedup merges and consolidation
- * archives. Those are the store's own housekeeping, run in bulk.
- *
  * This file must not import `memory-store.ts` or `profile-store.ts`:
  * both stores import it.
  */
 
-export type MemoryChangeKind = "note" | "profile";
-export type MemoryChangeOp = "update" | "remove";
+export type MemoryChangeKind = "note" | "profile" | "lesson" | "procedure";
+export type MemoryChangeOp =
+  | "update"
+  | "remove"
+  | "evict"
+  | "merge"
+  | "archive"
+  | "create"
+  | "deprecate";
 /** Who asked for the change: the person (HTTP routes) or the agent (tools, reflection). */
 export type MemoryChangeActor = "user" | "agent";
 
@@ -45,16 +57,59 @@ export interface ProfileSnapshot {
   keywords: string[];
 }
 
+/** The write a dedup merge folded into an existing note (op `merge`). */
+export interface AbsorbedWrite {
+  content: string;
+  tags: string[];
+  source: string;
+  sessionId: string | null;
+  workingDir: string | null;
+  at: number;
+}
+
+/** For op `merge`: the existing note as it was, plus the write it absorbed. */
+export interface MergeSnapshot extends NoteSnapshot {
+  absorbed: AbsorbedWrite;
+}
+
+/** A lesson or a procedure as it was (ops `create` and `deprecate`). */
+export interface LessonSnapshot {
+  id: number;
+  activation: string;
+  principle: string;
+  tags: string[];
+  status: "active" | "deprecated";
+}
+
+export interface ProcedureSnapshot {
+  id: number;
+  activation: string;
+  steps: unknown[];
+  tags: string[];
+  status: "active" | "deprecated";
+}
+
+export type MemoryChangeSnapshot =
+  | NoteSnapshot
+  | MergeSnapshot
+  | ProfileSnapshot
+  | LessonSnapshot
+  | ProcedureSnapshot;
+
 export interface MemoryChange {
   id: number;
   kind: MemoryChangeKind;
-  /** The note id (as text) or the profile key. */
+  /** The note, lesson or procedure id (as text) or the profile key. */
   target: string;
   op: MemoryChangeOp;
   by: MemoryChangeActor;
   at: number;
-  before: NoteSnapshot | ProfileSnapshot;
-  /** The new text for a note `update`; `null` for a removal. */
+  before: MemoryChangeSnapshot;
+  /**
+   * The new text for a note `update`, the absorbed text for a `merge`,
+   * the lesson id for an `archive`, the reason for a `deprecate`;
+   * `null` otherwise.
+   */
   after: string | null;
   /** When this change was undone; `null` while it stands. */
   restoredAt: number | null;
@@ -65,13 +120,24 @@ export interface MemoryChangeInput {
   target: string;
   op: MemoryChangeOp;
   by: MemoryChangeActor;
-  before: NoteSnapshot | ProfileSnapshot;
+  before: MemoryChangeSnapshot;
   after?: string | null;
 }
 
 /** Rows older than this are pruned when a store opens. */
 export const MEMORY_CHANGE_LOG_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 export const MEMORY_CHANGE_LOG_LIST_MAX = 200;
+
+const KINDS: ReadonlySet<string> = new Set(["note", "profile", "lesson", "procedure"]);
+const OPS: ReadonlySet<string> = new Set([
+  "update",
+  "remove",
+  "evict",
+  "merge",
+  "archive",
+  "create",
+  "deprecate",
+]);
 
 const TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS memory_change_log (
@@ -103,12 +169,12 @@ interface ChangeRow {
 function rowToChange(row: ChangeRow): MemoryChange {
   return {
     id: row.id,
-    kind: row.kind === "profile" ? "profile" : "note",
+    kind: (KINDS.has(row.kind) ? row.kind : "note") as MemoryChangeKind,
     target: row.target,
-    op: row.op === "update" ? "update" : "remove",
+    op: (OPS.has(row.op) ? row.op : "remove") as MemoryChangeOp,
     by: row.actor === "user" ? "user" : "agent",
     at: row.at,
-    before: JSON.parse(row.before) as NoteSnapshot | ProfileSnapshot,
+    before: JSON.parse(row.before) as MemoryChangeSnapshot,
     after: row.after,
     restoredAt: row.restored_at,
   };

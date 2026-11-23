@@ -109,10 +109,10 @@ test("save: checked, written to .env owner-only, the new session cached for the 
   writeFileSync(join(d.stateDir, ".env"), "# mine\nTELEGRAM_BOT_TOKEN=123:abc\n", { mode: 0o644 });
   const res = await K.saveComposioKey(d, KEY);
   assert.deepEqual(res, { ok: true, verified: true, shadowed: false });
-  assert.deepEqual(checks, [{ apiKey: KEY, userId: "user-kept" }]);
+  assert.deepEqual(checks, [{ apiKey: KEY, userId: "user-kept", connectedAccounts: {} }]);
   assert.equal(readFileSync(join(d.stateDir, ".env"), "utf8"), `# mine\nTELEGRAM_BOT_TOKEN=123:abc\nCOMPOSIO_API_KEY=${KEY}\n`);
   assert.equal(statSync(join(d.stateDir, ".env")).mode & 0o777, 0o600);
-  assert.deepEqual(writes, [{ userId: "user-kept", sessionId: "trs_new", mcpUrl: "https://new/mcp" }]);
+  assert.deepEqual(writes, [{ userId: "user-kept", sessionId: "trs_new", mcpUrl: "https://new/mcp", sessionPins: null }]);
   assert.ok(!JSON.stringify(res).includes(KEY));
 });
 
@@ -140,7 +140,7 @@ test("save: Composio unreachable writes the key, drops the old session and says 
   assert.equal(res.warning, "The key is saved, but it could not be checked. Could not reach Composio: offline.");
   assert.deepEqual(cli.dotenvKeys(d.stateDir).keys, ["COMPOSIO_API_KEY"]);
   // The cached session belonged to the old key (integrations-orchestrator.ts applyComposio).
-  assert.deepEqual(writes, [{ userId: "u", sessionId: null, mcpUrl: null }]);
+  assert.deepEqual(writes, [{ userId: "u", sessionId: null, mcpUrl: null, sessionPins: null }]);
 });
 
 test("save: an unreadable config stops before Composio, so no second user id is minted", async () => {
@@ -167,7 +167,7 @@ test("save: a key in this app's environment is reported, and the typed key's ses
   assert.equal(res.shadowed, true);
   assert.equal(res.verified, true);
   // The agent loads the environment's key; a session made with the typed one would not match it.
-  assert.deepEqual(writes, [{ userId: "u", sessionId: null, mcpUrl: null }]);
+  assert.deepEqual(writes, [{ userId: "u", sessionId: null, mcpUrl: null, sessionPins: null }]);
 });
 
 /* ---------------- remove ---------------- */
@@ -178,7 +178,7 @@ test("remove: the key leaves .env, the session is forgotten, the user id stays",
   const res = await K.removeComposioKey(d);
   assert.deepEqual(res, { ok: true, verified: false, shadowed: false });
   assert.equal(readFileSync(join(d.stateDir, ".env"), "utf8"), "A=1\n");
-  assert.deepEqual(writes, [{ sessionId: null, mcpUrl: null }]);
+  assert.deepEqual(writes, [{ sessionId: null, mcpUrl: null, sessionPins: null }]);
 });
 
 /* ---------------- check again ---------------- */
@@ -189,7 +189,7 @@ test("check again reads the key the agent would load, environment first, and cac
   const r1 = await K.checkSavedComposioKey(fromFile.d);
   assert.deepEqual(r1, { ok: true, verified: true, shadowed: false });
   assert.equal(fromFile.checks[0].apiKey, KEY, "the quotes are stripped as load-dotenv.ts does");
-  assert.deepEqual(fromFile.writes, [{ userId: "u", sessionId: "trs_new", mcpUrl: "https://new/mcp" }]);
+  assert.deepEqual(fromFile.writes, [{ userId: "u", sessionId: "trs_new", mcpUrl: "https://new/mcp", sessionPins: null }]);
 
   const fromEnv = deps({ env: { COMPOSIO_API_KEY: " ak_env_dummy_0000 " } });
   writeFileSync(join(fromEnv.d.stateDir, ".env"), `COMPOSIO_API_KEY=${KEY}\n`);
@@ -226,4 +226,33 @@ test("analytics: composio_setup carries a step and an outcome, never anything el
   assert.equal("step" in V.validateEvent("composio_setup", { step: KEY, result: "ok" }, "main").props, false);
   assert.equal("key" in V.validateEvent("composio_setup", { step: "key_saved", result: "ok", key: KEY }, "main").props, false);
   assert.equal(V.validateEvent("settings_pane_viewed", { pane: "composio", ms_on_pane: 5 }, "ui").props.pane, "composio");
+});
+
+// ATO-1494: the per-app default accounts (composio.accounts) are pinned on the
+// checked session exactly as the agent pins them, and the cached session is
+// stamped with them, so ensure-composio-session.ts reuses it only while the
+// defaults are the same.
+test("save and check pin the default accounts and stamp the cached session", async () => {
+  const accounts = [
+    { toolkit: "gmail", alias: "work", connectedAccountId: "ca_work", isDefault: true },
+    { toolkit: "gmail", alias: "home", connectedAccountId: "ca_home", isDefault: false },
+    { toolkit: "slack", alias: "team", connectedAccountId: "ca_slack", isDefault: true },
+  ];
+  const { d, writes, checks } = deps({ config: { userId: "u", accounts } });
+  const res = await K.saveComposioKey(d, KEY);
+  assert.equal(res.ok, true);
+  assert.deepEqual(checks[0].connectedAccounts, { gmail: ["ca_work"], slack: ["ca_slack"] });
+  assert.equal(writes[0].sessionPins, "trs_new#gmail=ca_work,slack=ca_slack");
+  writeFileSync(join(d.stateDir, ".env"), `COMPOSIO_API_KEY=${KEY}\n`);
+  await K.checkSavedComposioKey(d);
+  assert.deepEqual(checks[1].connectedAccounts, { gmail: ["ca_work"], slack: ["ca_slack"] });
+  assert.equal(writes.at(-1).sessionPins, "trs_new#gmail=ca_work,slack=ca_slack");
+});
+
+test("the session call sends connected_accounts only when something is pinned", async () => {
+  const calls = [];
+  await K.checkComposioKey({ apiKey: KEY, userId: "u-1", connectedAccounts: { gmail: ["ca_work"] }, fetchImpl: answering(200, SESSION, calls) });
+  assert.deepEqual(JSON.parse(calls[0].init.body), { user_id: "u-1", workbench: { enable: false }, connected_accounts: { gmail: ["ca_work"] } });
+  await K.checkComposioKey({ apiKey: KEY, userId: "u-1", connectedAccounts: {}, fetchImpl: answering(200, SESSION, calls) });
+  assert.deepEqual(JSON.parse(calls[1].init.body), { user_id: "u-1", workbench: { enable: false } });
 });

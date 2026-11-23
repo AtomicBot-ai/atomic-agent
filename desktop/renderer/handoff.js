@@ -15,6 +15,14 @@
    Settings › Import's header. */
 
 const HANDOFF_AGENT_ROWS = [['claude-code', 'Claude Code'], ['codex', 'Codex']];
+/* ATO-1633: each agent wears its own mark (renderer/logos/, keys of LOGO_FILES). */
+const HANDOFF_AGENT_LOGOS = {'claude-code': 'claudecode', codex: 'codex'};
+
+/** An agent's mark at `size`, or '' where the renderer's logoHTML is not loaded (the Node checks). */
+function handoffMark(agent, size) {
+  const key = HANDOFF_AGENT_LOGOS[agent];
+  return key && typeof logoHTML === 'function' ? logoHTML(key, size, 'term') : '';
+}
 
 /** Last folder name of a path, for a row's subtitle. */
 function handoffFolder(cwd) {
@@ -67,7 +75,9 @@ async function handoffLoad() {
 
 function handoffSheetHTML() {
   const label = handoffLabel(HANDOFF.agent);
-  let body = segControl(HANDOFF_AGENT_ROWS, HANDOFF.agent, 'handoff:agent:')
+  // segControl's look (.seg), each choice led by its agent's mark.
+  let body = '<div class="seg handoffseg">' + HANDOFF_AGENT_ROWS.map(([id, name]) =>
+    '<button class="' + (HANDOFF.agent === id ? 'on' : '') + '" data-act="handoff:agent:' + id + '">' + handoffMark(id, 'xs') + esc(name) + '</button>').join('') + '</div>'
     + '<p class="sd-cap">Pick the session that stopped. It opens as a new chat with its history, ready to continue here.</p>';
   if (HANDOFF.error) body += '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(HANDOFF.error) + '</span></div>';
   if (HANDOFF.loading) {
@@ -75,7 +85,7 @@ function handoffSheetHTML() {
   } else if (HANDOFF.rows) {
     const rows = HANDOFF.rows.map((row) => {
       const busy = HANDOFF.starting === row.id;
-      return '<div class="row handoffrow">'
+      return '<div class="row handoffrow">' + handoffMark(HANDOFF.agent, 'sm')
         + '<span class="main"><span class="t">' + esc(row.title || '(untitled)') + '</span>'
         + '<span class="s">' + esc(handoffRowMeta(row, relTime)) + '</span></span>'
         + '<button class="btn btn-p sm" data-act="handoff:go:' + esc(row.id) + '"' + (HANDOFF.starting ? ' disabled' : '') + '>'
@@ -87,6 +97,8 @@ function handoffSheetHTML() {
   return sheet('Continue from ' + label,
     body,
     '<button class="btn btn-g sm" data-act="handoff:refresh"' + (HANDOFF.loading ? ' disabled' : '') + '>' + ic('refresh') + 'Refresh</button>'
+    // ATO-1157: every session of both agents, by who is waiting (agent-hub.js).
+    + '<button class="btn btn-g sm" data-act="hub:open">Agents…</button>'
     + '<span class="grow"></span><button class="btn btn-s sm" data-act="close">Close</button>',
     'sheet-handoff');
 }
@@ -131,4 +143,4 @@ function handoffAct(v) {
   if (v.indexOf('go:') === 0) { handoffStartRow(v.slice('go:'.length)); return; }
 }
 
-if (typeof module !== 'undefined') module.exports = {handoffFolder, handoffRowMeta, handoffDoneText, HANDOFF_AGENT_ROWS};
+if (typeof module !== 'undefined') module.exports = {handoffFolder, handoffRowMeta, handoffDoneText, handoffMark, HANDOFF_AGENT_ROWS, HANDOFF_AGENT_LOGOS};

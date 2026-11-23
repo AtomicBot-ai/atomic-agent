@@ -6,7 +6,7 @@ import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import type { ApprovalGate } from "../../approval/approval-gate.js";
 import type { SessionStore } from "../../session/session-store.js";
 import type { SkillRegistry } from "../../skills/skill-registry.js";
-import type { LlamaServerClient } from "../../llm/llama-server-client.js";
+import { LlamaServerClient } from "../../llm/llama-server-client.js";
 import { renewTransportPool } from "../../llm/transport-deadlines.js";
 import type { ProviderRegistry } from "../../llm/provider/index.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
@@ -28,7 +28,7 @@ import { resolveExtraApiKeys } from "../../config/resolve-llm-api-key.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
 import { finishTool } from "../../tools/finish.js";
 import { buildAskUserTool, replyTool } from "../../tools/conversation/index.js";
-import { buildBrowserPageRenderer, buildBrowserTools, UserSiteApprovals, type BrowserExtractModelRef } from "../../tools/browser/index.js";
+import { browserScenarioDir, buildBrowserPageRenderer, buildBrowserTools, UserSiteApprovals, type BrowserExtractModelRef } from "../../tools/browser/index.js";
 import type { BrowserBackend } from "../../tools/browser/browser-backend.js";
 import { registerOsScreenTools, registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry, type WebSearchKeyHelp } from "../../tools/os/index.js";
 import { registerVerifyTools, runChecks } from "../../tools/verify/index.js";
@@ -42,6 +42,7 @@ import { planUpdateTool } from "../../tools/plan/index.js";
 import { buildCanvasRenderTool } from "../../tools/canvas/index.js";
 import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActive } from "../../tools/tool-search/index.js";
 import { buildSessionsSearchTool, registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
+import { buildFilesSearchTool, type FileIndexApi } from "../../tools/files/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
 import { IMAGE_GENERATE_TOOL, openRouterImageKey, registerImageTools } from "../../tools/image/index.js";
@@ -49,19 +50,22 @@ import { registerVideoTools, VIDEO_GENERATE_TOOL, VIDEO_RENDER_HTML_TOOL } from 
 import { AUDIO_TRANSCRIBE_TOOL, registerAudioListenTools, registerAudioTools } from "../../tools/audio/index.js";
 import { captureImageGenerated, captureVideoGenerated } from "../../analytics/analytics-events.js";
 import type { AnalyticsClient } from "../../analytics/analytics-client.js";
-import { buildFusionDelegateTool, readSlotOccupancy, type FusionDelegateDeps } from "../../tools/fusion/index.js";
+import { buildFusionDelegateTool, readSlotOccupancy, servedModelName, type FusionDelegateDeps } from "../../tools/fusion/index.js";
+import { MintedSessionMetadata, buildSubagentRunTool } from "../../tools/subagent/index.js";
 import { confineReads } from "../../tools/read-scope/index.js";
 import { McpManager, buildMcpPromptGetTool, buildMcpPromptListTool, buildMcpResourceListTool, buildMcpResourceReadTool, buildMcpToolDescriptors, createMcpSamplingHandler, mergeMcpDescriptors, applyMcpToolNameRule, buildMcpToolNameRule } from "../../mcp/index.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
 import type { McpServerConfig } from "../../mcp/mcp-types.js";
+import { mcpAppsUiFromEnv } from "../../mcp/mcp-apps.js";
 import { loadPluginMcpServers } from "../../plugins/plugin-mcp.js";
 import { createPluginMcpLiveStop } from "../../plugins/plugin-mcp-live.js";
 import { listPluginSubagents } from "../../plugins/plugin-subagents.js";
-import { loadAgentProfiles, normaliseProfileName, type AgentProfile } from "../../agent-profiles/index.js";
+import { loadAgentProfiles, normaliseProfileName, readSettingsAgentProfiles, type AgentProfile } from "../../agent-profiles/index.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { filterToolDescriptorsByConfig } from "../filter-disabled-tools.js";
 import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
 import { resolveComposioServerConfig } from "../../composio/index.js";
+import { activePolicy, mcpServerPolicy } from "../../policy/index.js";
 
 /** Header names whose value is a credential (`Authorization`, `X-Api-Key`, `Cookie`, ...). */
 const SECRET_HEADER = /authorization|api[-_]?key|token|secret|password|cookie|auth/i;
@@ -162,8 +166,16 @@ export function createRuntimeToolRegistry(
       allowedDomains: config.browser.allowedDomains,
       userProfile: config.browser.connect === "user-chrome",
       ...(config.browser.connect === "user-chrome" ? { userSites: new UserSiteApprovals() } : {}),
+      // ATO-1377: the same switch as os.web.fetch and os.http.request.
+      ...(config.http.urlDataGuard !== undefined ? { urlDataGuard: config.http.urlDataGuard } : {}),
     };
-    for (const tool of buildBrowserTools(browserBackend, dangerous, domainPolicy, browserExtract)) {
+    for (const tool of buildBrowserTools(
+      browserBackend,
+      dangerous,
+      domainPolicy,
+      browserExtract,
+      browserScenarioDir(config.paths.stateDir),
+    )) {
       toolRegistry.register(tool);
     }
   }
@@ -207,10 +219,12 @@ export function registerRuntimeCoreTools(input: {
   webSearchKeyHelp?: WebSearchKeyHelp;
   /** The agent's browser, for the `os.web.fetch` bot-wall step (ATO-968). */
   browserBackend?: BrowserBackend;
+  /** "My files" (ATO-1621): `files.search` is registered when there is an index. */
+  fileIndex?: FileIndexApi;
 } & Pick<RegisterMemoryToolsOptions, "profileStore" | "notesStore" | "lessonStore" | "procedureStore">): void {
   const { config, toolRegistry, dangerous, sessionStore, resolveOriginalRequest, resolvePreviousReply, declaredInputs,
     shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, logger,
-    webSearchKeyHelp, canAskUser } = input;
+    webSearchKeyHelp, canAskUser, fileIndex } = input;
 
   registerOsTools(toolRegistry, {
     ...dangerous,
@@ -249,8 +263,9 @@ export function registerRuntimeCoreTools(input: {
     // (ATO-503). Read live, like the skill gate.
     isTrustedProject: (dir) => isProjectFolderTrusted(config.paths.userConfigFile, config.skills.projectTrust, dir),
   });
-  // Computer use (ATO-525): screenshot, click, type, key — macOS only and
-  // opt-in (`tools.screen.enabled`, default off). A screenshot asks as
+  // Computer use (ATO-525): screenshot, click, type, key — macOS, and
+  // the screenshot alone on Windows and Linux (ATO-527); opt-in
+  // (`tools.screen.enabled`, default off). A screenshot asks as
   // `screen_capture`, every input action as `screen_control`; the
   // descriptors follow the same gate below.
   registerOsScreenTools(toolRegistry, {
@@ -357,6 +372,8 @@ export function registerRuntimeCoreTools(input: {
   // ATO-1151: search past chats word for word, then read around a hit.
   // Read-only and always on; the index is built on the first search.
   toolRegistry.register(buildSessionsSearchTool({ source: sessionStore }));
+  // ATO-1621: passages from the folders in My files, with ready citations.
+  if (fileIndex) toolRegistry.register(buildFilesSearchTool({ index: fileIndex }));
 }
 
 export function registerRuntimeVisionTools(input: {
@@ -579,13 +596,19 @@ export async function connectRuntimeMcpCatalog(input: {
           server: "*",
         })
       : undefined,
-    // ATO-704: no host wires a port yet, so servers see no elicitation
-    // capability until one does (see docs/client.md).
+    // ATO-704 / ATO-1492: only a host that wires a port (serve does)
+    // makes servers see the elicitation capability (see docs/client.md).
     ...(options.handlers?.onMcpElicitation
       ? { elicitationPort: options.handlers.onMcpElicitation }
       : {}),
     // Browser sign-ins of remote servers live in `<stateDir>/mcp-oauth/`.
     oauthStateDir: config.paths.stateDir,
+    // ATO-1135: a host that renders MCP Apps pages (the desktop app) says so
+    // with ATOMIC_AGENT_MCP_APPS_UI; only then do clients advertise the
+    // extension and read a tool's `ui://` page after a call.
+    ...(mcpAppsUiFromEnv() ? { appsUi: true } : {}),
+    // Admin MCP allowlist (ATO-587), read live so a refreshed policy applies on restart.
+    serverPolicy: (server) => mcpServerPolicy(activePolicy(), server),
     ...(options.handlers?.onChannelStatus
       ? {
           onStatus: (status) =>
@@ -698,14 +721,21 @@ export async function connectRuntimeMcpCatalog(input: {
       // keys off it) only exists while the resolver says fusion — an
       // orchestrator that cannot delegate must not be told it can.
       fusion: { enabled: resolveCurrentRunMode().effective === "fusion" },
+      // The other side of the same gate (ATO-1670): subagent.run is
+      // offered outside Fusion, where fusion.delegate is not.
+      subagent: { enabled: resolveCurrentRunMode().effective !== "fusion" },
       image: { available: openRouterImageKey(getConfig()) !== undefined },
       // Same key, same reason: every clip is made on OpenRouter.
       video: { available: openRouterImageKey(getConfig()) !== undefined },
       // Boot-time, like the registration above: the tools exist only when
-      // they were switched on before start and the host is a Mac.
+      // they were switched on before start. All of them on a Mac; capture
+      // alone on Windows and Linux (ATO-527).
       screen: {
-        enabled: config.tools.screen.enabled && process.platform === "darwin",
+        enabled:
+          config.tools.screen.enabled &&
+          (process.platform === "darwin" || process.platform === "win32" || process.platform === "linux"),
         point: config.tools.screen.point && process.platform === "darwin",
+        control: process.platform === "darwin",
       },
     });
     if (!liveMcpEnabled) return base;
@@ -846,7 +876,7 @@ export function registerRuntimeFusionAndReadScope(input: {
   prepareLocalLink: FusionDelegateDeps["warmWorkerBackend"];
   emitAgentLoopEventFor: FusionDelegateDeps["emitEvent"];
   resolveCurrentRunMode: FusionDelegateDeps["resolveRunMode"];
-  providerRegistry: Pick<ProviderRegistry, "getProvider">;
+  providerRegistry: Pick<ProviderRegistry, "getProvider" | "modelVariant">;
   llama: Pick<
     LlamaServerClient,
     "measuredTokensPerSecond" | "fetchSlots" | "probeHealth"
@@ -871,6 +901,11 @@ export function registerRuntimeFusionAndReadScope(input: {
     prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode, providerRegistry,
     llama, approvals, dangerous, slotManager, workingDir, logger, turnBudget,
     orchestratorTurnSpendUsd, liveWorkers, steerWorker, runCheckpoints, sessionUsage, outcomeLog, costAccumulator } = input;
+  // Every worker session minted here, by id, so subagent.run reads the
+  // caller's own depth stamp (ATO-1670). Worker sessions are never stored.
+  const mintedSessions = new MintedSessionMetadata();
+  const createTrackedEphemeralSession: FusionDelegateDeps["createEphemeralSession"] = (meta, dir, inherit) =>
+    mintedSessions.remember(createEphemeralSession(meta, dir, inherit));
 
 
   // The orchestrator's fan-out. Registered UNCONDITIONALLY: the tool
@@ -887,7 +922,7 @@ export function registerRuntimeFusionAndReadScope(input: {
     buildFusionDelegateTool({
       runTurn: (session, userMessage, turnOptions) =>
         runTurn(session, userMessage, turnOptions),
-      createEphemeralSession,
+      createEphemeralSession: createTrackedEphemeralSession,
       resolveOriginalRequest: resolveOriginalRequest,
       declaredInputs,
       // The worker leg's pricing, when the catalogue or a hand-priced
@@ -929,6 +964,19 @@ export function registerRuntimeFusionAndReadScope(input: {
           ? () => llama.probeHealth()
           : undefined;
       },
+      // ATO-1562: a llama.cpp server that is not this agent's own serves
+      // whatever it loaded; its worker rows are labelled with that name.
+      // Asked per fan-out, bounded by the client's probe timeout. The
+      // main local server (`localModels.url`) is ours and keeps its label.
+      servedModelOf: async (providerId) => {
+        const entry = resolveLlmConfig(getConfig()).providers.find((p) => p.id === providerId);
+        if (entry === undefined || !isForeignLlamaServer(entry, getConfig().localModels.url)) return null;
+        const client = new LlamaServerClient({
+          baseUrl: entry.url!,
+          ...(entry.apiKey === undefined ? {} : { apiKey: entry.apiKey }),
+        });
+        return servedModelName(await client.fetchProps());
+      },
       // The turn's $ / time caps (ATO-947), reset at each fusion turn's
       // start by the loop; read only when a cap is configured.
       ...(turnBudget === undefined ? {} : { turnBudget }),
@@ -938,10 +986,19 @@ export function registerRuntimeFusionAndReadScope(input: {
       // Escalation (ATO-942): one completion pinned to the configured
       // escalation provider — never the fallback chain, so it cannot
       // land on a model the operator did not pick for it.
-      escalationComplete: async ({ providerId, prompt, maxOutputTokens, signal, sessionId }) => {
-        const provider = providerRegistry.getProvider(providerId);
+      escalationComplete: async ({ providerId, model, prompt, maxOutputTokens, signal, sessionId }) => {
+        // ATO-1560: the escalation's / judge's own model on that provider
+        // runs on the provider's copy built for it, like a per-turn model.
+        const provider =
+          model === undefined
+            ? providerRegistry.getProvider(providerId)
+            : await providerRegistry.modelVariant(providerId, model);
         if (provider === undefined) {
-          throw new Error(`escalation provider ${providerId} is not configured`);
+          throw new Error(
+            model === undefined
+              ? `escalation provider ${providerId} is not configured`
+              : `escalation provider ${providerId} cannot run model ${model}`,
+          );
         }
         const result = await provider.complete({
           prompt,
@@ -965,7 +1022,7 @@ export function registerRuntimeFusionAndReadScope(input: {
               local:
                 entry !== undefined &&
                 (entry.kind === "llama-server" || isLocalServerUrl(entry.baseUrl ?? entry.url)),
-              plan: entry?.kind === "subscription-cli",
+              plan: entry?.kind === "subscription-cli" || entry?.kind === "subscription-oauth",
             });
           } catch {
             // The readout never takes an escalation down.
@@ -1022,6 +1079,8 @@ export function registerRuntimeFusionAndReadScope(input: {
           stateDir: config.paths.stateDir,
           configFile: config.paths.userConfigFile,
           startupTrust: config.skills.projectTrust,
+          settingsProfiles: () =>
+            readSettingsAgentProfiles(config.paths.userConfigFile, () => getConfig().llm?.runMode?.agentProfiles),
           pluginProfiles: () => pluginAgentProfiles(config.paths.stateDir),
         }),
       outputCharCap: config.agent.batchToolResultCharCap,
@@ -1034,6 +1093,61 @@ export function registerRuntimeFusionAndReadScope(input: {
           signal: ctx.signal,
           config,
         }),
+      logger,
+    }),
+  );
+  // Subagents outside Fusion (ATO-1670), on the shared worker runner.
+  // Registered unconditionally like fusion.delegate; the descriptor gate
+  // above hides it in Fusion, and the tool refuses there too.
+  toolRegistry.register(
+    buildSubagentRunTool({
+      runTurn: (session, userMessage, turnOptions) =>
+        runTurn(session, userMessage, turnOptions),
+      createEphemeralSession: createTrackedEphemeralSession,
+      readSessionMetadata: (sessionId) => mintedSessions.read(sessionId),
+      resolveOriginalRequest,
+      approvals,
+      emitEvent: emitAgentLoopEventFor,
+      workingDir,
+      resolveRunMode: resolveCurrentRunMode,
+      // The calling session's model: the step's pinned provider, else the
+      // active one with its configured chat model.
+      resolveSessionLeg: (pinnedProviderId) => {
+        const resolved = resolveLlmConfig(getConfig());
+        const providerId = pinnedProviderId ?? resolved.activeTextProvider;
+        const entry = resolved.providers.find((p) => p.id === providerId);
+        return { providerId, model: entry?.defaultChatModel ?? entry?.model ?? providerId };
+      },
+      workerSupportsSlotAffinity: (providerId) =>
+        providerRegistry.getProvider(providerId)?.capabilities
+          .supportsSlotAffinity ?? false,
+      // Declared `files` are asked about once per call, as a fan-out is.
+      approvalRequired: dangerous.approvalRequired,
+      agentStateDir: config.paths.stateDir,
+      // Prices subagent completions under the turn's spend ceiling, the
+      // same resolver fusion.delegate's workers are priced with.
+      resolveWorkerPricing: (providerId, modelId) =>
+        resolveModelPricingFor(resolveLlmConfig(getConfig()), modelId, providerId)?.pricing,
+      // "Local" as the session readout above decides it: a llama-server
+      // entry or one on a local server URL. Anything else configured is cloud.
+      isCloudProvider: (providerId) => {
+        const entry = resolveLlmConfig(getConfig()).providers.find((p) => p.id === providerId);
+        return (
+          entry !== undefined &&
+          entry.kind !== "llama-server" &&
+          !isLocalServerUrl(entry.baseUrl ?? entry.url)
+        );
+      },
+      // The same profile loader fusion.delegate is given.
+      resolveAgentProfiles: (dir) =>
+        loadAgentProfiles({
+          workingDir: dir,
+          stateDir: config.paths.stateDir,
+          configFile: config.paths.userConfigFile,
+          startupTrust: config.skills.projectTrust,
+          pluginProfiles: () => pluginAgentProfiles(config.paths.stateDir),
+        }),
+      outputCharCap: config.agent.batchToolResultCharCap,
       logger,
     }),
   );
@@ -1075,4 +1189,18 @@ function safePluginMcpServers(
     logger.warn("plugin MCP servers unavailable", { error: err instanceof Error ? err.message : String(err) });
     return { servers: [], owners: {} };
   }
+}
+
+/**
+ * A `llama-server` entry on a server other than the main local one
+ * (`localModels.url`): somebody else's llama.cpp, which serves the model
+ * it loaded (ATO-1562).
+ */
+export function isForeignLlamaServer(
+  entry: { kind: string; url?: string },
+  mainUrl: string,
+): boolean {
+  if (entry.kind !== "llama-server" || entry.url === undefined) return false;
+  const norm = (u: string): string => u.trim().replace(/\/+$/, "");
+  return norm(entry.url) !== norm(mainUrl);
 }

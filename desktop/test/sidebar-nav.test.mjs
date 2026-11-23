@@ -5,28 +5,28 @@ import { createRequire } from 'node:module';
 const {sidebarNavItems, railGlyph, toggleSidebar, sidebarToggleView, lucideIcon, studioMenuItems, LUCIDE} = createRequire(import.meta.url)('../renderer/sidebar-nav.js');
 
 // ATO-457 (U-24), W2: under Studio, Cron jobs (the Tasks tab), Skills and Plugins are standing rows, whatever the agent holds.
-test('the section rows are Cron jobs, Skills, Plugins, reaching the ⌘ 2 / ⌘ 3 verbs and Settings › Plugins', () => {
+test('the section rows are Cron jobs, Skills, Plugins, Recipes, reaching the ⌘ 2 / ⌘ 3 verbs, Settings › Plugins and the recipes sheet', () => {
   const items = sidebarNavItems(null);
-  assert.deepEqual(items.map((n) => n.label), ['Cron jobs', 'Skills', 'Plugins']);
-  assert.deepEqual(items.map((n) => n.id), ['tasks', 'skills', 'plugins'], 'the internal ids stay');
-  assert.deepEqual(items.map((n) => n.act), ['room:tasks', 'room:skills', 'settings:plugins']);
-  assert.deepEqual(items.map((n) => n.chord), ['⌘ 2', '⌘ 3', '']);
-  assert.deepEqual(items.map((n) => n.icon), ['timer', 'bookOpen', 'puzzle']);
+  assert.deepEqual(items.map((n) => n.label), ['Cron jobs', 'Skills', 'Plugins', 'Recipes']);
+  assert.deepEqual(items.map((n) => n.id), ['tasks', 'skills', 'plugins', 'recipes'], 'the internal ids stay');
+  assert.deepEqual(items.map((n) => n.act), ['room:tasks', 'room:skills', 'settings:plugins', 'recipe:gallery']);
+  assert.deepEqual(items.map((n) => n.chord), ['⌘ 2', '⌘ 3', '', '']);
+  assert.deepEqual(items.map((n) => n.icon), ['timer', 'bookOpen', 'puzzle', 'scrollText']);
   assert.ok(items.every((n) => !n.on), 'nothing is lit while Settings is closed');
   // The old {projects} option no longer adds a New project row.
-  assert.deepEqual(sidebarNavItems(null, {projects: true}).map((n) => n.label), ['Cron jobs', 'Skills', 'Plugins']);
+  assert.deepEqual(sidebarNavItems(null, {projects: true}).map((n) => n.label), ['Cron jobs', 'Skills', 'Plugins', 'Recipes']);
 });
 
 test('the row whose Settings tab is open is the lit one', () => {
-  assert.deepEqual(sidebarNavItems('tasks').map((n) => n.on), [true, false, false]);
-  assert.deepEqual(sidebarNavItems('skills').map((n) => n.on), [false, true, false]);
-  assert.deepEqual(sidebarNavItems('plugins').map((n) => n.on), [false, false, true]);
-  assert.deepEqual(sidebarNavItems('memory').map((n) => n.on), [false, false, false]);
+  assert.deepEqual(sidebarNavItems('tasks').map((n) => n.on), [true, false, false, false]);
+  assert.deepEqual(sidebarNavItems('skills').map((n) => n.on), [false, true, false, false]);
+  assert.deepEqual(sidebarNavItems('plugins').map((n) => n.on), [false, false, true, false]);
+  assert.deepEqual(sidebarNavItems('memory').map((n) => n.on), [false, false, false, false]);
 });
 
 // W2: the top rows draw thin Lucide glyphs, 24px grid at 1.5 stroke.
 test('every row icon is a Lucide glyph at stroke 1.5; an unknown name draws nothing', () => {
-  for (const n of ['plus', 'sparkles', 'timer', 'bookOpen', 'puzzle', 'image', 'video', 'folderPlus']) {
+  for (const n of ['plus', 'sparkles', 'timer', 'bookOpen', 'puzzle', 'image', 'video', 'folderPlus', 'scrollText']) {
     const svg = lucideIcon(n);
     assert.match(svg, /viewBox="0 0 24 24"/, n);
     assert.match(svg, /stroke-width="1\.5"/, n);
@@ -185,6 +185,7 @@ test('the sidebar wires the projects module: loaded before renderer.js, drawn ab
 test('the Edit project sheet keeps to the store limits and saves name and instructions by id', () => {
   const src = readFileSync(new URL('../renderer/chat-projects.js', import.meta.url), 'utf8');
   assert.match(src, /PROJECT_INSTRUCTIONS_MAX = 16000/);
-  assert.match(src, /projectsSave\(\{id: e\.id, name, instructions: e\.instructions\}\)/);
+  // ATO-1012: plus a new folder from Change folder… (project-edit-extras.js projectEditExtrasFields).
+  assert.match(src, /projectsSave\(Object\.assign\(\{id: e\.id, name, instructions: e\.instructions\}, extra\)\)/);
   assert.match(src, /res && res\.error/, 'the error main returns is shown');
 });

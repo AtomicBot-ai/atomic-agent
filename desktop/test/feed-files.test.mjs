@@ -13,6 +13,9 @@ files:
   - url: Atomic-Agent-${V}-arm64-mac.zip
     sha512: m
     size: 1
+  - url: Atomic-Agent-${V}-x64-mac.zip
+    sha512: n
+    size: 1
 path: Atomic-Agent-${V}-arm64-mac.zip
 sha512: m
 `,
@@ -46,6 +49,8 @@ sha512: r
 const INSTALLERS = [
   `Atomic-Agent-${V}-arm64-mac.zip`,
   `Atomic-Agent-${V}-arm64-mac.zip.blockmap`,
+  `Atomic-Agent-${V}-x64-mac.zip`,
+  `Atomic-Agent-${V}-x64-mac.zip.blockmap`,
   `Atomic-Agent-Setup-${V}-x64.exe`,
   `Atomic-Agent-Setup-${V}-arm64.exe`,
   `Atomic-Agent-${V}-x86_64.AppImage`,
@@ -99,6 +104,13 @@ test("a single Windows job's stable.yml (not merged) is refused", () => {
   const { problems } = checkFeed(...folder({ "stable.yml": single }));
   assert.equal(problems.length, 1);
   assert.match(problems[0], /both the x64 and the arm64 installer/);
+});
+
+test("a single Mac job's stable-mac.yml (not merged) is refused (ATO-1506)", () => {
+  const single = YML["stable-mac.yml"].replace(/  - url: Atomic-Agent-0\.0\.8-x64-mac\.zip\n    sha512: n\n    size: 1\n/, "");
+  const { problems } = checkFeed(...folder({ "stable-mac.yml": single }));
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /both the arm64 and the x64 zip/);
 });
 
 test("update files of different versions are refused", () => {

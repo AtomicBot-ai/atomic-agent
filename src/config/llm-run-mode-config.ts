@@ -1,3 +1,4 @@
+import { parseAgentProfilesConfig, type UserAgentProfilesConfig } from "./agent-profiles-schema.js";
 import { emitConfigNoticeOnce, isSetAsideString } from "./config-primitives.js";
 import { ConfigValidationError } from "./config-validation-error.js";
 
@@ -33,10 +34,11 @@ export type UserLlmFusionConfig = {
    */
   orchestratorProvider?: string;
   /**
-   * Informational pin for the orchestrator model. The wire request
-   * carries no model field — the provider entry's `defaultChatModel` is
-   * what actually serves — so this only overrides what is *displayed*
-   * and priced. Left unset by the TUI.
+   * The orchestrator model. On a provider that serves several models (a
+   * cloud API, LM Studio, Ollama) the orchestrator's requests ask for it
+   * instead of the entry's `defaultChatModel` (ATO-1560); it is also
+   * what is displayed and priced. A `llama-server` entry serves the
+   * model it loaded, so there it is only the label.
    */
   orchestratorModel?: string;
   /**
@@ -45,9 +47,11 @@ export type UserLlmFusionConfig = {
    */
   workerProvider?: string;
   /**
-   * Informational pin for the worker model. The managed daemon serves
-   * whatever `localModels.managed.modelId` names; this only overrides
-   * the label. Left unset by the TUI.
+   * The worker model. On a provider that serves several models (a cloud
+   * API, LM Studio, Ollama) every worker turn asks for it instead of the
+   * entry's `defaultChatModel` (ATO-1560). On a `llama-server` leg the
+   * server serves whatever it loaded (the managed daemon:
+   * `localModels.managed.modelId`), so there it only overrides the label.
    */
   workerModel?: string;
   /**
@@ -267,6 +271,21 @@ export const FUSION_JUDGE_MODES: readonly NonNullable<UserLlmFusionConfig["judge
 export type UserLlmRunModeConfig = {
   mode?: RunModeName;
   fusion?: UserLlmFusionConfig;
+  /**
+   * Subagent profiles written in the settings (ATO-1667), keyed by name:
+   * the same roles as `agents/*.md` files, with `description`, `prompt`
+   * (the file's body), `model` and `tools`. A name follows the file rule
+   * (letters, digits, `-`, `_`; lower-cased). The profile loader reads
+   * them after the user's files and before plugins (ATO-1668).
+   *
+   * A sibling of `fusion`, not inside it: a profile is a role a task is
+   * handed to, wider than the Fusion legs, and a map keyed by name like
+   * Codex `[agents.<name>]` and OpenCode `agent`. It stays under
+   * `llm.runMode` rather than at the top level so the change keeps to
+   * the run-mode owner and the `llm` key lists. See
+   * `agent-profiles-schema.ts`.
+   */
+  agentProfiles?: UserAgentProfilesConfig;
 };
 
 export const RUN_MODE_NAMES: readonly RunModeName[] = [
@@ -725,6 +744,8 @@ export function parseLlmRunModeConfig(
   if (obj.fusion !== undefined) {
     out.fusion = parseFusion(obj.fusion, providers, `${field}.fusion`);
   }
+  const agentProfiles = parseAgentProfilesConfig(obj.agentProfiles, `${field}.agentProfiles`);
+  if (agentProfiles !== undefined) out.agentProfiles = agentProfiles;
   return out;
 }
 

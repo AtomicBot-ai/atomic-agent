@@ -1,0 +1,38 @@
+/* ============================================================
+   ATO-639 — Settings › Diagnostics' Timeline (renderer/trace-view.js).
+   A waterfall: name column indented by depth, a track with the bar placed
+   by start and length against the whole turn, then duration and badges.
+   Composes the kit's tokens; scoped to .trv and .trv-nav.
+   ============================================================ */
+
+.trv-nav .grow{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trv-ask{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-style:italic}
+
+.trv{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;overflow:hidden;
+  max-height:420px;overflow-y:auto;background:var(--well)}
+.trv-row{display:grid;grid-template-columns:minmax(120px,28%) 1fr minmax(150px,auto);align-items:center;gap:10px;
+  min-height:24px;padding:2px 10px;border-top:1px solid var(--line-hair);font-size:var(--fs-cap);color:var(--ink)}
+.trv-row:first-child{border-top:0}
+.trv-row:hover{background:var(--hover)}
+.trv-row--turn{font-weight:600}
+.trv-row--event{color:var(--ink-2)}
+.trv-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;font-family:var(--font-mono);letter-spacing:0}
+.trv-row--turn .trv-name,.trv-row--step .trv-name,.trv-row--event .trv-name{font-family:var(--font-ui)}
+
+.trv-track{position:relative;height:10px;min-width:0}
+.trv-bar{position:absolute;top:1px;height:8px;border-radius:3px;background:var(--ink-3)}
+.trv-row--turn .trv-bar{background:var(--line)}
+.trv-row--step .trv-bar{background:var(--brand-wash-2)}
+.trv-row--llm .trv-bar{background:var(--brand)}
+.trv-row--tool .trv-bar{background:var(--success)}
+.trv-row--warn .trv-bar{background:var(--amber)}
+.trv-row--err .trv-bar{background:var(--critical)}
+.trv-mark{position:absolute;top:0;width:2px;height:10px;margin-left:-1px;background:var(--amber)}
+.trv-row--err .trv-mark{background:var(--critical)}
+
+.trv-meta{display:flex;align-items:center;justify-content:flex-end;gap:6px;white-space:nowrap}
+.trv-dur{font-family:var(--font-mono);letter-spacing:0;color:var(--ink-2)}
+.trv-badge{padding:0 5px;border-radius:5px;background:var(--panel-2);color:var(--ink-2);
+  font:400 var(--fs-micro)/1.6 var(--font-mono);letter-spacing:0}
+.trv-badge--err{background:color-mix(in srgb, var(--critical) 14%, transparent);color:var(--critical)}
+.trv-badge--warn{background:var(--amber-wash);color:var(--amber-text)}

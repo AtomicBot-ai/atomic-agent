@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url);
 const { skillEvalDuration, skillEvalTokens, skillEvalCost, skillEvalSummary, skillEvalHTML } = require("../renderer/workspace-skills.js");
 const {
   skillEvalSupported, skillEvalTasksFile, skillEvalArgs, parseSkillEvalOutput, skillEvalSavedPath,
+  skillEvalCheckArgs, parseSkillEvalCheckTasks,
 } = require("../out/main/skill-eval-cli.js");
 
 const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -125,6 +126,20 @@ test("main: probe from #1307's help, task file and argv", () => {
   assert.equal(skillEvalTasksFile("", () => true), null);
   // Never --no-approval: approvals stay refused, as #1307 does by default.
   assert.deepEqual(skillEvalArgs("guide", "/s/tasks.yaml"), ["skill", "eval", "guide", "--tasks", "/s/tasks.yaml", "--json"]);
+});
+
+test("main: a built-in skill's packaged task set comes from the agent (ATO-1608)", () => {
+  assert.deepEqual(skillEvalCheckArgs("pdf"), ["skill", "eval", "pdf", "--check-tasks"]);
+  const path = "/Applications/Atomic Agent.app/Contents/Resources/agent/starter-skills/pdf/evals/tasks.yaml";
+  // src/cli/skill-eval-command.ts --check-tasks: `<skill>\t<n> tasks\t<path>`.
+  assert.equal(parseSkillEvalCheckTasks(`pdf\t4 tasks\t${path}\n`, "pdf"), path);
+  assert.equal(parseSkillEvalCheckTasks(`pdf\t1 task\t${path}\r\n`, "pdf"), path);
+  assert.equal(parseSkillEvalCheckTasks(`xlsx\t4 tasks\t${path}\n`, "pdf"), null);
+  assert.equal(parseSkillEvalCheckTasks("", "pdf"), null);
+  assert.equal(parseSkillEvalCheckTasks("no tasks file for pdf: pass --tasks <file>\n", "pdf"), null);
+  const ipc = readFileSync(new URL("../main/skill-eval-ipc.ts", import.meta.url), "utf8");
+  // The file beside SKILL.md still wins; the agent is asked only when there is none.
+  assert.match(ipc, /const tasksFile = beside \?\? \(await builtinTasksFile\(name, cwd\)\);/);
 });
 
 // The result document as #1307 writes it (src/skills/eval/eval-result.ts).

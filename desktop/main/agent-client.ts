@@ -13,6 +13,7 @@ import { LineSplitter, lineLevel } from "./agent-output.js";
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor } from "./local-llama-key.js";
 import { chatSessionIdFor } from "./chat-session.js";
+import { incognitoBodyField } from "./incognito-chats.js";
 import { runMemoryWrite, type MemoryWriteResult } from "./memory-write.js";
 import { projectBodyFields as projectFields } from "./projects-store.js";
 import { reasoningBodyField, type ReasoningLevel } from "./reasoning-level.js";
@@ -56,6 +57,7 @@ import {
  *   POST /v1/chat/completions       the agent loop, streamed as SSE
  *   GET  /api/events                SSE stream of approval requests
  *   POST /api/approval/resolve      allow-once | allow-in-chat | allow-always | deny
+ *   POST /api/question/answer       an ask_user question's answer (ATO-1502)
  *
  * The server is bound to 127.0.0.1 on an ephemeral port and gated by a
  * bearer token generated per launch, so nothing outside this app can
@@ -143,6 +145,12 @@ const KILL_WAIT_MS = 3_000;
  * blocking the main thread. It holds the databases while it is there.
  */
 const LINGER_WAIT_MS = 5_000;
+/** ATO-661: the compact POST's body, `{"instructions": …}` only when the person said what to keep. */
+export function compactBody(instructions?: string): string {
+  const keep = typeof instructions === "string" ? instructions.trim() : "";
+  return keep ? JSON.stringify({ instructions: keep }) : "{}";
+}
+
 /**
  * ATO-259: a manual compaction is answered when the summary is written.
  * The agent caps the whole operation at ten minutes by default
@@ -211,6 +219,14 @@ export function requestErrorText(err: unknown): string {
   return detail && !err.message.includes(detail) ? `${err.message} (${detail})` : err.message;
 }
 
+/** ATO-1461: the agent's `GET /api/fallback/local-question` answer (src/runtime/append-local-question.ts). */
+export interface AppendLocalQuestionStatus {
+  question: string | null;
+  detail: string | null;
+  appendLocal: boolean;
+  answer: "keep" | "off" | null;
+}
+
 /** ATO-1250: the agent's `GET /api/project-trust` answer (src/runtime/project-trust.ts). */
 export interface ProjectTrustStatus {
   workingDir: string;
@@ -260,6 +276,17 @@ export interface ApprovalRulesList {
 export interface OfflineModeStatus {
   enabled: boolean;
   egress: { bytesOut: number; requestsOut: number; requestsBlocked: number; since: string } | null;
+}
+
+/**
+ * ATO-1082: Privacy Shield as `GET/POST /api/privacy-shield` reports it.
+ * `masked` is the distinct values (emails, phones, cards, IBANs, keys) the
+ * agent masked before they went to a cloud model, since it started; null
+ * when the agent sent no readable number.
+ */
+export interface PrivacyShieldStatus {
+  enabled: boolean;
+  masked: number | null;
 }
 
 /** The `error.message` of an agent's JSON error body, else the HTTP status. */
@@ -393,11 +420,43 @@ export function commandOf(pid: number): string | null {
   }
 }
 
+/**
+ * ATO-921: `commandOf` without blocking the main process. On Windows the
+ * probe is a cold PowerShell with a CIM query (often 1-3 s, up to the 10 s
+ * timeout on a slow or scanned machine); run synchronously on Electron's main
+ * process it froze the window long enough for Windows to call it
+ * unresponsive. Every caller on a path the window waits on uses this one.
+ */
+export function commandOfAsync(pid: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      const probe = commandLineProbe(process.platform, pid, process.env.SystemRoot);
+      if (probe.kind === "procfs") {
+        resolve(procCmdline(readFileSync(probe.file, "utf8")).trim() || null);
+        return;
+      }
+      execFile(
+        probe.command,
+        probe.args,
+        { encoding: "utf8", timeout: process.platform === "win32" ? 10_000 : 4000, windowsHide: true },
+        (err, stdout) => resolve(err ? null : String(stdout).trim() || null),
+      );
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 /** True when `pid` really is the `atag serve` we recorded on `port`. */
 function looksLikeOurServe(pid: number, port: number): boolean {
   const cmd = commandOf(pid);
   if (!cmd) return false;
   return looksLikeServeCommand(cmd, port);
+}
+
+async function looksLikeOurServeAsync(pid: number, port: number): Promise<boolean> {
+  const cmd = await commandOfAsync(pid);
+  return cmd ? looksLikeServeCommand(cmd, port) : false;
 }
 
 /** A short blocking pause. `/bin/sleep` on macOS, as it always was; there is
@@ -499,6 +558,54 @@ export function reapOrphanedServe(
         sleepSync(100);
       }
       if (looksLikeOurServe(rec.pid, rec.port)) process.kill(rec.pid, "SIGKILL");
+      killed = true;
+    }
+  } catch {
+    /* it exited between the check and the signal — the good outcome */
+  }
+  forgetServeRecord(path);
+  return { pid: rec.pid, killed };
+}
+
+/**
+ * ATO-921: `reapOrphanedServe` for an agent start, which runs while the
+ * window is up. Same decisions in the same order; the probe, the Windows tree
+ * kill and the POSIX wait no longer block the main process. The synchronous
+ * one stays for the boot-time state-dir step, before any window exists.
+ */
+export async function reapOrphanedServeAsync(
+  path: string = serveRecordPath(),
+  own: ReadonlySet<number> = new Set(),
+): Promise<{ pid: number; killed: boolean } | null> {
+  let rec: ServeRecord;
+  try {
+    rec = JSON.parse(readFileSync(path, "utf8")) as ServeRecord;
+  } catch {
+    return null;
+  }
+  if (!rec || typeof rec.pid !== "number" || typeof rec.port !== "number") {
+    forgetServeRecord(path);
+    return null;
+  }
+  if (own.has(rec.pid)) return null;
+  if (!(await looksLikeOurServeAsync(rec.pid, rec.port))) {
+    forgetServeRecord(path);
+    return null;
+  }
+  let killed = false;
+  try {
+    if (process.platform === "win32") {
+      // Awaited before the replacement is spawned: two agents on one state
+      // directory is worse than a slow launch, but the window keeps painting.
+      await taskkillTree(rec.pid);
+      killed = true;
+    } else {
+      process.kill(rec.pid, "SIGTERM");
+      const until = Date.now() + 3000;
+      while (Date.now() < until && (await looksLikeOurServeAsync(rec.pid, rec.port))) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      if (await looksLikeOurServeAsync(rec.pid, rec.port)) process.kill(rec.pid, "SIGKILL");
       killed = true;
     }
   } catch {
@@ -859,7 +966,7 @@ export class AgentClient extends EventEmitter {
        a crash, a SIGKILL — and would otherwise sit there for ever. A child
        this client let go of is not that, and is left alone (reapOrphanedServe). */
     const own = new Set([...this.lingering].map((c) => c.pid).filter((pid): pid is number => pid !== undefined));
-    const orphan = reapOrphanedServe(this.recordPath, own);
+    const orphan = await reapOrphanedServeAsync(this.recordPath, own);
     if (orphan) {
       // Both places a person might look: the Diagnostics pane, and the
       // terminal when the app was started from one.
@@ -1123,7 +1230,10 @@ export class AgentClient extends EventEmitter {
     void (async () => {
       while (!controller.signal.aborted && alive()) {
         try {
-          const res = await fetch(`${this.base()}/api/events`, {
+          // ATO-1492: `?elicitation=1` says this window draws MCP servers'
+          // questions; an agent from before it ignores the parameter and
+          // never sends those frames.
+          const res = await fetch(`${this.base()}/api/events?elicitation=1`, {
             headers: { authorization: `Bearer ${this.authToken()}` },
             signal: controller.signal,
           });
@@ -1131,7 +1241,7 @@ export class AgentClient extends EventEmitter {
           for await (const frame of sseFrames(res.body, controller.signal)) {
             if (frame.data === "[DONE]") continue;
             try {
-              this.emit("approval", JSON.parse(frame.data));
+              this.emit(eventsFrameChannel(frame.event), JSON.parse(frame.data));
             } catch {
               /* ignore malformed frame */
             }
@@ -1288,6 +1398,12 @@ export class AgentClient extends EventEmitter {
   /** `{runs:[{id, attempt, sessionId, startedAt, endedAt, outcome, error, errorCategory}], available}`, newest first. */
   taskRuns = (id: string, limit = 50) =>
     this.request<unknown>("GET", `/api/tasks/${encodeURIComponent(id)}/runs?limit=${encodeURIComponent(String(limit))}`);
+  /* ATO-458 — suggested tasks (ideas-ipc.ts): rebuilt from failed tasks and
+     stopped goals, then accepted (filed as a task) or dismissed for good.
+     404 "no route" on an agent from before them, 404 when tasks are off. */
+  refreshIdeas = () => this.request<unknown>("POST", "/api/ideas/refresh", {});
+  acceptIdea = (id: string) => this.request<unknown>("POST", `/api/ideas/${encodeURIComponent(id)}/accept`, {});
+  dismissIdea = (id: string) => this.request<unknown>("POST", `/api/ideas/${encodeURIComponent(id)}/dismiss`, {});
   health = () => this.json<unknown>("/health");
   /** ATO-134: /health without its llama probe (agent `?llama=0`; an older one ignores it and probes) — for busyTurns before a switch. */
   turnsHealth = () => this.json<unknown>("/health?llama=0");
@@ -1428,6 +1544,32 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-1639: `PUT /api/secrets/{name}` — the running agent saves one key
+   * wherever it keeps keys (`.env`, or the OS keychain when that is on) and
+   * starts using it at once. The value goes only in the request body. Null
+   * when the route is not there (an older agent) or the agent did not
+   * answer, so the caller uses `atag config secrets set` instead.
+   */
+  async putSecret(name: string, value: string | null): Promise<
+    { ok: true; store: "env" | "keychain" } | { ok: false; error: string } | null
+  > {
+    try {
+      const res = await fetch(`${this.base()}/api/secrets/${encodeURIComponent(name)}`, {
+        method: "PUT",
+        headers: this.headers(),
+        body: JSON.stringify({ value }),
+        signal: AbortSignal.timeout(120_000), // a macOS keychain dialog may be waiting for the person
+      });
+      if (res.status === 404) return null;
+      const body = (await res.json().catch(() => ({}))) as { store?: unknown; error?: { message?: string } };
+      if (res.ok) return { ok: true, store: body.store === "keychain" ? "keychain" : "env" };
+      return { ok: false, error: `the agent could not save the key: ${body.error?.message ?? `HTTP ${res.status}`}` };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * ATO-1024: `POST /api/memory/embeddings/reconnect` — have the running agent
    * attach the embedding server it did not find at boot. Null when the agent
    * has no such route or did not answer; never throws.
@@ -1449,6 +1591,11 @@ export class AgentClient extends EventEmitter {
   /** ATO-582: the Memory tab's edit or delete, through the agent's own memory routes (memory-write.ts). Never throws. */
   memoryWrite(op: unknown): Promise<MemoryWriteResult> {
     return runMemoryWrite(op, () => ({ base: this.base(), headers: this.headers() }));
+  }
+
+  /** ATO-1624: where the "My files" routes go (main/my-files.ts calls them). Throws when no agent is running. */
+  filesTarget(): { base: string; headers: Record<string, string> } {
+    return { base: this.base(), headers: this.headers() };
   }
 
   /**
@@ -1522,6 +1669,29 @@ export class AgentClient extends EventEmitter {
       });
       if (!res.ok) return null;
       return (await res.json()) as NonNullable<Awaited<ReturnType<AgentClient["telegramChannel"]>>>;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * ATO-516: `/api/discord/channel` — the Discord bot's live state (up, down,
+   * starting...), the bot's name once Discord said it, and another
+   * atomic-agent on this computer holding the bot. Null on an agent without
+   * the route, or one that is not up; never throws. Never carries the token.
+   */
+  async discordChannel(): Promise<{
+    available: boolean; state: string | null; lastError: string | null; hasToken: boolean;
+    bot: { id: string; username: string | null } | null;
+    otherPoller: { where: "this_computer"; pid: number | null } | null;
+  } | null> {
+    try {
+      const res = await fetch(`${this.base()}/api/discord/channel`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as NonNullable<Awaited<ReturnType<AgentClient["discordChannel"]>>>;
     } catch {
       return null;
     }
@@ -1692,6 +1862,43 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-1152: `POST /api/btw` — a side question beside the chat (`/btw`),
+   * answered with the chat as read-only context, no tools, nothing saved.
+   * The agent's own deadline is 90 s; ten more cover the queue. `supported:
+   * false` on an agent from before the route (404 "No route for", or 501).
+   * Never throws.
+   */
+  async askSideQuestion(
+    question: string,
+    sessionId?: string,
+    timeoutMs = 100_000,
+  ): Promise<{ ok: true; supported: true; text: string } | { ok: false; supported: boolean; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/btw`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({ question, ...(sessionId ? { session_id: sessionId } : {}) }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const text = await res.text();
+      if ((res.status === 404 && /No route for/.test(text)) || res.status === 501) {
+        return { ok: false, supported: false, error: "This agent cannot answer side questions" };
+      }
+      type BtwReply = { text?: unknown; error?: { message?: unknown } };
+      let parsed: BtwReply | null = null;
+      try { parsed = JSON.parse(text) as BtwReply; } catch { /* not JSON */ }
+      if (res.ok && typeof parsed?.text === "string") return { ok: true, supported: true, text: parsed.text };
+      const message = typeof parsed?.error?.message === "string" ? parsed.error.message : `HTTP ${res.status}`;
+      return { ok: false, supported: true, error: message };
+    } catch (err) {
+      if (err && typeof err === "object" && (err as { name?: unknown }).name === "TimeoutError") {
+        return { ok: false, supported: true, error: "timed out" };
+      }
+      return { ok: false, supported: true, error: requestErrorText(err) };
+    }
+  }
+
+  /**
    * ATO-1250: `GET /api/project-trust` — the agent's one-time question about
    * a folder's own skills and instruction files (ATO-298). An agent from
    * before the route answers "No route for", reported as unsupported so the
@@ -1709,6 +1916,45 @@ export class AgentClient extends EventEmitter {
       return { supported: true, ok: true, status: JSON.parse(text) as ProjectTrustStatus };
     } catch (err) {
       return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-1461: `GET /api/fallback/local-question` — the agent's one-time
+   * "Local model is set as your last-resort fallback. Keep it?" question.
+   * An agent from before the route is reported as unsupported, so the
+   * window shows nothing. Never throws.
+   */
+  async appendLocalQuestion(): Promise<{ supported: false } | { supported: true; ok: true; status: AppendLocalQuestionStatus } | { supported: true; ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/fallback/local-question`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
+      return { supported: true, ok: true, status: JSON.parse(text) as AppendLocalQuestionStatus };
+    } catch (err) {
+      return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /** ATO-1461: `POST /api/fallback/local-question` — Keep or Turn off, remembered by the agent. */
+  async answerAppendLocalQuestion(answer: "keep" | "off"): Promise<{ supported: false } | { ok: true; status: AppendLocalQuestionStatus } | { ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/fallback/local-question`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({ answer }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (res.ok) return { ok: true, status: JSON.parse(text) as AppendLocalQuestionStatus };
+      return { ok: false, error: errorMessage(text, res.status) };
+    } catch (err) {
+      return { ok: false, error: requestErrorText(err) };
     }
   }
 
@@ -1790,6 +2036,32 @@ export class AgentClient extends EventEmitter {
    * An agent from before the route (ATO-1084) answers "No route for",
    * reported as unsupported so Settings can say so. Never throws.
    */
+  /**
+   * ATO-1082: `GET /api/privacy-shield`, or with `enabled` a `POST` that
+   * switches it (the agent persists `privacy.shield.enabled` and applies it
+   * to the next cloud request). An agent from before the route answers
+   * "No route for", reported as unsupported. Never throws.
+   */
+  async privacyShield(enabled?: boolean): Promise<{ supported: false } | { supported: true; ok: true; data: PrivacyShieldStatus } | { supported: true; ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/privacy-shield`, {
+        method: enabled === undefined ? "GET" : "POST",
+        headers: this.headers(),
+        ...(enabled === undefined ? {} : { body: JSON.stringify({ enabled }) }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
+      const body = JSON.parse(text) as { enabled?: unknown; masked?: unknown };
+      if (typeof body.enabled !== "boolean") return { supported: true, ok: false, error: "the agent sent no Privacy Shield state" };
+      const masked = typeof body.masked === "number" && Number.isFinite(body.masked) && body.masked >= 0 ? Math.floor(body.masked) : null;
+      return { supported: true, ok: true, data: { enabled: body.enabled, masked } };
+    } catch (err) {
+      return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
   async offlineMode(enabled?: boolean): Promise<{ supported: false } | { supported: true; ok: true; data: OfflineModeStatus } | { supported: true; ok: false; error: string }> {
     try {
       const res = await fetch(`${this.base()}/api/offline-mode`, {
@@ -1958,8 +2230,12 @@ export class AgentClient extends EventEmitter {
    * agent's "busy" (one already running). An agent without the route
    * answers its unknown-route 404 and is reported as unsupported; the
    * route's own 404 is an unknown session.
+   *
+   * ATO-661: `instructions` is what the summary must keep (`/compact <text>`,
+   * core PR #1359). Sent only when there is some; without it the body stays
+   * `{}`, which every agent accepts.
    */
-  async compactSession(sessionId: string): Promise<{
+  async compactSession(sessionId: string, instructions?: string): Promise<{
     ok: boolean; supported: boolean;
     status?: "compacted" | "noop" | "busy" | "failed" | "cancelled";
     tokensBefore?: number; tokensAfter?: number; message?: string; error?: string;
@@ -1969,7 +2245,7 @@ export class AgentClient extends EventEmitter {
       const answer = await postAndWait(
         `${this.base()}/api/sessions/${encodeURIComponent(sessionId)}/compact`,
         this.headers(),
-        "{}",
+        compactBody(instructions),
         signal,
       );
       const res = { status: answer.status, ok: answer.status >= 200 && answer.status < 300 };
@@ -2130,6 +2406,27 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-1629: one of the agent's `/api/import/facts/*` routes (import-facts.ts),
+   * answered as the status and the parsed JSON body; a request that never got one throws.
+   */
+  async importFactsRoute(method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<{ status: number; body: unknown }> {
+    const res = await fetch(`${this.base()}/api/import/facts/${path}`, {
+      method,
+      headers: this.headers(),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    let parsed: unknown = null;
+    try {
+      const raw = await res.text();
+      parsed = raw ? JSON.parse(raw) : null;
+    } catch {
+      /* not JSON */
+    }
+    return { status: res.status, body: parsed };
+  }
+
+  /**
    * ATO-448: continue a chat whose last turn a restart cut off, through the
    * agent's `POST /api/sessions/{id}/resume`. On success the agent hands back
    * the continuing message (a note to check before repeating side effects,
@@ -2206,6 +2503,10 @@ export class AgentClient extends EventEmitter {
              computer's screen, so only its own agent is told it can. A
              remote agent's points belong to another machine. */
           ...(this.remote ? {} : { "x-atomic-screen-overlay": "1" }),
+          /* ATO-1502: this window draws the agent's ask_user question card
+             (renderer/question-card.js), so its turns are offered the tool.
+             An agent without ask_user ignores the header. */
+          "x-atomic-questions": "1",
         },
         // `session_id` continues the session the agent already holds, and is
         // ALWAYS sent: without one the agent derives the id from the first
@@ -2216,6 +2517,8 @@ export class AgentClient extends EventEmitter {
           stream: true,
           messages,
           session_id: chatSessionIdFor(sessionId),
+          // ATO-586: every turn of an incognito chat says so, so an agent restarted under it opens it incognito again.
+          ...incognitoBodyField(sessionId),
           // ATO-731: the folder a NEW session works in; the agent keeps an existing session's own.
           ...(workingDir ? { working_dir: workingDir } : {}),
           ...projectFields(project),
@@ -2377,6 +2680,54 @@ export class AgentClient extends EventEmitter {
     }
   }
 
+  /**
+   * ATO-1502: `POST /api/question/answer` — the answer to an ask_user
+   * question: `{ selected, other? }`, or `{ skip: true }`. The agent checks
+   * it against the question (400 and still open when it does not fit,
+   * 404 once it is no longer pending); the body comes back as is.
+   */
+  async answerQuestion(
+    approvalId: string,
+    answer: { selected?: string[]; other?: string; skip?: boolean },
+  ): Promise<unknown> {
+    const res = await fetch(`${this.base()}/api/question/answer`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ approvalId, ...answer }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    return res.json();
+  }
+
+  /**
+   * ATO-1492: the person's answer to an MCP server's question
+   * (`POST /api/mcp/elicitation/answer`). Never the approval route: the
+   * approval ladder can answer approvals by itself, these only a person.
+   * Resolves `{ok:false, status, error}` on a refusal: 400 keeps the
+   * question open (an answer that does not fit), 404 means it is gone.
+   */
+  async answerMcpElicitation(
+    id: string,
+    action: "accept" | "decline" | "cancel",
+    content?: Record<string, unknown>,
+  ): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+    const res = await fetch(`${this.base()}/api/mcp/elicitation/answer`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ id, action, ...(content ? { content } : {}) }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok) return { ok: true };
+    let error = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (body.error?.message) error = body.error.message;
+    } catch {
+      /* not JSON */
+    }
+    return { ok: false, status: res.status, error };
+  }
+
   async resolveApproval(
     approvalId: string,
     decision: ApprovalDecision,
@@ -2524,6 +2875,17 @@ export class AgentClient extends EventEmitter {
     }
     return false;
   }
+}
+
+/**
+ * Which client event a `GET /api/events` frame becomes. Approval frames
+ * keep the old unnamed / `approval_request` behaviour; an MCP server's
+ * question (ATO-1492) never reaches the approval path.
+ */
+export function eventsFrameChannel(event: string): "approval" | "mcpElicitation" | "mcpElicitationClosed" {
+  if (event === "mcp_elicitation") return "mcpElicitation";
+  if (event === "mcp_elicitation_closed") return "mcpElicitationClosed";
+  return "approval";
 }
 
 /** Minimal SSE frame reader: yields `{event, data}` per blank-line-delimited block. */

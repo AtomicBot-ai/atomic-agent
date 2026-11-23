@@ -30,6 +30,9 @@ import { compileToolAllowlist } from "../../agent-profiles/profile-tools.js";
  */
 export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   "fusion.delegate",
+  // A subagent starts no subagents (ATO-1670). Hidden here; refused by
+  // the tool itself on the caller's session depth.
+  "subagent.run",
   "finish",
   "tasks.schedule",
   "tasks.cron",
@@ -44,6 +47,8 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   "os.screen.click",
   "os.screen.type",
   "os.screen.key",
+  "os.screen.elements",
+  "os.screen.press",
   "os.screen.point",
   // The live checklist is the operator's view of the orchestrator's
   // work (ATO-486); a worker's own list would reach nobody.

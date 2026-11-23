@@ -70,10 +70,26 @@ function composerModelProvider() {
   const leg = composerModelSeat();
   return leg ? fzSeats()[leg === 'worker' ? 'works' : 'plans'].provider : selActiveProviderId();
 }
+/* ATO-1563: a llama.cpp server that is not the built-in one (local-llama) serves the
+   model it loaded and ignores the one a request names, so its seat has no model choice.
+   The entry, or null. LM Studio and Ollama are openai-compatible entries and keep their list. */
+const COMPOSER_SERVER_PICK = 'This server runs the model it has loaded. Change the model on the server itself.';
+function composerForeignLlamaServer(id) {
+  if (!id || id === 'local-llama' || typeof LIVE_CONFIG === 'undefined' || !LIVE_CONFIG || !LIVE_CONFIG.llm) return null;
+  const p = (LIVE_CONFIG.llm.providers || []).find((e) => e.id === id);
+  return p && p.kind === 'llama-server' ? p : null;
+}
 function composerSeatModelRows() {
   const leg = composerModelSeat();
   const id = composerModelProvider();
   const seat = fzSeats()[leg === 'worker' ? 'works' : 'plans'];
+  const server = composerForeignLlamaServer(id);
+  if (server) {
+    // The configured name, not a /props probe: the TUI row reads the entry's chatModel the same way.
+    const loaded = server.defaultChatModel || server.model || '';
+    return [{type:'seatModel', leg, id:loaded, label:loaded ? 'Loaded on the server: ' + loaded : 'Loaded on the server',
+      detail:'Change the model on the server', active:true, disabled:COMPOSER_SERVER_PICK}];
+  }
   if (id === 'local-llama') {
     return [{type:'action', id:'downloadMore', label:'Download more models…', detail:'opens Settings › Models', active:false}]
       .concat(selLocalMatches().filter((m) => m.downloaded).map((m) => ({
@@ -109,6 +125,7 @@ async function composerPickEngine(row) {
   render(); selEnterModelPane();
 }
 async function composerPickSeatModel(row) {
+  if (row.disabled) { toast('Model not changed', row.disabled); return; }
   const held = restartStopsTurn();
   if (held) { restartRefusedToast(held); return; }
   const before = fzBefore('Selecting model…');

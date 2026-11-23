@@ -96,6 +96,38 @@ describe("package managers, known by the binary's path", () => {
       "winget",
     ],
     ["win32", "C:\\Users\\op\\AppData\\Local\\Microsoft\\WinGet\\Links\\atag.exe", "winget"],
+    // mise, archive's top-level <slug>/ kept or stripped (ATO-1485).
+    [
+      "linux",
+      "/home/op/.local/share/mise/installs/github-atomicbot-ai-atomic-agent/0.8.0/linux-x64/atomic-agent",
+      "mise",
+    ],
+    [
+      "darwin",
+      "/Users/op/.local/share/mise/installs/github-AtomicBot-ai-atomic-agent/0.8.0/atomic-agent",
+      "mise",
+    ],
+    [
+      "win32",
+      "C:\\Users\\op\\AppData\\Local\\mise\\installs\\github-atomicbot-ai-atomic-agent\\0.8.0\\atomic-agent.exe",
+      "mise",
+    ],
+    // aqua's package directory: <tag>/<asset>/<slug>/atomic-agent.
+    [
+      "linux",
+      "/home/op/.local/share/aquaproj-aqua/pkgs/github_release/github.com/AtomicBot-ai/atomic-agent/v0.8.0/atomic-agent-linux-x64.tar.gz/linux-x64/atomic-agent",
+      "aqua",
+    ],
+    [
+      "darwin",
+      "/Users/op/.local/share/aquaproj-aqua/pkgs/github_release/github.com/AtomicBot-ai/atomic-agent/v0.8.0/atomic-agent-darwin-arm64.tar.gz/darwin-arm64/atomic-agent",
+      "aqua",
+    ],
+    [
+      "win32",
+      "C:\\Users\\op\\AppData\\Local\\aquaproj-aqua\\pkgs\\github_release\\github.com\\AtomicBot-ai\\atomic-agent\\v0.8.0\\atomic-agent-win32-x64.zip\\atomic-agent.exe",
+      "aqua",
+    ],
   ];
 
   it("names the manager from where its copy lives", () => {
@@ -117,6 +149,13 @@ describe("package managers, known by the binary's path", () => {
       ["darwin", "/opt/homebrew/lib/node_modules/@someone/atag-darwin-arm64/atomic-agent"],
       // The Windows layouts mean nothing on another platform.
       ["linux", "/home/op/scoop/apps/atomic-agent/0.7.1/atomic-agent.exe"],
+      // Another tool under mise or aqua, even one with our binary's name.
+      ["linux", "/home/op/.local/share/mise/installs/node/25.7.0/bin/node"],
+      ["linux", "/home/op/.local/share/mise/installs/github-someone-atomic-agent/1.0.0/atomic-agent"],
+      [
+        "linux",
+        "/home/op/.local/share/aquaproj-aqua/pkgs/github_release/github.com/someone/atomic-agent/v1.0.0/a.tar.gz/atomic-agent",
+      ],
     ];
     for (const [platform, execPath] of others) {
       expect(managerForPath(platform, execPath), execPath).toBeUndefined();
@@ -143,6 +182,8 @@ describe("package managers, known by the binary's path", () => {
     expect(packageUpgradeHint("npm")).toBe("npm install -g atomic-agent@latest");
     expect(packageUpgradeHint("homebrew")).toContain("brew upgrade atag");
     expect(packageUpgradeHint("scoop")).toBe("scoop update atomic-agent");
+    expect(packageUpgradeHint("mise")).toBe("mise upgrade");
+    expect(packageUpgradeHint("aqua")).toContain("aqua.yaml");
     expect(packageUpgradeHint("winget")).toBe("winget upgrade AtomicBot.AtomicAgent.CLI");
   });
 });

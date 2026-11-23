@@ -67,7 +67,9 @@ export function matchDangerousArgv(
     matchXargsRm(segments) ??
     matchRm(segments) ??
     matchNestedShell(segments) ??
-    matchPluginConsent(segments);
+    matchPluginConsent(segments) ??
+    matchSecretsAccess(segments) ??
+    matchSkillDraftConsent(segments);
   if (hit === null) return null;
   return { action: "approval_required", rule: hit.id, reason: hit.reason };
 }
@@ -744,6 +746,63 @@ function matchPluginConsent(
         return {
           id: "dangerous.plugin_code_consent",
           reason: "allow a plugin to run code",
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/** The `config secrets` subcommands that read, overwrite or delete one saved key. */
+const SECRETS_VALUE_VERBS: ReadonlySet<string> = new Set(["get", "set", "unset"]);
+
+/**
+ * The agent touching one saved key through its own CLI: `atomic-agent
+ * config secrets get|set|unset NAME` (ATO-1639). `get` prints the value
+ * from .env or the OS keychain without naming either file, so the
+ * path-based state-secret check never sees it, and output masking does
+ * not survive `| base64`. Only the desktop app and a person run these;
+ * like plugin consent they ask every time below full trust and no `shell`
+ * grant covers them. Matched on the words after `config`, not the binary
+ * name (`atag`, `npx atomic-agent`, `node dist/index.js`).
+ */
+function matchSecretsAccess(
+  segments: readonly (readonly string[])[],
+): ArgvCheck | null {
+  for (const words of segments) {
+    for (let i = 0; i < words.length - 2; i += 1) {
+      if (words[i] !== "config" || words[i + 1] !== "secrets") continue;
+      const verb = words[i + 2];
+      if (verb !== undefined && SECRETS_VALUE_VERBS.has(verb)) {
+        return {
+          id: "dangerous.secrets_value_access",
+          reason: `read or change a saved API key (config secrets ${verb})`,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * The agent approving its own learned skill draft (ATO-67): `atomic-agent
+ * skill learned approve <id>`. A draft is held because the turn that made
+ * it read outside content, and only a person may let it become a live
+ * skill, so this asks every time like `plugin allow-code`. Matched on the
+ * words, not the binary name (`atag`, `node dist/cli/index.js`); the
+ * verb is compared case-insensitively because the command parser is.
+ * `undo`, `discard` and the listing stay on the ordinary path.
+ */
+function matchSkillDraftConsent(
+  segments: readonly (readonly string[])[],
+): ArgvCheck | null {
+  for (const words of segments) {
+    for (let i = 0; i < words.length - 2; i += 1) {
+      if (words[i] !== "skill" || words[i + 1] !== "learned") continue;
+      if (words[i + 2]?.toLowerCase() === "approve") {
+        return {
+          id: "dangerous.skill_draft_consent",
+          reason: "approve a learned skill draft",
         };
       }
     }

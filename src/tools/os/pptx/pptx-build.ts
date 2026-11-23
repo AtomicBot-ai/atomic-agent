@@ -1,4 +1,6 @@
 import JSZip from "jszip";
+import { CHART_WORKBOOK_SHEET, chartWorkbook, chartXml } from "../ooxml/ooxml-chart.js";
+import { packZip } from "../ooxml/ooxml-package.js";
 import {
   PRES_PROPS_XML,
   TABLE_STYLES_XML,
@@ -46,6 +48,8 @@ export interface BuildPptxResult {
   slideCount: number;
   notesCount: number;
   imageCount: number;
+  tableCount: number;
+  chartCount: number;
 }
 
 const EXTENSION: Record<PptxImageInfo["kind"], string> = { png: "png", jpeg: "jpeg", gif: "gif" };
@@ -102,7 +106,9 @@ export async function buildPptx(input: BuildPptxInput): Promise<BuildPptxResult>
   );
 
   let imageCount = 0;
-  spec.slides.forEach((slide, index) => {
+  let chartCount = 0;
+  let tableCount = 0;
+  for (const [index, slide] of spec.slides.entries()) {
     const n = index + 1;
     const rels = [{ id: "rId1", type: "slideLayout", target: "../slideLayouts/slideLayout1.xml" }];
     if (slide.notes !== undefined) {
@@ -128,19 +134,34 @@ export async function buildPptx(input: BuildPptxInput): Promise<BuildPptxResult>
       rels.push({ id: "rId3", type: "image", target: `../media/${media}` });
       placed = { info: picture.info, relId: "rId3", name: picture.name };
     }
-    zip.file(`ppt/slides/slide${n}.xml`, slideXml(slide, palette, placed));
+    if (slide.table !== undefined && !isTitleSlide(slide)) tableCount += 1;
+    let chartRelId: string | undefined;
+    if (slide.chart !== undefined) {
+      // One chart part per chart, its data in an embedded workbook the
+      // way PowerPoint and python-pptx save it.
+      chartCount += 1;
+      const workbook = `Microsoft_Excel_Worksheet${chartCount}.xlsx`;
+      zip.file(`ppt/embeddings/${workbook}`, await chartWorkbook(slide.chart));
+      zip.file(
+        `ppt/charts/chart${chartCount}.xml`,
+        chartXml(slide.chart, { sheet: CHART_WORKBOOK_SHEET, row: 1, col: 1 }, "rId1"),
+      );
+      zip.file(
+        `ppt/charts/_rels/chart${chartCount}.xml.rels`,
+        relationships([{ id: "rId1", type: "package", target: `../embeddings/${workbook}` }]),
+      );
+      chartRelId = "rId4";
+      rels.push({ id: chartRelId, type: "chart", target: `../charts/chart${chartCount}.xml` });
+    }
+    zip.file(`ppt/slides/slide${n}.xml`, slideXml(slide, palette, placed, chartRelId));
     zip.file(`ppt/slides/_rels/slide${n}.xml.rels`, relationships(rels));
-  });
+  }
 
   const deckTitle = spec.title ?? spec.slides[0]?.title ?? "Presentation";
   zip.file("docProps/core.xml", corePropsXml(deckTitle, spec.author ?? "Atomic Agent", input.now ?? new Date()));
   zip.file("docProps/app.xml", appPropsXml(slideCount, notesSlides.length));
-  zip.file("[Content_Types].xml", contentTypesXml(slideCount, notesSlides));
+  zip.file("[Content_Types].xml", contentTypesXml(slideCount, notesSlides, chartCount));
 
-  const data = await zip.generateAsync({
-    type: "nodebuffer",
-    compression: "DEFLATE",
-    compressionOptions: { level: 6 },
-  });
-  return { data, slideCount, notesCount: notesSlides.length, imageCount };
+  const data = await packZip(zip);
+  return { data, slideCount, notesCount: notesSlides.length, imageCount, tableCount, chartCount };
 }

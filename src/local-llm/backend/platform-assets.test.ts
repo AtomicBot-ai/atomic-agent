@@ -12,6 +12,7 @@ import {
   wantedAssetForInstalled,
   WINDOWS_ARM64_BACKEND_ASSET,
   WINDOWS_ARM64_COMPAT_BACKEND_ASSET,
+  WINDOWS_ARM64_NO_BACKEND_MESSAGE,
   type PlatformAsset,
 } from "./platform-assets.js";
 
@@ -155,5 +156,20 @@ describe("acceptable assets (ATO-253)", () => {
     expect(wantedAssetForInstalled(mac, "something-else.zip")).toBe(
       mac.assetName,
     );
+  });
+});
+
+describe("the Windows on ARM sentence (ATO-443)", () => {
+  it("keeps the first sentence the desktop matches on", () => {
+    // desktop/main/agent-cli.ts NO_LOCAL_MODELS_HERE and engine-failure.ts.
+    expect(WINDOWS_ARM64_NO_BACKEND_MESSAGE).toMatch(/^Local models are not available yet for Windows on ARM\. /);
+    expect(WINDOWS_ARM64_NO_BACKEND_MESSAGE).not.toContain("\n");
+  });
+
+  it("points at a cloud model and at the local servers that run there", () => {
+    expect(WINDOWS_ARM64_NO_BACKEND_MESSAGE).toContain("cloud model");
+    expect(WINDOWS_ARM64_NO_BACKEND_MESSAGE).toContain("Foundry Local");
+    expect(WINDOWS_ARM64_NO_BACKEND_MESSAGE).toContain("LM Studio");
+    expect(WINDOWS_ARM64_NO_BACKEND_MESSAGE).not.toContain("\u2014");
   });
 });

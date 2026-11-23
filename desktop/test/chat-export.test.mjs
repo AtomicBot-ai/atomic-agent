@@ -86,7 +86,7 @@ test('the IPC channel is agent:exportSession', () => {
 });
 
 test('the row menu has Export… for a stored chat only, before Delete…', () => {
-  assert.deepEqual(chatMenuItems({ folders: true, exportable: true }).map((i) => i.verb), ['pin', 'unread', 'rename', 'fpick', 'export', 'delask']);
+  assert.deepEqual(chatMenuItems({ folders: true, exportable: true }).map((i) => i.verb), ['pin', 'unread', 'rename', 'fpick', 'export', 'houtopen', 'share', 'recipe:save', 'delask']);
   assert.ok(!chatMenuItems({}).some((i) => i.verb === 'export'));
 });
 

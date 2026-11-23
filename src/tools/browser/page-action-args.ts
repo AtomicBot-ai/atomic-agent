@@ -98,7 +98,7 @@ function parseWait(args: Record<string, unknown>): PageActionInput {
 export function parsePageAction(args: Record<string, unknown>): PageActionInput {
   const action = args.action;
   if (typeof action !== "string" || !(PAGE_ACTIONS as readonly string[]).includes(action)) {
-    fail(`\`action\` must be one of ${PAGE_ACTIONS.join("|")}`);
+    fail(`\`action\` must be one of ${PAGE_ACTIONS.join("|")}|take_over`);
   }
   switch (action as PageActionName) {
     case "select":

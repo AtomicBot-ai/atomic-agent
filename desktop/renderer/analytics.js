@@ -103,7 +103,7 @@ const ANX = (() => {
     'git_remote', 'fusion_fanout', 'browser_nonweb', 'browser_commit', 'browser_secret', 'browser_offsite',
     'trust_config', 'state_secret', 'email', 'fs_read_outside', 'paid_generation', 'screen_control', 'screen_capture',
     'local_model_restart', 'hook_ask', 'http_write', 'browser_site_tool', 'user_question',
-    'session_cross', 'other',
+    'session_cross', 'browser_take_over', 'other',
   ];
   function apprCategory(req) { return APPROVAL_CATEGORY_IDS.includes(req.cat) ? req.cat : 'other'; }
   const apprShownAt = new WeakMap();

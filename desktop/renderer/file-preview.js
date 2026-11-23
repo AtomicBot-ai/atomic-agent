@@ -99,7 +99,8 @@ function fpHtmlDoc(text) {
 }
 
 /* `path` '' while open: the list of the chat's files (ATO-1256). `listed`: the file was picked from that list. */
-const FP = {open: false, path: '', reply: false, listed: false, data: null, view: 'render', seq: 0, timer: 0, blobUrl: '', stamp: '', files: []};
+/* ATO-1628: `cite` the panel was opened from a citation chip; `frag` the PDF viewer's `#page=N`. */
+const FP = {open: false, path: '', reply: false, listed: false, data: null, view: 'render', seq: 0, timer: 0, blobUrl: '', stamp: '', files: [], cite: false, frag: ''};
 
 function fpEsc(s) { return String(s).replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c])); }
 function fpIcon(n) { return typeof ic === 'function' ? ic(n) : ''; }
@@ -112,8 +113,10 @@ function filePreviewOpen(path, opts) {
   const el = fpEl();
   const br = fpBridge();
   if (!el || !br || !br.filePreview || !path) return false;
-  const same = FP.open && FP.path === path;
+  const frag = opts && opts.page > 0 ? '#page=' + Math.floor(opts.page) : '';   // ATO-1628
+  const same = FP.open && FP.path === path && FP.frag === frag;
   FP.open = true; FP.path = path; FP.reply = !!(opts && opts.reply); FP.listed = !!(opts && opts.listed);
+  FP.cite = !!(opts && opts.cite); FP.frag = frag;
   if (!same) { FP.data = null; FP.view = 'render'; }
   el.hidden = false;
   fpApplyWidth();
@@ -230,7 +233,7 @@ function fpPaintHead() {
   const d = FP.data && FP.data.ok ? FP.data : null;
   const name = d ? d.name : String(FP.path).split(/[\\/]/).pop();
   const togglable = d && (d.kind === 'markdown' || d.kind === 'html' || d.kind === 'csv' || d.kind === 'tsv');
-  const meta = d ? [d.kind === 'other' ? (d.ext || 'file').replace(/^\./, '').toUpperCase() : d.kind.toUpperCase(), fpFormatSize(d.size)].filter(Boolean).join(' · ') : '';
+  const meta = d ? [d.kind === 'other' || d.kind === 'office' ? (d.ext || 'file').replace(/^\./, '').toUpperCase() : d.kind.toUpperCase(), fpFormatSize(d.size)].filter(Boolean).join(' · ') : '';
   el.querySelector('.fp-head').innerHTML = '<span class="fp-ic">' + fpIcon('doc') + '</span>'
     + '<span class="fp-title"><span class="fp-name" title="' + fpEsc(d ? d.path : FP.path) + '">' + fpEsc(name) + '</span>'
     + (meta ? '<span class="fp-meta">' + fpEsc(meta) + '</span>' : '') + '</span>'
@@ -279,7 +282,7 @@ function fpPaintBody(html) {
       const bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       FP.blobUrl = URL.createObjectURL(new Blob([bytes], {type: 'application/pdf'}));
-      pdf.src = FP.blobUrl;
+      pdf.src = FP.blobUrl + FP.frag;   // ATO-1628: Chromium's viewer opens at `#page=N`
     } catch (e) { body.innerHTML = fpOtherHtml(FP.data, 'This PDF could not be shown here.'); }
   }
   // HTML: srcdoc set as a property, never parsed into this document.
@@ -328,6 +331,8 @@ function fpMarkdownHtml(text) {
 
 function fpBodyHtml(res) {
   if (!res || res.ok === false) {
+    // ATO-1628: a cited file that is gone says so plainly, not an empty pane.
+    if (FP.cite && res && res.reason === 'missing') return '<div class="fp-msg fp-notfound"><b>File not found</b><br>' + fpEsc(FP.path) + '<br>It may have been moved, renamed or deleted since the agent indexed it.</div>';
     const why = !res ? 'It could not be read.'
       : res.reason === 'outside' ? 'This file is outside the folders the preview can read (your home folder, the agent’s folder, temporary files).'
       : 'It is no longer there.';
@@ -337,6 +342,7 @@ function fpBodyHtml(res) {
   const text = typeof d.text === 'string' ? d.text : '';
   if (d.kind === 'image') return '<div class="fp-img"><img alt="' + fpEsc(d.name) + '" src="' + fpEsc(d.dataUrl || '') + '"></div>';
   if (d.kind === 'pdf') return '<iframe class="fp-frame fp-pdf" data-fp-pdf="1" title="' + fpEsc(d.name) + '"></iframe>';
+  if (d.kind === 'office' && typeof fpOfficeHtml === 'function') return fpOfficeHtml(d);   // ATO-981: office-preview.js
   if (d.kind === 'other') return fpOtherHtml(d, d.note === 'too-large' ? 'too large to preview' : d.note === 'binary' ? 'no preview for this kind of file' : '');
   if (!text) return fpTruncNote(d) + '<div class="fp-msg">The file is empty.</div>';
   const source = FP.view === 'source';

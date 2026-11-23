@@ -4,6 +4,8 @@ import {
   ANSWER_STYLE_HEADER,
   answerChannelForOrigin,
   buildAnswerStyleGuidance,
+  MESSENGER_REPLY_MAX_CHARS,
+  SLACK_REPLY_MAX_CHARS,
   TELEGRAM_REPLY_MAX_CHARS,
   type AnswerChannel,
 } from "./answer-style.js";
@@ -23,7 +25,7 @@ const CAPS: CapabilitiesSummary = {
   hasNotifications: false,
 };
 
-const CHANNELS: readonly AnswerChannel[] = ["terminal", "desktop", "telegram", "discord"];
+const CHANNELS: readonly AnswerChannel[] = ["terminal", "desktop", "telegram", "discord", "slack", "messenger"];
 
 function prefix(answerStyle?: { channel: AnswerChannel; compact: boolean }): string {
   return buildStablePrefix({
@@ -49,6 +51,13 @@ describe("answerChannelForOrigin (ATO-966)", () => {
     expect(answerChannelForOrigin("sidecar")).toBe("desktop");
     expect(answerChannelForOrigin("telegram")).toBe("telegram");
     expect(answerChannelForOrigin("discord")).toBe("discord");
+  });
+
+  it("gives Slack its own style and the phone messengers a shared one (ATO-1508)", () => {
+    expect(answerChannelForOrigin("slack")).toBe("slack");
+    for (const origin of ["imessage", "signal", "matrix"]) {
+      expect(answerChannelForOrigin(origin)).toBe("messenger");
+    }
   });
 
   it("gives no channel where no person reads the reply as chat", () => {
@@ -110,6 +119,29 @@ describe("### answer-style in the stable prefix (ATO-966)", () => {
     }
     expect(buildAnswerStyleGuidance({ channel: "telegram", compact: false })).toContain("`attachments`");
     expect(TELEGRAM_REPLY_MAX_CHARS).toBeLessThan(4096);
+  });
+
+  it("tells Slack and the phone messengers no tables, no headings and their cap (ATO-1508)", () => {
+    const caps: Array<[AnswerChannel, number]> = [
+      ["slack", SLACK_REPLY_MAX_CHARS],
+      ["messenger", MESSENGER_REPLY_MAX_CHARS],
+    ];
+    for (const [channel, cap] of caps) {
+      for (const compact of [false, true]) {
+        const text = buildAnswerStyleGuidance({ channel, compact });
+        expect(text).toContain("no tables");
+        expect(text).toContain(String(cap));
+      }
+      const full = buildAnswerStyleGuidance({ channel, compact: false });
+      expect(full).toContain("no headings");
+    }
+    expect(buildAnswerStyleGuidance({ channel: "slack", compact: false })).toContain("`attachments`");
+    // iMessage, Signal and Matrix do not deliver reply files: never point the model there.
+    for (const compact of [false, true]) {
+      expect(buildAnswerStyleGuidance({ channel: "messenger", compact })).not.toContain("attachments");
+    }
+    // iMessage and Signal split at 2000: one reply stays one bubble.
+    expect(MESSENGER_REPLY_MAX_CHARS).toBeLessThan(2000);
   });
 
   it("keeps the short form short and still covers the same rules", () => {

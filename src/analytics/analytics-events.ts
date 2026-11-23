@@ -15,6 +15,7 @@ export const ANALYTICS_EVENTS = {
   imageGenerated: "image_generated",
   videoGenerated: "video_generated",
   uiAction: "ui_action",
+  updateChecked: "update_checked",
 } as const;
 
 /**
@@ -427,5 +428,55 @@ export function captureUiAction(
   client.capture(ANALYTICS_EVENTS.uiAction, {
     action,
     via: UI_ACTION_VIA.includes(via) ? via : "slash",
+  });
+}
+
+/** Why the latest release's policy says the running version must update. */
+export type UpdateRequiredReason = "broken" | "below-minimum";
+
+const UPDATE_REQUIRED_REASONS: readonly UpdateRequiredReason[] = ["broken", "below-minimum"];
+
+/** A bare `1.2.3` style version, nothing else. */
+const PLAIN_VERSION = /^\d{1,4}\.\d{1,4}\.\d{1,6}(?:-[0-9A-Za-z.-]{1,32})?$/;
+
+/** What one startup update check found (ATO-1007). */
+export interface UpdateCheckedContext {
+  /** Latest release version, without a leading `v`. */
+  latestVersion: string;
+  /** Whether a newer release than the running one exists. */
+  updateAvailable: boolean;
+  /** Set when the release policy requires leaving this version. */
+  requiredReason?: UpdateRequiredReason | null;
+}
+
+/**
+ * Emit `update_checked` after a successful startup update check
+ * (ATO-1007): the "share of users on the current version" metric. The
+ * client already stamps `app_version` on every event; this adds what the
+ * running version cannot know on its own, the latest release at that
+ * moment, so a dashboard reads `on_latest` directly instead of being
+ * edited on every release. `update_required` counts installs still on a
+ * version the release policy lists as broken or below its minimum
+ * (update-policy.ts).
+ *
+ * Fixed words and version strings only. A failed check sends nothing
+ * (offline is not a version). No-ops when analytics is disabled.
+ */
+export function captureUpdateChecked(
+  client: AnalyticsClient | null,
+  context: UpdateCheckedContext,
+): void {
+  if (!client) return;
+  const latest = context.latestVersion.trim().replace(/^v/i, "");
+  if (!PLAIN_VERSION.test(latest)) return;
+  const reason =
+    context.requiredReason && UPDATE_REQUIRED_REASONS.includes(context.requiredReason)
+      ? context.requiredReason
+      : null;
+  client.capture(ANALYTICS_EVENTS.updateChecked, {
+    latest_version: latest,
+    on_latest: !context.updateAvailable,
+    update_required: reason !== null,
+    ...(reason ? { required_reason: reason } : {}),
   });
 }

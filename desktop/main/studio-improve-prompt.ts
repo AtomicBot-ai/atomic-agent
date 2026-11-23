@@ -19,7 +19,7 @@ import {
   chatCompletionsUrl,
   localLlamaUrlFromFile,
   providerIsUsable,
-  resolveKeyValue,
+  resolveKeyValueAsync,
   type ProviderEntry,
   type UserConfigShape,
 } from "./agent-cli.js";
@@ -275,7 +275,7 @@ export async function improvePrompt(deps: ImproveDeps, kind: unknown, prompt: un
   }
 
   const headers: Record<string, string> = { "content-type": "application/json", ...(entry.headers ?? {}) };
-  const key = entry.kind === "llama-server" ? (deps.localKey?.(url) ?? null) : resolveKeyValue(entry);
+  const key = entry.kind === "llama-server" ? (deps.localKey?.(url) ?? null) : await resolveKeyValueAsync(entry); // ATO-1639: a key in the OS keychain too
   if (key && !apiKeyCharsOk(key)) return fail("NO_CHAT_MODEL", "The chat model's API key has a character keys do not have. Check it in Settings.");
   if (key && entry.apiKeyHeader) headers[entry.apiKeyHeader] = key;
   else if (key) headers.authorization = `Bearer ${key}`;

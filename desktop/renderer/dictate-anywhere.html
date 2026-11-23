@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>Dictation</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="css/dictate-anywhere.css">
+</head>
+<body class="da">
+  <!-- ATO-1064: the pill a dictation into any app shows (main/dictate-anywhere-window.ts). -->
+  <div class="da-pill" role="status" aria-live="polite">
+    <span id="da-dot" class="da-dot" aria-hidden="true"></span>
+    <span id="da-text" class="da-text">Listening…</span>
+    <span id="da-hint" class="da-hint" aria-hidden="true"></span>
+    <button id="da-done" class="da-btn" type="button" title="Type it into the app in front">Done</button>
+    <button id="da-cancel" class="da-btn da-btn--x" type="button" title="Throw it away" aria-label="Cancel">×</button>
+  </div>
+  <script src="dictate-anywhere.js"></script>
+</body>
+</html>

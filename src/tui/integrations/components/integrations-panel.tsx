@@ -1,6 +1,8 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { theme } from "../../theme/theme.js";
+import { BrandBadge } from "../../brand/brand-badge.js";
+import { integrationBrand } from "../../brand/brand-badges.js";
 import type {
   IntegrationRow,
   IntegrationsPanelState,
@@ -92,6 +94,9 @@ function ListView({
             >
               {i === panel.selected ? "> " : "  "}
             </Text>
+            {/* ATO-1635: blank for an integration with no brand of its
+                own, so every label starts in the same column. */}
+            <BrandBadge brand={integrationBrand(row.id)} />
             <Text bold={i === panel.selected}>{row.label}</Text>
             <Text color={badgeColor(row.level)}>
               {"  "}
@@ -263,6 +268,11 @@ function hint(panel: IntegrationsPanelState): string {
   if (panel.mode === "detail") {
     const row = panel.rows[panel.selected];
     const field = row?.fields[panel.selectedField];
+    // ATO-1630: nothing to edit on a row without fields; its verbs are listed above.
+    if (!field) {
+      const first = (row?.actions ?? [])[0];
+      return first ? `enter ${first.label} · esc back` : "esc back";
+    }
     const verb =
       field?.kind === "boolean"
         ? "enter toggle"

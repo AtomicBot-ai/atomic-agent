@@ -15,20 +15,37 @@ import { parseStringArrayOrNull } from "./config-values.js";
  */
 export type HttpApprovalMode = "never" | "writes" | "always";
 
+/**
+ * Ask before a URL sends data out in its address (ATO-1377, see
+ * `src/tools/os/web/url-data-guard.ts`).
+ */
+export type UrlDataGuardMode = "off" | "data" | "strict";
+
 export interface RuntimeHttpConfig {
   enabled: boolean;
   approvalMode: HttpApprovalMode;
   hostAllowlist: string[] | null;
   maxResponseBytes: number;
   defaultTimeoutMs: number;
+  /** Absent (older callers, tests) reads as `"data"`. */
+  urlDataGuard?: UrlDataGuardMode;
 }
 
 export interface UserHttpConfig {
+  /** Turns the `os.http.request` tool on. With `false` every call fails as disabled by config. Default `true`. */
   enabled: boolean;
+  /** When `os.http.request` asks for approval: `writes` (default) gates a request that sends data but not a GET, `always` gates every call, `never` gates none. */
   approvalMode: HttpApprovalMode;
+  /** Hosts `os.http.request` may call. `null` (default) allows any host; a list refuses every other host, and `*.example.com` covers `example.com` and its subdomains. */
   hostAllowlist: string[] | null;
+  /** Cap on the response body `os.http.request` returns, in bytes. Default `1048576` (1 MiB). */
   maxResponseBytes: number;
+  /** Timeout of an `os.http.request` call that sets no `timeoutMs` of its own, in milliseconds. Default `30000`. */
   defaultTimeoutMs: number;
+  /**
+   * Ask before `os.web.fetch`, a GET `os.http.request` or the browser opens an address that carries data out (ATO-1377). `"data"` (default) asks only when the address carries a lot of data (a long value after `?`, an encoded blob, text with line breaks); `"strict"` also asks once per site per chat; `"off"` never asks.
+   */
+  urlDataGuard: UrlDataGuardMode;
 }
 
 export function parseHttpApprovalMode(
@@ -67,6 +84,17 @@ function resolveHttpApprovalMode(
   );
 }
 
+export function parseUrlDataGuardMode(
+  raw: unknown,
+  field: string,
+): UrlDataGuardMode {
+  if (raw === "off" || raw === "data" || raw === "strict") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected one of off|data|strict, got ${JSON.stringify(raw)}`,
+  );
+}
+
 export function createHttpDefaults(): UserHttpConfig {
   return {
     enabled: true,
@@ -74,6 +102,7 @@ export function createHttpDefaults(): UserHttpConfig {
     hostAllowlist: null,
     maxResponseBytes: 1_048_576,
     defaultTimeoutMs: 30_000,
+    urlDataGuard: "data",
   };
 }
 
@@ -104,6 +133,10 @@ export function parseHttpConfig(
     defaultTimeoutMs: parsePositiveInt(
       raw.defaultTimeoutMs ?? readDefaults().defaultTimeoutMs,
       "http.defaultTimeoutMs",
+    ),
+    urlDataGuard: parseUrlDataGuardMode(
+      raw.urlDataGuard ?? readDefaults().urlDataGuard,
+      "http.urlDataGuard",
     ),
   };
 }

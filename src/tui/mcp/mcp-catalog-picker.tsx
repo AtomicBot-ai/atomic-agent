@@ -8,6 +8,8 @@ import {
 import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import { theme } from "../theme/theme.js";
+import { BrandBadge } from "../brand/brand-badge.js";
+import { mcpCatalogBrand } from "../brand/brand-badges.js";
 import { handleMcpTabKey } from "./mcp-key-bindings.js";
 import type { McpCatalogPickerState } from "./mcp-panel-state.js";
 
@@ -78,6 +80,9 @@ export function McpCatalogPicker({
                   wrap="truncate-end"
                 >
                   {active ? "> " : "  "}
+                  {/* ATO-1635: the vendor's badge, blank for the
+                      reference servers that have no vendor of their own. */}
+                  <BrandBadge brand={mcpCatalogBrand(entry.id)} />
                   {entry.title.padEnd(20)} {entry.description}
                 </Text>
               </MouseListRow>

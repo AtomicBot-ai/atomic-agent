@@ -18,8 +18,8 @@ function fn(name) {
 }
 
 const NAMES = [
-  "providerHost", "providerFailure", "providerReplied", "turnWaited", "turnFailure",
-  "turnFailureLine", "offlineTurnLine", "localWrongServerLine", "localContextFullLine", "localRequestInvalidLine", "localFailureCode", "localFrameAdvice", "localServerHost", "waitIsLocalServer",
+  "providerHost", "providerFailure", "providerReplied", "turnWaited", "turnFailure", "turnEmptyTwice",
+  "turnFailureLine", "offlineTurnLine", "dailyLimitLine", "localWrongServerLine", "localContextFullLine", "localRequestInvalidLine", "localFailureCode", "localFrameAdvice", "localServerHost", "waitIsLocalServer",
   "selProviders", "selActiveProviderId", "llmBlock", "llmProviders", "llmProvider", "llmLocalModels",
 ];
 
@@ -75,5 +75,16 @@ test("a cloud provider's 404 still reads as no reply from it", () => {
   const said = '"openrouter" answered 404 (not found). The model id or the base URL is likely wrong.';
   const r = row({ kind: "error", category: "transport", error: said });
   assert.equal(r.text, "Couldn't get a reply from OpenRouter.");
+  assert.equal(r.detail, said);
+});
+
+test("ATO-1578: two empty answers from a cloud model read as the agent's phrase", () => {
+  const row = window({ llm: { activeTextProvider: "openrouter", providers: [
+    { id: "openrouter", kind: "openrouter", baseUrl: "https://openrouter.ai/api/v1" },
+  ] } });
+  const said = "the model returned an empty completion twice in a row";
+  const r = row({ kind: "error", category: "model", error: said,
+    payload: { failure: { cause: "empty_response_repeated", phrase: "The model sent back an empty answer twice. Try another model.", action: "switch-model" } } });
+  assert.equal(r.text, "The model sent back an empty answer twice. Try another model.");
   assert.equal(r.detail, said);
 });

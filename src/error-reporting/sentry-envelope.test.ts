@@ -238,6 +238,36 @@ describe("buildEnvelope", () => {
     expect(payload.tags.upstream_error_type).toBe("exceed_context_size_error");
   });
 
+  it("stamps the upstream detail tags and leaves the fingerprint as it was (ATO-1673)", () => {
+    const base: ScrubbedErrorEvent = {
+      errorType: "TransportError",
+      causeType: "OpenAiHttpError",
+      source: "llm_failure",
+      category: "transport",
+      httpStatus: 400,
+      upstreamErrorType: "invalid_request_error",
+      frames: [],
+    };
+    const plain = parseEventPayload(buildEnvelope(DSN, base, META).body);
+    const detailed = parseEventPayload(
+      buildEnvelope(
+        DSN,
+        {
+          ...base,
+          upstreamReason: "empty_content",
+          upstreamErrorParam: "messages[].content[].text",
+          upstreamErrorCode: "invalid_value",
+        },
+        META,
+      ).body,
+    );
+    expect(detailed.tags.upstream_reason).toBe("empty_content");
+    expect(detailed.tags.upstream_error_param).toBe("messages[].content[].text");
+    expect(detailed.tags.upstream_error_code).toBe("invalid_value");
+    expect(plain.tags.upstream_reason).toBeUndefined();
+    expect(detailed.fingerprint).toEqual(plain.fingerprint);
+  });
+
   it("omits upstream_error_type when the scrubbed event has none", () => {
     const ev: ScrubbedErrorEvent = {
       errorType: "TransportError",

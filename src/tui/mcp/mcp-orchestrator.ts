@@ -12,7 +12,7 @@ import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import { getConfig } from "../../config/index.js";
 import { describeUnfilledPlaceholders } from "../../mcp/mcp-catalog.js";
 import type { McpServerConfig } from "../../mcp/mcp-types.js";
-import { McpOAuthFlow } from "../../mcp/mcp-oauth-flow.js";
+import { McpOAuthFlow, type McpOAuthStartResult } from "../../mcp/mcp-oauth-flow.js";
 import type { TuiEventBusEmitter } from "../make-event-bus.js";
 import { openUrlInBrowser } from "../open-url.js";
 import {
@@ -116,6 +116,24 @@ export class McpOrchestrator {
         this.say(`mcp: ${err instanceof Error ? err.message : String(err)}`);
       }
     })();
+  }
+
+  /**
+   * Start a browser sign-in and hand back the result, for a caller that
+   * opens the page itself (the Integrations hub's "Sign in with Monid",
+   * ATO-1630). Same flow as `/mcp auth`, so both see one sign-in in flight.
+   */
+  startSignIn(name: string): Promise<McpOAuthStartResult> {
+    return this.oauth().start(name);
+  }
+
+  /**
+   * Forget a server's browser sign-in and wait for it, for a caller that
+   * reports the result itself (the Integrations hub's Monid Disconnect,
+   * ATO-1630). Same flow as `/mcp signout`.
+   */
+  forgetSignIn(name: string): Promise<void> {
+    return this.oauth().signOut(name);
   }
 
   /** `/mcp signout <name>`: forget a server's browser sign-in. */

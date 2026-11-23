@@ -72,7 +72,8 @@ export function isTrustDirectoryEntry(entry: string): boolean {
 /**
  * Every file in the agent's state that holds a secret or the trust
  * config: the trust surface above, plus the bearer key the managed
- * llama-server is launched with (`resolveApiKeyFilePath`), the session
+ * llama-server is launched with (`resolveApiKeyFilePath`), the API key
+ * `serve` generated for itself (`serveApiKeyPath`), the session
  * records Atomic Chat Core writes with their per-session key
  * (`coreSessionPath`) and the cached Atomic Mail session
  * (`resolveSessionPath`). Reading one of these through an agent tool,
@@ -80,7 +81,7 @@ export function isTrustDirectoryEntry(entry: string): boolean {
  * level 5, never grantable; `src/tools/read-scope/state-secrets.ts`).
  *
  * The file names are spelled here rather than imported because config
- * sits below `local-llm/` and `atomic-mail/`; `config-file.test.ts`
+ * sits below `local-llm/`, `atomic-mail/` and `cli/`; `config-file.test.ts`
  * pins them against the owners' own path helpers so the list cannot
  * drift from where those files really are.
  */
@@ -92,6 +93,7 @@ export function getStateSecretPaths(paths: {
   return [
     ...getTrustConfigPaths(paths),
     join(paths.localModelsDataDir, "llama-server.key"),
+    join(paths.stateDir, "serve-api.key"),
     join(paths.localModelsDataDir, "core", "chat.json"),
     join(paths.localModelsDataDir, "core", "embedding.json"),
     join(paths.stateDir, "atomic-mail", "session.json"),

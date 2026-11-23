@@ -12,6 +12,7 @@ import type { BatchApprovalPosture } from "../tool-resource-class.js";
 import { resourceClassFor, gatedCallRunsUnattended, isBatchable, isSoloRegardlessOfApproval } from "../tool-resource-class.js";
 import { BatchValidationError } from "./step-errors.js";
 import { resolveToolName } from "../tool-name-resolution.js";
+import { resolveBatchToolNames } from "./step-unknown-tools.js";
 import { getConfig } from "../../config/index.js";
 import type { ToolRegistry } from "../../tools/tool-registry.js";
 import { wouldRefuse as planModeWouldRefuse } from "../policies/plan-mode.js";
@@ -69,11 +70,16 @@ export function createStepBatchPolicy(
   // replaces whatever the first one carried. A completion that wrote an
   // invented transcript keeps today's refusal instead — its reply
   // reports work that never happened and is not kept as anything.
+  //
+  // The first thing the step does with a parsed batch, so tool names are
+  // resolved to their registered form here, before this split and every
+  // later check reads them (`resolveBatchToolNames`, ATO-1674).
   let progressNote: ToolCallPayload | null = null;
   const takeProgressNote = (
-    batch: ToolCallBatch,
+    parsedBatch: ToolCallBatch,
     result: CompletionResult,
   ): { batch: ToolCallBatch; note: ToolCallPayload | null } => {
+    const batch = resolveBatchToolNames(ctx, deps, parsedBatch);
     if (fabricationOf(result) !== null) return { batch, note: null };
     // A reply batched only with memory writes is the answer: reordered
     // reply-last, the writes run and the reply ends the turn.

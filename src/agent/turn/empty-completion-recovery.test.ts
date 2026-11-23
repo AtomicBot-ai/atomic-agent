@@ -6,7 +6,9 @@ import { parseSentryDsn } from "../../error-reporting/sentry-config.js";
 import { buildEnvelope } from "../../error-reporting/sentry-envelope.js";
 import {
   EMPTY_COMPLETION_RECOVERY_BUDGET,
+  EMPTY_COMPLETION_RETRY_MAX_DELAY_MS,
   composeEmptyCompletionNotice,
+  emptyCompletionRetryDelayMs,
   formatEmptyCompletionNotice,
   isRecoverableEmptyCompletion,
   repeatedEmptyCompletionError,
@@ -227,5 +229,42 @@ describe("Sentry grouping of a doubled empty", () => {
 describe("EMPTY_COMPLETION_RECOVERY_BUDGET", () => {
   it("buys exactly one retry, so the second empty is terminal", () => {
     expect(EMPTY_COMPLETION_RECOVERY_BUDGET).toBe(1);
+  });
+});
+
+describe("repeatedEmptyCompletionError on a cloud link (ATO-1578)", () => {
+  it("marks the error only when the link is cloud", () => {
+    const first = new ModelError("empty", "model returned empty content", { transport: "native_tools", stage: "initial" });
+    expect(repeatedEmptyCompletionError(first, { cloud: true }).repeatedOnCloud).toBe(true);
+    expect(repeatedEmptyCompletionError(first, { cloud: false }).repeatedOnCloud).toBeUndefined();
+    expect(repeatedEmptyCompletionError(first).repeatedOnCloud).toBeUndefined();
+  });
+});
+
+describe("emptyCompletionRetryDelayMs (ATO-1676)", () => {
+  it("waits 500 ms before the first re-ask", () => {
+    expect(emptyCompletionRetryDelayMs(1)).toBe(500);
+  });
+
+  it("doubles per further attempt and never exceeds the ceiling", () => {
+    expect(emptyCompletionRetryDelayMs(2)).toBe(1_000);
+    expect(emptyCompletionRetryDelayMs(3)).toBe(2_000);
+    expect(emptyCompletionRetryDelayMs(50)).toBe(
+      EMPTY_COMPLETION_RETRY_MAX_DELAY_MS,
+    );
+  });
+
+  it("reads a zero or negative attempt as the first one", () => {
+    expect(emptyCompletionRetryDelayMs(0)).toBe(500);
+    expect(emptyCompletionRetryDelayMs(-3)).toBe(500);
+  });
+
+  it("the whole budget waits less than the ceiling for every attempt", () => {
+    for (let a = 1; a <= EMPTY_COMPLETION_RECOVERY_BUDGET; a += 1) {
+      expect(emptyCompletionRetryDelayMs(a)).toBeGreaterThan(0);
+      expect(emptyCompletionRetryDelayMs(a)).toBeLessThanOrEqual(
+        EMPTY_COMPLETION_RETRY_MAX_DELAY_MS,
+      );
+    }
   });
 });

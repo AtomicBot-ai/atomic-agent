@@ -74,7 +74,9 @@ describe("handleSlackEvent", () => {
   it("runs the turn with the slack origin and a chat answer style", async () => {
     const { ctx, runTurn } = makeCtx();
     await handleSlackEvent(dm("hello"), ctx);
-    expect(runTurn.mock.calls[0]?.[2]).toMatchObject({ origin: "slack", answerChannel: "telegram" });
+    expect(runTurn.mock.calls[0]?.[2]).toMatchObject({ origin: "slack" });
+    // The Slack style comes from the origin now (ATO-1508), not a Telegram stand-in.
+    expect(runTurn.mock.calls[0]?.[2]).not.toHaveProperty("answerChannel");
   });
 
   it("strips the mention and answers in the channel thread", async () => {

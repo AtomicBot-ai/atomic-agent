@@ -3,6 +3,7 @@ import type {
   HuggingFaceGgufChoice,
 } from "../../local-llm/index.js";
 import type { ImportReport } from "../../import/index.js";
+import { t } from "../../i18n/index.js";
 import type { OnboardingImportAgentRow } from "./import-step.js";
 
 /**
@@ -127,29 +128,28 @@ export interface OnboardingChoice {
  * order is asserted by tests so a reshuffle cannot silently remap `1`.
  */
 export const ONBOARDING_CHOICES: readonly OnboardingChoice[] = [
+  // Getters, not values: the text follows the interface language, which
+  // is set at start-up after this module has loaded (ATO-571).
   {
     id: "local",
-    label: "Local models",
-    detail: [
-      "Runs on this machine. Private, no key, free per token.",
-      "Answers in a minute; a bigger model follows on its own.",
-    ],
+    get label() { return t("onboarding.choose.local.label"); },
+    get detail() {
+      return [t("onboarding.choose.local.detail1"), t("onboarding.choose.local.detail2")] as const;
+    },
   },
   {
     id: "cloud",
-    label: "Cloud models",
-    detail: [
-      "OpenRouter, Anthropic, Gemini, Groq and 20 more.",
-      "Fastest to a working agent — needs an API key.",
-    ],
+    get label() { return t("onboarding.choose.cloud.label"); },
+    get detail() {
+      return [t("onboarding.choose.cloud.detail1"), t("onboarding.choose.cloud.detail2")] as const;
+    },
   },
   {
     id: "custom",
-    label: "Custom endpoint",
-    detail: [
-      "An OpenAI-compatible or llama-server URL you already run.",
-      "Nothing is downloaded, nothing else is asked.",
-    ],
+    get label() { return t("onboarding.choose.custom.label"); },
+    get detail() {
+      return [t("onboarding.choose.custom.detail1"), t("onboarding.choose.custom.detail2")] as const;
+    },
   },
 ];
 

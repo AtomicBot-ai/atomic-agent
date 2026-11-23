@@ -16,7 +16,9 @@
    - The sidebar shows each project with its chats, folding like a chat
      folder. A chat filed in an ATO-1034 chat folder stays in that folder.
    - Edit (the pencil on a project's header): its name and its instructions,
-     which main hands the agent with every turn of the project's chats.
+     which main hands the agent with every turn of the project's chats; for a
+     project with a folder also the folder, its own cloud model and the
+     folder's AGENTS.md (ATO-1012, project-edit-extras.js).
    - Removing a project leaves its chats (under Chats) and the folder on disk.
 
    Without the store (an older main, or ATO-42 not in this build) nothing here
@@ -168,12 +170,21 @@ function projectCreateRedraw(patch) {
   render();
 }
 
+/* The system folder picker a project's folder is chosen with, opened at
+   `start` (or the window's folder). The folder, or null. Edit project's
+   Change folder… asks the same one (project-edit-extras.js). */
+async function projectPickFolder(start) {
+  if (typeof BR === 'undefined' || !BR || typeof BR.overnightPickFolder !== 'function') return null;
+  let dir = null;
+  try { dir = await BR.overnightPickFolder(start || (typeof WORKSPACE === 'string' ? WORKSPACE : ''), 'project'); } catch (e) { dir = null; }
+  return typeof dir === 'string' && dir ? dir : null;
+}
+
 async function projectCreatePick() {
   const c = PROJECTS.create;
   if (!c || c.saving || typeof BR === 'undefined' || !BR || typeof BR.overnightPickFolder !== 'function') return;
-  let dir = null;
-  try { dir = await BR.overnightPickFolder(c.folder || (typeof WORKSPACE === 'string' ? WORKSPACE : ''), 'project'); } catch (e) { dir = null; }
-  if (PROJECTS.create !== c || typeof dir !== 'string' || !dir) return;
+  const dir = await projectPickFolder(c.folder);
+  if (PROJECTS.create !== c || !dir) return;
   projectCreateRedraw({folder: dir, name: c.name.trim() ? c.name : projectNameFromDir(dir), error: null});
 }
 
@@ -310,6 +321,7 @@ function projectEditOpen(id) {
   PROJECTS.edit = {id, name: p.name, instructions, shownName: p.name, shownInstructions: instructions, error: null, saving: false};
   S.overlay = 'pedit';
   render();
+  if (p.folder && typeof worktreeLoad === 'function') worktreeLoad(id);   // ATO-576: its worktrees (chat-worktree.js)
   const f = typeof document !== 'undefined' && document.getElementById('pedit-name');
   if (f) f.focus();
 }
@@ -342,12 +354,15 @@ async function projectEditSave() {
   }
   projectEditRedraw({saving: true, error: null});
   let res = null;
-  try { res = await api.projectsSave({id: e.id, name, instructions: e.instructions}); } catch (err) { res = {ok: false, error: String(err && err.message || err)}; }
+  // ATO-1012: a new folder from Change folder… (project-edit-extras.js).
+  const extra = typeof projectEditExtrasFields === 'function' ? projectEditExtrasFields(e) : {};
+  try { res = await api.projectsSave(Object.assign({id: e.id, name, instructions: e.instructions}, extra)); } catch (err) { res = {ok: false, error: String(err && err.message || err)}; }
   if (PROJECTS.edit !== e) return;   // closed meanwhile
   const p = projectFromSave(res);
   if (!p) { projectEditRedraw({saving: false, error: (res && res.error) || 'The project was not saved'}); return; }
   const i = PROJECTS.state.projects.findIndex((x) => x.id === p.id);
   if (i >= 0) PROJECTS.state.projects[i] = p;
+  if (typeof projectEditExtrasSaved === 'function') projectEditExtrasSaved(e, p);   // ATO-1012: the project's model
   PROJECTS.edit = null;
   if (S.overlay === 'pedit') S.overlay = null;
   render();
@@ -360,10 +375,14 @@ function projectEditHTML() {
   const p = projectAny(e.id);
   const body = '<label class="sd-cap" for="pedit-name">Name</label>'
     + '<input id="pedit-name" class="tk-inp" maxlength="' + PROJECT_NAME_MAX + '" value="' + esc(e.shownName) + '"' + (e.saving ? ' disabled' : '') + '>'
-    + (p && p.folder ? '<p class="sd-cap mono" title="' + esc(p.folder) + '">' + esc(p.folder) + '</p>' : '')
+    // ATO-1012: the folder with Change folder…, the model and the folder's AGENTS.md (project-edit-extras.js).
+    + (typeof projectEditFolderHTML === 'function' ? projectEditFolderHTML(e, p)
+      : p && p.folder ? '<p class="sd-cap mono" title="' + esc(p.folder) + '">' + esc(p.folder) + '</p>' : '')
+    + (p && p.folder && typeof worktreeListHTML === 'function' ? worktreeListHTML(e.id) : '')   // ATO-576
     + '<label class="sd-cap" for="pedit-instr">Instructions for every chat in this project</label>'
     + '<textarea id="pedit-instr" class="tk-inp sd-json" rows="8" maxlength="' + PROJECT_INSTRUCTIONS_MAX + '"'
       + ' placeholder="For example: answer in English, run the tests before you say it works."' + (e.saving ? ' disabled' : '') + '>' + esc(e.shownInstructions) + '</textarea>'
+    + (typeof projectEditMoreHTML === 'function' ? projectEditMoreHTML(e, p) : '')
     + (e.error ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(e.error) + '</span></div>' : '');
   return sheet('Edit project', body,
     '<span class="grow"></span><button class="btn btn-s sm" data-act="close">Cancel</button>'
@@ -434,9 +453,10 @@ function projectsSidebarHTML(groups, folders) {
         + head
           + ' title="' + esc(g.name + where + ' · ' + g.rows.length + (g.rows.length === 1 ? ' chat' : ' chats')) + '">'
           + '<span class="sb-fchev">' + ic(shut ? 'chevR' : 'chevD') + '</span>'
-          + '<span class="sb-fic">' + ic('folder') + '</span>'
+          + '<span class="sb-fic">' + (folder && typeof folderGlyphHTML === 'function' ? folderGlyphHTML(g.item, g.rows) : ic('folder')) + '</span>'
           + '<span class="sb-fname">' + esc(g.name) + '</span>'
           + (g.rows.length ? '<span class="ct tnum">' + g.rows.length + '</span>' : '')
+          + (folder || !g.item.folder || typeof worktreeHeadButton !== 'function' ? '' : worktreeHeadButton(g.id))   // ATO-576 (chat-worktree.js)
           + '<span class="sesmore iconbtn" data-act="pedit:' + esc(g.id) + '" title="Edit project" aria-label="Edit project" role="button">' + ic('edit') + '</span>'
           + '<span class="sesmore iconbtn" data-act="pdelask:' + esc(g.id) + '" title="Remove project" aria-label="Remove project" role="button">' + ic('x') + '</span>'
         + '</button>'

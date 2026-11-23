@@ -23,6 +23,7 @@ import type { ApprovalLevel } from "../approval/approval-level.js";
 import type { ApprovalHandler } from "../approval/approval-router.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
+import type { FileIndexApi } from "../tools/files/index.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 import type { ProviderRegistry } from "../llm/provider/index.js";
 import type { ReasoningEffort } from "../llm/provider/completion-types.js";
@@ -49,7 +50,7 @@ import type { MetricSink } from "../tracing/metrics-collector.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { TraceSink } from "../tracing/trace/index.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
-import type { AnalyticsDisabledVia, AnalyticsSurface, UiActionVia } from "../analytics/index.js";
+import type { AnalyticsDisabledVia, AnalyticsSurface, UiActionVia, UpdateCheckedContext } from "../analytics/index.js";
 import type { BrokenPipePolicy } from "../error-reporting/index.js";
 
 
@@ -217,6 +218,27 @@ export interface OfflineModeControl {
    */
   setEnabled(enabled: boolean): Promise<void>;
   egress(): EgressSnapshot;
+}
+
+/**
+ * Live control of Privacy Shield (ATO-1082). `setEnabled` persists
+ * `privacy.shield.enabled` and applies it to the next cloud request.
+ */
+export interface PrivacyShieldControl {
+  isEnabled(): boolean;
+  setEnabled(enabled: boolean): Promise<void>;
+  /**
+   * Distinct values masked: in this process (`masked`, over `sessions`
+   * chats), and in `sessionId`'s chat when one is given (`session`, and
+   * `lastRequest`, how many its latest cloud request carried).
+   */
+  stats(sessionId?: string): PrivacyShieldStats;
+}
+
+export interface PrivacyShieldStats {
+  masked: number;
+  sessions: number;
+  session?: { masked: number; lastRequest: number };
 }
 
 export interface AgentRuntime {
@@ -393,6 +415,12 @@ export interface AgentRuntime {
    * always sets it. See `createOfflineModeControl`.
    */
   readonly offlineMode?: OfflineModeControl;
+  /**
+   * Privacy Shield (ATO-1082). Optional so hand-built runtimes (tests,
+   * embedders) keep compiling; `createAgentRuntime` always sets it. See
+   * `createPrivacyShieldControl`.
+   */
+  readonly privacyShield?: PrivacyShieldControl;
   /**
    * Discord remote-control channel, or `null` when the build never
    * constructed one. Same contract as `telegramChannel`.
@@ -744,6 +772,13 @@ export interface AgentRuntime {
    */
   reconnectMemoryEmbeddings?(): Promise<MemoryEmbeddingReconnect>;
   /**
+   * The "My files" index (ATO-1621): the folders the person added and
+   * the background indexing of them, behind `/api/files/*` and
+   * `files.search`. Optional so test doubles and older hosts need not
+   * have one; the routes answer 501 without it.
+   */
+  fileIndex?: FileIndexApi;
+  /**
    * Register `handler` as the approval sink for `sessionId`. Every
    * `ApprovalRequest` whose `sessionId` matches will be routed to
    * `handler` instead of the host's `onApprovalRequest` fallback.
@@ -803,6 +838,13 @@ export interface AgentRuntime {
    * implement it.
    */
   reportUiAction?(action: string, via: UiActionVia): void;
+  /**
+   * Count one successful startup update check (`update_checked`,
+   * ATO-1007): the latest release and whether this install is on it or
+   * must leave its version. A no-op while analytics is off. Optional so
+   * test doubles and older hosts need not implement it.
+   */
+  reportUpdateChecked?(context: UpdateCheckedContext): void;
   /**
    * The interview invite's view of analytics (ATO-1467): the anonymous
    * shared install id and the whole days since install, or `null` while

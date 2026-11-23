@@ -86,7 +86,8 @@ function tgPairApply(pair, op, res, now) {
 /* Whether the tab should ask again in TG_PAIR_POLL_MS. */
 function tgPairPolling(pair) { return !!pair && pair.phase === 'waiting'; }
 
-/* The pairing card's inside. `ctx`: {howto, note, busy, label, restart?, now?}; `h`: {esc}.
+/* The pairing card's inside. `ctx`: {howto, note, busy, label, restart?, now?}; `h`: {esc, qr?}
+   (`qr(text, label)` → SVG markup, qr-code.js qrSvg by default).
    `now` (epoch ms) shows how long the code has left; the renderer ticks
    [data-tg-countdown] in place between repaints (ATO-516).
    `label` names the start button ('Pair', or the replace wording). `restart` is the
@@ -105,9 +106,14 @@ function tgPairCardHTML(pair, ctx, h) {
       + '<div class="sd-acts" data-tg-link><span class="sd-mono sd-grow" title="' + esc(p.link) + '">' + esc(p.link.replace(/^https:\/\//, '')) + '</span>'
       + '<button class="btn btn-s sm" data-act="telegram:pairCopy">Copy link</button>'
       + '<button class="btn btn-p sm" data-act="telegram:pairOpen">Open in Telegram</button></div>' : '';
+    // ATO-516: the same link as a QR code (qr-code.js), for Telegram on a phone: the camera opens the bot.
+    const qr = h.qr || (typeof qrSvg === 'function' ? qrSvg : null);
+    const svg = p.link && qr ? qr(p.link, 'QR code: open the bot in Telegram') : '';
+    const scan = svg ? '<div class="sd-qr" data-tg-qr>' + svg + '<p class="sd-cap">On your phone: scan this with the camera, then press Start in Telegram.</p></div>' : '';
     return '<div class="sd-paircode" data-tg-code aria-label="Pairing code">' + esc(p.code || '') + '</div>'
       + '<p>' + esc(p.instruction || ('Send /start ' + (p.code || '') + ' to your bot in Telegram.')) + '</p>'
       + link
+      + scan
       + err
       + '<div class="sd-acts"><span class="sd-cap">Waiting for your message…</span>'
       + (left ? '<span class="sd-cap">Expires in <b data-tg-countdown>' + esc(left) + '</b></span>' : '') + '<span class="sd-grow"></span>'

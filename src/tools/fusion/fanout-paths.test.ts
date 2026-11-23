@@ -66,6 +66,27 @@ describe("resolveFanoutScope", () => {
     const scope = resolveFanoutScope([task({ files: ["./src/a.ts"] })], CWD);
     expect(scope).toEqual(["/repo"]);
   });
+
+  it("normalises `..` in an absolute path before taking its directory", () => {
+    // `/a/../b` is `/b`, whose directory `/` is too broad: never the scope.
+    expect(resolveFanoutScope([task({ files: ["/a/../b"] })], CWD)).toEqual([CWD]);
+    // Before the fix the directory `/a/..` passed the breadth check and
+    // collapsed every other root under it.
+    expect(resolveFanoutScope([task({ files: ["/a/../b"] })], CWD)).not.toContain("/a/..");
+    expect(resolveFanoutScope([task({ files: ["/tmp/x/../y/z.ts"] })], CWD).sort()).toEqual(
+      ["/repo", "/tmp/y"],
+    );
+  });
+
+  it("normalises `..` inside the working directory to the directory it names", () => {
+    expect(resolveFanoutScope([task({ files: [`${CWD}/x/../y.ts`] })], CWD)).toEqual([CWD]);
+  });
+
+  it("refuses a relative climb that lands on home or root", () => {
+    const work = `${homedir()}/proj/sub`;
+    expect(resolveFanoutScope([task({ files: ["../../x.ts"] })], work)).toEqual([work]);
+    expect(resolveFanoutScope([task({ files: ["../../../.."] })], work)).toEqual([work]);
+  });
 });
 
 describe("collapseScope", () => {
@@ -96,5 +117,8 @@ describe("collapseScope", () => {
     // the home directory are not scopes, they are the absence of one.
     expect(collapseScope(["/"])).toEqual([]);
     expect(collapseScope([homedir()])).toEqual([]);
+    // However it is written.
+    expect(collapseScope(["/a/.."])).toEqual([]);
+    expect(collapseScope([`${homedir()}/x/..`])).toEqual([]);
   });
 });

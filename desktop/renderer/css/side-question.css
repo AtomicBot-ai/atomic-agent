@@ -1,0 +1,18 @@
+/* ============================================================
+   ATO-1152 — /btw, the side question (renderer/side-question.js). One card
+   above the composer, beside the goal card; closed with its x. Colours come
+   from tokens only.
+   ============================================================ */
+
+.btwcard{display:flex;flex-direction:column;gap:6px;margin:0 4px;padding:8px 10px 10px 12px;border-radius:12px;
+  background:var(--panel-2);box-shadow:inset 0 0 0 1px var(--bd-2);min-width:0}
+.btw-top{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-cap);color:var(--ink-2)}
+.btw-l{flex:none;font-weight:600;color:var(--ink)}
+.btw-q{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.btw-note{flex:none;white-space:nowrap}
+.btw-x{flex:none}
+.btw-body{max-height:240px;overflow:auto;font-size:var(--fs-body, 14px);color:var(--ink);overflow-wrap:anywhere}
+.btw-wait{color:var(--ink-2)}
+.btw-fail{color:var(--critical)}
+.btw-md > :first-child{margin-top:0}
+.btw-md > :last-child{margin-bottom:0}

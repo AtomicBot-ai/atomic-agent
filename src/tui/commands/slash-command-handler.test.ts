@@ -187,6 +187,18 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toBeUndefined();
   });
 
+  it("asks to export the open chat for /export, with the format and path (ATO-1054)", () => {
+    expect(dispatchSlashCommand("/export").chatExport).toEqual({ format: "markdown", path: null });
+    expect(dispatchSlashCommand("/export pdf ~/Documents/trip notes.pdf").chatExport).toEqual({
+      format: "pdf",
+      path: "~/Documents/trip notes.pdf",
+    });
+    const result = dispatchSlashCommand("/export docx");
+    expect(result.chatExport).toEqual({ format: "docx", path: null });
+    expect(result.clearBuffer).toBe(true);
+    expect(result.systemMessage).toBeUndefined();
+  });
+
   it("signals triggerSessionNew for /new", () => {
     const result = dispatchSlashCommand("/new");
     expect(result.triggerSessionNew).toBe(true);
@@ -755,5 +767,16 @@ describe("/enhance", () => {
     expect(bad.vimVerb).toBeUndefined();
     expect(bad.systemMessage).toMatch(/usage: \/vim/);
     expect(dispatchSlashCommand("/vim").forwardAsMessage).toBe(false);
+  });
+});
+
+describe("/learn (ATO-67)", () => {
+  it("hands the parsed command to the caller", () => {
+    expect(dispatchSlashCommand("/learn").learnCommand).toEqual({ kind: "list" });
+    expect(dispatchSlashCommand("/learn undo a1b2c3").learnCommand).toEqual({ kind: "undo", id: "a1b2c3" });
+    expect(dispatchSlashCommand("/learn approve a1b2c3").learnCommand).toEqual({ kind: "approve", id: "a1b2c3" });
+    expect(dispatchSlashCommand("/learn discard a1b2c3").learnCommand).toEqual({ kind: "discard", id: "a1b2c3" });
+    expect(dispatchSlashCommand("/learn show a1b2c3").learnCommand).toEqual({ kind: "show", id: "a1b2c3", json: false });
+    expect(dispatchSlashCommand("/learn nonsense").learnCommand?.kind).toBe("error");
   });
 });

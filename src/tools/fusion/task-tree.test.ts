@@ -9,6 +9,7 @@ import {
   extractSplitProposal,
   hasSplitProposal,
   renderSplitInstructions,
+  treeLimitBreach,
   validateSplitProposal,
   type ExpandSplitsDeps,
   type SplitLimits,
@@ -416,5 +417,47 @@ describe("expandSplits", () => {
       deps,
     );
     expect(spy.mock.calls[0]?.[1]?.inputs).toEqual(["sales.csv"]);
+  });
+});
+
+describe("treeLimitBreach (ATO-1670)", () => {
+  const base = { depth: 0, maxDepth: 1, nodes: 0, maxNodes: 24, adding: 4 };
+
+  it("passes below both caps", () => {
+    expect(treeLimitBreach(base)).toBeUndefined();
+    expect(treeLimitBreach({ ...base, nodes: 20, adding: 4 })).toBeUndefined();
+  });
+
+  it("refuses at the depth cap before looking at the node count", () => {
+    expect(treeLimitBreach({ ...base, depth: 1 })).toEqual({
+      kind: "depth",
+      depth: 1,
+      maxDepth: 1,
+    });
+    expect(treeLimitBreach({ ...base, depth: 1, nodes: 99 })?.kind).toBe("depth");
+  });
+
+  it("refuses a node count over the cap and says the total", () => {
+    expect(treeLimitBreach({ ...base, nodes: 21, adding: 4 })).toEqual({
+      kind: "nodes",
+      total: 25,
+      maxNodes: 24,
+    });
+  });
+
+  it("is the check canSplitAt makes: depth below the cap and room for a minimal split", () => {
+    const tree = new TaskTreeState({ maxDepth: 2, maxNodes: 3 }, "m");
+    tree.addRoots(
+      [{ id: "a", title: "a", instructions: "x" }],
+      undefined,
+    );
+    // 1 node + 2 more = 3: fits.
+    expect(tree.canSplitAt(1)).toBe(true);
+    tree.addRoots(
+      [{ id: "b", title: "b", instructions: "x" }],
+      undefined,
+    );
+    // 2 nodes + 2 more = 4 > 3.
+    expect(tree.canSplitAt(1)).toBe(false);
   });
 });

@@ -83,6 +83,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `http.hostAllowlist` (default `null`).
 - `http.maxResponseBytes` (default `1048576`).
 - `http.defaultTimeoutMs` (default `30000`).
+- `http.urlDataGuard` (default `"data"`: a GET or a page the browser opens asks first when its address carries a lot of data; `"strict"` also asks once per site per chat; `"off"` never asks; ATO-1377).
 
 ## web
 
@@ -139,6 +140,12 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 ## network
 
 - `network.offline` (default `false`): offline mode. Every outbound connection to a host other than this machine (`localhost`, `127.0.0.0/8`, `::1`) is refused; local models keep working. `ATOMIC_AGENT_OFFLINE=1` turns it on for one process. Shell commands and stdio MCP servers are not isolated ([offline mode](../../llm/docs/offline-network.md)).
+- `network.proxy.url` (default `null`, off): your own HTTP(S) proxy, or the local HTTP port of a VPN client (v2ray, Clash, sing-box), for the agent's web traffic: model providers, web search, `os.web.*` and `os.http.request`, remote MCP servers and the browser the agent starts. `http://host:port` or `https://host:port`, with `user:password@` if needed. SOCKS is not supported: use the client's HTTP port. `ATOMIC_AGENT_PROXY` sets it for one process. Not covered: shell commands, your own Chrome when the agent attaches to it, the Telegram bot. Offline mode wins over a proxy.
+- `network.proxy.noProxy` (default `[]`): hosts that go direct (`example.com` also covers its subdomains). This machine always goes direct.
+
+## privacy
+
+- `privacy.shield.enabled` (default `false`): Privacy Shield. Emails, phone numbers, card numbers, IBANs and keys in a request to a cloud model are replaced with placeholders such as `[EMAIL_1]` and put back in the reply and in tool calls on this machine. Local models are never masked ([privacy shield](../../privacy/README.md)).
 
 ## sessions
 
@@ -251,6 +258,8 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `skills.clawhub.apiBase` (default `"https://clawhub.ai"`).
 - `skills.clawhub.browseLimit` (default `100`).
 - `skills.clawhub.nonSuspiciousOnly` (default `true`).
+- `skills.selfLearning.enabled` (default `true`, ATO-67): after a turn of at least `skills.selfLearning.minSteps` model steps, one background model call reviews it and may write a new user skill or patch a learned one it used. The previous version is saved first; `/learn` (TUI) and `atomic-agent skill learned` list the changes, `/learn undo <id>` and `atomic-agent skill learned undo <id>` take one back. A turn that read outside content (web, MCP, email, HTTP) or came from a chat channel or a plain HTTP caller only saves a draft marked "Pending review", used once `/learn approve <id>` (`atomic-agent skill learned approve <id>`) says so; `discard <id>` deletes it. Never touches starter, hub, plugin, shared or project skills. Set `false` to turn it off.
+- `skills.selfLearning.minSteps` (default `10`): model steps a turn needs before it is reviewed, 1 to 1000.
 - `skills.eval.judgeProvider`: unset. A provider id from `llm.providers` that grades `judge` checks in `atomic-agent skill eval` (ATO-1101). Unset, the active text provider grades them when it is a cloud provider; with a local model active, `skill eval` stops with exit 2 until this is set or `ATOMIC_AGENT_JUDGE_URL` is.
 
 ## tui
@@ -260,6 +269,8 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `tui.mouse` (default `true`).
 - `tui.nextStepSuggestions` (default `false`).
 - `tui.vimMode` (default `false`).
+- `tui.language` (default `"auto"`).
+- `tui.verboseSteps` (default `false`).
 - `tui.notify.enabled` (default `true`).
 - `tui.notify.minDurationMs` (default `30000`).
 - `tui.onboarding.completedAt` (default `null`).

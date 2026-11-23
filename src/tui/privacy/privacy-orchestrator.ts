@@ -7,6 +7,7 @@ import {
   readOfflineModeControl,
   snapshotOfflineMode,
 } from "./offline-mode.js";
+import { readPrivacyShieldControl, snapshotPrivacyShield } from "./privacy-shield.js";
 
 /**
  * Only TUI module that persists `analytics.enabled` and hot-applies it
@@ -32,6 +33,7 @@ export class PrivacyOrchestrator {
       analyticsEnabled: getConfig().analytics.enabled,
       sessionGrants: this.runtime.approvals.sessionGrants(),
       offline: snapshotOfflineMode(readOfflineModeControl(this.runtime)),
+      shield: snapshotPrivacyShield(readPrivacyShieldControl(this.runtime)),
     });
     this.bus.emit({
       type: "approval_level_changed",
@@ -69,6 +71,38 @@ export class PrivacyOrchestrator {
       });
     }
     // Re-read either way: the panel shows what the agent says now.
+    this.refresh();
+  }
+
+  /**
+   * Flip Privacy Shield (ATO-1082) through the agent's own control, which
+   * persists `privacy.shield.enabled` and applies it to the next cloud
+   * request. A runtime without it gets a plain line and no state change.
+   */
+  async toggleShield(): Promise<void> {
+    const control = readPrivacyShieldControl(this.runtime);
+    if (!control) {
+      this.bus.emit({
+        type: "privacy_action_settled",
+        error: "privacy shield is not available in this agent build",
+      });
+      return;
+    }
+    this.bus.emit({ type: "privacy_action_started" });
+    try {
+      const next = !control.isEnabled();
+      await control.setEnabled(next);
+      this.bus.emit({
+        type: "privacy_action_settled",
+        message: next ? "privacy shield on" : "privacy shield off",
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.bus.emit({
+        type: "privacy_action_settled",
+        error: `privacy shield toggle failed: ${msg}`,
+      });
+    }
     this.refresh();
   }
 

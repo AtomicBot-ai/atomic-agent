@@ -14,11 +14,17 @@
 </head>
 <body class="mini-chat">
   <header class="mc-head">
-    <span class="mc-title">New chat</span>
+    <span id="mc-title" class="mc-title">New chat</span>
     <button id="mc-open" class="btn btn-s sm" type="button" disabled>Open in big window</button>
   </header>
   <main id="mc-log" class="mc-log" aria-live="polite"></main>
   <div id="mc-wait" class="mc-wait" role="status" hidden><span class="mc-dot" aria-hidden="true"></span><span id="mc-wait-text"></span></div>
+  <!-- ATO-985: the text selected in the app in front when the hotkey opened this window, and what to do with it. -->
+  <section id="mc-sel" class="mc-sel" aria-label="Selected text" hidden>
+    <blockquote id="mc-sel-text" class="mc-chip"></blockquote>
+    <div id="mc-actions" class="mc-actions" role="group" aria-label="Use the selected text"></div>
+    <div id="mc-lang" class="mc-lang" role="menu" aria-label="Translate into" hidden></div>
+  </section>
   <footer class="mc-foot">
     <textarea id="mc-input" class="mc-input" rows="2" spellcheck="true" placeholder="Ask Atomic Agent…" aria-label="Message"></textarea>
     <button id="mc-send" class="btn btn-p sm" type="button" disabled>Send</button>
@@ -28,6 +34,7 @@
   <script src="vendor/purify.js"></script>
   <script src="md-render.js"></script>
   <script src="code-highlight.js"></script>
+  <script src="mini-chat-selection.js"></script>
   <script src="mini-chat.js"></script>
 </body>
 </html>

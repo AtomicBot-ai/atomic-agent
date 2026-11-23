@@ -118,6 +118,7 @@ export interface WebCrawlConfig {
 }
 
 export interface WebSearchConfig {
+  /** Turns the `os.web.search` tool on. With `false` the tool is left out of the catalog and a call fails as disabled. Default `true`. */
   enabled: boolean;
   /**
    * Primary provider. The default `exa` uses its API endpoint when its
@@ -127,7 +128,9 @@ export interface WebSearchConfig {
    * key (ATO-327). Existing configs need no rewrite for that.
    */
   provider: WebSearchProviderName;
+  /** Results a search returns when the call does not ask for a number, 1 to 20. Default `8`. */
   maxResults: number;
+  /** Timeout of one search provider request, in milliseconds. Default `15000`. */
   timeoutMs: number;
   /**
    * Per-runtime result cache TTL in minutes. `0` disables caching. The cache
@@ -162,38 +165,23 @@ export interface WebSearchConfig {
    */
   fallback: WebSearchProviderName[];
   searxng: {
+    /** Base URL of the SearXNG instance the `searxng` provider queries. `null` (default) leaves SearXNG unconfigured, so the search chain skips it. */
     instanceUrl: string | null;
   };
   exa: {
+    /** Exa's keyless MCP endpoint, used when `apiKeyEnv` holds no key. Default `https://mcp.exa.ai/mcp`. */
     endpoint: string;
+    /** Exa's search API URL, used when `apiKeyEnv` holds a key. Default `https://api.exa.ai/search`. */
     apiEndpoint: string;
+    /** Name of the environment variable that holds the Exa API key. Default `EXA_API_KEY`; without a key Exa uses its rate-limited free tier. */
     apiKeyEnv: string;
   };
   brave: {
+    /** Name of the environment variable that holds the Brave Search API key. Default `BRAVE_SEARCH_API_KEY`; without a key the `brave` provider is skipped. */
     apiKeyEnv: string;
   };
 }
 
-/**
- * Declarative binding between an inbound webhook URL path and the task
- * it materialises. Per-webhook config lets operators point external
- * systems (e.g. a GitHub hook, a cron-like SaaS) at atomic-agent
- * without writing code — the HTTP layer turns each hit into a task.
- *
- * `sessionMode` drives session continuity across repeated hits:
- *  - `ephemeral`   — fresh ephemeral session per hit (default when no
- *    schedule is set; matches CLI one-shot behaviour)
- *  - `persistent`  — a single session created on the first hit and
- *    reused forever; sessionId persisted in
- *    `<stateDir>/webhook-sessions.json` keyed by webhook name
- *  - `named`       — explicit `sessionId` supplied by the operator; no
- *    persistence file, no auto-creation
- *
- * `userMessageTemplate` supports `{{body.<json.path>}}` placeholders
- * against the parsed JSON request body. `secret`, when set, is
- * matched against the `x-webhook-secret` request header in addition
- * to the global API-key check.
- */
 export function createWebSearchDefaults(): WebSearchConfig {
   return {
     enabled: true,

@@ -181,6 +181,13 @@ export interface EffectiveConversationCapInput {
    * Tokens consumed by the `### loaded-tools` section (rare tool schemas).
    */
   loadedToolsTokens?: number;
+  /**
+   * The request's native `tools` array (JSON schemas), which a
+   * `native_tools` link sends beside the prompt text (ATO-1678). It
+   * takes window room like any section, so it is subtracted the same
+   * way. Omitted or `0`: the grammar transport, which sends none.
+   */
+  toolSchemaTokens?: number;
   completionMaxTokens: number;
   /**
    * Bounded think block of a local reasoning model that thinks on this
@@ -469,6 +476,7 @@ export function computeEffectiveConversationCap(
     (input.lessonsTokens ?? 0) -
     (input.proceduresTokens ?? 0) -
     (input.loadedToolsTokens ?? 0) -
+    (input.toolSchemaTokens ?? 0) -
     effectiveReplyReserve(
       input.completionMaxTokens,
       input.contextWindow,

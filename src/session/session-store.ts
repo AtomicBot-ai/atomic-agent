@@ -346,6 +346,14 @@ export interface RecentWorkingDirRow {
   updatedAt: number;
 }
 
+/** `metadata.archived` is a literal `true`, as `readSessionArchived` reads it. */
+const IS_ARCHIVED_SQL = `
+SELECT 1 AS hit
+  FROM sessions
+ WHERE id = ?
+   AND json_valid(payload)
+   AND json_type(payload, '$.metadata.archived') = 'true'`;
+
 /**
  * Durable session persistence. The SessionState is serialised as JSON,
  * optimising for developer iteration over schema stability, except for the
@@ -1166,19 +1174,45 @@ export class SessionStore {
   }
 
   /**
+   * Whether the stored row `id` is archived (`metadata.archived: true`,
+   * ATO-1150), read in SQL so the payload is not parsed. The terminal's
+   * history search uses it to keep archived chats out, as the rail does
+   * (ATO-1510).
+   */
+  isArchived(id: string): boolean {
+    return this.db.prepare(IS_ARCHIVED_SQL).get(id) !== undefined;
+  }
+
+  /**
    * Delete the incognito chats whose owning process is gone — the app
    * was killed or crashed before it could close them. Boot only, before
    * this process opens one of its own (see `orphanIncognitoSessionIds`).
    * Returns the deleted ids so the caller can remove their trace files.
+   *
+   * `beforeDelete` runs for each chat before its row goes (ATO-1547: the
+   * runtime drops the chat's tasks there). When it throws, that chat is
+   * kept for the next start, so a crash or a locked file between the two
+   * never leaves the tasks behind with no chat left to find them by.
    */
-  sweepOrphanIncognito(): string[] {
+  sweepOrphanIncognito(beforeDelete?: (id: string) => void): string[] {
     const ids = orphanIncognitoSessionIds(
       this.db,
       this.turnOwnerProbe,
       this.dbIdentity,
     );
-    for (const id of ids) this.delete(id);
-    return ids;
+    const deleted: string[] = [];
+    for (const id of ids) {
+      if (beforeDelete) {
+        try {
+          beforeDelete(id);
+        } catch {
+          continue;
+        }
+      }
+      this.delete(id);
+      deleted.push(id);
+    }
+    return deleted;
   }
 
   delete(id: string): void {

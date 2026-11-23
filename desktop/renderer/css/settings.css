@@ -170,6 +170,12 @@ button.set-search:hover{border-color:var(--bd)}
 .set-skeval{padding:10px 12px;border-radius:8px;margin:10px 0}
 .set-skeval .acts{align-items:center;gap:8px;margin:0}
 .set-skeval p{margin:6px 0 0}
+/* ATO-67: Pending review, learned skills waiting above the skill rows */
+.set-skdrafts{margin-bottom:14px}
+.set-skdraft{display:block;padding:10px 12px}
+.set-skdraft .d{margin:4px 0 0;white-space:normal}
+.set-skdraft .acts{align-items:center;gap:8px;margin:8px 0 0}
+.set-skdsrc{margin:4px 0 10px;padding-left:18px}
 
 /* Empty and loading states */
 .set-empty{padding:40px 20px 28px}
@@ -487,3 +493,12 @@ button.set-search:hover{border-color:var(--bd)}
   font:500 var(--fs-cap)/1.45 var(--font-mono);white-space:pre-wrap;word-break:break-word;max-height:160px;overflow:auto}
 .set-plgfoot{margin:0;font-size:var(--fs-cap);line-height:1.5;color:var(--ink-3)}
 .set-plgfoot .mono{color:var(--ink-2)}
+/* ATO-601: the Tasks tab's "From e-mail" cards (email-tasks.js). */
+.mailtasks{display:flex;flex-direction:column;gap:6px;margin:0 0 14px}
+.mailtasks-head{font-size:var(--fs-label);color:var(--ink-2);font-weight:600;display:flex;gap:8px;align-items:baseline}
+.mailtasks-sub{font-weight:400;color:var(--ink-3)}
+.mailtask{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--bd);border-radius:10px}
+.mailtask-text{flex:1;min-width:0}
+.mailtask-subject{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mailtask-meta{font-size:var(--fs-label);color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mailtask-acts{display:flex;gap:6px;flex:none}

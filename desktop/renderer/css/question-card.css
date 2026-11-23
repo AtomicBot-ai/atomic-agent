@@ -1,0 +1,28 @@
+/* ATO-1502: the agent's ask_user question (renderer/question-card.js).
+   It is an approval card (.appr, chat.css) with option rows in place of
+   Allow / Deny. Tokens are styles.css's. */
+.appr.qc .qc-opts{display:grid;gap:6px;padding-left:42px;min-width:0}
+.appr.qc .qc-opt{display:flex;align-items:flex-start;gap:10px;width:100%;min-width:0;padding:8px 12px;border-radius:var(--r-well);
+  background:var(--well);color:var(--ink);text-align:left;cursor:pointer;box-shadow:inset 0 0 0 1px var(--bd-2);
+  transition:background var(--t-state) var(--ease),box-shadow var(--t-state) var(--ease)}
+.appr.qc .qc-opt:hover{background:var(--hover)}
+.appr.qc .qc-opt.on{box-shadow:inset 0 0 0 1.5px var(--indigo)}
+.appr.qc .qc-opt:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.appr.qc .qc-mark{flex:none;display:grid;place-items:center;width:16px;height:16px;margin-top:2px;border-radius:50%;
+  box-shadow:inset 0 0 0 1.5px var(--ink-3);color:var(--on-strong)}
+.appr.qc .qc-mark.sq{border-radius:4px}
+.appr.qc .qc-opt.on .qc-mark{background:var(--indigo);box-shadow:none}
+.appr.qc .qc-mark svg{width:11px;height:11px}
+.appr.qc .qc-txt{display:grid;gap:2px;min-width:0}
+.appr.qc .qc-lbl{font-size:var(--fs-body);line-height:1.4;font-weight:500;overflow-wrap:anywhere}
+.appr.qc .qc-desc{font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2);overflow-wrap:anywhere}
+.appr.qc .qc-other{padding-left:42px;min-width:0}
+.appr.qc .qc-input{display:block;width:100%;min-height:36px;max-height:160px;resize:vertical;padding:8px 12px;border-radius:var(--r-well);
+  background:var(--well);color:var(--ink);font:inherit;font-size:var(--fs-body);line-height:1.45;border:0;box-shadow:inset 0 0 0 1px var(--bd-2)}
+.appr.qc .qc-input:focus{outline:none;box-shadow:inset 0 0 0 1.5px var(--blue)}
+.appr.qc > .apprrisk{padding-left:42px}
+.appr.qc .appr-yes:disabled{opacity:.5;cursor:default}
+/* the receipt: what was answered, after the verdict */
+.appr.qc-done .qc-recap{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}
+.appr.qc-done .qc-recap::before{content:"\00b7";margin-right:8px;color:var(--ink-3)}
+.appr.qc-done.ok .tk-gly{color:var(--ok)}

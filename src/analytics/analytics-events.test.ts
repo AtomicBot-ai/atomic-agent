@@ -8,6 +8,7 @@ import {
   captureModelConfigured,
   captureOnboardingStep,
   captureUiAction,
+  captureUpdateChecked,
 } from "./analytics-events.js";
 import type { AnalyticsStateStore } from "./analytics-state-store.js";
 
@@ -395,5 +396,56 @@ describe("captureUiAction (ATO-1465)", () => {
 
   it("no-ops when analytics is disabled (null client)", () => {
     expect(() => captureUiAction(null, "/report", "slash")).not.toThrow();
+  });
+});
+
+describe("captureUpdateChecked (ATO-1007)", () => {
+  it("an install on the latest release reports on_latest", () => {
+    const client = fakeClient();
+    captureUpdateChecked(client, { latestVersion: "0.8.0", updateAvailable: false, requiredReason: null });
+    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.updateChecked, {
+      latest_version: "0.8.0",
+      on_latest: true,
+      update_required: false,
+    });
+    expect(ANALYTICS_EVENTS.updateChecked).toBe("update_checked");
+  });
+
+  it("an install on a broken version says it must update and why", () => {
+    const client = fakeClient();
+    captureUpdateChecked(client, { latestVersion: "v0.8.0", updateAvailable: true, requiredReason: "broken" });
+    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.updateChecked, {
+      latest_version: "0.8.0",
+      on_latest: false,
+      update_required: true,
+      required_reason: "broken",
+    });
+  });
+
+  it("sends nothing for a tag that is not a plain version", () => {
+    const client = fakeClient();
+    captureUpdateChecked(client, { latestVersion: "nightly/../x", updateAvailable: true });
+    captureUpdateChecked(client, { latestVersion: "", updateAvailable: false });
+    expect(client.capture).not.toHaveBeenCalled();
+  });
+
+  it("drops an unknown reason instead of sending free text", () => {
+    const client = fakeClient();
+    captureUpdateChecked(client, {
+      latestVersion: "0.8.0",
+      updateAvailable: true,
+      requiredReason: "something else" as never,
+    });
+    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.updateChecked, {
+      latest_version: "0.8.0",
+      on_latest: false,
+      update_required: false,
+    });
+  });
+
+  it("is a no-op while analytics is off", () => {
+    expect(() =>
+      captureUpdateChecked(null, { latestVersion: "0.8.0", updateAvailable: false }),
+    ).not.toThrow();
   });
 });

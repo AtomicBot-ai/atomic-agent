@@ -46,6 +46,23 @@ import type { ProvidersWizardState } from "./providers-wizard-state.js";
 import type { WizardMouseRoute } from "./route-wizard-key.js";
 import { CHECKING_KEY_HINT } from "./providers-wizard-measure.js";
 import { pickListHints, renderPickList } from "./wizard-pick-list.js";
+import { BrandBadge } from "../brand/brand-badge.js";
+import { modelBrand, providerBrand } from "../brand/brand-badges.js";
+
+/**
+ * Brand badges for a pick list's rows (ATO-1635): `brandOf` is asked only
+ * for the rows on screen, so a 300-row catalog never builds 300 badges.
+ * Every row gets the slot, branded or blank, so labels share a column.
+ */
+function brandLeading(
+  ids: readonly string[],
+  brandOf: (id: string) => ReturnType<typeof modelBrand>,
+): (index: number) => ReactElement {
+  return (index) => {
+    const id = ids[index];
+    return <BrandBadge brand={id === undefined ? null : brandOf(id)} />;
+  };
+}
 
 /** Service name for headings: the preset label wins over the raw kind. */
 function providerLabelForWizard(w: ProvidersWizardState): string {
@@ -272,6 +289,7 @@ function CompatChatModelStep(props: {
     return renderPickList({
       title: `Chat model — ${picks.length} ${source}`,
       options: picks.map((id) => ({ label: id })),
+      leading: brandLeading(picks, modelBrand),
       cursor: w.cursor,
       wizard: w,
       ...(props.route === undefined ? {} : { route: props.route }),
@@ -387,9 +405,14 @@ function CatalogChatModelStep(props: {
     "Esc back",
     "Esc clears search, again backs out",
   );
+  const rows = visibleRowsForPhase(w);
   return renderPickList({
     title,
-    options: visibleRowsForPhase(w),
+    options: rows,
+    leading: brandLeading(
+      rows.map((row) => row.id),
+      modelBrand,
+    ),
     cursor: w.cursor,
     wizard: w,
     ...(props.route === undefined ? {} : { route: props.route }),
@@ -430,9 +453,14 @@ export function ProvidersWizard(props: {
     w.mode === "configure" ? `configure ${w.providerId}` : "add provider";
 
   if (w.phase === "pick_kind") {
+    const kindRows = visibleKindRows(w.search);
     return renderPickList({
       title: `LLM provider — ${modeLabel}`,
-      options: visibleKindRows(w.search),
+      options: kindRows,
+      leading: brandLeading(
+        kindRows.map((row) => row.id),
+        providerBrand,
+      ),
       cursor: w.cursor,
       wizard: w,
       ...route,
@@ -503,9 +531,14 @@ export function ProvidersWizard(props: {
       "Esc back",
       "Esc clears search, again backs out",
     );
+    const embeddingRows = visibleRowsForPhase(w);
     return renderPickList({
       title: "Embedding backend",
-      options: visibleRowsForPhase(w),
+      options: embeddingRows,
+      leading: brandLeading(
+        embeddingRows.map((row) => row.id),
+        modelBrand,
+      ),
       cursor: w.cursor,
       wizard: w,
       ...route,

@@ -1265,6 +1265,9 @@ export async function selectComposerEngine(engine: "atomic-core" | "llama-server
   return { ...entered, restart: selected.restart || entered.restart };
 }
 
+/** ATO-1563: the core's words (chat-orchestrator) for a pick on a foreign llama.cpp server. */
+export const FOREIGN_LLAMA_PICK = "This server runs the model it has loaded. Change the model on the server itself.";
+
 /** Pin a model on its own Fusion role without activating the worker as primary. */
 export async function selectFusionModel(leg: "orchestrator" | "worker", modelId: string): Promise<SwitchResult> {
   const requestedAt = stopsMark();
@@ -1279,6 +1282,10 @@ export async function selectFusionModel(leg: "orchestrator" | "worker", modelId:
   const providerId = leg === "worker" ? rm.workerProviderId : rm.orchestratorProviderId;
   const provider = read.config.llm?.providers?.find(p => p.id === providerId);
   if (!provider) return { ok: false, error: "Choose an inference engine first." };
+  // ATO-1563: a llama.cpp server that is not the built-in one serves the model it
+  // loaded and ignores the one a request names. A pick there would only be a label,
+  // and `models use` would restart the built-in model instead, so none is made.
+  if (provider.kind === "llama-server" && provider.id !== LOCAL_ID) return { ok: false, error: FOREIGN_LLAMA_PICK };
   const local = provider.kind === "llama-server";
   if (!local && !providerIsUsable(provider)) return needsKeyFor(provider, provider.id);
   if (!stillWanted()) return superseded;

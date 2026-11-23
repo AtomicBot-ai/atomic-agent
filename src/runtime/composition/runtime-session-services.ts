@@ -6,8 +6,10 @@ import { WEBHOOK_SESSIONS_FILENAME } from "../../http/webhook-session-store.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { ShellJobRegistry } from "../../tools/os/shell/shell-jobs.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
+import type { FileCheckpointStore } from "../../tools/os/fs/fs-checkpoint-store.js";
 import type { createRuntimeTraces } from "./runtime-traces.js";
 import { sweepOrphanIncognitoSessions } from "../incognito-sessions.js";
+import { forgetPrivacyVault, linkPrivacyVault } from "../../privacy/index.js";
 
 export function prepareRuntimeSessionStore(
   config: AtomicAgentConfig,
@@ -53,8 +55,11 @@ export function prepareRuntimeSessionStore(
     });
   }
   // An incognito chat (ATO-586) whose process died before closing it is
-  // deleted now, trace and all. Ones a live window still holds stay.
-  sweepOrphanIncognitoSessions(sessionStore, config.paths.tracesDir, logger);
+  // deleted now, trace and tasks and all (ATO-1547). Ones a live window
+  // still holds stay.
+  sweepOrphanIncognitoSessions(sessionStore, config.paths.tracesDir, logger, config.paths.tasksDbFile, {
+    staleAfterMs: config.tasks.staleAfterMs,
+  });
   // `sessions.sqlite` and the traces beside it are the only state this
   // runtime never shrinks (§"Session retention"). One bounded pass here,
   // opt-in, and wrapped so that a prune can never be the reason a
@@ -103,6 +108,7 @@ export function installRuntimeSessionDelete(
   dropRecorder: ReturnType<typeof createRuntimeTraces>["dropRecorder"],
   shellJobs: Pick<ShellJobRegistry, "endSession">,
   outputSpill?: Pick<ToolOutputSpill, "removeSession">,
+  fileCheckpoints?: Pick<FileCheckpointStore, "removeSession">,
 ) {
   // Drop a session's trace recorder — and stop its detached shell jobs,
   // kept ones included — when the session itself is deleted, so the map
@@ -116,10 +122,19 @@ export function installRuntimeSessionDelete(
     // The full outputs its clipped results were saved to (ATO-663).
     // Best effort and never throws.
     outputSpill?.removeSession(id);
+    // The copies of files taken before the chat's edits (ATO-1501): they
+    // can hold what the user's files said before, so they leave with the
+    // chat instead of waiting for the 30-day sweep. Best effort, async,
+    // and never throws into the delete.
+    if (fileCheckpoints) {
+      void Promise.resolve()
+        .then(() => fileCheckpoints.removeSession(id))
+        .catch(() => undefined);
+    }
     deleteSession(id);
+    // Its Privacy Shield placeholders (ATO-1083), memory only.
+    forgetPrivacyVault(id);
   };
-
-
 }
 
 export function createRuntimeSessionFactories(
@@ -161,10 +176,13 @@ export function createRuntimeSessionFactories(
     meta: FusionWorkerMeta,
     dir?: string,
     inheritWorkspace: boolean = dir !== undefined,
-  ): SessionState => ({
-    ...createFusionWorkerSession({ workingDir: dir ?? workingDir, meta }),
-    ...(inheritWorkspace ? { inheritedWorkspace: true } : {}),
-  });
+  ): SessionState => {
+    const state = createFusionWorkerSession({ workingDir: dir ?? workingDir, meta });
+    // ATO-1083: a cloud worker masks with its chat's Privacy Shield
+    // vault, so the planner and its workers share placeholders.
+    linkPrivacyVault(state.id, meta.parentSessionId);
+    return { ...state, ...(inheritWorkspace ? { inheritedWorkspace: true } : {}) };
+  };
 
   return { createSession, createEphemeralSession };
 }

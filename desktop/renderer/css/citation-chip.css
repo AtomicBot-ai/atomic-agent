@@ -1,0 +1,22 @@
+/* ============================================================
+   Citation chips (ATO-1628): `[report.pdf, p. 12](file:///…#page=12)` in a
+   reply. citation-chip.js draws them; colours come from tokens only, so light
+   and dark follow the theme. Sized like the reply's file chip (.filechip).
+   ============================================================ */
+
+.citechip{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:20px;padding:0 2px 0 6px;vertical-align:middle;
+  border-radius:var(--r-pill);background:var(--well);color:var(--ink);font:500 var(--fs-cap)/20px var(--font-ui);cursor:pointer;
+  transition:background var(--t-state) var(--ease)}
+.citechip:hover{background:var(--brand-wash)}
+.citechip:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+.citechip > svg{flex:none;width:13px;height:13px;color:var(--blue)}
+.citechip .cite-tx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.citechip .cite-open{flex:none;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:var(--r-pill);color:var(--ink-3)}
+.citechip .cite-open svg{width:12px;height:12px}
+.citechip .cite-open:hover{background:var(--hover);color:var(--ink)}
+.citechip .cite-open:focus-visible{outline:2px solid var(--blue);outline-offset:0}
+
+/* The preview's "File not found" for a cited file that is gone. */
+.fp-notfound b{display:inline-block;margin-bottom:4px;font-weight:600;color:var(--ink)}
+
+@media (prefers-reduced-motion: reduce){.citechip{transition:none}}

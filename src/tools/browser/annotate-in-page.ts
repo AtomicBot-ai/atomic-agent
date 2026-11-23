@@ -1,7 +1,7 @@
 /**
  * The annotate overlay (ATO-518): the user clicks elements in the agent's
- * browser window and types a comment for each; the agent reads the pins
- * back with selectors, styles and boxes.
+ * browser window and each one gets a numbered pin; the agent reads the
+ * pins back with selectors, styles and boxes.
  *
  * The scripts are JS source strings run in an isolated world of the page
  * (CDP `Page.createIsolatedWorld`, `annotate-playwright.ts`): they share
@@ -10,12 +10,17 @@
  * shadow root, only trusted (real input) events count, and clicks on the
  * page are swallowed while picking so a pin never presses a button.
  *
- * Known limit: the comment is typed into the page's document, and key and
- * input events are composed, so a page script listening on `window` in
- * the capture phase sees each key as it is typed (it fires before any
- * listener here can stop it). The comment box says so. Moving the typing
- * out of the page (a native prompt answered through the backend's dialog
- * handling, or the agent's own UI) is a possible follow-up. Styles are
+ * No text is typed on the page (ATO-1543). An earlier version had a
+ * comment box in the overlay, but anything typed into the page's document
+ * is visible to the page: key and input events are composed, so a page
+ * listener on `window` in the capture phase sees every key before any
+ * listener here can stop it, and an isolated world or a closed shadow
+ * root does not change that. So the overlay only picks elements; what to
+ * change about each numbered pin is said in the agent's own chat, which
+ * the page cannot reach. Same split as Playwright codegen's picker and
+ * Claude in Chrome: pick in the page, write in the host's UI. The overlay
+ * never focuses anything, so keys keep going wherever the user had them.
+ * Styles are
  * set through `element.style`, never a `<style>` tag or `innerHTML`, so a
  * strict Content-Security-Policy or Trusted Types page still shows it.
  * Strings, not functions: the SEA bundle keeps names and would wrap
@@ -76,7 +81,7 @@ export const ANNOTATE_START_SCRIPT = String.raw`(() => {
     return { started: false, pins: existing.pins.length };
   }
   if (existing && typeof existing.teardown === "function") existing.teardown();
-  const state = { pins: [], nextId: 1, picking: true, host: null, pending: null, render: null, teardown: null };
+  const state = { pins: [], nextId: 1, picking: true, host: null, render: null, teardown: null };
   w[KEY] = state;
 
   const make = (tag, css, text) => {
@@ -100,17 +105,7 @@ export const ANNOTATE_START_SCRIPT = String.raw`(() => {
   toggle.append(toggleLabel, countBadge);
   toggle.setAttribute("aria-pressed", "true");
   bar.append(barText, toggle);
-  const pop = make("div", "position: fixed; display: none; pointer-events: auto; width: 280px; padding: 8px; border-radius: 8px; background: #fff; color: #111; box-shadow: 0 6px 24px rgba(0,0,0,.25); " + FONT);
-  const area = make("textarea", "box-sizing: border-box; width: 100%; height: 72px; resize: vertical; padding: 6px; border: 1px solid #ccc; border-radius: 5px; color: #111; background: #fff; " + FONT);
-  area.placeholder = "What should change here?";
-  area.maxLength = 2000;
-  const note = make("div", "margin-top: 4px; color: #666; font-size: 11px;", "This page can see what you type here: no passwords or secrets.");
-  const row = make("div", "display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px;");
-  const save = make("button", "all: unset; cursor: pointer; padding: 3px 10px; border-radius: 5px; background: " + ACCENT + "; color: #fff; " + FONT, "Save");
-  const cancel = make("button", "all: unset; cursor: pointer; padding: 3px 10px; border-radius: 5px; background: #eee; color: #111; " + FONT, "Cancel");
-  row.append(cancel, save);
-  pop.append(area, note, row);
-  root.append(hl, layer, bar, pop);
+  root.append(hl, layer, bar);
   (doc.body || doc.documentElement).appendChild(host);
 
   const esc = (s) => (w.CSS && typeof w.CSS.escape === "function") ? w.CSS.escape(s) : String(s).replace(/[^A-Za-z0-9_-]/g, (c) => "\\" + c);
@@ -175,13 +170,12 @@ export const ANNOTATE_START_SCRIPT = String.raw`(() => {
     el.style.top = Math.round(rect.top) + "px";
     if (box) { el.style.width = Math.round(rect.width) + "px"; el.style.height = Math.round(rect.height) + "px"; }
   };
-  const closePop = () => { state.pending = null; pop.style.display = "none"; area.value = ""; };
   const render = () => {
-    barText.textContent = state.picking ? "Click an element and write what to change." : "";
+    barText.textContent = state.picking ? "Click elements to pin them, then say in the agent's chat what to change for each number." : "";
     barText.style.display = state.picking ? "" : "none";
     countBadge.textContent = String(state.pins.length);
     toggle.setAttribute("aria-pressed", state.picking ? "true" : "false");
-    toggle.title = state.picking ? "Leave annotate mode (pins stay)" : "Annotate: click elements to comment on them";
+    toggle.title = state.picking ? "Leave annotate mode (pins stay)" : "Annotate: click elements to pin them";
     toggle.style.background = state.picking ? ACCENT : "transparent";
     layer.replaceChildren();
     for (const pin of state.pins) {
@@ -190,7 +184,7 @@ export const ANNOTATE_START_SCRIPT = String.raw`(() => {
       const outline = make("div", "position: fixed; pointer-events: none; box-sizing: border-box; border: 2px dashed " + ACCENT + "; border-radius: 3px;");
       placeAt(outline, true, rect);
       const badge = make("div", "position: fixed; pointer-events: auto; cursor: pointer; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: " + ACCENT + "; color: #fff; text-align: center; transform: translate(-50%, -50%); " + FONT, String(pin.id));
-      badge.title = pin.comment + "  (click to remove)";
+      badge.title = "Pin " + pin.id + " (click to remove)";
       placeAt(badge, false, rect);
       badge.addEventListener("click", (event) => {
         if (!event.isTrusted) return;
@@ -206,36 +200,13 @@ export const ANNOTATE_START_SCRIPT = String.raw`(() => {
   toggle.addEventListener("click", (event) => {
     if (!event.isTrusted) return;
     state.picking = !state.picking;
-    closePop();
     render();
   });
-  cancel.addEventListener("click", (event) => { if (event.isTrusted) closePop(); });
-  const commit = () => {
-    if (!state.pending) return;
-    const comment = area.value.trim();
-    if (comment && state.pins.length < MAX_PINS) {
-      state.pins.push({ id: state.nextId, comment: comment.slice(0, 2000), el: state.pending, facts: factsOf(state.pending) });
-      state.nextId += 1;
-    }
-    closePop();
-    render();
-  };
-  save.addEventListener("click", (event) => { if (event.isTrusted) commit(); });
-  // Stops the page's bubble-phase handlers (its shortcuts) from reacting to
-  // the comment. It does NOT hide the keys: a capture listener on window
-  // ran before this one (see the known limit above).
-  for (const type of ["keydown", "keyup", "keypress", "input"]) {
-    area.addEventListener(type, (event) => {
-      event.stopPropagation();
-      if (type === "keydown" && event.key === "Escape") closePop();
-      if (type === "keydown" && event.isTrusted && event.key === "Enter" && (event.metaKey || event.ctrlKey)) commit();
-    });
-  }
 
   const outside = (event) => event.isTrusted && event.target !== host && !(event.target && host.contains(event.target));
   const pickable = (target) => target && target.nodeType === 1 && target !== doc.documentElement && target !== doc.body;
   const onMove = (event) => {
-    if (!state.picking || state.pending || !outside(event) || !pickable(event.target)) { if (!state.pending) hl.style.display = "none"; return; }
+    if (!state.picking || !outside(event) || !pickable(event.target)) { hl.style.display = "none"; return; }
     placeAt(hl, true, event.target.getBoundingClientRect());
     hl.style.display = "block";
   };
@@ -249,16 +220,11 @@ export const ANNOTATE_START_SCRIPT = String.raw`(() => {
     event.preventDefault();
     event.stopImmediatePropagation();
     if (!pickable(event.target)) return;
-    state.pending = event.target;
-    const rect = event.target.getBoundingClientRect();
-    placeAt(hl, true, rect);
-    hl.style.display = "block";
-    const left = Math.min(Math.max(8, rect.left), Math.max(8, w.innerWidth - 296));
-    const top = rect.bottom + 8 + 140 < w.innerHeight ? rect.bottom + 8 : Math.max(8, rect.top - 148);
-    pop.style.left = Math.round(left) + "px";
-    pop.style.top = Math.round(top) + "px";
-    pop.style.display = "block";
-    area.focus();
+    if (state.pins.some((pin) => pin.el === event.target)) return;
+    if (state.pins.length >= MAX_PINS) return;
+    state.pins.push({ id: state.nextId, el: event.target, facts: factsOf(event.target) });
+    state.nextId += 1;
+    render();
   };
   let frame = 0;
   const onScroll = () => {
@@ -300,7 +266,7 @@ export const ANNOTATE_READ_SCRIPT = String.raw`(() => {
     const attached = pin.el.isConnected;
     let facts = pin.facts;
     if (attached) { try { facts = state.factsOf(pin.el); } catch (e) { facts = pin.facts; } }
-    return Object.assign({ id: pin.id, comment: pin.comment, attached: attached }, facts);
+    return Object.assign({ id: pin.id, attached: attached }, facts);
   });
   return { active: true, picking: state.picking === true, pins: pins };
 })()`;

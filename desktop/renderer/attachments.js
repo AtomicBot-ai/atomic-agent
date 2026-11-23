@@ -22,9 +22,10 @@
    longest edge, WebP re-encoded). */
 
 const ATT_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
-// Audio is not sent as a file: on macOS 26 it can be transcribed (ATO-1074, transcribe.js),
-// elsewhere the chip says it is not supported. The list is what AVAudioFile opens.
-const ATT_AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'm4a', 'aac', 'aif', 'aiff', 'caf']);
+// Audio is not sent as a file: it can be transcribed on this computer (ATO-1074, transcribe.js;
+// Apple's speech on macOS 26, whisper.cpp on Windows and Linux, ATO-1076). The list is what
+// AVAudioFile opens plus what whisper.cpp hears through ffmpeg; main refuses a type its engine cannot read.
+const ATT_AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'm4a', 'aac', 'aif', 'aiff', 'caf', 'flac', 'ogg', 'oga', 'opus', 'wma']);
 const ATT_DOCUMENT_EXTENSIONS = new Set([
   // Documents
   'pdf', 'docx', 'txt', 'md', 'csv', 'xlsx', 'xls', 'ods', 'pptx', 'html', 'htm',
@@ -132,7 +133,7 @@ const ATT_INBOX_PATH = /[\\/]inbox[\\/][a-z0-9_-]+[\\/]\d{4}-\d{2}-\d{2}[\\/]\d{
  * that does not parse): such a message is drawn as typed.
  */
 function attSplitMessage(text) {
-  const s = String(text || '');
+  const s = attMentionTyped(String(text || ''));
   const at = s.lastIndexOf('\n\n[attachments]\n');
   if (at < 0) return null;
   const lines = s.slice(at + '\n\n[attachments]\n'.length).split('\n');
@@ -155,6 +156,11 @@ function attSplitMessage(text) {
   if (!items.some((i) => !i.failed)) return null;
   const head = s.slice(0, at);
   return {caption: ATT_STANDIN.test(head) ? '' : head, items};
+}
+/* ATO-1597: the text without its `<mentioned-files>` block (file-mentions.js), so the
+   attachments block in front of it still parses and nothing puts the files back twice. */
+function attMentionTyped(text) {
+  return typeof fmTypedText === 'function' ? fmTypedText(text) : text;
 }
 /** The inbox name without its `HHMMSS-` stamp (and `-2` collision suffix stays). */
 function attDisplayName(base) {
@@ -422,7 +428,7 @@ function attClearSent() {
  */
 function attToEditor(text) {
   const split = attSplitMessage(text);
-  if (!split) return text;
+  if (!split) return attMentionTyped(text);
   for (const it of split.items) {
     if (it.failed || ATT.items.some((i) => i.saved && i.saved.path === it.path)) continue;
     ATT.items.push({id: 'att' + (++ATT.seq), key: it.path, name: it.name, size: 0, method: 'restored',
@@ -440,7 +446,7 @@ function attParseSize(text) {
 /** What a person reads of a message: its caption, or a word for its files when it has none. */
 function attPlainText(text) {
   const split = attSplitMessage(text);
-  if (!split) return text;
+  if (!split) return attMentionTyped(text);
   if (split.caption) return split.caption;
   const n = split.items.filter((i) => !i.failed).length;
   return n === 1 ? '(1 file)' : '(' + n + ' files)';
@@ -448,7 +454,7 @@ function attPlainText(text) {
 /** A queued message's tray line: its caption, and how many files ride with it. */
 function attQueueLabel(text) {
   const split = attSplitMessage(text);
-  if (!split) return text;
+  if (!split) return attMentionTyped(text);
   const n = split.items.filter((i) => !i.failed).length;
   return (split.caption ? split.caption + ' · ' : '') + n + (n === 1 ? ' file' : ' files');
 }
@@ -538,9 +544,12 @@ function attImgCache(path) {
  * alone, exactly as before.
  */
 function attUserBody(text) {
+  // ATO-1597: the @-mentioned files are a line each under the bubble, never the raw block.
+  const fm = typeof fmSplitBlock === 'function' ? fmSplitBlock(text) : null;
+  const files = fm ? fmSentHTML(fm.files) : '';
   const split = attSplitMessage(text);
-  if (!split) return '<div class="prose usr bubble">' + esc(text) + '</div>';
-  return (split.caption ? '<div class="prose usr bubble">' + esc(split.caption) + '</div>' : '')
+  if (!split) return '<div class="prose usr bubble">' + esc(fm ? fm.typed : text) + '</div>' + files;
+  return (split.caption ? '<div class="prose usr bubble">' + esc(split.caption) + '</div>' : '') + files
     + '<div class="attsent">' + split.items.map(attSentChipHTML).join('') + '</div>';
 }
 function attSentChipHTML(it) {

@@ -109,4 +109,61 @@ describe("/api/memory notes and profile (ATO-1124)", () => {
     expect((await send("/api/memory/profile/nope", "DELETE")).status).toBe(404);
     expect((await send("/api/memory/profile/city", "PATCH", { value: 1 })).status).toBe(400);
   });
+  it("turns one note off and on with PATCH, and lists it marked (ATO-1124)", async () => {
+    const notes = harness.runtime.notesStore;
+    const note = notes.store({ content: "the user is allergic to peanuts" });
+
+    const off = await send(`/api/memory/notes/${note.id}`, "PATCH", { disabled: true });
+    expect(off.status).toBe(200);
+    const offBody = (await off.json()) as { note: NoteBody & { disabled: boolean; disabledAt: number | null } };
+    expect(offBody.note).toMatchObject({ id: note.id, content: "the user is allergic to peanuts", disabled: true });
+    expect(typeof offBody.note.disabledAt).toBe("number");
+    expect(notes.recall("peanuts")).toEqual([]);
+
+    const listed = (await (await fetch(`${harness.baseUrl}/api/memory/notes`)).json()) as {
+      notes: Array<{ id: number; disabled: boolean }>;
+    };
+    expect(listed.notes).toEqual([expect.objectContaining({ id: note.id, disabled: true })]);
+
+    const on = await send(`/api/memory/notes/${note.id}`, "PATCH", { disabled: false });
+    expect(((await on.json()) as { note: { disabled: boolean; disabledAt: number | null } }).note).toMatchObject({
+      disabled: false,
+      disabledAt: null,
+    });
+    expect(notes.recall("peanuts").map((e) => e.id)).toEqual([note.id]);
+
+    expect((await send(`/api/memory/notes/${note.id}`, "PATCH", { disabled: "yes" })).status).toBe(400);
+    expect((await send(`/api/memory/notes/${note.id}`, "PATCH", {})).status).toBe(400);
+    expect((await send("/api/memory/notes/999999", "PATCH", { disabled: true })).status).toBe(404);
+  });
+
+  it("turns one profile fact off with PATCH: listed, not in the prompt (ATO-1124)", async () => {
+    const profile = harness.runtime.profileStore;
+    profile.set("diet", "vegetarian");
+
+    const off = await send("/api/memory/profile/diet", "PATCH", { disabled: true });
+    expect(off.status).toBe(200);
+    expect(((await off.json()) as { fact: FactBody & { disabled: boolean } }).fact).toMatchObject({
+      key: "diet",
+      value: "vegetarian",
+      disabled: true,
+    });
+    expect(profile.listForPrompt().map((f) => f.key)).not.toContain("diet");
+
+    const listed = (await (await fetch(`${harness.baseUrl}/api/memory/profile`)).json()) as {
+      facts: Array<{ key: string; disabled: boolean }>;
+    };
+    expect(listed.facts).toEqual([expect.objectContaining({ key: "diet", disabled: true })]);
+
+    // Editing the value keeps it off; a value and the switch can go together.
+    const edited = await send("/api/memory/profile/diet", "PATCH", { value: "vegan", disabled: false });
+    expect(((await edited.json()) as { fact: { value: string; disabled: boolean } }).fact).toMatchObject({
+      value: "vegan",
+      disabled: false,
+    });
+    expect(profile.listForPrompt().map((f) => f.key)).toContain("diet");
+
+    expect((await send("/api/memory/profile/diet", "PATCH", { disabled: 1 })).status).toBe(400);
+    expect((await send("/api/memory/profile/nope", "PATCH", { disabled: true })).status).toBe(404);
+  });
 });

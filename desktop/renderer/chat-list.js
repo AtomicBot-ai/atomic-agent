@@ -59,8 +59,17 @@ function chatMenuItems(opts) {
     ...(o.folders === true ? [{verb: 'fpick', label: 'Move to project…', icon: 'folder'}] : []),
     // ATO-1150: Archive hides a stored chat from the lists; Unarchive brings it back.
     ...(o.archivable === true ? [o.archived ? {verb: 'unarchive', label: 'Unarchive', icon: 'archive'} : {verb: 'archive', label: 'Archive', icon: 'archive'}] : []),
+    // ATO-1173: a stored chat in a project with a folder splits its task into worker chats (project-workers.js).
+    ...(o.workers === true ? [{verb: 'pworkers', label: 'Split into worker chats…', icon: 'tasks'}] : []),
     // ATO-1054: "Export…" saves the chat as Markdown / PDF / Word (chat-export.js), for a stored chat.
     ...(o.exportable === true ? [{verb: 'export', label: 'Export…', icon: 'download'}] : []),
+    // ATO-561: "Open in new window" shows a stored chat in a window of its own (chat-popout.js).
+    ...(o.windowable === true ? [{verb: 'popout', label: 'Open in new window', icon: 'open'}] : []),
+    // ATO-1014: the same stored chat, written up as a brief for Claude Code / Codex (handoff-out.js).
+    ...(o.exportable === true ? [{verb: 'houtopen', label: 'Hand off to Claude / Codex…', icon: 'arrowR'}] : []),
+    // ATO-581: "Share chat…" saves a redacted copy and offers a secret gist (chat-share.js), for a stored chat.
+    ...(o.exportable === true ? [{verb: 'share', label: 'Share chat…', icon: 'upload'}] : []),
+    ...(o.exportable === true ? [{verb: 'recipe:save', label: 'Save as recipe…', icon: 'star'}] : []),   // ATO-1072 (chat-recipe.js)
     {verb: 'delask', label: 'Delete…', icon: 'trash', danger: true},
   ];
 }

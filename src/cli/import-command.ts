@@ -65,6 +65,9 @@ const HELP =
     "  --include a,b             Add options (sessions,cron)",
     "  --exclude a,b             Remove options",
     "  --migrate-secrets         Also copy OPENROUTER_API_KEY / AIMLAPI_API_KEY into <stateDir>/.env",
+    "  --trust-plugin <name>     Bridge this Python plugin (plugins/<name>) as a local MCP server;",
+    "                            repeat or comma-separate. Plugins run local code: trust each one",
+    "  --python <cmd>            Interpreter for bridged plugins (default python3, python on Windows)",
     "  --limit N                 Cap the number of sessions imported (newest first)",
     "  --overwrite               Overwrite destinations that differ (default: flag as conflict)",
     "  --dry-run                 Preview only; never write",
@@ -128,6 +131,7 @@ const HELP =
     "  atomic-agent import hermes --dry-run",
     "  atomic-agent import hermes --yes",
     "  atomic-agent import hermes --migrate-secrets --overwrite",
+    "  atomic-agent import hermes --trust-plugin calculator --dry-run",
     "  atomic-agent import openclaw --dry-run",
     "  atomic-agent import openclaw --agent main --yes",
     "  atomic-agent import claude-code --dry-run",
@@ -185,6 +189,10 @@ async function importHermes(args: string[]): Promise<number> {
   const include = parseCsv(readOption(args, "--include"));
   const exclude = parseCsv(readOption(args, "--exclude"));
   const migrateSecrets = args.includes("--migrate-secrets");
+  const trustedPlugins = readRepeatedOption(args, "--trust-plugin").flatMap(
+    (raw) => parseCsv(raw),
+  );
+  const pythonCommand = readOption(args, "--python");
   const overwrite = args.includes("--overwrite");
   const dryRun = args.includes("--dry-run");
   const yes = args.includes("--yes");
@@ -206,6 +214,7 @@ async function importHermes(args: string[]): Promise<number> {
       include,
       exclude,
       migrateSecrets,
+      trustedPlugins,
     });
   } catch (err) {
     if (err instanceof ImportOptionError) {
@@ -235,6 +244,10 @@ async function importHermes(args: string[]): Promise<number> {
       stateDir: config.paths.stateDir,
       maxAttempts: config.tasks.maxAttempts,
       workingDirFallback: process.cwd(),
+      sourceDir,
+      userConfigFile: config.paths.userConfigFile,
+      trustedPlugins,
+      ...(pythonCommand ? { pythonCommand } : {}),
     });
 
     process.stdout.write(`Source: ${sourceDir}\n`);
@@ -645,6 +658,17 @@ function readOption(args: string[], name: string): string | undefined {
   const value = args[idx + 1];
   if (!value || value.startsWith("--")) return undefined;
   return value;
+}
+
+/** Every value of a flag that may repeat (`--trust-plugin a --trust-plugin b`). */
+function readRepeatedOption(args: string[], name: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== name) continue;
+    const value = args[i + 1];
+    if (value && !value.startsWith("--")) out.push(value);
+  }
+  return out;
 }
 
 function parseCsv(raw: string | undefined): string[] {

@@ -362,11 +362,30 @@ export interface BrowserBackend {
   debugLog?(): PageDebugLog;
   /**
    * Annotate mode (ATO-518): put the pin overlay on the active page so the
-   * user can click elements and comment on them, read the pins back, or
+   * user can click elements to pin them (the words go in chat), read the pins back, or
    * take the overlay off. Optional: a backend without it cannot annotate.
    */
   startAnnotate?(): Promise<AnnotateStartResult>;
   readAnnotations?(input: AnnotateReadInput): Promise<AnnotateReadResult>;
   /** Resolves the number of pins dropped. */
   stopAnnotate?(): Promise<{ url: string; removed: number }>;
+  /**
+   * Take over (ATO-508): get the calling session's active tab ready for
+   * the person to act in by hand. The agent's own Chrome that runs
+   * without a window is restarted with one (`browser.headless: "auto"`),
+   * then the tab is brought to the front. Optional: a backend without it
+   * cannot hand over.
+   */
+  prepareTakeOver?(): Promise<TakeOverTarget>;
+}
+
+/** The tab the person is handed (`BrowserBackend.prepareTakeOver`). */
+export interface TakeOverTarget {
+  url: string;
+  title: string;
+  /**
+   * False when nobody can see the tab: the agent's Chrome is headless
+   * and `browser.headless` is `true`, so it is never given a window.
+   */
+  window: boolean;
 }

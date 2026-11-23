@@ -53,16 +53,54 @@ function dcInitial() {
     message:null, msgKind:'info', msgGen:0, owedGen:null, lastError:null,
     confirm:null, confirmAt:0,
     restart:{phase:'idle', text:null},
+    channel:null, liveLoop:false,
   };
 }
 
-/* What the tab says about the bot, in one line, and whether it is set up. `owed`: a restart is owed. */
+/* What the tab says about the bot, in one line, and whether it is set up. `owed`: a restart is owed.
+   ATO-516: with the agent's live channel (`st.channel`, GET /api/discord/channel) a complete setup
+   says what the bot is doing right now; `chip` is 'connected', 'connecting' or 'not-connected'. */
 function dcStatus(st, owed) {
-  if (st.hasToken !== true) return {on:false, line:'Add a bot token to start.'};
-  if (!st.cfg.ownerUserIds.length) return {on:false, line:'Almost there: add your Discord user id below, so the bot knows who it answers.'};
-  if (!st.cfg.enabled) return {on:false, line:'Turned off: the bot does not answer until you turn it on below.'};
-  if (owed) return {on:false, line:'Waiting for a restart: the agent loads the token and these settings when it starts. Press Restart agent below; the app stays open.'};
-  return {on:true, line:'Send your bot a direct message, or @mention it in a server channel, to talk to Atomic Agent.'};
+  const off = (line) => ({on:false, chip:'not-connected', line});
+  if (st.hasToken !== true) return off('Add a bot token to start.');
+  if (!st.cfg.ownerUserIds.length) return off('Almost there: add your Discord user id below, so the bot knows who it answers.');
+  if (!st.cfg.enabled) return off('Turned off: the bot does not answer until you turn it on below.');
+  if (owed) return off('Waiting for a restart: the agent loads the token and these settings when it starts. Press Restart agent below; the app stays open.');
+  const talk = 'Send your bot a direct message, or @mention it in a server channel, to talk to Atomic Agent.';
+  const ch = st.channel;
+  if (!ch || ch.available !== true) return {on:true, chip:'connected', line:talk};
+  if (ch.state === 'up') {
+    const name = ch.bot && typeof ch.bot.username === 'string' && ch.bot.username ? '@' + ch.bot.username : 'your bot';
+    return {on:true, chip:'connected', line:'Connected as ' + name + '. ' + talk};
+  }
+  if (ch.state === 'starting') return {on:false, chip:'connecting', line:'Connecting to Discord…'};
+  if (ch.otherPoller && ch.otherPoller.where === 'this_computer') {
+    const pid = typeof ch.otherPoller.pid === 'number' ? ' (process ' + ch.otherPoller.pid + ')' : '';
+    return off('Another Atomic Agent on this computer' + pid + ' is running this bot. Quit it, then press Restart agent below.');
+  }
+  if (ch.state === 'down') {
+    const why = typeof ch.lastError === 'string' && ch.lastError.trim() ? ch.lastError.trim().replace(/\.$/, '') : 'no reason given';
+    return off('The bot could not connect: ' + why + '. Check the token, then press Restart agent below.');
+  }
+  return off('The agent has not started the bot yet. Press Restart agent below; the app stays open.');
+}
+
+/* ATO-516: how often the open tab asks the agent for the bot's live state. */
+const DC_LIVE_POLL_MS = 3000;
+
+/* Ask for the live state every DC_LIVE_POLL_MS while `visible()` says the tab
+   is on screen, repainting when the answer changes. One loop at a time;
+   `timers` ({setTimeout}) is passed in for the tests. */
+function dcLiveLoop(ctrl, visible, repaint, timers) {
+  const t = timers || {setTimeout: (fn, ms) => setTimeout(fn, ms)};
+  if (ctrl.state.liveLoop) return;
+  ctrl.state.liveLoop = true;
+  const tick = async () => {
+    if (!visible()) { ctrl.state.liveLoop = false; return; }
+    try { if (await ctrl.pollChannel()) repaint(); } catch (e) { /* the next tick tries again */ }
+    t.setTimeout(tick, DC_LIVE_POLL_MS);
+  };
+  tick();
 }
 
 /* What the restart left: `st` is the agent status BR.restart resolved with, or null. */
@@ -86,6 +124,7 @@ function dcRestartResult(res, view) {
      restart()         → agent status {state, error?}
      restartBlocked()  → true while a reply runs (a restart would end it)
      agentGen()        → the running agent's generation, to retire "restart owed" lines
+     channel()         → GET /api/discord/channel's answer, or null (optional: an older app or agent has none)
    Every method answers; a thrown call is read as {ok:false, error}. */
 function createDiscordSettings(api) {
   const st = dcInitial();
@@ -104,6 +143,7 @@ function createDiscordSettings(api) {
     else st.lastError = 'Could not read the Discord settings: ' + ((cfg && cfg.error) || 'unknown error');
     if (tok && tok.ok) st.hasToken = tok.has === true;
     else if (st.hasToken === null) st.hasToken = false;
+    await pollChannel();
     st.known = true;
   }
   /* Serialized, like the Telegram tab's refresh: one asked for during another runs after it. */
@@ -123,9 +163,21 @@ function createDiscordSettings(api) {
     return {ok:true};
   }
 
+  /* The live channel, read again; true when what the tab shows of it changed. */
+  async function pollChannel() {
+    if (typeof api.channel !== 'function') return false;
+    const res = await call(() => api.channel());
+    const next = res && typeof res === 'object' && res.available === true ? res : null;
+    const key = (c) => c ? [c.state, c.lastError, c.bot && c.bot.username, c.otherPoller && c.otherPoller.pid].join('|') : '';
+    const changed = key(next) !== key(st.channel);
+    st.channel = next;
+    return changed;
+  }
+
   return {
     state: st,
     refresh,
+    pollChannel,
     restartOwed() { return st.owedGen !== null && st.owedGen === gen(); },
     entered() { st.confirm = null; st.idError = null; if (st.restart.phase !== 'restarting') st.restart = {phase:'idle', text:null}; return refresh(); },
     openToken() { st.mode = 'tokenPrompt'; st.tokenError = null; },
@@ -211,9 +263,11 @@ function createDiscordSettings(api) {
   };
 }
 
-/* The tab. `owed`: a restart is owed; `stale`: the last message was said to an earlier agent. `h`: {esc, ic}. */
+/* The tab. `owed`: a restart is owed; `stale`: the last message was said to an earlier agent. `h`: {esc, ic, logo?}. */
 function discordPaneHTML(st, view, h) {
   const {esc, ic} = h;
+  // ATO-1634: Discord's own mark (h.logo, renderer.js logoHTML) where the pane had the chat icon.
+  const dcMark = (size, cls) => (typeof h.logo === 'function' && h.logo('discord', size, 'chat')) || '<span class="tk-ico ' + cls + '">' + ic('chat') + '</span>';
   const v = view || {};
   const busy = st.busy;
   const restartBtn = '<button class="btn btn-p sm" data-act="discord:restart"' + (st.restart.phase === 'restarting' ? ' disabled' : '') + '>'
@@ -233,7 +287,7 @@ function discordPaneHTML(st, view, h) {
     body += '<div class="tk-empty"><span class="tk-spin"></span><p>Loading…</p></div>';
   } else if (st.hasToken !== true) {
     body += '<div class="tk-card pad sd-tgcard sd-center" data-dc-connect>'
-      + '<span class="tk-ico tk-ico--lg tk-ico--blue">' + ic('chat') + '</span>'
+      + dcMark('lg', 'tk-ico--lg tk-ico--blue')
       + '<h3 class="sd-title">Connect Discord</h3>'
       + '<p>Create an application in the Discord Developer Portal, add a bot to it, copy the bot token and paste it here. Then invite the bot to your server, or message it directly. The token is stored only on this machine.</p>'
       + '<div class="sd-acts sd-center"><button class="btn btn-s sm" data-act="discord:portal">Open Developer Portal</button>'
@@ -241,10 +295,10 @@ function discordPaneHTML(st, view, h) {
   } else {
     const s = dcStatus(st, v.owed);
     body += '<div class="tk-card sd-tgstatus"><div class="tk-setrow">'
-      + '<span class="tk-ico tk-ico--blue">' + ic('chat') + '</span>'
+      + dcMark('', 'tk-ico--blue')
       + '<div class="body"><div class="t">Discord</div><div class="d">' + esc(s.line) + '</div></div>'
-      + '<span class="tk-chip tk-chip--sm ' + (s.on ? 'tk-chip--green' : 'tk-chip--amber') + '" data-dc-status="' + (s.on ? 'connected' : 'not-connected') + '">'
-        + (s.on ? 'Connected' : 'Not connected') + '</span>'
+      + '<span class="tk-chip tk-chip--sm ' + (s.on ? 'tk-chip--green' : 'tk-chip--amber') + '" data-dc-status="' + s.chip + '">'
+        + (s.chip === 'connected' ? 'Connected' : s.chip === 'connecting' ? 'Connecting…' : 'Not connected') + '</span>'
       + '<button class="iconbtn sm" data-act="discord:refresh" title="Check again" aria-label="Check again">' + ic('refresh') + '</button>'
       + '</div></div>';
     const row = (title, d, tail) => '<div class="tk-setrow"><div class="body"><div class="t">' + title + '</div><div class="d">' + d + '</div></div>' + tail + '</div>';
@@ -290,5 +344,5 @@ function discordPaneHTML(st, view, h) {
 
 if (typeof module !== 'undefined') {
   module.exports = {DISCORD_TOKEN_ENV, DC_PORTAL_URL, DC_RESTART_APPLY, dcTokenClean, dcIdClean, dcReadBlock, dcInitial, dcStatus,
-    dcRestartResult, createDiscordSettings, discordPaneHTML};
+    dcRestartResult, createDiscordSettings, discordPaneHTML, DC_LIVE_POLL_MS, dcLiveLoop};
 }

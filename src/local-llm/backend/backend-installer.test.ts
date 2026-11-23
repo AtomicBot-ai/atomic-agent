@@ -1120,7 +1120,7 @@ describe("downloadBackend on Windows arm64", () => {
     serve({ [ARM64_ASSET]: await nestedZip() }, downloaded);
 
     await expect(downloadBackend(dir)).rejects.toThrow(
-      "Local models are not available yet for Windows on ARM. Use a cloud model instead.",
+      "Local models are not available yet for Windows on ARM. Use a cloud model, or add a local server that runs on ARM and NPUs, such as Foundry Local or LM Studio, as a provider.",
     );
     expect(downloaded).toEqual([]);
   });
@@ -1167,7 +1167,7 @@ describe("downloadBackend on Windows arm64", () => {
     serve({ [WINDOWS_BACKEND_ASSETS.vulkan]: await nestedZip() });
 
     await expect(downloadBackend(dir)).rejects.toThrow(
-      "Local models are not available yet for Windows on ARM. Use a cloud model instead.",
+      "Local models are not available yet for Windows on ARM. Use a cloud model, or add a local server that runs on ARM and NPUs, such as Foundry Local or LM Studio, as a provider.",
     );
     expect(isBackendDownloaded(dir)).toBe(false);
   });

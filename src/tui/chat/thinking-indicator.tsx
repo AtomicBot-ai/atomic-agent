@@ -52,7 +52,7 @@ export function ThinkingIndicator({
       ? `compacting context · part ${compaction.progress.chunk}/${compaction.progress.chunks} · ${elapsedLabel}`
       : `compacting context · ${formatTokens(compaction.tokensBefore ?? 0)} tokens · ${elapsedLabel}`
     : running
-      ? formatPhase(phase, elapsedLabel)
+      ? formatPhase(phase, elapsedLabel, state.promptProgress ?? null)
       : `context compaction queued · ${elapsedLabel}`;
   return (
     <Box marginLeft={3} marginTop={1} flexDirection="column">
@@ -166,9 +166,18 @@ function extractIdentifyingArg(args: Record<string, unknown>): string | null {
   return null;
 }
 
-function formatPhase(phase: Phase, elapsed: string): string {
+function formatPhase(
+  phase: Phase,
+  elapsed: string,
+  promptProgress: { processed: number; total: number } | null,
+): string {
   switch (phase.kind) {
     case "thinking":
+      // ATO-1001: a local model still reading the prompt says how far it
+      // got, like LM Studio's "Processing prompt… 40%".
+      if (promptProgress !== null && promptProgress.total > 0) {
+        return `reading prompt · ${promptPercent(promptProgress)}% of ${formatTokens(promptProgress.total)} tokens · ${elapsed}`;
+      }
       return `thinking · ${elapsed}`;
     case "tool":
       return phase.arg
@@ -177,6 +186,12 @@ function formatPhase(phase: Phase, elapsed: string): string {
     case "reply":
       return `writing reply · ${elapsed}`;
   }
+}
+
+/** Whole percent read so far, 0 to 100. */
+export function promptPercent(progress: { processed: number; total: number }): number {
+  if (progress.total <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.floor((progress.processed / progress.total) * 100)));
 }
 
 /**

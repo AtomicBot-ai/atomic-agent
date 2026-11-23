@@ -96,11 +96,24 @@ const COMPOSIO_SETUP_STEPS = [
 ];
 
 /* No key yet: one card, one action (the Telegram tab's Connect card). */
+/* ATO-1634: a brand's mark (renderer.js LOGO_FILES key) before its name in a sentence; '' without the logo dep. */
+function cmpInlineMark(h, key) {
+  const m = typeof h.logo === 'function' ? h.logo(key, 'xs') : '';
+  return m ? '<span class="sd-inlmark">' + m + '</span>' : '';
+}
+/* ATO-1634: Composio's own mark where the pane had the link icon. */
+function cmpHeadMark(h) {
+  return (typeof h.logo === 'function' && h.logo('composio', '', 'link')) || '<span class="tk-ico tk-ico--blue">' + h.ic('link') + '</span>';
+}
+
 function composioSetupHTML(st, h) {
   return '<div class="tk-card pad sd-tgcard sd-cmpcard">'
-    + '<div class="sd-pairhead"><span class="tk-ico tk-ico--blue">' + h.ic('link') + '</span><h3 class="sd-title">Connect apps with Composio</h3></div>'
+    + '<div class="sd-pairhead">' + cmpHeadMark(h) + '<h3 class="sd-title">Connect apps with Composio</h3></div>'
     // The TUI's summary ("~1500 SaaS toolkits … with OAuth handled for you"), plus where the calls go.
-    + '<p>Composio connects Atomic Agent to 1,500+ apps like Gmail, Slack, Notion, Linear and GitHub, and handles each app\'s sign-in for you. '
+    // ATO-1633/1634: each app named wears its mark.
+    + '<p>Composio connects Atomic Agent to 1,500+ apps like ' + cmpInlineMark(h, 'gmail') + 'Gmail, ' + cmpInlineMark(h, 'slack') + 'Slack, '
+    + cmpInlineMark(h, 'notion') + 'Notion, ' + cmpInlineMark(h, 'linear') + 'Linear and ' + cmpInlineMark(h, 'github')
+    + 'GitHub, and handles each app\'s sign-in for you. '
     + 'Requests to those apps go through Composio\'s servers.</p>'
     + '<ol class="sd-steps">' + COMPOSIO_SETUP_STEPS.map((t) => '<li>' + h.esc(t) + '</li>').join('') + '</ol>'
     + composioKeyFieldHTML(st, h, 'setup')
@@ -112,7 +125,7 @@ function composioSetupHTML(st, h) {
 function composioStatusHTML(status, st, h) {
   const checking = st.busy === 'check';
   return '<div class="tk-card sd-tgstatus"><div class="tk-setrow">'
-    + '<span class="tk-ico tk-ico--blue">' + h.ic('link') + '</span>'
+    + cmpHeadMark(h)
     + '<div class="body"><div class="t">Composio</div><div class="d">' + h.esc(status.line) + '</div></div>'
     + '<span class="tk-chip tk-chip--sm ' + (COMPOSIO_CHIP_CLASS[status.level] || 'tk-chip--line') + '" data-cmp-status="' + status.level + '">' + h.esc(status.chip) + '</span>'
     + '<button class="iconbtn sm" data-act="composio:check" title="Check the key with Composio (R)" aria-label="Check the key"' + (st.busy ? ' disabled' : '') + '>'
@@ -151,7 +164,8 @@ function composioNoticesHTML(st, h) {
 
 /* The whole pane. `st` adds to composioStatus's input: {mode: 'list'|'key',
    busy: null|'save'|'remove'|'check'|'enable', keyError, message, warning,
-   lastError, shadowed, running}; `h`: the renderer's {esc, ic}. */
+   lastError, shadowed, running, accounts}; `accounts` is the switcher's state
+   (composio-accounts.js); `h`: the renderer's {esc, ic}. */
 function composioPaneHTML(st, h) {
   const status = composioStatus(st);
   let body = '';
@@ -164,8 +178,11 @@ function composioPaneHTML(st, h) {
         + '<p>The new key is checked with Composio before it replaces the saved one.</p>'
         + composioKeyFieldHTML(st, h, 'replace') + '</div>';
     }
-    if (st.hasKey !== false) body += composioRowsHTML(st, h);
-    else body += '<div class="tk-card pad sd-tgcard sd-cmpcard sd-inlinecard"><p>No key is saved. Paste a new one to connect again.</p>' + composioKeyFieldHTML(st, h, 'setup') + '</div>';
+    if (st.hasKey !== false) {
+      body += composioRowsHTML(st, h);
+      // ATO-1494: the account switcher (composio-accounts.js), once a key is saved and Composio is on.
+      if (st.hasKey === true && st.enabled !== false && st.accounts && typeof composioAccountsHTML === 'function') body += composioAccountsHTML(st.accounts, h);
+    } else body += '<div class="tk-card pad sd-tgcard sd-cmpcard sd-inlinecard"><p>No key is saved. Paste a new one to connect again.</p>' + composioKeyFieldHTML(st, h, 'setup') + '</div>';
   }
   return '<div class="sd-pane sd-cmp">' + body + composioNoticesHTML(st, h) + '</div>';
 }

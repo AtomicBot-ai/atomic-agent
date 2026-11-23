@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-const {workspaceSkillCommands, workspaceSkillMessage, createSkillCatalogLoader} = createRequire(import.meta.url)('../renderer/workspace-skills.js');
+const {workspaceSkillCommands, workspaceSkillMessage, createSkillCatalogLoader, skillRowsWithoutDrafts} = createRequire(import.meta.url)('../renderer/workspace-skills.js');
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return {resolve, promise}; }
 
 test('commands offer enabled skills once, preserving builtins and their aliases', () => {
@@ -86,6 +86,7 @@ test('a catalog answer updates slash suggestions without rebuilding a focused co
   const context=createContext({
     projectTrustCheck:()=>{trustChecks++;},   // ATO-1250: every catalog read also asks the folder-trust question's route
     BR:{skillList:()=>{}}, SK:{for:'A',rows:null,projectSkillsEnabled:true}, SKP:{mode:'list'}, SKILLS:[], LIVE_CAPS:null,
+    SKD:{refresh:()=>{}}, skillRowsWithoutDrafts,   // ATO-67: the Pending review group reads on its own, drafts stay out of the rows
     S:{settings:null,overlay:null,slash:true,draft:'/openspec'},
     SK_LOADER:createSkillCatalogLoader(async()=>({ok:true,workingDir:'/A',rows:[{name:'openspec-explore',enabled:true}]})),
     skillContextKey:()=> 'A', skillSessionId:()=> 'session-A', skillsVisible:()=>false, tkTyping:()=>false, skpTyping:()=>false,

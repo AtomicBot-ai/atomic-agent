@@ -172,6 +172,8 @@ describe("registering os.screen.point", () => {
       "os.screen.click",
       "os.screen.type",
       "os.screen.key",
+      "os.screen.elements",
+      "os.screen.press",
       "os.screen.point",
     ]);
     expect(names({ enabled: true, point: false })).not.toContain("os.screen.point");

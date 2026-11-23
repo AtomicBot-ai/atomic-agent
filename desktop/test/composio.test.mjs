@@ -87,6 +87,17 @@ test('with a key: status chip, the on switch, Replace and Remove, the connect-an
   assert.match(env, /COMPOSIO_API_KEY set in its environment/);
 });
 
+test('a saved key never shows the No key card (on, off, accounts not loaded, restart owed)', () => {
+  const on = C.composioPaneHTML(base, h);
+  assert.doesNotMatch(on, /No key is saved/);
+  const off = C.composioPaneHTML(Object.assign({}, base, {enabled:false, accounts:{}}), h);
+  assert.doesNotMatch(off, /No key is saved/, 'turning Composio off keeps the saved key');
+  assert.doesNotMatch(off, /id="cmp-key"/);
+  const unknown = C.composioPaneHTML(Object.assign({}, base, {hasKey:undefined, restartOwed:true}), h);
+  assert.match(unknown, /data-cmp-status="restart"/);
+  assert.doesNotMatch(unknown, /No key is saved/);
+});
+
 test('saving, errors and the owed restart', () => {
   const saving = C.composioPaneHTML(Object.assign({}, base, {hasKey:false, toolsUp:false, busy:'save'}), h);
   assert.match(saving, /Checking the key with Composio/);
@@ -120,9 +131,9 @@ test('the copy has no em dash and does not claim nothing leaves the machine', ()
   assert.doesNotMatch(all, /never leaves|nothing leaves|stays on your machine/i);
 });
 
-test('Composio is the last pane of Connections, in the tab list and the palette', () => {
-  assert.match(source, /\['connections','Connections','plug',\['mcp','telegram','discord','push','composio'\]\]/);
-  assert.match(source, /\['telegram','Telegram'\],\['discord','Discord'\],\['push','Phone push'\],\['composio','Composio'\],\['memory','Memory'\]/);
+test('Composio sits in Connections, in the tab list and the palette', () => {
+  assert.match(source, /\['connections','Connections','plug',\['mcp','telegram','discord','push','composio','monid'\]\]/);
+  assert.match(source, /\['telegram','Telegram'\],\['discord','Discord'\],\['push','Phone push'\],\['composio','Composio'\],\['monid','Monid'\],\['memory','Memory'\]/);
   assert.match(source, /\['link','Composio','Settings · Connections','','settings:composio'\]/);
   for (const hook of ["pane === 'composio') composioTabEntered()", "p === 'composio') return composioTab()",
     "k === 'composio') { close(); composioAct(a.slice(9))", "pane === 'composio' && composioKey(e, k, inText)"]) {

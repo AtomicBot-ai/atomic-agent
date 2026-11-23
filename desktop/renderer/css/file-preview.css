@@ -79,3 +79,16 @@
 .fp-row-m{font:400 var(--fs-micro)/15px var(--font-ui);color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fp-empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:48px 24px;text-align:center}
 .fp-empty .fp-other-m{max-width:28em}
+
+/* ---------------- ATO-981: Word, PowerPoint and Excel (office-preview.js) ----------------
+   A deck as cards, one per slide; a document as prose; a sheet uses the table above. */
+.fp-deck{display:flex;flex-direction:column;gap:8px;padding:10px 12px 16px}
+.fp-slide{display:flex;gap:10px;padding:10px 12px;border:1px solid var(--divider);border-radius:var(--r-well);background:var(--panel-2)}
+.fp-slide-n{flex:none;min-width:18px;font:600 var(--fs-micro)/18px var(--font-ui);color:var(--ink-3);font-variant-numeric:tabular-nums}
+.fp-slide-c{flex:1;min-width:0;overflow-wrap:anywhere}
+.fp-slide-t{font:600 var(--fs-ui)/20px var(--font-ui);color:var(--ink);margin-bottom:2px}
+.fp-slide-c p{margin:4px 0 0;font:400 var(--fs-label)/1.5 var(--font-ui);color:var(--ink-2);white-space:pre-wrap}
+.fp-slide-c p.fp-slide-e{color:var(--ink-3);font-style:italic}
+.fp-doc p{white-space:pre-wrap;overflow-wrap:anywhere}
+.fp-sheets{flex:none;margin:8px 14px 0;font:400 var(--fs-micro)/15px var(--font-ui);color:var(--ink-3);overflow-wrap:anywhere}
+.fp-prose .fp-tbl th.fp-rown{color:var(--ink-3);font-weight:400;text-align:right;font-variant-numeric:tabular-nums}

@@ -77,7 +77,18 @@ const config = {
     "out/**",
     "!out/native/**",
     "package.json",
-    "LICENSE"
+    "LICENSE",
+    /* ATO-1064: uiohook-napi (the Windows hold key watcher, loaded only on
+       Windows) ships its prebuilt .node files and nothing to build them:
+       not the C sources, not the macOS and Linux prebuilds. */
+    "!node_modules/uiohook-napi/{libuiohook,src}/**",
+    "!node_modules/uiohook-napi/binding.gyp",
+    "!node_modules/uiohook-napi/prebuilds/{darwin,linux}-*/**"
+  ],
+  /* A .node file cannot be loaded from inside the asar archive: the
+     Windows ones go to app.asar.unpacked, where Electron finds them. */
+  "asarUnpack": [
+    "**/node_modules/uiohook-napi/prebuilds/**"
   ],
   "extraResources": [
     {
@@ -98,22 +109,28 @@ const config = {
     "output": "release",
     "buildResources": "build"
   },
-  "npmRebuild": true,
+  /* ATO-1064: off. The one native dependency, uiohook-napi, is N-API with
+     prebuilds (win32-x64, win32-arm64), which Electron loads as they are.
+     @electron/rebuild does not recognise its prebuild file names
+     (uiohook-napi.node, not node.napi.node) and would compile it from
+     source on every build machine, which needs the X11 headers on Linux.
+     Every other dependency is plain JavaScript, so nothing else is lost. */
+  "npmRebuild": false,
   "mac": {
     "category": "public.app-category.productivity",
     "icon": "build/icon.icns",
+    /* ATO-1506: no `arch` here, as under "win": the CLI flag decides
+       (`--mac --arm64` or `--mac --x64`), one arch per job, never universal.
+       afterPack has only the job's own agent bundle to copy. The arch in the
+       file names keeps the two builds apart, and the zip's is what the Mac
+       updater matches on (an Apple silicon Mac takes the "arm64" zip, an
+       Intel Mac the other). */
     "target": [
       {
-        "target": "dmg",
-        "arch": [
-          "arm64"
-        ]
+        "target": "dmg"
       },
       {
-        "target": "zip",
-        "arch": [
-          "arm64"
-        ]
+        "target": "zip"
       }
     ],
     /* ATO-255: no space in the file name. Without this electron-builder
@@ -131,6 +148,9 @@ const config = {
       "LSMinimumSystemVersion": "14.0",
       "NSMicrophoneUsageDescription": "Atomic Agent records your voice only while you hold the microphone button in the composer, and transcribes it on this Mac.",
       "NSSpeechRecognitionUsageDescription": "Atomic Agent transcribes what you dictate using the on-device speech model. Nothing is sent to Apple.",
+      /* ATO-985 / ATO-1064: selected text and dictation in any app press
+         ⌘C / ⌘V through System Events (main/keystroke-clipboard.ts). */
+      "NSAppleEventsUsageDescription": "Atomic Agent presses Copy or Paste in the app in front, only when you use selected text or dictation in any app.",
       /* ATO-1067: "Find on my network" sends an mDNS query and probes the
          home subnet, which raises macOS's Local Network prompt. These give
          the prompt our words and declare the service types we browse
@@ -143,9 +163,14 @@ const config = {
         "from": "out/native/atomic-speech",
         "to": "native/atomic-speech"
       },
+      /* ATO-1064: says when Fn is held down and let go (dictation into any app). */
+      {
+        "from": "out/native/atomic-fn-key",
+        "to": "native/atomic-fn-key"
+      },
       /* Atomic Chat Core, fetched and checked against the release's
-         SHA256SUMS by scripts/fetch-core.mjs. Per arch, like the app: the
-         mac build is arm64 only, never universal. Under Resources, so the
+         SHA256SUMS by scripts/fetch-core.mjs. Per arch, like the app: one
+         build per arch (arm64, x64), never universal. Under Resources, so the
          Developer ID pass signs it with the hardened runtime and
          entitlementsInherit like the agent, and notarization covers it. */
       {

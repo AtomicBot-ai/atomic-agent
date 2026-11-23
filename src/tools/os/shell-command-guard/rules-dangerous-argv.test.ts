@@ -350,6 +350,61 @@ describe("dangerous.plugin_code_consent", () => {
   });
 });
 
+describe("dangerous.secrets_value_access", () => {
+  it.each([
+    "atomic-agent config secrets get OPENAI_API_KEY",
+    "atag config secrets get OPENAI_API_KEY",
+    "npx atomic-agent config secrets get OPENAI_API_KEY",
+    "node dist/index.js config secrets get OPENAI_API_KEY",
+    "atag config secrets get OPENAI_API_KEY | base64",
+    "cd x && atomic-agent config secrets get OPENAI_API_KEY",
+    "echo sk-x | atomic-agent config secrets set OPENAI_API_KEY",
+    "atomic-agent config secrets unset OPENAI_API_KEY",
+  ])("%s requires approval as dangerous", (line) => {
+    expect(guardLine(line)).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.secrets_value_access",
+    });
+  });
+
+  it.each([
+    "atomic-agent config secrets",
+    "atomic-agent config secrets status --json",
+    "atomic-agent config get model",
+  ])("%s stays on the ordinary path", (line) => {
+    expectNotDangerous(line);
+  });
+});
+
+describe("dangerous.skill_draft_consent (ATO-67)", () => {
+  it.each([
+    "atomic-agent skill learned approve a1b2c3",
+    "atag skill learned approve a1b2c3",
+    "npx atomic-agent skill learned approve a1b2c3",
+    "node dist/cli/index.js skill learned approve a1b2c3",
+    "/usr/local/bin/atomic-agent skill learned APPROVE a1b2c3",
+    "cd x && atomic-agent skill learned approve a1b2c3",
+    "atomic-agent skill learned list; atomic-agent skill learned approve a1b2c3",
+  ])("%s requires approval as dangerous", (line) => {
+    expect(guardLine(line)).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.skill_draft_consent",
+    });
+  });
+
+  it.each([
+    "atomic-agent skill learned",
+    "atomic-agent skill learned show a1b2c3",
+    "atomic-agent skill learned show a1b2c3 --json",
+    "atomic-agent skill learned discard a1b2c3",
+    "atomic-agent skill learned undo a1b2c3",
+    "atomic-agent skill list",
+    "echo approve",
+  ])("%s stays on the ordinary path", (line) => {
+    expectNotDangerous(line);
+  });
+});
+
 describe("rm flags and nested shells, read from parsed words", () => {
   it.each([
     ["rm -v -rf x", "dangerous.rm_recursive"],

@@ -236,6 +236,42 @@ describe("POST /api/webhooks/:name", () => {
     expect(harness.runtime.taskStore.list().length).toBe(0);
   });
 
+  it("returns 404 for an IMAP-triggered binding too (ATO-601)", async () => {
+    harness = await startTestHarness({
+      webhooks: {
+        gmail: {
+          source: "imap",
+          userMessageTemplate: "mail from {{body.from}}",
+          email: {
+            allowedSenders: ["boss@example.com"],
+            pollIntervalMs: 60_000,
+            replyByEmail: false,
+            trustFromHeader: false,
+          },
+          // No such variable: the trigger never gets as far as the network.
+          imap: {
+            host: "imap.invalid",
+            port: 993,
+            user: "me@example.com",
+            auth: "login",
+            passwordEnv: "ATOMIC_AGENT_TEST_IMAP_PASSWORD_UNSET",
+            mailbox: "INBOX",
+            idle: false,
+            markSeen: true,
+            attachments: { save: true, maxCount: 10, maxBytes: 1_000_000, maxTotalBytes: 2_000_000 },
+          },
+        },
+      },
+    });
+    const res = await fetch(`${harness.baseUrl}/api/webhooks/gmail`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ from: "boss@example.com" }),
+    });
+    expect(res.status).toBe(404);
+    expect(harness.runtime.taskStore.list().length).toBe(0);
+  });
+
   it("passes schedule through so the task is marked recurring", async () => {
     harness = await startTestHarness({
       webhooks: {

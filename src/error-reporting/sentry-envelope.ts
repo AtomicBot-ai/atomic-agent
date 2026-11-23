@@ -80,6 +80,11 @@ export function buildEnvelope(
   if (ev.upstreamErrorType) {
     tags.upstream_error_type = ev.upstreamErrorType;
   }
+  // ATO-1673: what was refused, as fixed words. Tags only: the
+  // fingerprint keeps the shape it has, so no live issue re-groups.
+  if (ev.upstreamReason) tags.upstream_reason = ev.upstreamReason;
+  if (ev.upstreamErrorParam) tags.upstream_error_param = ev.upstreamErrorParam;
+  if (ev.upstreamErrorCode) tags.upstream_error_code = ev.upstreamErrorCode;
   // Context tags never re-group issues: they stay out of the fingerprint.
   if (ev.llmFailureTags) Object.assign(tags, ev.llmFailureTags);
   if (ev.cliFailureTags) Object.assign(tags, ev.cliFailureTags);

@@ -92,9 +92,10 @@ export function createWebhookHandler(
     // something off Object.prototype.
     const webhooks = ctx.runtime.config.webhooks;
     const webhook = Object.hasOwn(webhooks, name) ? webhooks[name] : undefined;
-    // A mail binding (ATO-601) is fired by the inbox only: over HTTP it
-    // does not exist, so nobody can post a forged "mail" into it.
-    if (!webhook || webhook.source === "atomic-mail") {
+    // A mail binding (ATO-601, Atomic Mail or IMAP) is fired by the
+    // inbox only: over HTTP it does not exist, so nobody can post a
+    // forged "mail" into it.
+    if (!webhook || (webhook.source ?? "http") !== "http") {
       sendError(res, 404, openaiError(`webhook not found: ${name}`));
       ctx.runtime.metrics.recordWebhookReceived({
         webhookName: name,

@@ -1,5 +1,7 @@
 import type { StepContext, StepDependencies } from "./step-contract.js";
+import type { ToolCallBatch } from "../../llm/grammar/tool-call-grammar.js";
 import { ToolExecutionError } from "../../llm/index.js";
+import { resolveToolName } from "../tool-name-resolution.js";
 import { logTextPreview } from "./step-parsing.js";
 import {
   UNKNOWN_TOOL_STREAK_LIMIT,
@@ -9,6 +11,42 @@ import {
 
 /** Longest unregistered name one log line keeps. */
 const LOG_TOOL_CHARS = 80;
+
+/**
+ * The batch with every call that names a registered tool in another
+ * spelling (`functions.reply`, `mcp_github_create_issue`) renamed to the
+ * registered name, before anything reads the names.
+ *
+ * Resolution used to happen at admission (`step-evidence.ts`), after
+ * the step's checks had already read the raw name: `functions.reply`
+ * was no `reply` to the fabricated-transcript, claim and link holds or
+ * to the progress-note split, and a gated tool spelled another way was
+ * no gated tool to the batch trim, yet it ran as one (ATO-1674). The
+ * step's policy calls this first, so every check sees the tool that
+ * runs. A name that does not resolve is left as written for the
+ * unknown-tool result. Calls are copied, never changed in place.
+ */
+export function resolveBatchToolNames(
+  ctx: StepContext,
+  deps: Pick<StepDependencies, "registry" | "logger">,
+  batch: ToolCallBatch,
+): ToolCallBatch {
+  let changed = false;
+  const calls = batch.calls.map((call) => {
+    if (deps.registry.has(call.tool)) return call;
+    const resolved = resolveToolName(call.tool, deps.registry);
+    if (resolved === null || resolved === call.tool) return call;
+    changed = true;
+    deps.logger?.debug?.("tool name resolved to its registered form", {
+      sessionId: ctx.session.id,
+      stepIndex: ctx.stepIndex,
+      emitted: logTextPreview(call.tool, LOG_TOOL_CHARS),
+      resolved,
+    });
+    return { ...call, tool: resolved };
+  });
+  return changed ? { ...batch, calls } : batch;
+}
 
 /**
  * Admission for the calls of a step that name no registered tool (after

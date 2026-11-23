@@ -70,7 +70,7 @@ function liveOpenRouterEntry(
  */
 export function hasPricedCloudLink(resolved: ResolvedLlmConfig): boolean {
   return resolved.providers.some((entry) => {
-    if (entry.kind === "llama-server" || entry.kind === "subscription-cli") return false;
+    if (entry.kind === "llama-server" || entry.kind === "subscription-cli" || entry.kind === "subscription-oauth") return false;
     if (isLocalServerUrl(entry.baseUrl ?? entry.url)) return false;
     if (entry.userModels?.some((m) => m.pricing !== undefined)) return true;
     const modelId = entry.defaultChatModel ?? entry.model ?? null;

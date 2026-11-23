@@ -115,7 +115,12 @@ export interface AtomicAgentImporterDeps {
   stateDir: string;
   userConfigFile: string;
   globalSkillsDir: string;
-  targets: AtomicDesktopImportTargets;
+  /**
+   * The stores sessions, memory and cron go into. Optional for a caller
+   * that only imports skills, MCP servers and providers (a shared setup
+   * bundle, src/setup-share/), which then opens no database.
+   */
+  targets?: AtomicDesktopImportTargets;
 }
 
 export interface AtomicAgentRunOptions {
@@ -162,11 +167,16 @@ export class AtomicAgentImporter {
     selected: ReadonlySet<AtomicAgentOptionId>,
     options: AtomicAgentRunOptions,
   ): Promise<void> {
+    const targets = this.deps.targets;
+    if (!targets) {
+      items.push({ kind: "sessions", status: "error", reason: "no stores to import chats, memory or jobs into" });
+      return;
+    }
     const sessionIds = new Set<string>();
     const result = await importAtomicDesktop({
       sourceDir: this.deps.sourceDir,
       targetStateDir: this.deps.stateDir,
-      targets: this.deps.targets,
+      targets,
       parts: {
         sessions: selected.has("sessions"),
         tasks: selected.has("cron"),

@@ -25,7 +25,7 @@ import { registerSession } from "../local-llm/server/session-registry.js";
 import { enterAltScreen } from "./alt-screen.js";
 import { buildInkRenderOptions } from "./ink-render-options.js";
 import { enableSynchronizedOutput } from "./synchronized-output.js";
-import { legacyConhostStartupHint } from "./legacy-conhost.js";
+import { legacyConhostStartupHint, mouseDefaultForHost } from "./legacy-conhost.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import {
   parseTuiArgs,
@@ -41,6 +41,7 @@ import {
   persistUserTuiMouse,
   persistUserTuiShowSteps,
   persistUserTuiVimMode,
+  persistUserTuiVerboseSteps,
   persistUserTuiTheme,
   persistUserWhileBusySubmit,
 } from "./persist-user-tui-config.js";
@@ -57,7 +58,7 @@ import {
 } from "./mouse/mouse-tracking.js";
 import { createSelectionPassthrough } from "./mouse/selection-passthrough.js";
 import { isLocalBackendConfigured } from "./local-backend-readiness.js";
-import { makeEscalatingSignalHandler } from "./signal-escalation.js";
+import { makeEscalatingSignalHandler, makeSignalQuit } from "./signal-escalation.js";
 import { restoreTerminalNow } from "./terminal-restore.js";
 import { takeModelSpotlightHint } from "./local-models/model-spotlight-hint.js";
 import { needsOnboarding } from "./onboarding/needs-onboarding.js";
@@ -76,13 +77,14 @@ import { createInterviewInviteController } from "./interview-invite/interview-in
 import { detectKittyKeyboard } from "./detect-kitty-keyboard.js";
 import { setShiftEnterNewline } from "./shift-enter-support.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
-import { createSessionPickerSearch } from "./session-rail/session-search.js";
+import { createIndexedSessionPickerSearch, INDEXED_SEARCH_LIMIT } from "./session-rail/session-search.js";
 import { createHerdrReporter } from "./herdr-reporter.js";
 import {
   detectTerminalBackground,
   resolveStartupTheme,
 } from "./theme/detect-terminal-background.js";
 import { resolveThemeName, setActiveTheme, THEMES } from "./theme/theme.js";
+import { resolveUiLanguage, setUiLanguage } from "../i18n/index.js";
 import { formatStartupFusionNotice } from "./fusion-resume-notice.js";
 import {
   formatRestoredWorkingDirNotice,
@@ -141,6 +143,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
     recentDirs: () => readRecentWorkingDirs(getConfig().paths.sessionsDbFile),
   });
   const workingDir = startupDir.workingDir;
+  // Interface language, before the first render for the same reason as the
+  // theme below (ATO-571): `tui.language`, then ATOMIC_AGENT_LANG, then
+  // the system locale, then English.
+  setUiLanguage(resolveUiLanguage({ setting: getConfig().tui.language }));
   // Theme selection BEFORE any Ink render or stdin listener (the first-run
   // flow and the main render). An explicit
   // `tui.theme` (a registered name) wins; otherwise `"auto"` (or an unknown
@@ -209,6 +215,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
     showSteps: config.tui.showSteps,
     // Vim keys in the composer, off unless `/vim` turned them on (ATO-662).
     vimMode: config.tui.vimMode,
+    // Step notes under tool cards, off unless `/verbose` turned them on (ATO-34).
+    verboseSteps: config.tui.verboseSteps,
     // The composer's route controls read these on the home screen, and
     // the local-models slice only refreshes while the Models tab is
     // open — unseeded, a managed install mislabels itself `custom`
@@ -328,8 +336,14 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // mouse reporting off, alt screen left — and exits hard, instead of
   // Node's default kill that skips `exit` hooks and leaves the shell
   // printing `[<0;64;21M` on every click. See `signal-escalation.ts`.
+  // The graceful quit also unmounts Ink, which is what ends the TUI:
+  // `orchestrator.quit()` alone only stops the work (ATO-1614).
+  const signalQuit = makeSignalQuit({
+    stopWork: () => orchestrator.quit(),
+    announce: () => bus.emit({ type: "quit_requested" }),
+  });
   const onSignal = makeEscalatingSignalHandler({
-    quit: () => orchestrator.quit(),
+    quit: signalQuit.quit,
     restoreTerminal: restoreTerminalNow,
     exit: (code) => process.exit(code),
   });
@@ -378,7 +392,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // The decoded events reach React through `mouseSource`; the bytes
   // themselves are stripped from the stream Ink reads, because Ink's key
   // parser would otherwise type them into the chat buffer.
-  const mouseEnabled = parsed.mouse ?? config.tui.mouse;
+  // ATO-249: off by default on the classic Windows console, where the
+  // reports do not arrive and the wheel would stop scrolling.
+  const mouseEnabled = parsed.mouse ?? mouseDefaultForHost(config.tui.mouse);
   const mouseSource = makeMouseSource();
   let mouseTracking: MouseTrackingController | null = mouseEnabled
     ? enableMouseTracking({ stdout: process.stdout })
@@ -569,14 +585,23 @@ export async function tuiCommand(args: string[]): Promise<number> {
           runtime.setApprovalLevel(resolved.approvalLevel);
           runtime.setPlanMode(resolved.planMode);
         },
+        // ATO-490: `/think`, for this window's next turns; never written to config.json.
+        onReasoningLevelChanged: (level) => orchestrator.setReasoningLevel(level),
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
         onRewindPickerRequested: () => orchestrator.openRewindPicker(),
+        onChatExportRequested: (request) => { void orchestrator.exportOpenChat(request); },
         onRewindRequested: (turnIndex, expectText) =>
           orchestrator.rewindTo(turnIndex, expectText),
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
-        // ATO-1153: the picker's search reads message text from the store.
-        searchSessions: createSessionPickerSearch((id) =>
-          runtime.sessionStore.listChatLines(id),
+        // ATO-1153: the picker's search reads message text from the store;
+        // ATO-1510: and asks the FTS5 index for sessions not loaded yet.
+        searchSessions: createIndexedSessionPickerSearch(
+          (query) =>
+            runtime.sessionStore
+              .searchTranscripts({ query, limit: INDEXED_SEARCH_LIMIT })
+              // Archived chats stay out of search, as they stay off the rail.
+              .hits.filter((hit) => !runtime.sessionStore.isArchived(hit.sessionId)),
+          (id) => runtime.sessionStore.listChatLines(id),
         ),
         onSessionPinToggled: (id) => orchestrator.togglePinned(id),
         onSessionMoveRequested: (id, toIndex) =>
@@ -617,6 +642,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           persistThemeChoice(themeName, bus),
         onShowStepsPersistRequested: (on) => persistShowSteps(on, bus),
         onVimModePersistRequested: (on) => persistVimMode(on, bus),
+        onVerboseStepsPersistRequested: (on) => persistVerboseSteps(on, bus),
         onTasksAutoRefreshStart: () => orchestrator.tasks.startAutoRefresh(),
         onTasksRefreshRequested: () => orchestrator.tasks.refresh(),
         onTaskDetailRequested: (taskId) =>
@@ -651,6 +677,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         prepareSkillInvocation: (name, input) => orchestrator.skills.prepareInvocation(name, input),
         preparePluginCommand: (name, args) => orchestrator.skills.preparePluginCommand(name, args),
         onSkillsRefreshRequested: () => orchestrator.skills.refresh(),
+        onLearnCommand: (command) => void orchestrator.skills.runLearnCommand(command),
         onSkillDetailRequested: (name) =>
           void orchestrator.skills.openDetail(name),
         onSkillToggleRequested: (name) =>
@@ -820,6 +847,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.providers.removeProviderById(id),
         onImportPreview: (form) => orchestrator.import.preview(form),
         onImportExecute: (form) => orchestrator.import.execute(form),
+        onImportFacts: (cmd) => orchestrator.import.facts.handle(cmd),
         onOnboardingImportRequested: (plan) =>
           void orchestrator.import.runOnboarding(plan),
         onMcpDetailRequested: (serverName) =>
@@ -944,6 +972,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onAnalyticsSetEnabledRequested: (enabled) =>
           orchestrator.privacy.setAnalyticsEnabled(enabled, "slash"),
         onOfflineToggleRequested: () => orchestrator.privacy.toggleOffline(),
+        onPrivacyShieldToggleRequested: () => orchestrator.privacy.toggleShield(),
         onPrivacyRefreshRequested: () => orchestrator.privacy.refresh(),
         onIntegrationsRefreshRequested: () =>
           orchestrator.integrations.refresh(),
@@ -987,6 +1016,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           restartRequested = true;
         },
         onProjectTrustAnswered: (answer) => void orchestrator.projectTrust.answer(answer),
+        onAppendLocalAnswered: (answer) => orchestrator.appendLocalQuestion.answer(answer),
         onMouseSupportRequested: setMouseEnabled,
         // A drag that started on dead content (no target claimed the
         // press) — the terminal-agnostic selection trigger. Same
@@ -1015,6 +1045,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
       kittyKeyboard,
     }),
   );
+  // A SIGTERM that landed while the app was still being set up unmounts
+  // it now; one from here on unmounts it directly (ATO-1614).
+  signalQuit.attach(ink);
 
   orchestrator.start();
   // `--session` / `--send` (set by `atag handoff`): land on the saved
@@ -1038,6 +1071,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // Project skills and AGENTS.md/CLAUDE.md files of the opened folder load
   // only after the operator trusted them (ATO-298); ask once if any are new.
   orchestrator.projectTrust.check();
+  // The old "local model as last resort" switch is still on (ATO-1461):
+  // ask once whether to keep it; the answer is remembered.
+  orchestrator.appendLocalQuestion.check();
 
   // A `.env` that exists but could not be read means stored API keys were
   // silently dropped for this run (#59). The loader already wrote to
@@ -1331,6 +1367,22 @@ function persistVimMode(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     bus.emit({ type: "runtime_info", line: `vim setting not saved: ${msg}` });
+  }
+}
+
+/**
+ * `/verbose` already said in the chat what changed, so only a failed
+ * write is reported: the choice then lasts for this run only.
+ */
+function persistVerboseSteps(
+  on: boolean,
+  bus: ReturnType<typeof makeTuiEventBus>,
+): void {
+  try {
+    persistUserTuiVerboseSteps(on);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    bus.emit({ type: "runtime_info", line: `verbose setting not saved: ${msg}` });
   }
 }
 

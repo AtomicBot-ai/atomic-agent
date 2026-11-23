@@ -18,7 +18,21 @@ function simgvTag(t) {
   return '<span class="st-tag' + (t.cls ? ' ' + t.cls : '') + '">' + esc(t.text) + '</span>';
 }
 
+/** ATO-1633: the model's brand key (renderer.js LOGO_FILES): its family by id or name
+    ("openai/gpt-image-1", "Qwen Image"), else its vendor prefix ("x-ai/…"); '' for none. */
+function simgvLogoKey(model) {
+  if (!model || typeof modelLogoKey !== 'function') return '';
+  const id = String(model.id || '');
+  const vendor = id.includes('/') ? id.split('/')[0] : '';
+  return modelLogoKey(id) || modelLogoKey(model.name) || (vendor && typeof providerLogoKey === 'function' ? providerLogoKey(vendor) : '');
+}
+
+/* The model's mark through the shared helper (the white disc every brand wears),
+   the CPU badge for one with no mark. Without renderer.js (the Node checks) the old letter. */
 function simgvLogo(model) {
+  if (typeof logoHTML === 'function' && typeof markFallbackHTML === 'function') {
+    return logoHTML(simgvLogoKey(model), '', 'image') || markFallbackHTML(model && model.group === 'local' ? 'cpu' : 'image', '');
+  }
   const name = String((model && model.name) || '?');
   const letter = (name.match(/[A-Za-z0-9]/) || ['?'])[0].toUpperCase();
   return '<span class="st-mlogo' + (model && model.group === 'local' ? ' local' : '') + '" aria-hidden="true">' + esc(letter) + '</span>';

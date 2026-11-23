@@ -10,8 +10,10 @@
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="css/shell.css">
 <link rel="stylesheet" href="css/overlays.css">
+<link rel="stylesheet" href="css/agent-hub.css">
 <link rel="stylesheet" href="css/popovers.css">
 <link rel="stylesheet" href="css/chat.css">
+<link rel="stylesheet" href="css/question-card.css">
 <link rel="stylesheet" href="css/composer.css">
 <link rel="stylesheet" href="css/voice-replies.css">
 <link rel="stylesheet" href="css/attachments.css">
@@ -19,13 +21,22 @@
 <link rel="stylesheet" href="css/window-snapshot.css">
 <link rel="stylesheet" href="css/lan-find.css">
 <link rel="stylesheet" href="css/goal-card.css">
+<link rel="stylesheet" href="css/suggestion-cards.css">
+<link rel="stylesheet" href="css/side-question.css">
+<link rel="stylesheet" href="css/project-workers.css">
+<link rel="stylesheet" href="css/incognito-chat.css">
 <link rel="stylesheet" href="css/overnight.css">
+<link rel="stylesheet" href="css/import-facts.css">
 <link rel="stylesheet" href="css/task-schedule-picker.css">
 <link rel="stylesheet" href="css/fit-test.css">
 <link rel="stylesheet" href="css/file-preview.css">
+<link rel="stylesheet" href="css/canvas-pane.css">
 <link rel="stylesheet" href="css/onboarding.css">
 <link rel="stylesheet" href="css/settings.css">
+<link rel="stylesheet" href="css/my-files.css">
+<link rel="stylesheet" href="css/citation-chip.css">
 <link rel="stylesheet" href="css/settings-data.css">
+<link rel="stylesheet" href="css/trace-view.css">
 <link rel="stylesheet" href="css/memory-graph.css">
 <link rel="stylesheet" href="css/settings-llm.css">
 <link rel="stylesheet" href="css/motion.css">
@@ -45,6 +56,8 @@
         <section id="content"></section>
         <!-- ATO-1053: a file previewed beside the chat (file-preview.js draws it, render() never does). -->
         <aside id="fpreview" hidden></aside>
+        <!-- ATO-1055: an artifact opened larger beside the chat (canvas-pane.js draws it, render() never does). -->
+        <aside id="canvaspane" hidden></aside>
         <aside id="inspector"></aside>
       </div>
       <div id="console" class="hide"></div>
@@ -55,6 +68,8 @@
       <div id="overlays"></div>
       <!-- ATO-1113: the Run overnight dialog and its runs card (overnight.js draws it, render() never does). -->
       <div id="overnight"></div>
+      <!-- ATO-1629 / ATO-1061: "Here is what I learned about you" (import-facts.js draws it, render() never does). -->
+      <div id="import-facts"></div>
       <div id="fittest"></div>
       <div id="toasts"></div>
     </div>
@@ -71,6 +86,8 @@
 <script src="mcp-live.js"></script>
 <script src="mcp-auth.js"></script>
 <script src="plugins-pane.js"></script>
+<!-- ATO-1626: Settings › My files, the folders the agent indexes. -->
+<script src="my-files.js"></script>
 <script src="mcp-smart-add.js"></script>
 <script src="mcp-catalog.js"></script>
 <script src="session-titles.js"></script>
@@ -83,6 +100,8 @@
 <!-- ATO-900: the memory model card says what its click did, on the card. -->
 <script src="memory-model-card.js"></script>
 <script src="memory-edit.js"></script>
+<!-- ATO-321: Settings › Memory › Clear old memory. -->
+<script src="memory-forget.js"></script>
 <script src="app-update.js"></script>
 <script src="starter-chat.js"></script>
 <script src="upgrade-chat.js"></script>
@@ -96,23 +115,43 @@
 <script src="chat-rename.js"></script>
 <!-- ATO-1054: the chat row's Export… -->
 <script src="chat-export.js"></script>
+<script src="chat-share.js"></script>
 <!-- ATO-1034: chat folders, kept in ~/.atomic-agent/chat-folders.json. -->
 <script src="chat-folders.js"></script>
 <!-- ATO-1150: search and archive in the chat list (the pure half is chat-list.js). -->
 <script src="chat-search.js"></script>
+<script src="chat-worktree.js"></script>
 <script src="chat-projects.js"></script>
+<!-- ATO-1012: Edit project's folder, model and AGENTS.md line. -->
+<script src="project-edit-extras.js"></script>
+<!-- ATO-1173: worker chats, each in its own copy of the project folder. -->
+<script src="project-workers.js"></script>
+<!-- ATO-1146: drag a chat into a project. -->
+<script src="chat-drag.js"></script>
 <script src="handoff.js"></script>
+<!-- ATO-1014: Hand off to Claude Code / Codex, the way back from handoff.js. -->
+<script src="handoff-out.js"></script>
+<!-- ATO-1157: the Agents sheet, Claude Code / Codex sessions waiting for you. -->
+<script src="agent-hub.js"></script>
 <script src="bug-report.js"></script>
 <script src="quick-entry-settings.js"></script>
+<!-- ATO-1064: dictation into any app, its Settings row (after quick-entry-settings.js, whose combo recorder it uses). -->
+<script src="dictate-anywhere-settings.js"></script>
 <!-- ATO-556: the card an atomicagent:// link opens (install only on a click). -->
 <script src="deeplink.js"></script>
+<!-- ATO-1492: an MCP server's question to the person (never through the approval card). -->
+<script src="mcp-elicitation.js"></script>
+<!-- ATO-1072: Save as recipe and the Recipes gallery (recipes in userData/recipes.json). -->
+<script src="chat-recipe.js"></script>
 <script src="chat-rewind.js"></script>
 <script src="workspace-skills.js"></script>
 <!-- ATO-526: whether a skill's external programs are on this computer (words only; main looks them up). -->
 <script src="skill-bins.js"></script>
 <script src="project-trust.js"></script>
+<script src="append-local-question.js"></script>
 <script src="approval-rules.js"></script>
 <script src="offline-mode.js"></script>
+<script src="privacy-shield.js"></script>
 <!-- ATO-1268: smart approval's "Risk check: medium. …" line on the approval card. -->
 <script src="approval-risk.js"></script>
 <!-- ATO-445: Settings › Tasks › Webhooks, the state and the pane; renderer.js wires the IPC. -->
@@ -122,10 +161,17 @@
 <script src="lan-provider.js"></script>
 <!-- ATO-490: the composer's reasoning depth chip, remembered per chat. -->
 <script src="reasoning-switch.js"></script>
+<!-- ATO-601: the Tasks tab's "From e-mail" cards, read from GET /api/tasks. -->
+<script src="email-tasks.js"></script>
+<script src="composio-accounts.js"></script>
 <script src="composio.js"></script>
+<!-- ATO-1630: Settings › Connections › Monid (browser sign-in, no key); renderer.js wires the pane. -->
+<script src="monid.js"></script>
 <!-- ATO-1129: Settings › Connections › Phone push (ntfy); renderer.js wires the pane. -->
 <script src="phone-push.js"></script>
 <!-- ATO-859: Telegram pairing from the app, the state and the card; renderer.js wires the IPC. -->
+<!-- ATO-516: a QR code of the Telegram pairing link. -->
+<script src="qr-code.js"></script>
 <script src="telegram-pairing.js"></script>
 <!-- ATO-900 item 6: the Telegram tab's Restart agent, its state, words and button. -->
 <script src="telegram-restart.js"></script>
@@ -133,6 +179,9 @@
 <script src="discord-settings.js"></script>
 <script src="hf-mirror.js"></script>
 <script src="attachments.js"></script>
+<script src="bang-command.js"></script>
+<!-- ATO-1596 / ATO-1597: @-file mentions, the composer list and the sent message's file lines. -->
+<script src="file-mentions.js"></script>
 <script src="transcribe.js"></script>
 <script src="diff-lines.js"></script>
 <script src="diff-review.js"></script>
@@ -143,11 +192,20 @@
 <script src="disk-space.js"></script>
 <!-- ATO-1186: a reply's tok/s (W2: the composer status line is gone) -->
 <script src="status-line.js"></script>
+<script src="kv-cache-share.js"></script>
 <script src="model-spotlight.js"></script>
 <script src="interview-card.js"></script>
+<!-- ATO-1502: the agent's ask_user question card. -->
+<script src="question-card.js"></script>
+<!-- ATO-458: suggested tasks (Retry / Resume) under the start screen's starters -->
+<script src="suggestion-cards.js"></script>
 <!-- ATO-1185: the downloads icon in the sidebar header and its popover (renderDlcard). -->
 <script src="dl-indicator.js"></script>
+<!-- ATO-1503: Pause / Resume on a model download row (renderDlcard). -->
+<script src="dl-pause.js"></script>
 <script src="doctor-data.js"></script>
+<!-- ATO-639: Diagnostics' Timeline, one turn of the chat as a waterfall. -->
+<script src="trace-view.js"></script>
 <!-- ATO-336: context size and parallel slots for the local model (Settings › Models). -->
 <script src="local-context-slots.js"></script>
 <script src="memory-graph.js"></script>
@@ -158,6 +216,7 @@
 <!-- ATO-590: the Tasks tab's time picker, schedule in words, Pause / Resume and past runs. -->
 <script src="task-schedule-picker.js"></script>
 <script src="overnight.js"></script>
+<script src="import-facts.js"></script>
 <script src="fit-test.js"></script>
 <!-- ATO-669: forgiving ⌘K search; fuzzysort is vendored (MIT, licence beside it). -->
 <script src="vendor/fuzzysort.js"></script>
@@ -170,11 +229,15 @@
 <script src="vendor/marked.js"></script>
 <script src="vendor/purify.js"></script>
 <!-- ATO-1251: the reply's markdown blocks (renderMarkdown hands its text here). -->
+<!-- ATO-1628: citation chips (`file://…#page=N`) in a reply; md-render.js asks it for one. -->
+<script src="citation-chip.js"></script>
 <script src="md-render.js"></script>
 <!-- ATO-1140: formulas and Mermaid diagrams; KaTeX and Mermaid themselves load on first use. -->
 <script src="rich-blocks.js"></script>
 <!-- ATO-1053: the file preview panel (main reads the file; this only draws it). -->
 <script src="chat-files.js"></script>
+<!-- ATO-981: Word, PowerPoint and Excel files in that panel (main pulls the text out). -->
+<script src="office-preview.js"></script>
 <script src="file-preview.js"></script>
 <!-- ATO-464: a finished turn's steps fold into one summary line. -->
 <script src="turn-summary.js"></script>
@@ -185,6 +248,10 @@
 <!-- ATO-1040: goal mode, the composer's goal form and the progress card -->
 <script src="goal-card.js"></script>
 <script src="goal-actions.js"></script>
+<!-- ATO-1152: /btw, a side question answered in a card and never saved to the chat. -->
+<script src="side-question.js"></script>
+<!-- ATO-586: incognito chat, never listed, deleted when it is left. -->
+<script src="incognito-chat.js"></script>
 <!-- W2: the composer's mode chip: Chat · Goal · Run overnight · Voice conversation -->
 <script src="composer-mode.js"></script>
 <!-- ATO-965: /status, a snapshot of the running turn. -->
@@ -195,6 +262,11 @@
 <!-- ATO-1138: the window's own charts, tables and KPI cards for those frames. -->
 <script src="dashboard-templates.js"></script>
 <script src="chat-artifact.js"></script>
+<!-- ATO-1055: Expand on an artifact opens it in a canvas beside the chat. -->
+<script src="canvas-pane.js"></script>
+<script src="publish-site.js"></script>
+<!-- ATO-1010: MCP Apps, a server's tool UI, in that same frame. -->
+<script src="mcp-app.js"></script>
 <script src="tool-failures.js"></script>
 <!-- ATO-1249: the side panel's Steps and Reasoning, newest first, with a switch. -->
 <script src="insp-order.js"></script>
@@ -217,5 +289,7 @@
 <script src="renderer.js"></script>
 <!-- ATO-1063: a chat the mini window started, opened here by its "Open in big window". -->
 <script src="mini-chat-handoff.js"></script>
+<!-- ATO-561: "Open in new window" on a chat row. -->
+<script src="chat-popout.js"></script>
 </body>
 </html>

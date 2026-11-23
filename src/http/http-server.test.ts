@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { createHttpServer } from "./http-server.js";
 import { startTestHarness, type Harness } from "./test-harness.js";
 
 describe("http-server", () => {
@@ -30,6 +31,17 @@ describe("http-server", () => {
     } finally {
       await secured.cleanup();
     }
+  });
+
+  it("refuses to build a server with no key unless told it is meant to have none", async () => {
+    const base = {
+      runtime: harness.runtime,
+      host: "127.0.0.1",
+      port: 0,
+      routes: [],
+    };
+    await expect(createHttpServer({ ...base, apiKey: null })).rejects.toThrow(/API key is required/);
+    await expect(createHttpServer({ ...base, apiKey: "   " })).rejects.toThrow(/empty/);
   });
 
   it("close() stops accepting new connections", async () => {

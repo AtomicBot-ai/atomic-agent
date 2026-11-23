@@ -11,6 +11,7 @@ import { ConfigValidationError } from "./config-validation-error.js";
  * the next write.
  */
 export interface SessionRailConfig {
+  /** Session ids in the order the operator arranged the rail's Sessions list. Empty (default) sorts by recency; sessions not in the list go on top and unknown ids are ignored. */
   order: string[];
   /**
    * Session ids pinned to the top of the rail (config v53). Pinned rows

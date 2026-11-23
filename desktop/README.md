@@ -60,7 +60,10 @@ window shows "Not while a turn is running".
 | Steering the turn already running | `POST /api/sessions/{id}/steer` |
 | What a turn accepted but never read | `GET` / `DELETE /api/sessions/{id}/steer` |
 | Compacting a chat's context now | `POST /api/sessions/{id}/compact` |
+| `/btw`, a side question answered in a card and never saved to the chat (ATO-1152; an agent without the route says to update) | `POST /api/btw` |
+| An incognito chat (ATO-586): `incognito: true` on every turn, deleted when it is left | `POST /v1/chat/completions`, `DELETE /api/sessions/{id}` |
 | "Trust this folder?" and Settings › Skills' folder-trust switch (ATO-1250) | `GET` / `POST /api/project-trust` |
+| "Local model is set as your last-resort fallback. Keep it?", asked once (ATO-1461; hidden on an agent without the route) | `GET` / `POST /api/fallback/local-question` |
 | The grey next-step suggestion in the empty composer, Tab takes it (ATO-1094; only while Settings › General › Suggest a next step, `tui.nextStepSuggestions`, is on; hidden on an agent without the route) | `GET /api/sessions/{id}/next-step` |
 
 The turn stream is sent with `X-Atomic-Extensions: 1`, which upgrades it from
@@ -126,7 +129,9 @@ the agent could not compact and left older history out, `history_trimmed`
 adds one line saying so and pointing at `/compact`. `/compact` in the composer
 and "Compact now" in the context popover call the compact route through main
 (`agent:compactSession`); both are off while a turn runs, while a compaction
-is going, and before the chat is saved. Words and rules:
+is going, and before the chat is saved. `/compact <what to keep>` (ATO-661)
+sends the text as `instructions`, so the summary keeps it (at most 2000
+characters). Words and rules:
 [context-compaction.js](renderer/context-compaction.js). The route answers
 only when the summary is written, which can take longer than five minutes on
 a local model, so main sends it over `node:http` and not `fetch`: Node's fetch
@@ -887,6 +892,19 @@ Honestly degraded, and labelled as such in the UI:
   Gmail" with a sign-in link. The key never comes back to the window, and
   no message, log or analytics event (`composio_setup`: step and outcome)
   carries it. `app:dotenvSet` writes only the Telegram token and `EXA_API_KEY`.
+  **Accounts** (ATO-1494, `renderer/composio-accounts.js`,
+  `main/composio-accounts.ts`, `main/composio-accounts-ipc.ts`) is the card
+  under the rows once a key is saved: every account Composio has signed in
+  for this install (`GET /connected_accounts`), a short name for the ones
+  you keep, and one default per app that every call for that app goes
+  through, as the Claude and ChatGPT connectors and Raycast list accounts.
+  `composio:listAccounts` / `addAccount` / `removeAccount` / `setDefault`
+  read `composio.accounts`, apply the core's rules (ATO-548) and write the
+  whole list in one config write; the first named account of an app becomes
+  its default. The agent pins the defaults when it starts, so each change
+  owes a restart. Save and Check again pin the same defaults on the session
+  they cache and write its `sessionPins` stamp, so the agent reuses that
+  session only while the defaults are unchanged.
 - **Web search key (Exa)** (ATO-328). When a search ran without a key and
   Exa could not serve it, the agent's `event: tool_result` frame carries
   `key_required` (`provider`, `reason`: `rate_limited` / `unreachable` /
@@ -906,6 +924,24 @@ Honestly degraded, and labelled as such in the UI:
   frame's `envVar`) is not supported from the card or Settings, and such an
   agent keeps asking until that variable is set by hand. `app:dotenvSet`
   refuses a line break or NUL in any value.
+- **Keys in the OS keychain** (ATO-1639). When the agent keeps saved keys in
+  the OS keychain (`atag config secrets keychain`, opt-in since ATO-474;
+  `.env` stays the default), the app goes through the agent for every key
+  and never opens the keychain itself ([keychain-keys.ts](main/keychain-keys.ts)).
+  Which store is on, and the NAMES the keychain holds, come from the agent's
+  `<stateDir>/secrets-store.json`, so Settings counts those keys as saved. A
+  provider key typed in the window is saved under
+  `ATOMIC_AGENT_PROVIDER_<ID>_API_KEY` and the entry names that variable
+  instead of holding the key; bot tokens, the Exa key and the Composio key
+  (`app:dotenvSet`, `composio:*`) are saved and removed the same way. The
+  save is `PUT /api/secrets/{name}` while `atag serve` runs on this computer
+  (the running agent uses the key at once), else `atag config secrets set
+  <NAME>` with the value on stdin. A value the app needs (the key check, the
+  OpenRouter catalog, Studio's prompt help, Composio's Check) is read with
+  `atag config secrets get <NAME>` and kept for a minute. If the keychain
+  refuses a provider key, or the agent is older than these commands, the
+  key stays in config.json as before. With the default `.env` store none of
+  this runs.
 - **Import** is the TUI's Hermes/OpenClaw form over `atag import <source>
   … --dry-run` (preview) and `… --yes` (apply) — always exactly one of the
   two, never a bare run (which exits 0 on a non-TTY having written nothing).
@@ -1629,11 +1665,28 @@ fails, the build fails with the compiler output; `ATOMIC_SKIP_SPEECH_HELPER=1`
 leaves the helper out on purpose, e.g. with an Xcode older than 26). It ships through `extraResources`, NOT through
 `files` — `asar` is on, and a binary inside an asar archive cannot be
 executed, so `out/native/**` is excluded from the archive and the same file
-is copied to `Contents/Resources/native/atomic-speech`. `mac.extendInfo`
+is copied to `Contents/Resources/native/atomic-speech`. The same step builds
+`out/native/atomic-fn-key` from `native/atomic-fn-key.swift` (ATO-1064: it
+says when Fn is held down and let go, for dictation into any app; target
+macOS 14) and ships it the same way, to `Contents/Resources/native/atomic-fn-key`. `mac.extendInfo`
 carries `NSMicrophoneUsageDescription`; without it TCC kills the packaged
 app the first time the renderer opens the microphone. The .app is ad-hoc
 signed, so its signature changes on every rebuild and macOS re-asks for
 microphone access after each new build — expected, not a bug.
+
+On Windows, holding Ctrl+Win to dictate into any app (ATO-1064) needs no
+helper process: `main/hold-key-uiohook.ts` loads the native module
+`uiohook-napi` (pinned to 1.5.5, N-API prebuilds for win32-x64 and
+win32-arm64, so no rebuild for Electron) inside the app, only on Windows
+and only while the hold mode is on, and turns its key events into the same
+down/up lines the Mac helper prints. It reads keys and swallows none. If it
+cannot load or start, Settings says the watcher stopped and the toggle
+combo takes over. `electron-builder.cjs` keeps only its Windows prebuilds,
+unpacks them out of the asar (`asarUnpack`), and has `npmRebuild` off: the
+module is N-API, and `@electron/rebuild` does not recognise its prebuild
+file names, so it would try to compile it from source. Letting go of Win
+after Ctrl+Win may open the Start menu; the module cannot press the
+unassigned key that would stop it, and no real key is pressed instead.
 
 The app does **not** bundle the agent. It looks for `ATOMIC_AGENT_BIN` first,
 then `~/atag-agent/bin/atag`, then `atag` (or `atomic-agent`) in
@@ -1983,6 +2036,8 @@ desktop/
   main/updater.ts        app updates (electron-updater), only ever on a click
   electron-builder.cjs   the packaging config, and the update feed (ATAG_UPDATE_FEED_URL)
   native/atomic-speech.swift  on-device transcription (SpeechAnalyzer), NDJSON on stdout (live, and --file for an audio file)
+  native/atomic-fn-key.swift  hold Fn to dictate into any app: a listen-only event tap, down/up lines on stdout
+  main/hold-key-uiohook.ts  hold Ctrl+Win to dictate into any app on Windows (uiohook-napi, in process)
   preload/preload.ts     the window.atomic bridge
   renderer/              index.html · styles.css · renderer.js · voice-worklet.js
   scripts/copy-renderer.mjs

@@ -10,6 +10,9 @@ import { readContextOverflowCounts, type ContextOverflowCounts } from "./reliabi
 import { createStreamRepetitionWatcher } from "./reliability/stream-repetition-watcher.js";
 import { drySamplerFields } from "./dry-sampler.js";
 import { takePromptProgress } from "./llama-prompt-progress.js";
+import { isGrammarRefusal } from "./grammar-refusal.js";
+import { isLoopbackUrlOnPort } from "../local-llm/server/managed-api-key.js";
+import { managedPortsOf } from "./describe-llama-health-failure.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type {
   CompletionRequest,
@@ -564,7 +567,7 @@ export interface LlamaServerClientOptions {
    * does — so a field log can show whether a request after a cut-off
    * worker was ever sent (ATO-1357, issue #490).
    */
-  logger?: Pick<StructuredLogger, "debug">;
+  logger?: Pick<StructuredLogger, "debug"> & Partial<Pick<StructuredLogger, "warn">>;
 }
 
 /**
@@ -608,7 +611,9 @@ export class LlamaServerClient {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly refreshApiKey: (url: string) => Promise<string | null>;
   private readonly drySamplerOverride: boolean | undefined;
-  private readonly logger: Pick<StructuredLogger, "debug"> | undefined;
+  private readonly logger:
+    | (Pick<StructuredLogger, "debug"> & Partial<Pick<StructuredLogger, "warn">>)
+    | undefined;
   /** Recent generation speeds, tokens/s, newest last — see `measuredTokensPerSecond`. */
   private readonly throughputSamples: number[] = [];
   /**
@@ -640,6 +645,18 @@ export class LlamaServerClient {
    * its own previous one.
    */
   private readonly slotsPollsInFlight = new Map<string, Promise<unknown>>();
+  /**
+   * Base URLs of servers that refused our GBNF grammar with a 400
+   * (ATO-1675): an older llama.cpp whose grammar parser does not read
+   * every feature we emit, or another server on `/completion` that does
+   * not take the field. Every later request to that URL goes out without
+   * a grammar, and its result says so (`grammarSkipped`), so the step
+   * reads free text the way the native-tools path already does. Never
+   * set for our own engine, whose build we ship. Cleared, like
+   * `slotsUnavailableFor`, when the connection to the URL is refused:
+   * the server that refused is gone, and its replacement may be newer.
+   */
+  private readonly grammarRefusedFor = new Set<string>();
 
   constructor(options: LlamaServerClientOptions = {}) {
     const config = getConfig();
@@ -934,6 +951,119 @@ export class LlamaServerClient {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
+    const skipped = this.grammarSkipped(request);
+    try {
+      return markGrammarSkipped(await this.completeOnce(request), skipped);
+    } catch (err) {
+      if (!this.learnGrammarRefusal(request, err)) throw err;
+      try {
+        return markGrammarSkipped(await this.completeOnce(request), true);
+      } catch (retryErr) {
+        if (request.signal?.aborted) throw retryErr;
+        // The grammar refusal is what the user needs to read, not
+        // whatever the request without one then ran into (ATO-1399).
+        throw err;
+      }
+    }
+  }
+
+  /**
+   * Stream a completion. A grammar refusal (ATO-1675) can only arrive
+   * before the first chunk, as the status or as llama.cpp's first SSE
+   * event, so the one resend without the grammar never replays text the
+   * caller has already seen.
+   */
+  async *completeStream(
+    request: CompletionRequest,
+  ): AsyncGenerator<StreamChunk, CompletionResult, void> {
+    const skipped = this.grammarSkipped(request);
+    const first = this.completeStreamOnce(request);
+    let yielded = false;
+    let refusal: unknown;
+    try {
+      for (;;) {
+        const step = await first.next();
+        if (step.done) return markGrammarSkipped(step.value, skipped);
+        yielded = true;
+        yield step.value;
+      }
+    } catch (err) {
+      if (yielded || !this.learnGrammarRefusal(request, err)) throw err;
+      refusal = err;
+    } finally {
+      // A consumer that walks away mid-stream closes the request too.
+      await first.return(undefined as never).catch(() => undefined);
+    }
+    const second = this.completeStreamOnce(request);
+    let resentText = false;
+    try {
+      for (;;) {
+        let step: IteratorResult<StreamChunk, CompletionResult>;
+        try {
+          step = await second.next();
+        } catch (retryErr) {
+          // As in `complete()`: a resend that fails before any text
+          // gives back the grammar refusal, the error the user needs to
+          // read. Once the resend has streamed text, its own failure is
+          // what happened to that text, and it stands.
+          if (resentText || request.signal?.aborted) throw retryErr;
+          throw refusal;
+        }
+        if (step.done) return markGrammarSkipped(step.value, true);
+        resentText = true;
+        yield step.value;
+      }
+    } finally {
+      await second.return(undefined as never).catch(() => undefined);
+    }
+  }
+
+  /** The grammar of `request` stays home: its server refused one before. */
+  private grammarSkipped(request: CompletionRequest): boolean {
+    if (!request.grammar) return false;
+    return this.grammarRefusedFor.has(
+      this.baseUrlOverride ?? getConfig().localModels.url,
+    );
+  }
+
+  /**
+   * True when `err` is a grammar refusal (`isGrammarRefusal`) of a
+   * request that carried one, from a server that is not our own engine:
+   * the URL is remembered, so the caller's resend and every later
+   * request go out without the grammar. Our engine's refusal stands, as
+   * before: there it is a bug in the grammar, not an old server. Logs
+   * the fixed facts only, never the server's words.
+   */
+  private learnGrammarRefusal(request: CompletionRequest, err: unknown): boolean {
+    if (request.signal?.aborted) return false;
+    if (!request.grammar || !(err instanceof LlamaServerError)) return false;
+    if (!isGrammarRefusal(err.status, err.message, err.body?.type)) return false;
+    const base = this.baseUrlOverride ?? getConfig().localModels.url;
+    if (this.isManagedEngine(base)) return false;
+    this.grammarRefusedFor.add(base);
+    // Warn, so a field log shows the agent runs this server without a
+    // grammar. The port and whether it is loopback only: never the
+    // server's words, which may quote the request.
+    this.logger?.warn?.("llama: server refused the grammar; sending requests to it without one", {
+      sessionId: request.sessionId ?? null,
+      status: err.status,
+      midStream: err.midStream,
+      ...describeBase(base),
+    });
+    return true;
+  }
+
+  /**
+   * Our own engine (Atomic Core or the managed llama-server): a loopback
+   * URL on one of the managed ports, or one with a Core session key.
+   */
+  private isManagedEngine(base: string): boolean {
+    const config = getConfig();
+    if (coreKeyForUrl(config.paths.localModelsDataDir, base) !== null) return true;
+    return isLoopbackUrlOnPort(base, managedPortsOf(config.localModels));
+  }
+
+  private async completeOnce(request: CompletionRequest): Promise<CompletionResult> {
     const { url, headers, body } = this.prepareRequest(request, false);
     return this.runWithRetry(
       url,
@@ -968,7 +1098,7 @@ export class LlamaServerClient {
     );
   }
 
-  async *completeStream(
+  private async *completeStreamOnce(
     request: CompletionRequest,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
     const { url, headers, body } = this.prepareRequest(request, true);
@@ -1758,9 +1888,9 @@ export class LlamaServerClient {
     // `slotsUnavailableFor` is set the watch does not poll, so nothing
     // else on this client ever touches that URL again.
     if (errno !== undefined && SLOTS_UNREACHABLE_ERRNOS.has(errno)) {
-      this.forgetSlotsUnavailable(
-        this.baseUrlOverride ?? getConfig().localModels.url,
-      );
+      const refusedBase = this.baseUrlOverride ?? getConfig().localModels.url;
+      this.forgetSlotsUnavailable(refusedBase);
+      this.grammarRefusedFor.delete(refusedBase);
     }
     // Keep the errno and the original error. Rebuilding the failure
     // without them is what left the biggest bucket in error reporting
@@ -1799,7 +1929,9 @@ export class LlamaServerClient {
     if (this.drySamplerOverride ?? (config.localModels.drySampler === true)) {
       Object.assign(payload, drySamplerFields());
     }
-    if (request.grammar) payload.grammar = request.grammar;
+    if (request.grammar && !this.grammarRefusedFor.has(base)) {
+      payload.grammar = request.grammar;
+    }
     if (request.stop) payload.stop = request.stop;
     // Asked only when someone listens (ATO-1027); a build that does not
     // know the field ignores it and streams exactly as before.
@@ -1977,6 +2109,28 @@ function parseSseEvent(rawEvent: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/** The port of `base` and whether it is loopback, for a log line; never the host name. */
+function describeBase(base: string): { port: string; loopback: boolean } {
+  try {
+    const parsed = new URL(base);
+    const host = parsed.hostname.toLowerCase();
+    return {
+      port: parsed.port,
+      loopback: host === "localhost" || host === "[::1]" || /^127(\.\d{1,3}){3}$/.test(host),
+    };
+  } catch {
+    return { port: "", loopback: false };
+  }
+}
+
+/** `result`, marked as served without its grammar when `skipped` (ATO-1675). */
+function markGrammarSkipped(
+  result: CompletionResult,
+  skipped: boolean,
+): CompletionResult {
+  return skipped ? { ...result, grammarSkipped: true } : result;
 }
 
 function normaliseCompletionResponse(

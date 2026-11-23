@@ -56,10 +56,20 @@ describe("loadConfig", () => {
     }
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...USER_CONFIG_DEFAULTS,
-      network: { offline: true },
+      network: { offline: true, proxy: { url: null, noProxy: [] } },
     });
     resetConfigCache();
     expect(loadConfig().network?.offline).toBe(true);
+  });
+
+  it("privacy.shield.enabled: off by default, on from the file (ATO-599)", () => {
+    expect(loadConfig().privacy?.shield.enabled).toBe(false);
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      privacy: { shield: { enabled: true } },
+    });
+    resetConfigCache();
+    expect(loadConfig().privacy?.shield.enabled).toBe(true);
   });
 
   it("creates a defaults-only config on first run", () => {

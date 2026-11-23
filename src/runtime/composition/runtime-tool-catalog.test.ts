@@ -24,7 +24,7 @@ import * as mcp from "../../mcp/index.js";
 import type { McpToolMeta, McpSamplingHandler } from "../../mcp/index.js";
 import * as composio from "../../composio/index.js";
 import { setDynamicResourceClassResolver } from "../../agent/tool-resource-class.js";
-import { createRuntimeToolRegistry, registerRuntimeCoreTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope, runtimeKnownSecrets } from "./runtime-tool-catalog.js";
+import { createRuntimeToolRegistry, registerRuntimeCoreTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope, runtimeKnownSecrets, isForeignLlamaServer } from "./runtime-tool-catalog.js";
 import { ModelProfileManager } from "../../llm/model-profile-manager.js";
 import { createApiKeyCommandSource, resetCommandIssuedSecrets } from "../../llm/provider/openai/api-key-command.js";
 import { CostAccumulator } from "../../llm/provider/cost-accumulator.js";
@@ -119,7 +119,7 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       expect(registry.has("tool.view")).toBe(false);
       // Computer use is opt-in (`tools.screen.enabled`, default off): no input tool registered.
       expect(config.tools.screen.enabled).toBe(false);
-      for (const name of ["os.screen.click", "os.screen.type", "os.screen.key"]) expect(registry.has(name), name).toBe(false);
+      for (const name of ["os.screen.click", "os.screen.type", "os.screen.key", "os.screen.elements", "os.screen.press"]) expect(registry.has(name), name).toBe(false);
       // Pointing is on by default (ATO-1018), macOS only: the marks and the screenshot they read.
       expect(config.tools.screen.point).toBe(true);
       for (const name of ["os.screen.point", "os.screen.capture"]) expect(registry.has(name), name).toBe(process.platform === "darwin");
@@ -223,6 +223,9 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     expect(initial.some(tool => tool.name === "fusion.delegate" || tool.name === "vision.describe")).toBe(false);
     setFusion(true); const fusion = owner.effectiveToolDescriptors(); expect(fusion).not.toBe(initial);
     expect(fusion.some(tool => tool.name === "fusion.delegate")).toBe(true); expect(owner.effectiveToolDescriptors()).toBe(fusion);
+    // The other side of the fusion gate (ATO-1670): subagent.run is offered only outside Fusion.
+    expect(initial.some(tool => tool.name === "subagent.run")).toBe(true);
+    expect(fusion.some(tool => tool.name === "subagent.run")).toBe(false);
     setVision(true); const vision = owner.effectiveToolDescriptors(); expect(vision).not.toBe(fusion);
     expect(vision.some(tool => tool.name === "vision.describe")).toBe(true); expect(owner.effectiveToolDescriptors()).toBe(vision);
     setFusion(false); setVision(false);
@@ -297,7 +300,7 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     registerRuntimeFusionAndReadScope({ config, toolRegistry, approvals, dangerous, declaredInputs: new osTools.DeclaredInputsRegistry(),
       resolveOriginalRequest, runTurn: async () => externalOperation(), createEphemeralSession: () => createEmptySessionState({ id: "worker", workingDir: directory }),
       prepareLocalLink: async () => {}, emitAgentLoopEventFor: () => {}, resolveCurrentRunMode: () => resolveRunMode(resolveLlmConfig(config)),
-      providerRegistry: { getProvider: () => undefined }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const }, slotManager: { poolSize: () => 2 }, workingDir: directory, logger });
+      providerRegistry: { getProvider: () => undefined, modelVariant: async () => undefined }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const }, slotManager: { poolSize: () => 2 }, workingDir: directory, logger });
     const wired = builder.mock.calls[0]?.[0]; const protectedReads = confinement.mock.calls[0]?.[1];
     if (!wired || !protectedReads) throw new Error("late tool phase missing");
     expect(wired.approvals).toBe(approvals); expect(wired.approvalRequired).toBe(true);
@@ -309,7 +312,8 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     expect(protectedReads.stateSecrets).toEqual({ stateDir: config.paths.stateDir, files: getStateSecretPaths(config.paths) });
     config.agent.readScope = "unrestricted"; expect(protectedReads.readScope?.()).toBe("unrestricted");
     config.agent.readScope = "working-dir"; expect(protectedReads.readScope?.()).toBe("working-dir");
-    expect(toolRegistry.list().map(tool => tool.name)).toEqual(["os.fs.read", "fusion.delegate"]);
+    // subagent.run registers right after fusion.delegate (ATO-1670).
+    expect(toolRegistry.list().map(tool => tool.name)).toEqual(["os.fs.read", "fusion.delegate", "subagent.run"]);
     expect(builder.mock.invocationCallOrder[0]).toBeLessThan(confinement.mock.invocationCallOrder[0] ?? 0);
   });
 });
@@ -327,7 +331,7 @@ describe("fusion escalation calls in the session readout (ATO-1388)", () => {
       registerRuntimeFusionAndReadScope({ config, toolRegistry, approvals, dangerous: { approvals, approvalRequired: false }, declaredInputs: new osTools.DeclaredInputsRegistry(),
         resolveOriginalRequest: () => undefined, runTurn: async () => externalOperation(), createEphemeralSession: () => createEmptySessionState({ id: "worker", workingDir: directory }),
         prepareLocalLink: async () => {}, emitAgentLoopEventFor: () => {}, resolveCurrentRunMode: () => resolveRunMode(resolveLlmConfig(config)),
-        providerRegistry: { getProvider: () => provider as never }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const },
+        providerRegistry: { getProvider: () => provider as never, modelVariant: async () => provider as never }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const },
         slotManager: { poolSize: () => 2 }, workingDir: directory, logger, sessionUsage: { record } });
       const wired = builder.mock.calls.at(-1)?.[0];
       if (!wired?.escalationComplete) throw new Error("escalation seam missing");
@@ -337,6 +341,42 @@ describe("fusion escalation calls in the session readout (ATO-1388)", () => {
       expect(record).toHaveBeenCalledWith("s-1", expect.objectContaining({ providerId: "cloud", modelId: "big", usage, local: false }));
       await wired.escalationComplete({ providerId: "cloud", prompt: "p", maxOutputTokens: 100, signal });
       expect(record).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.restoreAllMocks();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("fusion escalation and judge calls on their own model (ATO-1560)", () => {
+  it("asks the provider's copy built for the target's model, and the provider itself without one", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "catalog-turn-model-"));
+    try {
+      const config = getConfig(); const toolRegistry = new ToolRegistry();
+      const approvals = new ApprovalGate({ emit: () => {}, level: 5 });
+      const builder = vi.spyOn(fusionTools, "buildFusionDelegateTool");
+      const base = { complete: vi.fn(async () => ({ content: "base", modelId: "model-a" })) };
+      const variant = { complete: vi.fn(async () => ({ content: "variant", modelId: "model-b" })) };
+      const asked: Array<[string, string]> = [];
+      registerRuntimeFusionAndReadScope({ config, toolRegistry, approvals, dangerous: { approvals, approvalRequired: false }, declaredInputs: new osTools.DeclaredInputsRegistry(),
+        resolveOriginalRequest: () => undefined, runTurn: async () => externalOperation(), createEphemeralSession: () => createEmptySessionState({ id: "worker", workingDir: directory }),
+        prepareLocalLink: async () => {}, emitAgentLoopEventFor: () => {}, resolveCurrentRunMode: () => resolveRunMode(resolveLlmConfig(config)),
+        providerRegistry: {
+          getProvider: () => base as never,
+          modelVariant: async (id: string, model: string) => { asked.push([id, model]); return variant as never; },
+        },
+        llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const },
+        slotManager: { poolSize: () => 2 }, workingDir: directory, logger });
+      const wired = builder.mock.calls.at(-1)?.[0];
+      if (!wired?.escalationComplete) throw new Error("escalation seam missing");
+      const signal = new AbortController().signal;
+      const withModel = await wired.escalationComplete({ providerId: "cloud", model: "model-b", prompt: "p", maxOutputTokens: 100, signal });
+      const without = await wired.escalationComplete({ providerId: "cloud", prompt: "p", maxOutputTokens: 100, signal });
+      expect(asked).toEqual([["cloud", "model-b"]]);
+      expect(withModel.content).toBe("variant");
+      expect(without.content).toBe("base");
+      expect(variant.complete).toHaveBeenCalledTimes(1);
+      expect(base.complete).toHaveBeenCalledTimes(1);
     } finally {
       vi.restoreAllMocks();
       await rm(directory, { recursive: true, force: true });
@@ -358,7 +398,7 @@ describe("fusion escalation calls in llm.costTracking (ATO-1497)", () => {
       registerRuntimeFusionAndReadScope({ config, toolRegistry, approvals, dangerous: { approvals, approvalRequired: false }, declaredInputs: new osTools.DeclaredInputsRegistry(),
         resolveOriginalRequest: () => undefined, runTurn: async () => externalOperation(), createEphemeralSession: () => createEmptySessionState({ id: "worker", workingDir: directory }),
         prepareLocalLink: async () => {}, emitAgentLoopEventFor: () => {}, resolveCurrentRunMode: () => resolveRunMode(resolveLlmConfig(config)),
-        providerRegistry: { getProvider: () => provider as never }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const },
+        providerRegistry: { getProvider: () => provider as never, modelVariant: async () => provider as never }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const },
         slotManager: { poolSize: () => 2 }, workingDir: directory, logger, sessionUsage: { record: vi.fn() }, costAccumulator });
       const wired = builder.mock.calls.at(-1)?.[0];
       if (!wired?.escalationComplete) throw new Error("escalation seam missing");
@@ -443,5 +483,14 @@ describe("runtimeKnownSecrets (ATO-1077)", () => {
     } finally {
       resetCommandIssuedSecrets();
     }
+  });
+});
+
+describe("isForeignLlamaServer (ATO-1562)", () => {
+  it("is a llama-server entry on a server other than the main local one", () => {
+    expect(isForeignLlamaServer({ kind: "llama-server", url: "http://127.0.0.1:8080" }, "http://127.0.0.1:19091")).toBe(true);
+    expect(isForeignLlamaServer({ kind: "llama-server", url: "http://127.0.0.1:19091/" }, "http://127.0.0.1:19091")).toBe(false);
+    expect(isForeignLlamaServer({ kind: "llama-server" }, "http://127.0.0.1:19091")).toBe(false);
+    expect(isForeignLlamaServer({ kind: "openai-compatible", url: "http://127.0.0.1:1234" }, "http://127.0.0.1:19091")).toBe(false);
   });
 });

@@ -57,7 +57,7 @@ export const HELP =
     "  env                       Settings that live in environment variables",
     "                            (or <stateDir>/.env) instead of the config file",
     "  path                      Print the path to the config file",
-    "  secrets [status|keychain|env]",
+    "  secrets [status|keychain|env|set|get|unset]",
     "                            Show or switch where saved API keys and tokens live:",
     "                            <stateDir>/.env (default) or the OS keychain; moves",
     "                            the keys both ways (`config secrets --help`)",

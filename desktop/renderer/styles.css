@@ -423,6 +423,17 @@ button.tk-chip:hover{background:var(--press)}
 /* The mark fills three quarters of the badge; at 62% it read as small. */
 .logo img{width:74%;height:74%;object-fit:contain;display:block}
 .logo--sm{width:22px;height:22px}.logo--xs{width:18px;height:18px}.logo--lg{width:44px;height:44px}
+/* ATO-1633: a mark in a 14-16px glyph slot (a sidebar folder, a tool card or row, the
+   new-model card, Fusion's live rows and feed lines) is the same disc at 16px. */
+.sb-fic .logo,.palrow .ic .logo,.cardhead .tl-ic .logo,.set-tlic .logo,.dlc-ttl > .logo,.fzlive .fzw > .logo,.sysrow .sys-ic .logo{width:16px;height:16px}
+/* A mark inside a sentence, and a short run of marks after one. */
+.sd-inlmark{display:inline-block;vertical-align:middle;line-height:0;margin:-3px 4px 0 1px}
+.set-plgmarks{display:inline-flex;gap:4px;vertical-align:middle;margin-left:6px}
+.set-plgmeta .set-plgmarks{margin-left:0}
+/* ATO-1634: Connections' tabs wear their brand before the name; a centred setup card's mark sits centred. */
+.set-subseg button .logo{display:inline-grid;vertical-align:middle;width:16px;height:16px;margin:-2px 6px 0 0}
+.sd-center > .logo{margin:0 auto}
+.set-whk-form .tk-seg .logo{margin-left:-6px}
 /* A model with no mark, or whose file did not load (markFallbackHTML): its
    icon on the logo's own disc and at the logo's sizes, so it reads as meant
    and not as a failed image. The disc is light in both themes, so the icon

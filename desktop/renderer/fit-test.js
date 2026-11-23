@@ -120,10 +120,18 @@ function fitJudgeNote(judge, word) {
     ? 'Your tasks and the replies stay on this computer: ' + word + ' grades them.'
     : 'Your recent tasks and the models\u2019 replies are sent to ' + word + ' to be graded.';
 }
+/* ATO-1633: a brand's mark inline in a sentence (h.mark, from renderer.js), '' without it. */
+function fitInlineMark(h, key) {
+  const m = typeof h.mark === 'function' ? h.mark(key, 'xs') : '';
+  return m ? '<span class="fit-mark">' + m + '</span>' : '';
+}
 function fitJudgeHTML(st, ctx, h) {
   const esc = h.esc;
   const judges = Array.isArray(st.judges) ? st.judges : [];
-  if (!judges.length) return '<p class="llm-note">To grade the answers, add a cloud provider, or an app like Ollama or LM Studio under Custom.</p>';
+  if (!judges.length) {
+    return '<p class="llm-note">To grade the answers, add a cloud provider, or an app like ' + fitInlineMark(h, 'ollama') + 'Ollama or '
+      + fitInlineMark(h, 'lmstudio') + 'LM Studio under Custom.</p>';
+  }
   const picked = judges.find((j) => j.id === st.judge) || null;
   return '<label class="fit-judge"><span class="tk-lbl">Who grades the answers</span>'
     + '<select class="tk-inp" data-fit-judge aria-label="Who grades the answers">'
@@ -131,7 +139,7 @@ function fitJudgeHTML(st, ctx, h) {
     + judges.map((j) => '<option value="' + esc(j.id) + '"' + (picked && picked.id === j.id ? ' selected' : '') + '>'
       + esc(ctx.judgeWord(j.id) + ' \u00b7 ' + j.model + (j.local ? ' (on this computer)' : '')) + '</option>').join('')
     + '</select></label>'
-    + '<p class="llm-note">' + esc(fitJudgeNote(picked, picked ? ctx.judgeWord(picked.id) : '')) + '</p>';
+    + '<p class="llm-note">' + (picked ? fitInlineMark(h, picked.id) : '') + esc(fitJudgeNote(picked, picked ? ctx.judgeWord(picked.id) : '')) + '</p>';
 }
 
 function fitEntryHTML(st, downloaded, ctx, h) {
@@ -177,7 +185,8 @@ function fitRowHTML(m, ctx, winner, switching, h) {
   const cells = fitFinished(m)
     ? '<td>' + esc(fitRightWords(m)) + '</td><td>' + esc(fitSpeedWords(m)) + '</td><td>' + esc(fitMemoryWords(m.peakMemoryBytes)) + '</td>'
     : '<td colspan="3" class="fit-dnf">Did not finish' + (m.error ? ': ' + esc(m.error) : '') + '</td>';
-  return '<tr' + (m.id === winner ? ' class="is-best"' : '') + '><th scope="row"><span class="fit-name">' + esc(name) + '</span>'
+  const mark = typeof h.modelMark === 'function' ? h.modelMark(m.id, 'xs') : '';
+  return '<tr' + (m.id === winner ? ' class="is-best"' : '') + '><th scope="row">' + (mark ? '<span class="fit-mark">' + mark + '</span>' : '') + '<span class="fit-name">' + esc(name) + '</span>'
     + (m.id === winner ? '<span class="fit-chip fit-chip--best">Best fit</span>' : '') + '</th>'
     + cells + '<td class="fit-act">' + act + '</td></tr>';
 }
@@ -223,6 +232,9 @@ function fitHelpers() {
   return {
     esc: typeof esc === 'function' ? esc : (s) => String(s),
     ic: typeof ic === 'function' ? ic : () => '',
+    // ATO-1633: a provider's mark by id or label (only one that has a logo), and a model's (its CPU badge when none).
+    mark: typeof providerLogoKey === 'function' && typeof logoHTML === 'function' ? (id, size) => logoHTML(providerLogoKey(id), size, 'server') : null,
+    modelMark: typeof modelMark === 'function' ? (id, size) => modelMark(id, size) : null,
   };
 }
 function fitBridge() { return typeof BR !== 'undefined' && BR && BR.fitTestSupported ? BR : null; }
@@ -297,6 +309,8 @@ async function fitStart() {
   fitPaintAll();
   const res = await br.fitTestStart({models, judge: FIT.judge}).catch((e) => ({ok: false, error: e && e.message ? e.message : String(e)}));
   FIT.phase = 'idle'; FIT.progress = null;
+  // ATO-1545: messages queued while the test held the server go now (renderer drainOwed).
+  if (typeof drainOwed === 'function') drainOwed();
   if (res && res.ok && res.result) FIT.result = res.result;
   else if (res && res.cancelled) FIT.note = 'Test stopped. Your chats use the same model as before.';
   else FIT.error = (res && res.error) || 'The model test did not finish.';

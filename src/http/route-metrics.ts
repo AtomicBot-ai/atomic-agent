@@ -20,10 +20,11 @@ import { sendJson, type HandlerContext, type HttpHandler } from "./request-conte
  * - readings taken at scrape time: turns running now, tasks per status
  *   in the durable queue, the version and process uptime.
  *
- * Only with `--api-key`, never open without one: the table's bearer
- * check runs first, and when serve has no key at all this handler
- * answers 401 itself, even on loopback. Prometheus sends the key
- * through `authorization: { credentials: … }`.
+ * Never open without a key: the table's bearer check runs first, and
+ * on a server built with no key at all (`unauthenticated: true`, never
+ * `serve`) this handler answers 401 itself. Prometheus sends serve's key
+ * (`--api-key`, or `atomic-agent serve --print-api-key`) through
+ * `authorization: { credentials: … }`.
  * No label carries a session id, a path or message text.
  */
 export function createMetricsHandler(registry?: PrometheusRegistry): HttpHandler {
@@ -33,7 +34,7 @@ export function createMetricsHandler(registry?: PrometheusRegistry): HttpHandler
         res,
         401,
         openaiError(
-          "GET /metrics needs an API key: start serve with --api-key and send it as a bearer token",
+          "GET /metrics needs an API key, and this server runs without one",
           "invalid_request_error",
           null,
           "metrics_need_api_key",

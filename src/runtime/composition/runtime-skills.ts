@@ -10,6 +10,7 @@ import { listStarterSkillNames, seedStarterSkillsIfMissing } from "../../skills/
 import { createProjectSkillTrustGate, projectTrustHint } from "../../skills/project-trust.js";
 import { runSkillCurator, skillCuratorAutoRunEnabled, skillCuratorPaths } from "../../skills/curator/index.js";
 import type { TaskStore } from "../../tasks/task-store.js";
+import { activePolicy, skillPolicyRefusal } from "../../policy/index.js";
 
 /** Text of every recurring task that can still run; a skill named in one is never archived. */
 export function recurringTaskTexts(taskStore: Pick<TaskStore, "list">): string[] {
@@ -82,6 +83,8 @@ export async function prepareRuntimeSkills(
     // Project skills load only after the operator trusted this folder (ATO-298).
     // Nothing here can ask: a TUI or desktop asks and refreshes, a headless run stays closed.
     createProjectSkillTrustGate(config.paths.userConfigFile, config.skills.projectTrust, workingDir),
+    // Admin policy (ATO-587): a skill it denies is not loaded.
+    (name) => skillPolicyRefusal(activePolicy(), name) !== null,
   );
   await skillRegistry.refresh();
   for (const e of skillRegistry.errors()) {

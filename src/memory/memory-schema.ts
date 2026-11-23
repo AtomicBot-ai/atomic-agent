@@ -603,6 +603,37 @@ function ensureNameGroundingColumns(db: MemoryDatabaseLike): void {
   }
 }
 
+// ATO-1124. "Turn off" one note or profile fact without deleting it:
+// `disabled_at` is the wall-clock ms the person turned it off, NULL while
+// it is on. A turned-off entry stays in the lists (marked) but is left
+// out of recall, search and the prompt. Added in place, without a
+// `MEMORY_SCHEMA_VERSION` bump, for the same reason as the name
+// grounding columns above: an older binary sharing the state dir keeps
+// opening the file and simply ignores the column (to it the entry is on).
+const DISABLED_COLUMNS: readonly { table: string; sql: string }[] = [
+  { table: "memories", sql: `ALTER TABLE memories ADD COLUMN disabled_at INTEGER` },
+  { table: "profile_facts", sql: `ALTER TABLE profile_facts ADD COLUMN disabled_at INTEGER` },
+];
+
+function ensureDisabledColumns(db: MemoryDatabaseLike): void {
+  for (const column of DISABLED_COLUMNS) {
+    const present = db
+      .prepare(
+        `SELECT 1 AS present FROM pragma_table_info('${column.table}') WHERE name = 'disabled_at'`,
+      )
+      .get();
+    if (present) continue;
+    try {
+      db.exec(column.sql);
+    } catch (err) {
+      // Another process sharing the file added it first.
+      if (!(err instanceof Error) || !/duplicate column/i.test(err.message)) {
+        throw err;
+      }
+    }
+  }
+}
+
 export interface MemoryDatabaseLike {
   exec(sql: string): unknown;
   prepare(sql: string): {
@@ -652,6 +683,7 @@ export function applyMigrations(db: MemoryDatabaseLike): void {
   // Every open, after the versioned steps: the v7 rebuild above creates
   // `profile_facts` without these columns. Idempotent.
   ensureNameGroundingColumns(db);
+  ensureDisabledColumns(db);
   if (current === MEMORY_SCHEMA_VERSION) return;
   db.prepare(
     `INSERT INTO schema_meta (key, value) VALUES ('version', ?)

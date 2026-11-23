@@ -301,6 +301,48 @@ describe("createTraceRecorder", () => {
     expect(details.nested.lines[1]).toBe("token plainShapeless9Value here");
   });
 
+  it("keeps an MCP App's page out of the trace file (ATO-1135)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-app", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "tool_call_parsed",
+        call: { tool: "mcp.weather.get_forecast", args: { city: "Tallinn" } },
+        batchIndex: 0,
+        batchSize: 1,
+      },
+    });
+    const page = `<html>${"x".repeat(3 * 1024 * 1024)}</html>`;
+    const details = {
+      structuredContent: { temp: 21 },
+      mcpApp: { resourceUri: "ui://weather/view.html", html: page },
+    };
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "tool_call_executed",
+        result: {
+          tool: "mcp.weather.get_forecast",
+          status: "ok",
+          summary: "Sunny, 21C",
+          details,
+          truncated: false,
+        },
+        batchIndex: 0,
+        batchSize: 1,
+      },
+    });
+    const invocation = events.find((e) => e.type === "tool_invocation");
+    expect(invocation).toMatchObject({ details: { structuredContent: { temp: 21 } } });
+    expect(invocation).not.toHaveProperty("details.mcpApp");
+    expect(JSON.stringify(invocation).length).toBeLessThan(10_000);
+    // The live result (the stream frame reads it) still has the page.
+    expect(details.mcpApp.html).toBe(page);
+  });
+
   it("emits N tool_invocation events per stepIndex with monotonic batchIndex", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-batch", emit, now });

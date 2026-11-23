@@ -81,9 +81,10 @@
     }
   ],
   "profiles": {
-    "$comment": "Named subsets. 'release' is the pre-release gate; 'quick' is a smoke of the stand itself; 'full' is everything above.",
+    "$comment": "Named subsets. 'release' is the pre-release gate; 'quick' is a smoke of the stand itself; 'full' is everything above; 'small-window' is 4B at 16K and 32K with thinking off and on, for any change to the answer reserve, compaction or the prompt budget (ATO-1582, ATO-257).",
     "quick": { "models": ["qwen3.5-4b"], "windows": [32768], "thinking": ["off"], "tasks": "core", "repeats": 1 },
     "release": { "models": ["qwen3.5-4b", "qwen3.5-9b", "qwen3.5-27b"], "windows": [32768, 65536], "thinking": ["off"], "tasks": "all", "repeats": 3 },
-    "full": { "models": "default", "windows": [32768, 65536], "thinking": ["off", "on"], "tasks": "all", "repeats": 3 }
+    "full": { "models": "default", "windows": [32768, 65536], "thinking": ["off", "on"], "tasks": "all", "repeats": 3 },
+    "small-window": { "models": ["qwen3.5-4b"], "windows": [16384, 32768], "thinking": ["off", "on"], "tasks": "all", "repeats": 3 }
   }
 }

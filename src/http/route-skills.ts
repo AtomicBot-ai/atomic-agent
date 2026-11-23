@@ -201,7 +201,7 @@ export function createInstallSkillHandler(): HttpHandler {
       if (err instanceof SkillInstallError) {
         sendError(
           res,
-          err.code === "already_installed" ? 409 : 400,
+          err.code === "already_installed" ? 409 : err.code === "policy_denied" ? 403 : 400,
           openaiError(err.message, "invalid_request_error", null, err.code),
         );
         return;

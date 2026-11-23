@@ -25,6 +25,13 @@ import { createProjectSkillTrustGate } from "../skills/project-trust.js";
 import { ShellJobRegistry } from "../tools/os/index.js";
 import { getAppVersion } from "../version.js";
 import {
+  activePolicy,
+  installPolicy,
+  loadPolicy,
+  policyRuleMatch,
+  type EffectivePolicy,
+} from "../policy/index.js";
+import {
   MCP_SERVER_HELP,
   McpServerUsageError,
   parseMcpServerArgs,
@@ -40,7 +47,9 @@ import {
 /**
  * The approval gate `mcp-server` serves under. It keeps the user's level
  * and saved rules; anything that would still prompt is refused, since an
- * MCP client cannot show the prompt and nobody could answer it.
+ * MCP client cannot show the prompt and nobody could answer it. The admin
+ * policy (ATO-587) stands above both, as in the runtime: its deny blocks
+ * and its ask prompts, which here means a refusal.
  */
 export function buildMcpServeApprovals(
   config: {
@@ -48,12 +57,14 @@ export function buildMcpServeApprovals(
     paths: Pick<AtomicAgentConfig["paths"], "stateDir">;
   },
   warn: (message: string) => void = () => undefined,
+  policy: () => EffectivePolicy = activePolicy,
 ): ApprovalGate {
   const approvals = new ApprovalGate({
     emit: () => undefined,
     level: config.agent.approvalLevel,
   });
   approvals.setRules(new ApprovalRulesStore({ stateDir: config.paths.stateDir, warn: (m) => warn(m) }));
+  approvals.setOrgPolicy((request) => policyRuleMatch(policy(), request));
   approvals.setSessionPolicy(MCP_SERVE_SESSION_ID, {
     onPrompt: "refuse",
     reason: MCP_SERVE_REFUSAL,
@@ -107,6 +118,16 @@ export async function mcpServerCommand(args: string[]): Promise<number> {
       createProjectSkillTrustGate(config.paths.userConfigFile, config.skills.projectTrust, workingDir),
     );
     await skillRegistry.refresh();
+
+    // Same admin policy as the runtime (ATO-587): files plus
+    // ATOMIC_POLICY_URL, short timeout, never blocks the start.
+    const orgPolicy = await loadPolicy({ stateDir: config.paths.stateDir });
+    installPolicy(orgPolicy);
+    for (const source of orgPolicy.sources) {
+      if (source.state === "invalid" || source.state === "unreachable" || source.state === "cached") {
+        warn(`policy: ${source.kind} source ${source.location} is ${source.state}${source.error ? ` (${source.error})` : ""}`);
+      }
+    }
 
     const approvals = buildMcpServeApprovals(config, warn);
     const jobs = new ShellJobRegistry({

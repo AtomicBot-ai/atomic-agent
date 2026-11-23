@@ -75,6 +75,7 @@ import { LocalModelsOrchestrator } from "./local-models/local-models-orchestrato
 import { TasksOrchestrator } from "./tasks/tasks-orchestrator.js";
 import { SkillsOrchestrator } from "./skills/skills-orchestrator.js";
 import { ProjectTrustOrchestrator } from "./project-trust/project-trust-orchestrator.js";
+import { AppendLocalQuestionOrchestrator } from "./append-local-question/append-local-question-orchestrator.js";
 import { MemoryOrchestrator } from "./memory/memory-orchestrator.js";
 import { McpOrchestrator } from "./mcp/mcp-orchestrator.js";
 import { ImportOrchestrator } from "./import/import-orchestrator.js";
@@ -97,6 +98,7 @@ import type { LastTurnRollbackOutcome, TuiEventBus } from "./tui-app.js";
 import { formatAgentErrorForChat } from "./chat/format-agent-error-for-chat.js";
 import { isInterruptedGoal, readGoalState, type GoalState } from "../agent/goal/index.js";
 import type { GoalCommand } from "./commands/goal-command.js";
+import { writeChatExport, type ChatExportRequest } from "./commands/export-command.js";
 import { activeGoalSpec, createGoalProgressReporter, runGoalCommand } from "./goal/goal-commands.js";
 import {
   ChatPullMirror,
@@ -110,6 +112,10 @@ import { INTERRUPTED_TURN_NOTICE } from "./interrupted-turn-notice.js";
 import { isInterruptedTurnResumeMessage } from "../session/interrupted-chat-turn.js";
 import { createHeapGuard } from "../runtime/heap-guard.js";
 import type { SessionPickerEntry, TuiState } from "./tui-state.js";
+import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
+import type { ReasoningLevel } from "../llm/reasoning-levels.js";
+import type { ReasoningEffort } from "../llm/provider/completion-types.js";
+import { reasoningOverrideFor } from "./commands/think-command.js";
 
 const DEBUG_BUNDLE_TRACE_LIMIT = 10;
 const DEBUG_BUNDLE_DIR_NAME = "atomic-agent-debug";
@@ -286,6 +292,8 @@ export class ChatOrchestrator {
    * ordinary backlog from the next one's point of view.
    */
   private steeredAhead = 0;
+  /** `/think` (ATO-490): sent on every turn started from here; absent for `auto`. */
+  private reasoningOverride: ReasoningEffort | undefined = undefined;
   /**
    * Abort handles of turns the operator switched away from — see
    * `detachRunningTurn`. Switching back re-attaches the handle; quit
@@ -323,6 +331,7 @@ export class ChatOrchestrator {
   public readonly tasks: TasksOrchestrator;
   public readonly skills: SkillsOrchestrator;
   public readonly projectTrust: ProjectTrustOrchestrator;
+  public readonly appendLocalQuestion: AppendLocalQuestionOrchestrator;
   public readonly memory: MemoryOrchestrator;
   public readonly mcp: McpOrchestrator;
   public readonly import: ImportOrchestrator;
@@ -364,6 +373,11 @@ export class ChatOrchestrator {
     });
     this.providers = new ProvidersOrchestrator(runtime, bus);
     this.fallback = new FallbackOrchestrator(bus);
+    this.appendLocalQuestion = new AppendLocalQuestionOrchestrator({
+      config: () => runtime.config,
+      emit: (action) => bus.emit(action),
+      refreshFallback: () => this.fallback.refresh(),
+    });
     this.llmHealth = new LlmHealthPoller(bus, options.llamaUrl);
     this.localModels = new LocalModelsOrchestrator(bus, {
       onManagedModelSelected: (modelId) => {
@@ -452,6 +466,13 @@ export class ChatOrchestrator {
       runtime,
       bus,
       this.telegram,
+      undefined,
+      undefined,
+      // ATO-1630: Monid's row signs in through the MCP tab's own flow.
+      {
+        startSignIn: (name) => this.mcp.startSignIn(name),
+        signOut: (name) => this.mcp.forgetSignIn(name),
+      },
     );
     this.swarm = new SwarmOrchestrator(runtime, bus);
     this.plugins = new PluginsOrchestrator(bus);
@@ -603,6 +624,12 @@ export class ChatOrchestrator {
       const result = await checkForAppUpdate({
         repo: this.runtime.config.update.repo,
       });
+      // ATO-1007: share of installs on the current version.
+      this.runtime.reportUpdateChecked?.({
+        latestVersion: result.latestVersion,
+        updateAvailable: result.updateAvailable,
+        requiredReason: result.requiredReason,
+      });
       if (!result.updateAvailable) return;
       this.pendingUpdateVersion = result.latestVersion;
       this.requiredUpdate = result.requiredReason;
@@ -663,6 +690,13 @@ export class ChatOrchestrator {
       const rm = this.runMode.current();
       if (rm.effective !== "fusion") return;
       const id = leg === "worker" ? rm.workerProviderId : rm.orchestratorProviderId;
+      // ATO-1563: a foreign llama.cpp server serves what it loaded; a pick
+      // there would only be a label, so none is written.
+      const kind = resolveLlmConfig(getConfig()).providers.find((p) => p.id === id)?.kind;
+      if (id !== "local-llama" && kind === "llama-server") {
+        this.bus.emit({ type: "composer_notice", text: "This server runs the model it has loaded. Change the model on the server itself." });
+        return;
+      }
       if (id === "local-llama") {
         if (getConfig().localModels.managed.modelId === modelId) {
           if (!await this.localModels.startDaemon()) return;
@@ -1600,6 +1634,15 @@ export class ChatOrchestrator {
   }
 
   /**
+   * `/think <level>` (ATO-490): the reasoning level of the next turns
+   * this window starts, in every chat, until changed. A turn already
+   * running keeps the level it started with; `auto` sends none.
+   */
+  setReasoningLevel(level: ReasoningLevel): void {
+    this.reasoningOverride = reasoningOverrideFor(level);
+  }
+
+  /**
    * Drop every parked message without touching the running turn
    * (`/queue clear`). No-op on an empty queue so the TUI is not spammed
    * with redundant `queue_changed` frames.
@@ -1689,6 +1732,16 @@ export class ChatOrchestrator {
       return;
     }
     this.bus.emit({ type: "rewind_picker_opened", points });
+  }
+
+  /**
+   * `/export` (ATO-1054): write the open chat, as held now, to a file
+   * and say where in the chat. A running turn is exported up to where
+   * it is.
+   */
+  async exportOpenChat(request: ChatExportRequest): Promise<void> {
+    const text = await writeChatExport(this.session, request);
+    this.bus.emit({ type: "system_message", text });
   }
 
   /**
@@ -1893,6 +1946,10 @@ export class ChatOrchestrator {
     // reply that beat the abort to the finish is still a reply.
     let stopped = false;
     let dispatched = false;
+    // ATO-1001: ask a local model how far it has read the prompt, so the
+    // indicator can say "reading prompt · 40%" instead of a bare
+    // "thinking" during a long prefill. Released when the turn ends.
+    const releasePromptProgress = claimTurnProgress(turnSessionId);
     try {
       if (waitingForModel || (fromQueue && gateFacts.activeProviderIsLocal && gateFacts.managedMode)) {
         this.waitingModelMessages.set(turnSessionId, text);
@@ -1938,6 +1995,10 @@ export class ChatOrchestrator {
         ...(this.options.maxSteps === undefined
           ? {}
           : { maxSteps: this.options.maxSteps }),
+        // ATO-490: the `/think` level; `auto` sends none.
+        ...(this.reasoningOverride === undefined
+          ? {}
+          : { reasoningOverride: this.reasoningOverride }),
         signal: controller.signal,
         origin: "tui",
         // The operator is at the chat: a model that runs out of memory
@@ -2013,6 +2074,7 @@ export class ChatOrchestrator {
         return;
       }
     } finally {
+      releasePromptProgress();
       this.waitingModelMessages.delete(turnSessionId);
       if (this.currentController === controller) this.currentController = null;
       // The turn saved its session, which answers for the transcript

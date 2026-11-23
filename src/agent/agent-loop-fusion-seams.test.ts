@@ -216,6 +216,111 @@ describe("AgentLoop fusion seams", () => {
     expect(pins).toEqual(["local-x", undefined]);
   });
 
+  it("hands tools the turn's spend ceiling only when one is set, and what they add counts in the turn's spend (ATO-1670)", async () => {
+    // `subagent.run` adds its children's spend through this seam, so the
+    // ceiling check before the next step sees it.
+    const seen: Array<{ ceilingUsd: number; before: number; after: number } | undefined> = [];
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      run: async (_args, ctx) => {
+        if (ctx.turnSpend === undefined) {
+          seen.push(undefined);
+        } else {
+          const before = ctx.turnSpend.spentUsd();
+          ctx.turnSpend.add(2);
+          seen.push({ ceilingUsd: ctx.turnSpend.ceilingUsd, before, after: ctx.turnSpend.spentUsd() });
+        }
+        return { tool: "os.fs.read", status: "ok", summary: "ok", details: {}, truncated: false };
+      },
+    });
+    let call = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        call += 1;
+        return makeCompletion(
+          call % 2 === 1
+            ? JSON.stringify({ tool: "os.fs.read", args: { path: `a${call}` } })
+            : JSON.stringify({ tool: "reply", args: { text: "done" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const capped = await loop.runTurn(
+      createEmptySessionState({ id: "s-spend", workingDir }),
+      turnOptions({ maxSteps: 4, taskMaxCostUsd: 1 }),
+    );
+    const free = await loop.runTurn(capped.session, turnOptions({ maxSteps: 4 }));
+    expect(seen).toEqual([{ ceilingUsd: 1, before: 0, after: 2 }, undefined]);
+    // The spend the tool added is what stopped the turn: its own
+    // completions are unpriced here, so without the seam it would not stop.
+    expect(capped.stopCause).toBe("cost_ceiling");
+    expect(free.stopCause).toBeUndefined();
+  });
+
+  it("a pinned turn hands its model and one turn id per turn to the tools it calls (ATO-1670)", async () => {
+    // `subagent.run` runs children on the turn's model (the desktop's
+    // per-project model arrives as runTurn({ providerId, model })) and
+    // keys its per-turn tally on the turn id, not on step edges.
+    const seen: { model: string | undefined; turnId: string | undefined }[] = [];
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      run: async (_args, ctx) => {
+        seen.push({ model: ctx.model, turnId: ctx.turnId });
+        return { tool: "os.fs.read", status: "ok", summary: "ok", details: {}, truncated: false };
+      },
+    });
+    // Reads until `readsWanted` calls have been seen, then a reply.
+    let readsWanted = 2;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      resolveLlmSlice: () => ({
+        toolTransport: "grammar",
+        toolCallAdapter: null,
+        supportsSlotAffinity: true,
+        supportsParallelTools: true,
+        strictTools: false,
+      }),
+      llmComplete: async () =>
+        makeCompletion(
+          seen.length < readsWanted
+            ? JSON.stringify({ tool: "os.fs.read", args: { path: `a${seen.length}` } })
+            : JSON.stringify({ tool: "reply", args: { text: "done" } }),
+        ),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const session = createEmptySessionState({ id: "s-model-pin", workingDir });
+    const first = await loop.runTurn(
+      session,
+      turnOptions({ maxSteps: 4, providerId: "cloud-x", model: "model-m" }),
+    );
+    readsWanted = 4;
+    await loop.runTurn(
+      first.session,
+      turnOptions({ maxSteps: 4, providerId: "cloud-x", model: "model-m" }),
+    );
+    expect(seen).toHaveLength(4);
+    expect(seen.map((s) => s.model)).toEqual(["model-m", "model-m", "model-m", "model-m"]);
+    expect(seen[0]!.turnId).toBeDefined();
+    expect(seen[1]!.turnId).toBe(seen[0]!.turnId);
+    expect(seen[2]!.turnId).toBe(seen[3]!.turnId);
+    expect(seen[2]!.turnId).not.toBe(seen[0]!.turnId);
+  });
+
   it("an unpinned turn never resolves a slice and carries no providerId", async () => {
     const seen: LlmStreamParams[] = [];
     let resolved = 0;

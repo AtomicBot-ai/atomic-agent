@@ -45,7 +45,7 @@ const ANX_ACTS = (() => {
       close:L, palette:{slash:L, theme:L}, shortcuts:L, context:L, modes:L, send:L, stop:L, retry:L,
       attach:{window:L}, clear:L, dump:L, report:L, 'help.report':L, 'help.discord':L, tools:L, restart:L, quit:L, about:L, update:L,
       workspace:{choose:L}, analytics:L, steer:L, onboarding:{choose:L, openNow:L}, voice:{add:L, dismiss:L, lang:L, pick:L, reset:L, settings:L},
-      session:{new:L, switch:L, id:L}, ses:L, pin:L, unpin:L, unread:L, read:L, del:L, delask:L, sesmenu:L, rename:L, export:L,
+      session:{new:L, switch:L, id:L}, ses:L, pin:L, unpin:L, unread:L, read:L, del:L, delask:L, sesmenu:L, rename:L, export:L, popout:L,
       // ATO-1034: chat folders; the folder and chat ids after the verb are cut off.
       tts:{auto:L}, ftoggle:L, fnew:L, frename:L, fdel:L, fpick:L, fput:L, fautosort:L,
       // ATO-1150: archive in the chat list; the chat id after the verb is cut off.
@@ -83,6 +83,8 @@ const ANX_ACTS = (() => {
       // ATO-954: Settings › Plugins (renderer/plugins-pane.js); the plugin and part names are cut off.
       plugins:{refresh:L, expand:L, toggle:L, part:L, code:L, codeConfirm:L, codeCancel:L, remove:L, removeConfirm:L, removeCancel:L,
         install:L, installAnyway:L, installDismiss:L},
+      // ATO-1626: Settings › My files (renderer/my-files.js); the folder index is cut off.
+      myfiles:{refresh:L, add:L, remove:L, removeConfirm:L, removeCancel:L},
       memory:{auto:L, back:L, ch:set(memChannels), cycle:L, expand:L, filter:set(memFilters), jump:L,
         neighbor:L, open:L, page:UPDOWN, refresh:L},
       tasks:{auto:L, back:L, cancel:L, cancelConfirm:L, cancelKeep:L, clearSearch:L, detail:L,

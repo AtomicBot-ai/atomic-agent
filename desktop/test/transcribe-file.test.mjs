@@ -196,3 +196,133 @@ test("the renderer's words: progress, reasons, failures; no long dashes", async 
   assert.ok(html.indexOf('src="attachments.js"') < html.indexOf('src="transcribe.js"'));
   assert.ok(html.indexOf('src="transcribe.js"') < html.indexOf('src="renderer.js"'));
 });
+
+/* ---------------- ATO-1076: the whisper.cpp engine (Windows, Linux) ---------------- */
+
+test("whisper-cli lines: timed segments, progress, noise dropped", () => {
+  assert.deepEqual(M.parseWhisperSegment("[00:01:23.400 --> 00:01:27.120]   Next point."),
+    { start: 83.4, end: 87.12, text: "Next point." });
+  assert.deepEqual(M.parseWhisperSegment("[01:00:00,000 --> 01:00:02,5]  Late"), { start: 3600, end: 3602.5, text: "Late" });
+  assert.equal(M.parseWhisperSegment("[00:00:00.000 --> 00:00:02.000]   [BLANK_AUDIO]"), null);
+  assert.equal(M.parseWhisperSegment("[00:00:00.000 --> 00:00:02.000]  (music)"), null);
+  assert.equal(M.parseWhisperSegment("[00:00:00.000 --> 00:00:02.000]   "), null);
+  assert.equal(M.parseWhisperSegment("whisper_init_from_file_with_params_no_state: loading model"), null);
+  assert.equal(M.parseWhisperProgress("whisper_print_progress_callback: progress =  42%"), 0.42);
+  assert.equal(M.parseWhisperProgress("whisper_print_progress_callback: progress = 100%"), 1);
+  assert.equal(M.parseWhisperProgress("system_info: n_threads = 4"), null);
+  assert.deepEqual(M.whisperFileArgs("/m/ggml-base.bin", "/t/a.wav", "ru"), ["-m", "/m/ggml-base.bin", "-f", "/t/a.wav", "-l", "ru", "-pp"]);
+  const ff = M.ffmpegWavArgs("/in/call.m4a", "/t/audio.wav");
+  assert.deepEqual(ff.slice(ff.indexOf("-i")), ["-i", "/in/call.m4a", "-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", "/t/audio.wav"]);
+  assert.equal(M.isTranscribableAudio("/a/call.ogg", M.WHISPER_TRANSCRIBE_EXTS), true);
+  assert.equal(M.isTranscribableAudio("/a/call.ogg"), false, "the Apple route keeps its own list");
+  assert.equal(M.isTranscribableAudio("/a/clip.mov", M.WHISPER_TRANSCRIBE_EXTS), false);
+});
+
+test("ffmpeg is found on PATH, with .exe on Windows", () => {
+  const seen = [];
+  const isExecutable = (p) => { seen.push(p); return p === "C:\\tools\\ffmpeg.exe" || p === "/opt/bin/ffmpeg"; };
+  assert.equal(M.findOnPath("ffmpeg", { env: { Path: "C:\\x;C:\\tools" }, platform: "win32", home: "C:\\Users\\a", isExecutable }), "C:\\tools\\ffmpeg.exe");
+  assert.equal(M.findOnPath("ffmpeg", { env: { PATH: "/usr/bin:/opt/bin" }, platform: "linux", home: "/home/a", isExecutable }), "/opt/bin/ffmpeg");
+  assert.equal(M.findOnPath("ffmpeg", { env: { PATH: "/usr/bin" }, platform: "linux", home: "/home/a", isExecutable: () => false }), null);
+});
+
+/* Stand-ins for whisper-cli and ffmpeg: same argv, same output shapes. */
+const fakeWhisper = join(dir, "fake-whisper.cjs");
+writeFileSync(fakeWhisper, `
+const a = process.argv.slice(2);
+const f = a[a.indexOf("-f") + 1];
+const lang = a[a.indexOf("-l") + 1];
+if (!a.includes("-pp") || !a.includes("-m")) { process.stderr.write("bad args"); process.exit(2); }
+if (f.endsWith("broken.wav")) { process.stderr.write("error: failed to read WAV file\\n"); process.exit(1); }
+if (f.endsWith("slow.wav")) { process.stdout.write("[00:00:00.000 --> 00:00:02.000]  first\\n"); setInterval(() => {}, 1000); return; }
+process.stderr.write("whisper_init_from_file: loading model\\n");
+process.stdout.write("[00:00:01.200 --> 00:00:04.000]   Hello team (" + lang + ").\\n[00:00:04.000 --> 00:00:0");
+setTimeout(() => {
+  process.stdout.write("5.000]   [BLANK_AUDIO]\\n");
+  process.stderr.write("whisper_print_progress_callback: progress =  50%\\n");
+  process.stdout.write("[00:01:23.000 --> 00:01:40.000]   Last point.\\n");
+  process.stderr.write("whisper_print_progress_callback: progress = 100%\\n");
+  process.exit(0);
+}, 20);
+`);
+const fakeFfmpeg = join(dir, "fake-ffmpeg.cjs");
+writeFileSync(fakeFfmpeg, `
+const a = process.argv.slice(2);
+const input = a[a.indexOf("-i") + 1];
+const out = a[a.length - 1];
+if (input.endsWith("bad.m4a")) { process.stderr.write("Invalid data found when processing input"); process.exit(1); }
+require("fs").writeFileSync(out, "RIFF");
+process.exit(0);
+`);
+for (const n of ["meet.m4a", "bad.m4a", "rec.wav", "broken.wav", "call.ogg"]) writeFileSync(audio(n), "x");
+
+function wengine(over = {}) {
+  return M.whisperFileEngine({
+    probe: async () => ({ ok: true }),
+    paths: () => ({ bin: process.execPath, model: "/models/whisper/ggml-base.bin" }),
+    chosen: () => ["ru-RU"],
+    ffmpeg: () => process.execPath,
+    prefixArgs: { whisper: [fakeWhisper], ffmpeg: [fakeFfmpeg] },
+    tempRoot: () => dir,
+    ...over,
+  });
+}
+
+test("whisper availability follows the voice probe", async () => {
+  assert.deepEqual(await wengine().available(), { ok: true, locale: "ru-RU", engine: "whisper" });
+  assert.deepEqual(await wengine({ chosen: () => [] }).available(), { ok: true, locale: "en-US", engine: "whisper" });
+  assert.deepEqual(await wengine({ probe: async () => ({ ok: false, reason: "voice-whisper-model-missing" }) }).available(),
+    { ok: false, reason: "voice-whisper-model-missing", engine: "whisper" });
+  assert.deepEqual(await wengine({ paths: () => null }).available(), { ok: false, reason: "voice-whisper-missing", engine: "whisper" });
+  assert.match(R.trxReasonText("voice-whisper-model-missing"), /microphone once/);
+  assert.match(R.trxErrorText("needs-ffmpeg"), /ffmpeg/);
+});
+
+test("whisper: an m4a goes through ffmpeg, segments stream, the temp WAV is removed", async () => {
+  const { readdirSync } = await import("node:fs");
+  const before = readdirSync(dir).filter((n) => n.startsWith("atomic-transcribe-")).length;
+  const t = new M.FileTranscriber(wengine());
+  const events = [];
+  const res = await t.transcribe({ job: "w1", path: audio("meet.m4a") }, (job, ev) => events.push({ job, ...ev }));
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.equal(res.engine, "whisper");
+  assert.equal(res.locale, "ru-RU");
+  assert.deepEqual(res.segments, [{ start: 1.2, end: 4, text: "Hello team (ru)." }, { start: 83, end: 100, text: "Last point." }]);
+  assert.equal(res.duration, 100);
+  assert.equal(res.text, "[00:00:01] Hello team (ru).\n[00:01:23] Last point.");
+  assert.equal(res.fileName, "meet transcript.txt");
+  assert.deepEqual(events.filter((e) => e.type === "progress").map((e) => e.fraction), [0.5, 1]);
+  assert.equal(events.filter((e) => e.type === "segment").length, 2);
+  assert.equal(readdirSync(dir).filter((n) => n.startsWith("atomic-transcribe-")).length, before, "temp folder deleted");
+});
+
+test("whisper: two chosen languages are heard as auto; a WAV without ffmpeg runs as is", async () => {
+  const t = new M.FileTranscriber(wengine({ chosen: () => ["en-US", "ru-RU"], ffmpeg: () => null }));
+  const res = await t.transcribe({ job: "w2", path: audio("rec.wav") }, () => {});
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.equal(res.segments[0].text, "Hello team (auto).");
+});
+
+test("whisper: failures come back worded, never as a crash", async () => {
+  const noFf = new M.FileTranscriber(wengine({ ffmpeg: () => null }));
+  assert.equal((await noFf.transcribe({ job: "w", path: audio("call.ogg") }, () => {})).error, "needs-ffmpeg");
+  const t = new M.FileTranscriber(wengine());
+  const bad = await t.transcribe({ job: "w", path: audio("bad.m4a") }, () => {});
+  assert.deepEqual([bad.ok, bad.error], [false, "open-file"]);
+  assert.match(bad.message, /Invalid data/);
+  const broken = await new M.FileTranscriber(wengine({ ffmpeg: () => null })).transcribe({ job: "w", path: audio("broken.wav") }, () => {});
+  assert.deepEqual([broken.ok, broken.error], [false, "whisper-failed"]);
+  assert.match(broken.message, /failed to read WAV/);
+  assert.equal((await t.transcribe({ job: "w", path: audio("clip.mov") }, () => {})).error, "not-audio");
+});
+
+test("whisper: cancel kills the run", async () => {
+  const t = new M.FileTranscriber(wengine({ ffmpeg: () => null }));
+  const seen = [];
+  const p = t.transcribe({ job: "ws", path: audio("slow.wav") }, (_j, ev) => seen.push(ev));
+  for (let i = 0; i < 200 && !seen.length; i++) await new Promise((r) => setTimeout(r, 25));
+  assert.equal(seen.length, 1);
+  assert.deepEqual(t.cancel("ws"), { ok: true });
+  const res = await p;
+  assert.deepEqual([res.ok, res.cancelled], [false, true]);
+});

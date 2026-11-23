@@ -9,6 +9,7 @@ import { applyMigrations } from "./memory-schema.js";
 import {
   MemoryChangeLog,
   type MemoryChangeActor,
+  type MergeSnapshot,
   type NoteSnapshot,
 } from "./evolution/memory-change-log.js";
 import type { EmbeddingStore } from "./embeddings/embedding-store.js";
@@ -49,6 +50,12 @@ export interface MemoryEntry {
    * inserts) and for every row migrated from v3.
    */
   lastRecalledAt: number | null;
+  /**
+   * ATO-1124. Set (wall-clock ms) while the person has turned this note
+   * off: it stays listed but is left out of recall, search, the prompt's
+   * index and consolidation. Absent while the note is on.
+   */
+  disabledAt?: number;
 }
 
 export interface MemoryStoreOptions {
@@ -146,6 +153,11 @@ export interface MemoryListOptions {
    */
   excludeArchived?: boolean;
   /**
+   * ATO-1124. Leave out notes the person turned off. `listIndex` always
+   * does; the person's own list (HTTP) shows them, marked.
+   */
+  excludeDisabled?: boolean;
+  /**
    * Only return rows with `updated_at <= updatedBefore` (epoch ms).
    * Applied in SQL before `LIMIT`, so a caller that wants "rows older
    * than X" gets up to `limit` of them instead of the newest `limit`
@@ -236,6 +248,8 @@ interface MemoryRow {
   tags: string | null;
   recall_count: number;
   last_recalled_at: number | null;
+  /** ATO-1124. Selected only where the caller needs it. */
+  disabled_at?: number | null;
 }
 
 /**
@@ -294,6 +308,8 @@ export class MemoryStore {
   private readonly recallTouchStmt: Database.Statement;
   private readonly dedupCandidateStmt: Database.Statement;
   private readonly restoreStmt: Database.Statement;
+  private readonly evictFifoPickStmt: Database.Statement;
+  private readonly evictUtilityPickStmt: Database.Statement;
   private readonly changeLog: MemoryChangeLog;
 
   constructor(options: MemoryStoreOptions) {
@@ -361,7 +377,7 @@ export class MemoryStore {
     this.deleteStmt = this.db.prepare(`DELETE FROM memories WHERE id = ?`);
     this.getStmt = this.db.prepare(
       `SELECT id, content, created_at, updated_at, source, session_id, working_dir, tags,
-              recall_count, last_recalled_at
+              recall_count, last_recalled_at, disabled_at
          FROM memories WHERE id = ?`,
     );
     this.countStmt = this.db.prepare(`SELECT COUNT(*) AS count FROM memories`);
@@ -370,10 +386,9 @@ export class MemoryStore {
     );
     // Legacy FIFO eviction (back-compat: omit eviction options ⇒ same as v1).
     this.evictFifoStmt = this.db.prepare(
-      `DELETE FROM memories WHERE id IN (
-         SELECT id FROM memories ORDER BY updated_at ASC, id ASC LIMIT ?
-       )`,
+      `DELETE FROM memories WHERE id IN (${EVICT_FIFO_PICK_SQL})`,
     );
+    this.evictFifoPickStmt = this.db.prepare(EVICT_FIFO_PICK_SQL);
     // Utility-weighted eviction. Single SQL statement — cross-phase
     // invariant 5: no per-row JS loop with I/O (§13.7.6).
     // Phase 7a: `vote_score ASC` slots in as the **first** tier so
@@ -381,16 +396,9 @@ export class MemoryStore {
     // ones (cross-phase invariant 19). Ties between equal-score
     // rows still fall through to the utility-recall ladder.
     this.evictUtilityStmt = this.db.prepare(
-      `DELETE FROM memories WHERE id IN (
-         SELECT id FROM memories
-          ORDER BY vote_score ASC,
-                   recall_count ASC,
-                   COALESCE(last_recalled_at, 0) ASC,
-                   updated_at ASC,
-                   id ASC
-          LIMIT ?
-       )`,
+      `DELETE FROM memories WHERE id IN (${EVICT_UTILITY_PICK_SQL})`,
     );
+    this.evictUtilityPickStmt = this.db.prepare(EVICT_UTILITY_PICK_SQL);
     // On a dedup-merge: existing row absorbs the new write. `updated_at`
     // is touched so it floats to the top of `list()`; tags are merged
     // (new ∪ existing) so the absorbed entry's tag superset is preserved.
@@ -417,7 +425,7 @@ export class MemoryStore {
       `SELECT m.id, m.content, m.tags, bm25(memories_fts) AS score
          FROM memories_fts
          JOIN memories m ON m.id = memories_fts.rowid
-        WHERE memories_fts MATCH ?
+        WHERE memories_fts MATCH ? AND m.disabled_at IS NULL
         ORDER BY score ASC
         LIMIT 5`,
     );
@@ -452,7 +460,7 @@ export class MemoryStore {
     const workingDir = validateOptionalString(input.workingDir, "workingDir");
 
     if (this.dedupEnabled) {
-      const merged = this.tryDedupMerge({ content, tags, now });
+      const merged = this.tryDedupMerge({ content, tags, now, source, sessionId, workingDir });
       if (merged !== null) return merged;
     } else {
       this.metrics?.recordMemoryDedup({
@@ -538,6 +546,9 @@ export class MemoryStore {
     content: string;
     tags: string[];
     now: number;
+    source: string;
+    sessionId: string | null;
+    workingDir: string | null;
   }): MemoryEntry | null {
     const ftsQuery = buildFtsQuery(args.content);
     if (ftsQuery.length === 0) {
@@ -622,11 +633,34 @@ export class MemoryStore {
     const mergedTags = mergeTagSets(existingTags, args.tags);
     const mergedTagsJson =
       mergedTags.length > 0 ? JSON.stringify(mergedTags) : null;
-    this.touchOnDedupStmt.run({
-      id: best.id,
-      updated_at: args.now,
-      tags: mergedTagsJson,
-    });
+    const keptId = best.id;
+    const existing = this.get(keptId);
+    this.db.transaction((): void => {
+      this.touchOnDedupStmt.run({
+        id: keptId,
+        updated_at: args.now,
+        tags: mergedTagsJson,
+      });
+      // ATO-1059: the folded write is otherwise gone, so it is journaled
+      // with the note as it was, for an undo that splits them again.
+      if (existing !== null) {
+        const before: MergeSnapshot = {
+          ...noteSnapshot(existing),
+          absorbed: {
+            content: args.content,
+            tags: args.tags,
+            source: args.source,
+            sessionId: args.sessionId,
+            workingDir: args.workingDir,
+            at: args.now,
+          },
+        };
+        this.changeLog.record(
+          { kind: "note", target: String(keptId), op: "merge", by: "agent", before, after: args.content },
+          args.now,
+        );
+      }
+    })();
     this.metrics?.recordMemoryDedup({
       outcome: "merged",
       bestScore: best.score,
@@ -664,7 +698,8 @@ export class MemoryStore {
     );
     const scope = opts.scope ?? "all";
     const requiredTags = validateTags(opts.tags);
-    const where: string[] = [`memories_fts MATCH ?`];
+    // ATO-1124: a note the person turned off is never recalled.
+    const where: string[] = [`memories_fts MATCH ?`, `m.disabled_at IS NULL`];
     const params: unknown[] = [ftsQuery];
     if (scope === "project") {
       const dir = validateOptionalString(opts.workingDir, "workingDir");
@@ -713,6 +748,7 @@ export class MemoryStore {
              FROM memories_fts
              JOIN memories m ON m.id = memories_fts.rowid
             WHERE memories_fts MATCH ? AND m.consolidated_into IS NULL
+              AND m.disabled_at IS NULL
             ORDER BY bm25(memories_fts) ASC
             LIMIT ?`,
         )
@@ -890,6 +926,9 @@ export class MemoryStore {
     if (opts.excludeArchived) {
       where.push(`consolidated_into IS NULL`);
     }
+    if (opts.excludeDisabled) {
+      where.push(`disabled_at IS NULL`);
+    }
     for (const tag of opts.excludeTags ?? []) {
       where.push(
         `(tags IS NULL OR NOT EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE json_each.value = ?))`,
@@ -909,7 +948,7 @@ export class MemoryStore {
     const sql = `
       SELECT id, content, created_at, updated_at,
              source, session_id, working_dir, tags,
-             recall_count, last_recalled_at
+             recall_count, last_recalled_at, disabled_at
         FROM memories
         ${whereClause}
        ORDER BY updated_at DESC, id DESC
@@ -930,7 +969,8 @@ export class MemoryStore {
    * same trimming rules with the prompt renderer.
    */
   listIndex(opts: MemoryIndexOptions = {}): MemoryIndexEntry[] {
-    const entries = this.list(opts);
+    // ATO-1124: a turned-off note never reaches the prompt.
+    const entries = this.list({ ...opts, excludeDisabled: true });
     const previewChars = clampPreviewChars(opts.previewChars);
     return entries.map((e) => ({
       id: e.id,
@@ -1001,6 +1041,21 @@ export class MemoryStore {
   }
 
   /**
+   * ATO-1124. Turn one note off (`disabled: true`) or back on. Off keeps
+   * the note and its vector but leaves it out of recall, search, the
+   * prompt's index and dedup; `updated_at` is left alone. Returns the
+   * note, or `null` when the id is not stored.
+   */
+  setDisabled(id: number, disabled: boolean, now: number = this.now()): MemoryEntry | null {
+    const normalizedId = validateId(id);
+    // Turning off an already-off note keeps the first time.
+    this.db
+      .prepare(`UPDATE memories SET disabled_at = ${disabled ? "COALESCE(disabled_at, ?)" : "NULL"} WHERE id = ?`)
+      .run(...(disabled ? [now] : []), normalizedId);
+    return this.get(normalizedId);
+  }
+
+  /**
    * Memory-v2 phase 5. Stamp `consolidated_into` on the given memory
    * rows so they drop out of `### memory-index` while staying
    * recallable by id (cross-phase invariant 9: archived episodes are
@@ -1029,12 +1084,56 @@ export class MemoryStore {
     const txn = this.db.transaction((): number => {
       let touched = 0;
       for (const id of normalisedParents) {
+        const before = this.get(id);
         const r = stmt.run(normalisedLessonId, now, id) as { changes: number };
         touched += r.changes;
+        // ATO-1059: journaled, so one note can come back from a lesson.
+        if (r.changes > 0 && before !== null) {
+          this.changeLog.record(
+            {
+              kind: "note",
+              target: String(id),
+              op: "archive",
+              by: "agent",
+              before: noteSnapshot(before),
+              after: String(normalisedLessonId),
+            },
+            now,
+          );
+        }
       }
       return touched;
     });
     return txn();
+  }
+
+  /**
+   * ATO-1059. Undo `archiveInto` for one note: it shows in the index and
+   * recall again, with its old `updated_at`. The lesson stays. `false`
+   * when the note is gone or not archived.
+   */
+  unarchive(id: number, updatedAt: number): boolean {
+    const normalizedId = validateId(id);
+    const result = this.db
+      .prepare(
+        `UPDATE memories SET consolidated_into = NULL, updated_at = ?
+          WHERE id = ? AND consolidated_into IS NOT NULL`,
+      )
+      .run(updatedAt, normalizedId) as { changes: number };
+    return result.changes > 0;
+  }
+
+  /**
+   * ATO-1059. Put a note's tags back as they were (the undo of a dedup
+   * merge, which adds the folded write's tags). `false` when gone.
+   */
+  setTags(id: number, tags: readonly string[]): boolean {
+    const normalizedId = validateId(id);
+    const valid = validateTags([...tags]);
+    const result = this.db
+      .prepare(`UPDATE memories SET tags = ? WHERE id = ?`)
+      .run(valid.length > 0 ? JSON.stringify(valid) : null, normalizedId) as { changes: number };
+    return result.changes > 0;
   }
 
   /**
@@ -1220,6 +1319,15 @@ export class MemoryStore {
   }
 
   /**
+   * The embedding model attached now, or `null` when recall is
+   * keyword-only. The file index (ATO-1621) embeds its chunks with the
+   * same local model, and follows a reattach through this.
+   */
+  currentEmbeddingClient(): EmbeddingWriter["client"] | null {
+    return this.embeddingWriter?.client ?? null;
+  }
+
+  /**
    * Memory-v2 phase 1B. Fire-and-forget embedding write. Idempotent:
    * the underlying `UPSERT` handles re-embeds when the model is
    * upgraded. Always non-throwing — see `EmbeddingWriter` doc.
@@ -1309,7 +1417,8 @@ export class MemoryStore {
       .prepare(
         `SELECT id, content, created_at, updated_at, source, session_id, working_dir, tags,
                 recall_count, last_recalled_at
-           FROM memories WHERE id IN (${ids.map(() => "?").join(", ")})`,
+           FROM memories
+          WHERE id IN (${ids.map(() => "?").join(", ")}) AND disabled_at IS NULL`,
       )
       .all(...ids) as MemoryRow[];
     return rows.map(rowToEntry);
@@ -1328,7 +1437,7 @@ export class MemoryStore {
     requiredTags: readonly string[],
     limit: number,
   ): HybridRecallInputEntry[] {
-    const where: string[] = [`memories_fts MATCH ?`];
+    const where: string[] = [`memories_fts MATCH ?`, `m.disabled_at IS NULL`];
     const params: unknown[] = [ftsQuery];
     if (workingDir !== null) {
       where.push(`m.working_dir = ?`);
@@ -1366,7 +1475,26 @@ export class MemoryStore {
     const stmt = this.evictionUtilityWeighted
       ? this.evictUtilityStmt
       : this.evictFifoStmt;
-    const result = stmt.run(excess) as { changes: number };
+    const pick = this.evictionUtilityWeighted
+      ? this.evictUtilityPickStmt
+      : this.evictFifoPickStmt;
+    // ATO-1059: read the rows the DELETE will pick (the same SELECT, in
+    // the same transaction) and journal them first, so an evicted note
+    // can be put back. The delete stays one statement; the per-row reads
+    // cover only the overflow, one row on an ordinary write.
+    const result = this.db.transaction((): { changes: number } => {
+      const ids = (pick.all(excess) as Array<{ id: number }>).map((r) => r.id);
+      const at = this.now();
+      for (const id of ids) {
+        const before = this.get(id);
+        if (before === null) continue;
+        this.changeLog.record(
+          { kind: "note", target: String(id), op: "evict", by: "agent", before: noteSnapshot(before) },
+          at,
+        );
+      }
+      return stmt.run(excess) as { changes: number };
+    })();
     this.metrics?.recordMemoryEviction({
       reason: "overflow",
       evicted: result.changes,
@@ -1578,6 +1706,7 @@ function rowToEntry(row: MemoryRow): MemoryEntry {
     recallCount: typeof row.recall_count === "number" ? row.recall_count : 0,
     lastRecalledAt:
       typeof row.last_recalled_at === "number" ? row.last_recalled_at : null,
+    ...(typeof row.disabled_at === "number" ? { disabledAt: row.disabled_at } : {}),
   };
 }
 
@@ -1706,6 +1835,18 @@ function buildFtsQuery(query: string): string {
   if (tokens.length === 0) return "";
   return tokens.map((t) => `"${t}"*`).join(" OR ");
 }
+
+/** The rows overflow eviction drops, oldest first (legacy FIFO). */
+const EVICT_FIFO_PICK_SQL = `SELECT id FROM memories ORDER BY updated_at ASC, id ASC LIMIT ?`;
+
+/** The rows utility-weighted eviction drops (see the constructor). */
+const EVICT_UTILITY_PICK_SQL = `SELECT id FROM memories
+          ORDER BY vote_score ASC,
+                   recall_count ASC,
+                   COALESCE(last_recalled_at, 0) ASC,
+                   updated_at ASC,
+                   id ASC
+          LIMIT ?`;
 
 function noteSnapshot(entry: MemoryEntry): NoteSnapshot {
   return {

@@ -317,6 +317,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **Plugins** | Install Claude Code, Codex and Cursor plugin packages from a folder or a marketplace with `atomic-agent plugin install`. Their skills show up as `plugin:skill`, their MCP servers join the agent behind approval, their commands become TUI slash commands, and their PreToolUse and PostToolUse command hooks can block or annotate a tool call. A plugin's local programs and hooks run only after you allow its code. Installing stays in the terminal; the desktop app loads a plugin's skills, MCP servers and hooks, and manages installed plugins in Settings › Plugins. |
 | **Handoff** | When Claude Code or Codex stops in the middle of a task, `atag handoff --from claude-code` (or `codex`) saves its latest session in the current folder as an Atomic Agent chat and opens the TUI with a message to carry on. A long session is shortened to fit a local model's window (the local model's configured context, else 32k tokens). The desktop app has the same thing as **Continue from Claude Code / Codex**. |
 | **Share a chat** | `atag share` saves a chat as one HTML file (or Markdown with `--format md`) to send a colleague: your messages and the agent's replies only, with tool output and reasoning left out and keys, local paths, emails and IP addresses replaced. `atag share --gist` then shows what would go up and, only after you type yes, uploads it as a secret GitHub gist through `gh`. |
+| **Check a shared recipe** | A recipe is a task someone shares as an `atomicagent://recipe/open` link or a small YAML file: a title, the task text and a few fields to fill in. `atag recipe check <file or link>` shows what it will do and flags text that downloads and runs code, sends keys somewhere, tries to override the agent or hides invisible characters. It is a tripwire, not a guarantee: a clean result means no known risky pattern was found, so read the text before you send it. `atag recipe link <file>` turns a recipe file into its link. A recipe only fills a new chat's box; you send it yourself, and it never picks the model, tools or permissions. |
 | **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub or GitHub skill repos. Ships with 18 starter skills (Docker, GitHub, Notion, Obsidian, PDF, and more; 15 outside macOS, where the Apple ones are skipped), auto-installed on first run. |
 | **Vision** | Optional `vision.describe` for multimodal models with `mmproj`, kept outside the text transcript. |
 | **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. `atag mcp-server` works the other way round: Claude Code, Codex or Cursor can search Atomic Agent's memory and read its skills (read-only by default). |
@@ -372,6 +373,8 @@ atomic-agent overnight "migrate the tests to vitest" --budget 5 --hours 8 --dir 
 Switch modes with `/mode`, `ctrl+g M`, or the composer chip. On an approval prompt, `ctrl+y` approves, `ctrl+d` denies, `ctrl+f` grants the category, `ctrl+b` retargets a write or grants a shell command's shape, `ctrl+z` pages through the full command when the preview is cut, `esc` aborts, and typing answers the agent in words. `/theme` switches between six palettes: `classic-dark`, `classic-light`, `toxic-green`, `khorne-red`, `darky-dark`, `moon-yellow`. The TUI is clickable; to select text, drag over plain text, or turn the mouse off with `/mouse off` or `--no-mouse`. Handy slash commands: `/help`, `/tools`, `/model`, `/privacy`. A failed or long turn raises a desktop notification, sessions are named from their first prompt, and inside a [herdr](https://github.com/herdrdev/herdr) pane the TUI labels the pane with its state.
 
 Full TUI guide: [TUI.md](docs/user/tui.md).
+
+Keep the agent running while your laptop is closed: [run it on your own server](docs/user/self-host.md) (Docker or `atag serve --no-parent-exit`).
 
 </details>
 
@@ -544,13 +547,21 @@ Run `atomic-agent` as a local HTTP service:
 atomic-agent serve \
   --host 127.0.0.1 \
   --port 8787 \
-  --cwd /path/to/work \
-  --api-key "$ATOMIC_AGENT_API_KEY"
+  --cwd /path/to/work
 ```
 
-Without a key, anyone who reaches the port can run the agent and its tools, so `serve` refuses to start on a host other than loopback (`0.0.0.0`, a LAN address) unless `--api-key` or `ATOMIC_AGENT_API_KEY` is set. On loopback it still starts without one and prints a one-line warning. Without a key it answers only requests that name a loopback host (`localhost`, `127.0.0.1`, `[::1]`, `*.localhost`, this machine's name) and come from no web page or a page on one of those hosts, and it wants request bodies as `application/json`, so a website open in your browser cannot drive it (ATO-1495). To let a specific web origin in, list it in `ATOMIC_AGENT_ALLOWED_ORIGINS` (comma-separated, a trailing `*` matches a prefix, for example `chrome-extension://*`).
+`serve` always requires an API key, on loopback too: any program on the machine can reach a loopback port, and whoever holds the key can run the agent and its tools. Pass your own with `--api-key` or `ATOMIC_AGENT_API_KEY`. Without one, `serve` generates a key on the first run, keeps it in `<state dir>/serve-api.key` (owner-only, `~/.atomic-agent/serve-api.key` by default), reuses it after, and says where it is when it starts; in a terminal it also prints the phone panel address with the key in it (`http://127.0.0.1:8787/panel#key=…`). Every authenticated route wants it as `Authorization: Bearer <key>` (or `x-api-key`):
 
-`POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. `POST /v1/messages` (Anthropic Messages, for Claude Code: `ANTHROPIC_BASE_URL=http://127.0.0.1:8787`) and `POST /v1/responses` (OpenAI Responses, for Codex and the Agents SDK) run the same turn and answer in their own format; the agent uses its own tools, not the client's ([details](src/http/README.md)). Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
+```bash
+curl -H "Authorization: Bearer $(atomic-agent serve --print-api-key)" \
+  http://127.0.0.1:8787/api/sessions
+```
+
+`--print-api-key` prints the key `serve` runs with and exits; delete the file to get a new one on the next start. On a host other than loopback (`0.0.0.0`, a LAN address) `serve` wants a key you chose yourself, at least 16 characters, and refuses to start with only the generated one. `/health`, `/v1/models` and the `/panel` page answer without a key.
+
+To give another person or device less than the full key, make a named token with a role: `atag http tokens add phone --role member` prints a token once (`admin` can do everything, `member` can chat and read, `viewer` can only read); `atag http tokens list` and `atag http tokens remove phone` manage them. The serve key stays the admin key, and named tokens only apply while serve has one. A token used on a route its role does not cover gets `403`. A `member` token can also answer the agent's approval prompts, so it can run anything the agent's tools can do once it approves them: shell commands, file reads and writes, config edits. That is the same as running commands on the host, so give `member` tokens only to people you would trust with the machine. `viewer` is the read-only role.
+
+`POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. `POST /v1/messages` (Anthropic Messages, for Claude Code: `ANTHROPIC_BASE_URL=http://127.0.0.1:8787` with `ANTHROPIC_API_KEY` set to the serve key) and `POST /v1/responses` (OpenAI Responses, for Codex and the Agents SDK) run the same turn and answer in their own format; the agent uses its own tools, not the client's ([details](src/http/README.md)). Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
 
 `serve` boots the same runtime the TUI does, so enabled Telegram and Discord bots, and every enabled Swarm bot that has a token, come up in this process too. That makes `serve` the way to keep the bots answering with no TUI open; it stays in the foreground until you stop it and does not restart itself. Each bot runs in one process at a time; see Channels below.
 
@@ -699,6 +710,36 @@ atag mcp-server --cwd ~/code/project             # working folder for project sk
 ```
 
 The other client cannot show Atomic Agent's approval prompt, so with `--allow-exec` a command that would ask is refused and the client is told to ask you. Only your approval level and saved "always allow" rules can let a command run; the hardline shell guard still blocks the worst ones.
+
+While `atag serve` runs, the same read-only tools are also at `http://127.0.0.1:8787/mcp` (MCP Streamable HTTP). With an API key on serve, the client sends it as a bearer token:
+
+```bash
+claude mcp add --transport http atomic-agent http://127.0.0.1:8787/mcp \
+  --header "Authorization: Bearer $ATOMIC_AGENT_API_KEY"   # Claude Code
+```
+
+Requests from a web page on another site (a foreign `Origin`) are refused. The write and shell tools are only on `atag mcp-server`.
+
+</details>
+
+<details>
+<summary><b>ACP: use Atomic Agent as the agent in Zed, JetBrains or Neovim</b></summary>
+
+`atag acp` runs Atomic Agent as an [Agent Client Protocol](https://agentclientprotocol.com) server over stdio. The editor starts it and shows its replies, tool calls and plan in its own agent panel; approval prompts appear there as permission buttons.
+
+Zed, in `settings.json`:
+
+```json
+{ "agent_servers": { "Atomic Agent": { "type": "custom", "command": "atag", "args": ["acp"] } } }
+```
+
+JetBrains IDEs (AI Chat, "Add Custom Agent"), in `~/.jetbrains/acp.json`, with the full path to the binary:
+
+```json
+{ "agent_servers": { "Atomic Agent": { "command": "/full/path/to/atag", "args": ["acp"] } } }
+```
+
+The agent uses your configured model, tools, memory, skills and approval level, with the editor's project folder as the working folder. `atag acp --setup` runs first-time setup in a terminal; editors that support terminal sign-in offer it as the agent's auth method. Not yet supported: reopening an earlier chat (`session/load`), MCP servers passed by the editor (configure them in Atomic Agent instead) and the editor's unsaved buffers.
 
 </details>
 

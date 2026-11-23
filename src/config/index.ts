@@ -4,6 +4,7 @@ export type {
   BrowserConnectMode,
   GitConfig,
   HttpApprovalMode,
+  UrlDataGuardMode,
   LocalLlmMode,
   LogLevel,
   OnboardingState,
@@ -55,6 +56,7 @@ export {
 } from "./config-file.js";
 export { loadConfig, resolveStateDir } from "./load-config.js";
 export { OFFLINE_ENV, type NetworkConfig } from "./network-config.js";
+export type { PrivacyConfig, PrivacyShieldConfig } from "./privacy-config.js";
 export { getConfig, resetConfigCache, withFreshConfig } from "./config-cache.js";
 export {
   formatDotenvReadWarning,
@@ -106,6 +108,15 @@ export {
   type SecretsStoreKind,
   type SecretsStoreState,
 } from "./secret-store.js";
+export {
+  SecretAccessError,
+  readSavedSecret,
+  saveSecret,
+  secretNameError,
+  secretValueError,
+  type SavedSecret,
+  type SavedSecretRead,
+} from "./secret-access.js";
 export {
   moveSecretsToEnv,
   moveSecretsToKeychain,

@@ -32,6 +32,7 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "browser_secret",
   "browser_offsite",
   "browser_site_tool",
+  "browser_take_over",
   "trust_config",
   "state_secret",
   "email",
@@ -56,7 +57,7 @@ describe("session-grant eligibility", () => {
     );
   });
 
-  it("grants every category except trust_config, state_secret, email, browser_secret, local_model_restart, hook_ask, user_question, shell_dangerous and fusion_fanout", () => {
+  it("grants every category except trust_config, state_secret, email, browser_secret, local_model_restart, hook_ask, user_question, browser_take_over, shell_dangerous and fusion_fanout", () => {
     for (const category of ALL_CATEGORIES) {
       expect(isGrantableCategory(category)).toBe(
         category !== "shell_dangerous" &&
@@ -67,7 +68,8 @@ describe("session-grant eligibility", () => {
           category !== "browser_secret" &&
           category !== "local_model_restart" &&
           category !== "hook_ask" &&
-          category !== "user_question",
+          category !== "user_question" &&
+          category !== "browser_take_over",
       );
     }
   });
@@ -130,6 +132,8 @@ describe("approval ladder", () => {
       browser_offsite: 3,
       // A site's own WebMCP tool: the same rung as a submit.
       browser_site_tool: 4,
+      // The person hands control back; nothing else can say so (ATO-508).
+      browser_take_over: null,
       trust_config: 5,
       // The read-side twin of trust_config (ATO-877).
       state_secret: 5,

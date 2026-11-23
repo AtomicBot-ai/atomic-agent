@@ -16,9 +16,14 @@ import {
   type ScreenGeometryStore,
 } from "./screen-geometry.js";
 import {
+  chooseDesktopCaptureBackend,
+  takeDesktopScreenshot,
+} from "./screen-capture-win-linux.js";
+import {
   hostAppName,
   macOnlyMessage,
   runScreenOp,
+  screenCaptureSupported,
   screenRecordingMessage,
   type ScreenDeps,
   type ScreenProbe,
@@ -92,10 +97,10 @@ export function buildOsScreenCaptureTool(
   return {
     name: OS_SCREEN_CAPTURE_TOOL,
     description:
-      "Take a screenshot of the primary display, or of one app window with `app` / `window` (macOS). Saves a JPEG in the temp folder and returns its path, size and the pixel-to-point scale; look at it with vision.describe or attach it to the reply with reply.attachments, then click with os.screen.click using the image's pixel coordinates. `text: true` also saves the window's text. May ask the user first.",
+      "Take a screenshot of the primary display, or of one app window with `app` / `window` (macOS). Saves a JPEG in the temp folder and returns its path, size and the pixel-to-point scale; look at it with vision.describe or attach it to the reply with reply.attachments, then click with os.screen.click using the image's pixel coordinates. `text: true` also saves the window's text. On Windows and Linux it takes the whole screen only, as a PNG, and there is no clicking yet. May ask the user first.",
     readonly: true,
     async run(rawArgs, ctx) {
-      if (deps.platform !== "darwin") {
+      if (!screenCaptureSupported(deps.platform)) {
         return errorResult(macOnlyMessage(OS_SCREEN_CAPTURE_TOOL, deps.platform));
       }
       if (options.onlyWithOverlay && !options.onlyWithOverlay(ctx.sessionId)) {
@@ -110,6 +115,11 @@ export function buildOsScreenCaptureTool(
         return errorResult((error as Error).message);
       }
       const withText = rawArgs.text === true;
+      if (deps.platform !== "darwin" && (region || query || withText)) {
+        return errorResult(
+          `on ${deps.platform} os.screen.capture takes the whole screen only for now; a region, an app window and its text are macOS-only. Call it again with no arguments.`,
+        );
+      }
       if (region && query) {
         return errorResult("pass either a region (x, y, width, height) or a window (app, window), not both");
       }
@@ -117,6 +127,7 @@ export function buildOsScreenCaptureTool(
         return errorResult("`text: true` reads one window's text: name it with `app` and/or `window`");
       }
       try {
+        if (deps.platform !== "darwin") return await captureDesktop(options, ctx);
         if (query) return await captureWindow(options, query, withText, ctx);
         return await capture(options, region, ctx);
       } catch (error) {
@@ -230,6 +241,81 @@ async function capture(
         screenHeight: probe.screen.height,
         frontmost: probe.frontmost,
         bytes,
+      },
+    },
+    SCREEN_RESULT_OPTIONS,
+  );
+}
+
+/**
+ * Windows and Linux (ATO-527, look only): the whole screen, every
+ * display, as a PNG in the same folder. There is no probe: the program
+ * that will take the picture is chosen first (a missing Linux tool is
+ * reported without a prompt), then the user approves, then it runs
+ * ([`screen-capture-win-linux.ts`](screen-capture-win-linux.ts)). The
+ * geometry is remembered like a macOS capture's, in screen pixels; no
+ * tool reads it yet, since clicking and pointing are macOS-only.
+ */
+async function captureDesktop(
+  options: OsScreenCaptureOptions,
+  ctx: { workingDir: string; sessionId: string; signal: AbortSignal },
+): Promise<CompressedToolResult> {
+  const { deps, geometry } = options;
+  const choice = await chooseDesktopCaptureBackend(deps, ctx);
+  if (!choice.ok) return errorResult(choice.message, { retryable: false, reason: choice.reason });
+  const { backend } = choice;
+
+  const what = "the whole screen (every display)";
+  await requireApproval(
+    options,
+    {
+      sessionId: ctx.sessionId,
+      tool: OS_SCREEN_CAPTURE_TOOL,
+      category: "screen_capture",
+      reason: `take a screenshot of ${what}`,
+      preview: `${OS_SCREEN_CAPTURE_TOOL}: screenshot of ${what}\ntaken with: ${backend.label}`,
+      affectedResources: ["screen"],
+    },
+    ctx.signal,
+  );
+
+  const dir = screenshotDir(deps.tmpDir, ctx.sessionId);
+  await deps.ensureDir(dir);
+  const path = join(dir, `screen-${stamp(deps.now())}.png`);
+  const shot = await takeDesktopScreenshot(deps, backend, path, ctx);
+  if (!shot.ok) return errorResult(shot.message, { retryable: false, reason: shot.reason });
+
+  const { report } = shot;
+  const area = { x: report.originX, y: report.originY, width: report.screenWidth, height: report.screenHeight };
+  const image = { width: report.imageWidth, height: report.imageHeight };
+  const mapped = captureGeometry(area, image);
+  geometry.set(ctx.sessionId, mapped);
+
+  const lines = [
+    `saved ${path} (${image.width}x${image.height} px) of ${what} (${area.width}x${area.height} screen pixels), taken with ${shot.tool}.`,
+    `scale ${mapped.scale.toFixed(4)} image px per screen pixel, origin ${area.x},${area.y}.`,
+    `Look at it with vision.describe { "path": "${path}" }, or attach it to your reply with reply.attachments to show the user. ` +
+      `Clicking, typing and pointing are macOS-only for now: on ${deps.platform} tell the user what to do.`,
+  ];
+  if (!shot.downscaled && fitWithin(area.width, area.height).resize) {
+    lines.push("The picture is full size: no image tool could shrink it (installing ImageMagick fixes that).");
+  }
+  return compressToolResult(
+    {
+      tool: OS_SCREEN_CAPTURE_TOOL,
+      status: "ok",
+      output: lines.join("\n"),
+      details: {
+        path,
+        imageWidth: image.width,
+        imageHeight: image.height,
+        scale: mapped.scale,
+        originX: mapped.originX,
+        originY: mapped.originY,
+        screenWidth: area.width,
+        screenHeight: area.height,
+        captureTool: shot.tool,
+        bytes: shot.bytes,
       },
     },
     SCREEN_RESULT_OPTIONS,
