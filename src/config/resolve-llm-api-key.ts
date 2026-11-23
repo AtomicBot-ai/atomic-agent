@@ -1,4 +1,5 @@
 import { isOtherComputerOnNetworkUrl } from "../llm/provider/openai/network-server-address.js";
+import { isLocalProviderUrl } from "../llm/provider/presets/is-local-provider-url.js";
 import type { UserLlmProviderEntry } from "./llm-config.js";
 
 /**
@@ -42,13 +43,38 @@ export function resolveLlmProviderApiKey(
     // operator's real OpenAI key, and sending that as a Bearer over
     // plain http:// to a box on the LAN would leak it.
     if (isOtherComputerOnNetworkUrl(entry.baseUrl)) return undefined;
+    // `OPENAI_COMPAT_API_KEY` is the variable people set for compat
+    // servers on purpose, so it still goes to any of them. The OpenAI
+    // variables (ATO-1703) go only to OpenAI itself or this machine: a
+    // config.json from somewhere else could otherwise name its own server
+    // as `baseUrl` and receive the operator's real OpenAI key.
     const key =
       process.env.OPENAI_COMPAT_API_KEY ??
-      process.env.OPENAI_API_KEY ??
-      process.env.ATOMIC_AGENT_OPENAI_API_KEY;
+      (mayReceiveOpenAiKey(entry.baseUrl)
+        ? (process.env.OPENAI_API_KEY ??
+          process.env.ATOMIC_AGENT_OPENAI_API_KEY)
+        : undefined);
     return key && key.length > 0 ? key : undefined;
   }
   return undefined;
+}
+
+const OPENAI_ORIGIN = "https://api.openai.com";
+
+/**
+ * ATO-1703: whether `OPENAI_API_KEY` / `ATOMIC_AGENT_OPENAI_API_KEY` may be
+ * sent to a compat entry's `baseUrl`. Only OpenAI's own API and servers on
+ * this machine qualify; no `baseUrl` means the provider's built-in default,
+ * which is not a host a config file chose. Anything unparsable gets nothing.
+ */
+export function mayReceiveOpenAiKey(baseUrl: string | undefined): boolean {
+  if (baseUrl === undefined || baseUrl.length === 0) return true;
+  if (isLocalProviderUrl(baseUrl)) return true;
+  try {
+    return new URL(baseUrl).origin === OPENAI_ORIGIN;
+  } catch {
+    return false;
+  }
 }
 
 /**
