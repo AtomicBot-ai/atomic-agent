@@ -106,6 +106,8 @@ export function packedConversationTurns(packed: PackedTurns): PromptTurn[] {
           turn.reasoning.length > 0
             ? { reasoning: turn.reasoning }
             : {}),
+          // Only a Gemini body writes it back (ATO-1680).
+          ...(turn.thoughtSignature ? { thoughtSignature: turn.thoughtSignature } : {}),
         });
         break;
       case "tool_result":

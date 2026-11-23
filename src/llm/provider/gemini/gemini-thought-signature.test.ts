@@ -121,6 +121,15 @@ describe("Gemini 3 thought signatures go back on the history's calls (ATO-1680)"
     expect(single![0]!.extra_content).toEqual({ google: { thought_signature: SKIP_THOUGHT_SIGNATURE } });
   });
 
+  it("signs only the first call of a parallel set as the transcript records it, call and result in turn", () => {
+    // appendBatchedTurns writes call, result, call, result, so each call
+    // opens its own message; the unsigned second call gets the skip value.
+    const interleaved = { ...prompt, turns: [turns[0]!, turns[1]!, turns[3]!, turns[2]!, turns[4]!] };
+    const [first, second] = calls(buildNativeMessages(interleaved, { nameEscape, thoughtSignatures: true }));
+    expect(first![0]!.extra_content).toEqual({ google: { thought_signature: SIG } });
+    expect(second![0]!.extra_content).toEqual({ google: { thought_signature: SKIP_THOUGHT_SIGNATURE } });
+  });
+
   it("sends no extra_content to any other service", () => {
     const messages = buildNativeMessages(prompt, { nameEscape });
     expect(JSON.stringify(messages)).not.toContain("extra_content");
