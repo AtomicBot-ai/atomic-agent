@@ -6,7 +6,7 @@ import { FanoutScopeRegistry } from "../../approval/fanout-scope.js";
 import type { RunTurnResult } from "../../agent/agent-loop.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import { createEmptySessionState } from "../../session/session-state.js";
-import { FUSION_WORKER_ID_PREFIX } from "../../session/fusion-worker-session.js";
+import { FUSION_WORKER_ID_PREFIX, readFusionWorkerMeta } from "../../session/fusion-worker-session.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 import {
   buildAcceptanceChecklist,
@@ -20,6 +20,8 @@ import {
 } from "./fusion-delegate.js";
 import type { EscalationComplete } from "./escalation.js";
 import type { DelegateTask } from "./delegate-args.js";
+import type { WorkerTaskResult } from "./worker-result.js";
+import { runChecks as runVerifyChecks } from "../verify/run-verify.js";
 
 const logger = new StructuredLogger({ level: "error", sinks: [] });
 const TARGET = { providerId: "cloud", model: "judge-model" };
@@ -372,5 +374,159 @@ describe("a node closes only on a green list (ATO-944)", () => {
     expect(d.briefs[0]).not.toContain("ACCEPTANCE CHECKLIST");
     expect((result.details.tasks as Array<{ status: string }>)[0]!.status).toBe("ok");
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("the whole acceptance list is current after a repair (#539)", () => {
+  const tasks = [
+    { id: "a", title: "A", instructions: "write a.txt containing alpha", files: ["a.txt"] },
+    { id: "b", title: "B", instructions: "write b.txt containing beta", files: ["b.txt"] },
+  ];
+  const checks = tasks.map((task) => ({
+    task: task.id,
+    kind: "command",
+    cmd: process.execPath,
+    args: [
+      "-e",
+      `const fs = require('node:fs'); const assert = require('node:assert/strict'); ` +
+        `assert.equal(fs.readFileSync('${task.id}.txt', 'utf8'), '${task.id === "a" ? "alpha" : "beta"}');`,
+    ],
+    checks: ["exit 0"],
+  }));
+
+  function workers(
+    dir: string,
+    complete: EscalationComplete,
+    onRepair: () => void,
+    over: Partial<FusionDelegateDeps> = {},
+  ) {
+    const attempts = { a: 0, b: 0 };
+    const runs: string[] = [];
+    const d = deps(dir, complete, over);
+    d.runTurn = async (session, message) => {
+      const id = readFusionWorkerMeta(session.metadata)?.taskId;
+      if (id !== "a" && id !== "b") throw new Error(`unexpected worker ${id}`);
+      runs.push(id);
+      attempts[id] += 1;
+      d.briefs.push(message);
+      writeFileSync(join(dir, `${id}.txt`), id === "a" ? "alpha" : attempts.b === 1 ? "pending" : "beta");
+      if (id === "b" && attempts.b > 1) onRepair();
+      return { session, reason: "reply", stepCount: 1 } as RunTurnResult;
+    };
+    return { d, runs };
+  }
+
+  it("fails a previously green task when another task's repair breaks its real executable check", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "judge-recheck-script-"));
+    try {
+      const checked: boolean[][] = [];
+      const { d, runs } = workers(
+        dir,
+        answer([{ id: "a3", pass: true, why: "the file matches its instruction" }]),
+        () => writeFileSync(join(dir, "a.txt"), "broken by the repair"),
+        {
+          runChecks: async (specs, ctx) => {
+            const result = await runVerifyChecks(specs, ctx);
+            checked.push(result.results.map((r) => r.ok));
+            return result;
+          },
+        },
+      );
+      const result = await buildFusionDelegateTool(d).run(
+        { tasks, contract: { checks } },
+        { workingDir: dir, sessionId: "s-p", stepIndex: 0, signal: new AbortController().signal },
+      );
+      expect(checked).toEqual([[true, false], [false, true]]);
+      expect(runs).toEqual(["a", "b", "b"]);
+      const rows = result.details.tasks as WorkerTaskResult[];
+      expect(rows.find((r) => r.id === "a")).toMatchObject({
+        status: "failed",
+        checks: { total: 1, failed: 1 },
+        judge: { green: false, retried: false },
+      });
+      expect(rows.find((r) => r.id === "b")).toMatchObject({
+        status: "ok",
+        checks: { total: 1, failed: 0 },
+        judge: { green: true, retried: true },
+      });
+      expect(result.details.outcome).toBe("partial");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([false, true])("judges the latest evidence for every task after repair (earlier task damaged: %s)", async (damaged) => {
+    const dir = mkdtempSync(join(tmpdir(), "judge-recheck-model-"));
+    try {
+      const evidenceSeen: Array<{ task: string; pass: boolean }> = [];
+      const { d, runs } = workers(
+        dir,
+        async ({ prompt }) => {
+          const task = prompt.includes("## Task\nwrite a.txt") ? "a" : "b";
+          const pass = prompt.includes(`### ${task}.txt\n${task === "a" ? "alpha" : "beta"}`);
+          evidenceSeen.push({ task, pass });
+          return { content: JSON.stringify({ items: [{ id: "a2", pass, why: pass ? "expected content" : "wrong content" }] }) };
+        },
+        () => {
+          if (damaged) writeFileSync(join(dir, "a.txt"), "broken by the repair");
+        },
+      );
+      const result = await buildFusionDelegateTool(d).run(
+        { tasks },
+        { workingDir: dir, sessionId: "s-p", stepIndex: 0, signal: new AbortController().signal },
+      );
+      expect(runs).toEqual(["a", "b", "b"]);
+      expect(evidenceSeen.filter((e) => e.task === "a").map((e) => e.pass)).toEqual([true, !damaged]);
+      expect(evidenceSeen.filter((e) => e.task === "b").map((e) => e.pass)).toEqual([false, true]);
+      const rows = result.details.tasks as WorkerTaskResult[];
+      expect(rows.find((r) => r.id === "a")).toMatchObject({
+        status: damaged ? "failed" : "ok",
+        judge: { green: !damaged, retried: false },
+      });
+      expect(rows.find((r) => r.id === "b")).toMatchObject({
+        status: "ok",
+        judge: { green: true, retried: true },
+      });
+      expect(result.details.outcome).toBe(damaged ? "partial" : "all_ok");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not keep earlier green evidence when the check runner fails after repair", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "judge-recheck-unavailable-"));
+    try {
+      let checkRuns = 0;
+      const { d, runs } = workers(
+        dir,
+        answer([{ id: "a3", pass: true, why: "the file matches its instruction" }]),
+        () => {},
+        {
+          runChecks: async (specs, ctx) => {
+            checkRuns += 1;
+            if (checkRuns > 1) throw new Error("verification unavailable after repair");
+            return runVerifyChecks(specs, ctx);
+          },
+        },
+      );
+      const result = await buildFusionDelegateTool(d).run(
+        { tasks, contract: { checks } },
+        { workingDir: dir, sessionId: "s-p", stepIndex: 0, signal: new AbortController().signal },
+      );
+      expect(checkRuns).toBe(2);
+      expect(runs).toEqual(["a", "b", "b"]);
+      const a = (result.details.tasks as WorkerTaskResult[]).find((r) => r.id === "a")!;
+      expect(a.status).not.toBe("ok");
+      expect(a.judge?.green).toBe(false);
+      expect(a.judge?.items).toContainEqual(expect.objectContaining({
+        pass: false,
+        by: "fact",
+        why: "the check did not run",
+      }));
+      expect(a.checks?.failed).not.toBe(0);
+      expect(result.summary).toContain("verification unavailable after repair");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
