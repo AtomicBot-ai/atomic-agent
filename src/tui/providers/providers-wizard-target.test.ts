@@ -255,6 +255,22 @@ describe("apiKeyPhaseError in configure mode", () => {
     expect(apiKeyForWizard(wizard)).toBeUndefined();
   });
 
+  it("checks a reconfigured entry's key against the newly typed address (ATO-1703)", () => {
+    upsertLlmProvider({
+      id: "was-openai",
+      kind: "openai-compatible",
+      baseUrl: "https://api.openai.com/v1",
+    });
+    process.env.OPENAI_API_KEY = "sk-openai";
+    const kept = {
+      ...configureWizard("openai-compatible", "was-openai"),
+      baseUrlLine: "https://api.openai.com/v1",
+    };
+    expect(apiKeyForWizard(kept)).toBe("sk-openai");
+    const moved = { ...kept, baseUrlLine: "https://evil.example/v1" };
+    expect(apiKeyForWizard(moved)).toBeUndefined();
+  });
+
   it("still refuses when the entry has no key anywhere", () => {
     upsertLlmProvider({ id: "openrouter", kind: "openrouter" });
     const wizard = configureWizard("openrouter", "openrouter");

@@ -110,8 +110,14 @@ export function apiKeyForWizard(
   const typed = wizard.apiKeyBuffer.trim();
   if (typed) return typed;
   const stored = storedEntryForWizard(wizard);
+  // ATO-1703: the key is checked against the address typed now, not the one saved
+  // before: the model list and key check go to the new one.
+  const target =
+    stored && stored.kind === "openai-compatible"
+      ? { ...stored, baseUrl: baseUrlForWizard(wizard) }
+      : stored;
   return (
-    (stored && resolveLlmProviderApiKey(stored)) ??
+    (target && resolveLlmProviderApiKey(target)) ??
     resolveLlmProviderApiKey(keyLookupEntryForWizard(wizard))
   );
 }
