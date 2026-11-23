@@ -11,6 +11,7 @@ import {
 import { cloudTakesReasoningOverride } from "../../reasoning-levels.js";
 import {
   buildNativeMessages,
+  CONTINUE_AFTER_ASSISTANT,
   type NativeMessageOptions,
 } from "./openai-native-messages.js";
 import { toStrictOpenAiTools } from "./openai-strict-tools.js";
@@ -338,7 +339,10 @@ function assembleOpenAiChatBody(
   if (options.anthropicCacheControl) {
     body.messages = applyAnthropicCacheControl(
       body.messages as ReadonlyArray<Record<string, unknown>>,
-      { includeLastMessage: filtered.modelMode?.mode === "cloud" && filtered.messages?.tail === "" && resolveMessageShape(filtered, options) === "native" },
+      // The request-only continue message (ATO-1681) is gone from the
+      // next request, so the breakpoint stays on the note before it.
+      { includeLastMessage: filtered.modelMode?.mode === "cloud" && filtered.messages?.tail === "" && resolveMessageShape(filtered, options) === "native"
+        && (body.messages as ReadonlyArray<Record<string, unknown>>).at(-1)?.["content"] !== CONTINUE_AFTER_ASSISTANT },
     );
   }
   const modelParams = options.modelParams;

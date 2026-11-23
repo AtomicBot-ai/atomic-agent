@@ -26,7 +26,12 @@ import type { PromptMessages, PromptTurn } from "../completion-types.js";
  *    it is carried as the text line the flat form would show, in a
  *    `user` message;
  *  - the packer's dropped-turns recap opens the history as a `user`
- *    message, since it is what stood in for those turns.
+ *    message, since it is what stood in for those turns;
+ *  - the request never ends on an assistant message. A cloud request
+ *    has no tail, and a step after a progress note ends on that note
+ *    (ATO-1681). Anthropic's newer models refuse that as prefill and
+ *    DeepSeek's thinking mode refuses it outright, both with a 400, so
+ *    {@link CONTINUE_AFTER_ASSISTANT} goes out after it as `user`.
  */
 
 export type OpenAiChatMessage = Record<string, unknown>;
@@ -122,6 +127,14 @@ function keepTailWithin(text: string, tokens: number): string {
 
 export const NO_RESULT_RECORDED = "(no result recorded)";
 
+/**
+ * The `user` message after a history that would otherwise end on the
+ * assistant's own text (ATO-1681). Request-only: never recorded, so the
+ * transcript and the cached prefix are unchanged, and the next step's
+ * request, which has the step's calls after the note, does not carry it.
+ */
+export const CONTINUE_AFTER_ASSISTANT = "Continue.";
+
 export function buildNativeMessages(
   prompt: PromptMessages,
   options: NativeMessageOptions,
@@ -146,6 +159,14 @@ export function buildNativeMessages(
   // What a tool-call message without reasoning of its own carries:
   // nothing, unless the service requires the field.
   const missingReasoning = options.reasoningRequired === true ? "" : undefined;
+  // DeepSeek's thinking mode reads every assistant message after the
+  // last user message as part of the current tool turn, a progress note
+  // included, and refuses one without the field (ATO-1681). Replies of
+  // earlier turns keep their old shape.
+  let lastUser = -1;
+  prompt.turns.forEach((turn, index) => {
+    if (turn.kind === "user") lastUser = index;
+  });
 
   const flushOrphans = (): void => {
     if (orphanLines.length === 0) return;
@@ -176,7 +197,13 @@ export function buildNativeMessages(
         // as an empty completion instead of an error. Nothing was said, so
         // nothing is sent.
         if (turn.text.trim().length === 0) break;
-        out.push({ role: "assistant", content: turn.text });
+        out.push({
+          role: "assistant",
+          content: turn.text,
+          ...(missingReasoning !== undefined && index > lastUser
+            ? { reasoning_content: missingReasoning }
+            : {}),
+        });
         break;
       case "assistant_tool_call": {
         if (turn.callId && pending.length > 0 && out[out.length - 1]?.role === "assistant") {
@@ -231,6 +258,12 @@ export function buildNativeMessages(
   answerPending();
   flushOrphans();
   if (prompt.tail.length > 0) out.push({ role: "user", content: prompt.tail });
+  else if (out[out.length - 1]?.role === "assistant") {
+    // Every tool call has its `tool` answer by now, so an assistant
+    // message here is text: a progress note, or a reply with no user
+    // message after it.
+    out.push({ role: "user", content: CONTINUE_AFTER_ASSISTANT });
+  }
   return out;
 }
 
