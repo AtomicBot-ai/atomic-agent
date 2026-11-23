@@ -1,5 +1,4 @@
 import { isOtherComputerOnNetworkUrl } from "../llm/provider/openai/network-server-address.js";
-import { isLocalProviderUrl } from "../llm/provider/presets/is-local-provider-url.js";
 import type { UserLlmProviderEntry } from "./llm-config.js";
 
 /**
@@ -19,6 +18,9 @@ export function resolveLlmProviderApiKey(
   // prevent (#69), and keyless local servers (LM Studio) rely on the
   // `undefined` here to send requests without an Authorization header.
   if (entry.apiKeyEnvVar && entry.apiKeyEnvVar.length > 0) {
+    // ATO-1703: naming `OPENAI_API_KEY` here is no way around the rule
+    // below; a config.json from elsewhere could carry exactly that.
+    if (!mayUseKeyVariable(entry, entry.apiKeyEnvVar)) return undefined;
     const key = process.env[entry.apiKeyEnvVar];
     return key && key.length > 0 ? key : undefined;
   }
@@ -61,20 +63,53 @@ export function resolveLlmProviderApiKey(
 
 const OPENAI_ORIGIN = "https://api.openai.com";
 
+/** The variables that usually hold the operator's real OpenAI key (ATO-1703). */
+export const OPENAI_KEY_VARIABLES: ReadonlySet<string> = new Set([
+  "OPENAI_API_KEY",
+  "ATOMIC_AGENT_OPENAI_API_KEY",
+]);
+
 /**
  * ATO-1703: whether `OPENAI_API_KEY` / `ATOMIC_AGENT_OPENAI_API_KEY` may be
- * sent to a compat entry's `baseUrl`. Only OpenAI's own API and servers on
- * this machine qualify; no `baseUrl` means the provider's built-in default,
- * which is not a host a config file chose. Anything unparsable gets nothing.
+ * sent to a compat entry's `baseUrl`. Only OpenAI's own API and this
+ * machine qualify, by literal loopback address: a `*.localhost` name can
+ * still be answered by the network's DNS. No `baseUrl` answers `true`: the
+ * compat providers refuse to start without one, so nothing is sent, and
+ * callers that look a key up before the address is known keep working.
+ * Anything unparsable gets nothing.
  */
 export function mayReceiveOpenAiKey(baseUrl: string | undefined): boolean {
   if (baseUrl === undefined || baseUrl.length === 0) return true;
-  if (isLocalProviderUrl(baseUrl)) return true;
+  let url: URL;
   try {
-    return new URL(baseUrl).origin === OPENAI_ORIGIN;
+    url = new URL(baseUrl);
   } catch {
     return false;
   }
+  if (url.origin === OPENAI_ORIGIN) return true;
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  const host = url.hostname.toLowerCase();
+  return host === "localhost" || host === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+}
+
+/**
+ * Whether `entry` may read its key from the variable `name`. Only the
+ * OpenAI variables are restricted: they go to OpenAI or this machine, and
+ * never to a native kind (OpenRouter, Gemini, ...), whose host is not OpenAI.
+ */
+function mayUseKeyVariable(
+  entry: { readonly kind?: string; readonly baseUrl?: string },
+  name: string,
+): boolean {
+  if (!OPENAI_KEY_VARIABLES.has(name)) return true;
+  if (entry.baseUrl !== undefined && entry.baseUrl.length > 0) {
+    return mayReceiveOpenAiKey(entry.baseUrl);
+  }
+  return (
+    entry.kind === undefined ||
+    entry.kind === "openai-compatible" ||
+    entry.kind === "qwen-openai-compatible"
+  );
 }
 
 /**
@@ -84,8 +119,19 @@ export function mayReceiveOpenAiKey(baseUrl: string | undefined): boolean {
  * variables are skipped; order is kept, repeats are dropped.
  */
 export function resolveExtraApiKeys(
-  entry: { readonly extraApiKeyEnvVars?: readonly string[] },
+  entry: {
+    readonly extraApiKeyEnvVars?: readonly string[];
+    readonly kind?: string;
+    readonly baseUrl?: string;
+  },
   env: NodeJS.ProcessEnv = process.env,
+  options: {
+    /**
+     * `false` reads every named variable, the OpenAI ones included, for
+     * callers that only mask values in output and never send them.
+     */
+    readonly scopeOpenAiKey?: boolean;
+  } = {},
 ): string[] {
   const out: string[] = [];
   const names = entry.extraApiKeyEnvVars;
@@ -93,6 +139,10 @@ export function resolveExtraApiKeys(
   if (!Array.isArray(names)) return out;
   for (const name of names) {
     if (typeof name !== "string" || name.length === 0) continue;
+    // ATO-1703: the same rule as `apiKeyEnvVar`.
+    if (options.scopeOpenAiKey !== false && !mayUseKeyVariable(entry, name)) {
+      continue;
+    }
     const key = env[name]?.trim();
     if (key && key.length > 0 && !out.includes(key)) out.push(key);
   }

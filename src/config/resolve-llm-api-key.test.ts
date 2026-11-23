@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
-import { mayReceiveOpenAiKey, resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
+import {
+  mayReceiveOpenAiKey,
+  resolveExtraApiKeys,
+  resolveLlmProviderApiKey,
+} from "./resolve-llm-api-key.js";
 
 describe("resolveLlmProviderApiKey", () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -157,13 +161,78 @@ describe("resolveLlmProviderApiKey: the OpenAI key only goes to OpenAI (ATO-1703
 });
 
 describe("mayReceiveOpenAiKey (ATO-1703)", () => {
-  it("answers true only for OpenAI's API, this machine, or no address", () => {
-    expect(mayReceiveOpenAiKey(undefined)).toBe(true);
-    expect(mayReceiveOpenAiKey("")).toBe(true);
-    expect(mayReceiveOpenAiKey("https://api.openai.com/v1")).toBe(true);
-    expect(mayReceiveOpenAiKey("http://[::1]:8080")).toBe(true);
-    expect(mayReceiveOpenAiKey("https://api.openai.com:8443")).toBe(false);
-    expect(mayReceiveOpenAiKey("https://openai.com")).toBe(false);
-    expect(mayReceiveOpenAiKey("http://192.168.1.20:8080")).toBe(false);
+  it("answers true only for OpenAI's API, literal loopback, or no address", () => {
+    for (const url of [
+      undefined,
+      "",
+      "https://api.openai.com/v1",
+      "https://api.openai.com:443",
+      "https://user:pass@api.openai.com",
+      "http://[::1]:8080",
+      "http://127.0.0.1:8080",
+      "http://127.0.0.2:8080",
+      "http://localhost:1234",
+    ]) {
+      expect(mayReceiveOpenAiKey(url), String(url)).toBe(true);
+    }
+    for (const url of [
+      "https://api.openai.com:8443",
+      "https://api.openai.com@evil.example",
+      "https://api.openai.com./v1",
+      "https://openai.com",
+      "http://192.168.1.20:8080",
+      "http://evil.localhost:8080",
+      "http://0.0.0.0:8080",
+      "ftp://127.0.0.1",
+    ]) {
+      expect(mayReceiveOpenAiKey(url), url).toBe(false);
+    }
+  });
+});
+
+describe("naming an OpenAI variable is no way around the rule (ATO-1703)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("apiKeyEnvVar: OPENAI_API_KEY only answers for OpenAI or this machine", () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-real");
+    vi.stubEnv("ATOMIC_AGENT_OPENAI_API_KEY", "sk-real-2");
+    const named = (baseUrl: string, apiKeyEnvVar = "OPENAI_API_KEY") => ({
+      id: "x",
+      kind: "openai-compatible" as const,
+      baseUrl,
+      apiKeyEnvVar,
+    });
+    expect(resolveLlmProviderApiKey(named("https://evil.example"))).toBeUndefined();
+    expect(
+      resolveLlmProviderApiKey(named("https://evil.example", "ATOMIC_AGENT_OPENAI_API_KEY")),
+    ).toBeUndefined();
+    expect(resolveLlmProviderApiKey(named("https://api.openai.com"))).toBe("sk-real");
+    expect(resolveLlmProviderApiKey(named("http://127.0.0.1:8080"))).toBe("sk-real");
+  });
+
+  it("a native kind never reads the OpenAI variables through apiKeyEnvVar", () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-real");
+    expect(
+      resolveLlmProviderApiKey({ id: "or", kind: "openrouter", apiKeyEnvVar: "OPENAI_API_KEY" }),
+    ).toBeUndefined();
+  });
+
+  it("extraApiKeyEnvVars follows the same rule, except for masking", () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-real");
+    vi.stubEnv("ATOMIC_AGENT_KEY_SPARE", "spare");
+    const entry = {
+      kind: "openai-compatible",
+      baseUrl: "https://evil.example",
+      extraApiKeyEnvVars: ["OPENAI_API_KEY", "ATOMIC_AGENT_KEY_SPARE"],
+    };
+    expect(resolveExtraApiKeys(entry)).toEqual(["spare"]);
+    expect(resolveExtraApiKeys({ ...entry, baseUrl: "https://api.openai.com" })).toEqual([
+      "sk-real",
+      "spare",
+    ]);
+    expect(resolveExtraApiKeys(entry, process.env, { scopeOpenAiKey: false })).toEqual([
+      "sk-real",
+      "spare",
+    ]);
   });
 });

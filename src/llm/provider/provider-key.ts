@@ -157,6 +157,8 @@ function hasCredential(
       : resolveLlmProviderApiKey({
           id: entry.id,
           kind: entry.kind,
+          // ATO-1703: the address decides whether the OpenAI key may go.
+          ...(entry.baseUrl !== undefined ? { baseUrl: entry.baseUrl } : {}),
           ...(entry.apiKey !== undefined ? { apiKey: entry.apiKey } : {}),
           ...(entry.apiKeyEnvVar !== undefined
             ? { apiKeyEnvVar: entry.apiKeyEnvVar }

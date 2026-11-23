@@ -74,6 +74,9 @@ function keyLookupEntryForWizard(
   return {
     id: wizard.providerId ?? preset?.id ?? kind,
     kind,
+    // ATO-1703: the address the wizard will probe and save decides
+    // whether the OpenAI key may be read for it.
+    ...(kind === "openai-compatible" ? { baseUrl: baseUrlForWizard(wizard) } : {}),
     ...(preset ? { apiKeyEnvVar: preset.envVar } : {}),
   };
 }
