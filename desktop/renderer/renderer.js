@@ -24219,12 +24219,13 @@ function chatImage(path) {
 }
 
 /** The paths a new reply or an opened chat names: a picture whose file changed
-    since it was read is read again, one that failed is tried again. */
+    since it was read is read again, one that failed is tried again.
+    ATO-1729: two replies may name the same file, so each path is checked once. */
 async function revalidateChatImages(paths) {
-  const list = (paths || []).filter((p) => CHAT_IMG.has(p) && CHAT_IMG.get(p).state !== 'loading');
+  const list = [...new Set(paths || [])].filter((p) => CHAT_IMG.has(p) && CHAT_IMG.get(p).state !== 'loading');
   if (!list.length) return;
   let changed = false;
-  for (const p of list) if (CHAT_IMG.get(p).state === 'fail') { CHAT_IMG.delete(p); changed = true; }
+  for (const p of list) if (CHAT_IMG.get(p)?.state === 'fail') { CHAT_IMG.delete(p); changed = true; }
   const held = list.filter((p) => CHAT_IMG.has(p));
   if (held.length && BR && BR.statPaths) {
     for (let i = 0; i < held.length; i += ATTACH_STAT_CHUNK) {
