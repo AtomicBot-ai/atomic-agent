@@ -147,8 +147,12 @@ export function describeLlmFailure(
       context.engineLiveness = "unknown";
     }
     // No model process: say why it is gone, if its log does (ATO-1435).
+    // A start that never got its model up (`start_pending`, ATO-421) has
+    // no process either.
     if (
-      (context.engineLiveness === "dead" || context.engineLiveness === "no_pid") &&
+      (context.engineLiveness === "dead" ||
+        context.engineLiveness === "no_pid" ||
+        context.engineLivenessReason === "start_pending") &&
       deps.readEngineExitReason !== undefined
     ) {
       try {
