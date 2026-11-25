@@ -125,11 +125,10 @@ describe("runtime lifecycle ownership", () => {
     expect(lifecycle.isShutdown()).toBe(true);
   });
 
-  it("a shutdown with no beginShutdown before it is stopping too (ATO-1688)", async () => {
+  it("a shutdown with no beginShutdown before it is not stopping: the host's own stop stands (ATO-1688)", async () => {
     const lifecycle = createRuntimeLifecycle(fixture([]).resources);
-    const done = lifecycle.shutdown();
-    expect(lifecycle.isStopping()).toBe(true);
-    await done;
+    await lifecycle.shutdown();
+    expect(lifecycle.isStopping()).toBe(false);
   });
 
   it("waits for the bounded task stop before closing its store and reports unfinished runs", async () => {

@@ -81,6 +81,7 @@ describe("runtime turn ownership recipes", () => {
     const turnController = new TurnController();
     const steeringInbox = new SteeringInbox();
     let closing = false;
+    let stopping = false;
     const deps: RuntimeTurnDependencies = {
       sessions: { sessionStore, turnContext: traces.turnContext, turnRequests, turnPreviousReplies },
       execution: {
@@ -97,10 +98,10 @@ describe("runtime turn ownership recipes", () => {
         releaseSession: id => { events.push(`unpin:${id}`); traces.releaseSession(id); },
       },
       telemetry: { observability: { getAnalytics: () => null }, analyticsStateStore: new AnalyticsStateStore(join(dir, "analytics.json")), turnUsageMeter: new TurnUsageMeter() },
-      state, lifecycle: { isShutdown: () => closing }, logger,
+      state, lifecycle: { isShutdown: () => closing, isStopping: () => stopping }, logger,
     };
     const service = createRuntimeTurnService(config, deps);
-    return { config, traces, providers, state, events, rows, checkpoints, turnRequests, turnPreviousReplies, sessionStore, loop, turnController, steeringInbox, deps, service, setClosing: (value: boolean) => { closing = value; } };
+    return { config, traces, providers, state, events, rows, checkpoints, turnRequests, turnPreviousReplies, sessionStore, loop, turnController, steeringInbox, deps, service, setClosing: (value: boolean) => { closing = value; }, setStopping: (value: boolean) => { stopping = value; } };
   }
   beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "atomic-runtime-turns-")); fixture = await makeFixture(); });
   afterEach(async () => {
@@ -379,34 +380,43 @@ describe("runtime turn ownership recipes", () => {
     expect(fixture.events.slice(-4)).toEqual(["release:cancelled", "shell-turn", "clear:session", "unpin:session"]);
   });
 
-  it("a turn cancelled while the host stops ends as interrupted, its transcript kept (ATO-1688)", async () => {
-    fixture.loop.runTurn.mockImplementation(async (value: SessionState, options: RunTurnOptions) => {
-      const out = result(value, options);
-      return { ...out, session: { ...out.session, status: "cancelled", lastError: null }, reason: "cancelled" } as RunTurnResult;
-    });
-    fixture.setClosing(true);
+  const cancelledLoop = () => fixture.loop.runTurn.mockImplementation(async (value: SessionState, options: RunTurnOptions) => {
+    const out = result(value, options);
+    return { ...out, session: { ...out.session, status: "cancelled", lastError: null }, reason: "cancelled" } as RunTurnResult;
+  });
+
+  it("a chat turn cancelled while the host stops ends as interrupted, its transcript kept (ATO-1688)", async () => {
+    cancelledLoop();
+    fixture.setStopping(true);
     const output = await fixture.service.executeTurn(session(), "request");
     expect(fixture.rows.get("session")).toMatchObject({ status: INTERRUPTED_TURN_ENDING.status, lastError: INTERRUPTED_TURN_ENDING.lastError });
     expect(fixture.rows.get("session")?.turns.map((t) => t.kind)).toEqual(["user", "assistant_reply"]);
     expect(output.session.lastError).toBe(INTERRUPTED_TURN_ENDING.lastError);
   });
 
-  it("a person's Stop, with the host running, stays a plain cancel (ATO-1688)", async () => {
-    fixture.loop.runTurn.mockImplementation(async (value: SessionState, options: RunTurnOptions) => {
-      const out = result(value, options);
-      return { ...out, session: { ...out.session, status: "cancelled", lastError: null }, reason: "cancelled" } as RunTurnResult;
-    });
-    await fixture.service.executeTurn(session(), "request");
+  it("a person's Stop keeps its own end, with the host running or only shutting down (ATO-1688)", async () => {
+    cancelledLoop();
+    await fixture.service.executeTurn(session("a"), "request");
+    expect(fixture.rows.get("a")).toMatchObject({ status: "cancelled", lastError: null });
+    fixture.setClosing(true);
+    await fixture.service.executeTurn(session("b"), "request");
+    expect(fixture.rows.get("b")).toMatchObject({ status: "cancelled", lastError: null });
+  });
+
+  it("a task's turn cancelled while the host stops keeps its own end: the task runner runs it again (ATO-1688)", async () => {
+    cancelledLoop();
+    fixture.setStopping(true);
+    await fixture.service.executeTurn(session(), "request", { checkpoint: { taskId: "task-1" } });
     expect(fixture.rows.get("session")).toMatchObject({ status: "cancelled", lastError: null });
   });
 
-  it("a thrown turn aborted while the host stops is released as interrupted (ATO-1688)", async () => {
+  it("a thrown chat turn aborted while the host stops is released as interrupted (ATO-1688)", async () => {
     const old = { ...session(), lastError: "prior error" };
     fixture.rows.set(old.id, old);
     const abort = new AbortController(); abort.abort();
     const failure = new Error("transport wrapped abort");
     fixture.loop.runTurn.mockRejectedValue(failure);
-    fixture.setClosing(true);
+    fixture.setStopping(true);
     await expect(fixture.service.executeTurn(old, "request", { signal: abort.signal })).rejects.toBe(failure);
     expect(fixture.rows.get(old.id)).toMatchObject(INTERRUPTED_TURN_ENDING);
   });

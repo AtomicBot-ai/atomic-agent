@@ -383,9 +383,16 @@ export function createRuntimeTurnService(
     }
   };
 
-  /** ATO-1688: the host is stopping (a quit, a restart): a turn cancelled now was cut off, not stopped by a person. */
-  const stopping = (): boolean =>
-    lifecycle.isStopping?.() === true || lifecycle.isShutdown();
+  /**
+   * ATO-1688: the host is stopping (`serve` told by a quit or a restart):
+   * a chat turn cancelled now was cut off, not stopped by a person. Not a
+   * durable task's turn (`checkpoint.taskId`): the task runner runs that
+   * again by itself, and a Continue on its chat would have nothing to
+   * continue (`interruptedChatTurn`). A host that only calls `shutdown`
+   * (the TUI, which stops its own turn first) keeps the turn's own end.
+   */
+  const cutOffByStop = (runOptions: { checkpoint?: { taskId?: string } }): boolean =>
+    lifecycle.isStopping?.() === true && runOptions.checkpoint?.taskId === undefined;
 
   /**
    * ATO-1688: a turn that ends `cancelled` while the host stops was cut
@@ -395,8 +402,11 @@ export function createRuntimeTurnService(
    * reading as a person's Stop. Its transcript so far is kept as the
    * turn wrote it.
    */
-  const endedByStop = (finished: SessionState): SessionState =>
-    finished.status === "cancelled" && stopping()
+  const endedByStop = (
+    finished: SessionState,
+    runOptions: { checkpoint?: { taskId?: string } },
+  ): SessionState =>
+    finished.status === "cancelled" && cutOffByStop(runOptions)
       ? { ...finished, lastError: INTERRUPTED_TURN_ENDING.lastError }
       : finished;
 
@@ -414,12 +424,13 @@ export function createRuntimeTurnService(
     session: SessionState,
     err: unknown,
     signal: AbortSignal | undefined,
+    cutOff = false,
   ): void => {
     try {
       sessionStore.releaseTurn(
         session.id,
         signal?.aborted === true
-          ? stopping()
+          ? cutOff
             ? INTERRUPTED_TURN_ENDING
             : { status: "cancelled", lastError: session.lastError }
           : {
@@ -700,7 +711,7 @@ export function createRuntimeTurnService(
             [SESSION_LLM_METADATA_KEY]: llmStamp,
             [SESSION_ROUTE_METADATA_KEY]: turnRoute,
           },
-        });
+        }, runOptions);
         // The turn's end replaces its `running` mark (`beginTurn`).
         sessionStore.finishTurn(finished);
         // Name the thread once, from its first prompt, after the first
@@ -742,7 +753,7 @@ export function createRuntimeTurnService(
         // reply, finish, max steps, failed, cancelled — so this is a turn
         // that threw, or whose save did. Its row must not go on saying
         // `running`.
-        releaseThrownTurn(session, err, runOptions.signal);
+        releaseThrownTurn(session, err, runOptions.signal, cutOffByStop(runOptions));
         throw err;
       } finally {
         inFlight.end();

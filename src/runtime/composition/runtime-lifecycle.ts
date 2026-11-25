@@ -91,14 +91,15 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
   };
   let shutdownCalled = false;
   /**
-   * ATO-1688: the host has begun to stop (`beginShutdown`), or the
-   * teardown itself runs. `serve` drops its connections, which aborts the
+   * ATO-1688: the host has begun to stop (`beginShutdown`). `serve` drops its connections, which aborts the
    * turns on them, before it calls `shutdown`: a turn that unwound in
    * that moment wrote its own end as a person's Stop (`cancelled`, with
    * the error it had before), over nothing yet, and the chat reopened
    * with no word that its reply had been cut off by the quit and no
-   * Continue. A turn that ends cancelled while this is set ends as
-   * interrupted instead (`runtime-turn-service.ts`).
+   * Continue. A chat turn that ends cancelled while this is set ends as
+   * interrupted instead (`runtime-turn-service.ts`). `shutdown` alone
+   * does not set it: a host that stops its own turn and then shuts down
+   * (the TUI's quit) keeps that turn's own end.
    */
   let stopping = false;
   const beginShutdown = (): void => {
@@ -107,7 +108,6 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
   const shutdown = async (): Promise<void> => {
     if (shutdownCalled) return;
     shutdownCalled = true;
-    stopping = true;
     resources.compaction?.shutdown();
     // Say now, while the store is certainly open, that the turns still
     // running were interrupted: a stop that turns into a kill partway
