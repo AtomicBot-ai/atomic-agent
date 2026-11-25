@@ -209,9 +209,10 @@ async function inWindow(js: Js, check: Check, asked: Array<{ id: string; live: b
       return {row, picker};
     })()`);
     check(
-      "T115 (ATO-318): a DashScope provider reads DashScope with the Qwen mark on the Cloud row and in the Fallback picker, never only its id",
-      /llm-name">DashScope</.test(names.row ?? "") && /qwen-color\.svg/.test(names.row ?? "")
-        && /llm-name">DashScope</.test(names.picker ?? "") && /qwen-color\.svg/.test(names.picker ?? ""),
+      // ATO-1634 gave DashScope Alibaba Cloud's mark in place of Qwen's (brand-logos-more.test.mjs).
+      "T115 (ATO-318): a DashScope provider reads DashScope with the Alibaba Cloud mark on the Cloud row and in the Fallback picker, never only its id",
+      /llm-name">DashScope</.test(names.row ?? "") && /alibabacloud-color\.svg/.test(names.row ?? "")
+        && /llm-name">DashScope</.test(names.picker ?? "") && /alibabacloud-color\.svg/.test(names.picker ?? ""),
       show(names),
     );
   } finally {

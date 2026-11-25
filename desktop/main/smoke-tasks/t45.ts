@@ -359,7 +359,8 @@ async function marks(run: Run, check: Check): Promise<void> {
       const out = {};
       for (const s of ['', 'sm', 'xs', 'lg']) {
         // A model with no mark, then a provider with none (a custom endpoint), beside a real logo of the same size.
-        box.innerHTML = modelMark('muse-glimmer-30b', s) + providerMark('', s) + logoHTML('qwen', s);
+        // Not "muse-…": since ATO-1634 Muse wears Meta's mark.
+        box.innerHTML = modelMark('glimmer-30b', s) + providerMark('', s) + logoHTML('qwen', s);
         const [fb, pfb, logo] = box.children;
         const a = getComputedStyle(fb), p = getComputedStyle(pfb), b = getComputedStyle(logo);
         out[s || 'default'] = {cls: fb.className, w: a.width, h: a.height, lw: b.width, bg: a.backgroundColor, lbg: b.backgroundColor,
@@ -371,7 +372,7 @@ async function marks(run: Run, check: Check): Promise<void> {
   })()`);
   const sizes = ["default", "sm", "xs", "lg"];
   check(
-    "T45: a model with no mark of its own (Meta Muse Glimmer 30B), or a provider with none, wears its icon on the logo's disc, at the logo's size",
+    "T45: a model with no mark of its own (Glimmer 30B), or a provider with none, wears its icon on the logo's disc, at the logo's size",
     sizes.every((s) => {
       const m = r[s] as {
         cls?: string; w?: string; h?: string; lw?: string; bg?: string; lbg?: string; ring?: boolean; icon?: boolean; img?: boolean;

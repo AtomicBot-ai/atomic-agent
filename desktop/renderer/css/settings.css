@@ -109,8 +109,12 @@ button.menurow:hover > svg{color:var(--ink-2)}
 .set-statusin .tk-dot{width:7px;height:7px}
 .set-statusin .tk-spin{width:12px;height:12px}
 .settb .set-done{flex:none}
-/* Connections: MCP servers · Telegram beside the title. */
-.settb .set-subseg{margin-left:8px}
+/* Connections: MCP servers · Telegram beside the title. ATO-1752: when the
+   switch does not fit, it gives up its room before the status line does
+   and scrolls inside the header, so Done never leaves the card. */
+.settb .set-subseg{margin-left:8px;position:relative;min-width:0;flex:0 100 auto;overflow-x:auto;scrollbar-width:none}
+.settb .set-subseg::-webkit-scrollbar{display:none}
+.settb .set-subseg button{flex:none}
 .setbody{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:0 24px 22px;scrollbar-gutter:stable}
 
 /* ---------------- Utilities ---------------- */

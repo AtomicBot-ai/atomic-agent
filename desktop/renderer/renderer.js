@@ -6198,6 +6198,15 @@ function renderSettings() {
     + '</div>'
     + '</div>';
   $('#window').appendChild(el);
+  /* ATO-1752: Connections' pane switch scrolls inside the header when it
+     is wider than the room left beside the title, the status line and Done
+     (six panes with their marks no longer fit a narrower window); the
+     open pane's tab is brought into view. */
+  const subseg = el.querySelector('.settb .set-subseg');
+  const subOn = subseg && subseg.querySelector('button.on');
+  if (subOn && subseg.scrollWidth > subseg.clientWidth) {
+    subseg.scrollLeft = Math.max(0, subOn.offsetLeft + subOn.offsetWidth - subseg.clientWidth);
+  }
   // Composio: a half-typed key goes back into its field (the markup carries it empty) before the focus and caret do.
   composioKeyRestore();
   // Item 36: back where the nav was; on a new section or a fresh opening, its row is brought into view.
