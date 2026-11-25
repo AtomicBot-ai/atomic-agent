@@ -620,6 +620,17 @@
 .sysrow .sys-det-t svg{width:12px;height:12px}
 .sysrow .sys-det-x{display:block;margin:4px 0 0 16px;font:400 var(--fs-label)/1.45 var(--font-mono);color:var(--ink-3);white-space:pre-wrap;overflow-wrap:anywhere}
 .sysrow .sys-det-x.shut{position:absolute;width:1px;height:1px;margin:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+/* ATO-1754: a Fusion worker's started line opens onto what it was told (fusion-brief.js).
+   Same quiet toggle as Details; the brief scrolls inside its own box so a long one never pushes the chat away. */
+.sysrow .fzb{display:block;margin-top:4px}
+.sysrow .fzb-t{display:inline-flex;align-items:center;gap:4px;padding:0;border:0;background:none;color:var(--ink-3);font:inherit;font-size:var(--fs-label);cursor:pointer}
+.sysrow .fzb-t:hover{color:var(--ink)}
+.sysrow .fzb-t svg{width:12px;height:12px}
+.sysrow .fzb-x{display:flex;flex-direction:column;gap:4px;margin:6px 0 2px 16px}
+.sysrow .fzb-k{font-size:var(--fs-label);color:var(--ink-2)}
+.sysrow .fzb-note{color:var(--amber-text)}
+.sysrow .fzb-pre{display:block;max-height:320px;overflow:auto;padding:8px 10px;border:1px solid var(--line);border-radius:8px;
+  font:400 var(--fs-label)/1.45 var(--font-mono);color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
 
 /* ---------------- a reply's own files (ATO-408) ----------------
    Pictures the reply delivers, up to 320px tall, a click opens the viewer;

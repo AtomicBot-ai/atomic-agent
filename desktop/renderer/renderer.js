@@ -8801,6 +8801,8 @@ document.addEventListener('click', (e) => {
   // Scroll-stable cards: no S.stick = false, no render() — repaintEntry swaps the
   // one entry and recomputes stick from geometry.
   if (tg) { const m = S.log.find((x) => x.id === tg.dataset.toggle); if (m) { m.open = !m.open; repaintEntry(m, m.k === 'tool' ? '.cardhead' : '.disc'); } return; }
+  const fb = t.closest('[data-fzbrief]');   // ATO-1754: a Fusion worker's "What it was told" (fusion-brief.js)
+  if (fb) { const m = S.log.find((x) => x.id === fb.dataset.fzbrief); if (m) { m.fzbOpen = !m.fzbOpen; repaintEntry(m, '.fzb-t'); } return; }
   const sd = t.closest('[data-sysdet]');   // ATO-380: a failed turn's Details (sysDetailHTML)
   if (sd) { const m = S.log.find((x) => x.id === sd.dataset.sysdet); if (m) { m.detOpen = !m.detOpen; repaintEntry(m, '.sys-det-t'); } return; }
   const go = t.closest('[data-goto]');
@@ -11691,6 +11693,10 @@ function onChatEvent(ev) {
       tokens: typeof p.tokens === 'number' && p.tokens > 0 ? p.tokens : undefined,
       spentUsd: typeof p.spent_usd === 'number' && Number.isFinite(p.spent_usd) ? p.spent_usd : undefined,
     };
+    // ATO-1754 (fusion-brief.js): on `started`, what the worker was told and
+    // why it is not on the model it asked for. An older agent sends neither.
+    const fzb = e.phase === 'started' && typeof fzbFromPayload === 'function' ? fzbFromPayload(p) : {brief: null, modelNote: null};
+    if (fzb.modelNote) e.modelNote = fzb.modelNote;
     if (typeof fzpNoteStarted === 'function') fzpNoteStarted(FZP, e, FZ.live);   // ATO-1329: reads the row as it was
     FZ.live = fzReduceLive(FZ.live, e);
     if (typeof fzpNoteFrame === 'function') fzpNoteFrame(e);
@@ -11698,7 +11704,8 @@ function onChatEvent(ev) {
     // `usage` (agent with the worker token counts) only moves the live row's
     // context size: one transcript line per completion per worker would bury
     // the lines that say what happened, as the TUI's reducer keeps it off its feed.
-    if (item && e.phase !== 'usage') S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, fusion:true, fzModel: e.model || null, text: esc(fzWorkerLine(e))});
+    if (item && e.phase !== 'usage') S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, fusion:true, fzModel: e.model || null, text: esc(fzWorkerLine(e)),
+      ...(fzb.brief ? {fzBrief: fzb.brief, fzNote: fzb.modelNote, fzbOpen: false} : {})});
     render();
     return;
   }
@@ -21771,7 +21778,8 @@ function fzLiveLine(w) {
 function fzWorkerLine(e) {
   const model = e.model ? ' · ' + e.model : '';
   const who = e.role === 'orchestrator' ? 'orchestrator' + model : 'worker ' + e.title + model;
-  if (e.phase === 'started') return who + ': started';
+  // ATO-1754: a task that asked for a role or model and landed on another says so where it starts.
+  if (e.phase === 'started') return who + ': started' + (e.modelNote ? ' (' + e.modelNote + ')' : '');
   if (e.phase === 'tool') {
     return e.role === 'orchestrator'
       ? who + ' — ' + (e.tool ?? 'working') + ' (' + e.title + ')'
@@ -23541,7 +23549,9 @@ function sysRowHTML(m, times) {
   // Fusion's first-switch intro is a block of its own (the tree mark, then paragraphs).
   if (m.fusionIntro) return '<div class="sysrow sys-block"><span></span><span class="sys-tx">' + m.text + rep + '</span></div>';
   return '<div class="sysrow' + (m.sev ? ' ' + m.sev : '') + '">' + sysGlyph(m)
-    + '<span class="sys-tx">' + m.text + rep + (m.detail ? sysDetailHTML(m) : '') + (m.tried ? tpTriedHTML(m) : '') + '</span>'
+    + '<span class="sys-tx">' + m.text + rep + (m.detail ? sysDetailHTML(m) : '') + (m.tried ? tpTriedHTML(m) : '')
+    // ATO-1754: a Fusion worker's started line opens onto what it was told (fusion-brief.js).
+    + (m.fzBrief && typeof fzbHTML === 'function' ? fzbHTML(m, (open) => ic(open ? 'chevD' : 'chevR')) : '') + '</span>'
     + (acts ? '<span class="sys-acts">' + acts + '</span>' : '') + '</div>';
 }
 
