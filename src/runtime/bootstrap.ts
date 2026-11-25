@@ -1191,6 +1191,7 @@ export async function createAgentRuntime(
     setPlanMode: (on: boolean) => {
       planMode = on;
     },
+    beginShutdown: () => lifecycle.beginShutdown(),
     // The file index stops after the rest; it holds no session state.
     shutdown: async () => {
       await shutdown();

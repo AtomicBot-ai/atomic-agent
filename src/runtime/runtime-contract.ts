@@ -911,6 +911,13 @@ export interface AgentRuntime {
    */
   getPlanMode(): boolean;
   setPlanMode(on: boolean): void;
+  /**
+   * ATO-1688: the host is about to stop (before `serve` drops its
+   * connections, which aborts the turns on them). A turn that ends
+   * cancelled from here on was cut off, and is recorded as interrupted,
+   * so the chat offers to continue it. Optional: `shutdown` implies it.
+   */
+  beginShutdown?(): void;
   /** Close all resources (browser, sqlite, llama client). Safe to call twice. */
   shutdown(options?: RuntimeShutdownOptions): Promise<void>;
 }
