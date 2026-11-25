@@ -795,8 +795,11 @@ async function runOneTask(
     // worker writes unprompted. The refuse policy above still catches
     // everything else, so straying outside the scope comes back as
     // `needs_orchestrator` — a task to re-delegate, not a dead worker.
+    // Unless the level let the fan-out through with nobody asked
+    // (ATO-1689): then the worker holds no scope and runs under the
+    // standing level, like the chat it works for.
     const writeScope = isolated?.writeScope ?? options.writeScope ?? [];
-    if (writeScope.length > 0) {
+    if (writeScope.length > 0 && options.scopeApproved !== false) {
       deps.approvals.fanoutScopes?.grant(id, writeScope);
     }
     // A file the user declined on the orchestrator's turn stays declined

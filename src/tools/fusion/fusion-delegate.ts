@@ -5,6 +5,10 @@ import {
 } from "../../approval/dangerous-tool.js";
 import { resolve as resolvePath } from "node:path";
 import { isInside } from "../../approval/fanout-scope.js";
+import {
+  isAutoApprovedAt,
+  type ApprovalLevel,
+} from "../../approval/approval-level.js";
 import { resolveFanoutScope } from "./fanout-paths.js";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
@@ -232,6 +236,38 @@ export function scopeInsideStateDir(
   if (stateDir === undefined || stateDir.length === 0) return [];
   const root = resolvePath(stateDir);
   return writeScope.filter((dir) => isInside(root, resolvePath(dir)));
+}
+
+/**
+ * Whether the fan-out question is left to the standing level instead of
+ * asked (ATO-1689). In auto mode (level 2, workspace writes stop asking)
+ * a normal chat writes inside its folder unasked, and a fan-out whose
+ * every directory sits inside that same folder hands its workers nothing
+ * more than that, so asking about it is a prompt a normal chat would not
+ * show.
+ *
+ * Only on the levels where workspace writes are silent but the fan-out
+ * itself is not (2 and 3). From level 4 the ladder already silences the
+ * fan-out with its full authority. A directory outside the folder is a
+ * write a normal auto-mode chat would ask about, so the question stays.
+ *
+ * Returning true never widens what a worker may do: the caller then
+ * hands the workers no fan-out scope (`scopeApproved: false`), so every
+ * worker step goes to the gate under the standing level, like the
+ * chat's own. Shell commands, which the fan-out's yes would cover, are
+ * asked about at level 2, and a worker's refuse policy hands them back
+ * to the orchestrator.
+ */
+export function fanoutQuietUnderLevel(
+  level: ApprovalLevel,
+  writeScope: readonly string[],
+  workingDir: string,
+): boolean {
+  if (isAutoApprovedAt(level, "fusion_fanout")) return false;
+  if (!isAutoApprovedAt(level, "fs_write_workspace")) return false;
+  if (writeScope.length === 0) return false;
+  const root = resolvePath(workingDir);
+  return writeScope.every((dir) => isInside(root, resolvePath(dir)));
 }
 
 function error(
@@ -681,8 +717,37 @@ export function buildFusionDelegateTool(
           writeScope,
         ) ??
           false);
+      // Auto mode (ATO-1689): a fan-out that stays inside the chat's
+      // folder is no question at a level where writes there are silent.
+      // It still goes through the gate as the workspace write it is, so a
+      // saved deny or ask rule on `fusion.delegate` keeps its say, and the
+      // workers get no fan-out scope: they run under the standing level.
+      const approvalLevel = deps.approvals.getLevel?.();
+      const quietUnderLevel =
+        deps.approvalRequired &&
+        !alreadyApproved &&
+        !declinedInScope &&
+        approvalLevel !== undefined &&
+        fanoutQuietUnderLevel(approvalLevel, writeScope, ctx.workingDir);
+      const workersHoldScope = !quietUnderLevel;
       try {
-        if (!alreadyApproved) {
+        if (quietUnderLevel) {
+          await requireApproval(
+            {
+              approvals: deps.approvals as ApprovalGate,
+              approvalRequired: deps.approvalRequired,
+            },
+            {
+              sessionId: ctx.sessionId,
+              tool: FUSION_DELEGATE_TOOL,
+              category: "fs_write_workspace",
+              reason: `${parsed.tasks.length} task${parsed.tasks.length === 1 ? "" : "s"} to ${maxWorkers} worker${maxWorkers === 1 ? "" : "s"} writing in ${writeScope.join(", ")}`,
+              preview: describeFanoutPreview(parsed.tasks, writeScope),
+              affectedResources: [...writeScope],
+            },
+            ctx.signal,
+          );
+        } else if (!alreadyApproved) {
           // A yes from a person who was shown this fan-out is their newer
           // answer for the files they declined in its directories; one
           // the level gave is not, and those files stay declined.
@@ -717,8 +782,11 @@ export function buildFusionDelegateTool(
             deps.approvals.forgetDeclinedUnder?.(ctx.sessionId, writeScope);
           }
         }
-        deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
-
+        // The level's yes is not a person's: it is not remembered for the
+        // turn, so a later fan-out reaching outside the folder still asks.
+        if (workersHoldScope) {
+          deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
+        }
       } catch (err) {
         // The user's own no already says what happened and what to do,
         // and so does a repeat of one they declined earlier in the turn.
@@ -1118,6 +1186,7 @@ export function buildFusionDelegateTool(
               ? {}
               : { workerMaxOutputTokens }),
             writeScope,
+            ...(workersHoldScope ? {} : { scopeApproved: false }),
             signal: runSignal,
             ...guardOptionsFor(workerProviderId, workerPricing, workerModel, tasks),
             ...escalationOptions,
@@ -1201,6 +1270,7 @@ export function buildFusionDelegateTool(
               ? {}
               : { workerMaxOutputTokens: mode.workerMaxOutputTokens }),
             writeScope,
+            ...(workersHoldScope ? {} : { scopeApproved: false }),
             signal: runSignal,
             ...guardOptionsFor(leg.providerId, pricing, leg.model, tasks),
             // Dropped only where the target is this leg's own model: a
