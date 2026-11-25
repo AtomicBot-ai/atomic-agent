@@ -1105,6 +1105,9 @@ export function buildFusionDelegateTool(
             maxWorkers,
             providerId: workerProviderId,
             workerModel,
+            // ATO-1754: a task that asked for a role or model and landed
+            // here says why on its `started` line.
+            taskModelNote: (id) => taskLegs.get(id)?.note,
             // ATO-1560: the workers run on the model they are shown with.
             ...(mode.workerTurnModel === undefined ? {} : { turnModel: mode.workerTurnModel }),
             workerMaxSteps: mode.workerMaxSteps,
@@ -1189,6 +1192,7 @@ export function buildFusionDelegateTool(
             providerId: leg.providerId,
             workerModel:
               onlyRole === "-" ? leg.model : `${leg.model} (${onlyRole})`,
+            taskModelNote: (id) => taskLegs.get(id)?.note,
             ...(leg.turnModel === undefined ? {} : { turnModel: leg.turnModel }),
             workerMaxSteps: mode.workerMaxSteps,
             workerTimeoutMs: mode.workerTimeoutMs,

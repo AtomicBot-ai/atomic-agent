@@ -232,6 +232,12 @@ export interface WorkerRunnerCoreOptions {
 /** Fusion's options on top of the core. Each one absent does nothing. */
 export interface FusionWorkerRunnerOptionsExtras {
   /**
+   * Why a task is not on the model it asked for (`TaskLeg.note`,
+   * ATO-943), put on its `started` event (ATO-1754). Absent, or
+   * `undefined` for a task: nothing to say.
+   */
+  taskModelNote?: (taskId: string) => string | undefined;
+  /**
    * The local leg's measured generation speed
    * (`LlamaServerClient.measuredTokensPerSecond`), `null` when nothing
    * has completed yet. Absent for a cloud leg, which keeps the ceiling.

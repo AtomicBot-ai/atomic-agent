@@ -32,7 +32,11 @@ export function formatFusionWorkerLine(event: FusionWorkerEvent): string {
       : `worker ${event.title}${model}`;
   switch (event.phase) {
     case "started":
-      return `» ${who}: started`;
+      // ATO-1754: a task that asked for a role or model and landed on
+      // another says so where it starts, not only in the final result.
+      return event.modelNote
+        ? `» ${who}: started (${event.modelNote})`
+        : `» ${who}: started`;
     case "tool":
       // The orchestrator's only line is its own `fusion.delegate` call,
       // and its `title` carries the fan-out width — worth the columns.

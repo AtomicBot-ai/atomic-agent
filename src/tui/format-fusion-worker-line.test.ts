@@ -67,6 +67,20 @@ describe("formatFusionWorkerLine", () => {
     );
   });
 
+  it("says on the started line why a task is off the model it asked for (ATO-1754)", () => {
+    expect(
+      formatFusionWorkerLine({
+        type: "fusion_worker",
+        taskId: "t1",
+        title: "A",
+        phase: "started",
+        model: "qwen",
+        modelNote: "role review has no model configured; ran on the workers' model qwen",
+        brief: "TASK t1: A",
+      }),
+    ).toBe("» worker A · qwen: started (role review has no model configured; ran on the workers' model qwen)");
+  });
+
   it("omits the model rather than inventing one", () => {
     // `workerModel` and `orchestratorModel` are both nullable in the
     // resolver. A placeholder here would be attribution the runtime

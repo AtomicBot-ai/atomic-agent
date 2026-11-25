@@ -18,8 +18,10 @@ import {
 } from "../../session/fusion-worker-session.js";
 import type { DelegateTask } from "./delegate-args.js";
 import {
+  clipBriefForEvent,
   detectStall,
   estimateWorkerTimeoutMs,
+  FUSION_WORKER_BRIEF_EVENT_CHARS,
   runWorkerTasks,
   WORKER_TIMEOUT_FLOOR_MS,
   WORKER_TOOL_LINES_PER_TASK,
@@ -95,6 +97,41 @@ const BASE = {
 };
 
 describe("runWorkerTasks", () => {
+  it("puts the brief the worker got and its model note on the started line (ATO-1754)", async () => {
+    const { deps, calls, events } = harness(async ({ options }) => {
+      options.eventHook?.({ type: "turn_started", turnIndex: 0 });
+      return turnResult();
+    });
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(2),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+      briefSuffix: (id) => (id === "t1" ? "ACCEPTANCE: tests pass" : undefined),
+      taskModelNote: (id) => (id === "t0" ? "role build has no model configured" : undefined),
+    });
+    const started = events.flatMap(({ event }) =>
+      event.type === "fusion_worker" && event.phase === "started" ? [event] : [],
+    );
+    expect(started).toHaveLength(2);
+    // Exactly what the worker's turn was started with, suffix included.
+    expect(started[0]!.brief).toBe(calls[0]!.userMessage);
+    expect(started[1]!.brief).toBe(calls[1]!.userMessage);
+    expect(started[0]!.brief).toContain("TASK t0: Task 0");
+    expect(started[1]!.brief).toContain("ACCEPTANCE: tests pass");
+    expect(started[0]!.modelNote).toBe("role build has no model configured");
+    expect(started[1]).not.toHaveProperty("modelNote");
+  });
+
+  it("clips only a brief longer than the event carries (ATO-1754)", () => {
+    const short = "x".repeat(FUSION_WORKER_BRIEF_EVENT_CHARS);
+    expect(clipBriefForEvent(short)).toBe(short);
+    const long = "y".repeat(FUSION_WORKER_BRIEF_EVENT_CHARS + 1);
+    const clipped = clipBriefForEvent(long);
+    expect(clipped.startsWith("y".repeat(FUSION_WORKER_BRIEF_EVENT_CHARS) + "\n\n(cut here")).toBe(true);
+    expect(clipped).toContain("the worker received all of it");
+  });
+
   it("starts no further task after the turn is stopped, with no budget cap set (ATO-1334)", async () => {
     const stop = new AbortController();
     const { deps, calls } = harness(async () => {
