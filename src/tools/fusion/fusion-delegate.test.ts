@@ -2378,11 +2378,13 @@ describe("fusion.delegate in auto mode (ATO-1689)", () => {
   it("gives its workers no more than the chat has: workspace writes run, shell commands do not", async () => {
     const { gate, prompts } = gateAt(2);
     const seen: Array<{ scope: readonly string[]; write: boolean; shell: boolean }> = [];
+    const briefs: string[] = [];
     const tool = buildFusionDelegateTool(
       deps({
         approvalRequired: true,
         approvals: gate,
-        runTurn: async (session) => {
+        runTurn: async (session, message) => {
+          briefs.push(message);
           const write = await gate.request({
             sessionId: session.id,
             tool: "os.fs.write",
@@ -2414,6 +2416,72 @@ describe("fusion.delegate in auto mode (ATO-1689)", () => {
     // ask, so it is refused and handed back to the orchestrator.
     expect(seen[0]?.shell).toBe(false);
     expect(prompts).toHaveLength(0);
+    // …and its brief says so, instead of promising it may run the tests.
+    expect(briefs[0]).toContain("sent out in auto mode without asking the user");
+    expect(briefs[0]).not.toContain("authorised this fan-out to write files AND run commands");
+  });
+
+  it("still asks after the chat read outside content, as a held chat would", async () => {
+    const { gate, prompts } = gateAt(3);
+    gate.setTaintReview(() => true);
+    gate.noteUntrustedContent("s-parent", "web page");
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts.some((p) => p.category === "fusion_fanout")).toBe(true);
+  });
+
+  it("asks before the next fan-out once a worker was refused a command, and that yes covers commands", async () => {
+    const { gate, prompts } = gateAt(2);
+    const refusals: string[] = [];
+    let wantsShell = true;
+    const tool = buildFusionDelegateTool(
+      deps({
+        approvalRequired: true,
+        approvals: gate,
+        runTurn: async (session) => {
+          if (wantsShell) {
+            const shell = await gate.request({
+              sessionId: session.id,
+              tool: "os.shell.run",
+              category: "shell",
+              reason: "npm test",
+            });
+            if (!shell.approved) refusals.push(shell.reason ?? "");
+          }
+          return turnResult();
+        },
+      }),
+    );
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(0);
+    expect(refusals[0]).toContain("sent out in auto mode without asking the user");
+    expect(refusals[0]).toContain("needs operator approval, which a worker cannot request");
+
+    wantsShell = false;
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.category).toBe("fusion_fanout");
+    // A new turn starts quiet again.
+    gate.fanoutScopes.clearTurnGrant("s-parent");
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(1);
+  });
+
+  it("still asks when the contract's checks would run commands", async () => {
+    const { gate, prompts } = gateAt(2);
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    await tool.run(
+      {
+        tasks: insideTask,
+        contract: { checks: [{ kind: "command", cmd: "npm", args: ["test"] }] },
+      },
+      ctx(),
+    );
+    expect(prompts.some((p) => p.category === "fusion_fanout")).toBe(true);
   });
 
   it("still asks before a fan-out that writes outside the chat's folder", async () => {

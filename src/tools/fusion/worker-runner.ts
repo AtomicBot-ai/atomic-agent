@@ -834,6 +834,7 @@ async function runOneTask(
       ? {}
       : { originalRequest: options.originalRequest }),
     ...(options.contract === undefined ? {} : { contract: options.contract }),
+    ...(options.scopeApproved === false ? { commandsAuthorised: false } : {}),
   })}${suffix === undefined ? "" : `\n\n${suffix}`}`;
   const declaredFiles = task.files?.length ?? 0;
   // Per-task budgets the orchestrator sized itself, clamped into what

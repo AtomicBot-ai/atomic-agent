@@ -7,8 +7,14 @@ import { resolve as resolvePath } from "node:path";
 import { isInside } from "../../approval/fanout-scope.js";
 import {
   isAutoApprovedAt,
+  type ApprovalCategory,
   type ApprovalLevel,
 } from "../../approval/approval-level.js";
+import {
+  FUSION_WORKER_APPROVAL_REFUSED,
+  FUSION_WORKER_COMMAND_NOT_ASKED_REFUSED,
+  workerRefusalFor,
+} from "./worker-tool-policy.js";
 import { resolveFanoutScope } from "./fanout-paths.js";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
@@ -722,14 +728,44 @@ export function buildFusionDelegateTool(
       // It still goes through the gate as the workspace write it is, so a
       // saved deny or ask rule on `fusion.delegate` keeps its say, and the
       // workers get no fan-out scope: they run under the standing level.
+      //
+      // Not when the question covers more than writes: a contract's
+      // checks and provide examples run commands with no gate of their
+      // own, a worker was refused a command under an earlier quiet
+      // fan-out this turn (the user's yes is what lets the next one run
+      // it), or the chat read outside content, which a chat at this level
+      // would be held for and its fresh worker sessions would not.
       const approvalLevel = deps.approvals.getLevel?.();
       const quietUnderLevel =
         deps.approvalRequired &&
         !alreadyApproved &&
         !declinedInScope &&
         approvalLevel !== undefined &&
-        fanoutQuietUnderLevel(approvalLevel, writeScope, ctx.workingDir);
+        fanoutQuietUnderLevel(approvalLevel, writeScope, ctx.workingDir) &&
+        (parsed.contract === undefined ||
+          checksWithExamples(parsed.contract).length === 0) &&
+        !(deps.approvals.fanoutScopes?.commandRefusedThisTurn(ctx.sessionId) ?? false) &&
+        !(deps.approvals.holdsForOutsideContent?.(ctx.sessionId, "http") ?? false);
       const workersHoldScope = !quietUnderLevel;
+      // A quiet fan-out's workers hold no scope; a command they are
+      // refused is noted, so the next fan-out of the turn asks.
+      const quietWorkerOptions = workersHoldScope
+        ? {}
+        : {
+            scopeApproved: false,
+            approvalRefusal: {
+              general: FUSION_WORKER_APPROVAL_REFUSED,
+              reasonFor: (request: { category: ApprovalCategory }) => {
+                const operatorOnly = workerRefusalFor(request);
+                if (operatorOnly !== undefined) return operatorOnly;
+                if (request.category === "shell" || request.category === "script") {
+                  deps.approvals.fanoutScopes?.noteCommandRefused(ctx.sessionId);
+                  return FUSION_WORKER_COMMAND_NOT_ASKED_REFUSED;
+                }
+                return undefined;
+              },
+            },
+          };
       try {
         if (quietUnderLevel) {
           await requireApproval(
@@ -1186,7 +1222,7 @@ export function buildFusionDelegateTool(
               ? {}
               : { workerMaxOutputTokens }),
             writeScope,
-            ...(workersHoldScope ? {} : { scopeApproved: false }),
+            ...quietWorkerOptions,
             signal: runSignal,
             ...guardOptionsFor(workerProviderId, workerPricing, workerModel, tasks),
             ...escalationOptions,
@@ -1270,7 +1306,7 @@ export function buildFusionDelegateTool(
               ? {}
               : { workerMaxOutputTokens: mode.workerMaxOutputTokens }),
             writeScope,
-            ...(workersHoldScope ? {} : { scopeApproved: false }),
+            ...quietWorkerOptions,
             signal: runSignal,
             ...guardOptionsFor(leg.providerId, pricing, leg.model, tasks),
             // Dropped only where the target is this leg's own model: a
@@ -1361,9 +1397,12 @@ export function buildFusionDelegateTool(
                   ctx.workingDir,
                   { results: rows, signal: ctx.signal },
                 );
+                // A split's checks are the worker's own; under a quiet
+                // fan-out nobody approved commands, so they are reported
+                // as not run (ATO-1689).
                 const checks = await runContractChecks(
                   checksWithExamples(childContract),
-                  deps.runChecks,
+                  workersHoldScope ? deps.runChecks : undefined,
                   { workingDir: ctx.workingDir, signal: ctx.signal },
                 );
                 const failedChecks = checks.outcomes

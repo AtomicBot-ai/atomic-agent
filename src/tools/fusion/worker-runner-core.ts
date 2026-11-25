@@ -77,6 +77,7 @@ export interface WorkerRunnerCoreDeps {
         | "forgetDeclinedUnder"
         | "wouldPrompt"
         | "getLevel"
+        | "holdsForOutsideContent"
       >
     >;
   /** Progress into the PARENT session's frame. */
