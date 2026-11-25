@@ -276,6 +276,17 @@ function projectItems(groups, folders) {
   return items.map((it, i) => ({it, i})).sort((a, b) => (b.it.at - a.it.at) || (a.i - b.i)).map((x) => x.it);
 }
 
-if (typeof module !== 'undefined') module.exports = {orderChats, projectItems, chatUnread, chatFailedSinceRead, chatMenuItems, chatMenuPlace,
+/* ATO-1688: the first `n` rows of the list, then any row past the cut whose
+   chat is busy (a turn running, an approval waiting), in list order. A chat
+   left working in the background slid below "Load more" as newer chats were
+   stored, and read as lost. `hidden` is how many rows stay behind the cut. */
+function pageWithBusy(all, n, isBusy) {
+  const list = all || [];
+  const head = list.slice(0, Math.max(0, n));
+  const kept = list.slice(head.length).filter((r) => r && typeof isBusy === 'function' && isBusy(r));
+  return {rows: head.concat(kept), hidden: list.length - head.length - kept.length};
+}
+
+if (typeof module !== 'undefined') module.exports = {orderChats, projectItems, pageWithBusy, chatUnread, chatFailedSinceRead, chatMenuItems, chatMenuPlace,
   archiveSet, splitArchived, chatSearchQuery, chatSearch, CHAT_SEARCH_MAX, archivedIdsOf, agentKeepsArchive, archiveMigrationStep,
   projectPathKey, projectNameFromDir, projectsCoerce, projectForFolder, projectOf, projectGroups};

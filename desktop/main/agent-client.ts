@@ -2620,7 +2620,10 @@ export class AgentClient extends EventEmitter {
       }
       this.emit("chat", { turnId, kind: "done" });
     } catch (err) {
-      const aborted = controller.signal.aborted;
+      /* ATO-1688: a quit (close) ends the agent before it drops the turns'
+         streams, so a stream the agent's shutdown broke is the app ending
+         the turn, not the transport failing under it. */
+      const aborted = controller.signal.aborted || this.closed;
       this.emit("chat", {
         turnId,
         kind: aborted ? "aborted" : "error",
@@ -2776,14 +2779,27 @@ export class AgentClient extends EventEmitter {
   private async stopNow(): Promise<boolean> {
     this.stopping = true;
     this.stopEpoch++;
-    for (const controller of this.turns.values()) controller.abort();
-    this.turns.clear();
-    this.completions.clear();
+    const child = this.child;
+    /* ATO-1688: the quit (close) tells the agent first and drops the turns'
+       streams once it has gone. Dropped first, the agent saw each turn's
+       request go away before its SIGTERM, ended the turn as a person's
+       Stop, and the chat came back after the relaunch with its reply cut
+       off and no word of it. Told first, the agent's own shutdown cuts the
+       turns off and records them as interrupted (ATO-448's Continue). A
+       restart still drops them first: the window goes on and must see its
+       turns end now. */
+    const signalFirst = this.closed && !!child;
+    const dropTurns = (): void => {
+      for (const controller of this.turns.values()) controller.abort();
+      this.turns.clear();
+      this.completions.clear();
+    };
+    if (!signalFirst) dropTurns();
     this.events?.abort();
     this.events = null;
     const starting = this.starting;
-    const child = this.child;
     const exited = child ? await this.endChild(child) : true;
+    if (signalFirst) dropTurns();
     // A start on its way gives up at its next look; the child it had spawned, if any, was `child`.
     if (starting) await starting.catch(() => undefined);
     this.port = null;

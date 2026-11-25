@@ -11,6 +11,10 @@
    Results tab lists every file of the latest turn: the changed ones with
    their counts, then the files the reply delivered or names as saved.
 
+   A fusion.delegate call's frame carries `diffstats: [{path, added, removed}]`
+   instead (ATO-1702): the files its workers changed, one row each, added to
+   the same card.
+
    An older agent sends no `diffstat`: no card, and the Results tab lists
    the reply's files without counts. The session store keeps no tool
    details, so a reopened chat has no counts either. Rows are .filechip
@@ -26,6 +30,22 @@ function changedFileOfFrame(p) {
   const count = (n) => typeof n === 'number' && Number.isInteger(n) && n >= 0;
   if (typeof d.path !== 'string' || !d.path || !count(d.added) || !count(d.removed)) return null;
   return {path: d.path, added: d.added, removed: d.removed};
+}
+
+/** Every change a frame carries: its own `diffstat` (a write/edit), then each
+    checked row of `diffstats` (ATO-1702: the files a fusion.delegate call's
+    workers changed, summed per path by the agent, ATO-1701). A row of a shape
+    the card cannot draw is skipped; the rest stay. */
+function changedFilesOfFrame(p) {
+  const out = [];
+  const one = changedFileOfFrame(p);
+  if (one) out.push(one);
+  const list = p && typeof p === 'object' && Array.isArray(p.diffstats) ? p.diffstats : [];
+  for (const d of list) {
+    const f = changedFileOfFrame({diffstat: d});
+    if (f) out.push(f);
+  }
+  return out;
 }
 
 /** The list with one more change: a file already on it adds its counts, a new one goes last. */
@@ -112,5 +132,5 @@ function resultsPaneHTML(log, deps) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {CHANGED_FILES_MAX, changedFileOfFrame, changedFilesAdd, changedFilesBase, changedFilesCardHTML, changedFilesPaths, turnResultFiles, latestReply, resultsPaneHTML};
+  module.exports = {CHANGED_FILES_MAX, changedFileOfFrame, changedFilesOfFrame, changedFilesAdd, changedFilesBase, changedFilesCardHTML, changedFilesPaths, turnResultFiles, latestReply, resultsPaneHTML};
 }

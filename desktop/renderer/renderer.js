@@ -2737,11 +2737,15 @@ function sidebarChats() {
   const pg = projectGroups(PROJECTS.state, order.rest, FOLDERS.state, homeDir());
   const fg = folderGroups(FOLDERS.state, pg.rest);
   const all = order.pinned.concat(fg.loose);
-  const rows = all.slice(0, SIDEBAR_PAGE * PAGE.chats);
+  // ATO-1688: a chat still working (or waiting on an approval) stays on the list past Load more's cut.
+  const page = pageWithBusy(all, SIDEBAR_PAGE * PAGE.chats, chatBusy);
+  const rows = page.rows;
   const filed = fg.groups.reduce((n, g) => n + g.rows.length, 0) + pg.groups.reduce((n, g) => n + g.rows.length, 0);
   const visible = rows.concat(...fg.groups.filter((g) => !g.folder.collapsed).map((g) => g.rows),
     ...pg.groups.filter((g) => !projectCollapsed(g.project.id)).map((g) => g.rows), CHATSEARCH.archOpen ? arch.archived : []);
-  return {rows, hidden: all.length - rows.length, pinned: Math.min(order.pinned.length, rows.length), groups: fg.groups, projects: pg.groups, visible, filed, archived: arch.archived};
+  // The pinned block is the pinned rows the page drew: a busy row kept past the cut is never one of them.
+  const pinnedIds = new Set(order.pinned.map((p) => p.id));
+  return {rows, hidden: page.hidden, pinned: rows.filter((r) => pinnedIds.has(r.id)).length, groups: fg.groups, projects: pg.groups, visible, filed, archived: arch.archived};
 }
 
 /* The dot, in the user's three states. "Running" is NOT S.busy: an approval
@@ -2770,6 +2774,26 @@ function chatDot(s) {
   if (unread && chatFailedSinceRead(s, seen)) return ['filled', 'the last turn failed', 'tone-red'];
   if (unread) return ['filled', 'finished — not read yet'];
   return ['empty', 'read'];
+}
+
+/** ATO-1688: a chat with a turn running or an approval waiting (what chatDot draws as running or amber). */
+function chatBusy(s) {
+  if (!s || !s.id) return false;
+  if (PENDING_APPROVALS.has(s.id)) return true;
+  for (const sid of RUNNING.values()) if (sid === s.id) return true;
+  return false;
+}
+/* ATO-1688: a collapsed project or folder draws no rows, so a chat working in
+   it had no mark anywhere. Its header gets the dot the row would have: amber
+   when one waits on an approval, the running pulse when one works. */
+function groupBusyDotHTML(rows) {
+  let running = false;
+  for (const r of rows || []) {
+    if (!r || !r.id) continue;
+    if (PENDING_APPROVALS.has(r.id)) return '<span class="sdot filled tone-amber" title="a chat here is waiting for your approval"></span>';
+    if (chatBusy(r)) running = true;
+  }
+  return running ? '<span class="sdot running" title="a chat here is still working"></span>' : '';
 }
 
 /* Same rules for tasks. A task that has not run yet has none of the user's
@@ -8801,6 +8825,8 @@ document.addEventListener('click', (e) => {
   // Scroll-stable cards: no S.stick = false, no render() — repaintEntry swaps the
   // one entry and recomputes stick from geometry.
   if (tg) { const m = S.log.find((x) => x.id === tg.dataset.toggle); if (m) { m.open = !m.open; repaintEntry(m, m.k === 'tool' ? '.cardhead' : '.disc'); } return; }
+  const fb = t.closest('[data-fzbrief]');   // ATO-1754: a Fusion worker's "What it was told" (fusion-brief.js)
+  if (fb) { const m = S.log.find((x) => x.id === fb.dataset.fzbrief); if (m) { m.fzbOpen = !m.fzbOpen; repaintEntry(m, '.fzb-t'); } return; }
   const sd = t.closest('[data-sysdet]');   // ATO-380: a failed turn's Details (sysDetailHTML)
   if (sd) { const m = S.log.find((x) => x.id === sd.dataset.sysdet); if (m) { m.detOpen = !m.detOpen; repaintEntry(m, '.sys-det-t'); } return; }
   const go = t.closest('[data-goto]');
@@ -11691,6 +11717,10 @@ function onChatEvent(ev) {
       tokens: typeof p.tokens === 'number' && p.tokens > 0 ? p.tokens : undefined,
       spentUsd: typeof p.spent_usd === 'number' && Number.isFinite(p.spent_usd) ? p.spent_usd : undefined,
     };
+    // ATO-1754 (fusion-brief.js): on `started`, what the worker was told and
+    // why it is not on the model it asked for. An older agent sends neither.
+    const fzb = e.phase === 'started' && typeof fzbFromPayload === 'function' ? fzbFromPayload(p) : {brief: null, modelNote: null};
+    if (fzb.modelNote) e.modelNote = fzb.modelNote;
     if (typeof fzpNoteStarted === 'function') fzpNoteStarted(FZP, e, FZ.live);   // ATO-1329: reads the row as it was
     FZ.live = fzReduceLive(FZ.live, e);
     if (typeof fzpNoteFrame === 'function') fzpNoteFrame(e);
@@ -11698,7 +11728,8 @@ function onChatEvent(ev) {
     // `usage` (agent with the worker token counts) only moves the live row's
     // context size: one transcript line per completion per worker would bury
     // the lines that say what happened, as the TUI's reducer keeps it off its feed.
-    if (item && e.phase !== 'usage') S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, fusion:true, fzModel: e.model || null, text: esc(fzWorkerLine(e))});
+    if (item && e.phase !== 'usage') S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, fusion:true, fzModel: e.model || null, text: esc(fzWorkerLine(e)),
+      ...(fzb.brief ? {fzBrief: fzb.brief, fzNote: fzb.modelNote, fzbOpen: false} : {})});
     render();
     return;
   }
@@ -11770,8 +11801,8 @@ function onChatEvent(ev) {
     // ATO-1010: an MCP tool's app page (`mcp_app` on the frame) runs in the same sandboxed frame (mcp-app.js).
     if (p.mcp_app && item && typeof chatMcpApp === 'function') chatMcpApp(item, p, S.sessionId, S.log);
     // ATO-1187: a write/edit's lines added/removed go on the turn's "Changed files" card (changed-files.js).
-    const changedFile = changedFileOfFrame(p);
-    if (changedFile && item) item.changed = changedFilesAdd(item.changed, changedFile);
+    // ATO-1702: a fusion.delegate's `diffstats` (its workers' files) go on the same card.
+    if (item) for (const changedFile of changedFilesOfFrame(p)) item.changed = changedFilesAdd(item.changed, changedFile);
     render();
     return;
   }
@@ -21023,7 +21054,7 @@ function continueTurn() {
 }
 
 /* ATO-448: a chat whose last turn a restart cut off (a crash, a kill, an
-   update) gets one row with a Continue button. Nothing continues by itself:
+   update; ATO-1688: a quit) gets one row with a Continue button. Nothing continues by itself:
    only the click asks the agent (POST /api/sessions/{id}/resume) for the
    continuing message, a note telling the model to check what already ran
    before repeating anything with side effects, then the cut-off request,
@@ -21034,7 +21065,7 @@ const RESUME = {pending: false};
 function interruptedTurnOffer(data, live) {
   if (live || !data || data.status !== 'cancelled' || data.lastError !== INTERRUPTED_TURN_ERROR) return null;
   if (!(BR && BR.resumeInterruptedTurn)) return null;
-  return {id:nid(), k:'system', text:'The last reply was interrupted by a restart.', act:'resume-turn'};
+  return {id:nid(), k:'system', text:'The last reply was cut off before it finished: the app quit or the agent restarted.', act:'resume-turn'};
 }
 function dropInterruptedTurnOffer() {
   const at = S.log.findIndex((x) => x.k === 'system' && x.act === 'resume-turn');
@@ -21771,7 +21802,8 @@ function fzLiveLine(w) {
 function fzWorkerLine(e) {
   const model = e.model ? ' · ' + e.model : '';
   const who = e.role === 'orchestrator' ? 'orchestrator' + model : 'worker ' + e.title + model;
-  if (e.phase === 'started') return who + ': started';
+  // ATO-1754: a task that asked for a role or model and landed on another says so where it starts.
+  if (e.phase === 'started') return who + ': started' + (e.modelNote ? ' (' + e.modelNote + ')' : '');
   if (e.phase === 'tool') {
     return e.role === 'orchestrator'
       ? who + ' — ' + (e.tool ?? 'working') + ' (' + e.title + ')'
@@ -23285,7 +23317,9 @@ function renderItems() {
        would move it in time. */
     if (m.k === 'system') {
       let j = i;
-      while (j + 1 < items.length && items[j + 1].k === 'system' && items[j + 1].text === m.text && items[j + 1].detail === m.detail) j++;
+      while (j + 1 < items.length && items[j + 1].k === 'system' && items[j + 1].text === m.text && items[j + 1].detail === m.detail
+        // ATO-1754: two workers with the same title and model keep their own briefs.
+        && items[j + 1].fzBrief === m.fzBrief) j++;
       const times = j - i + 1;
       if (times >= 2) { html += systemRun(m, times); i = j; continue; }
     }
@@ -23541,7 +23575,9 @@ function sysRowHTML(m, times) {
   // Fusion's first-switch intro is a block of its own (the tree mark, then paragraphs).
   if (m.fusionIntro) return '<div class="sysrow sys-block"><span></span><span class="sys-tx">' + m.text + rep + '</span></div>';
   return '<div class="sysrow' + (m.sev ? ' ' + m.sev : '') + '">' + sysGlyph(m)
-    + '<span class="sys-tx">' + m.text + rep + (m.detail ? sysDetailHTML(m) : '') + (m.tried ? tpTriedHTML(m) : '') + '</span>'
+    + '<span class="sys-tx">' + m.text + rep + (m.detail ? sysDetailHTML(m) : '') + (m.tried ? tpTriedHTML(m) : '')
+    // ATO-1754: a Fusion worker's started line opens onto what it was told (fusion-brief.js).
+    + (m.fzBrief && typeof fzbHTML === 'function' ? fzbHTML(m, (open) => ic(open ? 'chevD' : 'chevR')) : '') + '</span>'
     + (acts ? '<span class="sys-acts">' + acts + '</span>' : '') + '</div>';
 }
 

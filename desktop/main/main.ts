@@ -27,6 +27,7 @@ import { newChatSessionId } from "./chat-session.js";
 import { ChatWorktrees, gitExecWith, registerChatWorktreeIpc } from "./chat-worktree-ipc.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
+import { quitQuestion, workingChatCount } from "./quit-question.js";
 import { busyPorts, modelPortsOf, onSmokeStopSignal, portsHeldByRun, runSmokeGuarded, signalExitCode, smokeMayStopModels, smokeOwnsItsState, smokeScreenshot } from "./smoke-exit.js";
 import { randomUUID } from "node:crypto";
 import { freemem, homedir, tmpdir, totalmem } from "node:os";
@@ -1363,6 +1364,8 @@ async function leaveManagedRoute<T extends { ok: boolean }>(res: T): Promise<T> 
 
 /** ATO-229: how many of this window's turns main is streaming (wireIpc's liveTurns). */
 let liveTurnCount: () => number = () => 0;
+/** ATO-1696: the same turns, for the quit's question (counted by chat, quit-question.ts). */
+let liveTurnRecords: () => Array<{ turnId: string; sessionId: string | null }> = () => [];
 
 /**
  * ATO-229 — the updater's side of main: the IPC the toast and Settings call,
@@ -1469,6 +1472,7 @@ function wireIpc(client: AgentClient): void {
     }
   });
   liveTurnCount = () => liveTurns.size;
+  liveTurnRecords = () => [...liveTurns.values()];
   /* Studio and the local chat model on one memory (studio-gpu-share.ts): a
      local generation pauses the chat model when the two do not fit (always
      under Atomic Core, which keeps one model per GPU), the supervisor holds
@@ -11630,7 +11634,8 @@ function retireStudioCoreOnQuit(): Promise<unknown> {
 }
 
 /* ATO-135: a quit with messages still queued in a chat asks first — they are
-   kept across a closed window, not across a quit. Once per quit. */
+   kept across a closed window, not across a quit. ATO-1696: so does one with
+   a chat still working, whose reply the quit would cut off. Once per quit. */
 let queuedQuitAsked = false;
 
 // Never leave the agent running after the app is gone.
@@ -11645,15 +11650,17 @@ app.on("before-quit", (event) => {
   const installing = appUpdater()?.state().phase === "installing";
   const inTray = tray !== null && readBackgroundPrefs(app.getPath("userData")).keepRunning;
   if (!SMOKE && !FIRST_RUN_PROBE && !quitShutdown && !queuedQuitAsked && !installing && (windowUp || process.platform === "darwin" || inTray)) {
-    const n = queuedMessageCount();
-    if (n > 0) {
+    /* ATO-1696: a turn still running asks too (in the chat on screen or one
+       left in the background); one dialog when there are both. */
+    const ask = quitQuestion({ queued: queuedMessageCount(), working: workingChatCount(liveTurnRecords()) });
+    if (ask) {
       const opts = {
         type: "warning" as const,
         buttons: ["Quit", "Cancel"],
         defaultId: 1,
         cancelId: 1,
-        message: n === 1 ? "A queued message has not been sent" : `${n} queued messages have not been sent`,
-        detail: "They wait for their chat's turn to end. Quitting now drops them.",
+        message: ask.message,
+        detail: ask.detail,
       };
       const pick = win && windowUp ? dialog.showMessageBoxSync(win, opts) : dialog.showMessageBoxSync(opts);
       if (pick !== 0) { event.preventDefault(); return; }
