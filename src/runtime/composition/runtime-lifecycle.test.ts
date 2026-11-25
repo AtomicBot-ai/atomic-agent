@@ -112,6 +112,25 @@ describe("runtime lifecycle ownership", () => {
     ]);
   });
 
+  it("says it is stopping from beginShutdown on, before the teardown runs (ATO-1688)", async () => {
+    const events: string[] = [];
+    const lifecycle = createRuntimeLifecycle(fixture(events).resources);
+    expect(lifecycle.isStopping()).toBe(false);
+    lifecycle.beginShutdown();
+    expect(lifecycle.isStopping()).toBe(true);
+    expect(lifecycle.isShutdown()).toBe(false);
+    expect(events).toEqual([]);
+    await lifecycle.shutdown();
+    expect(lifecycle.isStopping()).toBe(true);
+    expect(lifecycle.isShutdown()).toBe(true);
+  });
+
+  it("a shutdown with no beginShutdown before it is not stopping: the host's own stop stands (ATO-1688)", async () => {
+    const lifecycle = createRuntimeLifecycle(fixture([]).resources);
+    await lifecycle.shutdown();
+    expect(lifecycle.isStopping()).toBe(false);
+  });
+
   it("waits for the bounded task stop before closing its store and reports unfinished runs", async () => {
     const events: string[] = [];
     const { resources } = fixture(events);

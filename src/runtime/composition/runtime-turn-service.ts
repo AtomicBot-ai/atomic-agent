@@ -10,7 +10,7 @@ import type { SlotManager } from "../../llm/slot-manager.js";
 import type { ProviderRegistry } from "../../llm/provider/index.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
 import type { ProviderFallbackChain } from "../../llm/fallback/index.js";
-import type { SessionStore } from "../../session/session-store.js";
+import { INTERRUPTED_TURN_ENDING, type SessionStore } from "../../session/session-store.js";
 import { isIncognitoSession, readFusionWorkerMeta, SESSION_LLM_METADATA_KEY, SESSION_ROUTE_METADATA_KEY, readSessionRoute, resolveTurnRoute, SESSION_TITLE_METADATA_KEY, SESSION_TITLE_TIMEOUT_MS, generateSessionTitle, readSessionTitle, shouldNameSession, type SessionLlmStamp, type SessionState } from "../../session/index.js";
 import { renderRouteChangeNote } from "../../prompt/route-change-note.js";
 import { applySessionProject, type SessionProject } from "../../session/session-project.js";
@@ -128,7 +128,11 @@ export interface RuntimeTurnDependencies {
    * `runtime-experience-review.ts`). Omitted (tests, embedders): no review.
    */
   experienceReview?: Pick<ReturnType<typeof createExperienceReviewer>, "maybeReview">;
-  lifecycle: { isShutdown(): boolean };
+  /**
+   * `isStopping` (ATO-1688): the host has begun to stop. Omitted, the
+   * shutdown itself is the only sign (`isShutdown`).
+   */
+  lifecycle: { isShutdown(): boolean; isStopping?(): boolean };
   logger: StructuredLogger;
 }
 
@@ -380,24 +384,55 @@ export function createRuntimeTurnService(
   };
 
   /**
+   * ATO-1688: the host is stopping (`serve` told by a quit or a restart):
+   * a chat turn cancelled now was cut off, not stopped by a person. Not a
+   * durable task's turn (`checkpoint.taskId`): the task runner runs that
+   * again by itself, and a Continue on its chat would have nothing to
+   * continue (`interruptedChatTurn`). A host that only calls `shutdown`
+   * (the TUI, which stops its own turn first) keeps the turn's own end.
+   */
+  const cutOffByStop = (runOptions: { checkpoint?: { taskId?: string } }): boolean =>
+    lifecycle.isStopping?.() === true && runOptions.checkpoint?.taskId === undefined;
+
+  /**
+   * ATO-1688: a turn that ends `cancelled` while the host stops was cut
+   * off by it, and ends the way the shutdown's stand-in and the boot
+   * sweep end one (`INTERRUPTED_TURN_ENDING`): the chat then says its
+   * reply was cut off and offers to continue it (ATO-448), rather than
+   * reading as a person's Stop. Its transcript so far is kept as the
+   * turn wrote it.
+   */
+  const endedByStop = (
+    finished: SessionState,
+    runOptions: { checkpoint?: { taskId?: string } },
+  ): SessionState =>
+    finished.status === "cancelled" && cutOffByStop(runOptions)
+      ? { ...finished, lastError: INTERRUPTED_TURN_ENDING.lastError ?? null }
+      : finished;
+
+  /**
    * End a turn that has no state to save — it threw — on the status it
    * actually ended with: `cancelled` when it had been told to stop (an
    * abort can surface as any error), `failed` with the error otherwise.
    * The transcript stays what it was before the turn (`session`); there
    * is nothing truer to put there. A cancel puts back the `lastError`
    * the session had before the turn, which a shutdown's stand-in may
-   * have overwritten meanwhile.
+   * have overwritten meanwhile; one cancelled by the host stopping
+   * (ATO-1688) ends as interrupted, as that stand-in says.
    */
   const releaseThrownTurn = (
     session: SessionState,
     err: unknown,
     signal: AbortSignal | undefined,
+    cutOff = false,
   ): void => {
     try {
       sessionStore.releaseTurn(
         session.id,
         signal?.aborted === true
-          ? { status: "cancelled", lastError: session.lastError }
+          ? cutOff
+            ? INTERRUPTED_TURN_ENDING
+            : { status: "cancelled", lastError: session.lastError }
           : {
               status: "failed",
               lastError: err instanceof Error ? err.message : String(err),
@@ -666,7 +701,8 @@ export function createRuntimeTurnService(
         // session later restores its provider/model (session-llm.ts).
         const usage = traces.readContextUsage(session.id);
         const spend = sessionUsage?.get(session.id);
-        const finished: SessionState = {
+        // ATO-1688: cut off by the host stopping, it ends as interrupted (`endedByStop`).
+        const finished: SessionState = endedByStop({
           ...result.session,
           ...(usage === undefined ? {} : { contextUsage: usage }),
           ...(spend === undefined ? {} : { sessionUsage: spend }),
@@ -675,7 +711,7 @@ export function createRuntimeTurnService(
             [SESSION_LLM_METADATA_KEY]: llmStamp,
             [SESSION_ROUTE_METADATA_KEY]: turnRoute,
           },
-        };
+        }, runOptions);
         // The turn's end replaces its `running` mark (`beginTurn`).
         sessionStore.finishTurn(finished);
         // Name the thread once, from its first prompt, after the first
@@ -717,7 +753,7 @@ export function createRuntimeTurnService(
         // reply, finish, max steps, failed, cancelled — so this is a turn
         // that threw, or whose save did. Its row must not go on saying
         // `running`.
-        releaseThrownTurn(session, err, runOptions.signal);
+        releaseThrownTurn(session, err, runOptions.signal, cutOffByStop(runOptions));
         throw err;
       } finally {
         inFlight.end();
