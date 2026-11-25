@@ -1611,9 +1611,14 @@ export function buildFusionDelegateTool(
               true,
             ),
           );
-          const merged = results.map(
-            (r) => retried.find((x) => x.id === r.id) ?? r,
-          );
+          const merged = results.map((r) => {
+            const again = retried.find((x) => x.id === r.id);
+            if (again === undefined) return r;
+            // The first attempt's files stay changed in the folder: the
+            // retry starts from them, so the card lists both (ATO-1700).
+            const diffstats = sumDiffStats([r, again]);
+            return diffstats.length === 0 ? again : { ...again, diffstats };
+          });
           const evaluated = await evaluateContract(
             merged.filter((r) => retryIds.has(r.id)),
             merged,
