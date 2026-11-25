@@ -266,6 +266,13 @@ describe("describeLlmFailure: why the engine's process is gone (ATO-1435)", () =
     expect(readEngineExitReason).not.toHaveBeenCalled();
   });
 
+  it("reads it for a start that never got its model up (start_pending, ATO-421)", () => {
+    const readEngineExitReason = vi.fn(() => "model_file_corrupt" as const);
+    const pending = vi.fn(() => ({ state: "unknown" as const, reason: "start_pending" as const, lock: "free" as const }));
+    const d = { ...deps(config({})), explainEngineLiveness: pending, readEngineExitReason };
+    expect(describeLlmFailure({ error: refusedError() }, d).engineExitReason).toBe("model_file_corrupt");
+  });
+
   it("never reads it for an external server or a failure that was not a refusal", () => {
     const readEngineExitReason = vi.fn(() => "out_of_memory" as const);
     const external = { ...deps(config({ mode: "external" })), explainEngineLiveness: explain("dead"), readEngineExitReason };

@@ -104,6 +104,7 @@ import {
   describeServerFault,
   readRunningPid,
   loraAdapterForModel,
+  withChatStartPending,
 } from "../../local-llm/index.js";
 import {
   classifyVramFit,
@@ -2177,7 +2178,11 @@ export class LocalModelsOrchestrator {
   }): Promise<boolean> {
     return this.operations.run(async signal => {
       this.chatReadyError = "The model did not start. Choose a ready model and retry the message.";
-      const started = await this.startDaemonNow({ ...opts, signal });
+      // ATO-421: the backend check, device pick and port clearance below run
+      // before the daemon start's own marker; a turn already waiting on the
+      // refused port (a crash restart) reads the whole start as on its way.
+      const started = await withChatStartPending(getConfig().paths.localModelsDataDir, () =>
+        this.startDaemonNow({ ...opts, signal }));
       if (started && !signal.aborted) this.chatReadyError = null;
       return started;
     }, false);
