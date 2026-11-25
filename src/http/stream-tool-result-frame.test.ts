@@ -264,7 +264,7 @@ describe("tool_result over SSE", () => {
     for (const frame of sent.slice(2)) expect(frame).not.toHaveProperty("diffstat");
   });
 
-  it("carries an ok fusion.delegate's diffstats list, checked row by row, and nothing otherwise (ATO-1701)", () => {
+  it("carries a fusion.delegate's diffstats list, checked row by row, and nothing otherwise (ATO-1701)", () => {
     const sse = makeSse();
     const hook = buildStreamEventHook(sse.writer as never, env(true));
     const diffstats = [
@@ -282,7 +282,9 @@ describe("tool_result over SSE", () => {
     const sent = frames(sse, "tool_result");
     expect(sent[0]!.diffstats).toEqual(diffstats);
     expect(sent[0]).not.toHaveProperty("diffstat");
-    for (const frame of sent.slice(1, 4)) expect(frame).not.toHaveProperty("diffstats");
+    // Every task failed, but what it wrote in the folder is still changed.
+    expect(sent[1]!.diffstats).toEqual(diffstats);
+    for (const frame of sent.slice(2, 4)) expect(frame).not.toHaveProperty("diffstats");
     // A single write keeps its own diffstat and gets no list.
     expect(sent[4]!.diffstat).toEqual({ path: "/w/a.ts", added: 1, removed: 0 });
     expect(sent[4]).not.toHaveProperty("diffstats");

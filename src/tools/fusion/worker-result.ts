@@ -234,7 +234,9 @@ export interface WorkerTaskResult {
    * paths in the folder; a workspace task's are rebased after its merge
    * and keep only what the merge wrote. `fusion.delegate` sums them into
    * `details.diffstats` for the chat's "Changed files" card. Absent when
-   * the task changed no file.
+   * the task changed no file, and on a row a resume carried over from
+   * the checkpoint (which keeps no file list): those files were changed
+   * in the turn that was cut off.
    */
   diffstats?: FileDiffStat[];
   /**

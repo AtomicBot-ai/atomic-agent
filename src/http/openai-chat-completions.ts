@@ -1204,18 +1204,21 @@ function diffstatFrame(
 const DIFFSTATS_FRAME_MAX = 200;
 
 /**
- * `diffstats` on a `tool_result` frame (ATO-1701): the files an ok
+ * `diffstats` on a `tool_result` frame (ATO-1701): the files a
  * `fusion.delegate` call's workers changed, as `[{path, added, removed}]`
  * summed per path (`details.diffstats`, ATO-1700). The workers' own
  * write results run in their sessions and never reach this stream, so
  * without it the "Changed files" card stayed empty after a fan-out.
- * Rows of a shape a host cannot draw are dropped; the list is left out
- * when none is left. A single write/edit keeps its `diffstat`.
+ * Sent on an `error` result too: a fan-out whose every task failed its
+ * checks still changed those files in the folder (a workspace that was
+ * not merged lists none). Rows of a shape a host cannot draw are
+ * dropped; the list is left out when none is left. A single write/edit
+ * keeps its `diffstat`.
  */
 function diffstatsFrame(
   result: CompressedToolResult,
 ): { diffstats?: { path: string; added: number; removed: number }[] } {
-  if (result.tool !== "fusion.delegate" || result.status !== "ok") return {};
+  if (result.tool !== "fusion.delegate") return {};
   const raw = (result.details ?? {}).diffstats;
   if (!Array.isArray(raw)) return {};
   const count = (n: unknown): n is number =>
