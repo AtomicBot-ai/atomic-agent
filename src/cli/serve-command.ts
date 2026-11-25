@@ -234,6 +234,9 @@ export async function serveCommand(args: string[]): Promise<number> {
     return 1;
   } finally {
     orphanWatch?.stop();
+    // ATO-1688: before the connections drop and abort their turns, so a
+    // turn the stop cuts off is recorded as interrupted, not as a Stop.
+    runtime?.beginShutdown?.();
     elicitations.closeAll();
     // The public address goes first, before the API it fronts.
     if (tunnel) await tunnel.stop().catch(() => {});

@@ -1074,6 +1074,21 @@ export type AgentLoopEvent =
        * escalation model is priced (ATO-942).
        */
       costUsd?: number;
+      /**
+       * `phase: "started"` only (ATO-1754): the message this worker's
+       * turn was started with, as it was sent (`renderWorkerBrief` plus
+       * any suffix), clipped at `FUSION_WORKER_BRIEF_EVENT_CHARS`. Lets
+       * a UI show what the orchestrator actually asked of the worker.
+       */
+      brief?: string;
+      /**
+       * `phase: "started"` only (ATO-1754): why the task did not run on
+       * the model it asked for (a role with no model configured, a second
+       * local model this machine is not marked to hold), the same words
+       * the orchestrator's result row carries. Absent when it ran where
+       * it asked to.
+       */
+      modelNote?: string;
     }
   /** `### profile` was clipped at `memory.profile.maxTokens` (issue #407). */
   | ProfileClippedEvent

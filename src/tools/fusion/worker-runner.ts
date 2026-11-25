@@ -453,6 +453,19 @@ export interface WorkerRunnerDeps
 /** The same type under the core/add-on naming. */
 export type FusionWorkerRunnerDeps = WorkerRunnerDeps;
 
+/**
+ * The most of a worker's brief its `started` event carries (ATO-1754).
+ * A brief is the task plus the quoted request (up to
+ * `ORIGINAL_REQUEST_CHAR_BUDGET`), the contract and the rules, so this
+ * fits every real one; a longer one is cut with a line saying so.
+ */
+export const FUSION_WORKER_BRIEF_EVENT_CHARS = 40_000;
+
+export function clipBriefForEvent(brief: string): string {
+  if (brief.length <= FUSION_WORKER_BRIEF_EVENT_CHARS) return brief;
+  return `${brief.slice(0, FUSION_WORKER_BRIEF_EVENT_CHARS)}\n\n(cut here: the brief is ${brief.length.toLocaleString("en-US")} chars; the worker received all of it.)`;
+}
+
 /** Escalations one worker may get, automatic and manual together. */
 export const MAX_ESCALATIONS_PER_WORKER = 2;
 
@@ -674,6 +687,10 @@ async function runOneTask(
   // routed by the ambient frame would be tagged with a throwaway session
   // that has no recorder, no hook and no UI, and would reach nobody.
   let announced = false;
+  // ATO-1754: what the worker was told and why it is not where it asked
+  // to run, so the operator can open a worker instead of guessing.
+  let sentBrief: string | undefined;
+  const modelNote = options.taskModelNote?.(task.id);
   const announceStart = (): void => {
     if (announced) return;
     announced = true;
@@ -686,6 +703,8 @@ async function runOneTask(
       model: options.workerModel,
       ...(task.etaSeconds === undefined ? {} : { etaSeconds: task.etaSeconds }),
       ...(liveStepBudget === undefined ? {} : { stepBudget: liveStepBudget }),
+      ...(sentBrief === undefined ? {} : { brief: clipBriefForEvent(sentBrief) }),
+      ...(modelNote === undefined || modelNote.length === 0 ? {} : { modelNote }),
     });
   };
 
@@ -795,8 +814,11 @@ async function runOneTask(
     // worker writes unprompted. The refuse policy above still catches
     // everything else, so straying outside the scope comes back as
     // `needs_orchestrator` — a task to re-delegate, not a dead worker.
+    // Unless the level let the fan-out through with nobody asked
+    // (ATO-1689): then the worker holds no scope and runs under the
+    // standing level, like the chat it works for.
     const writeScope = isolated?.writeScope ?? options.writeScope ?? [];
-    if (writeScope.length > 0) {
+    if (writeScope.length > 0 && options.scopeApproved !== false) {
       deps.approvals.fanoutScopes?.grant(id, writeScope);
     }
     // A file the user declined on the orchestrator's turn stays declined
@@ -831,7 +853,9 @@ async function runOneTask(
       ? {}
       : { originalRequest: options.originalRequest }),
     ...(options.contract === undefined ? {} : { contract: options.contract }),
+    ...(options.scopeApproved === false ? { commandsAuthorised: false } : {}),
   })}${suffix === undefined ? "" : `\n\n${suffix}`}`;
+  sentBrief = brief;
   const declaredFiles = task.files?.length ?? 0;
   // Per-task budgets the orchestrator sized itself, clamped into what
   // this install allows. A task that asked for nothing keeps the
@@ -1817,6 +1841,11 @@ async function runOneTask(
       report,
     );
   }
+
+  // The files this worker changed, for the chat's "Changed files" card
+  // (ATO-1700): its own write results never reach the chat's stream.
+  const diffstats = filesWritten.diffstats;
+  if (diffstats.length > 0) result = { ...result, diffstats };
 
   // Keep the feed paired: a turn that died before it ever stepped never
   // reached the hook, and a bare `failed` line about a worker the

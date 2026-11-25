@@ -42,6 +42,7 @@ import {
 } from "./branch-workspace.js";
 import { resolveContractInputs } from "./contract-inputs.js";
 import type { DelegateTask } from "./delegate-args.js";
+import { rebaseDiffStats } from "./worker-diffstats.js";
 import type { WorkerTaskResult, WorkerTaskStatus } from "./worker-result.js";
 
 /** Statuses whose workspace is merged back; everything else is discarded. */
@@ -467,9 +468,11 @@ export async function runIsolatedWave(
         continue;
       }
       // The planner reads the folder's paths, not a workspace that is
-      // about to be removed.
+      // about to be removed. The changed-files list (ATO-1700) is set
+      // again below from what the merge actually wrote.
+      const { diffstats: workspaceStats, ...rest } = raw;
       const row: WorkerTaskResult = {
-        ...raw,
+        ...rest,
         reply: rebaseText(raw.reply, [ws.dir], input.realDir),
         ...(raw.error === undefined
           ? {}
@@ -496,7 +499,14 @@ export async function runIsolatedWave(
         protectedPaths,
         input.options?.mergeFile,
       );
-      out.push(applyMergeOutcome(row, outcome));
+      const merged = applyMergeOutcome(row, outcome);
+      const diffstats = rebaseDiffStats(
+        workspaceStats ?? [],
+        ws.dir,
+        input.realDir,
+        outcome.applied,
+      );
+      out.push(diffstats.length === 0 ? merged : { ...merged, diffstats });
       const task = input.tasks.find((t) => t.id === row.id);
       const suggestion =
         task === undefined ? undefined : mergeTaskSuggestion(task, outcome);
