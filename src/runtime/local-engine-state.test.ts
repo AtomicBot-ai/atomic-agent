@@ -124,3 +124,12 @@ describe("explainLocalEngineState: a held lock with no model process (ATO-1434)"
     expect(probe).not.toHaveBeenCalled();
   });
 });
+
+describe("explainLocalEngineState: a start on its way before the lock (ATO-421)", () => {
+  const pending = vi.fn(() => ({ state: "unknown", reason: "start_pending", lock: "free" }) as never);
+
+  it("asks whether a model process exists, so the no-process ceiling bounds the wait", () => {
+    expect(explainLocalEngineState("local-llama", cfg("managed"), "local-llama", pending, () => "none"))
+      .toEqual({ state: "unknown", reason: "start_pending", modelProcess: "none" });
+  });
+});

@@ -36,6 +36,17 @@ function standardHeaders(body: string, id: string, timestampS: number): Record<s
   };
 }
 
+/** The same signature under the svix-* header names Resend and Clerk send (ATO-1542). */
+function svixHeaders(body: string, id: string, timestampS: number): Record<string, string> {
+  const standard = standardHeaders(body, id, timestampS);
+  return {
+    "content-type": "application/json",
+    "svix-id": standard["webhook-id"] ?? "",
+    "svix-timestamp": standard["webhook-timestamp"] ?? "",
+    "svix-signature": standard["webhook-signature"] ?? "",
+  };
+}
+
 const nowS = (): number => Math.floor(Date.now() / 1000);
 
 describe("POST /api/webhooks/:name with verify=github", () => {
@@ -181,6 +192,37 @@ describe("POST /api/webhooks/:name with verify=standard-webhooks", () => {
     const forged = standardHeaders(body, "msg_forged", nowS());
     forged["webhook-signature"] = `v1,${Buffer.alloc(32).toString("base64")}`;
     expect((await post(body, forged)).status).toBe(401);
+    expect(harness.runtime.taskStore.list().length).toBe(0);
+  });
+
+  it("accepts the svix-* header names and dedupes on svix-id", async () => {
+    await start();
+    const body = JSON.stringify({ type: "email.delivered", data: {} });
+    const headers = svixHeaders(body, "msg_svix_1", nowS());
+    const res = await post(body, headers);
+    expect(res.status).toBe(202);
+    const reply = (await res.json()) as Reply;
+    expect(harness.runtime.taskStore.get(reply.taskId ?? "")?.userMessage).toBe(
+      "event email.delivered id msg_svix_1",
+    );
+    const replay = await post(body, headers);
+    expect(replay.status).toBe(200);
+    expect(((await replay.json()) as Reply).duplicate).toBe(true);
+    expect(harness.runtime.taskStore.list().length).toBe(1);
+  });
+
+  it("rejects svix-* headers with a wrong signature, missing header or old timestamp", async () => {
+    await start();
+    const body = JSON.stringify({ type: "t" });
+    const forged = svixHeaders(body, "msg_svix_forged", nowS());
+    forged["svix-signature"] = `v1,${Buffer.alloc(32).toString("base64")}`;
+    expect((await post(body, forged)).status).toBe(401);
+    for (const drop of ["svix-id", "svix-timestamp", "svix-signature"]) {
+      const headers = svixHeaders(body, "msg_svix_missing", nowS());
+      delete headers[drop];
+      expect((await post(body, headers)).status).toBe(401);
+    }
+    expect((await post(body, svixHeaders(body, "msg_svix_old", nowS() - 6 * 60))).status).toBe(401);
     expect(harness.runtime.taskStore.list().length).toBe(0);
   });
 

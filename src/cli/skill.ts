@@ -447,7 +447,9 @@ async function handleList(args: string[] = []): Promise<number> {
     process.stdout.write(`${name}\t-\t[missing]\tdisabled\t(not installed)\n`);
   }
   if (untrusted > 0) {
-    process.stdout.write(`untrusted: ${untrusted} project skill${untrusted === 1 ? "" : "s"} in this folder ${untrusted === 1 ? "is" : "are"} not loaded until the folder is trusted: run ${projectTrustHint(process.cwd())}\n`);
+    // stderr, like the WARN lines and the pending section (ATO-1707): the desktop parses
+    // stdout of the plain listing as rows and folds any other line into the last description.
+    process.stderr.write(`untrusted: ${untrusted} project skill${untrusted === 1 ? "" : "s"} in this folder ${untrusted === 1 ? "is" : "are"} not loaded until the folder is trusted: run ${projectTrustHint(process.cwd())}\n`);
   }
   for (const e of errors) {
     process.stderr.write(`WARN: ${e.path}: ${e.error}\n`);

@@ -1,5 +1,6 @@
 import type { CompletionUsage } from "../../llm/provider/completion-types.js";
 import type { DelegateContract } from "./contract.js";
+import { sumDiffStats } from "./worker-diffstats.js";
 import {
   completedWaveNotes,
   contractForWave,
@@ -718,6 +719,9 @@ async function closeParent(
   );
   const tools = sumTools(row, children);
   const usage = sumUsage([row, ...children]);
+  // The children's files too (ATO-1700): their rows live only in the
+  // tree, and the chat's "Changed files" card reads the closed row.
+  const diffstats = sumDiffStats([row, ...children]);
   const { error: _parentError, ...parentRow } = row;
   let closed: WorkerTaskResult = {
     ...parentRow,
@@ -730,6 +734,7 @@ async function closeParent(
     durationMs: Math.max(row.durationMs, Date.now() - startedAt),
     tools,
     ...(usage === undefined ? {} : { usage }),
+    ...(diffstats.length === 0 ? {} : { diffstats }),
     notes: [
       ...(row.notes ?? []).filter((n) => !FILE_CHECK_NOTE.test(n)),
       `split into ${children.length} subtasks: ${children.map((c) => `${c.id} ${c.status}`).join(", ")}`,

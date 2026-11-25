@@ -7,6 +7,7 @@ import {
   writtenBeforeBoot,
   type CoreOperationTurnLockState,
 } from "../core/core-operation.js";
+import { chatStartPending } from "./chat-start-pending.js";
 import { classifyPidLiveness } from "./daemon-lifecycle.js";
 
 /**
@@ -54,6 +55,11 @@ export type ManagedEngineLiveness = "alive" | "dead" | "no_pid" | "unknown";
  *   - `lock_unreadable` / `lock_probe_failed`   the lock could not be judged.
  *   - `pid_unreadable`                          the pid file exists and
  *                                               could not be read.
+ *   - `start_pending`                           no live model process, and
+ *                                               a chat start is on its way
+ *                                               in a live process, before
+ *                                               it took the lock (ATO-421,
+ *                                               `chat-start-pending.ts`).
  */
 export type ManagedEngineLivenessReason =
   | "pid_alive"
@@ -67,7 +73,8 @@ export type ManagedEngineLivenessReason =
   | "lock_writing"
   | "lock_unreadable"
   | "lock_probe_failed"
-  | "pid_unreadable";
+  | "pid_unreadable"
+  | "start_pending";
 
 export interface ManagedEngineLivenessReport {
   state: ManagedEngineLiveness;
@@ -81,6 +88,8 @@ export interface ManagedEngineLivenessProbes {
   pidLiveness?: (pid: number) => "alive" | "foreign" | "dead";
   /** When this machine last booted, wall clock ms. */
   bootTimeMs?: () => number;
+  /** A chat start on its way before the lock (`chatStartPending`). */
+  startPending?: (dataDir: string) => boolean;
 }
 
 const LOCK_REASON: Partial<Record<CoreOperationTurnLockState, ManagedEngineLivenessReason>> = {
@@ -119,25 +128,38 @@ export function explainManagedEngineLiveness(
   if (turnLockMeansOperationInProgress(lock)) {
     return { state: "unknown", reason: LOCK_REASON[lock] ?? "lock_held", lock };
   }
+  // ATO-421: with no live model process, a start on its way before the
+  // lock (the desktop's restart booting `models start`, the TUI's launch
+  // start in its backend check) is not a dead engine. A live process is
+  // never hidden behind the marker.
+  const gone = (report: ManagedEngineLivenessReport): ManagedEngineLivenessReport => {
+    let pending: boolean;
+    try {
+      pending = (probes.startPending ?? chatStartPending)(dataDir);
+    } catch {
+      pending = false;
+    }
+    return pending ? { state: "unknown", reason: "start_pending", lock } : report;
+  };
   let raw: string;
   try {
     raw = readFileSync(resolvePidFilePath(dataDir), "utf-8").trim();
   } catch (err) {
     return (err as NodeJS.ErrnoException | null)?.code === "ENOENT"
-      ? { state: "no_pid", reason: "no_pid_file", lock }
+      ? gone({ state: "no_pid", reason: "no_pid_file", lock })
       : { state: "unknown", reason: "pid_unreadable", lock };
   }
   const pid = Number(raw);
   // An empty or garbled record is what `readRunningPid` treats as nothing
   // recorded: no process can be behind it.
-  if (!Number.isInteger(pid) || pid <= 0) return { state: "no_pid", reason: "pid_empty", lock };
+  if (!Number.isInteger(pid) || pid <= 0) return gone({ state: "no_pid", reason: "pid_empty", lock });
   // A record from before the last reboot: pids start over at boot, so the
   // number may now name an unrelated live process (ATO-1275).
   if (pidFileBeforeBoot(dataDir, probes.bootTimeMs ?? machineBootTimeMs)) {
-    return { state: "dead", reason: "pid_before_boot", lock };
+    return gone({ state: "dead", reason: "pid_before_boot", lock });
   }
   const answer = pidLiveness(pid);
-  if (answer === "dead") return { state: "dead", reason: "pid_dead", lock };
+  if (answer === "dead") return gone({ state: "dead", reason: "pid_dead", lock });
   return { state: "alive", reason: answer === "foreign" ? "pid_foreign" : "pid_alive", lock };
 }
 

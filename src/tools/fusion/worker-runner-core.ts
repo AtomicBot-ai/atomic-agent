@@ -76,6 +76,8 @@ export interface WorkerRunnerCoreDeps {
         | "hasDeclinedUnder"
         | "forgetDeclinedUnder"
         | "wouldPrompt"
+        | "getLevel"
+        | "holdsForOutsideContent"
       >
     >;
   /** Progress into the PARENT session's frame. */
@@ -187,6 +189,14 @@ export interface WorkerRunnerCoreOptions {
    */
   writeScope?: readonly string[];
   /**
+   * False when nobody approved `writeScope` for these workers: the
+   * standing level let the fan-out through (auto mode, ATO-1689), so the
+   * workers get no fan-out scope and every step they take is decided by
+   * the gate under that level, as the chat's own would be. Absent or true:
+   * the scope is granted as before.
+   */
+  scopeApproved?: boolean;
+  /**
    * The operator's request behind the orchestrator's turn, quoted into
    * every worker's brief as context (`renderWorkerBrief`). Absent when
    * the parent turn has none to give.
@@ -231,6 +241,12 @@ export interface WorkerRunnerCoreOptions {
 
 /** Fusion's options on top of the core. Each one absent does nothing. */
 export interface FusionWorkerRunnerOptionsExtras {
+  /**
+   * Why a task is not on the model it asked for (`TaskLeg.note`,
+   * ATO-943), put on its `started` event (ATO-1754). Absent, or
+   * `undefined` for a task: nothing to say.
+   */
+  taskModelNote?: (taskId: string) => string | undefined;
   /**
    * The local leg's measured generation speed
    * (`LlamaServerClient.measuredTokensPerSecond`), `null` when nothing

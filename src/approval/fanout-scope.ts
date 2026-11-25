@@ -39,6 +39,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 export class FanoutScopeRegistry {
   private readonly dirsBySession = new Map<string, readonly string[]>();
   private readonly turnScopeBySession = new Map<string, readonly string[]>();
+  private readonly commandsRefusedInTurn = new Set<string>();
 
   /**
    * Authorise `dirs` (absolute, already resolved) for `sessionId`.
@@ -114,6 +115,23 @@ export class FanoutScopeRegistry {
    */
   clearTurnGrant(sessionId: string): void {
     this.turnScopeBySession.delete(sessionId);
+    this.commandsRefusedInTurn.delete(sessionId);
+  }
+
+  /**
+   * A worker of `sessionId`'s fan-out was refused a command because the
+   * fan-out went out in auto mode with nobody asked (ATO-1689). The next
+   * fan-out of the turn asks the operator, whose yes covers commands, so
+   * a task that needs the tests is not refused the same way again.
+   * Forgotten when the turn ends, with the turn grant.
+   */
+  noteCommandRefused(sessionId: string): void {
+    this.commandsRefusedInTurn.add(sessionId);
+  }
+
+  /** Whether `noteCommandRefused` was called for this turn. */
+  commandRefusedThisTurn(sessionId: string): boolean {
+    return this.commandsRefusedInTurn.has(sessionId);
   }
 }
 

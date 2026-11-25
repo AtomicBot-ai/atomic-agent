@@ -71,6 +71,7 @@ import {
   LOW_MEMORY_EMBEDDING_NOTE,
   startChatAndEmbeddingDaemons,
   startEmbeddingDaemon,
+  withChatStartPending,
   stopChatAndEmbeddingDaemons,
   stopDaemon,
   WINDOWS_ARM64_NO_BACKEND_MESSAGE,
@@ -564,7 +565,21 @@ export async function runLocalModelsStatus(write: (text: string) => void = (t) =
   return 0;
 }
 
+/**
+ * `models start`, the desktop's start and restart. Its backend check and
+ * the probes before the load run before the daemon start inside it, so the
+ * marker is held from here (ATO-421): a turn waiting on the refused port
+ * reads the start as on its way for the command's whole length.
+ */
 export async function runLocalModelsStart(
+  opts: Parameters<typeof runLocalModelsStartNow>[0] = {},
+): Promise<number> {
+  const cfg = getConfig();
+  if (cfg.localModels.mode !== "managed") return runLocalModelsStartNow(opts);
+  return withChatStartPending(cfg.paths.localModelsDataDir, () => runLocalModelsStartNow(opts));
+}
+
+async function runLocalModelsStartNow(
   opts: {
     interactive?: boolean;
     signal?: AbortSignal;

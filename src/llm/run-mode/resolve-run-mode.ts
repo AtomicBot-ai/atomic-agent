@@ -21,6 +21,7 @@ import type {
   LlmProviderConfigEntry,
   ResolvedLlmConfig,
 } from "../provider/registry/provider-types.js";
+import { isForeignLlamaServer } from "./foreign-llama-server.js";
 
 export type RunModeDegradationReason =
   "no-cloud-provider" | "no-second-provider";
@@ -179,6 +180,13 @@ export type FusionRoleModels = {
 export type ResolveRunModeOptions = {
   /** `localModels.managed.modelId`, the model the worker daemon serves. */
   managedModelId?: string | null;
+  /**
+   * `localModels.url`, the main local server. A `llama-server` worker on
+   * another URL is somebody else's llama.cpp: the managed model says
+   * nothing about it (ATO-1562). Absent, every local worker is read as
+   * the main one, as before.
+   */
+  localServerUrl?: string;
 };
 
 function isLocalKind(entry: LlmProviderConfigEntry | undefined): boolean {
@@ -296,10 +304,24 @@ export function resolveRunMode(
   // Models by role (ATO-943). A role's label follows the same chain as
   // the legs': the worker leg's own label when the role IS the worker
   // leg, else the entry's chat model (cloud) or `model` (local).
+  // A foreign llama.cpp worker (ATO-1562) is never labelled with the
+  // managed model: that names a model this machine holds, not the one
+  // the other server loaded. Its own entry's `model` is the best guess
+  // here; `fusion.delegate` replaces it with what `/props` says.
+  // `local-llama` is the managed daemon's own entry whatever its URL
+  // reads (in managed mode it is built from the daemon's port, not from
+  // `localModels.url`), as the TUI composer already treats it.
+  const workerIsForeign =
+    worker !== undefined &&
+    worker.id !== "local-llama" &&
+    opts.localServerUrl !== undefined &&
+    isForeignLlamaServer(worker, opts.localServerUrl);
   const workerModelLabel =
     fusion?.workerModel ??
     (worker !== undefined && isLocalKind(worker)
-      ? (opts.managedModelId ?? worker.model ?? null)
+      ? workerIsForeign
+        ? (worker.model ?? null)
+        : (opts.managedModelId ?? worker.model ?? null)
       : (worker?.defaultChatModel ?? worker?.model ?? null));
   // What each leg asks for on the wire (ATO-1560). The orchestrator's
   // model is applied to every request its unpinned turns send to that

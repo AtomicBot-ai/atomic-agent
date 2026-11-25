@@ -12,7 +12,7 @@ import { createWebhookHandler } from "./route-webhooks.js";
  * one), so the handler refuses any binding without a `secret`, and every
  * hit must pass the binding's `verify` scheme. Every signed binding also
  * gets replay protection here: a delivery id already turned into a task
- * (`X-GitHub-Delivery`, `webhook-id`, Stripe event `id`) answers 200 and
+ * (`X-GitHub-Delivery`, `webhook-id` or `svix-id`, Stripe event `id`) answers 200 and
  * runs nothing, and the timestamped schemes (Standard Webhooks, Stripe)
  * refuse a signature more than 5 minutes old.
  */

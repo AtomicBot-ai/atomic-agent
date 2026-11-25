@@ -222,3 +222,44 @@ describe("readManagedModelProcess (ATO-1434)", () => {
     expect(readManagedModelProcess(dataDir, { ...longUp, pidLiveness: () => "foreign" })).toBe("running");
   });
 });
+
+describe("explainManagedEngineLiveness: a chat start on its way (ATO-421)", () => {
+  let dataDir: string;
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "engine-liveness-pending-"));
+  });
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  const deadPid = (): number => spawnSync(process.execPath, ["-e", ""]).pid!;
+  const writePid = (value: string): void => writeFileSync(resolvePidFilePath(dataDir), value, "utf-8");
+  const pending = { startPending: () => true };
+
+  it("no pid file with a start on its way is unknown (start_pending), not no_pid", () => {
+    expect(explainManagedEngineLiveness(dataDir, pending)).toEqual({ state: "unknown", reason: "start_pending", lock: "free" });
+    expect(explainManagedEngineLiveness(dataDir, { startPending: () => false }).reason).toBe("no_pid_file");
+  });
+
+  it("a dead recorded pid with a start on its way (the restart after a crash) is start_pending", () => {
+    writePid(String(deadPid()));
+    expect(explainManagedEngineLiveness(dataDir, pending).reason).toBe("start_pending");
+  });
+
+  it("never hides a live model process behind the marker", () => {
+    writePid(String(process.pid));
+    expect(explainManagedEngineLiveness(dataDir, pending)).toMatchObject({ state: "alive", reason: "pid_alive" });
+  });
+
+  it("a marker probe that throws leaves the reading as it was", () => {
+    expect(explainManagedEngineLiveness(dataDir, { startPending: () => { throw new Error("EACCES"); } }).reason).toBe("no_pid_file");
+  });
+
+  it("reads the real marker a start writes", async () => {
+    const { markChatStartPending } = await import("./chat-start-pending.js");
+    const done = markChatStartPending(dataDir);
+    expect(explainManagedEngineLiveness(dataDir).reason).toBe("start_pending");
+    done();
+    expect(explainManagedEngineLiveness(dataDir).reason).toBe("no_pid_file");
+  });
+});

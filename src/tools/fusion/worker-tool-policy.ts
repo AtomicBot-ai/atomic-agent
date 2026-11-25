@@ -127,6 +127,22 @@ export const FUSION_WORKER_APPROVAL_MARKER =
   "needs operator approval, which a worker cannot request";
 
 /**
+ * The refusal for a command a worker ran under a fan-out that went out
+ * in auto mode with nobody asked (ATO-1689). Such a fan-out covers file
+ * writes in the working directory, as the chat's own level does, not
+ * commands. The orchestrator cannot run the command either, but its next
+ * fan-out asks the user once, and that yes covers commands. Keeps
+ * `FUSION_WORKER_APPROVAL_MARKER`, so the task comes back
+ * `needs_orchestrator`.
+ */
+export const FUSION_WORKER_COMMAND_NOT_ASKED_REFUSED =
+  `this step ${FUSION_WORKER_APPROVAL_MARKER}. ` +
+  "This fan-out was sent out in auto mode without asking the user, so it covers file writes " +
+  "in the working directory, not commands or deletions. Stop retrying it and, in your reply, name the exact " +
+  "command or file and why the task needs it: when the orchestrator sends the task out again, the user " +
+  "is asked once to allow commands there.";
+
+/**
  * The stable substring of `FUSION_WORKER_OPERATOR_ONLY_REFUSED`: the
  * result classifier keys a note to the orchestrator off it.
  */
