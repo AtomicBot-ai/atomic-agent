@@ -20,6 +20,40 @@ test('a frame diffstat is read only when its shape is whole; an older agent send
   assert.equal(C.changedFileOfFrame({diffstat: {path: '/a', added: '1', removed: 0}}), null);
 });
 
+test('a fusion.delegate frame lists every worker file; a broken row is skipped, the rest stay (ATO-1702)', () => {
+  const frame = {tool: 'fusion.delegate', diffstats: [
+    {path: '/w/a.ts', added: 5, removed: 3},
+    {path: '', added: 1, removed: 0},
+    {path: '/w/bad', added: -1, removed: 0},
+    null,
+    'x',
+    {path: '/w/b.md', added: 10, removed: 0},
+  ]};
+  assert.deepEqual(C.changedFilesOfFrame(frame), [
+    {path: '/w/a.ts', added: 5, removed: 3},
+    {path: '/w/b.md', added: 10, removed: 0},
+  ]);
+  // A write/edit still gives its one file; a frame with neither gives none.
+  assert.deepEqual(C.changedFilesOfFrame({diffstat: {path: '/w/c.ts', added: 1, removed: 0}}), [{path: '/w/c.ts', added: 1, removed: 0}]);
+  assert.deepEqual(C.changedFilesOfFrame({}), []);
+  assert.deepEqual(C.changedFilesOfFrame(null), []);
+  assert.deepEqual(C.changedFilesOfFrame({diffstats: 'nope'}), []);
+  // Into the card: two files, two rows; a file the chat already changed adds up.
+  let list = C.changedFilesAdd([], {path: '/w/a.ts', added: 1, removed: 0});
+  for (const f of C.changedFilesOfFrame(frame)) list = C.changedFilesAdd(list, f);
+  assert.deepEqual(list, [
+    {path: '/w/a.ts', added: 6, removed: 3, edits: 2},
+    {path: '/w/b.md', added: 10, removed: 0, edits: 1},
+  ]);
+  assert.match(C.changedFilesCardHTML(list, deps), /Changed files \(2\)/);
+  assert.match(C.resultsPaneHTML([{k: 'assistant', changed: list}], deps), /Changed files \(2\)/);
+});
+
+test('the renderer puts every change of a frame on the card, not only its single diffstat (ATO-1702)', () => {
+  const src = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
+  assert.match(src, /for \(const changedFile of changedFilesOfFrame\(p\)\) item\.changed = changedFilesAdd\(item\.changed, changedFile\)/);
+});
+
 test('changes to one file add up on one row, files keep the order they were first touched', () => {
   let list = C.changedFilesAdd(undefined, {path: '/w/a.ts', added: 3, removed: 1});
   list = C.changedFilesAdd(list, {path: '/w/b.md', added: 10, removed: 0});

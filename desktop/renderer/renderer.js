@@ -11770,8 +11770,8 @@ function onChatEvent(ev) {
     // ATO-1010: an MCP tool's app page (`mcp_app` on the frame) runs in the same sandboxed frame (mcp-app.js).
     if (p.mcp_app && item && typeof chatMcpApp === 'function') chatMcpApp(item, p, S.sessionId, S.log);
     // ATO-1187: a write/edit's lines added/removed go on the turn's "Changed files" card (changed-files.js).
-    const changedFile = changedFileOfFrame(p);
-    if (changedFile && item) item.changed = changedFilesAdd(item.changed, changedFile);
+    // ATO-1702: a fusion.delegate's `diffstats` (its workers' files) go on the same card.
+    if (item) for (const changedFile of changedFilesOfFrame(p)) item.changed = changedFilesAdd(item.changed, changedFile);
     render();
     return;
   }
