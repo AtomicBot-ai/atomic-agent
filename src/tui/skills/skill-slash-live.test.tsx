@@ -30,6 +30,10 @@ async function fixture(cloud = true) {
     mkdirSync(root, { recursive: true });
     writeFileSync(join(root, "SKILL.md"), `---\nname: openspec-explore\ndescription: Explore project requirements\n---\n${source} EXPLORE BODY`);
   }
+  // A global skill: the only kind the local registry sees for this folder.
+  const globalSkill = join(dir, "state", "skills", "local-review");
+  mkdirSync(globalSkill, { recursive: true });
+  writeFileSync(join(globalSkill, "SKILL.md"), "---\nname: local-review\ndescription: Review local changes\n---\nLOCAL REVIEW BODY");
   vi.stubEnv("ATOMIC_AGENT_STATE_DIR", join(dir, "state"));
   vi.stubEnv("ATOMIC_AGENT_GRAMMARS_DIR", join(process.cwd(), "grammars"));
   resetConfigCache();
@@ -56,7 +60,7 @@ async function fixture(cloud = true) {
       llamaComplete: async p => {
         prompts.push(p.prompt);
         return completion(prompts.length === 1
-          ? '[{"tool":"skill.view","args":{"name":"openspec-explore"}}]'
+          ? `[{"tool":"skill.view","args":{"name":"${cloud ? "openspec-explore" : "local-review"}"}}]`
           : '[{"tool":"reply","args":{"text":"Skill loaded successfully"}}]');
       } },
   });
@@ -126,14 +130,32 @@ it("rechecks disabling after the palette was shown and preserves the unsent requ
   } finally { await f.close(); }
 });
 
-it("keeps local slash behavior unchanged", async () => {
+it("invokes a skill by slash command on a local model too (ATO-1469)", async () => {
   const f = await fixture(false);
   try {
-    f.app.stdin.write("/openspec-explore");
-    await vi.waitFor(() => expect(f.frame()).toContain("/openspec-explore"));
-    expect(f.frame()).not.toContain("Explore project requirements");
+    f.app.stdin.write("/local-rev");
+    await vi.waitFor(() => expect(f.frame()).toContain("Review local changes"));
+    f.app.stdin.write("\t");
+    await vi.waitFor(() => expect(f.frame()).not.toContain("Review local changes"));
+    f.app.stdin.write("check the diff");
+    await new Promise(resolve => setTimeout(resolve, 30));
     f.app.stdin.write("\r");
-    await vi.waitFor(() => expect(f.frame()).toContain("unknown command: /openspec-explore"));
+    await vi.waitFor(() => expect(f.frame()).toContain("Skill loaded successfully"));
+    expect(f.prompts[0]).toContain('skill.view({"name":"local-review"})');
+    expect(f.prompts[0]).toContain("check the diff");
+    expect(f.prompts[1]).toContain("LOCAL REVIEW BODY");
+    expect(f.frame()).not.toContain("unknown command");
+  } finally { await f.close(); }
+});
+
+it("refuses a local skill disabled after the palette was shown", async () => {
+  const f = await fixture(false);
+  try {
+    f.app.stdin.write("/local-review now");
+    await vi.waitFor(() => expect(f.frame()).toContain("/local-review now"));
+    f.runtime.skillRegistry.setDisabledNames(["local-review"]);
+    f.app.stdin.write("\r");
+    await vi.waitFor(() => expect(f.frame()).toContain("skill local-review is disabled"));
     expect(f.prompts).toHaveLength(0);
   } finally { await f.close(); }
 });

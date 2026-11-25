@@ -1,5 +1,6 @@
 import { isAsciiOnly } from "./ascii-header-guard.js";
 import { buildOpenAiAuthHeaders } from "./openai-auth-headers.js";
+import type { ApiKeySource } from "./api-key-command.js";
 import { readErrnoCode } from "../../errno-code.js";
 import {
   groqRequestTooLargeSentence,
@@ -31,6 +32,7 @@ import {
   localBadRequestKind,
 } from "./local-bad-request.js";
 import { isToolSchemaErrorText } from "./tool-schema-rejection.js";
+import { invalidSamplingParameter } from "./invalid-parameter.js";
 import {
   ATOMIC_CHAT_KEY_ADVICE,
   atomicChatKeyMessage,
@@ -63,7 +65,41 @@ export type OpenAiHttpDeps = {
    * (ATO-569). Must not throw; a throw is swallowed.
    */
   onResponseHeaders?: (headers: Headers) => void;
+  /**
+   * More than one key for this provider (ATO-471). When set, a request
+   * a key was refused for (rate limit, bad key, empty account) is sent
+   * again with the pool's next key before the error goes up to the
+   * fallback chain. Absent: one key, the historical behaviour.
+   */
+  keyPool?: OpenAiKeyRotation;
+  /**
+   * Where the key comes from when it is a short-lived token printed by a
+   * command (`apiKeyCommand`, Vertex AI's `gcloud auth print-access-token`).
+   * When set it replaces `apiKey` on every request, and a 401 re-runs the
+   * command once and resends. See `api-key-command.ts`.
+   */
+  apiKeySource?: ApiKeySource;
 };
+
+/**
+ * What the HTTP layer needs from a provider's key pool. The pool itself
+ * (`llm/fallback/key-pool.ts`) owns the order, the cooldowns and the
+ * classification; this layer only asks it for keys.
+ */
+export interface OpenAiKeyRotation {
+  /** The key the next request should carry. */
+  current(): string;
+  /**
+   * `key` was refused with `err`: the key to try next, or null when no
+   * other key would help (the error is not about the key, or every
+   * other key is cooling down).
+   */
+  rotate(key: string, err: unknown): string | null;
+  /** Would `rotate` move off `key` for `err`? Never changes state. */
+  wouldRotate(key: string, err: unknown): boolean;
+  /** `key` served a request. */
+  succeeded(key: string): void;
+}
 
 /**
  * A key problem the request itself shows, without asking the provider:
@@ -246,7 +282,9 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
     return `${who} refused the request (403): its moderation flagged the input, the key is fine.${own ? ` ${own}` : ""}`;
   }
   if (err.status === 401 || err.status === 403) {
-    return `${who} rejected the API key (${err.status}). Check the key in the Providers panel.`;
+    // Decision 56 (ATO-1458): the same words the fallback line uses, no
+    // HTTP code in the sentence; the status stays on the error for logs.
+    return `${who} did not accept your API key. Check the key in the Providers panel.`;
   }
   if ((err.status === 404 || err.status === 405) && isLocalProviderUrl(err.url)) {
     return localServerNotFoundSentence(err.url, err.status);
@@ -299,6 +337,20 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   if (err.status === 400 && isLocalProviderUrl(err.url)) {
     const sentence = localBadRequestSentence(err);
     if (sentence !== null) return sentence;
+  }
+  if ((err.status === 400 || err.status === 422) && !isLocalProviderUrl(err.url)) {
+    // ATO-1218: the model refused one of the sampling settings we sent.
+    // The turn stops here (`shouldAdvance`), so name the provider and the
+    // setting, keep the provider's own words, and say what to change.
+    const param = invalidSamplingParameter(`${err.message}\n${err.body?.text ?? ""}`);
+    if (param !== null) {
+      const own = providerReason(err);
+      return (
+        `${who} did not accept the "${param}" setting for this model (${err.status}).` +
+        (own ? ` ${own}` : "") +
+        ` Change or remove it in the model's settings, or pick another model.`
+      );
+    }
   }
   // Everything else — 400 bad request, 413, 422 — has no wording of its own
   // here, and a bare "rejected the request (400)" throws away the only
@@ -622,13 +674,15 @@ export async function openAiGetJson(
   deps: OpenAiHttpDeps,
   path: string,
 ): Promise<Record<string, unknown>> {
-  return runOpenAiWithRetry(deps, path, undefined, async () => {
-    const res = await openAiFetch(deps, path, null, {}, false, "GET");
-    if (!res.ok) {
-      throw await httpErrorFromResponse(deps, path, res);
-    }
-    return (await res.json()) as Record<string, unknown>;
-  });
+  return withKeyRotation(deps, undefined, (keyed) =>
+    runOpenAiWithRetry(keyed, path, undefined, async () => {
+      const res = await openAiFetch(keyed, path, null, {}, false, "GET");
+      if (!res.ok) {
+        throw await httpErrorFromResponse(keyed, path, res);
+      }
+      return (await res.json()) as Record<string, unknown>;
+    }),
+  );
 }
 
 export async function openAiPostJson(
@@ -639,20 +693,22 @@ export async function openAiPostJson(
   onSend?: OnOpenAiRequestBody,
 ): Promise<Record<string, unknown>> {
   return withCreditLimitRetry(deps, body, onSend, (attemptBody) =>
-    runOpenAiWithRetry(deps, path, request.signal, async () => {
-      const res = await openAiFetch(
-        deps,
-        path,
-        attemptBody,
-        request,
-        false,
-        "POST",
-      );
-      if (!res.ok) {
-        throw await httpErrorFromResponse(deps, path, res);
-      }
-      return readJsonBody(res, request.signal);
-    }),
+    withKeyRotation(deps, undefined, (keyed) =>
+      runOpenAiWithRetry(keyed, path, request.signal, async () => {
+        const res = await openAiFetch(
+          keyed,
+          path,
+          attemptBody,
+          request,
+          false,
+          "POST",
+        );
+        if (!res.ok) {
+          throw await httpErrorFromResponse(keyed, path, res);
+        }
+        return readJsonBody(res, request.signal);
+      }),
+    ),
   );
 }
 
@@ -786,27 +842,67 @@ export async function openAiStartStream(
   // refused before any bytes exist, so re-sending with a lower ceiling
   // cannot duplicate output — the same argument the open-retry makes.
   return withCreditLimitRetry(deps, body, onSend, (attemptBody) =>
-    runOpenAiWithRetry(
-      deps,
-      path,
-      request.signal,
-      async () => {
-        const res = await openAiFetch(
-          deps,
-          path,
-          attemptBody,
-          request,
-          true,
-          "POST",
-        );
-        if (!res.ok || !res.body) {
-          throw await httpErrorFromResponse(deps, path, res);
-        }
-        return res as Response & { body: NonNullable<Response["body"]> };
-      },
-      budget,
+    withKeyRotation(deps, budget, (keyed) =>
+      runOpenAiWithRetry(
+        keyed,
+        path,
+        request.signal,
+        async () => {
+          const res = await openAiFetch(
+            keyed,
+            path,
+            attemptBody,
+            request,
+            true,
+            "POST",
+          );
+          if (!res.ok || !res.body) {
+            throw await httpErrorFromResponse(keyed, path, res);
+          }
+          return res as Response & { body: NonNullable<Response["body"]> };
+        },
+        budget,
+      ),
     ),
   );
+}
+
+/**
+ * Send with the pool's current key; when that key is refused (rate
+ * limit, bad key, empty account) send the same request with the pool's
+ * next key, until one serves or no other key would help (ATO-471).
+ * Only then does the error go up, so the fallback chain moves to another
+ * provider only after every key of this one was tried.
+ *
+ * Inside the credit-limit retry on purpose: a funded second key beats
+ * resending with a smaller reply cap on the first. A refusal is a
+ * complete HTTP answer before any byte of a stream exists, so resending
+ * cannot duplicate output. A stream's shared `budget` still bounds the
+ * total requests of one completion; once it is spent the last refusal
+ * goes up as it was. Cancellation is never rotated.
+ */
+async function withKeyRotation<T>(
+  deps: OpenAiHttpDeps,
+  budget: OpenAiAttemptBudget | undefined,
+  send: (keyed: OpenAiHttpDeps) => Promise<T>,
+): Promise<T> {
+  const pool = deps.keyPool;
+  if (!pool) return send(deps);
+  const tried = new Set<string>();
+  let key = pool.current();
+  for (;;) {
+    tried.add(key);
+    try {
+      const out = await send({ ...deps, apiKey: key });
+      pool.succeeded(key);
+      return out;
+    } catch (err) {
+      const next = pool.rotate(key, err);
+      if (next === null || tried.has(next)) throw err;
+      if (budget !== undefined && budget.remaining <= 0) throw err;
+      key = next;
+    }
+  }
 }
 
 /**
@@ -835,6 +931,56 @@ export async function openAiFetch(
   request: { signal?: AbortSignal; requestTimeoutMs?: number },
   stream: boolean,
   method: "GET" | "POST" = "POST",
+): Promise<Response> {
+  const source = deps.apiKeySource;
+  if (!source) return openAiFetchOnce(deps, path, body, request, stream, method);
+  const first = await openAiFetchOnce(
+    await withCommandKey(deps, source, path),
+    path, body, request, stream, method,
+  );
+  if (first.status !== 401) return first;
+  // The token printed earlier has expired or been revoked: run the
+  // command again and resend once. A second 401 is the real answer.
+  await first.body?.cancel().catch(() => undefined);
+  source.invalidate();
+  return openAiFetchOnce(
+    await withCommandKey(deps, source, path),
+    path, body, request, stream, method,
+  );
+}
+
+/**
+ * `deps` with the command's current output as `apiKey`. A command that
+ * cannot produce a key is a 401-class failure (deterministic, never
+ * retried, a fallback chain moves on); its message names the command,
+ * never its output.
+ */
+async function withCommandKey(
+  deps: OpenAiHttpDeps,
+  source: ApiKeySource,
+  path: string,
+): Promise<OpenAiHttpDeps> {
+  try {
+    return { ...deps, apiKey: await source.get() };
+  } catch (err) {
+    throw new OpenAiHttpError(
+      err instanceof Error ? err.message : "apiKeyCommand failed",
+      401,
+      `${deps.baseUrl}${path}`,
+      false,
+      null,
+      deps.label,
+    );
+  }
+}
+
+async function openAiFetchOnce(
+  deps: OpenAiHttpDeps,
+  path: string,
+  body: Record<string, unknown> | null,
+  request: { signal?: AbortSignal; requestTimeoutMs?: number },
+  stream: boolean,
+  method: "GET" | "POST",
 ): Promise<Response> {
   // Built before the try below, which would wrap the throw as a
   // retryable "network error" and replace its message with a
@@ -967,6 +1113,7 @@ async function httpErrorFromResponse(
  */
 function sentCredential(deps: OpenAiHttpDeps): boolean {
   if ((deps.apiKey ?? "").trim().length > 0) return true;
+  if (deps.apiKeySource) return true;
   const named = deps.apiKeyHeader?.trim().toLowerCase();
   return Object.entries(deps.extraHeaders ?? {}).some(([name, value]) => {
     const lower = name.trim().toLowerCase();
@@ -1067,6 +1214,9 @@ async function runOpenAiWithRetry<T>(
       // surfaced as.
       if (signal?.aborted) throw err;
       if (!isRetryableOpenAiError(err) || budget.remaining <= 0) throw err;
+      // Another key of this provider answers a rate limit better than
+      // the same key again: `withKeyRotation` sends it there (ATO-471).
+      if (deps.keyPool?.wouldRotate(deps.apiKey, err)) throw err;
       // A provider asking for a longer cooldown than this layer will wait
       // gets it from the turn (the outage wait honours the whole hint) or
       // from the person's fallback link, not from a quick retry it already

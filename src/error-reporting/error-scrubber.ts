@@ -11,6 +11,8 @@ import { classifyTransportHost } from "./classify-transport-host.js";
 import { sanitizeLlmFailureTags, type LlmFailureContext } from "./llm-failure-tags.js";
 import { maskSecrets } from "./secret-detector.js";
 import { extractAnswerFailureTags } from "./answer-failure-tag.js";
+import { extractSubscriptionCliFailureTags } from "./subscription-cli-failure-tag.js";
+import { extractUpstreamErrorDetail } from "./upstream-error-detail.js";
 
 /** Neutral, transport-agnostic shape of a scrubbed error report. */
 export interface ScrubbedErrorEvent {
@@ -116,6 +118,20 @@ export interface ScrubbedErrorEvent {
    */
   upstreamErrorType?: string;
   /**
+   * What the provider said was wrong, as one fixed word
+   * (`upstream-error-detail.ts`, ATO-1673): `missing_thought_signature`,
+   * `tool_result_missing`, `empty_content`, … or `other`. Matched on
+   * this machine; the provider's sentence itself never travels.
+   */
+  upstreamReason?: string;
+  /**
+   * The request field the provider blamed (`messages[].content`), only
+   * when it starts at a known request field, indices reduced to `[]`.
+   */
+  upstreamErrorParam?: string;
+  /** `error.code` of the provider body, bounded enum shape. */
+  upstreamErrorCode?: string;
+  /**
    * `llm_failure` turn context as ready-made tags (`provider_id`,
    * `local_engine`, `outage_waited_ms`, `outage_attempts`,
    * `daemon_state`, and for a refused connection `local_engine_alive`
@@ -123,6 +139,14 @@ export interface ScrubbedErrorEvent {
    * `sanitizeLlmFailureTags`.
    */
   llmFailureTags?: Record<string, string>;
+  /**
+   * `cli_failure` / `cli_exit_code` / `cli_reason` of a failed Claude
+   * Code or Codex run (ATO-1446, ATO-1679), fixed words and a bounded
+   * integer from
+   * `extractSubscriptionCliFailureTags`. Context only, like
+   * `llmFailureTags`: they stay out of the fingerprint.
+   */
+  cliFailureTags?: Record<string, string>;
   /** Path-stripped stack frames (basenames only — no home dir / username). */
   frames: SentryStackFrame[];
 }
@@ -518,7 +542,21 @@ export function scrubError(
   if (upstreamErrorType !== undefined) {
     event.upstreamErrorType = upstreamErrorType;
   }
+  const detail = extractUpstreamErrorDetail(err);
+  if (detail.upstreamReason !== undefined) {
+    event.upstreamReason = detail.upstreamReason;
+  }
+  if (detail.upstreamErrorParam !== undefined) {
+    event.upstreamErrorParam = detail.upstreamErrorParam;
+  }
+  if (detail.upstreamErrorCode !== undefined) {
+    event.upstreamErrorCode = detail.upstreamErrorCode;
+  }
   const llmFailureTags = sanitizeLlmFailureTags(opts.llmFailure);
   if (llmFailureTags !== undefined) event.llmFailureTags = llmFailureTags;
+  const cliFailureTags = extractSubscriptionCliFailureTags(err);
+  if (cliFailureTags !== undefined) {
+    event.cliFailureTags = cliFailureTags;
+  }
   return event;
 }

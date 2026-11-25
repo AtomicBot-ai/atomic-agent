@@ -8,8 +8,14 @@ import { connectCore, ensureCore, withCoreClient } from "./core-client.js";
 import { shutdownIdleCoreClient } from "./core-idle.js";
 import { noteReleaseTimeout, RELEASE_WAIT_MS, waitForProcessRelease } from "../server/process-release.js";
 
-/** These host arguments are owned by the control contract, never duplicated in extra_args. */
-export function coreLoadOverrides(args: readonly string[]): Record<string, unknown> {
+/**
+ * These host arguments are owned by the control contract, never duplicated in extra_args.
+ *
+ * `speculative.mtp` asks Core for MTP drafting; off unless a caller has
+ * checked `coreMtpSwitch` (`core-speculative.ts`), which today is never
+ * true for chat: Core clears it on the TurboQuant provider (ATO-452).
+ */
+export function coreLoadOverrides(args: readonly string[], speculative: { mtp?: boolean } = {}): Record<string, unknown> {
   const skipped = new Set(["-m", "--model", "--host", "--port", "-a", "--alias", "--mmproj"]);
   const extras: string[] = [];
   let ctx = 0;
@@ -26,7 +32,7 @@ export function coreLoadOverrides(args: readonly string[]): Record<string, unkno
   // Core's own default keeps the vision projector on the CPU
   // (`--no-mmproj-offload`); the llama-server engine offloads it.
   return { ctx_size: ctx, parallel, concurrent_mode: false, auto_unload: false,
-    mtp: false, dflash: false, offload_mmproj: true, extra_args: extras.join(" ") };
+    mtp: speculative.mtp === true, dflash: false, offload_mmproj: true, extra_args: extras.join(" ") };
 }
 
 export async function loadCoreSession(dataDir: string, options: {

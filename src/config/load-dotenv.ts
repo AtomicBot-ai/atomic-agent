@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import {
+  loadKeychainSecrets,
+  type KeychainLoadResult,
+  type SecretKeychain,
+} from "./secret-store.js";
+
 /**
  * A `.env` read failure that survived the retry loop (or was not
  * retryable). Deliberately tiny: the errno code plus the attempt count.
@@ -35,6 +41,12 @@ export interface DotenvLoadResult {
    * silently dropped (#59).
    */
   error: DotenvReadFailure | null;
+  /**
+   * Keychain outcome when the operator opted into the OS keychain
+   * (ATO-474); absent in the default `.env` mode. Its `loaded` names
+   * are also in `loaded` above. Names only, never values.
+   */
+  keychain?: KeychainLoadResult;
 }
 
 /** I/O seams, injectable for tests. Production callers omit them. */
@@ -120,6 +132,21 @@ function parseLine(
 }
 
 /**
+ * `KEY=VALUE` pairs of a `.env` text, parsed exactly as the loader
+ * parses them (malformed lines are skipped silently). Used by the
+ * secrets migration, which must move the same values the loader reads.
+ */
+export function parseDotenvText(raw: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const lines = raw.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const parsed = parseLine(lines[i] ?? "", i + 1, () => {});
+    if (parsed && !out.has(parsed[0])) out.set(parsed[0], parsed[1]);
+  }
+  return out;
+}
+
+/**
  * Read the file with a short retry loop. Windows antivirus and sync
  * clients hold transient locks that surface as EPERM/EBUSY for a few
  * milliseconds; two brief backoffs ride those out without noticeably
@@ -202,7 +229,28 @@ export function formatDotenvReadWarning(
  */
 export function loadDotenvFromStateDir(
   stateDir: string,
-  deps: Partial<DotenvIoDeps> = {},
+  deps: Partial<DotenvIoDeps> & { keychain?: SecretKeychain } = {},
+): DotenvLoadResult {
+  const result = loadDotenvFile(stateDir, deps);
+  // Opt-in OS keychain (ATO-474). Runs whether or not `.env` exists: a
+  // full migration leaves no `.env` behind. In the default mode this is
+  // one missing-file check and never loads the native binding.
+  const keychain = loadKeychainSecrets(stateDir, deps.keychain);
+  if (keychain) {
+    result.keychain = keychain;
+    result.loaded.push(...keychain.loaded);
+    for (const key of keychain.skipped) {
+      if (!result.loaded.includes(key) && !result.skipped.includes(key)) {
+        result.skipped.push(key);
+      }
+    }
+  }
+  return result;
+}
+
+function loadDotenvFile(
+  stateDir: string,
+  deps: Partial<DotenvIoDeps>,
 ): DotenvLoadResult {
   const io: DotenvIoDeps = {
     readFile: deps.readFile ?? ((p) => readFileSync(p, "utf8")),

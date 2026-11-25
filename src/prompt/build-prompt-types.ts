@@ -19,7 +19,12 @@ import type { ToolRole } from "../tools/tool-roles.js";
 
 export interface BuildPromptInput {
   workspace?: import("../session/workspace-context.js").SessionWorkspace;
-  /** Estimated cost of the actual native tool schemas, cloud only. */
+  /**
+   * Estimated cost of the request's native `tools` array (JSON schemas),
+   * set on a `native_tools` link in either model mode. The window holds
+   * it beside the prompt text, so the budget subtracts it (ATO-1678;
+   * before, only the cloud budget did). Absent on the grammar transport.
+   */
   toolSchemaTokens?: number;
   /** Stage 1 metadata only: does not change rendering or budgets yet. */
   modelMode?: import("../llm/model-mode.js").ResolvedModelMode;
@@ -36,12 +41,24 @@ export interface BuildPromptInput {
   skillCatalogDropped?: number;
   systemPersona?: string;
   /**
+   * The session's latched user persona (ATO-54), forwarded into
+   * `buildStablePrefix` as `### persona`. Omitted: no block.
+   */
+  persona?: import("./persona-block.js").PersonaPromptInput;
+  /**
    * Single-stream decode speed of the local worker daemon (tokens per
    * second), measured once at daemon start and held on the model profile
    * manager. Rendered into the `### fusion` machine facts as "~N tok/s";
    * `null` / absent says nothing. Read only when that block renders.
    */
   fusionTokensPerSecond?: number | null;
+  /**
+   * What past fusion runs on this machine showed (ATO-949), from the
+   * outcome log's summary, held per session. Rendered into the
+   * `### fusion` block as "Past runs here: …"; absent or empty says
+   * nothing.
+   */
+  fusionPastRuns?: readonly string[] | null;
   /**
    * Transport the serving link uses for tool calls. Forwarded into
    * `buildStablePrefix`, where `"native_tools"` swaps the text-JSON
@@ -257,8 +274,19 @@ export interface BuiltPrompt {
     recalled: number;
     memoryIndex: number;
     taskPolicy: number;
+    /**
+     * The native `tools` array sent beside the text (`toolSchemaTokens`);
+     * included in `total`. Absent when the request carries none.
+     */
+    toolSchema?: number;
     total: number;
   };
+  /**
+   * The reply reserve the local budget held back
+   * (`effectiveReplyReserve`), for diagnostics only: not `n_predict`.
+   * The cloud prompt reports it on `contextBudget` instead.
+   */
+  replyReserve?: number;
   limits: TokenBudgetLimits;
   truncated: boolean;
   truncation: BuiltPromptTruncationFlags;
@@ -304,4 +332,11 @@ export interface BuiltPrompt {
    * `### profile` (issue #407). Counts, never values.
    */
   profileClip?: ProfileClipStats;
+  /**
+   * ATO-42: the `### project` block of the local prompt, when the chat is
+   * in a project with instructions. `tokens` is the full text's estimate,
+   * `truncated` says the block was cut to `PROJECT_SECTION_MAX_TOKENS`.
+   * Absent on the cloud prompt, which carries the whole text.
+   */
+  project?: { name: string | null; tokens: number; truncated: boolean };
 }

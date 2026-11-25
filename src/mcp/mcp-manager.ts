@@ -28,10 +28,19 @@ import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 
 import { McpClient, type McpClientDeps } from "./mcp-client.js";
-import { McpConnectError, scrubErrorMessage } from "./mcp-errors.js";
+import {
+  createMcpElicitationHandler,
+  type McpElicitationPort,
+} from "./mcp-elicitation-handler.js";
+import {
+  McpAuthRequiredError,
+  McpConnectError,
+  scrubErrorMessage,
+} from "./mcp-errors.js";
 import { createMcpResourceClassResolver } from "./mcp-resource-class.js";
 import {
   createMcpToolDefinition,
+  isLocalMcpTransport,
   trustsReadOnlyHintFor,
 } from "./mcp-tool-adapter.js";
 import type {
@@ -66,6 +75,19 @@ export interface McpManagerDeps extends McpClientDeps {
    * test seam — production bootstrap always passes it.
    */
   dangerous?: DangerousToolOptions;
+  /**
+   * How a server's `elicitation/create` reaches a person (ATO-704). When
+   * set, every client gets its own handler naming its server and
+   * advertises `elicitation`; when absent, no client does.
+   */
+  elicitationPort?: McpElicitationPort;
+  /**
+   * The admin MCP allowlist (`src/policy/`, ATO-587), asked before every
+   * connect. `allowed: false` keeps the server down with `message` as its
+   * error; an allowed server with a `message` (warn-only mode) connects
+   * and logs it. Absent means every server may connect.
+   */
+  serverPolicy?: (config: McpServerConfig) => { allowed: boolean; message?: string };
 }
 
 /**
@@ -108,12 +130,18 @@ export class McpManager {
         state: s.state,
         ts: Date.now(),
         ...(s.lastError ? { lastError: s.lastError } : {}),
+        ...(s.state === "needs_auth" ? { authRequired: true } : {}),
         toolCount: catalog.tools.length,
         resourceCount: catalog.resources.length,
         promptCount: catalog.prompts.length,
       });
     }
     return out;
+  }
+
+  /** The live config of one server (config, Composio or plugin). */
+  getServerConfig(server: string): McpServerConfig | undefined {
+    return this.servers.get(server)?.config;
   }
 
   /** Look up a client by server name. Returns `undefined` when absent. */
@@ -284,7 +312,7 @@ export class McpManager {
       });
       return;
     }
-    const client = new McpClient(config, this.deps);
+    const client = new McpClient(config, this.clientDeps(config));
     this.servers.set(config.name, {
       config,
       client,
@@ -293,9 +321,35 @@ export class McpManager {
     });
   }
 
+  /** Shared deps plus this server's own elicitation handler, if a port is wired. */
+  private clientDeps(config: McpServerConfig): McpClientDeps {
+    const port = this.deps.elicitationPort;
+    if (!port) return this.deps;
+    return {
+      ...this.deps,
+      elicitationHandler: createMcpElicitationHandler({
+        port,
+        server: config.name,
+        ...(this.deps.logger ? { logger: this.deps.logger } : {}),
+      }),
+    };
+  }
+
   private async startOne(s: ManagedServer): Promise<void> {
     if (!s.config.enabled) {
       this.transition(s, "disabled");
+      return;
+    }
+    const policy = this.deps.serverPolicy?.(s.config);
+    if (policy?.message !== undefined) {
+      this.deps.logger?.warn("mcp.server_not_on_allowlist", {
+        server: s.config.name,
+        blocked: !policy.allowed,
+      });
+    }
+    if (policy?.allowed === false) {
+      s.lastError = policy.message ?? "blocked by your organization's policy";
+      this.transition(s, "down");
       return;
     }
     this.transition(s, "starting");
@@ -311,6 +365,14 @@ export class McpManager {
       const msg =
         err instanceof McpConnectError ? err.message : scrubErrorMessage(err);
       s.lastError = msg;
+      if (err instanceof McpAuthRequiredError) {
+        // Not a failure: the server waits for a browser sign-in.
+        this.transition(s, "needs_auth");
+        this.deps.logger?.info("mcp.server_needs_auth", {
+          server: s.config.name,
+        });
+        return;
+      }
       this.transition(s, "down");
       this.deps.logger?.warn("mcp.server_down", {
         server: s.config.name,
@@ -340,6 +402,8 @@ export class McpManager {
         trust,
         dangerous: this.deps.dangerous,
         trustReadOnlyHint: trustsReadOnlyHintFor(s.config, meta.rawName),
+        localTransport: isLocalMcpTransport(s.config.transport),
+        ...(s.config.approval !== undefined ? { approval: s.config.approval } : {}),
       });
       // ToolRegistry.register is last-writer-wins. Two servers
       // cannot collide because the qualified name carries the
@@ -382,6 +446,7 @@ export class McpManager {
       state: next,
       ts: Date.now(),
       ...(s.lastError ? { lastError: s.lastError } : {}),
+      ...(next === "needs_auth" ? { authRequired: true } : {}),
       toolCount: catalog.tools.length,
       resourceCount: catalog.resources.length,
       promptCount: catalog.prompts.length,

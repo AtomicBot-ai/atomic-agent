@@ -8,7 +8,13 @@ import {
 } from "../gemini/gemini-provider.js";
 import { LlamaServerProvider } from "../llama-server/llama-server-provider.js";
 import { OpenAiProvider } from "../openai/openai-provider.js";
+import { createKeyPool, orderedUniqueKeys } from "../../fallback/key-pool.js";
+import { resolveExtraApiKeys } from "../../../config/resolve-llm-api-key.js";
+import type { StructuredLogger } from "../../../tracing/index.js";
+import { isExternalEngineEntry } from "../openai/json-schema-tool-mode.js";
+import { sharedApiKeyCommandSource } from "../openai/api-key-command.js";
 import type { ProviderCapabilities } from "../llm-provider.js";
+import { resolveCloudModelAudio } from "../model-audio.js";
 import { resolveCloudModelVision } from "../model-vision.js";
 import {
   OpenRouterProvider,
@@ -16,7 +22,11 @@ import {
   OPENROUTER_APP_REFERER,
   OPENROUTER_APP_TITLE,
 } from "../openrouter/openrouter-provider.js";
-import { SUBSCRIPTION_CLI_KIND } from "../../../config/provider-auth-mode.js";
+import {
+  SUBSCRIPTION_CLI_KIND,
+  SUBSCRIPTION_OAUTH_KIND,
+} from "../../../config/provider-auth-mode.js";
+import { createSubscriptionOAuthProvider } from "../subscription-oauth/create-subscription-oauth-provider.js";
 import {
   registerBuiltInCliAdapters,
   resolveCliAdapter,
@@ -28,6 +38,25 @@ import {
 } from "./provider-types.js";
 
 let registered = false;
+
+/**
+ * The key a provider sends and, when it holds more than one distinct
+ * key, its key pool (ATO-471): `apiKey` first, then the values of
+ * `extraApiKeyEnvVars` from `<stateDir>/.env`. With `apiKey` blank the
+ * first extra key becomes the key sent, so a provider configured only
+ * through extra keys still authenticates. A single key builds no pool,
+ * so that provider is built exactly as before.
+ */
+function keyOptions(
+  entry: LlmProviderConfigEntry,
+  logger: StructuredLogger,
+): { apiKey: string; keyPool?: NonNullable<ReturnType<typeof createKeyPool>> } {
+  const extras = resolveExtraApiKeys(entry);
+  if (extras.length === 0) return { apiKey: entry.apiKey ?? "" };
+  const keys = orderedUniqueKeys([entry.apiKey, ...extras]);
+  const keyPool = createKeyPool({ providerId: entry.id, keys, logger });
+  return { apiKey: keys[0] ?? "", ...(keyPool ? { keyPool } : {}) };
+}
 
 /**
  * What the entry's `userModels[]` row for the model it serves says about
@@ -66,6 +95,20 @@ function modelVisionOptions(
   const verdict = resolveCloudModelVision(entry, modelId);
   if (verdict.visionSource === "assumed") return {};
   return { supportsVision: verdict.vision, visionSource: verdict.visionSource };
+}
+
+/**
+ * Whether the model this link serves takes audio input, per MODEL
+ * (`model-audio.ts`). `unknown` is left implicit: the provider reads
+ * an absent flag as "no audio".
+ */
+function modelAudioOptions(
+  entry: LlmProviderConfigEntry,
+  modelId: string,
+): { supportsAudio?: boolean; audioSource?: ProviderCapabilities["audioSource"] } {
+  const verdict = resolveCloudModelAudio(entry, modelId);
+  if (verdict.audioSource === "unknown") return {};
+  return { supportsAudio: verdict.audio, audioSource: verdict.audioSource };
 }
 
 
@@ -135,11 +178,17 @@ export function registerBuiltInProviderKinds(): void {
       id: entry.id,
       providerKind: "openai-compatible",
       baseUrl: entry.baseUrl,
-      apiKey: entry.apiKey ?? "",
+      ...keyOptions(entry, ctx.logger),
       defaultChatModel: entry.defaultChatModel,
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
+      // A short-lived token printed by a command (Vertex AI) replaces the
+      // stored key on every request; see `openai/api-key-command.ts`.
+      ...(entry.apiKeyCommand && entry.apiKeyCommand.length > 0
+        ? { apiKeySource: sharedApiKeyCommandSource(entry.apiKeyCommand, entry.id) }
+        : {}),
       ...(chatModel ? modelVisionOptions(entry, chatModel) : {}),
+      ...(chatModel ? modelAudioOptions(entry, chatModel) : {}),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
@@ -148,6 +197,9 @@ export function registerBuiltInProviderKinds(): void {
       promptCache: entry.promptCache,
       messageShape: entry.messageShape,
       ...(chatModel ? modelWireOptions(entry, chatModel) : {}),
+      // Ollama / LM Studio: JSON-reply tool calls for a model whose native
+      // calls the engine breaks (ATO-642); native stays the default.
+      ...(isExternalEngineEntry(entry) ? { jsonSchemaToolFallback: true } : {}),
       logger: ctx.logger,
     });
   });
@@ -170,11 +222,12 @@ export function registerBuiltInProviderKinds(): void {
       id: entry.id,
       providerKind: "qwen-openai-compatible",
       baseUrl: entry.baseUrl,
-      apiKey: entry.apiKey ?? "",
+      ...keyOptions(entry, ctx.logger),
       defaultChatModel: entry.defaultChatModel,
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
       ...(chatModel ? modelVisionOptions(entry, chatModel) : {}),
+      ...(chatModel ? modelAudioOptions(entry, chatModel) : {}),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       taggedToolCompatibility: "qwen",
@@ -184,6 +237,9 @@ export function registerBuiltInProviderKinds(): void {
       promptCache: entry.promptCache,
       messageShape: entry.messageShape,
       ...(chatModel ? modelWireOptions(entry, chatModel) : {}),
+      // Ollama / LM Studio: JSON-reply tool calls for a model whose native
+      // calls the engine breaks (ATO-642); native stays the default.
+      ...(isExternalEngineEntry(entry) ? { jsonSchemaToolFallback: true } : {}),
       logger: ctx.logger,
     });
   });
@@ -195,10 +251,11 @@ export function registerBuiltInProviderKinds(): void {
       id: entry.id,
       providerKind: "openrouter",
       baseUrl: entry.baseUrl,
-      apiKey: entry.apiKey ?? "",
+      ...keyOptions(entry, ctx.logger),
       defaultChatModel: model,
       headers: entry.headers,
       ...modelVisionOptions(entry, model),
+      ...modelAudioOptions(entry, model),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
@@ -229,7 +286,7 @@ export function registerBuiltInProviderKinds(): void {
       id: entry.id,
       providerKind: "aimlapi",
       baseUrl: entry.baseUrl,
-      apiKey: entry.apiKey ?? "",
+      ...keyOptions(entry, ctx.logger),
       defaultChatModel: model,
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
@@ -239,6 +296,7 @@ export function registerBuiltInProviderKinds(): void {
       ...modelWireOptions(entry, model),
       headers: entry.headers,
       ...modelVisionOptions(entry, model),
+      ...modelAudioOptions(entry, model),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       logger: ctx.logger,
@@ -252,7 +310,7 @@ export function registerBuiltInProviderKinds(): void {
       id: entry.id,
       providerKind: "gemini",
       baseUrl: entry.baseUrl,
-      apiKey: entry.apiKey ?? "",
+      ...keyOptions(entry, ctx.logger),
       defaultChatModel: model,
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
@@ -262,6 +320,7 @@ export function registerBuiltInProviderKinds(): void {
       ...modelWireOptions(entry, model),
       headers: entry.headers,
       ...modelVisionOptions(entry, model),
+      ...modelAudioOptions(entry, model),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       logger: ctx.logger,
@@ -301,4 +360,16 @@ export function registerBuiltInProviderKinds(): void {
         ctx.logger.warn("llm.subscription_cli", { message }),
     });
   });
+
+  // EXPERIMENTAL (ATO-1448): a ChatGPT plan signed in by `atag login
+  // chatgpt`, without the Codex CLI. Only used by an entry that names
+  // this kind; nothing defaults to it.
+  registerProviderKind(SUBSCRIPTION_OAUTH_KIND, (ctx) =>
+    createSubscriptionOAuthProvider({
+      entry: ctx.entry,
+      stateDir: ctx.config.paths.stateDir,
+      onWarning: (message) =>
+        ctx.logger.warn("llm.subscription_oauth", { message }),
+    }),
+  );
 }

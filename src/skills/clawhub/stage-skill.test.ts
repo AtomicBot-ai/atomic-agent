@@ -11,6 +11,11 @@ describe("resolveSkillSource", () => {
     expect(resolveSkillSource("@alice/pdf")).toBe("clawhub");
   });
 
+  it("infers skills.sh from a skills.sh/owner/repo/skill identifier", () => {
+    expect(resolveSkillSource("skills.sh/anthropics/skills/pdf")).toBe("skills.sh");
+    expect(resolveSkillSource("skills.sh/anthropics/skills/pdf", "github")).toBe("github");
+  });
+
   it("infers github for a bare slug or owner/repo identifier", () => {
     expect(resolveSkillSource("anthropics/skills")).toBe("github");
     expect(resolveSkillSource("myskill")).toBe("github");

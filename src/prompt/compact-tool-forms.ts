@@ -41,8 +41,33 @@ const FORMS: Record<string, CompactToolForm> = {
   },
   "browser.tabs": { summary: "List, switch, close or open browser tabs.", tier: RARE },
   "browser.scroll": { summary: "Scroll the page; read_aria after if needed.", tier: RARE },
+  "browser.act": {
+    summary:
+      "select, upload, back, forward, key, hover, dialog (before the click that opens it), wait, or take_over (user logs in / solves a captcha), by `action`.",
+    tier: RARE,
+  },
   "browser.screenshot": {
     summary: "JPEG of the page or one element; returns a path.",
+    tier: RARE,
+  },
+  "browser.extract": {
+    summary: "Page data as JSON matching a JSON Schema, in one call.",
+    tier: RARE,
+  },
+  "browser.site_tools": {
+    summary: "List or call the page's own WebMCP tools; a call asks first.",
+    tier: RARE,
+  },
+  "browser.debug": {
+    summary: "Recent console messages / page errors, or network requests and failures.",
+    tier: RARE,
+  },
+  "browser.annotate": {
+    summary: "The user pins page elements (says in chat what to change): start, then read (selectors, styles, boxes), stop.",
+    tier: RARE,
+  },
+  "browser.scenario": {
+    summary: "Record browser steps (start, stop with a name), then run them again without the model; list, delete.",
     tier: RARE,
   },
   "os.shell.run": {
@@ -80,13 +105,23 @@ const FORMS: Record<string, CompactToolForm> = {
     summary:
       "Outline a code project (key files, symbols, line numbers) before reading; path = one file gives its skeleton.",
   },
+  "os.code.search": {
+    summary: "Syntax-aware code search (ast-grep): pattern is code with $VAR metavariables. Needs the ast-grep CLI.",
+    tier: RARE,
+  },
+  "os.code.rewrite": {
+    summary: "Syntax-aware search and replace (ast-grep); dry-run unless apply=true (may require approval).",
+    tier: RARE,
+  },
   "os.fs.edit": {
     summary:
       "Replace text in a file (may require approval). oldString must match the file text exactly (copy it from os.fs.read, same indentation) and be unique unless replaceAll.",
   },
   "os.fs.read_document": {
-    summary: "Text from PDF, Office, ODF or RTF documents. Not for source code: use os.fs.read.",
+    summary: "Text from PDF, Office, ODF, RTF, EPUB, HTML or email files. Not for source code: use os.fs.read.",
   },
+  "os.fs.docx": { summary: "Create, append to (lists, tables, pictures) or find-and-replace in a Word .docx, optionally as tracked changes (may require approval).", tier: RARE },
+  "os.fs.xlsx": { summary: "Create, write cells and formulas in, chart, or read an Excel .xlsx (writes may require approval).", tier: RARE },
   "os.fs.archive.list": { summary: "List archive entries.", tier: RARE },
   "os.fs.archive.read_entry": { summary: "Read one archive entry.", tier: RARE },
   "os.fs.archive.extract": { summary: "Extract an archive (may require approval).", tier: RARE },
@@ -96,6 +131,10 @@ const FORMS: Record<string, CompactToolForm> = {
   "os.fs.watch": { summary: "Wait for file changes once.", tier: RARE },
   "os.fs.move": {
     summary: "Move or rename files and folders; creates missing folders. Use instead of mv/mkdir.",
+    tier: RARE,
+  },
+  "os.fs.write_pptx": {
+    summary: "Create an editable .pptx deck: per slide title, bullets, an image, table or chart, notes (may require approval).",
     tier: RARE,
   },
   "os.git.status": { summary: "Git status and current branch." },
@@ -129,6 +168,7 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Search the web; returns title/url/snippet. Read a result with os.web.fetch.",
   },
   "os.web.fetch": { summary: "Read a web page as markdown/text (GET, no JS)." },
+  "os.web.crawl": { summary: "Read several pages of one site, politely (links + sitemap).", tier: RARE },
   "os.clipboard.read": { summary: "Read the clipboard.", tier: RARE },
   "os.clipboard.write": { summary: "Write the clipboard.", tier: RARE },
   "os.window.list": { summary: "List windows.", tier: RARE },
@@ -140,6 +180,8 @@ const FORMS: Record<string, CompactToolForm> = {
   "os.screen.click": { summary: "Click at x,y of the last capture (asks first).", tier: RARE },
   "os.screen.type": { summary: "Type text into the frontmost app (asks first).", tier: RARE },
   "os.screen.key": { summary: "Press a key or shortcut (asks first).", tier: RARE },
+  "os.screen.elements": { summary: "Numbered list of a window's buttons and fields.", tier: RARE },
+  "os.screen.press": { summary: "Press element n of that list in the background (asks first).", tier: RARE },
   "os.screen.point": {
     summary: "Draw arrows, boxes or labels on the user's screen to show where to click; never clicks.",
     tier: RARE,
@@ -153,6 +195,13 @@ const FORMS: Record<string, CompactToolForm> = {
   "plan.update": {
     summary: "Show a live checklist for work of 3+ steps; send the whole plan each call.",
     tier: RARE,
+  },
+  "canvas.render": {
+    summary: "Show a chart (bar, line, area, pie, table) or an HTML page in the chat as a canvas.",
+    tier: RARE,
+  },
+  ask_user: {
+    summary: "Ask the user a question with 2-8 ready answers when a choice only they can make blocks the work; waits for the answer.",
   },
   "skill.run_script": { summary: "Run a skill's script (may require approval).", tier: RARE },
   "memory.profile.set": {
@@ -168,13 +217,29 @@ const FORMS: Record<string, CompactToolForm> = {
   "memory.procedures.recall": {
     summary: "Read a procedure's steps by id from `### procedures`, or search.",
   },
+  "memory.sessions.search": {
+    summary: "Search past chats by their words, then read around a hit.",
+    tier: RARE,
+  },
+  "files.search": {
+    summary: "Search My files folders; paste each hit's `cite` as is.",
+    tier: RARE,
+  },
   "tasks.schedule": { summary: "Schedule a one-shot task.", tier: RARE },
   "tasks.cron": { summary: "Schedule a recurring task.", tier: RARE },
   "tasks.list": { summary: "List tasks.", tier: RARE },
   "tasks.cancel": { summary: "Cancel a task.", tier: RARE },
   "tasks.show": { summary: "Show one task.", tier: RARE },
+  "sessions.list": { summary: "List other chats.", tier: RARE },
+  "sessions.read": { summary: "Read another chat (asks first).", tier: RARE },
+  "sessions.send": { summary: "Send a request to another chat (asks first).", tier: RARE },
+  "sessions.check": { summary: "Answer to a sent request.", tier: RARE },
   "vision.describe": {
     summary: "Describe images (at most 4 per call). `prompt` is required.",
+  },
+  "audio.listen": {
+    summary: "Listen to a WAV/MP3 file with an audio-capable model.",
+    tier: RARE,
   },
   "image.generate": {
     summary: "Generate pictures (paid); show them via reply.attachments.",
@@ -182,6 +247,14 @@ const FORMS: Record<string, CompactToolForm> = {
   },
   "video.generate": {
     summary: "Generate a short video clip (paid, slow); show it via reply.attachments.",
+    tier: RARE,
+  },
+  "audio.transcribe": {
+    summary: "Transcribe speech in an audio file (voice message) to text locally.",
+    tier: RARE,
+  },
+  "video.render_html": {
+    summary: "Record an HTML page (path or html) to an .mp4 with the local browser and ffmpeg; free.",
     tier: RARE,
   },
   "mcp.resource.list": { summary: "List an MCP server's resources.", tier: RARE },
@@ -195,6 +268,10 @@ const FORMS: Record<string, CompactToolForm> = {
   },
   "fusion.delegate": {
     summary: "Hand independent parts of the work to local workers; call it alone.",
+    tier: RARE,
+  },
+  "subagent.run": {
+    summary: "Hand a self-contained part of the work to a subagent on your model; call it alone.",
     tier: RARE,
   },
   reply: {

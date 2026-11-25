@@ -58,21 +58,23 @@ describe("integration configuration ownership", () => {
     expect(createComposioDefaults()).not.toBe(createComposioDefaults());
     expect(Object.keys(createComposioDefaults())).toEqual([
       "enabled", "apiKeyEnv", "userId", "sessionId", "mcpUrl",
+      "accounts", "sessionPins",
     ]);
   });
 
   it("keeps direct null clearing distinct from the composing default fallback", () => {
     const saved = USER_CONFIG_DEFAULTS.notifications;
     try {
-      USER_CONFIG_DEFAULTS.notifications = { downloads: { channel: "email" } };
+      const push = createNotificationsDefaults().push;
+      USER_CONFIG_DEFAULTS.notifications = { downloads: { channel: "email" }, push };
       expect(parseDownloadNotifyChannel(null, "channel")).toBeNull();
       expect(parseDownloadNotifyChannel(undefined, "channel")).toBeNull();
       expect(parseNotificationsConfig({ channel: null }, () => USER_CONFIG_DEFAULTS.notifications))
-        .toEqual({ downloads: { channel: "email" } });
+        .toEqual({ downloads: { channel: "email" }, push });
       expect(parseUserConfigFile({ notifications: { downloads: { channel: null } } }).notifications)
-        .toEqual({ downloads: { channel: "email" } });
+        .toEqual({ downloads: { channel: "email" }, push });
       expect(parseUserConfigFile({ notifications: { downloads: { channel: "off" } } }).notifications)
-        .toEqual({ downloads: { channel: "off" } });
+        .toEqual({ downloads: { channel: "off" }, push });
     } finally {
       USER_CONFIG_DEFAULTS.notifications = saved;
     }
@@ -84,15 +86,16 @@ describe("integration configuration ownership", () => {
     const parsed = parseNotificationsConfig({
       get channel() {
         events.push("raw.channel");
-        defaults = { downloads: { channel: "discord" } };
+        defaults = { downloads: { channel: "discord" }, push: createNotificationsDefaults().push };
         return undefined;
       },
     }, () => {
       events.push("defaults");
       return defaults;
     });
-    expect(events).toEqual(["raw.channel", "defaults"]);
-    expect(parsed).toEqual({ downloads: { channel: "discord" } });
+    // `defaults` is read again for the push block, after the downloads one.
+    expect(events).toEqual(["raw.channel", "defaults", "defaults"]);
+    expect(parsed).toEqual({ downloads: { channel: "discord" }, push: createNotificationsDefaults().push });
   });
 
   it("keeps the notifications downloads reference prepared before late TUI validation", () => {
@@ -188,9 +191,11 @@ describe("integration configuration ownership", () => {
     };
     expect(parseComposioConfig({}, () => defaults)).toEqual({
       enabled: false, apiKeyEnv: " CUSTOM_KEY ", userId: null, sessionId: null, mcpUrl: null,
+      accounts: [], sessionPins: null,
     });
     expect(parseComposioConfig({ userId: " install ", sessionId: " ", mcpUrl: " deferred endpoint " }, () => defaults))
-      .toEqual({ enabled: false, apiKeyEnv: " CUSTOM_KEY ", userId: "install", sessionId: null, mcpUrl: "deferred endpoint" });
+      .toEqual({ enabled: false, apiKeyEnv: " CUSTOM_KEY ", userId: "install", sessionId: null, mcpUrl: "deferred endpoint",
+        accounts: [], sessionPins: null });
   });
 
   it("reads composio defaults per expression after within-call replacement", () => {

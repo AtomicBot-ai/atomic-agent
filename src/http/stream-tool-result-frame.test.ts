@@ -196,6 +196,22 @@ describe("tool_result over SSE", () => {
     expect(sent[2]).not.toHaveProperty("key_required");
   });
 
+  it("carries the file an ok canvas.render wrote as canvas, and nothing otherwise (ATO-1137)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const canvas = { path: "/work/canvas-sales-20261112-142233.html", title: "Sales", kind: "chart", chart: "bar", bytes: 2048 };
+
+    hook({ type: "step_started", stepIndex: 0 });
+    hook(executed(result({ tool: "canvas.render", summary: "Saved canvas", details: { canvas } }), 0));
+    hook(executed(result({ tool: "canvas.render", status: "error", summary: "bad args", details: { canvas } }), 1));
+    hook(executed(result({ tool: "os.fs.write", details: { canvas } }), 2));
+    hook(executed(result({ tool: "canvas.render", details: { canvas: { ...canvas, path: 42 } } }), 3));
+
+    const sent = frames(sse, "tool_result");
+    expect(sent[0]!.canvas).toEqual(canvas);
+    for (const frame of sent.slice(1)) expect(frame).not.toHaveProperty("canvas");
+  });
+
   it("carries an ok os.screen.point's marks as screen_marks, and nothing otherwise (ATO-1018)", () => {
     const sse = makeSse();
     const hook = buildStreamEventHook(sse.writer as never, env(true));
@@ -210,6 +226,68 @@ describe("tool_result over SSE", () => {
     const sent = frames(sse, "tool_result");
     expect(sent[0]!.screen_marks).toEqual(screenMarks);
     for (const frame of sent.slice(1)) expect(frame).not.toHaveProperty("screen_marks");
+  });
+
+  it("carries an ok MCP tool's app page as mcp_app, and nothing otherwise (ATO-1135)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const mcpApp = { resourceUri: "ui://weather/view.html", mimeType: "text/html;profile=mcp-app", html: "<p>hi</p>" };
+
+    hook({ type: "step_started", stepIndex: 0 });
+    hook(executed(result({ tool: "mcp.weather.get_forecast", summary: "Sunny", details: { mcpApp } }), 0));
+    hook(executed(result({ tool: "mcp.weather.get_forecast", status: "error", details: { mcpApp } }), 1));
+    hook(executed(result({ tool: "os.fs.write", details: { mcpApp } }), 2));
+    hook(executed(result({ tool: "mcp.weather.get_forecast", details: { mcpApp: { ...mcpApp, resourceUri: "https://x/y" } } }), 3));
+    hook(executed(result({ tool: "mcp.weather.get_forecast", details: { mcpApp: { ...mcpApp, html: "" } } }), 4));
+
+    const sent = frames(sse, "tool_result");
+    expect(sent[0]!.mcp_app).toEqual(mcpApp);
+    expect(sent[0]!.summary).toBe("Sunny");
+    for (const frame of sent.slice(1)) expect(frame).not.toHaveProperty("mcp_app");
+  });
+
+  it("carries an ok write/edit's diffstat with its path, and nothing otherwise (ATO-1187)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+
+    hook({ type: "step_started", stepIndex: 0 });
+    hook(executed(result({ tool: "os.fs.write", details: { path: "/w/a.txt", diffstat: { added: 3, removed: 0 } } }), 0));
+    hook(executed(result({ tool: "os.fs.edit", details: { path: "/w/b.ts", diffstat: { added: 2, removed: 1 } } }), 1));
+    hook(executed(result({ tool: "os.fs.edit", status: "error", details: { path: "/w/b.ts", diffstat: { added: 2, removed: 1 } } }), 2));
+    hook(executed(result({ tool: "os.fs.write", details: { path: "/w/c.txt" } }), 3));
+    hook(executed(result({ tool: "os.fs.write", details: { path: "/w/d.txt", diffstat: { added: -1, removed: 0 } } }), 4));
+    hook(executed(result({ tool: "os.shell.run", details: { path: "/w/e.txt", diffstat: { added: 1, removed: 0 } } }), 5));
+
+    const sent = frames(sse, "tool_result");
+    expect(sent[0]!.diffstat).toEqual({ path: "/w/a.txt", added: 3, removed: 0 });
+    expect(sent[1]!.diffstat).toEqual({ path: "/w/b.ts", added: 2, removed: 1 });
+    for (const frame of sent.slice(2)) expect(frame).not.toHaveProperty("diffstat");
+  });
+
+  it("carries a fusion.delegate's diffstats list, checked row by row, and nothing otherwise (ATO-1701)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const diffstats = [
+      { path: "/w/a.ts", added: 5, removed: 3 },
+      { path: "/w/b.md", added: 10, removed: 0 },
+    ];
+
+    hook({ type: "step_started", stepIndex: 0 });
+    hook(executed(result({ tool: "fusion.delegate", details: { diffstats: [...diffstats, { path: "", added: 1, removed: 0 }, { path: "/w/c", added: -1, removed: 0 }, null] } }), 0));
+    hook(executed(result({ tool: "fusion.delegate", status: "error", details: { diffstats } }), 1));
+    hook(executed(result({ tool: "fusion.delegate", details: {} }), 2));
+    hook(executed(result({ tool: "fusion.delegate", details: { diffstats: [{ path: "/w/x", added: "1", removed: 0 }] } }), 3));
+    hook(executed(result({ tool: "os.fs.write", details: { path: "/w/a.ts", diffstat: { added: 1, removed: 0 }, diffstats } }), 4));
+
+    const sent = frames(sse, "tool_result");
+    expect(sent[0]!.diffstats).toEqual(diffstats);
+    expect(sent[0]).not.toHaveProperty("diffstat");
+    // Every task failed, but what it wrote in the folder is still changed.
+    expect(sent[1]!.diffstats).toEqual(diffstats);
+    for (const frame of sent.slice(2, 4)) expect(frame).not.toHaveProperty("diffstats");
+    // A single write keeps its own diffstat and gets no list.
+    expect(sent[4]!.diffstat).toEqual({ path: "/w/a.ts", added: 1, removed: 0 });
+    expect(sent[4]).not.toHaveProperty("diffstats");
   });
 
   it("carries the call's approval records, auto-approvals included, and nothing when there are none (ATO-1145)", () => {

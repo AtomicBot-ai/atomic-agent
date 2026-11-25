@@ -2,7 +2,12 @@ import type { RunTurnResult } from "../agent/agent-contract.js";
 import type { LlmFailureCategory } from "../llm/reliability/index.js";
 
 import type { TaskRunSummary } from "./task-run-summary.js";
-import type { TaskRecord, TaskSchedule, TaskStatus } from "./task-types.js";
+import type {
+  TaskNotifyTarget,
+  TaskRecord,
+  TaskSchedule,
+  TaskStatus,
+} from "./task-types.js";
 
 /**
  * Terminal statuses that produce a report. Retries (`running ->
@@ -24,6 +29,12 @@ export type TaskReportStatus = Extract<
  */
 export interface TaskReport {
   taskId: string;
+  /**
+   * Where the report goes (`TaskRecord.notify`), so one sink can route
+   * per target (ATO-1129). Absent on reports built by hand in tests:
+   * read as `"telegram"`, the only target before push.
+   */
+  notify?: TaskNotifyTarget;
   status: TaskReportStatus;
   /** The task's prompt — lets the recipient recognise which job fired. */
   userMessage: string;
@@ -75,9 +86,8 @@ export interface TaskReportRun {
 }
 
 /**
- * Delivery seam wired in bootstrap (the Telegram channel today — the
- * only member of `TASK_NOTIFY_TARGETS`; a second target turns the
- * sink into a per-target dispatch). Invoked fire-and-forget by the
+ * Delivery seam wired in bootstrap: a per-target dispatch on
+ * `TaskReport.notify` (Telegram, or phone push since ATO-1129). Invoked fire-and-forget by the
  * runner: a throwing or rejecting sink is warn-logged and never
  * affects the task's own status.
  */
@@ -124,6 +134,7 @@ export function buildTaskReport(
   return {
     ...(run ?? {}),
     taskId: task.id,
+    ...(task.notify !== null ? { notify: task.notify } : {}),
     status,
     userMessage: task.userMessage,
     scheduleKind: task.schedule?.kind ?? null,

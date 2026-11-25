@@ -25,12 +25,14 @@ import {
   CodexOptionError,
   resolveCodexOptions,
   importAgentDir,
+  groupImportReport,
   type ImportOptionId,
   type ClaudeCodeOptionId,
   type CodexOptionId,
   type OpenclawOptionId,
   type ImportReport,
 } from "../import/index.js";
+import { importAtomicAgent, importClaudeApp } from "./import-app-sources-command.js";
 import { importAtomicDesktopCommand } from "./import-atomic-desktop-command.js";
 import { importOhMyPi, importPi } from "./import-pi-family-command.js";
 import { processFinaleIo, writeImportFinale } from "./import-finale.js";
@@ -46,6 +48,13 @@ const HELP =
     "  codex [options]           Import skills, instructions + sessions from ~/.codex",
     "  pi [options]              Import skills + sessions from ~/.pi/agent",
     "  oh-my-pi [options]        Import skills, MCP servers + sessions from ~/.omp/agent",
+    "  claude-app --source <zip|dir> [options]",
+    "                            Import chats + project instructions from a Claude data export",
+    "                            (claude.ai / Claude desktop: Settings > Privacy > Export data)",
+    "  atomic-agent [--source <dir>] [options]",
+    "                            Import chats (with their projects and folders), memory, skills,",
+    "                            MCP servers and cloud providers from another Atomic Agent data",
+    "                            folder (default ~/.atomic-agent); --include cron, --migrate-secrets",
     "  atomic-desktop --source <dir> [--json]",
     "                            Merge an old Atomic Agent desktop state dir's sessions, tasks,",
     "                            memory notes + profile facts into this one (see atomic-desktop --help)",
@@ -56,6 +65,9 @@ const HELP =
     "  --include a,b             Add options (sessions,cron)",
     "  --exclude a,b             Remove options",
     "  --migrate-secrets         Also copy OPENROUTER_API_KEY / AIMLAPI_API_KEY into <stateDir>/.env",
+    "  --trust-plugin <name>     Bridge this Python plugin (plugins/<name>) as a local MCP server;",
+    "                            repeat or comma-separate. Plugins run local code: trust each one",
+    "  --python <cmd>            Interpreter for bridged plugins (default python3, python on Windows)",
     "  --limit N                 Cap the number of sessions imported (newest first)",
     "  --overwrite               Overwrite destinations that differ (default: flag as conflict)",
     "  --dry-run                 Preview only; never write",
@@ -109,10 +121,17 @@ const HELP =
     "  --dry-run                 Preview only; never write",
     "  --yes                     Skip the interactive confirmation",
     "",
+    "Projects and folders: an imported chat keeps the group it had at the source.",
+    "A chat that ran in a folder that still exists goes into a project for that",
+    "folder (projects.json); otherwise into a chat folder of that name",
+    "(chat-folders.json). The desktop's \"Keep chats in their projects\" switch",
+    "turns this off. Re-running never duplicates a project, folder or chat.",
+    "",
     "Examples:",
     "  atomic-agent import hermes --dry-run",
     "  atomic-agent import hermes --yes",
     "  atomic-agent import hermes --migrate-secrets --overwrite",
+    "  atomic-agent import hermes --trust-plugin calculator --dry-run",
     "  atomic-agent import openclaw --dry-run",
     "  atomic-agent import openclaw --agent main --yes",
     "  atomic-agent import claude-code --dry-run",
@@ -147,6 +166,12 @@ export async function importCommand(args: string[]): Promise<number> {
   if (sub === "oh-my-pi") {
     return importOhMyPi(args.slice(1));
   }
+  if (sub === "claude-app") {
+    return importClaudeApp(args.slice(1));
+  }
+  if (sub === "atomic-agent") {
+    return importAtomicAgent(args.slice(1));
+  }
   if (sub === "atomic-desktop") {
     return importAtomicDesktopCommand(args.slice(1));
   }
@@ -164,6 +189,10 @@ async function importHermes(args: string[]): Promise<number> {
   const include = parseCsv(readOption(args, "--include"));
   const exclude = parseCsv(readOption(args, "--exclude"));
   const migrateSecrets = args.includes("--migrate-secrets");
+  const trustedPlugins = readRepeatedOption(args, "--trust-plugin").flatMap(
+    (raw) => parseCsv(raw),
+  );
+  const pythonCommand = readOption(args, "--python");
   const overwrite = args.includes("--overwrite");
   const dryRun = args.includes("--dry-run");
   const yes = args.includes("--yes");
@@ -185,6 +214,7 @@ async function importHermes(args: string[]): Promise<number> {
       include,
       exclude,
       migrateSecrets,
+      trustedPlugins,
     });
   } catch (err) {
     if (err instanceof ImportOptionError) {
@@ -214,13 +244,20 @@ async function importHermes(args: string[]): Promise<number> {
       stateDir: config.paths.stateDir,
       maxAttempts: config.tasks.maxAttempts,
       workingDirFallback: process.cwd(),
+      sourceDir,
+      userConfigFile: config.paths.userConfigFile,
+      trustedPlugins,
+      ...(pythonCommand ? { pythonCommand } : {}),
     });
 
     process.stdout.write(`Source: ${sourceDir}\n`);
     process.stdout.write(`Selected: ${options.join(", ")}\n\n`);
 
     // Phase 1: preview.
-    const preview = importer.run({ options, execute: false, overwrite, limit });
+    const preview = groupImportReport(
+      importer.run({ options, execute: false, overwrite, limit }),
+      { stateDir: config.paths.stateDir, execute: false },
+    );
     process.stdout.write("Preview:\n");
     process.stdout.write(`${formatReport(preview)}\n`);
 
@@ -250,7 +287,10 @@ async function importHermes(args: string[]): Promise<number> {
     }
 
     // Phase 2: execute.
-    const final = importer.run({ options, execute: true, overwrite, limit });
+    const final = groupImportReport(
+      importer.run({ options, execute: true, overwrite, limit }),
+      { stateDir: config.paths.stateDir, execute: true },
+    );
     process.stdout.write("\nResult:\n");
     process.stdout.write(`${formatReport(final)}\n`);
     await writeImportFinale(final, processFinaleIo(args));
@@ -320,7 +360,10 @@ async function importOpenclaw(args: string[]): Promise<number> {
     process.stdout.write(`Selected: ${options.join(", ")}\n\n`);
 
     // Phase 1: preview.
-    const preview = importer.run({ options, execute: false, overwrite, limit });
+    const preview = groupImportReport(
+      importer.run({ options, execute: false, overwrite, limit }),
+      { stateDir: config.paths.stateDir, execute: false },
+    );
     process.stdout.write("Preview:\n");
     process.stdout.write(`${formatReport(preview)}\n`);
 
@@ -350,7 +393,10 @@ async function importOpenclaw(args: string[]): Promise<number> {
     }
 
     // Phase 2: execute.
-    const final = importer.run({ options, execute: true, overwrite, limit });
+    const final = groupImportReport(
+      importer.run({ options, execute: true, overwrite, limit }),
+      { stateDir: config.paths.stateDir, execute: true },
+    );
     process.stdout.write("\nResult:\n");
     process.stdout.write(`${formatReport(final)}\n`);
     await writeImportFinale(final, processFinaleIo(args));
@@ -426,12 +472,10 @@ async function importClaudeCode(args: string[]): Promise<number> {
     process.stdout.write(`Selected: ${options.join(", ")}\n\n`);
 
     // Phase 1: preview.
-    const preview = await importer.run({
-      options,
-      execute: false,
-      overwrite,
-      limit,
-    });
+    const preview = groupImportReport(
+      await importer.run({ options, execute: false, overwrite, limit }),
+      { stateDir: config.paths.stateDir, execute: false },
+    );
     process.stdout.write("Preview:\n");
     process.stdout.write(`${formatReport(preview)}\n`);
 
@@ -461,12 +505,10 @@ async function importClaudeCode(args: string[]): Promise<number> {
     }
 
     // Phase 2: execute.
-    const final = await importer.run({
-      options,
-      execute: true,
-      overwrite,
-      limit,
-    });
+    const final = groupImportReport(
+      await importer.run({ options, execute: true, overwrite, limit }),
+      { stateDir: config.paths.stateDir, execute: true },
+    );
     process.stdout.write("\nResult:\n");
     process.stdout.write(`${formatReport(final)}\n`);
     await writeImportFinale(final, processFinaleIo(args));
@@ -536,12 +578,10 @@ async function importCodex(args: string[]): Promise<number> {
     process.stdout.write(`Selected: ${options.join(", ")}\n\n`);
 
     // Phase 1: preview.
-    const preview = await importer.run({
-      options,
-      execute: false,
-      overwrite,
-      limit,
-    });
+    const preview = groupImportReport(
+      await importer.run({ options, execute: false, overwrite, limit }),
+      { stateDir: config.paths.stateDir, execute: false },
+    );
     process.stdout.write("Preview:\n");
     process.stdout.write(`${formatReport(preview)}\n`);
 
@@ -571,12 +611,10 @@ async function importCodex(args: string[]): Promise<number> {
     }
 
     // Phase 2: execute.
-    const final = await importer.run({
-      options,
-      execute: true,
-      overwrite,
-      limit,
-    });
+    const final = groupImportReport(
+      await importer.run({ options, execute: true, overwrite, limit }),
+      { stateDir: config.paths.stateDir, execute: true },
+    );
     process.stdout.write("\nResult:\n");
     process.stdout.write(`${formatReport(final)}\n`);
     await writeImportFinale(final, processFinaleIo(args));
@@ -620,6 +658,17 @@ function readOption(args: string[], name: string): string | undefined {
   const value = args[idx + 1];
   if (!value || value.startsWith("--")) return undefined;
   return value;
+}
+
+/** Every value of a flag that may repeat (`--trust-plugin a --trust-plugin b`). */
+function readRepeatedOption(args: string[], name: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== name) continue;
+    const value = args[i + 1];
+    if (value && !value.startsWith("--")) out.push(value);
+  }
+  return out;
 }
 
 function parseCsv(raw: string | undefined): string[] {

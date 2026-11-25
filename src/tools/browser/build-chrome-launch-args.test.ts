@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildChromeLaunchArgs } from "./build-chrome-launch-args.js";
+import { HEADLESS_WINDOW_SIZE } from "./web-identity.js";
 
 describe("buildChromeLaunchArgs", () => {
   const base = {
@@ -33,6 +34,44 @@ describe("buildChromeLaunchArgs", () => {
     });
     expect(args).toContain("--headless=new");
     expect(args).toContain("--disable-gpu");
+  });
+
+  it("gives headless the honest identity and a real-size window (ATO-969)", () => {
+    const ua =
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
+    const args = buildChromeLaunchArgs({
+      ...base,
+      headless: true,
+      platform: "darwin",
+      userAgent: ua,
+      lang: "ru-RU",
+    });
+    expect(args).toContain(`--user-agent=${ua}`);
+    expect(args).toContain("--lang=ru-RU");
+    expect(args).toContain(
+      `--window-size=${HEADLESS_WINDOW_SIZE.width},${HEADLESS_WINDOW_SIZE.height}`,
+    );
+    // Never the old headless, never a timezone override.
+    expect(args).not.toContain("--headless");
+    expect(args.some((a) => a.toLowerCase().includes("timezone"))).toBe(false);
+  });
+
+  it("leaves a headed browser's own UA, language and window alone", () => {
+    const args = buildChromeLaunchArgs({
+      ...base,
+      platform: "darwin",
+      userAgent: "Mozilla/5.0 test",
+      lang: "ru-RU",
+    });
+    expect(args.some((a) => a.startsWith("--user-agent="))).toBe(false);
+    expect(args.some((a) => a.startsWith("--lang="))).toBe(false);
+    expect(args.some((a) => a.startsWith("--window-size="))).toBe(false);
+  });
+
+  it("headless without a known version keeps Chrome's own UA", () => {
+    const args = buildChromeLaunchArgs({ ...base, headless: true, platform: "linux" });
+    expect(args.some((a) => a.startsWith("--user-agent="))).toBe(false);
   });
 
   it("does not include --disable-dev-shm-usage on macOS", () => {
@@ -70,5 +109,33 @@ describe("buildChromeLaunchArgs", () => {
       platform: "darwin",
     }).length;
     expect(args.length).toBe(baseLen + 2);
+  });
+});
+
+describe("buildChromeLaunchArgs offline (ATO-1084)", () => {
+  it("routes everything but loopback to a proxy that is not there", () => {
+    const base = { cdpPort: 9222, userDataDir: "/tmp/p", headless: true, platform: "darwin" as const };
+    expect(buildChromeLaunchArgs({ ...base, offline: true })).toContain(
+      "--proxy-server=http://127.0.0.1:9",
+    );
+    expect(buildChromeLaunchArgs(base).some((a) => a.startsWith("--proxy-server"))).toBe(false);
+  });
+});
+
+describe("buildChromeLaunchArgs with the user's proxy (ATO-87)", () => {
+  const base = { cdpPort: 9222, userDataDir: "/tmp/p", headless: false, platform: "darwin" as const };
+  const proxyArgs = ["--proxy-server=http://10.0.0.2:3128", "--proxy-bypass-list=a.com;*.a.com"];
+
+  it("passes the proxy flags", () => {
+    const args = buildChromeLaunchArgs({ ...base, proxyArgs });
+    expect(args).toEqual(expect.arrayContaining(proxyArgs));
+  });
+
+  it("lets offline mode win over the proxy", () => {
+    const args = buildChromeLaunchArgs({ ...base, offline: true, proxyArgs });
+    expect(args.filter((a) => a.startsWith("--proxy-server"))).toEqual([
+      "--proxy-server=http://127.0.0.1:9",
+    ]);
+    expect(args.some((a) => a.startsWith("--proxy-bypass-list"))).toBe(false);
   });
 });

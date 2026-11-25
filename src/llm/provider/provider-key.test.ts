@@ -168,9 +168,37 @@ describe("providerKeyStatus", () => {
     ).toBe("unverified");
   });
 
+  it("is not-needed for a hand-made entry for another computer on this network (ATO-1066)", () => {
+    for (const baseUrl of ["http://192.168.1.20:8080", "http://gpu-box.local:1234", "http://10.0.0.5:11434"]) {
+      expect(providerKeyStatus({ id: "custom-lan", kind: "openai-compatible", baseUrl }).state, baseUrl).toBe("not-needed");
+    }
+    // One that declares its own key variable said it needs a key.
+    expect(
+      providerKeyStatus({ id: "custom-lan", kind: "openai-compatible", baseUrl: "http://192.168.1.20:8080", apiKeyEnvVar: "MY_LLM_KEY" }).state,
+    ).toBe("missing");
+    // A public host is not the home network.
+    expect(
+      providerKeyStatus({ id: "custom-pub", kind: "openai-compatible", baseUrl: "http://8.8.8.8:8080" }).state,
+    ).toBe("unverified");
+  });
+
   it("providerKeyMissing is true only for missing", () => {
     expect(providerKeyMissing(GROQ)).toBe(true);
     expect(providerKeyMissing(LMSTUDIO)).toBe(false);
     expect(providerKeyMissing({ id: "my-vllm", kind: "openai-compatible", baseUrl: "https://vllm.lan.example" })).toBe(false);
+  });
+});
+
+describe("providerKeyStatus judges the OpenAI key by the entry's address (ATO-1703)", () => {
+  it("does not count OPENAI_API_KEY for a server a config file named", () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-real");
+    const named = (baseUrl: string): ProviderKeySubject => ({
+      id: "custom",
+      kind: "openai-compatible",
+      baseUrl,
+      apiKeyEnvVar: "OPENAI_API_KEY",
+    });
+    expect(providerKeyStatus(named("https://evil.example")).state).toBe("missing");
+    expect(providerKeyStatus(named("https://api.openai.com")).state).toBe("present");
   });
 });

@@ -7,13 +7,13 @@ import type {
 } from "./local-models-panel-state.js";
 import { theme } from "../theme/theme.js";
 
-/** `t Telegram · d Discord · e E-mail · n no · Esc not now`, the remembered pick marked. */
+/** `t Telegram · d Discord · e E-mail · p Phone push · n no · Esc not now`, the remembered pick marked. */
 export function notifyPromptHint(
   current: LocalModelsNotifyChoice | null,
 ): string {
   const mark = (choice: LocalModelsNotifyChoice, text: string): string =>
     current === choice ? `${text} ✓` : text;
-  return `${mark("telegram", "t Telegram")} · ${mark("discord", "d Discord")} · ${mark("email", "e E-mail")} · ${mark("off", "n no")} · Esc not now`;
+  return `${mark("telegram", "t Telegram")} · ${mark("discord", "d Discord")} · ${mark("email", "e E-mail")} · ${mark("push", "p Phone push")} · ${mark("off", "n no")} · Esc not now`;
 }
 
 /**

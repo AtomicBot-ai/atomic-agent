@@ -31,7 +31,10 @@ import {
   installSkillRouted,
   listStarterSkillNames,
   looksLikeClawHubIdentifier,
+  looksLikeSkillsShIdentifier,
   searchClawHub,
+  searchSkillsSh,
+  SkillsShClient,
   SkillHubInstallError,
   type HubSkillEntry,
   type ScanGateOptions,
@@ -41,6 +44,17 @@ import {
   createInstallConfirm,
   formatScanFindings,
 } from "./skill-install-confirm.js";
+import { handleUpdate } from "./skill-update.js";
+import { listPendingDrafts, type PendingDraft } from "../skills/learning/pending-drafts.js";
+import { oneLine } from "../skills/learning/learn-command.js";
+import {
+  handleSkillCurate,
+  handleSkillHistory,
+  handleSkillLearned,
+  handleSkillRestore,
+  recordUserSkillRemoval,
+  SKILL_HISTORY_HELP_LINES,
+} from "./skill-history-command.js";
 
 const HELP =
   [
@@ -51,8 +65,15 @@ const HELP =
     "                             Install a skill from a local directory, the GitHub skill hub, or ClawHub (@owner/slug).",
     "                             Every install is security-scanned: caution asks first (--yes skips the question;",
     "                             without a terminal it is required), dangerous needs --acknowledge-risk",
+    "  update [<name>...] [--check] [--yes] [--acknowledge-risk]",
+    "                             Update skills installed from GitHub or ClawHub. Each new version is re-scanned",
+    "                             like an install and replaced only after you confirm (--yes skips the question;",
+    "                             without a terminal it is required, otherwise updates are only reported).",
+    "                             Skills changed locally are reported, never overwritten.",
+    "                             --check only lists what is outdated; --rollback <name> restores the previous copy",
     "  uninstall <name>           Remove an installed global skill",
-    "  list                       List installed skills (project + global) with enabled/disabled state",
+    "  list [--json]              List installed skills (project + global) with enabled/disabled state, then",
+    "                             learned drafts pending review; --json lists those as status \"pending\" rows",
     "  show <name>                Print SKILL.md for an installed skill",
     "  enable <name>              Re-enable a previously disabled skill (mutates config.json)",
     "  disable <name>             Hide a skill from the registry without removing files (mutates config.json)",
@@ -62,6 +83,13 @@ const HELP =
     "  browse [--source owner/repo]   Browse installable skills (ClawHub + configured GitHub taps)",
     "  search <query>             Search ClawHub + the configured GitHub taps",
     "  tap list|add <owner/repo>|remove <owner/repo>   Manage hub taps (mutates config.json)",
+    "  eval <name> [--tasks <tasks.yaml>] | --all  [--check-tasks] [--repeat <n>] [--only with|without] [--max-steps <n>] [--no-approval] [--json]",
+    "       [--judge-url <url>] [--judge-model <id>]   judge for `judge` checks (else skills.eval.judgeProvider, else the active cloud provider)",
+    "                             Run each task with the skill and without it, check the answers, and save",
+    "                             accuracy, time, tokens and cost to <stateDir>/skill-evals/<name>/ (Skill Lab).",
+    ...SKILL_HISTORY_HELP_LINES,
+    "                             Without --tasks only a starter skill's packaged evals/tasks.yaml is used; --all runs",
+    "                             every starter that has one; --check-tasks only prints where the tasks file is",
   ].join("\n") + "\n";
 
 export async function skillCommand(args: string[]): Promise<number> {
@@ -81,10 +109,12 @@ export async function skillCommand(args: string[]): Promise<number> {
     switch (sub) {
       case "install":
         return await handleInstall(args.slice(1));
+      case "update":
+        return await handleUpdate(args.slice(1));
       case "uninstall":
         return await handleUninstall(args.slice(1));
       case "list":
-        return await handleList();
+        return await handleList(args.slice(1));
       case "show":
         return await handleShow(args.slice(1));
       case "enable":
@@ -97,6 +127,19 @@ export async function skillCommand(args: string[]): Promise<number> {
         return await handleSearch(args.slice(1));
       case "tap":
         return await handleTap(args.slice(1));
+      case "eval": {
+        // Loaded on demand: it boots a full runtime, the other subcommands do not.
+        const { skillEvalCommand } = await import("./skill-eval-command.js");
+        return await skillEvalCommand(args.slice(1));
+      }
+      case "history":
+        return await handleSkillHistory(args.slice(1));
+      case "restore":
+        return await handleSkillRestore(args.slice(1));
+      case "curate":
+        return await handleSkillCurate(args.slice(1));
+      case "learned":
+        return await handleSkillLearned(args.slice(1));
       default:
         process.stderr.write(`unknown subcommand: ${sub}\n`);
         process.stderr.write(HELP);
@@ -157,7 +200,7 @@ async function handleInstall(args: string[]): Promise<number> {
   const source = args.find((a) => !a.startsWith("-"));
   if (!source) {
     process.stderr.write(
-      "usage: atomic-agent skill install <path|owner/repo[/path]> [--force] [--yes] [--acknowledge-risk]\n",
+      "usage: atomic-agent skill install <path|owner/repo[/path]|@owner/slug|skills.sh/owner/repo/skill> [--force] [--yes] [--acknowledge-risk]\n",
     );
     return 2;
   }
@@ -172,6 +215,11 @@ async function handleInstall(args: string[]): Promise<number> {
   // installer; a GitHub identifier (`owner/repo[/path]`) routes through
   // the tap installer; anything else is a local directory path. All
   // three run the same security scan and gate.
+  // A skills.sh row (`skills.sh/owner/repo/skill`) is looked up in its
+  // GitHub repo and then installed like a tap skill.
+  if (looksLikeSkillsShIdentifier(source)) {
+    return await handleSkillsShInstall(source, force, gate, config.paths.globalSkillsDir);
+  }
   if (looksLikeClawHubIdentifier(source)) {
     return await handleClawHubInstall(
       source,
@@ -292,6 +340,23 @@ async function handleClawHubInstall(
   }
 }
 
+async function handleSkillsShInstall(
+  identifier: string,
+  force: boolean,
+  gate: ScanGateOptions,
+  targetRoot: string,
+): Promise<number> {
+  try {
+    const result = await installSkillRouted({ identifier, source: "skills.sh", targetRoot, force, ...gate });
+    process.stdout.write(
+      `installed ${result.manifest.name} (v${result.manifest.version}) from ${identifier} — ${summarizeScan(result.scan)}\n`,
+    );
+    return 0;
+  } catch (err) {
+    return reportInstallError(err, gate, identifier);
+  }
+}
+
 async function handleUninstall(args: string[]): Promise<number> {
   const name = args[0];
   if (!name) {
@@ -299,7 +364,8 @@ async function handleUninstall(args: string[]): Promise<number> {
     return 2;
   }
   const config = getConfig();
-  const result = await uninstallSkill(config.paths.globalSkillsDir, name);
+  // Saved to the skill history first, so `skill restore` can undo it (ATO-580).
+  const result = await recordUserSkillRemoval(name, () => uninstallSkill(config.paths.globalSkillsDir, name));
   if (!result.removed) {
     process.stderr.write(`skill not installed globally: ${name}\n`);
     return 1;
@@ -319,7 +385,20 @@ async function handleUninstall(args: string[]): Promise<number> {
   return 0;
 }
 
-async function handleList(): Promise<number> {
+/** One row of `skill list --json`; `status: "pending"` is a learned draft waiting for approval (ATO-67). */
+interface SkillListJsonRow {
+  name: string;
+  version: string;
+  source: string;
+  status: "enabled" | "disabled" | "untrusted" | "declined" | "pending";
+  description: string;
+  /** Pending rows: the id `skill learned approve|discard <id>` takes, and whether it is a new skill or a patch. */
+  draftId?: string;
+  draftKind?: "create" | "patch";
+}
+
+async function handleList(args: string[] = []): Promise<number> {
+  const json = args.includes("--json");
   const config = getConfig();
   const projectDir = resolve(process.cwd(), config.paths.projectSkillsDirName);
   const { skills, errors } = await loadSkills({
@@ -330,16 +409,33 @@ async function handleList(): Promise<number> {
   // Project skills load only once this folder is trusted (ATO-298); show why one is off.
   const trust = readProjectTrust(config.paths.userConfigFile, config.skills.projectTrust, process.cwd());
   let untrusted = 0;
+  const rows: SkillListJsonRow[] = [];
+  for (const s of skills) {
+    const projectTrust = s.source === "project" ? skillTrust(trust, s.manifest.name) : "trusted";
+    if (projectTrust === "pending") untrusted++;
+    const state = disabled.has(s.manifest.name) ? "disabled" : projectTrust === "pending" ? "untrusted" : projectTrust === "declined" ? "declined" : "enabled";
+    rows.push({ name: s.manifest.name, version: s.manifest.version, source: s.source, status: state, description: s.manifest.description });
+  }
+  if (json) {
+    // `--json` also carries the self-learning drafts pending review, so a
+    // UI can show them as "Pending review"; the tab-separated listing the
+    // desktop parses today stays installed skills only.
+    const installedNames = new Set(skills.map((s) => s.manifest.name));
+    for (const name of disabled) {
+      if (!installedNames.has(name)) rows.push({ name, version: "-", source: "missing", status: "disabled", description: "(not installed)" });
+    }
+    for (const d of await listPendingDrafts(config.paths.stateDir)) {
+      rows.push({ name: d.name, version: "-", source: "learned", status: "pending", description: oneLine(d.reason), draftId: d.id, draftKind: d.kind });
+    }
+    process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
+    for (const e of errors) process.stderr.write(`WARN: ${e.path}: ${e.error}\n`);
+    return 0;
+  }
   if (skills.length === 0) {
     process.stdout.write("(no skills installed)\n");
   } else {
-    for (const s of skills) {
-      const projectTrust = s.source === "project" ? skillTrust(trust, s.manifest.name) : "trusted";
-      if (projectTrust === "pending") untrusted++;
-      const state = disabled.has(s.manifest.name) ? "disabled" : projectTrust === "pending" ? "untrusted" : projectTrust === "declined" ? "declined" : "enabled";
-      process.stdout.write(
-        `${s.manifest.name}\tv${s.manifest.version}\t[${s.source}]\t${state}\t${s.manifest.description}\n`,
-      );
+    for (const r of rows) {
+      process.stdout.write(`${r.name}\tv${r.version}\t[${r.source}]\t${r.status}\t${r.description}\n`);
     }
   }
   // Surface entries that are in the disable list but no longer installed —
@@ -351,12 +447,44 @@ async function handleList(): Promise<number> {
     process.stdout.write(`${name}\t-\t[missing]\tdisabled\t(not installed)\n`);
   }
   if (untrusted > 0) {
-    process.stdout.write(`untrusted: ${untrusted} project skill${untrusted === 1 ? "" : "s"} in this folder ${untrusted === 1 ? "is" : "are"} not loaded until the folder is trusted: run ${projectTrustHint(process.cwd())}\n`);
+    // stderr, like the WARN lines and the pending section (ATO-1707): the desktop parses
+    // stdout of the plain listing as rows and folds any other line into the last description.
+    process.stderr.write(`untrusted: ${untrusted} project skill${untrusted === 1 ? "" : "s"} in this folder ${untrusted === 1 ? "is" : "are"} not loaded until the folder is trusted: run ${projectTrustHint(process.cwd())}\n`);
   }
   for (const e of errors) {
     process.stderr.write(`WARN: ${e.path}: ${e.error}\n`);
   }
+  const pending = await listPendingDrafts(config.paths.stateDir);
+  if (pending.length > 0) process.stderr.write(formatPendingSection(pending));
   return 0;
+}
+
+/**
+ * The plain listing's "Pending review" section (ATO-67). It goes to
+ * stderr: the desktop on rel/xp-build parses stdout line by line
+ * (desktop/main/agent-cli.ts skillList), folds any line with fewer than
+ * four tab cells into the previous row's description, fails on such a
+ * line when no row came before, and shows every 4+ cell row whose status
+ * is not "enabled" as a disabled installed skill. No stdout line could
+ * carry a draft without one of those misreadings, while stderr is only
+ * read when the command fails. A person at a terminal sees both streams,
+ * the way `WARN:` lines already reach them. No tabs, so even `2>&1`
+ * never forms a fake row.
+ */
+export function formatPendingSection(pending: readonly PendingDraft[]): string {
+  const lines = [
+    "",
+    `Pending review (${pending.length} learned skill draft${pending.length === 1 ? "" : "s"}, not used until you approve ${pending.length === 1 ? "it" : "them"}):`,
+  ];
+  for (const d of [...pending].reverse()) {
+    const reason = oneLine(d.reason);
+    lines.push(
+      `  ${d.id}  ${d.kind === "create" ? "new skill" : "patch"} ${oneLine(d.name)}${reason ? `: ${reason}` : ""}`,
+      `          review: atomic-agent skill learned show ${d.id}`,
+    );
+  }
+  lines.push("Then: atomic-agent skill learned approve <id> | atomic-agent skill learned discard <id>");
+  return `${lines.join("\n")}\n`;
 }
 
 async function handleShow(args: string[]): Promise<number> {
@@ -480,14 +608,16 @@ async function handleSearch(args: string[]): Promise<number> {
     process.stderr.write("usage: atomic-agent skill search <query>\n");
     return 2;
   }
-  // ClawHub's search and the taps side by side, as in browse.
+  // ClawHub's search, skills.sh and the taps side by side, as in browse.
+  // A skills.sh failure is a warning only and never fails the search.
   const taps = configuredTaps();
   const client = new GithubSkillClient();
-  const [clawEntries, { entries, errors }] = await Promise.all([
+  const [clawEntries, shEntries, { entries, errors }] = await Promise.all([
     browseClawHubSafe(query),
+    searchSkillsSh(new SkillsShClient(), query, { warn: (m) => process.stderr.write(`WARN: ${m}\n`) }),
     searchHub(client, taps, query),
   ]);
-  return printHubEntries([...clawEntries, ...entries], errors);
+  return printHubEntries([...clawEntries, ...shEntries, ...entries], errors);
 }
 
 /**
@@ -525,7 +655,7 @@ function printHubEntries(
     identifier: string;
     version: string;
     description: string;
-    source?: "github" | "clawhub";
+    source?: "github" | "clawhub" | "skills.sh";
     downloads?: number;
   }>,
   errors: ReadonlyArray<{ repo: string; error: string }>,
@@ -534,9 +664,9 @@ function printHubEntries(
     process.stdout.write("(no skills found)\n");
   } else {
     for (const e of entries) {
-      const badge = e.source === "clawhub" ? "[claw]" : "[gh]";
-      // ClawHub tracks downloads; GitHub taps do not (dash keeps columns
-      // aligned). Raw integer so the output stays grep/awk-friendly.
+      const badge = e.source === "clawhub" ? "[claw]" : e.source === "skills.sh" ? "[sh]" : "[gh]";
+      // ClawHub tracks downloads and skills.sh installs; GitHub taps do
+      // not (dash keeps columns aligned). Raw integer so the output stays grep/awk-friendly.
       const downloads = e.downloads === undefined ? "-" : `↓${e.downloads}`;
       process.stdout.write(
         `${badge}\t${e.identifier}\t${downloads}\t${e.description}\n`,

@@ -40,13 +40,20 @@ import { registerGithubTools } from "./github/github-tools.js";
 import { registerSkillTools } from "./skill/index.js";
 import { buildToolViewTool } from "./tool-view/index.js";
 import { planUpdateTool } from "./plan/index.js";
+import { buildCanvasRenderTool } from "./canvas/index.js";
+import { buildAskUserTool } from "./conversation/index.js";
 import { buildToolSearchTool } from "./tool-search/index.js";
-import { registerMemoryTools } from "./memory/index.js";
+import { buildSessionsSearchTool, registerMemoryTools } from "./memory/index.js";
+import { buildFilesSearchTool } from "./files/index.js";
 import { registerTaskTools } from "./tasks/index.js";
+import { registerSessionTools } from "./sessions/index.js";
 import { registerVisionTools } from "./vision/index.js";
+import { registerAudioListenTools } from "./audio/index.js";
 import { registerImageTools } from "./image/index.js";
 import { registerVideoTools } from "./video/index.js";
+import { registerAudioTools } from "./audio/index.js";
 import { buildFusionDelegateTool } from "./fusion/fusion-delegate.js";
+import { buildSubagentRunTool } from "./subagent/index.js";
 import { TOOL_ROLES, descriptorsForRole, partitionByRole, roleAdmits } from "./tool-roles.js";
 import { confineReads } from "./read-scope/confine-reads.js";
 import { READ_TOOL_TARGETS } from "./read-scope/read-scope-targets.js";
@@ -107,8 +114,8 @@ const TERMINALS = {
   finish: { owner: "tools/finish + OpenAI adapter", reason: "Native adapter supplies the session terminal even when a role hides its descriptor; its wire schema overrides the catalog schema" },
 };
 const CONDITIONAL = {
-  registration: { owner: "runtime/bootstrap", reason: "Browser, memory, tasks, vision and screen builders follow their enabled gates" },
-  availability: { owner: "runtime/filter-disabled-tools", reason: "Web, email, GitHub, fusion, image and video definitions stay registered while unavailable descriptors are hidden" },
+  registration: { owner: "runtime/bootstrap", reason: "Browser, memory, tasks, sessions, vision, audio and screen builders follow their enabled gates" },
+  availability: { owner: "runtime/filter-disabled-tools", reason: "Web, email, GitHub, fusion, subagent, image and video definitions stay registered while unavailable descriptors are hidden" },
   mcp: { owner: "mcp/McpManager + runtime/bootstrap", reason: "Meta tools are registered once; server-qualified tools and external schemas belong to the live catalog" },
   wrapper: { owner: "tools/read-scope/confine-reads", reason: "The protection phase replaces selected definitions without changing their catalog metadata" },
 };
@@ -253,8 +260,9 @@ const names = (items: readonly { name: string }[]) => items.map((item) => item.n
 const gates: ToolGateConfig = {
   browser: { enabled: true }, web: { search: { enabled: true } },
   vision: { enabled: true, providerAvailable: true },
+  audio: { enabled: true },
   memory: { profile: { enabled: true }, notes: { enabled: true }, lessons: { enabled: true }, procedures: { enabled: true } },
-  tasks: { agentToolsEnabled: true }, email: { available: true }, mcp: { enabled: true }, github: { connected: true }, fusion: { enabled: true },
+  tasks: { agentToolsEnabled: true }, sessions: { agentToolsEnabled: true }, email: { available: true }, mcp: { enabled: true }, github: { connected: true }, fusion: { enabled: true },
   image: { available: true },
   video: { available: true },
   screen: { enabled: true, point: true },
@@ -295,14 +303,25 @@ beforeAll(() => {
   registerSkillTools(registry, new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), dangerous);
   registry.register(buildToolViewTool());
   registry.register(planUpdateTool);
+  registry.register(buildCanvasRenderTool(dangerous));
+  registry.register(buildAskUserTool({ approvals: dangerous.approvals }));
   // Runtime registers it beside the live descriptor list (runtime-tool-catalog).
   registry.register(buildToolSearchTool({ catalog: () => ({ descriptors: DEFAULT_TOOL_DESCRIPTORS, deferred: new Set() }) }));
   registerMemoryTools(registry, memoryOptions(true));
+  // Runtime registers it beside the memory tools, always on (runtime-tool-catalog).
+  registry.register(buildSessionsSearchTool({ source: { searchTranscripts: unexpected, listSearchableChatLines: unexpected } }));
+  // Runtime registers it when the My files index opens (runtime-tool-catalog).
+  registry.register(buildFilesSearchTool({ index: { search: async () => unexpected(), listFolders: unexpected, status: unexpected } }));
   registerTaskTools(registry, taskOptions(true));
+  registerSessionTools(registry, sessionOptions(true));
   registerVisionTools(registry, { enabled: true, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
+  registerAudioListenTools(registry, { enabled: true, provider: () => undefined, maxAudioBytes: 1024 });
   registerImageTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });
   registerVideoTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });
+  registerAudioTools(registry, { ...dangerous, dataDir: () => directory });
   registry.register(buildFusionDelegateTool({ ...dangerous, slotManager: { poolSize: () => 1 }, resolveRunMode: unexpected, workerSupportsSlotAffinity: () => false, warmWorkerBackend: async () => unexpected(), outputCharCap: 1000, logger: new StructuredLogger({ level: "error", sinks: [] }), runTurn: async () => unexpected(), createEphemeralSession: unexpected, emitEvent: unexpected, workingDir: directory }));
+  // Runtime registers it beside fusion.delegate (runtime-tool-catalog, ATO-1670).
+  registry.register(buildSubagentRunTool({ approvals: dangerous.approvals, approvalRequired: true, resolveRunMode: unexpected, resolveSessionLeg: unexpected, workerSupportsSlotAffinity: () => false, outputCharCap: 1000, runTurn: async () => unexpected(), createEphemeralSession: unexpected, emitEvent: unexpected, workingDir: directory }));
   manager = new McpManager([], { toolRegistry: registry });
   for (const definition of [buildMcpResourceListTool(manager), buildMcpResourceReadTool(manager), buildMcpPromptListTool(manager), buildMcpPromptGetTool(manager)]) registry.register(definition);
 });
@@ -319,6 +338,9 @@ function memoryOptions(enabled: boolean) {
 function taskOptions(enabled: boolean) {
   return { taskStore, taskRunner, createSession: unexpected, agentToolsEnabled: enabled, defaultMaxAttempts: 1, defaultListLimit: 10 };
 }
+function sessionOptions(enabled: boolean) {
+  return { ...dangerous, sessionStore: { listSummaryPage: () => [], listChatLines: () => [], load: () => null }, taskStore, taskRunner, createSession: unexpected, defaultMaxAttempts: 1, enabled };
+}
 function catalog(): Catalog {
   return { descriptors: DEFAULT_TOOL_DESCRIPTORS, registrations: registry.registrations, schemaNames: schemaInventory(join(sourceRoot, "prompt/default-tool-args-schemas.ts"), "DEFAULT_TOOL_ARGS_SCHEMAS"), classes: new Map(Object.entries(listKnownToolResourceClasses())) };
 }
@@ -333,7 +355,7 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(97);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(123);
     expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(DEFAULT_TOOL_DESCRIPTORS.length);
     expect(registry.list()).toHaveLength(registry.registrations.length);
     for (const definition of registry.registrations) {
@@ -411,21 +433,28 @@ describe("whole built-in tool catalog conformance", () => {
     const disabled = new RecordingRegistry();
     registerMemoryTools(disabled, memoryOptions(false));
     registerTaskTools(disabled, taskOptions(false));
+    registerSessionTools(disabled, sessionOptions(false));
     registerVisionTools(disabled, { enabled: false, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
     registerVisionTools(disabled, { enabled: true, provider: undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
+    registerAudioListenTools(disabled, { enabled: false, provider: () => undefined, maxAudioBytes: 1024 });
+    registerAudioListenTools(disabled, { enabled: true, provider: undefined, maxAudioBytes: 1024 });
     registerOsScreenTools(disabled, { ...dangerous, enabled: false, platform: "darwin" });
-    registerOsScreenTools(disabled, { ...dangerous, enabled: true, platform: "linux" });
+    registerOsScreenTools(disabled, { ...dangerous, enabled: true, platform: "freebsd" });
+    registerOsScreenTools(disabled, { ...dangerous, enabled: false, point: true, platform: "linux" });
     expect(disabled.registrations).toEqual([]);
     const families = [
       { group: GATED_TOOL_NAMES.browser, next: { ...gates, browser: { enabled: false } } },
       { group: GATED_TOOL_NAMES.webSearch, next: { ...gates, web: { search: { enabled: false } } } },
       { group: GATED_TOOL_NAMES.vision, next: { ...gates, vision: { enabled: true, providerAvailable: false } } },
+      { group: GATED_TOOL_NAMES.audio, next: { ...gates, audio: { enabled: false } } },
       ...Object.entries(gates.memory).map(([key]) => ({ group: key === "profile" ? GATED_TOOL_NAMES.memoryProfile : key === "notes" ? GATED_TOOL_NAMES.memoryNotes : key === "lessons" ? GATED_TOOL_NAMES.memoryLessons : GATED_TOOL_NAMES.memoryProcedures, next: { ...gates, memory: { ...gates.memory, [key]: { enabled: false } } } })),
       { group: GATED_TOOL_NAMES.tasks, next: { ...gates, tasks: { agentToolsEnabled: false } } },
+      { group: GATED_TOOL_NAMES.sessions, next: { ...gates, sessions: { agentToolsEnabled: false } } },
       { group: GATED_TOOL_NAMES.email, next: { ...gates, email: { available: false } } },
       { group: GATED_TOOL_NAMES.mcp, next: { ...gates, mcp: { enabled: false } } },
       { group: GATED_TOOL_NAMES.github, next: { ...gates, github: { connected: false } } },
       { group: GATED_TOOL_NAMES.fusion, next: { ...gates, fusion: { enabled: false } } },
+      { group: GATED_TOOL_NAMES.subagent, next: { ...gates, subagent: { enabled: false } } },
       { group: GATED_TOOL_NAMES.image, next: { ...gates, image: { available: false } } },
       { group: GATED_TOOL_NAMES.video, next: { ...gates, video: { available: false } } },
       { group: GATED_TOOL_NAMES.screen, next: { ...gates, screen: { enabled: false } } },
@@ -439,6 +468,8 @@ describe("whole built-in tool catalog conformance", () => {
     expect(names(perFamily.registrations)).toEqual([...GATED_TOOL_NAMES.memoryProfile, ...GATED_TOOL_NAMES.memoryNotes, ...GATED_TOOL_NAMES.memoryLessons, ...GATED_TOOL_NAMES.memoryProcedures]);
     const tasks = new RecordingRegistry(); registerTaskTools(tasks, taskOptions(true));
     expect(new Set(names(tasks.registrations))).toEqual(new Set(GATED_TOOL_NAMES.tasks));
+    const sessions = new RecordingRegistry(); registerSessionTools(sessions, sessionOptions(true));
+    expect(names(sessions.registrations)).toEqual([...GATED_TOOL_NAMES.sessions]);
     expect(new Set(names(buildBrowserTools(browser, dangerous)))).toEqual(new Set(GATED_TOOL_NAMES.browser));
     const screen = new RecordingRegistry(); registerOsScreenTools(screen, { ...dangerous, enabled: true, point: true, platform: "darwin" });
     expect(names(screen.registrations)).toEqual([...GATED_TOOL_NAMES.screen]);

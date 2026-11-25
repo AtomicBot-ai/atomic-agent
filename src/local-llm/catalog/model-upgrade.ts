@@ -25,6 +25,7 @@ import {
   type LocalModelDef,
 } from "./models-catalog.js";
 import { recommendedModelFor } from "./recommended-model.js";
+import type { MemoryBandwidth } from "../backend/memory-bandwidth.js";
 
 /** What the recommendation needs to know about the machine. */
 export interface MachineForModels {
@@ -44,6 +45,12 @@ export interface MachineForModels {
    * upgrade.
    */
   cpuOnly: boolean;
+  /**
+   * ATO-450: published peak memory bandwidth by chip or card name
+   * (`estimateMemoryBandwidth`), for the speed forecast only. Absent
+   * when the machine was not probed for it; nothing then forecasts.
+   */
+  bandwidth?: MemoryBandwidth;
 }
 
 /**

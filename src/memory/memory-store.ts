@@ -6,6 +6,12 @@ import { dirname } from "node:path";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 
 import { applyMigrations } from "./memory-schema.js";
+import {
+  MemoryChangeLog,
+  type MemoryChangeActor,
+  type MergeSnapshot,
+  type NoteSnapshot,
+} from "./evolution/memory-change-log.js";
 import type { EmbeddingStore } from "./embeddings/embedding-store.js";
 import type { EmbeddingWriter } from "./embeddings/embedding-writer.js";
 import {
@@ -44,6 +50,12 @@ export interface MemoryEntry {
    * inserts) and for every row migrated from v3.
    */
   lastRecalledAt: number | null;
+  /**
+   * ATO-1124. Set (wall-clock ms) while the person has turned this note
+   * off: it stays listed but is left out of recall, search, the prompt's
+   * index and consolidation. Absent while the note is on.
+   */
+  disabledAt?: number;
 }
 
 export interface MemoryStoreOptions {
@@ -141,12 +153,23 @@ export interface MemoryListOptions {
    */
   excludeArchived?: boolean;
   /**
+   * ATO-1124. Leave out notes the person turned off. `listIndex` always
+   * does; the person's own list (HTTP) shows them, marked.
+   */
+  excludeDisabled?: boolean;
+  /**
    * Only return rows with `updated_at <= updatedBefore` (epoch ms).
    * Applied in SQL before `LIMIT`, so a caller that wants "rows older
    * than X" gets up to `limit` of them instead of the newest `limit`
    * rows with the young ones filtered out afterwards.
    */
   updatedBefore?: number;
+  /**
+   * ATO-672. Leave out rows carrying any of these tags (e.g. the
+   * `superseded` tag note reconciliation sets). Applied in SQL before
+   * `LIMIT`, like `excludeArchived`.
+   */
+  excludeTags?: readonly string[];
 }
 
 /**
@@ -225,6 +248,8 @@ interface MemoryRow {
   tags: string | null;
   recall_count: number;
   last_recalled_at: number | null;
+  /** ATO-1124. Selected only where the caller needs it. */
+  disabled_at?: number | null;
 }
 
 /**
@@ -268,6 +293,9 @@ export class MemoryStore {
   private embeddingVectorWeight: number;
   private embeddingBruteForceCeiling: number;
   private embeddingMinCosine: number | undefined;
+  // `false` while the attached model's vectors are still being rebuilt:
+  // recall stays keyword-only until then (see `attachEmbeddings`).
+  private vectorRecallReady: (() => boolean) | undefined;
   private readonly now: () => number;
   private readonly insertStmt: Database.Statement;
   private readonly deleteStmt: Database.Statement;
@@ -279,6 +307,10 @@ export class MemoryStore {
   private readonly touchOnDedupStmt: Database.Statement;
   private readonly recallTouchStmt: Database.Statement;
   private readonly dedupCandidateStmt: Database.Statement;
+  private readonly restoreStmt: Database.Statement;
+  private readonly evictFifoPickStmt: Database.Statement;
+  private readonly evictUtilityPickStmt: Database.Statement;
+  private readonly changeLog: MemoryChangeLog;
 
   constructor(options: MemoryStoreOptions) {
     if (!Number.isInteger(options.maxEntries) || options.maxEntries <= 0) {
@@ -324,6 +356,16 @@ export class MemoryStore {
     this.embeddingBruteForceCeiling =
       options.embeddings?.bruteForceCeiling ?? DEFAULT_BRUTE_FORCE_CEILING;
     this.now = options.now ?? Date.now;
+    // ATO-1059: the journal of edits and deletions, in this same file.
+    this.changeLog = new MemoryChangeLog(this.db, this.now());
+    this.restoreStmt = this.db.prepare(
+      `INSERT INTO memories
+         (id, content, created_at, updated_at, source, session_id, working_dir, tags,
+          recall_count, last_recalled_at, consolidating_at)
+       VALUES
+         (@id, @content, @created_at, @updated_at, @source, @session_id, @working_dir, @tags,
+          0, NULL, NULL)`,
+    );
     this.insertStmt = this.db.prepare(
       `INSERT INTO memories
          (content, created_at, updated_at, source, session_id, working_dir, tags,
@@ -335,7 +377,7 @@ export class MemoryStore {
     this.deleteStmt = this.db.prepare(`DELETE FROM memories WHERE id = ?`);
     this.getStmt = this.db.prepare(
       `SELECT id, content, created_at, updated_at, source, session_id, working_dir, tags,
-              recall_count, last_recalled_at
+              recall_count, last_recalled_at, disabled_at
          FROM memories WHERE id = ?`,
     );
     this.countStmt = this.db.prepare(`SELECT COUNT(*) AS count FROM memories`);
@@ -344,10 +386,9 @@ export class MemoryStore {
     );
     // Legacy FIFO eviction (back-compat: omit eviction options ⇒ same as v1).
     this.evictFifoStmt = this.db.prepare(
-      `DELETE FROM memories WHERE id IN (
-         SELECT id FROM memories ORDER BY updated_at ASC, id ASC LIMIT ?
-       )`,
+      `DELETE FROM memories WHERE id IN (${EVICT_FIFO_PICK_SQL})`,
     );
+    this.evictFifoPickStmt = this.db.prepare(EVICT_FIFO_PICK_SQL);
     // Utility-weighted eviction. Single SQL statement — cross-phase
     // invariant 5: no per-row JS loop with I/O (§13.7.6).
     // Phase 7a: `vote_score ASC` slots in as the **first** tier so
@@ -355,16 +396,9 @@ export class MemoryStore {
     // ones (cross-phase invariant 19). Ties between equal-score
     // rows still fall through to the utility-recall ladder.
     this.evictUtilityStmt = this.db.prepare(
-      `DELETE FROM memories WHERE id IN (
-         SELECT id FROM memories
-          ORDER BY vote_score ASC,
-                   recall_count ASC,
-                   COALESCE(last_recalled_at, 0) ASC,
-                   updated_at ASC,
-                   id ASC
-          LIMIT ?
-       )`,
+      `DELETE FROM memories WHERE id IN (${EVICT_UTILITY_PICK_SQL})`,
     );
+    this.evictUtilityPickStmt = this.db.prepare(EVICT_UTILITY_PICK_SQL);
     // On a dedup-merge: existing row absorbs the new write. `updated_at`
     // is touched so it floats to the top of `list()`; tags are merged
     // (new ∪ existing) so the absorbed entry's tag superset is preserved.
@@ -391,7 +425,7 @@ export class MemoryStore {
       `SELECT m.id, m.content, m.tags, bm25(memories_fts) AS score
          FROM memories_fts
          JOIN memories m ON m.id = memories_fts.rowid
-        WHERE memories_fts MATCH ?
+        WHERE memories_fts MATCH ? AND m.disabled_at IS NULL
         ORDER BY score ASC
         LIMIT 5`,
     );
@@ -426,7 +460,7 @@ export class MemoryStore {
     const workingDir = validateOptionalString(input.workingDir, "workingDir");
 
     if (this.dedupEnabled) {
-      const merged = this.tryDedupMerge({ content, tags, now });
+      const merged = this.tryDedupMerge({ content, tags, now, source, sessionId, workingDir });
       if (merged !== null) return merged;
     } else {
       this.metrics?.recordMemoryDedup({
@@ -512,6 +546,9 @@ export class MemoryStore {
     content: string;
     tags: string[];
     now: number;
+    source: string;
+    sessionId: string | null;
+    workingDir: string | null;
   }): MemoryEntry | null {
     const ftsQuery = buildFtsQuery(args.content);
     if (ftsQuery.length === 0) {
@@ -596,11 +633,34 @@ export class MemoryStore {
     const mergedTags = mergeTagSets(existingTags, args.tags);
     const mergedTagsJson =
       mergedTags.length > 0 ? JSON.stringify(mergedTags) : null;
-    this.touchOnDedupStmt.run({
-      id: best.id,
-      updated_at: args.now,
-      tags: mergedTagsJson,
-    });
+    const keptId = best.id;
+    const existing = this.get(keptId);
+    this.db.transaction((): void => {
+      this.touchOnDedupStmt.run({
+        id: keptId,
+        updated_at: args.now,
+        tags: mergedTagsJson,
+      });
+      // ATO-1059: the folded write is otherwise gone, so it is journaled
+      // with the note as it was, for an undo that splits them again.
+      if (existing !== null) {
+        const before: MergeSnapshot = {
+          ...noteSnapshot(existing),
+          absorbed: {
+            content: args.content,
+            tags: args.tags,
+            source: args.source,
+            sessionId: args.sessionId,
+            workingDir: args.workingDir,
+            at: args.now,
+          },
+        };
+        this.changeLog.record(
+          { kind: "note", target: String(keptId), op: "merge", by: "agent", before, after: args.content },
+          args.now,
+        );
+      }
+    })();
     this.metrics?.recordMemoryDedup({
       outcome: "merged",
       bestScore: best.score,
@@ -638,7 +698,8 @@ export class MemoryStore {
     );
     const scope = opts.scope ?? "all";
     const requiredTags = validateTags(opts.tags);
-    const where: string[] = [`memories_fts MATCH ?`];
+    // ATO-1124: a note the person turned off is never recalled.
+    const where: string[] = [`memories_fts MATCH ?`, `m.disabled_at IS NULL`];
     const params: unknown[] = [ftsQuery];
     if (scope === "project") {
       const dir = validateOptionalString(opts.workingDir, "workingDir");
@@ -665,6 +726,37 @@ export class MemoryStore {
     const sliced = filtered.slice(0, k);
     if (sliced.length > 0) this.touchOnRecall(sliced);
     return sliced;
+  }
+
+  /**
+   * ATO-672. Notes that share words with `content`, best BM25 first,
+   * WITHOUT the recall side effects (`recall_count` / `last_recalled_at`
+   * stay as they are): a background comparison is not a use of the
+   * note. Archived rows are left out. A query FTS5 cannot parse yields
+   * no rows instead of throwing.
+   */
+  findSimilar(content: string, k: number): MemoryEntry[] {
+    const ftsQuery = buildFtsQuery(content.slice(0, MEMORY_QUERY_MAX_LENGTH));
+    if (ftsQuery.length === 0) return [];
+    const limit = clampPositiveInt(k, 1, MEMORY_RECALL_MAX_K, "k");
+    try {
+      const rows = this.db
+        .prepare(
+          `SELECT m.id, m.content, m.created_at, m.updated_at,
+                  m.source, m.session_id, m.working_dir, m.tags,
+                  m.recall_count, m.last_recalled_at
+             FROM memories_fts
+             JOIN memories m ON m.id = memories_fts.rowid
+            WHERE memories_fts MATCH ? AND m.consolidated_into IS NULL
+              AND m.disabled_at IS NULL
+            ORDER BY bm25(memories_fts) ASC
+            LIMIT ?`,
+        )
+        .all(ftsQuery, limit) as MemoryRow[];
+      return rows.map(rowToEntry);
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -720,10 +812,94 @@ export class MemoryStore {
     return row ? rowToEntry(row) : null;
   }
 
-  remove(id: number): boolean {
+  /**
+   * Delete a note. The note as it was goes into the change journal
+   * first (ATO-1059), so the deletion can be undone; `by` says who asked.
+   */
+  remove(id: number, by: MemoryChangeActor = "agent"): boolean {
     const normalizedId = validateId(id);
-    const result = this.deleteStmt.run(normalizedId) as { changes: number };
-    return result.changes > 0;
+    return this.db.transaction((): boolean => {
+      const before = this.get(normalizedId);
+      if (before === null) return false;
+      const result = this.deleteStmt.run(normalizedId) as { changes: number };
+      if (result.changes === 0) return false;
+      this.changeLog.record(
+        { kind: "note", target: String(normalizedId), op: "remove", by, before: noteSnapshot(before) },
+        this.now(),
+      );
+      return true;
+    })();
+  }
+
+  /** ATO-1059. The journal of note and profile edits and deletions. */
+  getChangeLog(): MemoryChangeLog {
+    return this.changeLog;
+  }
+
+  /**
+   * ATO-1059. Put a deleted note back, under its old id when that is
+   * still free (a later note never reuses it: the id column is
+   * AUTOINCREMENT), otherwise under a new one. Counters start from zero;
+   * a vector is written in the background.
+   */
+  restoreNote(snapshot: NoteSnapshot, now: number = this.now()): MemoryEntry {
+    const content = validateContent(snapshot.content);
+    const tags = validateTags(snapshot.tags);
+    const source = validateSource(snapshot.source === "user" ? "user" : "agent");
+    const free = this.get(validateId(snapshot.id)) === null;
+    const result = this.restoreStmt.run({
+      id: free ? snapshot.id : null,
+      content,
+      created_at: snapshot.createdAt,
+      updated_at: now,
+      source,
+      session_id: snapshot.sessionId,
+      working_dir: snapshot.workingDir,
+      tags: tags.length > 0 ? JSON.stringify(tags) : null,
+    }) as { lastInsertRowid: number | bigint };
+    const id = Number(result.lastInsertRowid);
+    this.evictOverflow();
+    void this.writeEmbeddingFor(id, content);
+    const entry = this.get(id);
+    if (entry === null) throw new Error(`MemoryStore.restoreNote: row ${id} missing after insert`);
+    return entry;
+  }
+
+  /**
+   * ATO-1124. Replace a note's text: the person's own edit from the
+   * desktop's Memory tab, through `PATCH /api/memory/notes/{id}`. The
+   * FTS row follows through the `memories_au` trigger; the note's old
+   * vectors are dropped and one for the new text is written in the
+   * background (non-throwing, like `store`), so recall never matches the
+   * old wording. `source`, `session_id` and the counters are kept: they
+   * say where the note came from, which an edit does not change.
+   * Returns `null` when the id is not stored.
+   */
+  updateContent(
+    id: number,
+    content: string,
+    now: number = this.now(),
+    by: MemoryChangeActor = "agent",
+  ): MemoryEntry | null {
+    const normalizedId = validateId(id);
+    const text = validateContent(content);
+    const updated = this.db.transaction((): boolean => {
+      const before = this.get(normalizedId);
+      if (before === null) return false;
+      this.db
+        .prepare(`UPDATE memories SET content = ?, updated_at = ? WHERE id = ?`)
+        .run(text, now, normalizedId);
+      // ATO-1059: the old text goes into the journal, for an undo.
+      this.changeLog.record(
+        { kind: "note", target: String(normalizedId), op: "update", by, before: noteSnapshot(before), after: text },
+        now,
+      );
+      return true;
+    })();
+    if (!updated) return null;
+    this.embeddingStore?.deleteAllForMemory(normalizedId);
+    void this.writeEmbeddingFor(normalizedId, text);
+    return this.get(normalizedId);
   }
 
   /**
@@ -750,6 +926,15 @@ export class MemoryStore {
     if (opts.excludeArchived) {
       where.push(`consolidated_into IS NULL`);
     }
+    if (opts.excludeDisabled) {
+      where.push(`disabled_at IS NULL`);
+    }
+    for (const tag of opts.excludeTags ?? []) {
+      where.push(
+        `(tags IS NULL OR NOT EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE json_each.value = ?))`,
+      );
+      params.push(tag);
+    }
     if (opts.updatedBefore !== undefined) {
       if (!Number.isFinite(opts.updatedBefore)) {
         throw new Error(
@@ -763,7 +948,7 @@ export class MemoryStore {
     const sql = `
       SELECT id, content, created_at, updated_at,
              source, session_id, working_dir, tags,
-             recall_count, last_recalled_at
+             recall_count, last_recalled_at, disabled_at
         FROM memories
         ${whereClause}
        ORDER BY updated_at DESC, id DESC
@@ -784,7 +969,8 @@ export class MemoryStore {
    * same trimming rules with the prompt renderer.
    */
   listIndex(opts: MemoryIndexOptions = {}): MemoryIndexEntry[] {
-    const entries = this.list(opts);
+    // ATO-1124: a turned-off note never reaches the prompt.
+    const entries = this.list({ ...opts, excludeDisabled: true });
     const previewChars = clampPreviewChars(opts.previewChars);
     return entries.map((e) => ({
       id: e.id,
@@ -855,6 +1041,21 @@ export class MemoryStore {
   }
 
   /**
+   * ATO-1124. Turn one note off (`disabled: true`) or back on. Off keeps
+   * the note and its vector but leaves it out of recall, search, the
+   * prompt's index and dedup; `updated_at` is left alone. Returns the
+   * note, or `null` when the id is not stored.
+   */
+  setDisabled(id: number, disabled: boolean, now: number = this.now()): MemoryEntry | null {
+    const normalizedId = validateId(id);
+    // Turning off an already-off note keeps the first time.
+    this.db
+      .prepare(`UPDATE memories SET disabled_at = ${disabled ? "COALESCE(disabled_at, ?)" : "NULL"} WHERE id = ?`)
+      .run(...(disabled ? [now] : []), normalizedId);
+    return this.get(normalizedId);
+  }
+
+  /**
    * Memory-v2 phase 5. Stamp `consolidated_into` on the given memory
    * rows so they drop out of `### memory-index` while staying
    * recallable by id (cross-phase invariant 9: archived episodes are
@@ -883,12 +1084,56 @@ export class MemoryStore {
     const txn = this.db.transaction((): number => {
       let touched = 0;
       for (const id of normalisedParents) {
+        const before = this.get(id);
         const r = stmt.run(normalisedLessonId, now, id) as { changes: number };
         touched += r.changes;
+        // ATO-1059: journaled, so one note can come back from a lesson.
+        if (r.changes > 0 && before !== null) {
+          this.changeLog.record(
+            {
+              kind: "note",
+              target: String(id),
+              op: "archive",
+              by: "agent",
+              before: noteSnapshot(before),
+              after: String(normalisedLessonId),
+            },
+            now,
+          );
+        }
       }
       return touched;
     });
     return txn();
+  }
+
+  /**
+   * ATO-1059. Undo `archiveInto` for one note: it shows in the index and
+   * recall again, with its old `updated_at`. The lesson stays. `false`
+   * when the note is gone or not archived.
+   */
+  unarchive(id: number, updatedAt: number): boolean {
+    const normalizedId = validateId(id);
+    const result = this.db
+      .prepare(
+        `UPDATE memories SET consolidated_into = NULL, updated_at = ?
+          WHERE id = ? AND consolidated_into IS NOT NULL`,
+      )
+      .run(updatedAt, normalizedId) as { changes: number };
+    return result.changes > 0;
+  }
+
+  /**
+   * ATO-1059. Put a note's tags back as they were (the undo of a dedup
+   * merge, which adds the folded write's tags). `false` when gone.
+   */
+  setTags(id: number, tags: readonly string[]): boolean {
+    const normalizedId = validateId(id);
+    const valid = validateTags([...tags]);
+    const result = this.db
+      .prepare(`UPDATE memories SET tags = ? WHERE id = ?`)
+      .run(valid.length > 0 ? JSON.stringify(valid) : null, normalizedId) as { changes: number };
+    return result.changes > 0;
   }
 
   /**
@@ -943,13 +1188,18 @@ export class MemoryStore {
    *  - Validation errors (empty `addTags`, invalid tag tokens) throw
    *    `MemoryValidationError` — same surface as `store()`.
    *
+   *  - `evictable` (optional): when the row is already at
+   *    `MEMORY_MAX_TAGS`, existing tags this predicate accepts are
+   *    dropped (newest first) to make room for the new ones. Without
+   *    it, new tags past the cap are silently dropped (old behaviour).
+   *
    * The `now` parameter is exposed for tests; production callers pass
    * the runner's injected clock.
    */
   evolveTags(
     id: number,
     addTags: readonly string[],
-    opts: { leaseMs: number; now?: number } = { leaseMs: 0 },
+    opts: { leaseMs: number; now?: number; evictable?: (tag: string) => boolean } = { leaseMs: 0 },
   ): EvolveTagsResult {
     const normalizedId = validateId(id);
     const cleanTags = normalizeTagsInput(addTags);
@@ -972,7 +1222,7 @@ export class MemoryStore {
       }
     }
     const existing = parseTags(row.tags);
-    const merged = applyEvolveTags(existing, cleanTags);
+    const merged = applyEvolveTags(existing, cleanTags, opts.evictable);
     if (merged.addedTags.length === 0) {
       return {
         outcome: "skipped_no_change",
@@ -1042,8 +1292,19 @@ export class MemoryStore {
     bruteForceCeiling?: number;
     /** The model's floor for meaning-only recall; omitted ⇒ the default. */
     minCosine?: number;
+    /**
+     * Whether recall may use the vectors yet. The runtime passes one that
+     * is `false` while the background reindex of this model runs (a model
+     * switch, or embeddings turned on over older notes): a half-indexed
+     * corpus would rank the notes that already have a vector above the
+     * ones that do not, so recall stays keyword-only (BM25) until the
+     * reindex ends. New notes are still embedded meanwhile. Omitted ⇒
+     * always ready.
+     */
+    vectorRecallReady?: () => boolean;
   }): void {
     this.embeddingMinCosine = args.minCosine;
+    this.vectorRecallReady = args.vectorRecallReady;
     this.embeddingWriter = args.writer;
     this.embeddingStore = args.store;
     if (args.fts5Weight !== undefined) this.embeddingFts5Weight = args.fts5Weight;
@@ -1054,6 +1315,16 @@ export class MemoryStore {
   detachEmbeddings(): void {
     this.embeddingWriter = undefined;
     this.embeddingStore = undefined;
+    this.vectorRecallReady = undefined;
+  }
+
+  /**
+   * The embedding model attached now, or `null` when recall is
+   * keyword-only. The file index (ATO-1621) embeds its chunks with the
+   * same local model, and follows a reattach through this.
+   */
+  currentEmbeddingClient(): EmbeddingWriter["client"] | null {
+    return this.embeddingWriter?.client ?? null;
   }
 
   /**
@@ -1108,9 +1379,10 @@ export class MemoryStore {
       requiredTags,
       k * 4,
     );
-    if (!this.embeddingWriter || !this.embeddingStore) {
-      // No hybrid wiring — return BM25 top-K and bump recall_count
-      // the same way `recall()` does.
+    if (!this.embeddingWriter || !this.embeddingStore || this.vectorRecallReady?.() === false) {
+      // No hybrid wiring, or the model's vectors are still being
+      // rebuilt — return BM25 top-K and bump recall_count the same way
+      // `recall()` does.
       const sliced = bm25Hits.slice(0, k);
       if (sliced.length > 0) this.touchOnRecall(sliced);
       return sliced;
@@ -1145,7 +1417,8 @@ export class MemoryStore {
       .prepare(
         `SELECT id, content, created_at, updated_at, source, session_id, working_dir, tags,
                 recall_count, last_recalled_at
-           FROM memories WHERE id IN (${ids.map(() => "?").join(", ")})`,
+           FROM memories
+          WHERE id IN (${ids.map(() => "?").join(", ")}) AND disabled_at IS NULL`,
       )
       .all(...ids) as MemoryRow[];
     return rows.map(rowToEntry);
@@ -1164,7 +1437,7 @@ export class MemoryStore {
     requiredTags: readonly string[],
     limit: number,
   ): HybridRecallInputEntry[] {
-    const where: string[] = [`memories_fts MATCH ?`];
+    const where: string[] = [`memories_fts MATCH ?`, `m.disabled_at IS NULL`];
     const params: unknown[] = [ftsQuery];
     if (workingDir !== null) {
       where.push(`m.working_dir = ?`);
@@ -1202,7 +1475,26 @@ export class MemoryStore {
     const stmt = this.evictionUtilityWeighted
       ? this.evictUtilityStmt
       : this.evictFifoStmt;
-    const result = stmt.run(excess) as { changes: number };
+    const pick = this.evictionUtilityWeighted
+      ? this.evictUtilityPickStmt
+      : this.evictFifoPickStmt;
+    // ATO-1059: read the rows the DELETE will pick (the same SELECT, in
+    // the same transaction) and journal them first, so an evicted note
+    // can be put back. The delete stays one statement; the per-row reads
+    // cover only the overflow, one row on an ordinary write.
+    const result = this.db.transaction((): { changes: number } => {
+      const ids = (pick.all(excess) as Array<{ id: number }>).map((r) => r.id);
+      const at = this.now();
+      for (const id of ids) {
+        const before = this.get(id);
+        if (before === null) continue;
+        this.changeLog.record(
+          { kind: "note", target: String(id), op: "evict", by: "agent", before: noteSnapshot(before) },
+          at,
+        );
+      }
+      return stmt.run(excess) as { changes: number };
+    })();
     this.metrics?.recordMemoryEviction({
       reason: "overflow",
       evicted: result.changes,
@@ -1309,12 +1601,28 @@ function normalizeTagsInput(raw: readonly string[]): string[] {
 function applyEvolveTags(
   existing: readonly string[],
   addTags: readonly string[],
+  evictable?: (tag: string) => boolean,
 ): { tags: string[]; addedTags: string[] } {
   const merged: string[] = [...existing];
   const addedTags: string[] = [];
   for (const tag of addTags) {
-    if (merged.length >= MEMORY_MAX_TAGS) break;
     if (merged.includes(tag)) continue;
+    if (merged.length >= MEMORY_MAX_TAGS) {
+      // Make room only by dropping an older tag the caller allows,
+      // never one of the tags this call is adding.
+      let victim = -1;
+      if (evictable) {
+        for (let i = merged.length - 1; i >= 0; i -= 1) {
+          const candidate = merged[i]!;
+          if (!addTags.includes(candidate) && evictable(candidate)) {
+            victim = i;
+            break;
+          }
+        }
+      }
+      if (victim < 0) break;
+      merged.splice(victim, 1);
+    }
     merged.push(tag);
     addedTags.push(tag);
   }
@@ -1398,6 +1706,7 @@ function rowToEntry(row: MemoryRow): MemoryEntry {
     recallCount: typeof row.recall_count === "number" ? row.recall_count : 0,
     lastRecalledAt:
       typeof row.last_recalled_at === "number" ? row.last_recalled_at : null,
+    ...(typeof row.disabled_at === "number" ? { disabledAt: row.disabled_at } : {}),
   };
 }
 
@@ -1525,4 +1834,29 @@ function buildFtsQuery(query: string): string {
     .filter((t) => t.length > 0);
   if (tokens.length === 0) return "";
   return tokens.map((t) => `"${t}"*`).join(" OR ");
+}
+
+/** The rows overflow eviction drops, oldest first (legacy FIFO). */
+const EVICT_FIFO_PICK_SQL = `SELECT id FROM memories ORDER BY updated_at ASC, id ASC LIMIT ?`;
+
+/** The rows utility-weighted eviction drops (see the constructor). */
+const EVICT_UTILITY_PICK_SQL = `SELECT id FROM memories
+          ORDER BY vote_score ASC,
+                   recall_count ASC,
+                   COALESCE(last_recalled_at, 0) ASC,
+                   updated_at ASC,
+                   id ASC
+          LIMIT ?`;
+
+function noteSnapshot(entry: MemoryEntry): NoteSnapshot {
+  return {
+    id: entry.id,
+    content: entry.content,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+    source: entry.source,
+    sessionId: entry.sessionId,
+    workingDir: entry.workingDir,
+    tags: entry.tags,
+  };
 }

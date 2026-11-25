@@ -8,17 +8,23 @@ import type { CompletionResult } from "../../llm/llama-server-client.js";
 import { ProviderRegistry, resolveLlmConfig, type LlmProvider } from "../../llm/provider/index.js";
 import { resolveActiveToolTransport } from "../../llm/provider/registry/resolve-tool-transport.js";
 import { modelWantsStrictTools } from "../../llm/provider/model-strict-tools.js";
-import { resolveRunMode, type ResolvedRunMode } from "../../llm/run-mode/index.js";
+import { fusionLinkModel, resolveRunMode, type ResolvedRunMode } from "../../llm/run-mode/index.js";
 import { sanitizeModelAlias } from "../../analytics/index.js";
-import { completionUsageForTurn, type TurnUsageMeter } from "../../analytics/index.js";
+import { completionUsageForTurn, generationMsFor, type TurnUsageMeter } from "../../analytics/index.js";
 import type { CostAccumulator } from "../../llm/provider/cost-accumulator.js";
 import type { ResolvedModel } from "../../llm/provider/model-resolver.js";
-import type { SessionUsageLedger } from "../../session/usage-meter.js";
+import { priceCompletion, type SessionUsageLedger } from "../../session/usage-meter.js";
+import {
+  effectiveDailyLimitUsd,
+  isOverDailyLimit,
+  type DailySpendStore,
+} from "../../session/daily-spend.js";
+import { DailySpendLimitError } from "../../llm/reliability/spend-limit-error.js";
 import { isLocalServerUrl } from "../../llm/provider/openai/local-server-url.js";
 import { resolveModelPricingFor } from "../resolve-model-pricing.js";
 import { LearnedContextWindows } from "../learned-context-windows.js";
 import { isOllamaEntry, readOllamaContextWindow } from "../../llm/provider/ollama/ollama-context-window.js";
-import { resolveVisionProvider, visionRouteAvailable } from "../vision-route.js";
+import { audioRouteAvailable, resolveVisionProvider, visionRouteAvailable } from "../vision-route.js";
 import { providerIdIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
 import { createLocalLinkPreparer } from "../../llm/local-backend-gate.js";
 import type { ProviderFallbackChain } from "../../llm/fallback/index.js";
@@ -92,6 +98,7 @@ export async function connectRuntimeProviders(
     const fresh = getConfig();
     return resolveRunMode(resolveLlmConfig(fresh), {
       managedModelId: fresh.localModels.managed.modelId,
+      localServerUrl: fresh.localModels.url,
     });
   };
 
@@ -289,6 +296,22 @@ export function createRuntimeModelContext(
       },
     });
 
+  // `audio.listen` (ATO-497, decision 62): same live route as vision.
+  // Unset `vision.audioInput` offers it only on a local link whose loaded
+  // model reports audio; `true` also allows cloud, `false` never.
+  const audioOnLiveRoute = (): boolean =>
+    audioRouteAvailable({
+      registry: providerRegistry,
+      isLlamaServer: (providerId) =>
+        providerIdIsLlamaServer(resolveLlmConfig(getConfig()), providerId),
+      fusionWorkerProviderId: () => {
+        const mode = resolveCurrentRunMode();
+        return mode.effective === "fusion" ? mode.workerProviderId : null;
+      },
+      // Boot snapshot, like the registration it gates.
+      audioInput: () => config.vision.audioInput,
+    });
+
   return {
     resolveModelPricing,
     observeContextWindow,
@@ -297,10 +320,20 @@ export function createRuntimeModelContext(
     primeLocalContextWindow,
     resolveCurrentVisionProvider,
     visionOnLiveRoute,
+    audioOnLiveRoute,
   };
 }
 
 export type RuntimeModelContext = ReturnType<typeof createRuntimeModelContext>;
+
+/**
+ * A catalogue window, or null for none: `source === "default"` is the
+ * nominal 128k placeholder, not a fact about the model (see
+ * `resolveCatalogContextWindow`).
+ */
+export function catalogWindowOf(model: ResolvedModel | undefined): number | null {
+  return !model || model.source === "default" || model.contextWindow <= 0 ? null : model.contextWindow;
+}
 
 export function connectRuntimeFallback(
   options: RuntimeInferenceOptions,
@@ -313,8 +346,12 @@ export function connectRuntimeFallback(
     turnUsageMeter: TurnUsageMeter;
     /** Session spend and account limits for the composer readout (ATO-569). */
     sessionUsage?: SessionUsageLedger;
+    /** Today's spend over every session, and the daily ceiling's source (ATO-649). */
+    dailySpend?: DailySpendStore;
     resolveModelPricing: RuntimeModelContext["resolveModelPricing"];
     resolveCatalogContextWindow?: RuntimeModelContext["resolveCatalogContextWindow"];
+    /** Builds a pinned provider's per-turn model copy (ATO-1148). */
+    providerRegistry?: Pick<ProviderRegistry, "modelVariant">;
   },
 ) {
   const {
@@ -326,7 +363,57 @@ export function connectRuntimeFallback(
     turnUsageMeter,
     resolveModelPricing,
     sessionUsage,
+    dailySpend,
   } = deps;
+  // How a link bills: a local server (any kind pointed at this machine)
+  // bills nothing, a subscription CLI bills by the plan, the rest per
+  // token. One reading for the session readout, the day total and the
+  // daily ceiling.
+  const linkBilling = (providerId: string): { local: boolean; plan: boolean } => {
+    const entry = resolveLlmConfig(getConfig()).providers.find((p) => p.id === providerId);
+    return {
+      local:
+        entry === undefined || entry.kind === "llama-server" || isLocalServerUrl(entry.baseUrl ?? entry.url),
+      plan: entry?.kind === "subscription-cli" || entry?.kind === "subscription-oauth",
+    };
+  };
+  // ATO-649: fold a metered completion into today's total. Before the
+  // session record, so the `usage_updated` event that follows carries it.
+  const recordDailySpend = (
+    result: CompletionResult,
+    servedProviderId: string,
+    model: ResolvedModel | undefined,
+  ): void => {
+    if (!dailySpend || !result.usage) return;
+    dailySpend.record(
+      priceCompletion({ usage: result.usage, ...(model ? { model } : {}), ...linkBilling(servedProviderId) }),
+    );
+  };
+  // ATO-649: refuse a paid link once today's spend reached
+  // `costTracking.dailyLimitUsd`, before anything is sent. Thrown from the
+  // seam's per-attempt hook. `onDailyLimit: "stop"` (default): the chain
+  // does not move on, the turn ends saying so, and every later paid call
+  // today is refused here the same way. `"local"`: the chain advances
+  // past the link (to the local model when it is in the chain) and
+  // announces the switch. Local and plan links are never refused: they
+  // are not spend. Read live, so a raised limit applies at once.
+  const enforceDailySpendLimit = (providerId: string): void => {
+    if (!dailySpend) return;
+    const costTracking = getConfig().llm?.costTracking;
+    const limitUsd = effectiveDailyLimitUsd(costTracking?.dailyLimitUsd);
+    if (limitUsd === null) return;
+    const billing = linkBilling(providerId);
+    if (billing.local || billing.plan) return;
+    const today = dailySpend.today();
+    if (isOverDailyLimit(today, limitUsd)) {
+      throw new DailySpendLimitError({
+        spentUsd: today.usd,
+        limitUsd,
+        providerId,
+        onLimit: costTracking?.onDailyLimit === "local" ? "local" : "stop",
+      });
+    }
+  };
   // Fold one completion into its session's spend and the account's
   // limit readings (ATO-569). A local link is never priced; a cloud call
   // with no usage block and no limits has nothing to say.
@@ -339,7 +426,7 @@ export function connectRuntimeFallback(
   ): void => {
     if (!sessionUsage || !sessionId) return;
     if (!metered && !result.rateLimits?.length) return;
-    const entry = resolveLlmConfig(getConfig()).providers.find((p) => p.id === servedProviderId);
+    const billing = linkBilling(servedProviderId);
     sessionUsage.record(sessionId, {
       providerId: servedProviderId,
       modelId: result.modelId,
@@ -347,10 +434,8 @@ export function connectRuntimeFallback(
       ...(model ? { model } : {}),
       // A local server under another kind (LM Studio, Ollama, a
       // llama.cpp behind the OpenAI-compatible entry) bills nothing too.
-      local:
-        metered &&
-        (entry === undefined || entry.kind === "llama-server" || isLocalServerUrl(entry.baseUrl ?? entry.url)),
-      plan: entry?.kind === "subscription-cli",
+      local: metered && billing.local,
+      plan: billing.plan,
       ...(result.rateLimits ? { rateLimits: result.rateLimits } : {}),
     });
   };
@@ -367,6 +452,8 @@ export function connectRuntimeFallback(
   ): void => {
     if (params.sessionId) {
       turnUsageMeter.recordServed(params.sessionId, servedProviderId);
+      // ATO-1026: a local llama-server's prefill / generation time.
+      turnUsageMeter.recordTiming(params.sessionId, result);
     }
     // A local llama-server sends no usage block; its timings still count
     // toward the turn's tokens (the meter only), but are never priced.
@@ -376,6 +463,7 @@ export function connectRuntimeFallback(
       return;
     }
     const model = result.usage ? resolveModelPricing(result.modelId, servedProviderId) : undefined;
+    recordDailySpend(result, servedProviderId, model);
     recordSessionUsage(params.sessionId, result, servedProviderId, true, model);
     if (costAccumulator && result.usage) {
       costAccumulator.recordTurn({
@@ -397,14 +485,20 @@ export function connectRuntimeFallback(
     sessionId: string | undefined,
     result: CompletionResult,
     servedProviderId: string,
+    streamMs?: number,
   ): void => {
-    if (sessionId) turnUsageMeter.recordServed(sessionId, servedProviderId);
+    if (sessionId) {
+      turnUsageMeter.recordServed(sessionId, servedProviderId);
+      // ATO-1026: a local llama-server's prefill / generation time.
+      turnUsageMeter.recordTiming(sessionId, result);
+    }
     const metered = completionUsageForTurn(result);
     if (!metered) {
       recordSessionUsage(sessionId, result, servedProviderId, false, undefined);
       return;
     }
     const model = result.usage ? resolveModelPricing(result.modelId, servedProviderId) : undefined;
+    recordDailySpend(result, servedProviderId, model);
     // ATO-1289: most chat turns stream, so the cost accumulator must see
     // a streamed completion exactly as it sees a unary one (same gate,
     // no session required) — otherwise `costTracking` only ever counts
@@ -418,10 +512,13 @@ export function connectRuntimeFallback(
     }
     if (!sessionId) return;
     recordSessionUsage(sessionId, result, servedProviderId, true, model);
+    // ATO-1186: the reply speed the desktop shows under the answer.
+    const generationMs = generationMsFor(result, streamMs);
     turnUsageMeter.record({
       sessionId,
       usage: metered,
       ...(model ? { model } : {}),
+      ...(generationMs !== undefined ? { generationMs } : {}),
     });
   };
 
@@ -445,19 +542,50 @@ export function connectRuntimeFallback(
     },
   });
 
+  // Read live like the run mode everywhere else: a switch out of Fusion
+  // stops the orchestrator's model at the next request.
+  const orchestratorLinkModel = (providerId: string): string | undefined => {
+    const fresh = getConfig();
+    return fusionLinkModel(
+      resolveRunMode(resolveLlmConfig(fresh), {
+        managedModelId: fresh.localModels.managed.modelId,
+        localServerUrl: fresh.localModels.url,
+      }),
+      providerId,
+    );
+  };
+
   const fallbackSeamDeps: FallbackSeamDeps = {
     fallbackChain,
-    resolveSlice: (providerId) => {
+    resolveSlice: (providerId, pinnedModel) => {
       const { provider, transport, isLlamaServer } = resolveActiveLlmSlice(providerId);
-      return { provider, transport, contextWindow: (isLlamaServer ? profileManager?.getProfile().contextWindow : undefined)
+      const slice = { provider, transport, contextWindow: (isLlamaServer ? profileManager?.getProfile().contextWindow : undefined)
         ?? deps.resolveCatalogContextWindow?.(providerId) ?? null };
+      // ATO-1560: an unpinned request on Fusion's orchestrator leg asks
+      // for the orchestrator's chosen model, not the entry's default.
+      const model = pinnedModel ?? (isLlamaServer ? undefined : orchestratorLinkModel(providerId));
+      if (model === undefined || isLlamaServer || !deps.providerRegistry) return slice;
+      // ATO-1148: a turn on a project's own cloud model asks the pinned
+      // provider's copy built for that model; the config and the active
+      // provider stay as they are. The window is that model's, not the
+      // entry's default model's.
+      return deps.providerRegistry.modelVariant(providerId, model).then((variant) => {
+        if (!variant) throw new Error(`cannot run llm provider "${providerId}" on model "${model}"`);
+        return { provider: variant, transport, contextWindow: catalogWindowOf(resolveModelPricing(model, providerId)) };
+      });
     },
     // Issue #112. The one place that knows a cloud→local fallover is
     // about to happen: the chain has already picked the link and the
     // completion has not been sent, so warm it here rather than infer
     // against it. No-op on every other attempt — one boolean after the
     // first call. See `prepareLocalLink` above.
-    prepareLink: prepareLocalLink,
+    // ATO-649: the daily ceiling is checked here too, per attempt and
+    // before the request, so no paid request leaves once it is reached
+    // (`onDailyLimit` decides whether the chain moves on).
+    prepareLink: async (providerId) => {
+      enforceDailySpendLimit(providerId);
+      await prepareLocalLink(providerId);
+    },
     recordUnaryUsage,
     recordStreamUsage,
   };

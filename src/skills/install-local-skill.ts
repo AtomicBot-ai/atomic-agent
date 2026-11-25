@@ -7,6 +7,7 @@ import {
   type ScanGateOptions,
 } from "./hub/install-from-hub.js";
 import { scanSkillDir } from "./hub/scan-skill-dir.js";
+import { removeSkillLock } from "./hub/skill-lock.js";
 import type { SkillScanResult } from "./hub/skill-security-scanner.js";
 import {
   installSkill,
@@ -59,6 +60,9 @@ export async function installLocalSkill(
       dereference: false,
       verbatimSymlinks: true,
     });
+    // A folder (even a copy of a hub install) gets no hub origin: without
+    // the lock, `skill update` leaves it alone.
+    await removeSkillLock(staged);
     const { verdict, findings } = await scanSkillDir(staged);
     const scan: SkillScanResult = { verdict, findings };
     await enforceScanGate(sourceDir, scan, options);

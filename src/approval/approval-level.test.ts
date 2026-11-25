@@ -19,6 +19,7 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "fs_write_home",
   "fs_trash",
   "http",
+  "http_write",
   "shell",
   "shell_dangerous",
   "script",
@@ -30,6 +31,8 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "browser_commit",
   "browser_secret",
   "browser_offsite",
+  "browser_site_tool",
+  "browser_take_over",
   "trust_config",
   "state_secret",
   "email",
@@ -39,6 +42,8 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "screen_capture",
   "local_model_restart",
   "hook_ask",
+  "user_question",
+  "session_cross",
   "other",
 ];
 
@@ -52,7 +57,7 @@ describe("session-grant eligibility", () => {
     );
   });
 
-  it("grants every category except trust_config, state_secret, email, browser_secret, local_model_restart, hook_ask, shell_dangerous and fusion_fanout", () => {
+  it("grants every category except trust_config, state_secret, email, browser_secret, local_model_restart, hook_ask, user_question, browser_take_over, shell_dangerous and fusion_fanout", () => {
     for (const category of ALL_CATEGORIES) {
       expect(isGrantableCategory(category)).toBe(
         category !== "shell_dangerous" &&
@@ -62,7 +67,9 @@ describe("session-grant eligibility", () => {
           category !== "email" &&
           category !== "browser_secret" &&
           category !== "local_model_restart" &&
-          category !== "hook_ask",
+          category !== "hook_ask" &&
+          category !== "user_question" &&
+          category !== "browser_take_over",
       );
     }
   });
@@ -100,11 +107,14 @@ describe("approval ladder", () => {
     // One row per category: the first level at which it goes silent.
     // This is THE product decision — a change here is a behaviour
     // change, not a refactor.
-    const silentFrom: Record<ApprovalCategory, ApprovalLevel> = {
+    // `null`: never silent, at any level.
+    const silentFrom: Record<ApprovalCategory, ApprovalLevel | null> = {
       fs_write_workspace: 2,
       fs_write_home: 3,
       fs_trash: 3,
       http: 3,
+      // A POST can carry data anywhere: the shell rung (ATO-1462).
+      http_write: 4,
       shell: 4,
       // rm -rf, git reset --hard, sudo: only full trust runs them unasked.
       shell_dangerous: 5,
@@ -120,6 +130,10 @@ describe("approval ladder", () => {
       browser_secret: 5,
       // Navigation outside a non-empty allow-list: the `http` rung.
       browser_offsite: 3,
+      // A site's own WebMCP tool: the same rung as a submit.
+      browser_site_tool: 4,
+      // The person hands control back; nothing else can say so (ATO-508).
+      browser_take_over: null,
       trust_config: 5,
       // The read-side twin of trust_config (ATO-877).
       state_secret: 5,
@@ -135,17 +149,21 @@ describe("approval ladder", () => {
       screen_capture: 3,
       local_model_restart: 5,
       hook_ask: 5,
+      // A question only the person can answer (ATO-489).
+      user_question: null,
+      // Another chat's messages, read or written (ATO-570).
+      session_cross: 5,
       other: 5,
     };
     for (const [category, from] of Object.entries(silentFrom) as [
       ApprovalCategory,
-      ApprovalLevel,
+      ApprovalLevel | null,
     ][]) {
       for (const level of LEVELS) {
         expect(
           isAutoApprovedAt(level, category),
           `${category} at level ${level}`,
-        ).toBe(level >= from);
+        ).toBe(from !== null && level >= from);
       }
     }
   });
@@ -163,6 +181,9 @@ describe("approval ladder", () => {
     expect(formatApprovalCategory("trust_config")).toBe("agent trust config");
     expect(formatApprovalCategory("state_secret")).toBe("agent secret file");
     expect(formatApprovalCategory("shell")).toBe("shell command");
+    expect(formatApprovalCategory("http_write")).toBe(
+      "HTTP request · sends data",
+    );
     expect(formatApprovalCategory("git_remote")).toBe("git · remote");
     expect(formatApprovalCategory("screen_control")).toBe(
       "screen · click / type",
@@ -179,6 +200,9 @@ describe("approval ladder", () => {
     expect(formatApprovalCategory("browser_secret")).toBe(
       "browser · password or payment",
     );
+    expect(formatApprovalCategory("session_cross")).toBe(
+      "another chat · read / send",
+    );
   });
 
   it("level 1 asks for every category and level 5 for none (cumulative ladder)", () => {
@@ -187,6 +211,7 @@ describe("approval ladder", () => {
       "fs_write_home",
       "fs_trash",
       "http",
+      "http_write",
       "shell",
       "script",
       "proc_kill",

@@ -26,6 +26,7 @@ Use Node >=25.7 (the package/Volta floor supports ESM Node SEA) and `npm ci` wit
 - Migration/default: [config instructions](../src/config/AGENTS.md), [compatibility](../src/config/docs/compatibility.md); run schema/load-config and affected-domain tests.
 - MCP UI: [TUI instructions](../src/tui/AGENTS.md), [MCP instructions](../src/mcp/AGENTS.md); [feature guide](../src/tui/mcp/README.md) locates all MCP views/state/input/tests. Run tui/mcp, shared config and HTTP route seam tests for persistence changes.
 - Model download: [local model instructions](../src/local-llm/AGENTS.md), [download ownership](../src/local-llm/docs/downloads.md); run local-llm download tests and affected TUI tests.
+- Terminal rendering (alt screen, mouse modes, resize, exit restore): [real-terminal tests](../src/tui/pty/tui-real-terminal.test.ts) run `atag tui` under node-pty + @xterm/headless. Not installed by `npm ci`; run `npm install --no-save node-pty@1.1.0 @xterm/headless@6.0.0 && npm run build && npx vitest run src/tui/pty` (CI: `TUI (real terminal)` workflow).
 
 ## Documentation
 

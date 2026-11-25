@@ -4,6 +4,8 @@ import { formatApprovalCategory } from "../../../approval/approval-level.js";
 import type { SessionGrantsSnapshot } from "../../../approval/approval-gate.js";
 import { theme } from "../../theme/theme.js";
 import type { PrivacyPanelState } from "../privacy-panel-state.js";
+import { offlineEgressLine, type OfflinePanelState } from "../offline-mode.js";
+import { shieldCounterLine, type ShieldPanelState } from "../privacy-shield.js";
 
 export interface PrivacyPanelProps {
   panel: PrivacyPanelState;
@@ -12,7 +14,9 @@ export interface PrivacyPanelProps {
 export function PrivacyPanel({ panel }: PrivacyPanelProps): ReactElement {
   return (
     <Box flexDirection="column">
-      <Box>
+      <OfflineSection offline={panel.offline} busy={panel.busy} />
+      <ShieldSection shield={panel.shield} busy={panel.busy} />
+      <Box marginTop={1}>
         <Text bold color={theme.colors.accentSoft}>
           Analytics
         </Text>
@@ -68,7 +72,128 @@ export function PrivacyPanel({ panel }: PrivacyPanelProps): ReactElement {
       ) : null}
       <Box marginTop={1}>
         <Text color={theme.colors.muted}>
+          {panel.offline.supported
+            ? `o: offline ${panel.offline.enabled ? "off" : "on"} · `
+            : ""}
+          {panel.shield.supported
+            ? `m: shield ${panel.shield.enabled ? "off" : "on"} · `
+            : ""}
           a: analytics {panel.analyticsEnabled ? "off" : "on"} · r: refresh
+        </Text>
+      </Box>
+    </Box>
+  );
+}
+
+/**
+ * Offline mode (ATO-1087). Every value comes from the agent's kill switch
+ * (ATO-1084): an agent without it gets a plain "not available" line and no
+ * toggle; the counter line is the agent's own number, never a stand-in.
+ */
+function OfflineSection({
+  offline,
+  busy,
+}: {
+  offline: OfflinePanelState;
+  busy: boolean;
+}): ReactElement {
+  if (!offline.supported) {
+    return (
+      <Box flexDirection="column">
+        <Text bold color={theme.colors.accentSoft}>
+          Offline mode
+        </Text>
+        <Box marginTop={1}>
+          <Text color={theme.colors.muted}>
+            {"   "}not available in this agent build
+          </Text>
+        </Box>
+      </Box>
+    );
+  }
+  const egress = offlineEgressLine(offline.egress);
+  return (
+    <Box flexDirection="column">
+      <Text bold color={theme.colors.accentSoft}>
+        Offline mode
+      </Text>
+      <Box marginTop={1}>
+        <Text color={theme.colors.muted}>{"   "}offline mode </Text>
+        <Text
+          color={offline.enabled ? theme.colors.accentSoft : theme.colors.muted}
+        >
+          {offline.enabled ? "on" : "off"}
+        </Text>
+        {busy ? <Text color={theme.colors.muted}>{"  "}…</Text> : null}
+      </Box>
+      <Box>
+        <Text color={theme.colors.muted}>
+          {"   "}
+          {egress ?? "could not read the outbound counter from the agent"}
+        </Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text color={theme.colors.muted}>
+          {"   "}When on, the agent blocks network requests to anything but this
+          computer. The count above is what the agent sent to other hosts.
+        </Text>
+      </Box>
+    </Box>
+  );
+}
+
+/**
+ * Privacy Shield (ATO-1082). On/off and the agent's own "masked N"
+ * counter; an agent without the control gets a plain line and no toggle.
+ */
+function ShieldSection({
+  shield,
+  busy,
+}: {
+  shield: ShieldPanelState;
+  busy: boolean;
+}): ReactElement {
+  const header = (
+    <Box marginTop={1}>
+      <Text bold color={theme.colors.accentSoft}>
+        Privacy Shield
+      </Text>
+    </Box>
+  );
+  if (!shield.supported) {
+    return (
+      <Box flexDirection="column">
+        {header}
+        <Box marginTop={1}>
+          <Text color={theme.colors.muted}>
+            {"   "}not available in this agent build
+          </Text>
+        </Box>
+      </Box>
+    );
+  }
+  const counter = shieldCounterLine(shield);
+  return (
+    <Box flexDirection="column">
+      {header}
+      <Box marginTop={1}>
+        <Text color={theme.colors.muted}>{"   "}privacy shield </Text>
+        <Text color={shield.enabled ? theme.colors.accentSoft : theme.colors.muted}>
+          {shield.enabled ? "on" : "off"}
+        </Text>
+        {busy ? <Text color={theme.colors.muted}>{"  "}…</Text> : null}
+      </Box>
+      <Box>
+        <Text color={theme.colors.muted}>
+          {"   "}
+          {counter ?? "could not read the masked counter from the agent"}
+        </Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text color={theme.colors.muted}>
+          {"   "}When on, emails, phone numbers, card numbers, IBANs and keys are
+          replaced with placeholders before a request goes to a cloud model, and
+          put back in the answer on this computer. Local models see the real text.
         </Text>
       </Box>
     </Box>

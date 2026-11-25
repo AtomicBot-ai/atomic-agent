@@ -13,6 +13,23 @@ import { createInterface } from "node:readline";
 export interface ToolInvocationSummary {
   tool: string;
   status: "ok" | "error";
+  /**
+   * The call's arguments as JSON text, capped at ARGS_CAP characters.
+   * Read by `tool_args_not_match` and the attack report; absent when
+   * the trace line had no `args`.
+   */
+  args?: string;
+}
+
+const ARGS_CAP = 8_000;
+
+function argsText(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  try {
+    return JSON.stringify(raw).slice(0, ARGS_CAP);
+  } catch {
+    return undefined;
+  }
 }
 
 export interface TraceMetrics {
@@ -88,7 +105,8 @@ export async function collectTraceMetrics(path: string): Promise<TraceMetrics> {
       if (status === "error") metrics.toolErrorCount += 1;
       if (batchSize > 1 && batchIndex === 0) metrics.batchCount += 1;
       metrics.maxBatchSize = Math.max(metrics.maxBatchSize, batchSize);
-      metrics.toolInvocations.push({ tool, status });
+      const args = argsText(event.args);
+      metrics.toolInvocations.push(args === undefined ? { tool, status } : { tool, status, args });
     } else if (type === "parse_retry") {
       metrics.parseRetries += 1;
     } else if (type === "loop_detected") {

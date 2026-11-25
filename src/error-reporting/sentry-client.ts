@@ -12,6 +12,7 @@ import {
   type ErrorReportDimensions,
 } from "./sentry-envelope.js";
 import { SentryRateLimiter, sentryGroupingKey } from "./sentry-rate-limit.js";
+import { isOfflineNetwork } from "../llm/offline-network.js";
 
 /** Minimal logger surface so this module does not depend on the tracing package. */
 export interface ErrorReportLogger {
@@ -75,6 +76,10 @@ export class SentryClient {
   }
 
   capture(event: ScrubbedErrorEvent): void {
+    // ATO-1085: offline mode went on after this client was built. Drop
+    // the report before an envelope exists, so nothing reaches Sentry
+    // and the offline counter shows no blocked attempt for it.
+    if (isOfflineNetwork()) return;
     try {
       // ATO-1286: one install repeating one failure must not flood the
       // project. Keyed on the fingerprint the envelope attaches; dropped

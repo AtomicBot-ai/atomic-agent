@@ -13,3 +13,20 @@ if (!process.env.ATOMIC_AGENT_STATE_DIR) {
     join(tmpdir(), "atomic-agent-test-"),
   );
 }
+
+/**
+ * Keep cloud skill discovery away from the real `~/.agents/skills`
+ * (ATO-706): a missing folder means no shared skills in tests.
+ */
+if (!process.env.ATOMIC_AGENT_SHARED_SKILLS_DIR) {
+  process.env.ATOMIC_AGENT_SHARED_SKILLS_DIR = join(
+    mkdtempSync(join(tmpdir(), "atomic-agent-shared-skills-")),
+    "missing",
+  );
+}
+
+/**
+ * Never fetch a developer's real organization policy (ATO-587) from a
+ * test: the loader tests pass their own env.
+ */
+delete process.env.ATOMIC_POLICY_URL;

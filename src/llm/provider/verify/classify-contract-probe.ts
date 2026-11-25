@@ -142,7 +142,7 @@ export function classifyProbeStream(
  * has to parse as a JSON object; a truncated `{"ok":` is the shape a
  * route with incomplete deltas produces.
  */
-function argumentsAreDispatchable(raw: string): boolean {
+export function argumentsAreDispatchable(raw: string): boolean {
   const trimmed = raw.trim();
   if (trimmed.length === 0) return true;
   try {

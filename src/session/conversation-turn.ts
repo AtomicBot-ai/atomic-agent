@@ -33,6 +33,12 @@ export type ConversationTurn =
       tool: string;
       args: Record<string, unknown>;
       reasoning?: string;
+      /**
+       * Gemini 3's thought signature of the step that emitted this call,
+       * kept on the step's first call so the next request can hand it
+       * back (ATO-1680). Opaque; absent for every other model.
+       */
+      thoughtSignature?: string;
       at: number;
     }
   | {
@@ -81,6 +87,14 @@ export type ConversationTurn =
        * handed, a reflection pair, a session's title — may take it for one.
        */
       stopped?: true;
+      /**
+       * A failed turn's record ({@link formatTurnFailedRecord}) when tools
+       * had already run in that turn (ATO-1476). Their effects stay, and
+       * the transcript may not show them (a step that failed after its
+       * batch ran is never committed), so the turn is never taken back
+       * for a retry that would run them again.
+       */
+      toolsRan?: true;
       at: number;
     };
 
@@ -171,6 +185,7 @@ export function assistantToolCallTurn(params: {
   tool: string;
   args: Record<string, unknown>;
   reasoning?: string;
+  thoughtSignature?: string;
   at?: number;
 }): ConversationTurn {
   let turn: ConversationTurn = {
@@ -181,6 +196,9 @@ export function assistantToolCallTurn(params: {
   };
   if (params.reasoning !== undefined && params.reasoning.length > 0) {
     turn = { ...turn, reasoning: params.reasoning };
+  }
+  if (params.thoughtSignature !== undefined && params.thoughtSignature.length > 0) {
+    turn = { ...turn, thoughtSignature: params.thoughtSignature };
   }
   return turn;
 }

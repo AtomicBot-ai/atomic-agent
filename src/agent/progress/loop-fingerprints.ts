@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
 import { LOOP_VETO_DENIED_REASON } from "./loop-constants.js";
+import { withoutMcpAppPage } from "../../mcp/mcp-apps.js";
 import type { ReadObservation } from "./read-coverage.js";
 /** How much of a result's summary the outcome fingerprint reads. */
 const OUTCOME_FINGERPRINT_CHARS = 200;
@@ -12,6 +13,7 @@ const WRITE_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.patch",
   "os.fs.restore",
   "os.fs.move",
+  "os.fs.write_pptx",
 ]);
 
 /** One of the tools whose success means the workspace moved, landed or not. */
@@ -93,8 +95,10 @@ export function hashToolOutcome(
   // `sizeDownload` change on every call and a repeated dead/identical
   // endpoint (e.g. 21 identical search POSTs) never registers as a
   // no-progress streak. Mirrors OpenClaw's `stripVolatileSendIds`.
+  // An MCP App's page (`details.mcpApp`, ATO-1135) is up to 4 MB of
+  // presentation, not the answer; hashing it per call is pure cost.
   return hashString(
-    `${result.summary}:${hashCanonical(stripVolatile(result.details))}`,
+    `${result.summary}:${hashCanonical(stripVolatile(withoutMcpAppPage(result.details)))}`,
   );
 }
 

@@ -17,14 +17,26 @@ import { CurlUnavailableError } from "./ensure-curl.js";
 import {
   executeGuardedHttpRequest,
   isCurlTransportError,
-  isSensitiveHeaderName,
   type HttpMethod,
   SsrfBlockedError,
 } from "./http-request-fetch.js";
+import {
+  buildHttpApprovalPreview,
+  maskUrlSecrets,
+} from "./http-request-preview.js";
 import type { HostLookup } from "./web-fetch-ssrf-guard.js";
+import {
+  checkUrlSend,
+  DEFAULT_URL_DATA_GUARD,
+  noteUrlSendAllowed,
+  urlSendReason,
+  type UrlSendSites,
+} from "./url-data-guard.js";
+import { offlineRefusal } from "../../../llm/offline-network.js";
 
 export type { HttpMethod } from "./http-request-fetch.js";
 export { parseCurlOutput } from "./http-request-fetch.js";
+export { maskHeaderValue } from "./http-request-preview.js";
 
 type RunCommandFn = (
   cmd: string,
@@ -37,6 +49,8 @@ export interface OsHttpRequestOptions extends DangerousToolOptions {
   runCommand?: RunCommandFn;
   /** Injectable DNS lookup for SSRF tests (mirrors os.web.fetch). */
   lookup?: HostLookup;
+  /** Sites a chat already used under `http.urlDataGuard: "strict"` (ATO-1377). Defaults to the shared store. */
+  urlSendSites?: UrlSendSites;
 }
 
 interface HttpArgs {
@@ -67,26 +81,66 @@ export function buildOsHttpRequestTool(
         );
       }
       const args = parseArgs(rawArgs, httpCfg.defaultTimeoutMs);
+      // ATO-1084: refused before approval, DNS or curl while offline.
+      const offline = offlineRefusal(args.urlObj, "os.http.request");
+      if (offline) {
+        return compressToolResult({
+          tool: "os.http.request",
+          status: "error",
+          output: offline.message,
+          details: {
+            url: args.url,
+            method: args.method,
+            blocked: true,
+            offline: true,
+            host: offline.host,
+          },
+        });
+      }
       if (!hostAllowed(args.urlObj.hostname, httpCfg.hostAllowlist)) {
         throw new Error(
           `os.http.request: host ${args.urlObj.hostname} is not in config.http.hostAllowlist`,
         );
       }
-      if (needsApproval(httpCfg.approvalMode, args.method)) {
+      // ATO-1377: a GET whose address carries a lot of data (or, under
+      // `"strict"`, the chat's first request to a site) asks like a POST.
+      // `approvalMode: "never"` is the operator saying no HTTP prompts.
+      const urlCheck =
+        args.method === "GET" && httpCfg.approvalMode !== "never"
+          ? checkUrlSend(
+              httpCfg.urlDataGuard ?? DEFAULT_URL_DATA_GUARD,
+              args.url,
+              ctx.sessionId,
+              options.urlSendSites,
+            )
+          : null;
+      if (
+        needsApproval(httpCfg.approvalMode, args.method) ||
+        heldForOutsideContent(options, httpCfg, ctx.sessionId) ||
+        urlCheck !== null
+      ) {
+        // Every text the prompt (and the ledger) shows has secrets in the
+        // query, fragment and body masked (ATO-1471).
+        const shownUrl = maskUrlSecrets(args.url);
         await requireApproval(
           options,
           {
             sessionId: ctx.sessionId,
             tool: "os.http.request",
-            category: "http",
-            reason: `${args.method} ${args.url}`,
-            preview: buildApprovalPreview(args),
-            affectedResources: [args.url],
-            // "Allow for this session" covers this origin only (ATO-1182).
+            category: urlCheck !== null ? "http_write" : httpApprovalCategory(args.method),
+            reason:
+              urlCheck !== null
+                ? urlSendReason(shownUrl, urlCheck)
+                : `${args.method} ${shownUrl}`,
+            preview: buildHttpApprovalPreview(args),
+            affectedResources: [shownUrl],
+            // "Allow for this session" and "Allow always" cover this
+            // origin only (ATO-1182, ATO-1471).
             grantKey: args.urlObj.origin,
           },
           ctx.signal,
         );
+        if (urlCheck !== null) noteUrlSendAllowed(urlCheck, ctx.sessionId, options.urlSendSites);
       }
 
       let guarded;
@@ -317,10 +371,39 @@ function hasHeader(headers: Record<string, string>, name: string): boolean {
  * means anything that is not a pure read (GET/HEAD) asks. We only support
  * GET + POST today, so in practice `writes` == "POST asks".
  */
+/**
+ * A GET under `approvalMode: "writes"` skips the gate, but after outside
+ * content its URL alone can carry data out (`GET https://x/?d=<secret>`).
+ * So on a tainted session with `agent.taintReview` on it asks, and the
+ * gate's hold settles it (ATO-618). `"never"` and a host allowlist are the
+ * person's own choices and keep answering.
+ */
+function heldForOutsideContent(
+  options: OsHttpRequestOptions,
+  httpCfg: AtomicAgentConfig["http"],
+  sessionId: string,
+): boolean {
+  if (httpCfg.approvalMode === "never" || httpCfg.hostAllowlist !== null) return false;
+  return options.approvals.holdsForOutsideContent(sessionId, "http");
+}
+
 function needsApproval(mode: HttpApprovalMode, method: HttpMethod): boolean {
   if (mode === "always") return true;
   if (mode === "never") return false;
   return method !== "GET";
+}
+
+/** Methods that only read; any other one sends data out. */
+const READ_ONLY_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * The approval category a request asks under: a read stays `http`
+ * (silent from level 3), anything that sends data asks as `http_write`
+ * (silent from level 4, never answered by an `http` grant or rule).
+ * Exported for tests (ATO-1462).
+ */
+export function httpApprovalCategory(method: string): "http" | "http_write" {
+  return READ_ONLY_METHODS.has(method.toUpperCase()) ? "http" : "http_write";
 }
 
 /**
@@ -344,58 +427,4 @@ export function hostAllowed(
     }
   }
   return false;
-}
-
-function buildApprovalPreview(args: HttpArgs): string {
-  const lines: string[] = [`${args.method} ${args.url}`];
-  for (const [k, v] of Object.entries(args.headers)) {
-    lines.push(`${k}: ${isSensitiveHeaderName(k) ? maskHeaderValue(v) : v}`);
-  }
-  if (args.body !== undefined) {
-    const snippet =
-      args.body.length > 400
-        ? `${args.body.slice(0, 400)}… [${args.body.length} bytes]`
-        : args.body;
-    lines.push("");
-    lines.push(snippet);
-  }
-  return lines.join("\n");
-}
-
-/**
- * Auth scheme words (RFC 9110 / IANA registry, plus common vendor ones)
- * the preview may keep in front of the mask. Anything else is treated as
- * part of the secret: `X-Auth-Token: abc123 def456` must not show
- * `abc123`.
- */
-const AUTH_SCHEMES = new Set([
-  "basic",
-  "bearer",
-  "digest",
-  "token",
-  "negotiate",
-  "ntlm",
-  "hoba",
-  "mutual",
-  "vapid",
-  "aws4-hmac-sha256",
-  "dpop",
-  "gnap",
-  "privatetoken",
-]);
-
-/**
- * The value of a credential header as the approval preview shows it: a
- * known scheme word kept (`Bearer ****`, `Basic ****`), everything else
- * masked. The preview reaches the terminal, the desktop app and
- * Telegram, so a token in it would be one more copy of the token
- * (ATO-1182).
- */
-export function maskHeaderValue(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return value;
-  const scheme = /^(\S+)\s+\S/.exec(trimmed);
-  return scheme && AUTH_SCHEMES.has(scheme[1]!.toLowerCase())
-    ? `${scheme[1]} ****`
-    : "****";
 }

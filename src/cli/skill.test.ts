@@ -27,6 +27,8 @@ vi.mock("../skills/hub/index.js", async (importOriginal) => ({
     entries: [],
     errors: [{ repo: "owner/repo", error: "boom" }],
   })),
+  // Never reach the real skills.sh from tests.
+  searchSkillsSh: vi.fn(async () => []),
 }));
 
 function writeSkill(globalDir: string, name: string): void {
@@ -85,6 +87,21 @@ describe("skillCommand", () => {
     vi.restoreAllMocks();
   });
 
+  it("update skips skills that were not installed from a hub", async () => {
+    writeSkill(globalSkillsDir, "alpha");
+    expect(await skillCommand(["update", "--check"])).toBe(0);
+    expect(stdout).toContain("no skills installed from a skill hub");
+    stdout = "";
+    expect(await skillCommand(["update", "alpha"])).toBe(0);
+    expect(stderr).toContain("alpha: not installed from a skill hub; skipped");
+  });
+
+  it("update --rollback needs a name and a previous copy", async () => {
+    expect(await skillCommand(["update", "--rollback"])).toBe(2);
+    expect(await skillCommand(["update", "--rollback", "alpha"])).toBe(1);
+    expect(stderr).toContain("no previous copy of alpha to roll back to");
+  });
+
   it("list shows enabled state for installed skills", async () => {
     writeSkill(globalSkillsDir, "alpha");
     writeSkill(globalSkillsDir, "beta");
@@ -118,7 +135,8 @@ describe("skillCommand", () => {
     vi.spyOn(process, "cwd").mockReturnValue(workspace);
     expect(await skillCommand(["list"])).toBe(0);
     expect(stdout).toMatch(/local-one\t.*\[project\]\tuntrusted/);
-    expect(stdout).toContain("untrusted: 1 project skill in this folder is not loaded until the folder is trusted: run atomic-agent skill project on --workspace ");
+    expect(stderr).toContain("untrusted: 1 project skill in this folder is not loaded until the folder is trusted: run atomic-agent skill project on --workspace ");
+    expect(stdout).not.toContain("untrusted:");
     stdout = ""; expect(await skillCommand(["list", "--workspace", workspace])).toBe(0);
     expect(stdout).toMatch(/cloud-one\t\[project\]\tnot trusted in this folder yet/);
     expect(stdout).toContain("untrusted: This folder has 2 project skills and AGENTS.md. Run atomic-agent skill project on --workspace ");

@@ -55,6 +55,7 @@ export type {
   PairingModeOptions,
 } from "./pairing-mode.js";
 export {
+  pairingDeepLink,
   pairingInstruction,
   pairedOwnerLine,
   replaceOwnerPrompt,
@@ -71,3 +72,8 @@ export {
   sendTelegramOneShot,
   type OneShotTelegramInput,
 } from "./one-shot-sender.js";
+export { runCronCommand } from "./cron-command.js";
+export type { CronCommandDeps, CronCreateInput, CronTaskService } from "./cron-command.js";
+export { CRON_USAGE, parseCronCommand } from "./cron-command-parse.js";
+export type { CronCommand } from "./cron-command-parse.js";
+export { cronTaskServiceFromRuntime } from "./cron-task-service.js";

@@ -1,5 +1,10 @@
 import type { ToolCallTransport } from "../llm/provider/completion-types.js";
-import { COMPOSIO_GUIDANCE, isComposioActive } from "./composio-guidance.js";
+import {
+  COMPOSIO_GUIDANCE,
+  buildComposioAccountsGuidance,
+  isComposioActive,
+  type ComposioAccountHint,
+} from "./composio-guidance.js";
 import { GITHUB_GUIDANCE, isGithubActive } from "./github-guidance.js";
 import { buildFusionGuidance, isFusionActive } from "./fusion-guidance.js";
 import {
@@ -7,6 +12,7 @@ import {
   buildAnswerStyleGuidance,
   type AnswerStyleInput,
 } from "./answer-style.js";
+import { buildPersonaBlock, PERSONA_HEADER, type PersonaPromptInput } from "./persona-block.js";
 import type { FusionMachineFacts } from "./fusion-machine-facts.js";
 import {
   formatSkillCatalogLine,
@@ -149,12 +155,26 @@ export interface StablePrefixInput {
    */
   answerStyle?: AnswerStyleInput;
   /**
+   * The user's active persona (ATO-54, `persona-block.ts`): rendered as
+   * `### persona` after `### rules` / `### answer-style`, added to the
+   * built-in system text rather than replacing it. Latched per session
+   * by the caller, so stable within a session. Omitted, no block and
+   * the prefix is byte-identical to before personas existed.
+   */
+  persona?: PersonaPromptInput;
+  /**
    * Render the compact scaffold (`compact-prompt.ts`): authored short
    * tool forms, compact tiers, shorter persona / rules / instructions.
    * Decided once per session by the caller so the prefix stays
    * byte-stable. Omitted or `false` keeps the full prefix byte-identical.
    */
   compact?: boolean;
+  /**
+   * `composio.accounts` (ATO-1494): which named account each app acts
+   * through, one line under the Composio guidance. Read only while
+   * Composio is mounted; omitted or empty adds nothing.
+   */
+  composioAccounts?: readonly ComposioAccountHint[];
 }
 
 /** Header of the out-of-role names line — pinned by tests, read by the model. */
@@ -358,8 +378,12 @@ export function buildStablePrefix(input: StablePrefixInput): string {
   // Same contract for GitHub: the `github.*` descriptors are only in
   // the catalog while the hub holds a token.
   const githubActive = isGithubActive(input.toolDescriptors);
+  const composioAccountsLine = composioActive
+    ? buildComposioAccountsGuidance(input.composioAccounts)
+    : null;
   const integrationsBlock = [
     ...(composioActive ? [COMPOSIO_GUIDANCE] : []),
+    ...(composioAccountsLine !== null ? [composioAccountsLine] : []),
     ...(githubActive ? [GITHUB_GUIDANCE] : []),
   ];
   // Same contract as the Composio block: present only while the tool it
@@ -448,6 +472,9 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     ``,
     ...(input.answerStyle !== undefined
       ? [ANSWER_STYLE_HEADER, buildAnswerStyleGuidance(input.answerStyle), ``]
+      : []),
+    ...(input.persona !== undefined
+      ? [PERSONA_HEADER, buildPersonaBlock(input.persona), ``]
       : []),
     `### skills`,
     skills,

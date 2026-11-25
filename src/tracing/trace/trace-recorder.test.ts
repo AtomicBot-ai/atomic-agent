@@ -301,6 +301,48 @@ describe("createTraceRecorder", () => {
     expect(details.nested.lines[1]).toBe("token plainShapeless9Value here");
   });
 
+  it("keeps an MCP App's page out of the trace file (ATO-1135)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-app", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "tool_call_parsed",
+        call: { tool: "mcp.weather.get_forecast", args: { city: "Tallinn" } },
+        batchIndex: 0,
+        batchSize: 1,
+      },
+    });
+    const page = `<html>${"x".repeat(3 * 1024 * 1024)}</html>`;
+    const details = {
+      structuredContent: { temp: 21 },
+      mcpApp: { resourceUri: "ui://weather/view.html", html: page },
+    };
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "tool_call_executed",
+        result: {
+          tool: "mcp.weather.get_forecast",
+          status: "ok",
+          summary: "Sunny, 21C",
+          details,
+          truncated: false,
+        },
+        batchIndex: 0,
+        batchSize: 1,
+      },
+    });
+    const invocation = events.find((e) => e.type === "tool_invocation");
+    expect(invocation).toMatchObject({ details: { structuredContent: { temp: 21 } } });
+    expect(invocation).not.toHaveProperty("details.mcpApp");
+    expect(JSON.stringify(invocation).length).toBeLessThan(10_000);
+    // The live result (the stream frame reads it) still has the page.
+    expect(details.mcpApp.html).toBe(page);
+  });
+
   it("emits N tool_invocation events per stepIndex with monotonic batchIndex", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-batch", emit, now });
@@ -463,6 +505,49 @@ describe("createTraceRecorder", () => {
       attempt: 1,
       reasoningTokens: 1500,
       timing: { predictedTokens: 1400 },
+    });
+  });
+
+  it("records the decode rate and draft counts on llm_completion (ATO-631)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-speed", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "llm_raw_completion",
+        stepIndex: 0,
+        attempt: 1,
+        completion: {
+          content: "[]",
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          timing: {
+            promptMs: 900,
+            predictedMs: 2_000,
+            promptTokens: 80,
+            predictedTokens: 24,
+            predictedPerSecond: 12,
+            draftTokens: 30,
+            draftAcceptedTokens: 21,
+          },
+          cacheHitTokens: 60,
+          slotId: 0,
+          modelId: "demo",
+        },
+      },
+    });
+    const completion = events.find((e) => e.type === "llm_completion");
+    expect(completion).toMatchObject({
+      timing: {
+        promptMs: 900,
+        predictedMs: 2_000,
+        predictedPerSecond: 12,
+        draftTokens: 30,
+        draftAcceptedTokens: 21,
+      },
     });
   });
 

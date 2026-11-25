@@ -58,7 +58,7 @@ const FAMILY_ALIASES: ReadonlyMap<string, string> = new Map([
 export interface ToolGateSourceConfig {
   readonly browser: { readonly enabled: boolean };
   readonly web: { readonly search: { readonly enabled: boolean } };
-  readonly vision: { readonly enabled: boolean };
+  readonly vision: { readonly enabled: boolean; readonly audioInput?: boolean };
   readonly memory: {
     readonly profile: { readonly enabled: boolean };
     readonly notes: { readonly enabled: boolean };
@@ -69,6 +69,7 @@ export interface ToolGateSourceConfig {
   readonly tasks: {
     readonly enabled: boolean;
     readonly agentToolsEnabled: boolean;
+    readonly sessionToolsEnabled?: boolean;
   };
   readonly mcp: { readonly servers: readonly unknown[] };
   /** `tools.screen.enabled`; optional so hand-built test configs need not name it. */
@@ -107,6 +108,9 @@ export function effectiveToolDescriptors(
       enabled: config.vision.enabled,
       providerAvailable: config.vision.enabled,
     },
+    // Approximated like vision: `true` lists it; unset (auto) depends on
+    // the loaded model's `/props`, invisible here, so it is not listed.
+    audio: { enabled: config.vision.audioInput === true },
     email: {
       available:
         readAtomicMailApiKey() !== null && config.atomicMail.address !== null,
@@ -120,16 +124,25 @@ export function effectiveToolDescriptors(
     tasks: {
       agentToolsEnabled: config.tasks.enabled && config.tasks.agentToolsEnabled,
     },
+    sessions: {
+      agentToolsEnabled: config.tasks.enabled && config.tasks.sessionToolsEnabled === true,
+    },
     mcp: { enabled: config.mcp.servers.length > 0 },
     // `/tools` reads the same env the runtime does, so this gate is
     // exact rather than approximated.
     github: { connected: resolveGithubToken(undefined, env) !== null },
     fusion: { enabled: config.llm?.runMode?.mode === "fusion" },
+    // The runtime's live gate reads the effective mode; the configured
+    // one is the same approximation the fusion gate above makes.
+    subagent: { enabled: config.llm?.runMode?.mode !== "fusion" },
     image: { available: openRouterImageKey(config, env) !== undefined },
     video: { available: openRouterImageKey(config, env) !== undefined },
     screen: {
-      enabled: config.tools?.screen?.enabled === true && platform === "darwin",
+      enabled:
+        config.tools?.screen?.enabled === true &&
+        (platform === "darwin" || platform === "win32" || platform === "linux"),
       point: config.tools?.screen?.point === true && platform === "darwin",
+      control: platform === "darwin",
     },
   });
 }

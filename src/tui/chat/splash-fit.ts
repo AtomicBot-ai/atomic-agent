@@ -104,6 +104,15 @@ export const SPLASH_TIPS: readonly SplashTip[] = [
     short: "pick model",
     command: "/model",
   },
+  // Where the agent runs (ATO-1640): an operator who could not find
+  // Fusion edited the config by hand. One click opens the composer's
+  // own Local / Cloud / Fusion switch.
+  {
+    label: "/runmode",
+    description: "run on Local, Cloud or Fusion",
+    short: "run mode",
+    command: "/runmode",
+  },
   {
     label: "/tasks",
     description: "jump to the Tasks tab (cron + ingress UI)",
@@ -115,6 +124,15 @@ export const SPLASH_TIPS: readonly SplashTip[] = [
     description: "bring sessions and skills over from another agent",
     short: "Hermes import",
     command: "/import",
+  },
+  {
+    // Last, so it is the first tip a short window drops. Setup itself
+    // stays lean (the onboarding theme key was turned down in #651), so
+    // the start page right after setup is where the palette is offered.
+    label: "/theme",
+    description: "switch the UI theme",
+    short: "UI theme",
+    command: "/theme",
   },
 ];
 

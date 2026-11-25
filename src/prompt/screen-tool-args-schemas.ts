@@ -2,7 +2,7 @@
  * JSON Schemas for `os.screen.*` (ATO-525), spread into
  * `DEFAULT_TOOL_ARGS_SCHEMAS`. Same conventions as the main file
  * (`additionalProperties: false`, enums verbatim, shape not bounds) and
- * no keyword the strict-mode rewrite refuses, so the first four convert;
+ * no keyword the strict-mode rewrite refuses, so all but the last convert;
  * `os.screen.point` nests its marks and stays non-strict on purpose.
  */
 
@@ -56,6 +56,17 @@ export const SCREEN_TOOL_ARGS_SCHEMAS: readonly [string, Schema][] = [
     obj({ text: { type: "string" }, via: { type: "string", enum: ["keys", "paste"] } }, ["text"]),
   ],
   ["os.screen.key", obj({ keys: { type: "string" } }, ["keys"])],
+  [
+    "os.screen.elements",
+    obj({ app: { type: "string" }, window: { type: "string" }, maxElements: { type: "integer" } }, ["app"]),
+  ],
+  [
+    "os.screen.press",
+    obj(
+      { app: { type: "string" }, element: { type: "integer" }, window: { type: "string" }, value: { type: "string" } },
+      ["app", "element"],
+    ),
+  ],
   [
     "os.screen.point",
     // The marks nest an object, so the item bounds keep this one off

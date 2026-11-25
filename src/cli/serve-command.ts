@@ -1,11 +1,20 @@
 import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
+import { McpElicitationBroker } from "../mcp/mcp-elicitation-broker.js";
 import { createStderrSink } from "../tracing/structured-logger.js";
+import { PrometheusRegistry } from "../tracing/prometheus-registry.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 
-import { HELP, lanUrls, parseArgs, serveAuthWarning } from "./serve-args.js";
+import { HELP, lanUrls, parseArgs } from "./serve-args.js";
+import { resolveServeApiKey, serveApiKeyNotice } from "./serve-api-key.js";
 import { watchForOrphaning } from "./serve-orphan-guard.js";
+import {
+  startWebhookTunnel,
+  tunnelPreflight,
+  type TunnelPreflight,
+  type WebhookTunnel,
+} from "./serve-webhook-tunnel.js";
 import {
   formatReapOutcomes,
   registerServe,
@@ -17,6 +26,7 @@ import {
   buildRouteTable,
   CompletionRegistry,
   createHttpServer,
+  createHttpTokenSource,
 } from "../http/index.js";
 import type { HttpServerHandle } from "../http/index.js";
 
@@ -46,13 +56,52 @@ export async function serveCommand(args: string[]): Promise<number> {
     return 0;
   }
 
+  // Always a key, on loopback too: the operator's, else the persisted one
+  // made on the first run. No key, no server.
+  const apiKey = resolveServeApiKey(parsed.apiKey, stateDir);
+  if ("error" in apiKey) {
+    process.stderr.write(`serve: ${apiKey.error}\n`);
+    return 1;
+  }
+  if (parsed.printApiKey) {
+    process.stdout.write(`${apiKey.key}\n`);
+    return 0;
+  }
+
+  // ATO-625: refuse the tunnel before anything boots, so a missing
+  // cloudflared or a webhook set with no secret never opens a public address.
+  let tunnelCheck: Extract<TunnelPreflight, { ok: true }> | null = null;
+  if (parsed.tunnel) {
+    const config = getConfig();
+    const check = tunnelPreflight({
+      webhooks: config.webhooks,
+      tasksEnabled: config.tasks.enabled,
+    });
+    if (!check.ok) {
+      process.stderr.write(`serve: ${check.error}\n`);
+      return 1;
+    }
+    tunnelCheck = check;
+  }
+
   const approvalBus = new ApprovalBus();
   const completionRegistry = new CompletionRegistry();
+  // ATO-1492: MCP servers' questions to the person ("confirm?", a small
+  // form). A window shows them only when it opens /api/events with
+  // `?elicitation=1`; with none open the surface is `none` and every
+  // question is declined at once, which is what an unattended serve
+  // must do. Never routed through the approval gate: that one can
+  // answer by itself, a server's question must not be.
+  const elicitations = new McpElicitationBroker();
+  // ATO-646: what `GET /metrics` reports, folded in memory from the
+  // runtime's metric samples.
+  const metricsRegistry = new PrometheusRegistry();
 
   let runtime: AgentRuntime | null = null;
   let handle: HttpServerHandle | null = null;
   let releaseRecord: (() => void) | null = null;
   let orphanWatch: OrphanWatch | null = null;
+  let tunnel: WebhookTunnel | null = null;
   try {
     runtime = await createAgentRuntime({
       workingDir: parsed.workingDir,
@@ -82,6 +131,7 @@ export async function serveCommand(args: string[]): Promise<number> {
         // factory's parameter makes that a compile error now, and
         // `serve-command.test.ts` reads what is passed here.
         logSinks: [createStderrSink()],
+        metricSinks: [metricsRegistry.sink],
         onApprovalRequest: (request) => {
           // ATO-1111: drop mirrored prompts whose turn was aborted, so a
           // window that never reconnects /api/events does not keep them.
@@ -89,26 +139,60 @@ export async function serveCommand(args: string[]): Promise<number> {
           if (live) approvalBus.prune((r) => live.approvals.isPending(r.approvalId));
           approvalBus.publish(request);
         },
+        onMcpElicitation: elicitations,
       },
     });
+    const namedTokens = createHttpTokenSource(stateDir);
     handle = await createHttpServer({
       runtime,
       host: parsed.host,
       port: parsed.port,
-      apiKey: parsed.apiKey,
-      routes: buildRouteTable(),
+      apiKey: apiKey.key,
+      routes: buildRouteTable({
+        metricsRegistry,
+        // ATO-693: off unless --a2a; parseArgs already refused it without a key.
+        a2a: parsed.a2a ? { publicUrl: a2aPublicUrl() } : null,
+      }),
       approvalBus,
       completionRegistry,
+      elicitations,
+      // ATO-583: `atag http tokens add` names tokens with a role; the key stays admin.
+      namedTokens,
     });
-    const authNote = parsed.apiKey ? "auth=bearer" : "auth=none";
+    const baseUrl = `http://${handle.host}:${handle.port}`;
+    // ATO-583 named tokens beside the always-on key (serve always has a key now).
+    const named = namedTokens().length;
+    const authNote = `auth=bearer${named > 0 ? `+${named} named` : ""}`;
     process.stderr.write(
-      `[atomic-agent] serve listening on http://${handle.host}:${handle.port} (${authNote}, cwd=${parsed.workingDir})\n`,
+      `[atomic-agent] serve listening on ${baseUrl} (${authNote}, cwd=${parsed.workingDir})\n`,
     );
-    const authWarning = serveAuthWarning(parsed);
-    if (authWarning) process.stderr.write(authWarning);
+    if (parsed.a2a) {
+      process.stderr.write(
+        "[atomic-agent] a2a: agent card at /.well-known/agent-card.json, tasks on POST /api/a2a (bearer auth)\n",
+      );
+    }
+    process.stderr.write(serveApiKeyNotice(apiKey, baseUrl, process.stderr.isTTY === true));
     // ATO-1126: on every interface, say where another device reaches it (the desktop's remote agent, a phone).
     for (const url of lanUrls(parsed.host, handle.port)) {
       process.stderr.write(`[atomic-agent] serve reachable at ${url}\n`);
+    }
+    if (parsed.tunnel && tunnelCheck) {
+      tunnel = await startWebhookTunnel({
+        runtime,
+        request: parsed.tunnel,
+        preflight: tunnelCheck,
+        apiKey: apiKey.key,
+        approvalBus,
+        completionRegistry,
+        write: (line) => process.stderr.write(line),
+      });
+      process.stderr.write(
+        `[atomic-agent] tunnel: starting cloudflared (${parsed.tunnel.mode}) for webhooks only, gateway on 127.0.0.1:${tunnel.gatewayPort}\n`,
+      );
+      // Not awaited: the public address can take a few seconds, and the
+      // local API serves meanwhile. The outcome is logged and shown on
+      // GET /api/webhooks.
+      void tunnel.ready;
     }
 
     releaseRecord = registerServe(stateDir, {
@@ -150,6 +234,12 @@ export async function serveCommand(args: string[]): Promise<number> {
     return 1;
   } finally {
     orphanWatch?.stop();
+    // ATO-1688: before the connections drop and abort their turns, so a
+    // turn the stop cuts off is recorded as interrupted, not as a Stop.
+    runtime?.beginShutdown?.();
+    elicitations.closeAll();
+    // The public address goes first, before the API it fronts.
+    if (tunnel) await tunnel.stop().catch(() => {});
     if (handle) await handle.close();
     if (runtime) await runtime.shutdown();
     // Released last, and only once the port and the databases are
@@ -158,6 +248,12 @@ export async function serveCommand(args: string[]): Promise<number> {
     // invisible stray this module exists to prevent.
     releaseRecord?.();
   }
+}
+
+/** ATO-693: `ATOMIC_AGENT_A2A_PUBLIC_URL`, the address the agent card names; unset or blank is none. */
+function a2aPublicUrl(): string | null {
+  const raw = process.env.ATOMIC_AGENT_A2A_PUBLIC_URL?.trim();
+  return raw ? raw : null;
 }
 
 interface OrphanWatch {

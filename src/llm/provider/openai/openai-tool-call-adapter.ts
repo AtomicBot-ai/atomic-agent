@@ -452,6 +452,8 @@ export function openAiToolCallsToBatch(
   options?: ToolBatchOptions,
 ): ToolCallBatch {
   const calls: ToolCallPayload[] = [];
+  // Gemini signs a parallel set on its first call only (ATO-1680).
+  const thoughtSignature = toolCalls.find((tc) => tc.thoughtSignature)?.thoughtSignature;
   let jsonRepair: JsonRepairReport | undefined;
   const noteRepair = options?.repairJson
     ? (report: JsonRepairReport): void => {
@@ -477,6 +479,7 @@ export function openAiToolCallsToBatch(
       tool: name,
       args,
       ...(reasoningText ? { reasoning: reasoningText } : {}),
+      ...(thoughtSignature ? { thoughtSignature } : {}),
     });
   }
   const reasoning =

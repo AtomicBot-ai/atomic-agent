@@ -21,6 +21,7 @@ import {
   type ImportItemResult,
   type ImportReport,
 } from "../import-report.js";
+import { groupHintFromCwd, withGroupHint } from "../grouping.js";
 import { reconcileImportedSession } from "../reconcile-session.js";
 import { splitMemoryNote } from "../split-note.js";
 import type { ClaudeCodeSource } from "./claude-code-source.js";
@@ -347,8 +348,12 @@ export class ClaudeCodeImporter {
     }
     for (const meta of metas) {
       let mapped: SessionState;
+      let cwd: string | null = null;
       try {
         const session = this.deps.source.readSession(meta);
+        // The folder the session ran in: the transcript's `cwd`, else the
+        // one Claude Code encoded in the project dir's name.
+        cwd = session.cwd ?? this.deps.source.projectCwdOf(meta);
         if (session.messages.length === 0) {
           // Warm-up / title-only transcript files: nothing to keep, but
           // the report still lists them so its counts add up to what
@@ -361,7 +366,9 @@ export class ClaudeCodeImporter {
           });
           continue;
         }
-        mapped = mapClaudeCodeSession(session, this.deps.workingDirFallback);
+        // W2 QA: the decoded folder when the transcript names none, so the
+        // chat continues where its project is, not in the app's workspace.
+        mapped = mapClaudeCodeSession(session, cwd ?? this.deps.workingDirFallback);
       } catch (err) {
         items.push({
           kind: "sessions",
@@ -371,7 +378,12 @@ export class ClaudeCodeImporter {
         });
         continue;
       }
-      items.push(this.reconcileSession(mapped, meta.id, options));
+      items.push(
+        withGroupHint(
+          this.reconcileSession(mapped, meta.id, options),
+          groupHintFromCwd(cwd),
+        ),
+      );
     }
   }
 

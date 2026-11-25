@@ -1,25 +1,30 @@
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { getConfig } from "../../config/index.js";
 import type { AgentLoop } from "../../agent/agent-loop.js";
-import type { RunTurnResult } from "../../agent/agent-contract.js";
+import type { AgentLoopEvent, RunTurnResult } from "../../agent/agent-contract.js";
 import type { LlmStreamParams } from "../../agent/step/step-contract.js";
+import { memoryReadOnlyToolFilter } from "../../agent/tool-resource-class.js";
 import type { CompletionResult } from "../../llm/llama-server-client.js";
 import type { ReasoningEffort } from "../../llm/provider/completion-types.js";
 import type { SlotManager } from "../../llm/slot-manager.js";
 import type { ProviderRegistry } from "../../llm/provider/index.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
 import type { ProviderFallbackChain } from "../../llm/fallback/index.js";
-import type { SessionStore } from "../../session/session-store.js";
-import { readFusionWorkerMeta, SESSION_LLM_METADATA_KEY, SESSION_ROUTE_METADATA_KEY, readSessionRoute, resolveTurnRoute, SESSION_TITLE_METADATA_KEY, SESSION_TITLE_TIMEOUT_MS, generateSessionTitle, readSessionTitle, shouldNameSession, type SessionLlmStamp, type SessionState } from "../../session/index.js";
+import { INTERRUPTED_TURN_ENDING, type SessionStore } from "../../session/session-store.js";
+import { isIncognitoSession, readFusionWorkerMeta, SESSION_LLM_METADATA_KEY, SESSION_ROUTE_METADATA_KEY, readSessionRoute, resolveTurnRoute, SESSION_TITLE_METADATA_KEY, SESSION_TITLE_TIMEOUT_MS, generateSessionTitle, readSessionTitle, shouldNameSession, type SessionLlmStamp, type SessionState } from "../../session/index.js";
 import { renderRouteChangeNote } from "../../prompt/route-change-note.js";
+import { applySessionProject, type SessionProject } from "../../session/session-project.js";
 import { previousReplyText, workerRequestRecord } from "../../prompt/request-section.js";
 import { pickOriginalRequest } from "../../tools/fusion/index.js";
 import type { ToolRole } from "../../tools/tool-roles.js";
+import { currentBrowserScope, endBrowserWorker, isAttendedTurn, runInBrowserScope } from "../../tools/browser/browser-run-scope.js";
 import type { ShellJobRegistry } from "../../tools/os/shell/shell-jobs.js";
 import { captureMessageSent, type AnalyticsStateStore, type LocalEngine, type TurnUsageMeter } from "../../analytics/index.js";
 import type { SessionUsageLedger } from "../../session/usage-meter.js";
 import { providerIdIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
+import { perTurnModelRefusal } from "../per-turn-model.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
+import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 import type { TurnController, TurnEventHook, TurnOrigin } from "../turn-controller.js";
 import type { SteeringInbox } from "../steering-inbox.js";
 import { TurnsInFlight } from "../turns-in-flight.js";
@@ -31,7 +36,11 @@ import type { RuntimeProviders } from "./runtime-inference.js";
 import { captureModelModePolicy, resolveModelMode, type ModelModePolicy } from "../../llm/model-mode.js";
 import type { GoalSpec, GoalState } from "../../agent/goal/index.js";
 import { createRuntimeGoalRunner } from "./runtime-goal.js";
+import { createNextStepSuggester } from "./runtime-next-step.js";
+import type { createExperienceReviewer } from "./runtime-experience-review.js";
+import { routeTurnProvider } from "./runtime-turn-router.js";
 import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
+import { surfaceShowsQuestions, withAskUserVisibility } from "../../tools/conversation/ask-user-surface.js";
 
 export function prepareRuntimeTurnState() {
   /**
@@ -74,6 +83,12 @@ export interface RuntimeTurnDependencies {
      * nothing is recorded and only the user's own words lift it.
      */
     turnPreviousReplies?: Map<string, string>;
+    /**
+     * Sessions whose running turn cannot show an `ask_user` card
+     * (ATO-489): the tool answers there at once. Omitted (tests,
+     * embedders): nothing is recorded and the tool is only hidden.
+     */
+    turnsWithoutQuestions?: Set<string>;
   };
   execution: {
     loop: Pick<AgentLoop, "runTurn">;
@@ -89,7 +104,7 @@ export interface RuntimeTurnDependencies {
     resolveCurrentRunMode: RuntimeProviders["resolveCurrentRunMode"];
     resolveRouteVision: RuntimeProviders["resolveRouteVision"];
     resolveActiveModelName: RuntimeProviders["resolveActiveModelName"];
-    fallbackChain: Pick<ProviderFallbackChain, "standingOverrideFor">;
+    fallbackChain: Pick<ProviderFallbackChain, "standingOverrideFor" | "setTurnPrimary">;
   };
   traces: Pick<RuntimeTraces, "ensureRecorder" | "pinSession" | "readContextUsage" | "clearContextUsage" | "releaseSession">;
   telemetry: {
@@ -98,9 +113,26 @@ export interface RuntimeTurnDependencies {
     turnUsageMeter: TurnUsageMeter;
     /** Session spend and account limits (ATO-569); absent in narrow test rigs. */
     sessionUsage?: SessionUsageLedger;
+    /** Turn counts and durations (ATO-646); absent in narrow test rigs. */
+    metrics?: Pick<AgentMetrics, "recordTurn">;
   };
   state: RuntimeTurnState;
-  lifecycle: { isShutdown(): boolean };
+  /**
+   * Session-scoped event sink for events that land after the turn ended
+   * (bootstrap's `emitAgentLoopEventFor`): the next-step suggestion
+   * (ATO-1093). Omitted (tests, embedders): the suggestion is only stored.
+   */
+  emitEvent?: (sessionId: string, event: AgentLoopEvent) => void;
+  /**
+   * Self-learning after a long turn (ATO-67,
+   * `runtime-experience-review.ts`). Omitted (tests, embedders): no review.
+   */
+  experienceReview?: Pick<ReturnType<typeof createExperienceReviewer>, "maybeReview">;
+  /**
+   * `isStopping` (ATO-1688): the host has begun to stop. Omitted, the
+   * shutdown itself is the only sign (`isShutdown`).
+   */
+  lifecycle: { isShutdown(): boolean; isStopping?(): boolean };
   logger: StructuredLogger;
 }
 
@@ -108,7 +140,7 @@ export function createRuntimeTurnService(
   config: AtomicAgentConfig,
   deps: RuntimeTurnDependencies,
 ) {
-  const { sessionStore, turnContext, turnRequests, turnPreviousReplies } = deps.sessions;
+  const { sessionStore, turnContext, turnRequests, turnPreviousReplies, turnsWithoutQuestions } = deps.sessions;
   const { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete } = deps.execution;
   const { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain } = deps.inference;
   const { traces, lifecycle, logger } = deps;
@@ -130,11 +162,14 @@ export function createRuntimeTurnService(
     maxSteps?: number;
     signal?: AbortSignal;
     providerId?: string;
+    model?: string;
     taskMaxDurationMs?: number;
     taskMaxCostUsd?: number;
     toolFilter?: (name: string) => boolean;
+    memoryReadOnly?: boolean;
     toolRole?: ToolRole;
     reasoningEffort?: ReasoningEffort;
+    reasoningOverride?: ReasoningEffort;
     maxOutputTokens?: number;
     interactive?: boolean;
   }) => ({
@@ -144,6 +179,9 @@ export function createRuntimeTurnService(
     ...(runOptions.reasoningEffort === undefined
       ? {}
       : { reasoningEffort: runOptions.reasoningEffort }),
+    ...(runOptions.reasoningOverride === undefined
+      ? {}
+      : { reasoningOverride: runOptions.reasoningOverride }),
     ...(runOptions.maxOutputTokens === undefined
       ? {}
       : { maxOutputTokens: runOptions.maxOutputTokens }),
@@ -163,9 +201,16 @@ export function createRuntimeTurnService(
     ...(runOptions.providerId === undefined
       ? {}
       : { providerId: runOptions.providerId }),
-    ...(runOptions.toolFilter === undefined
+    ...(runOptions.providerId === undefined || runOptions.model === undefined
       ? {}
-      : { toolFilter: runOptions.toolFilter }),
+      : { model: runOptions.model }),
+    // A read-only-memory turn (`skill eval`) also loses the memory write
+    // tools; the loop skips reflection and the lesson bump for it.
+    ...(runOptions.memoryReadOnly === true
+      ? { memoryReadOnly: true, toolFilter: memoryReadOnlyToolFilter(runOptions.toolFilter) }
+      : runOptions.toolFilter === undefined
+        ? {}
+        : { toolFilter: runOptions.toolFilter }),
     ...(runOptions.toolRole === undefined
       ? {}
       : { toolRole: runOptions.toolRole }),
@@ -178,13 +223,30 @@ export function createRuntimeTurnService(
    * active provider inside `resolveActiveLlmSlice` — for a fusion worker
    * that means silently running on the cloud leg.
    */
-  const assertKnownProvider = (providerId: string | undefined): void => {
-    if (providerId === undefined) return;
+  const assertKnownProvider = (providerId: string | undefined, model?: string, origin?: TurnOrigin): void => {
+    if (providerId === undefined) {
+      if (model !== undefined) {
+        throw new Error("a per-turn model needs the provider it runs on (providerId)");
+      }
+      return;
+    }
     if (!providerRegistry.getProvider(providerId)) {
       throw new Error(
         `cannot pin turn to llm provider "${providerId}": not configured`,
       );
     }
+    if (model === undefined) return;
+    // ATO-1148: a project's own model is a cloud choice. A local model
+    // is one per agent (one server, one loaded GGUF), so a per-turn
+    // model on a local link is refused rather than silently ignored.
+    // A Fusion turn's role model may be on LM Studio / Ollama (ATO-1560).
+    const refusal = perTurnModelRefusal(
+      resolveLlmConfig(getConfig()),
+      providerId,
+      model,
+      origin === "fusion" || origin === "subagent" ? { localServer: "allow" } : {},
+    );
+    if (refusal !== null) throw new Error(refusal);
   };
 
   /**
@@ -272,6 +334,20 @@ export function createRuntimeTurnService(
     }
   };
 
+  // Next-step suggestion (ATO-1093): the namer's path, off unless
+  // `tui.nextStepSuggestions` turns it on. Shares the namer's teardown set.
+  const nextStep = createNextStepSuggester({
+    getConfig,
+    sessionStore,
+    llmComplete,
+    slotManager,
+    resolveTransport: () => resolveActiveLlmSlice().transport,
+    pending: pendingSessionNamings,
+    isShutdown: () => lifecycle.isShutdown(),
+    ...(deps.emitEvent ? { emitEvent: deps.emitEvent } : {}),
+    logger,
+  });
+
   /**
    * Mark the session's row `running` for the turn about to run, so the
    * store says what is happening while it happens and a turn cut off by
@@ -308,24 +384,55 @@ export function createRuntimeTurnService(
   };
 
   /**
+   * ATO-1688: the host is stopping (`serve` told by a quit or a restart):
+   * a chat turn cancelled now was cut off, not stopped by a person. Not a
+   * durable task's turn (`checkpoint.taskId`): the task runner runs that
+   * again by itself, and a Continue on its chat would have nothing to
+   * continue (`interruptedChatTurn`). A host that only calls `shutdown`
+   * (the TUI, which stops its own turn first) keeps the turn's own end.
+   */
+  const cutOffByStop = (runOptions: { checkpoint?: { taskId?: string } }): boolean =>
+    lifecycle.isStopping?.() === true && runOptions.checkpoint?.taskId === undefined;
+
+  /**
+   * ATO-1688: a turn that ends `cancelled` while the host stops was cut
+   * off by it, and ends the way the shutdown's stand-in and the boot
+   * sweep end one (`INTERRUPTED_TURN_ENDING`): the chat then says its
+   * reply was cut off and offers to continue it (ATO-448), rather than
+   * reading as a person's Stop. Its transcript so far is kept as the
+   * turn wrote it.
+   */
+  const endedByStop = (
+    finished: SessionState,
+    runOptions: { checkpoint?: { taskId?: string } },
+  ): SessionState =>
+    finished.status === "cancelled" && cutOffByStop(runOptions)
+      ? { ...finished, lastError: INTERRUPTED_TURN_ENDING.lastError ?? null }
+      : finished;
+
+  /**
    * End a turn that has no state to save — it threw — on the status it
    * actually ended with: `cancelled` when it had been told to stop (an
    * abort can surface as any error), `failed` with the error otherwise.
    * The transcript stays what it was before the turn (`session`); there
    * is nothing truer to put there. A cancel puts back the `lastError`
    * the session had before the turn, which a shutdown's stand-in may
-   * have overwritten meanwhile.
+   * have overwritten meanwhile; one cancelled by the host stopping
+   * (ATO-1688) ends as interrupted, as that stand-in says.
    */
   const releaseThrownTurn = (
     session: SessionState,
     err: unknown,
     signal: AbortSignal | undefined,
+    cutOff = false,
   ): void => {
     try {
       sessionStore.releaseTurn(
         session.id,
         signal?.aborted === true
-          ? { status: "cancelled", lastError: session.lastError }
+          ? cutOff
+            ? INTERRUPTED_TURN_ENDING
+            : { status: "cancelled", lastError: session.lastError }
           : {
               status: "failed",
               lastError: err instanceof Error ? err.message : String(err),
@@ -347,11 +454,16 @@ export function createRuntimeTurnService(
       maxSteps?: number;
       signal?: AbortSignal;
       providerId?: string;
+      /** The pinned cloud provider's model for this turn only (ATO-1148). */
+      model?: string;
       taskMaxDurationMs?: number;
       taskMaxCostUsd?: number;
       toolFilter?: (name: string) => boolean;
+      /** See `RunTurnOptions.memoryReadOnly` (a `skill eval` run). */
+      memoryReadOnly?: boolean;
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
+      reasoningOverride?: ReasoningEffort;
       maxOutputTokens?: number;
       interactive?: boolean;
       /** What the turn's progress marker records beyond the message (ATO-1109). */
@@ -363,9 +475,14 @@ export function createRuntimeTurnService(
        * extensions client is the desktop app. Wins over `origin`.
        */
       answerChannel?: AnswerChannel;
+      /**
+       * The client declared whether it can show a question card
+       * (`ask_user`, ATO-489). Absent: decided from origin and channel.
+       */
+      questions?: boolean;
     } = {},
   ): Promise<RunTurnResult> => {
-    assertKnownProvider(runOptions.providerId);
+    assertKnownProvider(runOptions.providerId, runOptions.model, runOptions.origin);
     // A fusion worker session is throwaway: no recorder, no trace pin, no
     // memory, and — at the end — no save. The parent session's turn
     // owns the durable record of what the worker did.
@@ -390,12 +507,20 @@ export function createRuntimeTurnService(
           if (parentReply !== undefined) {
             turnPreviousReplies?.set(session.id, parentReply);
           }
-          return await loop.runTurn(session, {
+          // The browser treats a worker like the turn that fanned it out:
+          // a window when someone watches that chat (ATO-959). It browses
+          // in tabs of its own (ATO-961).
+          const browserScope = {
+            sessionId: session.id,
+            attended: currentBrowserScope()?.attended ?? false,
+            workerOf: worker.parentSessionId,
+          };
+          return await runInBrowserScope(browserScope, () => loop.runTurn(session, {
             userMessage,
             modelModePolicy,
             ephemeral: true,
             ...buildLoopTurnBudget(runOptions),
-          });
+          }));
         } finally {
           turnRequests.delete(session.id);
           turnPreviousReplies?.delete(session.id);
@@ -406,8 +531,30 @@ export function createRuntimeTurnService(
           shellJobs.endSession(session.id);
           // A throwaway worker must not keep its server slot pinned.
           slotManager.release(session.id);
+          // Nor its browser tabs (ATO-961).
+          endBrowserWorker(session.id);
         }
       });
+    }
+    // The model router (ATO-483), once per turn and before anything reads
+    // the route: a rule's provider goes first in this session's fallback
+    // chain for the turn, so every step starts on it and a failure falls
+    // over to the next `llm.fallback` link. Off by default; silent under
+    // the local run mode, Fusion or a turn that is already pinned. Set
+    // every turn (null when nothing routed), so a turn that threw before
+    // its `finally` cannot leave its head on the next one.
+    const routedProviderId = routeTurnProvider({
+      config: getConfig(),
+      userMessage,
+      workingDir: session.workingDir,
+      pinnedProviderId: runOptions.providerId,
+      runMode: resolveCurrentRunMode(),
+      isRegistered: (id) => providerRegistry.getProvider(id) !== undefined,
+      logger,
+      sessionId: session.id,
+    });
+    if (runOptions.providerId === undefined) {
+      fallbackChain.setTurnPrimary(session.id, routedProviderId ?? null);
     }
     // Resolved before the turn runs, from the live config: the model the
     // operator chose for this turn is what the session should remember,
@@ -417,16 +564,21 @@ export function createRuntimeTurnService(
     const llmEntry = llmResolved.providers.find(
       (p) => p.id === llmResolved.activeTextProvider,
     );
-    const llmStamp: SessionLlmStamp = {
-      providerId: llmResolved.activeTextProvider,
-      chatModel: llmEntry?.defaultChatModel ?? llmEntry?.model ?? null,
-    };
+    // A turn on a project's own cloud model (ATO-1148) ran on that
+    // provider and model, not the active one: that is what it records.
+    const turnModel = runOptions.providerId !== undefined ? runOptions.model : undefined;
+    const llmStamp: SessionLlmStamp = turnModel !== undefined
+      ? { providerId: runOptions.providerId!, chatModel: turnModel }
+      : {
+          providerId: llmResolved.activeTextProvider,
+          chatModel: llmEntry?.defaultChatModel ?? llmEntry?.model ?? null,
+        };
     // What this turn is served by, against what the session's previous
     // turn was: a switch of provider, model, run mode or fusion worker —
     // or a fallover still in force — is told to the model once, as
     // `### route`, because the transcript it reads names the old model
     // and repeats the old model's refusals (session-route.ts).
-    const turnRoute = resolveTurnRoute({
+    const configuredRoute = resolveTurnRoute({
       resolved: llmResolved,
       runMode: resolveCurrentRunMode(),
       managedModelId: getConfig().localModels.managed.modelId ?? null,
@@ -437,6 +589,9 @@ export function createRuntimeTurnService(
       // turn starts on the primary then, and that is what it is told.
       fallbackOverrideId: fallbackChain.standingOverrideFor(session.id),
     });
+    const turnRoute = turnModel === undefined
+      ? configuredRoute
+      : { ...configuredRoute, main: { ...configuredRoute.main, model: turnModel } };
     const previousRoute = readSessionRoute(session.metadata);
     const routeNote =
       previousRoute === null
@@ -491,6 +646,18 @@ export function createRuntimeTurnService(
           turnPreviousReplies?.set(session.id, previousReply);
         }
         const answerChannel = runOptions.answerChannel ?? answerChannelForOrigin(runOptions.origin);
+        // `ask_user` only where a person can see and answer the question
+        // (ATO-489). The desktop has no question card until ATO-1502, so
+        // its turns do not get the tool; remove that hide when it lands.
+        const showsQuestions = surfaceShowsQuestions({
+          ...(runOptions.origin !== undefined ? { origin: runOptions.origin } : {}),
+          ...(answerChannel !== undefined ? { answerChannel } : {}),
+          ...(runOptions.questions !== undefined ? { questions: runOptions.questions } : {}),
+        });
+        const toolFilter = withAskUserVisibility(runOptions.toolFilter, showsQuestions);
+        // A model that calls the hidden tool anyway gets an answer at
+        // once rather than a question nobody can see (ask-user.ts).
+        if (!showsQuestions) turnsWithoutQuestions?.add(session.id);
         // An explicit `maxSteps` from a caller (a durable task that pins
         // its own budget, `run --max-steps`) is a *ceiling* that caller
         // chose — honour it as one. Absent that, the config value is the
@@ -500,7 +667,13 @@ export function createRuntimeTurnService(
         // Carry on from what the session persisted, so a reopened thread
         // keeps adding to its own total (ATO-569).
         sessionUsage?.seed(session.id, session.sessionUsage);
-        const result = await loop.runTurn(session, {
+        // Who the browser works for: a cron task or a bridge gets no
+        // window under `browser.headless: "auto"` (ATO-959).
+        const browserScope = {
+          sessionId: session.id,
+          attended: isAttendedTurn(runOptions.origin, runOptions.interactive),
+        };
+        const result = await runInBrowserScope(browserScope, () => loop.runTurn(session, {
           userMessage,
           modelModePolicy,
           // The same record the workers' briefs quote, pinned into the
@@ -513,10 +686,13 @@ export function createRuntimeTurnService(
           // `origin: "fusion"` and gets no block (its reply goes to the
           // orchestrator, not to a person).
           ...(answerChannel !== undefined ? { answerChannel } : {}),
-          ...buildLoopTurnBudget(runOptions),
+          ...buildLoopTurnBudget({
+            ...runOptions,
+            ...(toolFilter !== undefined ? { toolFilter } : {}),
+          }),
           onStepCheckpoint: (state, step) =>
             checkpointStep(state, progress.atStep(step)),
-        });
+        }));
         // Stamp the turn's window occupancy so the stored session can
         // restore the TUI's context gauge when it is reopened. A turn
         // that built no prompt (failed before step 1) leaves whatever
@@ -525,7 +701,8 @@ export function createRuntimeTurnService(
         // session later restores its provider/model (session-llm.ts).
         const usage = traces.readContextUsage(session.id);
         const spend = sessionUsage?.get(session.id);
-        const finished: SessionState = {
+        // ATO-1688: cut off by the host stopping, it ends as interrupted (`endedByStop`).
+        const finished: SessionState = endedByStop({
           ...result.session,
           ...(usage === undefined ? {} : { contextUsage: usage }),
           ...(spend === undefined ? {} : { sessionUsage: spend }),
@@ -534,7 +711,7 @@ export function createRuntimeTurnService(
             [SESSION_LLM_METADATA_KEY]: llmStamp,
             [SESSION_ROUTE_METADATA_KEY]: turnRoute,
           },
-        };
+        }, runOptions);
         // The turn's end replaces its `running` mark (`beginTurn`).
         sessionStore.finishTurn(finished);
         // Name the thread once, from its first prompt, after the first
@@ -546,13 +723,28 @@ export function createRuntimeTurnService(
         // too, and a run that promised to stop at its cap must not make
         // one more paid call. The session stays unnamed until a later
         // turn answers within its budget.
+        // Never for an incognito chat (ATO-586): no list shows its name,
+        // and the late title save would write back a row its close deleted.
         if (
           getConfig().agent.nameSessions &&
           !stoppedForMoney(result.stopCause) &&
+          !isIncognitoSession(finished) &&
           shouldNameSession(finished)
         ) {
           void nameSession(finished);
         }
+        // Same contract as naming: fire-and-forget, never after a budget stop.
+        if (!stoppedForMoney(result.stopCause)) {
+          nextStep.maybeSuggest(finished, runOptions.origin);
+        }
+        // Self-learning (ATO-67): same contract, gated on the turn's
+        // length, origin and ending inside the reviewer.
+        deps.experienceReview?.maybeReview(finished, {
+          result,
+          origin: runOptions.origin,
+          ...(runOptions.answerChannel !== undefined ? { answerChannel: runOptions.answerChannel } : {}),
+          ...(runOptions.memoryReadOnly === true ? { memoryReadOnly: true } : {}),
+        });
         // `finish` ended the whole session: its kept jobs go with it.
         if (finished.status === "completed") shellJobs.endSession(session.id);
         return { ...result, session: finished };
@@ -561,7 +753,7 @@ export function createRuntimeTurnService(
         // reply, finish, max steps, failed, cancelled — so this is a turn
         // that threw, or whose save did. Its row must not go on saying
         // `running`.
-        releaseThrownTurn(session, err, runOptions.signal);
+        releaseThrownTurn(session, err, runOptions.signal, cutOffByStop(runOptions));
         throw err;
       } finally {
         inFlight.end();
@@ -574,7 +766,11 @@ export function createRuntimeTurnService(
         traces.clearContextUsage(session.id);
         turnRequests.delete(session.id);
         turnPreviousReplies?.delete(session.id);
+        turnsWithoutQuestions?.delete(session.id);
         traces.releaseSession(session.id);
+        if (routedProviderId !== undefined) {
+          fallbackChain.setTurnPrimary(session.id, null);
+        }
       }
     });
   };
@@ -610,6 +806,29 @@ export function createRuntimeTurnService(
     logger,
   });
 
+  // ATO-646: every turn, whatever its origin, counted and timed for
+  // `/metrics`. Timed from the queue's hand-over, so the wait behind
+  // another turn on the same session is not counted as this one's.
+  const timeTurn = async (
+    sessionId: string,
+    origin: TurnOrigin,
+    run: () => Promise<RunTurnResult>,
+  ): Promise<RunTurnResult> => {
+    const metrics = deps.telemetry.metrics;
+    if (!metrics) return run();
+    const startedAt = Date.now();
+    const record = (outcome: string): void =>
+      metrics.recordTurn({ sessionId, origin, outcome, durationMs: Date.now() - startedAt });
+    try {
+      const result = await run();
+      record(result.reason);
+      return result;
+    } catch (error) {
+      record("error");
+      throw error;
+    }
+  };
+
   const runTurn = async (
     session: SessionState,
     userMessage: string,
@@ -619,11 +838,16 @@ export function createRuntimeTurnService(
       eventHook?: TurnEventHook;
       origin?: TurnOrigin;
       providerId?: string;
+      /** See `executeTurn`'s `model`. */
+      model?: string;
       taskMaxDurationMs?: number;
       taskMaxCostUsd?: number;
       toolFilter?: (name: string) => boolean;
+      /** See `RunTurnOptions.memoryReadOnly` (a `skill eval` run). */
+      memoryReadOnly?: boolean;
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
+      reasoningOverride?: ReasoningEffort;
       maxOutputTokens?: number;
       interactive?: boolean;
       checkpoint?: TurnCheckpointOptions;
@@ -631,6 +855,10 @@ export function createRuntimeTurnService(
       onGoalProgress?: (goal: GoalState) => void;
       /** See `executeTurn`'s `answerChannel`. */
       answerChannel?: AnswerChannel;
+      /** ATO-42: see the runtime contract's `project`. */
+      project?: SessionProject | null;
+      /** See `executeTurn`'s `questions`. */
+      questions?: boolean;
     } = {},
   ): Promise<RunTurnResult> => {
     if (runOptions.goal !== undefined) {
@@ -656,7 +884,7 @@ export function createRuntimeTurnService(
     }
     // Before the queue, so a bad pin rejects now rather than after
     // waiting behind whatever is running on the session.
-    assertKnownProvider(runOptions.providerId);
+    assertKnownProvider(runOptions.providerId, runOptions.model, runOptions.origin);
     const origin = runOptions.origin ?? "cli";
     const submission = {
       sessionId: session.id,
@@ -673,11 +901,12 @@ export function createRuntimeTurnService(
       // parked) falls back to the caller's copy, the pre-existing
       // behaviour.
       run: () =>
-        executeTurn(
-          sessionStore.load(session.id) ?? session,
-          userMessage,
-          runOptions,
-        ),
+        timeTurn(session.id, origin, () => {
+          const fresh = sessionStore.load(session.id) ?? session;
+          // ATO-42: on the copy the turn runs and saves, never before the lock.
+          applySessionProject(fresh, runOptions.project);
+          return executeTurn(fresh, userMessage, runOptions);
+        }),
       ...(runOptions.eventHook ? { eventHook: runOptions.eventHook } : {}),
       ...(runOptions.signal ? { signal: runOptions.signal } : {}),
     } as const;
@@ -693,8 +922,9 @@ export function createRuntimeTurnService(
     // and also fires the one-time `first_message_sent`.
     // A fusion worker turn is excluded for the same reason: it is the
     // orchestrator fanning out, not a person; the parent session's turn
-    // is the one `message_sent` and the meter already count.
-    if (origin === "scheduler" || origin === "fusion") {
+    // is the one `message_sent` and the meter already count. A subagent
+    // worker turn is the same kind of turn (ATO-1669).
+    if (origin === "scheduler" || origin === "fusion" || origin === "subagent") {
       return turnController.enqueue(submission);
     }
     const startedAt = Date.now();
@@ -714,7 +944,10 @@ export function createRuntimeTurnService(
       const localEngine = resolveTurnLocalEngine(getConfig(), provider.id);
       return {
         provider: provider.name,
-        model: resolveActiveModelName(provider.id),
+        model:
+          runOptions.model !== undefined && provider.id === runOptions.providerId
+            ? runOptions.model
+            : resolveActiveModelName(provider.id),
         ...(localEngine ? { localEngine } : {}),
         ...usage,
       };
@@ -733,7 +966,14 @@ export function createRuntimeTurnService(
       // The same totals reach the caller, e.g. the OpenAI-compatible
       // endpoint's `usage` (ATO-276).
       return context.promptTokens !== undefined && context.completionTokens !== undefined
-        ? { ...result, usage: { promptTokens: context.promptTokens, completionTokens: context.completionTokens } }
+        ? {
+            ...result,
+            usage: {
+              promptTokens: context.promptTokens,
+              completionTokens: context.completionTokens,
+              ...(context.generation ? { generation: context.generation } : {}),
+            },
+          }
         : result;
     } catch (error) {
       captureMessageSent(observability.getAnalytics(), analyticsStateStore, {

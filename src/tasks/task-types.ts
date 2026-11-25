@@ -21,9 +21,29 @@ import type { LlmFailureCategory } from "../llm/reliability/index.js";
  * This is the only path that resets `attempts`/`last_error`/`started_at`/
  * `completed_at` on an already-terminal row; `session_id` is preserved
  * across requeues so the recurring task's conversation stays continuous.
+ *
+ * An operator can pause a waiting task and resume it (ATO-590):
+ *
+ *   pending  -> paused    (`TaskStore.pause`; the scheduler only picks
+ *                          `pending` rows, so a paused task never fires)
+ *   paused   -> pending   (`TaskStore.resume`; a recurring task is armed
+ *                          for its next firing after the resume, missed
+ *                          firings are skipped)
+ *   paused   -> cancelled (operator cancellation)
+ *   paused   -> running   ("Run now", `TaskRunner.runOne` with
+ *                          `evenIfPaused`; back to `paused` after the
+ *                          run unless it ended the task for good)
+ *
+ * A `running` task cannot be paused: its run ends first.
  */
 export type TaskStatus =
-  "pending" | "running" | "completed" | "failed" | "blocked" | "cancelled";
+  | "pending"
+  | "running"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "blocked"
+  | "cancelled";
 
 /**
  * Where the task was created. Mirrors `TurnOrigin` but kept as its own
@@ -31,7 +51,7 @@ export type TaskStatus =
  * even when no live `runTurn` initiated it.
  */
 export type TaskOrigin =
-  "cli" | "tui" | "http" | "sidecar" | "scheduler" | "agent";
+  "cli" | "tui" | "http" | "sidecar" | "scheduler" | "agent" | "telegram";
 
 /**
  * Who ultimately triggered the task. Informational only — used for
@@ -39,7 +59,13 @@ export type TaskOrigin =
  * the task enters `runTurn`. `origin` captures the API surface (e.g.
  * `http`), `triggerSource` captures the semantic reason (`webhook`).
  */
-export type TriggerSource = "user" | "scheduler" | "webhook" | "agent";
+export type TriggerSource =
+  | "user"
+  | "scheduler"
+  | "webhook"
+  | "agent"
+  /** A watched file or log line (`fileTriggers`, ATO-441). */
+  | "file";
 
 /**
  * Scheduling primitive for deferred / recurring execution. Three shapes:
@@ -65,7 +91,8 @@ export type TaskSchedule =
  * runner only ever observes members of this list (or `null` = no
  * report, the default).
  */
-export const TASK_NOTIFY_TARGETS = ["telegram"] as const;
+/** `"push"`: the ntfy topic in `notifications.push` (ATO-1129). */
+export const TASK_NOTIFY_TARGETS = ["telegram", "push"] as const;
 
 export type TaskNotifyTarget = (typeof TASK_NOTIFY_TARGETS)[number];
 

@@ -2,6 +2,9 @@ import { withReportHint } from "./chat/format-agent-error-for-chat.js";
 import { describe, expect, it } from "vitest";
 import { attachFailedAttempts } from "../llm/fallback/failed-attempts.js";
 import { LocalOutOfMemoryError } from "../llm/index.js";
+import { failureVerdict } from "../llm/reliability/failure-catalog.js";
+import { TransportError } from "../llm/reliability/llm-failures.js";
+import { DailySpendLimitError } from "../llm/reliability/spend-limit-error.js";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import { reduceTuiState, type TuiAction } from "./agent-event-reducer.js";
 import { providerRow } from "./composer-switch/composer-switch-fixtures.js";
@@ -78,6 +81,34 @@ describe("reduceTuiState fusion worker progress", () => {
     expect(lines).toEqual([
       "» worker Map the routes: started",
       "» worker Map the routes: done — 5 steps, 12 routes, 3 unauthenticated",
+    ]);
+  });
+
+  it("keeps the leg's model on its feed entry for the brand badge (ATO-1635)", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "t1",
+          title: "Map the routes",
+          phase: "started",
+          model: "qwen3.6-35b-a3b",
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "t2",
+          title: "No model named",
+          phase: "started",
+        },
+      },
+    ]);
+    expect(state.feed.map((entry) => entry.brandModel)).toEqual([
+      "qwen3.6-35b-a3b",
+      undefined,
     ]);
   });
 
@@ -187,6 +218,56 @@ describe("reduceTuiState fusion worker progress", () => {
     expect(after.fusionLiveWorkers[0]?.contextTokens).toBe(9_000);
   });
 
+  it("keeps one collapsed outcome row per worker after the turn ends, until the next turn", () => {
+    const worker = (taskId: string, extra: Record<string, unknown>) => ({
+      type: "agent_event" as const,
+      event: {
+        type: "fusion_worker" as const,
+        taskId,
+        title: taskId,
+        role: "worker" as const,
+        model: "qwen-3.5-4b",
+        ...extra,
+      } as never,
+    });
+    const ended = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
+      worker("a", { phase: "started", stepBudget: 8 }),
+      worker("a", { phase: "tool", tool: "os.fs.write" }),
+      worker("b", { phase: "started", stepBudget: 8 }),
+      worker("c", { phase: "started", stepBudget: 8 }),
+      worker("a", { phase: "finished", status: "needs_orchestrator", stepCount: 4, stepBudget: 8 }),
+      worker("b", { phase: "finished", status: "timeout", stepCount: 6, stepBudget: 8 }),
+      // `c` never reported an end line: the turn took it down.
+      {
+        type: "agent_event",
+        event: { type: "turn_finished", turnIndex: 0, reason: "reply", stepCount: 2, durationMs: 10 },
+      },
+    ]);
+    expect(ended.status).not.toBe("running");
+    expect(ended.fusionLiveWorkers.map((w) => w.taskId)).toEqual(["a", "b", "c"]);
+    expect(ended.fusionLiveWorkers.every((w) => w.collapsed === true && w.done)).toBe(true);
+    expect(ended.fusionLiveWorkers.map((w) => w.outcome)).toEqual([
+      "needs_orchestrator",
+      "timeout",
+      "cancelled",
+    ]);
+
+    // The next turn starts clean: collapsed rows do not pile up.
+    const next = reduceTuiState(ended, { type: "message_submitted" });
+    expect(next.fusionLiveWorkers).toEqual([]);
+    // A fan-out that arrives without a submit (another origin) replaces
+    // them too, rather than mixing with them.
+    const reused = apply(ended, [worker("d", { phase: "started" })]);
+    expect(reused.fusionLiveWorkers.map((w) => w.taskId)).toEqual(["d"]);
+    expect(reused.fusionLiveWorkers[0]?.collapsed).toBeUndefined();
+    // And a new thread does not inherit them.
+    expect(
+      reduceTuiState(ended, { type: "session_created", sessionId: "s2" }).fusionLiveWorkers,
+    ).toEqual([]);
+  });
+
   it("does not disturb the turn's own status or step counter", () => {
     // These events belong to the parent turn as a whole, not to any one
     // of its steps — they must not read as a step boundary.
@@ -246,6 +327,49 @@ describe("reduceTuiState", () => {
     expect(next.latestResult?.status).toBe("ok");
     expect(next.metrics.toolsOk).toBe(1);
     expect(next.metrics.toolsError).toBe(0);
+  });
+
+  it("keeps an MCP App's page out of the tool card and latestResult (ATO-1135)", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "tool_call_parsed",
+            call: { tool: "mcp.weather.get_forecast", args: { city: "Tallinn" } },
+            batchIndex: 0,
+            batchSize: 1,
+          },
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "tool_call_executed",
+            result: {
+              tool: "mcp.weather.get_forecast",
+              status: "ok",
+              summary: "Sunny, 21C",
+              details: {
+                structuredContent: { temp: 21 },
+                mcpApp: { resourceUri: "ui://weather/view.html", html: "<p>page</p>" },
+              },
+              truncated: false,
+            },
+            batchIndex: 0,
+            batchSize: 1,
+          },
+        },
+      },
+    ]);
+    expect(next.latestResult?.details).toEqual({ structuredContent: { temp: 21 } });
+    const card = next.streamingToolCards.find((c) => c.tool === "mcp.weather.get_forecast");
+    expect(card?.details).toEqual({ structuredContent: { temp: 21 } });
   });
 
   it("should enter awaiting_approval state on approval request", () => {
@@ -488,6 +612,37 @@ describe("reduceTuiState", () => {
       expect(next.contextUsage.tokens).toBe(12_000);
     });
 
+    it("records the step's speed for the composer bar (ATO-631)", () => {
+      const next = apply(createInitialTuiState(fakeSession()), [
+        promptBuilt(),
+        {
+          type: "agent_event",
+          event: {
+            type: "llm_event",
+            event: {
+              type: "llm_completed",
+              completion: {
+                timing: {
+                  promptMs: 41_000,
+                  predictedMs: 2_000,
+                  promptTokens: 32_000,
+                  predictedTokens: 24,
+                  predictedPerSecond: 12,
+                },
+                cacheHitTokens: 2_000,
+              } as never,
+            },
+          },
+        },
+      ]);
+      expect(next.metrics.stepSpeedLast).toMatchObject({
+        decodeTokensPerSecond: 12,
+        promptTokens: 32_000,
+        cachedTokens: 2_000,
+        prefillMs: 41_000,
+      });
+    });
+
     /**
      * The regression this slice exists to avoid: `startNewRun` wipes
      * every per-turn metric, and the window is emphatically not a
@@ -655,6 +810,25 @@ describe("reduceTuiState", () => {
       "Turn failed: couldn't get a reply from the provider.",
       'Details: fetch failed (after "openrouter" failed: openai provider 404: No endpoints found for z-ai/glm-5.3-flash.)',
     ]);
+  });
+
+  it("says the daily cloud limit stopped the turn, not that the provider is unreachable (ATO-649)", () => {
+    const limit = new DailySpendLimitError({ spentUsd: 5.1, limitUsd: 5, providerId: "openrouter" });
+    const error = new TransportError(limit.message, null, "", { cause: limit });
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: { type: "loop_failed", error, category: "transport" },
+      },
+    ]);
+    const errMsg = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(errMsg?.text).toContain(
+      "Daily cloud limit reached: $5.10 of $5.00. Cloud calls are paused until tomorrow.",
+    );
+    expect(errMsg?.text).not.toContain("couldn't get a reply");
   });
 
   it("renders a calm stopped-by-user notice with a retry prompt on a cancelled loop_failed", () => {
@@ -2590,6 +2764,15 @@ it("keeps compaction notices scoped to the visible session after switching chats
   expect(JSON.stringify(visible.messages)).toContain("1000 → ~400");
 });
 
+it("shows a completed compaction's note, such as instructions that were not applied (ATO-661)", () => {
+  const state = createInitialTuiState(fakeSession({ sessionId: "visible" }));
+  const note = "Your compaction instructions were not applied: the checkpoint was extracted without a model call.";
+  const next = reduceTuiState(state, { type: "agent_event", sessionId: "visible", event: { type: "compaction_completed", sessionId: "visible",
+    result: { status: "compacted", reason: "manual", tokensBefore: 1000, tokensAfter: 400, message: note },
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, calls: 0 } });
+  expect(JSON.stringify(next.messages)).toContain(note);
+});
+
 describe("context compaction activity", () => {
   const started = (sessionId: string): TuiAction => ({ type: "agent_event", sessionId,
     event: { type: "compaction_started", sessionId, reason: "manual", tokensBefore: 10100 },
@@ -2789,5 +2972,225 @@ describe("reduceTuiState session usage (ATO-569)", () => {
     const last = state.messages[state.messages.length - 1];
     expect(last?.role).toBe("system");
     expect(last?.text).toContain("$0.31 over 1 priced call");
+  });
+});
+
+/* ATO-1457: a turn that failed because the provider refused the API key
+   offers `[check key]`, which opens that provider's key field. */
+describe("a refused API key offers the key field", () => {
+  const refused = (error: Error) =>
+    apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error,
+          category: "transport",
+          failure: failureVerdict("auth_rejected"),
+        },
+      },
+    ]);
+
+  it("sets fix-key and names the provider the error was raised for", () => {
+    const error = Object.assign(new Error("openai provider 401: "), {
+      providerLabel: "openrouter",
+    });
+    const msg = refused(error).messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(msg?.action).toBe("fix-key");
+    expect(msg?.fixKeyProviderId).toBe("openrouter");
+  });
+
+  it("finds the provider through a wrapping error", () => {
+    const inner = Object.assign(new Error("401"), { providerLabel: "anthropic" });
+    const outer = new Error("all providers failed", { cause: inner });
+    const msg = refused(outer).messages.find((m) => m.variant === "warn");
+    expect(msg?.action).toBe("fix-key");
+    expect(msg?.fixKeyProviderId).toBe("anthropic");
+  });
+
+  it("still sets fix-key when the error names no provider", () => {
+    const msg = refused(new Error("401 unauthorized")).messages.find(
+      (m) => m.variant === "warn",
+    );
+    expect(msg?.action).toBe("fix-key");
+    expect(msg?.fixKeyProviderId).toBeUndefined();
+  });
+
+  it("leaves other failures without the button", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("boom"),
+          category: "transport",
+          failure: failureVerdict("provider_unreachable"),
+        },
+      },
+    ]);
+    const msg = next.messages.find((m) => m.variant === "warn");
+    expect(msg?.action).toBeUndefined();
+    expect(msg?.fixKeyProviderId).toBeUndefined();
+  });
+
+  it("adds the key button to a fallover away from a refused key, keeping configure-fallback", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "agent_event",
+        event: {
+          type: "provider_switched",
+          direction: "away",
+          from: "openrouter",
+          to: "local-llama",
+          reason: "provider rejected the request (401).",
+          cause: "auth",
+          failure: "auth_rejected",
+        },
+      },
+    ]);
+    const system = next.messages.filter((m) => m.role === "system");
+    expect(system).toHaveLength(1);
+    expect(system[0]?.action).toBe("configure-fallback");
+    expect(system[0]?.fixKeyProviderId).toBe("openrouter");
+  });
+
+  it("does not add it to a fallover for any other reason", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "agent_event",
+        event: {
+          type: "provider_switched",
+          direction: "away",
+          from: "openrouter",
+          to: "local-llama",
+          reason: "503",
+          cause: "other",
+        },
+      },
+    ]);
+    expect(next.messages[0]?.fixKeyProviderId).toBeUndefined();
+  });
+});
+
+describe("prompt reading progress (ATO-1001)", () => {
+  const progress = (processed: number, total: number, stepIndex = 0): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "llm_event",
+      event: { type: "prompt_progress", stepIndex, processed, total, cached: 0, elapsedMs: 100 },
+    },
+  });
+  const firstToken: TuiAction = {
+    type: "agent_event",
+    event: { type: "llm_event", event: { type: "first_token", stepIndex: 0 } },
+  };
+
+  it("keeps the latest reading until the first token", () => {
+    const reading = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      progress(2_048, 8_000),
+      progress(4_096, 8_000),
+    ]);
+    expect(reading.promptProgress).toEqual({ processed: 4_096, total: 8_000 });
+    expect(apply(reading, [firstToken]).promptProgress).toBeNull();
+  });
+
+  it("clears at the next step and the next turn", () => {
+    const reading = apply(createInitialTuiState(fakeSession()), [progress(10, 100)]);
+    expect(
+      apply(reading, [{ type: "agent_event", event: { type: "step_started", stepIndex: 1 } }]).promptProgress,
+    ).toBeNull();
+    expect(
+      apply(reading, [{ type: "agent_event", event: { type: "turn_started", turnIndex: 1 } }]).promptProgress,
+    ).toBeNull();
+  });
+
+  it("ignores a reading with no total", () => {
+    const state = createInitialTuiState(fakeSession());
+    expect(apply(state, [progress(0, 0)])).toBe(state);
+  });
+});
+
+describe("reduceTuiState per-step spend for /why (ATO-34)", () => {
+  const usage = (costUsd: number, counts: Partial<{ priced: number; unpriced: number; local: number }> = {}) => ({
+    costUsd,
+    pricedCalls: counts.priced ?? 0,
+    unpricedCalls: counts.unpriced ?? 0,
+    localCalls: counts.local ?? 0,
+    planCalls: 0,
+    costSources: [],
+    unpricedModels: [],
+    limits: [],
+    updatedAt: 1,
+  });
+  const read = (stepIndex: number): TuiAction[] => [
+    {
+      type: "agent_event",
+      event: {
+        type: "llm_event",
+        event: { type: "tool_call_parsed", call: { tool: "os.fs.read", args: { path: "a.ts" } }, batchIndex: 0, batchSize: 1 },
+      },
+    },
+    {
+      type: "agent_event",
+      event: {
+        type: "llm_event",
+        event: {
+          type: "tool_call_executed",
+          result: { tool: "os.fs.read", status: "ok", summary: `step ${stepIndex}`, details: {}, truncated: false },
+          batchIndex: 0,
+          batchSize: 1,
+        },
+      },
+    },
+  ];
+
+  it("puts each priced call on the running step and stamps it on that step's card", () => {
+    const state = apply(createInitialTuiState(fakeSession({ sessionId: "s1" })), [
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      { type: "agent_event", event: { type: "usage_updated", sessionId: "s1", usage: usage(0.01, { priced: 1 }) } },
+      ...read(0),
+      { type: "agent_event", event: { type: "step_started", stepIndex: 1 } },
+      { type: "agent_event", event: { type: "usage_updated", sessionId: "s1", usage: usage(0.035, { priced: 2 }) } },
+      ...read(1),
+    ]);
+    expect(state.stepSpend[0]?.usd).toBeCloseTo(0.01);
+    expect(state.stepSpend[1]?.usd).toBeCloseTo(0.025);
+    expect(state.streamingToolCards.map((c) => c.stepCostUsd)).toEqual([
+      expect.closeTo(0.01),
+      expect.closeTo(0.025),
+    ]);
+  });
+
+  it("stamps nothing on a local step and ignores another session's spend", () => {
+    const state = apply(createInitialTuiState(fakeSession({ sessionId: "s1" })), [
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      { type: "agent_event", event: { type: "usage_updated", sessionId: "other", usage: usage(5, { priced: 1 }) } },
+      { type: "agent_event", event: { type: "usage_updated", sessionId: "s1", usage: usage(0, { local: 1 }) } },
+      ...read(0),
+    ]);
+    expect(state.stepSpend[0]).toEqual({ usd: 0, pricedCalls: 0, unpricedCalls: 0, localCalls: 1, planCalls: 0 });
+    expect(state.streamingToolCards[0]?.stepCostUsd).toBeUndefined();
+  });
+
+  it("attributes nothing outside a turn and starts each turn from zero", () => {
+    const idle = apply(createInitialTuiState(fakeSession({ sessionId: "s1" })), [
+      { type: "agent_event", event: { type: "usage_updated", sessionId: "s1", usage: usage(0.02, { priced: 1 }) } },
+    ]);
+    expect(idle.stepSpend).toEqual({});
+    const second = apply(idle, [
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      { type: "agent_event", event: { type: "usage_updated", sessionId: "s1", usage: usage(0.05, { priced: 2 }) } },
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 1 } },
+    ]);
+    expect(second.stepSpend).toEqual({});
   });
 });

@@ -14,6 +14,8 @@
  * is still informative.
  */
 
+import type { AttackSpec, NegativeExpectation } from "./attack-schema.js";
+
 export type EvalCategory =
   | "os"
   | "skill"
@@ -30,7 +32,14 @@ export type EvalCategory =
    * pass-rates are NOT comparable to published GAIA leaderboards;
    * use as an internal proxy for assistant-style file-fact retrieval.
    */
-  | "gaia-style";
+  | "gaia-style"
+  /**
+   * Prompt-injection resistance: hostile text in a file, a saved page,
+   * an exported mail or a command's output asks the agent to do
+   * something the user never asked for. Kept out of `EVAL_CASES`; run
+   * with `npm run eval:attacks` (see `attack-schema.ts`).
+   */
+  | "attack";
 
 /**
  * Capability axes the agent is evaluated against. Each axe-focused case
@@ -165,7 +174,8 @@ export type EvalExpectation =
   | StepCountExpectation
   | ParseRetriesMaxExpectation
   | BatchSizeMinExpectation
-  | JudgeExpectation;
+  | JudgeExpectation
+  | NegativeExpectation;
 
 export interface EvalCase {
   /** Stable id for reporting (kebab-case, unique). */
@@ -191,4 +201,6 @@ export interface EvalCase {
    * installed skill).
    */
   requires?: ReadonlyArray<"mock-http" | "eval-skill">;
+  /** Set on `category: "attack"` cases only; read by the attack report. */
+  attack?: AttackSpec;
 }

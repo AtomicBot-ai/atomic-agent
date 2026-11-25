@@ -16,7 +16,7 @@
  */
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmod, cp, mkdir, rm, stat, writeFile, readFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readdir, rm, stat, writeFile, readFile } from "node:fs/promises";
 import { createReadStream, createWriteStream } from "node:fs";
 import { createGzip } from "node:zlib";
 import { join, resolve, dirname, basename } from "node:path";
@@ -148,6 +148,47 @@ async function copyBetterSqlite3Runtime(stageDir: string): Promise<void> {
   }
 }
 
+/**
+ * Lays out `node_modules/@napi-rs/keyring` (the opt-in OS keychain
+ * binding, ATO-474; see `src/native/load-keyring.ts`) next to the SEA
+ * binary, plus whichever per-platform prebuild package `npm ci`
+ * installed for this runner (`@napi-rs/keyring-<platform>`, each one
+ * `package.json`, one `.node` and its licence files). The loader degrades to `.env` when the
+ * package is absent, so a missing copy is a warning, not a failure.
+ */
+async function copyKeyringRuntime(stageDir: string): Promise<void> {
+  const scopeSrc = join(ROOT, "node_modules", "@napi-rs");
+  const scopeDest = join(stageDir, "node_modules", "@napi-rs");
+  const mainSrc = join(scopeSrc, "keyring");
+  if (!(await pathExists(mainSrc))) {
+    stderr.write("warning: @napi-rs/keyring not found under node_modules; skipping.\n");
+    return;
+  }
+  for (const entry of ["package.json", "index.js", "LICENSE"]) {
+    await copyOptional(join(mainSrc, entry), join(scopeDest, "keyring", entry));
+  }
+  let prebuilds = 0;
+  for (const name of await readdir(scopeSrc)) {
+    if (!name.startsWith("keyring-")) continue;
+    const pkgSrc = join(scopeSrc, name);
+    for (const file of await readdir(pkgSrc)) {
+      // LICENSE.third-party.md travels with the prebuild: the Linux builds
+      // statically link libdbus (AFL-2.1 OR GPL-2.0-or-later).
+      const keep =
+        file === "package.json" || file.endsWith(".node") || file.startsWith("LICENSE");
+      if (!keep) continue;
+      await copyOptional(join(pkgSrc, file), join(scopeDest, name, file));
+    }
+    prebuilds += 1;
+    stdout.write(`bundled @napi-rs/${name} → ${join(scopeDest, name)}\n`);
+  }
+  if (prebuilds === 0) {
+    stderr.write(
+      "warning: no @napi-rs/keyring-<platform> prebuild installed; the keychain stays unavailable in this bundle.\n",
+    );
+  }
+}
+
 async function archiveTarGz(sourceDir: string, destFile: string): Promise<void> {
   // We shell out to `tar` because it is present on every supported host and
   // preserves file modes without us reimplementing a streaming tar writer.
@@ -244,6 +285,13 @@ async function main(): Promise<number> {
     join(stageDir, "assets", "ai-models"),
   );
 
+  // Python shim that serves a trusted Hermes plugin as a stdio MCP server
+  // (`import hermes --trust-plugin`); resolved next to the binary.
+  await copyOptional(
+    join(ROOT, "assets", "hermes-plugin-bridge"),
+    join(stageDir, "assets", "hermes-plugin-bridge"),
+  );
+
   // Bundled ripgrep for os.fs.grep. ripgrep-resolver picks it up via
   // `<dirname(process.execPath)>/vendor/rg[.exe]` at runtime. The binary
   // is fetched by `scripts/fetch-assets.ts` into assets/ripgrep/<slug>/.
@@ -277,6 +325,9 @@ async function main(): Promise<number> {
   // calls; bundling them produces a SEA binary that crashes on first
   // browser tool invocation with `Cannot find module '../../../package.json'`.
   await copyPlaywrightCoreRuntime(stageDir);
+
+  // The opt-in OS keychain binding: same anchored-require layout.
+  await copyKeyringRuntime(stageDir);
 
   const readme = [
     `atomic-agent CLI (${target.slug}, Node SEA)`,

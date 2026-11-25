@@ -11,6 +11,7 @@ import { summarizeFailedAttempts } from "../../llm/fallback/failed-attempts.js";
 // A leaf for the same reason: the errno walk, without the classifier
 // (`classifyProviderWaitCause`) and the clients it would bring along.
 import { readErrnoCode } from "../../llm/errno-code.js";
+import { withoutMcpAppPage } from "../../mcp/mcp-apps.js";
 import { readGenerationId } from "../../llm/provider/openai/generation-id.js";
 // A leaf too: the shared credential detector of ATO-1077.
 import {
@@ -298,6 +299,19 @@ export function createTraceRecorder(
                   predictedMs: completion.timing.predictedMs,
                   promptTokens: completion.timing.promptTokens,
                   predictedTokens: completion.timing.predictedTokens,
+                  ...(completion.timing.predictedPerSecond !== undefined
+                    ? {
+                        predictedPerSecond:
+                          completion.timing.predictedPerSecond,
+                      }
+                    : {}),
+                  ...(completion.timing.draftTokens !== undefined
+                    ? {
+                        draftTokens: completion.timing.draftTokens,
+                        draftAcceptedTokens:
+                          completion.timing.draftAcceptedTokens ?? 0,
+                      }
+                    : {}),
                 },
               }
             : {}),
@@ -310,6 +324,9 @@ export function createTraceRecorder(
             : {}),
           ...(completion.generationId !== undefined
             ? { generationId: completion.generationId }
+            : {}),
+          ...(completion.usage?.costUsd !== undefined
+            ? { costUsd: completion.usage.costUsd }
             : {}),
         });
         return;
@@ -334,9 +351,11 @@ export function createTraceRecorder(
           // The registry masks the summary and the prompt-bound details
           // (ATO-1077); the rest of `details` (a command's stdout, a
           // fetched body) reaches the trace file only through here, so
-          // every string in it is masked too (ATO-1176).
+          // every string in it is masked too (ATO-1176). An MCP App's page
+          // (`details.mcpApp`, ATO-1135, up to 4 MB) is for the live frame
+          // only and stays out of the trace file.
           ...(inner.result.details !== undefined
-            ? { details: maskSecretsDeep(inner.result.details, knownSecrets()) }
+            ? { details: maskSecretsDeep(withoutMcpAppPage(inner.result.details), knownSecrets()) }
             : {}),
           ...(inner.result.truncated ? { toolTruncated: true } : {}),
           ...(inner.batchSize > 1

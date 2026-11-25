@@ -68,8 +68,25 @@ describe("resource configuration ownership", () => {
       disabled: ["one", "two"],
       taps: ["Owner/repo", "owner/repo"],
       clawhub: { enabled: false, apiBase: "ftp://source.local/path", browseLimit: 100, nonSuspiciousOnly: true },
+      selfLearning: { enabled: true, minSteps: 10 },
     });
     expect(parseSkillsConfig({ disabled: ["x"] }, createSkillsDefaults).disabled).toEqual(["x"]);
+  });
+
+  it("reads skills.selfLearning, on by default after 10 steps (ATO-67)", () => {
+    expect(parseSkillsConfig({}, createSkillsDefaults).selfLearning).toEqual({ enabled: true, minSteps: 10 });
+    expect(parseSkillsConfig({ selfLearning: { enabled: "false" } }, createSkillsDefaults).selfLearning).toEqual({ enabled: false, minSteps: 10 });
+    expect(parseSkillsConfig({ selfLearning: { minSteps: "25" } }, createSkillsDefaults).selfLearning).toEqual({ enabled: true, minSteps: 25 });
+    expect(validation(() => parseSkillsConfig({ selfLearning: { minSteps: 0 } }, createSkillsDefaults)).field).toBe("skills.selfLearning.minSteps");
+    expect(validation(() => parseSkillsConfig({ selfLearning: true }, createSkillsDefaults)).field).toBe("skills.selfLearning");
+  });
+
+  it("reads skills.eval.judgeProvider and leaves the key out when unset (ATO-1101)", () => {
+    expect(parseSkillsConfig({ eval: { judgeProvider: " openrouter " } }, createSkillsDefaults).eval).toEqual({ judgeProvider: "openrouter" });
+    expect(parseSkillsConfig({}, createSkillsDefaults)).not.toHaveProperty("eval");
+    expect(parseSkillsConfig({ eval: {} }, createSkillsDefaults)).not.toHaveProperty("eval");
+    expect(validation(() => parseSkillsConfig({ eval: { judgeProvider: 3 } }, createSkillsDefaults)).field).toBe("skills.eval.judgeProvider");
+    expect(validation(() => parseSkillsConfig({ eval: [] }, createSkillsDefaults)).field).toBe("skills.eval");
   });
 
   it("keeps skill normalization order and validates disabled source settings", () => {
@@ -115,9 +132,11 @@ describe("resource configuration ownership", () => {
       },
       get taps() { events.push("raw.taps"); return []; },
       get clawhub() { events.push("raw.clawhub"); return undefined; },
+      get selfLearning() { events.push("raw.selfLearning"); return undefined; },
     }, () => { events.push("defaults"); return defaults; });
     expect(events).toEqual([
       "raw.budget", "defaults", "raw.disabled", "defaults", "raw.taps", "raw.clawhub", "defaults",
+      "raw.selfLearning", "defaults",
     ]);
     expect(result.disabled).toEqual(["replacement"]);
     expect(result.taps).toEqual([]);
@@ -219,8 +238,8 @@ describe("resource configuration ownership", () => {
   });
 
   it("keeps tracing null fallback, explicit booleans and cap validation separate", () => {
-    expect(parseTracingConfig({ enabled: null }, () => ({ trace: { enabled: true, maxBytesPerSession: 1024 } })))
-      .toEqual({ trace: { enabled: true, maxBytesPerSession: 1024 } });
+    expect(parseTracingConfig({ enabled: null }, () => ({ ...createTracingDefaults(), trace: { enabled: true, maxBytesPerSession: 1024 } })))
+      .toEqual({ ...createTracingDefaults(), trace: { enabled: true, maxBytesPerSession: 1024 } });
     expect(parseTracingConfig({ enabled: false }, createTracingDefaults).trace.enabled).toBe(false);
     expect(parseTracingConfig({}, createTracingDefaults).trace.enabled).toBeNull();
     expect(validation(() => parseTracingConfig({ enabled: false, maxBytesPerSession: 0 }, createTracingDefaults)).field)
@@ -236,7 +255,7 @@ describe("resource configuration ownership", () => {
       get enabled() { events.push("raw.enabled"); return undefined; },
       get maxBytesPerSession() {
         events.push("raw.cap");
-        defaults = { trace: { enabled: false, maxBytesPerSession: 1024 } };
+        defaults = { ...createTracingDefaults(), trace: { enabled: false, maxBytesPerSession: 1024 } };
         return undefined;
       },
     }, () => { events.push("defaults"); return defaults; });

@@ -1,4 +1,4 @@
-import type { ApprovalGate, ApprovalRequest } from "../../approval/index.js";
+import type { ApprovalGate, ApprovalRequest, UserQuestion } from "../../approval/index.js";
 import {
   describeAlwaysRule,
   excerptPreview,
@@ -6,6 +6,7 @@ import {
   hiddenLinesNote,
   previewLines,
 } from "../../approval/index.js";
+import { formatRiskLine } from "../../approval/risk-review.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import { withThread, type TelegramApi } from "./outbound-sender.js";
@@ -76,6 +77,8 @@ interface PendingState {
   /** Read by `/status` and status snapshots (ATO-965). */
   sessionId: string;
   tool: string;
+  /** An `ask_user` question (ATO-489): its options are the buttons. */
+  question?: UserQuestion;
 }
 
 /**
@@ -96,7 +99,9 @@ interface PendingState {
  * 2. **Single resolution per approvalId.** Whichever path completes
  *    first (button vs timeout) cancels the other before calling
  *    `resolve`. A late-arriving stale button is acknowledged ("Already
- *    resolved.") but never resolves a second time.
+ *    resolved.") but never resolves a second time. A button from a
+ *    prompt an earlier run of the agent posted (ATO-613) says it expired
+ *    with the restart and nothing ran, and its keyboard is removed.
  * 3. **Send failure auto-denies immediately.** If `sendMessage`
  *    rejects, the operator cannot reply; the bridge resolves with
  *    `approved: false, reason: "telegram delivery failed"` so the
@@ -144,10 +149,24 @@ interface PendingState {
  *   non-invasive, scheduled for slice 3 alongside the live-control
  *   surface that is already going to touch this file.
  */
+/** Approval ids remembered per process, to tell an old prompt from one this run posted. */
+export const POSTED_IDS_MAX = 2_000;
+
+/** The toast on a button whose prompt was posted before the agent restarted (ATO-613). */
+export const APPROVAL_FROM_BEFORE_RESTART =
+  "This request expired: the agent restarted before you answered. Nothing was run. Send your request again.";
+
 export class ApprovalBridge {
   /** Not readonly: `rebind()` swaps the bot and owner after a reconnect. */
   private deps: ApprovalBridgeDeps;
   private readonly pending = new Map<string, PendingState>();
+  /**
+   * Approval ids this process has posted (ATO-613), newest last, capped.
+   * A click on an id outside it is a prompt from before the agent
+   * restarted: the turn that asked is gone, and saying "Already
+   * resolved" would read as if the action had run.
+   */
+  private readonly posted = new Set<string>();
   private readonly timeoutMs: number;
 
   constructor(deps: ApprovalBridgeDeps) {
@@ -198,7 +217,11 @@ export class ApprovalBridge {
               : FULL_COMMAND_MISSING_NOTE,
         ).text,
         withThread(
-          { reply_markup: buildKeyboard(request.approvalId, alwaysLabel) },
+          {
+            reply_markup: request.question
+              ? buildQuestionKeyboard(request.approvalId, request.question)
+              : buildKeyboard(request.approvalId, alwaysLabel),
+          },
           threadId,
         ),
       );
@@ -234,6 +257,7 @@ export class ApprovalBridge {
       chatId,
       messageId,
     );
+    this.rememberPosted(request.approvalId);
     this.pending.set(request.approvalId, {
       chatId,
       messageId,
@@ -241,6 +265,7 @@ export class ApprovalBridge {
       ...(alwaysLabel !== undefined ? { alwaysLabel } : {}),
       sessionId: request.sessionId,
       tool: request.tool,
+      ...(request.question ? { question: request.question } : {}),
     });
   }
 
@@ -264,14 +289,35 @@ export class ApprovalBridge {
     const parts = data.slice(CALLBACK_PREFIX.length).split(":");
     if (parts.length !== 2) return;
     const [approvalId, kind] = parts;
-    if (!approvalId || (kind !== "y" && kind !== "n" && kind !== "w")) return;
+    const option = kind !== undefined && /^o\d{1,2}$/.test(kind) ? Number(kind.slice(1)) : null;
+    if (!approvalId || (kind !== "y" && kind !== "n" && kind !== "w" && option === null)) return;
     const approved = kind !== "n";
 
     const pending = this.pending.get(approvalId);
     if (!pending) {
+      if (!this.posted.has(approvalId)) {
+        // A prompt from before the agent restarted (ATO-613): nothing
+        // waits on it any more. Say so, and take the buttons off.
+        await this.acknowledge(update.id, APPROVAL_FROM_BEFORE_RESTART);
+        if (update.message) {
+          void this.editFinal(
+            update.message.chat.id,
+            update.message.message_id,
+            "⏹ expired: the agent restarted before this was answered. Send your request again.",
+          );
+        }
+        return;
+      }
       // Stale button — the timer fired (or the operator clicked twice
       // in quick succession). Acknowledge so the spinner dismisses.
       await this.acknowledge(update.id, "Already resolved");
+      return;
+    }
+    // A question is answered by an option or skipped; an option button
+    // answers nothing else. A forged callback cannot do either across.
+    if (pending.question !== undefined || option !== null) {
+      if (kind === "y" || kind === "w") return;
+      await this.handleQuestionCallback(update.id, approvalId, pending, option);
       return;
     }
 
@@ -304,6 +350,39 @@ export class ApprovalBridge {
           : approved
             ? "✅ approved"
             : "❌ denied",
+      );
+    }
+  }
+
+  /**
+   * An option button (`o<index>`) or Skip (`n`) on a question (ATO-489).
+   * Anything else on a question, or an option on an approval, is dropped.
+   */
+  private async handleQuestionCallback(
+    callbackId: string,
+    approvalId: string,
+    pending: PendingState,
+    option: number | null,
+  ): Promise<void> {
+    const question = pending.question;
+    if (question === undefined) return;
+    const label = option === null ? undefined : question.options[option]?.label;
+    if (option !== null && label === undefined) return;
+    pending.cancelTimer();
+    this.pending.delete(approvalId);
+    const resolved = this.deps.approvals.resolve(
+      label === undefined
+        ? { approvalId, approved: false }
+        : { approvalId, approved: true, answer: { selected: [label] } },
+    );
+    await this.acknowledge(callbackId, label === undefined ? "Skipped" : "Answered");
+    if (resolved) {
+      await this.editFinal(
+        pending.chatId,
+        pending.messageId,
+        label === undefined
+          ? `❔ ${question.prompt}\nskipped`
+          : `❔ ${question.prompt}\n✅ ${label}`,
       );
     }
   }
@@ -435,6 +514,16 @@ export class ApprovalBridge {
     return () => clearTimeout(handle);
   }
 
+  private rememberPosted(approvalId: string): void {
+    this.posted.delete(approvalId);
+    this.posted.add(approvalId);
+    while (this.posted.size > POSTED_IDS_MAX) {
+      const oldest = this.posted.values().next().value;
+      if (oldest === undefined) break;
+      this.posted.delete(oldest);
+    }
+  }
+
   private async acknowledge(
     callbackQueryId: string,
     text: string,
@@ -501,6 +590,45 @@ function buildKeyboard(
   return { inline_keyboard: rows };
 }
 
+/** Longest option button text. */
+const OPTION_BUTTON_MAX_CHARS = 60;
+
+/**
+ * One button per option of an `ask_user` question (ATO-489), one per
+ * row so long labels stay readable, then Skip. A button answers with
+ * that one option: on a question that takes several, more than one is
+ * picked in the TUI or the desktop.
+ */
+function buildQuestionKeyboard(
+  approvalId: string,
+  question: UserQuestion,
+): {
+  inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+} {
+  const rows = question.options.map((option, index) => [
+    {
+      text:
+        option.label.length <= OPTION_BUTTON_MAX_CHARS
+          ? option.label
+          : `${option.label.slice(0, OPTION_BUTTON_MAX_CHARS - 1)}…`,
+      callback_data: `${CALLBACK_PREFIX}${approvalId}:o${index}`,
+    },
+  ]);
+  rows.push([{ text: "Skip", callback_data: `${CALLBACK_PREFIX}${approvalId}:n` }]);
+  return { inline_keyboard: rows };
+}
+
+/** The message a question is sent as: the question, then its options. */
+function formatQuestionText(question: UserQuestion): string {
+  const options = question.options.map((o, i) =>
+    o.description ? `${i + 1}. ${o.label} - ${o.description}` : `${i + 1}. ${o.label}`,
+  );
+  const text = `Question from the agent\n${question.prompt}\n\n${options.join("\n")}`;
+  return text.length <= APPROVAL_MESSAGE_MAX_CHARS
+    ? text
+    : `${text.slice(0, APPROVAL_MESSAGE_MAX_CHARS - 1)}…`;
+}
+
 /**
  * Telegram caps one `sendMessage` at 4096 UTF-16 units, and a failed
  * send auto-denies the request. The approval text stays under this,
@@ -544,12 +672,17 @@ function formatApprovalText(
   req: ApprovalRequest,
   attachNote: string | null,
 ): { text: string; cut: boolean } {
+  if (req.question) return { text: formatQuestionText(req.question), cut: false };
   const head: string[] = [
     "Approval requested",
     `tool: ${req.tool}`,
     `kind: ${formatApprovalCategory(req.category)}`,
   ];
   if (req.reason) head.push(`reason: ${req.reason}`);
+  // Smart approval's verdict (ATO-1268). This message is plain text (no
+  // parse_mode), so the reason needs no escaping.
+  const riskLine = formatRiskLine(req);
+  if (riskLine !== null) head.push(riskLine);
   const tail: string[] = [];
   if (req.affectedResources && req.affectedResources.length > 0) {
     tail.push("resources:");

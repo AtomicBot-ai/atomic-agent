@@ -125,6 +125,11 @@ export const FAILURE_CATALOG = {
     phrase: "The provider's app isn't installed or isn't signed in.",
     action: "none",
   },
+  // ATO-649: our own daily spend ceiling, not the provider's answer.
+  daily_limit_reached: {
+    phrase: "Today's cloud spending limit is reached, so cloud calls are paused.",
+    action: "switch-model",
+  },
 
   // No answer at all.
   connection_refused: {
@@ -152,6 +157,12 @@ export const FAILURE_CATALOG = {
   empty_response: {
     phrase: "The model sent back an empty answer.",
     action: "retry",
+  },
+  // ATO-1578: a cloud model that answered empty again after the agent's
+  // own re-ask. "Retry" would almost surely give a third empty answer.
+  empty_response_repeated: {
+    phrase: "The model sent back an empty answer twice. Try another model.",
+    action: "switch-model",
   },
   reply_cut_off: {
     phrase: "The model's reply was cut off before it finished.",

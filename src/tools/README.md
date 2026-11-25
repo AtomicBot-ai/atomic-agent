@@ -16,6 +16,7 @@ This area owns tool registry and adapters. Read [AGENTS.md](AGENTS.md) before ch
 - [untrusted-tool-output.ts](untrusted-tool-output.ts)
 - [tool-output-secrets.ts](tool-output-secrets.ts)
 - [describe-tool-call.ts](describe-tool-call.ts): a tool call as one readable line ("Read config.ts", "Ran npm test · failed") for the TUI, Telegram and desktop frames
+- [files/](files/README.md): the "My files" index (ATO-1621) and its read-only `files.search` tool with page citations
 
 ## Ownership and dependencies
 

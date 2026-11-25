@@ -71,6 +71,7 @@ const REPEAT_SAFE_TOOLS: ReadonlySet<string> = new Set([
   "skill.view",
   "os.web.search",
   "os.web.fetch",
+  "os.web.crawl",
   "os.git.status",
   "os.git.log",
   "os.git.diff",
@@ -82,6 +83,8 @@ const REPEAT_SAFE_TOOLS: ReadonlySet<string> = new Set([
   "memory.notes.recall",
   "memory.lessons.recall",
   "memory.procedures.recall",
+  "memory.sessions.search",
+  "files.search",
   "memory.profile.list",
   "memory.profile.history",
   "tasks.list",
@@ -92,6 +95,7 @@ const REPEAT_SAFE_TOOLS: ReadonlySet<string> = new Set([
   "mcp.prompt.list",
   "browser.read_aria",
   "browser.screenshot",
+  "browser.extract",
 ]);
 
 /** Whether one call of `tool` may have changed something a re-run would change again. */

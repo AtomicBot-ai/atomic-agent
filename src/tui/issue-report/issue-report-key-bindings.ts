@@ -53,6 +53,15 @@ export function handleIssueReportKey(
       close();
       return;
     }
+    // ATO-1466: the two checkboxes — support id and log tail.
+    if (input === "i") {
+      callbacks.onIssueReportToggleRequested?.("supportId");
+      return;
+    }
+    if (input === "l") {
+      callbacks.onIssueReportToggleRequested?.("logs");
+      return;
+    }
     if (key.return || input === "y") callbacks.onIssueReportSendRequested?.();
   }
 }

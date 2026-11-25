@@ -107,6 +107,19 @@ export function createResolveApprovalHandler(): HttpHandler {
       return;
     }
     const { approved, grant } = parsed;
+    if (approved) {
+      // An `ask_user` question (ATO-489) is answered with a choice, not an
+      // Allow: a bare approve would reach the model as no answer at all.
+      const pending = ctx.runtime.approvals.pendingRequest(approvalId);
+      if (pending?.category === "user_question") {
+        sendError(
+          res,
+          400,
+          openaiError("this is a question; answer it with POST /api/question/answer"),
+        );
+        return;
+      }
+    }
     const inChat = grant === "shape";
     if (grant === "always") {
       const request = ctx.runtime.approvals.pendingRequest(approvalId);
@@ -180,6 +193,14 @@ function parseDecision(raw: unknown): ParsedDecision | null {
  * aborted is gone from the gate but was still in the bus. The stream
  * also carries a comment line now and then, so a client's idle timeout
  * (undici: 300 s) does not drop it and replay on every reconnect.
+ *
+ * ATO-1492: a client that draws MCP elicitation forms opens the stream
+ * with `?elicitation=1`. Only then is it attached to the elicitation
+ * broker (so an older window never makes a server wait on a form it
+ * cannot draw), gets every open question replayed, and then
+ * `mcp_elicitation` (a question) and `mcp_elicitation_closed` (it was
+ * answered, here or elsewhere, or the server gave up) frames. Answers go
+ * to `POST /api/mcp/elicitation/answer`, never to the approval routes.
  */
 export function createApprovalEventsHandler(): HttpHandler {
   return async (req, res, ctx) => {
@@ -199,9 +220,29 @@ export function createApprovalEventsHandler(): HttpHandler {
         approvalEventPayload(request, ctx.runtime.approvals),
       );
     });
+    const wantsElicitation =
+      new URL(req.url ?? "/", "http://localhost").searchParams.get("elicitation") === "1";
+    const detachElicitation =
+      wantsElicitation && ctx.elicitations
+        ? ctx.elicitations.attach({
+            surface: "interactive",
+            onEvent: (event) => {
+              if (event.type === "asked") {
+                sse.writeEvent("mcp_elicitation", event.request);
+              } else {
+                sse.writeEvent("mcp_elicitation_closed", {
+                  id: event.id,
+                  action: event.action,
+                  reason: event.reason,
+                });
+              }
+            },
+          })
+        : null;
     await new Promise<void>((resolvePromise) => {
       req.on("close", () => {
         unsubscribe();
+        detachElicitation?.();
         sse.close();
         resolvePromise();
       });

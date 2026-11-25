@@ -43,6 +43,33 @@ describe("loadConfig", () => {
     vi.restoreAllMocks();
   });
 
+  it("network.offline: off by default, on from the file or ATOMIC_AGENT_OFFLINE (ATO-1084)", () => {
+    expect(loadConfig().network?.offline).toBe(false);
+    resetConfigCache();
+    process.env.ATOMIC_AGENT_OFFLINE = "1";
+    try {
+      expect(loadConfig().network?.offline).toBe(true);
+    } finally {
+      delete process.env.ATOMIC_AGENT_OFFLINE;
+    }
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      network: { offline: true, proxy: { url: null, noProxy: [] } },
+    });
+    resetConfigCache();
+    expect(loadConfig().network?.offline).toBe(true);
+  });
+
+  it("privacy.shield.enabled: off by default, on from the file (ATO-599)", () => {
+    expect(loadConfig().privacy?.shield.enabled).toBe(false);
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      privacy: { shield: { enabled: true } },
+    });
+    resetConfigCache();
+    expect(loadConfig().privacy?.shield.enabled).toBe(true);
+  });
+
   it("creates a defaults-only config on first run", () => {
     const config = loadConfig();
     const path = getUserConfigPath(stateDir);
@@ -158,6 +185,29 @@ describe("loadConfig", () => {
     process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET = "4096";
     resetConfigCache();
     expect(loadConfig().skills.catalogTokenBudget).toBe(4096);
+  });
+
+  // ATO-959: "auto" by default; a file true / false or the env var is
+  // the user's explicit choice and wins.
+  it("browser.headless: auto by default, the file next, the env var over both", () => {
+    expect(loadConfig().browser.headlessSetting).toBe("auto");
+    expect(loadConfig().browser.headless).toBe(false);
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      browser: { ...USER_CONFIG_DEFAULTS.browser, headless: true, profile: "temp" },
+    });
+    resetConfigCache();
+    expect(loadConfig().browser.headlessSetting).toBe(true);
+    expect(loadConfig().browser.headless).toBe(true);
+    expect(loadConfig().browser.profile).toBe("temp");
+    process.env.ATOMIC_AGENT_BROWSER_HEADLESS = "0";
+    resetConfigCache();
+    try {
+      expect(loadConfig().browser.headlessSetting).toBe(false);
+      expect(loadConfig().browser.headless).toBe(false);
+    } finally {
+      delete process.env.ATOMIC_AGENT_BROWSER_HEADLESS;
+    }
   });
 
   it("reads localModels.completionMaxTokens from the user config file", () => {
@@ -339,6 +389,7 @@ describe("loadConfig", () => {
           envPassthrough: ["GITHUB_TOKEN"],
         },
         screen: { enabled: false, point: true },
+        lsp: { enabled: false },
       },
     });
     const config = loadConfig();
@@ -449,7 +500,7 @@ describe("loadConfig", () => {
   it("honours user-pinned tracing.trace.enabled", () => {
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...USER_CONFIG_DEFAULTS,
-      tracing: { trace: { enabled: false, maxBytesPerSession: 4096 } },
+      tracing: { ...USER_CONFIG_DEFAULTS.tracing, trace: { enabled: false, maxBytesPerSession: 4096 } },
     });
     const config = loadConfig();
     expect(config.tracing.trace.enabled).toBe(false);

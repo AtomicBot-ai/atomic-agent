@@ -4,6 +4,7 @@ import type { PromptMessages } from "../completion-types.js";
 import { OpenAiHttpError } from "./openai-http.js";
 import { estimateTokens } from "../../../prompt/token-budget.js";
 import {
+  CONTINUE_AFTER_ASSISTANT,
   NO_RESULT_RECORDED,
   PRESERVED_REASONING_TOKEN_BUDGET,
   buildNativeMessages,
@@ -377,5 +378,82 @@ describe("buildNativeMessages: reasoning the service requires back (ATO-1397)", 
     );
     const calls = messages.filter((m) => m.role === "assistant");
     expect(calls.map((m) => m.reasoning_content)).toEqual(["", newer]);
+  });
+});
+
+describe("buildNativeMessages: a reply with no text (ATO-1575)", () => {
+  it("sends no assistant message with empty content and keeps the rest in order", () => {
+    const prompt: PromptMessages = {
+      system: "sys",
+      droppedSummary: null,
+      turns: [
+        { kind: "user", text: "hi" },
+        { kind: "assistant_reply", text: "" },
+        { kind: "user", text: "again" },
+        { kind: "assistant_reply", text: "  \n" },
+        { kind: "user", text: "third" },
+        { kind: "assistant_reply", text: "ok" },
+      ],
+      tail: "",
+    };
+    const out = buildNativeMessages(prompt, { nameEscape: (n) => n });
+    expect(out.map((m) => [m.role, m.content])).toEqual([
+      ["system", "sys"],
+      ["user", "hi"],
+      ["user", "again"],
+      ["user", "third"],
+      ["assistant", "ok"],
+      ["user", CONTINUE_AFTER_ASSISTANT],
+    ]);
+  });
+});
+
+describe("buildNativeMessages: never ends on an assistant message (ATO-1681)", () => {
+  const call: PromptMessages["turns"][number] = {
+    kind: "assistant_tool_call", tool: "os.fs.list", args: { path: "." }, callId: "call_turn_1",
+  };
+  const result: PromptMessages["turns"][number] = {
+    kind: "tool_result", tool: "os.fs.list", status: "ok", body: "a.txt", truncated: false, callId: "call_turn_1",
+  };
+  const note: PromptMessages["turns"][number] = { kind: "assistant_reply", text: "listed, reading next" };
+
+  it("puts a user message after a progress note when there is no tail", () => {
+    const out = buildNativeMessages(
+      prompt({ turns: [{ kind: "user", text: "go" }, call, result, note], tail: "" }),
+      options,
+    );
+    expect(out.map((m) => m.role)).toEqual(["system", "user", "assistant", "tool", "assistant", "user"]);
+    expect(out.at(-1)).toEqual({ role: "user", content: CONTINUE_AFTER_ASSISTANT });
+  });
+
+  it("adds nothing when the history already ends on a tool answer or a user message", () => {
+    const onTool = buildNativeMessages(prompt({ turns: [{ kind: "user", text: "go" }, call, result], tail: "" }), options);
+    expect(onTool.at(-1)!.role).toBe("tool");
+    const onUser = buildNativeMessages(prompt({ turns: [note, { kind: "user", text: "next" }], tail: "" }), options);
+    expect(onUser.at(-1)).toEqual({ role: "user", content: "next" });
+  });
+
+  it("adds nothing when a tail closes the request (the local layout)", () => {
+    const out = buildNativeMessages(prompt({ turns: [{ kind: "user", text: "go" }, call, result, note] }), options);
+    expect(out.filter((m) => m.content === CONTINUE_AFTER_ASSISTANT)).toEqual([]);
+    expect(out.at(-1)!.role).toBe("user");
+  });
+
+  it("gives DeepSeek's current-turn replies an empty reasoning_content, not earlier ones", () => {
+    const out = buildNativeMessages(
+      prompt({
+        turns: [
+          { kind: "user", text: "first" },
+          { kind: "assistant_reply", text: "answered" },
+          { kind: "user", text: "go" },
+          call, result, note,
+        ],
+        tail: "",
+      }),
+      { ...options, reasoningRequired: true },
+    );
+    expect(out.find((m) => m.content === "answered")).not.toHaveProperty("reasoning_content");
+    expect(out.find((m) => m.content === note.text)!.reasoning_content).toBe("");
+    expect(out.at(-1)!.role).toBe("user");
   });
 });

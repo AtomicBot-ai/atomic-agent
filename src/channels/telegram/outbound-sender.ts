@@ -1,3 +1,4 @@
+import { callWithFloodRetry, floodWaitSeconds } from "./flood-retry.js";
 import { convertMarkdownToTelegramHtml } from "./markdown-to-html.js";
 
 /**
@@ -109,6 +110,8 @@ export interface OutboundSendOptions {
   logger?: TelegramLogger;
   /** Test seam — replaces `setTimeout` in the 429 retry path. */
   sleep?: (ms: number) => Promise<void>;
+  /** Test seam: total flood-wait budget per chunk (see `flood-retry.ts`). */
+  floodRetryBudgetMs?: number;
   /**
    * Render mode for the outbound text. Defaults to `"plain"` (legacy
    * behaviour, no parse_mode header). When `"html"`, each chunk is
@@ -145,25 +148,19 @@ export interface OutboundSendResult {
  * pick 4000 to leave headroom for the prefix the caller may add (e.g.
  * `[step 12] ` if a future feature introduces inline annotations).
  */
-const CHUNK_SIZE_CHARS = 4000;
-
-/**
- * Hard ceiling on the `retry_after` we honour. A bot that has been
- * hammered hard enough to receive a >30 s back-off should drop the
- * chunk and surface a warning rather than block the loop for minutes.
- */
-const RETRY_AFTER_MAX_SECONDS = 30;
+export const TELEGRAM_CHUNK_CHARS = 4000;
 
 /**
  * Send `text` to `chatId`, chunking across multiple `sendMessage` calls
- * when needed. On HTTP 429 honour `retry_after` once; if the retry also
- * 429s, drop the chunk with a warn-level log and continue with the
- * next one. On HTTP 400 in formatted mode (`parseMode: "html"`),
- * retry the same chunk once as plain text — see ../README.md
- * §"Telegram remote-control channel" for the invariant. Errors that
- * are neither 429 nor a parse-related 400 are logged and skipped —
- * the goal is "best-effort delivery of as many chunks as possible"
- * rather than "all-or-nothing".
+ * when needed. On HTTP 429 wait the `retry_after` Telegram asked for and
+ * send the same chunk again, as many times as it takes within the
+ * flood-wait budget (`flood-retry.ts`, ATO-634); a chunk is dropped only
+ * when that budget runs out. On HTTP 400 in formatted mode
+ * (`parseMode: "html"`), retry the same chunk once as plain text — see
+ * ../README.md §"Telegram remote-control channel" for the invariant.
+ * Errors that are neither 429 nor a parse-related 400 are logged and
+ * skipped — the goal is "best-effort delivery of as many chunks as
+ * possible" rather than "all-or-nothing".
  *
  * Chunking always operates on the raw input text (line-break aware),
  * and the parse-mode conversion runs *per chunk*. This means a stray
@@ -175,7 +172,7 @@ const RETRY_AFTER_MAX_SECONDS = 30;
 export async function sendOutbound(
   opts: OutboundSendOptions,
 ): Promise<OutboundSendResult> {
-  const chunks = chunkUtf16(opts.text, CHUNK_SIZE_CHARS);
+  const chunks = chunkUtf16(opts.text, TELEGRAM_CHUNK_CHARS);
   const parseMode = opts.parseMode ?? "plain";
   let dropped = 0;
   let parseFallbacks = 0;
@@ -183,23 +180,25 @@ export async function sendOutbound(
     const rawChunk = chunks[i]!;
     const formatted = formatChunk(rawChunk, parseMode);
     const sendOpts = withThread(parseModeSendOptions(parseMode), opts.threadId);
+    const retrying = <T>(call: () => Promise<T>): Promise<T> =>
+      callWithFloodRetry(call, {
+        ...(opts.sleep ? { sleep: opts.sleep } : {}),
+        ...(opts.floodRetryBudgetMs !== undefined
+          ? { budgetMs: opts.floodRetryBudgetMs }
+          : {}),
+      });
     try {
-      await opts.api.sendMessage(opts.chatId, formatted, sendOpts);
+      await retrying(() =>
+        opts.api.sendMessage(opts.chatId, formatted, sendOpts),
+      );
     } catch (err) {
-      const retryAfter = readRetryAfterSeconds(err);
-      if (retryAfter !== null) {
-        const sleep = opts.sleep ?? defaultSleep;
-        await sleep(retryAfter * 1000);
-        try {
-          await opts.api.sendMessage(opts.chatId, formatted, sendOpts);
-        } catch (secondErr) {
-          dropped += 1;
-          opts.logger?.warn("telegram: dropping chunk after second 429", {
-            chatId: opts.chatId,
-            chunkIndex: i,
-            error: stringifyError(secondErr),
-          });
-        }
+      if (floodWaitSeconds(err) !== null) {
+        dropped += 1;
+        opts.logger?.warn("telegram: dropping chunk, flood-wait budget exhausted", {
+          chatId: opts.chatId,
+          chunkIndex: i,
+          error: stringifyError(err),
+        });
         continue;
       }
       if (parseMode !== "plain" && isParseEntityError(err)) {
@@ -215,10 +214,12 @@ export async function sendOutbound(
           error: stringifyError(err),
         });
         try {
-          await opts.api.sendMessage(
-            opts.chatId,
-            rawChunk,
-            withThread(undefined, opts.threadId),
+          await retrying(() =>
+            opts.api.sendMessage(
+              opts.chatId,
+              rawChunk,
+              withThread(undefined, opts.threadId),
+            ),
           );
         } catch (secondErr) {
           dropped += 1;
@@ -241,7 +242,8 @@ export async function sendOutbound(
   return { chunks: chunks.length, dropped, parseFallbacks };
 }
 
-function formatChunk(raw: string, parseMode: TelegramParseMode): string {
+/** Render one raw chunk for `parseMode` (markdown → Telegram HTML when `html`). */
+export function formatChunk(raw: string, parseMode: TelegramParseMode): string {
   if (parseMode === "html") return convertMarkdownToTelegramHtml(raw);
   return raw;
 }
@@ -259,7 +261,8 @@ export function withThread(
   return { ...(sendOpts ?? {}), message_thread_id: threadId };
 }
 
-function parseModeSendOptions(
+/** The `sendMessage` / `editMessageText` options for `parseMode`. */
+export function parseModeSendOptions(
   parseMode: TelegramParseMode,
 ): Record<string, unknown> | undefined {
   if (parseMode === "html") {
@@ -278,7 +281,7 @@ function parseModeSendOptions(
  * future transport replacement may also surface as `{ status: 400 }`.
  * We accept both.
  */
-function isParseEntityError(err: unknown): boolean {
+export function isParseEntityError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const e = err as {
     error_code?: unknown;
@@ -302,25 +305,7 @@ function isParseEntityError(err: unknown): boolean {
   );
 }
 
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-function readRetryAfterSeconds(err: unknown): number | null {
-  if (!err || typeof err !== "object") return null;
-  const e = err as {
-    error_code?: unknown;
-    parameters?: { retry_after?: unknown } | undefined;
-  };
-  if (e.error_code !== 429) return null;
-  const value = e.parameters?.retry_after;
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    return null;
-  }
-  return Math.min(value, RETRY_AFTER_MAX_SECONDS);
-}
-
-function stringifyError(err: unknown): string {
+export function stringifyError(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (typeof err === "string") return err;
   try {

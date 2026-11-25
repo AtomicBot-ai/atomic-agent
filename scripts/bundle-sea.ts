@@ -77,7 +77,15 @@ async function main(): Promise<number> {
     // `Cannot find module '../../../package.json'` the first time a browser
     // tool runs. Externalise the package and ship its `node_modules/` tree
     // next to the binary (see `scripts/package-bundle.ts`).
-    external: ["better-sqlite3", "playwright-core"],
+    // `@napi-rs/keyring` (opt-in OS keychain, ATO-474) loads a per-platform
+    // `.node` prebuild the same way `better-sqlite3` does; it ships under
+    // `node_modules/` next to the binary (see `copyKeyringRuntime`).
+    // `baileys` (WhatsApp channel, ATO-502) is loaded with a lazy
+    // `import()` only when `channels.whatsapp.enabled` is on. It pulls in a
+    // WebAssembly helper and native image code that cannot be inlined, and
+    // it is not shipped next to the binary yet, so in the binary the import
+    // fails and the channel reports `disabled` with a clear reason.
+    external: ["better-sqlite3", "playwright-core", "@napi-rs/keyring", "baileys"],
     // Bake the published version into the binary so `getAppVersion()`
     // (see src/version.ts) resolves without a shipped package.json.
     define: {

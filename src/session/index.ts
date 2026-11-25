@@ -2,8 +2,10 @@ export { SessionStore, INTERRUPTED_TURN_ENDING } from "./session-store.js";
 export type {
   SessionStoreOptions,
   RecentWorkingDirRow,
+  SessionChatLine,
   TurnEnding,
 } from "./session-store.js";
+export { readRecentWorkingDirs } from "./recent-working-dirs.js";
 export {
   currentTurnOwnerProbe,
   hostIdentity,
@@ -16,7 +18,38 @@ export {
 } from "./turn-owner.js";
 export type { TurnOwner, TurnOwnerProbe } from "./turn-owner.js";
 export { parseTurnProgress, serializeTurnProgress } from "./turn-progress.js";
+export { isIncognitoSession, newIncognitoMark } from "./incognito.js";
+export type { IncognitoMark } from "./incognito.js";
 export type { TurnProgress, TurnResumeOptions } from "./turn-progress.js";
+export {
+  INTERRUPTED_TURN_RESUME_NOTE,
+  interruptedChatTurn,
+  interruptedTurnResumeMessage,
+  isInterruptedTurnResumeMessage,
+} from "./interrupted-chat-turn.js";
+export type { InterruptedChatTurn } from "./interrupted-chat-turn.js";
+export {
+  bindSessionWorktree,
+  createSessionWorktree,
+  findRepoRoot,
+  isWorktreeBranchMerged,
+  listSessionWorktreeMarkers,
+  NOT_GIT_MESSAGE,
+  removeSessionWorktree,
+  SessionWorktreeError,
+  unbindSessionWorktree,
+  worktreeRemovalPreflight,
+} from "./session-worktree.js";
+export type {
+  RemovalPreflight,
+  SessionGitExec,
+  SessionWorktreeBinding,
+  SessionWorktreeErrorCode,
+  SessionWorktreeMarker,
+  SessionWorktreeOptions,
+} from "./session-worktree.js";
+export { cleanupIdleSessionWorktrees, DEFAULT_WORKTREE_IDLE_MS } from "./session-worktree-cleanup.js";
+export type { WorktreeCleanupOptions, WorktreeCleanupResult } from "./session-worktree-cleanup.js";
 export { LIVE_SESSION_STATUSES, pruneSessions } from "./session-retention.js";
 export type {
   PruneSessionsOptions,
@@ -35,13 +68,21 @@ export type {
   SessionSummaryPageOptions,
 } from "./session-summary-page.js";
 export { normalizeSessionState } from "./normalize-session-state.js";
-export { planLastTurnRollback, truncateSessionAt } from "./session-truncate.js";
+export {
+  listPreviousReplies,
+  planLastTurnRollback,
+  planRestorePreviousReply,
+  truncateSessionAt,
+} from "./session-truncate.js";
 export type {
   LastTurnRollbackOptions,
   LastTurnRollbackPlan,
   LastTurnRollbackRefusal,
+  RestorePreviousReplyPlan,
+  RestorePreviousReplyRefusal,
   TruncateSessionResult,
 } from "./session-truncate.js";
+export type { PreviousReplies, PreviousReply } from "./session-previous-replies.js";
 export {
   createEmptySessionState,
   appendFact,
@@ -119,11 +160,14 @@ export type { RouteLeg, SessionRoute } from "./session-route.js";
 export {
   FUSION_WORKER_METADATA_KEY,
   FUSION_WORKER_ID_PREFIX,
+  FUSION_WORKER_DEFAULT_DEPTH,
+  childFusionWorkerDepth,
   createFusionWorkerSession,
   readFusionWorkerMeta,
+  readSessionDepth,
   isFusionWorkerSessionId,
 } from "./fusion-worker-session.js";
-export type { FusionWorkerMeta } from "./fusion-worker-session.js";
+export type { FusionWorkerMeta, StampedFusionWorkerMeta } from "./fusion-worker-session.js";
 export {
   SESSION_TITLE_MAX_CHARS,
   SESSION_TITLE_METADATA_KEY,
@@ -141,6 +185,16 @@ export {
   SESSION_TITLE_USER_SET_AT_KEY,
 } from "./session-title.js";
 export {
+  NEXT_STEP_TIMEOUT_MS,
+  SESSION_NEXT_STEP_METADATA_KEY,
+  generateNextStep,
+  nextStepSuggestionsEnabled,
+  readSessionNextStep,
+  shouldSuggestNextStep,
+  turnInFlight,
+  type SessionNextStep,
+} from "./session-next-step.js";
+export {
   SESSION_USER_TITLE_MAX_CHARS,
   readUserTitleSetAt,
   validateUserSessionTitle,
@@ -149,3 +203,38 @@ export {
 } from "./session-title-user.js";
 
 export type { SessionCompaction, RollingCompactionSummary, CompactionResult, CompactionReason } from "./session-compaction.js";
+
+export {
+  createDatasetScrubber,
+  exportDataset,
+  totalRedactions,
+} from "./dataset-export/index.js";
+export type {
+  DatasetRedactionCounts,
+  ExportDatasetResult,
+} from "./dataset-export/index.js";
+// ATO-1054: one chat as Markdown / HTML / DOCX / PDF.
+export {
+  CHAT_EXPORT_MIME,
+  chatExportFilename,
+  chatExportTitle,
+  parseChatExportFormat,
+  renderChatHtml,
+  renderChatMarkdown,
+} from "./chat-export.js";
+export type {
+  ChatExportFormat,
+  ChatExportOptions,
+  DescribeExportedToolCall,
+} from "./chat-export.js";
+export { markdownToDocumentXml, renderMarkdownDocx } from "./chat-export-docx.js";
+export { encodeWinAnsi, renderMarkdownPdf } from "./chat-export-pdf.js";
+export { exportChat } from "./chat-export-render.js";
+export type { ChatExportFile } from "./chat-export-render.js";
+export {
+  SESSION_ARCHIVED_METADATA_KEY,
+  SESSION_ARCHIVED_SET_AT_KEY,
+  readSessionArchived,
+  readSessionArchivedSetAt,
+  withSessionArchived,
+} from "./session-archived.js";

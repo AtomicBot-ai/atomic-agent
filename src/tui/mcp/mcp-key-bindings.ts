@@ -2,7 +2,11 @@ import type { Key } from "ink";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
-import type { McpPanelState } from "./mcp-panel-state.js";
+import { listMcpCatalog } from "../../mcp/mcp-catalog.js";
+import type {
+  McpAddModalState,
+  McpPanelState,
+} from "./mcp-panel-state.js";
 
 export interface McpTabKeyContext {
   state: TuiState;
@@ -30,7 +34,13 @@ export function handleMcpTabKey(
   // modal component (`onEscape` / `onSubmit`). Returning `true` only
   // for the "modal-is-open" guard would swallow text input — hence the
   // short-circuit fall-through.
-  if (panel.addModal !== null) return false;
+  if (panel.addModal !== null) {
+    // ATO-1131: the catalog list is not an editor, so its keys are ours.
+    if (panel.addModal.picker !== null) {
+      return handleCatalogPickerKey(input, key, ctx, panel.addModal);
+    }
+    return false;
+  }
   if (panel.removeConfirm !== null) {
     return handleRemoveConfirmKey(input, key, ctx, panel);
   }
@@ -97,6 +107,43 @@ function handleServerOpKey(
     return true;
   }
   return false;
+}
+
+/**
+ * Catalog list inside the add modal: j/k or arrows move, Enter picks
+ * (fills the editor with the entry's JSON), `p` skips to pasting a
+ * config, Esc closes the modal. Every other key is swallowed so a
+ * letter cannot reach the list behind the modal.
+ */
+function handleCatalogPickerKey(
+  input: string,
+  key: Key,
+  ctx: McpTabKeyContext,
+  modal: McpAddModalState,
+): boolean {
+  const { dispatch } = ctx;
+  if (key.escape) {
+    dispatch({ type: "mcp_add_modal_closed" });
+    return true;
+  }
+  if (key.downArrow || input === "j") {
+    dispatch({ type: "mcp_add_catalog_moved", delta: 1 });
+    return true;
+  }
+  if (key.upArrow || input === "k") {
+    dispatch({ type: "mcp_add_catalog_moved", delta: -1 });
+    return true;
+  }
+  if (key.return) {
+    const entry = listMcpCatalog()[modal.picker?.cursor ?? 0];
+    if (entry) dispatch({ type: "mcp_add_catalog_picked", id: entry.id });
+    return true;
+  }
+  if (input === "p") {
+    dispatch({ type: "mcp_add_catalog_skipped" });
+    return true;
+  }
+  return true;
 }
 
 function handleRemoveConfirmKey(

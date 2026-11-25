@@ -113,6 +113,13 @@ describe("session read scope (the check)", () => {
     ).toBeNull();
   });
 
+  it("scopes the clip audio.listen sends to the model like any read (ATO-497)", () => {
+    expect(outside("audio.listen", { path: join(elsewhere, "secret.wav") })).toBe(
+      join(elsewhere, "secret.wav"),
+    );
+    expect(outside("audio.listen", { path: "voice.mp3" })).toBeNull();
+  });
+
   it("treats the temp directory as scratch: always in scope, whatever the roots", () => {
     for (const path of [
       join(tmpdir(), "helper.py"),

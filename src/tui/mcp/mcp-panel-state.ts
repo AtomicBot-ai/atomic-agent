@@ -68,6 +68,19 @@ export interface McpAddModalState {
   json: string;
   error: string | null;
   submitting: boolean;
+  /**
+   * ATO-1131: non-null while the built-in catalog list is shown (the
+   * modal opens on it). Picking an entry fills `json` and closes the
+   * list; `p` closes it to paste a config instead.
+   */
+  picker: McpCatalogPickerState | null;
+  /** Catalog id the buffer was filled from, for the key hints. */
+  catalogId: string | null;
+}
+
+/** Cursor into `listMcpCatalog()` (display order). */
+export interface McpCatalogPickerState {
+  cursor: number;
 }
 
 /**

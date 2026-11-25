@@ -56,6 +56,59 @@ export interface LlmFailureContext {
    * `decode_failed` / `none` / `unknown`. Sent as `local_fault`.
    */
   localFault?: string;
+  /**
+   * The local engine reading the outage wait decided "wait or not" on,
+   * taken at decision time (ATO-1432): the latest one and the first one
+   * in the outage. `LocalEngineState` (`alive` / `dead` / `unknown` /
+   * `atomic_chat_app`) and its reason (`LocalEngineStateReason`:
+   * `lock_held`, `pid_unreadable`, `not_local_link`, `not_managed`, ...).
+   * Sent as `engine_wait_verdict`, `engine_wait_reason`,
+   * `engine_wait_first_verdict`, `engine_wait_first_reason`.
+   */
+  engineWaitVerdict?: string;
+  engineWaitReason?: string;
+  engineWaitFirstVerdict?: string;
+  engineWaitFirstReason?: string;
+  /**
+   * Why the managed engine's process is gone, read from its log by fixed
+   * patterns (ATO-1435, `EngineExitReason`). Sent as `engine_exit_reason`.
+   */
+  engineExitReason?: string;
+  /**
+   * The failed step's prompt budget, by part, from its last
+   * `prompt_built` (ATO-1678): counts only, in the agent's estimate
+   * units. Sent as `prompt_*` tags.
+   */
+  promptBudget?: LlmPromptBudget;
+  /**
+   * The counts a truncated reply reported (`TruncationDetail`), in the
+   * server's units: what the window really held. Sent as `cut_*` tags.
+   */
+  truncationCounts?: LlmTruncationCounts;
+}
+
+/** {@link LlmFailureContext.promptBudget}. Every field a token count. */
+export interface LlmPromptBudget {
+  /** The whole prompt as estimated (`BuiltPrompt.tokens.total`). */
+  totalTokens: number;
+  /** The stable prefix: system, rules, tool catalog text, skills. */
+  stablePrefixTokens: number;
+  /** The native `tools` array beside the text; `0` on grammar. */
+  toolSchemaTokens: number;
+  /** The packed conversation (history). */
+  conversationTokens: number;
+  /** The window the prompt was packed to; `null` when unknown. */
+  contextWindow: number | null;
+  /** The reply reserve the budget held back; `null` when not reported. */
+  replyReserve: number | null;
+}
+
+/** {@link LlmFailureContext.truncationCounts}. */
+export interface LlmTruncationCounts {
+  promptTokens: number;
+  completionTokens: number;
+  /** The cap the request carried; absent when it carried none. */
+  requestedMaxTokens?: number;
 }
 
 /**
@@ -84,6 +137,25 @@ const ENGINE_LIVENESS_REASONS: ReadonlySet<string> = new Set([
   "lock_unreadable",
   "lock_probe_failed",
   "pid_unreadable",
+  "start_pending",
+]);
+const ENGINE_WAIT_VERDICTS: ReadonlySet<string> = new Set(["alive", "dead", "unknown", "atomic_chat_app"]);
+const ENGINE_WAIT_REASONS: ReadonlySet<string> = new Set([
+  ...ENGINE_LIVENESS_REASONS,
+  "not_local_link",
+  "not_active_provider",
+  "not_managed",
+  "atomic_chat_app",
+  "liveness_probe_failed",
+]);
+const ENGINE_EXIT_REASONS: ReadonlySet<string> = new Set([
+  "out_of_memory",
+  "model_file_missing",
+  "model_file_corrupt",
+  "gpu_driver",
+  "port_in_use",
+  "crashed_unknown",
+  "no_log",
 ]);
 const ENGINE_LOCK_STATES: ReadonlySet<string> = new Set([
   "free",
@@ -94,6 +166,7 @@ const ENGINE_LOCK_STATES: ReadonlySet<string> = new Set([
   "stale_dead_owner",
   "stale_before_boot",
   "stale_no_owner",
+  "stale_too_old",
   "probe_failed",
 ]);
 const LOCAL_FAULTS: ReadonlySet<string> = new Set([
@@ -204,6 +277,11 @@ function safeCount(value: number): string {
   return Number.isFinite(value) && value >= 0 ? String(Math.round(value)) : UNKNOWN;
 }
 
+/** A count where `0` means the provider did not report one. */
+function reportedCount(value: number): string {
+  return Number.isFinite(value) && value > 0 ? String(Math.round(value)) : UNKNOWN;
+}
+
 /**
  * Sentry tags for an {@link LlmFailureContext}. Only fixed words and
  * non-negative integers come out: a value outside its vocabulary becomes
@@ -221,6 +299,16 @@ function safeCount(value: number): string {
  * `port_holder: other_process` (ATO-1277).
  * A managed engine's failure adds `local_fault`, a fixed word read from
  * its log (ATO-1279).
+ * A turn whose outage wait read the local engine adds `engine_wait_verdict`,
+ * `engine_wait_reason` and their `_first_` pair: what the wait decided on,
+ * when it decided (ATO-1432). A refusal with no model process adds
+ * `engine_exit_reason`, why it is gone, read from its log (ATO-1435).
+ * None of these for an `external` engine.
+ * A failed step's prompt budget adds `prompt_total_tokens`,
+ * `prompt_prefix_tokens`, `prompt_tools_tokens`, `prompt_history_tokens`,
+ * `prompt_window` and `prompt_reply_reserve`; a truncated reply adds
+ * `cut_prompt_tokens`, `cut_reply_tokens` and `cut_reply_cap` (ATO-1678).
+ * Counts only, for every engine: no prompt text is read here.
  */
 export function sanitizeLlmFailureTags(
   context: LlmFailureContext | undefined,
@@ -245,6 +333,16 @@ export function sanitizeLlmFailureTags(
   if (context.localFault !== undefined && tags.local_engine !== "external") {
     tags.local_fault = fromVocabulary(context.localFault, LOCAL_FAULTS);
   }
+  if (tags.local_engine !== "external") {
+    if (context.engineWaitVerdict !== undefined) {
+      tags.engine_wait_verdict = fromVocabulary(context.engineWaitVerdict, ENGINE_WAIT_VERDICTS);
+      tags.engine_wait_reason = fromVocabulary(context.engineWaitReason ?? UNKNOWN, ENGINE_WAIT_REASONS);
+    }
+    if (context.engineWaitFirstVerdict !== undefined) {
+      tags.engine_wait_first_verdict = fromVocabulary(context.engineWaitFirstVerdict, ENGINE_WAIT_VERDICTS);
+      tags.engine_wait_first_reason = fromVocabulary(context.engineWaitFirstReason ?? UNKNOWN, ENGINE_WAIT_REASONS);
+    }
+  }
   if (context.requestUrl !== undefined) {
     tags.request_route = classifyRequestRoute(context.requestUrl);
     tags.port_class = classifyPortClass(context.requestUrl, context.managedPorts);
@@ -266,7 +364,26 @@ export function sanitizeLlmFailureTags(
       if (context.engineLock !== undefined) {
         tags.engine_lock = fromVocabulary(context.engineLock, ENGINE_LOCK_STATES);
       }
+      if (context.engineExitReason !== undefined) {
+        tags.engine_exit_reason = fromVocabulary(context.engineExitReason, ENGINE_EXIT_REASONS);
+      }
     }
+  }
+  const budget = context.promptBudget;
+  if (budget !== undefined) {
+    tags.prompt_total_tokens = safeCount(budget.totalTokens);
+    tags.prompt_prefix_tokens = safeCount(budget.stablePrefixTokens);
+    tags.prompt_tools_tokens = safeCount(budget.toolSchemaTokens);
+    tags.prompt_history_tokens = safeCount(budget.conversationTokens);
+    tags.prompt_window = budget.contextWindow === null ? "none" : safeCount(budget.contextWindow);
+    tags.prompt_reply_reserve = budget.replyReserve === null ? UNKNOWN : safeCount(budget.replyReserve);
+  }
+  const cut = context.truncationCounts;
+  if (cut !== undefined) {
+    // `0` is "not reported" in `TruncationDetail`, not a count.
+    tags.cut_prompt_tokens = reportedCount(cut.promptTokens);
+    tags.cut_reply_tokens = reportedCount(cut.completionTokens);
+    tags.cut_reply_cap = cut.requestedMaxTokens === undefined ? "none" : safeCount(cut.requestedMaxTokens);
   }
   return Object.keys(tags).length > 0 ? tags : undefined;
 }

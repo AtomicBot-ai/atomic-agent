@@ -117,6 +117,13 @@ export class RecentKeys {
     this.ring.length = 0;
   }
 
+  /** Drop every key `drop` matches, keeping the others in order. */
+  forget(drop: (key: string) => boolean): void {
+    const kept = this.ring.filter((key) => !drop(key));
+    this.ring.length = 0;
+    this.ring.push(...kept);
+  }
+
   get size(): number {
     return this.ring.length;
   }

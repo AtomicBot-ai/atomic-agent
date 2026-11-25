@@ -1,4 +1,9 @@
 import type { SessionGrantsSnapshot } from "../../approval/approval-gate.js";
+import {
+  createInitialOfflinePanelState,
+  type OfflinePanelState,
+} from "./offline-mode.js";
+import { createInitialShieldPanelState, type ShieldPanelState } from "./privacy-shield.js";
 
 /**
  * UI state for the TUI "Privacy" tab: the anonymous-analytics opt-out
@@ -25,6 +30,17 @@ export interface PrivacyPanelState {
    * session is switched / restarted, never persisted.
    */
   sessionGrants: SessionGrantsSnapshot;
+  /**
+   * Offline mode (ATO-1087): the agent's network kill switch and its
+   * outbound counter, as last read from the runtime. `supported: false`
+   * when the running agent has no kill switch.
+   */
+  offline: OfflinePanelState;
+  /**
+   * Privacy Shield (ATO-1082): masking before cloud models and the
+   * agent's "masked N" counter. `supported: false` without the control.
+   */
+  shield: ShieldPanelState;
 }
 
 export function createInitialPrivacyPanelState(): PrivacyPanelState {
@@ -34,5 +50,7 @@ export function createInitialPrivacyPanelState(): PrivacyPanelState {
     message: null,
     lastError: null,
     sessionGrants: { categories: [], shapes: [] },
+    offline: createInitialOfflinePanelState(),
+    shield: createInitialShieldPanelState(),
   };
 }

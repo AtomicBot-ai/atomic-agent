@@ -1,0 +1,10 @@
+skill: xlsx
+description: Create a workbook with values and a formula. Needs python3 with openpyxl on the machine (both variants need it).
+defaults:
+  maxSteps: 25
+tasks:
+  - id: sales-workbook
+    prompt: "Create sales.xlsx in this folder with one sheet named Sales. Row 1 is the header Region, Total. Rows 2 to 4 are North 120, South 80, East 50. B5 holds a formula that sums B2:B4."
+    check:
+      type: command
+      run: node "$SKILL_EVAL_TASKS_DIR/checks/sales-check.mjs"

@@ -4,6 +4,10 @@
  * missing, the CLI is signed out, or the invocation itself failed.
  */
 
+import { ChatgptSignInRequiredError } from "../subscription-oauth/oauth-errors.js";
+
+import { exitHint } from "./cli-exit-hint.js";
+
 export class SubscriptionCliNotInstalledError extends Error {
   /**
    * `productName` words it for someone who picked a subscription in a
@@ -69,12 +73,65 @@ export class SubscriptionCliAuthError extends Error {
   }
 }
 
+/**
+ * Why a CLI invocation failed, as a fixed word (ATO-1446). It is what an
+ * error report says about the failure: the message carries the CLI's own
+ * text and never leaves the machine, so without this field a report
+ * read only "SubscriptionCliInvocationError". Mirrored by name in
+ * `src/error-reporting/subscription-cli-failure-tag.ts`.
+ */
+export type SubscriptionCliFailureKind =
+  | "timeout"
+  | "output_too_large"
+  | "input_truncated"
+  | "exited"
+  | "limit_reached"
+  | "not_json"
+  | "reported_error"
+  | "turn_failed";
+
+/** Kinds whose message carries the CLI's own words, so a limit can show. */
+const KINDS_WITH_CLI_TEXT: ReadonlySet<SubscriptionCliFailureKind> = new Set([
+  "exited",
+  "reported_error",
+  "turn_failed",
+]);
+
+/**
+ * A subscription usage or rate limit, as Claude Code and Codex word it
+ * ("Claude AI usage limit reached", "You've hit your usage limit",
+ * "api status 429"). Narrow on purpose: it only picks the report's
+ * word, it never changes what the user is told.
+ */
+const LIMIT_PATTERNS = [
+  /\busage limit\b/i,
+  /\brate[ _-]?limit/i,
+  /\blimit reached\b/i,
+  /\bhit your (?:usage )?limit\b/i,
+  /\bquota\b/i,
+  /\bstatus 429\b/i,
+  /\b429 too many requests\b/i,
+];
+
+export function looksLikeUsageLimit(text: string): boolean {
+  return LIMIT_PATTERNS.some((re) => re.test(text));
+}
+
 export class SubscriptionCliInvocationError extends Error {
   readonly exitCode: number | null;
-  constructor(message: string, exitCode: number | null = null) {
+  readonly failureKind: SubscriptionCliFailureKind;
+  constructor(
+    message: string,
+    exitCode: number | null = null,
+    failureKind: SubscriptionCliFailureKind = "exited",
+  ) {
     super(message);
     this.name = "SubscriptionCliInvocationError";
     this.exitCode = exitCode;
+    this.failureKind =
+      KINDS_WITH_CLI_TEXT.has(failureKind) && looksLikeUsageLimit(message)
+        ? "limit_reached"
+        : failureKind;
   }
 }
 
@@ -112,13 +169,17 @@ export function looksLikeAuthFailure(text: string): boolean {
  *
  * Walks `cause`: the step executor hands the agent loop a
  * `TransportError` wrapping the original.
+ *
+ * The experimental ChatGPT sign-in (ATO-1453) counts too: an expired or
+ * missing sign-in is the same "sign in again" as a signed-out CLI.
  */
 export function isSubscriptionCliSetupError(err: unknown): boolean {
   let current: unknown = err;
   for (let depth = 0; depth < 5; depth += 1) {
     if (
       current instanceof SubscriptionCliNotInstalledError ||
-      current instanceof SubscriptionCliAuthError
+      current instanceof SubscriptionCliAuthError ||
+      current instanceof ChatgptSignInRequiredError
     ) {
       return true;
     }
@@ -181,12 +242,14 @@ export function mapCliFailure(input: CliFailureInput): Error {
     return new SubscriptionCliInvocationError(
       `"${input.binary}" timed out after ${input.timeoutMs}ms`,
       input.exitCode,
+      "timeout",
     );
   }
   if (input.truncated) {
     return new SubscriptionCliInvocationError(
       `"${input.binary}" produced more than ${input.maxOutputBytes} bytes; refusing to parse a truncated response`,
       input.exitCode,
+      "output_too_large",
     );
   }
   // When the CLI wrote its failure into its own JSON output, that text
@@ -207,21 +270,27 @@ export function mapCliFailure(input: CliFailureInput): Error {
   if (looksLikeAuthFailure(combined)) {
     return new SubscriptionCliAuthError(input.binary, input.authHint, detail);
   }
-  // Checked after the auth patterns: a signed-out CLI is what usually
-  // drops the pipe, and "run /login" is the more actionable message.
+  // The hint below reads `detail`, the same text the message carries, so
+  // it agrees with the `cli_reason` the error report reads off the
+  // message (ATO-1679). Checked after the auth patterns: a signed-out
+  // CLI is what usually drops the pipe, and "run /login" is the more
+  // actionable message. An old CLI or a missing git-bash also exits
+  // before reading stdin, so a long prompt lands here too.
   if (input.inputTruncated) {
     return new SubscriptionCliInvocationError(
       `"${input.binary}" stopped reading the prompt before it was fully written (exit ${
         input.exitCode ?? "null"
-      }): ${detail || "no output"}`,
+      }): ${detail || "no output"}${exitHint(input.binary, detail)}`,
       input.exitCode,
+      "input_truncated",
     );
   }
   return new SubscriptionCliInvocationError(
     `"${input.binary}" exited with code ${input.exitCode ?? "null"}: ${
       detail || "no output"
-    }`,
+    }${exitHint(input.binary, detail)}`,
     input.exitCode,
+    "exited",
   );
 }
 

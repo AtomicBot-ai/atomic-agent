@@ -4,8 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolvePidFilePath } from "../backend-paths.js";
-import { readCoreOperationLock as readCoreOperationLockForTest } from "../core/core-operation.js";
-import { explainManagedEngineLiveness, readManagedEngineLiveness } from "./engine-liveness.js";
+import {
+  CORE_OPERATION_STALE_MS,
+  readCoreOperationLock as readCoreOperationLockForTest,
+  readCoreOperationLockForTurn,
+} from "../core/core-operation.js";
+import { explainManagedEngineLiveness, readManagedEngineLiveness, readManagedModelProcess } from "./engine-liveness.js";
 
 describe("readManagedEngineLiveness (ATO-772)", () => {
   let dataDir: string;
@@ -145,5 +149,117 @@ describe("explainManagedEngineLiveness (ATO-1275)", () => {
       state: "alive",
       reason: "pid_alive",
     });
+  });
+
+  it("a lock held longer than any honest operation does not hide a dead engine (ATO-1433)", () => {
+    // A pid that a crashed owner left on Windows, now naming another program.
+    writeLock(process.ppid);
+    age(lockPath(), CORE_OPERATION_STALE_MS + 60_000);
+    // Boot long ago for both the lock and the pid file, so the reboot rule
+    // never decides this on a machine that has only just started.
+    const bootTimeMs = () => Date.now() - 30 * 24 * HOUR;
+    const probes = {
+      bootTimeMs,
+      operationLock: (dir: string) => readCoreOperationLockForTurn(dir, { bootTimeMs }),
+    };
+    expect(explainManagedEngineLiveness(dataDir, probes)).toEqual({
+      state: "no_pid",
+      reason: "no_pid_file",
+      lock: "stale_too_old",
+    });
+    writeFileSync(resolvePidFilePath(dataDir), String(deadPid()));
+    expect(explainManagedEngineLiveness(dataDir, probes)).toMatchObject({
+      state: "dead",
+      reason: "pid_dead",
+      lock: "stale_too_old",
+    });
+  });
+
+  it("a fresh lock held by another live process still keeps the wait", () => {
+    writeLock(process.ppid);
+    expect(explainManagedEngineLiveness(dataDir)).toMatchObject({ state: "unknown", reason: "lock_held" });
+  });
+
+  it("an unreadable lock is not a start under way: the pid decides (ATO-1433)", () => {
+    expect(explainManagedEngineLiveness(dataDir, { operationLock: () => "unreadable" })).toEqual({
+      state: "no_pid",
+      reason: "no_pid_file",
+      lock: "unreadable",
+    });
+  });
+});
+
+describe("readManagedModelProcess (ATO-1434)", () => {
+  let dataDir: string;
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "engine-process-"));
+  });
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  const longUp = { bootTimeMs: () => Date.now() - 30 * 24 * 3_600_000 };
+  const writePid = (value: string): void => writeFileSync(resolvePidFilePath(dataDir), value, "utf-8");
+
+  it("reads the pid file even while the engine lock is held", () => {
+    mkdirSync(join(dataDir, "core"), { recursive: true });
+    writeFileSync(join(dataDir, "core", "operation.lock"), String(process.ppid));
+    expect(readManagedModelProcess(dataDir, longUp)).toBe("none");
+    writePid(String(process.pid));
+    expect(readManagedModelProcess(dataDir, longUp)).toBe("running");
+  });
+
+  it("no pid file, an empty one or a gone pid is none", () => {
+    expect(readManagedModelProcess(dataDir, longUp)).toBe("none");
+    writePid("");
+    expect(readManagedModelProcess(dataDir, longUp)).toBe("none");
+    writePid(String(spawnSync(process.execPath, ["-e", ""]).pid!));
+    expect(readManagedModelProcess(dataDir, longUp)).toBe("none");
+  });
+
+  it("another user's process counts as running", () => {
+    writePid("4242");
+    expect(readManagedModelProcess(dataDir, { ...longUp, pidLiveness: () => "foreign" })).toBe("running");
+  });
+});
+
+describe("explainManagedEngineLiveness: a chat start on its way (ATO-421)", () => {
+  let dataDir: string;
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "engine-liveness-pending-"));
+  });
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  const deadPid = (): number => spawnSync(process.execPath, ["-e", ""]).pid!;
+  const writePid = (value: string): void => writeFileSync(resolvePidFilePath(dataDir), value, "utf-8");
+  const pending = { startPending: () => true };
+
+  it("no pid file with a start on its way is unknown (start_pending), not no_pid", () => {
+    expect(explainManagedEngineLiveness(dataDir, pending)).toEqual({ state: "unknown", reason: "start_pending", lock: "free" });
+    expect(explainManagedEngineLiveness(dataDir, { startPending: () => false }).reason).toBe("no_pid_file");
+  });
+
+  it("a dead recorded pid with a start on its way (the restart after a crash) is start_pending", () => {
+    writePid(String(deadPid()));
+    expect(explainManagedEngineLiveness(dataDir, pending).reason).toBe("start_pending");
+  });
+
+  it("never hides a live model process behind the marker", () => {
+    writePid(String(process.pid));
+    expect(explainManagedEngineLiveness(dataDir, pending)).toMatchObject({ state: "alive", reason: "pid_alive" });
+  });
+
+  it("a marker probe that throws leaves the reading as it was", () => {
+    expect(explainManagedEngineLiveness(dataDir, { startPending: () => { throw new Error("EACCES"); } }).reason).toBe("no_pid_file");
+  });
+
+  it("reads the real marker a start writes", async () => {
+    const { markChatStartPending } = await import("./chat-start-pending.js");
+    const done = markChatStartPending(dataDir);
+    expect(explainManagedEngineLiveness(dataDir).reason).toBe("start_pending");
+    done();
+    expect(explainManagedEngineLiveness(dataDir).reason).toBe("no_pid_file");
   });
 });

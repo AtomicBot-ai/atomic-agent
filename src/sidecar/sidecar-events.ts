@@ -6,6 +6,7 @@
 
 import type { ApprovalCategory } from "../approval/approval-level.js";
 import type { RiskLevel } from "../approval/risk-review.js";
+import type { UserQuestion } from "../approval/user-question.js";
 
 export type HostRequestType =
   | "start_session"
@@ -134,10 +135,31 @@ export interface ApprovalResponsePayload {
    * other fails the request and the approval stays pending.
    */
   grant?: "session" | "shape" | "always";
+  /**
+   * With `grant: "session"`, the site the host showed the grant for:
+   * echo the request's `grantHost` (ATO-1474). The agent records the
+   * site from its own pending request, never from this field; a value
+   * that is not the request's own site (another host, a request whose
+   * grant is not per site, or a non-session grant) fails the request
+   * and the approval stays pending. Absent behaves as before: the
+   * session grant takes the request's own scope.
+   */
+  grantHost?: string;
+  /**
+   * With `approved: true` on a `user_question` request (ATO-489): option
+   * labels or 0-based indexes picked, and/or the person's own words. An
+   * answer the question does not take fails the request; it stays open.
+   */
+  answer?: { selected?: Array<string | number>; other?: string };
 }
 
 export interface GetSessionPayload {
   sessionId: string;
+}
+
+/** `compact_session`: `instructions` (ATO-661) says what the summary must keep. */
+export interface CompactSessionPayload extends GetSessionPayload {
+  instructions?: string;
 }
 
 export interface SkillInstallPayload {
@@ -179,18 +201,34 @@ export interface ApprovalRequestPayload {
   /** What smart approval's risk review said, when it ran. */
   riskNote?: string;
   riskLevel?: RiskLevel;
+  /** The reviewer's reason alone, for `formatRiskLine` (ATO-1268). */
+  riskReason?: string;
   /**
    * Whether `grant: "session"` may be offered (the TUI's `[s]`). This
    * agent always sends the three `can*` flags; absent (an older agent)
    * reads as `false`.
    */
   canSession?: boolean;
+  /**
+   * When `canSession` and the session grant covers one site rather than
+   * the whole category (ATO-1474): the host of a browser submit or
+   * off-site request (`shop.example`), or the origin of an HTTP request
+   * (`https://api.example.com`). A host labels the choice with it ("Allow
+   * on shop.example in this chat") and may echo it back as the
+   * response's `grantHost`. Absent means the grant covers the category.
+   */
+  grantHost?: string;
   /** Whether `grant: "shape"` may be offered (the TUI's `[a]`). */
   canShape?: boolean;
   /** Whether `grant: "always"` may be offered ("Allow always"). */
   canAlways?: boolean;
   /** The text of that choice, when `canAlways`: `Always allow "git status" in this project`. */
   alwaysLabel?: string;
+  /**
+   * Set on a `user_question` request (`ask_user`, ATO-489): draw option
+   * cards and answer with `approval_response.answer`; a deny skips it.
+   */
+  question?: UserQuestion;
 }
 
 export interface ToolCallStartedPayload {
@@ -218,6 +256,17 @@ export interface ToolCallResultPayload {
   batchIndex?: number;
   batchSize?: number;
   truncated?: boolean;
+  /**
+   * The HTML file an ok `canvas.render` call wrote (ATO-1137), for the
+   * host to show as a canvas. Absent for every other call.
+   */
+  canvas?: {
+    path: string;
+    title: string;
+    kind: "html" | "chart";
+    chart?: "bar" | "line" | "area" | "pie" | "table";
+    bytes: number;
+  };
 }
 
 export interface StepStartedPayload {

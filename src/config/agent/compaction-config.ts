@@ -10,10 +10,33 @@ export type CompactionMode = "auto" | "model" | "extractive";
 export const COMPACTION_MODES: readonly CompactionMode[] = ["auto", "model", "extractive"];
 
 export interface CompactionConfig {
+  /**
+   * Compact the conversation automatically once its history reaches
+   * `triggerRatio` of the history allowance. `false` leaves only manual
+   * and overflow compaction. Default `true`.
+   */
   auto: boolean;
+  /**
+   * How a checkpoint summary is made: `model` asks the active model,
+   * `extractive` builds it from the records without a model call, `auto`
+   * (default) chooses per attempt.
+   */
   mode: CompactionMode;
+  /**
+   * Share of the history allowance the conversation may fill before
+   * automatic compaction runs. Default `0.9`; must be below 1 and above
+   * `targetRatio`.
+   */
   triggerRatio: number;
+  /**
+   * Share of the history allowance a compaction cuts the conversation
+   * down to. Default `0.65`; must be below `triggerRatio`.
+   */
   targetRatio: number;
+  /**
+   * Largest checkpoint summary a compaction asks for, in tokens. Default
+   * `2048`; a small history allowance gets a smaller summary.
+   */
   summaryMaxTokens: number;
   /**
    * Output tokens a summary call may spend on reasoning on top of
@@ -25,6 +48,10 @@ export interface CompactionConfig {
   reasoningReserveTokens: number;
   /** Timeout of one summary call; the total budget scales with chunk count. */
   timeoutMs: number;
+  /**
+   * Total time budget for one compaction's summary calls, in
+   * milliseconds, however many chunks it takes. Default `600000`.
+   */
   maxTotalTimeoutMs: number;
   /**
    * Under `auto`, extend a rolling summary between turns so compaction can
@@ -33,11 +60,19 @@ export interface CompactionConfig {
    * background scheduler); `false` turns it off everywhere.
    */
   background?: boolean;
+  /**
+   * ATO-676. Before a compaction, ask the model for short dated
+   * observations ("YYYY-MM-DD: ...") about the records being compacted
+   * and store them as one memory note tagged `observations`. A private
+   * side call: the visible chat is unchanged, and a failed flush never
+   * stops the compaction. Optional: absent means off (the default).
+   */
+  memoryFlush?: boolean;
 }
 
 export function createCompactionDefaults(): CompactionConfig {
   return { auto: true, mode: "auto", triggerRatio: 0.9, targetRatio: 0.65, summaryMaxTokens: 2048,
-    reasoningReserveTokens: 4096, timeoutMs: 600_000, maxTotalTimeoutMs: 600_000, background: true };
+    reasoningReserveTokens: 4096, timeoutMs: 600_000, maxTotalTimeoutMs: 600_000, background: true, memoryFlush: false };
 }
 
 function parseCompactionMode(raw: unknown, fallback: CompactionMode): CompactionMode {
@@ -63,6 +98,7 @@ export function parseCompactionConfig(raw: unknown, defaults: CompactionConfig):
     timeoutMs: parsePositiveInt(input.timeoutMs ?? defaults.timeoutMs, "agent.compaction.timeoutMs"),
     maxTotalTimeoutMs: parsePositiveInt(input.maxTotalTimeoutMs ?? defaults.maxTotalTimeoutMs, "agent.compaction.maxTotalTimeoutMs"),
     background: parseBool(input.background ?? defaults.background ?? true, "agent.compaction.background"),
+    memoryFlush: parseBool(input.memoryFlush ?? defaults.memoryFlush ?? false, "agent.compaction.memoryFlush"),
   };
   if (result.targetRatio >= result.triggerRatio || result.triggerRatio >= 1) {
     throw new ConfigValidationError("agent.compaction", "expected 0 < targetRatio < triggerRatio < 1");

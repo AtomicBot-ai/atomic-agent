@@ -1,5 +1,6 @@
 import { isListPhase } from "../providers/providers-wizard-phases.js";
 import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
+import { t, type MessageKey } from "../../i18n/index.js";
 import type { OnboardingStep, OnboardingUiState } from "./onboarding-state.js";
 
 /**
@@ -10,22 +11,29 @@ import type { OnboardingStep, OnboardingUiState } from "./onboarding-state.js";
  * the screen's render and input regions.
  */
 
-export const ONBOARDING_SUBTITLES: Record<OnboardingStep, string> = {
-  intro: "",
-  choose: "setup · step 1 of 2",
-  local_pick: "local models · step 2 of 2",
-  local_hf_ref: "local models · hugging face",
-  local_hf_pick: "local models · choose a file",
-  local_download: "local models · downloading",
-  propose_second: "one more thing",
-  wait_or_jump: "almost there",
-  import_pick: "bring your data · one last step",
-  import_done: "bring your data · done",
-  cloud: "cloud model · step 2 of 2",
-  custom_chat_url: "custom endpoint · step 2 of 2",
-  custom_embedding_url: "custom endpoint · embeddings",
-  finished: "setting up…",
+/** Message keys of the header subtitles; `intro` has none. */
+const ONBOARDING_SUBTITLE_KEYS: Record<OnboardingStep, MessageKey | null> = {
+  intro: null,
+  choose: "onboarding.subtitle.choose",
+  local_pick: "onboarding.subtitle.localPick",
+  local_hf_ref: "onboarding.subtitle.localHfRef",
+  local_hf_pick: "onboarding.subtitle.localHfPick",
+  local_download: "onboarding.subtitle.localDownload",
+  propose_second: "onboarding.subtitle.proposeSecond",
+  wait_or_jump: "onboarding.subtitle.waitOrJump",
+  import_pick: "onboarding.subtitle.importPick",
+  import_done: "onboarding.subtitle.importDone",
+  cloud: "onboarding.subtitle.cloud",
+  custom_chat_url: "onboarding.subtitle.customChatUrl",
+  custom_embedding_url: "onboarding.subtitle.customEmbeddingUrl",
+  finished: "onboarding.subtitle.finished",
 };
+
+/** The header subtitle of a step, in the interface language (ATO-571). */
+export function onboardingSubtitleFor(step: OnboardingStep): string {
+  const key = ONBOARDING_SUBTITLE_KEYS[step];
+  return key === null ? "" : t(key);
+}
 
 export function onboardingFooterFor(
   onboarding: OnboardingUiState,
@@ -34,47 +42,47 @@ export function onboardingFooterFor(
 ): string {
   // Same flip the chat hint strip's ctrl+c chip makes while armed (see
   // hotkey-hint.tsx) — the flow replaces that strip, not its semantics.
-  const quit = ctrlCArmed ? "ctrl+c press again to quit" : "ctrl+c quit";
+  const quit = t(ctrlCArmed ? "onboarding.footer.quitArmed" : "onboarding.footer.quit");
   switch (onboarding.step) {
     case "choose":
-      return `↑/↓ move   enter select   1–3 jump   esc skip   ${quit}`;
+      return t("onboarding.footer.choose", { quit });
     case "cloud":
       // "/ search" tracks the wizard phase, not the onboarding step: on
       // the key/URL/model text screens `/` is just a typed character.
       return wizard !== null && isListPhase(wizard.phase)
-        ? `↑/↓ move   / search   enter select   esc back   ${quit}`
-        : `↑/↓ move   enter select   esc back   ${quit}`;
+        ? t("onboarding.footer.listSearch", { quit })
+        : t("onboarding.footer.list", { quit });
     case "custom_chat_url":
-      return `enter test & continue   esc back   ${quit}`;
+      return t("onboarding.footer.customChatUrl", { quit });
     case "custom_embedding_url":
-      return `enter test & save   empty enter skips embeddings   esc back   ${quit}`;
+      return t("onboarding.footer.customEmbeddingUrl", { quit });
     case "local_pick":
-      return `↑/↓ move   enter select   esc back   ${quit}`;
+      return t("onboarding.footer.list", { quit });
     case "local_hf_ref": {
       // While the lookup runs, esc is the only live key — say so.
-      if (onboarding.busy) return `esc cancel the lookup   ${quit}`;
+      if (onboarding.busy) return t("onboarding.footer.hfLookupBusy", { quit });
       // Advertised only while there is something to clear, exactly like
       // the on-screen `[ clear ]` control it names the chord for.
-      const clear = onboarding.hfReference.length > 0 ? "ctrl+l clear   " : "";
-      return `enter look it up   ${clear}esc back   ${quit}`;
+      const clear = onboarding.hfReference.length > 0 ? `${t("onboarding.footer.hfClear")}   ` : "";
+      return t("onboarding.footer.hfRef", { clear, quit });
     }
     case "local_hf_pick":
-      return `↑/↓ move   enter download   esc back   ${quit}`;
+      return t("onboarding.footer.hfPick", { quit });
     case "local_download":
       // `s skip` matches the on-screen row; the wait_or_jump screen is
       // a different surface with its own rows and does not take `s`.
-      return `c set up cloud meanwhile   s skip to the agent   ${quit}`;
+      return t("onboarding.footer.localDownload", { quit });
     case "propose_second":
-      return `↑/↓ move   enter select   esc skip   ${quit}`;
+      return t("onboarding.footer.proposeSecond", { quit });
     case "import_pick":
       // While the run is out with the importers, Enter would double-run.
       return onboarding.busy
-        ? `importing…   ${quit}`
-        : `↑/↓ move   space tick   enter import   esc skip   ${quit}`;
+        ? t("onboarding.footer.importBusy", { quit })
+        : t("onboarding.footer.importPick", { quit });
     case "import_done":
-      return `any key to start   ${quit}`;
+      return t("onboarding.footer.importDone", { quit });
     case "wait_or_jump":
-      return `↑/↓ move   enter start or add a provider   ${quit}`;
+      return t("onboarding.footer.waitOrJump", { quit });
     case "finished":
       return "";
     case "intro":

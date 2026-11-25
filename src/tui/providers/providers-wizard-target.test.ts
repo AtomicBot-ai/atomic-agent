@@ -99,6 +99,22 @@ describe("apiKeyPhaseError", () => {
     }
   });
 
+  it("makes the key optional for a server on another computer on this network (ATO-1066)", () => {
+    for (const baseUrlLine of [
+      "http://192.168.1.20:8080",
+      "192.168.1.20:8080", // no scheme, as typed
+      "gpu-box.local:1234",
+      "http://10.0.0.5:11434",
+    ]) {
+      const wizard = { ...wizardFor("openai-compatible"), baseUrlLine };
+      expect(wizardKeyIsOptional(wizard), baseUrlLine).toBe(true);
+      expect(apiKeyPhaseError(wizard)).toBeNull();
+      expect(emptyKeyMeaningForWizard(wizard)).toContain("Optional");
+      // No credential check to run: the model list is the reachability check.
+      expect(verifyTargetForWizard(wizard)).toBeNull();
+    }
+  });
+
   it("still requires a key for a non-loopback custom URL", () => {
     const wizard = {
       ...wizardFor("openai-compatible"),
@@ -144,6 +160,15 @@ describe("apiKeyPhaseError", () => {
     process.env.OPENAI_API_KEY = "sk-openai";
     expect(apiKeyPhaseError(wizardFor("openai-compatible"))).toBeNull();
     expect(apiKeyForWizard(wizardFor("openai-compatible"))).toBe("sk-openai");
+  });
+
+  it("does not offer OPENAI_API_KEY for a compat address that is not OpenAI (ATO-1703)", () => {
+    process.env.OPENAI_API_KEY = "sk-openai";
+    const wizard = { ...wizardFor("openai-compatible"), baseUrlLine: "https://evil.example" };
+    expect(apiKeyForWizard(wizard)).toBeUndefined();
+    expect(apiKeyPhaseError(wizard)).toContain("API key required");
+    process.env.OPENAI_COMPAT_API_KEY = "compat-key";
+    expect(apiKeyForWizard(wizard)).toBe("compat-key");
   });
 
   it("leaves keyless services alone", () => {
@@ -214,6 +239,51 @@ describe("apiKeyPhaseError in configure mode", () => {
     const wizard = configureWizard("openai-compatible", "my-vllm");
     expect(apiKeyForWizard(wizard)).toBe("vllm-from-env");
     expect(apiKeyPhaseError(wizard)).toBeNull();
+  });
+
+  it("does not hand OPENAI_API_KEY to an imported entry's own server (ATO-1703)", () => {
+    upsertLlmProvider({
+      id: "imported",
+      kind: "openai-compatible",
+      baseUrl: "https://evil.example",
+    });
+    process.env.OPENAI_API_KEY = "sk-openai";
+    const wizard = {
+      ...configureWizard("openai-compatible", "imported"),
+      baseUrlLine: "https://evil.example",
+    };
+    expect(apiKeyForWizard(wizard)).toBeUndefined();
+  });
+
+  it("checks a reconfigured entry's key against the newly typed address (ATO-1703)", () => {
+    upsertLlmProvider({
+      id: "was-openai",
+      kind: "openai-compatible",
+      baseUrl: "https://api.openai.com/v1",
+    });
+    process.env.OPENAI_API_KEY = "sk-openai";
+    const kept = {
+      ...configureWizard("openai-compatible", "was-openai"),
+      baseUrlLine: "https://api.openai.com/v1",
+    };
+    expect(apiKeyForWizard(kept)).toBe("sk-openai");
+    const moved = { ...kept, baseUrlLine: "https://evil.example/v1" };
+    expect(apiKeyForWizard(moved)).toBeUndefined();
+  });
+
+  it("keeps a key saved in config.json when the address changes", () => {
+    upsertLlmProvider({
+      id: "own-key",
+      kind: "openai-compatible",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "sk-saved",
+    });
+    process.env.OPENAI_API_KEY = "sk-openai";
+    const moved = {
+      ...configureWizard("openai-compatible", "own-key"),
+      baseUrlLine: "https://llm.example.com/v1",
+    };
+    expect(apiKeyForWizard(moved)).toBe("sk-saved");
   });
 
   it("still refuses when the entry has no key anywhere", () => {

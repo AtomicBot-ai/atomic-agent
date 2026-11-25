@@ -1,5 +1,7 @@
 import { ConfigValidationError } from "./config-validation-error.js";
+import { parseLlmRouterConfig, type UserLlmRouterConfig } from "./llm-router-config.js";
 import { isSetAsideString } from "./config-primitives.js";
+import { parseOptionalApiKeyCommand } from "./llm-api-key-command.js";
 import {
   setAsideActiveStandIn,
   setAsideUnknownProviders,
@@ -10,7 +12,12 @@ import {
   parseLlmRunModeConfig,
   type UserLlmRunModeConfig,
 } from "./llm-run-mode-config.js";
-import { SUBSCRIPTION_CLI_KIND } from "./provider-auth-mode.js";
+import {
+  SUBSCRIPTION_CLI_KIND,
+  SUBSCRIPTION_OAUTH_KIND,
+  SUBSCRIPTION_OAUTH_SERVICES,
+  type SubscriptionOAuthService,
+} from "./provider-auth-mode.js";
 
 export type UserLlmToolTransport = "auto" | "grammar" | "native_tools";
 export const LLM_TOOL_TRANSPORTS: readonly UserLlmToolTransport[] = ["auto", "grammar", "native_tools"];
@@ -41,6 +48,15 @@ export type UserSubscriptionCliOptions = {
   maxBudgetUsd?: number;
 };
 
+/**
+ * EXPERIMENTAL (ATO-1448): settings for a `subscription-oauth` entry.
+ * Only which service it signs in to; the tokens live in
+ * `<stateDir>/auth/<service>.json`, never here.
+ */
+export type UserSubscriptionOAuthOptions = {
+  service: SubscriptionOAuthService;
+};
+
 export type UserLlmProviderEntry = {
   id: string;
   kind: string;
@@ -59,6 +75,22 @@ export type UserLlmProviderEntry = {
    * back to the per-kind defaults in `resolveLlmProviderApiKey`.
    */
   apiKeyEnvVar?: string;
+  /**
+   * Names of more env vars holding API keys for the same service, tried
+   * in order after the main key when it is rate-limited, refused or out
+   * of credit (ATO-471). Like `apiKeyEnvVar`: the values live in
+   * `<stateDir>/.env`, config.json holds only the names. Each must be an
+   * env var name (`[A-Z_][A-Z0-9_]*`); repeats are dropped.
+   */
+  extraApiKeyEnvVars?: string[];
+  /**
+   * Command (argv, run without a shell) whose output is this entry's key,
+   * for short-lived tokens: Vertex AI's
+   * `["gcloud", "auth", "print-access-token"]`. When set, requests use its
+   * output instead of `apiKey` / `apiKeyEnvVar`, cached for a few minutes
+   * and re-run on a 401. See `llm/provider/openai/api-key-command.ts`.
+   */
+  apiKeyCommand?: readonly string[];
   defaultChatModel?: string;
   defaultEmbeddingModel?: string;
   headers?: Record<string, string>;
@@ -73,6 +105,11 @@ export type UserLlmProviderEntry = {
   apiKeyHeader?: string;
   supportsTools?: boolean;
   supportsVision?: boolean;
+  /**
+   * The model on this link takes audio input (`input_audio` parts).
+   * Absent = not known, which reads as "no" (ATO-497).
+   */
+  supportsAudio?: boolean;
   requestTimeoutMs?: number;
   /**
    * Hard ceiling on this provider's output, in tokens. Absent means no
@@ -146,6 +183,8 @@ export type UserLlmProviderEntry = {
   userModels?: ReadonlyArray<UserModelEntry>;
   /** Present only on `subscription-cli` entries. */
   subscriptionCli?: UserSubscriptionCliOptions;
+  /** Only on `subscription-oauth` entries; absent reads as ChatGPT. */
+  subscriptionOauth?: UserSubscriptionOAuthOptions;
 };
 
 /**
@@ -166,6 +205,8 @@ export type UserModelEntry = {
   contextWindow?: number;
   dim?: number;
   supportsVision?: boolean;
+  /** This model takes audio input (`input_audio` parts); see `audio.listen`. */
+  supportsAudio?: boolean;
   supportsTools?: "none" | "basic" | "parallel" | "strict";
   supportsPromptCache?: boolean;
   /**
@@ -220,6 +261,30 @@ export type UserLlmOpenRouterConfig = {
   preferCacheRoutes?: boolean;
 };
 
+/**
+ * What the agent tracks and caps of cloud spend (`llm.costTracking`).
+ * Every field is optional in the file; the runtime fills the rest
+ * (`enabled` and `showInStatusBar` off, the day starting at 00:00 UTC,
+ * no ceiling, `onDailyLimit: "stop"`).
+ */
+export type UserLlmCostTrackingConfig = {
+  enabled?: boolean;
+  showInStatusBar?: boolean;
+  dailyResetHourUtc?: number;
+  /** Daily spend ceiling in USD, all sessions together (ATO-649). */
+  dailyLimitUsd?: number;
+  /**
+   * What happens once today's spend reaches `dailyLimitUsd` (ATO-649):
+   * `"stop"` (default) pauses cloud calls and says so in the chat;
+   * `"local"` moves the turn on to the local model when the fallback
+   * chain has one.
+   */
+  onDailyLimit?: DailyLimitAction;
+};
+
+export const DAILY_LIMIT_ACTIONS = ["stop", "local"] as const;
+export type DailyLimitAction = (typeof DAILY_LIMIT_ACTIONS)[number];
+
 export type UserLlmFileConfig = {
   activeTextProvider: string;
   activeEmbeddingProvider: string;
@@ -230,6 +295,10 @@ export type UserLlmFileConfig = {
   runMode?: UserLlmRunModeConfig;
   /** Settings for every `openrouter` entry at once. */
   openrouter?: UserLlmOpenRouterConfig;
+  /** Cloud spend tracking and the daily ceiling (ATO-649). */
+  costTracking?: UserLlmCostTrackingConfig;
+  /** Opt-in rule-based model router (ATO-483). See `llm-router-config.ts`. */
+  router?: UserLlmRouterConfig;
 };
 
 const PROVIDER_ID_RE = /^[a-z][a-z0-9-]{0,31}$/;
@@ -241,6 +310,7 @@ const PROVIDER_KINDS = new Set([
   "aimlapi",
   "gemini",
   SUBSCRIPTION_CLI_KIND,
+  SUBSCRIPTION_OAUTH_KIND,
 ]);
 
 function parseProviderId(raw: unknown, field: string): string {
@@ -259,6 +329,39 @@ function parseOptionalString(raw: unknown, field: string): string | undefined {
     throw new ConfigValidationError(field, "expected non-empty string");
   }
   return raw;
+}
+
+/** Same shape `<stateDir>/.env` accepts (`dotenv-writer.ts`, `load-dotenv.ts`). */
+const ENV_VAR_NAME = /^[A-Z_][A-Z0-9_]*$/;
+
+/**
+ * `extraApiKeyEnvVars`: an array of env var names. Blank strings are
+ * kept out rather than refused (a hand edit may leave an empty line),
+ * and an empty result reads as absent. Anything that is not an env var
+ * name is refused, so a pasted key never sits in config.json; the
+ * message never echoes the value.
+ */
+function parseOptionalEnvVarList(raw: unknown, field: string): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected array of env var names");
+  }
+  const out: string[] = [];
+  raw.forEach((value, i) => {
+    if (typeof value !== "string") {
+      throw new ConfigValidationError(`${field}[${i}]`, "expected string");
+    }
+    const name = value.trim();
+    if (name.length === 0) return;
+    if (!ENV_VAR_NAME.test(name)) {
+      throw new ConfigValidationError(
+        `${field}[${i}]`,
+        "must be an env var name ([A-Z_][A-Z0-9_]*) whose value is in <stateDir>/.env, not the key itself",
+      );
+    }
+    if (!out.includes(name)) out.push(name);
+  });
+  return out.length > 0 ? out : undefined;
 }
 
 function parseOptionalHeaders(
@@ -320,11 +423,19 @@ export function parseLlmProviderEntry(
     ...(obj.modelModes == null ? {} : { modelModes: parseModelModes(obj.modelModes, `${field}.modelModes`, fromFile) }),
     url: parseOptionalString(obj.url, `${field}.url`),
     apiKey: parseOptionalString(obj.apiKey, `${field}.apiKey`),
+    extraApiKeyEnvVars: parseOptionalEnvVarList(
+      obj.extraApiKeyEnvVars,
+      `${field}.extraApiKeyEnvVars`,
+    ),
     model: parseOptionalString(obj.model, `${field}.model`),
     baseUrl: parseOptionalString(obj.baseUrl, `${field}.baseUrl`),
     apiKeyEnvVar: parseOptionalString(
       obj.apiKeyEnvVar,
       `${field}.apiKeyEnvVar`,
+    ),
+    apiKeyCommand: parseOptionalApiKeyCommand(
+      obj.apiKeyCommand,
+      `${field}.apiKeyCommand`,
     ),
     defaultChatModel: parseOptionalString(
       obj.defaultChatModel,
@@ -361,6 +472,10 @@ export function parseLlmProviderEntry(
                 "expected boolean",
               );
             })(),
+    supportsAudio: parseOptionalBoolean(
+      obj.supportsAudio,
+      `${field}.supportsAudio`,
+    ),
     requestTimeoutMs:
       obj.requestTimeoutMs === undefined
         ? undefined
@@ -414,7 +529,32 @@ export function parseLlmProviderEntry(
       obj.subscriptionCli,
       `${field}.subscriptionCli`,
     ),
+    subscriptionOauth: parseSubscriptionOAuthOptions(
+      obj.subscriptionOauth,
+      `${field}.subscriptionOauth`,
+    ),
   };
+}
+
+function parseSubscriptionOAuthOptions(
+  raw: unknown,
+  field: string,
+): UserSubscriptionOAuthOptions | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  const service = (raw as Record<string, unknown>).service;
+  if (
+    typeof service !== "string" ||
+    !(SUBSCRIPTION_OAUTH_SERVICES as readonly string[]).includes(service)
+  ) {
+    throw new ConfigValidationError(
+      `${field}.service`,
+      `expected one of ${SUBSCRIPTION_OAUTH_SERVICES.join(", ")}`,
+    );
+  }
+  return { service: service as SubscriptionOAuthService };
 }
 
 function modelModeField(raw: unknown, field: string, fromFile: boolean): { modelMode?: ModelMode } {
@@ -590,6 +730,10 @@ function parseUserModelEntry(raw: unknown, field: string): UserModelEntry {
     supportsVision: parseOptionalBoolean(
       obj.supportsVision,
       `${field}.supportsVision`,
+    ),
+    supportsAudio: parseOptionalBoolean(
+      obj.supportsAudio,
+      `${field}.supportsAudio`,
     ),
     supportsTools: parseOptionalEnum<
       NonNullable<UserModelEntry["supportsTools"]>
@@ -837,6 +981,18 @@ export function parseUserLlmFileConfig(
       : parseLlmRunModeConfig(obj.runMode, providers, "llm.runMode");
 
   const openrouter = parseLlmOpenRouterConfig(obj.openrouter, "llm.openrouter");
+  const costTracking =
+    obj.costTracking === undefined || obj.costTracking === null
+      ? undefined
+      : parseLlmCostTrackingConfig(obj.costTracking, "llm.costTracking");
+  const router =
+    obj.router === undefined || obj.router === null
+      ? undefined
+      : parseLlmRouterConfig(
+          obj.router,
+          new Set(providers.map((p) => p.id)),
+          "llm.router",
+        );
 
   return {
     activeTextProvider,
@@ -846,7 +1002,66 @@ export function parseUserLlmFileConfig(
     ...(fallback ? { fallback } : {}),
     ...(runMode ? { runMode } : {}),
     ...(openrouter ? { openrouter } : {}),
+    ...(costTracking ? { costTracking } : {}),
+    ...(router ? { router } : {}),
   };
+}
+
+/**
+ * `llm.costTracking` (ATO-649). Until this parser the block was never
+ * read from `config.json` at all, so `dailyLimitUsd` set by hand did
+ * nothing. An `onDailyLimit` a newer build added reads as unset
+ * (`"stop"`), the safe side: no paid call and no silent switch.
+ */
+export function parseLlmCostTrackingConfig(
+  raw: unknown,
+  field: string,
+): UserLlmCostTrackingConfig {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  const obj = raw as Record<string, unknown>;
+  const out: UserLlmCostTrackingConfig = {};
+  for (const key of ["enabled", "showInStatusBar"] as const) {
+    if (obj[key] === undefined) continue;
+    if (typeof obj[key] !== "boolean") {
+      throw new ConfigValidationError(`${field}.${key}`, "expected boolean");
+    }
+    out[key] = obj[key] as boolean;
+  }
+  if (obj.dailyResetHourUtc !== undefined) {
+    const hour = obj.dailyResetHourUtc;
+    if (typeof hour !== "number" || !Number.isInteger(hour) || hour < 0 || hour > 23) {
+      throw new ConfigValidationError(
+        `${field}.dailyResetHourUtc`,
+        "expected an integer hour 0-23",
+      );
+    }
+    out.dailyResetHourUtc = hour;
+  }
+  if (obj.dailyLimitUsd !== undefined && obj.dailyLimitUsd !== null) {
+    const limit = obj.dailyLimitUsd;
+    if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) {
+      throw new ConfigValidationError(
+        `${field}.dailyLimitUsd`,
+        "expected a positive number of USD",
+      );
+    }
+    out.dailyLimitUsd = limit;
+  }
+  if (obj.onDailyLimit !== undefined && obj.onDailyLimit !== null) {
+    const action = obj.onDailyLimit;
+    if (!isSetAsideString(action, DAILY_LIMIT_ACTIONS, `${field}.onDailyLimit`, "stop")) {
+      if (action !== "stop" && action !== "local") {
+        throw new ConfigValidationError(
+          `${field}.onDailyLimit`,
+          "expected stop|local",
+        );
+      }
+      out.onDailyLimit = action as DailyLimitAction;
+    }
+  }
+  return out;
 }
 
 export function parseLlmOpenRouterConfig(

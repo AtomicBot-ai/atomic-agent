@@ -4,6 +4,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { resolveStateDir } from "../config/index.js";
 import { getAppVersion } from "../version.js";
 import { backupStateDir, unpackBackup } from "./data-archive.js";
+import { exportDatasetCommand } from "./data-export-dataset.js";
 
 /**
  * ATO-579 — `atag data`: back up, restore, move and reset the state dir.
@@ -25,6 +26,7 @@ const HELP = [
   "  move <new-folder>                     Move the folder (e.g. to another disk); the old path keeps working",
   "  reset --keep-models --yes             Start fresh but keep downloaded models; the rest is kept aside",
   "  path                                  Print where the folder is",
+  "  export-dataset --out <file.jsonl>     Your chats as a fine-tuning file, keys and emails taken out (stays local)",
 ].join("\n");
 
 export interface DataCommandDeps {
@@ -84,6 +86,8 @@ export async function dataCommand(args: string[], deps: DataCommandDeps = {}): P
     write(`left out: ${r.skipped.join(", ")}. The archive holds your API keys: keep it private.\n`);
     return 0;
   }
+
+  if (sub === "export-dataset") return exportDatasetCommand(rest, { stateDir: real, write });
 
   if (sub === "restore") {
     const file = positional[0];

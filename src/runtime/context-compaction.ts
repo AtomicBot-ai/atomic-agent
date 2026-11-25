@@ -1,8 +1,9 @@
 import type { CompactionEvent, ContextCompactionControl, CompactionStepOptions } from "../agent/compaction-control.js";
 import type { CompactionConfig } from "../config/agent/compaction-config.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
-import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
-import { decideCompaction, type CompactionSkip } from "../prompt/plan-compaction.js";
+import type { BuildPromptInput, BuiltPrompt } from "../prompt/build-prompt-types.js";
+import { decideCompaction, exactCountCandidate, type CompactionDecision, type CompactionDecisionModel, type CompactionSkip } from "../prompt/plan-compaction.js";
+import type { TokenCounter } from "../llm/token-counter.js";
 import { validSessionCompaction, type CompactionResult } from "../session/session-compaction.js";
 import type { SessionState } from "../session/session-state.js";
 import type { SessionStore } from "../session/session-store.js";
@@ -11,6 +12,7 @@ import { SessionNotFoundError } from "./session-not-found-error.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import { runContextCompaction, type CompactionRunnerDependencies } from "./context-compaction-runner.js";
 import type { BackgroundCompaction } from "./compaction-background.js";
+import { normalizeCompactionInstructions } from "./compaction-instructions.js";
 
 /**
  * After an automatic compaction times out, history must grow by this factor
@@ -24,6 +26,8 @@ interface ManualRequest {
   signal: AbortSignal;
   running: boolean;
   queued: boolean;
+  /** What the user asked this compaction to keep (ATO-661). */
+  instructions?: string;
   settle(result: CompactionResult): void;
 }
 
@@ -35,6 +39,13 @@ export interface ContextCompactionDependencies extends CompactionRunnerDependenc
   promptInput(state: SessionState): BuildPromptInput;
   /** Rolling summaries between turns; absent, compaction works as before. */
   background?: BackgroundCompaction;
+  /**
+   * The serving model's exact token counter for this session's route, when
+   * it has one (a local llama-server's `/tokenize`). Asked only when the
+   * heuristic puts history near the automatic trigger; absent, or answering
+   * `null`, the heuristic decides as before (ATO-656).
+   */
+  tokenCounter?(sessionId: string, providerId?: string): TokenCounter | undefined;
 }
 
 /**
@@ -156,8 +167,31 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     if (prompt.cloudContext) input = { ...input, session: { ...input.session, cloudContext: prompt.cloudContext } };
     // The same profile the step's own prompt budget follows (`buildPrompt`'s low water).
     const prefixReuse = input.profileWindowApplies === false ? undefined : input.profile?.prefixReuse;
-    const { plan, skip } = decideCompaction(input.session, prompt, config, request ? "manual" : options.requested,
-      prefixReuse ? { prefixReuse } : {});
+    const decide = (measured?: number) => decideCompaction(input.session, prompt, config, request ? "manual" : options.requested,
+      { ...(prefixReuse ? { prefixReuse } : {}), ...(measured !== undefined ? { measuredActiveTokens: measured } : {}) });
+    const measureText = request ? null : exactCountCandidate(input.session, prompt, config, options.requested);
+    let counter: TokenCounter | undefined;
+    if (measureText !== null) {
+      try { counter = deps.tokenCounter?.(id, options.providerId); } catch { /* The heuristic decides. */ }
+    }
+    if (measureText !== null && counter) {
+      // Near the trigger the heuristic's margin decides: ask the model's own
+      // count once, then decide as usual. Nothing to do resolves to the
+      // step's own session, unchanged.
+      const session = input.session;
+      return counter.count(measureText, options.signal).catch(() => null).then((exact) => {
+        if (stopped || options.signal.aborted) return session;
+        return act(input, options, request, inTurn, prompt, config, decide(exact ?? undefined), prefixReuse, routeKey) ?? session;
+      });
+    }
+    return act(input, options, request, inTurn, prompt, config, decide(), prefixReuse, routeKey);
+  }
+
+  function act(input: BuildPromptInput, options: CompactionStepOptions, request: ManualRequest | undefined, inTurn: boolean,
+    prompt: BuiltPrompt, config: CompactionConfig, decision: CompactionDecision,
+    prefixReuse: CompactionDecisionModel["prefixReuse"], routeKey: () => string): Promise<SessionState> | undefined {
+    const id = input.session.id;
+    const { plan, skip } = decision;
     if (!plan) {
       const reason = request ? "manual" : options.requested ?? "threshold";
       const message = skipMessage(skip ?? "no_reduction", prompt.contextWindow);
@@ -174,7 +208,8 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     const signal = AbortSignal.any([options.signal, request?.signal ?? controller.signal]);
     const release = () => { if (active.get(input.session.id) === controller) active.delete(input.session.id); };
     const preferExtractive = slowRoutes.size > 0 && slowRoutes.has(routeKey());
-    return runContextCompaction(input, plan, config, { ...options, signal, inTurn, preferExtractive }, deps)
+    const instructions = request?.instructions;
+    return runContextCompaction(input, plan, config, { ...options, signal, inTurn, preferExtractive, ...(instructions ? { instructions } : {}) }, deps)
       .then(({ state, result, timedOut }) => {
         if (result.status === "failed" && plan.reason !== "manual") autoFailed.add(id);
         if (timedOut) slowRoutes.add(routeKey());
@@ -226,7 +261,7 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
 
   return {
     control,
-    compactSession(id: string, options: { signal?: AbortSignal } = {}): Promise<CompactionResult> {
+    compactSession(id: string, options: { signal?: AbortSignal; instructions?: string } = {}): Promise<CompactionResult> {
       if (stopped || options.signal?.aborted) return Promise.resolve(cancelled());
       if (requests.has(id) || active.has(id)) return Promise.resolve({ status: "busy", reason: "manual" });
       deps.background?.cancel(id);
@@ -234,10 +269,11 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
       if (!turnSignal) load(id);
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, ...(options.signal ? [options.signal] : []), ...(turnSignal ? [turnSignal] : [])]);
+      const instructions = normalizeCompactionInstructions(options.instructions);
       return new Promise((resolve) => {
         const onAbort = () => { if (!request.running) request.settle(cancelled()); };
         const request: ManualRequest = {
-          controller, signal, running: false, queued: false,
+          controller, signal, running: false, queued: false, ...(instructions ? { instructions } : {}),
           settle(result) {
             if (requests.get(id) === request) requests.delete(id);
             signal.removeEventListener("abort", onAbort);

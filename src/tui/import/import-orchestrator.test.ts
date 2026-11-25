@@ -9,7 +9,6 @@ import { makeTuiEventBus } from "../make-event-bus.js";
 import type { OnboardingImportPlan } from "../onboarding/import-step.js";
 import type { TuiAction } from "../tui-action.js";
 import { ImportOrchestrator } from "./import-orchestrator.js";
-import type { ImportFormState } from "./import-panel-state.js";
 import {
   createInitialImportFormState,
   type ImportFormState,
@@ -19,11 +18,6 @@ interface Emitted {
   type: string;
   [key: string]: unknown;
 }
-import {
-  createInitialImportFormState,
-  type ImportFormState,
-} from "./import-panel-state.js";
-
 function makeBus() {
   const actions: Emitted[] = [];
   return {
@@ -145,8 +139,17 @@ describe("ImportOrchestrator", () => {
       summary: { migrated: number };
       items: unknown[];
     };
-    expect(report.summary.migrated).toBe(130);
-    expect(report.items).toHaveLength(130);
+    // 130 chats, plus the one group they came from: "/work" is not a folder
+    // on this computer, so it arrives as a chat folder named "work".
+    expect(report.summary.migrated).toBe(131);
+    expect(report.items).toHaveLength(131);
+    // Onboarding names the source on every row of its combined report.
+    expect(report.items[130]).toMatchObject({
+      kind: "Claude Code folders",
+      source: "work",
+      status: "migrated",
+      reason: "new folder; 130 chats; 130 added",
+    });
     expect(sessionStore.load("claude-code:s000")).not.toBeNull();
     expect(sessionStore.load("claude-code:s129")).not.toBeNull();
   });
@@ -173,7 +176,8 @@ describe("ImportOrchestrator", () => {
       executed: boolean;
     };
     expect(report.executed).toBe(false);
-    expect(report.summary.migrated).toBe(2);
+    // Two chats and the folder they would go into (grouping.ts).
+    expect(report.summary.migrated).toBe(3);
     expect(sessionStore.load("claude-code:s000")).toBeNull();
   });
 
@@ -278,13 +282,13 @@ async function settled(
 describe("ImportOrchestrator refreshSessions", () => {
   let tmp: string;
   let actions: TuiAction[];
-  let refreshSessions: ReturnType<typeof vi.fn>;
+  let refreshSessions: ReturnType<typeof vi.fn<() => void>>;
   let orchestrator: ImportOrchestrator;
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "atomic-agent-import-"));
     actions = [];
-    refreshSessions = vi.fn();
+    refreshSessions = vi.fn<() => void>();
     const bus = makeTuiEventBus();
     bus.subscribe((a) => actions.push(a));
     orchestrator = new ImportOrchestrator(stubRuntime(tmp), bus, {

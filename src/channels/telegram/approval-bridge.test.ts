@@ -7,6 +7,7 @@ import type {
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import {
+  APPROVAL_FROM_BEFORE_RESTART,
   ApprovalBridge,
   type ApprovalBridgeDeps,
   type InboundCallbackUpdate,
@@ -105,6 +106,29 @@ function callback(
 }
 
 describe("ApprovalBridge.dispatch", () => {
+  it("puts smart approval's verdict in the plain-text prompt (ATO-1268)", async () => {
+    const h = makeHarness();
+    await h.bridge.dispatch(
+      {
+        ...req("abc"),
+        riskNote: "risk check: high (pushes <b>main</b> & tags)",
+        riskLevel: "high",
+        riskReason: "pushes <b>main</b> & tags",
+      },
+      7,
+    );
+    const args = h.api.sendMessage.mock.calls[0]!;
+    // Plain text, no parse_mode: the reason goes out as written.
+    expect(args[1] as string).toContain("Risk check: high. Pushes <b>main</b> & tags");
+    expect((args[2] as { parse_mode?: string }).parse_mode).toBeUndefined();
+  });
+
+  it("has no risk line when no review ran", async () => {
+    const h = makeHarness();
+    await h.bridge.dispatch(req("abc"), 7);
+    expect(h.api.sendMessage.mock.calls[0]![1] as string).not.toContain("Risk check");
+  });
+
   it("sends a 2-button inline keyboard with the right callback_data", async () => {
     const h = makeHarness();
     await h.bridge.dispatch(req("abc"), 7);
@@ -451,6 +475,31 @@ describe("ApprovalBridge.handleCallback", () => {
     expect(h.api.answerCallbackQuery).toHaveBeenCalledWith("cb-1", {
       text: "Already resolved",
     });
+  });
+
+  it("says a button from before a restart expired, runs nothing and removes the keyboard (ATO-613)", async () => {
+    const h = makeHarness();
+    // This process never posted "old": the prompt came from an earlier run.
+    await h.bridge.handleCallback(callback("old", "y"));
+
+    expect(h.approvals.decisions).toEqual([]);
+    expect(h.api.answerCallbackQuery).toHaveBeenCalledWith("cb-1", {
+      text: APPROVAL_FROM_BEFORE_RESTART,
+    });
+    await vi.waitFor(() => expect(h.api.editMessageText).toHaveBeenCalledTimes(1));
+    expect(h.api.editMessageText.mock.calls[0]![0]).toBe(7);
+    expect(h.api.editMessageText.mock.calls[0]![1]).toBe(99);
+    expect(String(h.api.editMessageText.mock.calls[0]![2])).toContain("agent restarted");
+  });
+
+  it("still says Already resolved for a prompt this run posted and closed", async () => {
+    const h = makeHarness();
+    await h.bridge.dispatch(req("abc"), 7);
+    await h.bridge.handleCallback(callback("abc", "y"));
+    h.api.answerCallbackQuery.mockClear();
+
+    await h.bridge.handleCallback(callback("abc", "n"));
+    expect(h.api.answerCallbackQuery).toHaveBeenCalledWith("cb-1", { text: "Already resolved" });
   });
 
   it("cancels the timer once the button is clicked", async () => {

@@ -84,6 +84,8 @@ vi.mock("../runtime/bootstrap.js", () => ({
     skillCatalog: [],
     approvals: { resolve: () => {} },
     config: { telegram: { enabled: false } },
+    // The interview invite (ATO-1467) asks at startup whether a turn runs.
+    turnController: { busySessionIds: () => [] },
   }),
 }));
 
@@ -99,6 +101,7 @@ vi.mock("./chat-orchestrator.js", () => ({
     exitCode = 0;
     telegram = { forwardStatus: () => {} };
     projectTrust = { check: () => {}, answer: async () => {} };
+    appendLocalQuestion = { check: () => {}, answer: () => {} };
     localModels = {
       autoStartIfReady: async () => {},
       adoptBackgroundDownloads: () => {},
@@ -180,7 +183,8 @@ async function bootTui(args: string[] = []): Promise<Booted> {
     ) => {
       props = element.props;
       renderOptions = options;
-      return { waitUntilExit: () => exited, clear: () => {} };
+      // A real Ink app also unmounts; the signal quit calls it (ATO-1614).
+      return { waitUntilExit: () => exited, clear: () => {}, unmount: () => {} };
     },
   );
 
@@ -235,6 +239,9 @@ describe("tuiCommand mouse wiring", () => {
   beforeEach(() => {
     stateDir = mkdtempSync(join(tmpdir(), "tui-mouse-"));
     process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    // A Windows CI runner looks like the classic console, where the mouse
+    // now starts off (ATO-249). These cases are about the wiring.
+    process.env.ATOMIC_AGENT_CONHOST_GUARD = "0";
     resetConfigCache();
     trackingCalls.enabled = 0;
     trackingCalls.disabled = 0;
@@ -252,6 +259,7 @@ describe("tuiCommand mouse wiring", () => {
     if (realStdin) Object.defineProperty(process, "stdin", realStdin);
     rmSync(stateDir, { recursive: true, force: true });
     delete process.env.ATOMIC_AGENT_STATE_DIR;
+    delete process.env.ATOMIC_AGENT_CONHOST_GUARD;
     resetConfigCache();
     vi.resetModules();
   });
@@ -313,6 +321,18 @@ describe("tuiCommand mouse wiring", () => {
     // The source the tree subscribed to at mount is the one receiving
     // them — that is the whole point.
     expect(app.mouse).toBeDefined();
+    await app.stop();
+  });
+
+  it("starts with mouse reporting off on the classic Windows console (ATO-249)", async () => {
+    process.env.ATOMIC_AGENT_CONHOST_GUARD = "1";
+    writeMouseConfig(true);
+    const app = await bootTui();
+    expect(trackingCalls.enabled).toBe(0);
+    app.setMouseEnabled(true);
+    expect(trackingCalls.enabled).toBe(1);
+    stdin.emit("data", sgrPress(4, 4));
+    expect(app.seen).toHaveLength(1);
     await app.stop();
   });
 

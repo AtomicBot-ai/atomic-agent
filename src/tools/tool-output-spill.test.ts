@@ -91,7 +91,8 @@ describe("ToolOutputSpill (ATO-663)", () => {
   });
 
   it("never writes a tool that is not on the allowlist", async () => {
-    for (const tool of ["os.clipboard.read", "os.http.request", "os.email.inbox", "os.fs.read"]) {
+    // subagent.run (ATO-1670): its replies are the result, not a log to page through.
+    for (const tool of ["os.clipboard.read", "os.http.request", "os.email.inbox", "os.fs.read", "subagent.run"]) {
       const result = compressToolResult({ tool, status: "ok", output: longLog(100) });
       expect(await spill.spill(tool, "s-1", result)).toBe(result);
     }

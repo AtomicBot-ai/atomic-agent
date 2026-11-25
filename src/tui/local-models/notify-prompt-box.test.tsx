@@ -8,16 +8,16 @@ const strip = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
 describe("notifyPromptHint", () => {
   it("lists the three answers and Esc, marking the remembered one", () => {
     expect(notifyPromptHint(null)).toBe(
-      "t Telegram · d Discord · e E-mail · n no · Esc not now",
+      "t Telegram · d Discord · e E-mail · p Phone push · n no · Esc not now",
     );
     expect(notifyPromptHint("discord")).toBe(
-      "t Telegram · d Discord ✓ · e E-mail · n no · Esc not now",
+      "t Telegram · d Discord ✓ · e E-mail · p Phone push · n no · Esc not now",
     );
     expect(notifyPromptHint("email")).toBe(
-      "t Telegram · d Discord · e E-mail ✓ · n no · Esc not now",
+      "t Telegram · d Discord · e E-mail ✓ · p Phone push · n no · Esc not now",
     );
     expect(notifyPromptHint("off")).toBe(
-      "t Telegram · d Discord · e E-mail · n no ✓ · Esc not now",
+      "t Telegram · d Discord · e E-mail · p Phone push · n no ✓ · Esc not now",
     );
   });
 });
@@ -42,7 +42,7 @@ describe("NotifyPromptBox", () => {
     expect(frame).toContain("Tell you when Qwen 3.5 4B lands?");
     expect(frame).toContain("37% · the download keeps going");
     expect(frame).toContain(
-      "t Telegram · d Discord · e E-mail · n no · Esc not now",
+      "t Telegram · d Discord · e E-mail · p Phone push · n no · Esc not now",
     );
   });
 

@@ -4,10 +4,12 @@ import {
   SubscriptionCliAuthError,
   SubscriptionCliNotInstalledError,
 } from "../provider/subscription-cli/subscription-cli-errors.js";
+import { ChatgptSignInRequiredError } from "../provider/subscription-oauth/oauth-errors.js";
 import { ToolCallParseError } from "../grammar/tool-call-grammar.js";
 import type { LlmFailureCategory } from "./failure-category.js";
 import { LlmFailure } from "./llm-failures.js";
 import { isNetworkError } from "./network-error.js";
+import { isDailySpendLimitError } from "./spend-limit-error.js";
 
 /**
  * llama-server 4xx statuses that describe the *endpoint*, not the request
@@ -70,12 +72,19 @@ export function classifyFailure(err: unknown): LlmFailureCategory {
   // cannot serve the turn, and no other link is implicated. The default
   // `tool` arm below would both mislabel it ("Turn failed [tool]" for a
   // binary the user never installed) and stop the chain dead.
+  // The experimental ChatGPT sign-in (ATO-1453) missing or expired is the
+  // same "sign in again" as a signed-out CLI: the chain falls over to the
+  // next link.
   if (
     err instanceof SubscriptionCliNotInstalledError ||
-    err instanceof SubscriptionCliAuthError
+    err instanceof SubscriptionCliAuthError ||
+    err instanceof ChatgptSignInRequiredError
   ) {
     return "transport";
   }
+  // The day's spend ceiling refused a paid link (ATO-649): this link
+  // cannot serve the turn, another may. Not our tool's bug.
+  if (isDailySpendLimitError(err)) return "transport";
   if (isAbortError(err)) return "cancelled";
   // Checked after the abort branch on purpose: an aborted request can
   // surface as ECONNRESET, and a user pressing Esc is not a fallover.

@@ -2,6 +2,7 @@ import { selectManagedEngine } from "../../local-llm/engine-selection.js";
 import { retireIdleCore } from "../../local-llm/core/core-sessions.js";
 import { CORE_FALLBACK_LINE, CoreUnavailableError, shouldFallBackFromCore, type CoreFailureInfo } from "../../local-llm/core/core-errors.js";
 import { ModelOperationQueue } from "./model-operation-queue.js";
+import { hostRamGb } from "../../local-llm/backend/host-ram.js";
 import { totalmem } from "node:os";
 
 import { getConfig, resetConfigCache } from "../../config/index.js";
@@ -15,7 +16,9 @@ import { apiKeyForUrl } from "../../local-llm/server/managed-api-key.js";
 import {
   DEFAULT_EMBEDDING_MODEL_ID,
   DEFAULT_LLAMACPP_MODEL_ID,
+  cancelDownloadJob,
   downloadBackend,
+  pauseDownloadJob,
   downloadJobId,
   listDownloadJobs,
   isDownloadJobStale,
@@ -67,6 +70,7 @@ import {
   checkForBackendUpdateForPanel,
   maybeAutoUpdateBackend,
   probeNvidiaVramMiB,
+  probeConfiguredMachine,
   readBackendVersion,
   readLogTail,
   removeEmbeddingModel as removeEmbeddingModelFiles,
@@ -99,6 +103,8 @@ import {
   fetchServedModelIds,
   describeServerFault,
   readRunningPid,
+  loraAdapterForModel,
+  withChatStartPending,
 } from "../../local-llm/index.js";
 import {
   classifyVramFit,
@@ -112,7 +118,11 @@ import {
   persistMemoryEmbeddingsEnabled,
 } from "../persist-embedding-hybrid-recall.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
-import { isDownloadNotifyChannelReady } from "../../notifications/index.js";
+import {
+  enablePushNotifications,
+  isDownloadNotifyChannelReady,
+  pushPrivacyNote,
+} from "../../notifications/index.js";
 import { persistDownloadNotifyChannel } from "./persist-download-notify.js";
 import type { LocalModelsNotifyChoice } from "./local-models-panel-state.js";
 import { restartLocalDaemon } from "./local-models-daemon-restart.js";
@@ -289,6 +299,13 @@ export class LocalModelsOrchestrator {
     DownloadJobKind,
     { jobId: string; detach: () => void }
   >();
+  /**
+   * Jobs this TUI is stopping on the operator's word, and why. The
+   * watcher reads the worker's interim record (`cancelled`, or on
+   * Windows `interrupted`) through this, so a pause is reported as a
+   * pause and a stopped worker is never relaunched as if it had died.
+   */
+  private readonly stoppingDownloads = new Map<string, "pause" | "cancel">();
   /**
    * A ping the operator asked for on a channel that had no credentials
    * yet. Armed the moment the Integrations hub has them — the watch
@@ -703,11 +720,11 @@ export class LocalModelsOrchestrator {
           : "mmproj-only";
         const watched = await this.runDownloadJob("chat", id, workerMode, opts);
         if (watched.outcome === "detached") return;
-        if (watched.outcome === "cancelled") {
+        if (watched.outcome === "cancelled" || watched.outcome === "paused") {
           this.bus.emit({
             type: "local_models_pull_failed",
             kind: "chat",
-            error: describeCancelledPull(watched.job),
+            error: describeStoppedPull(watched.outcome, watched.job),
           });
           return;
         }
@@ -794,6 +811,15 @@ export class LocalModelsOrchestrator {
   private cloudRouteActive(): boolean {
     const active = getConfig().llm?.activeTextProvider;
     return !!active && active !== "local-llama";
+  }
+
+  /**
+   * ATO-378: whether the memory model may run without a local chat model
+   * beside it. Managed mode on a cloud chat route only: on the local route
+   * a stopped chat model means the operator stopped it (`s`, Stop).
+   */
+  private embeddingRunsAlone(): boolean {
+    return getConfig().localModels.mode === "managed" && this.cloudRouteActive();
   }
 
   private holdLanding(landing: HeldLanding): void {
@@ -927,17 +953,15 @@ export class LocalModelsOrchestrator {
   }
 
   /**
-   * ATO-1045: after the starter lands, start the best model's background
-   * download and say so. Fire and forget: the landing never waits on the
-   * device probe, and a failure leaves the starter running as it is.
+   * ATO-1045: after the starter lands, name the best model for this
+   * machine and its size. ATO-1475: only a suggestion, the download starts
+   * when the person runs `/models pull`. Fire and forget: the landing never
+   * waits on the device probe, and a failure leaves the starter as it is.
    */
   private async followStarterWithUpgrade(def: LocalModelDef): Promise<void> {
     const line = await upgradeAfterStarter(def);
     if (!line) return;
     this.bus.emit({ type: "runtime_info", line });
-    // The job is a detached worker like `models pull --background`: the
-    // next refresh adopts it, so its progress shows in the top bar.
-    await this.refresh().catch(() => undefined);
   }
 
   /**
@@ -958,11 +982,16 @@ export class LocalModelsOrchestrator {
     modelId: string,
     mode: DownloadJobMode,
     opts?: PullOptions,
-  ): Promise<{ outcome: "done" | "cancelled" | "detached"; job: DownloadJob }> {
+  ): Promise<{
+    outcome: "done" | "cancelled" | "paused" | "detached";
+    job: DownloadJob;
+  }> {
     const dataDir = getConfig().paths.localModelsDataDir;
     const spawn = this.hooks?.spawnDownload ?? spawnDownloadWorker;
     let launched = spawn({ dataDir, kind, modelId, mode });
     const jobId = launched.job.id;
+    // A fresh pull is not the stop an earlier one was asked for.
+    this.stoppingDownloads.delete(jobId);
 
     this.watchedDownloads.get(kind)?.detach();
     let detached = false;
@@ -1058,6 +1087,13 @@ export class LocalModelsOrchestrator {
         }
         last = job;
         if (job.status === "running") continue;
+        const stopping = this.stoppingDownloads.get(jobId);
+        if (job.status === "paused" || (stopping === "pause" && job.status !== "done")) {
+          return { outcome: "paused", job };
+        }
+        if (stopping === "cancel" && job.status !== "done") {
+          return { outcome: "cancelled", job };
+        }
         this.reportNotified(job);
         if (job.status === "interrupted" && !respawned) {
           // Once: the worker died (or went silent) under a watcher that
@@ -1083,6 +1119,7 @@ export class LocalModelsOrchestrator {
     } finally {
       if (this.watchedDownloads.get(kind) === watch) {
         this.watchedDownloads.delete(kind);
+        this.stoppingDownloads.delete(jobId);
       }
       // A ping that never got its credentials was about *these*
       // downloads; it must not fire, months later, for some other one.
@@ -1166,6 +1203,18 @@ export class LocalModelsOrchestrator {
       });
       return;
     }
+    if (choice === "push") {
+      // Push needs no credentials (ATO-1129): picking it turns it on with
+      // a fresh random topic, and the operator subscribes the phone to it.
+      const setup = enablePushNotifications();
+      for (const w of watched) writeDownloadNotify(dataDir, w.jobId, "push");
+      this.pendingNotify = null;
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: phone push on — subscribe to ${setup.subscribeUrl} in the ntfy app. ${pushPrivacyNote(setup.push)}`,
+      });
+      return;
+    }
     // No credentials yet: send them to the hub, and finish the job the
     // moment the hub reports the channel configured.
     this.pendingNotify = { channel: choice, label };
@@ -1242,11 +1291,26 @@ export class LocalModelsOrchestrator {
   }
 
   /**
-   * `x` in the Models tab: stop the download being watched, keeping
-   * its partial file. The watcher sees the worker's `cancelled` record
-   * and reports it with the resume hint.
+   * `x` in the Models tab: stop the download being watched and delete
+   * its partial file. The watcher reports it as cancelled.
    */
   async cancelPull(kind: DownloadJobKind): Promise<void> {
+    await this.stopPull(kind, "cancel");
+  }
+
+  /**
+   * `p` in the Models tab: stop the download being watched and keep its
+   * partial file. The job stays `paused` across restarts — nothing
+   * resumes it by itself — and Enter on the row continues it.
+   */
+  async pausePull(kind: DownloadJobKind): Promise<void> {
+    await this.stopPull(kind, "pause");
+  }
+
+  private async stopPull(
+    kind: DownloadJobKind,
+    how: "pause" | "cancel",
+  ): Promise<void> {
     const dataDir = getConfig().paths.localModelsDataDir;
     const watch = this.watchedDownloads.get(kind);
     const job = watch ? readDownloadJob(dataDir, watch.jobId) : null;
@@ -1258,13 +1322,24 @@ export class LocalModelsOrchestrator {
       return;
     }
     const stop = this.hooks?.stopDownload ?? stopDownloadWorker;
-    const result = await stop(dataDir, job);
-    if (result.outcome === "still-running" || result.outcome === "foreign") {
-      this.bus.emit({
-        type: "runtime_info",
-        line: `local-llm: could not stop download worker pid ${job.pid} (${result.outcome})`,
-      });
+    this.stoppingDownloads.set(job.id, how);
+    try {
+      const result =
+        how === "pause"
+          ? await pauseDownloadJob(dataDir, job, { stop })
+          : await cancelDownloadJob(dataDir, job, { stop });
+      if (result.outcome === "still-running" || result.outcome === "foreign") {
+        this.stoppingDownloads.delete(job.id);
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: could not stop download worker pid ${job.pid} (${result.outcome})`,
+        });
+      }
+    } catch (e) {
+      this.stoppingDownloads.delete(job.id);
+      throw e;
     }
+    // Otherwise the watcher clears it once it has read the ending.
   }
 
   /**
@@ -1287,7 +1362,8 @@ export class LocalModelsOrchestrator {
    *
    * `cancelled` and a non-resumable `failed` (a 404, a full disk) are the
    * operator's to act on and are left alone; `models downloads` still
-   * lists them.
+   * lists them. So is `paused`: at launch it is named once, with how to
+   * resume it, and its partial file waits.
    */
   adoptBackgroundDownloads(opts?: { onlyRunning?: boolean }): void {
     const dataDir = getConfig().paths.localModelsDataDir;
@@ -1300,6 +1376,15 @@ export class LocalModelsOrchestrator {
       if (job.status === "running" && this.watchedDownloads.has(job.kind))
         continue;
       if (this.watchedDownloads.get(job.kind)?.jobId === job.id) continue;
+      if (job.status === "paused") {
+        if (!opts?.onlyRunning) {
+          this.bus.emit({
+            type: "runtime_info",
+            line: `local-llm: ${cleanLabel(job.label)} download is paused at ${job.percent}% — Enter on its row resumes it`,
+          });
+        }
+        continue;
+      }
       const adoptable = opts?.onlyRunning
         ? job.status === "running"
         : job.status === "running" ||
@@ -1493,7 +1578,8 @@ export class LocalModelsOrchestrator {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
     const chat = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
-    if (chat.running) {
+    // On a cloud chat route only the memory model starts, never a chat one (ATO-378).
+    if (chat.running || this.embeddingRunsAlone()) {
       await this.startEmbeddingPairing();
       return;
     }
@@ -1534,6 +1620,8 @@ export class LocalModelsOrchestrator {
     try {
       const repo = await resolveHuggingFaceGgufChoices(raw, {
         signal: controller.signal,
+        // ATO-450: badge each quant for this machine, best one first.
+        machine: () => probeConfiguredMachine(),
       });
       if (this.hfLookup !== controller) return;
       this.hfLookup = null;
@@ -2090,7 +2178,11 @@ export class LocalModelsOrchestrator {
   }): Promise<boolean> {
     return this.operations.run(async signal => {
       this.chatReadyError = "The model did not start. Choose a ready model and retry the message.";
-      const started = await this.startDaemonNow({ ...opts, signal });
+      // ATO-421: the backend check, device pick and port clearance below run
+      // before the daemon start's own marker; a turn already waiting on the
+      // refused port (a crash restart) reads the whole start as on its way.
+      const started = await withChatStartPending(getConfig().paths.localModelsDataDir, () =>
+        this.startDaemonNow({ ...opts, signal }));
       if (started && !signal.aborted) this.chatReadyError = null;
       return started;
     }, false);
@@ -2279,6 +2371,9 @@ export class LocalModelsOrchestrator {
           parallel: cfg.localModels.managed.parallel,
           localLegRole,
           swaFull: cfg.localModels.managed.swaFull,
+          ...(loraAdapterForModel(cfg.localModels.managed.loraAdapters, mid)
+            ? { loraAdapter: loraAdapterForModel(cfg.localModels.managed.loraAdapters, mid) }
+            : {}),
           ...(device ? { device } : {}),
           // No multi-GPU split on the CPU-build retry.
           ...(multiGpu && device !== "cpu" ? { tensorSplit } : {}),
@@ -2964,7 +3059,11 @@ export class LocalModelsOrchestrator {
     const dataDir = cfg.paths.localModelsDataDir;
 
     const chat = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
-    if (!chat.running) return;
+    // ATO-378 / ATO-1123: on a cloud chat route no local chat model runs,
+    // and the memory model runs alone (memory search embeds locally
+    // whatever the chat route).
+    const alone = !chat.running && this.embeddingRunsAlone();
+    if (!chat.running && !alone) return;
 
     const desired = this.buildEmbeddingStartOptions(cfg, dataDir);
     const embStatus = await getEmbeddingDaemonStatus(
@@ -3006,9 +3105,23 @@ export class LocalModelsOrchestrator {
 
     if (embStatus.running && !opts?.hotSwap) return;
 
+    // ATO-357: alone, the engine is never installed behind the operator's
+    // back. A local model's first start installs it, with its progress.
+    if (alone && !isBackendDownloaded(dataDir, cfg.localModels.managed.engine)) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: "local-llm: the local engine is not installed yet — start a local model once to install it; memory search uses keywords until then",
+      });
+      return;
+    }
+
     // ATO-379: not started on a machine with little memory; recall stays on
     // keywords. Transient, so the opt-in is not touched (issue #465).
-    if (!embStatus.running && !(await holdEmbeddingForLowMemory(dataDir)).ok) {
+    // Alone, only the memory model's own floor applies.
+    const memory = !embStatus.running
+      ? await (alone ? holdEmbeddingForLowMemory(dataDir, { localChatRunning: false }) : holdEmbeddingForLowMemory(dataDir))
+      : null;
+    if (memory && !memory.ok) {
       this.noteLowMemoryEmbedding();
       return;
     }
@@ -3040,6 +3153,9 @@ export class LocalModelsOrchestrator {
       const { pid } = await this.trackCoreStart(this.operations.signal, signal =>
         startEmbeddingDaemon({ ...desired, signal, engine: cfg.localModels.managed.engine }));
       this.operations.signal?.throwIfAborted();
+      // Started alone on the cloud route: ours to stop at exit, as the
+      // one a cloud switch keeps (stopChatForCloudSelection).
+      if (alone) this.embeddingKeptForCloud = true;
       persistMemoryEmbeddingsEnabled(true);
       this.bus.emit({
         type: "runtime_info",
@@ -3123,11 +3239,11 @@ export class LocalModelsOrchestrator {
           opts,
         );
         if (watched.outcome === "detached") return;
-        if (watched.outcome === "cancelled") {
+        if (watched.outcome === "cancelled" || watched.outcome === "paused") {
           this.bus.emit({
             type: "local_models_pull_failed",
             kind: "embedding",
-            error: describeCancelledPull(watched.job),
+            error: describeStoppedPull(watched.outcome, watched.job),
           });
           return;
         }
@@ -3228,7 +3344,8 @@ export class LocalModelsOrchestrator {
       resetConfigCache();
     }
     const chat = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
-    if (!chat.running) {
+    // On a cloud chat route the memory model starts alone (ATO-378).
+    if (!chat.running && !this.embeddingRunsAlone()) {
       this.bus.emit({
         type: "runtime_info",
         line: "local-llm: chat daemon is down — press s to start chat+embedding together",
@@ -3529,6 +3646,9 @@ export class LocalModelsOrchestrator {
       cfg.llm?.activeTextProvider &&
       cfg.llm.activeTextProvider !== "local-llama"
     ) {
+      // ATO-378: no chat model on the cloud route, but the memory model
+      // when it is wanted, so memory search keeps its meaning-based half.
+      await this.startEmbeddingAloneAtLaunch();
       return;
     }
     if (cfg.localModels.mode !== "managed") return;
@@ -3589,6 +3709,31 @@ export class LocalModelsOrchestrator {
     // not run one, because the deferred pass below owns it.
     await this.startDaemon({ backendAlreadyChecked: true });
     this.scheduleBackendAutoUpdate(dataDir);
+  }
+
+  /**
+   * ATO-378, the launch on a cloud chat route: start the memory model
+   * alone when embeddings are on, a catalog model is picked and on disk,
+   * and the engine is installed. Nothing is downloaded (ATO-357) and
+   * nothing is said when one of these is missing: an ordinary launch.
+   * One found running (the desktop or an earlier session started it) is
+   * left as it is. Either way the runtime attaches memory to it now: it
+   * looked for the server once, as it booted.
+   */
+  private async startEmbeddingAloneAtLaunch(): Promise<void> {
+    if (!this.embeddingRunsAlone()) return;
+    const cfg = getConfig();
+    const dataDir = cfg.paths.localModelsDataDir;
+    if (!this.buildEmbeddingStartOptions(cfg, dataDir)) return;
+    const port = cfg.localModels.embeddings.port;
+    if (!(await getEmbeddingDaemonStatus(dataDir, port)).running) {
+      if (!isBackendDownloaded(dataDir, cfg.localModels.managed.engine)) return;
+      await this.ensureEmbeddingPaired();
+      if (this.operations.signal?.aborted) return;
+      if (!(await getEmbeddingDaemonStatus(dataDir, port)).running) return;
+      await this.refresh();
+    }
+    this.hooks?.onEmbeddingModelChanged?.();
   }
 
   /** How a start reports and persists what it did to a held port. */
@@ -3798,12 +3943,12 @@ function dataDirOf(cfg: ReturnType<typeof getConfig>): string {
 }
 
 /**
- * Host physical RAM in whole decimal GB (rounded down). Consumers use
- * this to decide which models are realistic candidates on this
- * machine — nothing fancy, just `os.totalmem() / 1e9`.
+ * Host RAM in whole GB as the machine is sold (ATO-1442: the same
+ * measure as onboarding and the desktop, so a 16 GB Mac reads 16, not 17).
+ * Consumers use this to decide which models are realistic candidates.
  */
 function detectHostRamGb(): number {
-  return Math.max(1, Math.floor(totalmem() / 1_000_000_000));
+  return hostRamGb();
 }
 
 /**
@@ -3846,7 +3991,9 @@ function channelName(channel: DownloadNotifyChannel): string {
     ? "Telegram"
     : channel === "discord"
       ? "Discord"
-      : "E-mail";
+      : channel === "push"
+        ? "Phone push"
+        : "E-mail";
 }
 
 /** The hub row a channel's credentials live on. */
@@ -3866,8 +4013,13 @@ function formatJobBytes(bytes: number): string {
     : `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
-function describeCancelledPull(job: DownloadJob): string {
-  return `download cancelled at ${job.percent}% — ${formatJobBytes(job.transferredBytes)} kept on disk; Enter resumes it`;
+function describeStoppedPull(
+  how: "cancelled" | "paused",
+  job: DownloadJob,
+): string {
+  return how === "paused"
+    ? `download paused at ${job.percent}% — ${formatJobBytes(job.transferredBytes)} kept on disk; Enter resumes it`
+    : "download cancelled — the partial file was deleted; p pauses instead and keeps it";
 }
 
 function describeProjectorFailure(def: LocalModelDef, error: string): string {

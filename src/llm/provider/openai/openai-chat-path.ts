@@ -14,7 +14,12 @@ import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
  * `https://api.perplexity.ai/router` is Perplexity's Router API, a
  * different root that keeps the convention.
  */
-const CHAT_AT_ROOT_HOSTS: ReadonlySet<string> = new Set(["api.perplexity.ai"]);
+const CHAT_AT_ROOT_HOSTS: ReadonlySet<string> = new Set([
+  "api.perplexity.ai",
+  // GitHub Copilot (ATO-462): `https://api.githubcopilot.com/chat/completions`,
+  // the route every Copilot client (pi, opencode, OpenClaw) calls.
+  "api.githubcopilot.com",
+]);
 
 /**
  * The path prefix of `<root>`'s chat route: `/v1`, or `""` for a root
@@ -29,7 +34,21 @@ export function openAiChatPathPrefix(baseUrl: string): "" | "/v1" {
     return "/v1";
   }
   const bareRoot = url.pathname === "" || url.pathname === "/";
-  return bareRoot && CHAT_AT_ROOT_HOSTS.has(url.hostname.toLowerCase())
-    ? ""
-    : "/v1";
+  if (bareRoot && CHAT_AT_ROOT_HOSTS.has(url.hostname.toLowerCase())) return "";
+  return isVertexOpenApiRoot(url) ? "" : "/v1";
+}
+
+/**
+ * Google Vertex AI's OpenAI-compatible root,
+ * `https://{region}-aiplatform.googleapis.com/v1/projects/{project}/locations/{region}/endpoints/openapi`
+ * (the `global` location drops the region from the host). The version is
+ * already in the path, so chat is `<root>/chat/completions`: probed
+ * 2026-11-13 with a bogus token, that answers 401 asking for an OAuth
+ * access token while `<root>/v1/chat/completions` is a 404.
+ */
+function isVertexOpenApiRoot(url: URL): boolean {
+  return (
+    /^(?:[a-z0-9-]+-)?aiplatform\.googleapis\.com$/i.test(url.hostname) &&
+    /\/endpoints\/openapi$/i.test(url.pathname)
+  );
 }

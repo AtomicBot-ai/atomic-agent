@@ -13,8 +13,10 @@ import { dirname, join, sep } from "node:path";
 import { getApprovalRulesPath } from "../approval/approval-rules-store.js";
 import { resolveSessionPath } from "../atomic-mail/atomic-mail-store.js";
 import { resolveApiKeyFilePath } from "../local-llm/backend-paths.js";
+import { serveApiKeyPath } from "../cli/serve-api-key.js";
 import { coreSessionPath } from "../local-llm/core/core-state.js";
 import { userHooksPath } from "../hooks/hook-config.js";
+import { secretsStorePath } from "./secret-store.js";
 import { installedPluginDir, pluginsRoot } from "../plugins/plugin-store.js";
 import {
   ensureUserConfigFileSync,
@@ -516,7 +518,10 @@ describe("user config file IO", () => {
     expect(migrated.telegram.ownerUserId).toBe(7);
     const onDisk = JSON.parse(readFileSync(path, "utf8"));
     expect(onDisk.version).toBe(USER_CONFIG_VERSION);
-    expect(onDisk.notifications).toEqual({ downloads: { channel: null } });
+    expect(onDisk.notifications).toEqual({
+      downloads: { channel: null },
+      push: USER_CONFIG_DEFAULTS.notifications.push,
+    });
     warn.mockRestore();
   });
 
@@ -962,6 +967,7 @@ describe("the state's secret files (ATO-877)", () => {
     expect(getStateSecretPaths(paths)).toEqual([
       ...getTrustConfigPaths(paths),
       resolveApiKeyFilePath(paths.localModelsDataDir),
+      serveApiKeyPath(stateDir),
       coreSessionPath(paths.localModelsDataDir, "chat"),
       coreSessionPath(paths.localModelsDataDir, "embedding"),
       resolveSessionPath(stateDir),
@@ -981,5 +987,15 @@ describe("the state's secret files (ATO-877)", () => {
     // model must not be able to grant itself an "always allow".
     expect(getTrustConfigPaths(paths)).toContain(getApprovalRulesPath(stateDir));
     expect(getStateSecretPaths(paths)).toContain(getApprovalRulesPath(stateDir));
+  });
+
+  it("protects the OS keychain switch like .env (ATO-474)", () => {
+    const stateDir = join(tmpdir(), "atomic-state");
+    const paths = {
+      stateDir,
+      userConfigFile: getUserConfigPath(stateDir),
+      localModelsDataDir: join(stateDir, "models"),
+    };
+    expect(getTrustConfigPaths(paths)).toContain(secretsStorePath(stateDir));
   });
 });

@@ -78,7 +78,13 @@ function Row({
           <Text color={theme.colors.muted}>{row.description}</Text>
         </Box>
       ) : null}
-      {row.lastError ? (
+      {row.state === "needs_auth" ? (
+        <Box marginLeft={2}>
+          <Text color={theme.colors.warn}>
+            ! Sign in required: /mcp auth {row.name}
+          </Text>
+        </Box>
+      ) : row.lastError ? (
         <Box marginLeft={2}>
           <Text color={theme.colors.error}>! {row.lastError}</Text>
         </Box>
@@ -94,6 +100,7 @@ function stateToColor(state: string): string {
     case "down":
       return theme.colors.error;
     case "starting":
+    case "needs_auth":
       return theme.colors.warn;
     case "disabled":
       return theme.colors.muted;

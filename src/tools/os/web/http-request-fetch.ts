@@ -6,6 +6,7 @@ import { writeCurlHeaderFile } from "./curl-header-file.js";
 import { CurlUnavailableError, isCurlMissingError } from "./ensure-curl.js";
 import { parseRetryAfterValueMs } from "./retry-after-header.js";
 import { explainCurlStderr, runCurl } from "./run-curl.js";
+import { getWebIdentity } from "../../browser/web-identity.js";
 import {
   assertHostAllowed,
   formatResolveEntry,
@@ -496,6 +497,11 @@ function buildPinnedCurlArgs(input: BuildPinnedCurlArgs): string[] {
     "0",
     "--resolve",
     formatResolveEntry(host, port, input.pinnedIps),
+    // The agent's one honest User-Agent, the same the browser and
+    // `os.web.fetch` send (ATO-969). A `User-Agent` the caller passes in
+    // `headers` still wins: curl lets a custom header replace this one.
+    "-A",
+    getWebIdentity().userAgent,
   ];
   if (input.method !== "GET") argv.push("-X", input.method);
   argv.push(...input.headerArgs);

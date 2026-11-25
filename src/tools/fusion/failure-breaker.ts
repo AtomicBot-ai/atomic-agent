@@ -186,7 +186,13 @@ export class FanoutFailureBreaker {
 
   observe(result: Pick<WorkerTaskResult, "status" | "error">): void {
     if (this.trip !== undefined) return;
-    if (result.status === "ok" || result.status === "no_changes") {
+    // A worker that stopped to ask a question (ATO-945) is a working
+    // worker on a healthy leg, not a failure.
+    if (
+      result.status === "ok" ||
+      result.status === "no_changes" ||
+      result.status === "needs_input"
+    ) {
       this.streakSignature = undefined;
       this.streakCount = 0;
       return;

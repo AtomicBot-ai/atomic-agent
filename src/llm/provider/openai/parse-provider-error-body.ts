@@ -24,6 +24,11 @@ export interface ProviderErrorBody {
   readonly code?: string;
   /** `error.type`. */
   readonly type?: string;
+  /**
+   * `error.status` of Google's shape (`INVALID_ARGUMENT`,
+   * `FAILED_PRECONDITION`), where `error.code` is only the HTTP number.
+   */
+  readonly status?: string;
   /** Upstream vendor name from OpenRouter's `metadata.provider_name`. */
   readonly upstream?: string;
   /**
@@ -84,9 +89,13 @@ const BILLING_WORDING =
  * billing wording below, which a 403 that also talks about its key or
  * authentication ("Authentication failed. Please check your billing
  * details.") is not read for.
+ *
+ * Bedrock (AWS) refuses a dead key as "Bearer Token has expired" or "The
+ * security token included in the request is invalid", Azure as "invalid
+ * subscription key" (ATO-468).
  */
 export const CREDENTIAL_WORDING =
-  /\b(?:api[ _-]?key|credentials?|unauthori[sz]ed|unauthenticated|authenticat\w*|access[ _-]?token|invalid[ _-]?token)\b/i;
+  /\b(?:api[ _-]?key|credentials?|unauthori[sz]ed|unauthenticated|authenticat\w*|access[ _-]?token|invalid[ _-]?token|(?:bearer|security)[ _-]?token|subscription[ _-]?key)\b/i;
 
 /**
  * A provider's words for input its moderation refused: OpenRouter's 403
@@ -126,6 +135,7 @@ export function parseProviderErrorBody(text: string): ProviderErrorBody {
     (error === null ? readString(root?.message) : undefined);
   const code = readCode(error?.code);
   const type = readString(error?.type);
+  const status = readString(error?.status);
   const upstream = readString(readObject(error?.metadata)?.provider_name);
   const upstreamMessage = raw !== null ? readUpstreamMessage(raw) : undefined;
   const hint = retryHintMs(`${message ?? ""}\n${raw ?? ""}\n${bounded}`);
@@ -133,6 +143,7 @@ export function parseProviderErrorBody(text: string): ProviderErrorBody {
     ...(message !== undefined ? { message } : {}),
     ...(code !== undefined ? { code } : {}),
     ...(type !== undefined ? { type } : {}),
+    ...(status !== undefined ? { status } : {}),
     ...(upstream !== undefined ? { upstream } : {}),
     ...(upstreamMessage !== undefined ? { upstreamMessage } : {}),
     ...(hint !== null ? { retryHintMs: hint } : {}),
@@ -279,7 +290,20 @@ function readRaw(metadata: unknown): string | null {
   return null;
 }
 
+/**
+ * The body's JSON object. Google's OpenAI-compatible surface wraps it in
+ * an array (`[{"error": {…}}]`); slicing from the first `{` left the
+ * closing `]` behind and the whole body read as nothing (ATO-1673), so
+ * an array is parsed as such and its first object taken.
+ */
 function tryParseJson(text: string): Record<string, unknown> | null {
+  const trimmed = text.trimStart();
+  if (trimmed.startsWith("[")) {
+    // Not JSON after all (`[ERROR] … {"error": …}`): fall through to the
+    // object slice below, as before.
+    const fromArray = firstObjectOfArray(trimmed);
+    if (fromArray !== undefined) return fromArray;
+  }
   const start = text.indexOf("{");
   if (start === -1) return null;
   try {
@@ -287,6 +311,24 @@ function tryParseJson(text: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/** The first object of a JSON array; `undefined` when `text` is not one. */
+function firstObjectOfArray(
+  text: string,
+): Record<string, unknown> | null | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed)) return undefined;
+  for (const item of parsed) {
+    const object = readObject(item);
+    if (object !== null) return object;
+  }
+  return null;
 }
 
 function readObject(value: unknown): Record<string, unknown> | null {

@@ -185,6 +185,45 @@ describe("resolveRunMode", () => {
     ).toBeNull();
   });
 
+  it("never labels a foreign llama.cpp worker with the managed model (ATO-1562)", () => {
+    const providers: ResolvedLlmConfig["providers"] = [
+      { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+      { id: "my-llama", kind: "llama-server", url: "http://127.0.0.1:8080", model: "huihui-qwen3.8-27b" },
+      { id: "openrouter", kind: "openrouter", defaultChatModel: "anthropic/claude-sonnet-4.5" },
+    ];
+    const foreign = resolveRunMode(
+      llm("openrouter", { mode: "fusion", fusion: { workerProvider: "my-llama" } }, providers),
+      { managedModelId: "qwen-3.5-4b", localServerUrl: "http://127.0.0.1:19091/" },
+    );
+    expect(foreign.workerModel).toBe("huihui-qwen3.8-27b");
+
+    // The main local server is still described by the managed model.
+    const ours = resolveRunMode(
+      llm("openrouter", { mode: "fusion", fusion: { workerProvider: "local-llama" } }, providers),
+      { managedModelId: "qwen-3.5-4b", localServerUrl: "http://127.0.0.1:19091" },
+    );
+    expect(ours.workerModel).toBe("qwen-3.5-4b");
+
+    // In managed mode `local-llama` is built from the daemon's port, so
+    // its URL need not match `localModels.url`; it is still ours.
+    const managedPort = resolveRunMode(
+      llm("openrouter", { mode: "fusion", fusion: { workerProvider: "local-llama" } }, providers),
+      { managedModelId: "qwen-3.5-4b", localServerUrl: "http://127.0.0.1:8080" },
+    );
+    expect(managedPort.workerModel).toBe("qwen-3.5-4b");
+
+    // A foreign entry that names no model has no label to guess.
+    const unnamed = resolveRunMode(
+      llm(
+        "openrouter",
+        { mode: "fusion", fusion: { workerProvider: "my-llama" } },
+        providers.map((p) => (p.id === "my-llama" ? { id: p.id, kind: p.kind, url: p.url } : p)),
+      ),
+      { managedModelId: "qwen-3.5-4b", localServerUrl: "http://127.0.0.1:19091" },
+    );
+    expect(unnamed.workerModel).toBeNull();
+  });
+
   it("applies the worker defaults and honours overrides", () => {
     expect(resolveRunMode(llm("openrouter", { mode: "fusion" }))).toMatchObject(
       {
@@ -293,6 +332,44 @@ describe("fusion escalation target (ATO-942)", () => {
     expect(rm.escalation).toBeNull();
   });
 
+  it("escalates to the orchestrator's model when both legs share one provider with two models (ATO-1561)", () => {
+    const rm = resolveRunMode(
+      llm("openrouter", {
+        mode: "fusion",
+        fusion: {
+          workerProvider: "openrouter",
+          orchestratorModel: "model-a",
+          workerModel: "model-b",
+          escalation: "advisor",
+        },
+      }),
+    );
+    expect(rm.escalation).toMatchObject({
+      providerId: "openrouter",
+      model: "model-a",
+      turnModel: "model-a",
+      auto: true,
+    });
+    expect(rm.workerTurnModel).toBe("model-b");
+  });
+
+  it("is still null when the shared provider runs the same model on both legs (ATO-1561)", () => {
+    const rm = resolveRunMode(
+      llm("openrouter", {
+        mode: "fusion",
+        fusion: { workerProvider: "openrouter", escalation: "advisor" },
+      }),
+    );
+    expect(rm.escalation).toBeNull();
+    const pinnedSame = resolveRunMode(
+      llm("openrouter", {
+        mode: "fusion",
+        fusion: { workerProvider: "openrouter", orchestratorModel: "model-a", workerModel: "model-a" },
+      }),
+    );
+    expect(pinnedSame.escalation).toBeNull();
+  });
+
   it("honours a pinned provider, the advisor switch, the replace flag and the cap", () => {
     const rm = resolveRunMode(
       llm("openrouter", {
@@ -353,5 +430,67 @@ describe("resolveRunMode — task tree (ATO-940)", () => {
         }),
       ).taskTree,
     ).toEqual({ maxDepth: 3, maxNodes: 10 });
+  });
+});
+
+describe("resolveRunMode — the model each leg asks for (ATO-1560)", () => {
+  const legs: ResolvedLlmConfig["providers"] = [
+    { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+    { id: "openrouter", kind: "openrouter", defaultChatModel: "model-a" },
+    { id: "lmstudio", kind: "openai-compatible", baseUrl: "http://127.0.0.1:1234/v1", defaultChatModel: "qwen-default" },
+  ];
+
+  it("asks a cloud or LM Studio worker leg for the picked worker model", () => {
+    const rm = resolveRunMode(
+      llm("openrouter", { mode: "fusion", fusion: { workerProvider: "lmstudio", workerModel: "qwen3.8-27b" } }, legs),
+    );
+    expect(rm.workerModel).toBe("qwen3.8-27b");
+    expect(rm.workerTurnModel).toBe("qwen3.8-27b");
+  });
+
+  it("asks nothing when the picked model is the entry's own, or the leg is llama-server", () => {
+    const own = resolveRunMode(
+      llm("openrouter", { mode: "fusion", fusion: { workerProvider: "lmstudio", workerModel: "qwen-default" } }, legs),
+    );
+    expect(own).not.toHaveProperty("workerTurnModel");
+    const local = resolveRunMode(
+      llm("openrouter", { mode: "fusion", fusion: { workerProvider: "local-llama", workerModel: "some-gguf" } }, legs),
+    );
+    expect(local.workerModel).toBe("some-gguf");
+    expect(local).not.toHaveProperty("workerTurnModel");
+    expect(resolveRunMode(llm("openrouter", { mode: "fusion" }, legs))).not.toHaveProperty("orchestratorTurnModel");
+  });
+
+  it("asks the orchestrator leg for the orchestrator model, and the judge and escalation on it too", () => {
+    const rm = resolveRunMode(
+      llm("openrouter", { mode: "fusion", fusion: { orchestratorModel: "model-big", judge: "on" } }, legs),
+    );
+    expect(rm.orchestratorTurnModel).toBe("model-big");
+    expect(rm.escalation).toMatchObject({ providerId: "openrouter", model: "model-big", turnModel: "model-big" });
+    expect(rm.judge).toEqual({ providerId: "openrouter", model: "model-big", turnModel: "model-big" });
+    // The workers are on llama-server: nothing to ask for there.
+    expect(rm).not.toHaveProperty("workerTurnModel");
+  });
+
+  it("gives workers on the orchestrator's provider their own model, so they do not inherit the orchestrator's", () => {
+    const rm = resolveRunMode(
+      llm("openrouter", { mode: "fusion", fusion: { workerProvider: "openrouter", orchestratorModel: "model-big" } }, legs),
+    );
+    expect(rm.orchestratorTurnModel).toBe("model-big");
+    expect(rm.workerModel).toBe("model-a");
+    expect(rm.workerTurnModel).toBe("model-a");
+  });
+
+  it("carries a role's model on a provider that serves several", () => {
+    const rm = resolveRunMode(
+      llm(
+        "openrouter",
+        { mode: "fusion", fusion: { orchestratorModel: "model-big", roles: { review: "openrouter", build: "lmstudio" } } },
+        legs,
+      ),
+    );
+    expect(rm.roles?.byRole.review).toEqual({ providerId: "openrouter", model: "model-big", turnModel: "model-big", local: false });
+    // LM Studio's own model is what it is asked for: no per-turn model.
+    expect(rm.roles?.byRole.build).toEqual({ providerId: "lmstudio", model: "qwen-default", local: false });
   });
 });

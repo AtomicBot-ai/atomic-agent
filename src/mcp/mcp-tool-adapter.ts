@@ -28,15 +28,19 @@
 import {
   ApprovalDeniedError,
   requireApproval,
+  savedRuleOverridesScope,
   type DangerousToolOptions,
 } from "../approval/dangerous-tool.js";
 import { compressToolResult } from "../compressor/result-compressor.js";
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tools/tool-registry.js";
 
+import { mcpToolPrompts, modeSkipsDefaultPrompt } from "./mcp-approval-mode.js";
+import { fetchMcpAppUi, MCP_APP_MAX_HTML_BYTES, type McpAppUi } from "./mcp-apps.js";
 import type { McpClient } from "./mcp-client.js";
 import { scrubErrorMessage } from "./mcp-errors.js";
 import type {
+  McpApprovalMode,
   McpServerConfig,
   McpToolMeta,
   McpTransport,
@@ -100,6 +104,10 @@ export interface McpToolGateOptions {
    * own install, which is the line ATO-1178 draws.
    */
   trustReadOnlyHint?: boolean;
+  /** The server's `approval` mode, when its config sets one (ATO-1134). */
+  approval?: McpApprovalMode;
+  /** The server runs over stdio (`isLocalMcpTransport`); read by `ask_writes`. */
+  localTransport?: boolean;
 }
 
 /** Whether a transport counts as local for the `readOnlyHint` rule (stdio only). */
@@ -121,6 +129,17 @@ export function trustsReadOnlyHintFor(
   return config.trustedReadOnlyTools?.includes(rawName) ?? false;
 }
 
+/**
+ * The `grantKey` of an MCP tool's approval request: one key per tool of
+ * one server, so a session grant ("Allow in this chat") made on one
+ * tool's prompt never answers another tool, of that server or any other
+ * (ATO-1473). `describeMcpToolGrant` (approval-gate.ts) reads the format
+ * back for the prompt's label.
+ */
+export function mcpGrantKey(server: string, rawName: string): string {
+  return `MCP tool ${server}/${rawName}`;
+}
+
 export function createMcpToolDefinition(
   meta: McpToolMeta,
   client: McpClient,
@@ -139,11 +158,19 @@ export function createMcpToolDefinition(
   // claim counts only where `trustReadOnlyHint` says so (stdio servers
   // and the agent's own named exceptions): other remote read-only tools
   // ask like everything else (ATO-1178). The prompt still offers "Allow
-  // in this chat", so trusting one is one click.
+  // in this chat", so trusting one tool is one click.
+  // A per-server `approval` mode (ATO-1134) replaces that answer for the
+  // server's tools; see `mcp-approval-mode.ts`.
   const dangerous = gate?.dangerous;
-  const trustsReadOnlyHint =
-    gate?.trustReadOnlyHint === true && meta.annotations?.readOnlyHint === true;
-  const gated = gate?.trust === "approval_gated" && !trustsReadOnlyHint;
+  const promptInputs = {
+    trust: gate?.trust ?? "pure_read",
+    ...(gate?.approval !== undefined ? { approval: gate.approval } : {}),
+    readOnlyHint: meta.annotations?.readOnlyHint === true,
+    trustReadOnlyHint: gate?.trustReadOnlyHint === true,
+    localTransport: gate?.localTransport === true,
+  } as const;
+  const gated = gate !== undefined && mcpToolPrompts(promptInputs);
+  const modeSkipped = gate !== undefined && modeSkipsDefaultPrompt(promptInputs);
   return {
     name: meta.qualifiedName,
     description:
@@ -162,7 +189,15 @@ export function createMcpToolDefinition(
       meta.annotations?.destructiveHint === false,
     run: async (args, ctx): Promise<CompressedToolResult> => {
       try {
-        if (gated && dangerous) {
+        const ruleCheck = {
+          sessionId: ctx.sessionId,
+          tool: meta.qualifiedName,
+          category: "other",
+        } as const;
+        if (
+          dangerous &&
+          (gated || (modeSkipped && savedRuleOverridesScope(dangerous.approvals, ruleCheck)))
+        ) {
           await requireApproval(
             dangerous,
             {
@@ -172,17 +207,34 @@ export function createMcpToolDefinition(
               reason: `call MCP tool ${meta.rawName} on server ${meta.server}`,
               preview: buildApprovalPreview(args),
               affectedResources: [meta.server],
+              // "Allow in this chat" covers this one tool only. Every
+              // MCP tool shares category `other`, so a key-less grant
+              // silenced every plugin's tools for the rest of the chat
+              // (ATO-1473).
+              grantKey: mcpGrantKey(meta.server, meta.rawName),
             },
             ctx.signal,
           );
         }
         const res = await client.callTool(meta.rawName, args, ctx.signal);
+        const details = extractStructuredDetails(res);
+        // MCP Apps (ATO-1135): the server's page for this call, for a
+        // client to render. It goes into `details` only; the model reads
+        // the summary, which `output` alone feeds. Read only when the
+        // host renders pages (`appsUi`), and under its own short deadline
+        // (`MCP_APP_FETCH_TIMEOUT_MS`), so a slow `ui://` read never holds
+        // the tool result back.
+        const resourceUri = meta.ui?.resourceUri;
+        if (resourceUri !== undefined && client.appsUi === true) {
+          const app = await fetchMcpAppUi(client, resourceUri, ctx.signal);
+          if (app !== undefined) details.mcpApp = withToolCall(app, args, res);
+        }
         return compressToolResult(
           {
             tool: meta.qualifiedName,
             status: "ok",
             output: projectMcpResponseToText(res, ctx.modelMode === "cloud"),
-            details: extractStructuredDetails(res),
+            details,
           },
           MCP_COMPRESSOR_OPTIONS,
         );
@@ -345,6 +397,42 @@ export function extractStructuredDetails(
     details.meta = obj._meta;
   }
   return details;
+}
+
+/**
+ * `details.mcpApp`: the page plus what the host hands the page once it
+ * loads (`ui/notifications/tool-input` and `tool-result` in the spec):
+ * the call's arguments and its `CallToolResult`. The two are left out
+ * when they would not serialise or would outweigh the page cap.
+ */
+export function withToolCall(
+  app: McpAppUi,
+  args: Record<string, unknown>,
+  res: unknown,
+): McpAppUi & { toolInput?: Record<string, unknown>; toolResult?: Record<string, unknown> } {
+  const out: McpAppUi & { toolInput?: Record<string, unknown>; toolResult?: Record<string, unknown> } = { ...app };
+  if (fitsCap(args)) out.toolInput = args;
+  if (res && typeof res === "object") {
+    const r = res as Record<string, unknown>;
+    const toolResult: Record<string, unknown> = {
+      content: Array.isArray(r.content) ? r.content : [],
+      ...(r.structuredContent && typeof r.structuredContent === "object"
+        ? { structuredContent: r.structuredContent }
+        : {}),
+      ...(r._meta && typeof r._meta === "object" ? { _meta: r._meta } : {}),
+    };
+    if (fitsCap(toolResult)) out.toolResult = toolResult;
+  }
+  return out;
+}
+
+function fitsCap(value: unknown): boolean {
+  try {
+    const json = JSON.stringify(value);
+    return json !== undefined && Buffer.byteLength(json, "utf8") <= MCP_APP_MAX_HTML_BYTES;
+  } catch {
+    return false;
+  }
 }
 
 function clipOutput(text: string, full = false): string {

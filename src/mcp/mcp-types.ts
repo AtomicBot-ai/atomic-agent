@@ -24,6 +24,12 @@ import type { ResourceClass } from "../agent/tool-resource-class.js";
  * `name` is validated against `MCP_SERVER_NAME_RE` so it lands
  * cleanly inside JSON keys, tool names, and GBNF string literals.
  */
+/** Per-server sandbox settings (`mcp.servers[].sandbox` object form). */
+export interface McpServerSandboxConfig {
+  /** Let the server reach the Docker daemon socket. Default false. */
+  allowDocker?: boolean;
+}
+
 export interface McpServerConfig {
   /** Unique operator-chosen namespace (kebab-case, max 32 chars). */
   name: string;
@@ -43,6 +49,24 @@ export interface McpServerConfig {
    */
   trust?: McpTrustLevel;
   /**
+   * Per-server approval mode (ATO-1134). Absent: the prompt follows
+   * `trust`, exactly as before. Set, it decides whether this server's
+   * tools ask before a call (`trust` still decides batching):
+   *
+   *  - `ask`: every call asks, except a stdio tool's own
+   *    `readOnlyHint: true` (the default `approval_gated` behaviour,
+   *    also on a `pure_read` server).
+   *  - `ask_writes`: on a stdio server, a tool that advertised
+   *    `readOnlyHint: true` at discovery runs without asking; every
+   *    other tool asks, and every tool of a remote HTTP / SSE server
+   *    asks (ATO-1178).
+   *  - `auto`: no prompt for this server's tools.
+   *
+   * A saved deny or ask rule still applies to a call the mode lets
+   * through. See `mcp-approval-mode.ts`.
+   */
+  approval?: McpApprovalMode;
+  /**
    * Optional environment variables for a `stdio` server, overlaid on
    * the allowlisted service variables (PATH, HOME, ...) taken from the
    * agent's environment; per-server entries win on key collision. This
@@ -51,6 +75,21 @@ export interface McpServerConfig {
    * Ignored for HTTP / SSE transports.
    */
   env?: Record<string, string>;
+  /**
+   * Safe Mode's OS sandbox for a `stdio` server (ATO-620). When Safe
+   * Mode is on (`ATOMIC_AGENT_SANDBOX=workspace`) every stdio server runs
+   * inside it: writes only in its `cwd`, temp and tool caches, no reads
+   * of credential folders or the agent's state; network stays on, since
+   * most servers call an API. `false` opts this one server out (a
+   * filesystem server that must write across the disk). Ignored for
+   * HTTP / SSE transports and while Safe Mode is off.
+   *
+   * The object form keeps the sandbox and loosens one thing:
+   * `{ allowDocker: true }` lets this server reach the Docker daemon
+   * socket, hidden from every sandboxed server by default (a Docker
+   * client can start a container that mounts the whole disk).
+   */
+  sandbox?: boolean | McpServerSandboxConfig;
   /**
    * Raw tool names to offer from this server. Absent: every tool the
    * server lists. Present (even empty): only these. See
@@ -80,6 +119,15 @@ export interface McpServerConfig {
  * third-party servers.
  */
 export type McpTrustLevel = "approval_gated" | "pure_read";
+
+/** See `McpServerConfig.approval`. */
+export type McpApprovalMode = "ask" | "ask_writes" | "auto";
+
+export const MCP_APPROVAL_MODES: readonly McpApprovalMode[] = [
+  "ask",
+  "ask_writes",
+  "auto",
+];
 
 export type McpTransport =
   McpStdioTransport | McpStreamableHttpTransport | McpSseTransport;
@@ -113,8 +161,13 @@ export interface McpSseTransport {
   headers?: Record<string, string>;
 }
 
-/** Server lifecycle states observable from outside the manager. */
-export type McpServerState = "disabled" | "starting" | "up" | "down";
+/**
+ * Server lifecycle states observable from outside the manager.
+ * `needs_auth`: a remote server answered 401 and has no usable token;
+ * the person signs in through the browser (`mcp-oauth-flow.ts`).
+ */
+export type McpServerState =
+  "disabled" | "starting" | "up" | "down" | "needs_auth";
 
 /** Status snapshot emitted on every observable transition. */
 export interface McpServerStatus {
@@ -122,8 +175,13 @@ export interface McpServerStatus {
   state: McpServerState;
   /** Wall-clock timestamp (ms) of the transition. */
   ts: number;
-  /** Short, scrubbed error message — populated when `state === "down"`. */
+  /**
+   * Short, scrubbed error message — populated when `state === "down"`,
+   * and "Sign in required" when `state === "needs_auth"`.
+   */
   lastError?: string;
+  /** Present and true only in `needs_auth`: sign in through the browser. */
+  authRequired?: boolean;
   /** Number of tools discovered after the most recent successful connect. */
   toolCount?: number;
   /** Number of resources discovered after the most recent successful connect. */
@@ -163,8 +221,23 @@ export interface McpToolMeta {
    * without re-fetching.
    */
   annotations?: Record<string, unknown>;
+  /**
+   * MCP Apps (ATO-1135): the tool's `_meta.ui` from discovery, parsed by
+   * `parseToolUiMeta` (mcp-apps.ts). `resourceUri` names the `ui://`
+   * page the host fetches after a call; `visibility` says who may call
+   * the tool. Absent for a tool without UI.
+   */
+  ui?: McpToolUiMeta;
   /** Computed resource class — drives batching / approval behaviour. */
   resourceClass: ResourceClass;
+}
+
+/** A tool's MCP Apps metadata (`_meta.ui`), see `McpToolMeta.ui`. */
+export interface McpToolUiMeta {
+  /** The `ui://` resource holding the tool's page. */
+  resourceUri?: string;
+  /** Who may call the tool; absent means `["model", "app"]`. */
+  visibility?: Array<"model" | "app">;
 }
 
 /** Neutral descriptor of a resource exposed by an MCP server. */

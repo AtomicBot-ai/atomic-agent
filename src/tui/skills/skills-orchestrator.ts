@@ -18,6 +18,8 @@ import {
   listStarterSkillNames,
   parseClawHubIdentifier,
   searchClawHub,
+  searchSkillsSh,
+  SkillsShClient,
   stageSkill,
   uninstallSkill,
   type HubSkillEntry,
@@ -30,6 +32,9 @@ import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TuiEventBus } from "../tui-app.js";
 import type { HubSkillRow } from "./skills-panel-state.js";
 import { toSkillSummaryRows } from "./skills-summary.js";
+import { runLearnCommand, type LearnCommand } from "../../skills/learning/learn-command.js";
+import { takenSkillNames } from "../../skills/learning/learn-targets.js";
+import { skillCuratorPaths } from "../../skills/curator/skill-curator-config.js";
 import { createEmptySessionState, type SessionState } from "../../session/session-state.js";
 import { setSkillDisabled as setWorkspaceSkillDisabled, setProjectSkillsEnabled } from "../../config/skill-policy-commands.js";
 import { readUserConfigFileSync } from "../../config/config-file.js";
@@ -84,6 +89,7 @@ export class SkillsOrchestrator {
   private pluginCommandsError: string | null = null;
   /** Memoised ClawHub client, rebuilt when the configured apiBase changes. */
   private clawHub: { client: ClawHubClient; apiBase: string } | null = null;
+  private readonly skillsSh = new SkillsShClient();
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -107,8 +113,12 @@ export class SkillsOrchestrator {
   /** Validate live policy; the model still loads the body through skill.view. */
   prepareInvocation(name: string, input: string): string {
     const workspace = this.workspace();
-    if (!workspace) throw new Error("Skill slash commands require cloud mode");
-    workspace.skills.assertAvailable(name);
+    if (workspace) workspace.skills.assertAvailable(name);
+    else {
+      // Local mode: the boot registry is what the local prompt and skill.view see.
+      if (this.runtime.skillRegistry.isDisabled(name)) throw new Error(`skill ${name} is disabled`);
+      this.runtime.skillRegistry.get(name);
+    }
     return `Use the ${JSON.stringify(name)} skill. Load its instructions with skill.view(${JSON.stringify({ name })}) before proceeding.`
       + (input ? `\n\n${input}` : "");
   }
@@ -352,6 +362,34 @@ export class SkillsOrchestrator {
   }
 
   /**
+   * `/learn` (ATO-67): list what the experience review saved and the
+   * drafts pending review, undo one change, approve or discard a draft.
+   * An undo or an approve changes a skill folder, so the registry and the
+   * stable prefix are rebuilt after it like after an uninstall.
+   */
+  async runLearnCommand(command: LearnCommand): Promise<void> {
+    const paths = this.runtime.config.paths;
+    const result = await runLearnCommand(command, {
+      stateDir: paths.stateDir,
+      skillsDir: paths.globalSkillsDir,
+      takenNames: async () => takenSkillNames({
+        records: this.runtime.skillRegistry.listAll().map((e) => e.record),
+        starterNames: await listStarterSkillNames(),
+        globalSkillsDir: paths.globalSkillsDir,
+        archiveDir: skillCuratorPaths(paths.stateDir).archiveDir,
+      }),
+    });
+    this.bus.emit({ type: "system_message", text: result.text });
+    if (!result.skillsChanged) return;
+    try {
+      await this.runtime.refreshSkills();
+      this.refresh();
+    } catch (err) {
+      this.bus.emit({ type: "runtime_info", line: `skills refresh failed: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  }
+
+  /**
    * Delete the global skill directory for `name`, drop any stale entry
    * from `skills.disabled`, then rebuild the registry + stable-prefix
    * consumers. On failure the modal stays open with the error so the
@@ -443,6 +481,11 @@ export class SkillsOrchestrator {
       );
       return [] as HubSkillEntry[];
     });
+    // skills.sh has no browse, only search. Its failure is a warning in
+    // the log line, never a hub error.
+    const shEntries = await searchSkillsSh(this.skillsSh, trimmed, {
+      warn: (line) => this.bus.emit({ type: "runtime_info", line }),
+    });
 
     let githubEntries: HubSkillEntry[] = [];
     try {
@@ -459,7 +502,7 @@ export class SkillsOrchestrator {
       );
     }
 
-    const merged = [...clawEntries, ...githubEntries];
+    const merged = [...clawEntries, ...shEntries, ...githubEntries];
     if (merged.length === 0 && errors.length > 0) {
       this.bus.emit({
         type: "skills_hub_results",
@@ -549,7 +592,9 @@ export class SkillsOrchestrator {
           downloads: row.downloads,
           body: null,
           bodyError:
-            "preview unavailable for GitHub taps (SKILL.md is pulled at install)",
+            row.source === "skills.sh"
+              ? "preview unavailable for skills.sh rows (SKILL.md is pulled from GitHub at install)"
+              : "preview unavailable for GitHub taps (SKILL.md is pulled at install)",
         },
       });
       return;

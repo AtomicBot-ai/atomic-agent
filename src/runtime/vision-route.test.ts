@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { LlmProvider, ProviderCapabilities } from "../llm/index.js";
 import {
+  audioInputAllowedOn,
+  audioRouteAvailable,
+  providerOffersAudio,
   providerOffersVision,
   resolveVisionProvider,
   visionRouteAvailable,
@@ -127,5 +130,90 @@ describe("visionRouteAvailable", () => {
         fusionWorkerProviderId: () => "gone",
       }),
     ).toBe(false);
+  });
+});
+
+/** ATO-497, decision 62: `vision.audioInput` unset = auto (local + capable only). */
+function audioProvider(id: string, audio: boolean): LlmProvider {
+  return {
+    id,
+    name: id,
+    capabilities: {
+      vision: false,
+      visionSource: "absent",
+      audio,
+      audioSource: audio ? (id.startsWith("local") ? "modalities.audio" : "config.provider") : "absent",
+    },
+  } as LlmProvider;
+}
+
+const LOCAL_DEAF = audioProvider("local-llama", false);
+const LOCAL_HEARS = audioProvider("local-llama", true);
+const CLOUD_HEARS = audioProvider("openrouter", true);
+const CLOUD_DEAF = audioProvider("aimlapi", false);
+
+describe("providerOffersAudio (decision 62)", () => {
+  it("auto: a local model without audio is not offered audio.listen", () => {
+    expect(providerOffersAudio(LOCAL_DEAF, true, undefined)).toBe(false);
+  });
+
+  it("auto: a local model that reports audio is offered audio.listen", () => {
+    expect(providerOffersAudio(LOCAL_HEARS, true, undefined)).toBe(true);
+  });
+
+  it("auto: a cloud model is not offered audio.listen, even one that hears", () => {
+    expect(providerOffersAudio(CLOUD_HEARS, false, undefined)).toBe(false);
+    expect(providerOffersAudio(CLOUD_DEAF, false, undefined)).toBe(false);
+  });
+
+  it("explicit true offers it on cloud; explicit false offers it nowhere", () => {
+    expect(providerOffersAudio(CLOUD_HEARS, false, true)).toBe(true);
+    expect(providerOffersAudio(LOCAL_HEARS, true, false)).toBe(false);
+  });
+
+  it("call-time rule: auto sends audio to local links only, true to any, false to none", () => {
+    expect(audioInputAllowedOn(true, undefined)).toBe(true);
+    expect(audioInputAllowedOn(false, undefined)).toBe(false);
+    expect(audioInputAllowedOn(false, true)).toBe(true);
+    expect(audioInputAllowedOn(true, false)).toBe(false);
+  });
+});
+
+describe("audioRouteAvailable (decision 62)", () => {
+  it("auto follows a local model swap and stays off on cloud", () => {
+    const providers = new Map<string, LlmProvider>([
+      ["local-llama", LOCAL_DEAF],
+      ["openrouter", CLOUD_HEARS],
+    ]);
+    let active = "local-llama";
+    const reg: VisionProviderLookup = {
+      get activeText() {
+        return providers.get(active)!;
+      },
+      getProvider: (id) => providers.get(id),
+    };
+    const deps = {
+      registry: reg,
+      isLlamaServer: isLocal,
+      fusionWorkerProviderId: (): string | null => null,
+      audioInput: (): boolean | undefined => undefined,
+    };
+    // Local model without audio: tool not offered.
+    expect(audioRouteAvailable(deps)).toBe(false);
+    // Swap to a local model whose /props reports audio: offered.
+    providers.set("local-llama", LOCAL_HEARS);
+    expect(audioRouteAvailable(deps)).toBe(true);
+    // Cloud route that could hear: not offered by default.
+    active = "openrouter";
+    expect(audioRouteAvailable(deps)).toBe(false);
+    // ...offered with an explicit `vision.audioInput: true`.
+    expect(audioRouteAvailable({ ...deps, audioInput: () => true })).toBe(true);
+    // Fusion: cloud orchestrator, local worker that hears -> offered in auto.
+    expect(
+      audioRouteAvailable({ ...deps, fusionWorkerProviderId: () => "local-llama" }),
+    ).toBe(true);
+    // Explicit false wins everywhere.
+    active = "local-llama";
+    expect(audioRouteAvailable({ ...deps, audioInput: () => false })).toBe(false);
   });
 });

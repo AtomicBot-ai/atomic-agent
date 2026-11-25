@@ -80,30 +80,75 @@ export type CompactionSkip = "window_too_small" | "already_compact" | "no_reduct
 /** A plan, or no plan with the reason when compaction was due or requested. */
 export type CompactionDecision = { plan: CompactionPlan; skip?: undefined } | { plan: null; skip?: CompactionSkip };
 
-export function planCompaction(state: SessionState, prompt: BuiltPrompt, config: CompactionConfig, requested?: "manual" | "overflow", model: { prefixReuse?: PrefixReuse } = {}): CompactionPlan | null {
+/**
+ * Share of the automatic trigger, below and above, inside which the
+ * heuristic's margin can decide whether compaction is due, so an exact
+ * count is worth asking for (ATO-656). Below the low end even a 20%
+ * under-count stays under the trigger; above the high end even a 20%
+ * over-count is past it.
+ */
+export const EXACT_COUNT_TRIGGER_BAND = { low: 0.8, high: 1.25 } as const;
+
+/**
+ * What the decision knows about the model: its prefix reuse, and the
+ * history's exact size in tokens when a counter measured
+ * {@link exactCountCandidate}'s text. The measured size replaces the
+ * heuristic one for the automatic trigger only; cut fitting stays on the
+ * conservative heuristic.
+ */
+export interface CompactionDecisionModel {
+  prefixReuse?: PrefixReuse;
+  measuredActiveTokens?: number;
+}
+
+/**
+ * The history text whose exact size settles an automatic threshold
+ * decision, or `null` when the heuristic alone settles it: compaction was
+ * requested, automatic compaction is off, the pair cap is what is due,
+ * the prompt is a cloud context (its history is counted differently), or
+ * the estimate is outside {@link EXACT_COUNT_TRIGGER_BAND}. The text is
+ * what `buildPrompt` prices as `compactionBudget.activeTokens`: the saved
+ * summary and the packed visible conversation.
+ */
+export function exactCountCandidate(state: SessionState, prompt: BuiltPrompt, config: CompactionConfig, requested?: "manual" | "overflow"): string | null {
+  const budget = prompt.compactionBudget;
+  if (requested || !config.auto || !budget || state.turns.length < 2 || prompt.cloudContext) return null;
+  if (budget.activePairs > prompt.conversationPairsCap) return null;
+  const trigger = budget.cap * config.triggerRatio;
+  if (!(trigger > 0)) return null;
+  if (budget.activeTokens < trigger * EXACT_COUNT_TRIGGER_BAND.low || budget.activeTokens > trigger * EXACT_COUNT_TRIGGER_BAND.high) return null;
+  const projection = projectSessionConversation(state);
+  const conversation = renderPackedConversation({ visibleTurns: projection.turns, droppedSummary: null });
+  return [projection.summary, conversation].filter(Boolean).join("\n");
+}
+
+export function planCompaction(state: SessionState, prompt: BuiltPrompt, config: CompactionConfig, requested?: "manual" | "overflow", model: CompactionDecisionModel = {}): CompactionPlan | null {
   return decideCompaction(state, prompt, config, requested, model).plan;
 }
 
-export function decideCompaction(state: SessionState, prompt: BuiltPrompt, config: CompactionConfig, requested?: "manual" | "overflow", model: { prefixReuse?: PrefixReuse } = {}): CompactionDecision {
+export function decideCompaction(state: SessionState, prompt: BuiltPrompt, config: CompactionConfig, requested?: "manual" | "overflow", model: CompactionDecisionModel = {}): CompactionDecision {
   const reduced = model.prefixReuse === "none" && NO_PREFIX_REUSE_TARGET_RATIO < config.targetRatio;
-  const decision = decideAtRatio(state, prompt, config, requested, reduced ? NO_PREFIX_REUSE_TARGET_RATIO : config.targetRatio);
+  const measured = model.measuredActiveTokens;
+  const decision = decideAtRatio(state, prompt, config, requested, reduced ? NO_PREFIX_REUSE_TARGET_RATIO : config.targetRatio, measured);
   // The smaller tail is a preference, not a requirement. On a small window
   // (a 16k model leaves about 3k of history) 35% of the allowance minus the
   // summary reserve is about 500 tokens, less than one tool step, so no cut
   // fitted, nothing was compacted and trimming dropped turns instead. The
   // configured target is still tried before giving up.
   if (reduced && decision.plan === null && decision.skip !== undefined && decision.skip !== "already_compact") {
-    const wider = decideAtRatio(state, prompt, config, requested, config.targetRatio);
+    const wider = decideAtRatio(state, prompt, config, requested, config.targetRatio, measured);
     if (wider.plan) return wider;
   }
   return decision;
 }
 
-function decideAtRatio(state: SessionState, prompt: BuiltPrompt, config: CompactionConfig, requested: "manual" | "overflow" | undefined, targetRatio: number): CompactionDecision {
+function decideAtRatio(state: SessionState, prompt: BuiltPrompt, config: CompactionConfig, requested: "manual" | "overflow" | undefined, targetRatio: number, measured?: number): CompactionDecision {
   const budget = prompt.compactionBudget;
   if (!budget || state.turns.length < 2) return { plan: null };
   const reason = requested ?? (budget.activePairs > prompt.conversationPairsCap ? "pairs" : "threshold");
-  if (!requested && (!config.auto || (reason !== "pairs" && budget.activeTokens < budget.cap * config.triggerRatio))) return { plan: null };
+  // The exact size, when measured, decides whether the threshold is reached.
+  const triggerTokens = measured !== undefined && Number.isFinite(measured) && measured >= 0 ? measured : budget.activeTokens;
+  if (!requested && (!config.auto || (reason !== "pairs" && triggerTokens < budget.cap * config.triggerRatio))) return { plan: null };
   const projection = projectSessionConversation(state);
   const targetTokens = Math.floor(targetRatio * (requested === "manual" ? Math.min(budget.cap, budget.activeTokens) : budget.cap));
   const summaryMaxTokens = Math.min(config.summaryMaxTokens, summaryReserve(budget.cap, targetTokens));

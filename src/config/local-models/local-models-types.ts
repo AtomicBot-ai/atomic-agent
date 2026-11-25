@@ -1,6 +1,7 @@
 import type { LocalModelDef } from "../../local-llm/catalog/models-catalog.js";
 import type { BackendVariantPreference, CoreBackendVariant } from "../../local-llm/backend/windows-backend-variant.js";
 import type { SwaFullPreference } from "../../local-llm/server/swa-full.js";
+import type { LoraAdapter } from "../../local-llm/server/lora-adapter.js";
 
 export type LocalLlmMode = "external" | "managed";
 
@@ -14,8 +15,11 @@ export type LocalTemplateSetting = "auto" | "on" | "off";
 export interface UserManagedLocalLlmConfig {
   /** Managed process owner. Default `"atomic-core"`; files before v77 migrate to it (llama.cpp stays selectable). */
   engine?: "llama-server" | "atomic-core";
+  /** Id of the local model the managed chat daemon loads, from the catalog or `customModels`. `null` (default) means none has been chosen yet. */
   modelId: string | null;
+  /** Loopback port the managed chat daemon listens on; in `managed` mode the agent talks to `http://127.0.0.1:<port>`. Default `19091`. */
   port: number;
+  /** Folder for the managed backends, downloaded models and their state files. `null` (default) uses `<stateDir>/models`, for example `~/.atomic-agent/models`. */
   dataDirOverride: string | null;
   /**
    * When true, managed-mode start (TUI auto-start / `s`, CLI
@@ -156,6 +160,27 @@ export interface UserManagedLocalLlmConfig {
    * predate the key get `true`.
    */
   autoRestart: boolean;
+  /**
+   * LoRA adapters for the managed chat server, keyed by local model id
+   * (ATO-1106): `{ "<modelId>": { "path": "/abs/adapter.gguf", "scale": 0.8 } }`.
+   * The adapter of the model being launched is passed as `--lora` (or
+   * `--lora-scaled` when `scale` is not 1); a missing file fails that
+   * launch with its path. A running server launched with another adapter
+   * is restarted on the next start instead of adopted. Additive and
+   * unversioned: absent means no adapters, as before.
+   */
+  loraAdapters?: Record<string, LoraAdapter>;
+  /**
+   * Keep the chat daemon's prompt cache on disk between runs (ATO-456).
+   * `true`: the managed server starts with `--slot-save-path`, the cache
+   * of every idle slot is saved before a managed stop and the newest
+   * saves are loaded back after the next start, so a long conversation
+   * continues without the model reading it all again. A save is only
+   * loaded into a launch with the same model, engine build and cache
+   * flags; others are deleted. At most 8 GiB on disk, oldest first.
+   * `false` (default): nothing is written.
+   */
+  promptDiskCache: boolean;
 }
 
 /**
@@ -167,6 +192,7 @@ export interface UserManagedLocalLlmConfig {
  * var, when set, wins over this file value (operator override).
  */
 export interface LocalModelDownloadConfig {
+  /** Parallel HTTP range requests one model or backend file is split across, 1 to 64. Default `16`; `1` downloads in a single stream. `ATOMIC_AGENT_DOWNLOAD_CONNECTIONS` wins when set. */
   connections: number;
   /**
    * Origin that serves Hugging Face for this install (config v53), e.g.
@@ -197,9 +223,11 @@ export interface LocalModelDownloadConfig {
  * no hybrid recall — observably identical to phase 1A.
  */
 export interface UserManagedEmbeddingLlmConfig {
+  /** Master switch for the managed embeddings daemon. Hybrid recall also needs `memory.embeddings.enabled` and a chosen `modelId`; when off, recall is keyword-only. Default `false`. */
   enabled: boolean;
   /** `EmbeddingModelId` from the catalog, or `null` when not chosen. */
   modelId: string | null;
+  /** Loopback port the managed embeddings daemon listens on. Default `19092`. */
   port: number;
   /** Base URL of the embedding-only llama-server. */
   url: string;
@@ -270,6 +298,11 @@ export interface RuntimeLocalModelsConfig {
    */
   drySampler?: boolean;
   /**
+   * Mirrors `UserConfigFile.localModels.strictToolArgs`. Optional so a
+   * hand-built runtime config that predates the field reads as off.
+   */
+  strictToolArgs?: boolean;
+  /**
    * Where `completionMaxTokens` and `requestTimeoutMs` came from
    * (ATO-922): the env override or `config.json`. Logged at start so a
    * file value the env silently beat is visible. Optional so a
@@ -298,6 +331,7 @@ export interface LocalModelsValueSources {
 }
 
 export interface UserLocalModelsConfig {
+  /** Base URL of the External llama-server the agent talks to when `mode` is `external`; `managed` mode uses `managed.port` instead. Default `http://127.0.0.1:9931`. */
   url: string;
   mode: LocalLlmMode;
   /**
@@ -361,6 +395,16 @@ export interface UserLocalModelsConfig {
    * an older file has no field and reads as off.
    */
   drySampler: boolean;
+  /**
+   * Hold a local model's tool ARGUMENTS to each tool's JSON Schema on
+   * the grammar path, not only its tool names (ATO-633): a key the
+   * schema does not know, a missing required key or a value outside an
+   * `enum` cannot be sampled. Applies to the tools on the generic call
+   * branch; a tool whose schema does not convert stays on the any-object
+   * path (`src/llm/grammar/strict-tool-args.ts`). Default `false`,
+   * unversioned and additive: an older file has no field and reads as off.
+   */
+  strictToolArgs: boolean;
   managed: UserManagedLocalLlmConfig;
   /**
    * Memory-v2 phase 1B. Optional second managed daemon for

@@ -13,6 +13,7 @@ import {
   type UserConfigFile,
 } from "./config-schema.js";
 import { writeOwnerOnlyFileAtomicSync } from "./owner-only-file.js";
+import { SECRETS_STORE_FILE } from "./secret-store.js";
 
 /** Resolve the absolute path to the user config file inside a state dir. */
 export function getUserConfigPath(stateDir: string): string {
@@ -27,7 +28,8 @@ export function getDotenvPath(stateDir: string): string {
 /**
  * The agent's own trust surface: `config.json` (holds
  * `agent.approvalLevel`), `.env` (API keys / bot tokens loaded at
- * boot), `approval-rules.json` (saved "always allow" rules,
+ * boot), `secrets-store.json` (whether they load from the OS keychain
+ * instead), `approval-rules.json` (saved "always allow" rules,
  * `src/approval/approval-rules-store.ts`) and what the agent runs from
  * its own state with no further question: `hooks.json` (commands run
  * on every tool call, re-read on change), the plugin records
@@ -52,6 +54,8 @@ export function getTrustConfigPaths(paths: {
   return [
     paths.userConfigFile,
     getDotenvPath(paths.stateDir),
+    // Opt-in OS keychain switch and the names it holds (ATO-474).
+    join(paths.stateDir, SECRETS_STORE_FILE),
     join(paths.stateDir, "approval-rules.json"),
     join(paths.stateDir, "hooks.json"),
     join(paths.stateDir, "plugins", "plugins.json"),
@@ -68,7 +72,8 @@ export function isTrustDirectoryEntry(entry: string): boolean {
 /**
  * Every file in the agent's state that holds a secret or the trust
  * config: the trust surface above, plus the bearer key the managed
- * llama-server is launched with (`resolveApiKeyFilePath`), the session
+ * llama-server is launched with (`resolveApiKeyFilePath`), the API key
+ * `serve` generated for itself (`serveApiKeyPath`), the session
  * records Atomic Chat Core writes with their per-session key
  * (`coreSessionPath`) and the cached Atomic Mail session
  * (`resolveSessionPath`). Reading one of these through an agent tool,
@@ -76,7 +81,7 @@ export function isTrustDirectoryEntry(entry: string): boolean {
  * level 5, never grantable; `src/tools/read-scope/state-secrets.ts`).
  *
  * The file names are spelled here rather than imported because config
- * sits below `local-llm/` and `atomic-mail/`; `config-file.test.ts`
+ * sits below `local-llm/`, `atomic-mail/` and `cli/`; `config-file.test.ts`
  * pins them against the owners' own path helpers so the list cannot
  * drift from where those files really are.
  */
@@ -88,6 +93,7 @@ export function getStateSecretPaths(paths: {
   return [
     ...getTrustConfigPaths(paths),
     join(paths.localModelsDataDir, "llama-server.key"),
+    join(paths.stateDir, "serve-api.key"),
     join(paths.localModelsDataDir, "core", "chat.json"),
     join(paths.localModelsDataDir, "core", "embedding.json"),
     join(paths.stateDir, "atomic-mail", "session.json"),

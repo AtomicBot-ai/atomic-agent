@@ -1,6 +1,8 @@
 import {
+  AudioUnsupportedError,
   ModelCannotSeeError,
   VisionUnsupportedError,
+  type AudioRequest,
   type LlmProvider,
   type ProviderCapabilities,
   type ProviderHealthResult,
@@ -8,7 +10,7 @@ import {
   type VisionResult,
 } from "../llm-provider.js";
 import { isGeminiOpenAiCompatUrl } from "../gemini/gemini-openai-compat.js";
-import { toGeminiTools } from "../gemini/gemini-tool-schema.js";
+import { toGeminiResponseFormat, toGeminiTools } from "../gemini/gemini-tool-schema.js";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -50,15 +52,26 @@ import {
   OPENAI_MAX_ATTEMPTS,
   type OpenAiAttemptBudget,
   type OpenAiHttpDeps,
+  type OpenAiKeyRotation,
 } from "./openai-http.js";
 import { isNetworkError } from "../../reliability/network-error.js";
 import { normaliseOpenAiChatResponse } from "./openai-normalise-response.js";
 import { parseRateLimitHeaders, type RateLimitWindow } from "../rate-limits.js";
 import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 import { openAiChatPathPrefix } from "./openai-chat-path.js";
+import type { ApiKeySource } from "./api-key-command.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
+import { describeAudioViaOpenAi } from "./openai-describe-audio.js";
 import { isAnthropicHost, isAnthropicModel } from "./prompt-cache-control.js";
 import { isLocalServerUrl } from "./local-server-url.js";
+import {
+  createChunkUnmasker,
+  maskOpenAiBody,
+  shieldVaultFor,
+  unmaskCompletion,
+  type ChunkUnmasker,
+} from "./openai-privacy-shield.js";
+import type { PrivacyVault } from "../../../privacy/index.js";
 import {
   adaptQwenCompletionResult,
   adaptQwenTaggedToolResponse,
@@ -66,6 +79,13 @@ import {
 } from "./qwen-tagged-tool-response-adapter.js";
 import type { CreditLimitLogger } from "./plan-credit-limit-retry.js";
 import { sendWithStructuredOutputFallback } from "./structured-output-fallback.js";
+import { isStructuredOutputRefusal } from "./structured-output-refusal.js";
+import {
+  applyJsonSchemaToolReply,
+  toJsonSchemaToolRequest,
+  type JsonSchemaToolPlan,
+} from "./json-schema-tools.js";
+import { jsonSchemaToolModes } from "./json-schema-tool-mode.js";
 import { normalizeToolSchemaBooleans } from "./tool-schema-booleans.js";
 import { findToolBehindSchemaError } from "./tool-schema-rejection.js";
 import {
@@ -86,6 +106,12 @@ export interface OpenAiProviderOptions {
    */
   apiKeyHeader?: string;
   /**
+   * The key as a command's output (`apiKeyCommand`), re-read per request
+   * and refreshed on a 401. Replaces `apiKey` when set. See
+   * `api-key-command.ts`.
+   */
+  apiKeySource?: ApiKeySource;
+  /**
    * Whether the model this link serves can read images, as resolved per
    * model by the factory (`model-vision.ts`), with `visionSource` saying
    * where that came from. Absent means nothing describes the model:
@@ -94,6 +120,13 @@ export interface OpenAiProviderOptions {
    */
   supportsVision?: boolean;
   visionSource?: ProviderCapabilities["visionSource"];
+  /**
+   * Whether the model takes audio input, resolved per model by the
+   * factory (`model-audio.ts`). Absent means unknown, which is `false`:
+   * audio is never sent on a guess.
+   */
+  supportsAudio?: boolean;
+  audioSource?: ProviderCapabilities["audioSource"];
   supportsParallelTools?: boolean;
   supportsPromptCache?: boolean;
   reasoningFormat?: ReasoningFormat;
@@ -164,6 +197,22 @@ export interface OpenAiProviderOptions {
    * stderr line rather than recovering silently.
    */
   logger?: CreditLimitLogger;
+  /**
+   * The provider's key pool when it has more than one key (ATO-471):
+   * every request carries the pool's current key, and a refused key is
+   * swapped for the next before the error reaches the fallback chain.
+   * Absent: `apiKey` alone, as before.
+   */
+  keyPool?: OpenAiKeyRotation;
+  /**
+   * The entry is an external local engine (Ollama, LM Studio) whose
+   * tool-call parser may not know the model's format (ATO-642). Native
+   * tools stay the default; a model whose native calls come back
+   * malformed is switched to tool calls through a JSON reply
+   * (`json-schema-tools.ts`, `json-schema-tool-mode.ts`). Absent, the
+   * client never leaves native tools.
+   */
+  jsonSchemaToolFallback?: boolean;
 }
 
 export class OpenAiProvider implements LlmProvider {
@@ -186,10 +235,16 @@ export class OpenAiProvider implements LlmProvider {
   private readonly extraBody: Record<string, unknown> | undefined;
   private readonly maxOutputTokens: number | undefined;
   private readonly strictTools: boolean;
+  private readonly jsonSchemaToolFallback: boolean;
   private readonly providerPreferences: Record<string, unknown> | undefined;
   private readonly bodyOptions: OpenAiBodyOptions;
   private readonly reasoningFormat: ReasoningFormat;
   private readonly messageShape: "native" | "flat";
+  /**
+   * Whether the base URL is this machine or the local network. Privacy
+   * Shield (ATO-1081) never masks for such a server: it is not a cloud.
+   */
+  private readonly localServer: boolean;
   /**
    * Sessions whose requests go out flat after the service rejected the
    * native layout (`"*"` for requests without a session id). Per
@@ -198,6 +253,17 @@ export class OpenAiProvider implements LlmProvider {
    * rebuilt on every config write, which is the cheapest re-probe.
    */
   private readonly flatSessions = new Set<string>();
+  /**
+   * Tools whose JSON schema this server refused, per session (`"*"` for
+   * requests without a session id): wire name -> the exact tool
+   * definition that was refused (ATO-1443). Every later request of the
+   * session goes out without them, instead of paying one failed request
+   * per agent step. Keyed on the definition as well as the name, so a
+   * tool whose schema changed (an MCP server reload) is tried again.
+   * Per instance, like `flatSessions`: a config write rebuilds the
+   * provider, which is the re-probe.
+   */
+  private readonly rejectedTools = new Map<string, Map<string, string>>();
 
   constructor(options: OpenAiProviderOptions) {
     this.id = options.id;
@@ -219,6 +285,11 @@ export class OpenAiProvider implements LlmProvider {
       createOpenAiStreamConsumer(this.reasoningFormat);
     this.capabilities = {
       ...openAiVisionCapabilities(options),
+      audio: options.supportsAudio ?? false,
+      audioSource:
+        options.supportsAudio === undefined
+          ? "unknown"
+          : (options.audioSource ?? "config.provider"),
       toolTransport: "native_tools",
       contextWindow: 128_000,
       supportsParallelTools: options.supportsParallelTools ?? true,
@@ -239,8 +310,10 @@ export class OpenAiProvider implements LlmProvider {
     this.extraBody = options.extraBody;
     this.maxOutputTokens = options.maxOutputTokens;
     this.strictTools = options.strictTools ?? false;
+    this.jsonSchemaToolFallback = options.jsonSchemaToolFallback ?? false;
     this.providerPreferences = options.providerPreferences;
     this.messageShape = options.messageShape ?? "native";
+    this.localServer = isLocalServerUrl(options.baseUrl);
     this.bodyOptions = {
       nameEscape: (name) => this.toolCallAdapter.nameEscape(name),
       ...(options.providerKind ? { providerKind: options.providerKind } : {}),
@@ -252,12 +325,14 @@ export class OpenAiProvider implements LlmProvider {
         ? { anthropicCacheControl: true }
         : {}),
       ...(isDeepSeekHost(options.baseUrl) ? { reasoningRequired: true } : {}),
+      ...(isGeminiOpenAiCompatUrl(options.baseUrl) ? { thoughtSignatures: true } : {}),
     };
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
       apiKey: options.apiKey,
       extraHeaders: options.headers ?? {},
       ...(options.apiKeyHeader ? { apiKeyHeader: options.apiKeyHeader } : {}),
+      ...(options.apiKeySource ? { apiKeySource: options.apiKeySource } : {}),
       requestTimeoutMs:
         options.requestTimeoutMs ?? OPENAI_DEFAULT_REQUEST_TIMEOUT_MS,
       fetchImpl: options.fetchImpl ?? fetch,
@@ -267,7 +342,17 @@ export class OpenAiProvider implements LlmProvider {
         const windows = parseRateLimitHeaders(headers);
         if (windows.length > 0) this.lastRateLimits = windows;
       },
+      ...(options.keyPool ? { keyPool: options.keyPool } : {}),
     };
+    const pool = options.keyPool;
+    if (pool) {
+      // Paths that send without the rotation wrapper (the model list
+      // probe) still carry the key in use rather than a refused primary.
+      Object.defineProperty(this.http, "apiKey", {
+        get: () => pool.current(),
+        enumerable: true,
+      });
+    }
   }
 
   /**
@@ -285,17 +370,43 @@ export class OpenAiProvider implements LlmProvider {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
+    // Tool calls through a JSON reply for a model whose native calls the
+    // engine's parser breaks (ATO-642). An engine that refuses the
+    // `response_format` sends this pair back to native tools for good,
+    // and this same request goes out native below.
+    const plan = this.jsonSchemaToolPlan(request);
+    if (plan) {
+      try {
+        return applyJsonSchemaToolReply(
+          await this.completeOnce(plan.wireRequest, false),
+        );
+      } catch (err) {
+        if (!this.revertJsonSchemaTools(request, err)) throw err;
+      }
+    }
+    const result = await this.completeNative(request);
+    this.noteNativeToolReply(request, result);
+    return result;
+  }
+
+  private async completeNative(
+    original: CompletionRequest,
+  ): Promise<CompletionResult> {
+    // Tools this session already learned the server refuses stay out
+    // from the first send (ATO-1443).
+    const known = this.withoutRememberedTools(original);
+    const request = known.request;
     try {
-      return await this.completeOnce(request);
+      return withDroppedTools(await this.completeOnce(request), known.dropped);
     } catch (err) {
       // One resend without the tool whose schema the server could not
       // use (ATO-1399); a second refusal goes back as the server wrote it.
       const reduced = this.withoutRejectedTool(request, err);
       if (!reduced) throw err;
       try {
-        return withDroppedTool(
+        return withDroppedTools(
           await this.completeOnce(reduced.request),
-          reduced.dropped,
+          [...known.dropped, reduced.dropped],
         );
       } catch (retryErr) {
         if (request.signal?.aborted) throw retryErr;
@@ -306,8 +417,16 @@ export class OpenAiProvider implements LlmProvider {
     }
   }
 
+  /**
+   * `structuredFallback: false` sends the body as built: a schema-mode
+   * request must not have its `response_format` quietly dropped on a
+   * refusal (that is the memory sub-calls' fallback), because without it
+   * nothing holds the reply to the call shape. The refusal goes to the
+   * caller instead, which goes back to native tools.
+   */
   private async completeOnce(
     request: CompletionRequest,
+    structuredFallback = true,
   ): Promise<CompletionResult> {
     const model = this.defaultChatModel;
     if (!model) {
@@ -317,27 +436,32 @@ export class OpenAiProvider implements LlmProvider {
     }
     // The body the response actually came from; see `OnOpenAiRequestBody`.
     let sentBody: Record<string, unknown> | undefined;
-    const send = (shape: "native" | "flat") =>
-      // Unary only: sub-calls carry `response_format`, streamed turns never do.
-      sendWithStructuredOutputFallback(
-        {
-          providerId: this.id,
-          model: model,
-          logger: this.http.logger,
-        },
+    // Privacy Shield (ATO-1081): one vault for the body and the reply.
+    const vault = shieldVaultFor(request.sessionId, this.localServer);
+    const post = (body: Record<string, unknown>) =>
+      openAiPostJson(
+        this.http,
+        `${this.chatPathPrefix}/chat/completions`,
+        body,
         request,
-        (req) => this.buildBody(req, false, shape),
-        (body) =>
-          openAiPostJson(
-            this.http,
-            `${this.chatPathPrefix}/chat/completions`,
-            body,
-            request,
-            (sent) => {
-              sentBody = sent;
-            },
-          ),
+        (sent) => {
+          sentBody = sent;
+        },
       );
+    const send = (shape: "native" | "flat") =>
+      structuredFallback
+        ? // Unary only: sub-calls carry `response_format`, streamed turns never do.
+          sendWithStructuredOutputFallback(
+            {
+              providerId: this.id,
+              model: model,
+              logger: this.http.logger,
+            },
+            request,
+            (req) => this.buildBody(req, false, shape, vault),
+            post,
+          )
+        : post(this.buildBody(request, false, shape, vault));
     // One resend per completion when the service names the only
     // temperature it takes, or refuses the field altogether
     // (`allowed-temperature.ts`); the rebuilt body carries the lesson.
@@ -369,12 +493,13 @@ export class OpenAiProvider implements LlmProvider {
       request,
       this.taggedToolOptions(),
     );
+    const normalised = normaliseOpenAiChatResponse(
+      adapted,
+      model,
+      this.reasoningFormat,
+    );
     return this.withRateLimits(withSentMaxTokens(
-      normaliseOpenAiChatResponse(
-        adapted,
-        model,
-        this.reasoningFormat,
-      ),
+      vault ? unmaskCompletion(normalised, vault) : normalised,
       sentBody,
     ));
   }
@@ -393,6 +518,7 @@ export class OpenAiProvider implements LlmProvider {
     request: CompletionRequest,
     stream: boolean,
     shape: "native" | "flat",
+    vault: PrivacyVault | null = null,
   ): Record<string, unknown> {
     const body = buildOpenAiChatBody(
       request,
@@ -410,6 +536,18 @@ export class OpenAiProvider implements LlmProvider {
     if (body.tools !== undefined && isGeminiOpenAiCompatUrl(this.http.baseUrl)) {
       body.tools = toGeminiTools(body.tools);
     }
+    // The helper calls' structured-output schema gets the same cleaning
+    // (ATO-1444). Only one we attached from `responseFormat`: a
+    // `response_format` set through `extraBody` is the operator's.
+    if (
+      request.responseFormat !== undefined &&
+      body.response_format !== undefined &&
+      isGeminiOpenAiCompatUrl(this.http.baseUrl)
+    ) {
+      body.response_format = toGeminiResponseFormat(body.response_format);
+    }
+    // Privacy Shield (ATO-1081): last, on the body exactly as it goes out.
+    if (vault) maskOpenAiBody(body, vault);
     return body;
   }
 
@@ -504,6 +642,7 @@ export class OpenAiProvider implements LlmProvider {
       tools,
     );
     if (!culprit) return null;
+    this.rememberRejectedTool(request, tools[culprit.index]!, culprit.name);
     const tool = this.toolCallAdapter.nameUnescape(culprit.name);
     this.http.logger?.warn(
       `llm: "${this.id}" could not use the JSON schema of tool "${tool}" (at ${culprit.pointer}); resending this request without that tool`,
@@ -526,6 +665,119 @@ export class OpenAiProvider implements LlmProvider {
     };
   }
 
+  /** Remember a refused tool for the rest of the session (ATO-1443). */
+  private rememberRejectedTool(
+    request: CompletionRequest,
+    tool: Record<string, unknown>,
+    wireName: string,
+  ): void {
+    const key = sessionKey(request);
+    let known = this.rejectedTools.get(key);
+    if (!known) {
+      known = new Map();
+      this.rejectedTools.set(key, known);
+    }
+    known.set(wireName, JSON.stringify(tool));
+  }
+
+  /**
+   * The request without the tools this session already learned the
+   * server refuses (ATO-1443), and those tools for `droppedTools`. The
+   * request itself when there are none.
+   */
+  private withoutRememberedTools(request: CompletionRequest): {
+    request: CompletionRequest;
+    dropped: DroppedTool[];
+  } {
+    const known = this.rejectedTools.get(sessionKey(request));
+    const tools = request.tools;
+    if (!known || known.size === 0 || !tools || tools.length === 0) {
+      return { request, dropped: [] };
+    }
+    const dropped: DroppedTool[] = [];
+    const kept = tools.filter((tool) => {
+      const name = toolWireName(tool);
+      if (name === null) return true;
+      const refused = known.get(name);
+      if (refused === undefined || refused !== JSON.stringify(tool)) return true;
+      dropped.push({
+        name: this.toolCallAdapter.nameUnescape(name),
+        reason: "schema_rejected",
+      });
+      return false;
+    });
+    if (dropped.length === 0) return { request, dropped };
+    return { request: { ...request, tools: kept }, dropped };
+  }
+
+  /**
+   * The schema-mode request for `request`, when this client is an
+   * external engine, the request offers tools and the pair is switched
+   * over (`jsonSchemaToolModes`); otherwise `null` and native tools.
+   */
+  private jsonSchemaToolPlan(
+    request: CompletionRequest,
+  ): JsonSchemaToolPlan | null {
+    const model = this.defaultChatModel;
+    if (!this.jsonSchemaToolFallback || !model) return null;
+    if (!jsonSchemaToolModes.isOn(this.id, model)) return null;
+    return toJsonSchemaToolRequest(request);
+  }
+
+  /**
+   * Whether a failed schema-mode send is the engine refusing
+   * `response_format`. If so, the pair goes back to native tools for the
+   * rest of the process and the caller resends natively.
+   */
+  private revertJsonSchemaTools(
+    request: CompletionRequest,
+    err: unknown,
+  ): boolean {
+    if (request.signal?.aborted || !isStructuredOutputRefusal(err)) {
+      return false;
+    }
+    const model = this.defaultChatModel!;
+    if (jsonSchemaToolModes.markRefused(this.id, model)) {
+      this.http.logger?.warn(
+        `llm: "${this.id}" refused response_format for ${model}; tool calls go back to the native tools payload for the rest of this run`,
+        { provider: this.id, model, status: err.status },
+      );
+    }
+    return true;
+  }
+
+  /**
+   * Count a native-tools reply toward the JSON-reply switch (ATO-642):
+   * only on an external engine, and only for a request that offered
+   * tools. Logs once, on the reply that switches the pair over.
+   */
+  private noteNativeToolReply(
+    request: CompletionRequest,
+    result: CompletionResult,
+  ): void {
+    const model = this.defaultChatModel;
+    if (!this.jsonSchemaToolFallback || !model) return;
+    const tools = request.tools;
+    if (!tools || tools.length === 0) return;
+    const offeredNames = new Set<string>();
+    for (const tool of tools) {
+      const fn = tool.function as { name?: unknown } | undefined;
+      if (typeof fn?.name === "string") offeredNames.add(fn.name);
+    }
+    const switched = jsonSchemaToolModes.noteNativeReply(this.id, model, {
+      ...(result.toolCalls ? { toolCalls: result.toolCalls } : {}),
+      content: result.content,
+      offeredNames,
+      finishReason: result.finishReason ?? null,
+    });
+    if (switched) {
+      this.http.logger?.warn(
+        `llm: "${this.id}" returned malformed native tool calls for ${model}; later tool calls go through a JSON reply (response_format) for the rest of this run`,
+        { provider: this.id, model, sessionId: request.sessionId ?? null },
+      );
+    }
+  }
+
   private markFlat(request: CompletionRequest, err: unknown): void {
     this.flatSessions.add(sessionKey(request));
     this.http.logger?.warn(
@@ -543,6 +795,44 @@ export class OpenAiProvider implements LlmProvider {
   async *completeStream(
     request: CompletionRequest,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
+    // See `complete`: tool calls through a JSON reply for a pair whose
+    // native calls break (ATO-642).
+    const plan = this.jsonSchemaToolPlan(request);
+    if (plan) {
+      let result: CompletionResult | undefined;
+      try {
+        result = yield* this.streamChat(plan.wireRequest, true);
+      } catch (err) {
+        if (!(err instanceof JsonSchemaToolsRefused)) throw err;
+        this.revertJsonSchemaTools(request, err.refusal);
+      }
+      if (result) {
+        const adapted = applyJsonSchemaToolReply(result);
+        // The reply text was held back while it streamed, because it is
+        // the JSON envelope. What the caller should read of it (an
+        // answer, or a reply that did not parse) goes out now, once.
+        if (adapted.content.length > 0) {
+          yield { delta: adapted.content, reasoningDelta: "", done: false };
+        }
+        return adapted;
+      }
+    }
+    const result = yield* this.streamChat(request, false);
+    this.noteNativeToolReply(request, result);
+    return result;
+  }
+
+  /**
+   * One streamed completion. `holdContent` keeps the reply text out of
+   * the yielded chunks (reasoning still streams): a schema-mode reply is
+   * JSON the caller must not show, and `completeStream` yields what it
+   * means once the stream is done. In that mode an engine that refuses
+   * `response_format` before any output fails as `JsonSchemaToolsRefused`.
+   */
+  private async *streamChat(
+    request: CompletionRequest,
+    holdContent: boolean,
+  ): AsyncGenerator<StreamChunk, CompletionResult, void> {
     const model = this.defaultChatModel;
     if (!model) {
       throw new Error(
@@ -550,10 +840,15 @@ export class OpenAiProvider implements LlmProvider {
       );
     }
     let shape = this.shapeFor(request);
-    // The request the body is built from: the caller's, until a schema
-    // error names a tool to leave out (`withoutRejectedTool`).
-    let activeRequest = request;
-    let body = this.buildBody(activeRequest, true, shape);
+    // The request the body is built from: the caller's without the tools
+    // this session already learned the server refuses (ATO-1443), until
+    // a schema error names one more to leave out (`withoutRejectedTool`).
+    const known = this.withoutRememberedTools(request);
+    let activeRequest = known.request;
+    // Privacy Shield (ATO-1081): one vault for every attempt of this
+    // completion, so a reopen masks the same way and the reply unmasks.
+    const vault = shieldVaultFor(request.sessionId, this.localServer);
+    let body = this.buildBody(activeRequest, true, shape, vault);
     const path = `${this.chatPathPrefix}/chat/completions`;
     let accumulated = "";
     let accumulatedReasoning = "";
@@ -626,6 +921,9 @@ export class OpenAiProvider implements LlmProvider {
         accumulatedReasoning = "";
         streamFinal = undefined;
         const stream = this.streamConsumer.consume(res.body, request.signal);
+        // Placeholders back in the text as it streams; a fresh hold-back
+        // per attempt, like the transcript above.
+        const unmasker: ChunkUnmasker | null = vault ? createChunkUnmasker(vault) : null;
         // Whether this pump reached the consumer's own `done`. A pump that
         // did not has abandoned a live stream; see the release below.
         let drained = false;
@@ -636,13 +934,32 @@ export class OpenAiProvider implements LlmProvider {
               streamFinal = next.value;
               streamEnded = true;
               drained = true;
+              // A placeholder the stream ended on was held back: it goes
+              // out now, under the same rules as any other chunk.
+              const tail = unmasker?.flush() ?? null;
+              if (tail) {
+                accumulated += tail.delta;
+                accumulatedReasoning += tail.reasoningDelta;
+                const shown = holdContent ? { ...tail, delta: "" } : tail;
+                if (shown.delta.length > 0 || shown.reasoningDelta.length > 0) {
+                  committed = true;
+                  yield shown;
+                }
+              }
               break attempts;
             }
-            const chunk = next.value;
-            if (chunk.delta) accumulated += chunk.delta;
-            if (chunk.reasoningDelta)
-              accumulatedReasoning += chunk.reasoningDelta;
-            if (!chunk.done) {
+            const received = unmasker ? unmasker.push(next.value) : next.value;
+            if (received.delta) accumulated += received.delta;
+            if (received.reasoningDelta)
+              accumulatedReasoning += received.reasoningDelta;
+            const chunk =
+              holdContent && received.delta
+                ? { ...received, delta: "" }
+                : received;
+            if (
+              !chunk.done &&
+              (!holdContent || chunk.reasoningDelta.length > 0)
+            ) {
               // Set before the yield, deliberately: a caller that throws
               // into this generator (`generator.throw()`, which is how a
               // consumer reports its own failure into a stream it is
@@ -707,6 +1024,9 @@ export class OpenAiProvider implements LlmProvider {
         // stopped. `signal.reason` is abort-shaped by construction.
         if (request.signal?.aborted)
           throw cancellationError(request.signal, err);
+        if (holdContent && !committed && isStructuredOutputRefusal(err)) {
+          throw new JsonSchemaToolsRefused(err);
+        }
         // The server could not use one tool's JSON schema (ATO-1399): a
         // 4xx/5xx from the open, before any output, so the same request
         // goes out once more without that tool.
@@ -716,7 +1036,7 @@ export class OpenAiProvider implements LlmProvider {
             toolDropped = reduced.dropped;
             schemaError = err;
             activeRequest = reduced.request;
-            body = this.buildBody(activeRequest, true, shape);
+            body = this.buildBody(activeRequest, true, shape, vault);
             continue;
           }
         }
@@ -730,7 +1050,7 @@ export class OpenAiProvider implements LlmProvider {
           this.learnTemperature(request, err, body)
         ) {
           temperatureRetried = true;
-          body = this.buildBody(activeRequest, true, shape);
+          body = this.buildBody(activeRequest, true, shape, vault);
           continue;
         }
         // The service refused the message layout, before any byte of
@@ -741,7 +1061,7 @@ export class OpenAiProvider implements LlmProvider {
         if (!committed && this.shouldFallBackToFlat(request, shape, err)) {
           this.markFlat(request, err);
           shape = "flat";
-          body = this.buildBody(activeRequest, true, shape);
+          body = this.buildBody(activeRequest, true, shape, vault);
           continue;
         }
         // An error event inside the stream (OpenRouter's `504 Upstream
@@ -789,12 +1109,15 @@ export class OpenAiProvider implements LlmProvider {
         "openai stream retry loop ended without a completion — canReopenStream and OPENAI_MAX_ATTEMPTS disagree",
       );
     }
-    const final = completionFromStreamFinal(
+    const built = completionFromStreamFinal(
       streamFinal,
       model,
       accumulated,
       accumulatedReasoning,
     );
+    // The consumer's own transcript and tool calls still carry the
+    // placeholders; `accumulated` was unmasked chunk by chunk.
+    const final = vault ? { ...unmaskCompletion(built, vault) } : built;
     if (accumulated.length > 0 && final.content.length === 0) {
       final.content = accumulated;
     }
@@ -827,7 +1150,10 @@ export class OpenAiProvider implements LlmProvider {
       sentBody,
     );
     return this.withRateLimits(
-      toolDropped ? withDroppedTool(safe, toolDropped) : safe,
+      withDroppedTools(
+        safe,
+        toolDropped ? [...known.dropped, toolDropped] : known.dropped,
+      ),
     );
   }
 
@@ -929,6 +1255,31 @@ export class OpenAiProvider implements LlmProvider {
       }
       throw error;
     }
+  }
+
+  async describeAudio(request: AudioRequest): Promise<VisionResult> {
+    if (!this.capabilities.audio) {
+      throw new AudioUnsupportedError(this.name);
+    }
+    const model = this.defaultChatModel;
+    if (!model) {
+      throw new Error(
+        `openai-compatible provider "${this.name}" has no defaultChatModel configured`,
+      );
+    }
+    return describeAudioViaOpenAi(
+      this.http,
+      model,
+      request,
+      this.chatPathPrefix,
+      this.providerPreferences,
+      {
+        ...(this.extraBody ? { extraBody: this.extraBody } : {}),
+        ...(this.bodyOptions.modelParams
+          ? { modelParams: this.bodyOptions.modelParams }
+          : {}),
+      },
+    );
   }
 
   async listModels(): Promise<readonly string[]> {
@@ -1085,6 +1436,24 @@ function withDroppedTool(
   return { ...result, droppedTools: [...already, dropped] };
 }
 
+/** `withDroppedTool` for each tool in order; the result itself when none. */
+function withDroppedTools(
+  result: CompletionResult,
+  dropped: readonly DroppedTool[],
+): CompletionResult {
+  let out = result;
+  for (const tool of dropped) out = withDroppedTool(out, tool);
+  return out;
+}
+
+/** A chat-completions tool's `function.name`, or null for any other shape. */
+function toolWireName(tool: Record<string, unknown>): string | null {
+  const fn = tool.function;
+  if (typeof fn !== "object" || fn === null) return null;
+  const name = (fn as { name?: unknown }).name;
+  return typeof name === "string" ? name : null;
+}
+
 /**
  * The error a turn the user cancelled should fail with.
  *
@@ -1180,4 +1549,18 @@ function applyToolCallTerminationSafety(
     stop: false,
     truncated: true,
   };
+}
+
+/**
+ * A schema-mode stream the engine refused for its `response_format`
+ * before any output (ATO-642); `completeStream` resends it natively.
+ */
+class JsonSchemaToolsRefused extends Error {
+  readonly refusal: OpenAiHttpError;
+
+  constructor(refusal: OpenAiHttpError) {
+    super(refusal.message);
+    this.name = "JsonSchemaToolsRefused";
+    this.refusal = refusal;
+  }
 }

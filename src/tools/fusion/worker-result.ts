@@ -17,6 +17,9 @@ import {
   FUSION_WORKER_OPERATOR_ONLY_MARKER,
 } from "./worker-tool-policy.js";
 import type { JudgeSummary } from "./judge.js";
+import type { FileDiffStat } from "./worker-diffstats.js";
+import { classifyWorkerFailure } from "./failure-breaker.js";
+import { MAX_WORKER_QUESTION_CHARS } from "./worker-question.js";
 
 /**
  * The note on a task a worker could not finish because a step needs the
@@ -44,6 +47,12 @@ export type WorkerTaskStatus =
   | "failed"
   | "cancelled"
   | "needs_orchestrator"
+  /**
+   * The worker stopped to ask the orchestrator a question it could not
+   * answer itself (`worker-question.ts`, ATO-945); `question` carries it.
+   * Not a failure: the remedy is an answer in the next brief.
+   */
+  | "needs_input"
   | "max_steps"
   /**
    * The worker ran out of WALL TIME rather than steps. Set by
@@ -74,6 +83,7 @@ export const WORKER_STATUS_ORDER: readonly WorkerTaskStatus[] = [
   "ok",
   "no_changes",
   "needs_orchestrator",
+  "needs_input",
   "max_steps",
   "timeout",
   "queued",
@@ -88,7 +98,7 @@ export interface WorkerToolStats {
   calls: number;
   errors: number;
   /**
-   * Successful write / edit / patch calls. A task that declared `files`
+   * Successful write / edit / patch calls (a dry-run patch is not one). A task that declared `files`
    * and made none is `no_changes` (`declared-files.ts`), whatever its
    * reply says.
    */
@@ -103,6 +113,17 @@ export const FILE_WRITING_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.patch",
   "os.fs.restore",
 ]);
+
+/**
+ * `os.fs.patch` without `apply: true` only previews: it comes back `ok`
+ * with `details.mode: "dry-run"` and the file untouched (ATO-1491).
+ */
+function isDryRunPatch(
+  tool: string,
+  details: Record<string, unknown>,
+): boolean {
+  return tool === "os.fs.patch" && details.mode === "dry-run";
+}
 
 /**
  * How the call as a whole went, for `details.outcome` and the tool
@@ -172,6 +193,15 @@ export interface WorkerTaskResult {
   tools: WorkerToolStats;
   usage?: CompletionUsage;
   /**
+   * Output tokens and the time the model spent producing them, summed
+   * over the worker's completions (ATO-1583): the server's own decode
+   * time when it reports one (llama.cpp `timings.predicted_ms`), else
+   * the request's wall time from prompt sent to completion. Tool runs,
+   * checks and queue waits between completions are not in it. Absent
+   * when nothing was measured.
+   */
+  generation?: { tokens: number; ms: number };
+  /**
    * What went wrong, in the failing layer's own words: the thrown turn,
    * the worker loop's last provider/loop error, or the declared-file
    * check. Rendered on the task's head line.
@@ -199,12 +229,28 @@ export interface WorkerTaskResult {
   /** The judge's verdict on this task's acceptance list (ATO-944), when it ran. */
   judge?: JudgeSummary;
   /**
+   * The files this task's ok `os.fs.write` / `os.fs.edit` calls changed,
+   * with lines added and removed, one row per path (ATO-1700). Absolute
+   * paths in the folder; a workspace task's are rebased after its merge
+   * and keep only what the merge wrote. `fusion.delegate` sums them into
+   * `details.diffstats` for the chat's "Changed files" card. Absent when
+   * the task changed no file, and on a row a resume carried over from
+   * the checkpoint (which keeps no file list): those files were changed
+   * in the turn that was cut off.
+   */
+  diffstats?: FileDiffStat[];
+  /**
    * The model the task ran on, set when models by role are configured
    * (ATO-943); absent, it ran on the worker leg as every task did.
    */
   model?: string;
   /** The role that picked `model`, when one did (ATO-943). */
   modelRole?: FusionRole;
+  /**
+   * The worker's question to the orchestrator, on a `needs_input` row
+   * (ATO-945); at most `MAX_WORKER_QUESTION_CHARS`.
+   */
+  question?: string;
 }
 
 export interface TaskCheckSummary {
@@ -253,11 +299,17 @@ export class WorkerRunCollector {
   private writes = 0;
   private readonly byTool: Record<string, number> = {};
   private usage: CompletionUsage | undefined;
+  /** Generation time per completion (ATO-1583); see `WorkerTaskResult.generation`. */
+  private genTokens = 0;
+  private genMs = 0;
+  private requestSentAt: number | undefined;
   private lastLoopError: string | undefined;
   private lastWaitReason: string | undefined;
   /** The last few tool results, one line each — what a hand-back reports. */
   private readonly recent: string[] = [];
   private readonly replaced: ReplacedInput[] = [];
+
+  constructor(private readonly now: () => number = Date.now) {}
 
   /** Feed one `AgentLoopEvent` from the worker turn's hook. */
   observe(event: AgentLoopEvent): void {
@@ -301,7 +353,12 @@ export class WorkerRunCollector {
       this.calls += 1;
       this.byTool[result.tool] = (this.byTool[result.tool] ?? 0) + 1;
       if (result.status === "error") this.errors += 1;
-      else if (FILE_WRITING_TOOLS.has(result.tool)) this.writes += 1;
+      else if (
+        FILE_WRITING_TOOLS.has(result.tool) &&
+        !isDryRunPatch(result.tool, result.details)
+      ) {
+        this.writes += 1;
+      }
       if (resultCarriesApprovalRefusal(result.summary, result.details)) {
         this.approvalRefused = true;
         if (resultCarriesOperatorOnlyRefusal(result.summary, result.details)) {
@@ -317,6 +374,12 @@ export class WorkerRunCollector {
       if (this.recent.length > FINDINGS_KEPT) this.recent.shift();
       return;
     }
+    if (inner.type === "prompt_built") {
+      // The request is about to go out; its completion closes the span.
+      this.requestSentAt = this.now();
+      return;
+    }
+    if (inner.type === "llm_completed") this.noteGeneration(inner.completion);
     if (inner.type === "llm_completed" && inner.completion.usage) {
       const next = inner.completion.usage;
       const prev = this.usage;
@@ -339,6 +402,34 @@ export class WorkerRunCollector {
                   }),
             };
     }
+  }
+
+  /**
+   * One completion's output and the time spent producing it. The
+   * server's decode time when it states one; otherwise the wall time
+   * since the prompt went out, which a cloud provider's response is
+   * all we have of (it includes time to first token). A completion with
+   * no preceding prompt (a parse retry) and no decode time is skipped.
+   */
+  private noteGeneration(completion: {
+    usage?: CompletionUsage;
+    timing?: { predictedMs: number; predictedTokens: number };
+  }): void {
+    const sentAt = this.requestSentAt;
+    this.requestSentAt = undefined;
+    const tokens =
+      completion.usage?.completionTokens ?? completion.timing?.predictedTokens ?? 0;
+    if (!Number.isFinite(tokens) || tokens <= 0) return;
+    const decodeMs = completion.timing?.predictedMs ?? 0;
+    const ms =
+      Number.isFinite(decodeMs) && decodeMs > 0
+        ? decodeMs
+        : sentAt === undefined
+          ? 0
+          : this.now() - sentAt;
+    if (!Number.isFinite(ms) || ms <= 0) return;
+    this.genTokens += tokens;
+    this.genMs += ms;
   }
 
   /**
@@ -425,6 +516,9 @@ export class WorkerRunCollector {
         byTool: { ...this.byTool },
       },
       ...(this.usage ? { usage: this.usage } : {}),
+      ...(this.genTokens > 0 && this.genMs > 0
+        ? { generation: { tokens: this.genTokens, ms: this.genMs } }
+        : {}),
       ...(error === undefined ? {} : { error }),
       ...(hint === undefined ? {} : { hint }),
       ...(notes.length === 0 ? {} : { notes }),
@@ -637,7 +731,7 @@ export const WORKER_HINT_CONTEXT =
 export const WORKER_HINT_SATURATED =
   "the local server was saturated: fewer parallel workers";
 export const WORKER_HINT_QUOTA =
-  "provider credit/quota exhausted — retrying will not help";
+  "provider credit/quota exhausted — retrying will not help: top up the provider's credit, or switch the workers to another provider or a local model";
 /**
  * The client's watchdog proved the server answers nothing at all —
  * either no connection was made (`first-token-unreachable`) or one was
@@ -959,7 +1053,10 @@ function renderStatusTable(
       ...(r.replacedInputs ?? []).map((input) =>
         oneLine(describeReplacedInput(input), TABLE_DETAIL_CHARS),
       ),
-      ...(r.error ? [`error: ${oneLine(r.error, TABLE_DETAIL_CHARS)}`] : []),
+      ...(r.error ? tableErrorParts(r, r.error) : []),
+      // The question in full (it is already bounded): the orchestrator
+      // answers it from this line, so a clipped one is a worse brief.
+      ...(r.question ? [`question: ${oneLine(r.question, MAX_WORKER_QUESTION_CHARS)}`] : []),
       ...(r.checks
         ? [describeChecks(r.checks, TABLE_DETAIL_CHARS, r.error)]
         : []),
@@ -972,6 +1069,27 @@ function renderStatusTable(
     ...lines,
     ...(clock === null ? [] : [clock]),
   ].join("\n");
+}
+
+/**
+ * A row's error, for the status table.
+ *
+ * Clipped to `TABLE_DETAIL_CHARS` like the rest of the row, except for
+ * a blocker (out of credit, CLI missing, key refused): there the
+ * provider's own sentence is the whole content of the row and names
+ * what to do, and a row once read `"openrouter" is out of credit: This
+ * request would exceed your available credits given y` (ATO-309). A
+ * blocker stops the fan-out, so there is one such row per delegation,
+ * and it carries its hint beside it.
+ */
+function tableErrorParts(r: WorkerTaskResult, error: string): string[] {
+  if (classifyWorkerFailure(r)?.blocker !== true) {
+    return [`error: ${oneLine(error, TABLE_DETAIL_CHARS)}`];
+  }
+  return [
+    `error: ${oneLine(error, ERROR_HEAD_CHARS)}`,
+    ...(r.hint ? [`hint: ${r.hint}`] : []),
+  ];
 }
 
 function oneLine(text: string, cap: number): string {
@@ -996,6 +1114,7 @@ function renderBlock(result: WorkerTaskResult, perTaskCap: number): string {
   const diagnosis = [
     ...(result.replacedInputs ?? []).map(describeReplacedInput),
     ...(result.hint ? [`hint: ${result.hint}`] : []),
+    ...(result.question ? [`question: ${result.question}`] : []),
     ...(result.checks
       ? [describeChecks(result.checks, ERROR_HEAD_CHARS, result.error)]
       : []),

@@ -1,6 +1,7 @@
 import type { CompletionResult, CompletionUsage } from "../completion-types.js";
 import type { ReasoningFormat } from "../llm-provider.js";
 import { createReasoningExtractor } from "./reasoning-extractor.js";
+import { readThoughtSignature } from "../gemini/gemini-thought-signature.js";
 
 export function normaliseOpenAiChatResponse(
   json: Record<string, unknown>,
@@ -10,7 +11,9 @@ export function normaliseOpenAiChatResponse(
   const choice =
     (json.choices as Array<Record<string, unknown>> | undefined)?.[0] ?? {};
   const message = (choice.message as Record<string, unknown> | undefined) ?? {};
-  const toolCalls = message.tool_calls as CompletionResult["toolCalls"];
+  const toolCalls = withThoughtSignatures(
+    message.tool_calls as CompletionResult["toolCalls"],
+  );
   const content = normaliseMessageContent(message.content);
   // Reasoning models served over OpenAI-compatible APIs return their CoT
   // in a dedicated field alongside `content` — `reasoning_content`
@@ -64,10 +67,20 @@ export function normaliseOpenAiUsage(
 ): CompletionUsage {
   const usage = raw ?? {};
   const details = usage.prompt_tokens_details;
-  const cached =
+  // Moonshot (Kimi) reports hits as a top-level `usage.cached_tokens`,
+  // and its `prompt_tokens_details` may carry only `cache_write_tokens`;
+  // a details block without a hit count must not hide the top-level one
+  // (ATO-912), or every hit is priced at the full input rate.
+  const detailsCached =
     details !== null && typeof details === "object"
       ? (details as Record<string, unknown>).cached_tokens
-      : usage.cache_read_input_tokens;
+      : undefined;
+  const cached =
+    typeof detailsCached === "number"
+      ? detailsCached
+      : typeof usage.cached_tokens === "number"
+        ? usage.cached_tokens
+        : usage.cache_read_input_tokens;
   // Kimi reports cache writes beside the hits (ATO-912); they are billed
   // at their own rate, so keep the count for the cost estimate.
   const written =
@@ -111,4 +124,19 @@ export function normaliseMessageContent(raw: unknown): string {
       .join("");
   }
   return "";
+}
+
+/**
+ * Gemini 3's thought signature, read off the raw call's
+ * `extra_content` onto `thoughtSignature` (ATO-1680). Calls without one
+ * are passed through as they came.
+ */
+function withThoughtSignatures(
+  toolCalls: CompletionResult["toolCalls"],
+): CompletionResult["toolCalls"] {
+  if (!Array.isArray(toolCalls)) return toolCalls;
+  return toolCalls.map((call) => {
+    const signature = readThoughtSignature(call);
+    return signature !== undefined ? { ...call, thoughtSignature: signature } : call;
+  });
 }

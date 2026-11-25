@@ -1,5 +1,6 @@
 import { getConfig, type AtomicAgentConfig } from "../../config/index.js";
-import type { LlmFailureContext } from "../../error-reporting/index.js";
+import type { EngineWaitVerdicts } from "../../agent/agent-contract.js";
+import type { LlmFailureContext, LlmPromptBudget, LlmTruncationCounts } from "../../error-reporting/index.js";
 import { managedPortsOf } from "../../llm/describe-llama-health-failure.js";
 import { readErrnoCode } from "../../llm/errno-code.js";
 import { readFailingLink } from "../../llm/fallback/index.js";
@@ -9,9 +10,11 @@ import {
   classifyLocalFault,
   explainManagedEngineLiveness,
   readChatDaemonPidState,
+  readEngineExitReason,
   readLogTail,
   resolveLogFilePath,
   type ChatDaemonPidState,
+  type EngineExitReason,
   type LocalFaultTag,
   type ManagedEngineLiveness,
   type ManagedEngineLivenessReport,
@@ -38,6 +41,12 @@ export interface LlmFailureContextDeps {
    * means no `localFault` is reported.
    */
   readLocalFault?: (dataDir: string) => LocalFaultTag;
+  /**
+   * Why the managed engine's process is gone, as a fixed word read from
+   * its log (ATO-1435). Asked for refused connections with the engine
+   * dead or never started only. Absent means no `engineExitReason`.
+   */
+  readEngineExitReason?: (dataDir: string) => EngineExitReason;
 }
 
 /** How much of the managed engine's log the fault tag reads. */
@@ -53,6 +62,7 @@ const defaultDeps: LlmFailureContextDeps = {
   readDaemonPidState: readChatDaemonPidState,
   explainEngineLiveness: explainManagedEngineLiveness,
   readLocalFault: readLocalFaultFromLog,
+  readEngineExitReason,
 };
 
 /**
@@ -68,13 +78,27 @@ const defaultDeps: LlmFailureContextDeps = {
  * process probe, says `unknown`).
  */
 export function describeLlmFailure(
-  event: { error: Error; outage?: { waitedMs: number; attempts: number } },
+  event: { error: Error; outage?: { waitedMs: number; attempts: number; engineVerdicts?: EngineWaitVerdicts } },
   deps: LlmFailureContextDeps = defaultDeps,
+  /** The failed turn's last built prompt, by part (ATO-1678). */
+  promptBudget?: LlmPromptBudget,
 ): LlmFailureContext {
   const context: LlmFailureContext = {};
+  // Counts only, read before any lookup below can return early.
+  if (promptBudget !== undefined) context.promptBudget = promptBudget;
+  const truncation = readTruncationCounts(event.error);
+  if (truncation !== undefined) context.truncationCounts = truncation;
   if (event.outage) {
     context.outageWaitedMs = event.outage.waitedMs;
     context.outageAttempts = event.outage.attempts;
+    // What the outage wait decided on, read when it decided (ATO-1432).
+    const verdicts = event.outage.engineVerdicts;
+    if (verdicts !== undefined) {
+      context.engineWaitVerdict = verdicts.last.state;
+      if (verdicts.last.reason !== undefined) context.engineWaitReason = verdicts.last.reason;
+      context.engineWaitFirstVerdict = verdicts.first.state;
+      if (verdicts.first.reason !== undefined) context.engineWaitFirstReason = verdicts.first.reason;
+    }
   }
   // `ECONNREFUSED`: nothing listened on the port (ATO-421). The reason the
   // turn ended (`LocalEngineDownError`) keeps the refusal on its cause.
@@ -122,6 +146,21 @@ export function describeLlmFailure(
     } catch {
       context.engineLiveness = "unknown";
     }
+    // No model process: say why it is gone, if its log does (ATO-1435).
+    // A start that never got its model up (`start_pending`, ATO-421) has
+    // no process either.
+    if (
+      (context.engineLiveness === "dead" ||
+        context.engineLiveness === "no_pid" ||
+        context.engineLivenessReason === "start_pending") &&
+      deps.readEngineExitReason !== undefined
+    ) {
+      try {
+        context.engineExitReason = deps.readEngineExitReason(config.paths.localModelsDataDir);
+      } catch {
+        context.engineExitReason = "unknown";
+      }
+    }
   } else if (connectionRefused && deps.readEngineLiveness !== undefined) {
     try {
       context.engineLiveness = deps.readEngineLiveness(config.paths.localModelsDataDir);
@@ -151,6 +190,30 @@ function readRequestUrl(error: unknown): string | undefined {
     if (typeof current !== "object" || current === null) return undefined;
     const url = (current as { url?: unknown }).url;
     if (typeof url === "string" && url.length > 0) return url;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/**
+ * The counts of a truncated reply (`ModelError.truncation`) on the error
+ * or its causes. Only the three numbers are copied, never the message.
+ */
+function readTruncationCounts(error: unknown): LlmTruncationCounts | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < MAX_URL_CAUSE_DEPTH; depth += 1) {
+    if (typeof current !== "object" || current === null) return undefined;
+    const detail = (current as { truncation?: unknown }).truncation;
+    if (typeof detail === "object" && detail !== null) {
+      const { promptTokens, completionTokens, requestedMaxTokens } = detail as Record<string, unknown>;
+      if (typeof promptTokens === "number" && typeof completionTokens === "number") {
+        return {
+          promptTokens,
+          completionTokens,
+          ...(typeof requestedMaxTokens === "number" ? { requestedMaxTokens } : {}),
+        };
+      }
+    }
     current = (current as { cause?: unknown }).cause;
   }
   return undefined;

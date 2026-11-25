@@ -17,7 +17,7 @@ import {
 const ALL_ENABLED: ToolGateSourceConfig = {
   browser: { enabled: true },
   web: { search: { enabled: true } },
-  vision: { enabled: true },
+  vision: { enabled: true, audioInput: true },
   memory: {
     profile: { enabled: true },
     notes: { enabled: true },
@@ -25,7 +25,7 @@ const ALL_ENABLED: ToolGateSourceConfig = {
     procedures: { enabled: true },
   },
   atomicMail: { address: "atag-1@atomicmail.ai" },
-  tasks: { enabled: true, agentToolsEnabled: true },
+  tasks: { enabled: true, agentToolsEnabled: true, sessionToolsEnabled: true },
   mcp: { servers: [{}] },
   llm: { runMode: { mode: "fusion" } },
   tools: { screen: { enabled: true, point: true } },
@@ -61,17 +61,32 @@ describe("listToolFamilies", () => {
 describe("effectiveToolDescriptors", () => {
   it("keeps the full catalog when every gate is open", () => {
     // Every gate open means both of them: a GitHub token in the hub and
-    // an Atomic Mail key in the environment.
+    // an Atomic Mail key in the environment. Fusion and subagents are
+    // exclusive (ATO-1670): with Fusion on, subagent.run is the one left out.
     process.env.ATOMIC_MAIL_API_KEY = "k";
     try {
       // ...and an OpenRouter key, which opens the image and video gates.
       const names = effectiveToolDescriptors(ALL_ENABLED, { ...WITH_GITHUB, OPENROUTER_API_KEY: "sk-or-test" }, "darwin").map(
         (d) => d.name,
       );
-      expect(names).toEqual(DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name));
+      expect(names).toEqual(
+        DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name).filter((n) => n !== "subagent.run"),
+      );
     } finally {
       delete process.env.ATOMIC_MAIL_API_KEY;
     }
+  });
+
+  it("lists subagent.run instead of fusion.delegate outside Fusion (ATO-1670)", () => {
+    const local = effectiveToolDescriptors(
+      { ...ALL_ENABLED, llm: { runMode: { mode: "local" } } },
+      WITH_GITHUB,
+    ).map((d) => d.name);
+    expect(local).toContain("subagent.run");
+    expect(local).not.toContain("fusion.delegate");
+    const fusion = effectiveToolDescriptors(ALL_ENABLED, WITH_GITHUB).map((d) => d.name);
+    expect(fusion).toContain("fusion.delegate");
+    expect(fusion).not.toContain("subagent.run");
   });
 
   it("drops image.generate and video.generate without an OpenRouter key", () => {

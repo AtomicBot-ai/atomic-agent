@@ -18,6 +18,7 @@ import {
 } from "../config-primitives.js";
 import { parseUrl } from "../config-values.js";
 import { parseCustomLocalModels } from "../custom-models-schema.js";
+import { parseLoraAdapters } from "./lora-adapters-parser.js";
 import { isKnownLocalModelId, type LocalModelDef } from "../../local-llm/catalog/models-catalog.js";
 import {
   BACKEND_VARIANT_PREFERENCES,
@@ -392,6 +393,11 @@ export function prepareLocalModelsInputs(
         readDefaults().managed.autoRestart,
       "localModels.managed.autoRestart",
     ),
+    promptDiskCache: parseBool(
+      rawManaged.promptDiskCache ??
+        readDefaults().managed.promptDiskCache,
+      "localModels.managed.promptDiskCache",
+    ),
     device: parseNonEmptyString(
       rawManaged.device ?? readDefaults().managed.device,
       "localModels.managed.device",
@@ -421,6 +427,8 @@ export function prepareLocalModelsInputs(
       "localModels.managed.swaFull",
     ),
   };
+  const loraAdapters = parseLoraAdapters(rawManaged.loraAdapters, "localModels.managed.loraAdapters");
+  if (loraAdapters) managed.loraAdapters = loraAdapters;
 
   const rawEmbeddings =
     (localModels.embeddings as Record<string, unknown> | undefined) ?? {};
@@ -522,6 +530,10 @@ export function parseUserLocalModelsConfig(
     drySampler: parseBool(
       localModels.drySampler ?? readDefaults().drySampler,
       "localModels.drySampler",
+    ),
+    strictToolArgs: parseBool(
+      localModels.strictToolArgs ?? readDefaults().strictToolArgs,
+      "localModels.strictToolArgs",
     ),
     managed,
     embeddings: embeddingsDaemon,

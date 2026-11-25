@@ -41,6 +41,8 @@ describe("tool roles", () => {
     for (const name of [
       "finish",
       "fusion.delegate",
+      // ATO-1670: a builder is a worker or a subagent; neither starts one.
+      "subagent.run",
       "tasks.schedule",
       "tasks.list",
       "memory.notes.store",
@@ -48,6 +50,7 @@ describe("tool roles", () => {
       "browser.navigate",
       "os.fs.trash",
       "os.fs.move",
+      "os.fs.write_pptx",
       "os.git.commit",
       "os.web.search",
       "vision.describe",
@@ -102,6 +105,8 @@ describe("tool roles", () => {
       "memory.notes.store",
       "browser.navigate",
       "tasks.schedule",
+      // Fusion hands work out with fusion.delegate (ATO-1670).
+      "subagent.run",
     ]) {
       expect(roleAdmits("orchestrator", name), name).toBe(false);
     }

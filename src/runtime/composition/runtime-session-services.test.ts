@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as configuration from "../../config/index.js";
@@ -7,7 +8,9 @@ import type { AtomicAgentConfig } from "../../config/index.js";
 import * as sessions from "../../session/index.js";
 import { SessionStore } from "../../session/session-store.js";
 import { StructuredLogger, type LogRecord } from "../../tracing/structured-logger.js";
+import { FileCheckpointStore } from "../../tools/os/fs/fs-checkpoint-store.js";
 import { createRuntimeSessionFactories, installRuntimeSessionDelete, prepareRuntimeSessionStore } from "./runtime-session-services.js";
+import { privacyVaultFor, resetPrivacyVaults } from "../../privacy/index.js";
 
 describe("runtime session phases", () => {
   let dir: string;
@@ -90,6 +93,34 @@ describe("runtime session phases", () => {
     expect(events).toEqual(["trace:one", "shell:one", "outputs:one", "store:one"]);
   });
 
+  it("delete wrapper removes the chat's file checkpoints with it (ATO-1501)", async () => {
+    const root = join(dir, "file-checkpoints");
+    const checkpoints = new FileCheckpointStore(root);
+    const file = join(dir, "notes.txt");
+    await writeFile(file, "what the file said before");
+    await checkpoints.capture("s-gone", file, "os.fs.write");
+    await checkpoints.capture("s-kept", file, "os.fs.write");
+    expect(existsSync(checkpoints.sessionDir("s-gone"))).toBe(true);
+
+    const store = { delete: (_id: string) => undefined };
+    installRuntimeSessionDelete(store, () => undefined, { endSession: () => [] }, undefined, checkpoints);
+    store.delete("s-gone");
+
+    await vi.waitFor(() => expect(existsSync(checkpoints.sessionDir("s-gone"))).toBe(false));
+    expect(existsSync(checkpoints.sessionDir("s-kept"))).toBe(true);
+  });
+
+  it("a checkpoint removal that fails never stops the delete", () => {
+    const events: string[] = [];
+    const store = { delete: (id: string) => { events.push(`store:${id}`); } };
+    installRuntimeSessionDelete(
+      store, () => undefined, { endSession: () => [] }, undefined,
+      { removeSession: () => { throw new Error("busy"); } },
+    );
+    expect(() => store.delete("one")).not.toThrow();
+    expect(events).toEqual(["store:one"]);
+  });
+
   it("delete wrapper retains failure precedence before the original deletion", () => {
     const events: string[] = [];
     const failure = new Error("trace failed");
@@ -107,7 +138,7 @@ describe("runtime session phases", () => {
     const worker = factories.createEphemeralSession({ parentSessionId: deferred.id, taskId: "task" });
     expect(deferred.metadata).toBe(metadata);
     expect(deferred.workingDir).toBe(dir);
-    expect(sessions.readFusionWorkerMeta(worker.metadata)).toEqual({ parentSessionId: deferred.id, taskId: "task" });
+    expect(sessions.readFusionWorkerMeta(worker.metadata)).toEqual({ parentSessionId: deferred.id, taskId: "task", depth: 1 });
     expect(worker.id).not.toBe(deferred.id);
     const inherited = factories.createEphemeralSession({ parentSessionId: deferred.id, taskId: "inherited" }, join(dir, "other"));
     expect(inherited.workingDir).toBe(join(dir, "other"));
@@ -119,6 +150,22 @@ describe("runtime session phases", () => {
     expect(calls).toEqual([]);
     const persistent = factories.createSession();
     expect(calls).toEqual([`save:${persistent.id}`, `trace:${persistent.id}`]);
+  });
+
+  it("a Fusion worker masks with its chat's Privacy Shield vault (ATO-1083)", () => {
+    const factories = createRuntimeSessionFactories(dir, { save: () => {} }, () => null);
+    const parent = factories.createSession({ persist: false });
+    const worker = factories.createEphemeralSession({ parentSessionId: parent.id, taskId: "t" });
+    expect(privacyVaultFor(worker.id)).toBe(privacyVaultFor(parent.id));
+    expect(privacyVaultFor(parent.id).mask("mail a@b.io")).toBe("mail [EMAIL_1]");
+    expect(privacyVaultFor(worker.id).mask("again a@b.io")).toBe("again [EMAIL_1]");
+    resetPrivacyVaults();
+  });
+
+  it("createSession starts in the folder it is given, else the launch folder (ATO-570)", () => {
+    const factories = createRuntimeSessionFactories(dir, { save: () => {} }, () => null);
+    expect(factories.createSession({ persist: false, workingDir: "/tmp/x" }).workingDir).toBe("/tmp/x");
+    expect(factories.createSession({ persist: false }).workingDir).toBe(dir);
   });
 
   it("save failure stops recorder creation and propagates the original error", () => {

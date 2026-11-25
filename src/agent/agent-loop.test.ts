@@ -10,13 +10,14 @@ import { SlotManager } from "../llm/slot-manager.js";
 import { TransportError } from "../llm/reliability/llm-failures.js";
 import { LlamaServerError } from "../llm/llama-server-client.js";
 import { SubscriptionCliNotInstalledError } from "../llm/provider/subscription-cli/subscription-cli-errors.js";
+import { DailySpendLimitError } from "../llm/reliability/spend-limit-error.js";
 import {
   humanizeOpenAiHttpError,
   OpenAiHttpError,
 } from "../llm/provider/openai/openai-http.js";
 import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-error-body.js";
 import { PARSE_RECOVERY_BUDGET } from "./parse-failure-recovery.js";
-import { EMPTY_COMPLETION_RECOVERY_BUDGET } from "./empty-completion-recovery.js";
+import { EMPTY_COMPLETION_RECOVERY_BUDGET, EMPTY_COMPLETION_RETRY_BASE_DELAY_MS } from "./empty-completion-recovery.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import type { SessionState } from "../session/session-state.js";
 import type {
@@ -1485,6 +1486,41 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(failures[0]).toContain(
       "Claude Code isn't installed (the `claude` command was not found).",
     );
+  });
+
+  it("does not wait out the daily spend ceiling, and says so (ATO-649)", async () => {
+    const registry = buildDefaultToolRegistry();
+    const waits: unknown[] = [];
+    const failures: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        throw new DailySpendLimitError({ spentUsd: 5.1, limitUsd: 5, providerId: "openrouter" });
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+        if (event.type === "loop_failed") failures.push(event.error.message);
+      },
+    });
+    const started = Date.now();
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-over-budget", workingDir }),
+      {
+        userMessage: "hi",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(waits).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(failures[0]).toContain("Daily cloud limit reached: $5.10 of $5.00");
   });
 
   it("waits out a 503, which is exactly the kind that fixes itself", async () => {
@@ -4007,6 +4043,85 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(replies[0]).toMatchObject({ text: "done" });
   });
 
+  it("waits before re-asking after a wholly empty native-tools completion (ATO-1676)", async () => {
+    // Sent back in the same instant, the re-ask reached the same busy
+    // backend that had just answered empty.
+    const registry = buildDefaultToolRegistry();
+    const calledAt: number[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        calledAt.push(Date.now());
+        return calledAt.length === 1
+          ? makeNativeCompletion()
+          : makeNativeCompletion([
+              { name: "reply", arguments: JSON.stringify({ text: "done" }) },
+            ]);
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const session = createEmptySessionState({ id: "s-empty-wait", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "go",
+      maxSteps: 5,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("reply");
+    expect(calledAt).toHaveLength(2);
+    // Timer slack: setTimeout may fire a few ms early on some hosts.
+    expect(calledAt[1]! - calledAt[0]!).toBeGreaterThanOrEqual(
+      EMPTY_COMPLETION_RETRY_BASE_DELAY_MS - 50,
+    );
+  });
+
+  it("a stop during the empty-answer wait cancels the turn without a second request (ATO-1676)", async () => {
+    const registry = buildDefaultToolRegistry();
+    const controller = new AbortController();
+    let llmCalls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        llmCalls += 1;
+        return makeNativeCompletion();
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        // The stop arrives 100 ms after the re-ask is announced, so it
+        // lands inside the 500 ms wait. Without the wait the loop would
+        // already have sent the second request by then.
+        if (event.type === "empty_completion_recovered") {
+          announcedAt = Date.now();
+          setTimeout(() => controller.abort(), 100);
+        }
+      },
+    });
+    let announcedAt = 0;
+    const session = createEmptySessionState({ id: "s-empty-wait-stop", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "go",
+      maxSteps: 5,
+      signal: controller.signal,
+    });
+    const elapsedMs = Date.now() - announcedAt;
+    expect(announcedAt).toBeGreaterThan(0);
+    expect(result.reason).toBe("cancelled");
+    expect(llmCalls).toBe(1);
+    // The stop cut the wait short instead of sitting out the full 500 ms.
+    expect(elapsedMs).toBeLessThan(EMPTY_COMPLETION_RETRY_BASE_DELAY_MS - 50);
+  });
+
   it("ends the turn on the second empty native-tools completion, saying so", async () => {
     const registry = buildDefaultToolRegistry();
     let llmCalls = 0;
@@ -4586,7 +4701,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     // off the operator has swapped the loaded model to Gemma. The
     // turn-start `/props` probe must pick that up before step 0 builds
     // its prompt.
-    const fetchProps = vi.fn<[], Promise<Record<string, unknown>>>();
+    const fetchProps = vi.fn<() => Promise<Record<string, unknown>>>();
     fetchProps.mockResolvedValue(GEMMA4_PROPS);
     const fakeLlama = { fetchProps } as unknown as LlamaServerClient;
 
@@ -4652,7 +4767,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
 
     // Turn-start probe still sees the original Qwen model — the swap
     // happens only between step 0 and step 1.
-    const fetchProps = vi.fn<[], Promise<Record<string, unknown>>>();
+    const fetchProps = vi.fn<() => Promise<Record<string, unknown>>>();
     fetchProps.mockResolvedValueOnce(QWEN3_PROPS);
     fetchProps.mockResolvedValue(GEMMA4_PROPS);
     const fakeLlama = { fetchProps } as unknown as LlamaServerClient;

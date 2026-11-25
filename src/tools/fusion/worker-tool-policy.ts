@@ -1,5 +1,6 @@
 import type { ApprovalCategory } from "../../approval/approval-level.js";
 import type { ToolRole } from "../tool-roles.js";
+import { compileToolAllowlist } from "../../agent-profiles/profile-tools.js";
 
 /**
  * What a fusion worker may and may not do.
@@ -29,6 +30,9 @@ import type { ToolRole } from "../tool-roles.js";
  */
 export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   "fusion.delegate",
+  // A subagent starts no subagents (ATO-1670). Hidden here; refused by
+  // the tool itself on the caller's session depth.
+  "subagent.run",
   "finish",
   "tasks.schedule",
   "tasks.cron",
@@ -43,15 +47,38 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   "os.screen.click",
   "os.screen.type",
   "os.screen.key",
+  "os.screen.elements",
+  "os.screen.press",
   "os.screen.point",
   // The live checklist is the operator's view of the orchestrator's
   // work (ATO-486); a worker's own list would reach nobody.
   "plan.update",
+  // Same for a canvas (ATO-1137): only the orchestrator's stream reaches
+  // the chat, so a worker's chart would be a file nobody is shown.
+  "canvas.render",
+  // Nobody watches a worker's session, so its question would reach nobody
+  // (ATO-489); the gate would refuse it anyway.
+  "ask_user",
 ]);
 
 /** `RunTurnOptions.toolFilter` for a worker turn. */
 export function isWorkerVisibleTool(name: string): boolean {
   return !WORKER_EXCLUDED_TOOLS.has(name);
+}
+
+/**
+ * The worker's `toolFilter` with a subagent profile's allowlist (ATO-566)
+ * on top: a tool must pass both, so a profile can only narrow what a
+ * worker sees, never bring back an excluded tool. No allowlist: exactly
+ * `isWorkerVisibleTool`.
+ */
+export function workerToolFilterFor(
+  allowlist: readonly string[] | undefined,
+): (name: string) => boolean {
+  const allows = compileToolAllowlist(allowlist).allows;
+  return allows === undefined
+    ? isWorkerVisibleTool
+    : (name) => isWorkerVisibleTool(name) && allows(name);
 }
 
 /**
@@ -98,6 +125,22 @@ export const FUSION_WORKER_APPROVAL_REFUSED =
  */
 export const FUSION_WORKER_APPROVAL_MARKER =
   "needs operator approval, which a worker cannot request";
+
+/**
+ * The refusal for a command a worker ran under a fan-out that went out
+ * in auto mode with nobody asked (ATO-1689). Such a fan-out covers file
+ * writes in the working directory, as the chat's own level does, not
+ * commands. The orchestrator cannot run the command either, but its next
+ * fan-out asks the user once, and that yes covers commands. Keeps
+ * `FUSION_WORKER_APPROVAL_MARKER`, so the task comes back
+ * `needs_orchestrator`.
+ */
+export const FUSION_WORKER_COMMAND_NOT_ASKED_REFUSED =
+  `this step ${FUSION_WORKER_APPROVAL_MARKER}. ` +
+  "This fan-out was sent out in auto mode without asking the user, so it covers file writes " +
+  "in the working directory, not commands or deletions. Stop retrying it and, in your reply, name the exact " +
+  "command or file and why the task needs it: when the orchestrator sends the task out again, the user " +
+  "is asked once to allow commands there.";
 
 /**
  * The stable substring of `FUSION_WORKER_OPERATOR_ONLY_REFUSED`: the

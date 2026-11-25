@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as configuration from "../../config/index.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import type { LlmStreamParams } from "../../agent/step/step-contract.js";
@@ -13,6 +16,8 @@ import { CostAccumulator } from "../../llm/provider/cost-accumulator.js";
 import { TurnUsageMeter } from "../../analytics/index.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 import { OpenAiHttpError } from "../../llm/provider/openai/openai-http.js";
+import { DailySpendStore } from "../../session/daily-spend.js";
+import { DailySpendLimitError } from "../../llm/reliability/spend-limit-error.js";
 import { connectRuntimeFallback, connectRuntimeProviders, createRuntimeModelContext, createRuntimeProviderReloads, type RuntimeProviders } from "./runtime-inference.js";
 
 function completion(modelId = "priced-model"): CompletionResult {
@@ -209,6 +214,29 @@ describe("runtime provider/context/fallback/reload phases", () => {
     expect(fixture.costAccumulator.snapshot().sessionUsd).toBeCloseTo(0.00002);
   });
 
+  it("in Fusion, an unpinned request on the orchestrator leg runs on the orchestrator's chosen model (ATO-1560)", async () => {
+    const fixture = fallback();
+    const variant = { complete: vi.fn(async () => completion("orchestrator-model")) };
+    const asked: Array<[string, string]> = [];
+    const registry = { modelVariant: async (id: string, model: string) => { asked.push([id, model]); return variant as never; } };
+    const cloud = providers.providerRegistry.getProvider("cloud");
+    if (!cloud) throw new Error("cloud fixture missing");
+    const base = vi.spyOn(cloud, "complete").mockResolvedValue(completion("cloud-model"));
+    const wired = connectRuntimeFallback({}, { ...fixture.deps, providerRegistry: registry });
+
+    // Outside Fusion the orchestrator pin is not read: the entry's model answers.
+    config.llm = { ...config.llm!, runMode: { mode: "cloud", fusion: { orchestratorModel: "orchestrator-model" } } };
+    await wired.llmComplete(params);
+    expect(asked).toEqual([]);
+    expect(base).toHaveBeenCalledTimes(1);
+
+    config.llm = { ...config.llm!, runMode: { mode: "fusion", fusion: { orchestratorProvider: "cloud", workerProvider: "local", orchestratorModel: "orchestrator-model" } } };
+    await wired.llmComplete(params);
+    expect(asked).toEqual([["cloud", "orchestrator-model"]]);
+    expect(variant.complete).toHaveBeenCalledTimes(1);
+    expect(base).toHaveBeenCalledTimes(1);
+  });
+
   // ATO-277: message_sent reads the served link from the meter.
   it("a fallover records the link that actually served, and counts it as a fallback", async () => {
     const fixture = fallback();
@@ -285,6 +313,112 @@ describe("runtime provider/context/fallback/reload phases", () => {
     expect(fixture.costAccumulator.snapshot().sessionUsd).toBeCloseTo(0.5);
   });
 
+  describe("daily spend and its ceiling (ATO-649)", () => {
+    function withDailySpend(limitUsd?: number, onDailyLimit?: "stop" | "local") {
+      config.llm = {
+        ...(config.llm ?? resolveLlmConfig(config)),
+        costTracking: {
+          enabled: false,
+          showInStatusBar: false,
+          dailyResetHourUtc: 0,
+          ...(limitUsd !== undefined ? { dailyLimitUsd: limitUsd } : {}),
+          ...(onDailyLimit !== undefined ? { onDailyLimit } : {}),
+        },
+      };
+      const dir = mkdtempSync(join(tmpdir(), "daily-spend-"));
+      const dailySpend = new DailySpendStore({ path: join(dir, "daily-spend.json") });
+      const fixture = fallback();
+      return { ...fixture, dailySpend, deps: { ...fixture.deps, dailySpend } };
+    }
+
+    it("adds a priced cloud completion to today's total", async () => {
+      const fixture = withDailySpend();
+      const served = providers.providerRegistry.getProvider("served");
+      if (!served) throw new Error("served fixture missing");
+      vi.spyOn(served, "complete").mockResolvedValue(completion());
+      const wired = connectRuntimeFallback({}, fixture.deps);
+      await wired.llmComplete({ ...params, providerId: "served" });
+      expect(fixture.dailySpend.today().usd).toBeCloseTo(0.00002);
+      expect(fixture.dailySpend.today().pricedCalls).toBe(1);
+    });
+
+    it("refuses every paid link once today's spend reached the limit, before sending", async () => {
+      const fixture = withDailySpend(1);
+      fixture.dailySpend.record({ kind: "priced", usd: 1.2, source: "provider" });
+      const cloud = providers.providerRegistry.getProvider("cloud");
+      const served = providers.providerRegistry.getProvider("served");
+      if (!cloud || !served) throw new Error("provider fixtures missing");
+      const cloudCall = vi.spyOn(cloud, "complete").mockResolvedValue(completion());
+      const servedCall = vi.spyOn(served, "complete").mockResolvedValue(completion());
+      const wired = connectRuntimeFallback({}, fixture.deps);
+      await expect(wired.llmComplete(params)).rejects.toBeInstanceOf(DailySpendLimitError);
+      expect(cloudCall).not.toHaveBeenCalled();
+      expect(servedCall).not.toHaveBeenCalled();
+    });
+
+    it("stops at the limit by default: no paid call now or on a later turn, and no move to the local link", async () => {
+      const fixture = withDailySpend(1);
+      fixture.dailySpend.record({ kind: "priced", usd: 1.2, source: "provider" });
+      const fallbackChain = new ProviderFallbackChain({
+        resolve: () => ({ chain: ["cloud", "local"], timing: DEFAULT_FALLBACK_TIMING }),
+      });
+      const cloud = providers.providerRegistry.getProvider("cloud");
+      const localLink = providers.providerRegistry.getProvider("local");
+      if (!cloud || !localLink) throw new Error("provider fixtures missing");
+      const cloudCall = vi.spyOn(cloud, "complete").mockResolvedValue(completion());
+      const localCall = vi.spyOn(localLink, "complete").mockResolvedValue(completion("local-id"));
+      const wired = connectRuntimeFallback({}, { ...fixture.deps, fallbackChain });
+      const first = await wired.llmComplete(params).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(first).toBeInstanceOf(DailySpendLimitError);
+      expect((first as DailySpendLimitError).onLimit).toBe("stop");
+      expect((first as Error).message).toContain("Daily cloud limit reached: $1.20 of $1.00");
+      expect((first as Error).message).toContain("Cloud calls are paused until tomorrow");
+      // The next turn the same day is refused the same way.
+      await expect(wired.llmComplete({ ...params, sessionId: "next-turn" })).rejects.toBeInstanceOf(
+        DailySpendLimitError,
+      );
+      expect(cloudCall).not.toHaveBeenCalled();
+      expect(localCall).not.toHaveBeenCalled();
+      expect(fallbackChain.activeOverrideFor("turn")).toBeNull();
+    });
+
+    it("onDailyLimit \"local\" moves an over-budget turn on to the local link, which answers", async () => {
+      const fixture = withDailySpend(1, "local");
+      fixture.dailySpend.record({ kind: "priced", usd: 1.2, source: "provider" });
+      const notices: string[] = [];
+      const fallbackChain = new ProviderFallbackChain({
+        resolve: () => ({ chain: ["cloud", "local"], timing: DEFAULT_FALLBACK_TIMING }),
+        noticeSink: (notice) => notices.push(`${notice.from}->${notice.to}:${notice.cause ?? ""}`),
+      });
+      const cloud = providers.providerRegistry.getProvider("cloud");
+      const localLink = providers.providerRegistry.getProvider("local");
+      if (!cloud || !localLink) throw new Error("provider fixtures missing");
+      const cloudCall = vi.spyOn(cloud, "complete").mockResolvedValue(completion());
+      vi.spyOn(localLink, "complete").mockResolvedValue({ ...completion("local-id"), content: "local answer" });
+      const wired = connectRuntimeFallback({}, { ...fixture.deps, fallbackChain });
+      await expect(wired.llmComplete(params)).resolves.toMatchObject({ content: "local answer" });
+      expect(cloudCall).not.toHaveBeenCalled();
+      expect(notices).toEqual(["cloud->local:spend-limit"]);
+    });
+
+    it("lets paid links through below the limit and with no limit set", async () => {
+      for (const limit of [5, undefined]) {
+        const fixture = withDailySpend(limit);
+        fixture.dailySpend.record({ kind: "priced", usd: 1.2, source: "provider" });
+        const served = providers.providerRegistry.getProvider("served");
+        if (!served) throw new Error("served fixture missing");
+        vi.spyOn(served, "complete").mockResolvedValue(completion());
+        const wired = connectRuntimeFallback({}, fixture.deps);
+        await expect(wired.llmComplete({ ...params, providerId: "served" })).resolves.toMatchObject({
+          content: "answer",
+        });
+      }
+    });
+  });
+
   it("a local completion without a usage block still counts its timings toward the turn, unpriced (ATO-276)", async () => {
     const fixture = fallback();
     const served = providers.providerRegistry.getProvider("served");
@@ -295,8 +429,9 @@ describe("runtime provider/context/fallback/reload phases", () => {
     const wired = connectRuntimeFallback({}, fixture.deps);
     await wired.llmComplete({ ...params, providerId: "served" });
     const snapshot = fixture.turnUsageMeter.snapshot("turn");
-    // #735 records which provider served the turn; no costUsd: unpriced.
-    expect(snapshot).toEqual({ promptTokens: 300, completionTokens: 20, cachedTokens: 100, servedProviderId: "served" });
+    // #735 records which provider served the turn; no costUsd: unpriced. The
+    // timings also give the turn its prefill/generation split and speed.
+    expect(snapshot).toEqual({ promptTokens: 300, completionTokens: 20, cachedTokens: 100, servedProviderId: "served", prefillMs: 1, genMs: 2, genTokensPerS: 10000 });
     expect(fixture.costAccumulator.snapshot().sessionUsd).toBe(0);
   });
 

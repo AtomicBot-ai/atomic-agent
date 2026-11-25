@@ -20,6 +20,10 @@ import {
 import { getCachedOpenAiCompatModelsForBaseUrl } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import { isAsciiOnly } from "../../llm/provider/openai/ascii-header-guard.js";
 import { normalizeOpenAiBaseUrl } from "../../llm/provider/openai/normalize-openai-base-url.js";
+import {
+  isOtherComputerOnNetworkUrl,
+  withAssumedScheme,
+} from "../../llm/provider/openai/network-server-address.js";
 import { openAiChatPathPrefix } from "../../llm/provider/openai/openai-chat-path.js";
 import {
   DEFAULT_OPENROUTER_BASE,
@@ -70,6 +74,9 @@ function keyLookupEntryForWizard(
   return {
     id: wizard.providerId ?? preset?.id ?? kind,
     kind,
+    // ATO-1703: the address the wizard will probe and save decides
+    // whether the OpenAI key may be read for it.
+    ...(kind === "openai-compatible" ? { baseUrl: baseUrlForWizard(wizard) } : {}),
     ...(preset ? { apiKeyEnvVar: preset.envVar } : {}),
   };
 }
@@ -92,6 +99,26 @@ function storedEntryForWizard(
 }
 
 /**
+ * `stored` moved to `baseUrl`. The loaded config already carries, as
+ * `apiKey`, whatever the environment gave the entry at its saved address;
+ * such a key is dropped and looked up again for the new address
+ * (ATO-1703), while a key saved in `config.json` itself stays.
+ */
+function retargetedEntry(
+  stored: UserLlmProviderEntry,
+  baseUrl: string,
+): UserLlmProviderEntry {
+  const { apiKey, ...rest } = stored;
+  const fromEnvironment =
+    apiKey !== undefined && apiKey === resolveLlmProviderApiKey(rest);
+  return {
+    ...rest,
+    ...(apiKey !== undefined && !fromEnvironment ? { apiKey } : {}),
+    baseUrl,
+  };
+}
+
+/**
  * Typed key wins; then the key the entry being reconfigured already has
  * (stored, or under its own env var); then a key already in the
  * environment for this kind. Same union `saveProviderWizardToConfig`
@@ -103,8 +130,14 @@ export function apiKeyForWizard(
   const typed = wizard.apiKeyBuffer.trim();
   if (typed) return typed;
   const stored = storedEntryForWizard(wizard);
+  // ATO-1703: the key is checked against the address typed now, not the one saved
+  // before: the model list and key check go to the new one.
+  const target =
+    stored && stored.kind === "openai-compatible"
+      ? retargetedEntry(stored, baseUrlForWizard(wizard))
+      : stored;
   return (
-    (stored && resolveLlmProviderApiKey(stored)) ??
+    (target && resolveLlmProviderApiKey(target)) ??
     resolveLlmProviderApiKey(keyLookupEntryForWizard(wizard))
   );
 }
@@ -142,13 +175,20 @@ export function wizardKeyIsOptional(wizard: ProvidersWizardState): boolean {
     ? findProviderPreset(wizard.presetId)
     : undefined;
   if (preset && (preset.local || preset.listsModelsWithoutKey)) return true;
+  // The key comes from the preset's command (Vertex AI's gcloud token).
+  if (preset?.apiKeyCommand) return true;
   // A hand-added compat endpoint pointing at a loopback address is a
   // local server too, even without a matching preset. A raw
   // `llama-server` on `http://127.0.0.1:9931` needs no key, so an empty
   // one is valid there. The wizard collects the base URL before the key
   // screen for this kind, so the URL is known by the time this runs.
+  // ATO-1066: so is a server on another computer on this network (a GPU
+  // box running llama-server, LM Studio or Ollama): usually keyless, and
+  // one started with a key still takes it from this screen.
   return (
-    wizard.kind === "openai-compatible" && isLoopbackBaseUrl(wizard.baseUrlLine)
+    wizard.kind === "openai-compatible" &&
+    (isLoopbackBaseUrl(wizard.baseUrlLine) ||
+      isOtherComputerOnNetworkUrl(withAssumedScheme(wizard.baseUrlLine)))
   );
 }
 
@@ -194,6 +234,29 @@ export function apiKeyPhaseError(wizard: ProvidersWizardState): string | null {
   if (wizardKeyIsOptional(wizard)) return null;
   if (apiKeyForWizard(wizard)) return null;
   return `API key required — paste the key, or set ${envHintForWizard(wizard)} in .env first`;
+}
+
+/**
+ * Why the base URL step cannot be left yet, or `null` when it can. Only a
+ * per-account preset refuses anything: its prefilled URL is a template
+ * (`https://your-resource.openai.azure.com/openai`), and saving it as is
+ * would fail every request against a host nobody owns.
+ */
+export function baseUrlPhaseError(wizard: ProvidersWizardState): string | null {
+  if (wizard.phase !== "base_url" || !wizard.presetId) return null;
+  const endpoint = findProviderPreset(wizard.presetId)?.perAccountEndpoint;
+  if (!endpoint) return null;
+  const line = wizard.baseUrlLine.trim();
+  if (!/^https?:\/\/\S+$/i.test(line)) {
+    return "Enter the full URL, starting with https://";
+  }
+  if (
+    endpoint.placeholder &&
+    line.toLowerCase().includes(endpoint.placeholder.toLowerCase())
+  ) {
+    return endpoint.hint;
+  }
+  return null;
 }
 
 /**

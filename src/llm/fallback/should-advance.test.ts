@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { ChatgptSignInRequiredError } from "../provider/subscription-oauth/oauth-errors.js";
 import { shouldAdvance } from "./should-advance.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { LlamaServerError } from "../llama-server-client.js";
@@ -13,8 +14,32 @@ import {
   SubscriptionCliAuthError,
   SubscriptionCliNotInstalledError,
 } from "../provider/subscription-cli/subscription-cli-errors.js";
+import { DailySpendLimitError } from "../reliability/spend-limit-error.js";
+import { classifyFailure } from "../reliability/classify-failure.js";
 
 describe("shouldAdvance", () => {
+  it("does not advance past the daily spend ceiling by default: the turn stops (ATO-649)", () => {
+    const err = new DailySpendLimitError({ spentUsd: 5.2, limitUsd: 5, providerId: "openrouter" });
+    expect(err.onLimit).toBe("stop");
+    expect(shouldAdvance(err)).toEqual({ advance: false, immediate: false });
+    // Wrapped by the step layer, the same answer.
+    expect(shouldAdvance(new Error("wrapped", { cause: err }))).toEqual({ advance: false, immediate: false });
+    expect(classifyFailure(err)).toBe("transport");
+    expect(err.message).toContain("Daily cloud limit reached: $5.20 of $5.00");
+    expect(err.message).toContain('onDailyLimit to "local"');
+  });
+
+  it("advances past the ceiling, not immediately, when onDailyLimit is \"local\" (ATO-649)", () => {
+    const err = new DailySpendLimitError({
+      spentUsd: 5.2,
+      limitUsd: 5,
+      providerId: "openrouter",
+      onLimit: "local",
+    });
+    expect(shouldAdvance(err)).toEqual({ advance: true, immediate: false });
+    expect(err.message).not.toContain("onDailyLimit");
+  });
+
   it("advances immediately on a cloud 429", () => {
     expect(shouldAdvance(new OpenAiHttpError("x", 429, "u"))).toEqual({
       advance: true,
@@ -86,6 +111,44 @@ describe("shouldAdvance", () => {
         }),
       ),
     ).toEqual({ advance: false, immediate: false });
+  });
+
+  it("does NOT advance on a cloud 400 that refuses a sampling setting (ATO-1218)", () => {
+    // Nadya's decision (17.11): an invalid parameter stops with a clear
+    // error; it never moves the turn to the next link.
+    expect(
+      shouldAdvance(
+        new OpenAiHttpError(
+          'openai provider 400: {"error":{"message":"invalid temperature: only 1 is allowed for this model"}}',
+          400,
+          "https://api.moonshot.ai/v1/chat/completions",
+          false,
+          null,
+          "kimi",
+        ),
+      ),
+    ).toEqual({ advance: false, immediate: false });
+    expect(
+      shouldAdvance(
+        new TransportError('"kimi" rejected the request (400).', 400, "u", {
+          cause: new OpenAiHttpError("openai provider 400: top_p must be between 0 and 1", 400, "u"),
+        }),
+      ),
+    ).toEqual({ advance: false, immediate: false });
+    expect(
+      shouldAdvance(
+        new OpenAiHttpError("openai provider 422: presence_penalty is out of range", 422, "u"),
+      ),
+    ).toEqual({ advance: false, immediate: false });
+  });
+
+  it("still advances on a 429 or 5xx that mentions temperature: the provider is down (ATO-1218)", () => {
+    expect(
+      shouldAdvance(new OpenAiHttpError("openai provider 429: invalid temperature", 429, "u")),
+    ).toEqual({ advance: true, immediate: true });
+    expect(
+      shouldAdvance(new OpenAiHttpError("openai provider 500: invalid temperature", 500, "u")),
+    ).toEqual({ advance: true, immediate: true });
   });
 
   it("still advances on any other cloud 400 — the body may be wrong for this vendor only", () => {
@@ -194,6 +257,13 @@ describe("shouldAdvance", () => {
     expect(
       shouldAdvance(new SubscriptionCliAuthError("codex", "Run /login.")),
     ).toEqual({ advance: true, immediate: false });
+  });
+
+  it("advances when the experimental ChatGPT sign-in is missing or expired (ATO-1453)", () => {
+    expect(shouldAdvance(new ChatgptSignInRequiredError("refresh_refused"))).toEqual({
+      advance: true,
+      immediate: false,
+    });
   });
 
   it("advances via threshold on a TransportError carrying null status", () => {

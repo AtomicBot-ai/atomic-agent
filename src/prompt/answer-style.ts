@@ -17,7 +17,18 @@
  */
 
 /** Surfaces that show the reply to a person, each with its own limits. */
-export type AnswerChannel = "terminal" | "desktop" | "telegram" | "discord";
+export type AnswerChannel =
+  | "terminal"
+  | "desktop"
+  | "telegram"
+  | "discord"
+  /** Slack mrkdwn: no tables, no headings (ATO-1508). */
+  | "slack"
+  /**
+   * Phone-first chat apps where markdown tables and headings do not
+   * render: iMessage, Signal, Matrix (ATO-1508).
+   */
+  | "messenger";
 
 /**
  * The surface a turn's reply is shown on, from where the turn came in.
@@ -40,6 +51,12 @@ export function answerChannelForOrigin(
       return "telegram";
     case "discord":
       return "discord";
+    case "slack":
+      return "slack";
+    case "imessage":
+    case "signal":
+    case "matrix":
+      return "messenger";
     default:
       return undefined;
   }
@@ -56,6 +73,16 @@ export const ANSWER_STYLE_HEADER = "### answer-style";
 export const TELEGRAM_REPLY_MAX_CHARS = 3500;
 /** Discord caps one message at 2000 (`DISCORD_MESSAGE_LIMIT`). */
 export const DISCORD_REPLY_MAX_CHARS = 1800;
+/**
+ * Slack takes far more per message, but past a few thousand characters
+ * a thread reply turns into a wall; same cap as Telegram.
+ */
+export const SLACK_REPLY_MAX_CHARS = 3500;
+/**
+ * iMessage and Signal split at 2000 (`IMESSAGE_CHUNK_CHARS`,
+ * `SIGNAL_MESSAGE_LIMIT`); one bubble on a phone screen reads best.
+ */
+export const MESSENGER_REPLY_MAX_CHARS = 1800;
 /** Replies longer than this many lines may use headings. */
 export const HEADINGS_MIN_LINES = 20;
 
@@ -79,6 +106,14 @@ const FULL_CHANNEL: Record<AnswerChannel, string> = {
     `Keep the reply under ${TELEGRAM_REPLY_MAX_CHARS} characters; put anything longer in a file and send it in \`attachments\`.`,
   discord:
     `Shown in Discord: no tables. Keep the reply under ${DISCORD_REPLY_MAX_CHARS} characters; put anything longer in a file and send it in \`attachments\`.`,
+  slack:
+    `Shown in Slack: no tables and no headings (they do not render); use short lists. ` +
+    `Keep the reply under ${SLACK_REPLY_MAX_CHARS} characters; put anything longer in a file and send it in \`attachments\`.`,
+  messenger:
+    // No `attachments` hint: the iMessage, Signal and Matrix adapters do
+    // not deliver reply files yet, so a body moved into a file would be lost.
+    `Shown in a phone chat app (iMessage, Signal or Matrix): no tables and no headings; short paragraphs or a short list. ` +
+    `Keep the reply under ${MESSENGER_REPLY_MAX_CHARS} characters where you can; files cannot be sent here, so keep everything in the text.`,
 };
 
 const COMPACT_CHANNEL: Record<AnswerChannel, string> = {
@@ -86,6 +121,8 @@ const COMPACT_CHANNEL: Record<AnswerChannel, string> = {
   desktop: "Desktop app: markdown is fine.",
   telegram: `Telegram: no tables, under ${TELEGRAM_REPLY_MAX_CHARS} characters.`,
   discord: `Discord: no tables, under ${DISCORD_REPLY_MAX_CHARS} characters.`,
+  slack: `Slack: no tables, under ${SLACK_REPLY_MAX_CHARS} characters.`,
+  messenger: `Chat app: no tables, under ${MESSENGER_REPLY_MAX_CHARS} characters.`,
 };
 
 export interface AnswerStyleInput {

@@ -1,13 +1,10 @@
-import type { AgentLoopEvent, RunTurnResult } from "../../agent/agent-contract.js";
-import type { ReasoningEffort } from "../../llm/provider/completion-types.js";
-import type { ApprovalGate } from "../../approval/approval-gate.js";
-import type { SessionState } from "../../session/session-state.js";
-import type { FusionWorkerMeta } from "../../session/fusion-worker-session.js";
-import type { TurnOrigin } from "../../runtime/turn-controller.js";
+import type { AgentLoopEvent } from "../../agent/agent-contract.js";
+import { FUSION_WORKER_DEFAULT_DEPTH } from "../../session/fusion-worker-session.js";
 import type { DelegateTask } from "./delegate-args.js";
-import type { DelegateContract } from "./contract.js";
-import type { CompletionUsage } from "../../llm/provider/completion-types.js";
-import type { FusionEscalationTarget } from "../../llm/run-mode/index.js";
+import {
+  readWorkerQuestion,
+  WORKER_NEEDS_INPUT_NOTE,
+} from "./worker-question.js";
 import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
 import {
   describeTrigger,
@@ -16,18 +13,15 @@ import {
   formatPersonSteer,
   renderAdvisorPrompt,
   requestAdvice,
-  type EscalationComplete,
   type EscalationTrigger,
-  type FusionLiveWorkers,
 } from "./escalation.js";
-import type { WorkerPricing } from "./worker-result.js";
 import { resolveContractInputs } from "./contract-inputs.js";
 import {
   applyDeclaredFileReport,
   applyNoChangesRule,
   inspectDeclaredFiles,
 } from "./declared-files.js";
-import type { DeclaredInputsRegistry } from "../os/fs/fs-declared-inputs.js";
+import { FusionWorkerStopError } from "./fusion-stop-errors.js";
 import {
   renderWorkerBrief,
   WORKER_REPLY_CHAR_BUDGET,
@@ -41,23 +35,36 @@ import {
   type SlotOccupancy,
   type WorkerTaskResult,
 } from "./worker-result.js";
-import type { StructuredLogger } from "../../tracing/index.js";
 import { getConfig } from "../../config/index.js";
 import {
   FUSION_WORKER_APPROVAL_REFUSED,
   WORKER_TOOL_ROLE,
-  isWorkerVisibleTool,
+  workerToolFilterFor,
   workerRefusalFor,
 } from "./worker-tool-policy.js";
-import type { ToolRole } from "../tool-roles.js";
 import { fingerprintToolOutcome } from "../../agent/progress/loop-fingerprints.js";
 import {
   LOCAL_LEG_UNRESPONSIVE_ERROR,
   LOCAL_LEG_UNRESPONSIVE_HINT,
-  type LocalHealthAnswer,
-  type LocalLegHealth,
 } from "./local-leg-health.js";
 import { hasSplitProposal, splitSteer } from "./task-tree.js";
+import { WrittenFilesTracker } from "./worker-files-written.js";
+import { estimatedOutputTokens } from "./worker-fit.js";
+import {
+  DEFAULT_WORKER_TURN_ORIGIN,
+  type FusionWorkerRunnerDepsExtras,
+  type FusionWorkerRunnerOptionsExtras,
+  type WorkerRunnerCoreDeps,
+  type WorkerRunnerCoreOptions,
+} from "./worker-runner-core.js";
+
+export {
+  DEFAULT_WORKER_TURN_ORIGIN,
+  type FusionWorkerRunnerDepsExtras,
+  type FusionWorkerRunnerOptionsExtras,
+  type WorkerRunnerCoreDeps,
+  type WorkerRunnerCoreOptions,
+} from "./worker-runner-core.js";
 
 /**
  * How many `phase: "tool"` lines one worker may put in the parent's
@@ -90,6 +97,12 @@ export function estimateWorkerTimeoutMs(input: {
   declaredFiles: number;
   tokensPerSecond: number | null | undefined;
   ceilingMs: number;
+  /**
+   * The planner's own output estimate for the task (ATO-1363). Used in
+   * place of the per-file guess when it is larger, so a task stated as
+   * big is not sized as two files; never makes the limit shorter.
+   */
+  outputTokens?: number | null;
 }): number {
   const { tokensPerSecond, ceilingMs } = input;
   if (
@@ -100,9 +113,15 @@ export function estimateWorkerTimeoutMs(input: {
   ) {
     return ceilingMs;
   }
-  const tokens =
-    input.briefChars / 4 +
+  const perFile =
     WORKER_TOKENS_PER_DECLARED_FILE * Math.max(0, input.declaredFiles);
+  const stated =
+    typeof input.outputTokens === "number" &&
+    Number.isFinite(input.outputTokens) &&
+    input.outputTokens > 0
+      ? input.outputTokens
+      : 0;
+  const tokens = input.briefChars / 4 + Math.max(perFile, stated);
   const estimateMs =
     (tokens / tokensPerSecond) * WORKER_TIMEOUT_SAFETY_FACTOR * 1000;
   const floor = Math.min(WORKER_TIMEOUT_FLOOR_MS, ceilingMs);
@@ -422,214 +441,44 @@ export function formatEarlyHandBack(input: {
   );
 }
 
-export interface WorkerRunnerDeps {
-  /** `runtime.runTurn`, unchanged. */
-  runTurn: (
-    session: SessionState,
-    userMessage: string,
-    options: {
-      origin?: TurnOrigin;
-      providerId?: string;
-      maxSteps?: number;
-      taskMaxDurationMs?: number;
-      toolFilter?: (name: string) => boolean;
-      toolRole?: ToolRole;
-      reasoningEffort?: ReasoningEffort;
-      maxOutputTokens?: number;
-      signal?: AbortSignal;
-      eventHook?: (event: AgentLoopEvent) => void;
-    },
-  ) => Promise<RunTurnResult>;
-  /** `runtime.createEphemeralSession` — in-memory, never persisted. */
-  createEphemeralSession: (meta: FusionWorkerMeta, workingDir?: string, inheritWorkspace?: boolean) => SessionState;
-  inheritWorkspace?: boolean;
-  approvals: Pick<ApprovalGate, "setSessionPolicy" | "clearSessionPolicy"> &
-    Partial<
-      Pick<
-        ApprovalGate,
-        | "fanoutScopes"
-        | "followDeclined"
-        | "clearSessionGrants"
-        | "hasDeclinedUnder"
-        | "forgetDeclinedUnder"
-        | "wouldPrompt"
-      >
-    >;
-  /**
-   * Where a worker's declared inputs (the contract's `inputs`, F51) are
-   * registered for its session so `os.fs.write` refuses to replace
-   * them. Absent (tests, embedders) declares nothing.
-   */
-  declaredInputs?: Pick<DeclaredInputsRegistry, "declare" | "clear">;
-  /** Progress into the PARENT session's frame. */
-  emitEvent: (sessionId: string, event: AgentLoopEvent) => void;
-  workingDir: string;
-  /**
-   * The local server's slot table at this moment (`GET /slots`, read by
-   * `readSlotOccupancy`), `null` when it gave no readable answer. Asked
-   * once, by a local worker's queue watchdog just before it ends the
-   * worker, so the hint on the row says what the server was doing rather
-   * than guessing from the worker count. Absent (tests, embedders, a
-   * cloud leg) nothing is probed and the hint says only what is known.
-   */
-  probeSlotOccupancy?: () => Promise<SlotOccupancy | null>;
-  /** Where a raised task budget is logged. Absent, it is only noted on the row. */
-  logger?: Pick<StructuredLogger, "info">;
-  /**
-   * The local leg's dispatch health across fan-outs (ATO-917): marked
-   * when a local worker is cut off, checked before the next local worker
-   * is sent. Absent (tests, embedders, a cloud leg) nothing is checked.
-   */
-  localLegHealth?: LocalLegHealth;
-  /** `LlamaServerClient.probeHealth`, the question the check above asks. */
-  probeLocalHealth?: () => Promise<LocalHealthAnswer>;
-  /**
-   * The probe for one local leg's own server (ATO-1318), or `undefined`
-   * when nothing can ask that server; then the check is skipped for it.
-   * When set it replaces `probeLocalHealth`, which only ever asks the
-   * main local server.
-   */
-  probeLocalHealthFor?: (
-    providerId: string,
-  ) => (() => Promise<LocalHealthAnswer>) | undefined;
-  /**
-   * One completion on the escalation provider (ATO-942). Absent, nothing
-   * is ever escalated, manual or automatic.
-   */
-  escalationComplete?: EscalationComplete;
-  /** `runtime.steer`: how an advisor's hint reaches a running worker. */
-  steerWorker?: (sessionId: string, text: string) => boolean;
-  /** Where running workers are registered for the person's stop / escalate. */
-  liveWorkers?: FusionLiveWorkers;
-  /**
-   * Replace the process's HTTP connection pool before a local worker is
-   * sent after one was cut off and the server still answered
-   * (`renewTransportPool`, ATO-1357). Returns whether it did. Absent
-   * (tests, embedders), nothing is renewed.
-   */
-  renewLocalTransport?: () => boolean;
+/**
+ * The Fusion runner's dependencies: the shared core plus Fusion's
+ * add-ons, every one of which is optional (ATO-1669,
+ * `worker-runner-core.ts`).
+ */
+export interface WorkerRunnerDeps
+  extends WorkerRunnerCoreDeps,
+    FusionWorkerRunnerDepsExtras {}
+
+/** The same type under the core/add-on naming. */
+export type FusionWorkerRunnerDeps = WorkerRunnerDeps;
+
+/**
+ * The most of a worker's brief its `started` event carries (ATO-1754).
+ * A brief is the task plus the quoted request (up to
+ * `ORIGINAL_REQUEST_CHAR_BUDGET`), the contract and the rules, so this
+ * fits every real one; a longer one is cut with a line saying so.
+ */
+export const FUSION_WORKER_BRIEF_EVENT_CHARS = 40_000;
+
+export function clipBriefForEvent(brief: string): string {
+  if (brief.length <= FUSION_WORKER_BRIEF_EVENT_CHARS) return brief;
+  return `${brief.slice(0, FUSION_WORKER_BRIEF_EVENT_CHARS)}\n\n(cut here: the brief is ${brief.length.toLocaleString("en-US")} chars; the worker received all of it.)`;
 }
 
 /** Escalations one worker may get, automatic and manual together. */
 export const MAX_ESCALATIONS_PER_WORKER = 2;
 
-export interface RunWorkerTasksOptions {
-  parentSessionId: string;
-  tasks: readonly DelegateTask[];
-  /** Concurrency ceiling, already reconciled against the slot pool. */
-  maxWorkers: number;
-  /** The local leg every worker turn is pinned to. */
-  providerId: string;
-  /**
-   * Display label for the model the workers run on, already resolved by
-   * the caller (`runMode.workerModel ?? providerId`). Resolved there
-   * rather than here because the runner has no config access and must
-   * never invent a name it cannot stand behind.
-   */
-  workerModel: string;
-  workerMaxSteps: number;
-  /**
-   * Wall-clock ceiling per worker turn. With `localTokensPerSecond` it
-   * is the ceiling of a per-task estimate (`estimateWorkerTimeoutMs`);
-   * without, it is the limit itself.
-   */
-  workerTimeoutMs: number;
-  /**
-   * The local leg's measured generation speed
-   * (`LlamaServerClient.measuredTokensPerSecond`), `null` when nothing
-   * has completed yet. Absent for a cloud leg, which keeps the ceiling.
-   */
-  localTokensPerSecond?: number | null;
-  /**
-   * The workers run on a local (slot-affine) leg. Turns on the local
-   * floors (`LOCAL_WORKER_TASK_BUDGET_FLOOR_MS`,
-   * `LOCAL_WORKER_FIRST_TOKEN_FLOOR_MS`) and the slot probe. Explicit
-   * because `localTokensPerSecond` is `null` both on a cloud leg and on
-   * a local one nothing has been measured on yet.
-   */
-  localLeg?: boolean;
-  /** `runMode.fusion.workerReasoning`, sent with every worker completion. */
-  workerReasoning?: ReasoningEffort;
-  /**
-   * `runMode.fusion.workerMaxOutputTokens`, the per-step output cap. A
-   * measured local leg may send less: what fits the worker's time
-   * (`fitReplyCapToTime`).
-   */
-  workerMaxOutputTokens?: number;
-  /**
-   * Directories these workers may write in without asking, as approved
-   * by the operator on this fan-out's own prompt. Empty means nothing
-   * was authorised — the workers then hit the refuse policy on every
-   * write, exactly as they did before the fan-out prompt existed, and
-   * the operator sees it as every task returning `needs_orchestrator`.
-   */
-  writeScope?: readonly string[];
-  /**
-   * The operator's request behind the orchestrator's turn, quoted into
-   * every worker's brief as context (`renderWorkerBrief`). Absent when
-   * the parent turn has none to give.
-   */
-  originalRequest?: string;
-  /**
-   * The fan-out's contract, rendered into every brief above the task
-   * (`renderWorkerBrief`). Checked after the fan-out by the caller.
-   */
-  contract?: DelegateContract;
-  signal: AbortSignal;
-  /**
-   * Asked before each task starts: a reason means the task is not
-   * started and comes back `cancelled` with that reason (the turn's cap,
-   * ATO-947). Absent, every task starts as before.
-   */
-  shouldStart?: () => string | undefined;
-  /**
-   * Asked only before a task starts, after `shouldStart`: the failure
-   * breaker (ATO-1406). Unlike `shouldStart` it never refuses an
-   * escalation or cuts a run already going, so running workers finish.
-   */
-  shouldStartTask?: () => string | undefined;
-  /** Every worker completion's usage, as it lands (live spend, ATO-947). */
-  onWorkerUsage?: (taskId: string, usage: CompletionUsage) => void;
-  /**
-   * Where a stuck worker may be escalated, and that model's price when
-   * known (ATO-942). Absent: no escalation of any kind.
-   */
-  escalation?: { target: FusionEscalationTarget; pricing?: WorkerPricing };
-  /** What an escalation cost, as it lands, for the turn's cap. */
-  onEscalationSpend?: (taskId: string, usd: number) => void;
-  /** The worker model's price, for the live $ on its row. Absent: tokens only. */
-  workerPricing?: WorkerPricing;
-  /**
-   * Text appended to a task's brief: its acceptance checklist and, on a
-   * judge's retry, what was found not met (ATO-944). Absent: the brief
-   * is exactly as before.
-   */
-  briefSuffix?: (taskId: string) => string | undefined;
-  /**
-   * The workspace a task runs in instead of the working directory, and
-   * the write scope rebased onto it (branch isolation, ATO-946). Absent,
-   * or `undefined` for a task: the working directory, as before.
-   */
-  taskWorkspace?: (
-    taskId: string,
-  ) => { workingDir: string; writeScope: readonly string[] } | undefined;
-  /**
-   * The task tree (ATO-940): whether this task may still propose a
-   * split. True, the half-budget hand-back and a cut first answer first
-   * steer the worker toward a `split_proposal` (once, with
-   * `SPLIT_GRACE_STEPS` more steps), and a reply that carries one skips
-   * the declared-file check: the files are its children's to write.
-   * Absent: exactly as before.
-   */
-  canProposeSplit?: (taskId: string) => boolean;
-  /**
-   * Every tool a worker starts, unthrottled (the feed's lines are capped
-   * per task). The run checkpoint (ATO-617) records side effects from it.
-   */
-  onWorkerTool?: (taskId: string, tool: string) => void;
-  /** Each task's row as soon as it is final, before the fan-out returns (ATO-617). */
-  onTaskFinished?: (result: WorkerTaskResult) => void;
-}
+/**
+ * The Fusion runner's options: the shared core plus Fusion's add-ons,
+ * every one of which is optional (ATO-1669, `worker-runner-core.ts`).
+ */
+export interface RunWorkerTasksOptions
+  extends WorkerRunnerCoreOptions,
+    FusionWorkerRunnerOptionsExtras {}
+
+/** The same type under the core/add-on naming. */
+export type FusionWorkerRunnerOptions = RunWorkerTasksOptions;
 
 /**
  * Steps a worker steered toward a split proposal gets to write one
@@ -707,6 +556,18 @@ export async function runWorkerTasks(
   return results;
 }
 
+/**
+ * The shared runner with only the core fields (ATO-1669): the same
+ * `runWorkerTasks`, typed to the core fields only; add-ons are still
+ * read if present.
+ */
+export function runWorkerTasksCore(
+  deps: WorkerRunnerCoreDeps,
+  options: WorkerRunnerCoreOptions,
+): Promise<WorkerTaskResult[]> {
+  return runWorkerTasks(deps, options);
+}
+
 async function runOneTask(
   deps: WorkerRunnerDeps,
   options: RunWorkerTasksOptions,
@@ -721,9 +582,13 @@ async function runOneTask(
   // The worker always runs in this folder (the parent's, in every model
   // mode, #1121); only an isolated or cloud worker inherits a workspace.
   const inheritWorkspace = isolated !== undefined || deps.inheritWorkspace === true;
+  // Fusion fans out only from the operator session, so every worker it
+  // spawns sits one level down (ATO-1666); a subagent run passes the
+  // depth it computed from its caller's session (ATO-1670).
   const session = deps.createEphemeralSession({
     parentSessionId: options.parentSessionId,
     taskId: task.id,
+    depth: options.depth ?? FUSION_WORKER_DEFAULT_DEPTH,
   }, workingDir, inheritWorkspace);
   // A worker that queued on the parent id would wait behind the
   // orchestrator's own turn — which is the turn calling this — and the
@@ -785,6 +650,7 @@ async function runOneTask(
       phase: "failed",
       role: "worker",
       model: options.workerModel,
+      status: refused.status,
       stepCount: 0,
       durationMs: refused.durationMs,
       summary: summarise(refused),
@@ -821,6 +687,10 @@ async function runOneTask(
   // routed by the ambient frame would be tagged with a throwaway session
   // that has no recorder, no hook and no UI, and would reach nobody.
   let announced = false;
+  // ATO-1754: what the worker was told and why it is not where it asked
+  // to run, so the operator can open a worker instead of guessing.
+  let sentBrief: string | undefined;
+  const modelNote = options.taskModelNote?.(task.id);
   const announceStart = (): void => {
     if (announced) return;
     announced = true;
@@ -832,6 +702,9 @@ async function runOneTask(
       role: "worker",
       model: options.workerModel,
       ...(task.etaSeconds === undefined ? {} : { etaSeconds: task.etaSeconds }),
+      ...(liveStepBudget === undefined ? {} : { stepBudget: liveStepBudget }),
+      ...(sentBrief === undefined ? {} : { brief: clipBriefForEvent(sentBrief) }),
+      ...(modelNote === undefined || modelNote.length === 0 ? {} : { modelNote }),
     });
   };
 
@@ -877,8 +750,15 @@ async function runOneTask(
   // What this worker has spent so far, for its row: tokens always, $
   // when the worker model is priced, escalations folded in.
   let spentTokens = 0;
+  let spentTokensOut = 0;
   let spentUsd = 0;
   let priced = options.workerPricing !== undefined;
+  // Progress for the row (ATO-1364): steps against the budget, and the
+  // distinct files written. Declared here, ahead of the budget itself,
+  // so every announcer above can read them whenever it fires.
+  let liveStepBudget: number | undefined;
+  let liveSteps = 0;
+  const filesWritten = new WrittenFilesTracker();
   const announceUsage = (contextTokens: number, spendMoved = false): void => {
     const contextMoved =
       contextTokens > 0 && contextTokens !== lastContextTokens;
@@ -893,11 +773,20 @@ async function runOneTask(
       model: options.workerModel,
       ...(lastContextTokens > 0 ? { contextTokens: lastContextTokens } : {}),
       ...(spentTokens > 0 ? { tokens: spentTokens } : {}),
+      ...(spentTokensOut > 0 ? { tokensOut: spentTokensOut } : {}),
       ...(priced ? { spentUsd } : {}),
+      ...(liveStepBudget === undefined ? {} : { stepBudget: liveStepBudget }),
+      ...(liveSteps > 0 ? { stepCount: liveSteps } : {}),
+      ...(filesWritten.count > 0 ? { filesWritten: filesWritten.count } : {}),
     });
   };
-  const addSpend = (tokens: number, usd: number | null): void => {
+  const addSpend = (
+    tokens: number,
+    usd: number | null,
+    tokensOut = 0,
+  ): void => {
     spentTokens += Math.max(0, tokens);
+    spentTokensOut += Math.max(0, tokensOut);
     if (usd !== null) {
       spentUsd += usd;
       priced = true;
@@ -914,8 +803,8 @@ async function runOneTask(
     // the orchestrator to re-send it with the path and loop.
     deps.approvals.setSessionPolicy(id, {
       onPrompt: "refuse",
-      reason: FUSION_WORKER_APPROVAL_REFUSED,
-      reasonFor: workerRefusalFor,
+      reason: options.approvalRefusal?.general ?? FUSION_WORKER_APPROVAL_REFUSED,
+      reasonFor: options.approvalRefusal?.reasonFor ?? workerRefusalFor,
       // A throwaway worktree is still the parent's project: its saved
       // rules hold here too.
       ...(isolated !== undefined ? { ruleWorkdir: deps.workingDir } : {}),
@@ -925,8 +814,11 @@ async function runOneTask(
     // worker writes unprompted. The refuse policy above still catches
     // everything else, so straying outside the scope comes back as
     // `needs_orchestrator` — a task to re-delegate, not a dead worker.
+    // Unless the level let the fan-out through with nobody asked
+    // (ATO-1689): then the worker holds no scope and runs under the
+    // standing level, like the chat it works for.
     const writeScope = isolated?.writeScope ?? options.writeScope ?? [];
-    if (writeScope.length > 0) {
+    if (writeScope.length > 0 && options.scopeApproved !== false) {
       deps.approvals.fanoutScopes?.grant(id, writeScope);
     }
     // A file the user declined on the orchestrator's turn stays declined
@@ -961,12 +853,15 @@ async function runOneTask(
       ? {}
       : { originalRequest: options.originalRequest }),
     ...(options.contract === undefined ? {} : { contract: options.contract }),
+    ...(options.scopeApproved === false ? { commandsAuthorised: false } : {}),
   })}${suffix === undefined ? "" : `\n\n${suffix}`}`;
+  sentBrief = brief;
   const declaredFiles = task.files?.length ?? 0;
   // Per-task budgets the orchestrator sized itself, clamped into what
   // this install allows. A task that asked for nothing keeps the
   // configured defaults, byte for byte as before.
   const stepBudget = clampTaskBudget(task.maxSteps, options.workerMaxSteps);
+  liveStepBudget = stepBudget.value;
   const timeBudget = clampTaskBudget(task.timeoutMs, options.workerTimeoutMs);
   // A local worker gets at least the local floor, however small a
   // number the planner sized the task with (ATO-234).
@@ -1008,6 +903,7 @@ async function runOneTask(
     declaredFiles,
     tokensPerSecond: options.localTokensPerSecond,
     ceilingMs: taskTimeMs,
+    outputTokens: estimatedOutputTokens(task),
   });
 
   // The worker's own clock, kept apart from the operator's signal: when
@@ -1165,7 +1061,10 @@ async function runOneTask(
     }
     stall = stalled;
     handBack.abort(
-      new Error("handed back early: no file written by half the budget"),
+      new FusionWorkerStopError(
+        "hand-back",
+        "handed back early: no file written by half the budget",
+      ),
     );
   };
   const handedBack = (): boolean =>
@@ -1292,7 +1191,9 @@ async function runOneTask(
       options.shouldStart?.() === undefined
     ) {
       replaceRequested = true;
-      replaceAbort.abort(new Error("replaced by the escalation model"));
+      replaceAbort.abort(
+        new FusionWorkerStopError("replaced", "replaced by the escalation model"),
+      );
     }
   };
   // The person's notes to this worker (ATO-568). They ride the same
@@ -1347,7 +1248,7 @@ async function runOneTask(
     options.parentSessionId,
     task.id,
     {
-      stop: () => stopByPerson.abort(new Error("stopped by the person")),
+      stop: () => stopByPerson.abort(new FusionWorkerStopError("person", "stopped by the person")),
       escalate: () => escalate({ kind: "manual" }),
       steer: (text) => steerByPerson(session.id, text),
     },
@@ -1356,11 +1257,12 @@ async function runOneTask(
   let result: WorkerTaskResult;
   try {
     const turn = await deps.runTurn(session, brief, {
-      origin: "fusion",
+      origin: options.origin ?? DEFAULT_WORKER_TURN_ORIGIN,
       providerId: options.providerId,
+      ...(options.turnModel === undefined ? {} : { model: options.turnModel }),
       maxSteps: stepBudget.value,
       taskMaxDurationMs: timeoutMs + queueBudgetMs,
-      toolFilter: isWorkerVisibleTool,
+      toolFilter: workerToolFilterFor(task.agentProfile?.tools),
       toolRole: WORKER_TOOL_ROLE,
       ...(options.workerReasoning === undefined
         ? {}
@@ -1394,6 +1296,8 @@ async function runOneTask(
           currentFingerprints = [];
           currentBusy = false;
           stepsFinished += 1;
+          liveSteps = stepsFinished;
+          announceUsage(0, true);
           const stalled = detectStall(steps);
           if (stalled !== undefined) {
             autoEscalate({ kind: "stall", detail: stalled });
@@ -1409,6 +1313,7 @@ async function runOneTask(
           // a batched step, so the dedupe above earns its keep.
           announceStart();
           announceTool(event.event.call.tool);
+          filesWritten.observeParsed(event.event.call, event.event.batchIndex);
           try {
             options.onWorkerTool?.(task.id, event.event.call.tool);
           } catch {
@@ -1427,12 +1332,14 @@ async function runOneTask(
               options.workerPricing === undefined
                 ? null
                 : estimateUsageCostUsd(completed.usage, options.workerPricing),
+              completed.usage.completionTokens,
             );
           } else {
             addSpend(
               (completed.timing?.promptTokens ?? 0) +
                 (completed.timing?.predictedTokens ?? 0),
               null,
+              completed.timing?.predictedTokens ?? 0,
             );
           }
           announceUsage(completed.timing?.promptTokens ?? 0, true);
@@ -1466,6 +1373,9 @@ async function runOneTask(
           const result = event.event.result;
           if (result.status === "ok" && WRITE_TOOLS.has(result.tool)) {
             wroteSomething = true;
+          }
+          if (filesWritten.observeExecuted(result, event.event.batchIndex)) {
+            announceUsage(0, true);
           }
           currentFingerprints.push(fingerprintToolOutcome(result.tool, result));
           if (result.status === "ok" && !READ_ONLY_TOOLS.has(result.tool)) {
@@ -1566,7 +1476,11 @@ async function runOneTask(
     !stopByPerson.signal.aborted
   ) {
     const replaceSession = deps.createEphemeralSession(
-      { parentSessionId: options.parentSessionId, taskId: task.id },
+      {
+        parentSessionId: options.parentSessionId,
+        taskId: task.id,
+        depth: options.depth ?? FUSION_WORKER_DEFAULT_DEPTH,
+      },
       workingDir,
       inheritWorkspace,
     );
@@ -1574,7 +1488,8 @@ async function runOneTask(
     const replaceCollector = new WorkerRunCollector();
     const capAbort = new AbortController();
     const replaceTimer = setTimeout(
-      () => capAbort.abort(new Error("time limit")),
+      () =>
+        capAbort.abort(new FusionWorkerStopError("time-limit", "time limit")),
       timeoutMs,
     );
     replaceTimer.unref?.();
@@ -1583,7 +1498,7 @@ async function runOneTask(
       options.parentSessionId,
       task.id,
       {
-        stop: () => stopByPerson.abort(new Error("stopped by the person")),
+        stop: () => stopByPerson.abort(new FusionWorkerStopError("person", "stopped by the person")),
         escalate: async () => "not escalated: the task is already running on the escalation model",
         steer: (text) => steerByPerson(replaceSession.id, text),
       },
@@ -1603,11 +1518,12 @@ async function runOneTask(
         replaceSession,
         `${brief}\n\n## Already tried\nA local worker worked on this task first and stayed stuck after advice. What it found: ${localFindings}`,
         {
-          origin: "fusion",
+          origin: options.origin ?? DEFAULT_WORKER_TURN_ORIGIN,
           providerId: target.providerId,
+          ...(target.turnModel === undefined ? {} : { model: target.turnModel }),
           maxSteps: stepBudget.value,
           taskMaxDurationMs: timeoutMs,
-          toolFilter: isWorkerVisibleTool,
+          toolFilter: workerToolFilterFor(task.agentProfile?.tools),
           toolRole: WORKER_TOOL_ROLE,
           signal: AbortSignal.any([
             options.signal,
@@ -1617,6 +1533,16 @@ async function runOneTask(
           eventHook: (event) => {
             markNoteRead(replaceSession.id, event);
             replaceCollector.observe(event);
+            if (
+              event.type === "llm_event" &&
+              event.event.type === "tool_call_executed" &&
+              filesWritten.observeExecuted(
+                event.event.result,
+                event.event.batchIndex,
+              )
+            ) {
+              announceUsage(0, true);
+            }
             // The re-run's side effects reach the checkpoint as they
             // start, like the local worker's do (ATO-1316): a crash in
             // the middle of the re-run must not offer the task as safe
@@ -1625,6 +1551,10 @@ async function runOneTask(
               event.type === "llm_event" &&
               event.event.type === "tool_call_parsed"
             ) {
+              filesWritten.observeParsed(
+                event.event.call,
+                event.event.batchIndex,
+              );
               try {
                 options.onWorkerTool?.(task.id, event.event.call.tool);
               } catch {
@@ -1646,13 +1576,16 @@ async function runOneTask(
                 event.event.completion.usage.promptTokens +
                   event.event.completion.usage.completionTokens,
                 usd,
+                event.event.completion.usage.completionTokens,
               );
               announceUsage(0, true);
               if (
                 replaceSpent >= target.maxUsd ||
                 options.shouldStart?.() !== undefined
               ) {
-                capAbort.abort(new Error("escalation cap"));
+                capAbort.abort(
+                  new FusionWorkerStopError("escalation-cap", "escalation cap"),
+                );
               }
             }
           },
@@ -1875,6 +1808,21 @@ async function runOneTask(
   // its files are its children's, and the delegate checks them on the
   // parent once they ran.
   const proposedSplit = mayPropose && hasSplitProposal(result.reply);
+  // A worker that ended its own turn on a question (ATO-945) stopped by
+  // design: it is `needs_input`, not `ok`, and its declared files are not
+  // checked, because it was told to stop before writing them.
+  const question =
+    !proposedSplit && result.status === "ok"
+      ? readWorkerQuestion(result.reply)
+      : undefined;
+  if (question !== undefined) {
+    result = {
+      ...result,
+      status: "needs_input",
+      question,
+      notes: [...(result.notes ?? []), WORKER_NEEDS_INPUT_NOTE],
+    };
+  }
   if (
     !proposedSplit &&
     task.files !== undefined &&
@@ -1894,6 +1842,11 @@ async function runOneTask(
     );
   }
 
+  // The files this worker changed, for the chat's "Changed files" card
+  // (ATO-1700): its own write results never reach the chat's stream.
+  const diffstats = filesWritten.diffstats;
+  if (diffstats.length > 0) result = { ...result, diffstats };
+
   // Keep the feed paired: a turn that died before it ever stepped never
   // reached the hook, and a bare `failed` line about a worker the
   // operator never saw start reads like a phantom.
@@ -1905,7 +1858,10 @@ async function runOneTask(
     phase: workerPhase(result),
     role: "worker",
     model: options.workerModel,
+    status: result.status,
     stepCount: result.stepCount,
+    stepBudget: stepBudget.value,
+    ...(filesWritten.count > 0 ? { filesWritten: filesWritten.count } : {}),
     durationMs: result.durationMs,
     summary: summarise(result),
   });
@@ -1923,6 +1879,11 @@ function workerPhase(
 /** One line for the operator's feed — never the whole reply. */
 function summarise(result: WorkerTaskResult): string {
   if (result.status === "needs_orchestrator") return "needs the orchestrator";
+  if (result.status === "needs_input" && result.question !== undefined) {
+    const cap = Math.min(120, WORKER_REPLY_CHAR_BUDGET);
+    const q = result.question;
+    return `asks: ${q.length > cap ? `${q.slice(0, cap)}…` : q}`;
+  }
   const text = (result.error ?? result.reply).replace(/\s+/g, " ").trim();
   if (text.length === 0) return result.status;
   const cap = Math.min(120, WORKER_REPLY_CHAR_BUDGET);

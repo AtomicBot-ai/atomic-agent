@@ -9,6 +9,9 @@ import {
 
 export type WebSearchProviderName = "duckduckgo" | "searxng" | "exa" | "brave";
 
+/** Main-content extractor `os.web.fetch` runs first on an HTML page. */
+export type WebFetchExtractorName = "readability" | "defuddle";
+
 /**
  * Tunables for `os.web.fetch` (config v38). Before v38 the tool hard-coded a
  * 30s overall budget with no connect timeout and no retries, so a single
@@ -51,9 +54,71 @@ export interface WebFetchConfig {
    * parking the agent for minutes on a header value.
    */
   retryMaxDelayMs: number;
+  /**
+   * Main-content extractor tried first on an HTML page (ATO-698). Default
+   * `"readability"` (Mozilla Readability, as before). `"defuddle"` runs
+   * Defuddle first, which keeps code blocks, math and tables in the
+   * markdown, and falls back to Readability when it finds nothing. Off by
+   * default until it has been compared on real pages. Unversioned and
+   * additive: an older file has no field and keeps Readability.
+   */
+  extractor: WebFetchExtractorName;
+  /**
+   * Step 2 of the page-read ladder (ATO-968): when curl gets a
+   * bot-protection challenge, render the page in the agent's own browser
+   * and extract from that. Default `true`. Needs `browser.enabled`; never
+   * used with `browser.connect: "user-chrome"` (the user's signed-in
+   * Chrome), and the browser domain lists apply.
+   */
+  renderWithBrowser: boolean;
+  /**
+   * Step 3: Jina Reader without a key (rate-limited by Jina) when the
+   * page is still walled. Default `false`: it sends the URL to Jina. A key
+   * in `jinaApiKeyEnv` turns Jina on by itself.
+   */
+  jinaReader: boolean;
+  /** Environment variable holding a Jina Reader key. Default `"JINA_API_KEY"`. */
+  jinaApiKeyEnv: string;
+  /**
+   * Environment variable holding a Firecrawl key; Firecrawl runs after
+   * Jina only when it is set. Default `"FIRECRAWL_API_KEY"`.
+   */
+  firecrawlApiKeyEnv: string;
+}
+
+/**
+ * Politeness and limits for `os.web.crawl` (ATO-700, ATO-970). Defaults are
+ * deliberately conservative: an agent that hammers a site gets banned, and
+ * the site owner pays for it.
+ */
+export interface WebCrawlConfig {
+  /**
+   * Smallest gap between two requests to one host, in milliseconds. A
+   * robots.txt `Crawl-delay` that asks for more wins, up to 30 seconds.
+   * Default `1000` (one request a second).
+   */
+  minDelayMs: number;
+  /** Hard cap on pages one crawl reads. A call may ask for fewer. Default `50`. */
+  maxPages: number;
+  /** Hard cap on link depth from the start page. Default `2`. */
+  maxDepth: number;
+  /**
+   * Obey robots.txt. Default `true`. Turning it off for every site is a
+   * blunt tool; `robotsExemptHosts` is the way for your own sites.
+   */
+  respectRobots: boolean;
+  /**
+   * Hosts whose robots.txt is not applied (your own sites, a staging
+   * server). Exact host names, a leading `*.` matches subdomains. Default
+   * empty. The rate limit still applies to them.
+   */
+  robotsExemptHosts: string[];
+  /** Minutes a fetched page or robots.txt is reused by later crawls. Zero disables. Default `15`. */
+  cacheTtlMinutes: number;
 }
 
 export interface WebSearchConfig {
+  /** Turns the `os.web.search` tool on. With `false` the tool is left out of the catalog and a call fails as disabled. Default `true`. */
   enabled: boolean;
   /**
    * Primary provider. The default `exa` uses its API endpoint when its
@@ -63,7 +128,9 @@ export interface WebSearchConfig {
    * key (ATO-327). Existing configs need no rewrite for that.
    */
   provider: WebSearchProviderName;
+  /** Results a search returns when the call does not ask for a number, 1 to 20. Default `8`. */
   maxResults: number;
+  /** Timeout of one search provider request, in milliseconds. Default `15000`. */
   timeoutMs: number;
   /**
    * Per-runtime result cache TTL in minutes. `0` disables caching. The cache
@@ -98,38 +165,23 @@ export interface WebSearchConfig {
    */
   fallback: WebSearchProviderName[];
   searxng: {
+    /** Base URL of the SearXNG instance the `searxng` provider queries. `null` (default) leaves SearXNG unconfigured, so the search chain skips it. */
     instanceUrl: string | null;
   };
   exa: {
+    /** Exa's keyless MCP endpoint, used when `apiKeyEnv` holds no key. Default `https://mcp.exa.ai/mcp`. */
     endpoint: string;
+    /** Exa's search API URL, used when `apiKeyEnv` holds a key. Default `https://api.exa.ai/search`. */
     apiEndpoint: string;
+    /** Name of the environment variable that holds the Exa API key. Default `EXA_API_KEY`; without a key Exa uses its rate-limited free tier. */
     apiKeyEnv: string;
   };
   brave: {
+    /** Name of the environment variable that holds the Brave Search API key. Default `BRAVE_SEARCH_API_KEY`; without a key the `brave` provider is skipped. */
     apiKeyEnv: string;
   };
 }
 
-/**
- * Declarative binding between an inbound webhook URL path and the task
- * it materialises. Per-webhook config lets operators point external
- * systems (e.g. a GitHub hook, a cron-like SaaS) at atomic-agent
- * without writing code — the HTTP layer turns each hit into a task.
- *
- * `sessionMode` drives session continuity across repeated hits:
- *  - `ephemeral`   — fresh ephemeral session per hit (default when no
- *    schedule is set; matches CLI one-shot behaviour)
- *  - `persistent`  — a single session created on the first hit and
- *    reused forever; sessionId persisted in
- *    `<stateDir>/webhook-sessions.json` keyed by webhook name
- *  - `named`       — explicit `sessionId` supplied by the operator; no
- *    persistence file, no auto-creation
- *
- * `userMessageTemplate` supports `{{body.<json.path>}}` placeholders
- * against the parsed JSON request body. `secret`, when set, is
- * matched against the `x-webhook-secret` request header in addition
- * to the global API-key check.
- */
 export function createWebSearchDefaults(): WebSearchConfig {
   return {
     enabled: true,
@@ -160,6 +212,22 @@ export function createWebFetchDefaults(): WebFetchConfig {
     maxRetries: 2,
     retryBaseDelayMs: 500,
     retryMaxDelayMs: 5_000,
+    extractor: "readability",
+    renderWithBrowser: true,
+    jinaReader: false,
+    jinaApiKeyEnv: "JINA_API_KEY",
+    firecrawlApiKeyEnv: "FIRECRAWL_API_KEY",
+  };
+}
+
+export function createWebCrawlDefaults(): WebCrawlConfig {
+  return {
+    minDelayMs: 1_000,
+    maxPages: 50,
+    maxDepth: 2,
+    respectRobots: true,
+    robotsExemptHosts: [],
+    cacheTtlMinutes: 15,
   };
 }
 
@@ -330,5 +398,88 @@ export function parseWebFetchConfig(
       raw.retryMaxDelayMs ?? readDefaults().retryMaxDelayMs,
       "web.fetch.retryMaxDelayMs",
     ),
+    extractor: parseWebFetchExtractorName(
+      raw.extractor ?? readDefaults().extractor,
+      "web.fetch.extractor",
+    ),
+    renderWithBrowser: parseBool(
+      raw.renderWithBrowser ?? readDefaults().renderWithBrowser,
+      "web.fetch.renderWithBrowser",
+    ),
+    jinaReader: parseBool(
+      raw.jinaReader ?? readDefaults().jinaReader,
+      "web.fetch.jinaReader",
+    ),
+    jinaApiKeyEnv: parseNonEmptyString(
+      raw.jinaApiKeyEnv ?? readDefaults().jinaApiKeyEnv,
+      "web.fetch.jinaApiKeyEnv",
+    ),
+    firecrawlApiKeyEnv: parseNonEmptyString(
+      raw.firecrawlApiKeyEnv ?? readDefaults().firecrawlApiKeyEnv,
+      "web.fetch.firecrawlApiKeyEnv",
+    ),
   };
+}
+
+function parseHostList(raw: unknown, field: string): string[] {
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      field,
+      `expected an array of host names, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return raw.map((entry, i) =>
+    parseNonEmptyString(entry, `${field}[${i}]`).trim().toLowerCase(),
+  );
+}
+
+export function parseWebCrawlConfig(
+  raw: Record<string, unknown>,
+  readDefaults: () => WebCrawlConfig,
+): WebCrawlConfig {
+  return {
+    minDelayMs: parseNonNegativeBoundedInt(
+      raw.minDelayMs ?? readDefaults().minDelayMs,
+      "web.crawl.minDelayMs",
+      0,
+      60_000,
+    ),
+    maxPages: parseBoundedPositiveInt(
+      raw.maxPages ?? readDefaults().maxPages,
+      "web.crawl.maxPages",
+      1,
+      500,
+    ),
+    maxDepth: parseNonNegativeBoundedInt(
+      raw.maxDepth ?? readDefaults().maxDepth,
+      "web.crawl.maxDepth",
+      0,
+      10,
+    ),
+    respectRobots: parseBool(
+      raw.respectRobots ?? readDefaults().respectRobots,
+      "web.crawl.respectRobots",
+    ),
+    robotsExemptHosts: parseHostList(
+      raw.robotsExemptHosts ?? readDefaults().robotsExemptHosts,
+      "web.crawl.robotsExemptHosts",
+    ),
+    cacheTtlMinutes: parseNonNegativeBoundedInt(
+      raw.cacheTtlMinutes ?? readDefaults().cacheTtlMinutes,
+      "web.crawl.cacheTtlMinutes",
+      0,
+      1440,
+    ),
+  };
+}
+
+export function parseWebFetchExtractorName(
+  raw: unknown,
+  field: string,
+): WebFetchExtractorName {
+  if (raw === "readability" || raw === "defuddle") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected one of readability|defuddle, got ${JSON.stringify(raw)}`,
+  );
 }

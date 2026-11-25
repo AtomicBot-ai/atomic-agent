@@ -28,6 +28,29 @@ export interface ProjectTrustRecord {
   declinedInstructions: string[];
 }
 
+/**
+ * Skill Lab settings (`skills.eval`, ATO-1101). `judgeProvider` names the
+ * configured provider (an id from `llm.providers`) that grades `judge`
+ * checks in `atomic-agent skill eval`. Unset: the active text provider,
+ * when it is a cloud one. Never a built-in paid endpoint.
+ */
+export interface SkillsEvalConfig {
+  judgeProvider?: string;
+}
+
+/**
+ * Self-learning (`skills.selfLearning`, ATO-67): after a long turn the
+ * agent reviews it in the background and may write a new skill or patch a
+ * learned one. Unversioned, additive: a file without the block reads the
+ * defaults below.
+ */
+export interface SkillsSelfLearningConfig {
+  /** After a long turn, review it in the background and save what was learned as a skill (a new SKILL.md, or a fix to a skill it used). Every change is listed by `/learn` and undone with `/learn undo <id>`. */
+  enabled: boolean;
+  /** Model steps a turn needs before it is reviewed for something to learn. */
+  minSteps: number;
+}
+
 export interface RuntimeSkillsConfig {
   cloudWorkspaces: CloudWorkspaceSkillsPolicy[];
   /** Per-folder trust answers for project skills and instruction files. Mirrors `UserConfigFile.skills.projectTrust`. */
@@ -68,21 +91,41 @@ export interface RuntimeSkillsConfig {
     browseLimit: number;
     nonSuspiciousOnly: boolean;
   };
+  /** Skill Lab settings; absent when config.json has no `skills.eval`. */
+  eval?: SkillsEvalConfig;
+  /** Self-learning (ATO-67); absent in narrow fixtures, which read the defaults. */
+  selfLearning?: SkillsSelfLearningConfig;
 }
 
 export interface UserSkillsConfig {
+  /** Per-folder skill policies keyed by canonical `workingDir`: `projectSkillsEnabled` turns that folder's project skills off, `disabled` lists skill names hidden only there. Written when a skill is toggled for a workspace; default empty. */
   cloudWorkspaces: CloudWorkspaceSkillsPolicy[];
   projectTrust: ProjectTrustRecord[];
   catalogTokenBudget: number;
   disabled: string[];
   taps: string[];
   clawhub: {
+    /** Include the ClawHub registry when browsing or searching the skill hub. With `false` no ClawHub request is made. Default `true`. */
     enabled: boolean;
+    /** Base URL of the ClawHub registry API. Default `https://clawhub.ai`. */
     apiBase: string;
+    /** Most ClawHub skills one browse or search returns. Default `100`. */
     browseLimit: number;
+    /** Ask ClawHub to leave out skills it flags as suspicious when browsing or searching. Default `true`. */
     nonSuspiciousOnly: boolean;
   };
+  /** Skill Lab settings; absent when config.json has no `skills.eval`. */
+  eval?: SkillsEvalConfig;
+  /** Self-learning (ATO-67). Optional so older literals still type-check; defaults and parsing always set it. */
+  selfLearning?: SkillsSelfLearningConfig;
 }
+
+/**
+ * Self-learning defaults (ATO-67): on, like OpenClaw's skill workshop
+ * (`autonomous.mode: "auto"`), after a turn of at least 10 model steps,
+ * the iteration count OpenClaw and Hermes review at.
+ */
+export const DEFAULT_SKILLS_SELF_LEARNING: SkillsSelfLearningConfig = { enabled: true, minSteps: 10 };
 
 /**
  * Default `skills.catalogTokenBudget`, shared by the file defaults and
@@ -222,6 +265,7 @@ export function createSkillsDefaults(): UserSkillsConfig {
       browseLimit: 100,
       nonSuspiciousOnly: true,
     },
+    selfLearning: { ...DEFAULT_SKILLS_SELF_LEARNING },
   };
 }
 
@@ -248,7 +292,37 @@ export function parseSkillsConfig(
       "skills.taps",
     ),
     clawhub: parseClawHubConfigWithDefaults(skills.clawhub, () => readDefaults().clawhub),
+    ...parseSkillsEvalConfig(skills.eval),
+    selfLearning: parseSelfLearningConfig(skills.selfLearning, readDefaults().selfLearning ?? DEFAULT_SKILLS_SELF_LEARNING),
   };
+}
+
+/** `skills.selfLearning` (unversioned, additive): missing fields take the defaults. */
+export function parseSelfLearningConfig(
+  raw: unknown,
+  defaults: SkillsSelfLearningConfig = DEFAULT_SKILLS_SELF_LEARNING,
+): SkillsSelfLearningConfig {
+  if (raw === undefined || raw === null) return { ...defaults };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError("skills.selfLearning", `expected object, got ${JSON.stringify(raw)}`);
+  }
+  const obj = raw as Record<string, unknown>;
+  return {
+    enabled: parseBool(obj.enabled ?? defaults.enabled, "skills.selfLearning.enabled"),
+    minSteps: parseBoundedPositiveInt(obj.minSteps ?? defaults.minSteps, "skills.selfLearning.minSteps", 1, 1000),
+  };
+}
+
+/** `skills.eval` (unversioned, additive): absent or `{}` leaves the key out. */
+function parseSkillsEvalConfig(raw: unknown): { eval?: SkillsEvalConfig } {
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== "object" || Array.isArray(raw)) throw new ConfigValidationError("skills.eval", "expected an object");
+  const judge = (raw as Record<string, unknown>).judgeProvider;
+  if (judge === undefined || judge === null) return {};
+  if (typeof judge !== "string" || judge.trim() === "") {
+    throw new ConfigValidationError("skills.eval.judgeProvider", `expected a provider id, got ${JSON.stringify(judge)}`);
+  }
+  return { eval: { judgeProvider: judge.trim() } };
 }
 
 function parseCloudWorkspaces(raw: unknown): CloudWorkspaceSkillsPolicy[] {

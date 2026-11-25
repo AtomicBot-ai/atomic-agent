@@ -13,6 +13,8 @@ import { classifyTestCommand } from "../progress/test-command-key.js";
 import { classifyReadResult } from "../progress/read-coverage.js";
 import { fingerprintWorkspace } from "../progress/workspace-fingerprint.js";
 import type { BatchCallInput, BatchExecutionContext, BatchLoopSignal } from "./batch-contract.js";
+import { policyCallRefusal } from "../../policy/policy-enforce.js";
+import type { EffectivePolicy } from "../../policy/policy-evaluator.js";
 /**
  * The error result a call gets instead of running when its arguments
  * are not what the model meant, or `null` when the call is clean.
@@ -61,6 +63,26 @@ export function refuseBeforeDispatch(
 }
 
 /**
+ * The error result for a call the admin policy denies (ATO-587), or
+ * `null`. Checked at dispatch so a tool that never asks the approval gate
+ * (`os.web.search`, a read-only MCP tool, `skill.view`) is still covered;
+ * a policy `ask` is the gate's job (`ApprovalGate.setOrgPolicy`).
+ */
+export function refuseByOrgPolicy(
+  call: ToolCallPayload,
+  policy: EffectivePolicy,
+): CompressedToolResult | null {
+  const reason = policyCallRefusal(policy, call.tool, call.args);
+  if (reason === null) return null;
+  return compressToolResult({
+    tool: call.tool,
+    status: "error",
+    output: reason,
+    details: { policyDenied: true },
+  });
+}
+
+/**
  * If `input` is a `skill.view` whose target name is already present in
  * `ctx.loadedSkillNames`, return a terse synthetic result so the executor
  * can skip the real invocation. The result carries NO `skillLoaded`
@@ -101,8 +123,9 @@ export function skillAlreadyLoadedResult(
 export const FINAL_STEP_REFUSAL = "final step: only reply or finish run here";
 
 /**
- * Refuse a non-terminal call on the loop's reserved final step, or one
- * outside the step's tool set (`step-tool-set.ts`). The prompt's
+ * Refuse a non-terminal call on the loop's reserved final step, one
+ * outside the step's tool set (`step-tool-set.ts`), or one the turn's
+ * `toolFilter` hides (a fusion worker's policy and profile allowlist). The prompt's
  * `### notice` already said so; this is what makes it true without
  * narrowing the tool catalog (stable-prefix bytes) for one step. A solo
  * `[reply]` never reaches this gate — terminals are split off before
@@ -131,8 +154,27 @@ export function runFinalStepGate(
       vetoResult: toolSetRefusal(input.call.tool, ctx.toolSet),
     };
   }
+  if (ctx.toolFilter !== undefined && !ctx.toolFilter(input.call.tool)) {
+    return {
+      proceed: false,
+      vetoResult: {
+        tool: input.call.tool,
+        status: "error",
+        summary: `${TOOL_FILTER_REFUSAL}: \`${input.call.tool}\` was not run`,
+        details: { tool_filter: true, tool: input.call.tool },
+        truncated: false,
+      },
+    };
+  }
   return { proceed: true };
 }
+
+/**
+ * The result a call gets when the turn's `toolFilter` hides its tool: a
+ * native-tool model can name a tool that was never in its payload, and
+ * the hidden tool must not run just because it is registered.
+ */
+export const TOOL_FILTER_REFUSAL = "this tool is not available in this turn";
 
 /**
  * Refuse a mutating call while plan mode is on.

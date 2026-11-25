@@ -17,6 +17,10 @@
     ATOMIC_AGENT_VERSION      v0.1.0               (optional: pin a tag; default: latest)
     ATOMIC_AGENT_INSTALL_DIR  path                 (default: %LOCALAPPDATA%\atomic-agent)
     ATOMIC_AGENT_NO_PATH      1                    (optional: skip user PATH update)
+    ATOMIC_AGENT_EXPECTED_SHA256  hex              (set by `atomic-agent update` from the
+                                                   release's signed SHA256SUMS)
+    ATOMIC_AGENT_INSTALL_FROM reddit               (optional: where the install link
+                                                   was found, for anonymous analytics)
 #>
 
 $ErrorActionPreference = "Stop"
@@ -37,6 +41,13 @@ try {
 $RepoDefault = "AtomicBot-ai/atomic-agent"
 $Repo = if ($env:ATOMIC_AGENT_REPO) { $env:ATOMIC_AGENT_REPO } else { $RepoDefault }
 $Version = $env:ATOMIC_AGENT_VERSION
+
+# Where the install link was found, for anonymous analytics
+# (`install_source`). `irm ... | iex` cannot see its own URL, so
+# atomicagent.io/install.ps1?from=<tag> fills in the empty value on the next
+# line before serving this script. Keep that line exactly as it is.
+$InstallFromTag = ""
+$InstallFrom = if ($env:ATOMIC_AGENT_INSTALL_FROM) { $env:ATOMIC_AGENT_INSTALL_FROM } else { $InstallFromTag }
 $InstallDir = if ($env:ATOMIC_AGENT_INSTALL_DIR) {
   $env:ATOMIC_AGENT_INSTALL_DIR
 } else {
@@ -345,6 +356,18 @@ try {
   }
   Write-Info "checksum verified"
 
+  # The .sha256 lives in the same release as the zip, so whoever can replace
+  # one can replace both. `atomic-agent update` checks the release's signed
+  # SHA256SUMS first (Node has Ed25519; Windows PowerShell 5.1 does not, so a
+  # fresh install here relies on the .sha256 alone) and passes the digest down.
+  $signedSha = $env:ATOMIC_AGENT_EXPECTED_SHA256
+  if ($signedSha) {
+    if ($actual -ne $signedSha.Trim().ToLower()) {
+      Fail "checksum mismatch for $ArchiveName against the signed SHA256SUMS`n  expected: $($signedSha.Trim().ToLower())`n  actual:   $actual"
+    }
+    Write-Info "matches the signed SHA256SUMS"
+  }
+
   # Extract into a fresh staging dir. The Windows zip stores files at its root
   # (no top-level <slug>/ wrapper), unlike the Unix tarball.
   $Stage = Join-Path $Work "stage"
@@ -444,6 +467,35 @@ function Write-InstallChannel {
 }
 
 Write-InstallChannel
+
+# Install source marker for anonymous analytics (`install_source`). The file
+# holds one word from the fixed list below and nothing else; any other value
+# is never written. The first recorded source is kept, so an update or a
+# reinstall from another link does not move the install to a new source.
+# Best effort: a failure here never fails the install.
+function Write-InstallSource {
+  try {
+    $sources = @("x", "reddit", "github", "email", "site", "discord", "hn", "youtube", "other")
+    $from = "$InstallFrom".Trim().ToLowerInvariant()
+    if ($sources -notcontains $from) { return }
+    $stateDir = if ($env:ATOMIC_AGENT_STATE_DIR) {
+      $env:ATOMIC_AGENT_STATE_DIR
+    } else {
+      Join-Path $HOME ".atomic-agent"
+    }
+    $sourceFile = Join-Path $stateDir "install-source"
+    if (Test-Path -LiteralPath $sourceFile) {
+      $existing = ([IO.File]::ReadAllText($sourceFile)).Trim().TrimStart([char]0xFEFF).ToLowerInvariant()
+      if ($sources -contains $existing) { return }
+    }
+    New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+    [IO.File]::WriteAllText($sourceFile, "$from`n", [Text.Encoding]::ASCII)
+  } catch {
+    # Analytics metadata only; ignore.
+  }
+}
+
+Write-InstallSource
 
 Add-ToUserPath $InstallDir
 

@@ -3,6 +3,8 @@ import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { LlamaServerError } from "../llama-server-client.js";
 import { TransportError } from "../reliability/llm-failures.js";
 import { isRequestSizeRejection } from "../reliability/request-size-rejection.js";
+import { isInvalidParameterRejection } from "../reliability/invalid-parameter-rejection.js";
+import { findDailySpendLimitError } from "../reliability/spend-limit-error.js";
 
 /**
  * Fallover decision for a single thrown error.
@@ -59,6 +61,16 @@ const NO: AdvanceDecision = { advance: false, immediate: false };
  * only counts toward the threshold).
  */
 export function shouldAdvance(err: unknown): AdvanceDecision {
+  // The day's spend ceiling refused this paid link before anything was
+  // sent (ATO-649). With `onDailyLimit: "stop"` (the default) no other
+  // link is tried: the turn ends saying the limit is reached. With
+  // `"local"` the next link (the local model, when the chain has one) is
+  // exactly where the turn should go. Not immediate: the breaker has
+  // nothing to learn about the provider from our own ceiling.
+  const spendLimit = findDailySpendLimitError(err);
+  if (spendLimit !== null) {
+    return spendLimit.onLimit === "local" ? { advance: true, immediate: false } : NO;
+  }
   // A 400/413 that names the reply cap or the context length is the
   // request being too big for the model, not the link being down. It is
   // deterministic on every link (the local fallback usually has the
@@ -66,6 +78,14 @@ export function shouldAdvance(err: unknown): AdvanceDecision {
   // llama-server that was not running — and from there into the outage
   // wait. Same standing as the local 400/413/422 band below.
   if (isRequestSizeRejection(err)) return NO;
+  // ATO-1218: a 400/422 that says a sampling setting we sent is invalid
+  // for the model ("invalid temperature: only 1 is allowed", "top_p must
+  // be between 0 and 1") is our request, not the provider being down.
+  // Nadya's decision (17.11): stop with the provider's own error, never a
+  // silent move to the next link (often the local model nobody picked).
+  // A provider that is really down (429 / 5xx / network) still advances
+  // below, and the switch is announced by the `provider_switched` line.
+  if (isInvalidParameterRejection(err)) return NO;
   const category = classifyFailure(err);
   if (category !== "transport" && category !== "model") {
     return NO;

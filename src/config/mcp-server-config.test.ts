@@ -158,6 +158,18 @@ describe("MCP server configuration and shared values", () => {
     expect(thrownError(() => parsedServer({ name: "github", transport: STDIO, enabledTools: "get_issue" }))).toBeInstanceOf(ConfigValidationError);
   });
 
+  it("keeps a per-server approval mode and omits it when absent or null (ATO-1134)", () => {
+    for (const approval of ["ask", "ask_writes", "auto"] as const) {
+      expect(parsedServer({ name: "github", transport: STDIO, approval }).approval).toBe(approval);
+    }
+    expect("approval" in parsedServer({ name: "github", transport: STDIO })).toBe(false);
+    expect("approval" in parsedServer({ name: "github", transport: STDIO, approval: null })).toBe(false);
+    expect(thrownError(() => parsedServer({ name: "github", transport: STDIO, approval: "never" }))).toMatchObject({
+      field: "mcp.servers[0].approval",
+      reason: 'expected one of ask|ask_writes|auto, got "never"',
+    });
+  });
+
   it("wraps an indexed parser error through the existing add-server command", () => {
     const error = thrownError(() => parseAddServerJson(JSON.stringify({
       name: "args-fixture",
@@ -233,3 +245,25 @@ describe("MCP server configuration and shared values", () => {
     });
   });
 });
+
+describe("MCP server sandbox opt-out (ATO-620)", () => {
+  it("keeps sandbox: false, omits an absent or null one, rejects a non-boolean", () => {
+    expect(parsedServer({ name: "sa", transport: STDIO, sandbox: false }).sandbox).toBe(false);
+    expect("sandbox" in parsedServer({ name: "sb", transport: STDIO })).toBe(false);
+    expect("sandbox" in parsedServer({ name: "sc", transport: STDIO, sandbox: null })).toBe(false);
+    expect(thrownError(() => parsedServer({ name: "sd", transport: STDIO, sandbox: "no" }))).toBeInstanceOf(
+      ConfigValidationError,
+    );
+    expect(parsedServer({ name: "se", transport: STDIO, sandbox: { allowDocker: true } }).sandbox).toEqual({
+      allowDocker: true,
+    });
+    expect(parsedServer({ name: "sf", transport: STDIO, sandbox: {} }).sandbox).toEqual({});
+    expect(
+      thrownError(() => parsedServer({ name: "sg", transport: STDIO, sandbox: { allowDocker: "maybe" } })),
+    ).toBeInstanceOf(ConfigValidationError);
+    expect(
+      thrownError(() => parsedServer({ name: "sh", transport: STDIO, sandbox: { network: false } })),
+    ).toBeInstanceOf(ConfigValidationError);
+  });
+});
+

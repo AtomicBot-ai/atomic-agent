@@ -5,6 +5,7 @@ import {
   refreshAimlapiChatCatalogFromApi,
 } from "../../llm/provider/aimlapi/fetch-aimlapi-chat-catalog.js";
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { describeOtherComputerUnreachable } from "../../llm/provider/openai/network-server-address.js";
 import { fetchGeminiModels } from "../../llm/provider/gemini/fetch-gemini-models.js";
 import {
   getCachedOpenRouterChatPicks,
@@ -45,6 +46,23 @@ import type { ProvidersWizardState } from "./providers-wizard-state.js";
 import type { WizardMouseRoute } from "./route-wizard-key.js";
 import { CHECKING_KEY_HINT } from "./providers-wizard-measure.js";
 import { pickListHints, renderPickList } from "./wizard-pick-list.js";
+import { BrandBadge } from "../brand/brand-badge.js";
+import { modelBrand, providerBrand } from "../brand/brand-badges.js";
+
+/**
+ * Brand badges for a pick list's rows (ATO-1635): `brandOf` is asked only
+ * for the rows on screen, so a 300-row catalog never builds 300 badges.
+ * Every row gets the slot, branded or blank, so labels share a column.
+ */
+function brandLeading(
+  ids: readonly string[],
+  brandOf: (id: string) => ReturnType<typeof modelBrand>,
+): (index: number) => ReactElement {
+  return (index) => {
+    const id = ids[index];
+    return <BrandBadge brand={id === undefined ? null : brandOf(id)} />;
+  };
+}
 
 /** Service name for headings: the preset label wins over the raw kind. */
 function providerLabelForWizard(w: ProvidersWizardState): string {
@@ -62,6 +80,10 @@ function explainModelListError(error: string, w: ProvidersWizardState): string {
   // `http <status>` leads; the provider's own sentence may follow it, and
   // a number inside that sentence is not the status.
   const status = /^http (\d{3})\b/.exec(error)?.[1];
+  // ATO-1066: a server on another computer that did not answer is about
+  // that computer (asleep, server stopped, bound to 127.0.0.1, firewall).
+  const unreachable = describeOtherComputerUnreachable(baseUrlForWizard(w), error);
+  if (unreachable) return unreachable;
   if (status === "401" || status === "403") {
     return `${service} rejected this key, check it belongs to ${service}`;
   }
@@ -267,6 +289,7 @@ function CompatChatModelStep(props: {
     return renderPickList({
       title: `Chat model — ${picks.length} ${source}`,
       options: picks.map((id) => ({ label: id })),
+      leading: brandLeading(picks, modelBrand),
       cursor: w.cursor,
       wizard: w,
       ...(props.route === undefined ? {} : { route: props.route }),
@@ -382,9 +405,14 @@ function CatalogChatModelStep(props: {
     "Esc back",
     "Esc clears search, again backs out",
   );
+  const rows = visibleRowsForPhase(w);
   return renderPickList({
     title,
-    options: visibleRowsForPhase(w),
+    options: rows,
+    leading: brandLeading(
+      rows.map((row) => row.id),
+      modelBrand,
+    ),
     cursor: w.cursor,
     wizard: w,
     ...(props.route === undefined ? {} : { route: props.route }),
@@ -425,9 +453,14 @@ export function ProvidersWizard(props: {
     w.mode === "configure" ? `configure ${w.providerId}` : "add provider";
 
   if (w.phase === "pick_kind") {
+    const kindRows = visibleKindRows(w.search);
     return renderPickList({
       title: `LLM provider — ${modeLabel}`,
-      options: visibleKindRows(w.search),
+      options: kindRows,
+      leading: brandLeading(
+        kindRows.map((row) => row.id),
+        providerBrand,
+      ),
       cursor: w.cursor,
       wizard: w,
       ...route,
@@ -498,9 +531,14 @@ export function ProvidersWizard(props: {
       "Esc back",
       "Esc clears search, again backs out",
     );
+    const embeddingRows = visibleRowsForPhase(w);
     return renderPickList({
       title: "Embedding backend",
-      options: visibleRowsForPhase(w),
+      options: embeddingRows,
+      leading: brandLeading(
+        embeddingRows.map((row) => row.id),
+        modelBrand,
+      ),
       cursor: w.cursor,
       wizard: w,
       ...route,
@@ -513,11 +551,19 @@ export function ProvidersWizard(props: {
   }
 
   if (w.phase === "base_url") {
+    // A per-account preset (Azure, Bedrock) says what to change in its
+    // prefilled template; every other URL step keeps the plain hint.
+    const endpointHint = w.presetId
+      ? findProviderPreset(w.presetId)?.perAccountEndpoint?.hint
+      : undefined;
     return renderLineField({
       title: "API base URL",
       value: w.baseUrlLine,
       placeholder: OPENAI_COMPAT_DEFAULT_BASE_URL,
-      hint: "Enter to continue · Esc back",
+      // ATO-1066: a model on another computer is this row too.
+      hint: endpointHint
+        ? `${endpointHint} · Enter to continue · Esc back`
+        : "Enter to continue · Esc back · another computer: its address, e.g. 192.168.1.20:8080",
       error: w.error,
     });
   }

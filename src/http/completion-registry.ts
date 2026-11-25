@@ -35,6 +35,19 @@ export class CompletionRegistry {
     return this.entries.has(completionId);
   }
 
+  /**
+   * Whether a streamed completion is still open on this session. A goal
+   * run (ATO-1040) holds its one completion across every round, while the
+   * turn controller is idle between them (the judge's call), so this is
+   * how a route tells "the goal is between rounds" from "nothing runs".
+   */
+  hasSession(sessionId: string): boolean {
+    for (const entry of this.entries.values()) {
+      if (entry.sessionId === sessionId) return true;
+    }
+    return false;
+  }
+
   size(): number {
     return this.entries.size;
   }

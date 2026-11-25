@@ -1,4 +1,5 @@
 import type { ToolCallBatch } from "../../llm/grammar/tool-call-grammar.js";
+import { completionDefectLogFields } from "./completion-defect-log.js";
 import type { StepDependencies, StepContext, LlmStreamParams } from "./step-contract.js";
 import type { CompletionResult } from "../../llm/llama-server-client.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
@@ -808,6 +809,7 @@ export function finishStepRepair(
       sessionId: ctx.session.id,
       stepIndex: ctx.stepIndex,
       reason: retryModelFailure.reason,
+      ...completionDefectLogFields(completion, prompt),
     });
     throw new ModelError(
       retryModelFailure.reason,

@@ -5,12 +5,18 @@ import { compressToolResult } from "../../../compressor/result-compressor.js";
 import { resolveUserPath } from "../expand-home.js";
 import { categorizeFsMutation } from "./fs-approval-scope.js";
 import { checkChangedFile } from "./fs-content-check.js";
+import { writeDiffStat } from "./fs-diffstat.js";
 import {
   checkInputReplacement,
   refuseInputReplacement,
 } from "./fs-input-guard.js";
 import { refuseMaskedSecretWrite } from "./fs-masked-secret-guard.js";
-import { PARSE_CHECK_MAX_CHARS, withParseWarning } from "./fs-parse-check.js";
+import {
+  displayPath,
+  PARSE_CHECK_MAX_CHARS,
+  withParseWarning,
+} from "./fs-parse-check.js";
+import { joinWarnings, type LspDiagnostics } from "./lsp/index.js";
 import {
   NO_REPLACE_NOTE,
   countLines,
@@ -32,7 +38,7 @@ import {
   requireFsApproval,
   type FsDangerousToolOptions,
 } from "./fs-require-approval.js";
-import type { ToolDefinition } from "../../tool-registry.js";
+import type { ToolContext, ToolDefinition } from "../../tool-registry.js";
 
 /**
  * How many times one write may be retargeted from the approval prompt
@@ -187,8 +193,19 @@ export function buildOsFsWriteTool(
         mode,
         content,
         ctx.workingDir,
+        prior,
+        options.lspDiagnostics,
+        ctx,
       );
       const linesAfter = countLines(content);
+      // Lines added/removed for a host's "Changed files" card (ATO-1187).
+      // In `details` only, which the prompt never renders.
+      const diffstat = writeDiffStat({
+        mode,
+        existed: prior !== null,
+        priorText: prior?.content?.toString("utf8") ?? null,
+        content,
+      });
       // The path is echoed in `output` (not just `details`) so a model
       // that had its target moved reads where the file actually landed
       // and keeps working against the right path.
@@ -214,6 +231,7 @@ export function buildOsFsWriteTool(
                 ? {}
                 : { previousLines: prior.lines }),
               ...(target === absolute ? {} : { requestedPath: absolute }),
+              ...(diffstat === null ? {} : { diffstat }),
             },
           }),
           parseWarning,
@@ -272,6 +290,9 @@ async function parseWarningAfterWrite(
   mode: "append" | "replace",
   content: string,
   workingDir: string,
+  prior: PriorFile | null,
+  lsp: Pick<LspDiagnostics, "diagnoseChange"> | undefined,
+  ctx: Pick<ToolContext, "sessionId" | "signal">,
 ): Promise<string | null> {
   try {
     let written = content;
@@ -279,12 +300,26 @@ async function parseWarningAfterWrite(
       if ((await stat(target)).size > PARSE_CHECK_MAX_CHARS) return null;
       written = await readFile(target, "utf8");
     }
-    return checkChangedFile({
+    const parse = checkChangedFile({
       absolute: target,
       workingDir,
       change: "write",
       after: written,
     });
+    // Language-server errors are judged against the file as it was, so
+    // rewriting a file that already had errors reports only new ones.
+    const before = prior?.content?.toString("utf8");
+    const fromLsp =
+      (await lsp?.diagnoseChange({
+        absolute: target,
+        display: displayPath(target, workingDir),
+        change: "write",
+        after: written,
+        sessionId: ctx.sessionId,
+        signal: ctx.signal,
+        ...(before === undefined ? {} : { before }),
+      })) ?? null;
+    return joinWarnings(parse, fromLsp);
   } catch {
     return null;
   }

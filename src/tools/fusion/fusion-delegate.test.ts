@@ -19,6 +19,7 @@ import { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { ToolContext } from "../tool-registry.js";
 import {
   buildFusionDelegateTool,
+  fanoutQuietUnderLevel,
   scopeInsideStateDir,
   type FusionDelegateDeps,
 } from "./fusion-delegate.js";
@@ -124,22 +125,39 @@ describe("fusion.delegate", () => {
     expect(create.mock.calls[0]?.[2]).toBe(true);
   });
 
-  it("runs a local worker in the parent's folder without inheriting a workspace (issue #1121)", async () => {
+  it("runs a local worker in the parent's folder, with that folder's workspace once the folder changed (issue #1121, ATO-1601)", async () => {
     // The real factory: bootstrap folder /boot, parent switched live to /selected.
     const factories = createRuntimeSessionFactories("/boot", { save: () => {} }, () => null);
     const create = vi.fn(factories.createEphemeralSession);
     const runTurn = vi.fn(async (session: SessionState) => {
       expect(session.workingDir).toBe("/selected");
-      expect(session.inheritedWorkspace).toBeUndefined();
+      // The startup folder's skill registry is the wrong one here; the
+      // worker builds its own view of /selected (skills only on a local leg).
+      expect(session.inheritedWorkspace).toBe(true);
       return turnResult({ session });
     });
     const result = await buildFusionDelegateTool(deps({ createEphemeralSession: create, runTurn, workingDir: "/boot" })).run(
       { tasks: [TASKS[0]!] }, ctx({ workingDir: "/selected", modelMode: "local" }));
     expect(result.status).toBe("ok");
     expect(create.mock.calls[0]?.[1]).toBe("/selected");
-    expect(create.mock.calls[0]?.[2]).toBe(false);
+    expect(create.mock.calls[0]?.[2]).toBe(true);
     expect(runTurn).toHaveBeenCalledOnce();
   });
+
+  it("runs a local worker in the startup folder without inheriting a workspace (issue #1121)", async () => {
+    const factories = createRuntimeSessionFactories("/boot", { save: () => {} }, () => null);
+    const create = vi.fn(factories.createEphemeralSession);
+    const runTurn = vi.fn(async (session: SessionState) => {
+      expect(session.workingDir).toBe("/boot");
+      expect(session.inheritedWorkspace).toBeUndefined();
+      return turnResult({ session });
+    });
+    const result = await buildFusionDelegateTool(deps({ createEphemeralSession: create, runTurn, workingDir: "/boot" })).run(
+      { tasks: [TASKS[0]!] }, ctx({ workingDir: "/boot", modelMode: "local" }));
+    expect(result.status).toBe("ok");
+    expect(create.mock.calls[0]?.[2]).toBe(false);
+  });
+
   it("is not readonly and carries its own name", () => {
     const tool = buildFusionDelegateTool(deps());
     expect(tool.name).toBe("fusion.delegate");
@@ -746,6 +764,64 @@ describe("fusion.delegate", () => {
     expect(result.details.outcome).toBe("all_ok");
   });
 
+  it("sums the files every worker changed into details.diffstats, one row per path (ATO-1700)", async () => {
+    // Discord, 21.11: after a fan-out the desktop showed no "Changed
+    // files" card, because the workers' write results never reach the
+    // chat's stream.
+    const edit = (path: string, added: number, removed: number, tool = "os.fs.edit", status: "ok" | "error" = "ok") => ({
+      type: "llm_event" as const,
+      event: {
+        type: "tool_call_executed" as const,
+        result: {
+          tool,
+          status,
+          summary: `edited ${path}`,
+          details: { path, diffstat: { added, removed } },
+          truncated: false,
+        },
+        batchIndex: 0,
+        batchSize: 1,
+      },
+    });
+    const tool = buildFusionDelegateTool(
+      deps({
+        runTurn: async (session, _message, options) => {
+          if (session.id.endsWith("1")) {
+            options.eventHook?.(edit("/repo/shared.ts", 3, 1));
+            options.eventHook?.(edit("/repo/one.md", 10, 0, "os.fs.write"));
+          } else {
+            options.eventHook?.(edit("/repo/shared.ts", 2, 2));
+            options.eventHook?.(edit("/repo/failed.ts", 7, 0, "os.fs.edit", "error"));
+            options.eventHook?.(edit("/repo/ran.txt", 1, 0, "os.shell.run"));
+          }
+          options.eventHook?.({
+            type: "llm_event",
+            event: { type: "assistant_reply", text: "done" },
+          });
+          return turnResult();
+        },
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(result.status).toBe("ok");
+    expect(result.details.diffstats).toEqual([
+      { path: "/repo/shared.ts", added: 5, removed: 3 },
+      { path: "/repo/one.md", added: 10, removed: 0 },
+    ]);
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows[0]?.diffstats).toEqual([
+      { path: "/repo/shared.ts", added: 3, removed: 1 },
+      { path: "/repo/one.md", added: 10, removed: 0 },
+    ]);
+    // The model reads the summary, never the list.
+    expect(result.summary).not.toContain("diffstats");
+  });
+
+  it("leaves details.diffstats out when no worker changed a file (ATO-1700)", async () => {
+    const result = await buildFusionDelegateTool(deps()).run({ tasks: TASKS }, ctx());
+    expect(result.details).not.toHaveProperty("diffstats");
+  });
+
   it("carries a worker's replaced input into the head line, the row and details.tasks (F43)", async () => {
     // Live, 2026-09-15: the worker's write result warned that it had
     // replaced the user's 2,401-row `sales.csv`; the orchestrator saw
@@ -1194,6 +1270,102 @@ describe("fusion.delegate", () => {
       }
     });
 
+    it("calls a provide's example after the fan-out and fails its producer on a mismatch (ATO-1362)", async () => {
+      const dir = fixture();
+      try {
+        writeFileSync(join(dir, "js", "phys.js"), "export const PHYS = {};");
+        const runChecks = vi.fn(
+          async (specs: readonly Record<string, unknown>[]) => ({
+            ok: false,
+            results: specs.map((spec) =>
+              Array.isArray(spec.args) && spec.args[0] === "--input-type=module"
+                ? {
+                    ok: false,
+                    summary:
+                      'verify.run command: FAILED\nexample: expect was false for r = [{"o":{"x":9}}]',
+                  }
+                : { ok: true, summary: "exit 0" },
+            ),
+          }),
+        );
+        const tool = buildFusionDelegateTool(deps({ workingDir: dir, runChecks }));
+        const result = await tool.run(
+          {
+            tasks: TASKS,
+            contract: {
+              provides: [
+                {
+                  task: "t1",
+                  kind: "symbol",
+                  name: "PHYS",
+                  in: "js/phys.js",
+                  shape: "corners(b) -> [{w: world point, o: local offset}]",
+                  example: {
+                    call: "PHYS.corners({x:10,y:10,w:2,h:2,a:0})",
+                    expect: "r.every(c => Math.abs(c.w.x - 10) <= 1)",
+                  },
+                },
+              ],
+              requires: [{ task: "t2", name: "PHYS" }],
+              checks: [{ task: "t2", kind: "command", cmd: "node", args: ["--check", "js/phys.js"] }],
+            },
+          },
+          ctx({ workingDir: dir }),
+        );
+        // The declared check first, then the example — one runner call.
+        expect(runChecks).toHaveBeenCalledTimes(1);
+        const specs = runChecks.mock.calls[0]![0];
+        expect(specs).toHaveLength(2);
+        expect(specs[0]).toEqual({ kind: "command", cmd: "node", args: ["--check", "js/phys.js"] });
+        expect(specs[1]).toMatchObject({ kind: "command", cmd: "node" });
+        const rows = result.details.tasks as WorkerTaskResult[];
+        expect(rows.map((r) => r.status)).toEqual(["failed", "ok"]);
+        expect(rows[0]!.error).toMatch(/^checks: .*expect was false/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("runs only the old name checks, with no failure and no warning, for a contract with no shape or example (ATO-1362)", async () => {
+      const dir = fixture();
+      try {
+        writeFileSync(join(dir, "js", "phys.js"), "export const PHYS = {};");
+        const runChecks = vi.fn(
+          async (specs: readonly Record<string, unknown>[]) => ({
+            ok: true,
+            results: specs.map(() => ({ ok: true, summary: "exit 0" })),
+          }),
+        );
+        const tool = buildFusionDelegateTool(deps({ workingDir: dir, runChecks }));
+        const result = await tool.run(
+          {
+            tasks: TASKS,
+            contract: {
+              provides: [{ task: "t1", kind: "symbol", name: "PHYS", in: "js/phys.js" }],
+              requires: [{ task: "t2", name: "PHYS" }],
+              checks: [{ task: "t2", kind: "command", cmd: "node", args: ["--check", "js/phys.js"] }],
+            },
+          },
+          ctx({ workingDir: dir }),
+        );
+        // Exactly the declared spec: no extra example run.
+        expect(runChecks).toHaveBeenCalledTimes(1);
+        expect(runChecks.mock.calls[0]![0]).toEqual([
+          { kind: "command", cmd: "node", args: ["--check", "js/phys.js"] },
+        ]);
+        const rows = result.details.tasks as WorkerTaskResult[];
+        expect(rows.map((r) => r.status)).toEqual(["ok", "ok"]);
+        expect(rows.every((r) => r.error === undefined)).toBe(true);
+        // The name check ran and passed; nothing about a missing shape or example.
+        const report = result.details.contract as { findings: { present: boolean }[]; warnings?: string[] };
+        expect(report.findings).toEqual([expect.objectContaining({ name: "PHYS", present: true })]);
+        expect(report.warnings ?? []).toEqual([]);
+        expect(result.summary).not.toMatch(/shape|example/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     it("does not accuse cancelled tasks of missing their provides", async () => {
       // Live, run2-attempt0: a 34.5-minute fan-out ended `all_failed`
       // with every task cancelled — three of them after 0 steps — and
@@ -1377,7 +1549,12 @@ describe("fusion.delegate", () => {
         // is pinning.
         ({ durationMs: _ms, queueWaitMs: _q, ...row }) => row,
       );
-      expect(result.summary).toMatchInlineSnapshot(`
+      // The critical-path line (ATO-1586) closes every fan-out; it is
+      // built from those wall-clock readings, so it is checked by shape.
+      const pathLine =
+        /\nCritical path \d+s \(tasks t[12]\), total work \d+s, idle local slot \d+s\.$/;
+      expect(result.summary).toMatch(pathLine);
+      expect(result.summary.replace(pathLine, "")).toMatchInlineSnapshot(`
         "2 tasks: 2 ok
         - [t1] ok — One
         - [t2] ok — Two
@@ -1388,7 +1565,9 @@ describe("fusion.delegate", () => {
         (the worker produced no reply)"
       `);
       expect(result.details).not.toHaveProperty("waves");
-      expect({ ...result.details, tasks: rows }).toMatchInlineSnapshot(`
+      const { criticalPath, ...details } = result.details;
+      expect(criticalPath).toMatchObject({ tasks: [expect.stringMatching(/^t[12]$/)] });
+      expect({ ...details, tasks: rows }).toMatchInlineSnapshot(`
         {
           "maxWorkers": 2,
           "outcome": "all_ok",
@@ -1750,6 +1929,43 @@ describe("fusion.delegate models by role (ATO-943)", () => {
     expect(rows[3]).toMatchObject({ model: "sonnet" });
   });
 
+  it("asks each leg's provider for its turn model on the wire (ATO-1560)", async () => {
+    const asked = new Map<string, string | undefined>();
+    const withTurns: NonNullable<ResolvedRunMode["roles"]> = {
+      ...roles,
+      byRole: {
+        ...roles.byRole,
+        build: { providerId: "or-coder", model: "qwen-coder", turnModel: "qwen/qwen3-coder", local: false },
+      },
+    };
+    const result = await buildFusionDelegateTool(
+      deps({
+        resolveRunMode: () => fusionMode({ roles: withTurns, workerTurnModel: "qwen3.8-27b" }),
+        workerSupportsSlotAffinity: affine,
+        runTurn: async (session, _msg, options) => {
+          const meta = session.metadata?.fusionWorker as { taskId: string };
+          asked.set(meta.taskId, options.model);
+          return turnResult();
+        },
+      }),
+    ).run(
+      {
+        tasks: [
+          { id: "b", instructions: "build it", role: "build" },
+          { id: "d", instructions: "plain" },
+          { id: "r", instructions: "check", role: "review" },
+        ],
+      },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(Object.fromEntries(asked)).toEqual({
+      b: "qwen/qwen3-coder",
+      d: "qwen3.8-27b",
+      r: undefined,
+    });
+  });
+
   it("refuses a model that is not on the allowed list before any worker starts", async () => {
     const runTurn = vi.fn(async () => turnResult());
     const result = await buildFusionDelegateTool(
@@ -1972,5 +2188,467 @@ describe("scopeInsideStateDir (ATO-1267)", () => {
 
   it("checks nothing when no state directory is known", () => {
     expect(scopeInsideStateDir(["/home/u/.atomic-agent"], undefined)).toEqual([]);
+  });
+});
+
+describe("fusion.delegate — outcome log (ATO-949)", () => {
+  it("logs one row per finished task, counts and labels only", async () => {
+    const append = vi.fn();
+    const tool = buildFusionDelegateTool(deps({ outcomeLog: { append } }));
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(result.status).toBe("ok");
+    expect(append).toHaveBeenCalledTimes(2);
+    const rows = append.mock.calls.map((c) => c[0]);
+    for (const row of rows) {
+      expect(row).toMatchObject({ leg: "local", model: "small", size: "small", costUsd: null });
+      expect(JSON.stringify(row)).not.toMatch(/Do one|Do two|One|Two|t1|t2/);
+    }
+  });
+
+  it("calls a cloud leg cloud", async () => {
+    const append = vi.fn();
+    const tool = buildFusionDelegateTool(
+      deps({ outcomeLog: { append }, workerSupportsSlotAffinity: () => false }),
+    );
+    await tool.run({ tasks: [TASKS[0]!] }, ctx());
+    expect(append.mock.calls[0]?.[0]).toMatchObject({ leg: "cloud" });
+  });
+});
+
+describe("fusion.delegate — output estimate vs the worker's limit (ATO-1363)", () => {
+  // Fixture: workerTimeoutMs 60 s, so the longest a task may ask for is
+  // 4 min; a local leg measured at 5 tok/s.
+  const measured = (over: Partial<FusionDelegateDeps> = {}) =>
+    deps({ localTokensPerSecond: () => 5, ...over });
+
+  it("dispatches a task no allowed limit could hold, with a warning and a planner note, never a worker-fit refusal", async () => {
+    const runTurn = vi.fn(async () => turnResult());
+    // 2,000 tokens at 5 tok/s = 6m40s even alone, over the 4 min max.
+    const result = await buildFusionDelegateTool(measured({ runTurn })).run(
+      { tasks: [{ id: "huge", instructions: "Write it all", outputTokens: 2_000 }] },
+      ctx(),
+    );
+    expect(runTurn).toHaveBeenCalledOnce();
+    expect(result.status).toBe("ok");
+    expect(result.details.reason).not.toBe("worker-fit");
+    expect(result.details.oversizedTasks).toEqual(["huge"]);
+    expect(result.summary).toContain("fit: ~2,000 tokens at 5 tok/s is ~6m40s even running alone");
+    expect(result.summary).toContain("split it into smaller tasks");
+    expect(result.summary).toContain("[huge] stated more output than any time limit");
+    expect(result.summary).toContain("it was dispatched anyway");
+  });
+
+  it("runs a task over its limit, warns on its row, and reports estimate vs actual", async () => {
+    const runTurn = vi.fn(async () => turnResult());
+    // 400 tokens at 5 tok/s = 80 s, over the 60 s limit, under 4 min.
+    const result = await buildFusionDelegateTool(measured({ runTurn })).run(
+      { tasks: [{ id: "big", instructions: "Write it", outputTokens: 400 }] },
+      ctx(),
+    );
+    expect(runTurn).toHaveBeenCalledOnce();
+    expect(result.summary).toContain("fit: ~400 tokens at 5 tok/s is ~1m20s, over its 1m00s limit");
+    expect(result.summary).toContain("Estimates vs actual");
+    expect(result.summary).toContain("- [big] estimated ~400 tokens, ~1m20s; actual");
+    expect(result.details.estimates).toEqual([
+      expect.objectContaining({ id: "big", estimatedTokens: 400, estimatedMs: 80_000 }),
+    ]);
+  });
+
+  it("says nothing without a measured speed or without an estimate", async () => {
+    const unmeasured = await buildFusionDelegateTool(
+      deps({ localTokensPerSecond: () => null }),
+    ).run(
+      { tasks: [{ id: "huge", instructions: "Write it all", outputTokens: 2_000 }] },
+      ctx(),
+    );
+    expect(unmeasured.status).toBe("ok");
+    expect(unmeasured.summary).not.toContain("fit:");
+    expect(unmeasured.details).not.toHaveProperty("oversizedTasks");
+    // The size is still reported back, without a time estimate.
+    expect(unmeasured.summary).toContain("- [huge] estimated ~2,000 tokens; actual");
+    const plain = await buildFusionDelegateTool(measured()).run(
+      { tasks: TASKS },
+      ctx(),
+    );
+    expect(plain.summary).not.toContain("fit:");
+    expect(plain.summary).not.toContain("Estimates vs actual");
+    expect(plain.details).not.toHaveProperty("estimates");
+  });
+});
+
+describe("fusion.delegate subagent profiles (ATO-566)", () => {
+  const roles: NonNullable<ResolvedRunMode["roles"]> = {
+    byRole: { review: { providerId: "or-sonnet", model: "sonnet", local: false } },
+    mixLocalModels: false,
+    localLegProviderIds: ["local-llama"],
+  };
+
+  it("applies a built-in profile: its brief, its read-only tools and its role's model", async () => {
+    const seen: Array<{ brief: string; providerId?: string; filter?: (n: string) => boolean }> = [];
+    const result = await buildFusionDelegateTool(
+      deps({
+        resolveRunMode: () => fusionMode({ roles }),
+        workerSupportsSlotAffinity: (id) => id === "local-llama",
+        runTurn: async (_session, brief, options) => {
+          seen.push({ brief, providerId: options.providerId, ...(options.toolFilter ? { filter: options.toolFilter } : {}) });
+          return turnResult();
+        },
+      }),
+    ).run({ tasks: [{ id: "r", instructions: "review src/a.ts", profile: "review" }] }, ctx());
+    expect(result.status).toBe("ok");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.brief).toContain("PROFILE review");
+    expect(seen[0]!.providerId).toBe("or-sonnet");
+    expect(seen[0]!.filter?.("os.fs.read")).toBe(true);
+    expect(seen[0]!.filter?.("os.fs.write")).toBe(false);
+    expect(seen[0]!.filter?.("os.shell.run")).toBe(false);
+    expect(result.details.profiles).toEqual([
+      expect.objectContaining({ task: "r", profile: "review", source: "builtin", model: "role review" }),
+    ]);
+  });
+
+  it("refuses an unknown profile before any worker starts and uses the runtime's profile set", async () => {
+    const runTurn = vi.fn(async () => turnResult());
+    const asked: string[] = [];
+    const result = await buildFusionDelegateTool(
+      deps({
+        runTurn,
+        resolveAgentProfiles: (dir) => {
+          asked.push(dir);
+          return { profiles: [], get: () => undefined, diagnostics: [], withheld: [] };
+        },
+      }),
+    ).run({ tasks: [{ id: "x", instructions: "go", profile: "explore" }] }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain('names profile "explore"');
+    expect(asked).toEqual(["/repo"]);
+    expect(runTurn).not.toHaveBeenCalled();
+  });
+
+  it("loads no profiles and changes nothing when no task names one", async () => {
+    const resolveAgentProfiles = vi.fn();
+    let filter: ((n: string) => boolean) | undefined;
+    const result = await buildFusionDelegateTool(
+      deps({
+        resolveAgentProfiles,
+        runTurn: async (_s, _b, options) => {
+          filter = options.toolFilter;
+          return turnResult();
+        },
+      }),
+    ).run({ tasks: TASKS }, ctx());
+    expect(result.status).toBe("ok");
+    expect(resolveAgentProfiles).not.toHaveBeenCalled();
+    expect(filter?.("os.fs.write")).toBe(true);
+    expect(result.details).not.toHaveProperty("profiles");
+  });
+});
+
+describe("fusion.delegate on a llama.cpp server that is not ours (ATO-1562)", () => {
+  it("labels the workers with the model the server serves and says once that it differs from the pick", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        emitEvent: (sessionId, event) => events.push({ sessionId, ...event }),
+        resolveRunMode: () => fusionMode({ workerModel: "picked-model", workerModelPinned: true }),
+        servedModelOf: async () => "served-model",
+      }),
+    );
+    const first = await tool.run({ tasks: TASKS }, ctx());
+    const workerEvents = events.filter((e) => e.role === "worker");
+    expect(workerEvents.length).toBeGreaterThan(0);
+    expect(workerEvents.every((e) => e.model === "served-model")).toBe(true);
+    expect(first.summary).toContain(
+      "Selected picked-model, but the server serves served-model. The model is changed on the server side.",
+    );
+    const second = await tool.run({ tasks: TASKS }, ctx());
+    expect(second.summary).not.toContain("Selected picked-model");
+  });
+
+  it("says nothing when nothing was picked, and keeps the pick when the server does not say", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const quiet = buildFusionDelegateTool(
+      deps({
+        emitEvent: (sessionId, event) => events.push({ sessionId, ...event }),
+        resolveRunMode: () => fusionMode({ workerModel: "managed-default" }),
+        servedModelOf: async () => "served-model",
+      }),
+    );
+    const unpinned = await quiet.run({ tasks: TASKS }, ctx());
+    expect(events.filter((e) => e.role === "worker").every((e) => e.model === "served-model")).toBe(true);
+    expect(unpinned.summary).not.toContain("but the server serves");
+
+    const kept: Array<Record<string, unknown>> = [];
+    const silent = buildFusionDelegateTool(
+      deps({
+        emitEvent: (sessionId, event) => kept.push({ sessionId, ...event }),
+        resolveRunMode: () => fusionMode({ workerModel: "picked-model", workerModelPinned: true }),
+        servedModelOf: async () => {
+          throw new Error("unreachable");
+        },
+      }),
+    );
+    const result = await silent.run({ tasks: TASKS }, ctx());
+    expect(kept.filter((e) => e.role === "worker").every((e) => e.model === "picked-model")).toBe(true);
+    expect(result.summary).not.toContain("but the server serves");
+  });
+});
+
+/**
+ * ATO-1689 (Discord, 21.11): in auto mode a normal chat writes inside its
+ * folder unasked, but Fusion still asked before every fan-out into that
+ * same folder, because `fusion_fanout` only goes quiet at level 4.
+ */
+describe("fusion.delegate in auto mode (ATO-1689)", () => {
+  function gateAt(level: 1 | 2 | 3 | 4): {
+    gate: ApprovalGate;
+    prompts: ApprovalRequest[];
+  } {
+    const prompts: ApprovalRequest[] = [];
+    const gate: ApprovalGate = new ApprovalGate({
+      level,
+      emit: (req) => {
+        prompts.push(req);
+        queueMicrotask(() =>
+          gate.resolve({ approvalId: req.approvalId, approved: true }),
+        );
+      },
+    });
+    return { gate, prompts };
+  }
+  const insideTask = [
+    { id: "t1", title: "One", instructions: "Write /repo/src/a.js" },
+  ];
+
+  it("does not ask before a fan-out that stays inside the chat's folder", async () => {
+    const { gate, prompts } = gateAt(2);
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    const result = await tool.run({ tasks: insideTask }, ctx());
+    expect(result.status).not.toBe("error");
+    expect(prompts).toHaveLength(0);
+    // A later fan-out of the same turn is decided again, not on a yes
+    // nobody gave.
+    expect(gate.fanoutScopes.turnGrantCovers("s-parent", ["/repo"])).toBe(false);
+  });
+
+  it("gives its workers no more than the chat has: workspace writes run, shell commands do not", async () => {
+    const { gate, prompts } = gateAt(2);
+    const seen: Array<{ scope: readonly string[]; write: boolean; shell: boolean }> = [];
+    const briefs: string[] = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        approvalRequired: true,
+        approvals: gate,
+        runTurn: async (session, message) => {
+          briefs.push(message);
+          const write = await gate.request({
+            sessionId: session.id,
+            tool: "os.fs.write",
+            category: "fs_write_workspace",
+            reason: "write /repo/src/a.js",
+          });
+          const shell = await gate.request({
+            sessionId: session.id,
+            tool: "os.shell.run",
+            category: "shell",
+            reason: "npm test",
+          });
+          seen.push({
+            scope: gate.fanoutScopes.scopeFor(session.id),
+            write: write.approved,
+            shell: shell.approved,
+          });
+          return turnResult();
+        },
+      }),
+    );
+    expect((await tool.run({ tasks: insideTask }, ctx())).status).not.toBe("error");
+    expect(seen).toHaveLength(1);
+    // No fan-out scope: `os.shell.run` and `verify.run` read it as the
+    // operator's yes to commands in the directory.
+    expect(seen[0]?.scope).toEqual([]);
+    expect(seen[0]?.write).toBe(true);
+    // A level-2 chat asks before a shell command; a worker has nobody to
+    // ask, so it is refused and handed back to the orchestrator.
+    expect(seen[0]?.shell).toBe(false);
+    expect(prompts).toHaveLength(0);
+    // …and its brief says so, instead of promising it may run the tests.
+    expect(briefs[0]).toContain("sent out in auto mode without asking the user");
+    expect(briefs[0]).not.toContain("authorised this fan-out to write files AND run commands");
+  });
+
+  it("still asks after the chat read outside content, as a held chat would", async () => {
+    const { gate, prompts } = gateAt(3);
+    gate.setTaintReview(() => true);
+    gate.noteUntrustedContent("s-parent", "web page");
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts.some((p) => p.category === "fusion_fanout")).toBe(true);
+  });
+
+  it("asks before the next fan-out once a worker was refused a command, and that yes covers commands", async () => {
+    const { gate, prompts } = gateAt(2);
+    const refusals: string[] = [];
+    let wantsShell = true;
+    const tool = buildFusionDelegateTool(
+      deps({
+        approvalRequired: true,
+        approvals: gate,
+        runTurn: async (session) => {
+          if (wantsShell) {
+            const shell = await gate.request({
+              sessionId: session.id,
+              tool: "os.shell.run",
+              category: "shell",
+              reason: "npm test",
+            });
+            if (!shell.approved) refusals.push(shell.reason ?? "");
+          }
+          return turnResult();
+        },
+      }),
+    );
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(0);
+    expect(refusals[0]).toContain("sent out in auto mode without asking the user");
+    expect(refusals[0]).toContain("needs operator approval, which a worker cannot request");
+
+    wantsShell = false;
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.category).toBe("fusion_fanout");
+    // A new turn starts quiet again.
+    gate.fanoutScopes.clearTurnGrant("s-parent");
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(1);
+  });
+
+  it("asks before the next fan-out once a worker was refused moving a file to the Trash", async () => {
+    const { gate, prompts } = gateAt(2);
+    let first = true;
+    const tool = buildFusionDelegateTool(
+      deps({
+        approvalRequired: true,
+        approvals: gate,
+        runTurn: async (session) => {
+          if (first) {
+            first = false;
+            await gate.request({
+              sessionId: session.id,
+              tool: "os.fs.trash",
+              category: "fs_trash",
+              reason: "trash /repo/src/old.js",
+            });
+          }
+          return turnResult();
+        },
+      }),
+    );
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(0);
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.category).toBe("fusion_fanout");
+  });
+
+  it("still asks when the contract's checks would run commands", async () => {
+    const { gate, prompts } = gateAt(2);
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    await tool.run(
+      {
+        tasks: insideTask,
+        contract: { checks: [{ kind: "command", cmd: "npm", args: ["test"] }] },
+      },
+      ctx(),
+    );
+    expect(prompts.some((p) => p.category === "fusion_fanout")).toBe(true);
+  });
+
+  it("still asks before a fan-out that writes outside the chat's folder", async () => {
+    const { gate, prompts } = gateAt(2);
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    await tool.run(
+      { tasks: [{ id: "t1", title: "One", instructions: "Write /elsewhere/b.js" }] },
+      ctx(),
+    );
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.category).toBe("fusion_fanout");
+  });
+
+  it("still asks at the default level, where a chat's own writes ask too", async () => {
+    const { gate, prompts } = gateAt(1);
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.category).toBe("fusion_fanout");
+  });
+
+  it("asks again where the user declined a file in the folder this turn", async () => {
+    const prompts: ApprovalRequest[] = [];
+    let approve = false;
+    const gate: ApprovalGate = new ApprovalGate({
+      level: 1,
+      emit: (req) => {
+        prompts.push(req);
+        const approved = approve;
+        queueMicrotask(() => gate.resolve({ approvalId: req.approvalId, approved }));
+      },
+    });
+    await gate.request({
+      sessionId: "s-parent",
+      tool: "os.fs.write",
+      category: "fs_write_workspace",
+      reason: "write /repo/src/a.js",
+      targetPaths: ["/repo/src/a.js"],
+    });
+    gate.setLevel(2);
+    approve = true;
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]?.category).toBe("fusion_fanout");
+  });
+
+  it("leaves level 4 as it was: no question, and the workers hold the scope", async () => {
+    const { gate, prompts } = gateAt(4);
+    const scopes: Array<readonly string[]> = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        approvalRequired: true,
+        approvals: gate,
+        runTurn: async (session) => {
+          scopes.push(gate.fanoutScopes.scopeFor(session.id));
+          return turnResult();
+        },
+      }),
+    );
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(0);
+    expect(scopes[0]?.length).toBeGreaterThan(0);
+  });
+});
+
+describe("fanoutQuietUnderLevel (ATO-1689)", () => {
+  it("is quiet only where workspace writes are and the fan-out is not, inside the folder", () => {
+    expect(fanoutQuietUnderLevel(1, ["/repo"], "/repo")).toBe(false);
+    expect(fanoutQuietUnderLevel(2, ["/repo", "/repo/src"], "/repo")).toBe(true);
+    expect(fanoutQuietUnderLevel(3, ["/repo/src"], "/repo")).toBe(true);
+    expect(fanoutQuietUnderLevel(4, ["/repo"], "/repo")).toBe(false);
+    expect(fanoutQuietUnderLevel(2, ["/repo", "/tmp/x"], "/repo")).toBe(false);
+    expect(fanoutQuietUnderLevel(2, ["/repo-backup"], "/repo")).toBe(false);
+    expect(fanoutQuietUnderLevel(2, ["/repo/../etc"], "/repo")).toBe(false);
+    expect(fanoutQuietUnderLevel(2, [], "/repo")).toBe(false);
   });
 });

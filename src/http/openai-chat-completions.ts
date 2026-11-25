@@ -26,6 +26,13 @@ import {
 import { getConfig } from "../config/index.js";
 
 import { checkWorkingDir } from "./session-working-dir.js";
+import { chatGoalSpec, goalProgressFrame } from "./chat-goal.js";
+import type { GoalState } from "../agent/goal/index.js";
+import { parseProjectFields, type SessionProject } from "../session/session-project.js";
+import type { ReasoningEffort } from "../llm/provider/completion-types.js";
+import { reasoningOverrideFromRequest } from "../llm/reasoning-levels.js";
+import { perTurnModelRefusal } from "../runtime/per-turn-model.js";
+import { resolveLlmConfig } from "../llm/provider/index.js";
 import { openaiError } from "./openai-errors.js";
 import {
   beginSse,
@@ -41,8 +48,10 @@ import {
 } from "./request-context.js";
 import { deriveChatSessionId } from "./openai-session-id.js";
 import { maintenanceFrame } from "./stream-maintenance-frames.js";
+import { PROJECT_SECTION_MAX_TOKENS } from "../prompt/build-prompt.js";
 import { toolDisabledNotice } from "../agent/tool-disabled-notice.js";
 import { describeToolCall } from "../tools/describe-tool-call.js";
+import { canvasRecordOf, type CanvasRecord } from "../tools/canvas/index.js";
 import { createTurnPhaseTracker } from "./stream-turn-phase.js";
 import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
 import { claimScreenOverlay } from "../tools/os/screen/screen-overlay-hosts.js";
@@ -50,6 +59,7 @@ import { buildSlowFirstTokenHint } from "./slow-first-token-hint.js";
 import type { UndeliveredSteer } from "./undelivered-steers.js";
 import {
   buildFinalAssistantPayload,
+  buildGenerationPayload,
   buildStreamChunk,
   buildUsageChunk,
   buildUsagePayload,
@@ -57,6 +67,18 @@ import {
 
 export const SESSION_ID_HEADER = "X-Atomic-Session-Id";
 export const COMPLETION_ID_HEADER = "X-Atomic-Completion-Id";
+/**
+ * ATO-1148: set when the turn runs on the request's `provider_id` +
+ * `provider_model` (`<provider id>/<model>`), so a client can tell this
+ * agent from an older one that ignored the fields and ran the active model.
+ */
+export const TURN_MODEL_HEADER = "X-Atomic-Turn-Model";
+
+function turnModelHeader(request: ParsedRequest): Record<string, string> {
+  return request.turnModel
+    ? { [TURN_MODEL_HEADER]: `${request.turnModel.providerId}/${request.turnModel.model}` }
+    : {};
+}
 /**
  * Opt-in toggle for atomic-agent-specific SSE extensions on the streaming
  * chat-completions endpoint. When absent, the stream is a strict subset of
@@ -72,6 +94,13 @@ export const EXTENSIONS_HEADER = "X-Atomic-Extensions";
  * it the tool answers that marks need the desktop app.
  */
 export const SCREEN_OVERLAY_HEADER = "X-Atomic-Screen-Overlay";
+/**
+ * ATO-489: the extensions client draws `ask_user` question cards and
+ * answers them with POST /api/question/answer, so its turns are offered
+ * the tool. Without it an extensions client (today's desktop app) does
+ * not get `ask_user`. The desktop sends it once ATO-1502 ships.
+ */
+export const QUESTIONS_HEADER = "X-Atomic-Questions";
 const MODEL_DEFAULT = "atomic-agent";
 
 /**
@@ -88,6 +117,33 @@ interface ChatCompletionRequest {
   session_id?: string;
   /** ATO-731: the folder a NEW session works in (absolute); an existing one keeps its own. */
   working_dir?: string;
+  /**
+   * ATO-42: the instructions of the client's project this chat belongs to,
+   * re-sent each turn; null clears them, absent keeps what the session has.
+   */
+  project_instructions?: string | null;
+  /** ATO-42: the project's name, shown to the model beside its instructions. */
+  project_name?: string | null;
+  /**
+   * ATO-490: OpenAI's own field, read as the chat's reasoning level.
+   * `low` / `medium` / `high` override for this turn; `auto`, absent and
+   * any other value change nothing (`reasoningOverrideFromRequest`).
+   */
+  reasoning_effort?: unknown;
+  /**
+   * ATO-586: open a NEW session as an incognito chat (nothing written to
+   * memory, never listed, deleted by `DELETE /api/sessions/{id}` or the
+   * next start). An existing session keeps what it was.
+   */
+  incognito?: boolean;
+  /**
+   * ATO-1148: run this turn on a configured CLOUD provider and chat model
+   * (a project's own model) without switching the agent's active model.
+   * `provider_model` needs `provider_id`; a local provider is refused,
+   * its model is one per agent. Absent: the active model, as before.
+   */
+  provider_id?: string;
+  provider_model?: string;
 }
 
 interface ParsedRequest {
@@ -101,9 +157,19 @@ interface ParsedRequest {
   sessionIdOverride: string | null;
   /** ATO-731: `working_dir`, checked; null for the server's own folder. */
   workingDir: string | null;
+  /** ATO-42: the project fields, checked (see `parseProjectFields`). */
+  project: SessionProject | null | undefined;
+  /** ATO-586: `incognito: true` on the request. */
+  incognito: boolean;
+  /** ATO-1148: `provider_id` + `provider_model`, checked; null for the active model. */
+  turnModel: { providerId: string; model: string } | null;
   extensionsEnabled: boolean;
   /** `X-Atomic-Screen-Overlay` on an extensions request (ATO-1018). */
   screenOverlay: boolean;
+  /** ATO-490: the turn's reasoning level, when the request picked one. */
+  reasoningOverride?: ReasoningEffort;
+  /** `X-Atomic-Questions` on an extensions request (ATO-489). */
+  questions: boolean;
 }
 
 /**
@@ -162,6 +228,7 @@ async function handleNonStream(
   const controller = new AbortController();
   onClientGone(res, () => controller.abort());
   let result: RunTurnResult;
+  const nonStreamGoal = chatGoalSpec(env.session, env.request.extensionsEnabled);
   try {
     // Non-stream mode ignores intermediate events — only the final
     // RunTurnResult matters. The TurnController per-session lock is
@@ -169,6 +236,13 @@ async function handleNonStream(
     result = await ctx.runtime.runTurn(env.session, env.request.userMessage, {
       signal: controller.signal,
       origin: "http",
+      // ATO-42: stamped inside the session's turn lock, so a turn that
+      // is running cannot save over it.
+      ...(env.request.project !== undefined ? { project: env.request.project } : {}),
+      // ATO-1148: a project's own cloud model, for this turn only.
+      ...(env.request.turnModel
+        ? { providerId: env.request.turnModel.providerId, model: env.request.turnModel.model }
+        : {}),
       // An extensions client (the desktop) draws approval prompts, so a
       // person can be asked before an out-of-memory restart (ATO-334); a
       // plain OpenAI client cannot answer and gets the automatic one.
@@ -178,6 +252,13 @@ async function handleNonStream(
       ...(env.request.extensionsEnabled
         ? { interactive: true, answerChannel: "desktop" as const }
         : {}),
+      // ATO-1040: a chat with an active stored goal runs it (chat-goal.ts).
+      ...(nonStreamGoal === undefined ? {} : { goal: nonStreamGoal }),
+      ...(env.request.reasoningOverride !== undefined
+        ? { reasoningOverride: env.request.reasoningOverride }
+        : {}),
+      // ATO-489: `ask_user` only for a client that draws its card.
+      ...(env.request.questions ? { questions: true } : {}),
     });
   } catch (err) {
     // Reaches this branch only for unclassified / programming
@@ -239,6 +320,7 @@ async function handleNonStream(
   sendJson(res, 200, payload, {
     [SESSION_ID_HEADER]: result.session.id,
     [COMPLETION_ID_HEADER]: env.completionId,
+    ...turnModelHeader(env.request),
   });
 }
 
@@ -260,6 +342,7 @@ async function handleStream(
     {
       [SESSION_ID_HEADER]: env.session.id,
       [COMPLETION_ID_HEADER]: env.completionId,
+      ...turnModelHeader(env.request),
     },
     { heartbeatMs: SSE_HEARTBEAT_MS },
   );
@@ -318,17 +401,37 @@ async function handleStream(
 
   let result: RunTurnResult | null = null;
   let error: Error | null = null;
+  // ATO-1040: an active stored goal runs as rounds, each change a frame.
+  const goal = chatGoalSpec(env.session, env.request.extensionsEnabled);
   try {
     result = await ctx.runtime.runTurn(env.session, env.request.userMessage, {
       signal: controller.signal,
       origin: "http",
+      // ATO-1148: a project's own cloud model, for this turn only.
+      ...(env.request.turnModel
+        ? { providerId: env.request.turnModel.providerId, model: env.request.turnModel.model }
+        : {}),
       eventHook: hook,
+      ...(env.request.project !== undefined ? { project: env.request.project } : {}),
       // See the non-stream path: only a client that draws approval
       // prompts is asked before an out-of-memory restart (ATO-334).
       // Desktop answer style and reply polish too, see the non-stream path.
       ...(env.request.extensionsEnabled
         ? { interactive: true, answerChannel: "desktop" as const }
         : {}),
+      ...(goal === undefined
+        ? {}
+        : {
+            goal,
+            onGoalProgress: (state: GoalState) => {
+              if (!sse.closed) sse.writeEvent("goal_progress", goalProgressFrame(env.session.id, state));
+            },
+          }),
+      ...(env.request.reasoningOverride !== undefined
+        ? { reasoningOverride: env.request.reasoningOverride }
+        : {}),
+      // ATO-489: `ask_user` only for a client that draws its card.
+      ...(env.request.questions ? { questions: true } : {}),
     });
   } catch (err) {
     // Same contract as the non-stream branch above: classified
@@ -387,6 +490,8 @@ async function handleStream(
     });
   }
   if (env.request.extensionsEnabled) {
+    // ATO-1186: `generation` lets the desktop show the reply speed.
+    const generation = buildGenerationPayload(result!);
     sse.writeEvent("usage", {
       id: env.completionId,
       object: "chat.completion.usage",
@@ -394,6 +499,7 @@ async function handleStream(
       model: env.request.model,
       session_id: result!.session.id,
       usage,
+      ...(generation ? { generation } : {}),
     });
   }
   sse.writeEvent(
@@ -444,12 +550,17 @@ async function handleStream(
  *    else.
  *  - `reasoning_delta` → `event: reasoning_progress` (extensions opt-in
  *    only)
+ *  - an ok `canvas.render` call's `tool_result` carries `canvas`: the
+ *    file it wrote, for the chat to show (extensions opt-in only, ATO-1137)
  *  - `plan_updated` → `event: plan_updated` with the whole checklist
  *    (extensions opt-in only, ATO-486)
  *  - compaction lifecycle and `history_trimmed` → named frames of the
  *    same names (extensions opt-in only, `stream-maintenance-frames.ts`)
  *  - `tool_disabled` → `event: tool_disabled` with the chat sentence
  *    (extensions opt-in only, ATO-1417)
+ *  - the first `prompt_built` whose local prompt carries a project block
+ *    → `event: project_instructions` {name, tokens, truncated, max_tokens}
+ *    (extensions opt-in only, ATO-42)
  *  - `step_error` / `loop_failed` → `emitStreamError` (shape depends on
  *    whether extensions are opted in)
  *
@@ -480,6 +591,8 @@ export function buildStreamEventHook(
      can say in words what it did ("Read config.ts"). Removed when the
      result is written. */
   const openCallArgs = new Map<string, unknown>();
+  /* ATO-42: the project block is fixed for the turn, so it is told once. */
+  let projectReported = false;
   const writeContent = (content: string): void => {
     sse.writeEvent(
       null,
@@ -598,6 +711,13 @@ export function buildStreamEventHook(
           }).line,
           ...keyRequiredFrame(inner.result),
           ...screenMarksFrame(inner.result),
+          // ATO-1137: the canvas an ok `canvas.render` wrote, for the chat to show.
+          ...canvasFrame(inner.result),
+          ...diffstatFrame(inner.result),
+          // ATO-1701: the files a fusion fan-out's workers changed.
+          ...diffstatsFrame(inner.result),
+          // ATO-1135: an MCP App's page for this call, for the chat to render.
+          ...mcpAppFrame(inner.result),
           // ATO-1145: the call's approval records, as the transcript keeps
           // them (`tool_result.approvals`), so a live turn summary can list
           // what was auto-approved (`verdict: "auto-approved"`, `via`,
@@ -605,6 +725,24 @@ export function buildStreamEventHook(
           ...(inner.result.approvals !== undefined && inner.result.approvals.length > 0
             ? { approvals: inner.result.approvals }
             : {}),
+        });
+      } else if (inner.type === "prompt_built") {
+        /* ATO-42: the local prompt carried the chat's project instructions,
+           and whether they were cut to PROJECT_SECTION_MAX_TOKENS, so a
+           host can say so in the chat. Once per turn, extensions-only. */
+        const project = inner.prompt.project;
+        if (!env.request.extensionsEnabled || projectReported || project === undefined) return;
+        projectReported = true;
+        sse.writeEvent("project_instructions", {
+          id: env.completionId,
+          object: "chat.completion.project_instructions",
+          created: env.created,
+          model: env.request.model,
+          session_id: env.session.id,
+          name: project.name,
+          tokens: project.tokens,
+          truncated: project.truncated,
+          max_tokens: PROJECT_SECTION_MAX_TOKENS,
         });
       } else if (inner.type === "plan_updated") {
         /* ATO-486: the live checklist, whole, each time it changes. A
@@ -854,6 +992,12 @@ export function buildStreamEventHook(
           ...(isFiniteNumber(event.tokens) && event.tokens > 0 ? { tokens: event.tokens } : {}),
           ...(isFiniteNumber(event.spentUsd) ? { spent_usd: event.spentUsd } : {}),
           ...(isFiniteNumber(event.costUsd) ? { cost_usd: event.costUsd } : {}),
+          // ATO-1754: on `started`, what the worker was told and why it is
+          // not on the model it asked for.
+          ...(typeof event.brief === "string" && event.brief.length > 0 ? { brief: event.brief } : {}),
+          ...(typeof event.modelNote === "string" && event.modelNote.length > 0
+            ? { model_note: event.modelNote }
+            : {}),
         });
       }
       return;
@@ -1022,6 +1166,98 @@ function screenMarksFrame(
   if (!Array.isArray(marks) || marks.length === 0) return {};
   if (typeof seconds !== "number" || !Number.isFinite(seconds)) return {};
   return { screen_marks: { marks, seconds } };
+}
+
+/**
+ * `canvas` on a `tool_result` frame (ATO-1137): the HTML file an ok
+ * `canvas.render` call wrote, as `{path, title, kind, chart?, bytes}`,
+ * so a host can open the canvas beside the chat while the turn runs.
+ * Left out for every other call and for a shape a host cannot open.
+ */
+function canvasFrame(result: CompressedToolResult): { canvas?: CanvasRecord } {
+  const canvas = canvasRecordOf(result);
+  return canvas === undefined ? {} : { canvas };
+}
+
+/** Tools whose ok result carries `details.diffstat` (ATO-1187). */
+const DIFFSTAT_TOOLS: ReadonlySet<string> = new Set(["os.fs.write", "os.fs.edit"]);
+
+/**
+ * `diffstat` on a `tool_result` frame (ATO-1187): the file an ok
+ * `os.fs.write` / `os.fs.edit` changed and how many lines it added and
+ * removed, for the desktop's "Changed files" card. The frame is the
+ * only live path: the summary is clipped and the store keeps no
+ * `details`. Left out unless the path is a string and both counts are
+ * whole non-negative numbers.
+ */
+function diffstatFrame(
+  result: CompressedToolResult,
+): { diffstat?: { path: string; added: number; removed: number } } {
+  if (!DIFFSTAT_TOOLS.has(result.tool) || result.status !== "ok") return {};
+  const details = result.details ?? {};
+  const path = details.path;
+  const raw = details.diffstat;
+  if (typeof path !== "string" || path.length === 0) return {};
+  if (typeof raw !== "object" || raw === null) return {};
+  const { added, removed } = raw as { added?: unknown; removed?: unknown };
+  const count = (n: unknown): n is number =>
+    typeof n === "number" && Number.isInteger(n) && n >= 0;
+  if (!count(added) || !count(removed)) return {};
+  return { diffstat: { path, added, removed } };
+}
+
+/** Most rows a `diffstats` list carries; the card shows fewer. */
+const DIFFSTATS_FRAME_MAX = 200;
+
+/**
+ * `diffstats` on a `tool_result` frame (ATO-1701): the files a
+ * `fusion.delegate` call's workers changed, as `[{path, added, removed}]`
+ * summed per path (`details.diffstats`, ATO-1700). The workers' own
+ * write results run in their sessions and never reach this stream, so
+ * without it the "Changed files" card stayed empty after a fan-out.
+ * Sent on an `error` result too: a fan-out whose every task failed its
+ * checks still changed those files in the folder (a workspace that was
+ * not merged lists none). Rows of a shape a host cannot draw are
+ * dropped; the list is left out when none is left. A single write/edit
+ * keeps its `diffstat`.
+ */
+function diffstatsFrame(
+  result: CompressedToolResult,
+): { diffstats?: { path: string; added: number; removed: number }[] } {
+  if (result.tool !== "fusion.delegate") return {};
+  const raw = (result.details ?? {}).diffstats;
+  if (!Array.isArray(raw)) return {};
+  const count = (n: unknown): n is number =>
+    typeof n === "number" && Number.isInteger(n) && n >= 0;
+  const out: { path: string; added: number; removed: number }[] = [];
+  for (const row of raw) {
+    if (out.length >= DIFFSTATS_FRAME_MAX) break;
+    if (typeof row !== "object" || row === null) continue;
+    const { path, added, removed } = row as { path?: unknown; added?: unknown; removed?: unknown };
+    if (typeof path !== "string" || path.length === 0) continue;
+    if (!count(added) || !count(removed)) continue;
+    out.push({ path, added, removed });
+  }
+  return out.length === 0 ? {} : { diffstats: out };
+}
+
+/**
+ * `mcp_app` on a `tool_result` frame (ATO-1135): the page an ok MCP tool
+ * with `_meta.ui.resourceUri` named, as `details.mcpApp` holds it
+ * (`McpAppUi` plus `toolInput` / `toolResult`, see mcp-apps.ts), so a
+ * host can render it in its sandboxed frame. The frame is the only live
+ * path: the model sees the summary alone, never the page. Left out for
+ * any other call and unless the page is a non-empty string from a
+ * `ui://` URI.
+ */
+function mcpAppFrame(result: CompressedToolResult): { mcp_app?: Record<string, unknown> } {
+  if (!result.tool.startsWith("mcp.") || result.status !== "ok") return {};
+  const raw = (result.details ?? {}).mcpApp;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+  const app = raw as Record<string, unknown>;
+  if (typeof app.resourceUri !== "string" || !app.resourceUri.toLowerCase().startsWith("ui://")) return {};
+  if (typeof app.html !== "string" || app.html.length === 0) return {};
+  return { mcp_app: app };
 }
 
 /** Longest `summary` a `tool_result` carries; the store keeps the whole one. */
@@ -1237,6 +1473,17 @@ async function parseRequestBody(
     }
     workingDir = check.dir;
   }
+  const project = parseProjectFields(body.project_instructions, body.project_name);
+  if (!project.ok) {
+    sendError(res, 400, openaiError(project.error, "invalid_request_error", project.param));
+    return null;
+  }
+  const reasoningOverride = reasoningOverrideFromRequest(body.reasoning_effort);
+  const turnModel = parseTurnModel(body);
+  if (typeof turnModel === "string") {
+    sendError(res, 400, openaiError(turnModel, "invalid_request_error", "provider_model"));
+    return null;
+  }
   return {
     model:
       typeof body.model === "string" && body.model.length > 0
@@ -1249,13 +1496,39 @@ async function parseRequestBody(
     firstUserMessage: firstUser?.content ?? lastUser.content,
     sessionIdOverride,
     workingDir,
+    project: project.value,
+    incognito: body.incognito === true,
+    turnModel,
     extensionsEnabled: isExtensionsHeaderTruthy(
       getHeader(req, EXTENSIONS_HEADER),
     ),
     screenOverlay:
       isExtensionsHeaderTruthy(getHeader(req, EXTENSIONS_HEADER)) &&
       isExtensionsHeaderTruthy(getHeader(req, SCREEN_OVERLAY_HEADER)),
+    ...(reasoningOverride !== undefined ? { reasoningOverride } : {}),
+    questions:
+      isExtensionsHeaderTruthy(getHeader(req, EXTENSIONS_HEADER)) &&
+      isExtensionsHeaderTruthy(getHeader(req, QUESTIONS_HEADER)),
   };
+}
+
+/**
+ * ATO-1148: the turn's own cloud provider + model, or why the request
+ * cannot have one. Both absent is the normal case (null). The cloud
+ * check reads the live config, the same one the turn will run on.
+ */
+export function parseTurnModel(
+  body: { provider_id?: unknown; provider_model?: unknown },
+): { providerId: string; model: string } | null | string {
+  const { provider_id: providerId, provider_model: model } = body;
+  const none = (v: unknown) => v === undefined || v === null;
+  if (none(providerId) && none(model)) return null;
+  if (typeof providerId !== "string" || providerId.trim().length === 0) {
+    return "provider_model needs provider_id, the configured provider it runs on";
+  }
+  if (typeof model !== "string") return "provider_id needs provider_model, the model to run on it";
+  const refusal = perTurnModelRefusal(resolveLlmConfig(getConfig()), providerId.trim(), model.trim());
+  return refusal ?? { providerId: providerId.trim(), model: model.trim() };
 }
 
 /**
@@ -1285,15 +1558,23 @@ function resolveSession(
   parsed: ParsedRequest,
   ctx: HandlerContext,
 ): SessionState {
+  // An incognito chat never takes the derived id: the same opening prompt
+  // would resume an ordinary chat that started with it, and that one
+  // remembers. It gets its own id, and continues by `session_id`.
   const desiredId =
     parsed.sessionIdOverride ??
-    deriveChatSessionId(parsed.systemPrompt, parsed.firstUserMessage);
+    (parsed.incognito
+      ? `api-${randomUUID()}`
+      : deriveChatSessionId(parsed.systemPrompt, parsed.firstUserMessage));
   const existing = ctx.runtime.sessionStore.load(desiredId);
   if (existing) return existing;
   const state = createEmptySessionState({
     id: desiredId,
     workingDir: parsed.workingDir ?? ctx.runtime.capabilities.workingDir,
     metadata: { source: "openai-chat", model: parsed.model },
+    ...(parsed.incognito
+      ? { incognito: ctx.runtime.sessionStore.newIncognitoMark() }
+      : {}),
   });
   ctx.runtime.sessionStore.save(state);
   return state;

@@ -1,4 +1,5 @@
 import type { ImportReport } from "../../import/import-report.js";
+import { createInitialImportFactsState, type ImportFactsUiState } from "./import-facts-state.js";
 import {
   defaultSourceDir,
   importSourceToggles,
@@ -26,11 +27,12 @@ export type { ImportSourceId } from "./import-sources.js";
  * reducer stay pure (no SQLite handle); the orchestrator is the only
  * module that touches `runtime` and the import logic.
  */
-export type ImportPanelMode = "configure" | "preview" | "running" | "done";
+/** `facts`: the "what I learned about you" step (ATO-1627, import-facts-state.ts). */
+export type ImportPanelMode = "configure" | "preview" | "running" | "done" | "facts";
 
 /** Which field has keyboard focus inside the configure form. */
 export type ImportFormFocus =
-  "sourceType" | "source" | ImportOptionToggle | "overwrite" | "limit" | "run";
+  "sourceType" | "source" | ImportOptionToggle | "overwrite" | "limit" | "run" | "facts";
 
 /** Boolean fields toggled with space / left / right inside the form. */
 export const IMPORT_TOGGLE_FIELDS = [
@@ -58,6 +60,7 @@ export function importFocusOrder(source: ImportSourceId): ImportFormFocus[] {
     "overwrite",
     "limit",
     "run",
+    "facts",
   ];
 }
 
@@ -96,6 +99,8 @@ export interface ImportPanelState {
   notice: string | null;
   /** Trouble with the destination store, shown under the report. */
   storeWarning: string | null;
+  /** The facts step's own state (ATO-1627). */
+  facts: ImportFactsUiState;
 }
 
 export function createInitialImportFormState(): ImportFormState {
@@ -122,5 +127,6 @@ export function createInitialImportPanelState(): ImportPanelState {
     reportExecuted: false,
     notice: null,
     storeWarning: null,
+    facts: createInitialImportFactsState(),
   };
 }

@@ -17,31 +17,146 @@ import { readFileSync } from "node:fs";
  * under `/usr/lib`. A copy installed anywhere else, the installer's
  * `~/.local/bin` say, stays the installer's even with a package on the same
  * machine.
+ *
+ * npm, Homebrew, Scoop and winget own their copy the same way: their upgrade
+ * replaces it and their uninstall removes it, so a self-update would only be
+ * undone (or fight the manager's own bookkeeping). They leave no marker; the
+ * binary's path says which one installed it ({@link managerForPath}).
+ * The tool managers mise and aqua are the same case: they unpack the release
+ * archive into a versioned directory of their own and pin that version, so
+ * a self-update would swap the binary behind their back and they would go on
+ * reporting the old version (ATO-1485).
  */
 export const PACKAGE_DIR = "/usr/lib/atomic-agent";
 export const PACKAGED_BINARY = `${PACKAGE_DIR}/atomic-agent`;
 export const PACKAGE_MARKER = `${PACKAGE_DIR}/install-source`;
 
-export const INSTALL_SOURCES = ["deb", "rpm", "aur"] as const;
+/** The Linux packages, which leave the marker under {@link PACKAGE_DIR}. */
+export const LINUX_PACKAGE_SOURCES = ["deb", "rpm", "aur"] as const;
+
+/**
+ * The package managers outside Linux, recognised by where they put the
+ * binary (no marker: none of them runs a script of ours at install time
+ * that every one of them would honour). See {@link MANAGED_PATHS}.
+ */
+export const MANAGER_SOURCES = [
+  "npm",
+  "homebrew",
+  "scoop",
+  "winget",
+  "mise",
+  "aqua",
+] as const;
+
+export const INSTALL_SOURCES = [...LINUX_PACKAGE_SOURCES, ...MANAGER_SOURCES] as const;
 export type InstallSource = (typeof INSTALL_SOURCES)[number];
+type ManagerSource = (typeof MANAGER_SOURCES)[number];
 
 const LABELS: Record<InstallSource, string> = {
   deb: "the deb package",
   rpm: "the rpm package",
   aur: "the AUR package atomic-agent-bin",
+  npm: "npm (the atomic-agent package)",
+  homebrew: "Homebrew (the atag formula)",
+  scoop: "Scoop (the atomic-agent manifest)",
+  winget: "winget (AtomicBot.AtomicAgent.CLI)",
+  mise: "mise (the github:AtomicBot-ai/atomic-agent tool)",
+  aqua: "aqua (the AtomicBot-ai/atomic-agent package)",
 };
 
 const UPGRADE: Record<InstallSource, string> = {
   deb: "sudo apt update && sudo apt install --only-upgrade atomic-agent",
   rpm: "sudo dnf upgrade atomic-agent",
   aur: "yay -Syu atomic-agent-bin (or your AUR helper)",
+  npm: "npm install -g atomic-agent@latest",
+  homebrew: "brew update && brew upgrade atag",
+  scoop: "scoop update atomic-agent",
+  winget: "winget upgrade AtomicBot.AtomicAgent.CLI",
+  mise: "mise upgrade",
+  aqua: "raise the AtomicBot-ai/atomic-agent version in aqua.yaml, then run aqua install",
 };
 
 const REMOVE: Record<InstallSource, string> = {
   deb: "sudo apt remove atomic-agent",
   rpm: "sudo dnf remove atomic-agent",
   aur: "sudo pacman -R atomic-agent-bin",
+  npm: "npm uninstall -g atomic-agent",
+  homebrew: "brew uninstall atag",
+  scoop: "scoop uninstall atomic-agent",
+  winget: "winget uninstall AtomicBot.AtomicAgent.CLI",
+  mise: "remove the tool from mise.toml, then run mise prune",
+  aqua: "remove AtomicBot-ai/atomic-agent from aqua.yaml, then run aqua rm AtomicBot-ai/atomic-agent",
 };
+
+/**
+ * Where each package manager keeps the binary, as `process.execPath` sees it
+ * (the resolved path: Node resolves the `bin` symlink on macOS and Linux, and
+ * a Scoop shim starts the real exe). Matched against the path with `\` turned
+ * into `/`, case-insensitively on Windows. Every pattern names our own
+ * package, so a binary of the same name from anywhere else never matches:
+ *
+ *   npm      <prefix>/node_modules/@atomicbot/atag-<slug>/atomic-agent[.exe]
+ *            (the launcher package's platform dependency; packaging/npm)
+ *   homebrew <prefix>/Cellar/atag/<version>/libexec/atomic-agent
+ *   scoop    <root>/apps/atomic-agent/<version|current>/atomic-agent.exe
+ *   winget   .../WinGet/Packages/AtomicBot.AtomicAgent.CLI_<source>/atomic-agent.exe,
+ *            or its alias under .../WinGet/Links/
+ *   mise     <data dir>/installs/<backend>-atomicbot-ai-atomic-agent/<version>/[<slug>/]atomic-agent[.exe]
+ *            (the tool `github:AtomicBot-ai/atomic-agent`, or `ubi:`/`aqua:`;
+ *            the data dir is ~/.local/share/mise, %LOCALAPPDATA%\mise or $MISE_DATA_DIR)
+ *   aqua     <root>/pkgs/github_release/github.com/AtomicBot-ai/atomic-agent/<tag>/<asset>/[<slug>/]atomic-agent[.exe]
+ *            (the root is ~/.local/share/aquaproj-aqua, %LOCALAPPDATA%\aquaproj-aqua or $AQUA_ROOT_DIR)
+ */
+const MANAGED_PATHS: ReadonlyArray<{
+  source: ManagerSource;
+  platforms: readonly NodeJS.Platform[];
+  pattern: RegExp;
+}> = [
+  {
+    source: "npm",
+    platforms: ["darwin", "linux", "win32"],
+    pattern: /\/node_modules\/@atomicbot\/atag-[a-z0-9-]+\/atomic-agent(\.exe)?$/i,
+  },
+  {
+    source: "homebrew",
+    platforms: ["darwin", "linux"],
+    pattern: /\/Cellar\/atag\/[^/]+\/libexec\/atomic-agent$/,
+  },
+  {
+    source: "scoop",
+    platforms: ["win32"],
+    pattern: /\/apps\/atomic-agent\/[^/]+\/atomic-agent\.exe$/i,
+  },
+  {
+    source: "winget",
+    platforms: ["win32"],
+    pattern:
+      /\/winget\/(packages\/atomicbot\.atomicagent\.cli_[^/]+\/atomic-agent|links\/(atomic-agent|atag))\.exe$/i,
+  },
+  {
+    source: "mise",
+    platforms: ["darwin", "linux", "win32"],
+    pattern:
+      /\/installs\/(github|ubi|aqua)-atomicbot-ai-atomic-agent\/[^/]+\/(.+\/)?atomic-agent(\.exe)?$/i,
+  },
+  {
+    source: "aqua",
+    platforms: ["darwin", "linux", "win32"],
+    pattern:
+      /\/pkgs\/github_release\/github\.com\/atomicbot-ai\/atomic-agent\/[^/]+\/(.+\/)?atomic-agent(\.exe)?$/i,
+  },
+];
+
+/** The package manager whose layout `execPath` sits in, if any. */
+export function managerForPath(
+  platform: NodeJS.Platform,
+  execPath: string,
+): ManagerSource | undefined {
+  const path = platform === "win32" ? execPath.replace(/\\/g, "/") : execPath;
+  return MANAGED_PATHS.find(
+    (entry) => entry.platforms.includes(platform) && entry.pattern.test(path),
+  )?.source;
+}
 
 /** Narrow the marker's text to a known source, else `undefined`. */
 export function parseInstallSource(raw: unknown): InstallSource | undefined {
@@ -65,10 +180,20 @@ export interface ReadInstallSourceInput {
 export function readInstallSource(
   input: ReadInstallSourceInput,
 ): InstallSource | undefined {
+  const managed = managerForPath(input.platform, input.execPath);
+  if (managed) return managed;
   if (input.platform !== "linux" || input.execPath !== PACKAGED_BINARY) {
     return undefined;
   }
-  return parseInstallSource(input.readFile(PACKAGE_MARKER));
+  return parseLinuxPackageSource(input.readFile(PACKAGE_MARKER));
+}
+
+/** The marker names a Linux package only; a manager is known by its path. */
+function parseLinuxPackageSource(raw: unknown): InstallSource | undefined {
+  const source = parseInstallSource(raw);
+  return (LINUX_PACKAGE_SOURCES as readonly string[]).includes(source ?? "")
+    ? source
+    : undefined;
 }
 
 function readTextFile(path: string): string | undefined {
@@ -102,7 +227,7 @@ export function readShadowedPackage(
   if (input.platform !== "linux" || input.execPath === PACKAGED_BINARY) {
     return undefined;
   }
-  return parseInstallSource(input.readFile(PACKAGE_MARKER));
+  return parseLinuxPackageSource(input.readFile(PACKAGE_MARKER));
 }
 
 /** {@link readShadowedPackage} for the running process. */

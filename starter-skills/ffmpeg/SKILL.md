@@ -1,9 +1,15 @@
 ---
 name: ffmpeg
-description: Process audio and video with the `ffmpeg` / `ffprobe` CLIs — convert, trim, extract audio, resize, change format, make GIFs, inspect media. Use for any audio/video transformation.
+description: Convert, trim, resize or inspect audio and video with `ffmpeg` (extract audio, make GIFs).
 version: 1.0.1
 requires_tools:
   - os.shell.run
+requires_bins:
+  - "ffmpeg"
+  - "ffprobe"
+install:
+  darwin: "brew install ffmpeg"
+  linux: "apt-get install ffmpeg"
 dangerous: false
 ---
 

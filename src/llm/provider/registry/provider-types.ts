@@ -1,6 +1,9 @@
 import type { AtomicAgentConfig } from "../../../config/index.js";
 import type { ModelMode } from "../../../config/model-mode.js";
-import type { UserSubscriptionCliOptions } from "../../../config/llm-config.js";
+import type {
+  UserSubscriptionCliOptions,
+  UserSubscriptionOAuthOptions,
+} from "../../../config/llm-config.js";
 import type { UserLlmRunModeConfig } from "../../../config/llm-run-mode-config.js";
 import type { LlamaServerClient } from "../../llama-server-client.js";
 import type { ModelProfile } from "../../model-profile.js";
@@ -40,8 +43,22 @@ export type LlmProviderConfigEntry = {
    * working after a restart. See `openai/openai-auth-headers.ts`.
    */
   apiKeyHeader?: string;
+  /**
+   * Env var names of more keys for the same service, tried in order
+   * after `apiKey` when a key is refused (ATO-471,
+   * `llm/fallback/key-pool.ts`). The values are read from `process.env`
+   * (`<stateDir>/.env`) when the provider is built.
+   */
+  extraApiKeyEnvVars?: string[];
+  /**
+   * Command (argv) whose output is the key; see
+   * `UserLlmProviderEntry.apiKeyCommand` and `openai/api-key-command.ts`.
+   */
+  apiKeyCommand?: readonly string[];
   supportsTools?: boolean;
   supportsVision?: boolean;
+  /** See `UserLlmProviderEntry.supportsAudio` (ATO-497). */
+  supportsAudio?: boolean;
   requestTimeoutMs?: number;
   promptCache?: "auto" | "off" | "explicit-markers";
   /** Native-tools request layout; see `UserLlmProviderEntry.messageShape`. */
@@ -81,6 +98,8 @@ export type LlmProviderConfigEntry = {
    * drive and how to invoke it. Absent on every other kind.
    */
   subscriptionCli?: UserSubscriptionCliOptions;
+  /** EXPERIMENTAL `subscription-oauth` settings (ATO-1448); no tokens here. */
+  subscriptionOauth?: UserSubscriptionOAuthOptions;
   userModels?: ReadonlyArray<UserModelConfigEntry>;
 };
 
@@ -90,6 +109,7 @@ export type UserModelConfigEntry = {
   contextWindow?: number;
   dim?: number;
   supportsVision?: boolean;
+  supportsAudio?: boolean;
   supportsTools?: "none" | "basic" | "parallel" | "strict";
   supportsPromptCache?: boolean;
   reasoningFormat?: LlmProvider["capabilities"]["reasoningFormat"];

@@ -5,6 +5,7 @@ import type { ApprovalBus } from "./approval-bus.js";
 import type { CompletionRegistry } from "./completion-registry.js";
 import type { UndeliveredSteerStore } from "./undelivered-steers.js";
 import type { AuthThrottle } from "./auth-throttle.js";
+import type { McpElicitationBroker } from "../mcp/mcp-elicitation-broker.js";
 import { secretEquals } from "./secret-equal.js";
 
 /**
@@ -31,6 +32,12 @@ export interface HandlerContext {
    * `GET /api/sessions/{id}/steer`.
    */
   undeliveredSteers: UndeliveredSteerStore;
+  /**
+   * ATO-1492: open MCP elicitation questions (a server asking the person
+   * to confirm or fill a small form). Set only by a host that wired the
+   * broker into the runtime as `onMcpElicitation` (serve does).
+   */
+  elicitations?: McpElicitationBroker;
 }
 
 export type HttpHandler = (
@@ -57,11 +64,11 @@ export function getBearerToken(req: IncomingMessage): string | null {
 }
 
 /**
- * Enforce the optional bearer-token auth. Returns `true` when the
- * caller may proceed. When auth fails the response is closed with a
- * 401 and the handler must bail out. When `apiKey` is `null` auth is
- * disabled entirely — useful for local loopback use and the default
- * when the operator did not pass `--api-key`.
+ * Enforce the bearer-token auth. Returns `true` when the caller may
+ * proceed. When auth fails the response is closed with a 401 and the
+ * handler must bail out. `apiKey` is `null` only on a server built with
+ * `unauthenticated: true` (tests, an embedder that says so); `serve`
+ * always has a key, generated on the first run when none is given.
  */
 export function enforceAuth(
   req: IncomingMessage,
@@ -75,19 +82,32 @@ export function enforceAuth(
      constant-time, so the token cannot be read back from response timing. */
   const wait = throttle ? throttle.retryAfter(address) : 0;
   if (wait > 0) {
-    sendJson(
-      res,
-      429,
-      openaiError("Too many wrong API keys from this address; try again later", "invalid_request_error", null, "auth_throttled"),
-      { "retry-after": String(wait) },
-    );
+    sendAuthThrottled(res, wait);
     return false;
   }
-  if (secretEquals(getBearerToken(req), apiKey)) {
+  /* ATO-1080: Anthropic clients (Claude Code with ANTHROPIC_API_KEY) send
+     the key as `x-api-key` instead of a bearer token. Same key, same check. */
+  if (secretEquals(getBearerToken(req) ?? getHeader(req, "x-api-key"), apiKey)) {
     throttle?.succeeded(address);
     return true;
   }
   throttle?.failed(address);
+  sendInvalidApiKey(res);
+  return false;
+}
+
+/** The 429 of an address that kept sending wrong keys (ATO-1126). */
+export function sendAuthThrottled(res: ServerResponse, waitSeconds: number): void {
+  sendJson(
+    res,
+    429,
+    openaiError("Too many wrong API keys from this address; try again later", "invalid_request_error", null, "auth_throttled"),
+    { "retry-after": String(waitSeconds) },
+  );
+}
+
+/** The 401 of a missing or unknown key. */
+export function sendInvalidApiKey(res: ServerResponse): void {
   sendJson(
     res,
     401,
@@ -98,7 +118,6 @@ export function enforceAuth(
       "invalid_api_key",
     ),
   );
-  return false;
 }
 
 export function sendJson(
@@ -132,6 +151,15 @@ export function sendError(
 export async function readJsonBody<T = unknown>(
   req: IncomingMessage,
 ): Promise<T> {
+  return parseJsonBody<T>(await readRawBody(req));
+}
+
+/**
+ * Read the exact request bytes, capped at `MAX_JSON_BODY_BYTES`. Routes
+ * that verify a signature over the body (signed webhooks) read it this
+ * way first and parse it with `parseJsonBody` afterwards.
+ */
+export async function readRawBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
@@ -142,10 +170,14 @@ export async function readJsonBody<T = unknown>(
     }
     chunks.push(buf);
   }
-  if (total === 0) return {} as T;
-  const raw = Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
+}
+
+/** Parse bytes from `readRawBody`; an empty body is `{}`. */
+export function parseJsonBody<T = unknown>(raw: Buffer): T {
+  if (raw.length === 0) return {} as T;
   try {
-    return JSON.parse(raw) as T;
+    return JSON.parse(raw.toString("utf8")) as T;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new BodyParseError(`invalid JSON: ${message}`);
@@ -228,6 +260,11 @@ export function beginSse(
     "x-accel-buffering": "no",
     ...extraHeaders,
   });
+  // Send the head now: Node holds it until the first write otherwise, so
+  // a client of a stream with nothing to say yet (no pending approval, no
+  // question) would not see it open until the first heartbeat. Optional:
+  // a test double of the response may not have it.
+  res.flushHeaders?.();
   let closed = false;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   if (options.heartbeatMs && options.heartbeatMs > 0) {

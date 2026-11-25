@@ -10,11 +10,19 @@ import {
 import type { DownloadFileOptions } from "../downloads/download-file.js";
 import { verifyGuardedEndpoint } from "../../llm/llama-server-auth-probe.js";
 import { getConfig } from "../../config/index.js";
+import { withChatStartPending } from "./chat-start-pending.js";
 import type { LocalLegRole } from "./worker-slots.js";
 import { holdEmbeddingForLowMemory, type EmbeddingMemoryVerdict } from "./embedding-memory-gate.js";
 import { MAX_AUTO_SLOTS, resolveConfiguredSlots } from "./worker-slots.js";
 import { currentRunLog } from "./server-fault.js";
 import { readLogTail } from "./log-tail.js";
+import {
+  promptCacheFingerprint,
+  promptCacheLaunchArgs,
+  restorePromptCaches,
+  savePromptCaches,
+  statModelFile,
+} from "./prompt-disk-cache.js";
 import {
   decidePartialOffloadShrink,
   parseGpuOffload,
@@ -95,6 +103,13 @@ import {
 import { resolvePlatformAsset } from "../backend/platform-assets.js";
 import { assertBackendRunsOnThisMac } from "../backend/macos-min-version.js";
 import { assertPortFree, waitForOwnDaemon } from "./daemon-launch-guard.js";
+import {
+  loraAdapterArgs,
+  loraAdapterFileProblem,
+  loraAdapterKey,
+  loraAdapterShapeProblem,
+  type LoraAdapter,
+} from "./lora-adapter.js";
 import { noteReleaseTimeout, waitForProcessRelease } from "./process-release.js";
 import {
   buildDaemonEnv,
@@ -120,6 +135,14 @@ export interface DaemonStartOptions {
    * undefined for text-only operation.
    */
   mmprojFile?: string;
+  /**
+   * LoRA adapter for this model (`localModels.managed.loraAdapters`,
+   * ATO-1106): appended as `--lora <path>` or `--lora-scaled
+   * <path>:<scale>`. `startDaemon` refuses to launch when the file is
+   * missing or the shape is one llama.cpp would misread. Undefined keeps
+   * the launch byte-identical.
+   */
+  loraAdapter?: LoraAdapter;
   /**
    * Resolved compute device for offloading. A concrete backend device
    * id (e.g. `Vulkan0`) appends `--device <id>`; the literal `"cpu"`
@@ -415,6 +438,18 @@ export interface LaunchRecord {
    * grow. Read by whoever owns the daemon to decide a growth restart.
    */
   autoContextCeiling?: number | null;
+  /**
+   * `loraAdapterKey` of the adapter this server was launched with;
+   * `null` / absent for none. Port reclaim compares it with the adapter
+   * the next launch wants, so changing the adapter restarts the server.
+   */
+  loraAdapter?: string | null;
+  /**
+   * The launch's prompt-cache fingerprint (`prompt-disk-cache.ts`) when
+   * it runs with `localModels.managed.promptDiskCache`; what a stop
+   * stamps its saves with.
+   */
+  promptCacheFingerprint?: string | null;
 }
 
 export function writeLaunchRecord(dataDir: string, record: LaunchRecord): void {
@@ -447,6 +482,9 @@ export function readLaunchRecord(
           : null,
       launchedAt: toFiniteNumber(parsed.launchedAt) ?? 0,
       autoContextCeiling: toFiniteNumber(parsed.autoContextCeiling) ?? null,
+      loraAdapter: typeof parsed.loraAdapter === "string" ? parsed.loraAdapter : null,
+      promptCacheFingerprint:
+        typeof parsed.promptCacheFingerprint === "string" ? parsed.promptCacheFingerprint : null,
     };
   } catch {
     return null;
@@ -702,6 +740,7 @@ export function buildLlamaServerArgs(
       "2048",
     );
   }
+  args.push(...loraAdapterArgs(opts.loraAdapter));
   return args;
 }
 
@@ -724,8 +763,11 @@ export function buildLlamaServerArgs(
  *   whether the model fits the device whole.
  * - `note`: why a unified-memory machine got less than its free figure
  *   would fit, for the daemon log.
+ *
+ * Exported for tests only (`context-24gb.test.ts` drives it with a mocked
+ * device table); `startDaemon` is the one caller.
  */
-async function resolveEffectiveContextSize(
+export async function resolveEffectiveContextSize(
   device: string | undefined,
   model: {
     fileSizeGb: number;
@@ -967,6 +1009,22 @@ function readConfiguredCompletionMaxTokens(): number | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** `localModels.managed.promptDiskCache`; off when config cannot be read. */
+function readConfiguredPromptDiskCache(): boolean {
+  try {
+    return getConfig().localModels.managed.promptDiskCache === true;
+  } catch {
+    return false;
+  }
+}
+
+/** The `--parallel` a launch's argv carries; 1 when absent. */
+function launchSlotCount(args: readonly string[]): number {
+  const at = args.indexOf("--parallel");
+  const n = at >= 0 ? Number(args[at + 1]) : 1;
+  return Number.isInteger(n) && n > 0 ? n : 1;
 }
 
 export interface DaemonStatus {
@@ -1244,6 +1302,14 @@ async function recordStartThroughput(opts: {
 export async function startDaemon(
   opts: DaemonStartOptions,
 ): Promise<DaemonStartResult> {
+  // ATO-421: a turn that meets the refused port meanwhile reads this start
+  // as on its way, not as a dead engine, until it ends either way.
+  return withChatStartPending(opts.dataDir, () => startDaemonNow(opts));
+}
+
+async function startDaemonNow(
+  opts: DaemonStartOptions,
+): Promise<DaemonStartResult> {
   // A crashed Core may have left its model running on our pid mirror and
   // port: a new Core reaps it before this start reads either.
   await recoverOrphanedCoreSessions(opts.dataDir);
@@ -1273,6 +1339,13 @@ export async function startDaemon(
         ? `model ${opts.modelId} file not found: ${model.localPath}`
         : `model ${opts.modelId} not downloaded; run 'atomic-agent models pull ${opts.modelId}'`,
     );
+  }
+  if (opts.loraAdapter) {
+    const problem =
+      loraAdapterShapeProblem(opts.loraAdapter) ?? loraAdapterFileProblem(opts.loraAdapter);
+    if (problem) {
+      throw new Error(`${problem} (localModels.managed.loraAdapters["${opts.modelId}"])`);
+    }
   }
 
   // A configured tensor split flips `auto` device resolution to "leave
@@ -1386,6 +1459,19 @@ export async function startDaemon(
     model.id,
     contextSize,
   );
+  // ATO-456: off by default. The fingerprint is taken before the save
+  // path is added, which is not part of what a saved cache depends on.
+  const promptCacheFp = readConfiguredPromptDiskCache()
+    ? promptCacheFingerprint({
+        args,
+        engineBuild: (() => {
+          const v = readBackendVersion(opts.dataDir, opts.engine);
+          return `${opts.engine ?? "llama-server"}|${v?.tag ?? "?"}|${v?.asset ?? "?"}`;
+        })(),
+        modelFile: statModelFile(modelPath),
+      })
+    : null;
+  if (promptCacheFp) args.push(...promptCacheLaunchArgs(opts.dataDir));
 
   // The launch decisions, in the daemon's own log where a reader looking
   // at the flags will look for them. Their first line is also the marker
@@ -1438,7 +1524,7 @@ export async function startDaemon(
     writeFileSync(pidPath, String(session.pid), "utf8");
     const coreShrink = partialOffloadShrinkAfterStart(opts, { contextSize, device });
     if (coreShrink) {
-      await stopDaemon(opts.dataDir, { port: opts.port });
+      await stopDaemon(opts.dataDir, { port: opts.port, savePromptCache: false });
       return startDaemon({ ...opts, offloadShrink: coreShrink });
     }
     // Core's session is a llama-server on this port that takes the
@@ -1455,7 +1541,12 @@ export async function startDaemon(
       probe: opts.throughputProbe !== false,
     });
     writeLaunchRecord(opts.dataDir, { pid: session.pid, modelId: model.id, contextSize,
-      swaFull: swaFull.enabled, prefixReuse: effectivePrefixReuse, launchedAt: Date.now(), autoContextCeiling });
+      swaFull: swaFull.enabled, prefixReuse: effectivePrefixReuse, launchedAt: Date.now(), autoContextCeiling,
+      loraAdapter: loraAdapterKey(opts.loraAdapter), promptCacheFingerprint: promptCacheFp });
+    if (promptCacheFp) {
+      await restorePromptCaches({ dataDir: opts.dataDir, port: opts.port, apiKey: session.api_key,
+        fingerprint: promptCacheFp, slots: launchSlotCount(args) });
+    }
     // Core retries a load that fails with the projector once without it and
     // reports `mmproj_path: null`; an older Core omits the field.
     const projectorDropped = Boolean(opts.mmprojFile) && (session.mmproj_path === null || session.mmproj_path === "");
@@ -1503,7 +1594,7 @@ export async function startDaemon(
     // a fraction of the speed with no sign of why.
     const shrink = partialOffloadShrinkAfterStart(opts, { contextSize, device });
     if (shrink) {
-      await stopDaemon(opts.dataDir, { port: opts.port });
+      await stopDaemon(opts.dataDir, { port: opts.port, savePromptCache: false });
       return await startDaemon({ ...opts, offloadShrink: shrink });
     }
     const tokensPerSecond = await recordStartThroughput({
@@ -1525,7 +1616,13 @@ export async function startDaemon(
       prefixReuse: effectivePrefixReuse,
       launchedAt: Date.now(),
       autoContextCeiling,
+      loraAdapter: loraAdapterKey(opts.loraAdapter),
+      promptCacheFingerprint: promptCacheFp,
     });
+    if (promptCacheFp) {
+      await restorePromptCaches({ dataDir: opts.dataDir, port: opts.port, apiKey,
+        fingerprint: promptCacheFp, slots: launchSlotCount(args) });
+    }
     return {
       pid: child.pid,
       tokensPerSecond,
@@ -1544,6 +1641,46 @@ export interface StopDaemonOptions {
   timeoutMs?: number;
   /** The port the daemon listens on; the configured one when omitted. */
   port?: number;
+  /**
+   * Save the slots' prompt caches first when
+   * `localModels.managed.promptDiskCache` is on (default `true`). A
+   * restart whose new launch cannot load them passes `false`.
+   */
+  savePromptCache?: boolean;
+}
+
+/**
+ * Before a managed stop: save the chat server's prompt caches when the
+ * launch ran with the disk cache (ATO-456). Best effort, bounded by
+ * `PROMPT_CACHE_SAVE_BUDGET_MS`; never throws.
+ */
+async function savePromptCachesBeforeStop(dataDir: string, opts?: StopDaemonOptions): Promise<void> {
+  if (opts?.savePromptCache === false || !readConfiguredPromptDiskCache()) return;
+  try {
+    let target: { pid: number; port: number; apiKey: string | null } | null = null;
+    const core = (() => {
+      try {
+        return JSON.parse(readFileSync(coreSessionPath(dataDir, "chat"), "utf-8")) as
+          { pid?: unknown; port?: unknown; api_key?: unknown };
+      } catch {
+        return null;
+      }
+    })();
+    if (core && typeof core.pid === "number" && typeof core.port === "number") {
+      target = { pid: core.pid, port: core.port, apiKey: typeof core.api_key === "string" ? core.api_key : null };
+    } else {
+      const pid = Number(readFileSync(resolvePidFilePath(dataDir), "utf-8").trim());
+      const port = opts?.port ?? configuredPort("chat");
+      if (Number.isInteger(pid) && pid > 0 && port !== null) {
+        target = { pid, port, apiKey: resolveManagedServerApiKey(dataDir, readConfiguredApiKey()) };
+      }
+    }
+    const fingerprint = target ? readLaunchRecord(dataDir, target.pid)?.promptCacheFingerprint : null;
+    if (!target || !fingerprint) return;
+    await savePromptCaches({ dataDir, port: target.port, apiKey: target.apiKey, fingerprint });
+  } catch {
+    /* no save: the next start reads the conversation again, as before */
+  }
 }
 
 /** The configured port of a managed daemon, `null` when config cannot be read. */
@@ -1573,6 +1710,7 @@ export async function stopDaemon(
   dataDir: string,
   opts?: StopDaemonOptions,
 ): Promise<void> {
+  await savePromptCachesBeforeStop(dataDir, opts);
   if (await stopCoreSession(dataDir, "chat", { releaseWaitMs: opts?.timeoutMs })) return;
   const pidPath = resolvePidFilePath(dataDir);
   let raw: string;

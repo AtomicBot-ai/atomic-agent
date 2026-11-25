@@ -4,6 +4,7 @@ import {
   SubscriptionCliAuthError,
   SubscriptionCliNotInstalledError,
 } from "../provider/subscription-cli/subscription-cli-errors.js";
+import { ChatgptSignInRequiredError } from "../provider/subscription-oauth/oauth-errors.js";
 import { classifyFailure } from "./classify-failure.js";
 import {
   failureVerdict,
@@ -15,6 +16,7 @@ import { GrammarError, ModelError, ToolExecutionError } from "./llm-failures.js"
 import { isLocalEngineDown } from "./local-engine-down.js";
 import { isAtomicChatNotRunning } from "./atomic-chat-not-running.js";
 import { RequestTooLargeError } from "./request-too-large.js";
+import { DailySpendLimitError } from "./spend-limit-error.js";
 import {
   ATOMIC_CHAT_KEY_REQUIRED_CODE,
   LOCAL_CONTEXT_EXCEEDED_CODE,
@@ -144,10 +146,16 @@ function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
     chain.some(
       (l) =>
         l instanceof SubscriptionCliNotInstalledError ||
-        l instanceof SubscriptionCliAuthError,
+        l instanceof SubscriptionCliAuthError ||
+        l instanceof ChatgptSignInRequiredError,
     )
   ) {
     return "provider_setup";
+  }
+
+  // ATO-649: our daily ceiling refused the paid link before sending.
+  if (chain.some((l) => l instanceof DailySpendLimitError)) {
+    return "daily_limit_reached";
   }
 
   if (category === "transport") {
@@ -161,7 +169,9 @@ function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
 }
 
 function modelCause(err: ModelError): FailureCauseId {
-  if (err.reason === "empty") return "empty_response";
+  if (err.reason === "empty") {
+    return err.repeatedOnCloud === true ? "empty_response_repeated" : "empty_response";
+  }
   if (err.reason === "no_stop") return "unfinished_reply";
   if (err.truncation?.repetitive === true) return "repeating_output";
   if (err.truncation?.cause === "context_window") return "context_too_long";

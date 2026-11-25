@@ -23,6 +23,14 @@ export type ApprovalCategory =
   | "fs_write_home"
   | "fs_trash"
   | "http"
+  /**
+   * An `os.http.request` that sends data out: any method other than
+   * GET / HEAD / OPTIONS (a POST today). Level 4 beside `shell`: a POST
+   * can carry files or keys to any host, so it does not go quiet at the
+   * level where a GET does, and an `http` grant or saved rule never
+   * answers it (ATO-1462).
+   */
+  | "http_write"
   | "shell"
   /**
    * A shell command the guard's dangerous layer matched (`dangerous.*`
@@ -55,6 +63,20 @@ export type ApprovalCategory =
    * `browser.allowedDomains`. Level 3 beside `http`.
    */
   | "browser_offsite"
+  /**
+   * A tool the open page declares for agents through WebMCP
+   * (`browser.site_tools` call, ATO-521): the site's own code runs and
+   * may send, buy or delete just as a submit would. Level 4 beside
+   * `browser_commit`; a session grant covers one site.
+   */
+  | "browser_site_tool"
+  /**
+   * The agent hands the browser to the person for one step (`browser.act`
+   * `take_over`, ATO-508): a login, a password, a captcha. The answer
+   * means "I did it, carry on", so only a person can give it: no level,
+   * grant, rule or reviewer answers it (`null` below), bypass included.
+   */
+  | "browser_take_over"
   | "trust_config"
   /**
    * Publishing under the operator's name — a pull request, an issue, a
@@ -103,7 +125,8 @@ export type ApprovalCategory =
   | "paid_generation"
   /**
    * Driving the operator's real mouse and keyboard (`os.screen.click`,
-   * `os.screen.type`, `os.screen.key`, ATO-525). Level 4 beside `shell`:
+   * `os.screen.type`, `os.screen.key`, ATO-525), or pressing a control
+   * through Accessibility (`os.screen.press`, ATO-530). Level 4 beside `shell`:
    * a click or a keystroke in an arbitrary app can do anything the
    * operator could do there, so it never goes quiet below the rung where
    * a shell command does.
@@ -129,6 +152,20 @@ export type ApprovalCategory =
    * the same way.
    */
   | "hook_ask"
+  /**
+   * A clarifying question from `ask_user` (ATO-489, `user-question.ts`):
+   * not an action to allow but a choice only the person can make, so no
+   * level, grant, rule or reviewer ever answers it (`null` below).
+   */
+  | "user_question"
+  /**
+   * Reading another chat's messages or sending a request into another
+   * chat (`sessions.read`, `sessions.send`, ATO-570). The other chat is
+   * the operator's private context, so it asks until full trust; a
+   * session grant is the operator's call, but the risk reviewer never
+   * settles it (`risk-review.ts`).
+   */
+  | "session_cross"
   | "other";
 
 /**
@@ -140,15 +177,18 @@ export type ApprovalCategory =
  *    session working directory (realpath containment).
  *  - level 3 (home): file writes anywhere under the home directory,
  *    moves to Trash, archive extraction, HTTP requests (the SSRF guard
- *    is not part of the gate and stays on), paid cloud generation,
+ *    is not part of the gate and stays on) that only read (GET), paid
+ *    cloud generation,
  *    browser navigation outside `browser.allowedDomains`, screenshots.
  *  - level 4 (operator): guarded shell commands (not the dangerous
- *    ones, `shell_dangerous`, which wait for level 5), skill scripts,
+ *    ones, `shell_dangerous`, which wait for level 5), HTTP requests
+ *    that send data (`http_write`, a POST), skill scripts,
  *    process kills, screen control (mouse and keyboard), and network git (`os.git.{push,pull,fetch,clone}`
  *    plus adding a remote) — the same rung as a guarded `git push`
  *    through the shell, so the dedicated tools are never looser or
  *    stricter than the escape hatch. Browser clicks / Enter that
- *    submit, publish or delete (`browser_commit`). The remote-sync switch
+ *    submit, publish or delete (`browser_commit`), and a site's own
+ *    WebMCP tools (`browser_site_tool`). The remote-sync switch
  *    (`git.remoteSync`) is checked before this ladder is consulted.
  *  - level 5 (full trust): everything, including browser navigation to
  *    non-web URLs, browser passwords and payments, writes to the agent's
@@ -163,11 +203,12 @@ export type ApprovalCategory =
  * 3 or 4 could rewrite its own config to level 5 without a prompt and
  * escalate itself across a restart. See `fs-approval-scope.ts`.
  */
-const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
+const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel | null> = {
   fs_write_workspace: 2,
   fs_write_home: 3,
   fs_trash: 3,
   http: 3,
+  http_write: 4,
   paid_generation: 3,
   browser_offsite: 3,
   screen_capture: 3,
@@ -179,15 +220,21 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   fusion_fanout: 4,
   shell_dangerous: 5,
   browser_commit: 4,
+  browser_site_tool: 4,
   screen_control: 4,
   browser_nonweb: 5,
   browser_secret: 5,
+  // Never: "I did the step in the browser" is only the person's to say.
+  browser_take_over: null,
   trust_config: 5,
   state_secret: 5,
   email: 5,
   fs_read_outside: 5,
   local_model_restart: 5,
   hook_ask: 5,
+  // Never: even full trust cannot pick an answer for the person.
+  user_question: null,
+  session_cross: 5,
   other: 5,
 };
 
@@ -210,7 +257,8 @@ export function isAutoApprovedAt(
   level: ApprovalLevel,
   category: ApprovalCategory,
 ): boolean {
-  return level >= AUTO_APPROVE_FROM_LEVEL[category];
+  const from = AUTO_APPROVE_FROM_LEVEL[category];
+  return from !== null && level >= from;
 }
 
 /**
@@ -234,6 +282,9 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   fs_write_home: true,
   fs_trash: true,
   http: true,
+  // Grantable, but only by its own name (and per origin, `grantKey`):
+  // an `http` grant from a GET prompt never reaches a POST.
+  http_write: true,
   shell: true,
   // `rm -rf`, `git reset --hard`, `sudo`: each one is its own decision.
   // A `shell` or `[a]` grant never reaches this category either.
@@ -256,6 +307,10 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   // A password or a payment is its own decision every time.
   browser_secret: false,
   browser_offsite: true,
+  // "Let this site's own tools run in this chat": per site (`site-grants.ts`).
+  browser_site_tool: true,
+  // Each hand-over is its own step for the person to do.
+  browser_take_over: false,
   trust_config: false,
   // The read-side twin of `trust_config`: "read my API keys for the
   // rest of the session" is never a standing answer, and a `shell`
@@ -279,6 +334,11 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   local_model_restart: false,
   // A hook that asks for a person asks every time.
   hook_ask: false,
+  // Each question is its own; there is nothing to allow "for the session".
+  user_question: false,
+  // "Let it read and message my other chats for this session" is the
+  // operator's call; each prompt still names the chat.
+  session_cross: true,
   other: true,
 };
 
@@ -298,6 +358,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   fs_write_home: "file write · home",
   fs_trash: "move to Trash",
   http: "HTTP request",
+  http_write: "HTTP request · sends data",
   shell: "shell command",
   shell_dangerous: "dangerous shell command",
   script: "skill script",
@@ -309,6 +370,8 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   browser_commit: "browser · submit / publish / delete",
   browser_secret: "browser · password or payment",
   browser_offsite: "browser · site outside the allow-list",
+  browser_site_tool: "browser · the site's own tool",
+  browser_take_over: "browser · your turn",
   trust_config: "agent trust config",
   state_secret: "agent secret file",
   email: "e-mail send",
@@ -318,6 +381,8 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   screen_capture: "screen · screenshot",
   local_model_restart: "local model · restart",
   hook_ask: "hook · confirm",
+  user_question: "question for you",
+  session_cross: "another chat · read / send",
   other: "uncategorised",
 };
 

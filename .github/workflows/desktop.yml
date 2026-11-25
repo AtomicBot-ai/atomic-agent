@@ -1,0 +1,1010 @@
+# Desktop app packages: build the Electron app in desktop/ for every platform
+# the agent ships on, with the matching agent bundle inside, and upload the
+# installers as workflow artifacts. Nothing is published: no release, no tag.
+#
+# Each job builds on its OWN platform. The agent is a Node SEA plus native
+# modules (better-sqlite3), and electron-builder's afterPack
+# (desktop/scripts/after-pack.mjs) runs the bundled agent once to prove it can
+# open its database, so none of this can be cross-built from one machine.
+#
+# The agent bundle steps mirror .github/workflows/release.yml. Signing:
+# - macOS, with the Apple secrets: electron-builder signs the app and every
+#   binary inside it with the Developer ID certificate release.yml signs the
+#   agent with, under the hardened runtime, and notarizes and staples it; the
+#   DMG is then signed, notarized and stapled too. Without the secrets the app
+#   is ad-hoc signed by afterPack, same as a local `npm run dist`.
+# - Windows, with the DigiCert KeyLocker secrets: the agent binaries are
+#   signed before they are bundled and electron-builder signs the app exe, the
+#   installer and the uninstaller through desktop/scripts/win-sign.cjs.
+#
+# Atomic Chat Core ships inside every app (resources/core). "Fetch Atomic Chat
+# Core" downloads the release asset for the job's slug into
+# desktop/build/core/<slug> and fails unless it matches the release's
+# SHA256SUMS. On Windows it is signed there, before packaging, like the agent
+# binaries; on macOS electron-builder signs it with the app. The desktop
+# seeds it into the agent's data dir on first launch (desktop/main/core-seed.ts).
+#
+# Windows on ARM (ATO-252) is the one exception to "each job builds on its own
+# platform", and it is split in two jobs:
+# - agent-win32-arm64 (windows-11-arm) builds the agent bundle natively with
+#   an arm64 Node (the SEA and better-sqlite3 cannot be cross-built), proves
+#   the arm64 binaries are arm64 and that the agent starts and opens its
+#   database there, and uploads bundle/win32-arm64 UNSIGNED. It signs nothing:
+#   DigiCert ships smctl and its KSP for x64 only, and the x64 signtool under
+#   emulation hangs forever on `signtool sign` (run 37470241594).
+# - package-win32-arm64 (windows-2022, x64) downloads that bundle, signs its
+#   binaries exactly like win32-x64 does, and runs `electron-builder --win
+#   --arm64` with the same signing hook. Authenticode does not care about the
+#   file's arch, and the Electron arm64 app is only packed here, not run.
+#   afterPack cannot run the arm64 agent on an x64 host, so its database
+#   probe is skipped there; it ran in agent-win32-arm64 instead.
+#
+# Linux (linux-x64 on ubuntu-22.04, linux-arm64 on ubuntu-24.04-arm) produces
+# an AppImage, a deb and an rpm per arch, all unsigned, named
+# Atomic-Agent-<version>-<arch>.<ext> with the arch spelled the format's way:
+# x86_64/arm64 for the AppImage, amd64/arm64 for the deb, x86_64/aarch64 for
+# the rpm. The rpm needs rpmbuild on the runner ("Install rpmbuild"); the
+# apt/dnf repository on main (scripts/linux-repo.ts) picks the deb and the
+# rpm out of the release and signs the rpm itself.
+#
+# App updates (ATO-229): the repository variable ATAG_UPDATE_FEED_URL, when
+# set, goes into the build (desktop/electron-builder.cjs) and electron-builder
+# also writes the update files (stable-mac.yml + the mac zip, stable.yml,
+# stable-linux.yml / stable-linux-arm64.yml for the AppImage (ATO-573),
+# blockmaps); they are uploaded with the installers. Uploading them to the
+# feed is a separate release step, not done here (desktop/README.md
+# "App updates"). Each Windows job (package win32-x64, package-win32-arm64)
+# writes its own stable.yml; the feed needs the two merged into one
+# (desktop/scripts/merge-update-yml.mjs, ATO-252). Before the upload,
+# desktop/scripts/feed-files.mjs checks the folder holds every platform's yml
+# and every file they name (ATO-1230: the 0.0.7 feed went up without the
+# Linux ymls, and no AppImage could update).
+
+name: Desktop packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or SHA to build (empty = the ref this run was started from)"
+        required: false
+        default: ""
+        type: string
+      # ATO-229: test builds for an A -> B update, without touching repo vars or package.json in git.
+      feed_url:
+        description: "Update feed URL for this build only (empty = vars.ATAG_UPDATE_FEED_URL). https:// only, except http://127.0.0.1 or http://localhost for a local test feed. Needs the signing secrets."
+        required: false
+        default: ""
+        type: string
+      channel:
+        description: "Update channel for this build only (empty = vars.ATAG_UPDATE_CHANNEL, else stable)"
+        required: false
+        default: ""
+        type: string
+      version_override:
+        description: "App version for this build only, e.g. 0.0.90 (set in the runner's package.json, never committed)"
+        required: false
+        default: ""
+        type: string
+  push:
+    branches:
+      - desktop/cross-platform
+
+concurrency:
+  # Two test builds of one ref (A and B, ATO-229) differ only by version_override: they must not cancel each other.
+  group: desktop-${{ github.ref }}-${{ inputs.ref || 'push' }}-${{ inputs.version_override || '' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: package (${{ matrix.slug }})
+    strategy:
+      # One platform failing must not cancel the others.
+      fail-fast: false
+      matrix:
+        include:
+          # macos-26, not macos-14: GitHub retires macos-14 (ATO-114), and it has
+          # no Xcode 26 — the voice helper needs the macOS 26 SDK, so on
+          # macos-14 it was skipped and the DMG shipped without dictation (ATO-162).
+          # macos-15, not macos-26: on macos-26 electron-builder's temporary
+          # signing keychain fails to unlock (`security set-key-partition-list`:
+          # "SecKeychainUnlock: The user name or passphrase you entered is not
+          # correct", run 37017546119). macos-15 carries Xcode 26.x too, which
+          # the Select Xcode 26 step picks.
+          - { slug: darwin-arm64, os: macos-15, builder: "--mac --arm64", artifacts: "desktop/release/*.dmg\ndesktop/release/*.zip\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
+          - { slug: win32-x64, os: windows-2022, builder: "--win --x64", artifacts: "desktop/release/*.exe\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
+          # win32-arm64 is not a row here: it is built by agent-win32-arm64 and
+          # package-win32-arm64 below (see the header).
+          - { slug: linux-x64, os: ubuntu-22.04, builder: "--linux --x64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb\ndesktop/release/*.rpm\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
+          - { slug: linux-arm64, os: ubuntu-24.04-arm, builder: "--linux --arm64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb\ndesktop/release/*.rpm\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      # "true" only when the repo has the signing secrets. Secrets cannot be
+      # read in `if:` directly.
+      HAS_WIN_SIGNING: ${{ secrets.SM_API_KEY != '' && secrets.SM_CODE_SIGNING_CERT_SHA1_HASH != '' }}
+      HAS_MAC_SIGNING: ${{ secrets.MACOS_CSC_LINK != '' && secrets.NOTARYTOOL_KEY != '' }}
+      # Never let electron-builder go looking for a signing identity in the
+      # runner keychain. The Developer ID certificate arrives explicitly as
+      # CSC_LINK in "Package desktop app"; without it afterPack signs ad-hoc.
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      # ATO-229: an app built with a feed updates itself, and an update is only
+      # accepted when it is signed like the running app (Squirrel.Mac: the same
+      # Developer ID; Windows: the publisherName in electron-builder.cjs). An
+      # unsigned build with a feed would offer updates it can never install.
+      - name: A build with an update feed must be signed
+        if: (matrix.slug == 'darwin-arm64' || startsWith(matrix.slug, 'win32-')) && (inputs.feed_url != '' || vars.ATAG_UPDATE_FEED_URL != '')
+        run: |
+          if [[ "${{ matrix.slug }}" == "darwin-arm64" && "$HAS_MAC_SIGNING" != "true" ]] \
+            || [[ "${{ matrix.slug }}" == win32-* && "$HAS_WIN_SIGNING" != "true" ]]; then
+            echo "::error::An update feed is set but the signing secrets are missing; refusing to build an app that cannot update."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || '' }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Same pin as release.yml: the SEA needs Node >= 25.7 for
+          # `"mainFormat": "module"`.
+          node-version: "25.7"
+          check-latest: true
+
+      # ---- agent bundle (mirrors release.yml) --------------------------------
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and build
+        run: npm run build
+
+      # SENTRY_AUTH_TOKEN deliberately not passed: these are test packages, not
+      # releases, so no sourcemaps are uploaded (bundle-sea skips the upload).
+      - name: Bundle CLI for SEA
+        run: npm run bundle:sea
+
+      - name: Fetch runtime assets (ripgrep for host)
+        run: npm run bundle:fetch-assets
+
+      - name: Build Node SEA binary
+        run: npm run bundle:build-binary
+
+      # Before the Windows signing steps: they sign this file where it lands.
+      - name: Fetch Atomic Chat Core
+        run: node desktop/scripts/fetch-core.mjs --slug "${{ matrix.slug }}"
+
+      # ---- Windows code signing (DigiCert KeyLocker) --------------------------
+      # Same setup as release.yml. Without the secrets these steps are skipped
+      # and the installer comes out unsigned (SmartScreen will warn).
+      # package-win32-arm64 below repeats these steps; keep the two in step.
+      - name: Unsigned Windows build
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING != 'true'
+        run: echo "::warning::DigiCert secrets are missing; the Windows installer is unsigned."
+
+      - name: Setup DigiCert KeyLocker (Windows)
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+        run: |
+          $headers = @{ "x-api-key" = $env:SM_API_KEY }
+          $smctlUrl = "https://one.digicert.com/signingmanager/api-ui/v1/releases/smtools-windows-x64.msi/download"
+          Invoke-WebRequest -Uri $smctlUrl -Headers $headers -OutFile smtools.msi
+          Start-Process msiexec.exe -ArgumentList "/i", "smtools.msi", "/quiet", "/norestart" -Wait
+
+          $smctlPath = "C:\Program Files\DigiCert\DigiCert One Signing Manager Tools"
+          echo "$smctlPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+          $certBytes = [Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE_B64)
+          $certPath = "$env:RUNNER_TEMP\digicert_client_cert.p12"
+          [IO.File]::WriteAllBytes($certPath, $certBytes)
+          echo "SM_CLIENT_CERT_FILE=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Verify DigiCert KeyLocker setup (Windows)
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: smctl healthcheck
+
+      - name: Sync certificates to Windows Store (Windows)
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: smctl windows certsync
+
+      - name: Setup Windows SDK signtool (Windows)
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $signtoolPath = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "signtool.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*\x64\*" } |
+            Sort-Object { [version]($_.FullName -replace '.*\\(\d+\.\d+\.\d+\.\d+)\\.*', '$1') } -Descending |
+            Select-Object -First 1
+
+          if ($signtoolPath) {
+            $signtoolDir = $signtoolPath.DirectoryName
+            Write-Host "Found signtool at: $signtoolDir"
+            echo "$signtoolDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          } else {
+            Write-Error "signtool.exe not found in Windows SDK"
+            exit 1
+          }
+
+      # The agent binaries are signed at their source paths, before "Package
+      # bundle" copies them; afterPack then copies the bundle into
+      # resources/agent. Authenticode signatures live inside the file, so both
+      # copies keep them. electron-builder only signs what it builds itself.
+      - name: Sign agent binaries (Windows)
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: |
+          $ErrorActionPreference = "Stop"
+          $targets = @((Get-Item "bundle\${{ matrix.slug }}\atomic-agent.exe").FullName)
+          # Atomic Chat Core, staged by "Fetch Atomic Chat Core"; extraResources ships it as resources/core.
+          $targets += (Get-Item "desktop\build\core\${{ matrix.slug }}\atomic-chat-core.exe").FullName
+          $rg = "assets\ripgrep\${{ matrix.slug }}\rg.exe"
+          if (Test-Path $rg) { $targets += (Get-Item $rg).FullName }
+          $sqlite = Get-ChildItem -Path "node_modules\better-sqlite3\build\Release" -Filter "*.node" -ErrorAction SilentlyContinue
+          foreach ($f in $sqlite) { $targets += $f.FullName }
+
+          # signtool is a native command: check $LASTEXITCODE, a failure does
+          # not trip $ErrorActionPreference.
+          foreach ($t in $targets) {
+            Write-Host "Signing: $t"
+            signtool sign /sha1 $env:SM_CODE_SIGNING_CERT_SHA1_HASH /tr http://timestamp.digicert.com /td SHA256 /fd SHA256 "$t"
+            if ($LASTEXITCODE -ne 0) { Write-Error "signtool sign failed for $t"; exit 1 }
+            signtool verify /pa "$t"
+            if ($LASTEXITCODE -ne 0) { Write-Error "signtool verify failed for $t"; exit 1 }
+          }
+      # ---- end Windows code signing -------------------------------------------
+
+      - name: Package bundle
+        run: npx tsx scripts/package-bundle.ts "${{ matrix.slug }}"
+
+      # ---- desktop app ------------------------------------------------------
+      # The voice helper (desktop/native/atomic-speech.swift) needs the macOS 26
+      # SDK; the runner's default Xcode is older. This picks the newest Xcode 26
+      # and fails loudly if the image has none.
+      - name: Select Xcode 26 (macOS)
+        if: matrix.slug == 'darwin-arm64'
+        run: |
+          set -euo pipefail
+          xc=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1 || true)
+          if [ -z "$xc" ]; then
+            echo "::error::No Xcode 26 on this runner; the DMG would ship without voice input."
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          sudo xcode-select -s "$xc/Contents/Developer"
+          xcodebuild -version
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build desktop app
+        working-directory: desktop
+        run: npm run build
+
+      # build-speech-helper.mjs never fails the build (a contributor without
+      # Xcode still gets an app); CI must not ship a Mac DMG without it.
+      - name: Check the voice helper was built (macOS)
+        if: matrix.slug == 'darwin-arm64'
+        run: |
+          set -euo pipefail
+          test -x desktop/out/native/atomic-speech || { echo "::error::desktop/out/native/atomic-speech was not built — voice input would be missing from the DMG."; exit 1; }
+          file desktop/out/native/atomic-speech
+
+      # afterPack copies ../bundle/<slug> into resources/agent and runs it
+      # once; the job fails here if the bundle is missing or cannot open its
+      # database. npmRebuild rebuilds any native desktop dependency for this
+      # runner's platform (there are none today).
+      # On Windows electron-builder hands the app exe, the installer and the
+      # uninstaller to desktop/scripts/win-sign.cjs, which signs with the same
+      # KeyLocker certificate. The secrets are only passed to the Windows job;
+      # elsewhere the hook is never called.
+      # On macOS (with the Apple secrets) the identity override turns signing
+      # on: electron-builder imports CSC_LINK into a throwaway keychain, signs
+      # the app and everything inside it with desktop/build/entitlements.mac.plist
+      # under the hardened runtime, notarizes it with the App Store Connect API
+      # key (APPLE_API_*) and staples the ticket, then signs the DMG.
+      - name: Write notary API key to file (macOS)
+        if: matrix.slug == 'darwin-arm64' && env.HAS_MAC_SIGNING == 'true'
+        env:
+          NOTARYTOOL_KEY_CONTENT: ${{ secrets.NOTARYTOOL_KEY }}
+        run: |
+          KEY_PATH="${RUNNER_TEMP}/notary-key.p8"
+          printf '%s\n' "$NOTARYTOOL_KEY_CONTENT" > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          echo "APPLE_API_KEY=$KEY_PATH" >> "$GITHUB_ENV"
+
+      # ATO-229: a test build's version, in this runner's package.json only (the
+      # checkout is thrown away with the runner; nothing is committed or pushed).
+      - name: Set the app version for this build (version_override)
+        if: inputs.version_override != ''
+        working-directory: desktop
+        shell: bash
+        env:
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION_OVERRIDE" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::version_override must look like 0.0.90 (got: $VERSION_OVERRIDE)"
+            exit 1
+          fi
+          npm pkg set version="$VERSION_OVERRIDE"
+          node -p "'app version for this build: ' + require('./package.json').version"
+
+      # electron-builder builds the rpm through fpm, which calls rpmbuild;
+      # the Ubuntu runners do not have it. The deb and the AppImage need
+      # nothing extra.
+      - name: Install rpmbuild (Linux)
+        if: startsWith(matrix.slug, 'linux-')
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm
+          rpmbuild --version
+
+      - name: Package desktop app
+        working-directory: desktop
+        env:
+          SM_API_KEY: ${{ startsWith(matrix.slug, 'win32-') && secrets.SM_API_KEY || '' }}
+          SM_CLIENT_CERT_PASSWORD: ${{ startsWith(matrix.slug, 'win32-') && secrets.SM_CLIENT_CERT_PASSWORD || '' }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ startsWith(matrix.slug, 'win32-') && secrets.SM_CODE_SIGNING_CERT_SHA1_HASH || '' }}
+          SM_HOST: https://clientauth.one.digicert.com
+          CSC_LINK: ${{ matrix.slug == 'darwin-arm64' && secrets.MACOS_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.slug == 'darwin-arm64' && secrets.MACOS_CSC_KEY_PASSWORD || '' }}
+          APPLE_API_KEY_ID: ${{ matrix.slug == 'darwin-arm64' && secrets.NOTARYTOOL_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ matrix.slug == 'darwin-arm64' && secrets.NOTARYTOOL_ISSUER || '' }}
+          # ATO-229: empty unless the repository variable is set; then the app checks this feed for updates.
+          # The dispatch inputs (test builds) win over the repository variables.
+          ATAG_UPDATE_FEED_URL: ${{ inputs.feed_url || vars.ATAG_UPDATE_FEED_URL }}
+          ATAG_UPDATE_CHANNEL: ${{ inputs.channel || vars.ATAG_UPDATE_CHANNEL || 'stable' }}
+          # ATO-241: the run goes into the app (with the commit, electron-builder.cjs), so a support report names its build.
+          ATAG_BUILD_RUN: ${{ github.run_number }}
+          ATAG_BUILD_RUN_ID: ${{ github.run_id }}
+        run: |
+          mac_signing=()
+          if [[ "${{ matrix.slug }}" == "darwin-arm64" && "$HAS_MAC_SIGNING" == "true" ]]; then
+            mac_signing=(-c.mac.identity="AtomicMail Systems OU (MU9G7XKJUL)" -c.dmg.sign=true)
+          elif [[ "${{ matrix.slug }}" == "darwin-arm64" ]]; then
+            echo "::warning::Apple signing secrets are missing; the macOS app is ad-hoc signed and not notarized."
+          fi
+          npx electron-builder ${{ matrix.builder }} "${mac_signing[@]}" --publish never
+
+      # electron-builder notarizes and staples the .app, not the DMG around it.
+      # Notarizing the DMG too lets Gatekeeper clear a downloaded DMG offline.
+      - name: Notarize and staple the DMG (macOS)
+        if: matrix.slug == 'darwin-arm64' && env.HAS_MAC_SIGNING == 'true'
+        env:
+          NOTARYTOOL_KEY_ID: ${{ secrets.NOTARYTOOL_KEY_ID }}
+          NOTARYTOOL_ISSUER: ${{ secrets.NOTARYTOOL_ISSUER }}
+        run: |
+          set -euo pipefail
+          dmg=$(ls desktop/release/*.dmg)
+          out=$(xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY" --key-id "$NOTARYTOOL_KEY_ID" \
+            --issuer "$NOTARYTOOL_ISSUER" --wait --output-format json)
+          echo "$out"
+          status=$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')
+          if [[ "$status" != "Accepted" ]]; then
+            id=$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+            xcrun notarytool log "$id" --key "$APPLE_API_KEY" --key-id "$NOTARYTOOL_KEY_ID" --issuer "$NOTARYTOOL_ISSUER" || true
+            echo "::error::DMG notarization: $status"
+            exit 1
+          fi
+          # Apple's ticket service often drops the connection right after a
+          # fresh Accepted (Error 68), so give the ticket time and retry.
+          for attempt in 1 2 3 4 5 6; do
+            xcrun stapler staple "$dmg" && break
+            [[ $attempt -lt 6 ]] || exit 1
+            echo "::warning::Stapling failed (attempt $attempt), retrying in 30s"
+            sleep 30
+          done
+          # ATO-369: stapling rewrote the DMG after electron-builder wrote
+          # stable-mac.yml, so refresh the DMG's size and sha512 there. Its
+          # blockmap is stale now too and nothing reads it (updates use the zip).
+          rm -f "$dmg.blockmap"
+          for yml in desktop/release/*-mac.yml; do
+            [[ -f "$yml" ]] || continue
+            (cd desktop && node scripts/refresh-update-entry.mjs "../$yml" "../$dmg")
+          done
+
+      # What a user's Mac checks: the signature over every nested binary, the
+      # hardened runtime, and that Gatekeeper accepts the app as a notarized
+      # Developer ID app and the DMG as a notarized disk image.
+      - name: Verify macOS signatures
+        if: matrix.slug == 'darwin-arm64' && env.HAS_MAC_SIGNING == 'true'
+        run: |
+          set -euo pipefail
+          app="desktop/release/mac-arm64/Atomic Agent.app"
+          dmg=$(ls desktop/release/*.dmg)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv "$app" 2>&1 | grep -E "^(Identifier|Authority|TeamIdentifier|Runtime Version)="
+          codesign -dv "$app" 2>&1 | grep -q "^Identifier=io.atomicagent.desktop$"
+          agent_sig=$(codesign -dvv "$app/Contents/Resources/agent/atomic-agent" 2>&1)
+          grep -q "^Authority=Developer ID Application" <<<"$agent_sig"
+          grep -q "^CodeDirectory .*flags=.*runtime" <<<"$agent_sig"
+          # Voice input (ATO-162): the helper is in the app and signed like the agent.
+          speech_sig=$(codesign -dvv "$app/Contents/Resources/native/atomic-speech" 2>&1)
+          grep -q "^Authority=Developer ID Application" <<<"$speech_sig"
+          grep -q "^CodeDirectory .*flags=.*runtime" <<<"$speech_sig"
+          # Atomic Chat Core: Developer ID, hardened runtime, secure timestamp.
+          core_sig=$(codesign -dvv "$app/Contents/Resources/core/atomic-chat-core" 2>&1)
+          grep -q "^Authority=Developer ID Application" <<<"$core_sig"
+          grep -q "^CodeDirectory .*flags=.*runtime" <<<"$core_sig"
+          grep -q "^Timestamp=" <<<"$core_sig"
+          spctl --assess --type execute --verbose=2 "$app"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+          xcrun stapler validate "$app"
+          xcrun stapler validate "$dmg"
+
+      - name: Verify Windows signatures
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          # win32-x64 only here; package-win32-arm64 checks win-arm64-unpacked.
+          $files = @(Get-ChildItem "desktop\release\*.exe") +
+            @(Get-Item "desktop\release\win-unpacked\Atomic Agent.exe") +
+            @(Get-Item "desktop\release\win-unpacked\resources\agent\atomic-agent.exe") +
+            @(Get-Item "desktop\release\win-unpacked\resources\core\atomic-chat-core.exe")
+          foreach ($f in $files) {
+            Write-Host "Verifying: $($f.FullName)"
+            signtool verify /pa "$($f.FullName)"
+            if ($LASTEXITCODE -ne 0) { Write-Error "not signed: $($f.FullName)"; exit 1 }
+          }
+
+      # ATO-229: the app checks an update's installer against
+      # win.signtoolOptions.publisherName (electron-builder.cjs, written into
+      # app-update.yml). A name that is not the certificate's CN would make
+      # every update fail, so the build fails here instead.
+      - name: Check the installer's signer against publisherName (Windows)
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $expected = @(node -e "const n=require('./desktop/electron-builder.cjs').win.signtoolOptions.publisherName; console.log([].concat(n).join('\n'))")
+          foreach ($f in Get-ChildItem "desktop\release\*.exe") {
+            $sig = Get-AuthenticodeSignature -LiteralPath $f.FullName
+            $subject = $sig.SignerCertificate.Subject
+            Write-Host "$($f.Name): status=$($sig.Status) subject=$subject"
+            if ($sig.Status -ne 'Valid') { Write-Error "signature not valid: $($f.Name)"; exit 1 }
+            $cn = ([regex]::Match($subject, '(?:^|,\s*)CN=("[^"]*"|[^,]*)')).Groups[1].Value.Trim('"')
+            if ($expected -notcontains $cn) { Write-Error "signer CN '$cn' is not in publisherName ($($expected -join ' | '))"; exit 1 }
+          }
+
+      # The Core the app seeds on first launch must RUN, as packaged and signed:
+      # core-seed.ts writes its install record only when `--version` prints the
+      # bundled version, so a copy that signing or packaging broke would make
+      # every user download Core at first start. Run on each runner's own
+      # architecture; win32-arm64 is built on x64 (package-win32-arm64) and is
+      # not run.
+      - name: Run the packaged Atomic Chat Core
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=$(node --input-type=module -e "import('./desktop/scripts/fetch-core.mjs').then((m) => console.log(m.bundledCoreVersion()))")
+          case "${{ matrix.slug }}" in
+            darwin-arm64) core="desktop/release/mac-arm64/Atomic Agent.app/Contents/Resources/core/atomic-chat-core" ;;
+            win32-x64)    core="desktop/release/win-unpacked/resources/core/atomic-chat-core.exe" ;;
+            linux-x64)    core="desktop/release/linux-unpacked/resources/core/atomic-chat-core" ;;
+            linux-arm64)  core="desktop/release/linux-arm64-unpacked/resources/core/atomic-chat-core" ;;
+            *) echo "no packaged Core check for ${{ matrix.slug }}"; exit 0 ;;
+          esac
+          test -f "$core" || { echo "::error::no packaged Core at $core"; exit 1; }
+          got=$("$core" --version | tr -d '\r' | head -n 1 | xargs)
+          echo "packaged Core: $core -> '$got' (expected '$expected')"
+          if [[ "$got" != "$expected" ]]; then
+            echo "::error::the packaged Atomic Chat Core reports '$got', expected '$expected'"
+            exit 1
+          fi
+
+      - name: List packages
+        run: ls -la desktop/release
+
+      # ATO-229: with a feed set, the update files must be there to upload.
+      - name: Check the update files (macOS, with a feed)
+        if: matrix.slug == 'darwin-arm64' && (inputs.feed_url != '' || vars.ATAG_UPDATE_FEED_URL != '')
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls desktop/release/*-mac.yml desktop/release/*-mac.zip
+          # The blockmap only enables a differential download; a full one works without it.
+          ls desktop/release/*-mac.zip.blockmap || echo "::warning::no mac zip blockmap: updates download the whole zip"
+          cat desktop/release/*-mac.yml
+
+      # ATO-1230: the AppImage reads <channel>-linux.yml (x64) or
+      # <channel>-linux-arm64.yml (arm64). It must be written, name the
+      # AppImage built here, and go into the artifact with it.
+      - name: Check the update files (Linux AppImage, with a feed)
+        if: startsWith(matrix.slug, 'linux-') && (inputs.feed_url != '' || vars.ATAG_UPDATE_FEED_URL != '')
+        shell: bash
+        env:
+          CHANNEL: ${{ inputs.channel || vars.ATAG_UPDATE_CHANNEL || 'stable' }}
+        run: |
+          set -euo pipefail
+          case "${{ matrix.slug }}" in
+            linux-x64)   yml="desktop/release/${CHANNEL}-linux.yml" ;;
+            linux-arm64) yml="desktop/release/${CHANNEL}-linux-arm64.yml" ;;
+          esac
+          if [[ ! -f "$yml" ]]; then
+            echo "::error::$yml was not written: the AppImage would never find an update (ATO-1230)"
+            exit 1
+          fi
+          cat "$yml"
+          appimage="$(sed -n 's/^path: *//p' "$yml" | tr -d "\"'")"
+          if [[ "$appimage" != *.AppImage || ! -f "desktop/release/$appimage" ]]; then
+            echo "::error::$yml names '$appimage', which is not an AppImage in desktop/release"
+            exit 1
+          fi
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.slug }}
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---- Windows on ARM, part 1: the agent bundle, built natively (ATO-252) ----
+  # Everything that has to be arm64 is built here, with an arm64 Node so the
+  # SEA embeds an arm64 node.exe and npm ci fetches/builds an arm64
+  # better-sqlite3. "Package bundle" also runs here: it copies better-sqlite3
+  # from THIS node_modules, and on the x64 packaging runner it would copy an
+  # x64 .node. Nothing is signed on this runner (see the header).
+  agent-win32-arm64:
+    name: agent (win32-arm64)
+    runs-on: windows-11-arm
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      HAS_WIN_SIGNING: ${{ secrets.SM_API_KEY != '' && secrets.SM_CODE_SIGNING_CERT_SHA1_HASH != '' }}
+    steps:
+      # Same gate as package-win32-arm64, here too so a run that cannot be
+      # signed fails before it spends the ARM build.
+      - name: A build with an update feed must be signed
+        if: inputs.feed_url != '' || vars.ATAG_UPDATE_FEED_URL != ''
+        run: |
+          if [[ "$HAS_WIN_SIGNING" != "true" ]]; then
+            echo "::error::An update feed is set but the signing secrets are missing; refusing to build an app that cannot update."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || '' }}
+
+      - name: Setup Node.js (arm64)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "25.7"
+          check-latest: true
+          # An x64 Node here (emulated) would make an x64 agent inside an arm64 app.
+          architecture: arm64
+
+      # ---- agent bundle (mirrors release.yml and the package job) -------------
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and build
+        run: npm run build
+
+      - name: Bundle CLI for SEA
+        run: npm run bundle:sea
+
+      - name: Fetch runtime assets (ripgrep for host)
+        run: npm run bundle:fetch-assets
+
+      - name: Build Node SEA binary
+        run: npm run bundle:build-binary
+
+      - name: Package bundle
+        run: npx tsx scripts/package-bundle.ts win32-arm64
+
+      # The PE header's Machine field: 0xAA64 is ARM64, 0x8664 is x64. Catches
+      # an emulated x64 Node or an x64 prebuilt slipping into the arm64 app.
+      - name: Check the bundle's binaries are arm64
+        run: |
+          set -euo pipefail
+          files=(bundle/win32-arm64/atomic-agent.exe bundle/win32-arm64/node_modules/better-sqlite3/build/Release/better_sqlite3.node)
+          if [[ -f bundle/win32-arm64/vendor/rg.exe ]]; then
+            files+=(bundle/win32-arm64/vendor/rg.exe)
+          else
+            echo "::warning::bundle/win32-arm64/vendor/rg.exe is missing; os.fs.grep needs a system ripgrep on Windows on ARM."
+          fi
+          node -e '
+            const fs = require("node:fs");
+            let bad = 0;
+            for (const f of process.argv.slice(1)) {
+              const b = fs.readFileSync(f);
+              const machine = b.readUInt16LE(b.readUInt32LE(0x3c) + 4);
+              console.log(`${f}: machine=0x${machine.toString(16)}`);
+              if (machine !== 0xaa64) { console.log(`::error::${f} is not an arm64 binary`); bad = 1; }
+            }
+            process.exit(bad);
+          ' "${files[@]}"
+
+      # The arm64 agent can only run here: afterPack on the x64 packaging
+      # runner cannot run it, so this is the same probe afterPack runs on every
+      # other target (desktop/scripts/after-pack.mjs, probeDatabase): `task
+      # list` on a throwaway state dir opens sqlite and exits 0, or exits 1
+      # naming NODE_MODULE_VERSION when better-sqlite3 does not match the SEA's
+      # Node. It runs from bundle/win32-arm64, the exact tree that is uploaded.
+      - name: Smoke the arm64 agent (version + database probe)
+        timeout-minutes: 5
+        run: |
+          set -uo pipefail
+          exe=bundle/win32-arm64/atomic-agent.exe
+          "$exe" --version || { echo "::error::the arm64 agent does not start (--version failed)"; exit 1; }
+          state="$RUNNER_TEMP/atag-agent-abi"
+          rm -rf "$state" && mkdir -p "$state"
+          ATOMIC_AGENT_STATE_DIR="$state" "$exe" task list > "$RUNNER_TEMP/agent-probe.log" 2>&1
+          rc=$?
+          cat "$RUNNER_TEMP/agent-probe.log"
+          if [[ $rc -ne 0 ]]; then
+            if grep -q NODE_MODULE_VERSION "$RUNNER_TEMP/agent-probe.log"; then
+              echo "::error::better-sqlite3 was built for a different Node than the SEA embeds."
+            fi
+            echo "::error::the bundled arm64 agent cannot open its own database (task list exited $rc)."
+            exit 1
+          fi
+
+      # The whole staged bundle, unsigned: package-win32-arm64 signs it and
+      # afterPack copies it into resources/agent. Hidden files are kept so the
+      # tree arrives exactly as package-bundle laid it out.
+      - name: Upload the unsigned agent bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-win32-arm64-unsigned
+          path: bundle/win32-arm64/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+
+  # ---- Windows on ARM, part 2: sign and package on x64 (ATO-252) ------------
+  # The steps mirror the win32-x64 row of the package job; keep the two in step.
+  # Only the agent bundle is arm64, and it comes from agent-win32-arm64. The
+  # root `npm ci`/build is not needed here: the desktop app builds from
+  # desktop/ alone and afterPack only reads ../bundle/win32-arm64.
+  package-win32-arm64:
+    name: package (win32-arm64)
+    needs: agent-win32-arm64
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      HAS_WIN_SIGNING: ${{ secrets.SM_API_KEY != '' && secrets.SM_CODE_SIGNING_CERT_SHA1_HASH != '' }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: A build with an update feed must be signed
+        if: inputs.feed_url != '' || vars.ATAG_UPDATE_FEED_URL != ''
+        run: |
+          if [[ "$HAS_WIN_SIGNING" != "true" ]]; then
+            echo "::error::An update feed is set but the signing secrets are missing; refusing to build an app that cannot update."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || '' }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "25.7"
+          check-latest: true
+
+      - name: Download the arm64 agent bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-win32-arm64-unsigned
+          path: bundle/win32-arm64
+
+      - name: Check the downloaded bundle
+        run: |
+          set -euo pipefail
+          test -f bundle/win32-arm64/atomic-agent.exe
+          test -f bundle/win32-arm64/node_modules/better-sqlite3/build/Release/better_sqlite3.node
+          ls -la bundle/win32-arm64
+
+      # The arm64 asset, fetched on this x64 runner: it is only signed and
+      # packed here, never run.
+      - name: Fetch Atomic Chat Core
+        run: node desktop/scripts/fetch-core.mjs --slug win32-arm64
+
+      # ---- Windows code signing (DigiCert KeyLocker), as in the package job ---
+      - name: Unsigned Windows build
+        if: env.HAS_WIN_SIGNING != 'true'
+        run: echo "::warning::DigiCert secrets are missing; the Windows installer is unsigned."
+
+      - name: Setup DigiCert KeyLocker (Windows)
+        if: env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+        run: |
+          $headers = @{ "x-api-key" = $env:SM_API_KEY }
+          $smctlUrl = "https://one.digicert.com/signingmanager/api-ui/v1/releases/smtools-windows-x64.msi/download"
+          Invoke-WebRequest -Uri $smctlUrl -Headers $headers -OutFile smtools.msi
+          Start-Process msiexec.exe -ArgumentList "/i", "smtools.msi", "/quiet", "/norestart" -Wait
+
+          $smctlPath = "C:\Program Files\DigiCert\DigiCert One Signing Manager Tools"
+          echo "$smctlPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+          $certBytes = [Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE_B64)
+          $certPath = "$env:RUNNER_TEMP\digicert_client_cert.p12"
+          [IO.File]::WriteAllBytes($certPath, $certBytes)
+          echo "SM_CLIENT_CERT_FILE=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Verify DigiCert KeyLocker setup (Windows)
+        if: env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: smctl healthcheck
+
+      - name: Sync certificates to Windows Store (Windows)
+        if: env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: smctl windows certsync
+
+      - name: Setup Windows SDK signtool (Windows)
+        if: env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $signtoolPath = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "signtool.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*\x64\*" } |
+            Sort-Object { [version]($_.FullName -replace '.*\\(\d+\.\d+\.\d+\.\d+)\\.*', '$1') } -Descending |
+            Select-Object -First 1
+
+          if ($signtoolPath) {
+            $signtoolDir = $signtoolPath.DirectoryName
+            Write-Host "Found signtool at: $signtoolDir"
+            echo "$signtoolDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          } else {
+            Write-Error "signtool.exe not found in Windows SDK"
+            exit 1
+          }
+
+      # The same binaries the win32-x64 row signs (the agent, ripgrep,
+      # better-sqlite3, Atomic Chat Core), the agent's signed where they already
+      # sit in the staged bundle: package-bundle ran on the ARM runner. afterPack copies the
+      # bundle into resources/agent; the signatures live inside the files.
+      - name: Sign agent binaries (Windows)
+        if: env.HAS_WIN_SIGNING == 'true'
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: |
+          $ErrorActionPreference = "Stop"
+          $targets = @((Get-Item "bundle\win32-arm64\atomic-agent.exe").FullName)
+          $targets += (Get-Item "desktop\build\core\win32-arm64\atomic-chat-core.exe").FullName
+          $rg = "bundle\win32-arm64\vendor\rg.exe"
+          if (Test-Path $rg) { $targets += (Get-Item $rg).FullName }
+          $sqlite = Get-ChildItem -Path "bundle\win32-arm64\node_modules\better-sqlite3\build\Release" -Filter "*.node" -ErrorAction SilentlyContinue
+          foreach ($f in $sqlite) { $targets += $f.FullName }
+
+          # signtool is a native command: check $LASTEXITCODE, a failure does
+          # not trip $ErrorActionPreference.
+          foreach ($t in $targets) {
+            Write-Host "Signing: $t"
+            signtool sign /sha1 $env:SM_CODE_SIGNING_CERT_SHA1_HASH /tr http://timestamp.digicert.com /td SHA256 /fd SHA256 "$t"
+            if ($LASTEXITCODE -ne 0) { Write-Error "signtool sign failed for $t"; exit 1 }
+            signtool verify /pa "$t"
+            if ($LASTEXITCODE -ne 0) { Write-Error "signtool verify failed for $t"; exit 1 }
+          }
+      # ---- end Windows code signing -------------------------------------------
+
+      # ---- desktop app ------------------------------------------------------
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build desktop app
+        working-directory: desktop
+        run: npm run build
+
+      - name: Set the app version for this build (version_override)
+        if: inputs.version_override != ''
+        working-directory: desktop
+        shell: bash
+        env:
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION_OVERRIDE" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::version_override must look like 0.0.90 (got: $VERSION_OVERRIDE)"
+            exit 1
+          fi
+          npm pkg set version="$VERSION_OVERRIDE"
+          node -p "'app version for this build: ' + require('./package.json').version"
+
+      # afterPack copies ../bundle/win32-arm64 into resources/agent. It cannot
+      # run the arm64 agent on this x64 runner and says so; the same probe ran
+      # in agent-win32-arm64. electron-builder signs the app exe, the
+      # installer and the uninstaller through desktop/scripts/win-sign.cjs.
+      - name: Package desktop app
+        working-directory: desktop
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+          SM_HOST: https://clientauth.one.digicert.com
+          ATAG_UPDATE_FEED_URL: ${{ inputs.feed_url || vars.ATAG_UPDATE_FEED_URL }}
+          ATAG_UPDATE_CHANNEL: ${{ inputs.channel || vars.ATAG_UPDATE_CHANNEL || 'stable' }}
+          ATAG_BUILD_RUN: ${{ github.run_number }}
+          ATAG_BUILD_RUN_ID: ${{ github.run_id }}
+        run: npx electron-builder --win --arm64 --publish never
+
+      - name: Verify Windows signatures
+        if: env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem "desktop\release\*.exe") +
+            @(Get-Item "desktop\release\win-arm64-unpacked\Atomic Agent.exe") +
+            @(Get-Item "desktop\release\win-arm64-unpacked\resources\agent\atomic-agent.exe") +
+            @(Get-Item "desktop\release\win-arm64-unpacked\resources\core\atomic-chat-core.exe")
+          foreach ($f in $files) {
+            Write-Host "Verifying: $($f.FullName)"
+            signtool verify /pa "$($f.FullName)"
+            if ($LASTEXITCODE -ne 0) { Write-Error "not signed: $($f.FullName)"; exit 1 }
+          }
+
+      - name: Check the installer's signer against publisherName (Windows)
+        if: env.HAS_WIN_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $expected = @(node -e "const n=require('./desktop/electron-builder.cjs').win.signtoolOptions.publisherName; console.log([].concat(n).join('\n'))")
+          foreach ($f in Get-ChildItem "desktop\release\*.exe") {
+            $sig = Get-AuthenticodeSignature -LiteralPath $f.FullName
+            $subject = $sig.SignerCertificate.Subject
+            Write-Host "$($f.Name): status=$($sig.Status) subject=$subject"
+            if ($sig.Status -ne 'Valid') { Write-Error "signature not valid: $($f.Name)"; exit 1 }
+            $cn = ([regex]::Match($subject, '(?:^|,\s*)CN=("[^"]*"|[^,]*)')).Groups[1].Value.Trim('"')
+            if ($expected -notcontains $cn) { Write-Error "signer CN '$cn' is not in publisherName ($($expected -join ' | '))"; exit 1 }
+          }
+
+      - name: List packages
+        run: ls -la desktop/release
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-win32-arm64
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.blockmap
+            desktop/release/*.yml
+            !desktop/release/builder-*.yml
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---- Checksums, signature, attestations (ATO-1035) -------------------------
+  # The release's SHA256SUMS.txt for the installers every job above built (the
+  # dmg and mac zip, both Windows setups, the AppImages, debs and rpms, and
+  # their blockmaps), signed with the packages key into SHA256SUMS.txt.asc: the
+  # key in packaging/atomic-chat.asc that already signs the apt/dnf repository.
+  # The update ymls are left out: stable.yml is merged from the two Windows
+  # jobs only when the feed goes up (desktop/README.md "App updates"). Without
+  # the key secret the sums are written unsigned, with a warning. A run started
+  # by hand also gets a GitHub build-provenance attestation for each installer,
+  # which `gh attestation verify <file> -R AtomicBot-ai/atomic-agent` checks.
+  # Upload desktop-checksums' two files to the desktop-vX.Y.Z release with the
+  # installers, in place of a SHA256SUMS.txt made by hand.
+  checksums:
+    name: checksums, signature, attestations
+    needs: [package, package-win32-arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: packaging
+
+      # One folder per artifact: the two Windows jobs each write a stable.yml,
+      # and a merged download would keep only one of them.
+      - name: Download the packages
+        uses: actions/download-artifact@v4
+        with:
+          path: packages
+          pattern: desktop-*
+
+      - name: Write SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          mkdir -p sums installers
+          find packages -mindepth 2 -maxdepth 2 -type f ! -name '*.yml' | while IFS= read -r f; do
+            name="$(basename "$f")"
+            if [ -e "installers/$name" ]; then echo "::error::two artifacts carry $name"; exit 1; fi
+            cp "$f" "installers/$name"
+          done
+          cd installers
+          if [ -z "$(ls -A)" ]; then echo "::error::no installers to sum"; exit 1; fi
+          ls -1 | LC_ALL=C sort | xargs -d '\n' sha256sum -- > ../sums/SHA256SUMS.txt
+          cat ../sums/SHA256SUMS.txt
+
+      - name: Sign SHA256SUMS.txt with the packages key
+        env:
+          KEY: ${{ secrets.LINUX_PACKAGES_GPG_KEY }}
+          PASSPHRASE: ${{ secrets.LINUX_PACKAGES_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEY" ]; then
+            echo "::warning::LINUX_PACKAGES_GPG_KEY is not set: SHA256SUMS.txt is not signed"
+            exit 0
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          (umask 077; mkdir -p "$GNUPGHOME")
+          expected="$(gpg --show-keys --with-colons packaging/atomic-chat.asc | awk -F: '/^fpr:/ {print $10; exit}')"
+          printf '%s\n' "$KEY" | gpg --batch --import
+          if ! gpg --list-secret-keys "$expected" >/dev/null 2>&1; then
+            echo "::error::LINUX_PACKAGES_GPG_KEY is not the key in packaging/atomic-chat.asc"; exit 1
+          fi
+          sign=(gpg --batch --yes --pinentry-mode loopback --local-user "$expected" --armor --detach-sign)
+          if [ -n "$PASSPHRASE" ]; then
+            printf '%s' "$PASSPHRASE" | "${sign[@]}" --passphrase-fd 0 --output sums/SHA256SUMS.txt.asc sums/SHA256SUMS.txt
+          else
+            "${sign[@]}" --output sums/SHA256SUMS.txt.asc sums/SHA256SUMS.txt
+          fi
+          gpg --dearmor --output "$RUNNER_TEMP/atomic-chat.gpg" < packaging/atomic-chat.asc
+          gpgv --keyring "$RUNNER_TEMP/atomic-chat.gpg" sums/SHA256SUMS.txt.asc sums/SHA256SUMS.txt
+          rm -rf "$GNUPGHOME"
+
+      - name: Attest build provenance
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: installers/*
+
+      - name: Upload the sums
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-checksums
+          path: sums/SHA256SUMS.txt*
+          if-no-files-found: error
+          retention-days: 14

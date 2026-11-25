@@ -1,5 +1,6 @@
 import type { CompletionUsage } from "../../llm/provider/completion-types.js";
 import type { DelegateContract } from "./contract.js";
+import { sumDiffStats } from "./worker-diffstats.js";
 import {
   completedWaveNotes,
   contractForWave,
@@ -127,7 +128,15 @@ export class TaskTreeState {
 
   /** Whether a node at `depth` may still propose a split. */
   canSplitAt(depth: number): boolean {
-    return depth < this.limits.maxDepth && this.nodesLeft >= MIN_SPLIT_TASKS;
+    return (
+      treeLimitBreach({
+        depth,
+        maxDepth: this.limits.maxDepth,
+        nodes: this.count,
+        maxNodes: this.limits.maxNodes,
+        adding: MIN_SPLIT_TASKS,
+      }) === undefined
+    );
   }
 
   /** The orchestrator's own tasks: depth 1, counted against the cap. */
@@ -284,6 +293,34 @@ export function extractSplitProposal(reply: string): ExtractedProposal {
   }
 }
 
+/**
+ * The tree's two caps as one check: may a node at `depth` add `adding`
+ * children to a tree that already holds `nodes`? The depth cap comes
+ * first, as in a proposal's refusal. Shared by the split check here and
+ * by the subagent tool (ATO-1670), whose caller depth and per-turn child
+ * count are the same two numbers.
+ */
+export type TreeLimitBreach =
+  | { kind: "depth"; depth: number; maxDepth: number }
+  | { kind: "nodes"; total: number; maxNodes: number };
+
+export function treeLimitBreach(input: {
+  depth: number;
+  maxDepth: number;
+  nodes: number;
+  maxNodes: number;
+  adding: number;
+}): TreeLimitBreach | undefined {
+  if (input.depth >= input.maxDepth) {
+    return { kind: "depth", depth: input.depth, maxDepth: input.maxDepth };
+  }
+  const total = input.nodes + input.adding;
+  if (total > input.maxNodes) {
+    return { kind: "nodes", total, maxNodes: input.maxNodes };
+  }
+  return undefined;
+}
+
 export interface SplitLimits {
   /** The depth of the node that proposed. */
   depth: number;
@@ -341,7 +378,15 @@ export function validateSplitProposal(
   if (unknown.length > 0) {
     return refuse(`unknown key${unknown.length === 1 ? "" : "s"} ${unknown.join(", ")}`);
   }
-  if (limits.depth >= limits.maxDepth) {
+  if (
+    treeLimitBreach({
+      depth: limits.depth,
+      maxDepth: limits.maxDepth,
+      nodes: 0,
+      maxNodes: limits.maxNodes,
+      adding: 0,
+    })?.kind === "depth"
+  ) {
     return refuse(
       `the task tree is already ${limits.depth} deep, its limit (llm.runMode.fusion.taskTree.maxDepth ${limits.maxDepth})`,
     );
@@ -355,7 +400,15 @@ export function validateSplitProposal(
   if (parsed.tasks.length < MIN_SPLIT_TASKS) {
     problems.push(`a split needs at least ${MIN_SPLIT_TASKS} subtasks`);
   }
-  if (limits.nodes + parsed.tasks.length > limits.maxNodes) {
+  if (
+    treeLimitBreach({
+      depth: 0,
+      maxDepth: 1,
+      nodes: limits.nodes,
+      maxNodes: limits.maxNodes,
+      adding: parsed.tasks.length,
+    })?.kind === "nodes"
+  ) {
     problems.push(
       `${parsed.tasks.length} subtasks would make ${limits.nodes + parsed.tasks.length} nodes; the tree's limit is ${limits.maxNodes} (llm.runMode.fusion.taskTree.maxNodes)`,
     );
@@ -666,6 +719,9 @@ async function closeParent(
   );
   const tools = sumTools(row, children);
   const usage = sumUsage([row, ...children]);
+  // The children's files too (ATO-1700): their rows live only in the
+  // tree, and the chat's "Changed files" card reads the closed row.
+  const diffstats = sumDiffStats([row, ...children]);
   const { error: _parentError, ...parentRow } = row;
   let closed: WorkerTaskResult = {
     ...parentRow,
@@ -678,6 +734,7 @@ async function closeParent(
     durationMs: Math.max(row.durationMs, Date.now() - startedAt),
     tools,
     ...(usage === undefined ? {} : { usage }),
+    ...(diffstats.length === 0 ? {} : { diffstats }),
     notes: [
       ...(row.notes ?? []).filter((n) => !FILE_CHECK_NOTE.test(n)),
       `split into ${children.length} subtasks: ${children.map((c) => `${c.id} ${c.status}`).join(", ")}`,

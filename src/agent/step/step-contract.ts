@@ -97,6 +97,8 @@ export interface LlmStreamParams {
   maxOutputTokens?: number;
   /** The turn's reasoning effort (`RunTurnOptions.reasoningEffort`). */
   reasoningEffort?: ReasoningEffort;
+  /** The chat's reasoning level (`RunTurnOptions.reasoningOverride`, ATO-490). */
+  reasoningOverride?: ReasoningEffort;
   /** See `CompletionRequest.disableThinking`. */
   disableThinking?: boolean;
   /**
@@ -145,6 +147,14 @@ export interface LlmStreamParams {
    * the chain picks the link as before.
    */
   providerId?: string;
+  /**
+   * With `providerId`: the chat model to ask that link for, instead of
+   * the model its config entry names (ATO-1148, a project's own cloud
+   * model). The request goes to a copy of the pinned provider built for
+   * this model; the config and the active provider are not touched, so
+   * other chats keep their model. Ignored without `providerId`.
+   */
+  model?: string;
 }
 
 
@@ -166,6 +176,12 @@ export interface StepDependencies {
    * the step's window, with nothing held between steps.
    */
   compactPromptLatch?: import("../../prompt/compact-prompt.js").CompactPromptLatch;
+  /**
+   * Per-session user persona (ATO-54), owned by the loop so the
+   * `### persona` block cannot move mid-session. Absent (tests, one-off
+   * callers): no persona is rendered.
+   */
+  personaLatch?: import("../../prompt/persona-latch.js").PersonaLatch;
   /**
    * Plan mode, read per call rather than captured once — same contract
    * as `BatchExecutionContext.isPlanMode`. Absent ⇒ off.
@@ -257,6 +273,11 @@ export interface StepDependencies {
    */
   fusionTokensPerSecond?: () => number | null;
   /**
+   * The fusion outcome log's summary for the `### fusion` block
+   * (ATO-949). Held per session by the log, so stable per step.
+   */
+  fusionPastRuns?: (sessionId: string) => readonly string[];
+  /**
    * Provider capability: whether the active native-tools provider can
    * generate parallel tool calls in one response. When false (or the
    * configured `agent.maxParallelToolCalls` is 1), the executor asks
@@ -279,6 +300,16 @@ export interface StepDependencies {
    * `LlmStreamParams.providerId`; see that field for the contract.
    */
   providerId?: string;
+  /** The pinned link's model for this turn; `LlmStreamParams.model`. */
+  model?: string;
+  /**
+   * Identity of the agent turn this step belongs to, the same for every
+   * step of one turn and different across turns. Handed to every tool
+   * call as `ToolContext.turnId` (ATO-1670).
+   */
+  turnId?: string;
+  /** The turn's spend ceiling seam, when a ceiling is set (`ToolContext.turnSpend`). */
+  turnSpend?: import("../../tools/tool-registry.js").TurnSpendSeam;
   /**
    * Invoked after every LLM completion (initial call and one-shot parse
    * retry alike). Used by the agent loop to feed the served `modelId`
@@ -368,6 +399,12 @@ export interface StepContext {
   answerChannel?: import("../../prompt/answer-style.js").AnswerChannel;
   /** The turn's reasoning effort — see `LlmStreamParams.reasoningEffort`. */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * The chat's reasoning level (ATO-490): a cloud reasoning effort over
+   * the model's `params`, and a local think budget in the grammar
+   * (`resolveStepGrammar`). Absent, the step is built as before.
+   */
+  reasoningOverride?: ReasoningEffort;
   /** The turn's output ceiling — see `LlmStreamParams.maxOutputTokens`. */
   maxOutputTokens?: number;
   /**

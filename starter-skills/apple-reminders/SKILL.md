@@ -1,9 +1,13 @@
 ---
 name: apple-reminders
-description: Manage Apple Reminders via the `remindctl` CLI on macOS — list, add, complete, delete, manage lists.
+description: Manage Apple Reminders on macOS via `remindctl` (add, list, complete).
 version: 1.2.2
 requires_tools:
   - os.shell.run
+requires_bins:
+  - "remindctl"
+install:
+  darwin: "brew install steipete/tap/remindctl"
 dangerous: false
 platforms:
   - darwin

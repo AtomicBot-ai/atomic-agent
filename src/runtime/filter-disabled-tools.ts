@@ -33,6 +33,13 @@ export interface ToolGateConfig {
   browser: { enabled: boolean };
   web: { search: { enabled: boolean } };
   vision: { enabled: boolean; providerAvailable: boolean };
+  /**
+   * Audio input gate (ATO-497, decision 62): the runtime passes the live
+   * `audioRouteAvailable` answer (unset `vision.audioInput` = a local
+   * model that reports audio only; `true` also cloud). Absent or `false`
+   * drops `audio.listen`.
+   */
+  audio?: { enabled: boolean };
   memory: {
     profile: { enabled: boolean };
     notes: { enabled: boolean };
@@ -40,6 +47,14 @@ export interface ToolGateConfig {
     procedures: { enabled: boolean };
   };
   tasks: { agentToolsEnabled: boolean };
+  /**
+   * Cross-chat tools (ATO-570): `tasks.enabled` and
+   * `tasks.sessionToolsEnabled`, default off. Absent means off, so a
+   * hand-built gate set never advertises them; every runtime caller
+   * passes it. The tools are not registered while it is off either
+   * (`registerSessionTools`).
+   */
+  sessions?: { agentToolsEnabled: boolean };
   /**
    * The agent's own inbox. Without a registered Atomic Mail inbox the
    * `os.email.*` tools can only answer "set one up", so they leave the
@@ -70,6 +85,12 @@ export interface ToolGateConfig {
    */
   fusion: { enabled: boolean };
   /**
+   * Subagent gate (ATO-1670). `enabled=false` drops `subagent.run`: the
+   * runtime passes it while Fusion is the effective mode, where
+   * `fusion.delegate` is the one way to hand work out. Absent: kept.
+   */
+  subagent?: { enabled: boolean };
+  /**
    * Image generation gate. `available=false` (no OpenRouter key) drops
    * `image.generate`: until local image models can be installed
    * (ATO-411) a call without a key could only answer "add a key". Read
@@ -90,8 +111,10 @@ export interface ToolGateConfig {
    * the tools are then not registered either (`registerOsScreenTools`).
    * `point` (`tools.screen.point`, ATO-1018) keeps `os.screen.point` and
    * `os.screen.capture` without `enabled`: drawing marks is not control.
+   * `control: false` (Windows and Linux, ATO-527) keeps only
+   * `os.screen.capture` under `enabled`; omitted means `true`.
    */
-  screen: { enabled: boolean; point?: boolean };
+  screen: { enabled: boolean; point?: boolean; control?: boolean };
 }
 
 /**
@@ -111,9 +134,16 @@ const GATED_TOOLS = {
     "browser.tabs",
     "browser.scroll",
     "browser.screenshot",
+    "browser.act",
+    "browser.extract",
+    "browser.site_tools",
+    "browser.debug",
+    "browser.annotate",
+    "browser.scenario",
   ],
   webSearch: ["os.web.search"],
   vision: ["vision.describe"],
+  audio: ["audio.listen"],
   memoryProfile: [
     "memory.profile.set",
     "memory.profile.remove",
@@ -134,7 +164,14 @@ const GATED_TOOLS = {
     "tasks.cancel",
     "tasks.show",
   ],
+  sessions: [
+    "sessions.list",
+    "sessions.read",
+    "sessions.send",
+    "sessions.check",
+  ],
   fusion: ["fusion.delegate"],
+  subagent: ["subagent.run"],
   mcp: [
     "mcp.resource.list",
     "mcp.resource.read",
@@ -157,15 +194,23 @@ const GATED_TOOLS = {
     "os.screen.click",
     "os.screen.type",
     "os.screen.key",
+    "os.screen.elements",
+    "os.screen.press",
     "os.screen.point",
   ],
 } as const;
 
-/** `os.screen.*` that drive the mouse and keyboard: `screen.enabled` only. */
+/**
+ * `os.screen.*` that drive the mouse and keyboard, or press controls
+ * through Accessibility (the element list only serves the press):
+ * `screen.enabled` only.
+ */
 const SCREEN_CONTROL_TOOLS: ReadonlySet<string> = new Set([
   "os.screen.click",
   "os.screen.type",
   "os.screen.key",
+  "os.screen.elements",
+  "os.screen.press",
 ]);
 
 /**
@@ -187,6 +232,9 @@ export function filterToolDescriptorsByConfig(
   if (!gates.vision.enabled || !gates.vision.providerAvailable) {
     for (const name of GATED_TOOLS.vision) disabled.add(name);
   }
+  if (gates.audio?.enabled !== true) {
+    for (const name of GATED_TOOLS.audio) disabled.add(name);
+  }
   if (!gates.memory.profile.enabled) {
     for (const name of GATED_TOOLS.memoryProfile) disabled.add(name);
   }
@@ -202,6 +250,9 @@ export function filterToolDescriptorsByConfig(
   if (!gates.tasks.agentToolsEnabled) {
     for (const name of GATED_TOOLS.tasks) disabled.add(name);
   }
+  if (gates.sessions?.agentToolsEnabled !== true) {
+    for (const name of GATED_TOOLS.sessions) disabled.add(name);
+  }
   if (!gates.mcp.enabled) {
     for (const name of GATED_TOOLS.mcp) disabled.add(name);
   }
@@ -214,19 +265,23 @@ export function filterToolDescriptorsByConfig(
   if (!gates.fusion.enabled) {
     for (const name of GATED_TOOLS.fusion) disabled.add(name);
   }
+  if (gates.subagent?.enabled === false) {
+    for (const name of GATED_TOOLS.subagent) disabled.add(name);
+  }
   if (!gates.image.available) {
     for (const name of GATED_TOOLS.image) disabled.add(name);
   }
   if (!gates.video.available) {
     for (const name of GATED_TOOLS.video) disabled.add(name);
   }
-  const screenPoint = gates.screen.point === true;
+  const screenControl = gates.screen.control !== false;
+  const screenPoint = gates.screen.point === true && screenControl;
   for (const name of GATED_TOOLS.screen) {
     const kept =
       name === "os.screen.point"
         ? screenPoint
         : SCREEN_CONTROL_TOOLS.has(name)
-          ? gates.screen.enabled
+          ? gates.screen.enabled && screenControl
           : gates.screen.enabled || screenPoint;
     if (!kept) disabled.add(name);
   }

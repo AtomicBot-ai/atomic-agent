@@ -9,29 +9,70 @@ import { buildBrowserSearchTool } from "./search.js";
 import { buildBrowserTabsTool } from "./tabs.js";
 import { buildBrowserScrollTool } from "./scroll.js";
 import { buildBrowserScreenshotTool } from "./screenshot.js";
+import { buildBrowserActTool } from "./act.js";
+import { buildBrowserExtractTool } from "./extract.js";
+import type { BrowserExtractModelRef } from "./extract-request.js";
+import { buildBrowserSiteToolsTool } from "./site-tools.js";
+import { buildBrowserDebugTool } from "./debug.js";
+import { buildBrowserAnnotateTool } from "./annotate.js";
 import {
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
 import { AriaSnapshotStore } from "./aria-view.js";
+import { ScenarioRecorder } from "./scenario-recorder.js";
+import { ScenarioStore } from "./scenario-store.js";
+import { buildBrowserScenarioTool } from "./scenario.js";
 
 export type {
+  AnnotateReadInput,
+  AnnotateReadResult,
+  AnnotateStartResult,
+  AnnotationCrop,
   AriaSnapshot,
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  PageActionInput,
+  PageActionName,
+  PageActionResult,
   RefDescription,
+  RenderHtmlInput,
+  RenderHtmlResult,
   ScreenshotInput,
   ScreenshotResult,
   ScrollDirection,
   ScrollInput,
   ScrollResult,
   SearchInput,
+  SiteToolCallInput,
+  SiteToolCallResult,
+  SiteToolsListInput,
+  SiteToolsListing,
   TabInfo,
   TabsInput,
   TypeInput,
 } from "./browser-backend.js";
 export { PlaywrightBackend } from "./playwright-backend.js";
+export {
+  currentBrowserScope,
+  endBrowserWorker,
+  isAttendedTurn,
+  onBrowserWorkerEnd,
+  resolveLaunchHeadless,
+  runInBrowserScope,
+} from "./browser-run-scope.js";
+export type { BrowserHeadlessSetting, BrowserRunScope } from "./browser-run-scope.js";
+export { BROWSER_PROFILE_CHOICES, MAX_TEMP_PROFILES, TempProfiles } from "./temp-profiles.js";
+export type { BrowserProfileChoice } from "./temp-profiles.js";
+export {
+  BROWSER_WORKER_ISOLATIONS,
+  BrowserTabLimitError,
+  DEFAULT_BROWSER_MAX_TABS,
+  MAX_BROWSER_MAX_TABS,
+  MIN_BROWSER_MAX_TABS,
+} from "./worker-tabs.js";
+export type { BrowserWorkerIsolation } from "./worker-tabs.js";
 export type { PlaywrightBackendOptions } from "./playwright-backend.js";
 export { buildChromeLaunchArgs } from "./build-chrome-launch-args.js";
 export type { BuildChromeLaunchArgsInput } from "./build-chrome-launch-args.js";
@@ -104,6 +145,8 @@ export { requireUserSite, userSiteCleared, UserSiteApprovals } from "./user-prof
 export { buildBrowserSearchTool } from "./search.js";
 export { buildBrowserTabsTool } from "./tabs.js";
 export { buildBrowserScrollTool } from "./scroll.js";
+export { buildBrowserPageRenderer } from "./render-page.js";
+export type { BrowserPageRenderer, RenderedPage } from "./render-page.js";
 export {
   BROWSER_SCREENSHOT_TOOL,
   BROWSER_SHOT_DIR,
@@ -111,29 +154,77 @@ export {
   buildBrowserScreenshotTool,
 } from "./screenshot.js";
 export type { BrowserScreenshotDeps } from "./screenshot.js";
+export { buildBrowserActTool } from "./act.js";
+export { keyCommits, PAGE_ACTIONS, parsePageAction } from "./page-action-args.js";
+export { BROWSER_EXTRACT_TOOL, buildBrowserExtractTool, extractPageBudget } from "./extract.js";
+export type {
+  BrowserExtractCompletionParams,
+  BrowserExtractModel,
+  BrowserExtractModelRef,
+} from "./extract-request.js";
+export { BROWSER_SITE_TOOLS_TOOL, buildBrowserSiteToolsTool } from "./site-tools.js";
+export { BROWSER_DEBUG_TOOL, buildBrowserDebugTool } from "./debug.js";
+export { PageDebugLog, redactDebugUrl } from "./page-debug-log.js";
+export type { ConsoleEntry, DebugLogKind, NetworkEntry } from "./page-debug-log.js";
+export { BROWSER_ANNOTATE_TOOL, buildBrowserAnnotateTool } from "./annotate.js";
+export type { BrowserAnnotateDeps } from "./annotate.js";
+export { BROWSER_SCENARIO_TOOL, buildBrowserScenarioTool } from "./scenario.js";
+export type { BrowserScenarioDeps, ScenarioReplayTools } from "./scenario.js";
+export { RECORDED_BROWSER_TOOLS, ScenarioRecorder } from "./scenario-recorder.js";
+export { BROWSER_SCENARIO_DIR, browserScenarioDir, ScenarioStore } from "./scenario-store.js";
+export { findTarget, parseScenario, SCENARIO_VERSION } from "./scenario-format.js";
+export type { Scenario, ScenarioStep, ScenarioTarget } from "./scenario-format.js";
 
 /**
  * Build the complete set of browser tools for the registry. The caller is
  * responsible for `backend.shutdown()` on process exit. `dangerous` gates
  * non-http(s) navigation, clicks / Enter that commit something, password
  * and payment input, and hosts outside the allow-list; `policy` carries
- * `browser.blockedDomains` / `browser.allowedDomains`.
+ * `browser.blockedDomains` / `browser.allowedDomains`. `extractModel` is
+ * the model `browser.extract` calls, bound by the runtime once it exists.
+ * `scenarioDir` is where `browser.scenario` keeps its files
+ * (`browserScenarioDir(stateDir)`); without it scenarios live in memory.
  */
 export function buildBrowserTools(
   backend: BrowserBackend,
   dangerous: DangerousToolOptions,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
+  extractModel: BrowserExtractModelRef = {},
+  scenarioDir?: string,
 ): ToolDefinition[] {
   // One per tool set: the last snapshot of each tab, for read_aria's diff view.
   const store = new AriaSnapshotStore();
+  // The tools a scenario replays. The model gets them wrapped by the
+  // recorder; a replay calls them directly, gates and all (ATO-960).
+  const replay = {
+    navigate: buildBrowserNavigateTool(backend, dangerous, policy, store),
+    search: buildBrowserSearchTool(backend, dangerous, policy, store),
+    click: buildBrowserClickTool(backend, dangerous, policy),
+    type: buildBrowserTypeTool(backend, dangerous, policy),
+    act: buildBrowserActTool(backend, dangerous, policy, store),
+  };
+  const recorder = new ScenarioRecorder(backend);
   return [
-    buildBrowserNavigateTool(backend, dangerous, policy, store),
-    buildBrowserClickTool(backend, dangerous, policy),
-    buildBrowserTypeTool(backend, dangerous, policy),
+    recorder.wrap(replay.navigate),
+    recorder.wrap(replay.click),
+    recorder.wrap(replay.type),
     buildBrowserReadAriaTool(backend, policy, store, dangerous),
-    buildBrowserSearchTool(backend, dangerous, policy, store),
+    recorder.wrap(replay.search),
     buildBrowserTabsTool(backend, dangerous, policy),
     buildBrowserScrollTool(backend),
     buildBrowserScreenshotTool(backend, policy, undefined, dangerous),
+    recorder.wrap(replay.act),
+    buildBrowserExtractTool(backend, policy, extractModel, dangerous),
+    buildBrowserSiteToolsTool(backend, dangerous, policy),
+    buildBrowserDebugTool(backend, policy),
+    buildBrowserAnnotateTool(backend, policy, dangerous),
+    buildBrowserScenarioTool({
+      backend,
+      recorder,
+      store: new ScenarioStore(scenarioDir),
+      tools: replay,
+      policy,
+      ariaStore: store,
+    }),
   ];
 }

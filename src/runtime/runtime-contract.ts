@@ -1,4 +1,5 @@
 import type { TurnCheckpointOptions } from "./turn-checkpoints.js";
+import type { InterruptedTurns } from "./interrupted-turns.js";
 import type { CompactionResult, SessionCompaction } from "../session/session-compaction.js";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import type { AtomicAgentConfig } from "../config/index.js";
@@ -11,15 +12,18 @@ import type { ChannelStatus } from "./channel-status.js";
 import type { TelegramChannel } from "../channels/telegram/index.js";
 import type { DiscordChannel } from "../channels/discord/index.js";
 import type { SwarmRegistry } from "../channels/swarm/index.js";
+import type { ChannelRegistry } from "../channels/channel-registry.js";
 import type { BotFactory } from "../channels/telegram/index.js";
-import type { McpManager } from "../mcp/index.js";
+import type { McpElicitationPort, McpManager } from "../mcp/index.js";
 import type { CompletionResult, StreamChunk } from "../llm/llama-server-client.js";
 import type { SlotManager } from "../llm/slot-manager.js";
+import type { EgressSnapshot } from "../llm/offline-network.js";
 import type { ApprovalGate } from "../approval/approval-gate.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
 import type { ApprovalHandler } from "../approval/approval-router.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
+import type { FileIndexApi } from "../tools/files/index.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 import type { ProviderRegistry } from "../llm/provider/index.js";
 import type { ReasoningEffort } from "../llm/provider/completion-types.js";
@@ -35,16 +39,18 @@ import type { AgentLoop } from "../agent/agent-loop.js";
 import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-contract.js";
 import type { GoalSpec, GoalState } from "../agent/goal/index.js";
 import type { SessionStore, FusionWorkerMeta, SessionState } from "../session/index.js";
+import type { SessionProject } from "../session/session-project.js";
 import type { TaskRunner, TaskStore } from "../tasks/index.js";
 import type { Scheduler } from "../scheduler/index.js";
 import type { WebhookSessionStore } from "../http/webhook-session-store.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
+import type { IncognitoDiscardOutcome } from "./incognito-sessions.js";
 import type { LogSink } from "../tracing/structured-logger.js";
 import type { MetricSink } from "../tracing/metrics-collector.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { TraceSink } from "../tracing/trace/index.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
-import type { AnalyticsDisabledVia, AnalyticsSurface } from "../analytics/index.js";
+import type { AnalyticsDisabledVia, AnalyticsSurface, UiActionVia, UpdateCheckedContext } from "../analytics/index.js";
 import type { BrokenPipePolicy } from "../error-reporting/index.js";
 
 
@@ -78,6 +84,17 @@ export interface RuntimeEventHandlers {
    * this handler keep working — the runtime never blocks on it.
    */
   onChannelStatus?: (status: ChannelStatus) => void;
+  /**
+   * How an MCP server's `elicitation/create` (pick an account, confirm,
+   * fill a small form) reaches a person (ATO-704). Only when set do MCP
+   * clients advertise the `elicitation` capability. The port declares
+   * its `surface`: `interactive` (desktop, TUI) waits until answered,
+   * `remote-chat` (Telegram, Discord) declines after 5 minutes, `none`
+   * (unattended task, headless) declines at once. The port is called
+   * outside any turn frame, so the host decides who is there; every
+   * failure is sent to the server as `decline` / `cancel`, never accept.
+   */
+  onMcpElicitation?: McpElicitationPort;
   logSinks?: LogSink[];
   metricSinks?: MetricSink[];
   /**
@@ -188,6 +205,42 @@ export interface MemoryEmbeddingReconnect {
   changed?: boolean;
 }
 
+/**
+ * Live control of offline mode (ATO-1084, read by the ATO-1087 UI).
+ * `setEnabled` persists `network.offline` and applies it at once.
+ */
+export interface OfflineModeControl {
+  isEnabled(): boolean;
+  /**
+   * Turning on applies before it saves, so it rejects with
+   * `OfflineModePersistError` when only the save failed and the process
+   * is offline anyway. Turning off saves first.
+   */
+  setEnabled(enabled: boolean): Promise<void>;
+  egress(): EgressSnapshot;
+}
+
+/**
+ * Live control of Privacy Shield (ATO-1082). `setEnabled` persists
+ * `privacy.shield.enabled` and applies it to the next cloud request.
+ */
+export interface PrivacyShieldControl {
+  isEnabled(): boolean;
+  setEnabled(enabled: boolean): Promise<void>;
+  /**
+   * Distinct values masked: in this process (`masked`, over `sessions`
+   * chats), and in `sessionId`'s chat when one is given (`session`, and
+   * `lastRequest`, how many its latest cloud request carried).
+   */
+  stats(sessionId?: string): PrivacyShieldStats;
+}
+
+export interface PrivacyShieldStats {
+  masked: number;
+  sessions: number;
+  session?: { masked: number; lastRequest: number };
+}
+
 export interface AgentRuntime {
   readonly config: AtomicAgentConfig;
   readonly loop: AgentLoop;
@@ -262,6 +315,18 @@ export interface AgentRuntime {
     resumeMessage(sessionId: string, runId?: string): string | null;
     discard(sessionId: string, runId?: string): string | null;
   };
+  /**
+   * A chat turn a restart cut off (ATO-448), never continued on its own:
+   * `pending` says whether `sessionId`'s last turn is one;
+   * `resumeMessage` returns the message that continues it (a note
+   * telling the model to check before repeating side effects, then the
+   * request) and marks it "resume queued", so it is offered once; the
+   * marker is replaced when the continuing turn starts. `release` gives
+   * it back when the caller drops that message before it runs (a cleared
+   * queue, a stop, a switch). The caller sends the message through
+   * `runTurn`. Optional so embedders and test runtimes need not provide it.
+   */
+  readonly interruptedTurns?: InterruptedTurns;
   /**
    * Durable user-profile store. Present even when
    * `memory.profile.enabled` is `false`, because the store owns the
@@ -345,6 +410,18 @@ export interface AgentRuntime {
    */
   readonly telegramChannel: TelegramChannel | null;
   /**
+   * Offline mode, the network kill switch (ATO-1084). Optional so hand-
+   * built runtimes (tests, embedders) keep compiling; `createAgentRuntime`
+   * always sets it. See `createOfflineModeControl`.
+   */
+  readonly offlineMode?: OfflineModeControl;
+  /**
+   * Privacy Shield (ATO-1082). Optional so hand-built runtimes (tests,
+   * embedders) keep compiling; `createAgentRuntime` always sets it. See
+   * `createPrivacyShieldControl`.
+   */
+  readonly privacyShield?: PrivacyShieldControl;
+  /**
    * Discord remote-control channel, or `null` when the build never
    * constructed one. Same contract as `telegramChannel`.
    */
@@ -356,6 +433,14 @@ export interface AgentRuntime {
    * when enabled with a token.
    */
   readonly swarm: SwarmRegistry | null;
+  /**
+   * Every chat channel behind the shared `Channel` surface (ATO-1169):
+   * Telegram, Discord and the adapters from `channels/channel-catalog.ts`
+   * (Slack, Signal, ...). `null` until `connectRuntimeChannels` runs.
+   * Hosts list and report channels through it; the primaries keep their
+   * typed handles above for pairing and owner settings.
+   */
+  readonly channels: ChannelRegistry | null;
   /**
    * MCP client manager. **Always non-null** — constructed even when
    * `config.mcp.servers[]` is empty so the live-control surface stays
@@ -411,11 +496,23 @@ export interface AgentRuntime {
    * task writes `session_id` into `tasks.sqlite`, a webhook and a
    * Telegram chat remember a mapping, and each expects a later `load`
    * to answer.
+   *
+   * `incognito: true` opens an incognito chat (ATO-586,
+   * `session/incognito.ts`): nothing from it is written to memory, no
+   * list shows it, and `discardIncognitoSession` deletes it on close.
    */
   createSession(input?: {
     metadata?: Record<string, unknown>;
     persist?: boolean;
+    incognito?: boolean;
   }): SessionState;
+  /**
+   * Close an incognito chat (ATO-586): delete its row, archived turns and
+   * trace file — once its running turn has ended, if one is running. A
+   * session that is not a stored incognito chat is left alone
+   * (`"not_incognito"`). Optional so test runtimes need not provide it.
+   */
+  discardIncognitoSession?(sessionId: string): IncognitoDiscardOutcome;
   /**
    * Drive one chat turn: append the user message, run the agent loop
    * until the model emits `reply` (or `finish`), persist the resulting
@@ -445,6 +542,12 @@ export interface AgentRuntime {
       eventHook?: TurnEventHook;
       origin?: TurnOrigin;
       providerId?: string;
+      /**
+       * With `providerId`: the cloud chat model for this turn only
+       * (`RunTurnOptions.model`, ATO-1148). Refused before the turn is
+       * queued on a local provider or without `providerId`.
+       */
+      model?: string;
       taskMaxDurationMs?: number;
       /** Spend ceiling in USD (see `RunTurnOptions.taskMaxCostUsd`). */
       taskMaxCostUsd?: number;
@@ -453,10 +556,18 @@ export interface AgentRuntime {
        * `fusion.delegate` narrows a worker's catalog with it.
        */
       toolFilter?: (name: string) => boolean;
+      /**
+       * Read memory, write none of it (see `RunTurnOptions.memoryReadOnly`):
+       * no reflection, no lesson bump, the `memory.*` write tools hidden.
+       * `skill eval` runs with it so its variants cannot leak into each other.
+       */
+      memoryReadOnly?: boolean;
       /** The turn's tool role (see `RunTurnOptions.toolRole`); a worker is a `builder`. */
       toolRole?: ToolRole;
       /** See `RunTurnOptions.reasoningEffort` — a fusion worker's setting. */
       reasoningEffort?: ReasoningEffort;
+      /** See `RunTurnOptions.reasoningOverride` — the chat's level (ATO-490). */
+      reasoningOverride?: ReasoningEffort;
       /** See `RunTurnOptions.maxOutputTokens` — a fusion worker's cap. */
       maxOutputTokens?: number;
       /**
@@ -487,6 +598,19 @@ export interface AgentRuntime {
        * `### answer-style` and its polish (ATO-966, ATO-967).
        */
       answerChannel?: AnswerChannel;
+      /**
+       * ATO-42: the client's project for this chat, stamped on the
+       * freshly loaded session inside the turn lock before the turn runs
+       * (`session/session-project.ts`). null clears it; absent keeps it.
+       */
+      project?: SessionProject | null;
+      /**
+       * The client declared whether it can show a question card, so the
+       * turn is offered `ask_user` (ATO-489). Absent: the TUI, the CLI
+       * and Telegram get it; the desktop (sidecar or an HTTP extensions
+       * client) does not until ATO-1502, nor does any other origin.
+       */
+      questions?: boolean;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -516,12 +640,17 @@ export interface AgentRuntime {
       maxSteps?: number;
       signal?: AbortSignal;
       providerId?: string;
+      /** See `runTurn`'s `model`. */
+      model?: string;
       taskMaxDurationMs?: number;
       /** Spend ceiling in USD (see `RunTurnOptions.taskMaxCostUsd`). */
       taskMaxCostUsd?: number;
       toolFilter?: (name: string) => boolean;
+      /** See `runTurn`'s `memoryReadOnly`. */
+      memoryReadOnly?: boolean;
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
+      reasoningOverride?: ReasoningEffort;
       maxOutputTokens?: number;
       /** See `runTurn`'s `interactive`. */
       interactive?: boolean;
@@ -535,6 +664,8 @@ export interface AgentRuntime {
       origin?: TurnOrigin;
       /** See `runTurn`'s `answerChannel`; wins over `origin`. */
       answerChannel?: AnswerChannel;
+      /** See `runTurn`'s `questions`. */
+      questions?: boolean;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -549,8 +680,12 @@ export interface AgentRuntime {
   createEphemeralSession(meta: FusionWorkerMeta, workingDir?: string, inheritWorkspace?: boolean): SessionState;
   /** Session-scoped cloud skills/instructions; null retains the legacy local view. */
   getSessionWorkspace(session: SessionState | string): import("../session/workspace-context.js").SessionWorkspace | null;
-  /** Maintain context without creating a turn or a transcript message. */
-  compactSession(sessionId: string, options?: { signal?: AbortSignal }): Promise<CompactionResult>;
+  /**
+   * Maintain context without creating a turn or a transcript message.
+   * `instructions` (ATO-661) says what the summary must keep; it is data
+   * inside the summary prompt, trimmed and capped at 2000 characters.
+   */
+  compactSession(sessionId: string, options?: { signal?: AbortSignal; instructions?: string }): Promise<CompactionResult>;
   getSessionCompaction(sessionId: string): SessionCompaction | null;
   cancelSessionCompaction(sessionId: string): boolean;
   /**
@@ -564,6 +699,26 @@ export interface AgentRuntime {
     draft: string,
     options?: { sessionId?: string; signal?: AbortSignal },
   ): Promise<import("./prompt-enhancer.js").PromptEnhanceResult>;
+  /**
+   * `/btw <question>` (ATO-1152): answer a side question with the
+   * conversation as read-only context. A sub-call under its own `btw:`
+   * fallback partition, with no tools, output bound and deadline: it
+   * creates no turn and writes nothing to the session. Optional so hosts
+   * and test doubles that never offer it need not implement it.
+   */
+  askSideQuestion?(
+    question: string,
+    options?: { sessionId?: string; signal?: AbortSignal },
+  ): Promise<import("./side-question.js").SideQuestionResult>;
+  /**
+   * One plain request to the current model, no tools (`POST /api/complete`,
+   * the desktop Studio's "Improve prompt"). A sub-call under its own
+   * `complete:` fallback partition with an output bound and a deadline:
+   * no turn, nothing written to any session. Optional like `enhancePrompt`.
+   */
+  completePlain?(
+    input: import("./plain-complete.js").PlainCompleteInput,
+  ): Promise<import("./plain-complete.js").PlainCompleteResult>;
   /**
    * Build — never run, never persist — the prompt the next turn would
    * open with, for a composer's context readout before any message is
@@ -617,6 +772,13 @@ export interface AgentRuntime {
    */
   reconnectMemoryEmbeddings?(): Promise<MemoryEmbeddingReconnect>;
   /**
+   * The "My files" index (ATO-1621): the folders the person added and
+   * the background indexing of them, behind `/api/files/*` and
+   * `files.search`. Optional so test doubles and older hosts need not
+   * have one; the routes answer 501 without it.
+   */
+  fileIndex?: FileIndexApi;
+  /**
    * Register `handler` as the approval sink for `sessionId`. Every
    * `ApprovalRequest` whose `sessionId` matches will be routed to
    * `handler` instead of the host's `onApprovalRequest` fallback.
@@ -669,6 +831,39 @@ export interface AgentRuntime {
     reasonCode: string;
   }): void;
   /**
+   * Count a built-in TUI slash command (`ui_action`, ATO-1465). `action`
+   * is the command name only (`/report`), never its arguments; the TUI
+   * passes only names from the built-in registry. A no-op while
+   * analytics is off. Optional so test doubles and older hosts need not
+   * implement it.
+   */
+  reportUiAction?(action: string, via: UiActionVia): void;
+  /**
+   * Count one successful startup update check (`update_checked`,
+   * ATO-1007): the latest release and whether this install is on it or
+   * must leave its version. A no-op while analytics is off. Optional so
+   * test doubles and older hosts need not implement it.
+   */
+  reportUpdateChecked?(context: UpdateCheckedContext): void;
+  /**
+   * The interview invite's view of analytics (ATO-1467): the anonymous
+   * shared install id and the whole days since install, or `null` while
+   * analytics is off (by config or the environment). Optional so test
+   * doubles and older hosts need not implement it.
+   */
+  interviewInviteIdentity?(): {
+    installId: string;
+    daysSinceInstall: number | undefined;
+  } | null;
+  /**
+   * Send `interview_invite_shown` / `_clicked` / `_dismissed` with fixed
+   * words only (`via`, `reason`). A no-op while analytics is off.
+   */
+  reportInterviewInvite?(
+    kind: "shown" | "clicked" | "dismissed",
+    props: { via?: string; reason?: string },
+  ): void;
+  /**
    * Register what restarts the managed local model with a smaller context
    * window after it ran out of memory (ATO-334), or `null` to clear it.
    * The process that owns the model registers one (the TUI); with none, a
@@ -716,6 +911,13 @@ export interface AgentRuntime {
    */
   getPlanMode(): boolean;
   setPlanMode(on: boolean): void;
+  /**
+   * ATO-1688: the host is about to stop (before `serve` drops its
+   * connections, which aborts the turns on them). A turn that ends
+   * cancelled from here on was cut off, and is recorded as interrupted,
+   * so the chat offers to continue it. Optional: `shutdown` implies it.
+   */
+  beginShutdown?(): void;
   /** Close all resources (browser, sqlite, llama client). Safe to call twice. */
   shutdown(): Promise<void>;
 }

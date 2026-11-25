@@ -18,13 +18,17 @@ import {
 } from "../../session/fusion-worker-session.js";
 import type { DelegateTask } from "./delegate-args.js";
 import {
+  clipBriefForEvent,
   detectStall,
   estimateWorkerTimeoutMs,
+  FUSION_WORKER_BRIEF_EVENT_CHARS,
   runWorkerTasks,
   WORKER_TIMEOUT_FLOOR_MS,
   WORKER_TOOL_LINES_PER_TASK,
   type WorkerRunnerDeps,
 } from "./worker-runner.js";
+import { FusionLiveWorkers } from "./escalation.js";
+import { FusionWorkerStopError } from "./fusion-stop-errors.js";
 
 type RunTurnCall = {
   session: SessionState;
@@ -93,6 +97,61 @@ const BASE = {
 };
 
 describe("runWorkerTasks", () => {
+  it("puts the brief the worker got and its model note on the started line (ATO-1754)", async () => {
+    const { deps, calls, events } = harness(async ({ options }) => {
+      options.eventHook?.({ type: "turn_started", turnIndex: 0 });
+      return turnResult();
+    });
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(2),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+      briefSuffix: (id) => (id === "t1" ? "ACCEPTANCE: tests pass" : undefined),
+      taskModelNote: (id) => (id === "t0" ? "role build has no model configured" : undefined),
+    });
+    const started = events.flatMap(({ event }) =>
+      event.type === "fusion_worker" && event.phase === "started" ? [event] : [],
+    );
+    expect(started).toHaveLength(2);
+    // Exactly what the worker's turn was started with, suffix included.
+    expect(started[0]!.brief).toBe(calls[0]!.userMessage);
+    expect(started[1]!.brief).toBe(calls[1]!.userMessage);
+    expect(started[0]!.brief).toContain("TASK t0: Task 0");
+    expect(started[1]!.brief).toContain("ACCEPTANCE: tests pass");
+    expect(started[0]!.modelNote).toBe("role build has no model configured");
+    expect(started[1]).not.toHaveProperty("modelNote");
+  });
+
+  it("clips an oversized brief on the started line, while the worker still gets all of it (ATO-1754)", async () => {
+    const { deps, calls, events } = harness(async ({ options }) => {
+      options.eventHook?.({ type: "turn_started", turnIndex: 0 });
+      return turnResult();
+    });
+    const big: DelegateTask = { id: "t0", title: "Big", instructions: "z".repeat(FUSION_WORKER_BRIEF_EVENT_CHARS + 100) };
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: [big],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    const started = events.flatMap(({ event }) =>
+      event.type === "fusion_worker" && event.phase === "started" ? [event] : [],
+    );
+    expect(calls[0]!.userMessage.length).toBeGreaterThan(FUSION_WORKER_BRIEF_EVENT_CHARS);
+    expect(started[0]!.brief).toBe(clipBriefForEvent(calls[0]!.userMessage));
+    expect(started[0]!.brief).toContain("the worker received all of it");
+  });
+
+  it("clips only a brief longer than the event carries (ATO-1754)", () => {
+    const short = "x".repeat(FUSION_WORKER_BRIEF_EVENT_CHARS);
+    expect(clipBriefForEvent(short)).toBe(short);
+    const long = "y".repeat(FUSION_WORKER_BRIEF_EVENT_CHARS + 1);
+    const clipped = clipBriefForEvent(long);
+    expect(clipped.startsWith("y".repeat(FUSION_WORKER_BRIEF_EVENT_CHARS) + "\n\n(cut here")).toBe(true);
+    expect(clipped).toContain("the worker received all of it");
+  });
+
   it("starts no further task after the turn is stopped, with no budget cap set (ATO-1334)", async () => {
     const stop = new AbortController();
     const { deps, calls } = harness(async () => {
@@ -202,6 +261,27 @@ describe("runWorkerTasks", () => {
     });
     expect(plain.calls[0]!.options).not.toHaveProperty("reasoningEffort");
     expect(plain.calls[0]!.options).not.toHaveProperty("maxOutputTokens");
+  });
+
+  it("asks the worker leg for its own model, only when one is set (ATO-1560)", async () => {
+    const { deps, calls } = harness(async () => turnResult());
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      workerModel: "model-b",
+      turnModel: "model-b",
+      signal: new AbortController().signal,
+    });
+    expect(calls[0]!.options).toMatchObject({ providerId: BASE.providerId, model: "model-b" });
+    const plain = harness(async () => turnResult());
+    await runWorkerTasks(plain.deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(plain.calls[0]!.options).not.toHaveProperty("model");
   });
 
   it("runs on a fresh session id, never the parent's — that would deadlock", async () => {
@@ -435,6 +515,103 @@ describe("runWorkerTasks", () => {
       ["usage", 12_345, 20_749],
       ["finished", null, null],
     ]);
+  });
+
+  it("reports steps against the budget, distinct files written and reply tokens on the row's usage line (ATO-1364, ATO-78)", async () => {
+    const parsed = (tool: string, args: Record<string, unknown>, batchIndex = 0): AgentLoopEvent => ({
+      type: "llm_event",
+      event: { type: "tool_call_parsed", call: { tool, args }, batchIndex, batchSize: 2 },
+    });
+    const executed = (tool: string, status: "ok" | "error", batchIndex = 0): AgentLoopEvent => ({
+      type: "llm_event",
+      event: {
+        type: "tool_call_executed",
+        result: { tool, status, summary: "", details: {}, truncated: false },
+        batchIndex,
+        batchSize: 2,
+      },
+    });
+    const completed: AgentLoopEvent = {
+      type: "llm_event",
+      event: {
+        type: "llm_completed",
+        completion: {
+          content: "",
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          timing: { promptMs: 1, predictedMs: 1, promptTokens: 1_000, predictedTokens: 50 },
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "m",
+        },
+      },
+    };
+    const finishedStep = (stepIndex: number): AgentLoopEvent => ({
+      type: "step_finished",
+      stepIndex,
+      summary: "",
+      durationMs: 1,
+    });
+    const { deps, events } = harness(async ({ options }) => {
+      options.eventHook?.({ type: "turn_started", turnIndex: 0 });
+      // Step 1: two writes to two files in one batch.
+      options.eventHook?.(completed);
+      options.eventHook?.(parsed("os.fs.write", { path: "src/a.ts" }, 0));
+      options.eventHook?.(parsed("os.fs.edit", { path: "./src/b.ts" }, 1));
+      options.eventHook?.(executed("os.fs.write", "ok", 0));
+      options.eventHook?.(executed("os.fs.edit", "ok", 1));
+      options.eventHook?.(finishedStep(0));
+      // Step 2: the same file again, and a failed write — neither is a new file.
+      options.eventHook?.(completed);
+      options.eventHook?.(parsed("os.fs.edit", { path: "src/a.ts" }, 0));
+      options.eventHook?.(parsed("os.fs.write", { path: "src/c.ts" }, 1));
+      options.eventHook?.(executed("os.fs.edit", "ok", 0));
+      options.eventHook?.(executed("os.fs.write", "error", 1));
+      options.eventHook?.(finishedStep(1));
+      return turnResult({ stepCount: 2 });
+    });
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    const lines = events.flatMap(({ event }) => (event.type === "fusion_worker" ? [event] : []));
+    expect(lines[0]).toMatchObject({ phase: "started", stepBudget: 7 });
+    const lastUsage = lines.filter((e) => e.phase === "usage").at(-1);
+    expect(lastUsage).toMatchObject({
+      stepCount: 2,
+      stepBudget: 7,
+      filesWritten: 2,
+      tokens: 2_100,
+      tokensOut: 100,
+    });
+    expect(lines.at(-1)).toMatchObject({
+      phase: "finished",
+      status: "ok",
+      stepCount: 2,
+      stepBudget: 7,
+      filesWritten: 2,
+    });
+  });
+
+  it("names the task's status on the end line, so a timeout or a hand-back is not just `finished`", async () => {
+    const { deps, events } = harness(async () => turnResult({ reason: "max_steps", stepCount: 7 }));
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(events.at(-1)!.event).toMatchObject({
+      type: "fusion_worker",
+      phase: "finished",
+      status: "max_steps",
+      stepCount: 7,
+      stepBudget: 7,
+    });
+    expect(events.at(-1)!.event).not.toHaveProperty("filesWritten");
   });
 
   it("bounds the tool lines: consecutive repeats collapse and the count is capped", async () => {
@@ -1082,6 +1259,18 @@ describe("worker limits from throughput (F19)", () => {
     expect(estimateWorkerTimeoutMs({ briefChars: 400, declaredFiles: 1, tokensPerSecond: 200, ceilingMs: 60_000 })).toBe(60_000);
   });
 
+  it("estimateWorkerTimeoutMs uses the planner's output estimate when it is bigger (ATO-1363)", () => {
+    const ceilingMs = 2_700_000;
+    // (4000/4 + 9,000 stated) / 10 tok/s × 3 = 3,000 s = 50 min → ceiling.
+    expect(estimateWorkerTimeoutMs({ briefChars: 4000, declaredFiles: 1, tokensPerSecond: 10, ceilingMs, outputTokens: 9_000 })).toBe(ceilingMs);
+    // (4000/4 + 4,000 stated) / 10 × 3 = 1,500 s.
+    expect(estimateWorkerTimeoutMs({ briefChars: 4000, declaredFiles: 1, tokensPerSecond: 10, ceilingMs, outputTokens: 4_000 })).toBe(1_500_000);
+    // Smaller than the per-file guess: never shortens the limit.
+    expect(estimateWorkerTimeoutMs({ briefChars: 4000, declaredFiles: 2, tokensPerSecond: 10, ceilingMs, outputTokens: 100 })).toBe(1_500_000);
+    // Absent or null: exactly as before.
+    expect(estimateWorkerTimeoutMs({ briefChars: 4000, declaredFiles: 2, tokensPerSecond: 10, ceilingMs, outputTokens: null })).toBe(1_500_000);
+  });
+
   it("gives each worker turn its own estimated time limit on a measured local leg", async () => {
     const { deps, calls } = harness(async () => turnResult());
     const withFiles = { ...tasks(1)[0]!, files: ["a.js", "b.js"] };
@@ -1237,8 +1426,15 @@ describe("early hand-back when nothing is written (D4 / F19, F42)", () => {
         "handed back early: declared files but wrote none by half the budget (4 steps completed, none a successful write)",
       ),
     );
-    const finished = events.map((e) => e.event).find((e) => e.type === "fusion_worker" && e.phase !== "started" && e.phase !== "tool");
-    expect(finished).toMatchObject({ phase: "finished", summary: "needs the orchestrator" });
+    // `usage` lines now ride along every finished step (ATO-1364).
+    const finished = events.map((e) => e.event).find((e) => e.type === "fusion_worker" && e.phase !== "started" && e.phase !== "tool" && e.phase !== "usage");
+    expect(finished).toMatchObject({
+      phase: "finished",
+      summary: "needs the orchestrator",
+      status: "needs_orchestrator",
+      stepCount: 4,
+      stepBudget: 8,
+    });
   });
 
   it("lets a worker that wrote something before the half-way mark run on", async () => {
@@ -1769,5 +1965,101 @@ describe("runWorkerTasks — shouldStartTask (ATO-1406)", () => {
       shouldStartTask: () => "the breaker",
     });
     expect(results[0]!.error).toBe("not started: the spend cap");
+  });
+});
+
+/**
+ * A worker stopped on purpose aborts with a named reason (ATO-1677): the
+ * provider rethrows `signal.reason` as is, and a plain `Error` there was
+ * reported to Sentry as a crash (`Object.stop`). The fake turns below
+ * read `signal.reason` on abort, the value a cloud request rejects with.
+ */
+describe("a stopped worker's abort reason (ATO-1677)", () => {
+  type TurnOptions = Parameters<WorkerRunnerDeps["runTurn"]>[2];
+
+  it("the person's stop aborts with a FusionWorkerStopError", async () => {
+    const live = new FusionLiveWorkers();
+    let started!: () => void;
+    const running = new Promise<void>((r) => {
+      started = r;
+    });
+    const reasons: unknown[] = [];
+    const { deps } = harness(
+      ({ options }: { options: TurnOptions }) =>
+        new Promise<RunTurnResult>((resolve) => {
+          // The request rejects with `signal.reason`; the loop catches it
+          // and ends the turn, which is what the runner sees.
+          options.signal?.addEventListener(
+            "abort",
+            () => {
+              reasons.push(options.signal!.reason);
+              resolve(turnResult({ reason: "cancelled", stepCount: 0 }));
+            },
+            { once: true },
+          );
+          started();
+        }),
+    );
+    deps.liveWorkers = live;
+    const run = runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    await running;
+    expect(live.stop("s-parent", "t0")).toBe(true);
+    const [row] = await run;
+    expect(row!.status).toBe("cancelled");
+    expect(reasons).toHaveLength(1);
+    const reason = reasons[0];
+    expect(reason).toBeInstanceOf(FusionWorkerStopError);
+    expect((reason as FusionWorkerStopError).name).toBe("FusionWorkerStopError");
+    expect((reason as FusionWorkerStopError).reason).toBe("person");
+    expect((reason as Error).message).toBe("stopped by the person");
+  });
+
+  it("an early hand-back aborts with a FusionWorkerStopError", async () => {
+    const reasons: unknown[] = [];
+    const { deps } = harness(async ({ options }: { options: TurnOptions }) => {
+      for (let step = 1; step <= 8; step += 1) {
+        if (options.signal?.aborted) {
+          reasons.push(options.signal.reason);
+          return turnResult({ reason: "cancelled", stepCount: step - 1 });
+        }
+        options.eventHook?.({ type: "step_started", stepIndex: step - 1 });
+        options.eventHook?.({
+          type: "llm_event",
+          event: {
+            type: "tool_call_executed",
+            result: { tool: "os.fs.read", status: "ok", summary: "read main.js", details: {}, truncated: false },
+            batchIndex: 0,
+            batchSize: 1,
+          },
+        });
+        options.eventHook?.({
+          type: "step_finished",
+          stepIndex: step - 1,
+          summary: "step done",
+          durationMs: 1,
+        });
+      }
+      return turnResult({ stepCount: 8 });
+    });
+    const [row] = await runWorkerTasks(deps, {
+      ...BASE,
+      workerMaxSteps: 8,
+      tasks: [{ ...tasks(1)[0]!, files: ["a.js"] }],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(row!.status).toBe("needs_orchestrator");
+    expect(reasons).toHaveLength(1);
+    const reason = reasons[0];
+    expect(reason).toBeInstanceOf(FusionWorkerStopError);
+    expect((reason as FusionWorkerStopError).reason).toBe("hand-back");
+    expect((reason as Error).message).toBe(
+      "handed back early: no file written by half the budget",
+    );
   });
 });

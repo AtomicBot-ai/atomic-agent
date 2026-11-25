@@ -68,3 +68,21 @@ export type {
   ApprovalPrompt,
   ApprovalOutcome,
 } from "./dangerous-tool.js";
+export {
+  ASK_USER_TOOL,
+  describeUserQuestionAnswer,
+  parseTypedUserQuestionAnswer,
+  renderUserQuestionText,
+  USER_QUESTION_DESCRIPTION_MAX,
+  USER_QUESTION_LABEL_MAX,
+  USER_QUESTION_MAX_OPTIONS,
+  USER_QUESTION_MIN_OPTIONS,
+  USER_QUESTION_OTHER_MAX,
+  USER_QUESTION_PROMPT_MAX,
+  validateUserQuestionAnswer,
+} from "./user-question.js";
+export type {
+  UserQuestion,
+  UserQuestionAnswer,
+  UserQuestionOption,
+} from "./user-question.js";

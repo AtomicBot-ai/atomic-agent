@@ -68,6 +68,12 @@ export type PromptTurn =
        * layout ignores it.
        */
       reasoning?: string;
+      /**
+       * Gemini 3's thought signature of the step that emitted this call,
+       * on the step's first recorded call (ATO-1680). Only a Gemini body
+       * writes it back; every other layout ignores it.
+       */
+      thoughtSignature?: string;
     }
   | {
       kind: "tool_result";
@@ -152,6 +158,14 @@ export interface CompletionRequest {
    * fan-out for its workers.
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * The reasoning level a person picked for this chat (ATO-490,
+   * `reasoning-levels.ts`). Unlike `reasoningEffort` it beats the
+   * model's own `params` and `extraBody`, and it is sent only to a model
+   * that reasons (`cloudTakesReasoningOverride`); anything else gets the
+   * body it got without it. Absent, nothing changes.
+   */
+  reasoningOverride?: ReasoningEffort;
   /**
    * Ask the server to skip the reasoning channel for this request
    * (`chat_template_kwargs: { enable_thinking: false }`). Sent only to an
@@ -247,6 +261,21 @@ export interface CompletionTiming {
   predictedMs: number;
   promptTokens: number;
   predictedTokens: number;
+  /**
+   * Decode speed as the server stated it (llama.cpp
+   * `timings.predicted_per_second`), tokens per second. Absent when the
+   * provider does not report one; `stepSpeedFromCompletion` then
+   * derives it from `predictedTokens` / `predictedMs` where it can.
+   */
+  predictedPerSecond?: number;
+  /**
+   * Speculative decoding (llama.cpp `timings.draft_n` /
+   * `draft_n_accepted`): tokens the draft model proposed this request,
+   * and how many of them the main model kept. Absent unless the server
+   * runs with a draft model.
+   */
+  draftTokens?: number;
+  draftAcceptedTokens?: number;
 }
 
 /**
@@ -343,6 +372,14 @@ export interface CompletionResult {
    * when every tool the caller sent went out.
    */
   droppedTools?: readonly DroppedTool[];
+  /**
+   * The request carried a GBNF grammar and the server got it without
+   * one: this server refused our grammar with a 400 earlier, so the
+   * llama-server client stopped sending it there (ATO-1675). Nothing held
+   * the reply to the call shape, so the step reads plain prose as a
+   * reply, as on native tools. Absent when the grammar went out.
+   */
+  grammarSkipped?: true;
 }
 
 /** One tool a provider left out of a request (`CompletionResult.droppedTools`). */
@@ -360,6 +397,12 @@ export interface OpenAiToolCall {
     name: string;
     arguments: string;
   };
+  /**
+   * Gemini 3's `extra_content.google.thought_signature` on this call,
+   * which the next request must hand back (ATO-1680). Absent from every
+   * other service.
+   */
+  thoughtSignature?: string;
 }
 
 export interface StreamChunk {

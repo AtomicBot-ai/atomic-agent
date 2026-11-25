@@ -2,6 +2,7 @@ import { projectSessionConversation } from "../session/session-compaction.js";
 import { buildCloudPrompt } from "./build-cloud-prompt.js";
 import {
   buildSkillCatalogSection,
+  cloudSkillCatalogBudget,
   reclipSkillCatalog,
 } from "../skills/skill-catalog.js";
 import { getConfig } from "../config/index.js";
@@ -48,10 +49,19 @@ import {
   CONVERSATION_CAP_AUTO,
   CONVERSATION_CAP_AUTO_FALLBACK,
   defaultBudget,
+  effectiveReplyReserve,
   estimateTokens,
   SESSION_SECTIONS_CAP_AUTO,
   truncateToTokens,
 } from "./token-budget.js";
+import { readSessionProject, renderSessionProjectBody } from "../session/session-project.js";
+
+/**
+ * ATO-42: the most the `### project` block takes in the local prompt. The
+ * client caps the text at 16k characters; a small local window gets the
+ * start of it, the cloud prompt (its own `project` section) all of it.
+ */
+export const PROJECT_SECTION_MAX_TOKENS = 1_500;
 
 export type {
   BuildPromptInput,
@@ -201,7 +211,8 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
 
   const workspaceCatalog = input.workspace ? buildSkillCatalogSection(
     input.workspace.skills.entries.filter(e => !e.disabledReasons.length).map(e => e.record),
-    input.workspace.cloud ? { maxChars: Infinity } : { tokenBudget: catalogTokenBudget },
+    // A cloud workspace may ship many skills: a larger, window-scaled budget, still capped (ATO-312).
+    { tokenBudget: input.workspace.cloud ? cloudSkillCatalogBudget(catalogTokenBudget, catalogWindow) : catalogTokenBudget },
   ) : undefined;
   // A catalog built upstream used the configured budget; the compact
   // scaffold re-packs it against the window-scaled one.
@@ -227,6 +238,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       ? undefined
       : input.profile?.reasoningSystemToken,
     maxParallelToolCalls: config.agent.maxParallelToolCalls,
+    // Config, like `fusion` below: moves only when the operator edits the
+    // account list, which also remounts Composio.
+    composioAccounts: config.composio.accounts,
     // Only read when the `### fusion` block actually renders. Config
     // values, so they move only when the operator writes the config
     // file — the same event that already flips the fusion descriptor
@@ -237,6 +251,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     fusion: resolveFusionMachineFacts(config, {
       workerSlots: input.liveWorkerSlots ?? null,
       tokensPerSecond: input.fusionTokensPerSecond ?? null,
+      pastRuns: input.fusionPastRuns ?? null,
     }),
     ...(turnFraming !== undefined
       ? { turnSystemOpen: turnFraming.systemOpen }
@@ -244,6 +259,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     ...(input.systemPersona !== undefined
       ? { systemPersona: input.systemPersona }
       : {}),
+    ...(input.persona !== undefined ? { persona: input.persona } : {}),
     ...(input.toolTransport !== undefined
       ? { toolTransport: input.toolTransport }
       : {}),
@@ -265,6 +281,20 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   if (input.modelMode?.mode === "cloud") return buildCloudPrompt(input, stablePrefix);
 
   const sessionParts = buildSessionSectionParts(input.session, limits.session);
+  // ATO-42: the client's project instructions, fixed for the turn, so they
+  // sit ahead of the conversation; capped so a small window keeps room.
+  const projectFull = renderSessionProjectBody(input.session);
+  const project =
+    projectFull !== null ? truncateToTokens(projectFull, PROJECT_SECTION_MAX_TOKENS) : null;
+  const projectTokens = project !== null ? estimateTokens(project) : 0;
+  const projectReport =
+    projectFull !== null && project !== null
+      ? {
+          name: readSessionProject(input.session)?.name ?? null,
+          tokens: estimateTokens(projectFull),
+          truncated: project.length < projectFull.length,
+        }
+      : null;
   const loadedForTail = sessionParts.loaded;
   const factsForTail = sessionParts.facts;
   const sessionPartsForBudget = [loadedForTail, factsForTail]
@@ -382,7 +412,12 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
 
   // `contextWindow` was resolved above, before the stable prefix.
   const sessionTokenEstimate =
-    estimateTokens(sessionPartsForBudget) + loadedToolsTokens;
+    estimateTokens(sessionPartsForBudget) + loadedToolsTokens + projectTokens;
+  // A `native_tools` link sends the tool schemas beside the text; the
+  // window holds them too (ATO-1678). The cloud prompt always counted
+  // them; a local one (Ollama, LM Studio, a Fusion worker leg) did not,
+  // so the transcript was packed into room the schemas already took.
+  const toolSchemaTokens = Math.max(0, input.toolSchemaTokens ?? 0);
   const conversationCapEffective = computeEffectiveConversationCap({
     configuredCap: limits.conversation,
     ...(conversationCapAuto ? { autoFill: true } : {}),
@@ -396,6 +431,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     lessonsTokens,
     proceduresTokens,
     loadedToolsTokens,
+    toolSchemaTokens,
     completionMaxTokens,
     reasoningBudgetTokens,
   });
@@ -465,6 +501,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // conversation as real chat messages and the two halves as one final
   // user message.
   const tailBefore: string[] = [];
+  if (project !== null) {
+    tailBefore.push("### project", project, ``);
+  }
   if (memoryIndex !== null) {
     tailBefore.push("### memory-index", memoryIndex, ``);
   }
@@ -616,14 +655,20 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       memoryIndex: memoryIndexTokens,
       taskPolicy: taskPolicyTokens,
       ...(compactionTokens ? { compaction: compactionTokens } : {}),
+      ...(toolSchemaTokens > 0 ? { toolSchema: toolSchemaTokens } : {}),
       total:
         budgetResult.perSection.total +
         loadedToolsTokens +
         profileTokens +
         recalledTokens +
         memoryIndexTokens +
-        taskPolicyTokens + compactionTokens,
+        taskPolicyTokens + compactionTokens + toolSchemaTokens,
     },
+    replyReserve: effectiveReplyReserve(
+      completionMaxTokens,
+      contextWindow,
+      reasoningBudgetTokens,
+    ),
     limits,
     truncated:
       truncation.loadedSkills ||
@@ -638,6 +683,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     ...(profileSection?.clip !== undefined
       ? { profileClip: profileSection.clip }
       : {}),
+    ...(projectReport !== null ? { project: projectReport } : {}),
     contextWindow,
     conversationCapEffective,
     conversationCapAuto,

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatFusionWorkerLine,
+  fusionWorkerBrand,
   fusionWorkerLineColor,
 } from "./format-fusion-worker-line.js";
+import { BRANDS } from "./brand/brand-badges.js";
 
 describe("formatFusionWorkerLine", () => {
   it("names the model running each worker leg", () => {
@@ -65,6 +67,20 @@ describe("formatFusionWorkerLine", () => {
     );
   });
 
+  it("says on the started line why a task is off the model it asked for (ATO-1754)", () => {
+    expect(
+      formatFusionWorkerLine({
+        type: "fusion_worker",
+        taskId: "t1",
+        title: "A",
+        phase: "started",
+        model: "qwen",
+        modelNote: "role review has no model configured; ran on the workers' model qwen",
+        brief: "TASK t1: A",
+      }),
+    ).toBe("» worker A · qwen: started (role review has no model configured; ran on the workers' model qwen)");
+  });
+
   it("omits the model rather than inventing one", () => {
     // `workerModel` and `orchestratorModel` are both nullable in the
     // resolver. A placeholder here would be attribution the runtime
@@ -120,5 +136,21 @@ describe("formatFusionWorkerLine", () => {
     expect(fusionWorkerLineColor({ ...base, phase: "cancelled" })).toBe(
       "yellow",
     );
+  });
+});
+
+describe("fusionWorkerBrand", () => {
+  it("brands a leg by its model family (ATO-1635)", () => {
+    expect(fusionWorkerBrand("qwen3.6-35b-a3b")).toBe(BRANDS.qwen);
+    expect(fusionWorkerBrand("anthropic/claude-sonnet-4.5")).toBe(BRANDS.claude);
+  });
+
+  it("falls back to the provider id the runtime names when it has no model", () => {
+    expect(fusionWorkerBrand("openrouter")).toBe(BRANDS.openrouter);
+  });
+
+  it("has no badge for an unknown or missing model", () => {
+    expect(fusionWorkerBrand("my-finetune")).toBeNull();
+    expect(fusionWorkerBrand(undefined)).toBeNull();
   });
 });

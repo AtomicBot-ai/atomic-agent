@@ -13,6 +13,9 @@ This area owns inference protocols and model profiles. Read [AGENTS.md](AGENTS.m
 - [llama-server-client.ts](llama-server-client.ts)
 - [dry-sampler.ts](dry-sampler.ts): the opt-in DRY anti-repeat fields for `/completion` (`localModels.drySampler`)
 - [slot-manager.ts](slot-manager.ts)
+- [toolcall-bench/](toolcall-bench/index.ts): the fixed tool-call reliability prompts, their scoring, and asking one question to several models (`models toolcall-bench`, `models ask`)
+- [transport-deadlines.ts](transport-deadlines.ts) and [offline-network.ts](offline-network.ts): the process-wide HTTP pool and the offline-mode kill switch composed into it ([offline mode](docs/offline-network.md), ATO-1084)
+- [openai-privacy-shield.ts](provider/openai/openai-privacy-shield.ts): Privacy Shield on the cloud wire (ATO-1081). Every cloud provider is an `OpenAiProvider`; with `privacy.shield.enabled` its body `messages` go out masked by the session vault and the reply, reasoning and tool-call arguments come back unmasked, streamed chunks included. Never for a server on this machine or the local network ([privacy shield](../privacy/README.md)).
 
 ## Ownership and dependencies
 
@@ -22,7 +25,11 @@ Model profiles connect prompt framing, grammar and streamed parsing. Provider ad
 
 Read docs/profiles.md for framing/grammar and docs/fallback.md for reliability; provider/openai tests for wire/schema changes.
 
+Read [subscription OAuth primitives](provider/subscription-oauth/README.md) before wiring any subscription sign-in; they are not used by a provider yet.
+
 Read [model behavior mode](docs/model-mode.md) for the explicit local/cloud policy flag, configuration precedence, per-turn lifetime and full cloud context. Native message IDs remain stable across checkpoints; the final OpenAI body checks messages, schemas and output reserve against a known cloud window before sending.
+
+Read [router/README.md](router/README.md) for the opt-in rule-based model router (`llm.router`, ATO-483): it puts a provider first in a turn's fallback chain by request features and stays silent under the local run mode, Fusion or a pinned turn.
 
 ## Validation
 

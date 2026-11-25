@@ -11,6 +11,8 @@ import { prepareStepRepair, finishStepRepair, type StepRepairArgs, tryParseToolC
 import { BatchValidationError, toLlmFailure } from "./step-errors.js";
 import { ModelError } from "../../llm/index.js";
 import { CompactPromptLatch } from "../../prompt/compact-prompt.js";
+import { PersonaLatch } from "../../prompt/persona-latch.js";
+import { buildPersonaBlock, PERSONA_HEADER } from "../../prompt/persona-block.js";
 import { COMPACT_SYSTEM_PERSONA, DEFAULT_SYSTEM_PERSONA } from "../../prompt/stable-prefix.js";
 
 function completion(overrides: Partial<CompletionResult> = {}): CompletionResult {
@@ -252,6 +254,28 @@ describe("compact prompt decision (ATO-1116)", () => {
     expect(linked.prompt).toContain(DEFAULT_SYSTEM_PERSONA);
     expect(linked.prompt).not.toContain(COMPACT_SYSTEM_PERSONA);
     expect(latch.resolve(ctx.session.id, "auto", null).compact).toBe(true);
+  });
+});
+
+describe("session persona (ATO-54)", () => {
+  const reviewer = { name: "reviewer", instructions: "Review for bugs first." };
+
+  it("renders the latched persona and keeps it for every step of the session", () => {
+    const { ctx, deps } = fixture();
+    const latch = new PersonaLatch();
+    latch.resolve(ctx.session.id, () => ({ source: "active", requested: "reviewer", persona: reviewer }));
+    const first = prepareStepInference(ctx, { ...deps, personaLatch: latch });
+    const second = prepareStepInference(ctx, { ...deps, personaLatch: latch });
+    expect(first.prompt.stablePrefix).toContain(`${PERSONA_HEADER}\n${buildPersonaBlock(reviewer)}`);
+    expect(second.prompt.stablePrefix).toBe(first.prompt.stablePrefix);
+  });
+
+  it("renders no persona without a latch or when the session latched none", () => {
+    const { ctx, deps } = fixture();
+    expect(prepareStepInference(ctx, deps).prompt.stablePrefix).not.toContain(PERSONA_HEADER);
+    const latch = new PersonaLatch();
+    latch.resolve(ctx.session.id, () => ({ source: "env", requested: "ghost", unknown: true }));
+    expect(prepareStepInference(ctx, { ...deps, personaLatch: latch }).prompt.stablePrefix).not.toContain(PERSONA_HEADER);
   });
 });
 

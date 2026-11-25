@@ -1,5 +1,7 @@
 export { buildGrammar, buildGrammarForTools } from "./build-grammar.js";
 export type { BuildGrammarOptions } from "./build-grammar.js";
+export { applyStrictToolArgs, STRICT_ARGS_LIMITS } from "./strict-tool-args.js";
+export type { StrictArgsTool } from "./strict-tool-args.js";
 export {
   withoutReasoningPrelude,
   withUnboundedReasoningPrelude,

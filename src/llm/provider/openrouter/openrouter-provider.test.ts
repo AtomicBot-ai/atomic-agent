@@ -210,7 +210,7 @@ describe("OpenRouterProvider", () => {
 });
 
 function sse(
-  events: readonly Array<Record<string, unknown> | string>,
+  events: ReadonlyArray<Record<string, unknown> | string>,
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   return new ReadableStream({

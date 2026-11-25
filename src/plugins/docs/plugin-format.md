@@ -21,7 +21,7 @@ Owner: src/plugins/
 |---|---|---|
 | Skills | `skills/<name>/SKILL.md`, or a root `SKILL.md` | Skill `plugin:<frontmatter name>` (root skill: `plugin`) |
 | Commands | `commands/**/*.md` | Terminal slash command `/plugin:name`, plus `/name` when free (see below) |
-| Subagents | `agents/*.md` | Profiles listed by `listPluginSubagents`, not run yet |
+| Subagents | `agents/*.md` | Subagent profiles a Fusion task can name as `plugin:agent` |
 | Hooks | `hooks/hooks.json` | Path recorded; run by the hooks engine (ATO-493) |
 | MCP servers | `.mcp.json` or manifest `mcpServers` | MCP server `<plugin>-<server>`, started with the agent; local ones need code consent |
 

@@ -111,7 +111,7 @@ export function mutationTargets(
 /**
  * Files an applied patch touches, read from its `---` / `+++` headers
  * with `stripComponents` (default 1, as the tool) dropped and `rootDir`
- * prefixed. `"any"` when they cannot be read; `null` for a dry run.
+ * prefixed, or from a `*** Begin Patch` envelope's file headers as written. `"any"` when they cannot be read; `null` for a dry run.
  */
 function patchTargets(args: unknown): readonly string[] | "any" | null {
   if (args === null || typeof args !== "object") return "any";
@@ -125,7 +125,23 @@ function patchTargets(args: unknown): readonly string[] | "any" | null {
       : 1;
   const root = stringField(args, "rootDir");
   const found = new Set<string>();
+  // In a `*** Begin Patch` envelope a removed `-- x` line reads as a
+  // `--- x` header, so only the envelope's own headers count there.
+  const isEnvelope = /^\s*\*\*\* Begin Patch\s*$/m.test(patch);
   for (const line of patch.split(/\r?\n/)) {
+    // Envelope paths are taken as written, no strip.
+    const envelope =
+      /^\s*\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/.exec(line);
+    if (envelope !== null) {
+      const rel = envelope[1]!.trim();
+      if (rel === "") continue;
+      const isAbsolute = rel.startsWith("/") || /^[a-zA-Z]:/.test(rel);
+      found.add(
+        normalizeLoopPath(root !== null && !isAbsolute ? `${root}/${rel}` : rel),
+      );
+      continue;
+    }
+    if (isEnvelope) continue;
     const header = /^(?:---|\+\+\+) (.+)$/.exec(line);
     if (header === null) continue;
     const name = header[1]!.split("\t")[0]!.trim();

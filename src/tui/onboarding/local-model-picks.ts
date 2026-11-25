@@ -1,6 +1,6 @@
-import { totalmem } from "node:os";
 import {
   getLocalModelDef,
+  hostRamGb as machineRamGb,
   isKnownLocalModelId,
   LOCAL_MODELS_CATALOG,
   recommendedModelFor,
@@ -9,9 +9,9 @@ import {
   type LocalModelId,
 } from "../../local-llm/index.js";
 
-/** Host physical RAM in whole decimal GB, the same measure the panel uses. */
+/** Host RAM in whole GB as the machine is sold, the same measure the panel and the desktop use (ATO-1442). */
 export function hostRamGb(): number {
-  return Math.max(1, Math.floor(totalmem() / 1_000_000_000));
+  return machineRamGb();
 }
 
 export interface LocalModelPick {

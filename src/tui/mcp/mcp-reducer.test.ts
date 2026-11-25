@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 
+import { fakeSession } from "../test-fixtures.js";
 import { createInitialTuiState } from "../tui-state.js";
 import type { TuiAction } from "../tui-action.js";
+import {
+  buildMcpCatalogJson,
+  findMcpCatalogEntry,
+  listMcpCatalog,
+} from "../../mcp/mcp-catalog.js";
 import { reduceMcpAction } from "./mcp-reducer.js";
 import type { McpServerDetail, McpServerRow } from "./mcp-panel-state.js";
 
-function dispatch(state = createInitialTuiState(), action: TuiAction) {
+function dispatch(state = createInitialTuiState(fakeSession()), action: TuiAction) {
   const next = reduceMcpAction(state, action);
   return next ?? state;
 }
@@ -44,7 +50,7 @@ function detail(name: string): McpServerDetail {
 
 describe("reduceMcpAction", () => {
   it("returns null for non-mcp actions", () => {
-    const initial = createInitialTuiState();
+    const initial = createInitialTuiState(fakeSession());
     expect(
       reduceMcpAction(initial, {
         type: "runtime_info",
@@ -54,7 +60,7 @@ describe("reduceMcpAction", () => {
   });
 
   it("mcp_refresh_started flips loading on and clears lastError", () => {
-    let s = createInitialTuiState();
+    let s = createInitialTuiState(fakeSession());
     s = { ...s, mcpPanel: { ...s.mcpPanel, lastError: "boom" } };
     const next = dispatch(s, { type: "mcp_refresh_started" });
     expect(next.mcpPanel.loading).toBe(true);
@@ -62,7 +68,7 @@ describe("reduceMcpAction", () => {
   });
 
   it("mcp_rows_loaded clamps cursor and stores rows + hint", () => {
-    let s = createInitialTuiState();
+    let s = createInitialTuiState(fakeSession());
     s = { ...s, mcpPanel: { ...s.mcpPanel, cursor: 99 } };
     const next = dispatch(s, {
       type: "mcp_rows_loaded",
@@ -77,7 +83,7 @@ describe("reduceMcpAction", () => {
   });
 
   it("mcp_cursor_moved is bounded by row count", () => {
-    let s = createInitialTuiState();
+    let s = createInitialTuiState(fakeSession());
     s = {
       ...s,
       mcpPanel: { ...s.mcpPanel, rows: [row("a"), row("b")], cursor: 0 },
@@ -89,7 +95,7 @@ describe("reduceMcpAction", () => {
   });
 
   it("mcp_detail_opened flips mode + stores detail and resets sub-cursor", () => {
-    const s = createInitialTuiState();
+    const s = createInitialTuiState(fakeSession());
     const next = dispatch(s, {
       type: "mcp_detail_opened",
       rowKey: "docs",
@@ -102,7 +108,7 @@ describe("reduceMcpAction", () => {
   });
 
   it("mcp_detail_closed returns to list and clears detail state", () => {
-    let s = createInitialTuiState();
+    let s = createInitialTuiState(fakeSession());
     s = {
       ...s,
       mcpPanel: {
@@ -120,7 +126,7 @@ describe("reduceMcpAction", () => {
   });
 
   it("mcp_detail_tab_cycled wraps around tools → resources → prompts", () => {
-    let s = createInitialTuiState();
+    let s = createInitialTuiState(fakeSession());
     s = {
       ...s,
       mcpPanel: {
@@ -139,7 +145,7 @@ describe("reduceMcpAction", () => {
   });
 
   it("mcp_detail_cursor_moved is bounded by the current tab's item count", () => {
-    let s = createInitialTuiState();
+    let s = createInitialTuiState(fakeSession());
     const d = detail("docs");
     s = {
       ...s,
@@ -177,7 +183,7 @@ describe("reduceMcpAction", () => {
   });
 
   it("mcp_auto_refresh_toggled flips the bit", () => {
-    const s = createInitialTuiState();
+    const s = createInitialTuiState(fakeSession());
     const off = dispatch(s, { type: "mcp_auto_refresh_toggled" });
     expect(off.mcpPanel.autoRefresh).toBe(false);
     const on = dispatch(off, { type: "mcp_auto_refresh_toggled" });
@@ -185,7 +191,7 @@ describe("reduceMcpAction", () => {
   });
 
   it("mcp_refresh_failed flips loading off and stores error", () => {
-    const s = createInitialTuiState();
+    const s = createInitialTuiState(fakeSession());
     const next = dispatch(s, { type: "mcp_refresh_failed", error: "boom" });
     expect(next.mcpPanel.loading).toBe(false);
     expect(next.mcpPanel.lastError).toBe("boom");
@@ -193,18 +199,67 @@ describe("reduceMcpAction", () => {
 
   describe("add-server modal", () => {
     it("mcp_add_modal_opened creates an empty modal state", () => {
-      const s = createInitialTuiState();
+      const s = createInitialTuiState(fakeSession());
       expect(s.mcpPanel.addModal).toBeNull();
       const next = dispatch(s, { type: "mcp_add_modal_opened" });
       expect(next.mcpPanel.addModal).toEqual({
         json: "",
         error: null,
         submitting: false,
+        picker: { cursor: 0 },
+        catalogId: null,
       });
     });
 
+    it("catalog cursor moves inside the list and stops at both ends", () => {
+      let s = dispatch(createInitialTuiState(fakeSession()), { type: "mcp_add_modal_opened" });
+      s = dispatch(s, { type: "mcp_add_catalog_moved", delta: -1 });
+      expect(s.mcpPanel.addModal?.picker).toEqual({ cursor: 0 });
+      s = dispatch(s, { type: "mcp_add_catalog_moved", delta: 2 });
+      expect(s.mcpPanel.addModal?.picker).toEqual({ cursor: 2 });
+      const total = listMcpCatalog().length;
+      s = dispatch(s, { type: "mcp_add_catalog_moved", delta: total + 5 });
+      expect(s.mcpPanel.addModal?.picker).toEqual({ cursor: total - 1 });
+    });
+
+    it("picking a catalog entry fills the editor with its JSON and closes the list", () => {
+      let s = dispatch(createInitialTuiState(fakeSession()), { type: "mcp_add_modal_opened" });
+      s = dispatch(s, { type: "mcp_add_validation_failed", error: "old" });
+      s = dispatch(s, { type: "mcp_add_catalog_picked", id: "firecrawl" });
+      const entry = findMcpCatalogEntry("firecrawl")!;
+      expect(s.mcpPanel.addModal).toEqual({
+        json: buildMcpCatalogJson(entry),
+        error: null,
+        submitting: false,
+        picker: null,
+        catalogId: "firecrawl",
+      });
+    });
+
+    it("an unknown catalog id changes nothing", () => {
+      const s = dispatch(createInitialTuiState(fakeSession()), { type: "mcp_add_modal_opened" });
+      const next = dispatch(s, { type: "mcp_add_catalog_picked", id: "no-such-server" });
+      expect(next).toBe(s);
+    });
+
+    it("skipping the catalog keeps an empty buffer for a pasted config", () => {
+      let s = dispatch(createInitialTuiState(fakeSession()), { type: "mcp_add_modal_opened" });
+      s = dispatch(s, { type: "mcp_add_catalog_skipped" });
+      expect(s.mcpPanel.addModal).toEqual({
+        json: "",
+        error: null,
+        submitting: false,
+        picker: null,
+        catalogId: null,
+      });
+      const again = dispatch(s, { type: "mcp_add_catalog_skipped" });
+      expect(again).toBe(s);
+      const moved = dispatch(s, { type: "mcp_add_catalog_moved", delta: 1 });
+      expect(moved).toBe(s);
+    });
+
     it("mcp_add_modal_opened is idempotent when the modal is already open", () => {
-      let s = createInitialTuiState();
+      let s = createInitialTuiState(fakeSession());
       s = dispatch(s, { type: "mcp_add_modal_opened" });
       s = dispatch(s, { type: "mcp_add_json_changed", json: "preserve me" });
       const next = dispatch(s, { type: "mcp_add_modal_opened" });
@@ -212,7 +267,7 @@ describe("reduceMcpAction", () => {
     });
 
     it("mcp_add_json_changed updates the buffer and clears any prior error", () => {
-      let s = createInitialTuiState();
+      let s = createInitialTuiState(fakeSession());
       s = dispatch(s, { type: "mcp_add_modal_opened" });
       s = dispatch(s, {
         type: "mcp_add_validation_failed",
@@ -227,7 +282,7 @@ describe("reduceMcpAction", () => {
     });
 
     it("mcp_add_submitting_started flips submitting on and clears error", () => {
-      let s = createInitialTuiState();
+      let s = createInitialTuiState(fakeSession());
       s = dispatch(s, { type: "mcp_add_modal_opened" });
       s = dispatch(s, { type: "mcp_add_validation_failed", error: "x" });
       const next = dispatch(s, { type: "mcp_add_submitting_started" });
@@ -236,7 +291,7 @@ describe("reduceMcpAction", () => {
     });
 
     it("mcp_add_validation_failed surfaces the error and stops submitting", () => {
-      let s = createInitialTuiState();
+      let s = createInitialTuiState(fakeSession());
       s = dispatch(s, { type: "mcp_add_modal_opened" });
       s = dispatch(s, { type: "mcp_add_submitting_started" });
       const next = dispatch(s, {
@@ -248,7 +303,7 @@ describe("reduceMcpAction", () => {
     });
 
     it("mcp_add_failed mirrors mcp_add_validation_failed shape", () => {
-      let s = createInitialTuiState();
+      let s = createInitialTuiState(fakeSession());
       s = dispatch(s, { type: "mcp_add_modal_opened" });
       s = dispatch(s, { type: "mcp_add_submitting_started" });
       const next = dispatch(s, {
@@ -260,7 +315,7 @@ describe("reduceMcpAction", () => {
     });
 
     it("mcp_add_succeeded closes the modal", () => {
-      let s = createInitialTuiState();
+      let s = createInitialTuiState(fakeSession());
       s = dispatch(s, { type: "mcp_add_modal_opened" });
       s = dispatch(s, {
         type: "mcp_add_json_changed",
@@ -271,7 +326,7 @@ describe("reduceMcpAction", () => {
     });
 
     it("mcp_add_modal_closed wipes the modal state", () => {
-      let s = createInitialTuiState();
+      let s = createInitialTuiState(fakeSession());
       s = dispatch(s, { type: "mcp_add_modal_opened" });
       s = dispatch(s, {
         type: "mcp_add_json_changed",
@@ -285,7 +340,7 @@ describe("reduceMcpAction", () => {
       // Multi-line paste of valid JSON — the reducer must store a
       // single-line representation so the MultiLineEditor does not
       // expand vertically with every pasted line.
-      let s = createInitialTuiState();
+      let s = createInitialTuiState(fakeSession());
       s = dispatch(s, { type: "mcp_add_modal_opened" });
       const next = dispatch(s, {
         type: "mcp_add_json_changed",
@@ -299,7 +354,7 @@ describe("reduceMcpAction", () => {
     it("mcp_add_json_changed preserves intra-string content because JSON encodes \\n as escape", () => {
       // Inside a JSON string literal `\n` is two characters (backslash
       // + n), not a newline. The flattener must leave that untouched.
-      let s = createInitialTuiState();
+      let s = createInitialTuiState(fakeSession());
       s = dispatch(s, { type: "mcp_add_modal_opened" });
       const json = '{"v":"line1\\nline2"}';
       const next = dispatch(s, { type: "mcp_add_json_changed", json });
@@ -307,7 +362,7 @@ describe("reduceMcpAction", () => {
     });
 
     it("error-folding actions are ignored when the modal is closed", () => {
-      const s = createInitialTuiState();
+      const s = createInitialTuiState(fakeSession());
       const next = dispatch(s, {
         type: "mcp_add_validation_failed",
         error: "boom",
@@ -318,7 +373,7 @@ describe("reduceMcpAction", () => {
 
   describe("remove-server confirm flow", () => {
     it("mcp_remove_confirm_opened seeds the modal with the target name", () => {
-      const next = dispatch(createInitialTuiState(), {
+      const next = dispatch(createInitialTuiState(fakeSession()), {
         type: "mcp_remove_confirm_opened",
         name: "github",
       });
@@ -330,7 +385,7 @@ describe("reduceMcpAction", () => {
     });
 
     it("re-opening with a different name overrides stale state", () => {
-      let s = createInitialTuiState();
+      let s = createInitialTuiState(fakeSession());
       s = dispatch(s, { type: "mcp_remove_confirm_opened", name: "first" });
       s = dispatch(s, { type: "mcp_remove_submitting_started" });
       s = dispatch(s, { type: "mcp_remove_failed", error: "stale" });
@@ -346,7 +401,7 @@ describe("reduceMcpAction", () => {
     });
 
     it("mcp_remove_submitting_started flips the flag and clears the error", () => {
-      let s = createInitialTuiState();
+      let s = createInitialTuiState(fakeSession());
       s = dispatch(s, { type: "mcp_remove_confirm_opened", name: "x" });
       s = dispatch(s, { type: "mcp_remove_failed", error: "prev" });
       const next = dispatch(s, { type: "mcp_remove_submitting_started" });
@@ -355,7 +410,7 @@ describe("reduceMcpAction", () => {
     });
 
     it("mcp_remove_failed surfaces the message and resets submitting", () => {
-      let s = createInitialTuiState();
+      let s = createInitialTuiState(fakeSession());
       s = dispatch(s, { type: "mcp_remove_confirm_opened", name: "x" });
       s = dispatch(s, { type: "mcp_remove_submitting_started" });
       const next = dispatch(s, {
@@ -367,7 +422,7 @@ describe("reduceMcpAction", () => {
     });
 
     it("mcp_remove_succeeded closes the confirm modal", () => {
-      let s = createInitialTuiState();
+      let s = createInitialTuiState(fakeSession());
       s = dispatch(s, { type: "mcp_remove_confirm_opened", name: "x" });
       const next = dispatch(s, {
         type: "mcp_remove_succeeded",
@@ -377,14 +432,14 @@ describe("reduceMcpAction", () => {
     });
 
     it("mcp_remove_confirm_closed clears the modal", () => {
-      let s = createInitialTuiState();
+      let s = createInitialTuiState(fakeSession());
       s = dispatch(s, { type: "mcp_remove_confirm_opened", name: "x" });
       const next = dispatch(s, { type: "mcp_remove_confirm_closed" });
       expect(next.mcpPanel.removeConfirm).toBeNull();
     });
 
     it("submit/fail actions are no-ops when the modal is closed", () => {
-      const s = createInitialTuiState();
+      const s = createInitialTuiState(fakeSession());
       const a = dispatch(s, { type: "mcp_remove_submitting_started" });
       const b = dispatch(a, { type: "mcp_remove_failed", error: "x" });
       expect(b.mcpPanel.removeConfirm).toBeNull();

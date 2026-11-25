@@ -1,6 +1,8 @@
 import type { PlanSnapshot } from "../agent/plan/plan-snapshot.js";
 import type { ProjectTrustPrompt } from "./project-trust/project-trust-state.js";
+import type { AppendLocalPrompt } from "./append-local-question/append-local-question-state.js";
 import type { CodingMode } from "./coding-mode/coding-mode.js";
+import type { ReasoningLevel } from "../llm/reasoning-levels.js";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { MetricSample } from "../tracing/metrics-collector.js";
@@ -35,6 +37,7 @@ import type {
 } from "./tui-state.js";
 import type { ContextUsageState } from "../session/context-usage.js";
 import type { SessionUsageState } from "../session/usage-meter.js";
+import type { RewindPoint } from "../session/session-rewind.js";
 
 /**
  * Every action the reducer knows how to fold into `TuiState`. All side
@@ -54,6 +57,8 @@ export type TuiAction =
       variant?: "normal" | "warn";
       /** See {@link ChatMessage.switchToSessionId}. */
       switchToSessionId?: string;
+      /** See {@link ChatMessage.action}. */
+      action?: "add-cloud-provider";
     }
   | {
       type: "agent_event";
@@ -89,6 +94,8 @@ export type TuiAction =
   | { type: "context_menu_closed" }
   /** Transient line in the composer meta row; `null` clears it. */
   | { type: "composer_notice"; text: string | null }
+  /** Tab on an empty composer took the next-step suggestion (ATO-1095). */
+  | { type: "next_step_suggestion_accepted" }
   | { type: "metric"; sample: MetricSample }
   | { type: "log"; record: LogRecord }
   /**
@@ -167,6 +174,14 @@ export type TuiAction =
   /** Open the mode menu, seeded on the mode currently in force. */
   /** Put the drafted plan away without running it or leaving plan mode. */
   | { type: "plan_handoff_dismissed" }
+  /** `/think` (ATO-490): the reasoning level the next turns ask for. */
+  | { type: "reasoning_level_set"; level: ReasoningLevel }
+  /** `/rewind` (ATO-1057): show the chat's earlier questions, newest first. */
+  | { type: "rewind_picker_opened"; points: readonly RewindPoint[] }
+  | { type: "rewind_picker_closed" }
+  | { type: "rewind_picker_cursor_moved"; delta: 1 | -1 }
+  /** Put the rewind picker highlight on an absolute row (mouse click). */
+  | { type: "rewind_picker_cursor_set"; row: number }
   | { type: "coding_mode_menu_opened" }
   | { type: "coding_mode_menu_closed" }
   | { type: "coding_mode_menu_cursor_moved"; delta: number }
@@ -224,6 +239,10 @@ export type TuiAction =
   | { type: "turn_expand_set"; scope: "last" | "all"; expanded: boolean }
   /** `/steps on|off`: always show steps (`tui.showSteps`). */
   | { type: "show_steps_set"; on: boolean }
+  /** `/verbose on|off`: one plain note per finished step (ATO-34). */
+  | { type: "verbose_steps_set"; on: boolean }
+  /** `/vim on|off`: vim keys in the composer (`tui.vimMode`). */
+  | { type: "vim_mode_set"; on: boolean }
   /** Open the slash palette with a leading-slash query. */
   | { type: "slash_palette_opened"; query: string }
   /** Update the filter query while the palette is open. */
@@ -248,6 +267,11 @@ export type TuiAction =
   | { type: "slash_palette_cursor_set"; row: number }
   /** Navigate input history by delta (up = older, down = newer). */
   | { type: "input_history_navigated"; delta: 1 | -1 }
+  /**
+   * Vim NORMAL Esc Esc (ATO-662): clear the draft and push it onto the
+   * prompt history, so Up recalls it. No-op on an empty draft.
+   */
+  | { type: "input_draft_stashed" }
   /** Clear the chat transcript (slash `/clear`). */
   | { type: "chat_cleared" }
   /**
@@ -380,13 +404,23 @@ export type TuiAction =
   /** Snap the chat scroll back to the bottom (newest message). */
   | { type: "chat_scroll_reset" }
   /** A newer release was detected at startup; offer the in-app update. */
-  | { type: "update_available"; current: string; latest: string }
+  | {
+      type: "update_available";
+      current: string;
+      latest: string;
+      /** ATO-1125: the release policy lists the running version. */
+      required?: "broken" | "below-minimum" | null;
+    }
   /** User declined the update offer (or it was otherwise cleared). */
   | { type: "update_dismissed" }
   /** The opened folder ships project skills or instruction files nobody trusted yet. */
   | { type: "project_trust_asked"; prompt: ProjectTrustPrompt }
   /** The trust question was answered or put off. */
   | { type: "project_trust_closed" }
+  /** ATO-1461: the old "local model as last resort" switch is on and nobody answered the question yet. */
+  | { type: "append_local_asked"; prompt: AppendLocalPrompt }
+  /** That question was answered or put off. */
+  | { type: "append_local_closed" }
   /** User accepted: the install script is now running. */
   | { type: "update_started" }
   /** The install script settled. */

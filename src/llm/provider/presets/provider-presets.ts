@@ -89,6 +89,56 @@ export interface ProviderPreset {
   readonly local?: boolean;
   /** One-line hint shown under the label. */
   readonly note?: string;
+  /**
+   * Set for services whose endpoint is per account (an Azure resource, an
+   * AWS Region), so no single `baseUrl` serves everyone. `baseUrl` is then
+   * a template: the wizard opens the base URL step prefilled with it and
+   * shows `hint`, and refuses to go on while the URL still contains
+   * `placeholder`. `hostPattern` (cloud services) names the real hosts, so a
+   * saved entry on `my-team.openai.azure.com` still counts as this cloud
+   * service (`defaultProviderModelMode`, `classifyTransportHost`).
+   */
+  readonly perAccountEndpoint?: {
+    readonly hint: string;
+    readonly placeholder?: string;
+    readonly hostPattern?: RegExp;
+  };
+  /**
+   * Command (argv, run without a shell) whose output is the key, for
+   * services whose credential is a short-lived token rather than a key
+   * to paste (Vertex AI's OAuth access token). Copied onto the saved
+   * entry as `apiKeyCommand`; the wizard then skips the key screen.
+   */
+  readonly apiKeyCommand?: readonly string[];
+}
+
+/**
+ * Google Vertex AI's OpenAI-compatible root for one project and region:
+ * `https://{region}-aiplatform.googleapis.com/v1/projects/{project}/locations/{region}/endpoints/openapi`.
+ * The `global` location has no regional host (`aiplatform.googleapis.com`).
+ * Chat is `<root>/chat/completions`, no extra `/v1` (`openai-chat-path.ts`).
+ */
+export function vertexOpenAiBaseUrl(location: {
+  readonly region: string;
+  readonly project: string;
+}): string {
+  const region = location.region.trim().toLowerCase();
+  const project = encodeURIComponent(location.project.trim());
+  const host =
+    region === "global" ? "aiplatform.googleapis.com" : `${region}-aiplatform.googleapis.com`;
+  return `https://${host}/v1/projects/${project}/locations/${region}/endpoints/openapi`;
+}
+
+/**
+ * The command that prints a Vertex AI access token. Plain argv on macOS
+ * and Linux. On Windows `gcloud` is a `gcloud.cmd` script, which Node
+ * cannot start without `cmd.exe`, so it goes through `cmd /c` there.
+ */
+export function vertexTokenCommand(
+  platform: NodeJS.Platform = process.platform,
+): readonly string[] {
+  const argv = ["gcloud", "auth", "print-access-token"];
+  return platform === "win32" ? ["cmd.exe", "/d", "/c", ...argv] : argv;
 }
 
 /**
@@ -100,6 +150,26 @@ export interface ProviderPreset {
  * list reads predictably; a test enforces this.
  */
 export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
+  {
+    id: "bedrock",
+    label: "Amazon Bedrock",
+    // Bedrock's OpenAI-compatible surface with a Bedrock API key sent as
+    // Bearer (no SigV4, no AWS SDK). `bedrock-mantle`, not
+    // `bedrock-runtime`: only Mantle serves `/v1/models` (Runtime answers
+    // 404 UnknownOperationException there). Probed 2026-11-12 with a bogus
+    // key: `/v1/models` and `/v1/chat/completions` answer 401
+    // `invalid_api_key` "Invalid bearer token" (a Bedrock API key *is* a
+    // bearer token), a bogus sibling path 404. The Region is the
+    // operator's, so the URL is asked for.
+    baseUrl: "https://bedrock-mantle.us-east-1.api.aws",
+    // The variable AWS's own SDKs and CLI read a Bedrock API key from.
+    envVar: "AWS_BEARER_TOKEN_BEDROCK",
+    note: "Bedrock models with a Bedrock API key; set your AWS Region in the URL",
+    perAccountEndpoint: {
+      hint: "Change us-east-1 to the AWS Region your Bedrock models are in",
+      hostPattern: /^bedrock-(?:mantle|runtime)\.[a-z0-9-]+\.(?:api\.aws|amazonaws\.com)$/i,
+    },
+  },
   {
     id: "anthropic",
     label: "Anthropic (Claude)",
@@ -125,7 +195,24 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     baseUrl: "http://127.0.0.1:1337",
     envVar: "ATOMIC_CHAT_API_KEY",
     local: true,
-    note: "the Local API Server Atomic Chat runs on your machine; no API key needed",
+    note: "Atomic Chat's Local API Server on this machine; no API key needed",
+  },
+  {
+    id: "azure-openai",
+    label: "Azure OpenAI",
+    // Azure's v1 API: `<resource>/openai/v1/...`, no dated `api-version`
+    // query, the key accepted as `Authorization: Bearer` (also as
+    // `api-key`; Bearer keeps this preset on the shared convention).
+    // The model id is the operator's *deployment* name. The resource name
+    // is per account, so the URL is asked for and the template refused.
+    baseUrl: "https://your-resource.openai.azure.com/openai",
+    envVar: "AZURE_OPENAI_API_KEY",
+    note: "your Azure resource; the model is your deployment name",
+    perAccountEndpoint: {
+      hint: "Replace your-resource with your Azure OpenAI resource name",
+      placeholder: "your-resource",
+      hostPattern: /\.(?:openai|services\.ai|cognitiveservices)\.azure\.com$/i,
+    },
   },
   {
     id: "cerebras",
@@ -149,6 +236,43 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "open-weight models, function calling",
   },
   {
+    id: "foundry-local",
+    label: "Foundry Local",
+    // Microsoft's on-device server (Windows, macOS; NPU/GPU/CPU through
+    // ONNX Runtime). It serves `/v1/models` and `/v1/chat/completions`
+    // with no key, but picks a new port each time it starts unless told
+    // otherwise (`foundry server start --port <n>`), so the URL is asked
+    // for. 5273 is the port Microsoft's own examples show.
+    baseUrl: "http://localhost:5273",
+    envVar: "FOUNDRY_LOCAL_API_KEY",
+    local: true,
+    note: "Microsoft's on-device server; no API key needed",
+    perAccountEndpoint: {
+      hint: "Use the URL `foundry server status` prints; the port changes on every start",
+    },
+  },
+  {
+    id: "google-vertex",
+    label: "Google Vertex AI",
+    // Vertex's OpenAI-compatible endpoint, without Google's SDK. The key
+    // is an OAuth access token (about an hour) from the operator's own
+    // `gcloud` sign-in, printed per request by `apiKeyCommand` and sent
+    // as Bearer. Probed 2026-11-13 with a bogus token:
+    // `<root>/chat/completions` answers 401 "Expected OAuth 2 access
+    // token", `<root>/v1/chat/completions` and a bogus sibling 404. There
+    // is no model list (`/models` is 404), so the model is typed by hand
+    // (`google/gemini-2.5-flash`). Project and region are the operator's.
+    baseUrl: vertexOpenAiBaseUrl({ region: "us-central1", project: "your-project" }),
+    envVar: "VERTEX_ACCESS_TOKEN",
+    note: "Gemini and partner models via your gcloud sign-in; project in the URL",
+    apiKeyCommand: vertexTokenCommand(),
+    perAccountEndpoint: {
+      hint: "Replace your-project with your Google Cloud project id (and us-central1 with your region, both places)",
+      placeholder: "your-project",
+      hostPattern: /^(?:[a-z0-9-]+-)?aiplatform\.googleapis\.com$/i,
+    },
+  },
+  {
     id: "groq",
     label: "Groq",
     baseUrl: "https://api.groq.com/openai",
@@ -169,6 +293,19 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     envVar: "LMSTUDIO_API_KEY",
     local: true,
     note: "the server LM Studio runs on your machine; no API key needed",
+  },
+  {
+    id: "lemonade",
+    label: "Lemonade (local)",
+    // AMD's local server (llama.cpp, ROCm, Vulkan, Ryzen AI NPU). Default
+    // port 13305 since its 2026 releases (older ones used 8000); it serves
+    // the OpenAI API under both `/v1` and `/api/v1`. A key is checked only
+    // when the server was started with LEMONADE_API_KEY, the same variable
+    // this preset reads.
+    baseUrl: "http://localhost:13305",
+    envVar: "LEMONADE_API_KEY",
+    local: true,
+    note: "the Lemonade server on your machine (AMD GPUs, NPUs); no key needed",
   },
   {
     id: "mistral",
@@ -263,6 +400,21 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "broad open-weight catalog",
   },
   {
+    id: "wandb",
+    label: "W&B Inference (CoreWeave)",
+    // CoreWeave Serverless Inference, still served from the W&B hostname.
+    // Bearer key; the `OpenAI-Project: <team>/<project>` header is
+    // optional (usage lands in the account's default `inference` project
+    // without it), so the operator adds it under `headers` in config.json
+    // only to bill another project. Probed 2026-11-12 with a bogus key:
+    // `/v1/models` and `/v1/chat/completions` answer 401 `invalid_api_key`.
+    // This host rejects a bad key before routing, so a bogus sibling path
+    // is 401 too, not 404; the routes are the documented ones.
+    baseUrl: "https://api.inference.wandb.ai",
+    envVar: "WANDB_API_KEY",
+    note: "CoreWeave Serverless Inference: open-weight models, W&B key",
+  },
+  {
     id: "xai",
     label: "xAI (Grok)",
     baseUrl: "https://api.x.ai",
@@ -270,6 +422,28 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "Grok models direct from the vendor",
   },
 ];
+
+/**
+ * The cloud preset `url` belongs to: the preset's own `baseUrl` origin, or
+ * a per-account host its `perAccountEndpoint.hostPattern` names (https
+ * only). Local presets never match: they are the operator's machine.
+ */
+export function cloudPresetForUrl(url: string): ProviderPreset | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return undefined;
+  }
+  return PROVIDER_PRESETS.find((preset) => {
+    if (preset.local) return false;
+    if (new URL(preset.baseUrl).origin === parsed.origin) return true;
+    return (
+      parsed.protocol === "https:" &&
+      (preset.perAccountEndpoint?.hostPattern?.test(parsed.hostname) ?? false)
+    );
+  });
+}
 
 export function findProviderPreset(id: string): ProviderPreset | undefined {
   return PROVIDER_PRESETS.find((p) => p.id === id);

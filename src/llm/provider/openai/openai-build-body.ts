@@ -8,8 +8,10 @@ import {
   reasoningEffortField,
   resolveTemperature,
 } from "./model-params.js";
+import { cloudTakesReasoningOverride } from "../../reasoning-levels.js";
 import {
   buildNativeMessages,
+  CONTINUE_AFTER_ASSISTANT,
   type NativeMessageOptions,
 } from "./openai-native-messages.js";
 import { toStrictOpenAiTools } from "./openai-strict-tools.js";
@@ -74,6 +76,12 @@ export interface OpenAiBodyOptions {
    * body carries no reasoning, as before.
    */
   reasoningRequired?: boolean;
+  /**
+   * Google's Gemini endpoint: hand each step's thought signature back on
+   * the history's tool calls (ATO-1680). See
+   * `NativeMessageOptions.thoughtSignatures`.
+   */
+  thoughtSignatures?: boolean;
 }
 
 /**
@@ -172,6 +180,8 @@ function assembleOpenAiChatBody(
     ...(options.reasoningRequired
       ? { preserveReasoning: true, reasoningRequired: true }
       : {}),
+    // Gemini 3 refuses a tool history without its signatures (ATO-1680).
+    ...(options.thoughtSignatures ? { thoughtSignatures: true } : {}),
   };
   const messages =
     resolveMessageShape(filtered, options) === "native" && filtered.messages
@@ -233,7 +243,15 @@ function assembleOpenAiChatBody(
   // A request that asked for no thinking at all (the risk reviewer, context
   // compaction) never gets the default: it would turn thinking on inside
   // a small output cap.
+  // A level the person picked for the chat (ATO-490) comes first, and
+  // only for a model that reasons: anything else keeps the body it had.
+  const override =
+    filtered.reasoningOverride !== undefined &&
+    cloudTakesReasoningOverride(options.providerKind, defaultChatModel)
+      ? filtered.reasoningOverride
+      : undefined;
   const effort =
+    override ??
     filtered.reasoningEffort ??
     (options.providerKind === "openrouter" && !filtered.disableThinking
       ? defaultReasoningEffort(defaultChatModel)
@@ -329,11 +347,17 @@ function assembleOpenAiChatBody(
   if (options.anthropicCacheControl) {
     body.messages = applyAnthropicCacheControl(
       body.messages as ReadonlyArray<Record<string, unknown>>,
-      { includeLastMessage: filtered.modelMode?.mode === "cloud" && filtered.messages?.tail === "" && resolveMessageShape(filtered, options) === "native" },
+      // The request-only continue message (ATO-1681) is gone from the
+      // next request, so the breakpoint stays on the note before it.
+      { includeLastMessage: filtered.modelMode?.mode === "cloud" && filtered.messages?.tail === "" && resolveMessageShape(filtered, options) === "native"
+        && (body.messages as ReadonlyArray<Record<string, unknown>>).at(-1)?.["content"] !== CONTINUE_AFTER_ASSISTANT },
     );
   }
   const modelParams = options.modelParams;
   if (!extraBody && !modelParams) return body;
+  const effortKeys = override === undefined ? [] : Object.keys(body).filter(
+    (key) => key === "reasoning" || key === "reasoning_effort",
+  );
   // Vendor passthrough, then the model's own parameters. Merged last so
   // they can reach fields this builder does not model, then reserved
   // keys are restored on top.
@@ -345,6 +369,13 @@ function assembleOpenAiChatBody(
   for (const key of RESERVED_BODY_KEYS) {
     if (key in body) merged[key] = body[key];
     else delete merged[key];
+  }
+  // The person's level beats the model's `params` and `extraBody`: the
+  // config's effort fields go, the level's own field is put back.
+  if (override !== undefined) {
+    delete merged.reasoning;
+    delete merged.reasoning_effort;
+    for (const key of effortKeys) merged[key] = body[key];
   }
   // A temperature the service itself named in a 400 beats the operator's
   // passthrough: that value is exactly what was just refused. So does a

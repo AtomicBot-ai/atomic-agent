@@ -1,14 +1,27 @@
+import { mkdtemp, open, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import {
   runCommand as defaultRunCommand,
   type CommandResult,
 } from "../../../sandbox/command-runner.js";
+import {
+  requireApproval,
+  type DangerousToolOptions,
+} from "../../../approval/dangerous-tool.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import type { AtomicAgentConfig, WebFetchConfig } from "../../../config/index.js";
-import { extractWebContent, type ExtractMode } from "./web-fetch-extract.js";
+import {
+  extractWebContentAsync,
+  type DefuddleRunner,
+  type ExtractMode,
+} from "./web-fetch-extract.js";
 import { CurlUnavailableError, isCurlMissingError } from "./ensure-curl.js";
 import { parseRetryAfterValueMs } from "./retry-after-header.js";
 import { explainCurlStderr, runCurl } from "./run-curl.js";
+import { getWebIdentity } from "../../browser/web-identity.js";
+import { offlineRefusal } from "../../../llm/offline-network.js";
 import {
   assertHostAllowed,
   formatResolveEntry,
@@ -21,8 +34,24 @@ const TOOL_NAME = "os.web.fetch";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 import { describeChallenge, detectChallenge } from "./web-fetch-challenge.js";
+import {
+  checkUrlSend,
+  DEFAULT_URL_DATA_GUARD,
+  noteUrlSendAllowed,
+  urlSendReason,
+  type UrlSendSites,
+} from "./url-data-guard.js";
+import { maskUrlSecrets } from "./http-request-preview.js";
+import {
+  describeReadVia,
+  readPastWall,
+  type PageRenderer,
+  type ReadVia,
+} from "./web-fetch-ladder.js";
 
 const MAX_RESPONSE_BYTES = 2_000_000;
+/** How much a `binaryBody` request may write to disk before curl stops. */
+const MAX_BINARY_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 const DEFAULT_MAX_CHARS = 50_000;
 const MAX_CHARS_CAP = 50_000;
@@ -37,6 +66,11 @@ const DEFAULT_FETCH_CONFIG: WebFetchConfig = {
   maxRetries: 2,
   retryBaseDelayMs: 500,
   retryMaxDelayMs: 5_000,
+  extractor: "readability",
+  renderWithBrowser: true,
+  jinaReader: false,
+  jinaApiKeyEnv: "JINA_API_KEY",
+  firecrawlApiKeyEnv: "FIRECRAWL_API_KEY",
 };
 
 /**
@@ -50,10 +84,6 @@ const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
 
 /** curl's "operation timed out" exit. The other exits are not transient. */
 const CURL_EXIT_TIMEOUT = 28;
-
-const USER_AGENT =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 /**
  * Marker appended to curl stdout via `-w` so the response body can be split
@@ -72,9 +102,26 @@ export interface OsWebFetchOptions {
    * working — when absent `DEFAULT_FETCH_CONFIG` applies, which reproduces the
    * pre-v38 30s budget.
    */
-  config?: Pick<AtomicAgentConfig, "web">;
+  config?: Pick<AtomicAgentConfig, "web"> & Partial<Pick<AtomicAgentConfig, "http">>;
   /** Injectable sleep so retry-backoff tests do not wait in real time. */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /**
+   * The approval gate. A fetch never asks on its own; it is only put to
+   * the gate on a session the review after outside content holds
+   * (`ApprovalGate.holdsForOutsideContent`, ATO-618). Absent: never asks.
+   */
+  dangerous?: DangerousToolOptions;
+  /** Sites a chat already used under `http.urlDataGuard: "strict"` (ATO-1377). Defaults to the shared store. */
+  urlSendSites?: UrlSendSites;
+  /** Injectable Defuddle runner so extractor tests need no real package. */
+  runDefuddle?: DefuddleRunner;
+  /**
+   * Step 2 of the page-read ladder (ATO-968): renders a walled page in the
+   * agent's own browser. Absent ⇒ the ladder goes straight to the readers.
+   */
+  renderPage?: PageRenderer;
+  /** Environment the reader keys are read from. Defaults to `process.env`. */
+  env?: NodeJS.ProcessEnv;
 }
 
 interface WebFetchArgs {
@@ -92,15 +139,27 @@ interface CurlResponse {
   truncated: boolean;
   /** Seconds parsed from a `Retry-After` response header, when present. */
   retryAfterMs: number | null;
+  /** The raw bytes, set only for a `binaryBody` request (`body` is then empty). */
+  bodyBytes?: Buffer;
 }
 
-interface FetchOutcome {
+export interface FetchOutcome {
   finalUrl: string;
   status: number;
   contentType: string;
   body: string;
   truncated: boolean;
   redirectChain: string[];
+  /**
+   * Set when `hooks.allowRedirect` refused the next hop: the redirect target
+   * that was not requested. `finalUrl`/`status` are then the redirecting page.
+   */
+  refusedRedirect?: string;
+  /**
+   * The body exactly as sent, for a `binaryBody` request (gzipped sitemaps,
+   * ATO-970). `body` is empty then: the bytes are not text yet.
+   */
+  bodyBytes?: Buffer;
 }
 
 export function buildOsWebFetchTool(
@@ -128,6 +187,51 @@ export function buildOsWebFetchTool(
     untrustedOutput: "a web page",
     async run(rawArgs, ctx) {
       const args = parseArgs(rawArgs, fetchCfg.timeoutMs);
+      // ATO-1084: nothing is resolved or spawned while offline. The SSRF
+      // guard already refuses this machine, so there is no local case.
+      const offline = offlineRefusal(args.url, TOOL_NAME);
+      if (offline) {
+        return compressToolResult({
+          tool: TOOL_NAME,
+          status: "error",
+          output: offline.message,
+          details: { url: args.url, blocked: true, offline: true, host: offline.host },
+        });
+      }
+      // After outside content a GET's URL alone can carry data out
+      // (`https://x/?d=<secret>`), so a held session asks first (ATO-618).
+      const gate = options.dangerous;
+      // ATO-1377: an address that carries a lot of data (or, under
+      // `"strict"`, the chat's first request to a site) asks like a POST
+      // on every session, held or not.
+      const urlCheck =
+        gate === undefined
+          ? null
+          : checkUrlSend(
+              options.config?.http?.urlDataGuard ?? DEFAULT_URL_DATA_GUARD,
+              args.url,
+              ctx.sessionId,
+              options.urlSendSites,
+            );
+      if (
+        gate !== undefined &&
+        (urlCheck !== null || gate.approvals.holdsForOutsideContent(ctx.sessionId, "http"))
+      ) {
+        const shownUrl = maskUrlSecrets(args.url);
+        await requireApproval(
+          gate,
+          {
+            sessionId: ctx.sessionId,
+            tool: TOOL_NAME,
+            category: urlCheck !== null ? "http_write" : "http",
+            reason: urlCheck !== null ? urlSendReason(shownUrl, urlCheck) : `GET ${args.url}`,
+            affectedResources: [urlCheck !== null ? shownUrl : args.url],
+            grantKey: urlOrigin(args.url),
+          },
+          ctx.signal,
+        );
+        if (urlCheck !== null) noteUrlSendAllowed(urlCheck, ctx.sessionId, options.urlSendSites);
+      }
       let outcome: FetchOutcome;
       try {
         outcome = await fetchWithGuard(args.url, {
@@ -159,35 +263,83 @@ export function buildOsWebFetchTool(
         contentType: outcome.contentType,
         body: outcome.body,
       });
+      let readVia: ReadVia = "curl";
+      let ladderTitle: string | undefined;
       if (challenge.challenged) {
-        return compressToolResult({
-          tool: TOOL_NAME,
-          status: "error",
-          output: describeChallenge(
-            outcome.finalUrl,
-            outcome.status,
-            challenge.marker ?? "",
-          ),
-          details: {
-            url: args.url,
-            finalUrl: outcome.finalUrl,
-            status: outcome.status,
-            challenge: challenge.marker,
-            retryWith: "browser.navigate",
+        // ATO-968: the agent's own browser, then the readers the user
+        // turned on. Only a page they actually read replaces the wall.
+        const ladder = await readPastWall({
+          url: outcome.finalUrl,
+          timeoutMs: args.timeoutMs,
+          cwd: ctx.workingDir,
+          signal: ctx.signal,
+          renderWithBrowser: fetchCfg.renderWithBrowser ?? true,
+          readers: {
+            jinaReader: fetchCfg.jinaReader ?? false,
+            jinaApiKeyEnv: fetchCfg.jinaApiKeyEnv ?? "JINA_API_KEY",
+            firecrawlApiKeyEnv:
+              fetchCfg.firecrawlApiKeyEnv ?? "FIRECRAWL_API_KEY",
           },
+          runCommand,
+          ...(options.renderPage ? { renderPage: options.renderPage } : {}),
+          ...(options.lookup ? { lookup: options.lookup } : {}),
+          ...(options.env ? { env: options.env } : {}),
         });
+        if (ladder.page === null) {
+          const tried =
+            ladder.attempts.length > 0
+              ? ` Also tried: ${ladder.attempts.join("; ")}.`
+              : "";
+          return compressToolResult({
+            tool: TOOL_NAME,
+            status: "error",
+            output:
+              describeChallenge(
+                outcome.finalUrl,
+                outcome.status,
+                challenge.marker ?? "",
+              ) + tried,
+            details: {
+              url: args.url,
+              finalUrl: outcome.finalUrl,
+              status: outcome.status,
+              challenge: challenge.marker,
+              retryWith: "browser.navigate",
+              ...(ladder.attempts.length > 0
+                ? { ladderAttempts: ladder.attempts }
+                : {}),
+            },
+          });
+        }
+        readVia = ladder.page.via;
+        ladderTitle = ladder.page.title;
+        outcome = {
+          ...outcome,
+          finalUrl: ladder.page.finalUrl,
+          status: 200,
+          contentType: ladder.page.contentType,
+          body: ladder.page.body,
+          truncated: false,
+        };
       }
 
-      const extracted = extractWebContent({
+      const extracted = await extractWebContentAsync({
         body: outcome.body,
         contentType: outcome.contentType,
         url: outcome.finalUrl,
         mode: args.mode,
+        // `?? "readability"`: configs built by hand (tests, embedders)
+        // may predate the field.
+        preferred: fetchCfg.extractor ?? "readability",
+        ...(options.runDefuddle ? { runDefuddle: options.runDefuddle } : {}),
       });
+      // Past step 1 the page opens with a line naming the step that read
+      // it, so the model knows it came through the browser or a reader.
+      const lead = readVia === "curl" ? "" : `${describeReadVia(readVia)}\n\n`;
       const capped = (ctx.modelMode !== "cloud" || rawArgs.maxChars !== undefined) && extracted.text.length > args.maxChars;
       const text = capped
-        ? `${extracted.text.slice(0, args.maxChars)}\n… [truncated]`
-        : extracted.text;
+        ? `${lead}${extracted.text.slice(0, args.maxChars)}\n… [truncated]`
+        : `${lead}${extracted.text}`;
       // ATO-913: in local mode a capped page hands the compressor the
       // whole extracted text, so the summary is still cut at `maxChars`
       // while the registry's output spill saves the full page to a file
@@ -209,8 +361,12 @@ export function buildOsWebFetchTool(
         finalUrl: outcome.finalUrl,
         status: outcome.status,
         contentType: outcome.contentType,
-        extractor: extracted.extractor,
-        title: extracted.title,
+        extractor:
+          readVia === "jina" || readVia === "firecrawl"
+            ? readVia
+            : extracted.extractor,
+        title: extracted.title ?? ladderTitle,
+        readVia,
         redirectChain: outcome.redirectChain,
         extractMode: args.mode,
         truncated: outcome.truncated || capped,
@@ -224,7 +380,7 @@ export function buildOsWebFetchTool(
           output: isHttpError
             ? `HTTP ${outcome.status} for ${outcome.finalUrl}`
             : spillable
-              ? extracted.text
+              ? `${lead}${extracted.text}`
               : text,
           details,
         },
@@ -235,6 +391,15 @@ export function buildOsWebFetchTool(
       );
     },
   };
+}
+
+/** The origin a session grant on this fetch covers, as for `os.http.request`. */
+function urlOrigin(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
 }
 
 function parseArgs(
@@ -284,6 +449,63 @@ interface FetchWithGuardOptions {
   /** Effective per-attempt budget (per-call arg, else `fetchCfg.timeoutMs`). */
   timeoutMs: number;
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** Pacing hooks for callers that limit their own traffic (`os.web.crawl`). */
+  hooks?: FetchRequestHooks;
+  /** Keep the body as bytes (see `FetchRawPageOptions.binaryBody`). */
+  binaryBody?: boolean;
+}
+
+/**
+ * Called around every real request, redirect hops and retries included, so a
+ * caller can hold a per-host request rate (ATO-970). `beforeRequest` runs
+ * before the SSRF check, so the address is still resolved fresh after a wait.
+ */
+export interface FetchRequestHooks {
+  beforeRequest?: (url: URL, signal: AbortSignal) => Promise<void>;
+  afterResponse?: (url: URL, status: number, retryAfterMs: number | null) => void;
+  /** Asked before a redirect hop is requested; `false` stops there (robots.txt in `os.web.crawl`). */
+  allowRedirect?: (url: URL) => boolean;
+}
+
+export interface FetchRawPageOptions {
+  cwd: string;
+  signal: AbortSignal;
+  runCommand?: typeof defaultRunCommand;
+  lookup?: HostLookup;
+  config?: Pick<AtomicAgentConfig, "web">;
+  timeoutMs?: number;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  hooks?: FetchRequestHooks;
+  /**
+   * Return the body as raw bytes in `bodyBytes` instead of text (ATO-970,
+   * `.xml.gz` sitemaps). curl writes it to a private temp file and does not
+   * decode `Content-Encoding` itself (it only asks for gzip), so the caller
+   * unpacks it with its own size cap and a gzip bomb never reaches the disk
+   * at full size. The download is capped at the same 2 MB as text.
+   */
+  binaryBody?: boolean;
+}
+
+/**
+ * The fetch pipeline without extraction: same SSRF guard on every hop, same
+ * redirect and retry rules, raw body back. `os.web.crawl` reads links from it.
+ */
+export function fetchRawPage(
+  rawUrl: string,
+  options: FetchRawPageOptions,
+): Promise<FetchOutcome> {
+  const fetchCfg = options.config?.web.fetch ?? DEFAULT_FETCH_CONFIG;
+  return fetchWithGuard(rawUrl, {
+    runCommand: options.runCommand ?? defaultRunCommand,
+    lookup: options.lookup,
+    cwd: options.cwd,
+    signal: options.signal,
+    fetchCfg,
+    timeoutMs: options.timeoutMs ?? fetchCfg.timeoutMs,
+    sleep: options.sleep ?? defaultSleep,
+    hooks: options.hooks,
+    binaryBody: options.binaryBody,
+  });
 }
 
 /** Thrown by `curlOnce` when curl itself failed (non-zero exit). */
@@ -322,7 +544,20 @@ async function fetchWithGuard(
           `${TOOL_NAME}: too many redirects (> ${MAX_REDIRECTS})`,
         );
       }
-      currentUrl = parseHttpUrl(res.redirectUrl);
+      const nextUrl = parseHttpUrl(res.redirectUrl);
+      if (opts.hooks?.allowRedirect?.(nextUrl) === false) {
+        return {
+          finalUrl: currentUrl.toString(),
+          status: res.status,
+          contentType: res.contentType,
+          body: res.body,
+          truncated: res.truncated,
+          redirectChain: chain,
+          refusedRedirect: nextUrl.toString(),
+          ...(res.bodyBytes ? { bodyBytes: res.bodyBytes } : {}),
+        };
+      }
+      currentUrl = nextUrl;
       continue;
     }
     return {
@@ -332,6 +567,7 @@ async function fetchWithGuard(
       body: res.body,
       truncated: res.truncated,
       redirectChain: chain,
+      ...(res.bodyBytes ? { bodyBytes: res.bodyBytes } : {}),
     };
   }
 }
@@ -356,6 +592,7 @@ async function fetchHopWithRetry(
 ): Promise<CurlResponse> {
   const { maxRetries } = opts.fetchCfg;
   for (let attempt = 0; ; attempt++) {
+    await opts.hooks?.beforeRequest?.(url, opts.signal);
     // Re-resolve on every attempt: the guard must pin a freshly verified IP
     // rather than trusting one resolved before an arbitrary backoff wait.
     const pinnedIps = await assertHostAllowed(url, { lookup: opts.lookup });
@@ -364,6 +601,7 @@ async function fetchHopWithRetry(
     let failure: unknown = null;
     try {
       res = await curlOnce(url, pinnedIps, opts);
+      opts.hooks?.afterResponse?.(url, res.status, res.retryAfterMs);
     } catch (err) {
       // Only a curl timeout is worth another attempt; a missing curl binary or
       // an aborted run must surface immediately.
@@ -428,6 +666,7 @@ async function curlOnce(
   pinnedIps: readonly string[],
   opts: FetchWithGuardOptions,
 ): Promise<CurlResponse> {
+  if (opts.binaryBody === true) return curlOnceBinary(url, pinnedIps, opts);
   const curlArgs = buildCurlArgs(url, pinnedIps, opts);
   let result: CommandResult;
   try {
@@ -452,10 +691,70 @@ async function curlOnce(
   return { ...parseCurlMeta(result.stdout), truncated: result.truncated };
 }
 
+/**
+ * `curlOnce` for a `binaryBody` request: the body goes to a file in a fresh
+ * private temp dir (`-o`), stdout carries only the `-w` meta line, and the
+ * file is read back as bytes and removed. Only the first 2 MB are read
+ * back (the rest is marked truncated); `--max-filesize` is a 50 MB disk
+ * guard on top.
+ */
+async function curlOnceBinary(
+  url: URL,
+  pinnedIps: readonly string[],
+  opts: FetchWithGuardOptions,
+): Promise<CurlResponse> {
+  const dir = await mkdtemp(join(tmpdir(), "atomic-web-"));
+  const bodyPath = join(dir, "body");
+  try {
+    const curlArgs = buildCurlArgs(url, pinnedIps, opts, bodyPath);
+    let result: CommandResult;
+    try {
+      result = await runCurl(opts.runCommand, curlArgs, {
+        cwd: opts.cwd,
+        timeoutMs: opts.timeoutMs + 2_000,
+        signal: opts.signal,
+        maxOutputBytes: 64 * 1024,
+      });
+    } catch (err) {
+      if (isCurlMissingError(err)) throw new CurlUnavailableError();
+      throw err;
+    }
+    if (result.exitCode !== 0) {
+      throw new CurlFailedError(
+        `${TOOL_NAME}: ${formatCurlError(result)}`,
+        result.exitCode ?? -1,
+      );
+    }
+    let bytes: Buffer = Buffer.alloc(0);
+    let truncated = false;
+    try {
+      // Read at most the cap: an older curl without a Content-Length to
+      // check may have written past `--max-filesize`.
+      const file = await open(bodyPath, "r");
+      try {
+        const size = (await file.stat()).size;
+        const want = Math.min(size, MAX_RESPONSE_BYTES);
+        bytes = Buffer.alloc(want);
+        const { bytesRead } = await file.read(bytes, 0, want, 0);
+        bytes = bytes.subarray(0, bytesRead);
+        truncated = size > MAX_RESPONSE_BYTES;
+      } finally {
+        await file.close();
+      }
+    } catch {
+      // No file: an empty body (a 204, or a redirect without one).
+    }
+    return { ...parseCurlMeta(result.stdout), body: "", bodyBytes: bytes, truncated };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 function buildCurlArgs(
   url: URL,
   pinnedIps: readonly string[],
   opts: Pick<FetchWithGuardOptions, "fetchCfg" | "timeoutMs">,
+  binaryBodyPath?: string,
 ): string[] {
   const host = url.hostname.replace(/^\[|\]$/g, "");
   const port = url.port || (url.protocol === "https:" ? "443" : "80");
@@ -486,13 +785,29 @@ function buildCurlArgs(
     // hands back bytes the extractor reads as binary noise — and some
     // hosts behave differently for a client that claims no encoding
     // support at all, since no browser has looked like that in years.
-    "--compressed",
+    // A binary body (ATO-970) is kept as sent: only gzip is offered, curl
+    // does not unpack it, and the caller unzips it under its own cap.
+    ...(binaryBodyPath === undefined
+      ? ["--compressed"]
+      : [
+          "-H",
+          "Accept-Encoding: gzip",
+          // A disk guard, not the cap: the read below keeps the first
+          // MAX_RESPONSE_BYTES and marks the rest truncated, so a big
+          // uncompressed sitemap still yields its first entries. 50 MB is
+          // the sitemap protocol's own size limit.
+          "--max-filesize",
+          String(MAX_BINARY_DOWNLOAD_BYTES),
+          "-o",
+          binaryBodyPath,
+        ]),
     "-H",
     "Accept: text/markdown, text/html;q=0.9, */*;q=0.1",
     "-H",
-    `User-Agent: ${USER_AGENT}`,
+    // The same honest UA and language as the agent's browser (ATO-969).
+    `User-Agent: ${getWebIdentity().userAgent}`,
     "-H",
-    "Accept-Language: en-US,en;q=0.9",
+    `Accept-Language: ${getWebIdentity().acceptLanguage}`,
     "-w",
     // `%{header_json}` is last on purpose: it is multi-line JSON that can
     // itself contain `|`, so every pipe-delimited field must precede it.

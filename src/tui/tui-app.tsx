@@ -1,5 +1,12 @@
 import { ContextChip } from "./context/context-chip.js";
 import { UsageReadout, usageReadoutLabel } from "./context/usage-readout.js";
+import {
+  StepSpeedReadout,
+  stepSpeedReadoutLabel,
+} from "./context/step-speed-readout.js";
+import { ThinkReadout } from "./context/think-readout.js";
+import { thinkReadoutLabel } from "./commands/think-command.js";
+import type { ReasoningLevel } from "../llm/reasoning-levels.js";
 import { formatProviderOutageParts } from "./format-provider-outage.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
 import type {
@@ -26,10 +33,12 @@ import {
   raiseDesktopNotification,
   shouldNotify,
 } from "./terminal-notify.js";
+import { pushTurnEnd, readReadyPush, schedulePushForApproval } from "./phone-push.js";
 import { CodingModeChip } from "./coding-mode/coding-mode-chip.js";
 import { CodingModePopup } from "./coding-mode/coding-mode-popup.js";
 import { IssueReportPopup } from "./issue-report/issue-report-popup.js";
 import type { IssueReportLevel } from "./issue-report/report-levels.js";
+import type { IssueReportToggle } from "./issue-report/issue-report-state.js";
 import { OnboardingScreen } from "./onboarding/onboarding-screen.js";
 import { TerminalTooSmall } from "./components/terminal-too-small.js";
 import { ContextPanel } from "./context/context-panel.js";
@@ -51,11 +60,13 @@ import {
 import { reduceTuiState } from "./agent-event-reducer.js";
 import { deriveHerdrReport, type HerdrReporter } from "./herdr-reporter.js";
 import type { ApprovalGrantScope } from "../approval/approval-gate.js";
+import type { UserQuestionAnswer } from "../approval/user-question.js";
 import type { TuiNotifyConfig, WhileBusySubmitMode } from "../config/index.js";
 import { getConfig } from "../config/index.js";
 import type { TuiAction } from "./tui-action.js";
 import {
   approvalHotkey,
+  codingModeMenuOwnsKey,
   handleAppKey,
   submitApprovalPath,
   handlePanelEscape,
@@ -65,6 +76,7 @@ import { appChromeRows } from "./components/debug-pane.js";
 import {
   composerCollapsedRows,
   ComposerOverlay,
+  ghostSuggestionPlaceholder,
   ComposerSlot,
   maxComposerEditorLines,
 } from "./components/composer-overlay.js";
@@ -83,6 +95,10 @@ import {
 import { DebugPane } from "./components/debug-pane.js";
 import { HotkeyHint } from "./components/hotkey-hint.js";
 import { PromptShell } from "./components/prompt-shell.js";
+import {
+  createVimEscClaim,
+  vimClaimsEsc,
+} from "./components/vim/index.js";
 import { EXECUTE_PLAN_MESSAGE } from "./coding-mode/plan-handoff.js";
 import { QueuedMessages } from "./components/queued-messages.js";
 import { PlanStrip } from "./components/plan-strip.js";
@@ -92,6 +108,7 @@ import { answerDesktopQuestion } from "./uninstall/uninstall-key-bindings.js";
 import type { UninstallChoice } from "./uninstall/uninstall-state.js";
 import { SessionPicker } from "./session-rail/session-picker.js";
 import { ThemePicker } from "./theme-picker/theme-picker.js";
+import { RewindPicker } from "./rewind/rewind-picker.js";
 import {
   isThemeName,
   setActiveTheme,
@@ -103,14 +120,21 @@ import {
 import { Sidebar } from "./components/sidebar.js";
 import { railTailInView } from "./session-rail/index.js";
 import {
+  pickerQuery,
+  visiblePickerSessions,
+  type SessionPickerSearch,
+} from "./session-rail/session-search.js";
+import {
   countRunningTasks,
   selectSidebarTasks,
 } from "./sidebar-tasks-selector.js";
 import { SlashPalette } from "./components/slash-palette.js";
+import { FileMentionPalette, useFileMentions } from "./file-mentions/index.js";
 import { StatusBar } from "./components/status-bar.js";
 import { TasksCancelModal } from "./tasks/tasks-cancel-modal.js";
 import { UpdateModal } from "./update/update-modal.js";
 import { ProjectTrustModal } from "./project-trust/project-trust-modal.js";
+import { AppendLocalQuestionModal } from "./append-local-question/append-local-question-modal.js";
 import { UpdateIndicator } from "./update/update-indicator.js";
 import { UpdateRestartPrompt } from "./update/update-restart-prompt.js";
 import { META_SLOT_SHRINK } from "./components/prompt-meta-bar.js";
@@ -153,6 +177,7 @@ import { handleTasksTabKey } from "./tasks/tasks-key-bindings.js";
 import { handleSkillsTabKey } from "./skills/skills-key-bindings.js";
 import type { SkillSourceKind } from "../skills/index.js";
 import type { HubSkillRow } from "./skills/skills-panel-state.js";
+import type { LearnCommand } from "../skills/learning/learn-command.js";
 import { handleMemoryTabKey } from "./memory/memory-key-bindings.js";
 import type {
   MemoryChannel,
@@ -240,6 +265,11 @@ export interface TuiAppCallbacks {
    */
   onApprovalReply?(approvalId: string, message: string): void;
   /**
+   * The answer typed for an `ask_user` question (ATO-489), already
+   * checked against it (`parseTypedUserQuestionAnswer`).
+   */
+  onQuestionAnswer?(approvalId: string, answer: UserQuestionAnswer): void;
+  /**
    * Remove a session for good. Confirmed by the operator in the dialog
    * the rail's `x` opens — the host does the deleting and decides where
    * the UI lands if the current thread was the one removed.
@@ -260,6 +290,13 @@ export interface TuiAppCallbacks {
   onAbort(): void;
   onQuit(): void;
   onMessageSubmitted(message: string): void;
+  /**
+   * The working directory's files for the composer's `@` palette
+   * (file-mentions/). Absent: no palette.
+   */
+  listMentionFiles?(): Promise<readonly string[]>;
+  /** Inline the files a message `@`-mentions before it is sent. */
+  expandFileMentions?(message: string): string;
   /**
    * `[try again]` on the chat's last question (ATO-1302): take that
    * question and its answer back out of the session so the resend is a
@@ -289,10 +326,36 @@ export interface TuiAppCallbacks {
     mode: CodingMode,
     resolved: { approvalLevel: ApprovalLevel; planMode: boolean },
   ): void;
+  /**
+   * `/think <level>` (ATO-490): the reasoning level the next turns of
+   * this window ask for (`auto` sends none).
+   */
+  onReasoningLevelChanged?(level: ReasoningLevel): void;
   /** Ask the orchestrator to emit the recent-sessions list to the bus. */
   onSessionPickerRequested?(): void;
+  /**
+   * `/rewind` (ATO-1057): open the picker of the chat's earlier
+   * questions, or say in the chat why it cannot (a turn is running,
+   * nothing to go back to).
+   */
+  onRewindPickerRequested?(): void;
+  /** `/export [format] [path]` (ATO-1054): write the open chat to a file and say where. */
+  onChatExportRequested?(request: import("./commands/export-command.js").ChatExportRequest): void;
+  /**
+   * Take the chat back to just before the question at `turnIndex` of
+   * the session's turns: the session (held and saved) keeps only what
+   * came before it, the transcript is rebuilt and the question goes back
+   * in the composer. `expectText` is the question the picker showed; a
+   * different row there is refused.
+   */
+  onRewindRequested?(turnIndex: number, expectText: string): void;
   /** Ask the orchestrator to swap to an existing persisted session. */
   onSessionSwitchRequested?(sessionId: string): void;
+  /**
+   * ATO-1153: narrow the open picker's list to the sessions whose title
+   * or message text holds the typed query. Without it only titles match.
+   */
+  searchSessions?: SessionPickerSearch;
   /**
    * Put a rail session on another slot (Shift+↑/↓ or a row drag).
    * `toIndex` indexes the list as displayed; the host persists the
@@ -311,15 +374,26 @@ export interface TuiAppCallbacks {
    * session to the top block of the rail, or release it.
    */
   onSessionPinToggled?(sessionId: string): void;
-  /** Ask the orchestrator to start a fresh session. */
-  onSessionNewRequested?(): void;
-  onCompactionRequested?(verb: "run" | "show"): void;
+  /** Ask the orchestrator to start a fresh session; `worktree` puts it in its own git worktree (ATO-576). */
+  onSessionNewRequested?(options?: { worktree?: boolean }): void;
+  /** `/incognito` (ATO-586): start a fresh incognito chat. */
+  onIncognitoSessionRequested?(): void;
+  /** `instructions`: what the summary must keep (`/compact <text>`, ATO-661). */
+  onCompactionRequested?(verb: "run" | "show", instructions?: string): void;
   /** `/goal …`: act on the open chat's goal (ATO-451). */
   onGoalCommand?(command: import("./commands/goal-command.js").GoalCommand): void;
   /** `/enhance <text>`: rewrite the draft once and hand it back to the composer. */
   onPromptEnhanceRequested?(draft: string): void;
   /** Idle Esc: stop a running `/enhance` (no-op when none is running). */
   onPromptEnhanceCancel?(): void;
+  /** `/btw <question>`: answer a side question without saving it (ATO-1152). */
+  onSideQuestionRequested?(question: string): void;
+  /**
+   * `/edit` (ATO-655): hand the terminal to `$VISUAL` / `$EDITOR` on
+   * `draft` and return what was saved. Synchronous on purpose: the editor
+   * owns the terminal until it exits, so nothing else may run meanwhile.
+   */
+  onExternalEditorRequested?(draft: string): import("./editor/index.js").ExternalEditResult;
   /** Ask the orchestrator to dump the current user profile into the chat log. */
   onMemoryDumpRequested?(): void;
   /** Ask the orchestrator to print the skill catalog into the chat log (`/skills`). */
@@ -330,6 +404,10 @@ export interface TuiAppCallbacks {
   onThemePersistRequested?(themeName: string): void;
   /** Persist "always show steps" into `tui.showSteps` (`/steps`). */
   onShowStepsPersistRequested?(on: boolean): void;
+  /** Persist the composer's vim keys into `tui.vimMode` (`/vim`). */
+  onVimModePersistRequested?(on: boolean): void;
+  /** Persist verbose step notes into `tui.verboseSteps` (`/verbose`). */
+  onVerboseStepsPersistRequested?(on: boolean): void;
   /**
    * `/mouse on|off` — flip terminal mouse reporting live. `null` asks
    * for the current state to be reported without changing it. The
@@ -388,10 +466,15 @@ export interface TuiAppCallbacks {
     mode?: "with-mmproj" | "gguf-only" | "mmproj-only",
   ): void;
   /**
-   * `x` in the Models tab: stop the download in flight for `kind`. The
-   * worker keeps its partial file, so Enter on the row resumes it.
+   * `x` in the Models tab: cancel the download in flight for `kind` and
+   * delete its partial file.
    */
   onLocalModelsPullCancelRequested?(kind: "chat" | "embedding"): void;
+  /**
+   * `p` in the Models tab: pause the download in flight for `kind`. The
+   * partial file is kept, so Enter on the row resumes it.
+   */
+  onLocalModelsPullPauseRequested?(kind: "chat" | "embedding"): void;
   onComposerEngineRequested?(engine: "atomic-core" | "llama-server", leg?: "orchestrator" | "worker"): void;
   onComposerFusionModelRequested?(leg: "orchestrator" | "worker", model: string): void;
   onLocalModelsEngineRequested?(engine: "atomic-core" | "llama-server"): void;
@@ -485,7 +568,7 @@ export interface TuiAppCallbacks {
    * yet), `off` remembers "no". Dismissed = Esc, nothing remembered.
    */
   onLocalModelsNotifyChoice?(
-    choice: "telegram" | "discord" | "email" | "off",
+    choice: "telegram" | "discord" | "email" | "push" | "off",
   ): void;
   onLocalModelsNotifyDismissed?(): void;
   /** `N` in the Models tab: reopen the prompt. */
@@ -508,6 +591,8 @@ export interface TuiAppCallbacks {
   preparePluginCommand?(name: string, args: string): string;
   /** Refresh the skills panel, count and slash catalog for the selected workspace. */
   onSkillsRefreshRequested?(): void;
+  /** `/learn` (ATO-67): list the skills the agent learned, or undo one. */
+  onLearnCommand?(command: LearnCommand): void;
   /** Skills tab: load the SKILL.md body and open the detail view. */
   onSkillDetailRequested?(name: string): void;
   /** Skills tab: flip the disabled bit and persist to `config.json`. */
@@ -606,6 +691,12 @@ export interface TuiAppCallbacks {
    * turn; `null` when there is no such run.
    */
   prepareFusionResume?(sessionId: string, runId: string | undefined): string | null;
+  /**
+   * `/resume` (ATO-448): the message that continues `sessionId`'s last
+   * turn when a restart cut it off, sent as the person's turn; `null`
+   * when there is none. Taking it records the turn as resumed.
+   */
+  prepareInterruptedTurnResume?(sessionId: string): string | null;
   /** Providers tab / LLM panel: select an exact chat model for a provider. */
   onProvidersSelectChatModel?(providerId: string, modelId: string): void;
   /**
@@ -671,6 +762,8 @@ export interface TuiAppCallbacks {
   onMcpRestartServer?(name: string): void;
   /** MCP tab: flip one server's `enabled` flag, persisted to config. */
   onMcpToggleServerEnabled?(name: string): void;
+  /** `/mcp auth <name>` / `/mcp signout <name>`: browser sign-in of a remote server. */
+  onMcpAuthRequested?(name: string, action: "signin" | "signout"): void;
   /** Providers tab: finish the add/configure wizard. */
   onProvidersWizardSubmit?(
     wizard: import("./providers/providers-wizard-state.js").ProvidersWizardState,
@@ -716,10 +809,17 @@ export interface TuiAppCallbacks {
   onDebugBundleExportRequested?(state: TuiState): void;
   /** `/report` or the help menu: open the issue-report popup. */
   onIssueReportRequested?(): void;
+  /**
+   * `/feedback` or Help › Talk to the team (ATO-1467): open the interview
+   * form (`open`) or hide the rare invite for good (`never`).
+   */
+  onFeedbackRequested?(verb: "open" | "never", origin?: "menu"): void;
   /** A level was chosen: build the report from `state` and write the zip. */
   onIssueReportPickRequested?(level: IssueReportLevel, state: TuiState): void;
   /** The operator confirmed: file the prepared report on GitHub. */
   onIssueReportSendRequested?(): void;
+  /** `i` / `l` on the confirm step: include the support id / log tail. */
+  onIssueReportToggleRequested?(option: IssueReportToggle): void;
   /** The popup was dismissed; the orchestrator drops its prepared report. */
   onIssueReportCloseRequested?(): void;
   /** Telegram tab: refresh state mirror (token presence, owner, etc.). */
@@ -760,6 +860,10 @@ export interface TuiAppCallbacks {
   onAnalyticsToggleRequested?(): void | Promise<void>;
   /** Privacy tab: set analytics to an explicit value (slash-command path). */
   onAnalyticsSetEnabledRequested?(enabled: boolean): void | Promise<void>;
+  /** Privacy tab: toggle offline mode through the agent's kill switch. */
+  onOfflineToggleRequested?(): void | Promise<void>;
+  /** Privacy tab: toggle Privacy Shield (masking before cloud models). */
+  onPrivacyShieldToggleRequested?(): void | Promise<void>;
   /** Privacy tab: re-read the persisted `analytics.enabled` snapshot. */
   onPrivacyRefreshRequested?(): void;
   /** Integrations tab: re-read credential presence + live server state. */
@@ -823,10 +927,14 @@ export interface TuiAppCallbacks {
   onImportPreview?(form: ImportFormState): void;
   /** Import tab: execute the import (write sessions / tasks / secrets). */
   onImportExecute?(form: ImportFormState): void;
+  /** Import tab: the "what I learned about you" step (ATO-1627). */
+  onImportFacts?(cmd: import("./import/import-facts-runner.js").ImportFactsCommand): void;
   /** Startup self-update: user accepted the offer — run `install.sh`. */
   onUpdateConfirmed?(): void;
   /** Startup folder trust question answered (ATO-298). */
   onProjectTrustAnswered?(answer: "trust" | "decline"): void;
+  /** Startup last-resort fallback question answered (ATO-1461). */
+  onAppendLocalAnswered?(answer: "keep" | "off"): void;
   /** Self-update settled: user pressed a key to re-exec the new binary. */
   onUpdateRestart?(): void;
   /**
@@ -842,6 +950,16 @@ export interface TuiAppCallbacks {
    * system message.
    */
   onOpenUrlRequested?(url: string): void;
+  /**
+   * An `[open in browser]` chip for a local `.html` page a message names
+   * (ATO-1139): open the absolute `path` in the OS default browser.
+   */
+  onOpenLocalFileRequested?(path: string): void;
+  /**
+   * A built-in slash command ran (ATO-1465): count it as `ui_action`.
+   * `action` is the command name only (`/report`), never its arguments.
+   */
+  onUiAction?(action: string, via: "slash" | "palette" | "menu"): void;
 }
 
 export interface TuiAppProps {
@@ -878,6 +996,12 @@ const CTRL_C_WINDOW_MS = 1500;
  * pending: it unfocuses the editor and eats the next keystroke.
  */
 const MENU_LEADER_WINDOW_MS = CTRL_C_WINDOW_MS;
+/**
+ * Vim NORMAL (ATO-662): a bare Esc does nothing, two inside this window
+ * clear the draft into prompt history. The same "finish the two-key
+ * gesture" window as Ctrl+C.
+ */
+const VIM_ESC_ESC_WINDOW_MS = CTRL_C_WINDOW_MS;
 /** Left gutter of the whole app frame — see the root `paddingLeft`. */
 const ROOT_PADDING_COLUMNS = 2;
 
@@ -1025,6 +1149,26 @@ export function TuiApp({
       return;
     }
     notifiedRunsRef.current = state.runHistory.length;
+    // Phone push (ATO-1129) has its own switch, `notifications.push`, and
+    // the same "long or failed" rule; it needs no TTY.
+    const push = readReadyPush();
+    if (
+      push &&
+      shouldNotify({
+        outcome: entry.outcome,
+        durationMs: entry.durationMs,
+        minDurationMs: notify.minDurationMs,
+      })
+    ) {
+      pushTurnEnd(push, {
+        outcome: entry.outcome,
+        reason: entry.reason,
+        stepCount: entry.stepCount,
+        durationMs: entry.durationMs,
+        messages: state.messages,
+        workingDirName: session.workingDir.split("/").filter(Boolean).pop(),
+      });
+    }
     if (!notify.enabled) return;
     // Escapes belong in a terminal. Piped or redirected stderr gets the
     // bytes as content, which is how a log file ends up with a bell in
@@ -1056,6 +1200,16 @@ export function TuiApp({
     // was "I have seen no notifications".
     raiseDesktopNotification(note);
   }, [state.runHistory, notify, session.workingDir]);
+
+  // An approval left waiting pings the phone (ATO-1129), after the same
+  // grace a finished turn gets; answering it first cancels the ping.
+  const waitingApprovalId = state.pendingApproval?.approvalId ?? null;
+  const waitingApprovalTool = state.pendingApproval?.tool ?? null;
+  useEffect(() => {
+    if (waitingApprovalId === null || waitingApprovalTool === null) return;
+    if (!readReadyPush()) return;
+    return schedulePushForApproval(waitingApprovalTool, notify.minDurationMs);
+  }, [waitingApprovalId, waitingApprovalTool, notify.minDurationMs]);
 
   useEffect(() => {
     if (state.uiMode === "debug" && state.activeTab === "tasks") {
@@ -1272,7 +1426,8 @@ export function TuiApp({
     state.uiMode === "chat" ||
     state.slashPaletteOpen ||
     state.themePickerOpen ||
-    state.sessionPickerOpen;
+    state.sessionPickerOpen ||
+    Boolean(state.rewindPicker);
 
   /**
    * Live mirror of {@link composerVisible}. The unmounting editor keeps
@@ -1284,6 +1439,15 @@ export function TuiApp({
    */
   const composerVisibleRef = useRef(true);
   composerVisibleRef.current = composerVisible;
+
+  /**
+   * Vim mode (ATO-662): the composer's editor keeps this in step so the
+   * app's own Esc handling can tell the Esc vim spends (leaving INSERT,
+   * dropping a half-typed command) from one it lets through.
+   */
+  const vimEscClaim = useRef(createVimEscClaim());
+  /** When the last bare NORMAL-mode Esc landed, for the Esc Esc clear. */
+  const vimLastEscAt = useRef<number | null>(null);
 
   const editorFocus =
     !state.menuOpen &&
@@ -1309,7 +1473,8 @@ export function TuiApp({
     // The coding-mode menu is deliberately NOT in this list: it closes
     // on any unrecognised key and lets that key through, so an operator
     // who opened it mid-sentence keeps typing. Unfocusing the editor
-    // there would swallow the letter that closed it.
+    // there would swallow the letter that closed it. The keys the menu
+    // does act on are claimed instead (`composerClaimKey`).
     !state.uninstall &&
     !state.sessionDelete &&
     // The issue-report popup is modal in the same sense as the ladders.
@@ -1326,6 +1491,10 @@ export function TuiApp({
     // "press any key to restart" prompt claims every key for the same reason.
     !state.updatePrompt &&
     state.updateStatus !== "done" &&
+    // The folder trust question claims y / n / Esc the same way (ATO-1481).
+    state.projectTrustPrompt === null &&
+    // So does the last-resort fallback question (ATO-1461).
+    state.appendLocalPrompt === null &&
     // When the slash-command palette is open the editor must hold focus
     // regardless of the active debug tab so the operator can type the
     // command and drive ↑↓ / tab / enter selection. Panels that open the
@@ -1374,7 +1543,7 @@ export function TuiApp({
       // `command` is the same door with an argument on it.
       const line = node.command ?? (node.slash ? `/${node.slash.name}` : null);
       if (line !== null) {
-        runSlashCommand(line, state, dispatch, callbacks);
+        runSlashCommand(line, state, dispatch, callbacks, "menu");
         return;
       }
       if (node.kind === "place") {
@@ -1436,6 +1605,7 @@ export function TuiApp({
     Boolean(state.updatePrompt) ||
     state.updateStatus === "done" ||
     state.sessionPickerOpen ||
+    Boolean(state.rewindPicker) ||
     state.themePickerOpen ||
     state.slashPaletteOpen ||
     isPanelModalOpen(state);
@@ -1508,6 +1678,7 @@ export function TuiApp({
       Boolean(state.sessionDelete) ||
       state.themePickerOpen ||
       state.sessionPickerOpen ||
+      Boolean(state.rewindPicker) ||
       state.slashPaletteOpen;
     if (!open) return false;
     if (hit.event.kind === "wheel") return true;
@@ -1555,6 +1726,7 @@ export function TuiApp({
     Boolean(state.sessionDelete) ||
     state.themePickerOpen ||
     state.sessionPickerOpen ||
+    Boolean(state.rewindPicker) ||
     state.slashPaletteOpen;
   useEffect(() => {
     if (backdropOwner) modalOpenedAtRef.current = Date.now();
@@ -1643,6 +1815,7 @@ export function TuiApp({
 
   useInput((input, key) => {
     const appHandled = handleAppKey(input, key, {
+      vimClaimsEsc: state.vimMode && vimClaimsEsc(vimEscClaim.current),
       state,
       dispatch,
       callbacks,
@@ -1683,14 +1856,37 @@ export function TuiApp({
     }
   });
 
+  // The `@` file palette (ATO-665): composer-local, only on the Run
+  // screen and never while the slash palette or a prompt owns the keys.
+  const listMentionFiles = useMemo(
+    () => (callbacks.listMentionFiles ? () => callbacks.listMentionFiles!() : undefined),
+    [callbacks],
+  );
+  const mentions = useFileMentions({
+    buffer: state.inputValue,
+    enabled: state.uiMode === "chat" && !state.slashPaletteOpen && !state.pendingApproval,
+    listFiles: listMentionFiles,
+  });
+  /** Complete the highlighted path; `false` when there was none. */
+  const acceptMention = useCallback((): boolean => {
+    if (!mentions.open) return false;
+    const next = mentions.accept();
+    if (next === null) return false;
+    dispatch({ type: "input_changed", value: next });
+    return true;
+  }, [mentions]);
+
   const submit = useCallback(
     (buffer: string) => {
       // Same stale-subscription window as `onEditorChange`: an Enter
       // that arrives while the composer is leaving must not send.
       if (!composerVisibleRef.current) return;
+      // Enter on an open `@` palette picks the path, like Tab; with no
+      // match it falls through and sends.
+      if (acceptMention()) return;
       handleEditorSubmit(buffer, state, dispatch, callbacks);
     },
-    [state, callbacks],
+    [state, callbacks, acceptMention],
   );
 
   /**
@@ -1714,6 +1910,8 @@ export function TuiApp({
       // a "/" seeded into it would open the slash palette over a panel
       // that owns that key itself.
       if (!composerVisibleRef.current) return;
+      // An edit between two NORMAL Escs makes them two gestures (ATO-662).
+      vimLastEscAt.current = null;
       dispatch({ type: "input_changed", value: next });
       const prefix = slashPrefix(next);
       if (prefix !== null) {
@@ -1724,6 +1922,36 @@ export function TuiApp({
     },
     [state.slashPaletteOpen],
   );
+
+  // ATO-1153: with the picker open the composer's text searches it. The
+  // picker, ↓ and Enter (`handleSessionPickerSubmit`) all read these rows,
+  // so the cursor indexes the same list everywhere.
+  const pickerSessions = visiblePickerSessions(state, callbacks.searchSessions);
+  const pickerSearchQuery = pickerQuery(state);
+  const pickerQueryRef = useRef(pickerSearchQuery);
+  useEffect(() => {
+    if (pickerQueryRef.current === pickerSearchQuery) return;
+    pickerQueryRef.current = pickerSearchQuery;
+    // A new query is a new list: start at its first match.
+    if (state.sessionPickerOpen && state.sessionPickerCursor !== 0) {
+      dispatch({ type: "session_picker_cursor_set", row: 0 });
+    }
+  }, [pickerSearchQuery, state.sessionPickerOpen, state.sessionPickerCursor]);
+
+  /**
+   * Vim NORMAL Esc Esc (ATO-662): true on the second of two Escs inside
+   * the window; the first only starts it.
+   */
+  const secondVimEsc = (): boolean => {
+    const now = Date.now();
+    const last = vimLastEscAt.current;
+    if (last === null || now - last > VIM_ESC_ESC_WINDOW_MS) {
+      vimLastEscAt.current = now;
+      return false;
+    }
+    vimLastEscAt.current = null;
+    return true;
+  };
 
   const onEscape = useCallback(() => {
     if (state.themePickerOpen) {
@@ -1738,14 +1966,28 @@ export function TuiApp({
       dispatch({ type: "session_picker_closed" });
       return;
     }
+    if (state.rewindPicker) {
+      dispatch({ type: "rewind_picker_closed" });
+      return;
+    }
     if (state.slashPaletteOpen) {
       dispatch({ type: "slash_palette_closed" });
+      return;
+    }
+    if (mentions.open) {
+      mentions.dismiss();
       return;
     }
     // Reached only with a draft in the buffer: an empty buffer means
     // Esc was claimed as `abort` before the editor ever saw it. Clearing
     // the draft hands the y / s / e / n keys back.
+    // With vim on (ATO-662) this is a NORMAL Esc, and the NORMAL rule
+    // holds here too: one Esc keeps the draft, Esc Esc stashes it.
     if (state.pendingApproval) {
+      if (state.vimMode) {
+        if (secondVimEsc()) dispatch({ type: "input_draft_stashed" });
+        return;
+      }
       if (state.inputValue.length > 0) {
         dispatch({ type: "input_changed", value: "" });
       }
@@ -1783,6 +2025,16 @@ export function TuiApp({
     // says `abort, draft kept` whenever there is a draft (see
     // `hotkey-hint.tsx`).
     if (!canAcceptMessage(state)) return;
+    // Vim NORMAL (ATO-662; INSERT's Esc never gets here, vim takes it).
+    // A bare Esc is a no-op: vim users press it by reflex, and a reflex
+    // must not throw away the draft or open the menu. Esc Esc clears the
+    // draft, and parks it in prompt history so Up brings it back.
+    if (state.vimMode) {
+      if (!secondVimEsc()) return;
+      callbacks.onPromptEnhanceCancel?.();
+      dispatch({ type: "input_draft_stashed" });
+      return;
+    }
     // Idle: Esc never quits. Everywhere else in the TUI it means cancel /
     // back one level, so a single unannounced press killing the agent —
     // and the half-typed message with it — was a trap: no hint strip ever
@@ -1804,15 +2056,24 @@ export function TuiApp({
     dispatch({ type: "menu_path_set", path: null });
     dispatch({ type: "menu_cursor_set", cursor: 0 });
     dispatch({ type: "menu_opened" });
-  }, [state, callbacks]);
+  }, [state, callbacks, mentions]);
 
   /**
    * The composer's stand-down rule. Ink hands a keypress to every
    * subscription, so without this the same `y` would both answer the
-   * prompt and type itself into the buffer.
+   * prompt and type itself into the buffer. The coding-mode menu claims
+   * its own ↑↓ / Enter / Esc the same way, so `/mode` cannot also walk
+   * the input history or send the draft behind it.
    */
   const composerClaimKey = useCallback(
-    (input: string, key: Key) => approvalHotkey(state, input, key) !== null,
+    (input: string, key: Key) =>
+      approvalHotkey(
+        state,
+        input,
+        key,
+        state.vimMode && vimClaimsEsc(vimEscClaim.current),
+      ) !== null ||
+      codingModeMenuOwnsKey(state, key),
     [state],
   );
 
@@ -1852,13 +2113,14 @@ export function TuiApp({
   // stale `state` closure). The editor still consumes Tab without
   // inserting a literal tab character — see `multi-line-editor.tsx`.
   const onTab = useCallback(() => {
+    if (acceptMention()) return;
     if (!state.slashPaletteOpen) return;
     const completions = filterSlashCommands(state.slashQuery, skillSlashCommands(state.skillsPanel));
     const chosen = completions[state.slashPaletteCursor];
     if (!chosen) return;
     dispatch({ type: "input_changed", value: `/${chosen.name} ` });
     dispatch({ type: "slash_palette_closed" });
-  }, [state.slashPaletteOpen, state.slashQuery, state.slashPaletteCursor, state.skillsPanel]);
+  }, [state.slashPaletteOpen, state.slashQuery, state.slashPaletteCursor, state.skillsPanel, acceptMention]);
 
   // Live-preview: swap the active palette to the theme at `cursor` (clamped)
   // so the whole UI repaints as the operator moves through the list. The
@@ -1880,14 +2142,24 @@ export function TuiApp({
       dispatch({ type: "session_picker_cursor_moved", delta: -1 });
       return;
     }
+    if (state.rewindPicker) {
+      dispatch({ type: "rewind_picker_cursor_moved", delta: -1 });
+      return;
+    }
     if (state.slashPaletteOpen) {
       dispatch({ type: "slash_palette_cursor_moved", delta: -1 });
       return;
     }
+    if (mentions.open && (mentions.results?.length ?? 0) > 0) {
+      mentions.move(-1);
+      return;
+    }
     dispatch({ type: "input_history_navigated", delta: -1 });
   }, [
+    mentions,
     state.slashPaletteOpen,
     state.sessionPickerOpen,
+    state.rewindPicker,
     state.themePickerOpen,
     state.themePickerCursor,
   ]);
@@ -1899,6 +2171,10 @@ export function TuiApp({
       return;
     }
     if (state.sessionPickerOpen) {
+      // ATO-1153: a search shows fewer rows than the list; stop on its last.
+      if (state.sessionPickerCursor + 1 >= pickerSessions.length) {
+        if (pickerQuery(state).trim().length > 0) return;
+      }
       dispatch({ type: "session_picker_cursor_moved", delta: 1 });
       // The picker lists the page the rail has loaded; walking to the
       // foot of it fetches the next one. The re-emitted list reaches the
@@ -1914,16 +2190,29 @@ export function TuiApp({
       }
       return;
     }
+    if (state.rewindPicker) {
+      dispatch({ type: "rewind_picker_cursor_moved", delta: 1 });
+      return;
+    }
     if (state.slashPaletteOpen) {
       dispatch({ type: "slash_palette_cursor_moved", delta: 1 });
       return;
     }
+    if (mentions.open && (mentions.results?.length ?? 0) > 0) {
+      mentions.move(1);
+      return;
+    }
     dispatch({ type: "input_history_navigated", delta: 1 });
   }, [
+    mentions,
     state.slashPaletteOpen,
     state.sessionPickerOpen,
     state.sessionPickerCursor,
     state.sessionPickerList,
+    state.rewindPicker,
+    state.inputValue,
+    state.sessionPickerDraft,
+    pickerSessions,
     state.themePickerOpen,
     state.themePickerCursor,
     callbacks,
@@ -2157,8 +2446,26 @@ export function TuiApp({
         fusion={promptBackend.kind === "fusion"}
       />
     ) : null;
+  // ATO-631: the last step's speed and KV-cache share, so a slow reply
+  // says whether the prompt was being re-read or the reply written
+  // slowly. Measured by `selectMetaBarFit` with the same label function.
+  const stepSpeedReadout =
+    stepSpeedReadoutLabel(state.metrics.stepSpeedLast) !== null ? (
+      <StepSpeedReadout
+        speed={state.metrics.stepSpeedLast}
+        fusion={promptBackend.kind === "fusion"}
+      />
+    ) : null;
+  // ATO-490: the `/think` level, when one is picked.
+  const thinkReadout =
+    thinkReadoutLabel(state.reasoningLevel) !== null ? (
+      <ThinkReadout
+        level={state.reasoningLevel}
+        fusion={promptBackend.kind === "fusion"}
+      />
+    ) : null;
   const promptContextSlot =
-    composerContextUsage || usageReadout ? (
+    composerContextUsage || usageReadout || stepSpeedReadout || thinkReadout ? (
       <Box flexDirection="row" flexShrink={0}>
         {composerContextUsage ? (
           <ContextChip
@@ -2167,6 +2474,8 @@ export function TuiApp({
             fusion={promptBackend.kind === "fusion"}
           />
         ) : null}
+        {stepSpeedReadout}
+        {thinkReadout}
         {usageReadout}
       </Box>
     ) : null;
@@ -2501,10 +2810,19 @@ export function TuiApp({
                 {state.sessionPickerOpen ? (
                   <Box flexShrink={0}>
                     <SessionPicker
-                      sessions={state.sessionPickerList}
+                      sessions={pickerSessions}
+                      query={pickerQuery(state)}
                       cursor={state.sessionPickerCursor}
                       currentSessionId={state.session.sessionId}
                       morePages={state.recentSessionsMorePages}
+                    />
+                  </Box>
+                ) : null}
+                {state.rewindPicker ? (
+                  <Box flexShrink={0}>
+                    <RewindPicker
+                      points={state.rewindPicker.points}
+                      cursor={state.rewindPicker.cursor}
                     />
                   </Box>
                 ) : null}
@@ -2523,6 +2841,14 @@ export function TuiApp({
                     commands={filterSlashCommands(state.slashQuery, skillSlashCommands(state.skillsPanel))}
                   />
                 ) : null}
+                {mentions.open && composerVisible ? (
+                  <FileMentionPalette
+                    results={mentions.results}
+                    cursor={mentions.cursor}
+                    onSelect={mentions.select}
+                    onActivate={acceptMention}
+                  />
+                ) : null}
                 {state.tasksPanel.cancelConfirm ? (
                   <Box flexShrink={0}>
                     <TasksCancelModal
@@ -2533,6 +2859,11 @@ export function TuiApp({
                 {state.projectTrustPrompt ? (
                   <Box flexShrink={0}>
                     <ProjectTrustModal prompt={state.projectTrustPrompt} />
+                  </Box>
+                ) : null}
+                {!state.projectTrustPrompt && state.appendLocalPrompt ? (
+                  <Box flexShrink={0}>
+                    <AppendLocalQuestionModal prompt={state.appendLocalPrompt} />
                   </Box>
                 ) : null}
                 {state.updatePrompt ? (
@@ -2583,7 +2914,9 @@ export function TuiApp({
                           // a fourth control to say it.
                           state.planHandoff
                             ? "Type to change the plan — it stays in plan mode…"
-                            : "Type a message or `/` for commands…"
+                            : state.nextStepSuggestion !== null
+                              ? ghostSuggestionPlaceholder(state.nextStepSuggestion)
+                              : "Type a message or `/` for commands…"
                         }
                         // No rotation while a plan is on offer. `PromptShell`
                         // resolves `rotated ?? placeholder`, so a rotating pool —
@@ -2592,7 +2925,9 @@ export function TuiApp({
                         // The offer is the one moment the field has something
                         // particular to say, so it says it instead of rotating.
                         rotatingPlaceholders={
-                          state.planHandoff ? NO_ROTATION : PROMPT_PLACEHOLDERS
+                          state.planHandoff || state.nextStepSuggestion !== null
+                            ? NO_ROTATION
+                            : PROMPT_PLACEHOLDERS
                         }
                         backend={promptBackend}
                         model={promptLlm.model}
@@ -2629,6 +2964,8 @@ export function TuiApp({
                         }
                         onHistoryPrev={onHistoryPrev}
                         onHistoryNext={onHistoryNext}
+                        vim={state.vimMode}
+                        vimEscClaim={vimEscClaim.current}
                       />
                     </ComposerOverlay>
                   </>

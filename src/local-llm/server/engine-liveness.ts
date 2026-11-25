@@ -1,12 +1,13 @@
 import { readFileSync, statSync } from "node:fs";
 import { resolvePidFilePath } from "../backend-paths.js";
 import {
-  lockMeansOperationInProgress,
   machineBootTimeMs,
-  readCoreOperationLock,
+  readCoreOperationLockForTurn,
+  turnLockMeansOperationInProgress,
   writtenBeforeBoot,
-  type CoreOperationLockState,
+  type CoreOperationTurnLockState,
 } from "../core/core-operation.js";
+import { chatStartPending } from "./chat-start-pending.js";
 import { classifyPidLiveness } from "./daemon-lifecycle.js";
 
 /**
@@ -22,7 +23,9 @@ import { classifyPidLiveness } from "./daemon-lifecycle.js";
  *               or llama.cpp/Core install holds the engine lock), or the pid
  *               file could not be read for another reason. A lock its owner
  *               left behind (gone, from before the last boot, or never given
- *               a pid) is not an operation under way (ATO-1275).
+ *               a pid) is not an operation under way (ATO-1275), nor is a
+ *               lock held longer than `CORE_OPERATION_STALE_MS` or one that
+ *               cannot be read (ATO-1433).
  *
  * Both managed engines keep the model process's pid in the same file:
  * llama-server writes its child's pid right after the spawn, Atomic Core
@@ -52,6 +55,11 @@ export type ManagedEngineLiveness = "alive" | "dead" | "no_pid" | "unknown";
  *   - `lock_unreadable` / `lock_probe_failed`   the lock could not be judged.
  *   - `pid_unreadable`                          the pid file exists and
  *                                               could not be read.
+ *   - `start_pending`                           no live model process, and
+ *                                               a chat start is on its way
+ *                                               in a live process, before
+ *                                               it took the lock (ATO-421,
+ *                                               `chat-start-pending.ts`).
  */
 export type ManagedEngineLivenessReason =
   | "pid_alive"
@@ -65,23 +73,26 @@ export type ManagedEngineLivenessReason =
   | "lock_writing"
   | "lock_unreadable"
   | "lock_probe_failed"
-  | "pid_unreadable";
+  | "pid_unreadable"
+  | "start_pending";
 
 export interface ManagedEngineLivenessReport {
   state: ManagedEngineLiveness;
   reason: ManagedEngineLivenessReason;
   /** The engine operation lock as read (`probe_failed` when the read threw). */
-  lock: CoreOperationLockState | "probe_failed";
+  lock: CoreOperationTurnLockState | "probe_failed";
 }
 
 export interface ManagedEngineLivenessProbes {
-  operationLock?: (dataDir: string) => CoreOperationLockState;
+  operationLock?: (dataDir: string) => CoreOperationTurnLockState;
   pidLiveness?: (pid: number) => "alive" | "foreign" | "dead";
   /** When this machine last booted, wall clock ms. */
   bootTimeMs?: () => number;
+  /** A chat start on its way before the lock (`chatStartPending`). */
+  startPending?: (dataDir: string) => boolean;
 }
 
-const LOCK_REASON: Partial<Record<CoreOperationLockState, ManagedEngineLivenessReason>> = {
+const LOCK_REASON: Partial<Record<CoreOperationTurnLockState, ManagedEngineLivenessReason>> = {
   held: "lock_held",
   held_self: "lock_held_self",
   writing: "lock_writing",
@@ -99,42 +110,56 @@ export function readManagedEngineLiveness(
  * `readManagedEngineLiveness` with the branch that decided it and the lock
  * reading, for error reports. A lock left behind by an owner that is gone
  * (dead pid, written before the last boot, never given a pid) does not
- * hide a dead engine (ATO-1275); a lock a live process holds still does.
+ * hide a dead engine (ATO-1275); a lock a live process holds still does,
+ * until it is older than `CORE_OPERATION_STALE_MS` (ATO-1433).
  */
 export function explainManagedEngineLiveness(
   dataDir: string,
   probes: ManagedEngineLivenessProbes = {},
 ): ManagedEngineLivenessReport {
-  const operationLock = probes.operationLock ?? readCoreOperationLock;
+  const operationLock = probes.operationLock ?? readCoreOperationLockForTurn;
   const pidLiveness = probes.pidLiveness ?? classifyPidLiveness;
-  let lock: CoreOperationLockState;
+  let lock: CoreOperationTurnLockState;
   try {
     lock = operationLock(dataDir);
   } catch {
     return { state: "unknown", reason: "lock_probe_failed", lock: "probe_failed" };
   }
-  if (lockMeansOperationInProgress(lock)) {
+  if (turnLockMeansOperationInProgress(lock)) {
     return { state: "unknown", reason: LOCK_REASON[lock] ?? "lock_held", lock };
   }
+  // ATO-421: with no live model process, a start on its way before the
+  // lock (the desktop's restart booting `models start`, the TUI's launch
+  // start in its backend check) is not a dead engine. A live process is
+  // never hidden behind the marker.
+  const gone = (report: ManagedEngineLivenessReport): ManagedEngineLivenessReport => {
+    let pending: boolean;
+    try {
+      pending = (probes.startPending ?? chatStartPending)(dataDir);
+    } catch {
+      pending = false;
+    }
+    return pending ? { state: "unknown", reason: "start_pending", lock } : report;
+  };
   let raw: string;
   try {
     raw = readFileSync(resolvePidFilePath(dataDir), "utf-8").trim();
   } catch (err) {
     return (err as NodeJS.ErrnoException | null)?.code === "ENOENT"
-      ? { state: "no_pid", reason: "no_pid_file", lock }
+      ? gone({ state: "no_pid", reason: "no_pid_file", lock })
       : { state: "unknown", reason: "pid_unreadable", lock };
   }
   const pid = Number(raw);
   // An empty or garbled record is what `readRunningPid` treats as nothing
   // recorded: no process can be behind it.
-  if (!Number.isInteger(pid) || pid <= 0) return { state: "no_pid", reason: "pid_empty", lock };
+  if (!Number.isInteger(pid) || pid <= 0) return gone({ state: "no_pid", reason: "pid_empty", lock });
   // A record from before the last reboot: pids start over at boot, so the
   // number may now name an unrelated live process (ATO-1275).
   if (pidFileBeforeBoot(dataDir, probes.bootTimeMs ?? machineBootTimeMs)) {
-    return { state: "dead", reason: "pid_before_boot", lock };
+    return gone({ state: "dead", reason: "pid_before_boot", lock });
   }
   const answer = pidLiveness(pid);
-  if (answer === "dead") return { state: "dead", reason: "pid_dead", lock };
+  if (answer === "dead") return gone({ state: "dead", reason: "pid_dead", lock });
   return { state: "alive", reason: answer === "foreign" ? "pid_foreign" : "pid_alive", lock };
 }
 
@@ -144,4 +169,36 @@ function pidFileBeforeBoot(dataDir: string, bootTimeMs: () => number): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether a model process exists right now, by the pid file alone, with
+ * the engine operation lock left out (ATO-1434). While a start or load
+ * holds the lock, `explainManagedEngineLiveness` answers `unknown` without
+ * looking at the pid; the outage wait asks this beside it to tell "a load
+ * is bringing the model up" from "a lock is held and no model exists".
+ *
+ *   - `none`     no pid file, an empty or garbled one, one written before
+ *                the last boot, or a pid that is gone.
+ *   - `running`  the recorded pid answers (another user's process counts).
+ *   - `unknown`  the pid file exists and could not be read.
+ *
+ * Read only, like `explainManagedEngineLiveness`.
+ */
+export type ManagedModelProcess = "none" | "running" | "unknown";
+
+export function readManagedModelProcess(
+  dataDir: string,
+  probes: Pick<ManagedEngineLivenessProbes, "pidLiveness" | "bootTimeMs"> = {},
+): ManagedModelProcess {
+  let raw: string;
+  try {
+    raw = readFileSync(resolvePidFilePath(dataDir), "utf-8").trim();
+  } catch (err) {
+    return (err as NodeJS.ErrnoException | null)?.code === "ENOENT" ? "none" : "unknown";
+  }
+  const pid = Number(raw);
+  if (!Number.isInteger(pid) || pid <= 0) return "none";
+  if (pidFileBeforeBoot(dataDir, probes.bootTimeMs ?? machineBootTimeMs)) return "none";
+  return (probes.pidLiveness ?? classifyPidLiveness)(pid) === "dead" ? "none" : "running";
 }

@@ -14,6 +14,56 @@ import {
   checkBrowserUrl,
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
+import {
+  checkUrlSend,
+  DEFAULT_URL_DATA_GUARD,
+  noteUrlSendAllowed,
+  urlSendReason,
+} from "../os/web/url-data-guard.js";
+import { maskUrlSecrets } from "../os/web/http-request-preview.js";
+import {
+  isOfflineNetwork,
+  offlineRefusal,
+  type OfflineNetworkError,
+} from "../../llm/offline-network.js";
+
+/** Schemes that never leave the machine; anything else is checked by host. */
+const LOCAL_SCHEMES = new Set(["about:", "file:", "data:", "blob:"]);
+
+/**
+ * Offline mode (ATO-1084): the refusal for opening `url`, or `null`.
+ * http(s) / ws(s) URLs pass only on this machine; `about:`, `file:`,
+ * `data:` and `blob:` pass; any other scheme is refused while offline,
+ * since the agent cannot tell what Chrome would fetch for it.
+ */
+export function offlineBrowserRefusal(
+  tool: string,
+  url: string,
+): OfflineNetworkError | null {
+  if (!isOfflineNetwork()) return null;
+  let protocol: string;
+  try {
+    protocol = new URL(url.trim()).protocol.toLowerCase();
+  } catch {
+    return offlineRefusal(url, tool);
+  }
+  if (LOCAL_SCHEMES.has(protocol)) return null;
+  return offlineRefusal(url.trim(), tool);
+}
+
+function offlineToolError(
+  tool: string,
+  url: string,
+  refused: OfflineNetworkError,
+  suffix = "",
+): CompressedToolResult {
+  return compressToolResult({
+    tool,
+    status: "error",
+    output: `${refused.message}${suffix}`,
+    details: { url, host: refused.host, reason: "offline_mode" },
+  });
+}
 
 /** http(s) or `about:blank`: all the user's own Chrome may be sent to. */
 export function isUserProfileUrl(url: string): boolean {
@@ -43,6 +93,8 @@ export async function gateBrowserUrl(
   url: string,
   ctx: Pick<ToolContext, "sessionId" | "signal">,
 ): Promise<CompressedToolResult | null> {
+  const offline = offlineBrowserRefusal(tool, url);
+  if (offline) return offlineToolError(tool, url, offline);
   if (policy.userProfile && !isUserProfileUrl(url)) {
     return compressToolResult({
       tool,
@@ -64,8 +116,15 @@ export async function gateBrowserUrl(
     // The user's own Chrome: a new site asks once per session (stricter
     // than `browser_offsite`, which it replaces here).
     await requireUserSite(dangerous, policy, tool, verdict.host, url, ctx);
+    // ATO-1377: a cleared site still asks for an address full of data.
+    // `"strict"`'s once-per-site rule is what `requireUserSite` just did.
+    await requireUrlData(dangerous, policy, tool, url, ctx, "data");
     return null;
   }
+  // ATO-1377: an address that carries data out, or under `"strict"` the
+  // chat's first visit to a site. One question: it stands in for
+  // `browser_offsite` (http_write never goes quiet below it).
+  if (await requireUrlData(dangerous, policy, tool, url, ctx)) return null;
   if (verdict.kind === "offsite") {
     await requireApproval(
       dangerous,
@@ -84,6 +143,41 @@ export async function gateBrowserUrl(
 }
 
 /**
+ * Ask as `http_write` when `checkUrlSend` says `url` must ask first
+ * (`url-data-guard.ts`). `modeCap` lowers `"strict"` to `"data"` where
+ * sites are already asked about another way. Returns whether it asked.
+ */
+async function requireUrlData(
+  dangerous: DangerousToolOptions,
+  policy: BrowserDomainPolicy,
+  tool: string,
+  url: string,
+  ctx: Pick<ToolContext, "sessionId" | "signal">,
+  modeCap?: "data",
+): Promise<boolean> {
+  const configured = policy.urlDataGuard ?? DEFAULT_URL_DATA_GUARD;
+  const mode = modeCap !== undefined && configured === "strict" ? modeCap : configured;
+  const check = checkUrlSend(mode, url, ctx.sessionId, policy.urlSendSites);
+  if (check === null) return false;
+  const shown = maskUrlSecrets(url.trim());
+  await requireApproval(
+    dangerous,
+    {
+      sessionId: ctx.sessionId,
+      tool,
+      category: "http_write",
+      reason: urlSendReason(shown, check),
+      preview: shown,
+      affectedResources: [check.host],
+      grantKey: check.origin,
+    },
+    ctx.signal,
+  );
+  noteUrlSendAllowed(check, ctx.sessionId, policy.urlSendSites);
+  return true;
+}
+
+/**
  * After an action that can move the browser (navigate, tabs new, a
  * click, Enter, a search), re-check where it landed: a redirect or a
  * link can end on a blocked host even when the URL asked for was fine.
@@ -93,7 +187,8 @@ export async function gateBrowserUrl(
  * later than the click itself returns is caught by the next read
  * (`browser.read_aria`), which refuses a blocked page too.
  *
- * Skipped while `blockedDomains` is empty, so it costs nothing then.
+ * Skipped while `blockedDomains` is empty and offline mode is off, so it
+ * costs nothing then.
  */
 export async function recheckLandedPage(
   backend: Pick<BrowserBackend, "currentUrl" | "navigate">,
@@ -101,7 +196,8 @@ export async function recheckLandedPage(
   tool: string,
   landedUrl?: string,
 ): Promise<CompressedToolResult | null> {
-  if (policy.blockedDomains.length === 0) return null;
+  const offline = isOfflineNetwork();
+  if (policy.blockedDomains.length === 0 && !offline) return null;
   let url = landedUrl;
   if (url === undefined) {
     try {
@@ -109,6 +205,12 @@ export async function recheckLandedPage(
     } catch {
       return null;
     }
+  }
+  // ATO-1084: a link or redirect that left this machine while offline.
+  const refused = offline ? offlineBrowserRefusal(tool, url) : null;
+  if (refused) {
+    await backend.navigate({ url: "about:blank" }).catch(() => undefined);
+    return offlineToolError(tool, url, refused, " The action ended on that site, so the tab was cleared.");
   }
   const verdict = checkBrowserUrl(url, policy);
   if (verdict.kind !== "blocked") return null;

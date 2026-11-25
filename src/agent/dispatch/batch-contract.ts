@@ -103,8 +103,16 @@ export interface BatchExecutionContext {
    * transcript and handed to every call of the batch unchanged.
    */
   userGroundingTexts?: readonly string[];
+  /** The session is an incognito chat (`ToolContext.incognito`, ATO-586). */
+  incognito?: boolean;
   /** The step's provider pin, handed to every call (`ToolContext.providerId`). */
   providerId?: string;
+  /** The turn's model on the pinned link (`ToolContext.model`). */
+  model?: string;
+  /** The agent turn this batch runs in (`ToolContext.turnId`). */
+  turnId?: string;
+  /** The turn's spend ceiling seam (`ToolContext.turnSpend`). */
+  turnSpend?: import("../../tools/tool-registry.js").TurnSpendSeam;
   /**
    * Fired immediately before the registry is invoked for each call.
    * Order: matches the order the executor reaches each call (within a
@@ -143,6 +151,13 @@ export interface BatchExecutionContext {
    * never reaches the registry; terminals are exempt as everywhere.
    */
   toolSet?: StepToolSet;
+  /**
+   * The turn's `RunTurnOptions.toolFilter` (a fusion worker's policy and
+   * profile allowlist). The prompt and grammar already hide what it
+   * rejects; this makes a call by name refused too, for a native-tool
+   * model that emits a hidden tool anyway. Terminals are exempt.
+   */
+  toolFilter?: (name: string) => boolean;
   /**
    * Plan mode, read at dispatch time rather than passed as a boolean.
    *

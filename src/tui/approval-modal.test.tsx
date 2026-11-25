@@ -41,6 +41,18 @@ function frameOf(
 }
 
 describe("ApprovalModal", () => {
+  it("shows smart approval's verdict when the review ran (ATO-1268)", () => {
+    const frame = frameOf(
+      request({
+        riskNote: "risk check: medium (installs a package)",
+        riskLevel: "medium",
+        riskReason: "installs a package",
+      }),
+    );
+    expect(frame).toContain("Risk check: medium. Installs a package");
+    expect(frameOf(request())).not.toContain("Risk check");
+  });
+
   it("renders the request and the decision buttons", () => {
     const frame = frameOf(request());
     expect(frame).toContain("approval required");

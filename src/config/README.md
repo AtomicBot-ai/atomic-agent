@@ -22,10 +22,12 @@ This area owns configuration and compatibility. Read [AGENTS.md](AGENTS.md) befo
 - [local model configuration](local-models/README.md)
 - [tui-config.ts](tui-config.ts)
 - [channel-config.ts](channel-config.ts)
-- [integration-config.ts](integration-config.ts)
+- [integration-config.ts](integration-config.ts), [composio-accounts-config.ts](composio-accounts-config.ts)
 - [session-rail-config.ts](session-rail-config.ts)
 - [webhook-config.ts](webhook-config.ts)
+- [email-trigger-config.ts](email-trigger-config.ts)
 - [load-config.ts](load-config.ts)
+- [secret-store.ts](secret-store.ts) and [secrets-migration.ts](secrets-migration.ts): opt-in OS keychain for saved keys (see [compatibility](docs/compatibility.md))
 - [config-file.ts](config-file.ts)
 - [config-shape.ts](config-shape.ts)
 - [carry-unknown-config-keys.ts](carry-unknown-config-keys.ts)
@@ -45,7 +47,7 @@ config-primitives owns scalar coercion and validation and imports only the exist
 
 session-rail-config owns the stored session order/pinning type and parser. It depends only on the existing validation error, without loading defaults or sessions. config-schema keeps compatible type/parser exports and assembles the whole file. Filtering stale ids, persistence and display order belong to [the TUI rail](../tui/session-rail/README.md).
 
-webhook-config owns webhook map normalization, session-mode requirements and schedule shapes. It uses scalar/error owners and the TaskSchedule type without loading task execution or HTTP. config-schema keeps compatible type/parser exports; the [HTTP webhook route](../http/route-webhooks.ts) materializes tasks and [task scheduling](../tasks/task-schedule.ts) owns canonical execution-time validation.
+webhook-config owns webhook map normalization, session-mode requirements and schedule shapes; email-trigger-config owns the `email` block of a binding with `source: "atomic-mail"` (sender allow-list, poll interval, reply flag, `trustFromHeader`), run by the [mail trigger](../atomic-mail/README.md). imap-trigger-config owns the `imap` block of a binding with `source: "imap"` (host, login, secret variable, IDLE, attachment limits), run by the [IMAP trigger](../imap-mail/README.md). It uses scalar/error owners and the TaskSchedule type without loading task execution or HTTP. config-schema keeps compatible type/parser exports; the [HTTP webhook route](../http/route-webhooks.ts) materializes tasks and [task scheduling](../tasks/task-schedule.ts) owns canonical execution-time validation.
 
 config-values owns shared URL, trimmed nullable-string and nullable-string-list validation. mcp-server-config owns server name/enabled/trust and stdio/HTTP/SSE transport normalization, using values/primitives/error and [neutral MCP types](../mcp/mcp-types.ts). config-schema keeps compatible parser exports and whole-file/default assembly; MCP commands and import consumers continue using that API. Parsing performs no connection/process/file operation and does not derive resource trust defaults; the manager/client retain execution and lifetime ownership.
 
@@ -63,7 +65,7 @@ agent/ owns the full agent runtime/user policy around the existing execution lea
 
 ## Task-specific reading
 
-Read [compatibility](docs/compatibility.md) for schema/default/migration changes; [user defaults](docs/user-defaults.md) and [operational defaults](docs/operational-defaults.md) contain checked values. Read ../approval/AGENTS.md for approval settings.
+Read [compatibility](docs/compatibility.md) for schema/default/migration changes; [user defaults](docs/user-defaults.md) and [operational defaults](docs/operational-defaults.md) contain checked values. The user-facing [settings reference](../../docs/user/settings-reference.md) is generated from the JSDoc on `UserConfigFile` and the env table in [env-settings.ts](env-settings.ts) by `npx tsx scripts/gen-settings-reference.ts`; a key or comment change needs a regeneration, which the reference tests enforce. A new environment variable goes into env-settings.ts. Read ../approval/AGENTS.md for approval settings.
 
 [Model behavior mode](../llm/docs/model-mode.md) documents provider defaults, per-model overrides and the v75 migration of existing cloud connections without a policy. [model-mode-commands.ts](model-mode-commands.ts) owns manual changes and cache invalidation for this setting. [Provider commands](llm-provider-commands.ts) assign and return an initial saved default for new connections, sharing classification with the schema migration through [model-mode.ts](model-mode.ts). After migration, updates preserve omitted policy fields without reclassifying entries.
 

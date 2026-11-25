@@ -10,6 +10,14 @@ export type {
   TaskStoreOptions,
 } from "./task-store.js";
 export { TaskRunner } from "./task-runner.js";
+export { TASK_RUNS_KEPT_PER_TASK } from "./task-run-log.js";
+export type { TaskRunOutcome, TaskRunRecord } from "./task-run-log.js";
+export {
+  isPausedTask,
+  pauseRecurringTask,
+  resumeRecurringTask,
+} from "./task-pause.js";
+export type { TaskPauseRefusal, TaskPauseResult } from "./task-pause.js";
 export { planTaskResume, resumeNote, wasInterruptedFromOutside } from "./task-resume.js";
 export type { TaskResumePlan, TaskResumePolicy } from "./task-resume.js";
 export type {
@@ -54,6 +62,29 @@ export type {
   HeldReportStore,
   HeldTaskReport,
 } from "./task-report-hold-store.js";
+export {
+  HEARTBEAT_CHECKLIST_FILENAME,
+  HEARTBEAT_DEFAULT_INTERVAL_MS,
+  HEARTBEAT_MIN_INTERVAL_MS,
+  HEARTBEAT_SENTINEL,
+  buildHeartbeatPrompt,
+  clampHeartbeatIntervalMs,
+  heartbeatTaskMessage,
+  isHeartbeatSilent,
+  isWithinActiveHours,
+  parseActiveHours,
+} from "./task-heartbeat.js";
+export type {
+  HeartbeatConfig,
+  HeartbeatOutcome,
+  HeartbeatState,
+} from "./task-heartbeat.js";
+export {
+  SqliteHeartbeatStore,
+  openPerCallHeartbeatStore,
+} from "./task-heartbeat-store.js";
+export type { HeartbeatStore } from "./task-heartbeat-store.js";
+export type { TaskHeartbeatOptions } from "./task-heartbeat-run.js";
 export { nextDelayMs } from "./task-backoff.js";
 export type { BackoffOptions } from "./task-backoff.js";
 export {
@@ -82,3 +113,45 @@ export {
   serializeScheduleValue,
   validateSchedule,
 } from "./task-schedule.js";
+export { IdeaStore } from "./idea-store.js";
+export type { IdeaListOptions, IdeaSyncResult } from "./idea-store.js";
+export {
+  IDEA_EXCERPT_MAX_LENGTH,
+  IDEA_STATUSES,
+  IDEA_TITLE_MAX_LENGTH,
+  IDEAS_PER_KIND_MAX,
+  IdeaStateError,
+} from "./idea-types.js";
+export type {
+  IdeaCandidate,
+  IdeaEvidence,
+  IdeaKind,
+  IdeaRecord,
+  IdeaStatus,
+} from "./idea-types.js";
+export {
+  RESUME_GOAL_LOOKBACK_MS,
+  RETRY_TASK_LOOKBACK_MS,
+  buildIdeaCandidates,
+  resumeGoalIdeas,
+  retryTaskIdeas,
+} from "./idea-rules.js";
+export type { GoalIdeaInput, IdeaRuleInput } from "./idea-rules.js";
+export { goalIdeaInputs } from "./idea-goal-source.js";
+export {
+  IDEA_REFRESH_SESSION_SCAN,
+  IDEA_REFRESH_TASK_SCAN,
+  acceptIdea,
+  ideaSourceTaskId,
+  ideaTaskCarry,
+  ideaToJson,
+  refreshIdeas,
+} from "./idea-service.js";
+export type {
+  AcceptIdeaOptions,
+  AcceptedIdea,
+  IdeaCarrySource,
+  IdeaRefreshDeps,
+  IdeaTaskCarry,
+  IdeaTaskFactory,
+} from "./idea-service.js";

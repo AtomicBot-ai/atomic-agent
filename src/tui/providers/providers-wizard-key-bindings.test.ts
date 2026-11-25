@@ -587,7 +587,84 @@ describe("handleProvidersWizardKey", () => {
     expect(cloud.presetId).toBe("ollama-cloud");
   });
 
-  it("a preset never shows the URL screen", () => {
+  it("opens a per-account preset (Azure) on the URL screen with its template", () => {
+    // ATO-468: the Azure resource name is the operator's, so the row
+    // cannot know the endpoint. It prefills the template instead.
+    let wizard = createProvidersWizardState("add");
+    const azureIdx = presetRowIndex("azure-openai");
+    for (let i = 0; i < azureIdx; i += 1) {
+      wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    }
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.presetId).toBe("azure-openai");
+    expect(wizard.phase).toBe("base_url");
+    expect(wizard.baseUrlLine).toBe("https://your-resource.openai.azure.com/openai");
+
+    // Enter on the untouched template is refused on this screen.
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("base_url");
+    expect(wizard.error).toMatch(/your-resource/);
+
+    // A real resource walks on: URL -> key -> model line.
+    wizard = {
+      ...wizard,
+      error: null,
+      baseUrlLine: "https://my-team.openai.azure.com/openai",
+    };
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("api_key");
+    for (const ch of "az") wizard = next(wizard, ch, emptyKey());
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("chat_model_line");
+    expect(wizard.baseUrlLine).toBe("https://my-team.openai.azure.com/openai");
+  });
+
+  it("lets Bedrock's default Region through, editable on the URL screen", () => {
+    // us-east-1 is a real Region, so the prefilled URL is valid as is.
+    let wizard = createProvidersWizardState("add");
+    const bedrockIdx = presetRowIndex("bedrock");
+    for (let i = 0; i < bedrockIdx; i += 1) {
+      wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    }
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.presetId).toBe("bedrock");
+    expect(wizard.phase).toBe("base_url");
+    expect(wizard.baseUrlLine).toBe("https://bedrock-mantle.us-east-1.api.aws");
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.error).toBeNull();
+    expect(wizard.phase).toBe("api_key");
+  });
+
+  it("asks Foundry Local for its URL, then skips the key screen", () => {
+    // ATO-626: a keyless local server on a port of its own choosing walks
+    // URL -> model, never the key screen.
+    let wizard = createProvidersWizardState("add");
+    const foundryIdx = presetRowIndex("foundry-local");
+    for (let i = 0; i < foundryIdx; i += 1) {
+      wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    }
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.presetId).toBe("foundry-local");
+    expect(wizard.phase).toBe("base_url");
+    wizard = { ...wizard, baseUrlLine: "http://localhost:61234" };
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("chat_model_line");
+    expect(wizard.baseUrlLine).toBe("http://localhost:61234");
+  });
+
+  it("takes Lemonade straight to the model choice, like the other local servers", () => {
+    let wizard = createProvidersWizardState("add");
+    const lemonadeIdx = presetRowIndex("lemonade");
+    for (let i = 0; i < lemonadeIdx; i += 1) {
+      wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    }
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.presetId).toBe("lemonade");
+    expect(wizard.baseUrlLine).toBe("http://localhost:13305");
+    expect(wizard.phase).toBe("chat_model_line");
+  });
+
+  it("a fixed-endpoint preset never shows the URL screen", () => {
     // Groq (keyed): service -> key -> models, base_url is never reached.
     let wizard = createProvidersWizardState("add");
     const groqIdx = presetRowIndex("groq");
@@ -644,6 +721,21 @@ describe("handleProvidersWizardKey", () => {
     for (const ch of "localhost:9931") wizard = next(wizard, ch, emptyKey());
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.phase).toBe("api_key");
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("chat_model_line");
+    expect(wizard.error).toBeNull();
+  });
+
+  it("adds http:// to another computer's address typed without one (ATO-1066)", () => {
+    let wizard = createProvidersWizardState("add");
+    wizard = next(wizard, "", emptyKey({ upArrow: true }));
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("base_url");
+    for (const ch of "192.168.1.20:8080") wizard = next(wizard, ch, emptyKey());
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.baseUrlLine).toBe("http://192.168.1.20:8080");
+    expect(wizard.phase).toBe("api_key");
+    // Keyless home server: the empty key screen passes.
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.phase).toBe("chat_model_line");
     expect(wizard.error).toBeNull();

@@ -222,6 +222,46 @@ describe("runGoal", () => {
     expect(out.result).not.toHaveProperty("spendUsd");
   });
 
+  it("stops as budget_limited once the token budget is spent and sums usage (ATO-1036)", async () => {
+    const h = harness({
+      runRound: async (s, message) => {
+        h.messages.push(message);
+        return { ...replied(s, "worked"), usage: { promptTokens: 300, completionTokens: 100 } };
+      },
+      judgeAnswers: Array(5).fill(verdict("not_met")),
+    });
+    const out = await runGoal(h.deps, {
+      session, message: "start", goal: createGoalState({ criteria: ["a"], maxTokens: 1_000 }, 0), signal,
+    });
+    // 400 + 400 = 800 < 1000 lets a third round start; 1200 stops the fourth.
+    expect(h.messages).toHaveLength(3);
+    expect(out.goal?.status).toBe("budget_limited");
+    expect(out.goal?.tokensUsed).toBe(1_200);
+    expect(out.goal?.statusReason ?? "").toContain("token budget");
+    expect(out.result.usage).toEqual({ promptTokens: 900, completionTokens: 300 });
+  });
+
+  it("counts tokens but never stops on them when the goal has no token cap", async () => {
+    const h = harness({
+      runRound: async (s, message) => {
+        h.messages.push(message);
+        return { ...replied(s, "worked"), usage: { promptTokens: 1_000_000, completionTokens: 1 } };
+      },
+      judgeAnswers: [verdict("not_met"), verdict("met")],
+    });
+    const out = await runGoal(h.deps, { session, message: "start", goal: goal(["a"]), signal });
+    expect(out.goal?.status).toBe("complete");
+    expect(out.goal?.tokensUsed).toBe(2_000_002);
+  });
+
+  it("does not start a round on a goal whose stored token budget is already spent", async () => {
+    const h = harness({});
+    const spent = { ...createGoalState({ criteria: ["a"], maxTokens: 10 }, 0), tokensUsed: 10 };
+    const out = await runGoal(h.deps, { session, message: "start", goal: spent, signal });
+    expect(h.messages).toHaveLength(0);
+    expect(out.goal?.status).toBe("budget_limited");
+  });
+
   it("honours a pause or clear requested between rounds", async () => {
     const controls: ("pause" | "clear" | null)[] = [null, "pause"];
     const h = harness({

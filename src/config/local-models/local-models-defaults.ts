@@ -27,6 +27,7 @@ export function createLocalModelsDefaults(): UserLocalModelsConfig {
     thinking: "auto",
     reasoningBudgetTokens: 0,
     drySampler: false,
+    strictToolArgs: false,
     managed: {
       engine: "atomic-core",
       modelId: null,
@@ -35,6 +36,7 @@ export function createLocalModelsDefaults(): UserLocalModelsConfig {
       autoUpdate: true,
       stopOnExit: true,
       autoRestart: true,
+      promptDiskCache: false,
       device: "auto",
       backendVariant: "auto",
       coreBackendVariant: "auto",

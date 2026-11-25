@@ -31,13 +31,16 @@ This area owns terminal interface. Read [AGENTS.md](AGENTS.md) before changing i
 - [Context readout and controls](context/README.md)
 - [Coding stance and plan handoff](coding-mode/README.md)
 - [Session selection and rail layout](session-rail/README.md)
+- [File mentions in the composer](file-mentions/README.md)
 - [Theme chooser](theme-picker/README.md)
+- [Rewind picker](rewind/README.md)
 - [Observation views](observe/README.md)
 - [Privacy settings](privacy/README.md)
 - [Integrations hub](integrations/README.md)
 - [Telegram setup adapter](telegram/README.md)
 - [Swarm management](swarm/README.md)
 - [Plugins panel](plugins/README.md)
+- [Brand badges](brand/README.md)
 
 ## Ownership and dependencies
 
@@ -68,3 +71,7 @@ Compaction has a session-scoped live indicator: queued requests wait visibly for
 `/goal <criteria>` sets a goal on the open chat and starts working on it ([goal mode](../agent/goal/README.md)): criteria one per line or split by `;`, a `check: <cmd>` item is a shell check. `/goal check add <cmd>`, `/goal check clear`, `/goal status`, `/goal pause|resume|clear` act on it; parsing is [goal-command.ts](commands/goal-command.ts) and the decisions [goal-commands.ts](goal/goal-commands.ts). While the chat's goal is active every message runs goal rounds; the status bar shows `Goal: 3/5 criteria green · round 2/10` and each evaluation leaves a line in the chat.
 
 `/enhance <text>` is opt-in prompt refinement: the draft goes straight back into the composer, the runtime runs one rewrite pass ([prompt-enhancer.ts](../runtime/prompt-enhancer.ts), its own `enhance:` fallback partition, output bound and 60 s deadline, aborted on shutdown), and the rewrite replaces the draft only if it was not edited meanwhile. Bare `/enhance` from the menu enhances the draft already in the composer; typed or picked from the palette it prints usage and clears only the command itself. Sending, Esc, switching or starting a session cancels a running pass. Nothing is sent; on failure the draft stays and a composer notice says why.
+
+`/btw <question>` asks a quick side question beside the main task ([side-question.ts](../runtime/side-question.ts), ATO-1152). The model gets a digest of the recent conversation, runs no tools, and answers once under its own `btw:` fallback partition, output bound and 90 s deadline. Nothing is written to the session: the question and the answer show as chat notices only, are gone after a restart, and never reach later turns. It works while a turn is running; switching, starting a session or quitting cancels it.
+
+`/edit` (or `ctrl+g E`) opens the composer draft in `$VISUAL` / `$EDITOR` (Notepad on Windows when neither is set) and puts the saved text back in the composer; nothing is sent. `/edit <text>` starts from that text instead. The temp file lives in the OS temp dir and is removed afterwards. [editor/](editor/index.ts) runs the editor synchronously with the terminal inherited after releasing raw mode, mouse reporting, the kitty keyboard protocol and the alternate screen, and restores them on return; it is refused during a running turn because the whole process waits on the editor.

@@ -121,11 +121,20 @@ export {
   WORKER_READ_REFUSAL_REASON,
   WORKER_READ_TOOL_TARGETS,
 } from "../read-scope/index.js";
-export { runWorkerTasks } from "./worker-runner.js";
+export { runWorkerTasks, runWorkerTasksCore } from "./worker-runner.js";
 export type {
   WorkerRunnerDeps,
   RunWorkerTasksOptions,
+  FusionWorkerRunnerDeps,
+  FusionWorkerRunnerOptions,
 } from "./worker-runner.js";
+export {
+  DEFAULT_WORKER_TURN_ORIGIN,
+  type FusionWorkerRunnerDepsExtras,
+  type FusionWorkerRunnerOptionsExtras,
+  type WorkerRunnerCoreDeps,
+  type WorkerRunnerCoreOptions,
+} from "./worker-runner-core.js";
 export {
   buildFusionDelegateTool,
   FUSION_DELEGATE_TOOL,
@@ -158,3 +167,11 @@ export {
   planResume,
   renderResumeRequest,
 } from "./run-resume.js";
+export {
+  FUSION_OUTCOMES_FILE_NAME,
+  FusionOutcomeLog,
+  outcomeRowFor,
+} from "./outcome-log.js";
+export type { FusionOutcomeRow, OutcomeSize } from "./outcome-log.js";
+export { summarizeOutcomes } from "./outcome-summary.js";
+export { reconcileWorkerLabel, servedModelName } from "./served-model-label.js";

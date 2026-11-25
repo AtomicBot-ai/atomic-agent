@@ -9,20 +9,20 @@ memory, reflection, session titles and the mechanical conversation packer.
 
 ## Entry points and ownership
 
-`runtime.compactSession(id, { signal? })` returns `compacted`, `noop`, `busy`,
+`runtime.compactSession(id, { signal?, instructions? })` returns `compacted`, `noop`, `busy`,
 `failed` or `cancelled`, with a reason and available size estimates.
 `getSessionCompaction(id)` reads the saved checkpoint without inference.
 Neither operation adds a user message, increments turn/step counters, nor runs
 reflection. Unknown persisted session IDs raise `SessionNotFoundError`.
 
-TUI exposes `/compact` and `/compact show`.
-Other arguments are rejected. HTTP exposes authenticated
+TUI exposes `/compact`, `/compact show` and `/compact <what to keep>`.
+HTTP exposes authenticated
 `POST /api/sessions/{id}/compact` (waits for the result; concurrent requests get
-409) and `GET /api/sessions/{id}/compaction` (`{sessionId, compaction}`, null when
+409; optional body `{"instructions": "..."}`) and `GET /api/sessions/{id}/compaction` (`{sessionId, compaction}`, null when
 absent). POST consumes the body through the normal size limiter. Disconnecting
 that HTTP request cancels its compaction, not the main turn. NDJSON exposes
 `compact_session` and `get_compaction`, both with `{sessionId}` and ordinary
-request/response correlation. The desktop calls the HTTP POST from its `/compact`
+request/response correlation; `compact_session` also takes `instructions`. The desktop calls the HTTP POST from its `/compact`
 command and the context popover's "Compact now". Channel-specific commands are
 not part of these surfaces.
 
@@ -35,6 +35,28 @@ runtime shutdown cancel owned operations. A started compaction that ends
 `failed` logs a warning and one that ends `cancelled` an info line
 (`logCompactionOutcome`); a request cancelled while still queued logs nothing. Steers arriving during a subcall are
 drained and budgeted before the next inference.
+
+### Compaction instructions
+
+Like Claude Code's `/compact <instructions>`, a manual compaction can say what
+the summary must keep, for example "keep the names of failing tests" (ATO-661;
+[rules](../compaction-instructions.ts)). Every surface takes the same optional
+string: trimmed, blank means none, at most 2000 characters. TUI and HTTP (400,
+`param: "instructions"`) and NDJSON reject a longer or non-string value; the
+runtime cuts a direct caller's text to the limit. Any `/compact` text other than
+`show` is instructions. Only a manual request carries them; automatic
+compactions never do.
+
+They are data, not a system override. The summarizer's user message starts
+with them in a `<<<`/`>>>` block (runs of three or more `<` or `>` inside are
+spaced out so the text cannot close it), repeated in every part. The system
+prompt gets one extra rule: keep what they ask as mandatory items under a
+"Kept on request" section, and never let them change the rules, format, size
+limit or ask to run tools. Only a model summary can follow them, so a request
+with instructions skips a valid rolling summary. When the checkpoint is
+extractive anyway (`mode: extractive`, or `auto` choosing or falling back to
+it), the result's `message` says the instructions were not applied; TUI shows
+a completed compaction's `message`. The desktop does not send instructions yet.
 
 ## State and prompt
 
@@ -92,7 +114,14 @@ the prompt builder's remaining history budget, including non-history sections
 and reply reserve. Token pressure at the trigger ratio or impending
 `conversationMaxPairs` eviction triggers auto compaction in `local`. Cloud uses
 window pressure after schemas, message overhead, reply reserve and safety margin;
-the local pair/section caps do not trigger it. The target is the
+the local pair/section caps do not trigger it. Sizes are the shared heuristic,
+except at the automatic token trigger on a local llama-server: when the estimate
+is within 0.8-1.25 of the trigger, the runtime asks the server's `/tokenize` for
+the history's exact size (1.5 s timeout, cached by content hash) and that size
+decides whether the trigger is reached. Any failure keeps the estimate; cut
+fitting always stays on the estimate. On a cloud route that band check uses
+`ceil(utf8 bytes / 4)` instead; no tokenizer dependency is bundled, and the
+provider's usage counts after the call are what the session records. The target is the
 target ratio of that allowance; manual requests use the smaller of allowance and
 current volume. When the step's model profile has prefix reuse `none` (and
 applies to that step's route), the ratio is at most 0.35: every later step
@@ -278,6 +307,24 @@ checkpoint is never replaced later by a rolling summary. Cloud state updates are
 not in it. Its background calls are counted as they run, not in the checkpoint's
 `calls`.
 
+## Memory flush before compaction
+
+With `agent.compaction.memoryFlush` on (off by default; ATO-676) and
+`memory.notes.enabled`, a compaction that has a plan first makes one side call
+([flush](../compaction-memory-flush.ts)) for dated observations about the records
+it is about to cover: lines of `YYYY-MM-DD: one short sentence`, at most 12, or
+`NONE`. The input is the same record text the summary reads, or its extractive
+digest when that does not fit the window. The call uses the compaction route,
+provider framing, side slot and `compaction:<sessionId>` usage, with thinking off
+and at most 60 s (or `timeoutMs`, if smaller). Lines without a usable date get the
+newest record's day. The lines are stored as one note through the notes store,
+tagged `observations` and `date-<today>`, with the session and working directory.
+Nothing is added to the session, the visible chat or the transcript. A failure,
+timeout or empty reply is logged and the compaction goes on as before; only a
+cancellation of the compaction itself stops it. An ephemeral turn never flushes.
+The rolling summary (`compaction-rolling.ts`) is unchanged; the flush runs before
+the rolling, extractive or model checkpoint alike.
+
 ## Observability and validation
 
 Session-scoped `compaction_started`, `compaction_progress`, `compaction_completed` and
@@ -295,9 +342,11 @@ Contract tests: [planner/service](../context-compaction.test.ts),
 [extractive/auto service](../context-compaction-extractive.test.ts),
 [extractive builder](../compaction-extractive.test.ts),
 [model summary prompt](../context-compaction-model.test.ts),
+[instructions](../compaction-instructions.test.ts),
 [request after the cut](../compaction-open-request.test.ts),
 [rolling summary](../context-compaction-rolling.test.ts),
 [rolling records](../compaction-rolling.test.ts),
+[memory flush](../compaction-memory-flush.test.ts),
 [rolling state](../../session/session-compaction-rolling.test.ts),
 [finished-turn cuts](../../session/session-compaction.test.ts),
 [HTTP/runtime/persistence](../../http/route-compaction.test.ts),

@@ -29,7 +29,7 @@ export function buildBrowserTabsTool(
   return {
     name: "browser.tabs",
     description:
-      "Manage browser tabs: list, switch, close, or open a new one. Opening a new tab with a non-http(s) URL requires approval (same gate as browser.navigate).",
+      "Manage browser tabs: list, switch, close, or open a new one. Opening a new tab with a non-http(s) URL requires approval (same gate as browser.navigate). `new` with profile \"temp\" opens it in a throwaway logged-out profile of this chat (no cookies or logins, discarded afterwards); profile \"agent\" goes back to the agent's own profile.",
     readonly: false,
     // Tab titles are the sites' own text (ATO-1378).
     untrustedOutput: BROWSER_PAGE_SOURCE,
@@ -54,6 +54,16 @@ export function buildBrowserTabsTool(
       }
       if (typeof rawArgs.url === "string" && rawArgs.url.length > 0) {
         input.url = rawArgs.url;
+      }
+      const profile = rawArgs.profile;
+      if (profile !== undefined) {
+        if (action !== "new") {
+          throw new Error("browser.tabs: `profile` goes only with action new");
+        }
+        if (profile !== "agent" && profile !== "temp") {
+          throw new Error('browser.tabs: `profile` is "agent" or "temp"');
+        }
+        input.profile = profile;
       }
 
       if (action === "new" && input.url !== undefined) {

@@ -10,7 +10,7 @@ import {
   runGitRaw,
   writeRepoFile,
 } from "../os/git/test-helpers.js";
-import { buildGithubTools } from "./github-tools.js";
+import { GITHUB_OFFLINE_PAUSED, buildGithubTools } from "./github-tools.js";
 
 function approveAll(): ApprovalGate {
   const gate = new ApprovalGate({
@@ -101,13 +101,14 @@ function fakeApiWithManyPrs(count: number): GithubApi {
 
 function toolsWith(
   api: GithubApi,
-  opts: { gate?: ApprovalGate; token?: string | null } = {},
+  opts: { gate?: ApprovalGate; token?: string | null; offline?: boolean } = {},
 ): Map<string, ToolDefinition> {
   const list = buildGithubTools({
     approvals: opts.gate ?? approveAll(),
     approvalRequired: true,
     resolveToken: () => (opts.token === undefined ? "ghp_x" : opts.token),
     apiFactory: () => api,
+    isOffline: () => opts.offline === true,
   });
   return new Map(list.map((t) => [t.name, t]));
 }
@@ -147,6 +148,17 @@ describe("github.* tools", () => {
     expect(tools.get("github.pr.create")?.readonly).toBe(false);
     expect(tools.get("github.issue.create")?.readonly).toBe(false);
     expect(tools.get("github.issue.comment")?.readonly).toBe(false);
+  });
+
+  it("every tool refuses with the offline reason while offline mode is on", async () => {
+    const api = fakeApi();
+    const tools = toolsWith(api, { offline: true });
+    for (const tool of tools.values()) {
+      await expect(
+        tool.run({ title: "t", number: 1, body: "b" }, makeCtx(repo)),
+      ).rejects.toThrow(GITHUB_OFFLINE_PAUSED);
+    }
+    expect(GITHUB_OFFLINE_PAUSED).toContain("offline mode is on");
   });
 
   it("every tool refuses with the hub pointer when there is no token", async () => {

@@ -30,12 +30,15 @@ import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import type { LogSink } from "../tracing/structured-logger.js";
+import type { PrometheusRegistry } from "../tracing/prometheus-registry.js";
 import type { McpServerConfig } from "../mcp/mcp-types.js";
 
 import { ApprovalBus } from "./approval-bus.js";
 import { CompletionRegistry } from "./completion-registry.js";
 import { createHttpServer, type HttpServerHandle } from "./http-server.js";
+import type { McpElicitationBroker } from "../mcp/mcp-elicitation-broker.js";
 import { buildRouteTable } from "./route-table.js";
+import type { A2aOptions } from "./route-a2a.js";
 
 /**
  * Inert browser backend — the HTTP tests never actually drive a
@@ -89,8 +92,14 @@ export class FakeBrowserBackend implements BrowserBackend {
 }
 
 export interface HarnessOptions {
-  /** When set, the HTTP server requires this bearer token. */
+  /**
+   * When set, the HTTP server requires this bearer token. Unset, the
+   * harness starts it with `unauthenticated: true`, a test-only seam:
+   * `serve` always has a key.
+   */
   apiKey?: string | null;
+  /** Installed as a metric sink and handed to `GET /metrics`, as serve does (ATO-646). */
+  metricsRegistry?: PrometheusRegistry;
   /**
    * Point `localModels.url` at a specific server so llama health probes
    * are deterministic — e.g. a stub that answers `/health`, or a port
@@ -138,6 +147,10 @@ export interface HarnessOptions {
   webhooks?: Record<string, WebhookConfig>;
   /** MCP servers persisted into `<stateDir>/config.json` before boot. */
   mcpServers?: McpServerConfig[];
+  /** ATO-1492: wired as `onMcpElicitation` and handed to the server, as serve does. */
+  elicitations?: McpElicitationBroker;
+  /** ATO-693: mount the A2A routes, as `serve --a2a` does. */
+  a2a?: A2aOptions | null;
 }
 
 export interface Harness {
@@ -222,11 +235,13 @@ export async function startTestHarness(
     approvalLevel: options.approvalLevel ?? 5,
     handlers: {
       logSinks: options.logSinks,
+      ...(options.metricsRegistry ? { metricSinks: [options.metricsRegistry.sink] } : {}),
       ...(options.onAgentEvent ? { onAgentEvent: options.onAgentEvent } : {}),
       onApprovalRequest: (request) => {
         approvalBus.publish(request);
         options.onApprovalRequest?.(request);
       },
+      ...(options.elicitations ? { onMcpElicitation: options.elicitations } : {}),
     },
     overrides: {
       browserBackend: new FakeBrowserBackend(),
@@ -246,10 +261,16 @@ export async function startTestHarness(
     runtime,
     host: "127.0.0.1",
     port: 0,
-    apiKey: options.apiKey ?? null,
-    routes: buildRouteTable(),
+    apiKey: options.apiKey || null,
+    // The harness's explicit keyless seam; `serve` itself never runs without a key.
+    unauthenticated: !options.apiKey,
+    routes: buildRouteTable({
+      ...(options.metricsRegistry ? { metricsRegistry: options.metricsRegistry } : {}),
+      ...(options.a2a ? { a2a: options.a2a } : {}),
+    }),
     approvalBus,
     completionRegistry,
+    ...(options.elicitations ? { elicitations: options.elicitations } : {}),
   });
 
   return {

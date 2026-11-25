@@ -18,6 +18,7 @@ const CLAUDE_ALIASES: Readonly<Record<string, string>> = {
   "os.web.fetch": "WebFetch",
   "os.web.search": "WebSearch",
   "fusion.delegate": "Task",
+  "subagent.run": "Task",
 };
 
 /**

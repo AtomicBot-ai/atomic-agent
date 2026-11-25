@@ -129,6 +129,48 @@ describe("findUnknownArguments", () => {
   });
 });
 
+describe("findUnknownArguments — snake_case keys (#901)", () => {
+  it("does not refuse timeout_ms for os.shell.run: it is renamed to timeoutMs at dispatch", () => {
+    expect(
+      findUnknownArguments("os.shell.run", { cmd: "ls", timeout_ms: 5000 }),
+    ).toBeNull();
+    expect(
+      findUnknownArguments("os.fs.edit", {
+        path: "a.ts",
+        old_string: "x",
+        new_string: "y",
+      }),
+    ).toBeNull();
+  });
+
+  it("still refuses a snake_case key beside its camelCase twin", () => {
+    expect(
+      findUnknownArguments("os.shell.run", {
+        cmd: "ls",
+        timeoutMs: 1000,
+        timeout_ms: 5000,
+      })!.unknownKeys,
+    ).toEqual(["timeout_ms"]);
+  });
+
+  it("refuses the second of two spellings that both normalise to one key", () => {
+    expect(
+      findUnknownArguments("os.shell.run", {
+        cmd: "ls",
+        timeout_ms: 1000,
+        '"timeoutMs"': 5000,
+      })!.unknownKeys,
+    ).toEqual(['"timeoutMs"']);
+  });
+
+  it("still refuses a snake_case key whose camelCase form is not declared", () => {
+    expect(
+      findUnknownArguments("os.shell.run", { cmd: "ls", no_such_key: 1 })!
+        .unknownKeys,
+    ).toEqual(["no_such_key"]);
+  });
+});
+
 describe("suggestKey", () => {
   it("strips leading dashes and underscores before an exact match", () => {
     expect(suggestKey("-args", ["cmd", "args"])).toBe("args");

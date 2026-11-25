@@ -7,7 +7,8 @@ import {
   ORIGINAL_REQUEST_END_MARKER,
   REQUEST_FOLLOW_UP_MARKER,
 } from "../../prompt/request-section.js";
-import type { DelegateTask } from "./delegate-args.js";
+import type { AppliedAgentProfile, DelegateTask } from "./delegate-args.js";
+import { WORKER_QUESTION_RULE } from "./worker-question.js";
 import {
   renderContractBlock,
   renderContractForTask,
@@ -156,6 +157,21 @@ function quoteContract(contract: DelegateContract, taskId: string): string[] {
 }
 
 /**
+ * A subagent profile's instructions (ATO-566): how this worker works, set
+ * apart from the TASK, which says what it does. A profile that narrowed
+ * the tools says so, so a worker that misses a tool does not hunt for it.
+ */
+function quoteProfile(profile: AppliedAgentProfile): string[] {
+  return [
+    `PROFILE ${profile.name} — how to work on this task; the TASK below says what to do, and the RULES at the end still apply.`,
+    profile.prompt,
+    ...(profile.tools === undefined
+      ? []
+      : [`This profile limits your tools to: ${profile.tools.join(", ")}. If the task needs another tool, say so in your reply instead of working around it.`]),
+  ];
+}
+
+/**
  * Workers of one fan-out run side by side, so a file a sibling writes
  * may not exist yet when this worker looks for it. Measured (ATO-919): a
  * worker re-read a neighbour's not-yet-written file until the loop
@@ -183,12 +199,19 @@ export function renderWorkerBrief(
     workingDir: string;
     originalRequest?: string;
     contract?: DelegateContract;
+    /**
+     * False when nobody approved this fan-out's directories (auto mode,
+     * ATO-1689): writes in the working directory run, commands do not.
+     * Absent or true: the operator's yes covers both.
+     */
+    commandsAuthorised?: boolean;
   },
 ): string {
   const request = options.originalRequest?.trim() ?? "";
   const lines: string[] = [
     `You are a worker agent executing one delegated task inside ${options.workingDir}; you have no memory of the parent conversation.`,
     ``,
+    ...(task.agentProfile ? [...quoteProfile(task.agentProfile), ``] : []),
     ...(request.length > 0 ? [...quoteOriginalRequest(request), ``] : []),
     ...(options.contract ? [...quoteContract(options.contract, task.id), ``] : []),
     `TASK ${task.id}: ${task.title}`,
@@ -204,9 +227,12 @@ export function renderWorkerBrief(
   lines.push(
     ``,
     `RULES:`,
-    `- Work autonomously. Never ask a question and never wait for confirmation — there is no user on this session. If something is ambiguous, take the most reasonable reading and say what you assumed in your reply.`,
+    `- Work autonomously. Never ask a question mid-task and never wait for confirmation — there is no user on this session. If something is ambiguous, take the most reasonable reading and say what you assumed in your reply.`,
+    WORKER_QUESTION_RULE,
     `- \`os.fs.write\` creates any missing parent directories itself, so \`mkdir\` is never needed before a write.`,
-    `- The operator authorised this fan-out to write files AND run commands in the directories the task names, so working there needs no permission: write the files, run the build, run the tests, read the output. Anything outside them is refused, not queued: a tool result carrying "${FUSION_WORKER_APPROVAL_MARKER}" means nobody can approve it here. Stop retrying it and say in your reply exactly what was blocked and where, so the orchestrator can re-send the task with that path named — it cannot run the action for you. If the refusal also says "${FUSION_WORKER_OPERATOR_ONLY_MARKER}" (a dangerous command, the agent's own config or secret files, a mail, a password or a payment), re-sending will not help: do not try another way to do the same thing, just name the exact command or file in your reply as something only the user can run or approve.`,
+    options.commandsAuthorised === false
+      ? `- Writing files inside ${options.workingDir} needs no permission: write them. This fan-out was sent out in auto mode without asking the user, so a command that runs code or changes things (a build, the tests, an install, \`verify.run\`) may be refused. A tool result carrying "${FUSION_WORKER_APPROVAL_MARKER}" means nobody can approve it here: stop retrying it and, in your reply, name the exact command or path that was blocked and why the task needs it, so the orchestrator can send the task out again and the user is asked once.`
+      : `- The operator authorised this fan-out to write files AND run commands in the directories the task names, so working there needs no permission: write the files, run the build, run the tests, read the output. Anything outside them is refused, not queued: a tool result carrying "${FUSION_WORKER_APPROVAL_MARKER}" means nobody can approve it here. Stop retrying it and say in your reply exactly what was blocked and where, so the orchestrator can re-send the task with that path named — it cannot run the action for you. If the refusal also says "${FUSION_WORKER_OPERATOR_ONLY_MARKER}" (a dangerous command, the agent's own config or secret files, a mail, a password or a payment), re-sending will not help: do not try another way to do the same thing, just name the exact command or file in your reply as something only the user can run or approve.`,
     `- Read files only inside ${options.workingDir} and the directories this task writes in; a read anywhere else is refused. Do not search other projects for context — ${request.length > 0 ? "your task, its FILES and the original request are" : "your task and its FILES are"} the context you have.`,
     siblingFilesRule(options.contract !== undefined),
     BROWSER_CODE_RULE,

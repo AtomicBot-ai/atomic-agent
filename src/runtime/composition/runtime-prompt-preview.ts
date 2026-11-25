@@ -11,10 +11,11 @@ import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
 import type { ProfileStore } from "../../memory/profile-store.js";
 import { SessionNotFoundError } from "../session-not-found-error.js";
 import type { ResolvedModelMode } from "../../llm/model-mode.js";
-import { reconcileCloudSkills } from "../../session/workspace-context.js";
+import { reconcileCloudSkills, type WorkspacePrepareOptions } from "../../session/workspace-context.js";
+import { isIncognitoSession } from "../../session/incognito.js";
 
 export interface RuntimePromptPreviewDependencies {
-  prepareWorkspace?: (session: SessionState, cloud: boolean) => import("../../session/workspace-context.js").SessionWorkspace;
+  prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal, options?: WorkspacePrepareOptions) => import("../../session/workspace-context.js").SessionWorkspace;
   workingDir: string;
   sessionStore: Pick<SessionStore, "load">;
   profileStore: Pick<ProfileStore, "listForPrompt">;
@@ -66,14 +67,17 @@ export function createRuntimePromptPreview(config: AtomicAgentConfig, deps: Runt
 export function buildRuntimePromptInput(config: AtomicAgentConfig, deps: RuntimePromptPreviewDependencies, session: SessionState, userMessage?: string): BuildPromptInput {
     const transport = deps.resolveToolTransport(session.id);
     const modelMode = deps.resolveModelMode?.(session.id);
-    const workspace = modelMode?.mode === "cloud" ? deps.prepareWorkspace?.(session, true) : undefined;
+    const contextWindow = deps.resolveCatalogContextWindow(session.id);
+    // The same window the step passes, so the preview budgets instructions as the real turn does (ATO-312).
+    const workspace = modelMode?.mode === "cloud" ? deps.prepareWorkspace?.(session, true, undefined, { contextWindow }) : undefined;
     if (workspace) session = reconcileCloudSkills(session, workspace);
     const descriptors = deps.effectiveToolDescriptors();
     return {
       ...(workspace ? { workspace } : {}),
       session,
       ...(modelMode ? { modelMode } : {}),
-      ...(modelMode?.mode === "cloud" && transport === "native_tools" && deps.resolveToolSchemaTokens
+      // Any model mode: a local native-tools link sends the schemas too (ATO-1678).
+      ...(transport === "native_tools" && deps.resolveToolSchemaTokens
         ? { toolSchemaTokens: deps.resolveToolSchemaTokens(session.id, descriptors) } : {}),
       // Called, not read: main made the descriptors late-bound so a live MCP
       // add/remove is visible without a restart. The preview wants the same
@@ -85,9 +89,10 @@ export function buildRuntimePromptInput(config: AtomicAgentConfig, deps: Runtime
       profile: deps.getLiveProfile(),
       toolTransport: transport,
       suppressReasoningPrefill: transport === "native_tools",
-      contextWindow: deps.resolveCatalogContextWindow(session.id),
+      contextWindow,
       ...(deps.profileWindowApplies ? { profileWindowApplies: deps.profileWindowApplies(session.id) } : {}),
-      ...(config.memory.profile.enabled
+      // None in an incognito chat (ATO-586, decision 8), as on a real turn.
+      ...(config.memory.profile.enabled && !isIncognitoSession(session)
         ? { profileFacts: deps.profileStore.listForPrompt() }
         : {}),
       ...(userMessage !== undefined

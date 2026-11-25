@@ -9,6 +9,7 @@ import {
   isSoloRegardlessOfApproval,
   listApprovalCategoriesByTool,
   listKnownToolResourceClasses,
+  memoryReadOnlyToolFilter,
   resourceClassFor,
   setDynamicResourceClassResolver,
   type ResourceClass,
@@ -61,18 +62,21 @@ describe("gated-call approval categories", () => {
     // verify.run starts commands too: a dangerous one waits for level 5 (ATO-1266).
     expect(gatedCallRunsUnattended("verify.run", { level: 4 })).toBe(false);
     expect(gatedCallRunsUnattended("verify.run", { level: 5 })).toBe(true);
-    expect(gatedCallRunsUnattended("os.http.request", { level: 3 })).toBe(true);
+    // A POST asks as http_write until level 4 (ATO-1462).
+    expect(gatedCallRunsUnattended("os.http.request", { level: 3 })).toBe(false);
+    expect(gatedCallRunsUnattended("os.http.request", { level: 4 })).toBe(true);
     expect(gatedCallRunsUnattended("os.email.send", { level: 4 })).toBe(false);
   });
 
   it("keeps os.screen.* in one serial class; input asks as screen_control, the capture as screen_capture", () => {
-    for (const name of ["os.screen.capture", "os.screen.click", "os.screen.type", "os.screen.key"]) {
+    for (const name of ["os.screen.capture", "os.screen.click", "os.screen.type", "os.screen.key", "os.screen.elements", "os.screen.press"]) {
       expect(resourceClassFor(name), name).toBe("approval_gated");
     }
     expect(approvalCategoriesFor("os.screen.capture")).toEqual(["screen_capture"]);
+    expect(approvalCategoriesFor("os.screen.elements")).toEqual(["screen_capture"]);
     expect(gatedCallRunsUnattended("os.screen.capture", { level: 2 })).toBe(false);
     expect(gatedCallRunsUnattended("os.screen.capture", { level: 3 })).toBe(true);
-    for (const name of ["os.screen.click", "os.screen.type", "os.screen.key"]) {
+    for (const name of ["os.screen.click", "os.screen.type", "os.screen.key", "os.screen.press"]) {
       expect(approvalCategoriesFor(name)).toEqual(["screen_control"]);
       expect(gatedCallRunsUnattended(name, { level: 3 }), name).toBe(false);
       expect(gatedCallRunsUnattended(name, { level: 4 }), name).toBe(true);
@@ -118,6 +122,12 @@ describe("gated-call approval categories", () => {
     expect(gatedCallRunsUnattended("never.heard.of.this", { level: 5 })).toBe(
       false,
     );
+  });
+
+  it("keeps subagent.run solo at every level, like the fan-out (ATO-1670)", () => {
+    expect(resourceClassFor("subagent.run")).toBe("approval_gated");
+    expect(isSoloRegardlessOfApproval("subagent.run")).toBe(true);
+    expect(gatedCallRunsUnattended("subagent.run", { level: 5 })).toBe(false);
   });
 
   it("treats a gated MCP tool as category `other`", () => {
@@ -166,6 +176,9 @@ describe("tool-resource-class", () => {
       "os.fs.patch",
       "os.fs.restore",
       "os.fs.move",
+      "os.fs.write_pptx",
+      "os.fs.docx",
+      "os.fs.xlsx",
       "os.fs.archive.extract",
       "os.git.init",
       "os.git.add",
@@ -260,5 +273,24 @@ describe("bookkeeping tools (a reply batched only with these ends the turn)", ()
     ]) {
       expect(isBookkeepingTool(name), name).toBe(false);
     }
+  });
+});
+
+describe("memoryReadOnlyToolFilter (skill eval turns)", () => {
+  it("hides every memory write tool and keeps the recalls", () => {
+    const filter = memoryReadOnlyToolFilter();
+    for (const name of ["memory.notes.store", "memory.notes.forget", "memory.profile.set", "memory.profile.remove"]) {
+      expect(filter(name), name).toBe(false);
+    }
+    for (const name of ["memory.notes.recall", "memory.lessons.recall", "memory.profile.list", "os.fs.read", "reply"]) {
+      expect(filter(name), name).toBe(true);
+    }
+  });
+
+  it("composes with the caller's own filter", () => {
+    const filter = memoryReadOnlyToolFilter((name) => name !== "os.fs.read");
+    expect(filter("os.fs.read")).toBe(false);
+    expect(filter("memory.notes.store")).toBe(false);
+    expect(filter("memory.notes.recall")).toBe(true);
   });
 });

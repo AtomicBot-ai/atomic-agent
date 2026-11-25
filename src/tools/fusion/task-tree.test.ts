@@ -9,6 +9,7 @@ import {
   extractSplitProposal,
   hasSplitProposal,
   renderSplitInstructions,
+  treeLimitBreach,
   validateSplitProposal,
   type ExpandSplitsDeps,
   type SplitLimits,
@@ -267,6 +268,30 @@ describe("expandSplits", () => {
     ]);
   });
 
+  it("puts the children's changed files on the closed parent row (ATO-1700)", async () => {
+    const { deps } = setup();
+    const withFiles: ExpandSplitsDeps["runChildren"] = async (tasks) =>
+      tasks.map((t) =>
+        row(t.id, "ok", "done", {
+          diffstats: [
+            { path: "/p/shared.ts", added: 2, removed: 1 },
+            { path: `/p/${t.id.split("/")[1]}.ts`, added: 5, removed: 0 },
+          ],
+        }),
+      );
+    const [out] = await expandSplits(
+      [PARENT],
+      [row("build", "ok", fence({ tasks: TWO }), { diffstats: [{ path: "/p/plan.md", added: 1, removed: 0 }] })],
+      { ...deps, runChildren: withFiles },
+    );
+    expect(out?.diffstats).toEqual([
+      { path: "/p/plan.md", added: 1, removed: 0 },
+      { path: "/p/shared.ts", added: 4, removed: 2 },
+      { path: "/p/engine.ts", added: 5, removed: 0 },
+      { path: "/p/ui.ts", added: 5, removed: 0 },
+    ]);
+  });
+
   it("keeps a child's long reply when the parent has no files, and cuts it when it has", async () => {
     const long = "x".repeat(3000);
     const longChildren: ExpandSplitsDeps["runChildren"] = async (tasks) =>
@@ -416,5 +441,47 @@ describe("expandSplits", () => {
       deps,
     );
     expect(spy.mock.calls[0]?.[1]?.inputs).toEqual(["sales.csv"]);
+  });
+});
+
+describe("treeLimitBreach (ATO-1670)", () => {
+  const base = { depth: 0, maxDepth: 1, nodes: 0, maxNodes: 24, adding: 4 };
+
+  it("passes below both caps", () => {
+    expect(treeLimitBreach(base)).toBeUndefined();
+    expect(treeLimitBreach({ ...base, nodes: 20, adding: 4 })).toBeUndefined();
+  });
+
+  it("refuses at the depth cap before looking at the node count", () => {
+    expect(treeLimitBreach({ ...base, depth: 1 })).toEqual({
+      kind: "depth",
+      depth: 1,
+      maxDepth: 1,
+    });
+    expect(treeLimitBreach({ ...base, depth: 1, nodes: 99 })?.kind).toBe("depth");
+  });
+
+  it("refuses a node count over the cap and says the total", () => {
+    expect(treeLimitBreach({ ...base, nodes: 21, adding: 4 })).toEqual({
+      kind: "nodes",
+      total: 25,
+      maxNodes: 24,
+    });
+  });
+
+  it("is the check canSplitAt makes: depth below the cap and room for a minimal split", () => {
+    const tree = new TaskTreeState({ maxDepth: 2, maxNodes: 3 }, "m");
+    tree.addRoots(
+      [{ id: "a", title: "a", instructions: "x" }],
+      undefined,
+    );
+    // 1 node + 2 more = 3: fits.
+    expect(tree.canSplitAt(1)).toBe(true);
+    tree.addRoots(
+      [{ id: "b", title: "b", instructions: "x" }],
+      undefined,
+    );
+    // 2 nodes + 2 more = 4 > 3.
+    expect(tree.canSplitAt(1)).toBe(false);
   });
 });

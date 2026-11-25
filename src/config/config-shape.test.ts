@@ -63,6 +63,8 @@ describe("config shape map (ATO-764)", () => {
     expect(knownConfigKeys("").has("llm")).toBe(true);
     expect(knownConfigKeys("").has("telemetry")).toBe(true);
     expect(knownConfigKeys("agent").has("approvalRequired")).toBe(true);
+    // Written only when set (ATO-54): known, so removing it sticks.
+    expect(knownConfigKeys("agent").has("personas")).toBe(true);
     expect(knownConfigKeys("discord").has("ownerUserId")).toBe(true);
     expect(knownConfigKeys("memory").has("profile")).toBe(true);
     expect(knownConfigKeys("memory").has("futureKey")).toBe(false);
@@ -87,6 +89,9 @@ describe("config shape map (ATO-764)", () => {
       expect(fusion.has(key)).toBe(true);
     }
     expect(fusion.has("futureKey")).toBe(false);
+    // ATO-1667: known under runMode, and a map whose removed entries stay removed.
+    expect(knownConfigKeys("llm.runMode").has("agentProfiles")).toBe(true);
+    expect(configBranchKind("llm.runMode.agentProfiles")).toBe("dictionary");
     expect(knownConfigKeys("llm").has("providers")).toBe(true);
     expect(knownConfigKeys("llm.fallback").has("chain")).toBe(true);
   });

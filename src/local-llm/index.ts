@@ -38,7 +38,25 @@ export {
   probeMachineForModels,
   type ProbeMachineInput,
 } from "./backend/machine-for-models.js";
+export { hostRamGb, marketedRamGb } from "./backend/host-ram.js";
 export {
+  estimateMemoryBandwidth,
+  type MemoryBandwidth,
+} from "./backend/memory-bandwidth.js";
+export {
+  forecastDecodeSpeed,
+  formatSpeedEstimate,
+  pickBestQuant,
+  quantBitsFromName,
+  quantFitFor,
+  rateQuant,
+  type QuantFit,
+  type QuantFitTier,
+  type QuantRating,
+  type SpeedForecast,
+} from "./catalog/quant-fit.js";
+export {
+  probeConfiguredMachine,
   readRecommendSnapshot,
   startModelUpgrade,
   type RecommendSnapshot,
@@ -50,6 +68,7 @@ export {
   resolvePlatformAsset,
   UnsupportedPlatformError,
   WINDOWS_ARM64_NO_BACKEND_MESSAGE,
+  wantedAssetForInstalled,
   type PlatformAsset,
 } from "./backend/platform-assets.js";
 
@@ -158,6 +177,15 @@ export {
   writeDownloadNotify,
   type DownloadNotifyChannel,
 } from "./downloads/download-notify-file.js";
+export {
+  cancelDownloadJob,
+  downloadJobPartialPaths,
+  pauseDownloadJob,
+  resumeDownloadJob,
+  type DownloadControlOptions,
+  type DownloadControlResult,
+  type ResumeDownloadResult,
+} from "./downloads/download-job-control.js";
 export {
   downloadWorkerArgs,
   looksLikeDownloadWorker,
@@ -282,11 +310,19 @@ export {
   type EmbeddingMemoryVerdict,
 } from "./server/embedding-memory-gate.js";
 export {
+  CHAT_START_PENDING_FILE,
+  chatStartPending,
+  markChatStartPending,
+  withChatStartPending,
+} from "./server/chat-start-pending.js";
+export {
   explainManagedEngineLiveness,
   readManagedEngineLiveness,
+  readManagedModelProcess,
   type ManagedEngineLiveness,
   type ManagedEngineLivenessReason,
   type ManagedEngineLivenessReport,
+  type ManagedModelProcess,
 } from "./server/engine-liveness.js";
 export {
   classifyPrefixReuse,
@@ -326,6 +362,11 @@ export {
 } from "./server/context-growth.js";
 export { readLogTail, type LogTailResult } from "./server/log-tail.js";
 export {
+  classifyEngineExitReason,
+  readEngineExitReason,
+  type EngineExitReason,
+} from "./server/engine-exit-reason.js";
+export {
   classifyLocalFault,
   describeServerFault,
   type LocalFaultTag,
@@ -343,6 +384,11 @@ export {
   type ReclaimOutcome,
   type ReclaimRequest,
 } from "./server/port-reclaim.js";
+export {
+  loraAdapterForModel,
+  loraAdapterKey,
+  type LoraAdapter,
+} from "./server/lora-adapter.js";
 
 export {
   huggingFaceToken,

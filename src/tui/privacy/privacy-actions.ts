@@ -1,4 +1,6 @@
 import type { SessionGrantsSnapshot } from "../../approval/approval-gate.js";
+import type { OfflinePanelState } from "./offline-mode.js";
+import type { ShieldPanelState } from "./privacy-shield.js";
 
 /**
  * Reducer actions specific to the Privacy tab. The orchestrator and the
@@ -11,6 +13,10 @@ export type PrivacyAction =
       type: "privacy_synced";
       analyticsEnabled: boolean;
       sessionGrants: SessionGrantsSnapshot;
+      /** Offline mode snapshot; omitted by callers that do not read it. */
+      offline?: OfflinePanelState;
+      /** Privacy Shield snapshot (ATO-1082); omitted by callers that do not read it. */
+      shield?: ShieldPanelState;
     }
   | { type: "privacy_action_started" }
   | { type: "privacy_action_settled"; message?: string; error?: string }

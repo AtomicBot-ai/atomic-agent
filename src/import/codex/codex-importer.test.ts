@@ -158,4 +158,21 @@ describe("CodexImporter", () => {
       ["secrets", "skipped"],
     ]);
   });
+
+  // W2: every session item carries the folder it ran in, for grouping.ts.
+  it("tags each session with the folder it ran in", async () => {
+    seedAll();
+    const report = await buildImporter().run({
+      options: resolveCodexOptions({ exclude: ["skills", "memory"] }),
+      execute: false,
+      overwrite: false,
+    });
+    const sessions = report.items.filter(
+      (item) => item.kind === "sessions" && item.destination,
+    );
+    expect(sessions.length).toBeGreaterThan(0);
+    for (const item of sessions) {
+      expect(item.group).toEqual({ key: "/work", name: "work", cwd: "/work" });
+    }
+  });
 });

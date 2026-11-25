@@ -18,6 +18,7 @@ import type { McpManager } from "../../mcp/mcp-manager.js";
 import type { TelegramChannel } from "../../channels/telegram/telegram-channel.js";
 import type { DiscordChannel } from "../../channels/discord/discord-channel.js";
 import type { SwarmRegistry } from "../../channels/swarm/swarm-registry.js";
+import type { ChannelRegistry } from "../../channels/channel-registry.js";
 import type { AnalyticsClient } from "../../analytics/analytics-client.js";
 import type { SentryClient } from "../../error-reporting/sentry-client.js";
 
@@ -31,6 +32,8 @@ export interface RuntimeLifecycleResources {
   readonly pendingSessionNamings: Set<AbortController>;
   /** In-flight `/enhance` passes (`runtime.enhancePrompt`), aborted with naming. */
   readonly pendingPromptEnhances?: Set<AbortController>;
+  /** In-flight `/btw` side questions (`runtime.askSideQuestion`), aborted with naming. */
+  readonly pendingSideQuestions?: Set<AbortController>;
   readonly turnsInFlight: Pick<TurnsInFlight, "settleCancelled">;
   readonly browserBackend: Pick<BrowserBackend, "shutdown">;
   readonly mcpManager: Pick<McpManager, "shutdown">;
@@ -47,12 +50,19 @@ export interface RuntimeLifecycleResources {
   readonly telegramChannelForShutdown: Pick<TelegramChannel, "stop"> | null;
   readonly discordChannelForShutdown: Pick<DiscordChannel, "stop"> | null;
   readonly swarmForShutdown: Pick<SwarmRegistry, "stopAll"> | null;
+  /** Catalog adapters (ATO-1169); the primaries above are skipped here. */
+  readonly channelsForShutdown?: Pick<ChannelRegistry, "stopAll"> | null;
   /** Unwatch of the plugin MCP live stop (ATO-1407); cleared before the manager shuts down. */
   readonly pluginMcpWatch?: (() => void) | null;
   readonly consolidatorJob: Pick<ConsolidatorJob, "stop"> | null;
   readonly taskStore: Pick<TaskStore, "close">;
   readonly analytics: Pick<AnalyticsClient, "shutdown"> | null;
   readonly errorReporter: Pick<SentryClient, "shutdown"> | null;
+  /**
+   * OpenTelemetry span export (ATO-496): ends the turns still open and
+   * sends what is queued, bounded. Never rejects.
+   */
+  readonly traceExport?: { shutdown(): Promise<void> } | null;
 }
 
 /** Owns shutdown state and the existing ordered teardown, including its bounded grace. */
@@ -80,6 +90,21 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
     }
   };
   let shutdownCalled = false;
+  /**
+   * ATO-1688: the host has begun to stop (`beginShutdown`). `serve` drops its connections, which aborts the
+   * turns on them, before it calls `shutdown`: a turn that unwound in
+   * that moment wrote its own end as a person's Stop (`cancelled`, with
+   * the error it had before), over nothing yet, and the chat reopened
+   * with no word that its reply had been cut off by the quit and no
+   * Continue. A chat turn that ends cancelled while this is set ends as
+   * interrupted instead (`runtime-turn-service.ts`). `shutdown` alone
+   * does not set it: a host that stops its own turn and then shuts down
+   * (the TUI's quit) keeps that turn's own end.
+   */
+  let stopping = false;
+  const beginShutdown = (): void => {
+    stopping = true;
+  };
   const shutdown = async (): Promise<void> => {
     if (shutdownCalled) return;
     shutdownCalled = true;
@@ -128,6 +153,8 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
     // And for a prompt rewrite nobody will read once the host is gone.
     for (const enhance of resources.pendingPromptEnhances ?? []) enhance.abort();
     resources.pendingPromptEnhances?.clear();
+    for (const side of resources.pendingSideQuestions ?? []) side.abort();
+    resources.pendingSideQuestions?.clear();
     // And for the embedding backfill: abort its in-flight embed now, and
     // wait for it (below) before the notes store it writes into closes.
     const backfillStopped = resources.embeddingBackfill?.stop().catch(() => {});
@@ -161,6 +188,10 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
         });
       }
     }
+    // Slack, Signal and the other catalog adapters (ATO-1169). Telegram
+    // and Discord were stopped above in their own order; `stopAll` logs
+    // and swallows each adapter's failure itself.
+    await resources.channelsForShutdown?.stopAll(new Set(["telegram", "discord"]));
     try {
       resources.pluginMcpWatch?.();
     } catch {
@@ -267,7 +298,18 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
     if (resources.errorReporter) {
       await resources.errorReporter.shutdown();
     }
+    // Last: the turns interrupted above have written their final rows.
+    try {
+      await resources.traceExport?.shutdown();
+    } catch {
+      // best-effort: telemetry never blocks the exit
+    }
   };
 
-  return { shutdown, isShutdown: () => shutdownCalled };
+  return {
+    shutdown,
+    beginShutdown,
+    isShutdown: () => shutdownCalled,
+    isStopping: () => stopping,
+  };
 }

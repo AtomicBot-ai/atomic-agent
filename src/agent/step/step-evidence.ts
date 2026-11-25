@@ -146,11 +146,10 @@ export function prepareStepDispatch(
   const unregistered: string[] = [];
   for (const call of calls) {
     if (deps.registry.has(call.tool)) continue;
-    // A near miss on the separator is not a missing tool. Qualified
-    // names travel over the OpenAI wire as `__` and a model writing the
-    // escaped form from memory lands on `fusion_delegate` — every
-    // character right, one underscore short. Resolve the obvious forms
-    // before treating the name as unknown.
+    // A near miss on the separator is not a missing tool. The step's
+    // policy already resolved such names before any check read them
+    // (`resolveBatchToolNames`, ATO-1674); this is the backstop for a
+    // batch that did not come through it.
     const resolved = resolveToolName(call.tool, deps.registry);
     if (resolved === null) {
       unregistered.push(call.tool);

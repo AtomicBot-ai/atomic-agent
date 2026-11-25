@@ -1,9 +1,14 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { SkillRegistry } from "../../skills/skill-registry.js";
+import type { SkillRecord } from "../../skills/skill-loader.js";
 import { workspaceSkillBody } from "../../skills/workspace-skills.js";
 
-export function buildSkillViewTool(registry: SkillRegistry): ToolDefinition {
+export function buildSkillViewTool(
+  registry: SkillRegistry,
+  /** Called after a body was read, for the skill usage ledger (ATO-580). */
+  onSkillUsed?: (record: SkillRecord) => void,
+): ToolDefinition {
   return {
     name: "skill.view",
     description:
@@ -17,6 +22,7 @@ export function buildSkillViewTool(registry: SkillRegistry): ToolDefinition {
       const scoped = ctx.workspaceSkills?.assertAvailable(name);
       const record = scoped?.record ?? registry.get(name);
       const body = scoped ? workspaceSkillBody(scoped) : await registry.readBody(name);
+      onSkillUsed?.(record);
       return compressToolResult(
         {
           tool: "skill.view",

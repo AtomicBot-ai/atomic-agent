@@ -1,4 +1,5 @@
 import { emitConfigNoticeOnce } from "./config-primitives.js";
+import { SUBSCRIPTION_OAUTH_SERVICES } from "./provider-auth-mode.js";
 
 /**
  * ATO-1241 — reading `llm.providers` written by a newer build.
@@ -51,6 +52,16 @@ export function unknownProviderReason(
     typeof cli === "string" && cli.length > 0 && !knownClis.includes(cli)
   ) {
     return `subscription CLI ${JSON.stringify(cli)}`;
+  }
+  // ATO-1448: a sign-in service a newer build added is set aside the
+  // same way, rather than failing the whole file.
+  const service = (obj.subscriptionOauth as { service?: unknown } | null | undefined)?.service;
+  if (
+    obj.subscriptionOauth !== null && typeof obj.subscriptionOauth === "object" &&
+    typeof service === "string" && service.length > 0 &&
+    !(SUBSCRIPTION_OAUTH_SERVICES as readonly string[]).includes(service)
+  ) {
+    return `subscription sign-in service ${JSON.stringify(service)}`;
   }
   return null;
 }
