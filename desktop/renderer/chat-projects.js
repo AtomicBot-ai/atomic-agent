@@ -473,6 +473,7 @@ function projectsSidebarHTML(groups, folders) {
           + '<span class="sb-fchev">' + ic(shut ? 'chevR' : 'chevD') + '</span>'
           + '<span class="sb-fic">' + (folder && typeof folderGlyphHTML === 'function' ? folderGlyphHTML(g.item, g.rows) : ic('folder')) + '</span>'
           + '<span class="sb-fname">' + esc(g.name) + '</span>'
+          + (shut && typeof groupBusyDotHTML === 'function' ? groupBusyDotHTML(g.rows) : '')   // ATO-1688
           + (g.rows.length ? '<span class="ct tnum">' + g.rows.length + '</span>' : '')
           + (folder || !g.item.folder || typeof worktreeHeadButton !== 'function' ? '' : worktreeHeadButton(g.id))   // ATO-576 (chat-worktree.js)
           + '<span class="sesmore iconbtn" data-act="pchat:' + esc(g.id) + '" title="New chat in this project" aria-label="New chat in this project" role="button">' + ic('plus') + '</span>'
