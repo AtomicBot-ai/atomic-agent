@@ -122,11 +122,14 @@ test('a server on another computer does not count the shared OpenAI key as its k
   assert.deepEqual(Array.from(c.llmKeyEnvNames({id:'custom-192-168-1-20-8080', kind:'openai-compatible', baseUrl:'http://192.168.1.20:8080'})), []);
   // Its own variable still counts.
   assert.deepEqual(Array.from(c.llmKeyEnvNames({id:'lan', kind:'openai-compatible', baseUrl:'http://192.168.1.20:8080', apiKeyEnvVar:'LAN_KEY'})), ['LAN_KEY']);
-  // A cloud or loopback compat endpoint keeps the shared variables.
-  for (const baseUrl of ['https://api.example.com/v1', 'http://127.0.0.1:1234']) {
+  // OpenAI itself or a loopback compat endpoint keeps the shared variables.
+  for (const baseUrl of ['https://api.openai.com/v1', 'http://127.0.0.1:1234']) {
     assert.deepEqual(Array.from(c.llmKeyEnvNames({id:'x', kind:'openai-compatible', baseUrl})),
       ['OPENAI_COMPAT_API_KEY', 'OPENAI_API_KEY', 'ATOMIC_AGENT_OPENAI_API_KEY'], baseUrl);
   }
+  // Any other cloud address keeps only the compat variable (ATO-1703).
+  assert.deepEqual(Array.from(c.llmKeyEnvNames({id:'x', kind:'openai-compatible', baseUrl:'https://api.example.com/v1'})),
+    ['OPENAI_COMPAT_API_KEY']);
   // The smoke driver uses the app's rule, not its own list.
   const main = readFileSync(new URL('../main/main.ts', import.meta.url), 'utf8');
   const k = main.indexOf('const keyNames = (p: Provider)');

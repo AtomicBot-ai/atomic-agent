@@ -14,6 +14,7 @@ import {
   stopsMark,
   supersedeBringUp,
 } from "./backend-switch.js";
+import { markChatStartPending } from "./chat-start-pending.js";
 import { cpuOnlyLogLine, cpuOnlyWorthSaying, type CpuOnlyNotice } from "./cpu-only.js";
 import {
   DaemonSupervisor,
@@ -186,11 +187,19 @@ async function probe(): Promise<"up" | "down"> {
 
 /** The background bring-up a launch makes (backend-switch): in the daemon's turn, and ended at once by a stop or a switch. */
 async function restart(): Promise<{ ok: boolean; superseded?: boolean; error?: string }> {
-  const modelId = readConfig()?.localModels?.managed?.modelId ?? "";
-  const r = await bringUpAtLaunch(modelId);
-  if (r.daemon === "started" || r.daemon === "untouched") return { ok: true };
-  if (r.daemon === "superseded") return { ok: false, superseded: true };
-  return { ok: false, error: r.error ?? (r.daemon === "skipped" ? "the model is not on disk" : `the start ended as ${r.daemon}`) };
+  const cfg = readConfig();
+  const modelId = cfg?.localModels?.managed?.modelId ?? "";
+  // ATO-421: from here until the start ends, a turn waiting on the refused
+  // port reads the restart as on its way instead of ending after its grace.
+  const done = markChatStartPending(managedDataDir(cfg?.localModels?.managed?.dataDirOverride ?? null));
+  try {
+    const r = await bringUpAtLaunch(modelId);
+    if (r.daemon === "started" || r.daemon === "untouched") return { ok: true };
+    if (r.daemon === "superseded") return { ok: false, superseded: true };
+    return { ok: false, error: r.error ?? (r.daemon === "skipped" ? "the model is not on disk" : `the start ended as ${r.daemon}`) };
+  } finally {
+    done();
+  }
 }
 
 /**

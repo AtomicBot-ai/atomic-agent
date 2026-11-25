@@ -6170,6 +6170,9 @@ function renderSettings() {
   // Item 36: the nav scrolls when the window is too short for its rows, and
   // the same rebuild would put it back at the top on every poll.
   const keepNav = old ? ((old.querySelector('.setmenu') || {}).scrollTop || 0) : 0;
+  // ATO-1752: the same for Connections' pane switch when it scrolls, on the same pane.
+  const keepSubseg = old && SETTINGS_SCROLL.pane === settingsPaneId(S.settingsPane)
+    ? ((old.querySelector('.settb .set-subseg') || {}).scrollLeft || 0) : null;
   // ATO-318: a field or button the operator is on inside the pane keeps the focus (and a field its caret) through the rebuild.
   const keepFocus = old && SETTINGS_SCROLL.pane === settingsPaneId(S.settingsPane) ? paneFocusKeep(old.querySelector('.setbody')) : null;
   if (old) old.remove();
@@ -6202,6 +6205,17 @@ function renderSettings() {
     + '</div>'
     + '</div>';
   $('#window').appendChild(el);
+  /* ATO-1752: Connections' pane switch scrolls inside the header when it
+     is wider than the room left beside the title, the status line and Done
+     (six panes with their marks no longer fit a narrower window); the
+     open pane's tab is brought into view, and a rebuild on the same pane
+     keeps where it was scrolled. */
+  const subseg = el.querySelector('.settb .set-subseg');
+  const subOn = subseg && subseg.querySelector('button.on');
+  if (subOn && subseg.scrollWidth > subseg.clientWidth) {
+    subseg.scrollLeft = keepSubseg !== null ? keepSubseg
+      : Math.max(0, subOn.offsetLeft + subOn.offsetWidth - subseg.clientWidth);
+  }
   // Composio: a half-typed key goes back into its field (the markup carries it empty) before the focus and caret do.
   composioKeyRestore();
   // Item 36: back where the nav was; on a new section or a fresh opening, its row is brought into view.
@@ -7940,7 +7954,7 @@ function act(a) {
                            f.collapsed = !f.collapsed; saveFolders(); render(); nameVisibleSessions(); return; }
   if (k === 'fnew')      { close(); folderCreate(v || null); return; }
   // ATO-1146: projects (chat-projects.js): New project, fold, remove.
-  if (k === 'pnew' || k === 'ptoggle' || k === 'pdelask' || k === 'pdel' || k === 'pedit' || k === 'psave' || k === 'pmore') { close(); projectAct(k, v); return; }
+  if (k === 'pnew' || k === 'ptoggle' || k === 'pdelask' || k === 'pdel' || k === 'pedit' || k === 'psave' || k === 'pmore' || k === 'pchat') { close(); projectAct(k, v); return; }
   // W2 QA: the New project sheet's own buttons keep it open.
   if (k === 'pnewpick' || k === 'pnewclear' || k === 'pnewsave') { projectAct(k, v); return; }
   // ATO-576: a project's chat in its own branch, and Remove in Edit project's worktree list (chat-worktree.js).
@@ -24219,12 +24233,13 @@ function chatImage(path) {
 }
 
 /** The paths a new reply or an opened chat names: a picture whose file changed
-    since it was read is read again, one that failed is tried again. */
+    since it was read is read again, one that failed is tried again.
+    ATO-1729: two replies may name the same file, so each path is checked once. */
 async function revalidateChatImages(paths) {
-  const list = (paths || []).filter((p) => CHAT_IMG.has(p) && CHAT_IMG.get(p).state !== 'loading');
+  const list = [...new Set(paths || [])].filter((p) => CHAT_IMG.has(p) && CHAT_IMG.get(p).state !== 'loading');
   if (!list.length) return;
   let changed = false;
-  for (const p of list) if (CHAT_IMG.get(p).state === 'fail') { CHAT_IMG.delete(p); changed = true; }
+  for (const p of list) if (CHAT_IMG.get(p)?.state === 'fail') { CHAT_IMG.delete(p); changed = true; }
   const held = list.filter((p) => CHAT_IMG.has(p));
   if (held.length && BR && BR.statPaths) {
     for (let i = 0; i < held.length; i += ATTACH_STAT_CHUNK) {
@@ -27601,13 +27616,27 @@ function llmEmbCfg() { return llmLocalModels().embeddings || {}; }
    (ATO-1066, agent-cli.ts readsSharedCompatKey), so they do not count as
    its key either. */
 function llmKeyEnvNames(p) {
-  if (p.apiKeyEnvVar) return [p.apiKeyEnvVar];
+  /* ATO-1703 (agent-cli.ts mayReceiveOpenAiKey): the OpenAI variables only go to
+     OpenAI's own API, literal loopback, or a compat entry with no address. */
+  const openAiOk = (() => {
+    if (!p.baseUrl) return !p.kind || p.kind === 'openai-compatible' || p.kind === 'qwen-openai-compatible';
+    try {
+      const u = new URL(p.baseUrl);
+      if (u.origin === 'https://api.openai.com') return true;
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+      const h = u.hostname.toLowerCase();
+      return h === 'localhost' || h === '[::1]' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+    } catch (_) { return false; }
+  })();
+  if (p.apiKeyEnvVar) {
+    return (p.apiKeyEnvVar === 'OPENAI_API_KEY' || p.apiKeyEnvVar === 'ATOMIC_AGENT_OPENAI_API_KEY') && !openAiOk ? [] : [p.apiKeyEnvVar];
+  }
   if (p.kind === 'openrouter') return ['OPENROUTER_API_KEY'];
   if (p.kind === 'aimlapi') return ['AIMLAPI_API_KEY'];
   if (p.kind === 'gemini') return ['GEMINI_API_KEY'];
   if (p.kind === 'openai-compatible' || p.kind === 'qwen-openai-compatible') {
     if (typeof lanIsOtherComputerUrl === 'function' && lanIsOtherComputerUrl(p.baseUrl)) return [];
-    return ['OPENAI_COMPAT_API_KEY', 'OPENAI_API_KEY', 'ATOMIC_AGENT_OPENAI_API_KEY'];
+    return openAiOk ? ['OPENAI_COMPAT_API_KEY', 'OPENAI_API_KEY', 'ATOMIC_AGENT_OPENAI_API_KEY'] : ['OPENAI_COMPAT_API_KEY'];
   }
   return [];
 }
