@@ -53,4 +53,6 @@ test('the renderer wires it: loaded before renderer.js, stored on the started li
   assert.match(src, /fzBrief: fzb\.brief, fzNote: fzb\.modelNote/);
   assert.match(src, /t\.closest\('\[data-fzbrief\]'\)/);
   assert.match(src, /fzbHTML\(m, /);
+  // Two started lines that read the same but carry different briefs are not folded into one.
+  assert.match(src, /items\[j \+ 1\]\.fzBrief === m\.fzBrief\) j\+\+;/);
 });

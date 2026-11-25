@@ -23293,7 +23293,9 @@ function renderItems() {
        would move it in time. */
     if (m.k === 'system') {
       let j = i;
-      while (j + 1 < items.length && items[j + 1].k === 'system' && items[j + 1].text === m.text && items[j + 1].detail === m.detail) j++;
+      while (j + 1 < items.length && items[j + 1].k === 'system' && items[j + 1].text === m.text && items[j + 1].detail === m.detail
+        // ATO-1754: two workers with the same title and model keep their own briefs.
+        && items[j + 1].fzBrief === m.fzBrief) j++;
       const times = j - i + 1;
       if (times >= 2) { html += systemRun(m, times); i = j; continue; }
     }
