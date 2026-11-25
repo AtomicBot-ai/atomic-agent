@@ -138,8 +138,8 @@ export const FUSION_WORKER_APPROVAL_MARKER =
 export const FUSION_WORKER_COMMAND_NOT_ASKED_REFUSED =
   `this step ${FUSION_WORKER_APPROVAL_MARKER}. ` +
   "This fan-out was sent out in auto mode without asking the user, so it covers file writes " +
-  "in the working directory, not commands. Stop retrying it and, in your reply, name the exact " +
-  "command and why the task needs it: when the orchestrator sends the task out again, the user " +
+  "in the working directory, not commands or deletions. Stop retrying it and, in your reply, name the exact " +
+  "command or file and why the task needs it: when the orchestrator sends the task out again, the user " +
   "is asked once to allow commands there.";
 
 /**

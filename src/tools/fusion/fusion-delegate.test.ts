@@ -2469,6 +2469,34 @@ describe("fusion.delegate in auto mode (ATO-1689)", () => {
     expect(prompts).toHaveLength(1);
   });
 
+  it("asks before the next fan-out once a worker was refused moving a file to the Trash", async () => {
+    const { gate, prompts } = gateAt(2);
+    let first = true;
+    const tool = buildFusionDelegateTool(
+      deps({
+        approvalRequired: true,
+        approvals: gate,
+        runTurn: async (session) => {
+          if (first) {
+            first = false;
+            await gate.request({
+              sessionId: session.id,
+              tool: "os.fs.trash",
+              category: "fs_trash",
+              reason: "trash /repo/src/old.js",
+            });
+          }
+          return turnResult();
+        },
+      }),
+    );
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(0);
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.category).toBe("fusion_fanout");
+  });
+
   it("still asks when the contract's checks would run commands", async () => {
     const { gate, prompts } = gateAt(2);
     const tool = buildFusionDelegateTool(

@@ -758,7 +758,14 @@ export function buildFusionDelegateTool(
               reasonFor: (request: { category: ApprovalCategory }) => {
                 const operatorOnly = workerRefusalFor(request);
                 if (operatorOnly !== undefined) return operatorOnly;
-                if (request.category === "shell" || request.category === "script") {
+                // What the fan-out's yes would have covered in the folder
+                // and a level 2 or 3 chat asks about: commands, and moving
+                // a file to the Trash.
+                if (
+                  request.category === "shell" ||
+                  request.category === "script" ||
+                  request.category === "fs_trash"
+                ) {
                   deps.approvals.fanoutScopes?.noteCommandRefused(ctx.sessionId);
                   return FUSION_WORKER_COMMAND_NOT_ASKED_REFUSED;
                 }
