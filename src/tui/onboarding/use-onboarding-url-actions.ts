@@ -5,6 +5,7 @@ import {
   managedPortsOf,
 } from "../../llm/describe-llama-health-failure.js";
 import { checkLlamaServer } from "../../llm/llama-server-health.js";
+import { probeOpenAiCompatEndpoint } from "../../llm/detect-openai-compat-endpoint.js";
 import type {
   OnboardingOutcome,
   OnboardingUiState,
@@ -13,6 +14,7 @@ import {
   normalizeLocalLlmBaseUrl,
   persistUserRemoteLlmUrls,
 } from "../persist-user-local-models-config.js";
+import { saveCustomOpenAiCompatEndpoint, customEndpointKeyWizard } from "./persist-custom-endpoint.js";
 import type { TuiAction } from "../tui-action.js";
 
 /**
@@ -53,6 +55,39 @@ export function useOnboardingUrlActions(args: {
           verifyAuth: true,
         });
         if (!health.reachable) {
+          // A hosted OpenAI-compatible endpoint answers 404 on
+          // `/health`; asking the right question saves it as a provider
+          // instead of dead-ending the operator on a llama-server error.
+          const probe = await probeOpenAiCompatEndpoint(base, {
+            timeoutMs: 5000,
+          });
+          if (probe.kind === "ok") {
+            const saved = await saveCustomOpenAiCompatEndpoint(base, {
+              timeoutMs: 5000,
+            });
+            if (saved) {
+              dispatch({
+                type: "onboarding_url_changed",
+                field: "chat",
+                value: saved.detection.baseUrl,
+              });
+              finish("custom");
+              return;
+            }
+          }
+          if (probe.kind === "needs_auth") {
+            // The route exists and speaks the OpenAI shape — it just
+            // wants a key, which this screen has no field for. Hand the
+            // operator to the provider wizard with the URL already
+            // filled in, on its key screen, instead of telling them
+            // their URL is wrong and leaving them to find the LLM tab.
+            dispatch({
+              type: "providers_wizard_opened",
+              wizard: customEndpointKeyWizard(probe.baseUrl),
+            });
+            dispatch({ type: "onboarding_step_set", step: "cloud" });
+            return;
+          }
           dispatch({
             type: "onboarding_error_set",
             error: describeLlamaHealthFailure(health, base, managedPortsOf(getConfig().localModels)),
