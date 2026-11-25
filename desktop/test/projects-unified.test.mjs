@@ -77,6 +77,31 @@ test("the sidebar draws chat folders under Projects, with Edit, Remove and a dro
   assert.doesNotMatch(html, /Folders/);
 });
 
+test("ATO-1690: the plus on a project's header opens a new chat in that project", () => {
+  const c = load();
+  vm.runInContext(`
+    PROJECTS.state = projectsCoerce({projects: [{id: 'paaaaaa', name: 'app', folder: '/src/app'}]});
+    FOLDERS.state = foldersCoerce({folders: [{id: 'f1', name: 'Marketing', collapsed: true}]});
+    PROJECTS.collapsed.add('paaaaaa');
+  `, c);
+  const html = vm.runInContext(`projectsSidebarHTML([{project: PROJECTS.state.projects[0], rows: []}], [{folder: FOLDERS.state.folders[0], rows: []}])`, c);
+  assert.match(html, /data-act="pchat:paaaaaa" title="New chat in this project"/);
+  assert.match(html, /data-act="pchat:f1"/);
+  // A project with a disk folder: the first turn carries its id, and it unfolds.
+  vm.runInContext(`projectAct('pchat', 'paaaaaa')`, c);
+  assert.deepEqual(c.acts, ["session:new"]);
+  assert.equal(vm.runInContext("projectCollapsed('paaaaaa')", c), false);
+  assert.equal(vm.runInContext("projectForNewTurn()", c), "paaaaaa");
+  // A project with no disk folder (a chat folder) too.
+  vm.runInContext(`projectAct('pchat', 'f1')`, c);
+  assert.equal(vm.runInContext("FOLDERS.state.folders[0].collapsed", c), false);
+  assert.equal(vm.runInContext("projectForNewTurn()", c), "f1");
+  // An unknown project opens nothing.
+  vm.runInContext(`projectAct('pchat', 'pgone00')`, c);
+  assert.deepEqual(c.acts, ["session:new", "session:new"]);
+  assert.equal(vm.runInContext("projectForNewTurn()", c), undefined);
+});
+
 test("past five projects the rest fold behind Show N more projects", () => {
   const c = load();
   const html = vm.runInContext(`(() => {
