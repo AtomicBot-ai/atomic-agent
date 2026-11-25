@@ -356,9 +356,13 @@ async function run(js: Js, check: Check): Promise<void> {
   check(
     "T47 Д28: the General switches stand alone — no On / Off word beside them — and still say their state",
     /* ATO-523 (#1447): the Quick entry shortcut row also shows its chord and a Change… button beside its
-       switch: that is the shortcut, not an On / Off word, so it is held to that exact shape. */
+       switch: that is the shortcut, not an On / Off word, so it is held to that exact shape. ATO-1064:
+       "Dictate into any app" carries how a take starts (Use a key combination…, Hold … instead,
+       a chord · Change…), its buttons, never an On / Off word either. */
     !g.err && named.every((n) => g.labels.includes(n))
-      && g.words.every((x, i) => x === "" || (g.labels[i] === "Quick entry shortcut" && /^\S.* · Change…$/.test(x) && !/\b(On|Off)\b/.test(x)))
+      && g.words.every((x, i) => x === "" || (!/\b(On|Off)\b/.test(x)
+        && ((g.labels[i] === "Quick entry shortcut" && /^\S.* · Change…$/.test(x))
+          || (g.labels[i] === "Dictate into any app" && /(Use a key combination…|Change…)$/.test(x)))))
       && g.states.every((n) => n === 0)
       && g.checked.every((c) => c === "true" || c === "false"),
     g.err ?? JSON.stringify({ labels: g.labels, words: g.words, states: g.states, checked: g.checked }),
