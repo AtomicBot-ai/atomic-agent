@@ -99,6 +99,26 @@ function storedEntryForWizard(
 }
 
 /**
+ * `stored` moved to `baseUrl`. The loaded config already carries, as
+ * `apiKey`, whatever the environment gave the entry at its saved address;
+ * such a key is dropped and looked up again for the new address
+ * (ATO-1703), while a key saved in `config.json` itself stays.
+ */
+function retargetedEntry(
+  stored: UserLlmProviderEntry,
+  baseUrl: string,
+): UserLlmProviderEntry {
+  const { apiKey, ...rest } = stored;
+  const fromEnvironment =
+    apiKey !== undefined && apiKey === resolveLlmProviderApiKey(rest);
+  return {
+    ...rest,
+    ...(apiKey !== undefined && !fromEnvironment ? { apiKey } : {}),
+    baseUrl,
+  };
+}
+
+/**
  * Typed key wins; then the key the entry being reconfigured already has
  * (stored, or under its own env var); then a key already in the
  * environment for this kind. Same union `saveProviderWizardToConfig`
@@ -114,7 +134,7 @@ export function apiKeyForWizard(
   // before: the model list and key check go to the new one.
   const target =
     stored && stored.kind === "openai-compatible"
-      ? { ...stored, baseUrl: baseUrlForWizard(wizard) }
+      ? retargetedEntry(stored, baseUrlForWizard(wizard))
       : stored;
   return (
     (target && resolveLlmProviderApiKey(target)) ??

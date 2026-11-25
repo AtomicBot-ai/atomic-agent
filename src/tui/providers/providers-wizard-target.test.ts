@@ -271,6 +271,21 @@ describe("apiKeyPhaseError in configure mode", () => {
     expect(apiKeyForWizard(moved)).toBeUndefined();
   });
 
+  it("keeps a key saved in config.json when the address changes", () => {
+    upsertLlmProvider({
+      id: "own-key",
+      kind: "openai-compatible",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "sk-saved",
+    });
+    process.env.OPENAI_API_KEY = "sk-openai";
+    const moved = {
+      ...configureWizard("openai-compatible", "own-key"),
+      baseUrlLine: "https://llm.example.com/v1",
+    };
+    expect(apiKeyForWizard(moved)).toBe("sk-saved");
+  });
+
   it("still refuses when the entry has no key anywhere", () => {
     upsertLlmProvider({ id: "openrouter", kind: "openrouter" });
     const wizard = configureWizard("openrouter", "openrouter");
