@@ -163,6 +163,46 @@ describe("AgentLoop fusion seams", () => {
     expect(params.slotId).toBe(-1);
   });
 
+  it("a pinned turn on its own model resolves its cloud slice and mode for that model (ATO-1559)", async () => {
+    const modes: Array<ResolvedModelMode | undefined> = [];
+    const modelModePolicy = captureModelModePolicy({
+      activeTextProvider: "main", activeEmbeddingProvider: "main", toolTransport: "auto",
+      providers: [{ id: "cloud-x", kind: "openrouter", defaultChatModel: "model-a", modelMode: "cloud" }],
+    });
+    const asked: Array<{ providerId: string; model: string | undefined }> = [];
+    const loop = new AgentLoop({
+      registry: buildDefaultToolRegistry(),
+      onEvent: event => {
+        if (event.type === "llm_event" && event.event.type === "prompt_built") modes.push(event.event.prompt.modelMode);
+      },
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      resolveLlmSlice: (providerId, model) => {
+        asked.push({ providerId, model });
+        return {
+          toolTransport: "grammar",
+          toolCallAdapter: null,
+          supportsSlotAffinity: false,
+          supportsParallelTools: true,
+          strictTools: false,
+        };
+      },
+      llmComplete: async () => makeCompletion("done"),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const session = createEmptySessionState({ id: "s-turn-model-slice", workingDir });
+    await loop.runTurn(
+      session,
+      turnOptions({ providerId: "cloud-x", model: "model-b", modelModePolicy }),
+    );
+    // Every slice of this turn is the turn model's, never the entry's.
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((a) => a.providerId === "cloud-x" && a.model === "model-b")).toBe(true);
+    expect(modes[0]).toMatchObject({ mode: "cloud", providerId: "cloud-x", modelId: "model-b" });
+  });
+
   it("a pinned turn hands its provider pin to the tools it calls", async () => {
     // `vision.describe` resolves its provider from this pin: a fusion
     // worker's image goes to the worker leg, not the active provider.

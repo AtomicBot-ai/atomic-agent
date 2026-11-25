@@ -562,13 +562,18 @@ export class AgentLoop {
               : {}),
           };
         const contextProviderId = options.providerId ?? this.deps.contextProviderId?.(state.id);
-        const initialMode = options.modelModePolicy ? resolveModelMode(options.modelModePolicy, options.providerId) : undefined;
-        const modelMode = options.modelModePolicy ? resolveModelMode(options.modelModePolicy, contextProviderId) : undefined;
+        // A pinned turn on its own model (ATO-1148/1559) is sized, moded
+        // and given its strict-tools flag for that model, not the entry's.
+        const turnModel = options.providerId !== undefined && contextProviderId === options.providerId
+          ? options.model
+          : undefined;
+        const initialMode = options.modelModePolicy ? resolveModelMode(options.modelModePolicy, options.providerId, turnModel) : undefined;
+        const modelMode = options.modelModePolicy ? resolveModelMode(options.modelModePolicy, contextProviderId, turnModel) : undefined;
         stepModelMode = modelMode?.mode;
         // Cloud transitions must use the sticky link before planning maintenance,
         // not only at send time. All-local preparation retains its existing path.
         const contextSlice = contextProviderId && (initialMode?.mode === "cloud" || modelMode?.mode === "cloud")
-          ? this.deps.resolveLlmSlice?.(contextProviderId) ?? pinnedSlice : pinnedSlice;
+          ? this.deps.resolveLlmSlice?.(contextProviderId, turnModel) ?? pinnedSlice : pinnedSlice;
         const stepDeps: StepDependencies = {
             prepareWorkspace: this.deps.prepareWorkspace,
             registry: this.deps.registry,
