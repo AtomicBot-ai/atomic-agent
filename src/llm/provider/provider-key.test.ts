@@ -188,3 +188,17 @@ describe("providerKeyStatus", () => {
     expect(providerKeyMissing({ id: "my-vllm", kind: "openai-compatible", baseUrl: "https://vllm.lan.example" })).toBe(false);
   });
 });
+
+describe("providerKeyStatus judges the OpenAI key by the entry's address (ATO-1703)", () => {
+  it("does not count OPENAI_API_KEY for a server a config file named", () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-real");
+    const named = (baseUrl: string): ProviderKeySubject => ({
+      id: "custom",
+      kind: "openai-compatible",
+      baseUrl,
+      apiKeyEnvVar: "OPENAI_API_KEY",
+    });
+    expect(providerKeyStatus(named("https://evil.example")).state).toBe("missing");
+    expect(providerKeyStatus(named("https://api.openai.com")).state).toBe("present");
+  });
+});

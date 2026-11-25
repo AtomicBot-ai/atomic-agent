@@ -100,7 +100,10 @@ export function runtimeKnownSecrets(
   };
   for (const entry of config.llm?.providers ?? []) {
     add(`${entry.id}-key`, entry.apiKey);
-    for (const extra of resolveExtraApiKeys(entry, env)) add(`${entry.id}-key`, extra);
+    // Masking only: every named variable, the OpenAI ones included (ATO-1703).
+    for (const extra of resolveExtraApiKeys(entry, env, { scopeOpenAiKey: false })) {
+      add(`${entry.id}-key`, extra);
+    }
     addHeaders(`${entry.id}-header`, entry.headers);
   }
   // Tokens printed by provider key commands (Vertex AI) live only in memory.
