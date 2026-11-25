@@ -155,3 +155,19 @@ test('no projects: every row is left as it was, for the folders and Chats', () =
   assert.deepEqual(out.groups, []);
   assert.deepEqual(ids(out.rest), ['a', 'b']);
 });
+
+// ATO-1688: a chat left working in the background must not slide behind Load more.
+test('pageWithBusy keeps a busy chat past the cut and counts only the rest as hidden', () => {
+  const {pageWithBusy} = createRequire(import.meta.url)('../renderer/chat-list.js');
+  const all = ['a', 'b', 'c', 'd', 'e'].map((id) => ses(id));
+  const busy = new Set(['d']);
+  const out = pageWithBusy(all, 2, (r) => busy.has(r.id));
+  assert.deepEqual(ids(out.rows), ['a', 'b', 'd']);
+  assert.equal(out.hidden, 2);
+  const none = pageWithBusy(all, 2, () => false);
+  assert.deepEqual(ids(none.rows), ['a', 'b']);
+  assert.equal(none.hidden, 3);
+  const short = pageWithBusy(all.slice(0, 1), 15, () => true);
+  assert.deepEqual(ids(short.rows), ['a']);
+  assert.equal(short.hidden, 0);
+});

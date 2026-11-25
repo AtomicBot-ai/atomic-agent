@@ -435,6 +435,7 @@ function foldersSidebarHTML(groups) {
           + '<span class="sb-fchev">' + ic(f.collapsed ? 'chevR' : 'chevD') + '</span>'
           + '<span class="sb-fic">' + folderGlyphHTML(f, g.rows) + '</span>'
           + '<span class="sb-fname">' + esc(f.name) + '</span>'
+          + (f.collapsed && typeof groupBusyDotHTML === 'function' ? groupBusyDotHTML(g.rows) : '')   // ATO-1688
           + (g.rows.length ? '<span class="ct tnum">' + g.rows.length + '</span>' : '')
           + '<span class="sesmore iconbtn" data-fmenu="' + esc(f.id) + '" title="Folder actions" aria-label="Folder actions"'
             + ' aria-haspopup="menu" role="button" tabindex="0">' + ic('dots') + '</span>'

@@ -2737,11 +2737,13 @@ function sidebarChats() {
   const pg = projectGroups(PROJECTS.state, order.rest, FOLDERS.state, homeDir());
   const fg = folderGroups(FOLDERS.state, pg.rest);
   const all = order.pinned.concat(fg.loose);
-  const rows = all.slice(0, SIDEBAR_PAGE * PAGE.chats);
+  // ATO-1688: a chat still working (or waiting on an approval) stays on the list past Load more's cut.
+  const page = pageWithBusy(all, SIDEBAR_PAGE * PAGE.chats, chatBusy);
+  const rows = page.rows;
   const filed = fg.groups.reduce((n, g) => n + g.rows.length, 0) + pg.groups.reduce((n, g) => n + g.rows.length, 0);
   const visible = rows.concat(...fg.groups.filter((g) => !g.folder.collapsed).map((g) => g.rows),
     ...pg.groups.filter((g) => !projectCollapsed(g.project.id)).map((g) => g.rows), CHATSEARCH.archOpen ? arch.archived : []);
-  return {rows, hidden: all.length - rows.length, pinned: Math.min(order.pinned.length, rows.length), groups: fg.groups, projects: pg.groups, visible, filed, archived: arch.archived};
+  return {rows, hidden: page.hidden, pinned: Math.min(order.pinned.length, rows.length), groups: fg.groups, projects: pg.groups, visible, filed, archived: arch.archived};
 }
 
 /* The dot, in the user's three states. "Running" is NOT S.busy: an approval
@@ -2770,6 +2772,26 @@ function chatDot(s) {
   if (unread && chatFailedSinceRead(s, seen)) return ['filled', 'the last turn failed', 'tone-red'];
   if (unread) return ['filled', 'finished — not read yet'];
   return ['empty', 'read'];
+}
+
+/** ATO-1688: a chat with a turn running or an approval waiting (what chatDot draws as running or amber). */
+function chatBusy(s) {
+  if (!s || !s.id) return false;
+  if (PENDING_APPROVALS.has(s.id)) return true;
+  for (const sid of RUNNING.values()) if (sid === s.id) return true;
+  return false;
+}
+/* ATO-1688: a collapsed project or folder draws no rows, so a chat working in
+   it had no mark anywhere. Its header gets the dot the row would have: amber
+   when one waits on an approval, the running pulse when one works. */
+function groupBusyDotHTML(rows) {
+  let running = false;
+  for (const r of rows || []) {
+    if (!r || !r.id) continue;
+    if (PENDING_APPROVALS.has(r.id)) return '<span class="sdot filled tone-amber" title="a chat here is waiting for your approval"></span>';
+    if (chatBusy(r)) running = true;
+  }
+  return running ? '<span class="sdot running" title="a chat here is still working"></span>' : '';
 }
 
 /* Same rules for tasks. A task that has not run yet has none of the user's
@@ -21023,7 +21045,7 @@ function continueTurn() {
 }
 
 /* ATO-448: a chat whose last turn a restart cut off (a crash, a kill, an
-   update) gets one row with a Continue button. Nothing continues by itself:
+   update; ATO-1688: a quit) gets one row with a Continue button. Nothing continues by itself:
    only the click asks the agent (POST /api/sessions/{id}/resume) for the
    continuing message, a note telling the model to check what already ran
    before repeating anything with side effects, then the cut-off request,
@@ -21034,7 +21056,7 @@ const RESUME = {pending: false};
 function interruptedTurnOffer(data, live) {
   if (live || !data || data.status !== 'cancelled' || data.lastError !== INTERRUPTED_TURN_ERROR) return null;
   if (!(BR && BR.resumeInterruptedTurn)) return null;
-  return {id:nid(), k:'system', text:'The last reply was interrupted by a restart.', act:'resume-turn'};
+  return {id:nid(), k:'system', text:'The last reply was cut off before it finished: the app quit or the agent restarted.', act:'resume-turn'};
 }
 function dropInterruptedTurnOffer() {
   const at = S.log.findIndex((x) => x.k === 'system' && x.act === 'resume-turn');
