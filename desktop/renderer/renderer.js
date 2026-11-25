@@ -2743,7 +2743,9 @@ function sidebarChats() {
   const filed = fg.groups.reduce((n, g) => n + g.rows.length, 0) + pg.groups.reduce((n, g) => n + g.rows.length, 0);
   const visible = rows.concat(...fg.groups.filter((g) => !g.folder.collapsed).map((g) => g.rows),
     ...pg.groups.filter((g) => !projectCollapsed(g.project.id)).map((g) => g.rows), CHATSEARCH.archOpen ? arch.archived : []);
-  return {rows, hidden: page.hidden, pinned: Math.min(order.pinned.length, rows.length), groups: fg.groups, projects: pg.groups, visible, filed, archived: arch.archived};
+  // The pinned block is the pinned rows the page drew: a busy row kept past the cut is never one of them.
+  const pinnedIds = new Set(order.pinned.map((p) => p.id));
+  return {rows, hidden: page.hidden, pinned: rows.filter((r) => pinnedIds.has(r.id)).length, groups: fg.groups, projects: pg.groups, visible, filed, archived: arch.archived};
 }
 
 /* The dot, in the user's three states. "Running" is NOT S.busy: an approval
