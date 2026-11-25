@@ -304,6 +304,8 @@ export function createAgUiTranslator(options: AgUiTranslatorOptions): AgUiTransl
             role: event.role ?? "worker",
             ...(event.model !== undefined ? { model: event.model } : {}),
             ...(event.summary !== undefined ? { summary: event.summary } : {}),
+            ...(event.brief !== undefined ? { brief: event.brief } : {}),
+            ...(event.modelNote !== undefined ? { modelNote: event.modelNote } : {}),
           });
           return;
         case "loop_failed":

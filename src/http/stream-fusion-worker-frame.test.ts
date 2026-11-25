@@ -109,6 +109,28 @@ describe("fusion_worker over SSE", () => {
     expect(sse.written[1]!.payload).not.toHaveProperty("eta_seconds");
   });
 
+  it("carries what a worker was told and why it is off its model (ATO-1754)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+
+    hook({
+      type: "fusion_worker",
+      taskId: "t6",
+      title: "api",
+      phase: "started",
+      brief: "TASK t6: api\n\nWrite the routes.",
+      modelNote: "role build has no model configured; ran on the workers' model q",
+    });
+    hook({ type: "fusion_worker", taskId: "t7", title: "ui", phase: "started", brief: "", modelNote: "" });
+
+    expect(sse.written[0]!.payload).toMatchObject({
+      brief: "TASK t6: api\n\nWrite the routes.",
+      model_note: "role build has no model configured; ran on the workers' model q",
+    });
+    expect(sse.written[1]!.payload).not.toHaveProperty("brief");
+    expect(sse.written[1]!.payload).not.toHaveProperty("model_note");
+  });
+
   it("carries a worker's context size on its usage frame", () => {
     const sse = makeSse();
     const hook = buildStreamEventHook(sse.writer as never, env(true));

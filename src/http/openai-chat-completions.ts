@@ -990,6 +990,12 @@ export function buildStreamEventHook(
           ...(isFiniteNumber(event.tokens) && event.tokens > 0 ? { tokens: event.tokens } : {}),
           ...(isFiniteNumber(event.spentUsd) ? { spent_usd: event.spentUsd } : {}),
           ...(isFiniteNumber(event.costUsd) ? { cost_usd: event.costUsd } : {}),
+          // ATO-1754: on `started`, what the worker was told and why it is
+          // not on the model it asked for.
+          ...(typeof event.brief === "string" && event.brief.length > 0 ? { brief: event.brief } : {}),
+          ...(typeof event.modelNote === "string" && event.modelNote.length > 0
+            ? { model_note: event.modelNote }
+            : {}),
         });
       }
       return;
