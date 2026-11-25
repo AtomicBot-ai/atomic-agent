@@ -5,6 +5,16 @@ import {
 } from "../../approval/dangerous-tool.js";
 import { resolve as resolvePath } from "node:path";
 import { isInside } from "../../approval/fanout-scope.js";
+import {
+  isAutoApprovedAt,
+  type ApprovalCategory,
+  type ApprovalLevel,
+} from "../../approval/approval-level.js";
+import {
+  FUSION_WORKER_APPROVAL_REFUSED,
+  FUSION_WORKER_COMMAND_NOT_ASKED_REFUSED,
+  workerRefusalFor,
+} from "./worker-tool-policy.js";
 import { resolveFanoutScope } from "./fanout-paths.js";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
@@ -232,6 +242,38 @@ export function scopeInsideStateDir(
   if (stateDir === undefined || stateDir.length === 0) return [];
   const root = resolvePath(stateDir);
   return writeScope.filter((dir) => isInside(root, resolvePath(dir)));
+}
+
+/**
+ * Whether the fan-out question is left to the standing level instead of
+ * asked (ATO-1689). In auto mode (level 2, workspace writes stop asking)
+ * a normal chat writes inside its folder unasked, and a fan-out whose
+ * every directory sits inside that same folder hands its workers nothing
+ * more than that, so asking about it is a prompt a normal chat would not
+ * show.
+ *
+ * Only on the levels where workspace writes are silent but the fan-out
+ * itself is not (2 and 3). From level 4 the ladder already silences the
+ * fan-out with its full authority. A directory outside the folder is a
+ * write a normal auto-mode chat would ask about, so the question stays.
+ *
+ * Returning true never widens what a worker may do: the caller then
+ * hands the workers no fan-out scope (`scopeApproved: false`), so every
+ * worker step goes to the gate under the standing level, like the
+ * chat's own. Shell commands, which the fan-out's yes would cover, are
+ * asked about at level 2, and a worker's refuse policy hands them back
+ * to the orchestrator.
+ */
+export function fanoutQuietUnderLevel(
+  level: ApprovalLevel,
+  writeScope: readonly string[],
+  workingDir: string,
+): boolean {
+  if (isAutoApprovedAt(level, "fusion_fanout")) return false;
+  if (!isAutoApprovedAt(level, "fs_write_workspace")) return false;
+  if (writeScope.length === 0) return false;
+  const root = resolvePath(workingDir);
+  return writeScope.every((dir) => isInside(root, resolvePath(dir)));
 }
 
 function error(
@@ -681,8 +723,74 @@ export function buildFusionDelegateTool(
           writeScope,
         ) ??
           false);
+      // Auto mode (ATO-1689): a fan-out that stays inside the chat's
+      // folder is no question at a level where writes there are silent.
+      // It still goes through the gate as the workspace write it is, so a
+      // saved deny or ask rule on `fusion.delegate` keeps its say, and the
+      // workers get no fan-out scope: they run under the standing level.
+      //
+      // Not when the question covers more than writes: a contract's
+      // checks and provide examples run commands with no gate of their
+      // own, a worker was refused a command under an earlier quiet
+      // fan-out this turn (the user's yes is what lets the next one run
+      // it), or the chat read outside content, which a chat at this level
+      // would be held for and its fresh worker sessions would not.
+      const approvalLevel = deps.approvals.getLevel?.();
+      const quietUnderLevel =
+        deps.approvalRequired &&
+        !alreadyApproved &&
+        !declinedInScope &&
+        approvalLevel !== undefined &&
+        fanoutQuietUnderLevel(approvalLevel, writeScope, ctx.workingDir) &&
+        (parsed.contract === undefined ||
+          checksWithExamples(parsed.contract).length === 0) &&
+        !(deps.approvals.fanoutScopes?.commandRefusedThisTurn(ctx.sessionId) ?? false) &&
+        !(deps.approvals.holdsForOutsideContent?.(ctx.sessionId, "http") ?? false);
+      const workersHoldScope = !quietUnderLevel;
+      // A quiet fan-out's workers hold no scope; a command they are
+      // refused is noted, so the next fan-out of the turn asks.
+      const quietWorkerOptions = workersHoldScope
+        ? {}
+        : {
+            scopeApproved: false,
+            approvalRefusal: {
+              general: FUSION_WORKER_APPROVAL_REFUSED,
+              reasonFor: (request: { category: ApprovalCategory }) => {
+                const operatorOnly = workerRefusalFor(request);
+                if (operatorOnly !== undefined) return operatorOnly;
+                // What the fan-out's yes would have covered in the folder
+                // and a level 2 or 3 chat asks about: commands, and moving
+                // a file to the Trash.
+                if (
+                  request.category === "shell" ||
+                  request.category === "script" ||
+                  request.category === "fs_trash"
+                ) {
+                  deps.approvals.fanoutScopes?.noteCommandRefused(ctx.sessionId);
+                  return FUSION_WORKER_COMMAND_NOT_ASKED_REFUSED;
+                }
+                return undefined;
+              },
+            },
+          };
       try {
-        if (!alreadyApproved) {
+        if (quietUnderLevel) {
+          await requireApproval(
+            {
+              approvals: deps.approvals as ApprovalGate,
+              approvalRequired: deps.approvalRequired,
+            },
+            {
+              sessionId: ctx.sessionId,
+              tool: FUSION_DELEGATE_TOOL,
+              category: "fs_write_workspace",
+              reason: `${parsed.tasks.length} task${parsed.tasks.length === 1 ? "" : "s"} to ${maxWorkers} worker${maxWorkers === 1 ? "" : "s"} writing in ${writeScope.join(", ")}`,
+              preview: describeFanoutPreview(parsed.tasks, writeScope),
+              affectedResources: [...writeScope],
+            },
+            ctx.signal,
+          );
+        } else if (!alreadyApproved) {
           // A yes from a person who was shown this fan-out is their newer
           // answer for the files they declined in its directories; one
           // the level gave is not, and those files stay declined.
@@ -717,8 +825,11 @@ export function buildFusionDelegateTool(
             deps.approvals.forgetDeclinedUnder?.(ctx.sessionId, writeScope);
           }
         }
-        deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
-
+        // The level's yes is not a person's: it is not remembered for the
+        // turn, so a later fan-out reaching outside the folder still asks.
+        if (workersHoldScope) {
+          deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
+        }
       } catch (err) {
         // The user's own no already says what happened and what to do,
         // and so does a repeat of one they declined earlier in the turn.
@@ -1118,6 +1229,7 @@ export function buildFusionDelegateTool(
               ? {}
               : { workerMaxOutputTokens }),
             writeScope,
+            ...quietWorkerOptions,
             signal: runSignal,
             ...guardOptionsFor(workerProviderId, workerPricing, workerModel, tasks),
             ...escalationOptions,
@@ -1201,6 +1313,7 @@ export function buildFusionDelegateTool(
               ? {}
               : { workerMaxOutputTokens: mode.workerMaxOutputTokens }),
             writeScope,
+            ...quietWorkerOptions,
             signal: runSignal,
             ...guardOptionsFor(leg.providerId, pricing, leg.model, tasks),
             // Dropped only where the target is this leg's own model: a
@@ -1291,9 +1404,12 @@ export function buildFusionDelegateTool(
                   ctx.workingDir,
                   { results: rows, signal: ctx.signal },
                 );
+                // A split's checks are the worker's own; under a quiet
+                // fan-out nobody approved commands, so they are reported
+                // as not run (ATO-1689).
                 const checks = await runContractChecks(
                   checksWithExamples(childContract),
-                  deps.runChecks,
+                  workersHoldScope ? deps.runChecks : undefined,
                   { workingDir: ctx.workingDir, signal: ctx.signal },
                 );
                 const failedChecks = checks.outcomes
