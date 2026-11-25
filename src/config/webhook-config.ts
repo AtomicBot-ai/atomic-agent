@@ -32,7 +32,8 @@ import type { TaskSchedule } from "../tasks/task-types.js";
  *    `x-webhook-secret` request header
  *  - `github` — `X-Hub-Signature-256: sha256=<hex HMAC of the raw body>`
  *  - `standard-webhooks` — the Standard Webhooks headers (`webhook-id`,
- *    `webhook-timestamp`, `webhook-signature`) with a `whsec_` secret
+ *    `webhook-timestamp`, `webhook-signature`, or the `svix-*` names Svix
+ *    senders use) with a `whsec_` secret
  *  - `stripe` — `Stripe-Signature: t=<unix>,v1=<hex HMAC of "<t>.<body>">`
  *    with the endpoint's `whsec_` secret used as-is (ATO-625)
  * The signed schemes require `secret`. `events`, allowed only with a

@@ -310,6 +310,12 @@ export {
   type EmbeddingMemoryVerdict,
 } from "./server/embedding-memory-gate.js";
 export {
+  CHAT_START_PENDING_FILE,
+  chatStartPending,
+  markChatStartPending,
+  withChatStartPending,
+} from "./server/chat-start-pending.js";
+export {
   explainManagedEngineLiveness,
   readManagedEngineLiveness,
   readManagedModelProcess,

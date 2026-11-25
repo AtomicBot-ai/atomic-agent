@@ -11,6 +11,7 @@ import {
 import { cloudTakesReasoningOverride } from "../../reasoning-levels.js";
 import {
   buildNativeMessages,
+  CONTINUE_AFTER_ASSISTANT,
   type NativeMessageOptions,
 } from "./openai-native-messages.js";
 import { toStrictOpenAiTools } from "./openai-strict-tools.js";
@@ -75,6 +76,12 @@ export interface OpenAiBodyOptions {
    * body carries no reasoning, as before.
    */
   reasoningRequired?: boolean;
+  /**
+   * Google's Gemini endpoint: hand each step's thought signature back on
+   * the history's tool calls (ATO-1680). See
+   * `NativeMessageOptions.thoughtSignatures`.
+   */
+  thoughtSignatures?: boolean;
 }
 
 /**
@@ -173,6 +180,8 @@ function assembleOpenAiChatBody(
     ...(options.reasoningRequired
       ? { preserveReasoning: true, reasoningRequired: true }
       : {}),
+    // Gemini 3 refuses a tool history without its signatures (ATO-1680).
+    ...(options.thoughtSignatures ? { thoughtSignatures: true } : {}),
   };
   const messages =
     resolveMessageShape(filtered, options) === "native" && filtered.messages
@@ -338,7 +347,10 @@ function assembleOpenAiChatBody(
   if (options.anthropicCacheControl) {
     body.messages = applyAnthropicCacheControl(
       body.messages as ReadonlyArray<Record<string, unknown>>,
-      { includeLastMessage: filtered.modelMode?.mode === "cloud" && filtered.messages?.tail === "" && resolveMessageShape(filtered, options) === "native" },
+      // The request-only continue message (ATO-1681) is gone from the
+      // next request, so the breakpoint stays on the note before it.
+      { includeLastMessage: filtered.modelMode?.mode === "cloud" && filtered.messages?.tail === "" && resolveMessageShape(filtered, options) === "native"
+        && (body.messages as ReadonlyArray<Record<string, unknown>>).at(-1)?.["content"] !== CONTINUE_AFTER_ASSISTANT },
     );
   }
   const modelParams = options.modelParams;

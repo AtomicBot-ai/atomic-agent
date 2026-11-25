@@ -99,11 +99,11 @@ describe("scheduler leadership", () => {
     // A wins the bot.
     holdTelegram(A);
     const a = leadership(A, true);
+    // The owner claims scheduler.lock over B's live pid on its first tick…
     expect(a.isLeader()).toBe(true);
-    // B wants Telegram but lost it: stands by and gives scheduler.lock up…
+    expect(schedulerHolder()).toBe(A);
+    // …and B, which wants Telegram but lost it, stands by.
     expect(b.isLeader()).toBe(false);
-    expect(schedulerHolder()).toBeNull();
-    // …which the owner takes on its next tick.
     expect(a.isLeader()).toBe(true);
     expect(schedulerHolder()).toBe(A);
   });
@@ -123,6 +123,33 @@ describe("scheduler leadership", () => {
     // 9999 is not alive: same as no owner.
     expect(a.isLeader()).toBe(true);
     expect(b.isLeader()).toBe(false);
+  });
+
+  it("a process without Telegram that led first hands over to the Telegram owner (#1735)", () => {
+    const a = leadership(A, false);
+    const b = leadership(B, true);
+    // A starts without Telegram and takes scheduler.lock.
+    expect(a.isLeader()).toBe(true);
+    expect(schedulerHolder()).toBe(A);
+    // B wins the bot afterwards and claims scheduler.lock over A.
+    holdTelegram(B);
+    expect(b.isLeader()).toBe(true);
+    expect(schedulerHolder()).toBe(B);
+    // From A's next tick on there is exactly one leader, round after round.
+    for (let round = 0; round < 3; round++) {
+      expect(a.isLeader()).toBe(false);
+      expect(b.isLeader()).toBe(true);
+    }
+    expect(schedulerHolder()).toBe(B);
+  });
+
+  it("a non-Telegram process keeps leading when the bot owner runs no scheduler", () => {
+    // B owns telegram.lock but never asks for leadership (its scheduler is off).
+    holdTelegram(B);
+    const a = leadership(A, false);
+    expect(a.isLeader()).toBe(true);
+    expect(a.isLeader()).toBe(true);
+    expect(schedulerHolder()).toBe(A);
   });
 
   it("leadership follows telegram.lock when it moves", () => {

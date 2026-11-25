@@ -65,6 +65,7 @@ export class RunModeOrchestrator {
     const config = getConfig();
     return resolveRunMode(resolveLlmConfig(config), {
       managedModelId: config.localModels.managed.modelId,
+      localServerUrl: config.localModels.url,
     });
   }
 

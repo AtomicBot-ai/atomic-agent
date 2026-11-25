@@ -68,6 +68,12 @@ export type PromptTurn =
        * layout ignores it.
        */
       reasoning?: string;
+      /**
+       * Gemini 3's thought signature of the step that emitted this call,
+       * on the step's first recorded call (ATO-1680). Only a Gemini body
+       * writes it back; every other layout ignores it.
+       */
+      thoughtSignature?: string;
     }
   | {
       kind: "tool_result";
@@ -391,6 +397,12 @@ export interface OpenAiToolCall {
     name: string;
     arguments: string;
   };
+  /**
+   * Gemini 3's `extra_content.google.thought_signature` on this call,
+   * which the next request must hand back (ATO-1680). Absent from every
+   * other service.
+   */
+  thoughtSignature?: string;
 }
 
 export interface StreamChunk {

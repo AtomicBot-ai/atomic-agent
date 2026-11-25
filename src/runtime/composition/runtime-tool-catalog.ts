@@ -66,6 +66,9 @@ import { filterToolDescriptorsByConfig } from "../filter-disabled-tools.js";
 import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
 import { resolveComposioServerConfig } from "../../composio/index.js";
 import { activePolicy, mcpServerPolicy } from "../../policy/index.js";
+import { isForeignLlamaServer } from "../../llm/run-mode/foreign-llama-server.js";
+
+export { isForeignLlamaServer };
 
 /** Header names whose value is a credential (`Authorization`, `X-Api-Key`, `Cookie`, ...). */
 const SECRET_HEADER = /authorization|api[-_]?key|token|secret|password|cookie|auth/i;
@@ -97,7 +100,10 @@ export function runtimeKnownSecrets(
   };
   for (const entry of config.llm?.providers ?? []) {
     add(`${entry.id}-key`, entry.apiKey);
-    for (const extra of resolveExtraApiKeys(entry, env)) add(`${entry.id}-key`, extra);
+    // Masking only: every named variable, the OpenAI ones included (ATO-1703).
+    for (const extra of resolveExtraApiKeys(entry, env, { scopeOpenAiKey: false })) {
+      add(`${entry.id}-key`, extra);
+    }
     addHeaders(`${entry.id}-header`, entry.headers);
   }
   // Tokens printed by provider key commands (Vertex AI) live only in memory.
@@ -1189,18 +1195,4 @@ function safePluginMcpServers(
     logger.warn("plugin MCP servers unavailable", { error: err instanceof Error ? err.message : String(err) });
     return { servers: [], owners: {} };
   }
-}
-
-/**
- * A `llama-server` entry on a server other than the main local one
- * (`localModels.url`): somebody else's llama.cpp, which serves the model
- * it loaded (ATO-1562).
- */
-export function isForeignLlamaServer(
-  entry: { kind: string; url?: string },
-  mainUrl: string,
-): boolean {
-  if (entry.kind !== "llama-server" || entry.url === undefined) return false;
-  const norm = (u: string): string => u.trim().replace(/\/+$/, "");
-  return norm(entry.url) !== norm(mainUrl);
 }

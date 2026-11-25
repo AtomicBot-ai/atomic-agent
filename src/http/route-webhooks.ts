@@ -41,7 +41,7 @@ import { TaskValidationError } from "../tasks/index.js";
  * Responses:
  *  - 202 `{ taskId }` on success
  *  - 200 `{ taskId: null, ignored | duplicate }` for a genuine hit that
- *    starts nothing (filtered event, GitHub `ping`, repeated `webhook-id`;
+ *    starts nothing (filtered event, GitHub `ping`, repeated `webhook-id`/`svix-id`;
  *    with `dedupeDeliveries`, any repeated delivery id)
  *  - 404 when the webhook name is unknown or `tasks.enabled` is false
  *  - 401 on bad/missing secret header (only when the config declares one;
@@ -62,7 +62,7 @@ export interface WebhookHandlerOptions {
   requireSecret?: boolean;
   /**
    * Start at most one task per delivery id on every signed scheme, not
-   * only Standard Webhooks: `X-GitHub-Delivery`, `webhook-id` or the
+   * only Standard Webhooks: `X-GitHub-Delivery`, `webhook-id` (`svix-id`) or the
    * Stripe event `id` (the tunnel gateway, ATO-625). A repeat answers
    * `200 { taskId: null, duplicate: true }`.
    */

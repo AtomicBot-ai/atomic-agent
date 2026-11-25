@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   checkSharedSecret,
   describeWebhookEvent,
+  readStandardWebhookHeaders,
   webhookEventAllowed,
 } from "./webhook-verify.js";
 import { renderWebhookTemplate } from "./webhook-template.js";
@@ -39,9 +40,35 @@ describe("describeWebhookEvent", () => {
     expect(hit).toEqual({ event: "github.star.added", action: "", delivery: "msg_1" });
   });
 
+  it("reads svix-id as the delivery when the sender uses svix-* headers", () => {
+    const hit = describeWebhookEvent(
+      { ...github, verify: "standard-webhooks" },
+      request({ "svix-id": "msg_svix" }),
+      { type: "email.sent" },
+    );
+    expect(hit).toEqual({ event: "email.sent", action: "", delivery: "msg_svix" });
+  });
+
   it("names nothing for the shared-secret scheme or a non-object body", () => {
     expect(describeWebhookEvent({ userMessageTemplate: "x" }, request({ "x-github-event": "push" }), {})).toEqual({ event: "", action: "", delivery: "" });
     expect(describeWebhookEvent(github, request({ "x-github-event": "push" }), [1, 2])).toEqual({ event: "push", action: "", delivery: "" });
+  });
+});
+
+describe("readStandardWebhookHeaders", () => {
+  const svix = { "svix-id": "msg_s", "svix-timestamp": "2", "svix-signature": "v1,s" };
+
+  it("falls back to the svix-* names", () => {
+    expect(readStandardWebhookHeaders(request(svix))).toEqual({ id: "msg_s", timestamp: "2", signature: "v1,s" });
+  });
+
+  it("prefers the webhook-* set and never mixes the two", () => {
+    expect(readStandardWebhookHeaders(request({ ...svix, "webhook-id": "msg_w" }))).toEqual({ id: "msg_w", timestamp: null, signature: null });
+    expect(readStandardWebhookHeaders(request({ ...svix, "webhook-signature": "v1,w" }))).toEqual({ id: null, timestamp: null, signature: "v1,w" });
+  });
+
+  it("reads nothing when neither set is sent", () => {
+    expect(readStandardWebhookHeaders(request({}))).toEqual({ id: null, timestamp: null, signature: null });
   });
 });
 

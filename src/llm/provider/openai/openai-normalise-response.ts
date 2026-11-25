@@ -1,6 +1,7 @@
 import type { CompletionResult, CompletionUsage } from "../completion-types.js";
 import type { ReasoningFormat } from "../llm-provider.js";
 import { createReasoningExtractor } from "./reasoning-extractor.js";
+import { readThoughtSignature } from "../gemini/gemini-thought-signature.js";
 
 export function normaliseOpenAiChatResponse(
   json: Record<string, unknown>,
@@ -10,7 +11,9 @@ export function normaliseOpenAiChatResponse(
   const choice =
     (json.choices as Array<Record<string, unknown>> | undefined)?.[0] ?? {};
   const message = (choice.message as Record<string, unknown> | undefined) ?? {};
-  const toolCalls = message.tool_calls as CompletionResult["toolCalls"];
+  const toolCalls = withThoughtSignatures(
+    message.tool_calls as CompletionResult["toolCalls"],
+  );
   const content = normaliseMessageContent(message.content);
   // Reasoning models served over OpenAI-compatible APIs return their CoT
   // in a dedicated field alongside `content` — `reasoning_content`
@@ -121,4 +124,19 @@ export function normaliseMessageContent(raw: unknown): string {
       .join("");
   }
   return "";
+}
+
+/**
+ * Gemini 3's thought signature, read off the raw call's
+ * `extra_content` onto `thoughtSignature` (ATO-1680). Calls without one
+ * are passed through as they came.
+ */
+function withThoughtSignatures(
+  toolCalls: CompletionResult["toolCalls"],
+): CompletionResult["toolCalls"] {
+  if (!Array.isArray(toolCalls)) return toolCalls;
+  return toolCalls.map((call) => {
+    const signature = readThoughtSignature(call);
+    return signature !== undefined ? { ...call, thoughtSignature: signature } : call;
+  });
 }
