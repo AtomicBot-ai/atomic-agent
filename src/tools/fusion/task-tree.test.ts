@@ -268,6 +268,30 @@ describe("expandSplits", () => {
     ]);
   });
 
+  it("puts the children's changed files on the closed parent row (ATO-1700)", async () => {
+    const { deps } = setup();
+    const withFiles: ExpandSplitsDeps["runChildren"] = async (tasks) =>
+      tasks.map((t) =>
+        row(t.id, "ok", "done", {
+          diffstats: [
+            { path: "/p/shared.ts", added: 2, removed: 1 },
+            { path: `/p/${t.id.split("/")[1]}.ts`, added: 5, removed: 0 },
+          ],
+        }),
+      );
+    const [out] = await expandSplits(
+      [PARENT],
+      [row("build", "ok", fence({ tasks: TWO }), { diffstats: [{ path: "/p/plan.md", added: 1, removed: 0 }] })],
+      { ...deps, runChildren: withFiles },
+    );
+    expect(out?.diffstats).toEqual([
+      { path: "/p/plan.md", added: 1, removed: 0 },
+      { path: "/p/shared.ts", added: 4, removed: 2 },
+      { path: "/p/engine.ts", added: 5, removed: 0 },
+      { path: "/p/ui.ts", added: 5, removed: 0 },
+    ]);
+  });
+
   it("keeps a child's long reply when the parent has no files, and cuts it when it has", async () => {
     const long = "x".repeat(3000);
     const longChildren: ExpandSplitsDeps["runChildren"] = async (tasks) =>

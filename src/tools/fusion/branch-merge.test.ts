@@ -215,6 +215,58 @@ describe("runIsolatedWave", () => {
     expect(await readFile(`${saved}.base`, "utf8")).toBe("one line\n");
   });
 
+  it("rebases each task's changed files to the folder and keeps only what the merge wrote (ATO-1700)", async () => {
+    const repo = await gitRepo({ "a.txt": "one line\n", "b.txt": "b\n" });
+    const stat = (path: string, added: number, removed: number) => ({ path, added, removed });
+    const wave = await runIsolatedWave({
+      realDir: repo,
+      tasks: [task("one"), task("two"), task("gone")],
+      writeScope: [repo],
+      inputs: [],
+      options: { tmpRoot: await tmpRoot() },
+      run: async (tasks, taskWorkspace) => {
+        const out: WorkerTaskResult[] = [];
+        for (const t of tasks) {
+          const dir = taskWorkspace!(t.id)!.workingDir;
+          if (t.id === "one") {
+            await writeFile(join(dir, "a.txt"), "one's line\n");
+            await mkdir(join(dir, "src"), { recursive: true });
+            await writeFile(join(dir, "src", "new.ts"), "x\n");
+            out.push({
+              ...row("one"),
+              diffstats: [
+                stat(join(dir, "a.txt"), 1, 1),
+                stat(join(dir, "src", "new.ts"), 1, 0),
+                // Outside its workspace: not a file of the folder.
+                stat("/elsewhere/x.ts", 1, 0),
+              ],
+            });
+          } else if (t.id === "two") {
+            await writeFile(join(dir, "a.txt"), "two's line\n");
+            await writeFile(join(dir, "b.txt"), "b from two\n");
+            out.push({
+              ...row("two"),
+              diffstats: [stat(join(dir, "a.txt"), 1, 1), stat(join(dir, "b.txt"), 1, 1)],
+            });
+          } else {
+            await writeFile(join(dir, "c.txt"), "never merged\n");
+            out.push({ ...row("gone", "failed"), diffstats: [stat(join(dir, "c.txt"), 1, 0)] });
+          }
+        }
+        return out;
+      },
+    });
+    expect(wave.results[0]!.diffstats).toEqual([
+      stat(join(repo, "a.txt"), 1, 1),
+      stat(join(repo, "src", "new.ts"), 1, 0),
+    ]);
+    // a.txt conflicted, so the folder kept its own version: only b.txt landed.
+    expect(wave.results[1]!.status).toBe("needs_orchestrator");
+    expect(wave.results[1]!.diffstats).toEqual([stat(join(repo, "b.txt"), 1, 1)]);
+    // A discarded workspace changed nothing in the folder.
+    expect(wave.results[2]!.diffstats).toBeUndefined();
+  });
+
   it("refuses a declared input the task wiped", async () => {
     const repo = await gitRepo({ "sales.csv": lines(40, "row"), "out.txt": "x\n" });
     const wave = await runIsolatedWave({

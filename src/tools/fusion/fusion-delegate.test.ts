@@ -19,6 +19,7 @@ import { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { ToolContext } from "../tool-registry.js";
 import {
   buildFusionDelegateTool,
+  fanoutQuietUnderLevel,
   scopeInsideStateDir,
   type FusionDelegateDeps,
 } from "./fusion-delegate.js";
@@ -761,6 +762,64 @@ describe("fusion.delegate", () => {
     );
     expect(result.status).toBe("ok");
     expect(result.details.outcome).toBe("all_ok");
+  });
+
+  it("sums the files every worker changed into details.diffstats, one row per path (ATO-1700)", async () => {
+    // Discord, 21.11: after a fan-out the desktop showed no "Changed
+    // files" card, because the workers' write results never reach the
+    // chat's stream.
+    const edit = (path: string, added: number, removed: number, tool = "os.fs.edit", status: "ok" | "error" = "ok") => ({
+      type: "llm_event" as const,
+      event: {
+        type: "tool_call_executed" as const,
+        result: {
+          tool,
+          status,
+          summary: `edited ${path}`,
+          details: { path, diffstat: { added, removed } },
+          truncated: false,
+        },
+        batchIndex: 0,
+        batchSize: 1,
+      },
+    });
+    const tool = buildFusionDelegateTool(
+      deps({
+        runTurn: async (session, _message, options) => {
+          if (session.id.endsWith("1")) {
+            options.eventHook?.(edit("/repo/shared.ts", 3, 1));
+            options.eventHook?.(edit("/repo/one.md", 10, 0, "os.fs.write"));
+          } else {
+            options.eventHook?.(edit("/repo/shared.ts", 2, 2));
+            options.eventHook?.(edit("/repo/failed.ts", 7, 0, "os.fs.edit", "error"));
+            options.eventHook?.(edit("/repo/ran.txt", 1, 0, "os.shell.run"));
+          }
+          options.eventHook?.({
+            type: "llm_event",
+            event: { type: "assistant_reply", text: "done" },
+          });
+          return turnResult();
+        },
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(result.status).toBe("ok");
+    expect(result.details.diffstats).toEqual([
+      { path: "/repo/shared.ts", added: 5, removed: 3 },
+      { path: "/repo/one.md", added: 10, removed: 0 },
+    ]);
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows[0]?.diffstats).toEqual([
+      { path: "/repo/shared.ts", added: 3, removed: 1 },
+      { path: "/repo/one.md", added: 10, removed: 0 },
+    ]);
+    // The model reads the summary, never the list.
+    expect(result.summary).not.toContain("diffstats");
+  });
+
+  it("leaves details.diffstats out when no worker changed a file (ATO-1700)", async () => {
+    const result = await buildFusionDelegateTool(deps()).run({ tasks: TASKS }, ctx());
+    expect(result.details).not.toHaveProperty("diffstats");
   });
 
   it("carries a worker's replaced input into the head line, the row and details.tasks (F43)", async () => {
@@ -2332,5 +2391,264 @@ describe("fusion.delegate on a llama.cpp server that is not ours (ATO-1562)", ()
     const result = await silent.run({ tasks: TASKS }, ctx());
     expect(kept.filter((e) => e.role === "worker").every((e) => e.model === "picked-model")).toBe(true);
     expect(result.summary).not.toContain("but the server serves");
+  });
+});
+
+/**
+ * ATO-1689 (Discord, 21.11): in auto mode a normal chat writes inside its
+ * folder unasked, but Fusion still asked before every fan-out into that
+ * same folder, because `fusion_fanout` only goes quiet at level 4.
+ */
+describe("fusion.delegate in auto mode (ATO-1689)", () => {
+  function gateAt(level: 1 | 2 | 3 | 4): {
+    gate: ApprovalGate;
+    prompts: ApprovalRequest[];
+  } {
+    const prompts: ApprovalRequest[] = [];
+    const gate: ApprovalGate = new ApprovalGate({
+      level,
+      emit: (req) => {
+        prompts.push(req);
+        queueMicrotask(() =>
+          gate.resolve({ approvalId: req.approvalId, approved: true }),
+        );
+      },
+    });
+    return { gate, prompts };
+  }
+  const insideTask = [
+    { id: "t1", title: "One", instructions: "Write /repo/src/a.js" },
+  ];
+
+  it("does not ask before a fan-out that stays inside the chat's folder", async () => {
+    const { gate, prompts } = gateAt(2);
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    const result = await tool.run({ tasks: insideTask }, ctx());
+    expect(result.status).not.toBe("error");
+    expect(prompts).toHaveLength(0);
+    // A later fan-out of the same turn is decided again, not on a yes
+    // nobody gave.
+    expect(gate.fanoutScopes.turnGrantCovers("s-parent", ["/repo"])).toBe(false);
+  });
+
+  it("gives its workers no more than the chat has: workspace writes run, shell commands do not", async () => {
+    const { gate, prompts } = gateAt(2);
+    const seen: Array<{ scope: readonly string[]; write: boolean; shell: boolean }> = [];
+    const briefs: string[] = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        approvalRequired: true,
+        approvals: gate,
+        runTurn: async (session, message) => {
+          briefs.push(message);
+          const write = await gate.request({
+            sessionId: session.id,
+            tool: "os.fs.write",
+            category: "fs_write_workspace",
+            reason: "write /repo/src/a.js",
+          });
+          const shell = await gate.request({
+            sessionId: session.id,
+            tool: "os.shell.run",
+            category: "shell",
+            reason: "npm test",
+          });
+          seen.push({
+            scope: gate.fanoutScopes.scopeFor(session.id),
+            write: write.approved,
+            shell: shell.approved,
+          });
+          return turnResult();
+        },
+      }),
+    );
+    expect((await tool.run({ tasks: insideTask }, ctx())).status).not.toBe("error");
+    expect(seen).toHaveLength(1);
+    // No fan-out scope: `os.shell.run` and `verify.run` read it as the
+    // operator's yes to commands in the directory.
+    expect(seen[0]?.scope).toEqual([]);
+    expect(seen[0]?.write).toBe(true);
+    // A level-2 chat asks before a shell command; a worker has nobody to
+    // ask, so it is refused and handed back to the orchestrator.
+    expect(seen[0]?.shell).toBe(false);
+    expect(prompts).toHaveLength(0);
+    // …and its brief says so, instead of promising it may run the tests.
+    expect(briefs[0]).toContain("sent out in auto mode without asking the user");
+    expect(briefs[0]).not.toContain("authorised this fan-out to write files AND run commands");
+  });
+
+  it("still asks after the chat read outside content, as a held chat would", async () => {
+    const { gate, prompts } = gateAt(3);
+    gate.setTaintReview(() => true);
+    gate.noteUntrustedContent("s-parent", "web page");
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts.some((p) => p.category === "fusion_fanout")).toBe(true);
+  });
+
+  it("asks before the next fan-out once a worker was refused a command, and that yes covers commands", async () => {
+    const { gate, prompts } = gateAt(2);
+    const refusals: string[] = [];
+    let wantsShell = true;
+    const tool = buildFusionDelegateTool(
+      deps({
+        approvalRequired: true,
+        approvals: gate,
+        runTurn: async (session) => {
+          if (wantsShell) {
+            const shell = await gate.request({
+              sessionId: session.id,
+              tool: "os.shell.run",
+              category: "shell",
+              reason: "npm test",
+            });
+            if (!shell.approved) refusals.push(shell.reason ?? "");
+          }
+          return turnResult();
+        },
+      }),
+    );
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(0);
+    expect(refusals[0]).toContain("sent out in auto mode without asking the user");
+    expect(refusals[0]).toContain("needs operator approval, which a worker cannot request");
+
+    wantsShell = false;
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.category).toBe("fusion_fanout");
+    // A new turn starts quiet again.
+    gate.fanoutScopes.clearTurnGrant("s-parent");
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(1);
+  });
+
+  it("asks before the next fan-out once a worker was refused moving a file to the Trash", async () => {
+    const { gate, prompts } = gateAt(2);
+    let first = true;
+    const tool = buildFusionDelegateTool(
+      deps({
+        approvalRequired: true,
+        approvals: gate,
+        runTurn: async (session) => {
+          if (first) {
+            first = false;
+            await gate.request({
+              sessionId: session.id,
+              tool: "os.fs.trash",
+              category: "fs_trash",
+              reason: "trash /repo/src/old.js",
+            });
+          }
+          return turnResult();
+        },
+      }),
+    );
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(0);
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.category).toBe("fusion_fanout");
+  });
+
+  it("still asks when the contract's checks would run commands", async () => {
+    const { gate, prompts } = gateAt(2);
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    await tool.run(
+      {
+        tasks: insideTask,
+        contract: { checks: [{ kind: "command", cmd: "npm", args: ["test"] }] },
+      },
+      ctx(),
+    );
+    expect(prompts.some((p) => p.category === "fusion_fanout")).toBe(true);
+  });
+
+  it("still asks before a fan-out that writes outside the chat's folder", async () => {
+    const { gate, prompts } = gateAt(2);
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    await tool.run(
+      { tasks: [{ id: "t1", title: "One", instructions: "Write /elsewhere/b.js" }] },
+      ctx(),
+    );
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.category).toBe("fusion_fanout");
+  });
+
+  it("still asks at the default level, where a chat's own writes ask too", async () => {
+    const { gate, prompts } = gateAt(1);
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.category).toBe("fusion_fanout");
+  });
+
+  it("asks again where the user declined a file in the folder this turn", async () => {
+    const prompts: ApprovalRequest[] = [];
+    let approve = false;
+    const gate: ApprovalGate = new ApprovalGate({
+      level: 1,
+      emit: (req) => {
+        prompts.push(req);
+        const approved = approve;
+        queueMicrotask(() => gate.resolve({ approvalId: req.approvalId, approved }));
+      },
+    });
+    await gate.request({
+      sessionId: "s-parent",
+      tool: "os.fs.write",
+      category: "fs_write_workspace",
+      reason: "write /repo/src/a.js",
+      targetPaths: ["/repo/src/a.js"],
+    });
+    gate.setLevel(2);
+    approve = true;
+    const tool = buildFusionDelegateTool(
+      deps({ approvalRequired: true, approvals: gate }),
+    );
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]?.category).toBe("fusion_fanout");
+  });
+
+  it("leaves level 4 as it was: no question, and the workers hold the scope", async () => {
+    const { gate, prompts } = gateAt(4);
+    const scopes: Array<readonly string[]> = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        approvalRequired: true,
+        approvals: gate,
+        runTurn: async (session) => {
+          scopes.push(gate.fanoutScopes.scopeFor(session.id));
+          return turnResult();
+        },
+      }),
+    );
+    await tool.run({ tasks: insideTask }, ctx());
+    expect(prompts).toHaveLength(0);
+    expect(scopes[0]?.length).toBeGreaterThan(0);
+  });
+});
+
+describe("fanoutQuietUnderLevel (ATO-1689)", () => {
+  it("is quiet only where workspace writes are and the fan-out is not, inside the folder", () => {
+    expect(fanoutQuietUnderLevel(1, ["/repo"], "/repo")).toBe(false);
+    expect(fanoutQuietUnderLevel(2, ["/repo", "/repo/src"], "/repo")).toBe(true);
+    expect(fanoutQuietUnderLevel(3, ["/repo/src"], "/repo")).toBe(true);
+    expect(fanoutQuietUnderLevel(4, ["/repo"], "/repo")).toBe(false);
+    expect(fanoutQuietUnderLevel(2, ["/repo", "/tmp/x"], "/repo")).toBe(false);
+    expect(fanoutQuietUnderLevel(2, ["/repo-backup"], "/repo")).toBe(false);
+    expect(fanoutQuietUnderLevel(2, ["/repo/../etc"], "/repo")).toBe(false);
+    expect(fanoutQuietUnderLevel(2, [], "/repo")).toBe(false);
   });
 });

@@ -58,4 +58,24 @@ describe("WrittenFilesTracker (ATO-1364)", () => {
     t.observeExecuted({ tool: "os.fs.write", status: "ok" }, 0);
     expect(t.count).toBe(2);
   });
+
+  it("keeps each ok write/edit's diffstat, summed per path, whatever was parsed (ATO-1700)", () => {
+    const t = new WrittenFilesTracker();
+    const ok = (tool: string, path: string, added: number, removed: number) => ({
+      tool,
+      status: "ok",
+      details: { path, diffstat: { added, removed } },
+    });
+    t.observeParsed({ tool: "os.fs.edit", args: { path: "/w/a.ts" } }, 0);
+    t.observeExecuted(ok("os.fs.edit", "/w/a.ts", 3, 1), 0);
+    t.observeExecuted(ok("os.fs.write", "/w/b.md", 4, 0), 1);
+    t.observeExecuted(ok("os.fs.edit", "/w/a.ts", 1, 1), 2);
+    t.observeExecuted({ ...ok("os.fs.edit", "/w/c.ts", 1, 0), status: "error" }, 3);
+    t.observeExecuted(ok("os.shell.run", "/w/d.ts", 1, 0), 4);
+    t.observeExecuted({ tool: "os.fs.write", status: "ok", details: { path: "/w/e.ts" } }, 5);
+    expect(t.diffstats).toEqual([
+      { path: "/w/a.ts", added: 4, removed: 2 },
+      { path: "/w/b.md", added: 4, removed: 0 },
+    ]);
+  });
 });

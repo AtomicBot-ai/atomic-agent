@@ -714,6 +714,8 @@ export function buildStreamEventHook(
           // ATO-1137: the canvas an ok `canvas.render` wrote, for the chat to show.
           ...canvasFrame(inner.result),
           ...diffstatFrame(inner.result),
+          // ATO-1701: the files a fusion fan-out's workers changed.
+          ...diffstatsFrame(inner.result),
           // ATO-1135: an MCP App's page for this call, for the chat to render.
           ...mcpAppFrame(inner.result),
           // ATO-1145: the call's approval records, as the transcript keeps
@@ -990,6 +992,12 @@ export function buildStreamEventHook(
           ...(isFiniteNumber(event.tokens) && event.tokens > 0 ? { tokens: event.tokens } : {}),
           ...(isFiniteNumber(event.spentUsd) ? { spent_usd: event.spentUsd } : {}),
           ...(isFiniteNumber(event.costUsd) ? { cost_usd: event.costUsd } : {}),
+          // ATO-1754: on `started`, what the worker was told and why it is
+          // not on the model it asked for.
+          ...(typeof event.brief === "string" && event.brief.length > 0 ? { brief: event.brief } : {}),
+          ...(typeof event.modelNote === "string" && event.modelNote.length > 0
+            ? { model_note: event.modelNote }
+            : {}),
         });
       }
       return;
@@ -1196,6 +1204,41 @@ function diffstatFrame(
     typeof n === "number" && Number.isInteger(n) && n >= 0;
   if (!count(added) || !count(removed)) return {};
   return { diffstat: { path, added, removed } };
+}
+
+/** Most rows a `diffstats` list carries; the card shows fewer. */
+const DIFFSTATS_FRAME_MAX = 200;
+
+/**
+ * `diffstats` on a `tool_result` frame (ATO-1701): the files a
+ * `fusion.delegate` call's workers changed, as `[{path, added, removed}]`
+ * summed per path (`details.diffstats`, ATO-1700). The workers' own
+ * write results run in their sessions and never reach this stream, so
+ * without it the "Changed files" card stayed empty after a fan-out.
+ * Sent on an `error` result too: a fan-out whose every task failed its
+ * checks still changed those files in the folder (a workspace that was
+ * not merged lists none). Rows of a shape a host cannot draw are
+ * dropped; the list is left out when none is left. A single write/edit
+ * keeps its `diffstat`.
+ */
+function diffstatsFrame(
+  result: CompressedToolResult,
+): { diffstats?: { path: string; added: number; removed: number }[] } {
+  if (result.tool !== "fusion.delegate") return {};
+  const raw = (result.details ?? {}).diffstats;
+  if (!Array.isArray(raw)) return {};
+  const count = (n: unknown): n is number =>
+    typeof n === "number" && Number.isInteger(n) && n >= 0;
+  const out: { path: string; added: number; removed: number }[] = [];
+  for (const row of raw) {
+    if (out.length >= DIFFSTATS_FRAME_MAX) break;
+    if (typeof row !== "object" || row === null) continue;
+    const { path, added, removed } = row as { path?: unknown; added?: unknown; removed?: unknown };
+    if (typeof path !== "string" || path.length === 0) continue;
+    if (!count(added) || !count(removed)) continue;
+    out.push({ path, added, removed });
+  }
+  return out.length === 0 ? {} : { diffstats: out };
 }
 
 /**
