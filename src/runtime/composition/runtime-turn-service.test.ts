@@ -21,6 +21,7 @@ import { createRuntimeTurnService, prepareRuntimeTurnState, stoppedForMoney, typ
 import { resolveModelMode } from "../../llm/model-mode.js";
 import { resolveLlmConfig } from "../../llm/provider/registry/provider-types.js";
 import type { TurnProgress } from "../../session/turn-progress.js";
+import { INTERRUPTED_TURN_ENDING } from "../../session/session-store.js";
 import { currentBrowserScope, onBrowserWorkerEnd, runInBrowserScope, type BrowserRunScope } from "../../tools/browser/browser-run-scope.js";
 
 function deferred<T>() {
@@ -376,6 +377,38 @@ describe("runtime turn ownership recipes", () => {
     await expect(fixture.service.executeTurn(old, "request", { signal: abort.signal })).rejects.toBe(failure);
     expect(fixture.rows.get(old.id)).toMatchObject({ status: "cancelled", lastError: "prior error" });
     expect(fixture.events.slice(-4)).toEqual(["release:cancelled", "shell-turn", "clear:session", "unpin:session"]);
+  });
+
+  it("a turn cancelled while the host stops ends as interrupted, its transcript kept (ATO-1688)", async () => {
+    fixture.loop.runTurn.mockImplementation(async (value: SessionState, options: RunTurnOptions) => {
+      const out = result(value, options);
+      return { ...out, session: { ...out.session, status: "cancelled", lastError: null }, reason: "cancelled" } as RunTurnResult;
+    });
+    fixture.setClosing(true);
+    const output = await fixture.service.executeTurn(session(), "request");
+    expect(fixture.rows.get("session")).toMatchObject({ status: INTERRUPTED_TURN_ENDING.status, lastError: INTERRUPTED_TURN_ENDING.lastError });
+    expect(fixture.rows.get("session")?.turns.map((t) => t.kind)).toEqual(["user", "assistant_reply"]);
+    expect(output.session.lastError).toBe(INTERRUPTED_TURN_ENDING.lastError);
+  });
+
+  it("a person's Stop, with the host running, stays a plain cancel (ATO-1688)", async () => {
+    fixture.loop.runTurn.mockImplementation(async (value: SessionState, options: RunTurnOptions) => {
+      const out = result(value, options);
+      return { ...out, session: { ...out.session, status: "cancelled", lastError: null }, reason: "cancelled" } as RunTurnResult;
+    });
+    await fixture.service.executeTurn(session(), "request");
+    expect(fixture.rows.get("session")).toMatchObject({ status: "cancelled", lastError: null });
+  });
+
+  it("a thrown turn aborted while the host stops is released as interrupted (ATO-1688)", async () => {
+    const old = { ...session(), lastError: "prior error" };
+    fixture.rows.set(old.id, old);
+    const abort = new AbortController(); abort.abort();
+    const failure = new Error("transport wrapped abort");
+    fixture.loop.runTurn.mockRejectedValue(failure);
+    fixture.setClosing(true);
+    await expect(fixture.service.executeTurn(old, "request", { signal: abort.signal })).rejects.toBe(failure);
+    expect(fixture.rows.get(old.id)).toMatchObject(INTERRUPTED_TURN_ENDING);
   });
 
   it("ephemeral workers bypass persistence, trace pins and normal turn tracking", async () => {
