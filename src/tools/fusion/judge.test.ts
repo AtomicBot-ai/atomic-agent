@@ -276,6 +276,41 @@ describe("a node closes only on a green list (ATO-944)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("keeps the first attempt's changed files next to the retry's (ATO-1700)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "judge-files-"));
+    let judged = 0;
+    const d = deps(dir, async () => {
+      judged += 1;
+      return { content: JSON.stringify({ items: [{ id: "a2", pass: judged > 1, why: "x" }] }) };
+    });
+    const plain = d.runTurn;
+    let attempt = 0;
+    d.runTurn = (async (session: never, message: string, options: { eventHook?: (e: unknown) => void }) => {
+      attempt += 1;
+      const path = join(dir, attempt === 1 ? "a.txt" : "b.txt");
+      options.eventHook?.({
+        type: "llm_event",
+        event: {
+          type: "tool_call_executed",
+          result: { tool: "os.fs.write", status: "ok", summary: "wrote", details: { path, diffstat: { added: attempt, removed: 0 } }, truncated: false },
+          batchIndex: 0,
+          batchSize: 1,
+        },
+      });
+      return plain(session, message, options as never);
+    }) as never;
+    const result = await buildFusionDelegateTool(d).run(
+      { tasks: TASK },
+      { workingDir: dir, sessionId: "s-p", stepIndex: 0, signal: new AbortController().signal },
+    );
+    expect(attempt).toBe(2);
+    expect(result.details.diffstats).toEqual([
+      { path: join(dir, "a.txt"), added: 1, removed: 0 },
+      { path: join(dir, "b.txt"), added: 2, removed: 0 },
+    ]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("lets the retry of a task with no files split it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "judge-s-"));
     const proposal =

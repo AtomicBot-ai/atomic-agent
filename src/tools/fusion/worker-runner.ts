@@ -1842,6 +1842,11 @@ async function runOneTask(
     );
   }
 
+  // The files this worker changed, for the chat's "Changed files" card
+  // (ATO-1700): its own write results never reach the chat's stream.
+  const diffstats = filesWritten.diffstats;
+  if (diffstats.length > 0) result = { ...result, diffstats };
+
   // Keep the feed paired: a turn that died before it ever stepped never
   // reached the hook, and a bare `failed` line about a worker the
   // operator never saw start reads like a phantom.

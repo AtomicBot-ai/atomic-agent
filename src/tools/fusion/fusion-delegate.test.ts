@@ -764,6 +764,64 @@ describe("fusion.delegate", () => {
     expect(result.details.outcome).toBe("all_ok");
   });
 
+  it("sums the files every worker changed into details.diffstats, one row per path (ATO-1700)", async () => {
+    // Discord, 21.11: after a fan-out the desktop showed no "Changed
+    // files" card, because the workers' write results never reach the
+    // chat's stream.
+    const edit = (path: string, added: number, removed: number, tool = "os.fs.edit", status: "ok" | "error" = "ok") => ({
+      type: "llm_event" as const,
+      event: {
+        type: "tool_call_executed" as const,
+        result: {
+          tool,
+          status,
+          summary: `edited ${path}`,
+          details: { path, diffstat: { added, removed } },
+          truncated: false,
+        },
+        batchIndex: 0,
+        batchSize: 1,
+      },
+    });
+    const tool = buildFusionDelegateTool(
+      deps({
+        runTurn: async (session, _message, options) => {
+          if (session.id.endsWith("1")) {
+            options.eventHook?.(edit("/repo/shared.ts", 3, 1));
+            options.eventHook?.(edit("/repo/one.md", 10, 0, "os.fs.write"));
+          } else {
+            options.eventHook?.(edit("/repo/shared.ts", 2, 2));
+            options.eventHook?.(edit("/repo/failed.ts", 7, 0, "os.fs.edit", "error"));
+            options.eventHook?.(edit("/repo/ran.txt", 1, 0, "os.shell.run"));
+          }
+          options.eventHook?.({
+            type: "llm_event",
+            event: { type: "assistant_reply", text: "done" },
+          });
+          return turnResult();
+        },
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(result.status).toBe("ok");
+    expect(result.details.diffstats).toEqual([
+      { path: "/repo/shared.ts", added: 5, removed: 3 },
+      { path: "/repo/one.md", added: 10, removed: 0 },
+    ]);
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows[0]?.diffstats).toEqual([
+      { path: "/repo/shared.ts", added: 3, removed: 1 },
+      { path: "/repo/one.md", added: 10, removed: 0 },
+    ]);
+    // The model reads the summary, never the list.
+    expect(result.summary).not.toContain("diffstats");
+  });
+
+  it("leaves details.diffstats out when no worker changed a file (ATO-1700)", async () => {
+    const result = await buildFusionDelegateTool(deps()).run({ tasks: TASKS }, ctx());
+    expect(result.details).not.toHaveProperty("diffstats");
+  });
+
   it("carries a worker's replaced input into the head line, the row and details.tasks (F43)", async () => {
     // Live, 2026-09-15: the worker's write result warned that it had
     // replaced the user's 2,401-row `sales.csv`; the orchestrator saw
