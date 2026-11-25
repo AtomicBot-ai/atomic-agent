@@ -51,6 +51,22 @@ describe("verifyGithubSignature", () => {
 });
 
 describe("verifyStandardWebhook", () => {
+  it("accepts the published Svix test vector (ATO-1542)", () => {
+    /* From Svix's verification docs: whsec_ secret, id.timestamp.body, v1 base64. */
+    const body = Buffer.from('{"test": 2432232314}');
+    const headers = {
+      id: "msg_p5jXN8AQM9LWM0D4loKWxJek",
+      timestamp: "1614265330",
+      signature: "v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE=",
+    };
+    const secret = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
+    const sentMs = 1614265330 * 1000;
+    expect(verifyStandardWebhook(body, headers, secret, sentMs)).toEqual({ ok: true });
+    expect(verifyStandardWebhook(body, { ...headers, signature: `v1,${Buffer.alloc(32).toString("base64")} ${headers.signature}` }, secret, sentMs)).toEqual({ ok: true });
+    expect(verifyStandardWebhook(Buffer.from('{"test": 2432232315}'), headers, secret, sentMs)).toEqual({ ok: false, reason: "bad_signature" });
+    expect(verifyStandardWebhook(body, headers, secret, sentMs + STANDARD_WEBHOOKS_TOLERANCE_MS + 1000)).toEqual({ ok: false, reason: "stale_timestamp" });
+  });
+
   const id = "msg_synthetic_1";
 
   it("accepts a valid v1 signature", () => {
