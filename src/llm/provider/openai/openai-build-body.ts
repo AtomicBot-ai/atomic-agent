@@ -76,6 +76,12 @@ export interface OpenAiBodyOptions {
    * body carries no reasoning, as before.
    */
   reasoningRequired?: boolean;
+  /**
+   * Google's Gemini endpoint: hand each step's thought signature back on
+   * the history's tool calls (ATO-1680). See
+   * `NativeMessageOptions.thoughtSignatures`.
+   */
+  thoughtSignatures?: boolean;
 }
 
 /**
@@ -174,6 +180,8 @@ function assembleOpenAiChatBody(
     ...(options.reasoningRequired
       ? { preserveReasoning: true, reasoningRequired: true }
       : {}),
+    // Gemini 3 refuses a tool history without its signatures (ATO-1680).
+    ...(options.thoughtSignatures ? { thoughtSignatures: true } : {}),
   };
   const messages =
     resolveMessageShape(filtered, options) === "native" && filtered.messages

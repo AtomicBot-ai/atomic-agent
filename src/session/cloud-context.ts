@@ -60,7 +60,8 @@ export function extendCloudContext(
       case "assistant_tool_call": {
         const callId = `call_turn_${i}`;
         pending.push({ id: callId, tool: source.tool });
-        turn = { kind: source.kind, tool: source.tool, args: structuredClone(source.args), callId };
+        turn = { kind: source.kind, tool: source.tool, args: structuredClone(source.args), callId,
+          ...(source.thoughtSignature ? { thoughtSignature: source.thoughtSignature } : {}) };
         break;
       }
       case "tool_result":
