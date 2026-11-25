@@ -123,6 +123,26 @@ describe("runWorkerTasks", () => {
     expect(started[1]).not.toHaveProperty("modelNote");
   });
 
+  it("clips an oversized brief on the started line, while the worker still gets all of it (ATO-1754)", async () => {
+    const { deps, calls, events } = harness(async ({ options }) => {
+      options.eventHook?.({ type: "turn_started", turnIndex: 0 });
+      return turnResult();
+    });
+    const big: DelegateTask = { id: "t0", title: "Big", instructions: "z".repeat(FUSION_WORKER_BRIEF_EVENT_CHARS + 100) };
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: [big],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    const started = events.flatMap(({ event }) =>
+      event.type === "fusion_worker" && event.phase === "started" ? [event] : [],
+    );
+    expect(calls[0]!.userMessage.length).toBeGreaterThan(FUSION_WORKER_BRIEF_EVENT_CHARS);
+    expect(started[0]!.brief).toBe(clipBriefForEvent(calls[0]!.userMessage));
+    expect(started[0]!.brief).toContain("the worker received all of it");
+  });
+
   it("clips only a brief longer than the event carries (ATO-1754)", () => {
     const short = "x".repeat(FUSION_WORKER_BRIEF_EVENT_CHARS);
     expect(clipBriefForEvent(short)).toBe(short);
