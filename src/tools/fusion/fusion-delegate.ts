@@ -70,6 +70,7 @@ import {
 } from "./outcome-log.js";
 import { renderLegSpeedLine, workerSpeedSample } from "./leg-speed.js";
 import { fanoutPathReport, renderPathLine } from "./critical-path.js";
+import { sumDiffStats } from "./worker-diffstats.js";
 import { workerInheritsWorkspace } from "./worker-workspace.js";
 import {
   planResume,
@@ -1818,6 +1819,7 @@ export function buildFusionDelegateTool(
       // Workers that were never served or timed out before a single step
       // count as nothing delivered too (ATO-234).
       const outcome = delegateOutcome(results);
+      const changedFiles = sumDiffStats(results);
       // What the fan-out cost on the worker leg, when its model is priced
       // (a cloud leg with a catalogue entry); a local leg resolves to no
       // pricing and the header says nothing.
@@ -1903,6 +1905,9 @@ export function buildFusionDelegateTool(
               : { oversizedTasks: fit.oversized }),
             ...(profileReports.length === 0 ? {} : { profiles: profileReports }),
             ...(merges.length === 0 ? {} : { merges }),
+            // The files the workers changed, summed per path (ATO-1700),
+            // for the chat's "Changed files" card (`diffstats` on the frame).
+            ...(changedFiles.length === 0 ? {} : { diffstats: changedFiles }),
             ...(replan === undefined ||
             (replan.pending.length === 0 && replan.exhausted.length === 0)
               ? {}

@@ -17,6 +17,7 @@ import {
   FUSION_WORKER_OPERATOR_ONLY_MARKER,
 } from "./worker-tool-policy.js";
 import type { JudgeSummary } from "./judge.js";
+import type { FileDiffStat } from "./worker-diffstats.js";
 import { classifyWorkerFailure } from "./failure-breaker.js";
 import { MAX_WORKER_QUESTION_CHARS } from "./worker-question.js";
 
@@ -227,6 +228,15 @@ export interface WorkerTaskResult {
   replacedInputs?: ReplacedInput[];
   /** The judge's verdict on this task's acceptance list (ATO-944), when it ran. */
   judge?: JudgeSummary;
+  /**
+   * The files this task's ok `os.fs.write` / `os.fs.edit` calls changed,
+   * with lines added and removed, one row per path (ATO-1700). Absolute
+   * paths in the folder; a workspace task's are rebased after its merge
+   * and keep only what the merge wrote. `fusion.delegate` sums them into
+   * `details.diffstats` for the chat's "Changed files" card. Absent when
+   * the task changed no file.
+   */
+  diffstats?: FileDiffStat[];
   /**
    * The model the task ran on, set when models by role are configured
    * (ATO-943); absent, it ran on the worker leg as every task did.

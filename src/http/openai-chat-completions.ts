@@ -714,6 +714,8 @@ export function buildStreamEventHook(
           // ATO-1137: the canvas an ok `canvas.render` wrote, for the chat to show.
           ...canvasFrame(inner.result),
           ...diffstatFrame(inner.result),
+          // ATO-1701: the files a fusion fan-out's workers changed.
+          ...diffstatsFrame(inner.result),
           // ATO-1135: an MCP App's page for this call, for the chat to render.
           ...mcpAppFrame(inner.result),
           // ATO-1145: the call's approval records, as the transcript keeps
@@ -1196,6 +1198,38 @@ function diffstatFrame(
     typeof n === "number" && Number.isInteger(n) && n >= 0;
   if (!count(added) || !count(removed)) return {};
   return { diffstat: { path, added, removed } };
+}
+
+/** Most rows a `diffstats` list carries; the card shows fewer. */
+const DIFFSTATS_FRAME_MAX = 200;
+
+/**
+ * `diffstats` on a `tool_result` frame (ATO-1701): the files an ok
+ * `fusion.delegate` call's workers changed, as `[{path, added, removed}]`
+ * summed per path (`details.diffstats`, ATO-1700). The workers' own
+ * write results run in their sessions and never reach this stream, so
+ * without it the "Changed files" card stayed empty after a fan-out.
+ * Rows of a shape a host cannot draw are dropped; the list is left out
+ * when none is left. A single write/edit keeps its `diffstat`.
+ */
+function diffstatsFrame(
+  result: CompressedToolResult,
+): { diffstats?: { path: string; added: number; removed: number }[] } {
+  if (result.tool !== "fusion.delegate" || result.status !== "ok") return {};
+  const raw = (result.details ?? {}).diffstats;
+  if (!Array.isArray(raw)) return {};
+  const count = (n: unknown): n is number =>
+    typeof n === "number" && Number.isInteger(n) && n >= 0;
+  const out: { path: string; added: number; removed: number }[] = [];
+  for (const row of raw) {
+    if (out.length >= DIFFSTATS_FRAME_MAX) break;
+    if (typeof row !== "object" || row === null) continue;
+    const { path, added, removed } = row as { path?: unknown; added?: unknown; removed?: unknown };
+    if (typeof path !== "string" || path.length === 0) continue;
+    if (!count(added) || !count(removed)) continue;
+    out.push({ path, added, removed });
+  }
+  return out.length === 0 ? {} : { diffstats: out };
 }
 
 /**
