@@ -6166,6 +6166,9 @@ function renderSettings() {
   // Item 36: the nav scrolls when the window is too short for its rows, and
   // the same rebuild would put it back at the top on every poll.
   const keepNav = old ? ((old.querySelector('.setmenu') || {}).scrollTop || 0) : 0;
+  // ATO-1752: the same for Connections' pane switch when it scrolls, on the same pane.
+  const keepSubseg = old && SETTINGS_SCROLL.pane === settingsPaneId(S.settingsPane)
+    ? ((old.querySelector('.settb .set-subseg') || {}).scrollLeft || 0) : null;
   // ATO-318: a field or button the operator is on inside the pane keeps the focus (and a field its caret) through the rebuild.
   const keepFocus = old && SETTINGS_SCROLL.pane === settingsPaneId(S.settingsPane) ? paneFocusKeep(old.querySelector('.setbody')) : null;
   if (old) old.remove();
@@ -6201,11 +6204,13 @@ function renderSettings() {
   /* ATO-1752: Connections' pane switch scrolls inside the header when it
      is wider than the room left beside the title, the status line and Done
      (six panes with their marks no longer fit a narrower window); the
-     open pane's tab is brought into view. */
+     open pane's tab is brought into view, and a rebuild on the same pane
+     keeps where it was scrolled. */
   const subseg = el.querySelector('.settb .set-subseg');
   const subOn = subseg && subseg.querySelector('button.on');
   if (subOn && subseg.scrollWidth > subseg.clientWidth) {
-    subseg.scrollLeft = Math.max(0, subOn.offsetLeft + subOn.offsetWidth - subseg.clientWidth);
+    subseg.scrollLeft = keepSubseg !== null ? keepSubseg
+      : Math.max(0, subOn.offsetLeft + subOn.offsetWidth - subseg.clientWidth);
   }
   // Composio: a half-typed key goes back into its field (the markup carries it empty) before the focus and caret do.
   composioKeyRestore();
