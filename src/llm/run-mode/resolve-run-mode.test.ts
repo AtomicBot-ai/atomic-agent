@@ -204,6 +204,14 @@ describe("resolveRunMode", () => {
     );
     expect(ours.workerModel).toBe("qwen-3.5-4b");
 
+    // In managed mode `local-llama` is built from the daemon's port, so
+    // its URL need not match `localModels.url`; it is still ours.
+    const managedPort = resolveRunMode(
+      llm("openrouter", { mode: "fusion", fusion: { workerProvider: "local-llama" } }, providers),
+      { managedModelId: "qwen-3.5-4b", localServerUrl: "http://127.0.0.1:8080" },
+    );
+    expect(managedPort.workerModel).toBe("qwen-3.5-4b");
+
     // A foreign entry that names no model has no label to guess.
     const unnamed = resolveRunMode(
       llm(

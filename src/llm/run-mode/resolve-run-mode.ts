@@ -308,8 +308,12 @@ export function resolveRunMode(
   // managed model: that names a model this machine holds, not the one
   // the other server loaded. Its own entry's `model` is the best guess
   // here; `fusion.delegate` replaces it with what `/props` says.
+  // `local-llama` is the managed daemon's own entry whatever its URL
+  // reads (in managed mode it is built from the daemon's port, not from
+  // `localModels.url`), as the TUI composer already treats it.
   const workerIsForeign =
     worker !== undefined &&
+    worker.id !== "local-llama" &&
     opts.localServerUrl !== undefined &&
     isForeignLlamaServer(worker, opts.localServerUrl);
   const workerModelLabel =
