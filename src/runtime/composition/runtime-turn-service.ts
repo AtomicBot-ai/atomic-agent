@@ -407,7 +407,7 @@ export function createRuntimeTurnService(
     runOptions: { checkpoint?: { taskId?: string } },
   ): SessionState =>
     finished.status === "cancelled" && cutOffByStop(runOptions)
-      ? { ...finished, lastError: INTERRUPTED_TURN_ENDING.lastError }
+      ? { ...finished, lastError: INTERRUPTED_TURN_ENDING.lastError ?? null }
       : finished;
 
   /**
