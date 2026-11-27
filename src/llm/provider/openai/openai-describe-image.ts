@@ -3,6 +3,8 @@ import type { OpenAiHttpDeps } from "./openai-http.js";
 import { openAiPostJson } from "./openai-http.js";
 import { normaliseMessageContent } from "./openai-normalise-response.js";
 import { modelParamProfile, resolveTemperature } from "./model-params.js";
+import { temperatureLessonFromError } from "./allowed-temperature.js";
+import { bodyAfterTemperatureLesson } from "./temperature-resend.js";
 
 /**
  * The provider's body passthrough, applied to the describe call the way
@@ -89,12 +91,19 @@ export async function postUserPartsViaOpenAi(
   };
   const body = withPassthrough(base, bodyOptions, profile);
   const start = Date.now();
-  const json = await openAiPostJson(
-    deps,
-    `${apiPathPrefix}/chat/completions`,
-    body,
-    request,
-  );
+  const path = `${apiPathPrefix}/chat/completions`;
+  let json: Record<string, unknown>;
+  try {
+    json = await openAiPostJson(deps, path, body, request);
+  } catch (err) {
+    // A 400 that refused the temperature or named the one it takes gets
+    // one resend that obeys it, like a turn (#1554).
+    const resend = request.signal?.aborted
+      ? undefined
+      : bodyAfterTemperatureLesson(defaultChatModel, temperatureLessonFromError(err), body);
+    if (resend === undefined) throw err;
+    json = await openAiPostJson(deps, path, resend, request);
+  }
   const message =
     (
       json.choices as Array<{ message?: Record<string, unknown> }> | undefined

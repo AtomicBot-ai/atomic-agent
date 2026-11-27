@@ -15,6 +15,8 @@ import {
   modelParamProfile,
   resolveTemperature,
 } from "../openai/model-params.js";
+import { temperatureLessonFromResponse } from "../openai/allowed-temperature.js";
+import { bodyAfterTemperatureLesson } from "../openai/temperature-resend.js";
 import {
   classifyVerifyResponse,
   classifyVerifyTransportError,
@@ -37,7 +39,10 @@ import type {
  */
 export const PROVIDER_VERIFY_TIMEOUT_MS = 8_000;
 
-/** model → other token field → next model. Never more than that. */
+/**
+ * model → other token field → next model. Never more than that, except
+ * the one resend without a temperature the model refused (#1554).
+ */
 const MAX_VERIFY_REQUESTS = 3;
 
 export async function verifyProviderKey(
@@ -72,6 +77,9 @@ export async function verifyProviderKey(
 
   let requests = 0;
   let tokenField: "max_tokens" | "max_completion_tokens" = "max_tokens";
+  // One resend for a refused temperature across the whole check: the
+  // lesson is kept for the model, so the rebuilt body obeys it.
+  let temperatureRetried = false;
   let lastVerdict: {
     status: ProviderVerifyStatus;
     model: string;
@@ -83,7 +91,7 @@ export async function verifyProviderKey(
     // The token-field retry is per model: an endpoint that wants
     // `max_completion_tokens` wants it for the next candidate too.
     for (;;) {
-      if (requests >= MAX_VERIFY_REQUESTS) {
+      if (requests >= MAX_VERIFY_REQUESTS + (temperatureRetried ? 1 : 0)) {
         return lastVerdict
           ? result(
               lastVerdict.status,
@@ -106,12 +114,13 @@ export async function verifyProviderKey(
       }
       requests += 1;
 
+      const sent = probeBody(model, tokenField);
       let res: Response;
       try {
         res = await openAiFetch(
           deps,
           path,
-          probeBody(model, tokenField),
+          sent,
           { ...(opts.signal ? { signal: opts.signal } : {}) },
           false,
           "POST",
@@ -132,6 +141,17 @@ export async function verifyProviderKey(
       }
 
       const body = res.ok ? "" : await readBounded(res);
+      // A model that refuses the probe's temperature 0 ("`temperature`
+      // is deprecated for this model") says nothing about the key: send
+      // again without it rather than report a provider error.
+      if (
+        !res.ok &&
+        !temperatureRetried &&
+        bodyAfterTemperatureLesson(model, temperatureLessonFromResponse(res.status, body), sent)
+      ) {
+        temperatureRetried = true;
+        continue;
+      }
       const verdict = classifyVerifyResponse(res.status, body);
       if (verdict.kind === "retry_token_field" && tokenField === "max_tokens") {
         tokenField = "max_completion_tokens";
