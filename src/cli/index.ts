@@ -42,6 +42,7 @@ import { pushCommand } from "./push-command.js";
 import { providersCommand } from "./providers-command.js";
 import { loginCommand, logoutCommand } from "./login-command.js";
 import { composioCommand } from "./composio-command.js";
+import { connectCommand } from "./connect-command.js";
 import { whisperCommand } from "./whisper-command.js";
 import { openUrlInBrowser, tuiCommand } from "../tui/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
@@ -269,6 +270,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "composio",
     summary: "Several Composio accounts per app, one default each (accounts list|add|remove|default)",
     run: composioCommand,
+  },
+  {
+    name: "connect",
+    summary: "Connect a chat channel step by step (linear)",
+    run: (args) => connectCommand(args, { openUrl: openUrlInBrowser }),
   },
   {
     name: "whisper",

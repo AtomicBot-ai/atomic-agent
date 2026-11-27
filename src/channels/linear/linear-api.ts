@@ -9,7 +9,12 @@
  * `Bearer <token>`. The key is never put in an error message.
  */
 
-import { LINEAR_COMMENT_LIMIT, LINEAR_GRAPHQL_URL, type LinearTarget } from "./linear-types.js";
+import {
+  LINEAR_COMMENT_LIMIT,
+  LINEAR_GRAPHQL_URL,
+  type LinearActivityKind,
+  type LinearTarget,
+} from "./linear-types.js";
 
 export class LinearApiError extends Error {
   constructor(
@@ -29,6 +34,11 @@ export interface LinearViewer {
 
 export interface LinearApiDeps {
   apiKey: string;
+  /**
+   * App installs (ATO-2464): renew an expired token and return the new
+   * one (`null`: cannot). Tried once when Linear refuses the key.
+   */
+  refresh?: () => Promise<string | null>;
   fetchImpl?: typeof fetch;
   url?: string;
 }
@@ -36,6 +46,8 @@ export interface LinearApiDeps {
 const VIEWER_QUERY = "query AtomicAgentViewer { viewer { id name } }";
 const COMMENT_CREATE_MUTATION =
   "mutation AtomicAgentCommentCreate($input: CommentCreateInput!) { commentCreate(input: $input) { success comment { id } } }";
+const AGENT_ACTIVITY_MUTATION =
+  "mutation AtomicAgentActivityCreate($input: AgentActivityCreateInput!) { agentActivityCreate(input: $input) { success agentActivity { id } } }";
 
 export function linearAuthHeader(apiKey: string): string {
   return apiKey.startsWith("lin_api_") ? apiKey : `Bearer ${apiKey}`;
@@ -51,15 +63,23 @@ export function fitCommentBody(text: string, limit = LINEAR_COMMENT_LIMIT): stri
 export class LinearApi {
   private readonly fetchImpl: typeof fetch;
   private readonly url: string;
+  private apiKey: string;
+  private refreshing: Promise<string | null> | null = null;
 
   constructor(private readonly deps: LinearApiDeps) {
     this.fetchImpl = deps.fetchImpl ?? fetch;
     this.url = deps.url ?? LINEAR_GRAPHQL_URL;
+    this.apiKey = deps.apiKey;
+  }
+
+  /** The key or token in use now (a refresh replaces it). */
+  currentKey(): string {
+    return this.apiKey;
   }
 
   /** The user (or app) the API key acts as. Rejects when the key is refused. */
   async viewer(): Promise<LinearViewer> {
-    const data = await this.request(VIEWER_QUERY, {});
+    const data = await this.query(VIEWER_QUERY, {});
     const viewer = (data as { viewer?: { id?: unknown; name?: unknown } }).viewer;
     if (typeof viewer?.id !== "string") throw new LinearApiError("Linear returned no viewer", "bad_response");
     return { id: viewer.id, name: typeof viewer.name === "string" ? viewer.name : "" };
@@ -72,7 +92,7 @@ export class LinearApi {
   async createComment(target: LinearTarget, body: string): Promise<string> {
     const input: Record<string, string> = { issueId: target.issueId, body: fitCommentBody(body) };
     if (target.parentId) input.parentId = target.parentId;
-    const data = await this.request(COMMENT_CREATE_MUTATION, { input });
+    const data = await this.query(COMMENT_CREATE_MUTATION, { input });
     const result = (data as { commentCreate?: { success?: unknown; comment?: { id?: unknown } } }).commentCreate;
     if (result?.success !== true || typeof result.comment?.id !== "string") {
       throw new LinearApiError("Linear did not create the comment", "bad_response");
@@ -80,12 +100,47 @@ export class LinearApi {
     return result.comment.id;
   }
 
-  private async request(query: string, variables: Record<string, unknown>): Promise<unknown> {
+  /**
+   * Post to a Linear agent session (Agents API, ATO-2464): `thought`
+   * while working, `response` for the answer, `elicitation` to ask,
+   * `error` when it failed. Needs a token of the agent installed as an
+   * app (`actor=app`). Returns the activity id.
+   */
+  async createAgentActivity(agentSessionId: string, kind: LinearActivityKind, body: string): Promise<string> {
+    const input = { agentSessionId, content: { type: kind, body: fitCommentBody(body) } };
+    const data = await this.query(AGENT_ACTIVITY_MUTATION, { input });
+    const result = (data as { agentActivityCreate?: { success?: unknown; agentActivity?: { id?: unknown } } })
+      .agentActivityCreate;
+    if (result?.success !== true || typeof result.agentActivity?.id !== "string") {
+      throw new LinearApiError("Linear did not record the agent activity", "bad_response");
+    }
+    return result.agentActivity.id;
+  }
+
+  /** One GraphQL call; resolves `data`, throws `LinearApiError` (`auth` when the key is refused). */
+  async query(query: string, variables: Record<string, unknown>): Promise<unknown> {
+    try {
+      return await this.send(query, variables);
+    } catch (err) {
+      if (!(err instanceof LinearApiError) || err.code !== "auth" || !this.deps.refresh) throw err;
+      const used = this.apiKey;
+      // One renewal for every call that hit the expiry at the same time.
+      this.refreshing ??= this.deps.refresh().catch(() => null).finally(() => {
+        this.refreshing = null;
+      });
+      const fresh = await this.refreshing;
+      if (fresh === null || fresh === used) throw err;
+      this.apiKey = fresh;
+      return this.send(query, variables);
+    }
+  }
+
+  private async send(query: string, variables: Record<string, unknown>): Promise<unknown> {
     const res = await this.fetchImpl(this.url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: linearAuthHeader(this.deps.apiKey),
+        Authorization: linearAuthHeader(this.apiKey),
       },
       body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(20_000),
