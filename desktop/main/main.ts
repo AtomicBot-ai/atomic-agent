@@ -286,8 +286,10 @@ import {
   useRemoteModels,
   atagRun,
   modelsRecommend,
+  onModelStarted,
   type ImportSourceId,
 } from "./agent-cli.js";
+import { readStateConfig, wireModelPortDrift } from "./model-port-drift.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
 import { checkSavedComposioKey, removeComposioKey, saveComposioKey, type ComposioDeps, type ComposioKeyResult } from "./composio-key.js";
 import { registerComposioAccountsIpc } from "./composio-accounts-ipc.js";
@@ -2798,6 +2800,16 @@ function wireIpc(client: AgentClient): void {
   // A restart held back for the turns runs as the last one ends — on a live agent; a dead one is started afresh by whoever starts it.
   client.on("idle", () => {
     if (client.status.state === "connected") lastTurnEnded();
+  });
+  /* ATO-1750: a model start on a port the running agent does not call (the
+     terminal agent moved it off a taken port in the shared config.json) restarts
+     the agent onto it, as a switch does: held under a turn, never at the quit. */
+  wireModelPortDrift({
+    onModelStarted,
+    agent: () => ({ state: client.status.state, remote: client.isRemote, llamaUrl: client.status.llama?.url }),
+    readConfig: () => readStateConfig(DESKTOP_STATE_DIR),
+    restart: () => restartAfterSwitch({ ok: true }, !quitting),
+    say: sayDesktop,
   });
   // Whoever starts `atag serve` again, it reads the file as it is: no restart is owed.
   client.on("status", (status: { state?: string }) => {

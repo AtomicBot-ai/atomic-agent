@@ -1174,12 +1174,23 @@ export function onDaemonLifecycle(fn: (e: DaemonLifecycle) => void): () => void 
   lifecycle = fn;
   return () => { if (lifecycle === fn) lifecycle = was; };
 }
+/* ATO-1750: told of every model server start the app makes, beside the supervisor (model-port-drift.ts). */
+const startedWatchers = new Set<() => void>();
+/** Called after each real start (never a smoke's stand-in). Hands back the undo. */
+export function onModelStarted(fn: () => void): () => void {
+  startedWatchers.add(fn);
+  return () => { startedWatchers.delete(fn); };
+}
 function tell(e: DaemonLifecycle): void {
   const h = cliStandIns.getStore();
   try {
     if (h) h.tell?.(e);   // a smoke's own start or stop: never the real supervisor's business
     else lifecycle(e);
   } catch { /* a listener never fails a start or a stop */ }
+  if (h || e !== "started") return;
+  for (const fn of startedWatchers) {
+    try { fn(); } catch { /* a watcher never fails a start */ }
+  }
 }
 /** ATO-123: the `models start` runs on their way — a model loading, for the supervisor. */
 export function startsInFlight(): number {
