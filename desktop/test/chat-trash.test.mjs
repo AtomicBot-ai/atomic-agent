@@ -153,7 +153,7 @@ test("Delete…'s confirm puts the chat in Trash through main, never the agent's
   const res = await vm.runInContext("chatTrashPut('s1')", c);
   assert.equal(res.ok, true);
   assert.deepEqual(calls, [["put", "s1", "Plan the trip"]]);
-  assert.deepEqual(vm.runInContext("TRASH.entries.map((e) => e.id)", c), ["s1"]);
+  assert.deepEqual([...vm.runInContext("TRASH.entries.map((e) => e.id)", c)], ["s1"]);   // copied out of the vm realm: strict deepEqual compares prototypes
   // A chat this window does not list is not touched at all.
   const unknown = await vm.runInContext("chatTrashPut('nope')", c);
   assert.equal(unknown.ok, false);
