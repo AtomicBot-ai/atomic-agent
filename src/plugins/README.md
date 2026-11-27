@@ -16,6 +16,7 @@ A plugin is a folder that bundles skills, slash commands, subagent profiles, hoo
 - [plugin-mcp-live.ts](plugin-mcp-live.ts): watches `plugins.json` in a running agent and stops, at once, every started plugin MCP server the state no longer allows (code stopped, plugin or server off, plugin removed); a call still waiting on one ends with that reason. It never starts a server.
 - [plugin-subagents.ts](plugin-subagents.ts): `agents/*.md` profiles; a Fusion task can name one as `plugin:agent` ([subagent profiles](../agent-profiles/README.md)).
 - [plugin-commands.ts](plugin-commands.ts): `commands/**/*.md` as slash commands `/plugin:command`; renders `$ARGUMENTS`, `$1`..`$9` and `${CLAUDE_PLUGIN_ROOT}`, never runs anything.
+- [user-commands.ts](user-commands.ts): the operator's own commands from `.atomic-agent/commands/`, `.claude/commands/` (trusted folders only) and `<stateDir>/commands/`, in the same format. See [docs/user-commands.md](docs/user-commands.md).
 - [marketplace-manifest.ts](marketplace-manifest.ts): reads `.claude-plugin/marketplace.json` (and `.omp-plugin/`), each entry's source kind, and the git URL allowlist.
 - [marketplace-fetch.ts](marketplace-fetch.ts): `PluginFetcher`, the only network code: shallow `git` checkout with hooks off, and https download of a bare marketplace.json.
 - [marketplace-store.ts](marketplace-store.ts): lock file `<stateDir>/plugins/marketplaces.json` (source, ref, pinned commit, fetch time) and checkouts in `plugins/marketplaces/<name>/`.
