@@ -17,8 +17,11 @@ import type { ShowOnceRect } from "./show-once-log.js";
  * the folder: pending-drafts.ts removePendingDraft). Never sent to a model.
  *
  * Taken with macOS's own `screencapture` (Screen Recording permission for
- * the app) of the window by its CGWindowID, or of its frame when only that
- * is known, then shrunk with `sips` so a recording stays small.
+ * the app) of the window by its CGWindowID only, then shrunk with `sips` so
+ * a recording stays small. Never of a screen rectangle: by the time the
+ * picture is taken another app (a browser, a password manager, a system
+ * prompt) can be on top of that frame. No window id (the osascript path,
+ * without the helper) means no picture.
  */
 
 export const SHOW_ONCE_SNAPSHOT_LIMITS = {
@@ -36,15 +39,10 @@ export function snapshotFileName(stepNumber: number): string {
   return `step-${stepNumber}.jpg`;
 }
 
-/** The `screencapture` argv for one window picture, or null when there is nothing to aim at. */
+/** The `screencapture` argv for one window picture by its window id, or null without one (a frame alone is never used). */
 export function snapshotArgs(target: { windowId?: number | null; rect?: ShowOnceRect | null }, file: string): string[] | null {
-  const base = ["-x", "-o", "-t", "jpg"];
   if (typeof target.windowId === "number" && Number.isInteger(target.windowId) && target.windowId > 0) {
-    return [...base, `-l${target.windowId}`, file];
-  }
-  const r = target.rect;
-  if (r && r.width > 0 && r.height > 0) {
-    return [...base, `-R${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.width)},${Math.round(r.height)}`, file];
+    return ["-x", "-o", "-t", "jpg", `-l${target.windowId}`, file];
   }
   return null;
 }

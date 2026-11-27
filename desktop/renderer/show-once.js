@@ -8,9 +8,10 @@ function showOnceSince(startedAt) {
   return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
 const SHOW_ONCE_KEPT = 'Only clicks, shortcuts, menu commands and which app and window are in front are recorded. Never what you type, '
-  + 'nothing in password managers, settings or Atomic Agent itself. It stays on this Mac.';
+  + 'nothing in password managers, settings or Atomic Agent itself. It stays on this Mac unless you tidy it with a cloud model.';
 const SHOW_ONCE_TIDY_HINT = 'After you stop, the model you chat with names the routine and lists what to ask for each time. '
-  + 'It gets the steps as text, never pictures. The steps themselves stay as recorded.';
+  + 'It gets the steps as text (button names, menu paths, window titles), never pictures. If that model is in the cloud, '
+  + 'this text leaves this Mac. The steps themselves stay as recorded.';
 const SHOW_ONCE_SNAP_HINT = 'A picture of the window after each step, to check the draft against. Never of browsers or protected apps. '
   + 'Kept on this Mac with the draft and deleted when you approve or discard it. Never sent to a model.';
 function showOnceSwitchHTML(key, on, label, hint, esc) {
@@ -111,4 +112,4 @@ function createShowOnceController(deps) {
   return {state: st, ensure, act, cardHTML: esc => { ensure(); return showOnceCardHTML(st.s, esc); }};
 }
 if (typeof module !== 'undefined') module.exports = {showOnceCardHTML, showOnceSince, createShowOnceController, SHOW_ONCE_KEPT,
-  showOnceOptionsHTML, showOnceTidyLine};
+  SHOW_ONCE_TIDY_HINT, showOnceOptionsHTML, showOnceTidyLine};
