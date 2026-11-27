@@ -7,6 +7,12 @@ Mention the agent in a Linear issue comment, or assign it the issue, and it star
 
 Linear reaches the agent in one of two ways, and Atomic Agent runs no relay in either: a signed webhook to a small endpoint on your machine (instant, needs a tunnel), or polling the Linear API once a minute (no public address, no tunnel; see "Without a public address" below). The channel is off by default and only answers the Linear users you list as owners. Same design as the Cline CLI Linear connector (Apache-2.0): signed webhook in, GraphQL `commentCreate` out.
 
+## Quick setup: `atag connect linear` (ATO-2464)
+
+`atag connect linear` asks how Linear should reach the agent (polling by default, a webhook, or a Linear app), reads the key without echoing it, checks it with Linear, sets the key's user as the owner (or the user with your Linear email, for an app), and saves: keys through the agent's key store (`.env` or the OS keychain, [linear-setup.ts](linear-setup.ts)), the rest in `channels.linear`. `--poll`, `--webhook`, `--app`, `--owner <id>` and `--mention <handle>` skip the questions; `--off` turns the channel off. The desktop app has the same in Settings, Connections, Linear. The manual steps below do the same by hand.
+
+`--app` installs the agent as a Linear app for agent sessions: create an OAuth application in Linear with the callback URL `http://localhost:3980/linear/oauth/callback` and a webhook with Agent session events, then the wizard opens Linear's install page and catches the answer on `127.0.0.1:3980` (checked against a random `state`). The access token goes to `LINEAR_API_KEY`, the refresh token to `LINEAR_OAUTH_REFRESH_TOKEN` and the client secret to `LINEAR_OAUTH_CLIENT_SECRET`, with `options.oauthClientId` in the config, so an expired app token is renewed on its own ([linear-oauth.ts](linear-oauth.ts)).
+
 ## 1. Create an API key and a webhook in Linear
 
 1. Linear, Settings, Account, Security & access, **Personal API keys**: create a key (`lin_api_...`). The agent posts its comments as this key's user. A separate Linear member for the agent (for example "Atomic Agent") keeps its comments apart from yours; your own key works too.
@@ -86,6 +92,7 @@ Installed in the workspace as a Linear app (OAuth with `actor=app`, scopes `app:
 - [linear-channel.ts](linear-channel.ts): lifecycle, lock, loop guard and approval routing.
 - [linear-server.ts](linear-server.ts) and [linear-signature.ts](linear-signature.ts): the signed endpoint; [linear-endpoint.ts](linear-endpoint.ts) picks it or the poller.
 - [linear-inbound-handler.ts](linear-inbound-handler.ts) and [linear-mention.ts](linear-mention.ts): what starts a turn.
-- [linear-api.ts](linear-api.ts): `viewer` and `commentCreate`.
+- [linear-api.ts](linear-api.ts): `viewer`, `commentCreate`, `agentActivityCreate`, token renewal.
+- [linear-setup.ts](linear-setup.ts), [linear-oauth.ts](linear-oauth.ts): what the setup wizard writes, and the app install.
 - [linear-approval-bridge.ts](linear-approval-bridge.ts): approvals as comments.
 - [linear-commands.ts](linear-commands.ts), [linear-turn-queue.ts](linear-turn-queue.ts), [linear-attachments.ts](linear-attachments.ts): comment commands, the per-issue queue, uploads.

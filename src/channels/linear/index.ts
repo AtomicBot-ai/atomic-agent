@@ -11,6 +11,7 @@ import { resolve } from "node:path";
 import type { ChannelDefinition } from "../channel.js";
 import { DiscordLockfile as PidLockfile } from "../discord/discord-lockfile.js";
 import { LinearChannel } from "./linear-channel.js";
+import { linearTokenRefresher } from "./linear-oauth.js";
 import {
   readLinearMentions,
   readLinearMode,
@@ -42,6 +43,27 @@ export { LinearPoller, LINEAR_KEY_REFUSED } from "./linear-poller.js";
 export type { LinearPollerDeps } from "./linear-poller.js";
 export { commentEvent, pollAssignments, pollComments, LINEAR_POLL_MAX_PAGES } from "./linear-poll-queries.js";
 export type { PolledEvent } from "./linear-poll-queries.js";
+export {
+  buildLinearAuthorizeUrl,
+  exchangeLinearCode,
+  linearTokenRefresher,
+  newOAuthState,
+  refreshLinearToken,
+  waitForLinearOAuthCode,
+  LINEAR_APP_SCOPES,
+  LINEAR_OAUTH_CLIENT_SECRET_KEY,
+  LINEAR_OAUTH_REDIRECT_URI,
+  LINEAR_OAUTH_REFRESH_TOKEN_KEY,
+} from "./linear-oauth.js";
+export type { LinearTokens } from "./linear-oauth.js";
+export {
+  disableLinearChannel,
+  findLinearUserByEmail,
+  saveLinearSecret,
+  writeLinearChannelConfig,
+  LINEAR_USER_ID_RE,
+} from "./linear-setup.js";
+export type { LinearChannelSettings } from "./linear-setup.js";
 export { handleLinearEvent, acquireOrCreateSession } from "./linear-inbound-handler.js";
 export type { LinearInboundContext } from "./linear-inbound-handler.js";
 export { mentionsAgent, stripAgentMention } from "./linear-mention.js";
@@ -69,6 +91,10 @@ export const LINEAR_CHANNEL: ChannelDefinition = {
       onAssign: readLinearOnAssign(ctx.channelConfig.options),
       sessionMapPath: resolve(ctx.stateDir, "linear-session.json"),
       inboxDir: resolve(ctx.stateDir, "inbox", "linear"),
+      refreshToken: linearTokenRefresher(
+        ctx.stateDir,
+        typeof ctx.channelConfig.options.oauthClientId === "string" ? ctx.channelConfig.options.oauthClientId : undefined,
+      ),
       lock: new PidLockfile(resolve(ctx.stateDir, "linear.lock")),
       onStatus: ctx.emitStatus,
     }),
