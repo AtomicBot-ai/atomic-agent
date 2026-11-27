@@ -189,8 +189,8 @@ test("the draft lands in the agent's Pending review folder, whole, with an id th
 
 test("the probe's answer is read defensively; a password field never carries a label", () => {
   const p = P.parseShowOnceProbe(JSON.stringify({ app: numbers, window: { x: 1, y: 2, width: 3, height: 4 }, element: { role: "AXSecureTextField", label: "hunter2" } }));
-  assert.deepEqual(p, { app: numbers, window: { x: 1, y: 2, width: 3, height: 4 }, element: { role: "AXSecureTextField", label: "" }, focused: null });
-  assert.deepEqual(P.parseShowOnceProbe("execution error"), { app: null, window: null, element: null, focused: null });
+  assert.deepEqual(p, { app: numbers, window: { x: 1, y: 2, width: 3, height: 4 }, element: { role: "AXSecureTextField", label: "" }, focused: null, windowTitle: null });
+  assert.deepEqual(P.parseShowOnceProbe("execution error"), { app: null, window: null, element: null, focused: null, windowTitle: null });
   assert.deepEqual(P.parseShowOnceProbe(JSON.stringify({ app: { pid: 3 }, window: { x: 0, y: 0, width: 0, height: 9 } })).app, null);
   assert.deepEqual(P.showOnceProbeArgs("click", 10.4, 20.6).slice(-3), ["click", "10", "21"]);
   assert.equal(P.showOnceProbeArgs("key").at(-1), "key");
@@ -210,13 +210,13 @@ test("the card: Record when idle, a red recording line with Stop while recording
   assert.ok(rec.includes('data-act="skills:showOnce:stop"') && rec.includes('data-act="skills:showOnce:cancel"'));
   assert.ok(!rec.includes("showOnce:start"));
   const saved = R.showOnceCardHTML({ ...base, last: { kind: "saved", id: "deadbeef", name: "show-once-numbers-20261127-0905", steps: 1 } }, esc);
-  assert.ok(saved.includes("Saved show-once-numbers-20261127-0905 (1 step) as a draft under Pending review"));
+  assert.ok(saved.includes("Saved show-once-numbers-20261127-0905 (1 step) under To review."));
   assert.ok(saved.includes("/u/.atomic-agent/skills-pending/deadbeef"));
   const denied = R.showOnceCardHTML({ ...base, last: { kind: "error", error: "Allow it", permission: true } }, esc);
   assert.ok(denied.includes('data-act="skills:showOnce:accessibility"'));
 });
 
-test("the controller follows the pushed state and reloads Pending review once per saved draft", async () => {
+test("the controller follows the pushed state and reloads To review once per saved draft", async () => {
   let push = null, changed = 0, paints = 0, started = 0;
   const br = {
     showOnceState: async () => base,

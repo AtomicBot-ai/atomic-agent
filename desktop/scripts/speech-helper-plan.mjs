@@ -42,3 +42,34 @@ export function compileFailureMessage(err) {
 export function speechHelperTarget(arch = process.arch) {
   return `${arch === "x64" ? "x86_64" : "arm64"}-apple-macos26.0`;
 }
+
+/**
+ * The small helpers compiled right after the speech helper, with the same
+ * rules (skipped with it, a compile error fails the build). They need no
+ * macOS 26 API, so their floor is the app's own, macOS 14, and like the
+ * speech helper each is built for this build's arch: arm64, or x86_64 on
+ * the Intel job (ATO-1506). The Fn watcher used to be pinned to arm64,
+ * which an Intel Mac cannot run.
+ *
+ * - atomic-fn-key (ATO-1064): says when Fn is held down and let go.
+ * - atomic-show-once (ATO-2499): Show once's Accessibility side.
+ *
+ * @returns {{ name: string, source: string, target: string, without: string }[]}
+ */
+export function smallHelpers(arch = process.arch) {
+  const cpu = arch === "x64" ? "x86_64" : "arm64";
+  return [
+    {
+      name: "atomic-fn-key",
+      source: "atomic-fn-key.swift",
+      target: `${cpu}-apple-macos14.0`,
+      without: "Without this helper, holding Fn to dictate into any app falls back to the key combination.",
+    },
+    {
+      name: "atomic-show-once",
+      source: "atomic-show-once.swift",
+      target: `${cpu}-apple-macos14.0`,
+      without: "Without this helper, Show once asks osascript once per event and records no menu commands or window titles.",
+    },
+  ];
+}

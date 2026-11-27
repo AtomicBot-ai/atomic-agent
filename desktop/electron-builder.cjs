@@ -79,12 +79,12 @@ const config = {
     "package.json",
     "LICENSE",
     /* ATO-1064: uiohook-napi (the Windows hold key watcher) ships its
-       prebuilt .node files and nothing to build them: not the C sources,
-       not the Linux prebuilds. ATO-2401: the macOS ones ship too, for
-       Show once (main/show-once-ipc.ts), loaded only when Record is clicked. */
+       prebuilt .node files and nothing to build them (not the C sources).
+       ATO-2401: the macOS ones ship too, for Show once
+       (main/show-once-ipc.ts), loaded only when Record is clicked.
+       ATO-2499: and the Linux ones, for Show once on X11. */
     "!node_modules/uiohook-napi/{libuiohook,src}/**",
-    "!node_modules/uiohook-napi/binding.gyp",
-    "!node_modules/uiohook-napi/prebuilds/linux-*/**"
+    "!node_modules/uiohook-napi/binding.gyp"
   ],
   /* A .node file cannot be loaded from inside the asar archive: the
      Windows ones go to app.asar.unpacked, where Electron finds them. */
@@ -168,6 +168,12 @@ const config = {
       {
         "from": "out/native/atomic-fn-key",
         "to": "native/atomic-fn-key"
+      },
+      /* ATO-2499: Show once's Accessibility helper (main/show-once-helper.ts);
+         without it Show once asks osascript once per event. */
+      {
+        "from": "out/native/atomic-show-once",
+        "to": "native/atomic-show-once"
       },
       /* Atomic Chat Core, fetched and checked against the release's
          SHA256SUMS by scripts/fetch-core.mjs. Per arch, like the app: one

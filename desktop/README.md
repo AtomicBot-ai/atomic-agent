@@ -692,7 +692,7 @@ Honestly degraded, and labelled as such in the UI:
   directory shown in the detail. Global uninstall and Skills Hub behavior
   retain their existing HTTP/CLI paths.
 - **Show once** (ATO-2401, macOS, local agent only) is the Record card above
-  Pending review. Nothing listens until Record is clicked; while it records,
+  To review (the learned-drafts group, called Pending review before ATO-2499). Nothing listens until Record is clicked; while it records,
   the card turns red and a menu bar item says "● Recording steps" (one click
   stops and saves, its right-click menu also discards). It stops on its own
   after 10 minutes or 200 steps, and on quit without saving. Clicks (the
@@ -700,12 +700,50 @@ Honestly degraded, and labelled as such in the UI:
   action keys are kept; typed characters never are (a run of typing is one
   "type the text here" step), nor anything in protected apps (the agent's
   screen guard list plus password managers by name), nor control labels in
-  browsers. No screenshots. Stop compiles the steps into a SKILL.md
+  browsers. No screenshots unless switched on (below). Stop compiles the steps into a SKILL.md
   (`main/show-once-skill.ts`, replayed with the os.screen tools) and saves it
   as a learned-skill draft in `<stateDir>/skills-pending/<id>/`, where
-  Pending review shows, approves or discards (deletes) it through the
+  To review shows, approves or discards (deletes) it through the
   agent's own `atag skill learned`. Needs Accessibility for Atomic Agent;
   the listener is uiohook-napi, whose macOS prebuilds ship for this.
+  ATO-2499: what was under each click and key comes from one resident
+  Accessibility helper, `native/atomic-show-once.swift` (built with the Fn
+  watcher by `scripts/build-speech-helper.mjs`, skipped with the speech
+  helper under `ATOMIC_SKIP_SPEECH_HELPER=1`; `Resources/native` when
+  packaged). Its AXObserver on the frontmost app adds menu commands
+  (File > Export To > PDF, replacing the clicks that opened the menu) and
+  window titles (where a step happened, what came to the front after it;
+  never in browsers). Without the helper each event asks osascript once,
+  as before, with no menu commands or titles.
+  Two switches under Record (`userData/show-once.json`): **Tidy the draft**
+  (on) sends the step lines as text to the chat model through the agent's
+  `POST /api/complete` once after Stop (`main/show-once-tidy.ts`,
+  `show-once-finish.ts`); it writes the title, description, a summary and
+  what to ask the user for, never the steps, and on any failure the draft
+  stays as recorded. **Save a picture of the window after each step** (off)
+  takes a `screencapture` of the window by its window id, never a screen
+  rectangle, so only with the helper (Screen Recording needed; never
+  browsers or protected apps) into the draft's `snapshots/`, shown in its
+  preview under To review and deleted with the draft
+  (`main/show-once-snapshots.ts`, `renderer/show-once-draft.js`).
+  Replay check: each step of the SKILL.md ends with a "Check:" line (the
+  window that should be in front after it, from the recorded titles), and
+  the replay rules stop at the first step that does not match and say
+  "Replay stopped at step N of M: expected ..., saw ...". **Test skill** in a
+  recorded draft's preview opens a new chat whose first message is a dry run
+  of the draft (it is not installed yet, so its text goes along).
+  Windows and Linux (ATO-2499): the same uiohook-napi listener (its Linux
+  prebuilds now ship), and the tray icon instead of the menu bar item.
+  Windows asks one resident Windows PowerShell (`main/show-once-win.ts`,
+  same line protocol as the helper) for the window under a click or in
+  front (user32), its title, and the UI Automation control there (type,
+  name, password or not; never its value). Linux on X11 asks `xdotool`
+  per event (`main/show-once-linux.ts`) for the window in front, its title
+  and process, with no control names. Wayland, or no `xdotool`, shows why
+  in place of the Record button (`main/show-once-platform.ts`). No step
+  pictures off macOS. Off macOS the os.screen tools only capture, so the
+  SKILL.md tells the agent to walk the user through each step and check a
+  capture after it.
 - **Memory** reads `<stateDir>/memory.sqlite` read-only (`sqlite3`, falling
   back to `node:sqlite`) with the stores' own statements, named and
   parameterised in the main process — the agent has no memory route.

@@ -54,3 +54,22 @@ test("the helper is compiled for the Mac it is built on (ATO-1506)", () => {
   assert.equal(speechHelperTarget("arm64"), "arm64-apple-macos26.0");
   assert.equal(speechHelperTarget("x64"), "x86_64-apple-macos26.0");
 });
+
+test("ATO-2499: the small helpers are built for this build's arch at macOS 14, Show once's helper among them", async () => {
+  const { smallHelpers } = await import("../scripts/speech-helper-plan.mjs");
+  const arm = smallHelpers("arm64");
+  assert.deepEqual(arm.map((h) => h.name), ["atomic-fn-key", "atomic-show-once"]);
+  for (const h of arm) assert.equal(h.target, "arm64-apple-macos14.0");
+  // The Intel job: an arm64 Fn watcher would not start on an Intel Mac.
+  for (const h of smallHelpers("x64")) assert.equal(h.target, "x86_64-apple-macos14.0");
+  for (const h of arm) assert.ok(h.without.length > 20, `${h.name} says what is lost without it`);
+});
+
+test("ATO-2499: the packaged Mac app carries Show once's helper next to the Fn watcher", async () => {
+  const { createRequire } = await import("node:module");
+  const config = createRequire(import.meta.url)("../electron-builder.cjs");
+  const res = (config.mac && config.mac.extraResources) || [];
+  const to = res.map((r) => (typeof r === "string" ? r : r.to));
+  assert.ok(to.includes("native/atomic-fn-key"));
+  assert.ok(to.includes("native/atomic-show-once"));
+});

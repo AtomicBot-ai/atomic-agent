@@ -43,3 +43,27 @@ export function startShowOnceCapture<H, I extends ShowOnceIndicator>(
     return { ok: false, stage: "listener", message: firstLine(err) };
   }
 }
+
+/** The slice of uiohook-napi a recording uses (show-once-ipc.ts). */
+export interface HookMouse { button: number; clicks: number; x: number; y: number }
+export interface HookKey { keycode: number; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }
+export interface ShowOnceHook {
+  on(event: "mousedown", fn: (e: HookMouse) => void): unknown;
+  on(event: "keydown", fn: (e: HookKey) => void): unknown;
+  removeListener(event: "mousedown" | "keydown", fn: (e: never) => void): unknown;
+  start(): void;
+  stop(): void;
+}
+
+/** Wires and starts the listener; when it cannot start, it is unwired and the error goes on. */
+export function startShowOnceHook(h: ShowOnceHook, onMouse: (e: HookMouse) => void, onKey: (e: HookKey) => void): ShowOnceHook {
+  h.on("mousedown", onMouse);
+  h.on("keydown", onKey);
+  try {
+    h.start();
+  } catch (err) {
+    try { h.removeListener("mousedown", onMouse as (e: never) => void); h.removeListener("keydown", onKey as (e: never) => void); } catch { /* gone */ }
+    throw err;
+  }
+  return h;
+}

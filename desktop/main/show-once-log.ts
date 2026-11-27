@@ -1,9 +1,20 @@
+import { SHOW_ONCE_MAX_LABEL, cleanLabel, classifyKey, keptElement, showOnceAppClass } from "./show-once-classify.js";
+
+export {
+  SHOW_ONCE_PROTECTED_BUNDLE_IDS,
+  classifyKey,
+  cleanLabel,
+  showOnceAppClass,
+  type KeyKind,
+  type ShowOnceAppClass,
+} from "./show-once-classify.js";
+
 /**
  * ATO-2401 "Show once": the person clicks Record, does a routine once in a
- * native macOS app, and the steps become a skill draft. This file is the
- * pure half: it folds the raw clicks and keys (uiohook-napi, plus which app
- * and which control was under them, show-once-probe.ts) into a short step
- * log. show-once-skill.ts turns the log into a SKILL.md.
+ * native app, and the steps become a skill draft. This file is the pure
+ * half: it folds the raw clicks and keys (uiohook-napi, plus which app,
+ * window and control was under them, show-once-prober.ts) into a short
+ * step log. show-once-skill.ts turns the log into a SKILL.md.
  *
  * What is never kept, whatever the app:
  *  - the characters typed. A run of typing is one "text" step with no
@@ -13,12 +24,20 @@
  *  - anything in a protected app (the agent itself, settings, password
  *    managers, the login and security prompts, script runners): one
  *    "protected" step names the app, nothing else of it is kept;
- *  - control labels inside web browsers (page content, which a page writes).
+ *  - control labels, window titles and menu paths inside web browsers
+ *    (page content, which a page writes).
+ *
+ * ATO-2499: with the Accessibility helper (native/atomic-show-once.swift)
+ * the log also gets menu commands ("menu" events: File > Export > PDF,
+ * which replace the clicks that opened the menu, or name the menu item a
+ * shortcut ran) and window titles. Each step keeps the title of the window
+ * it happened in (`window`) and the one in front after it (`after`, when
+ * that changed): the replay check compares those (show-once-skill.ts).
  *
  * The protected list follows the agent's screen guard
  * (src/tools/os/screen/screen-protected.ts BLOCKED_BUNDLE_IDS; the desktop
  * test checks that every id there is here too) plus a name check for
- * password managers that list does not name.
+ * password managers that list does not name (show-once-classify.ts).
  *
  * Precedent: Codex Record & Replay (ChatGPT desktop, macOS) and Claude in
  * Chrome "Record a workflow" both record clicks and keys into steps and
@@ -45,15 +64,23 @@ export interface ShowOnceRect {
 }
 
 export type ShowOnceEvent =
-  | { kind: "click"; at: number; x: number; y: number; button: "left" | "right"; clicks: number; app: ShowOnceApp | null; window?: ShowOnceRect | null; element?: ShowOnceElement | null }
-  | { kind: "key"; at: number; keycode: number; meta: boolean; ctrl: boolean; alt: boolean; shift: boolean; app: ShowOnceApp | null; focused?: ShowOnceElement | null };
+  | { kind: "click"; at: number; x: number; y: number; button: "left" | "right"; clicks: number; app: ShowOnceApp | null; window?: ShowOnceRect | null; element?: ShowOnceElement | null; windowTitle?: string | null }
+  | { kind: "key"; at: number; keycode: number; meta: boolean; ctrl: boolean; alt: boolean; shift: boolean; app: ShowOnceApp | null; focused?: ShowOnceElement | null; windowTitle?: string | null }
+  | { kind: "menu"; at: number; app: ShowOnceApp | null; path: string[] }
+  | { kind: "window"; at: number; app: ShowOnceApp | null; title: string };
+
+/** Where a step happened and what was in front after it (titles, cleaned). */
+interface Seen { window?: string; after?: string }
 
 export type ShowOnceStep =
   | { kind: "app"; app: string; bundleId: string; browser: boolean }
-  | { kind: "click"; app: string; bundleId: string; button: "left" | "right"; double: boolean; element: ShowOnceElement | null; offset: { x: number; y: number } | null }
-  | { kind: "keys"; app: string; bundleId: string; keys: string }
-  | { kind: "text"; app: string; bundleId: string; secure: boolean }
+  | ({ kind: "click"; app: string; bundleId: string; button: "left" | "right"; double: boolean; element: ShowOnceElement | null; offset: { x: number; y: number } | null } & Seen)
+  | ({ kind: "keys"; app: string; bundleId: string; keys: string; menu?: string[] } & Seen)
+  | ({ kind: "text"; app: string; bundleId: string; secure: boolean; into?: string } & Seen)
+  | ({ kind: "menu"; app: string; bundleId: string; path: string[] } & Seen)
   | { kind: "protected"; app: string };
+
+export type ShowOnceActionStep = Extract<ShowOnceStep, { kind: "click" | "keys" | "text" | "menu" }>;
 
 export const SHOW_ONCE_LIMITS = {
   /** Steps in one recording; past it the recording stops taking events. */
@@ -63,128 +90,21 @@ export const SHOW_ONCE_LIMITS = {
   /** Two clicks this close (ms) at the same spot are one double click. */
   doubleClickMs: 500,
   /** Characters of a control label kept. */
-  maxLabelChars: 60,
+  maxLabelChars: SHOW_ONCE_MAX_LABEL,
+  /** A menu command this soon (ms) after a shortcut is the item that shortcut ran. */
+  shortcutMenuMs: 1000,
+  /** Levels of a menu path kept (File > Export To > PDF). */
+  maxMenuDepth: 6,
 } as const;
 
-/** No input of any kind recorded (src/tools/os/screen/screen-protected.ts BLOCKED_BUNDLE_IDS). */
-export const SHOW_ONCE_PROTECTED_BUNDLE_IDS: readonly string[] = [
-  "io.atomicagent.desktop",
-  "com.apple.systempreferences",
-  "com.apple.Settings",
-  "com.apple.keychainaccess",
-  "com.apple.SecurityAgent",
-  "com.apple.loginwindow",
-  "com.apple.Passwords",
-  "com.1password.1password",
-  "com.agilebits.onepassword7",
-  "com.bitwarden.desktop",
-  "com.apple.ScriptEditor2",
-  "com.apple.Automator",
-  "com.apple.shortcuts",
-  "org.hammerspoon.Hammerspoon",
-  "com.stairways.keyboardmaestro",
-  "com.runningwithcrayons.Alfred",
-  "com.runningwithcrayons.Alfred-Preferences",
-  "com.raycast.macos",
-  "at.obdev.LaunchBar",
-];
-
-/** Password managers the id list may not name, matched on the app's name. */
-const PROTECTED_NAME_RE = /password|1password|bitwarden|keychain|lastpass|dashlane|keepass|enpass|proton pass|authenticator/i;
-
-/** Browsers: steps are kept, control labels are not (the page wrote them). */
-const BROWSER_BUNDLE_PREFIXES: readonly string[] = [
-  "com.apple.safari", "com.google.chrome", "org.chromium.chromium", "company.thebrowser", "com.microsoft.edgemac",
-  "org.mozilla.", "com.brave.browser", "com.operasoftware.", "com.vivaldi.vivaldi", "com.kagi.kagimacos",
-  "com.duckduckgo.macos.browser", "app.zen-browser.zen", "org.torproject.torbrowser", "ru.yandex.desktop.yandex-browser",
-  "ai.perplexity.comet", "com.openai.atlas",
-];
-
-export type ShowOnceAppClass = "own" | "protected" | "browser" | "open" | "unknown";
-
-function idMatches(list: readonly string[], lower: string): boolean {
-  return list.some((id) => {
-    const e = id.toLowerCase();
-    return lower === e || lower.startsWith(`${e}.`);
-  });
-}
-
-export function showOnceAppClass(app: ShowOnceApp | null, ownPid: number): ShowOnceAppClass {
-  if (!app) return "unknown";
-  if (app.pid !== null && app.pid === ownPid) return "own";
-  if (!app.bundleId) return "unknown";
-  const lower = app.bundleId.toLowerCase();
-  if (lower === "io.atomicagent.desktop") return "own";
-  if (idMatches(SHOW_ONCE_PROTECTED_BUNDLE_IDS, lower) || PROTECTED_NAME_RE.test(app.name || "")) return "protected";
-  if (BROWSER_BUNDLE_PREFIXES.some((p) => lower.startsWith(p))) return "browser";
-  return "open";
-}
-
-/** uiohook-napi key codes (libuiohook VC_*) that are modifiers alone. */
-const MODIFIER_CODES = new Set([42, 54, 29, 3613, 56, 3640, 3675, 3676, 58]);
-
-/** Keys that type a character (or erase one): their runs become one "text" step. */
-const TEXT_KEYS: Readonly<Record<number, string>> = {
-  16: "q", 17: "w", 18: "e", 19: "r", 20: "t", 21: "y", 22: "u", 23: "i", 24: "o", 25: "p",
-  30: "a", 31: "s", 32: "d", 33: "f", 34: "g", 35: "h", 36: "j", 37: "k", 38: "l",
-  44: "z", 45: "x", 46: "c", 47: "v", 48: "b", 49: "n", 50: "m",
-  2: "1", 3: "2", 4: "3", 5: "4", 6: "5", 7: "6", 8: "7", 9: "8", 10: "9", 11: "0",
-  12: "-", 13: "=", 26: "[", 27: "]", 39: ";", 40: "'", 41: "`", 43: "\\", 51: ",", 52: ".", 53: "/",
-  57: "space", 14: "backspace",
-};
-
-/** Keys that act rather than type, named the way os.screen.key reads them (src/tools/os/screen/screen-keys.ts). */
-const ACTION_KEYS: Readonly<Record<number, string>> = {
-  1: "escape", 15: "tab", 28: "return", 3612: "return",
-  59: "f1", 60: "f2", 61: "f3", 62: "f4", 63: "f5", 64: "f6", 65: "f7", 66: "f8", 67: "f9", 68: "f10", 87: "f11", 88: "f12",
-  3655: "home", 3663: "end", 3657: "pageup", 3665: "pagedown", 3667: "forwarddelete",
-  57416: "up", 57424: "down", 57419: "left", 57421: "right",
-};
-
-export type KeyKind = { kind: "ignore" } | { kind: "text" } | { kind: "keys"; keys: string };
-
-/** What one keydown is: nothing (a modifier alone), typing, or a chord to keep. */
-export function classifyKey(e: { keycode: number; meta: boolean; ctrl: boolean; alt: boolean; shift: boolean }): KeyKind {
-  if (MODIFIER_CODES.has(e.keycode)) return { kind: "ignore" };
-  const text = TEXT_KEYS[e.keycode];
-  const action = ACTION_KEYS[e.keycode];
-  const mods = [e.ctrl ? "ctrl" : "", e.alt ? "alt" : "", e.shift ? "shift" : "", e.meta ? "cmd" : ""].filter(Boolean);
-  // App and space switching, Spotlight and launchers, Force Quit: the agent's screen guard refuses
-  // these chords (refusedChordReason in screen-protected.ts), so a replay could not press them anyway.
-  if ((e.meta && (e.keycode === 15 || e.keycode === 41 || e.keycode === 57)) || ((e.ctrl || e.alt) && e.keycode === 57)
-    || (e.ctrl && action !== undefined && ["up", "down", "left", "right"].includes(action)) || (e.meta && e.alt && e.keycode === 1)) {
-    return { kind: "ignore" };
-  }
-  if (e.meta || e.ctrl) {
-    const key = text ?? action;
-    // A chord on a key this table does not know is left out rather than guessed.
-    return key ? { kind: "keys", keys: [...mods, key].join("+") } : { kind: "ignore" };
-  }
-  if (action) return { kind: "keys", keys: [...mods, action].join("+") };
-  if (text) return { kind: "text" };
-  return { kind: "ignore" };
-}
-
-/** Control roles whose label names the control (a button's title), not the person's content. */
-const LABELLED_ROLES = new Set([
-  "AXButton", "AXMenuItem", "AXMenuBarItem", "AXMenuButton", "AXPopUpButton", "AXCheckBox", "AXRadioButton",
-  "AXTab", "AXTextField", "AXSearchField", "AXComboBox", "AXDisclosureTriangle", "AXSlider", "AXIncrementor",
-]);
-
-/** A label safe to write into a skill: a control's own name, one line, short, no markup. */
-export function cleanLabel(raw: string): string {
-  const s = String(raw || "").replace(/[\u0000-\u001f\u007f`*_#<>|[\]]/g, " ").replace(/"/g, "'").replace(/\s+/g, " ").trim();
-  return s.length > SHOW_ONCE_LIMITS.maxLabelChars ? `${s.slice(0, SHOW_ONCE_LIMITS.maxLabelChars - 1).trimEnd()}…` : s;
-}
-
-function keptElement(el: ShowOnceElement | null | undefined, browser: boolean): ShowOnceElement | null {
-  if (!el || typeof el.role !== "string" || !/^AX[A-Za-z]{1,40}$/.test(el.role)) return null;
-  if (el.role === "AXSecureTextField") return { role: el.role, label: "" };
-  const label = !browser && LABELLED_ROLES.has(el.role) ? cleanLabel(el.label) : "";
-  return { role: el.role, label };
-}
+/** Clicks that only open or walk a menu: a "menu" step that follows replaces them. */
+const MENU_ROLES = new Set(["AXMenuBarItem", "AXMenuItem", "AXMenu", "AXMenuBar"]);
 
 const appName = (app: ShowOnceApp) => cleanLabel(app.name || "") || (app.bundleId as string);
+
+/** A step a person did (not an app switch, not a protected stretch). */
+export const isShowOnceAction = (s: ShowOnceStep | undefined): s is ShowOnceActionStep =>
+  !!s && (s.kind === "click" || s.kind === "keys" || s.kind === "text" || s.kind === "menu");
 
 /** The step log of one recording. `add` answers whether the log changed. */
 export class ShowOnceLog {
@@ -193,21 +113,27 @@ export class ShowOnceLog {
   skipped = 0;
   full = false;
   private bundle: string | null = null;
+  private browser = false;
   private lastClick: { at: number; x: number; y: number } | null = null;
+  private lastAt = 0;
 
-  constructor(private readonly ownPid: number) {}
+  /** ATO-2499 `platform`: how keys are read (classifyKey); the Mac when not given. */
+  constructor(private readonly ownPid: number, private readonly platform: string = "darwin") {}
 
   add(e: ShowOnceEvent): boolean {
     if (this.full) return false;
     const cls = showOnceAppClass(e.app, this.ownPid);
     if (cls === "own") return false;
     if (cls === "unknown" || !e.app) {
-      this.skipped++;
+      if (e.kind === "click" || e.kind === "key") this.skipped++;
       return false;
     }
     const app = e.app;
     const bundleId = app.bundleId as string;
     const name = appName(app);
+    // A title or a menu path only adds to what a person did; on its own it is no step.
+    if (e.kind === "window") return cls === "open" && bundleId === this.bundle ? this.seen(bundleId, e.title, true) : false;
+    if (e.kind === "menu") return cls === "open" && bundleId === this.bundle ? this.menu(e, name, bundleId) : false;
     if (cls === "protected") {
       const last = this.steps[this.steps.length - 1];
       this.bundle = bundleId;
@@ -219,12 +145,71 @@ export class ShowOnceLog {
     let changed = false;
     if (this.bundle !== bundleId) {
       this.bundle = bundleId;
+      this.browser = browser;
       this.lastClick = null;
       changed = this.push({ kind: "app", app: name, bundleId, browser });
       if (this.full) return changed;
     }
-    if (e.kind === "click") return this.click(e, name, bundleId, browser) || changed;
-    return this.key(e, name, bundleId) || changed;
+    const title = browser ? "" : cleanLabel(e.windowTitle || "");
+    // The title in front now is the previous step's after-state.
+    if (title) changed = this.seen(bundleId, title, false) || changed;
+    const before = this.steps.length;
+    const did = e.kind === "click" ? this.click(e, name, bundleId, browser) : this.key(e, name, bundleId, browser);
+    if (did) {
+      this.lastAt = e.at;
+      const last = this.steps[this.steps.length - 1];
+      if (title && this.steps.length > before && isShowOnceAction(last) && last.window === undefined) last.window = title;
+    }
+    return did || changed;
+  }
+
+  /**
+   * The window in front of `bundleId` is now `raw`: the last step's
+   * after-state when it moved. `event`: a pushed title (a window event),
+   * which also names where a step without a title happened.
+   */
+  private seen(bundleId: string, raw: string, event: boolean): boolean {
+    const title = this.browser ? "" : cleanLabel(raw);
+    const last = this.steps[this.steps.length - 1];
+    if (!title || !isShowOnceAction(last) || last.bundleId !== bundleId) return false;
+    if (last.window === title) {
+      if (last.after === undefined) return false;
+      delete last.after;
+      return true;
+    }
+    if (last.window === undefined) {
+      if (!event) return false;
+      last.window = title;
+      return true;
+    }
+    if (last.after === title) return false;
+    last.after = title;
+    return true;
+  }
+
+  private menu(e: Extract<ShowOnceEvent, { kind: "menu" }>, app: string, bundleId: string): boolean {
+    const path = (Array.isArray(e.path) ? e.path : []).map((p) => cleanLabel(String(p))).filter(Boolean).slice(-SHOW_ONCE_LIMITS.maxMenuDepth);
+    if (path.length === 0) return false;
+    const last = this.steps[this.steps.length - 1];
+    if (last && last.kind === "keys" && last.bundleId === bundleId && /(?:^|\+)(?:cmd|ctrl)\+/.test(last.keys)
+      && e.at - this.lastAt <= SHOW_ONCE_LIMITS.shortcutMenuMs) {
+      if (last.menu) return false;
+      last.menu = path;
+      return true;
+    }
+    // The clicks on the menu bar and down the menu are this one command.
+    let window: string | undefined;
+    for (let s = this.steps[this.steps.length - 1]; s && s.kind === "click" && s.bundleId === bundleId && s.element && MENU_ROLES.has(s.element.role); s = this.steps[this.steps.length - 1]) {
+      window = s.window ?? window;
+      this.steps.pop();
+      this.full = false;
+    }
+    this.lastClick = null;
+    this.lastAt = e.at;
+    const step: ShowOnceStep = { kind: "menu", app, bundleId, path };
+    if (window) step.window = window;
+    this.push(step);
+    return true;
   }
 
   private click(e: Extract<ShowOnceEvent, { kind: "click" }>, app: string, bundleId: string, browser: boolean): boolean {
@@ -243,15 +228,18 @@ export class ShowOnceLog {
     return this.push({ kind: "click", app, bundleId, button: e.button, double: e.clicks >= 2, element: keptElement(e.element, browser), offset });
   }
 
-  private key(e: Extract<ShowOnceEvent, { kind: "key" }>, app: string, bundleId: string): boolean {
-    const k = classifyKey(e);
+  private key(e: Extract<ShowOnceEvent, { kind: "key" }>, app: string, bundleId: string, browser: boolean): boolean {
+    const k = classifyKey(e, this.platform);
     if (k.kind === "ignore") return false;
     const secure = !!e.focused && e.focused.role === "AXSecureTextField";
     const last = this.steps[this.steps.length - 1];
     // Nothing of a password field is kept: not the keys, not a chord, not how many.
     if (k.kind === "text" || secure) {
       if (last && last.kind === "text" && last.bundleId === bundleId && last.secure === secure) return false;
-      return this.push({ kind: "text", app, bundleId, secure });
+      const step: ShowOnceStep = { kind: "text", app, bundleId, secure };
+      const into = secure ? null : keptElement(e.focused, browser);
+      if (into && into.label) step.into = into.label;
+      return this.push(step);
     }
     return this.push({ kind: "keys", app, bundleId, keys: k.keys });
   }
@@ -268,7 +256,7 @@ export class ShowOnceLog {
 
   /** Steps a person did (app switches and protected stretches not counted). */
   get actionCount(): number {
-    return this.steps.filter((s) => s.kind === "click" || s.kind === "keys" || s.kind === "text").length;
+    return this.steps.filter(isShowOnceAction).length;
   }
 
   /** The app of the last kept step, for the indicator. */
