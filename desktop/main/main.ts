@@ -8982,7 +8982,7 @@ async function settingsTestPartC(
     // Advanced toggle that used to sit above it is gone, so its word must not be.
     check(
       "telegram tab: no token anywhere → only the Connect Telegram card, plain tab label",
-      tg.hasToken === false && tgBody.includes("Connect Telegram") && tgBody.includes("Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.")
+      tg.hasToken === false && tgBody.includes("Connect Telegram") && tgBody.includes("Talk to Atomic Agent from your phone") && tgBody.includes("The token is stored only on this machine.")
         && !!tgCta && tgCta.label === "Paste a bot token" && tgCta.key === "" && !tgBody.includes("Advanced") && tgPlain,
       `hasToken=${String(tg.hasToken)} label=${JSON.stringify(tgLabel)} action=${JSON.stringify(tgCta)}`,
     );

@@ -188,3 +188,9 @@ test('keys: Shift+T and Shift+O do nothing; no letter removes the token or clear
   for (const k of ['t', 'o', 'e', 'r']) assert.equal(c.telegramKey(ev(k, {id:''}), k, false), false, k);
   assert.equal(calls.length, before);
 });
+
+test('the full smoke checks the new Connect card, not the old one-line text (ATO-426 review)', () => {
+  assert.ok(!main.includes('Create a bot with @BotFather, copy the token'), 'main.ts smoke still expects the removed sentence');
+  assert.ok(main.includes('tgBody.includes("Talk to Atomic Agent from your phone")'));
+  assert.ok(T.tgConnectCardHTML(h).includes('Talk to Atomic Agent from your phone'), 'the card and the smoke agree');
+});
