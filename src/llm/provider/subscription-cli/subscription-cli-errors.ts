@@ -89,7 +89,9 @@ export type SubscriptionCliFailureKind =
   | "plan_required"
   | "not_json"
   | "reported_error"
-  | "turn_failed";
+  | "turn_failed"
+  // A streamed run that exited 0 without its final result line (ATO-2522).
+  | "no_result_envelope";
 
 /** Kinds whose message carries the CLI's own words, so a limit can show. */
 const KINDS_WITH_CLI_TEXT: ReadonlySet<SubscriptionCliFailureKind> = new Set([
