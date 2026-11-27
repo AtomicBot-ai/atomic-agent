@@ -22,7 +22,7 @@ import type { RecentSessionDir } from "./fs/fs-locate-project-sources.js";
 import { buildOsFsGrepTool } from "./fs/fs-grep.js";
 import { buildOsFsEditTool } from "./fs/fs-edit.js";
 import { buildOsFsReadDocumentTool } from "./read-document/index.js";
-import { buildOsFsWritePptxTool } from "./pptx/index.js";
+import { buildOsFsWritePptxTool, type OsFsWritePptxOptions } from "./pptx/index.js";
 import { buildOsFsDocxTool, buildOsFsXlsxTool } from "./office/index.js";
 import {
   buildOsFsArchiveListTool,
@@ -225,6 +225,8 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    * first start asks once. Omitted: no folder is trusted.
    */
   isTrustedProject?: (dir: string) => boolean;
+  /** ATO-2444: each slide `os.fs.write_pptx` lays out, for the session's UIs. Omitted: none. */
+  onPptxProgress?: OsFsWritePptxOptions["onProgress"];
 }
 
 export function registerOsTools(
@@ -308,7 +310,12 @@ export function registerOsTools(
   registry.register(buildOsFsReadDocumentTool());
   // The same bag as os.fs.write: an input deck is refused, a replaced
   // one keeps a restore copy.
-  registry.register(buildOsFsWritePptxTool(fsMutation));
+  registry.register(
+    buildOsFsWritePptxTool({
+      ...fsMutation,
+      ...(options.onPptxProgress === undefined ? {} : { onProgress: options.onPptxProgress }),
+    }),
+  );
   registry.register(buildOsFsDocxTool(fsMutation));
   registry.register(buildOsFsXlsxTool(fsMutation));
   registry.register(buildOsFsArchiveListTool());

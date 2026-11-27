@@ -331,6 +331,11 @@ Real, driven by the running agent:
   attaches; `memory.*` writes the agent's own store, and `os.git.*` on this
   agent is blame/branch/diff/log/show/status only — those four are the whole
   list of file-producing tools.)
+- a deck being built (ATO-2444): each slide `os.fs.write_pptx` lays out
+  arrives as a `tool_update` with `slide`, and the running card draws it as a
+  small 16:9 sketch in the deck's theme (title, bullets, the layout's shape,
+  a box where the picture, table or chart goes), before the approval card;
+  `renderer/slide-thumbs.js`. An older agent sends none and the card reads as before
 - approval prompts, resolved over `/api/approval/resolve`
 - installed skills, durable tasks, and sessions — named by their first
   message and opened in full from the sidebar

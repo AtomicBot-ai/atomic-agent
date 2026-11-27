@@ -15,7 +15,7 @@ import {
   slideMasterXml,
 } from "./pptx-parts.js";
 import type { PptxImageInfo } from "./pptx-image.js";
-import { layoutSlide, type PptxLayout } from "./pptx-layout.js";
+import { layoutSlide, type LaidOutSlide, type PptxLayout } from "./pptx-layout.js";
 import { isTitleSlide, notesSlideXml, slideXml, type PlacedImage } from "./pptx-slide.js";
 import type { PptxDeckSpec } from "./pptx-spec.js";
 import { resolvePalette, themeXml } from "./pptx-theme.js";
@@ -42,6 +42,12 @@ export interface BuildPptxInput {
   /** Picture per slide index (0-based); slides without one are absent. */
   images?: ReadonlyMap<number, PptxImageInput>;
   now?: Date;
+  /**
+   * ATO-2444: told each slide as soon as it is laid out, in order, so the
+   * tool can show it in the chat while the deck is built. A throw here
+   * stops the build.
+   */
+  onSlide?: (laid: LaidOutSlide, index: number) => void;
 }
 
 export interface BuildPptxResult {
@@ -119,6 +125,7 @@ export async function buildPptx(input: BuildPptxInput): Promise<BuildPptxResult>
     const laid = layoutSlide(asked);
     const slide = laid.slide;
     layouts.push({ layout: laid.layout, moved: laid.moved });
+    input.onSlide?.(laid, index);
     const rels = [{ id: "rId1", type: "slideLayout", target: "../slideLayouts/slideLayout1.xml" }];
     if (slide.notes !== undefined) {
       notesSlides.push(n);

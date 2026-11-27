@@ -1,0 +1,35 @@
+/* ---------------- ATO-2444: a deck's slides, small, under its os.fs.write_pptx card (slide-thumbs.js) ----------------
+   Each thumbnail is a 16:9 sketch in the deck's own theme colours (set per
+   figure as --st-* variables); the strip scrolls sideways for a long deck. */
+.st-strip{margin:6px 0 2px;padding:0 2px}
+.st-head{font:500 var(--fs-micro)/16px var(--font-ui);color:var(--ink-3);margin-bottom:4px}
+.st-list{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;scroll-snap-type:x proximity}
+.st-thumb{flex:none;width:168px;margin:0;scroll-snap-align:start}
+.st-slide{position:relative;aspect-ratio:16/9;overflow:hidden;padding:7px 8px;border-radius:5px;
+  background:var(--st-bg);color:var(--st-text);box-shadow:0 0 0 1px var(--divider);font-family:var(--font-ui);
+  display:flex;flex-direction:column;gap:2px}
+.st-thumb figcaption{font:500 var(--fs-micro)/14px var(--font-ui);color:var(--ink-3);margin-top:3px}
+.st-moved{margin-left:4px;padding:0 4px;border-radius:3px;background:var(--panel-2);color:var(--ink-2)}
+.st-title{font-weight:700;font-size:8.5px;line-height:1.2;color:var(--st-title);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.st-subtitle{font-size:6.5px;line-height:1.25;color:var(--st-muted);font-style:italic;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.st-b{font-size:6px;line-height:1.3;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.st-b::before{content:"\2022";color:var(--st-accent);margin-right:3px}
+.st-b.st-sub{padding-left:7px}
+.st-b.st-sub::before{content:"\2013"}
+.st-rule{display:block;width:18px;height:2px;margin:1px 0 2px;background:var(--st-accent)}
+.st-center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:3px}
+.st-center .st-title{font-size:10px}
+.st-quote .st-title{font-style:italic;font-weight:500}
+.st-big .st-title{font-size:20px;color:var(--st-accent)}
+.st-section{flex:1;display:flex;align-items:center;gap:6px}
+.st-bar{flex:none;width:3px;height:60%;background:var(--st-accent);border-radius:1px}
+.st-section .st-title{font-size:11px}
+.st-row{flex:1;min-height:0;display:flex;gap:6px}
+.st-row>div{flex:1;min-width:0}
+.st-row>.st-wide{flex:2}
+.st-visual{flex:1;min-height:22px;height:100%;display:flex;align-items:center;justify-content:center;border-radius:3px;
+  font-size:6.5px;color:var(--st-muted);background:color-mix(in srgb, var(--st-accent) 14%, transparent);border:1px dashed color-mix(in srgb, var(--st-accent) 45%, transparent)}
+.st-line{flex:1;display:flex;align-items:flex-start;gap:3px;margin-top:6px;border-top:1px solid var(--st-muted);padding-top:0}
+.st-step{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:2px;margin-top:-3px}
+.st-step i{width:5px;height:5px;border-radius:50%;background:var(--st-accent)}
+.st-step span{font-size:5.5px;line-height:1.25;text-align:center;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
