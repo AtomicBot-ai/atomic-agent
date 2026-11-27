@@ -5,6 +5,8 @@ import {
   SubscriptionCliNotInstalledError,
 } from "../provider/subscription-cli/subscription-cli-errors.js";
 import { ChatgptSignInRequiredError } from "../provider/subscription-oauth/oauth-errors.js";
+import { OpenAiHttpError } from "../provider/openai/openai-http.js";
+import { isCloudToolsUnsupported } from "../provider/openai/cloud-tools-unsupported.js";
 import { classifyFailure } from "./classify-failure.js";
 import {
   failureVerdict,
@@ -158,6 +160,11 @@ function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
     return "daily_limit_reached";
   }
 
+  // ATO-1673: a cloud model the person picked takes no tools. OpenRouter
+  // says it with a 404, which the status alone files as a model the
+  // provider does not have; the id is fine, the request was refused.
+  if (chain.some(isCloudToolsRefusal)) return "request_rejected";
+
   if (category === "transport") {
     return waitCauseToId(classifyProviderWaitCause(err));
   }
@@ -256,6 +263,15 @@ function isWebSearchError(
   link: unknown,
 ): link is Error & { keyRequired?: unknown } {
   return link instanceof Error && WEB_SEARCH_ERROR_NAMES.has(link.name);
+}
+
+function isCloudToolsRefusal(link: unknown): boolean {
+  return (
+    link instanceof OpenAiHttpError &&
+    link.status !== null &&
+    link.streamError === undefined &&
+    isCloudToolsUnsupported(link.status, link.url, `${link.body?.text ?? ""}\n${link.message}`)
+  );
 }
 
 function causeChain(err: unknown): unknown[] {

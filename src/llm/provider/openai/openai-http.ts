@@ -32,6 +32,7 @@ import {
   localBadRequestKind,
 } from "./local-bad-request.js";
 import { isToolSchemaErrorText } from "./tool-schema-rejection.js";
+import { cloudToolsUnsupportedSentence, isCloudToolsUnsupported } from "./cloud-tools-unsupported.js";
 import { invalidSamplingParameter } from "./invalid-parameter.js";
 import {
   ATOMIC_CHAT_KEY_ADVICE,
@@ -285,6 +286,10 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
     // Decision 56 (ATO-1458): the same words the fallback line uses, no
     // HTTP code in the sentence; the status stays on the error for logs.
     return `${who} did not accept your API key. Check the key in the Providers panel.`;
+  }
+  // ATO-1673: the model the person picked takes no tools; not a wrong id.
+  if (isCloudToolsUnsupported(err.status, err.url, `${err.body?.text ?? ""}\n${err.message}`)) {
+    return cloudToolsUnsupportedSentence(who, err.status);
   }
   if ((err.status === 404 || err.status === 405) && isLocalProviderUrl(err.url)) {
     return localServerNotFoundSentence(err.url, err.status);
