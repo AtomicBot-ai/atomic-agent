@@ -67,8 +67,7 @@ import type { McpServerConfig } from "../../mcp/mcp-types.js";
 import { mcpAppsUiFromEnv } from "../../mcp/mcp-apps.js";
 import { loadPluginMcpServers } from "../../plugins/plugin-mcp.js";
 import { createPluginMcpLiveStop } from "../../plugins/plugin-mcp-live.js";
-import { listPluginSubagents } from "../../plugins/plugin-subagents.js";
-import { loadAgentProfiles, normaliseProfileName, readSettingsAgentProfiles, type AgentProfile } from "../../agent-profiles/index.js";
+import { loadRuntimeAgentProfiles } from "../agent-profile-sources.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { filterToolDescriptorsByConfig } from "../filter-disabled-tools.js";
 import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
@@ -129,28 +128,6 @@ export function runtimeKnownSecrets(
       if (isSecretEnvName(name)) add(`mcp-${server.name}-${name}`, value);
     }
     if (server.transport.kind !== "stdio") addHeaders(`mcp-${server.name}-header`, server.transport.headers);
-  }
-  return out;
-}
-
-/**
- * Enabled plugins' `agents/*.md` as subagent profiles, named
- * `plugin:agent`; a name that does not normalise is skipped.
- */
-function pluginAgentProfiles(stateDir: string): AgentProfile[] {
-  const out: AgentProfile[] = [];
-  for (const p of listPluginSubagents(stateDir).profiles) {
-    const [plugin, agent] = [normaliseProfileName(p.plugin), normaliseProfileName(p.name.slice(p.plugin.length + 1))];
-    if (plugin === null || agent === null || p.prompt.trim().length === 0) continue;
-    out.push({
-      name: `${plugin}:${agent}`,
-      description: p.description,
-      prompt: p.prompt.trim(),
-      ...(p.model === undefined ? {} : { model: p.model }),
-      ...(p.tools.length === 0 ? {} : { tools: p.tools }),
-      source: "plugin",
-      file: p.file,
-    });
   }
   return out;
 }
@@ -1206,15 +1183,7 @@ export function registerRuntimeFusionAndReadScope(input: {
       // new file or a trust answer applies without a restart. Project
       // files load only once the folder trusted them.
       resolveAgentProfiles: (dir) =>
-        loadAgentProfiles({
-          workingDir: dir,
-          stateDir: config.paths.stateDir,
-          configFile: config.paths.userConfigFile,
-          startupTrust: config.skills.projectTrust,
-          settingsProfiles: () =>
-            readSettingsAgentProfiles(config.paths.userConfigFile, () => getConfig().llm?.runMode?.agentProfiles),
-          pluginProfiles: () => pluginAgentProfiles(config.paths.stateDir),
-        }),
+        loadRuntimeAgentProfiles(config, dir),
       outputCharCap: config.agent.batchToolResultCharCap,
       // A contract's declared `checks` run through the verify family,
       // each on a throwaway copy of the workspace, so a fan-out is judged
@@ -1276,15 +1245,7 @@ export function registerRuntimeFusionAndReadScope(input: {
       // The same profile loader fusion.delegate is given, settings
       // profiles included (ATO-2002).
       resolveAgentProfiles: (dir) =>
-        loadAgentProfiles({
-          workingDir: dir,
-          stateDir: config.paths.stateDir,
-          configFile: config.paths.userConfigFile,
-          startupTrust: config.skills.projectTrust,
-          settingsProfiles: () =>
-            readSettingsAgentProfiles(config.paths.userConfigFile, () => getConfig().llm?.runMode?.agentProfiles),
-          pluginProfiles: () => pluginAgentProfiles(config.paths.stateDir),
-        }),
+        loadRuntimeAgentProfiles(config, dir),
       outputCharCap: config.agent.batchToolResultCharCap,
       logger,
     }),

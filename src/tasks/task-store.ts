@@ -30,6 +30,7 @@ import {
 } from "./task-schedule.js";
 import { TaskRunLog, type TaskRunRecord } from "./task-run-log.js";
 import { TaskBoard } from "./task-board.js";
+import { TaskBoardDeps, checkDependencies } from "./task-board-deps.js";
 import {
   TaskBoardComments,
   type BoardComment,
@@ -37,6 +38,7 @@ import {
 } from "./task-board-comments.js";
 import {
   buildBoardCards,
+  laneForCard,
   type BoardCard,
   type BoardEntry,
   type BoardPatch,
@@ -227,6 +229,8 @@ export class TaskStore {
   private readonly board: TaskBoard;
   /** Each card's comment history (ATO-2497). */
   private readonly boardComments: TaskBoardComments;
+  /** Which cards wait on which (ATO-2498). */
+  private readonly boardDeps: TaskBoardDeps;
   /**
    * Why this database has no budget columns (see `ensureBudgetColumns`),
    * or `null`. Without them a task asking for a budget is refused.
@@ -268,6 +272,7 @@ export class TaskStore {
     this.runLog = new TaskRunLog(this.db);
     this.board = new TaskBoard(this.db);
     this.boardComments = new TaskBoardComments(this.db);
+    this.boardDeps = new TaskBoardDeps(this.db);
 
     this.insertStmt = this.db.prepare(
       `INSERT INTO tasks (
@@ -308,19 +313,19 @@ export class TaskStore {
       `SELECT * FROM tasks WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`,
     );
     this.listPendingStmt = this.db.prepare(
-      `SELECT * FROM tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?`,
+      `SELECT * FROM tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT ? OFFSET ?`,
     );
     this.listPendingBySessionStmt = this.db.prepare(
       `SELECT * FROM tasks
          WHERE status = 'pending' AND session_id = ?
-         ORDER BY created_at ASC LIMIT ?`,
+         ORDER BY created_at ASC LIMIT ? OFFSET ?`,
     );
     this.listDueStmt = this.db.prepare(
       `SELECT * FROM tasks
          WHERE status = 'pending'
            AND (scheduled_for IS NULL OR scheduled_for <= ?)
          ORDER BY scheduled_for ASC, created_at ASC
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
     );
     const claimOwner = withOwners ? ",\n              run_owner = @owner" : "";
     // The claim names its owner in the same write, with the claim's own
@@ -601,15 +606,17 @@ export class TaskStore {
    * to drain only its session.
    */
   listPending(
-    options: { sessionId?: string; limit?: number } = {},
+    options: { sessionId?: string; limit?: number; offset?: number } = {},
   ): TaskRecord[] {
     const limit = options.limit ?? 100;
+    const offset = options.offset ?? 0;
     const rows = options.sessionId
       ? (this.listPendingBySessionStmt.all(
           options.sessionId,
           limit,
+          offset,
         ) as TaskRow[])
-      : (this.listPendingStmt.all(limit) as TaskRow[]);
+      : (this.listPendingStmt.all(limit, offset) as TaskRow[]);
     return rows.map(rowToRecord);
   }
 
@@ -621,8 +628,8 @@ export class TaskStore {
    * deterministically. Uses the dedicated `idx_tasks_due` partial index;
    * this is the only query path the scheduler takes to find work.
    */
-  listDue(now: number, limit = 100): TaskRecord[] {
-    const rows = this.listDueStmt.all(now, limit) as TaskRow[];
+  listDue(now: number, limit = 100, offset = 0): TaskRecord[] {
+    const rows = this.listDueStmt.all(now, limit, offset) as TaskRow[];
     return rows.map(rowToRecord);
   }
 
@@ -873,6 +880,45 @@ export class TaskStore {
     return this.boardComments.unavailable;
   }
 
+  /** The cards `id` waits on (ATO-2498), sorted; empty when none. */
+  boardDependencies(id: string): string[] {
+    return this.boardDeps.dependsOn(id);
+  }
+
+  /**
+   * Replace what card `id` waits on (`checkDependencies`: existing
+   * tasks, not itself, no cycle). `null` for an unknown task; an error
+   * sentence for a bad list or when dependencies are off.
+   */
+  setBoardDependencies(id: string, raw: unknown): { dependsOn: string[] } | { error: string } | null {
+    if (!this.get(id)) return null;
+    if (this.boardDeps.unavailable !== null) return { error: "card dependencies are not available here" };
+    const checked = checkDependencies(id, raw, (dep) => this.get(dep) !== null, this.boardDeps.all());
+    if ("error" in checked) return checked;
+    this.boardDeps.set(id, checked.dependsOn);
+    return checked;
+  }
+
+  /**
+   * The cards `id` still waits on: its dependencies whose card is not in
+   * Done (ATO-2498). A task waiting on one is not picked by the
+   * scheduler; a dependency whose task is gone no longer counts.
+   */
+  boardWaitingOn(id: string): string[] {
+    const deps = this.boardDeps.dependsOn(id);
+    if (deps.length === 0) return [];
+    return deps.filter((dep) => {
+      const task = this.get(dep);
+      if (!task) return false;
+      return laneForCard(task, this.board.get(dep) ?? undefined).lane !== "done";
+    });
+  }
+
+  /** Every dependency edge, as task id to the ids it waits on. */
+  boardDependencyMap(): Map<string, string[]> {
+    return this.boardDeps.all();
+  }
+
   /**
    * Drop every task bound to `sessionId` (ATO-586: an incognito chat
    * being closed). Rows are deleted, prompt and all, so nothing from the
@@ -895,6 +941,7 @@ export class TaskStore {
       // The board's notes on the deleted rows go with them (ATO-2257).
       this.board.pruneOrphans();
       this.boardComments.pruneOrphans();
+      this.boardDeps.pruneOrphans();
       return deleted;
     });
     return remove();

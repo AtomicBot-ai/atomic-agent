@@ -37,6 +37,9 @@ export {
   BOARD_FAILURE_FUSE_RUNS,
   failedRunStreak,
 } from "./task-board-fuse.js";
+export { BOARD_DEPENDENCIES_MAX, checkDependencies } from "./task-board-deps.js";
+export { assigneeMessage, assigneeNotice } from "./task-board-assignee.js";
+export type { AssigneeResolver, AssigneeRun } from "./task-board-assignee.js";
 export type { TaskRunOutcome, TaskRunRecord } from "./task-run-log.js";
 export {
   isPausedTask,
