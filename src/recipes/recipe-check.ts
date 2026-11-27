@@ -5,7 +5,7 @@ import {
   type SkillScanFinding,
   type SkillScanVerdict,
 } from "../skills/hub/skill-security-scanner.js";
-import { hasBareHost } from "./bare-host.js";
+import { hasHostName } from "./bare-host.js";
 import { findHiddenCharacters } from "./hidden-characters.js";
 import { recipePlaceholders, renderRecipePrompt, type Recipe } from "./recipe-format.js";
 import { recipeTexts } from "./recipe-link.js";
@@ -147,8 +147,10 @@ function scanPlainLanguage(file: string, text: string): RecipeFinding[] {
     ?? FETCH_PIPE_INTERPRETER_RE.exec(text)
     ?? FETCH_SUBSTITUTION_RE.exec(text);
   if (pipe) out.push(findingAt("pipe-to-shell", file, text, pipe.index));
-  const bareHost = hasBareHost(text);
-  const target = URL_RE.test(text) || SCRIPT_RE.test(text) || SCRIPT_EXTRA_RE.test(text) || bareHost;
+  // Both rules below need two or three signals, so a plain `attacker.com`
+  // (hasHostName, looser than hasBareHost) counts as their host.
+  const hostName = hasHostName(text);
+  const target = URL_RE.test(text) || SCRIPT_RE.test(text) || SCRIPT_EXTRA_RE.test(text) || hostName;
   const download = DOWNLOAD_RE.exec(text);
   const downloadAndRun = DOWNLOAD_AND_RUN_RE.exec(text);
   if (downloadAndRun) out.push(findingAt("download-and-run", file, text, downloadAndRun.index));
@@ -156,7 +158,7 @@ function scanPlainLanguage(file: string, text: string): RecipeFinding[] {
     out.push(findingAt("download-and-run", file, text, download.index));
   }
   const send = SEND_RE.exec(text);
-  if (send && PRIVATE_DATA_RE.test(text) && (URL_RE.test(text) || EMAIL_RE.test(text) || bareHost)) {
+  if (send && PRIVATE_DATA_RE.test(text) && (URL_RE.test(text) || EMAIL_RE.test(text) || hostName)) {
     out.push(findingAt("send-out-data", file, text, send.index));
   }
   const pkg = PACKAGE_INSTALL_RE.exec(text);

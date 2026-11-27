@@ -14,6 +14,11 @@
  * `.mov`, `.run`), so `notes.md/x` or `run.sh` never count; a scheme URL
  * still does through the caller's own URL rule. The token must not sit
  * inside a longer path, URL or email address (`src/app.io/x`, `a@b.com`).
+ *
+ * `hasHostName` is looser: any `LABEL.TLD` name with the same `TLDS` and
+ * the same boundaries, path or not (`attacker.com`). Too loose to be a
+ * target on its own, so the caller uses it only next to other signals
+ * (download plus run, send plus private data).
  */
 
 const LABEL = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
@@ -49,6 +54,7 @@ const WITH_PATH_RE = new RegExp(
 const WITH_PORT_RE = new RegExp(`${START}(?:${LABEL}\\.)+(?:${TLDS}):\\d{2,5}(?![\\w.])`, "i");
 const WWW_RE = new RegExp(`${START}www\\.(?:${LABEL}\\.)+(?:${TLDS})${END}`, "i");
 const KNOWN_HOST_RE = new RegExp(`${START}(?:${LABEL}\\.)*(?:${KNOWN_HOSTS})${END}`, "i");
+const HOST_NAME_RE = new RegExp(`${START}(?:${LABEL}\\.)+(?:${TLDS})${END}`, "i");
 
 /** The first host-like token without a scheme, or null. */
 export function findBareHost(text: string): { index: number; host: string } | null {
@@ -64,4 +70,9 @@ export function findBareHost(text: string): { index: number; host: string } | nu
 
 export function hasBareHost(text: string): boolean {
   return findBareHost(text) !== null;
+}
+
+/** A plain host name (`attacker.com`), path or not. Only for rules that also need other signals. */
+export function hasHostName(text: string): boolean {
+  return hasBareHost(text) || HOST_NAME_RE.test(text);
 }
