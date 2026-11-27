@@ -113,6 +113,44 @@ test("the responder announces on start, answers a one-shot query by unicast, and
   assert.equal(a.active(), false);
 });
 
+test("the responder answers only queries from its own networks (RFC 6762 §11)", async () => {
+  const sock = fakeSocket();
+  const a = SA.createShareAnnouncer({ createSocket: () => sock, interfaces: () => IFACES, hostname: () => "studio-mac", say: () => {} });
+  a.set(8787);
+  await new Promise((r) => setImmediate(r));
+  const before = sock.sent.length;
+  // Off-link: a public address, another private network, a forged multicast-port source, junk.
+  for (const rinfo of [
+    { address: "8.8.8.8", port: 53001 },
+    { address: "10.0.0.5", port: 53001 },
+    { address: "192.168.2.30", port: 5353 },
+    { address: "not-an-ip", port: 53001 },
+  ]) sock.emit("message", MD.buildMdnsQuery(), rinfo);
+  assert.equal(sock.sent.length, before, "no reply to a host off our networks");
+  // On-link still gets its answer.
+  sock.emit("message", MD.buildMdnsQuery(), { address: "192.168.1.30", port: 53001 });
+  assert.equal(sock.sent.length, before + 1);
+  a.stop();
+});
+
+test("on-link uses each interface's own netmask, and counts this computer", () => {
+  const wide = { en0: [{ family: "IPv4", address: "10.1.2.3", netmask: "255.255.0.0", internal: false }] };
+  assert.equal(SA.isOnLink("10.1.200.7", wide), true);
+  assert.equal(SA.isOnLink("10.2.0.1", wide), false);
+  assert.equal(SA.isOnLink("192.168.1.30", IFACES), true);
+  assert.equal(SA.isOnLink("::ffff:192.168.1.30", IFACES), true);
+  assert.equal(SA.isOnLink("192.168.10.30", IFACES), false);
+  assert.equal(SA.isOnLink("127.0.0.1", {}), true);
+  assert.equal(SA.isOnLink("8.8.8.8", { eth0: [{ family: "IPv4", address: "8.8.8.1", netmask: "255.255.255.0", internal: false }] }), false);
+});
+
+test("Find asks each address once, so a shared model is not probed twice without a key (ATO-2483)", () => {
+  const ipc = src("../main/lan-discovery-ipc.ts");
+  const find = ipc.slice(ipc.indexOf("async function findServers"), ipc.indexOf("export function wireLanDiscoveryIpc"));
+  assert.ok(find.includes("const checkOnce"), "findServers memoizes its checks");
+  assert.ok(!/\bcheckRoot\(`/.test(find), "every probe in findServers goes through checkOnce");
+});
+
 test("nothing is sent before the socket is bound, and no private network means no socket", () => {
   const sock = fakeSocket();
   sock.bind = () => {}; // never binds

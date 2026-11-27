@@ -187,10 +187,21 @@ async function findServers(): Promise<FindAnswer> {
     if (!c.ok || servers.has(c.url)) return;
     servers.set(c.url, { url: c.url, host, name, via, kind: c.kind, kindWord: c.kindWord, models: c.models, needsKey: c.needsKey, latencyMs: c.latencyMs });
   };
+  // ATO-2483: each address is asked once per Find, whether mDNS or the scan
+  // found it first, so a shared model is not probed twice without a key.
+  const asked = new Map<string, Promise<CheckAnswer>>();
+  const checkOnce = (root: string): Promise<CheckAnswer> => {
+    let answer = asked.get(root);
+    if (!answer) {
+      answer = checkRoot(root);
+      asked.set(root, answer);
+    }
+    return answer;
+  };
 
   const mdns = (async () => {
     const found = await mdnsBrowse(own);
-    await mapLimit(found.targets.slice(0, MDNS_MAX_CHECKS), 8, async (t) => keep(await checkRoot(`http://${t.host}:${t.port}${t.path}`), t.host, "mdns", t.name));
+    await mapLimit(found.targets.slice(0, MDNS_MAX_CHECKS), 8, async (t) => keep(await checkOnce(`http://${t.host}:${t.port}${t.path}`), t.host, "mdns", t.name));
     return found.answered;
   })();
 
@@ -199,9 +210,9 @@ async function findServers(): Promise<FindAnswer> {
     const open = await mapLimit(pairs, PROBE_CONCURRENCY, async (p) => ((await tcpOpen(p.host, p.port, CONNECT_TIMEOUT_MS)) ? p : null));
     const hits = open.filter((p): p is { host: string; port: number } => p !== null);
     await mapLimit(hits, 8, async (p) => {
-      keep(await checkRoot(`http://${p.host}:${p.port}`), p.host, "scan", null);
+      keep(await checkOnce(`http://${p.host}:${p.port}`), p.host, "scan", null);
       // ATO-2483: an agent on serve's port may also share its model there.
-      if (p.port === ATOMIC_AGENT_PORT) keep(await checkRoot(`http://${p.host}:${p.port}${SHARED_MODEL_ROOT_PATH}`), p.host, "scan", null);
+      if (p.port === ATOMIC_AGENT_PORT) keep(await checkOnce(`http://${p.host}:${p.port}${SHARED_MODEL_ROOT_PATH}`), p.host, "scan", null);
     });
   })();
 

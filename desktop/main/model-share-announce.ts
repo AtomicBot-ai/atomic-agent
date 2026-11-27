@@ -42,6 +42,41 @@ export interface ShareAnnouncerDeps {
   say?: (line: string) => void;
 }
 
+/** `a.b.c.d` as a 32-bit number, or null. */
+function v4Number(ip: string): number | null {
+  const parts = ip.replace(/^::ffff:/i, "").split(".");
+  if (parts.length !== 4) return null;
+  let n = 0;
+  for (const part of parts) {
+    if (!/^\d{1,3}$/.test(part) || Number(part) > 255) return null;
+    n = n * 256 + Number(part);
+  }
+  return n;
+}
+
+/**
+ * Whether `source` is on one of this computer's own private IPv4 networks
+ * (its address and netmask), or this computer itself. RFC 6762 §11: a
+ * responder answers only queries from its own link, so a host elsewhere
+ * (or a forged source) gets nothing: no hostname, port or addresses, and
+ * no bigger packet reflected at someone else.
+ */
+export function isOnLink(source: string, ifaces: Record<string, IfaceAddr[] | undefined>): boolean {
+  const src = v4Number(source);
+  if (src === null) return false;
+  if (src >>> 24 === 127) return true;
+  for (const list of Object.values(ifaces ?? {})) {
+    for (const ad of list ?? []) {
+      if (!ad || ad.internal || !(ad.family === "IPv4" || ad.family === 4) || !isPrivateV4(ad.address)) continue;
+      const ip = v4Number(ad.address);
+      const mask = v4Number(ad.netmask);
+      if (ip === null || mask === null || mask === 0) continue;
+      if (((ip & mask) >>> 0) === ((src & mask) >>> 0)) return true;
+    }
+  }
+  return false;
+}
+
 /** Our private IPv4 addresses, the same networks "Find on my network" looks through. */
 export function shareAddresses(ifaces: Record<string, IfaceAddr[] | undefined>): string[] {
   return subnetsFromInterfaces(ifaces).map((s) => s.self).filter(isPrivateV4);
@@ -72,6 +107,8 @@ export function createShareAnnouncer(deps: ShareAnnouncerDeps = {}): ShareAnnoun
 
   const onMessage = (msg: Buffer, rinfo: RemoteInfo): void => {
     if (!current) return;
+    // Only our own networks get an answer, by multicast or unicast alike.
+    if (!isOnLink(rinfo.address, ifaces())) return;
     const questions = parseMdnsQuestions(msg);
     const match = matchShareQuery(questions, current);
     if (!match) return;
