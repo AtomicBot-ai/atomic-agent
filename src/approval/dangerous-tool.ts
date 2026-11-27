@@ -1,5 +1,6 @@
 import type { ApprovalGate, RuleCheck } from "./approval-gate.js";
 import type { ApprovalCategory } from "./approval-level.js";
+import type { EgressDestination } from "./egress-scan.js";
 
 export interface DangerousToolOptions {
   approvals: ApprovalGate;
@@ -30,6 +31,8 @@ export interface ApprovalPrompt {
   commandSegments?: readonly (readonly string[])[];
   /** A script fed to a shell no rule can read; see `ApprovalRequest.commandUnreadable`. */
   commandUnreadable?: boolean;
+  /** Where the call sends data; see `ApprovalRequest.egress`. */
+  egress?: readonly EgressDestination[];
   /** Session working directory; see `ApprovalRequest.workdir`. */
   workdir?: string;
   /**
@@ -202,6 +205,9 @@ export async function requireApproval(
         ? { commandSegments: prompt.commandSegments.map((words) => [...words]) }
         : {}),
       ...(prompt.commandUnreadable === true ? { commandUnreadable: true } : {}),
+      ...(prompt.egress !== undefined && prompt.egress.length > 0
+        ? { egress: prompt.egress.map((d) => ({ ...d })) }
+        : {}),
       ...(prompt.workdir !== undefined ? { workdir: prompt.workdir } : {}),
       ...(prompt.redirectablePath !== undefined
         ? { redirectablePath: prompt.redirectablePath }

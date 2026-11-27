@@ -69,6 +69,7 @@ import { compileWatchPattern } from "./shell-job-watch.js";
 import { runShellWrite } from "./shell-job-write.js";
 import { ttyEnv, wrapForTty } from "./tty-wrap.js";
 import { ShellJobRegistry } from "./shell-jobs.js";
+import { shellEgress } from "./shell-egress.js";
 import {
   markRecoveredResult,
   missingCmdMessage,
@@ -352,6 +353,10 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     const dangerous = isDangerousGuardRule(guardVerdict.rule);
     const commandSegments = shellRuleSegments(cmd, execArgs, useShell);
     const commandUnreadable = shellRunsUnreadableScript(cmd, execArgs, useShell);
+    // Where the command sends data (ATO-2116): shown on the card, and a
+    // host nobody approved keeps a fan-out scope from settling the call.
+    // A script fed to a shell counts as data to an unknown host.
+    const egress = shellEgress(commandSegments, cwd, { commandUnreadable, targetPaths });
     const ruleCheck = {
       sessionId: ctx.sessionId,
       tool: "os.shell.run",
@@ -374,6 +379,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           targetPaths,
         }) ?? false
       ) &&
+      (options.approvals.unapprovedEgress?.(ctx.sessionId, egress) ?? []).length === 0 &&
       !savedRuleOverridesScope(options.approvals, ruleCheck);
     // A command the guard deems safe (`echo`, `ls`) runs without asking,
     // but a saved deny rule still stops it: it goes to the gate, which
@@ -435,6 +441,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           ...(commandArgv !== undefined ? { commandArgv } : {}),
           commandSegments,
           ...(commandUnreadable ? { commandUnreadable } : {}),
+          ...(egress.length > 0 ? { egress } : {}),
           workdir: ctx.workingDir,
           targetPaths,
           ...(guardVerdict.askEveryLevel === true ? { askEveryLevel: true as const } : {}),

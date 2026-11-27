@@ -7,6 +7,7 @@ import {
   previewLines,
 } from "../../approval/index.js";
 import { formatRiskLine } from "../../approval/risk-review.js";
+import { formatEgressLine } from "../../approval/egress-scan.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import {
@@ -718,6 +719,9 @@ function formatApprovalText(
   // parse_mode), so the reason needs no escaping.
   const riskLine = formatRiskLine(req);
   if (riskLine !== null) head.push(riskLine);
+  // Where the command sends data (ATO-2116); plain text like the rest.
+  const egressLine = formatEgressLine(req.egress);
+  if (egressLine !== null) head.push(egressLine);
   const tail: string[] = [];
   if (req.affectedResources && req.affectedResources.length > 0) {
     tail.push("resources:");

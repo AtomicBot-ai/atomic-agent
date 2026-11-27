@@ -23,6 +23,7 @@ import {
   previewLines,
 } from "../approval/approval-preview.js";
 import { formatRiskLine } from "../approval/risk-review.js";
+import { formatEgressLine } from "../approval/egress-scan.js";
 import {
   APPROVAL_CHORDS,
   canEditPath,
@@ -123,6 +124,8 @@ export function ApprovalModal({
   const editing = pathDraft !== null;
   // Smart approval's verdict on a request it did not let through (ATO-1268).
   const riskLine = formatRiskLine(request);
+  // Where the command sends data (ATO-2116).
+  const egressLine = formatEgressLine(request.egress);
   return (
     <Box
       flexDirection="column"
@@ -152,6 +155,7 @@ export function ApprovalModal({
             {riskLine}
           </Text>
         ) : null}
+        {egressLine !== null ? <Text color="yellow">{egressLine}</Text> : null}
         {request.preview ? (
           <ApprovalPreview
             request={request}

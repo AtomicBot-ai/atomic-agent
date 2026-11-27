@@ -6,6 +6,7 @@
 
 import type { ApprovalCategory } from "../approval/approval-level.js";
 import type { RiskLevel } from "../approval/risk-review.js";
+import type { EgressDestination } from "../approval/egress-scan.js";
 import type { UserQuestion } from "../approval/user-question.js";
 
 export type HostRequestType =
@@ -203,6 +204,12 @@ export interface ApprovalRequestPayload {
   riskLevel?: RiskLevel;
   /** The reviewer's reason alone, for `formatRiskLine` (ATO-1268). */
   riskReason?: string;
+  /**
+   * Where the command sends data (ATO-2116): `{kind, host, direction,
+   * label}`, `host` `null` when it cannot be read. A host draws the
+   * outbound ones as `sends data to -> <label>` (`formatEgressLine`).
+   */
+  egress?: EgressDestination[];
   /**
    * Whether `grant: "session"` may be offered (the TUI's `[s]`). This
    * agent always sends the three `can*` flags; absent (an older agent)

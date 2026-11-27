@@ -1,5 +1,6 @@
 import { newUntrustedNonce, wrapUntrusted } from "../tools/untrusted-text.js";
 import type { ApprovalRequest } from "./approval-gate.js";
+import { cleanEgressLabel, outboundDestinations } from "./egress-scan.js";
 import {
   formatApprovalCategory,
   isGrantableCategory,
@@ -256,6 +257,9 @@ export function riskReviewActionText(request: ApprovalRequest): string | null {
     request.category === "shell" || request.category === "script"
       ? stripShellComments(preview)
       : preview;
+  const egressLabels = [
+    ...new Set(outboundDestinations(request.egress).map((d) => `${cleanEgressLabel(d.label)} (${d.kind})`)),
+  ];
   const lines = [
     `description: ${request.reason}`,
     ...(shown.trim().length > 0 ? [`details:\n${shown}`] : []),
@@ -265,6 +269,9 @@ export function riskReviewActionText(request: ApprovalRequest): string | null {
     ...(request.targetPaths !== undefined && request.targetPaths.length > 0
       ? [`changes files: ${request.targetPaths.join(", ")}`]
       : []),
+    // Where the command sends data, as the egress scan read it (ATO-2116).
+    // Hosts come from the command, so they stay inside the untrusted block.
+    ...(egressLabels.length > 0 ? [`sends data to: ${egressLabels.join(", ")}`] : []),
   ];
   const text = lines.join("\n");
   return text.length > RISK_REVIEW_MAX_ACTION_CHARS ? null : text;
