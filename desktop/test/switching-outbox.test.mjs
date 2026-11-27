@@ -20,6 +20,8 @@ function fixture() {
   });
   // ATO-405: submit() and sendButton() read the composer's chips (renderer/attachments.js).
   vm.runInContext(readFileSync(new URL('../renderer/attachments.js',import.meta.url),'utf8'),c);
+  // ATO-2132 (#1838): drainQueued, queuesSnapshot and unqueueMessage call the queue editor (renderer/queue-edit.js).
+  vm.runInContext(readFileSync(new URL('../renderer/queue-edit.js',import.meta.url),'utf8'),c);
   for (const name of ['chatTitle','submit','sendButton','swxWaitsForRoute','openHoldsComposer','noteWaitingChat','drainQueued','drainOwed','queueKey','stashQueue','mergeQueue','restoreQueue','queuesSnapshot','chatQueuedCount','settlePendingChats','queueChatRunning','unqueueMessage','swxMessageOutcome']) vm.runInContext(functions.get(name),c);
   return {c,sent,notices,kept};
 }
