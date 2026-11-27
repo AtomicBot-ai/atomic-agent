@@ -1,5 +1,6 @@
 import type { AtomicAgentConfig } from "../config/index.js";
 import type { LlmProvider } from "../llm/provider/llm-provider.js";
+import { providerModelSeparator } from "../llm/provider/provider-model-ref.js";
 import { registerBuiltInProviderKinds } from "../llm/provider/registry/register-built-in-providers.js";
 import {
   getProviderFactory,
@@ -9,9 +10,10 @@ import {
 import { StructuredLogger } from "../tracing/index.js";
 
 /**
- * One `--models` item: `<provider>` (its configured chat model) or
- * `<provider>:<model>`. Split at the first colon only, since provider ids
- * have none and model ids may (`ollama:qwen3:8b`).
+ * One `--models` item: `<provider>` (its configured chat model),
+ * `<provider>/<model>` or `<provider>:<model>` (ATO-2773). Split at the
+ * first separator only, since provider ids have neither and model ids
+ * may (`ollama:qwen3:8b`, `openrouter/openai/gpt-oss`).
  */
 export interface ModelSpec {
   spec: string;
@@ -26,7 +28,7 @@ export function parseModelSpecs(raw: string | undefined, fallbackProviderId: str
     .filter((s) => s !== "");
   if (items.length === 0) return [{ spec: fallbackProviderId, providerId: fallbackProviderId }];
   return items.map((spec) => {
-    const at = spec.indexOf(":");
+    const at = providerModelSeparator(spec);
     if (at === -1) return { spec, providerId: spec };
     const model = spec.slice(at + 1).trim();
     return {
