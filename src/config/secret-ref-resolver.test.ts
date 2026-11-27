@@ -142,7 +142,8 @@ describe("resolveSecretRefSync / resolveSecretRef", () => {
     expect(await resolveSecretRef("A_KEY", "op://v/i/f", deps)).toBe(VALUE);
     expect(await resolveSecretRef("A_KEY", "op://v/i/f", deps)).toBe(VALUE);
     expect(f.calls).toHaveLength(1);
-    expect(resolvedSecretValues()).toEqual([{ label: "A_KEY", value: VALUE }]);
+    expect(resolvedSecretValues()).toContainEqual({ label: "A_KEY", value: VALUE });
+    expect(resolvedSecretValues().every((v) => v.label === "A_KEY")).toBe(true);
   });
 
   it("does not cache a failure", async () => {

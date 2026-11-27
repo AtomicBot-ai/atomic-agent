@@ -25,6 +25,21 @@ describe("values resolved from secret references are always masked (ATO-476, ATO
     );
   });
 
+  it("masks the base64, base64url and URL-encoded forms of a resolved value", () => {
+    const value = "Enc0ded?Secret/Value+9";
+    rememberResolvedSecret("DEPLOY_TOKEN", value);
+    const b64 = Buffer.from(value).toString("base64");
+    const b64Line = Buffer.from(`${value}\n`).toString("base64");
+    const b64url = Buffer.from(value).toString("base64url");
+    const url = encodeURIComponent(value);
+    for (const form of [b64, b64.replace(/=+$/, ""), b64Line, b64url, url]) {
+      expect(form).not.toBe(value);
+      const masked = maskSecrets(`out: ${form} end`);
+      expect(masked).not.toContain(form);
+      expect(masked).toContain("[redacted:DEPLOY_TOKEN]");
+    }
+  });
+
   it("says which values the exact-value layer can mask", () => {
     expect(isMaskableSecretValue("Shell5Secret6Value7")).toBe(true);
     expect(isMaskableSecretValue("short1")).toBe(false);

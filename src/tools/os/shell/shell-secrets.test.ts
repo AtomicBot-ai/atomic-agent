@@ -114,6 +114,9 @@ describe.skipIf(process.platform === "win32")("os.shell.run with {{secret:NAME}}
     expect(asked[0]!.preview).toContain("{{secret:DEMO_TOKEN}}");
     expect(asked[0]!.preview).not.toContain(VALUE);
     expect(asked[0]!.reason).toContain("uses secret DEMO_TOKEN");
+    // The card promises only what the masking does (exact text and common encodings).
+    expect(asked[0]!.reason).toContain("masked in output (exact value)");
+    expect(asked[0]!.reason).not.toContain("never shown");
     expect(resolved).toEqual(["DEMO_TOKEN"]);
     const seen = `${result.summary}\n${result.fullOutput ?? ""}\n${JSON.stringify(result.details)}`;
     expect(seen).not.toContain(VALUE);

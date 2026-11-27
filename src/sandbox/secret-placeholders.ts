@@ -1,9 +1,12 @@
 /**
  * `{{secret:NAME}}` in a command the model writes (ATO-476).
  *
- * The model never holds a secret's value: it writes the placeholder, the
- * human approves the command with the placeholder in it, and only the
- * process that starts gets the value, substituted after approval. What
+ * The model writes only the secret's name: it writes the placeholder,
+ * the human approves the command with the placeholder in it, and only
+ * the process that starts gets the value, substituted after approval.
+ * What the command prints is masked by exact value (and common
+ * encodings), not by meaning: a transform the command applies itself
+ * is visible on the approval card, not hidden. What
  * the transcript, the trace and the approval card keep is the call as the
  * model wrote it. Precedent: 1Password `op run`, which resolves `op://`
  * references only in the child's environment.

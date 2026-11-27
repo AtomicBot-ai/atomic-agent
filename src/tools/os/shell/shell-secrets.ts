@@ -48,7 +48,7 @@ export function checkShellSecrets(
 /** The approval reason's tail: which secrets the human is letting the command use. */
 export function describeShellSecretUse(names: readonly string[]): string {
   if (names.length === 0) return "";
-  return ` (uses secret${names.length === 1 ? "" : "s"} ${names.join(", ")}: filled in when it starts, never shown to the model)`;
+  return ` (uses secret${names.length === 1 ? "" : "s"} ${names.join(", ")}: filled in when it starts, masked in output (exact value))`;
 }
 
 export type ShellSecretFill =
