@@ -214,8 +214,13 @@ test('ATO-2750: the window cannot come back: the notification as before, the mai
 
 test('ATO-2750: the wiring: hidden, not destroyed, during the paste; Copy answer through main; the page draws the line', () => {
   const qw = src('../main/quick-entry-window.ts');
-  assert.match(qw, /hide: \(\) => \{ if \(box && !box\.isDestroyed\(\)\) box\.hide\(\); \},/);
-  assert.match(qw, /bringBack: \(\) => \{[\s\S]*?box\.show\(\);[\s\S]*?return true;/);
+  assert.match(qw, /hide: \(\) => \{ replacing = true; if \(box && !box\.isDestroyed\(\)\) box\.hide\(\); \},/);
+  assert.match(qw, /bringBack: \(\) => \{\s*replacing = false;[\s\S]*?box\.show\(\);[\s\S]*?return true;/);
+  // Bringing the source app to the front blurs the box: the blur must not destroy it mid-Replace.
+  assert.match(qw, /win\.on\("blur", \(\) => \{ if \(box === win && !replacing\) hide\(\); \}\);/);
+  assert.match(qw, /\}, source, raw\)\.finally\(\(\) => \{ replacing = false; \}\);/, 'cleared once Replace is over');
+  const hideAt = qw.indexOf('const hide = () => {');
+  assert.match(qw.slice(hideAt, qw.indexOf('\n  };', hideAt)), /replacing = false;/, 'and when the box goes');
   assert.match(qw, /close: hide,/);
   assert.match(qw, /ipcMain\.handle\("app:quickEntryCopy"[\s\S]*?event\.sender !== box\.webContents[\s\S]*?clipboard\.writeText\(text\)/);
   assert.match(src('../preload/preload.ts'), /quickEntryCopy: \(text: string\) => ipcRenderer\.invoke\("app:quickEntryCopy", text\)/);

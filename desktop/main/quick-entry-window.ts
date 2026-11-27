@@ -74,6 +74,10 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
   // ATO-2736: why the hotkey brought no selection, as the mini chat's one line (null: nothing to say).
   let notice: { text: string; settings: boolean } | null = null;
   let opening = false;
+  /* ATO-2750: true while Replace has the box out of sight and the source
+     app in front. That switch blurs the box; the blur must not destroy it,
+     or a failed paste has no window to come back to. */
+  let replacing = false;
   let disposed = false;
   let pref: QuickEntryPref = readQuickEntryPref(w.userData);
 
@@ -83,6 +87,7 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
     selection = null;
     source = null;
     notice = null;
+    replacing = false;
     if (b && !b.isDestroyed()) b.destroy();
   };
 
@@ -140,7 +145,7 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
     win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     win.webContents.on("will-navigate", (event) => event.preventDefault());
     // Clicking another app puts the box away; the typed text waits for next time.
-    win.on("blur", () => { if (box === win) hide(); });
+    win.on("blur", () => { if (box === win && !replacing) hide(); });
     win.on("closed", () => { if (box === win) box = null; });
     win.once("ready-to-show", () => {
       if (win.isDestroyed()) return;
@@ -211,8 +216,9 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
       allowed: (prompt) => keystrokesAllowed(prompt),
       /* ATO-2750: out of sight while the paste runs, not destroyed, so a
          failed paste brings it back with the line and "Copy answer". */
-      hide: () => { if (box && !box.isDestroyed()) box.hide(); },
+      hide: () => { replacing = true; if (box && !box.isDestroyed()) box.hide(); },
       bringBack: () => {
+        replacing = false;
         if (!box || box.isDestroyed()) return false;
         box.show();
         box.focus();
@@ -226,7 +232,7 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
       notify: (body) => {
         try { if (Notification.isSupported()) new Notification({ title: "Atomic Agent", body, silent: true }).show(); } catch { /* no notifications */ }
       },
-    }, source, raw);
+    }, source, raw).finally(() => { replacing = false; });
   });
   // ATO-2750: "Copy answer" beside a failed Replace. Only from the mini chat.
   ipcMain.handle("app:quickEntryCopy", (event, raw: unknown) => {
