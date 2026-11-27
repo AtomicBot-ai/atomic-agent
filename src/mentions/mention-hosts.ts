@@ -1,9 +1,9 @@
 /**
  * ATO-2241, shared since ATO-2472: is a link's host this computer or the local network? Used by
- * mention-url.ts so a public link cannot redirect the read to a local
- * address (a router page, a dev server, a cloud metadata endpoint). A host
- * the person typed as local stays allowed: `@http://localhost:3000` is on
- * purpose. Names are judged by their text only, never resolved.
+ * mention-url-hops.ts to tell a link typed as local (a router page, a dev
+ * server: read on purpose, `@http://localhost:3000`) from a public one, whose
+ * redirects are each checked by the SSRF guard before they connect
+ * (ATO-2797). Names are judged by their text only, never resolved here.
  */
 
 function ipv4Local(a: number, b: number): boolean {
