@@ -181,6 +181,10 @@ export interface UserManagedLocalLlmConfig {
    * `false` (default): nothing is written.
    */
   promptDiskCache: boolean;
+  /**
+   * Share the local model with other apps and devices (ATO-2336): `true` makes `atomic-agent serve` answer `GET /raw/v1/models` and `POST /raw/v1/chat/completions`, the bare model with no agent, for callers that send the share key (`atomic-agent models share` turns this on and prints the key). Off when absent (the default): those routes answer 404. Additive and unversioned: a file without the key reads as `false`.
+   */
+  share: boolean;
 }
 
 /**

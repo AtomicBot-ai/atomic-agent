@@ -64,6 +64,10 @@ Checks: `npx vitest run src/cli` when tests are present; `npm run lint`; `npm ru
 
 Before saving, the carried history is fitted into a local model's window (ATO-1155, [fit-context](../import/handoff/fit-context.ts)): when it is larger than half the window (`--context <tokens>`, default the managed model's pinned `contextSize`, else 32768; `0` skips this), the head becomes an extractive checkpoint (`SessionCompaction`, `kind: "extractive"`, no model call) cut at a safe boundary, the newest records stay verbatim, and very long tool outputs in that tail are clipped in the middle. `--json` reports it under `context`.
 
+## Model share
+
+`models share [--rotate] [--off] [--port <p>] [--json]` (ATO-2336, [models-share-command.ts](models-share-command.ts)) turns `localModels.managed.share` on, makes the share key on first use and prints the base URL (`http://127.0.0.1:<port>/raw/v1`, plus each LAN address) and the key to paste into another OpenAI-compatible app. `--rotate` replaces the key, `--off` turns sharing off and keeps the key. The routes and their rules: the "Shared local model" section of the [HTTP guide](../http/README.md).
+
 ## Model fit-test
 
 `models tasks collect [--last <n>] [--out <file>] [--json]` writes the user's last tasks as a fit-test set (ATO-1089, [models-tasks-command.ts](models-tasks-command.ts)); the rules for what is kept live in [the fit-test guide](../fit-test/README.md). `models fit-test --tasks <file> --models <a,b> --judge-url <url>` runs that set on up to three local models and prints score, time and peak memory per model (ATO-1090, [models-fit-test-command.ts](models-fit-test-command.ts)).

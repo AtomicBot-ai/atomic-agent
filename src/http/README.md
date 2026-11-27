@@ -15,6 +15,16 @@ This area owns http and openai-compatible ingress. Read [AGENTS.md](AGENTS.md) b
 - [request-context.ts](request-context.ts)
 - [scoped-auth.ts](scoped-auth.ts): named tokens with roles ([scopes](http-scopes.ts), [store](http-token-store.ts))
 - [openai-completions-cancel.ts](openai-completions-cancel.ts)
+- [route-raw-model.ts](route-raw-model.ts): `GET /raw/v1/models` and `POST /raw/v1/chat/completions`, the shared local model (below)
+
+## Shared local model (`/raw/v1`)
+
+ATO-2336, after LM Studio's "Serve on Local Network", Jan's Local API Server and Ollama's "Expose". `/v1/chat/completions` runs the agent; `/raw/v1/*` runs only the model. The request goes unchanged to the model server the agent uses now (`localModels.url`: the managed llama-server or Atomic Core), with that server's private key added server-side (`apiKeyForUrl`), and its answer, SSE included, streams back with only `content-type` and `cache-control` copied.
+
+- Off by default. With `localModels.managed.share` not `true` both routes answer the router's 404. The switch is read from the config file on every request, so `atomic-agent models share` (or `--off`) works on a running serve.
+- Its own key, `<stateDir>/model-share.key` ([model-share-key.ts](model-share-key.ts), 0600, a state secret). The routes are `requiresAuth: false` and check only this key: the serve key and named tokens get 401 there, and the share key gets 401 on every agent route, since the router never compares against it. Sharing on with no key file: 503. Wrong keys from a network address are throttled like the serve key.
+- One request at a time ([raw-model-limit.ts](raw-model-limit.ts)); a second gets 429 `model_busy`, so outside apps cannot take the slots the agent's turns need ([worker-slots.ts](../local-llm/server/worker-slots.ts)).
+- Other devices reach it only when serve itself listens beyond loopback (`--host 0.0.0.0`, which already needs an operator key); serve then prints that the traffic is plain http. A body is capped at 1 MiB like every JSON route.
 
 ## Ownership and dependencies
 

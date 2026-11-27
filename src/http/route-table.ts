@@ -143,6 +143,7 @@ import { createMetricsHandler } from "./route-metrics.js";
 import { a2aRoutes, type A2aOptions } from "./route-a2a.js";
 import { createMcpEndpointHandlers, MCP_ENDPOINT_PATH } from "./route-mcp-endpoint.js";
 import type { PrometheusRegistry } from "../tracing/prometheus-registry.js";
+import { createRawModelHandlers, RAW_MODEL_PREFIX, type RawModelShareDeps } from "./route-raw-model.js";
 
 export interface RouteTableOptions {
   /**
@@ -157,6 +158,8 @@ export interface RouteTableOptions {
    * routes out of the table, so they answer 404.
    */
   a2a?: A2aOptions | null;
+  /** ATO-2336: what the raw model routes read; tests inject their own (route-raw-model.ts). */
+  rawModel?: RawModelShareDeps;
 }
 
 /**
@@ -179,6 +182,8 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
   const mcpOAuth = createMcpOAuthHandlers();
   // ATO-549: the MCP sessions open on `/mcp` belong to this server too.
   const mcpEndpoint = createMcpEndpointHandlers();
+  // ATO-2336: one in-flight cap shared by both raw routes.
+  const rawModel = createRawModelHandlers(options.rawModel);
   return [
     {
       method: "GET",
@@ -192,6 +197,10 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
       handler: createModelsHandler(),
       requiresAuth: false,
     },
+    // ATO-2336: the bare local model for other apps, off by default. Not
+    // behind the serve key: the handler takes the share key and only it.
+    { method: "GET", path: `${RAW_MODEL_PREFIX}/models`, handler: rawModel.models, requiresAuth: false },
+    { method: "POST", path: `${RAW_MODEL_PREFIX}/chat/completions`, handler: rawModel.chatCompletions, requiresAuth: false },
     // ATO-1128: the phone panel's page; it holds no data and asks for the key (route-panel.ts).
     { method: "GET", path: "/panel", handler: createPanelPageHandler(), requiresAuth: false },
     { method: "GET", path: "/panel/app.js", handler: createPanelScriptHandler(), requiresAuth: false },

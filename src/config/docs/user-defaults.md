@@ -28,6 +28,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `localModels.managed.stopOnExit` (default `true`).
 - `localModels.managed.autoRestart` (default `true`).
 - `localModels.managed.promptDiskCache` (default `false`).
+- `localModels.managed.share` (default `false`; `true` opens serve's `/raw/v1` model routes to callers with the share key, ATO-2336).
 - `localModels.managed.device` (default `"auto"`).
 - `localModels.managed.backendVariant` (default `"auto"`).
 - `localModels.managed.coreBackendVariant` (default `"auto"`).
