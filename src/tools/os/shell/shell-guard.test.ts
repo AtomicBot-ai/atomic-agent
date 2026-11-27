@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ApprovalGate } from "../../../approval/approval-gate.js";
 import type { ToolContext } from "../../tool-registry.js";
-import { buildOsShellTool } from "./shell.js";
+import { buildOsShellTool, isTrustedReadOnlyVerdict } from "./shell.js";
 
 /**
  * ATO-2111: the person's security rules review a command a fusion
@@ -94,5 +94,22 @@ describe.skipIf(process.platform === "win32")("os.shell.run: security rules on t
       message: expect.stringContaining("Blocked by your security rules: reads private data"),
     });
     expect(reviewed).toEqual(["os.shell.run"]);
+  });
+});
+
+describe("isTrustedReadOnlyVerdict (ATO-2111)", () => {
+  it.each(["gh.read_only", "gh.api_read", "gog.read_only", "gog.auth_read", "ical_buddy.read_only"])(
+    "an allow from %s is trusted",
+    (rule) => {
+      expect(isTrustedReadOnlyVerdict({ action: "allow", rule })).toBe(true);
+    },
+  );
+
+  it.each([
+    ["allow", "safe.echo"],
+    ["approval_required", "gh.read_only"],
+    ["approval_required", "dangerous.rm"],
+  ])("%s from %s is not", (action, rule) => {
+    expect(isTrustedReadOnlyVerdict({ action, rule })).toBe(false);
   });
 });

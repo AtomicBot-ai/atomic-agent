@@ -1,6 +1,7 @@
 import type { ApprovalGate, RuleCheck } from "./approval-gate.js";
 import type { ApprovalCategory } from "./approval-level.js";
 import type { EgressDestination } from "./egress-scan.js";
+import { GUARD_ASK_PERSON } from "./guard-check.js";
 
 export interface DangerousToolOptions {
   approvals: ApprovalGate;
@@ -171,10 +172,13 @@ export function savedRuleDenies(
 }
 
 /**
- * For a call a fan-out scope settles without the gate's `request`: the
- * person's plain-text security rules still review it (ATO-2111). Throws
- * the refusal (never the user's decision) when they block it or the
- * reviewer gives no answer.
+ * For a call that skips the gate's `request` (a fan-out scope, a GET
+ * that asks nobody, a trusted read-only command): the person's
+ * plain-text security rules still review it (ATO-2111). Throws the
+ * refusal (never the user's decision) when they block it. When the
+ * reviewer gives no answer under `onFailure: ask` and the session can
+ * prompt, the call goes through `requireApproval`, so the person is
+ * asked; a session under a refuse policy is refused.
  */
 export async function requireGuardOnShortcut(
   options: DangerousToolOptions,
@@ -201,7 +205,12 @@ export async function requireGuardOnShortcut(
         : {}),
     },
     signal,
+    { askOnFailure: true },
   );
+  if (reason === GUARD_ASK_PERSON) {
+    await requireApproval(options, prompt, signal);
+    return;
+  }
   if (reason !== null && reason !== undefined) {
     throw new ApprovalDeniedError(prompt.tool, reason, { byUser: false });
   }

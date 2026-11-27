@@ -102,13 +102,18 @@ export function isDangerousGuardRule(rule: string): boolean {
  * The trusted read-only tools the guard runs unasked (`rules-trusted/`):
  * `gh` reads, `gog`, `icalBuddy`. They read private data (a calendar,
  * private repositories), so the person's security rules (ATO-2111)
- * still review them when a guard file covers `os.shell.run`.
+ * still review them when a guard file covers `os.shell.run`. Matched by
+ * the rule's id prefix, since one rule returns several verdict names
+ * (`gh.read_only`, `gh.api_read`, `gog.auth_read`).
  */
-const TRUSTED_READ_ONLY_RULES: ReadonlySet<string> = new Set([
-  ghReadOnlyRule.id,
-  gogReadOnlyRule.id,
-  icalBuddyReadOnlyRule.id,
-]);
+const TRUSTED_RULE_PREFIXES: readonly string[] = [ghReadOnlyRule, gogReadOnlyRule, icalBuddyReadOnlyRule].map(
+  (rule) => `${rule.id.split(".")[0]}.`,
+);
+
+/** True for an allow verdict of a trusted read-only rule. */
+export function isTrustedReadOnlyVerdict(verdict: { action: string; rule: string }): boolean {
+  return verdict.action === "allow" && TRUSTED_RULE_PREFIXES.some((prefix) => verdict.rule.startsWith(prefix));
+}
 
 export interface OsShellToolOptions extends DangerousToolOptions {
   /**
@@ -382,7 +387,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       );
     } else if (
       (scopedByFanout && guardVerdict.action === "approval_required") ||
-      (guardVerdict.action === "allow" && TRUSTED_READ_ONLY_RULES.has(guardVerdict.rule))
+      isTrustedReadOnlyVerdict(guardVerdict)
     ) {
       // The fan-out's yes does not cover the person's security rules
       // (ATO-2111), nor does the guard's trust in a read-only tool.

@@ -53,6 +53,7 @@ describe("GuardRulesSource", () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("os.fs.read, os.fs.grep");
     expect(warnings[0]).not.toContain("os.shell.run");
+    expect(warnings[0]).toContain("only see the calls that do ask (a read outside the project)");
     writeFileSync(join(stateDir, "guard.md"), "---\ntools: [os.shell.run]\n---\nNo .env, ever.");
     source.load(undefined);
     expect(warnings).toHaveLength(1);
