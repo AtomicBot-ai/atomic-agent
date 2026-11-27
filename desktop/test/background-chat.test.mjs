@@ -137,3 +137,44 @@ test("renderer.js hooks: palette row, empty state, header, act, ⌘↩, turn end
   const at = html.indexOf('src="background-chat.js"');
   assert.ok(at > 0 && at < html.indexOf('src="renderer.js"'));
 });
+
+/* ATO-2478: from the quick entry window, and "Open" on the end toast. */
+test("from the quick entry window: a new chat with its own line; the chat on screen stays", async () => {
+  const c = load({ ok: true, turnId: "t-q" });
+  c.S.overlay = null;
+  assert.equal(await vm.runInContext("bgChatFromQuickEntry('  tidy the README ')", c), true);
+  const [messages, session] = c.chats[0];
+  assert.equal(messages[0].content, "tidy the README");
+  assert.equal(session, undefined);
+  assert.equal(c.LIVE_TURNS.get("t-q").log[1].text, BG.BGCHAT_QUICK_LINE);
+  assert.equal(c.S.sessionId, "here");
+  assert.deepEqual(c.acts, [], "no palette to close, nothing opened");
+  assert.equal(await vm.runInContext("bgChatFromQuickEntry('   ')", c), false);
+  assert.equal(c.chats.length, 1);
+});
+
+test("the end toast has Open, which goes to that chat; no session, no button", async () => {
+  const c = load({ ok: true, turnId: "t-9" });
+  c.withAction = [];
+  c.toastWithAction = (t, s, kind, action) => c.withAction.push({ t, s, kind, action });
+  vm.runInContext("bgChatFromPalette()", c);
+  await new Promise((r) => setImmediate(r));
+  const plain = c.toasts.length;
+  vm.runInContext("bgChatTurnEnded('t-9', 'bg-sid', 'done')", c);
+  assert.equal(c.toasts.length, plain, "raised with its button instead");
+  assert.equal(c.withAction.length, 1);
+  assert.equal(c.withAction[0].t, "Background chat finished");
+  assert.equal(c.withAction[0].action.label, "Open");
+  c.acts.length = 0;
+  c.withAction[0].action.run();
+  assert.deepEqual(c.acts, ["ses:bg-sid"]);
+
+  const d = load({ ok: true, turnId: "t-2" });
+  d.withAction = [];
+  d.toastWithAction = (...a) => d.withAction.push(a);
+  vm.runInContext("bgChatFromPalette()", d);
+  await new Promise((r) => setImmediate(r));
+  vm.runInContext("bgChatTurnEnded('t-2', null, 'error')", d);
+  assert.equal(d.withAction.length, 0);
+  assert.equal(d.toasts.at(-1).t, "Background chat failed");
+});

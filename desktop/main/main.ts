@@ -11493,6 +11493,7 @@ void app.whenReady().then(async () => {
       if (process.platform === "darwin") app.focus({ steal: true });
       return win;
     },
+    mainWindow: () => win,   // ATO-2478: a background chat from the mini chat runs there without bringing it up
     log: (line) => console.error(line),
     // ATO-985: the text selected in the app in front, when Settings allows it.
     grabSelection: wireSelectedText({ userData: app.getPath("userData"), platform: process.platform }).grabSelection,
