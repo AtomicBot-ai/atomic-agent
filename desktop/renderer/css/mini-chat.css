@@ -32,4 +32,12 @@ body.mini-chat{display:flex;flex-direction:column;height:100%;background:var(--p
 .mc-replace-row{display:flex;margin-top:6px}
 .mc-replace{border-color:var(--brand)}
 .mc-replace:disabled{opacity:.6;cursor:default}
+/* ATO-2736: the one-line notice over the message box (mini-chat-notice.js). */
+.mc-notice{flex:none;display:flex;align-items:center;gap:8px;padding:6px 12px;font-size:var(--fs-cap);color:var(--ink-2);border-top:1px solid var(--line-hair)}
+.mc-notice[hidden]{display:none}
+.mc-notice.warn{color:var(--amber-text)}
+.mc-notice.bad{color:var(--critical)}
+.mc-notice span{flex:1 1 auto;min-width:0}
+.mc-notice button{flex:none}
+.mc-notice button[hidden]{display:none}
 @media (prefers-reduced-motion: reduce){.mc-dot{animation:none}}

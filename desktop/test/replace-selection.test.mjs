@@ -159,13 +159,16 @@ test('the page: the button only under a finished answer to the selection', () =>
 test('the wiring: main keeps the app, the page marks the answer and asks main', () => {
   const qw = src('../main/quick-entry-window.ts');
   assert.match(qw, /source = sel \? sel\.app : null;/);
-  assert.match(qw, /replace: source \? replaceLabel\(source\) : null, selection \}/);
+  assert.match(qw, /replace: source \? replaceLabel\(source\) : null, selection, notice \}/);
   assert.match(qw, /ipcMain\.handle\("app:quickEntryReplace"/);
   assert.match(qw, /event\.sender !== box\.webContents/, 'only the mini chat that has the selection');
   assert.match(qw, /replaceInSourceApp\(\{[\s\S]*?paste: pasteIntoFrontApp,[\s\S]*?\}, source, raw\)/);
+  // ATO-2736: the read itself moved to selected-text-grab.ts; the Electron half passes the reads in.
   const ipc = src('../main/selected-text-ipc.ts');
-  assert.match(ipc, /Promise\.all\(\[readSelectedText\(\), front\]\)/);
-  assert.match(ipc, /replaceAvailable\(w\.platform\) \? readFrontApp\(\)/);
+  assert.match(ipc, /withFrontApp: replaceAvailable\(w\.platform\),[\s\S]*?readText: readSelectedText,[\s\S]*?readFrontApp,/);
+  const grab = src('../main/selected-text-grab.ts');
+  assert.match(grab, /Promise\.all\(\[d\.readText\(\), front\]\)/);
+  assert.match(grab, /d\.withFrontApp \? d\.readFrontApp\(\)/);
   assert.match(src('../preload/preload.ts'), /quickEntryReplace: \(text: string\) => ipcRenderer\.invoke\("app:quickEntryReplace", text\)/);
   const js = src('../renderer/mini-chat.js');
   assert.match(js, /if \(withSelection && st\.reply\) st\.reply\.replace = true;/);
