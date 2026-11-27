@@ -295,6 +295,7 @@ import {
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
 import { checkSavedComposioKey, removeComposioKey, saveComposioKey, type ComposioDeps, type ComposioKeyResult } from "./composio-key.js";
 import { registerComposioAccountsIpc } from "./composio-accounts-ipc.js";
+import { checkTelegramToken } from "./telegram-token-check.js";   // ATO-426: a bot token checked with Telegram before it is saved
 // Item 2 (voice input): the on-device speech helper's supervisor.
 import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 // ATO-1074: an audio file transcribed on this machine, with timestamps.
@@ -4006,6 +4007,14 @@ function wireIpc(client: AgentClient): void {
     const res = await checkSavedComposioKey(composioDeps(stateDir));
     A.composioStep("key_checked", composioOutcome(res));
     return res;
+  });
+  /* ATO-426 (telegram-token-check.ts): the Telegram tab's token, checked with getMe before `app:dotenvSet`
+     writes it. The value comes in once and goes into that one request; the answer, like this handler, never
+     carries or logs it. */
+  ipcMain.handle("telegram:checkToken", async (_event, payload: unknown) => {
+    const { value } = (payload ?? {}) as { value?: unknown };
+    if (typeof value !== "string" || !value) return { ok: false, rejected: true, status: 0, error: "token required" };
+    return checkTelegramToken({ token: value });
   });
 
   /* ---- Item 2 (voice input) --------------------------------------------
@@ -8998,7 +9007,7 @@ async function settingsTestPartC(
     // Advanced toggle that used to sit above it is gone, so its word must not be.
     check(
       "telegram tab: no token anywhere → only the Connect Telegram card, plain tab label",
-      tg.hasToken === false && tgBody.includes("Connect Telegram") && tgBody.includes("Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.")
+      tg.hasToken === false && tgBody.includes("Connect Telegram") && tgBody.includes("Talk to Atomic Agent from your phone") && tgBody.includes("The token is stored only on this machine.")
         && !!tgCta && tgCta.label === "Paste a bot token" && tgCta.key === "" && !tgBody.includes("Advanced") && tgPlain,
       `hasToken=${String(tg.hasToken)} label=${JSON.stringify(tgLabel)} action=${JSON.stringify(tgCta)}`,
     );

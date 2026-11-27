@@ -1474,7 +1474,8 @@ const LLM_MODEL_WINDOW = 12; // llm-mode-rows.tsx MODEL_WINDOW
 const TG = {
   // `keysChain` serializes tgRefresh — see the note on that function.
   keysKnown:false, dotenvKeys:[], envKeys:[], keysBusy:false, keysChain:null,
-  mode:'list', token:{error:null, submitting:false},
+  mode:'list', token:{error:null, submitting:false, checking:false, shown:false, hasText:false},   // ATO-426: telegram-token.js tgTokenInitial()
+  bot:null, // ATO-426 U-77: '@name' Telegram confirmed at the last token save, this session only; never the token
   message:null, lastError:null, busy:false,
   channel:null, // ATO-758: the live channel as the agent reports it (BR.telegramChannel)
   confirm:null, // ATO-426: 'clearToken' / 'clearOwner' while its button waits for a second click
@@ -8954,6 +8955,7 @@ document.addEventListener('compositionend', (e) => {
 document.addEventListener('input', (e) => {
   // ATO-455: the rename box's text is drawn from RENAME.draft, so a repaint mid-typing keeps it.
   if (e.target.id === 'chat-rename') { RENAME.draft = e.target.value; return; }
+  if (e.target.id === 'tg-token') { tgTokenTyped(e.target); return; }   // ATO-426 U-77: Save waits for text; the token stays in the field
   // ATO-445: the webhook form's fields are drawn from WHK's state, so a repaint keeps them.
   if (e.target.dataset && e.target.dataset.whkField) { WHK.type(e.target.dataset.whkField, e.target.value); return; }
   // ATO-568: a worker's Steer field keeps its text across repaints.
@@ -30867,12 +30869,8 @@ function telegramTab() {
   if (TG.mode === 'tokenPrompt') body += tgTokenPromptHTML();
   else if (hasToken === null) body += '<div class="tk-empty"><span class="tk-spin"></span><p>Loading…</p></div>';
   else if (!hasToken) {
-    // setup-state.ts not_connected (no token). ST-28: one card, one action.
-    body += '<div class="tk-card pad sd-tgcard sd-center">'
-      + (logoHTML('telegram', 'lg', 'send') || '<span class="tk-ico tk-ico--lg tk-ico--blue">' + ic('send') + '</span>')   // ATO-1634
-      + '<h3 class="sd-title">Connect Telegram</h3>'
-      + '<p>Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.</p>'
-      + '<button class="btn btn-p" data-act="telegram:token" title="Enter">Paste a bot token</button></div>';
+    // setup-state.ts not_connected (no token). ATO-426 U-76: why, three steps, @BotFather opens (telegram-token.js).
+    body += tgConnectCardHTML({esc, ic, logo: logoHTML});
   } else {
     body += tgStatusHTML(enabled, owner);
     // setup-state.ts needs_pairing. ATO-859: the card pairs here, through the agent's pairing route.
@@ -30922,7 +30920,7 @@ function tgRowsHTML(enabled, owner) {
   return '<div class="tk-card sd-rows">'
     + row('Answer in Telegram', 'When this is off, the bot ignores every message.',
       '<button class="tk-switch" role="switch" aria-checked="' + (enabled === true) + '" aria-label="Answer in Telegram" data-act="telegram:enable"' + (busy || enabled === null ? ' disabled' : '') + '></button>')
-    + row('Bot token', 'Saved on this computer.',
+    + row('Bot token', 'Saved on this computer.' + (TG.bot ? ' Telegram knows it as ' + esc(TG.bot) + '.' : ''),   // ATO-426 U-77: the bot the last check confirmed
       '<button class="btn btn-s sm" data-act="telegram:token">Change token</button>'
       + '<button class="btn btn-danger sm" data-act="telegram:clearToken"' + (busy ? ' disabled' : '') + '>' + (TG.confirm === 'clearToken' ? 'Click again to remove' : 'Remove token') + '</button>')
     + (owner !== null ? row('Owner', 'Only this Telegram account can talk to the bot.',
@@ -30963,18 +30961,24 @@ function tgOtherPollerHTML(ch) {
     : 'This bot is already answering from somewhere else (another computer or app using the same token), so this agent cannot. Stop it there, or give this agent its own bot, then press Restart agent.';
   return '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(text) + '</span></div>';
 }
-/* telegram-token-prompt.tsx: a password input masks the token; the value never reaches state or the DOM as text. ST-29. */
-function tgTokenPromptHTML() {
-  const t = TG.token;
-  return '<div class="tk-card pad sd-tgcard">'
-    + '<h3 class="sd-title">Bot token</h3>'
-    + '<p>Paste the token @BotFather gave you. It is saved on this computer, in a file only your user account can read.</p>'
-    + '<label class="tk-inpwrap sd-tokwrap' + (t.error ? ' is-error' : '') + '">' + ic('key')
-    + '<input id="tg-token" type="password" autocomplete="off" spellcheck="false" aria-label="Bot token"' + (t.submitting ? ' disabled' : '') + '></label>'
-    + (t.error ? '<p class="tk-help tk-help--err">' + esc(t.error) + '</p>' : '')
-    + '<div class="sd-acts">' + (t.submitting ? '<span class="sd-cap">saving…</span>' : '') + '<span class="sd-grow"></span>'
-    + '<button class="btn btn-g sm" data-act="telegram:tokenCancel">Cancel</button>'
-    + '<button class="btn btn-p sm" data-act="telegram:tokenSave"' + (t.submitting ? ' disabled' : '') + '>Save</button></div></div>';
+/* telegram-token-prompt.tsx: a password input masks the token; the value never reaches state or the DOM as text. ST-29.
+   ATO-426 U-77: the markup is telegram-token.js (placeholder, Show / Hide, Save waits for text). */
+function tgTokenPromptHTML() { return tgTokenPromptCardHTML(TG.token, {esc, ic}); }
+/* The token field's own typing (the `input` delegate): Save follows whether there is text; the value stays in the field. */
+function tgTokenTyped(input) {
+  TG.token.hasText = tgTokenSaveEnabled(input.value);
+  const save = document.querySelector('[data-tg-token-prompt] [data-act="telegram:tokenSave"]');
+  if (save) save.disabled = !TG.token.hasText || !!(TG.token.submitting || TG.token.checking);
+}
+/* Show / Hide: the field's type flips in place, so what is typed stays and the caret keeps its spot. */
+function tgTokenReveal() {
+  TG.token.shown = !TG.token.shown;
+  const input = document.getElementById('tg-token');
+  if (!input) { tgRepaint(); return; }
+  input.type = TG.token.shown ? 'text' : 'password';
+  const btn = document.querySelector('[data-act="telegram:tokenReveal"]');
+  if (btn) { btn.innerHTML = ic(TG.token.shown ? 'eyeOff' : 'eye'); btn.setAttribute('aria-pressed', String(TG.token.shown)); btn.title = btn.ariaLabel = TG.token.shown ? 'Hide the token' : 'Show the token'; }
+  input.focus();
 }
 /* `kind`: 'owed' — a change the agent loads at start, so a restart is owed from now; 'restarting'; 'info'. */
 function tgSetMessage(text, kind) {
@@ -30987,24 +30991,37 @@ function tgSetMessage(text, kind) {
    port), "token saved", then the connect chain's next step — with a
    channel the desktop cannot see, that is `set_enabled` when telegram is
    off (setup-flow.ts decideConnectAction). */
-async function tgTokenSave(value) {
+async function tgTokenSave(value, opts) {
   const input = document.getElementById('tg-token');
   const raw = value !== undefined ? value : (input ? input.value : '');
-  const trimmed = String(raw || '').trim();
-  if (!trimmed) { TG.token.error = 'Paste the token first.'; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return {ok:false, error:TG.token.error}; }
+  /* ATO-426 U-77: the shape is checked before anything is written, then the token is checked with Telegram
+     (telegram-token.js, main/telegram-token-check.ts): a token Telegram refuses is never saved. `opts.raw` is
+     the smoke's writer round trip (an unshaped value that proves the .env quoting), never a person's path. */
+  const clean = opts && opts.raw ? {ok:true, value:String(raw || '').trim()} : tgTokenClean(raw);
+  if (!clean.ok || !clean.value) { TG.token.error = clean.error || TG_TOKEN_EMPTY; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return {ok:false, error:TG.token.error}; }
+  const trimmed = clean.value;
   const stateDir = memStateDir();
   if (!BR || !stateDir) { TG.token.error = 'The app is still starting. Try again in a moment.'; tgRepaint(); return {ok:false, error:TG.token.error}; }
+  let outcome = {save:true, message:'Token saved.', error:null, bot:null};
+  if (!(opts && opts.raw) && BR.telegramCheckToken) {
+    TG.token.checking = true; TG.busy = true; tgRepaint();
+    let chk;
+    try { chk = await BR.telegramCheckToken(trimmed); } catch (e) { chk = {ok:false, rejected:false, error:String((e && e.message) || e)}; }
+    TG.token.checking = false;
+    outcome = tgTokenCheckOutcome(chk);
+    if (!outcome.save) { TG.busy = false; TG.token.error = outcome.error; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return {ok:false, error:TG.token.error, rejected:true}; }
+  }
   TG.token.submitting = true; TG.busy = true; tgRepaint();
   const res = await BR.dotenvSet(stateDir, 'TELEGRAM_BOT_TOKEN', trimmed);
   // The prompt says it under the field; the tab's error line said it a second time.
   if (!res || res.ok === false) { TG.token.submitting = false; TG.busy = false; TG.token.error = 'Could not save the token: ' + ((res && res.error) || 'unknown error'); tgRepaint(); return {ok:false, error:TG.token.error}; }
-  TG.mode = 'list'; TG.token = {error:null, submitting:false};
-  tgSetMessage('Token saved.', 'owed');
+  TG.mode = 'list'; TG.token = tgTokenInitial(); TG.bot = outcome.bot;
+  tgSetMessage(outcome.message, 'owed');
   await tgRefresh();
   if (tgEnabled() === false) {
     const w = await BR.configSet('telegram.enabled', 'true');
     if (!w || w.ok === false) TG.lastError = 'Could not turn Telegram on: ' + ((w && w.error) || 'unknown error');
-    else tgSetMessage('Token saved and Telegram turned on.', 'owed');
+    else tgSetMessage(outcome.message.replace(/^Token saved\./, 'Token saved and Telegram turned on.'), 'owed');
     await tgRefresh();
   }
   TG.busy = false; tgRepaint();
@@ -31048,9 +31065,12 @@ function telegramAct(what) {
   if (confirmVerb && armed === verb && Date.now() - TG.confirmAt < TG_CONFIRM_MIN_MS) return;
   TG.confirm = null;
   if (confirmVerb && armed !== verb) { TG.confirm = verb; TG.confirmAt = Date.now(); tgRepaint(); return; }
-  if (verb === 'token') { TG.mode = 'tokenPrompt'; TG.token = {error:null, submitting:false}; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return; }
+  if (verb === 'token') { TG.mode = 'tokenPrompt'; TG.token = tgTokenInitial(); tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return; }
   if (verb === 'tokenSave') { tgTokenSave(arg || undefined); return; }
-  if (verb === 'tokenCancel') { TG.mode = 'list'; TG.token = {error:null, submitting:false}; tgRepaint(); return; }
+  // ATO-426 U-76/U-77: @BotFather opens in Telegram (the Discord pane's `portal`); the eye shows or hides what is typed.
+  if (verb === 'botfather') { if (BR && BR.openExternal) BR.openExternal(TG_BOTFATHER_URL); return; }
+  if (verb === 'tokenReveal') { tgTokenReveal(); return; }
+  if (verb === 'tokenCancel') { TG.mode = 'list'; TG.token = tgTokenInitial(); tgRepaint(); return; }
   if (verb === 'clearToken') { tgClearToken(); return; }
   if (verb === 'enable') { const e = tgEnabled(); if (e !== null) tgSetEnabled(!e); return; }
   if (verb === 'clearOwner') { tgClearOwner(); return; }
@@ -31789,7 +31809,8 @@ if (typeof window !== 'undefined') {
     // ATO-859: where pairing stands, never the code itself.
     pair: {phase: TG.pair.phase, supported: TG.pair.supported, hasCode: !!TG.pair.code, pairedLine: TG.pair.pairedLine, error: TG.pair.error}});
   window.__telegramAct = (what) => { telegramAct(what); return window.__telegram(); };
-  window.__telegramTokenSave = async (value) => { TG.mode = 'tokenPrompt'; TG.token = {error:null, submitting:false}; const r = await tgTokenSave(value); return Object.assign({}, r, {state: window.__telegram()}); };
+  // The smoke's value is unshaped on purpose (whitespace and `#`, to prove the writer quotes it), so it skips the shape and Telegram checks (ATO-426).
+  window.__telegramTokenSave = async (value) => { TG.mode = 'tokenPrompt'; TG.token = tgTokenInitial(); const r = await tgTokenSave(value, {raw:true}); return Object.assign({}, r, {state: window.__telegram()}); };
   window.__telegramClearToken = async () => { await tgClearToken(); return window.__telegram(); };
   window.__telegramRefresh = async () => { await tgRefresh(); return window.__telegram(); };
   // Composio: the pane's state, never the key (the drafts and saves go through the field, as a person types).
