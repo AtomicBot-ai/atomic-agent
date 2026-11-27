@@ -545,6 +545,8 @@ export async function createAgentRuntime(
   });
   // Review after outside content (ATO-618): off unless `agent.taintReview`, read live.
   approvals.setTaintReview(() => getConfig().agent.taintReview);
+  // Egress hold (ATO-2116): a host on `http.hostAllowlist` may receive a command's data unasked.
+  approvals.setEgressAllowlist(() => getConfig().http.hostAllowlist);
   browserExtract.current = {
     complete: (params) => llmComplete(params),
     transport: (providerId) => resolveActiveLlmSlice(providerId).transport,

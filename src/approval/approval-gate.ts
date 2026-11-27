@@ -49,6 +49,8 @@ import {
   UntrustedTaint,
 } from "./untrusted-taint.js";
 import type { UserQuestion, UserQuestionAnswer } from "./user-question.js";
+import { EgressSessionHosts, unknownOutbound } from "./egress-hold.js";
+import type { EgressDestination } from "./egress-scan.js";
 
 export interface ApprovalRequest {
   approvalId: string;
@@ -106,6 +108,14 @@ export interface ApprovalRequest {
    * prefix: what runs could be the very command the rule names.
    */
   commandUnreadable?: boolean;
+  /**
+   * Where the call sends data (`egress-scan.ts`, ATO-2116), set by the
+   * shell tool. Surfaces show the outbound entries as `sends data to ->
+   * host` (`formatEgressLine`), the risk reviewer reads them, and an
+   * outbound host nobody approved holds the call for a person
+   * (`egress-hold.ts`). Absent means none was found.
+   */
+  egress?: EgressDestination[];
   /**
    * The session's working directory, for rules scoped to a project. The
    * gate fills it from the dispatching tool call when the tool did not.
@@ -411,6 +421,10 @@ export class ApprovalGate {
   private readonly taintHeld = new Set<string>();
   /** `agent.taintReview`, read live; off until bootstrap wires it. */
   private taintReview: () => boolean = () => false;
+  /** `http.hostAllowlist`, read live (`setEgressAllowlist`); `null` makes no host known. */
+  private egressAllowlist: () => readonly string[] | null = () => null;
+  /** Hosts each session approved data going to (`egress-hold.ts`, ATO-2116). */
+  private readonly egressHosts = new EgressSessionHosts();
 
   constructor(options: { emit: ApprovalEmitter; level?: ApprovalLevel }) {
     this.emitter = options.emit;
@@ -478,6 +492,38 @@ export class ApprovalGate {
     this.taintReview = enabled;
   }
 
+  /**
+   * Live source of `http.hostAllowlist` for the egress hold (ATO-2116):
+   * a host on it may receive a command's data without the hold asking.
+   */
+  setEgressAllowlist(read: () => readonly string[] | null): void {
+    this.egressAllowlist = read;
+  }
+
+  /**
+   * The outbound destinations of `egress` no one approved for `sessionId`
+   * (`egress-hold.ts`). Non-empty means the call is put to a person
+   * whatever the level, a grant or an allow rule says; a caller that
+   * would settle a call without the gate (a fan-out scope) sends it to
+   * the gate instead.
+   */
+  unapprovedEgress(
+    sessionId: string,
+    egress: readonly EgressDestination[] | undefined,
+  ): EgressDestination[] {
+    if (egress === undefined || egress.length === 0) return [];
+    let allowlist: readonly string[] | null = null;
+    try {
+      allowlist = this.egressAllowlist();
+    } catch {
+      allowlist = null;
+    }
+    return unknownOutbound(egress, {
+      allowlist,
+      sessionHosts: this.egressHosts.known(sessionId, this.grantsBySession.get(sessionId)),
+    });
+  }
+
   /** Record that `sessionId` read outside content (`source`) in its running turn. */
   noteUntrustedContent(sessionId: string, source: string): void {
     this.taint.mark(sessionId, source);
@@ -542,6 +588,7 @@ export class ApprovalGate {
    */
   clearSessionGrants(sessionId?: string): void {
     this.readScopeGrants.clear(sessionId);
+    this.egressHosts.clear(sessionId);
     if (sessionId === undefined) {
       this.grantsBySession.clear();
       this.declinedBySession.clear();
@@ -620,8 +667,13 @@ export class ApprovalGate {
         automatic: true,
       });
     }
+    // Data going to a host nobody approved is put to a person: the level
+    // (bypass included), a grant, an allow rule and the reviewer stand
+    // down, as for an ask rule (ATO-2116, egress-hold.ts).
+    const egressHeld =
+      this.unapprovedEgress(request.sessionId, request.egress).length > 0;
     const auto =
-      rule?.decision === "ask" || this.taintHeld.has(approvalId)
+      rule?.decision === "ask" || this.taintHeld.has(approvalId) || egressHeld
         ? null
         : this.autoApproval(request);
     if (auto) {
@@ -636,7 +688,7 @@ export class ApprovalGate {
       }
       return Promise.resolve({ approvalId, approved: true, reason: auto });
     }
-    if (rule?.decision === "allow") {
+    if (rule?.decision === "allow" && !egressHeld) {
       recordAutoApproval(
         "rule",
         request.category,
@@ -649,7 +701,7 @@ export class ApprovalGate {
       });
     }
     // An "ask" rule means the person wants the prompt: no model rates it away.
-    if (rule?.decision !== "ask" && this.shouldReviewRisk(request)) {
+    if (rule?.decision !== "ask" && !egressHeld && this.shouldReviewRisk(request)) {
       return this.requestAfterReview(request, signal);
     }
     // Would prompt from here on. A session under a refuse policy gets its
@@ -1142,6 +1194,9 @@ export class ApprovalGate {
     scope: ApprovalGrantScope,
   ): void {
     if (!isGrantableCategory(request.category)) return;
+    // The person saw where the data goes and said yes for the chat (or
+    // for good): those hosts no longer hold this session (ATO-2116).
+    this.egressHosts.remember(request.sessionId, request.egress);
     if (scope === "always") {
       this.saveAlwaysRule(request);
       return;
