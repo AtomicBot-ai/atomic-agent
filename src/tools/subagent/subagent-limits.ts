@@ -2,11 +2,6 @@ import {
   DEFAULT_FUSION_CLOUD_WORKERS,
   DEFAULT_FUSION_TASK_TREE_MAX_NODES,
 } from "../../config/llm-run-mode-config.js";
-import {
-  FUSION_WORKER_DEFAULT_DEPTH,
-  isFusionWorkerSessionId,
-  readSessionDepth,
-} from "../../session/fusion-worker-session.js";
 import type { SessionState } from "../../session/session-state.js";
 
 /**
@@ -38,21 +33,12 @@ export const SUBAGENT_MAX_CHILDREN_PER_CALL = DEFAULT_FUSION_CLOUD_WORKERS;
 export const SUBAGENT_MAX_CHILDREN_PER_TURN = DEFAULT_FUSION_TASK_TREE_MAX_NODES;
 
 /**
- * The depth of the calling session, read from its session data. Fails
- * closed: a session whose id carries the worker prefix (`s-w-`) is at
- * least depth 1 even when its stamp is missing or broken, since only
- * `createFusionWorkerSession` mints such ids. Hiding the tool from
- * workers is not the guard; this is.
+ * The caller's depth now lives with the worker stamp it reads
+ * (`src/session/fusion-worker-session.ts`), so `fusion.delegate` can use
+ * it without depending on this folder (ATO-1740). Re-exported here so
+ * `subagent.run` and its tests keep their import.
  */
-export function callerDepth(
-  sessionId: string,
-  metadata: Record<string, unknown> | undefined,
-): number {
-  const stamped = readSessionDepth(metadata);
-  return isFusionWorkerSessionId(sessionId)
-    ? Math.max(stamped, FUSION_WORKER_DEFAULT_DEPTH)
-    : stamped;
-}
+export { callerDepth } from "../../session/fusion-worker-session.js";
 
 /** Where a call sits: its turn (when the loop names it) and its step. */
 export interface SubagentTurnPosition {

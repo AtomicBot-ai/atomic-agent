@@ -931,6 +931,7 @@ export function registerRuntimeFusionAndReadScope(input: {
       runTurn: (session, userMessage, turnOptions) =>
         runTurn(session, userMessage, turnOptions),
       createEphemeralSession: createTrackedEphemeralSession,
+      readSessionMetadata: (sessionId) => mintedSessions.read(sessionId),
       resolveOriginalRequest: resolveOriginalRequest,
       declaredInputs,
       // The worker leg's pricing, when the catalogue or a hand-priced
