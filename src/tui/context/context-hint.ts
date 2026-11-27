@@ -14,7 +14,14 @@ export const HINT_WINDOW_MAX = 65_536;
 export const HINT_SHARE = 0.1;
 
 /**
- * Two short lines, or `null` when nothing is big enough to mention.
+ * The command that turns search mode on. Config is read at start, so it
+ * says to restart (ATO-2772: the tip used to name the key, not the way).
+ */
+export const TOOL_SEARCH_ON_COMMAND =
+  "atag config set agent.tools.search on, then restart";
+
+/**
+ * Two or three short lines, or `null` when nothing is big enough to mention.
  *
  * An MCP server is the first suspect: it is the one cost the operator
  * added themselves and can take away in one step. The built-in catalog
@@ -45,15 +52,16 @@ export function contextHint(usage: ContextUsageView): readonly string[] | null {
   if (server !== null && serverTokens > threshold) {
     return [
       `tip: mcp ${server} takes ${share(serverTokens, window)}% of the window`,
-      usage.toolSearchActive
-        ? "turn the server off in /mcp to free it"
-        : "turn it off in /mcp, or set agent.tools.search: on",
+      ...(usage.toolSearchActive
+        ? ["turn the server off in /mcp to free it"]
+        : ["turn it off in /mcp, or load tools on demand:", TOOL_SEARCH_ON_COMMAND]),
     ];
   }
   if (!usage.toolSearchActive && builtin > threshold) {
     return [
       `tip: built-in tools take ${share(builtin, window)}% of the window`,
-      "set agent.tools.search: on to load them on demand",
+      "to load them on demand, run",
+      TOOL_SEARCH_ON_COMMAND,
     ];
   }
   return null;

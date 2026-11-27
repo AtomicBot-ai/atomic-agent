@@ -181,7 +181,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "model",
     description:
-      "open chat model picker · subcommands: pull <id> | use <id> | favorite [add|remove] | status | <base-url>",
+      "open chat model picker · subcommands: pull <id> | use <id> | favorite [add|remove] | status | <base-url> · ctrl+p switches to the next favorite",
     aliases: ["models", "local"],
   },
   // Added with the reasoning level (ATO-490).
@@ -305,6 +305,7 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "runmode",
     description:
       "where the chat runs: `/runmode` opens the switch · `/runmode local|cloud|fusion` sets one · `/runmode status`",
+    keywords: ["fusion", "local", "cloud"],
   },
   // The way back into first-run setup once it was skipped or finished.
   {
@@ -358,7 +359,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "fusion",
     description:
-      "a fusion run cut off by a restart: `/fusion` lists them · `/fusion resume [id]` continues from the unfinished wave · `/fusion discard [id]` drops it",
+      "a fusion run cut off by a restart: `/fusion` lists them · `/fusion resume [id]` continues from the unfinished wave · `/fusion discard [id]` drops it · to turn Fusion on, use `/runmode fusion`",
   },
   // ATO-448: a chat reply a restart cut off, continued only by the person.
   {
