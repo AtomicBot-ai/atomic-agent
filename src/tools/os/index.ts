@@ -156,6 +156,8 @@ export type {
 export { createBackgroundJobsControl } from "./shell/background-jobs-control.js";
 export type { BackgroundJobsControl, BackgroundJobView } from "./shell/background-jobs-control.js";
 export type { MonitorWake, MonitorWakeHandler } from "./shell/shell-monitor-wake.js";
+export { startDeclaredMonitor } from "./shell/shell-declared-monitor.js";
+export type { DeclaredMonitorSpec, DeclaredMonitorStart } from "./shell/shell-declared-monitor.js";
 
 export interface RegisterOsToolsOptions extends DangerousToolOptions {
   config: Pick<AtomicAgentConfig, "http" | "web" | "projects" | "tools">;

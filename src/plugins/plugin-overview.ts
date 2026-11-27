@@ -15,7 +15,7 @@ import { userKeyRefs } from "./plugin-keys.js";
  * place here that touches the disk.
  */
 
-export type PluginPartKind = "skill" | "mcp" | "hook" | "command" | "agent";
+export type PluginPartKind = "skill" | "mcp" | "hook" | "command" | "agent" | "monitor";
 
 /**
  * What the user has agreed to about code:
@@ -23,18 +23,18 @@ export type PluginPartKind = "skill" | "mcp" | "hook" | "command" | "agent";
  * - `code-allowed`: it can run code and the user said yes (`runsCodeAccepted`,
  *   `atomic-agent plugin allow-code`).
  * - `code-off`: it can run code and nobody has said yes, so its local MCP
- *   servers, hooks and skill scripts stay off; everything else works.
+ *   servers, hooks, monitors and skill scripts stay off; everything else works.
  */
 export type PluginTrust = "no-code" | "code-allowed" | "code-off";
 
 export interface PluginPartOverview {
-  /** The id `setPluginPartEnabled` takes: `skill:x`, `mcp:x`, `hook:Event`, `command:x`, `agent:x`. */
+  /** The id `setPluginPartEnabled` takes: `skill:x`, `mcp:x`, `hook:Event`, `command:x`, `agent:x`, `monitor:x`. */
   id: string;
   kind: PluginPartKind;
   name: string;
   /** The part's own switch; the plugin's switch is separate (`PluginOverview.enabled`). */
   enabled: boolean;
-  /** This part alone can run a command (skill scripts, stdio MCP server, any hook). */
+  /** This part alone can run a command (skill scripts, stdio MCP server, any hook, any monitor). */
   runsCode: boolean;
   /**
    * Whether the part is in use right now: the plugin is on, the part is on,
@@ -51,6 +51,7 @@ export interface PluginCounts {
   hooks: number;
   commands: number;
   agents: number;
+  monitors: number;
 }
 
 export interface PluginOverview {
@@ -114,7 +115,7 @@ export function buildPluginOverview(
       format: null,
       filesOk: false,
       error: options.bundleError ?? "plugin files are missing or unreadable",
-      counts: { skills: 0, mcpServers: 0, hooks: 0, commands: 0, agents: 0 },
+      counts: { skills: 0, mcpServers: 0, hooks: 0, commands: 0, agents: 0, monitors: 0 },
       runsCode: false,
       trust: "no-code",
       codeParts: [],
@@ -149,6 +150,10 @@ export function buildPluginOverview(
     const id = `agent:${agent.name}`;
     parts.push({ id, kind: "agent", active: false, name: agent.name, enabled: on(id), runsCode: false, missingKeys: [] });
   }
+  for (const monitor of bundle.monitors) {
+    const id = `monitor:${monitor.name}`;
+    parts.push({ id, kind: "monitor", active: false, name: monitor.name, enabled: on(id), runsCode: true, missingKeys: [] });
+  }
 
   const runsCode = bundleRunsCode(bundle) || hookEvents.length > 0;
   const codeAllowed = record.runsCodeAccepted === true;
@@ -167,6 +172,7 @@ export function buildPluginOverview(
       hooks: hookEvents.length || (bundle.hooksFile || bundle.manifest.hooksInline ? 1 : 0),
       commands: bundle.commands.length,
       agents: bundle.agents.length,
+      monitors: bundle.monitors.length,
     },
     runsCode,
     trust: pluginTrust(runsCode, codeAllowed),
@@ -192,6 +198,7 @@ export function pluginCodeParts(b: PluginBundle): string[] {
   const keyed = Object.entries(b.mcpServers).filter(([n, s]) => !stdio.includes(n) && userKeyRefs(s).length > 0);
   if (keyed.length) out.push(`MCP servers that get your keys: ${keyed.map(([n, s]) => `${n} (${userKeyRefs(s).join(", ")})`).join(", ")}`);
   if (b.hooksFile || b.manifest.hooksInline) out.push("hooks");
+  if (b.monitors.length) out.push(`monitors: ${b.monitors.map(m => m.name).join(", ")}`);
   const scripted = b.skills.filter(s => s.hasScripts).map(s => s.name || b.name);
   if (scripted.length) out.push(`skill scripts: ${scripted.join(", ")}`);
   return out;
@@ -294,6 +301,7 @@ export function formatPluginCounts(counts: PluginCounts): string {
     [counts.hooks, "hook"],
     [counts.commands, "command"],
     [counts.agents, "subagent"],
+    [counts.monitors, "monitor"],
   ];
   const text = parts.filter(([n]) => n > 0).map(([n, w]) => `${n} ${w}${n === 1 ? "" : "s"}`);
   return text.length ? text.join(", ") : "empty";

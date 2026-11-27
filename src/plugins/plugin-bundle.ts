@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join, relative, resolve, sep } from "node:path";
 import { userKeyRefs } from "./plugin-keys.js";
 import { readPluginManifest, PluginManifestError } from "./plugin-manifest.js";
+import { readMonitorEntries } from "./plugin-monitor-entries.js";
 import type { PluginAgentEntry, PluginBundle, PluginCommandEntry, PluginSkillEntry } from "./plugin-types.js";
 
 const SCRIPT_EXT = new Set([".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl", ".ps1", ".bat", ".cmd"]);
@@ -35,16 +36,25 @@ export function readPluginBundle(root: string): PluginBundle {
   if (isFile(mcpFile)) Object.assign(mcpServers, readMcpFile(mcpFile));
   if (manifest.mcpInline) Object.assign(mcpServers, mcpMap(manifest.mcpInline));
 
+  const monitorsRead = readMonitorEntries(absRoot, manifest);
+  notes.push(...monitorsRead.notes);
+
   for (const key of manifest.unsupportedKeys) notes.push(`Skipped "${key}": not supported yet.`);
   if (agents.length) notes.push(`${agents.length} subagent profile(s) found; a Fusion task or a \`subagent.run\` task can name them with \`profile\`.`);
-  if (format !== "claude" && format !== "conventional") notes.push(`Read as a ${format} package; only skills, commands, agents, hooks and MCP servers are used.`);
+  if (format !== "claude" && format !== "conventional") notes.push(`Read as a ${format} package; only skills, commands, agents, hooks, MCP servers and monitors are used.`);
 
-  return { name: manifest.name, root: absRoot, format, manifest, skills, commands, agents, hooksFile, mcpServers, notes };
+  return {
+    name: manifest.name, root: absRoot, format, manifest, skills, commands, agents, hooksFile, mcpServers,
+    monitors: monitorsRead.monitors,
+    ...(monitorsRead.file ? { monitorsFile: monitorsRead.file } : {}),
+    notes,
+  };
 }
 
-/** True when enabling the plugin needs the user's consent: it can run something here (hooks, stdio MCP servers, skill scripts) or an MCP server of it receives the user's keys. */
+/** True when enabling the plugin needs the user's consent: it can run something here (hooks, stdio MCP servers, skill scripts, monitors) or an MCP server of it receives the user's keys. */
 export function bundleRunsCode(bundle: PluginBundle): boolean {
   if (bundle.hooksFile || bundle.manifest.hooksInline) return true;
+  if (bundle.monitors.length > 0) return true;
   if (bundle.skills.some(s => s.hasScripts)) return true;
   return Object.values(bundle.mcpServers).some(s => typeof s.command === "string" || userKeyRefs(s).length > 0);
 }
