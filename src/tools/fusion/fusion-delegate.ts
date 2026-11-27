@@ -103,11 +103,11 @@ import {
   unknownModels,
   type TaskLeg,
 } from "./role-models.js";
-import { applyTaskProfiles, type AppliedProfileReport } from "./task-profiles.js";
 import {
-  builtinAgentProfileSet,
-  type AgentProfileSet,
-} from "../../agent-profiles/index.js";
+  loadAndApplyTaskProfiles,
+  type AppliedProfileReport,
+} from "./task-profiles.js";
+import type { AgentProfileSet } from "../../agent-profiles/index.js";
 import type { DelegateContract } from "./contract.js";
 import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
 import {
@@ -468,35 +468,21 @@ export function buildFusionDelegateTool(
       };
       // Subagent profiles (ATO-566): applied before the legs are picked,
       // since a profile's model can set the task's role.
-      let profileReports: AppliedProfileReport[] = [];
-      if (parsed.tasks.some((t) => t.profile !== undefined)) {
-        let profiles: AgentProfileSet;
-        try {
-          profiles =
-            deps.resolveAgentProfiles?.(ctx.workingDir) ??
-            builtinAgentProfileSet();
-        } catch (err) {
-          deps.logger.warn("fusion: loading agent profiles failed", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-          profiles = builtinAgentProfileSet();
-        }
-        if (profiles.diagnostics.length > 0) {
-          deps.logger.warn("fusion: agent profile problems", {
-            diagnostics: profiles.diagnostics,
-          });
-        }
-        const profiled = applyTaskProfiles(
-          parsed.tasks,
-          profiles,
-          allowedModels(workerLegRef, mode.roles),
-        );
-        if (!profiled.ok) {
-          return error(profiled.error, { field: "tasks", reason: "unknown-profile" });
-        }
-        parsed.tasks.splice(0, parsed.tasks.length, ...profiled.tasks);
-        profileReports = profiled.applied;
+      const profiled = loadAndApplyTaskProfiles({
+        tasks: parsed.tasks,
+        workingDir: ctx.workingDir,
+        resolveAgentProfiles: deps.resolveAgentProfiles,
+        allowedModels: allowedModels(workerLegRef, mode.roles),
+        logger: deps.logger,
+        logPrefix: "fusion",
+      });
+      if (!profiled.ok) {
+        return error(profiled.error, { field: "tasks", reason: "unknown-profile" });
       }
+      if (profiled.tasks !== parsed.tasks) {
+        parsed.tasks.splice(0, parsed.tasks.length, ...profiled.tasks);
+      }
+      const profileReports: AppliedProfileReport[] = profiled.applied;
       const modelProblem = unknownModels(parsed.tasks, workerLegRef, mode.roles);
       if (modelProblem !== undefined) {
         return error(modelProblem, { field: "tasks", reason: "unknown-model" });
