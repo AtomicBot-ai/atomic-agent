@@ -25,6 +25,7 @@ import { memoryCommand } from "./memory-command.js";
 import { modelsCommand } from "./models-command.js";
 import { importCommand } from "./import-command.js";
 import { handoffCommand } from "./handoff-command.js";
+import { launchCommand } from "./launch-command.js";
 import { shareCommand } from "./share-command.js";
 import { recipeCommand } from "./recipe-command.js";
 import { uninstallCommand } from "./uninstall-command.js";
@@ -183,6 +184,11 @@ const COMMANDS: CommandDescriptor[] = [
     summary:
       "Continue a Claude Code or Codex session here (e.g. after its usage limit)",
     run: (args) => handoffCommand(args, { openTui: tuiCommand }),
+  },
+  {
+    name: "launch",
+    summary: "Start Claude Code, Codex or OpenCode on Atomic Agent through atag serve (launch <claude|codex|opencode>)",
+    run: (args) => launchCommand(args),
   },
   {
     name: "share",
