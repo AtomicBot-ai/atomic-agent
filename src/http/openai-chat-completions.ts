@@ -923,6 +923,22 @@ export function buildStreamEventHook(
       }
       return;
     }
+    /* ATO-2004/2005: the loop guard stopped the turn (`level: "breaker"`).
+       The reply that follows is the model's summary step (or the canned
+       fallback), so a host can mark it as written after a stop without
+       reading the text. Extensions-only, like tool_disabled. */
+    if (event.type === "loop_detected" && event.level === "breaker") {
+      if (env.request.extensionsEnabled) {
+        sse.writeEvent("loop_stopped", {
+          object: "atomic.loop_stopped",
+          session_id: env.session.id,
+          step_index: event.stepIndex,
+          tool: event.tool,
+          ...(event.detector ? { detector: event.detector } : {}),
+        });
+      }
+      return;
+    }
     if (event.type === "provider_recovered") {
       if (env.request.extensionsEnabled) {
         sse.writeEvent("provider_recovered", {
