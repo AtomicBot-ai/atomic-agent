@@ -156,14 +156,12 @@ export function formatTruncationNotice(
   detail: TruncationDetail,
   retry: TruncationRetry,
 ): string {
-  const cut =
-    detail.completionTokens > 0
-      ? `Your previous reply to this step was cut off after ${detail.completionTokens} tokens, before it finished.`
-      : "Your previous reply to this step was cut off before it finished.";
+  const cut = cutSentence(detail);
+  const advice = partAdvice(detail);
   if (retry.kind === "raise_cap") {
     return (
       `${cut} The reply limit is ${retry.maxTokens} tokens for this attempt. ` +
-      `Keep your reasoning brief and emit the tool call now. ${WRITE_IN_PARTS}`
+      `Keep your reasoning brief and emit the tool call now.${advice} ${WRITE_IN_PARTS}`
     );
   }
   if (retry.kind === "same_cap") {
@@ -173,13 +171,43 @@ export function formatTruncationNotice(
         : "";
     return (
       `${cut}${loop} The reply limit stays at ${retry.maxTokens} tokens. ` +
-      `Think less: keep your reasoning brief and emit the tool call now. ${WRITE_IN_PARTS}`
+      `Think less: keep your reasoning brief and emit the tool call now.${advice} ${WRITE_IN_PARTS}`
     );
   }
   return (
     `${cut} The model server ran out of context, so older conversation has been trimmed to fit. ` +
     "Continue from the latest tool results, keep your reasoning brief, and emit the tool call now."
   );
+}
+
+/**
+ * The first sentence of the notice: how far the reply got and, when the
+ * detector could tell (`TruncationDetail.part`, ATO-1678), where it was.
+ * The cut reply is not in the transcript, so a model cut inside a tool
+ * call would otherwise not know which call never ran.
+ */
+function cutSentence(detail: TruncationDetail): string {
+  const after =
+    detail.completionTokens > 0 ? ` after ${detail.completionTokens} tokens` : "";
+  if (detail.part === "reasoning") {
+    return `Your previous reply to this step was cut off${after} while you were still thinking, before any tool call.`;
+  }
+  if (detail.part === "tool_call") {
+    const call = detail.cutTool !== undefined ? `a ${detail.cutTool} call` : "a tool call";
+    return `Your previous reply to this step was cut off${after} in the middle of ${call}, so that call never ran.`;
+  }
+  return `Your previous reply to this step was cut off${after}, before it finished.`;
+}
+
+/** What to do differently, for a cut whose place is known; empty otherwise. */
+function partAdvice(detail: TruncationDetail): string {
+  if (detail.part === "reasoning") {
+    return " Do not think the whole task through again: decide the next single step and call its tool.";
+  }
+  if (detail.part === "tool_call") {
+    return " Do the same work in smaller pieces: one smaller call now, the rest in the next steps.";
+  }
+  return "";
 }
 
 /**

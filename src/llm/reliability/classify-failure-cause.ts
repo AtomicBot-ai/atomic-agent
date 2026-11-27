@@ -207,6 +207,9 @@ function modelCause(err: ModelError): FailureCauseId {
   if (err.reason === "no_stop") return "unfinished_reply";
   if (err.truncation?.repetitive === true) return "repeating_output";
   if (err.truncation?.cause === "context_window") return "context_too_long";
+  // ATO-1678: cut again after the agent's own retry; "Retry" would ask
+  // the same model the same thing a third time.
+  if (err.repeatedCut === "cut") return "reply_cut_off_repeated";
   return "reply_cut_off";
 }
 

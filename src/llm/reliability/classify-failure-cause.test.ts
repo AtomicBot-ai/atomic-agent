@@ -240,6 +240,15 @@ const SAMPLES: ReadonlyArray<Sample> = [
     "retry",
   ],
   ["a cut-off reply", truncated("reply_cap"), "reply_cut_off", "retry"],
+  [
+    "a reply cut again after the agent's retry (ATO-1678)",
+    new ModelError("truncated", "cut again", {
+      truncation: { cause: "reply_cap", completionTokens: 16_384, promptTokens: 28_000 },
+      repeatedCut: "cut",
+    }),
+    "reply_cut_off_repeated",
+    "switch-model",
+  ],
   ["a reply with no stop token", new ModelError("no_stop", "no stop token"), "unfinished_reply", "retry"],
   [
     "a reply that looped on one block of text",

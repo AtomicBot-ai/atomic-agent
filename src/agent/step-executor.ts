@@ -15,7 +15,7 @@ import type { StepDependencies, StepContext, StepOutcome } from "./step/step-con
 export type { LlmStreamParams, LlmCompleteStream, StepDependencies, StepApprovalPostureSource, StepContext, StepTerminal, StepOutcome } from "./step/step-contract.js";
 import { toLlmFailure } from "./step/step-errors.js";
 export { BatchValidationError } from "./step/step-errors.js";
-import { completionAssumesOpenReasoning, resolveReasoning } from "./step/step-reasoning.js";
+import { completionAssumesOpenReasoning, cutReadingFor, resolveReasoning } from "./step/step-reasoning.js";
 import { runInitialCompletion } from "./step/step-inference.js";
 import { completionDefectLogFields } from "./step/completion-defect-log.js";
 import { continueCutAnswer, type ContinuedAnswer } from "./step/step-answer-continuation.js";
@@ -145,6 +145,7 @@ async function executeStepInner(
     defaultReplyCap: replyCap,
     stage: "initial",
     contextWindow: deps.contextWindow ?? null,
+    cutReading: cutReadingFor(deps.profile, assumesOpenReasoning(completion)),
   });
   const policy = createStepBatchPolicy(ctx, deps, assumesOpenReasoning);
   // Set when a reply cut at its length limit was continued (ATO-1031):
