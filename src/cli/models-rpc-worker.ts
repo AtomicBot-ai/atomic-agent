@@ -1,9 +1,11 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { networkInterfaces } from "node:os";
-import { delimiter, join } from "node:path";
+import { dirname, posix, win32 } from "node:path";
 import { getConfig } from "../config/index.js";
 import { resolveBackendDir } from "../local-llm/backend-paths.js";
+import { coreBackendSpawn, type CoreBackendSpawn } from "../local-llm/core/core-backend-env.js";
+import { readCoreBackend } from "../local-llm/core/core-state.js";
 import { DEFAULT_RPC_PORT } from "../local-llm/server/rpc-peers.js";
 
 /**
@@ -47,20 +49,35 @@ export function parseRpcWorkerArgs(args: readonly string[]): RpcWorkerOptions | 
 
 /**
  * Where `rpc-server` is: `ATOMIC_AGENT_RPC_SERVER`, then next to the
- * managed llama-server, then on PATH. `null` when none of them has it.
+ * agent's own llama-server (`<data>/local-models/backend`), then next to
+ * the llama-server Atomic Core installed (the default engine, ATO-2454),
+ * then on PATH. `null` when none of them has it. Both engines unpack the
+ * same TurboQuant archive, which carries `rpc-server` beside
+ * `llama-server` once it is built with GGML_RPC=ON.
+ *
+ * Paths and the PATH separator follow `platform`, not the host, so the
+ * Windows lookup (`rpc-server.exe`, `;`, any case of `Path`) is the same
+ * code a Windows run takes.
  */
 export function resolveRpcServerBinary(deps: {
   env: NodeJS.ProcessEnv;
   backendDir: string;
+  /** Folder of Core's active llama-server, `null` when Core has none installed. */
+  coreBackendDir?: string | null;
   platform: NodeJS.Platform;
   exists: (path: string) => boolean;
 }): string | null {
-  const name = deps.platform === "win32" ? "rpc-server.exe" : "rpc-server";
+  const win = deps.platform === "win32";
+  const path = win ? win32 : posix;
+  const name = win ? "rpc-server.exe" : "rpc-server";
   const override = deps.env.ATOMIC_AGENT_RPC_SERVER?.trim();
   if (override) return deps.exists(override) ? override : null;
+  const pathKey = win ? Object.keys(deps.env).find((k) => k.toUpperCase() === "PATH") : "PATH";
+  const searchPath = (pathKey ? deps.env[pathKey] : undefined) ?? "";
   const candidates = [
-    join(deps.backendDir, name),
-    ...(deps.env.PATH ?? "").split(delimiter).filter(Boolean).map((dir) => join(dir, name)),
+    path.join(deps.backendDir, name),
+    ...(deps.coreBackendDir ? [path.join(deps.coreBackendDir, name)] : []),
+    ...searchPath.split(win ? ";" : ":").filter(Boolean).map((dir) => path.join(dir, name)),
   ];
   return candidates.find((p) => deps.exists(p)) ?? null;
 }
@@ -81,8 +98,9 @@ export const RPC_LAN_WARNING =
   "GPU through this port. Run it only on a home or office network you trust, and stop it with Ctrl-C when done.\n";
 
 export const RPC_SERVER_MISSING =
-  "rpc-server not found. It ships with llama.cpp builds made with GGML_RPC=ON; the bundled engine does not " +
-  "include it yet. Install such a build (or set ATOMIC_AGENT_RPC_SERVER to its rpc-server) and run this again.\n";
+  "rpc-server not found. It ships next to llama-server in engine builds made with llama.cpp RPC (GGML_RPC=ON). " +
+  "Run `atomic-agent models update` to get the newest engine, or set ATOMIC_AGENT_RPC_SERVER to an rpc-server " +
+  "you have, then run this again.\n";
 
 export interface RpcWorkerDeps {
   spawn?: typeof nodeSpawn;
@@ -90,6 +108,8 @@ export interface RpcWorkerDeps {
   stderr?: (s: string) => void;
   binary?: string | null;
   addresses?: string[];
+  /** Environment and folder rpc-server runs with; Core's backend rules by default. */
+  launchEnv?: (binary: string) => CoreBackendSpawn;
 }
 
 export async function runModelsRpcWorker(args: readonly string[], deps: RpcWorkerDeps = {}): Promise<number> {
@@ -100,12 +120,14 @@ export async function runModelsRpcWorker(args: readonly string[], deps: RpcWorke
     err(`models rpc-worker: ${opts.error}\nusage: atomic-agent models rpc-worker [--lan | --host <ip>] [--port <n>] [--cache]\n`);
     return 1;
   }
+  const dataDir = deps.binary !== undefined ? "" : getConfig().paths.localModelsDataDir;
   const binary =
     deps.binary !== undefined
       ? deps.binary
       : resolveRpcServerBinary({
           env: process.env,
-          backendDir: resolveBackendDir(getConfig().paths.localModelsDataDir),
+          backendDir: resolveBackendDir(dataDir),
+          coreBackendDir: coreBackendDirOf(dataDir),
           platform: process.platform,
           exists: existsSync,
         });
@@ -124,7 +146,15 @@ export async function runModelsRpcWorker(args: readonly string[], deps: RpcWorke
       (addresses.length > 1 ? `this computer's addresses: ${addresses.join(", ")}\n` : ""),
   );
   const argv = ["--host", opts.host, "--port", String(opts.port), ...(opts.cache ? ["-c"] : [])];
-  const child = (deps.spawn ?? nodeSpawn)(binary, argv, { stdio: "inherit" });
+  // Run it the way Core runs its llama-server: its own folder on the
+  // library path (the ggml backends and CUDA runtime sit beside it), and
+  // on Windows from that folder, so the GPU backend DLLs load.
+  const launch = (deps.launchEnv ?? coreBackendSpawn)(binary);
+  const child = (deps.spawn ?? nodeSpawn)(binary, argv, {
+    stdio: "inherit",
+    env: launch.env,
+    ...(launch.cwd ? { cwd: launch.cwd } : {}),
+  });
   return await new Promise<number>((resolve) => {
     child.on("error", (e) => {
       err(`models rpc-worker: could not start ${binary}: ${e.message}\n`);
@@ -132,4 +162,14 @@ export async function runModelsRpcWorker(args: readonly string[], deps: RpcWorke
     });
     child.on("exit", (code, signal) => resolve(signal === "SIGINT" || signal === "SIGTERM" ? 0 : (code ?? 1)));
   });
+}
+
+/** Folder of the llama-server Core installed, or `null` when it has none. */
+function coreBackendDirOf(dataDir: string): string | null {
+  try {
+    const backend = readCoreBackend(dataDir);
+    return backend ? dirname(backend.binary) : null;
+  } catch {
+    return null;
+  }
 }
