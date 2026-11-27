@@ -3,6 +3,7 @@
  */
 
 import { findLaunchIntegration, LAUNCH_INTEGRATIONS, type LaunchIntegration } from "./launch-integrations.js";
+import { parsePrintEnvShell, PRINT_ENV_SHELLS, type PrintEnvShell } from "./print-env-format.js";
 
 /**
  * What the launched CLI talks to (ATO-2447).
@@ -17,7 +18,7 @@ import { findLaunchIntegration, LAUNCH_INTEGRATIONS, type LaunchIntegration } fr
 export type LaunchMode = "local" | "agent";
 
 export const LAUNCH_HELP = [
-  "Usage: atomic-agent launch [<agent>] [--agent] [--model <id>] [--print-env] [-- <agent args>]",
+  "Usage: atomic-agent launch [<agent>] [--agent] [--model <id>] [--print-env [--shell <s>]] [-- <agent args>]",
   "       atomic-agent launch <agent> --config [--agent] [--model <id>]   |   launch <agent> --revert",
   "",
   "Start another coding CLI on this machine's local model, through `atag serve`",
@@ -31,6 +32,8 @@ export const LAUNCH_HELP = [
   "                 own tools and memory, and the CLI's own tool calls are not offered to the model.",
   "  --model <id>   Model name the CLI sends (default: the loaded local model; atomic-agent with --agent)",
   "  --print-env    Print the environment and command instead of running it (keys masked)",
+  "  --shell <s>    Syntax for --print-env: posix, powershell or cmd (default powershell on",
+  "                 Windows, posix elsewhere)",
   "  --config       Write a lasting setting into the CLI's own config file instead of running it,",
   "                 so plain `claude` / `codex` / `opencode` / `qwen` use atag serve on port 8787 afterwards",
   "                 (a backup of the file is kept; the key itself is not written there)",
@@ -52,6 +55,8 @@ export interface LaunchArgs {
   readonly mode: LaunchMode;
   readonly model: string | null;
   readonly printEnv: boolean;
+  /** `--shell`, `null` for the platform default (ATO-2758). */
+  readonly shell: PrintEnvShell | null;
   readonly extraArgs: readonly string[];
   /** ATO-2448: write the lasting setting instead of running the CLI. */
   readonly config: boolean;
@@ -68,6 +73,7 @@ export function parseLaunchArgs(args: readonly string[]): LaunchArgs | { error: 
   let name: string | undefined;
   let model: string | null = null;
   let printEnv = false;
+  let shell: PrintEnvShell | null = null;
   let mode: LaunchMode = "local";
   let config = false;
   let revert = false;
@@ -80,7 +86,11 @@ export function parseLaunchArgs(args: readonly string[]): LaunchArgs | { error: 
     else if (arg === "--config") config = true;
     else if (arg === "--revert") revert = true;
     else if (arg === "--print-key") printKey = true;
-    else if (arg === "--model") {
+    else if (arg === "--shell" || arg.startsWith("--shell=")) {
+      const value = arg === "--shell" ? own[++i] : arg.slice("--shell=".length);
+      shell = value ? parsePrintEnvShell(value) : null;
+      if (!shell) return { error: `--shell expects one of: ${PRINT_ENV_SHELLS.join(", ")}` };
+    } else if (arg === "--model") {
       const value = own[i + 1];
       if (!value || value.startsWith("-")) return { error: "--model expects a model id" };
       model = value;
@@ -94,7 +104,7 @@ export function parseLaunchArgs(args: readonly string[]): LaunchArgs | { error: 
   }
   if ([config, revert, printEnv].filter(Boolean).length > 1) return { error: "use only one of --config, --revert and --print-env" };
   if ((config || revert) && extraArgs.length > 0) return { error: "--config and --revert run nothing, so they take no arguments after --" };
-  const rest = { mode, model, printEnv, extraArgs, config, revert, printKey };
+  const rest = { mode, model, printEnv, shell, extraArgs, config, revert, printKey };
   if (!name) return { integration: null, ...rest };
   const integration = findLaunchIntegration(name);
   if (!integration) {

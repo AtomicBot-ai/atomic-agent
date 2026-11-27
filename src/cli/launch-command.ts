@@ -43,6 +43,7 @@ import {
   type LaunchServe,
   type LaunchServeDeps,
 } from "./launch-serve.js";
+import { defaultPrintEnvShell } from "./print-env-format.js";
 import { resolveServeApiKey } from "./serve-api-key.js";
 
 export { LAUNCH_HELP, parseLaunchArgs, type LaunchArgs } from "./launch-args.js";
@@ -88,6 +89,8 @@ export interface LaunchCommandDeps {
   /** ATO-2451: the per-run token (launch-token.ts); tests pass their own. */
   readonly issueToken?: (stateDir: string, cliId: string) => IssuedToken;
   readonly lastingToken?: (stateDir: string) => { readonly token: string } | { readonly error: string };
+  /** Picks the `--print-env` syntax when `--shell` is not given (ATO-2758). */
+  readonly platform?: NodeJS.Platform;
 }
 
 /** The operator's own key from the environment, as serve takes it. */
@@ -185,7 +188,8 @@ export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}
     }
     const found = local && serve ? await probe(serve.baseUrl, lasting.token) : null;
     const modelId = found?.ok ? found.modelId : null;
-    write(formatPrintEnv(binaryPath ?? integration.binary, buildPlan(integration, parsed, serveUrl, lasting.token, modelId)));
+    const shell = parsed.shell ?? defaultPrintEnvShell(deps.platform ?? process.platform);
+    write(formatPrintEnv(binaryPath ?? integration.binary, buildPlan(integration, parsed, serveUrl, lasting.token, modelId), shell));
     return 0;
   }
   if (!serve) {

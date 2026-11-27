@@ -24,6 +24,23 @@ export const CLOUDFLARED_INSTALL_HINT =
   "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/ . " +
   "atomic-agent never downloads it for you.";
 
+const CLOUDFLARED_DOWNLOADS =
+  "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/";
+
+/**
+ * ATO-2758: the install step for this computer's OS only, then the
+ * command to run again (`atag pair --remote`, not "serve").
+ */
+export function cloudflaredInstallHint(rerun: string, platform: NodeJS.Platform = process.platform): string {
+  const install =
+    platform === "darwin"
+      ? "Install it with: brew install cloudflared"
+      : platform === "win32"
+        ? "Install it with: winget install --id Cloudflare.cloudflared (then open a new terminal so PATH picks it up)"
+        : `Install the cloudflared package for your Linux distribution from ${CLOUDFLARED_DOWNLOADS}`;
+  return `${install}. Then run ${rerun} again. atomic-agent never downloads it for you.`;
+}
+
 function isExecutableFile(path: string): boolean {
   try {
     if (!statSync(path).isFile()) return false;

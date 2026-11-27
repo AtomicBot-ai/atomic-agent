@@ -5,22 +5,29 @@
 
 import { DEFAULT_LAUNCH_MODEL, type LaunchIntegration, type LaunchPlan } from "./launch-integrations.js";
 import type { LaunchArgs } from "./launch-args.js";
+import { formatCommandLine, formatEnvLine, type PrintEnvShell } from "./print-env-format.js";
 
 export const MASKED = "<hidden: atag launch --print-key>";
 
 /** Model label for the bare local model when the server names none. */
 export const LOCAL_MODEL_FALLBACK_NAME = "local-model";
 
-/** Shell-style lines for `--print-env`, secrets masked (by name in env, by value in args). */
-export function formatPrintEnv(binary: string, plan: LaunchPlan): string {
-  const quote = (v: string): string => (/^[\w@%+=:,./-]*$/.test(v) && v !== "" ? v : `'${v.replace(/'/g, `'\\''`)}'`);
-  const secrets = new Set(plan.secretArgs ?? []);
-  const arg = (v: string): string => quote(secrets.has(v) ? MASKED : v);
+/**
+ * Lines for `--print-env` in `shell`'s syntax (print-env-format.ts,
+ * ATO-2758), secrets masked by name in env and by value in args, before
+ * any quoting.
+ */
+export function formatPrintEnv(binary: string, plan: LaunchPlan, shell: PrintEnvShell = "posix"): string {
+  const secrets = new Set([
+    ...(plan.secretArgs ?? []),
+    ...plan.secretEnv.map((name) => plan.env[name]).filter((v): v is string => typeof v === "string" && v !== ""),
+  ]);
+  const masked = (args: readonly string[]): string[] => args.map((v) => (secrets.has(v) ? MASKED : v));
   const lines = Object.entries(plan.env).map(([name, value]) =>
-    plan.secretEnv.includes(name) ? `export ${name}=${quote(MASKED)}` : `export ${name}=${quote(value)}`,
+    formatEnvLine(shell, name, plan.secretEnv.includes(name) ? MASKED : value),
   );
-  for (const step of plan.setup ?? []) lines.push([binary, ...step].map(arg).join(" "));
-  lines.push([binary, ...plan.args].map(arg).join(" "));
+  for (const step of plan.setup ?? []) lines.push(formatCommandLine(shell, binary, masked(step)));
+  lines.push(formatCommandLine(shell, binary, masked(plan.args)));
   return `${lines.join("\n")}\n`;
 }
 

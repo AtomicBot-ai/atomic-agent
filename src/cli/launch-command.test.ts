@@ -35,6 +35,7 @@ async function run(args: string[], over: LaunchCommandDeps = {}) {
     findServe: async () => SERVE,
     checkKey: async () => true,
     probeLocal: async () => ({ ok: true, modelId: "qwen-local" }),
+    platform: "darwin",
     ...over,
   };
   const code = await launchCommand(args, deps);
@@ -80,6 +81,19 @@ describe("atag launch (ATO-2172)", () => {
     expect(r.out).toContain(`export ATOMIC_AGENT_TOKEN='${MASKED}'`);
     expect(r.out).not.toContain("the-lasting-token");
     expect(r.out).toContain("/usr/local/bin/codex -c");
+  });
+
+  it("--print-env on Windows prints PowerShell lines by default, and --shell picks another (ATO-2758)", async () => {
+    const win = await run(["claude", "--print-env"], { platform: "win32" });
+    expect(win.out).toContain("$env:ANTHROPIC_BASE_URL = 'http://127.0.0.1:41234/local'");
+    expect(win.out).toContain(`$env:ANTHROPIC_AUTH_TOKEN = '${MASKED}'`);
+    expect(win.out).not.toContain("export ");
+    expect(win.out).not.toContain("the-lasting-token");
+    const cmd = await run(["claude", "--print-env", "--shell", "cmd"], { platform: "win32" });
+    expect(cmd.out).toContain('set "ANTHROPIC_BASE_URL=http://127.0.0.1:41234/local"');
+    const posix = await run(["claude", "--print-env", "--shell=posix"], { platform: "win32" });
+    expect(posix.out).toContain("export ANTHROPIC_BASE_URL=http://127.0.0.1:41234/local\n");
+    expect(parseLaunchArgs(["claude", "--shell", "fish"])).toEqual({ error: expect.stringContaining("--shell expects") });
   });
 
   it("runs the CLI with the env on top of the inherited one and forwards its exit code", async () => {
@@ -293,6 +307,15 @@ describe("atag launch (ATO-2172)", () => {
     const r = await run(["cline", "--print-env"]);
     expect(r.out).toContain("/usr/local/bin/cline auth -p openai -k");
     expect(r.out).not.toContain("the-lasting-token");
+  });
+
+  it("--print-env on Windows masks the key in env and args before quoting (ATO-2758, ATO-2451)", async () => {
+    const codex = await run(["codex", "--print-env"], { platform: "win32" });
+    expect(codex.out).toContain(`$env:ATOMIC_AGENT_TOKEN = '${MASKED}'`);
+    expect(codex.out).not.toContain("the-lasting-token");
+    const cline = await run(["cline", "--print-env"], { platform: "win32" });
+    expect(cline.out).toContain(`auth -p openai -k '${MASKED}'`);
+    expect(cline.out).not.toContain("the-lasting-token");
   });
 
   it("a missing CLI in a terminal is installed after a yes and then started (ATO-2450)", async () => {
