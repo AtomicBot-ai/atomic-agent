@@ -1148,7 +1148,7 @@ function createWindow(): BrowserWindow {
       window.webContents.reload();
     }).catch(() => undefined);
   });
-  wireWindowErrorReporting(window, () => recovered);
+  wireWindowErrorReporting(window, () => recovered, { quitting: () => quitting });
 
   // Renderer faults must never be silent: they surface in the app log
   // and, under --smoke, on stdout where CI can see them.
@@ -11242,7 +11242,7 @@ A.initAnalytics({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR, fresh
 A.configureDownloads({ stateDir: DESKTOP_STATE_DIR, hostRamGb: () => FAKE_RAM_GB ?? hostRamGb() });
 A.configureSetup({ stateDir: DESKTOP_STATE_DIR });
 A.beginSession();
-wireProcessErrorReporting();
+wireProcessErrorReporting({ quitting: () => quitting });
 
 /* ATO-1229 / ATO-1193: an AppImage (or a .deb with no AppArmor profile
    attached) on a Linux that blocks unprivileged user namespaces (Ubuntu

@@ -13,14 +13,37 @@
  */
 
 import { app, type BrowserWindow } from "electron";
+import { freemem } from "node:os";
 
 import { noteSessionTrouble, windowCrashed } from "../analytics/index.js";
 import { reportError } from "./client.js";
 import type { AgentMemorySample } from "../agent-memory-sample.js";
 import { agentExitStatus, agentRssBucket, freeMemoryBucket, lastErrorCategory, lastErrorFacts, linesBucket, shareBucket, uptimeBucket } from "./exit-reason.js";
 
+/**
+ * ATO-1734: the app at the moment a process went. `quitting` is main's own
+ * flag (set by stopForQuit, which before-quit runs); free memory is read
+ * from the OS. Sent as the same two tags AgentExited carries, so one search
+ * covers every crash: `app_quitting` yes / no, `free_mem` a bucket.
+ */
+export interface CrashMoment {
+  quitting?: () => boolean;
+  freeMemBytes?: () => number | null;
+}
+
+function momentTags(moment: CrashMoment): Record<string, string> {
+  let q: unknown;
+  let free: ReturnType<typeof freeMemoryBucket> = null;
+  try { q = moment.quitting?.(); } catch { q = undefined; }
+  try { free = freeMemoryBucket((moment.freeMemBytes ?? freemem)()); } catch { free = null; }
+  return {
+    ...(typeof q === "boolean" ? { app_quitting: q ? "yes" : "no" } : {}),
+    ...(free ? { free_mem: free } : {}),
+  };
+}
+
 /** Main process and app-wide events. Call once, early. */
-export function wireProcessErrorReporting(): void {
+export function wireProcessErrorReporting(moment: CrashMoment = {}): void {
   process.on("uncaughtExceptionMonitor", (err, origin) => {
     const e = err as Partial<Error> | undefined;
     noteSessionTrouble("crashed");
@@ -33,7 +56,7 @@ export function wireProcessErrorReporting(): void {
       source: "child-process-gone",
       name: "ChildProcessGone",
       level: "warning",
-      tags: { kind: details.type, reason: details.reason, exit_code: details.exitCode },
+      tags: { kind: details.type, reason: details.reason, exit_code: details.exitCode, ...momentTags(moment) },
     });
   });
 }
@@ -43,7 +66,7 @@ export function wireProcessErrorReporting(): void {
  * `recovered` (ATO-765): whether main is reloading the page that just went
  * (main.ts registers that listener first), sent as the `recovered` tag.
  */
-export function wireWindowErrorReporting(win: BrowserWindow, recovered: () => boolean | null = () => null): void {
+export function wireWindowErrorReporting(win: BrowserWindow, recovered: () => boolean | null = () => null, moment: CrashMoment = {}): void {
   const wc = win.webContents;
   wc.on("render-process-gone", (_e, details) => {
     if (details.reason === "clean-exit") return;
@@ -54,7 +77,7 @@ export function wireWindowErrorReporting(win: BrowserWindow, recovered: () => bo
       source: "render-process-gone",
       name: "RenderProcessGone",
       level: "warning",
-      tags: { kind: "gone", reason: details.reason, exit_code: details.exitCode, ...(r === null ? {} : { recovered: r ? "yes" : "no" }) },
+      tags: { kind: "gone", reason: details.reason, exit_code: details.exitCode, ...(r === null ? {} : { recovered: r ? "yes" : "no" }), ...momentTags(moment) },
     });
   });
   // ATO-1030: Windows logging off or shutting down ends the session without a quit.
