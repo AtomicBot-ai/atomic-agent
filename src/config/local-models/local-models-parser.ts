@@ -19,6 +19,7 @@ import {
 import { parseUrl } from "../config-values.js";
 import { parseCustomLocalModels } from "../custom-models-schema.js";
 import { parseLoraAdapters } from "./lora-adapters-parser.js";
+import { parseModelSamplingOverrides } from "./model-sampling-config.js";
 import { isKnownLocalModelId, type LocalModelDef } from "../../local-llm/catalog/models-catalog.js";
 import {
   BACKEND_VARIANT_PREFERENCES,
@@ -576,6 +577,7 @@ export function parseUserLocalModelsConfig(
       localModels.modelSampling ?? readDefaults().modelSampling,
       "localModels.modelSampling",
     ),
+    ...samplingOverridesField(localModels.modelSamplingOverrides),
     strictToolArgs: parseBool(
       localModels.strictToolArgs ?? readDefaults().strictToolArgs,
       "localModels.strictToolArgs",
@@ -585,4 +587,15 @@ export function parseUserLocalModelsConfig(
     download,
     customModels,
   };
+}
+
+/** ATO-2482: the key only when the file names at least one set. */
+function samplingOverridesField(
+  raw: unknown,
+): Pick<UserLocalModelsConfig, "modelSamplingOverrides"> {
+  const overrides = parseModelSamplingOverrides(
+    raw,
+    "localModels.modelSamplingOverrides",
+  );
+  return overrides ? { modelSamplingOverrides: overrides } : {};
 }

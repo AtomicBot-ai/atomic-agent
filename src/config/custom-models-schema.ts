@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 
 import { ConfigValidationError } from "./config-validation-error.js";
 import type { LocalModelDef } from "../local-llm/catalog/models-catalog.js";
+import { parseSamplingSetting } from "./local-models/model-sampling-config.js";
 
 /** The id becomes a directory name under `<dataDir>/models/`. */
 const CUSTOM_ID_RE = /^custom-[a-z0-9._-]+$/;
@@ -137,6 +138,8 @@ export function parseCustomLocalModel(
     `${field}.huggingFaceUrl`,
   );
   const localPath = storedLocalPath ?? localPathFromFileUrl(huggingFaceUrl);
+  // ATO-2482: the person's own sampling for this model, kept on rewrite.
+  const sampling = parseSamplingSetting(entry.sampling, `${field}.sampling`);
   const def: LocalModelDef = {
     id: id as LocalModelDef["id"],
     name: optionalString(entry.name, id),
@@ -160,6 +163,7 @@ export function parseCustomLocalModel(
     family: "custom",
     supportsVision,
     ...(localPath !== undefined ? { localPath } : {}),
+    ...(sampling !== undefined ? { sampling } : {}),
   };
   if (!supportsVision) return def;
   return {

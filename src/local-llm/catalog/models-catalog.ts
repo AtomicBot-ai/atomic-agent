@@ -4,6 +4,15 @@
  * icon fields.
  */
 
+import {
+  GEMMA_4_SAMPLING,
+  MUSE_GLIMMER_SAMPLING,
+  NEMOTRON_35_SAMPLING,
+  QWEN_35_SMALL_SAMPLING,
+  QWEN_SAMPLING,
+} from "./catalog-sampling.js";
+import type { LocalModelSampling } from "./model-sampling-sets.js";
+
 export type CuratedLocalModelId =
   | "qwen-3.5-2b"
   | "qwen-3.5-4b"
@@ -125,6 +134,15 @@ export interface LocalModelDef {
    * `vision.describe` tool registration. Required when `mmprojUrl` is set.
    */
   supportsVision: boolean;
+  /**
+   * The sampling the model card recommends (ATO-2482,
+   * `catalog-sampling.ts`), with an optional set per thinking mode. On a
+   * curated entry it sits over the GGUF header's `general.sampling.*` and
+   * is used only when `localModels.modelSampling` is on. On an added
+   * model (`localModels.customModels[].sampling`) it is the person's own
+   * choice and is always used, like `localModels.modelSamplingOverrides`.
+   */
+  sampling?: LocalModelSampling;
   /** HTTP URL of the mmproj GGUF projector file. Set iff `supportsVision`. */
   mmprojUrl?: string;
   /** On-disk filename for the projector. Set iff `supportsVision`. */
@@ -149,6 +167,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 6,
     recommendedRamGb: 8,
     family: "gemma",
+    sampling: GEMMA_4_SAMPLING,
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/mmproj-BF16.gguf",
@@ -170,6 +189,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 8,
     recommendedRamGb: 12,
     family: "gemma",
+    sampling: GEMMA_4_SAMPLING,
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/gemma-4-12B-it-qat-GGUF/resolve/main/mmproj-BF16.gguf",
@@ -191,6 +211,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 16,
     recommendedRamGb: 20,
     family: "gemma",
+    sampling: GEMMA_4_SAMPLING,
     tag: "High Performance",
     supportsVision: true,
     mmprojUrl:
@@ -213,6 +234,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 20,
     recommendedRamGb: 24,
     family: "gemma",
+    sampling: GEMMA_4_SAMPLING,
     tag: "High Performance",
     supportsVision: true,
     mmprojUrl:
@@ -235,6 +257,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 20,
     recommendedRamGb: 28,
     family: "qwen",
+    sampling: QWEN_SAMPLING,
     tag: "New",
     supportsVision: true,
     mmprojUrl:
@@ -257,6 +280,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 20,
     recommendedRamGb: 28,
     family: "qwen",
+    sampling: QWEN_SAMPLING,
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/mmproj-F16.gguf",
@@ -278,6 +302,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 24,
     recommendedRamGb: 36,
     family: "qwen",
+    sampling: QWEN_SAMPLING,
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf",
@@ -302,6 +327,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 4,
     recommendedRamGb: 6,
     family: "qwen",
+    sampling: QWEN_35_SMALL_SAMPLING,
     supportsVision: false,
   },
   {
@@ -319,6 +345,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 6,
     recommendedRamGb: 8,
     family: "qwen",
+    sampling: QWEN_SAMPLING,
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/mmproj-F16.gguf",
@@ -340,6 +367,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 10,
     recommendedRamGb: 16,
     family: "qwen",
+    sampling: QWEN_SAMPLING,
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/mmproj-F16.gguf",
@@ -361,6 +389,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 24,
     recommendedRamGb: 36,
     family: "qwen",
+    sampling: QWEN_SAMPLING,
     tag: "High Performance",
     supportsVision: true,
     mmprojUrl:
@@ -382,6 +411,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 24,
     recommendedRamGb: 32,
     family: "nemotron",
+    sampling: NEMOTRON_35_SAMPLING,
     tag: "New",
     supportsVision: false,
   },
@@ -406,6 +436,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 20,
     recommendedRamGb: 32,
     family: "muse",
+    sampling: MUSE_GLIMMER_SAMPLING,
     tag: "New",
     supportsVision: true,
     mmprojUrl:
@@ -439,6 +470,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 20,
     recommendedRamGb: 32,
     family: "qwen",
+    sampling: QWEN_SAMPLING,
     tag: "Use at your own risk",
     uncensored: true,
     supportsVision: true,
