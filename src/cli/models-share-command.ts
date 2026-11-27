@@ -3,7 +3,11 @@ import { ensureUserConfigFileSync, writeUserConfigFileSync } from "../config/con
 import type { UserConfigFile } from "../config/config-schema.js";
 import { ensureModelShareKey, modelShareKeyPath, rotateModelShareKey } from "../http/model-share-key.js";
 import { RAW_MODEL_PREFIX } from "../http/route-raw-model.js";
-import { lanUrls } from "./serve-args.js";
+import { formatShareSummary, networkServeHint, resolveShareReach, type ShareReach } from "./models-share-reach.js";
+import { isAlive } from "./serve-orphan-guard.js";
+import { readServeRecords, type ServeRecord } from "./serve-reaper.js";
+
+export { formatShareSummary } from "./models-share-reach.js";
 
 /**
  * `atomic-agent models share [--rotate] [--off] [--port <p>] [--json]`
@@ -32,22 +36,23 @@ export const SHARE_HELP =
     "",
     "  --rotate     Make a new key; apps that used the old one get 401",
     "  --off        Stop sharing (the routes answer 404); the key is kept",
-    "  --port <p>   The port serve listens on (default 8787)",
-    "  --json       Print { enabled, key, urls, keyPath } instead",
+    "  --port <p>   The port serve listens on (default: the running serve, else 8787)",
+    "  --json       Print { enabled, serving, key, urls, keyPath } instead",
     "",
-    "Other devices reach it only when serve listens on the network:",
-    "  atomic-agent serve --host 0.0.0.0 --api-key <a key you choose>",
+    "It answers only while atomic-agent serve runs.",
+    ...networkServeHint(8787),
   ].join("\n") + "\n";
 
 export interface ShareArgs {
   off: boolean;
   rotate: boolean;
-  port: number;
+  /** `--port`; `null` means the running serve's port, else 8787. */
+  port: number | null;
   json: boolean;
 }
 
 export function parseShareArgs(args: readonly string[]): ShareArgs | { help: true } | { error: string } {
-  const out: ShareArgs = { off: false, rotate: false, port: 8787, json: false };
+  const out: ShareArgs = { off: false, rotate: false, port: null, json: false };
   for (let i = 0; i < args.length; i += 1) {
     const flag = args[i];
     switch (flag) {
@@ -78,27 +83,15 @@ export function parseShareArgs(args: readonly string[]): ShareArgs | { help: tru
   return out;
 }
 
-/** The base URLs another app pastes: this computer first, then each LAN address. */
-export function shareBaseUrls(port: number, lan: readonly string[] = lanUrls("0.0.0.0", port)): { local: string; lan: string[] } {
+/** The `--json` shape: `serving` says whether a serve answers and where it listens (ATO-2758). */
+export function shareJson(key: string, reach: ShareReach, keyPath: string): Record<string, unknown> {
   return {
-    local: `http://127.0.0.1:${port}${RAW_MODEL_PREFIX}`,
-    lan: lan.map((origin) => `${origin}${RAW_MODEL_PREFIX}`),
+    enabled: true,
+    serving: reach.kind === "stopped" ? null : { port: reach.port, network: reach.kind === "network" },
+    key,
+    urls: { local: reach.local, lan: reach.kind === "network" ? reach.lan.filter((u) => u !== reach.local) : [] },
+    keyPath,
   };
-}
-
-export function formatShareSummary(input: { key: string; urls: { local: string; lan: string[] }; rotated: boolean }): string {
-  const lines = [
-    `Model sharing is on${input.rotated ? " with a new key (apps using the old one now get 401)" : ""}.`,
-    "Paste these into the other app (OpenAI-compatible):",
-    `  Base URL, this computer:   ${input.urls.local}`,
-    ...input.urls.lan.map((url) => `  Base URL, other devices:   ${url}`),
-    `  API key:                   ${input.key}`,
-    "",
-    "Other devices need serve on the network: atomic-agent serve --host 0.0.0.0 --api-key <a key you choose>",
-    "Warning: traffic on the local network is plain http; anyone on the same network can read it.",
-    "One request at a time: a second one gets 429 while the first runs. Stop with: atomic-agent models share --off",
-  ];
-  return `${lines.join("\n")}\n`;
 }
 
 /** Write `localModels.managed.share` to the config file; no write when it already holds `enabled`. */
@@ -116,7 +109,12 @@ export function setModelShareEnabled(path: string, enabled: boolean): void {
   resetConfigCache();
 }
 
-export async function runModelsShare(args: readonly string[]): Promise<number> {
+export interface ModelsShareDeps {
+  serveRecords?: (stateDir: string) => readonly ServeRecord[];
+  isAlive?: (pid: number) => boolean;
+}
+
+export async function runModelsShare(args: readonly string[], deps: ModelsShareDeps = {}): Promise<number> {
   const parsed = parseShareArgs(args);
   if ("help" in parsed) {
     process.stdout.write(SHARE_HELP);
@@ -140,11 +138,15 @@ export async function runModelsShare(args: readonly string[]): Promise<number> {
     return 1;
   }
   setModelShareEnabled(config.paths.userConfigFile, true);
-  const urls = shareBaseUrls(parsed.port);
+  const reach = resolveShareReach({
+    records: (deps.serveRecords ?? ((dir: string) => readServeRecords(dir).map((r) => r.record)))(stateDir),
+    isAlive: deps.isAlive ?? isAlive,
+    port: parsed.port,
+  });
   if (parsed.json) {
-    process.stdout.write(`${JSON.stringify({ enabled: true, key, urls, keyPath: modelShareKeyPath(stateDir) })}\n`);
+    process.stdout.write(`${JSON.stringify(shareJson(key, reach, modelShareKeyPath(stateDir)))}\n`);
   } else {
-    process.stdout.write(formatShareSummary({ key, urls, rotated: parsed.rotate }));
+    process.stdout.write(formatShareSummary({ key, reach, rotated: parsed.rotate }));
   }
   return 0;
 }
