@@ -221,6 +221,10 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Search past chats by their words, then read around a hit.",
     tier: RARE,
   },
+  "conversation.history": {
+    summary: "Find exact details this chat's summary dropped: `query`, then `from` to read.",
+    tier: RARE,
+  },
   "files.search": {
     summary: "Search My files folders; paste each hit's `cite` as is.",
     tier: RARE,

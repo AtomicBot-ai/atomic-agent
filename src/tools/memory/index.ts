@@ -31,6 +31,11 @@ export {
   type SessionsSearchSource,
 } from "./sessions-search.js";
 export {
+  buildConversationHistoryTool,
+  CONVERSATION_HISTORY_TOOL,
+  type ConversationHistorySource,
+} from "./conversation-history.js";
+export {
   INCOGNITO_MEMORY_READ_REFUSAL,
   INCOGNITO_MEMORY_WRITE_REFUSAL,
   INCOGNITO_TASK_REFUSAL,

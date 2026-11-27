@@ -172,6 +172,15 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    name: "conversation.history",
+    summary:
+      "Search or reread the earlier part of this chat that was compacted into a summary: exact numbers, paths, tool calls and tool output the summary left out. Only this chat, only what the summary replaced.",
+    argsSchema:
+      "{ query?: string, limit?: number /* 1..20 */, from?: number /* record from a hit */, count?: number /* 1..40 */ }",
+    examples: ['{"query":"invoice total"}', '{"from":12}'],
+    tier: "rare",
+  },
+  {
     name: "files.search",
     summary:
       "Search the folders the person added in My files (PDF, Word, slides, sheets, text). Each hit has the file, PDF page, a snippet and a `cite` link: paste `cite` exactly as given after what you took from it.",

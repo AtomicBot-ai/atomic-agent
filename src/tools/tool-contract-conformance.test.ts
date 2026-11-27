@@ -43,7 +43,7 @@ import { planUpdateTool } from "./plan/index.js";
 import { buildCanvasRenderTool } from "./canvas/index.js";
 import { buildAskUserTool } from "./conversation/index.js";
 import { buildToolSearchTool } from "./tool-search/index.js";
-import { buildSessionsSearchTool, registerMemoryTools } from "./memory/index.js";
+import { buildConversationHistoryTool, buildSessionsSearchTool, registerMemoryTools } from "./memory/index.js";
 import { buildFilesSearchTool } from "./files/index.js";
 import { registerTaskTools } from "./tasks/index.js";
 import { registerSessionTools } from "./sessions/index.js";
@@ -310,6 +310,8 @@ beforeAll(() => {
   registerMemoryTools(registry, memoryOptions(true));
   // Runtime registers it beside the memory tools, always on (runtime-tool-catalog).
   registry.register(buildSessionsSearchTool({ source: { searchTranscripts: unexpected, listSearchableChatLines: unexpected } }));
+  // Runtime registers it beside the memory tools, always on (runtime-tool-catalog, ATO-2261).
+  registry.register(buildConversationHistoryTool({ source: { load: unexpected } }));
   // Runtime registers it when the My files index opens (runtime-tool-catalog).
   registry.register(buildFilesSearchTool({ index: { search: async () => unexpected(), listFolders: unexpected, status: unexpected } }));
   registerTaskTools(registry, taskOptions(true));
@@ -355,7 +357,7 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(123);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(124);
     expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(DEFAULT_TOOL_DESCRIPTORS.length);
     expect(registry.list()).toHaveLength(registry.registrations.length);
     for (const definition of registry.registrations) {

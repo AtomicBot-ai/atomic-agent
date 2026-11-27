@@ -679,6 +679,10 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     }),
   ],
   [
+    "conversation.history",
+    obj({ query: stringSchema, limit: numberSchema, from: numberSchema, count: numberSchema }),
+  ],
+  [
     "files.search",
     obj({ query: stringSchema, folder: stringSchema, topK: numberSchema }, ["query"]),
   ],
