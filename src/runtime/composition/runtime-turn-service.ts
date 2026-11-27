@@ -44,6 +44,7 @@ import { localFirstSessionSize } from "./local-first-fit.js";
 import { localFirstTurnPolicy, type LocalFirstEscalation, type LocalFirstTurnPolicy } from "./local-first-escalation.js";
 import { continueOnStopHooks, startTurnHooks, subagentStopHooks } from "./runtime-session-hooks.js";
 import type { SessionHookEngine } from "../../hooks/session-hook-engine.js";
+import type { PluginMonitorStarter } from "./runtime-plugin-monitors.js";
 import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
 import { surfaceShowsQuestions, withAskUserVisibility } from "../../tools/conversation/ask-user-surface.js";
 import { withBoardCardVisibility } from "../../tools/tasks/board-card-visibility.js";
@@ -152,6 +153,8 @@ export interface RuntimeTurnDependencies {
   experienceReview?: Pick<ReturnType<typeof createExperienceReviewer>, "maybeReview">;
   /** SessionStart / UserPromptSubmit / Stop hooks (ATO-2198), SubagentStop / SessionEnd (ATO-2462). Absent: none run. */
   sessionHooks?: Pick<SessionHookEngine, "beforeTurn" | "afterTurn"> & Partial<Pick<SessionHookEngine, "afterSubagentTurn" | "endSession">>;
+  /** Plugin monitors start with a session's turn (ATO-2438). Absent: none start. */
+  pluginMonitors?: PluginMonitorStarter;
   /**
    * `isStopping` (ATO-1688): the host has begun to stop. Omitted, the
    * shutdown itself is the only sign (`isShutdown`).
@@ -575,6 +578,8 @@ export function createRuntimeTurnService(
       ? null
       : deps.sessionHooks ?? null;
     const hookContext = await startTurnHooks(sessionHooks, session, userMessage, runOptions.signal);
+    // ATO-2438: same rule as the hooks, so a refused prompt starts nothing and workers start none.
+    if (runOptions.origin !== "subagent" && runOptions.origin !== "fusion") deps.pluginMonitors?.startFor(session);
     // The model router (ATO-483), once per turn and before anything reads
     // the route: a rule's provider goes first in this session's fallback
     // chain for the turn, so every step starts on it and a failure falls

@@ -13,7 +13,7 @@ Owner: src/plugins/
 
 ## Manifest fields read
 
-`name` (required, kebab-case), `version`, `description`, `author` (string or object), `homepage`, `repository`, `license`, `keywords`, and the path overrides `skills`, `commands`, `agents` (string or list), `hooks` and `mcpServers` (path or inline object). `outputStyles`, `lspServers`, `monitors`, `bin` and `settings` are recognised and skipped with a note.
+`name` (required, kebab-case), `version`, `description`, `author` (string or object), `homepage`, `repository`, `license`, `keywords`, and the path overrides `skills`, `commands`, `agents` (string or list), `hooks` and `mcpServers` (path or inline object), and `experimental.monitors` (a path or the array; a top-level `monitors` is read too). `outputStyles`, `lspServers`, `bin` and `settings` are recognised and skipped with a note.
 
 ## What each part becomes
 
@@ -24,12 +24,19 @@ Owner: src/plugins/
 | Subagents | `agents/*.md` | Subagent profiles a Fusion task can name as `plugin:agent` |
 | Hooks | `hooks/hooks.json` | Path recorded; run by the hooks engine (ATO-493) |
 | MCP servers | `.mcp.json` or manifest `mcpServers` | MCP server `<plugin>-<server>`, started with the agent; local ones need code consent |
+| Monitors | `monitors/monitors.json` or manifest `experimental.monitors` | A background job of each chat with a monitor on it (see below); needs code consent |
 
 `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_DATA}`, `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` are expanded in MCP server entries. Other `${VAR}` references are left as written.
 
+## Monitors
+
+A monitor (ATO-2438, Claude Code's plugin monitors) is `{"name", "command", "description", "when"?, "until"?}`. `command` is a shell line; `${CLAUDE_PLUGIN_ROOT}` and the other plugin path variables are filled in (quote them, a path may hold spaces), nothing else is exported to it, and `${user_config.*}` is refused. `until` is our addition: a case-insensitive line pattern; without it every non-blank line counts. `when` is `"always"` (the default). `"on-skill-invoke:<skill>"` is not supported yet: such an entry is skipped with a note. An entry with any other key is skipped with a note, the rest of the plugin still loads.
+
+With code allowed, each monitor starts with a chat's first message in this process (`runtime/composition/runtime-plugin-monitors.ts`): in the chat's folder, with the filtered environment `os.shell.run` uses, as a kept background job of that chat with a monitor on it. It is not asked about, like a hook. Its lines reach the agent as monitor notices, with the same batching, cooldown and limits as a monitor the agent sets ([shell jobs](../../tools/os/shell/README.md)); the notice names the plugin. It shows in the agent's `jobs`, in `/ps`, and `/stop` or a `kill` ends it; it then stays stopped for that chat until Atomic Agent restarts, except after the chat's own end. It never pushes out the agent's jobs: with `tools.shell.maxJobs` already running it waits for the next message. Turning the plugin or the monitor (`monitor:<name>`) off, or stopping its code, stops it at that chat's next message. Monitors do not start for subagent or Fusion workers, nor in a channel's guest session (its turns carry the guest limits; a monitor's wake would not).
+
 ## Code consent
 
-Skills (as text), commands, subagent profiles and remote MCP servers without keys work right after install. Parts that start programs on the computer (local stdio MCP servers, hooks, skill scripts) and MCP servers that read the user's keys stay off until the user runs `atomic-agent plugin allow-code <name>` or installs with `--accept-code`. The consent is stored as `runsCodeAccepted` and dropped on every update.
+Skills (as text), commands, subagent profiles and remote MCP servers without keys work right after install. Parts that start programs on the computer (local stdio MCP servers, hooks, monitors, skill scripts) and MCP servers that read the user's keys stay off until the user runs `atomic-agent plugin allow-code <name>` or installs with `--accept-code`. The consent is stored as `runsCodeAccepted` and dropped on every update.
 
 `skill.run_script` refuses scripts from a plugin skill until that consent is given (the per-call approval still applies after it).
 

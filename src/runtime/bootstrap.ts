@@ -19,6 +19,7 @@ import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition
 import { createLocalFirstEscalation, withLocalFirstWatch } from "./composition/local-first-escalation.js";
 import { createIncognitoSessions } from "./incognito-sessions.js";
 import { installShellMonitorWake } from "./composition/runtime-shell-monitor-wake.js";
+import { createPluginMonitorStarter } from "./composition/runtime-plugin-monitors.js";
 import { createRuntimeKeepAwake, createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
 import { connectRuntimeChannels } from "./composition/runtime-channels.js";
 import { createRuntimeImapTrigger } from "./composition/runtime-imap-trigger.js";
@@ -1007,6 +1008,9 @@ export async function createAgentRuntime(
     emitEvent: emitAgentLoopEventFor,
     experienceReview,
     sessionHooks,
+    pluginMonitors: createPluginMonitorStarter({
+      shellJobs, stateDir: config.paths.stateDir, logger, envPassthrough: () => getConfig().tools.shell.envPassthrough,
+    }),
   });
   const { steer, controlGoal } = turnService;
   const runQueuedTurn = holdWhileRunning(keepAwake, turnService.runTurn);

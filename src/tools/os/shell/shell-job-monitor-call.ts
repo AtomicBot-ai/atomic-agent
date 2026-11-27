@@ -10,6 +10,7 @@ import {
   MONITOR_MAX_WAKES,
 } from "./shell-job-monitor.js";
 import { hasUntil } from "./shell-job-until.js";
+import type { ShellJobRecord, ShellJobRegistry } from "./shell-jobs.js";
 import { compileWatchPattern } from "./shell-job-watch.js";
 
 /**
@@ -52,18 +53,7 @@ export function runShellMonitor(
     );
   }
   const until = rawUntil as string;
-  ctx.jobs.markKeep(record);
-  const monitor = new JobMonitor({
-    sessionId: ctx.sessionId,
-    jobId: id,
-    command,
-    until,
-    pattern: compiled.pattern,
-    job: record.job,
-    deliver: (wake) => ctx.jobs.wake.deliver(wake),
-    stillOwned: () => ctx.jobs.get(ctx.sessionId, id) === record && record.state !== "killed",
-  });
-  ctx.jobs.setMonitor(record, monitor);
+  attachJobMonitor(ctx.jobs, record, { command, until, pattern: compiled.pattern });
   const cooldownSeconds = Math.round(MONITOR_COOLDOWN_MS / 1000);
   return ok(
     [
@@ -73,6 +63,33 @@ export function runShellMonitor(
     ].join("\n"),
     { jobId: id, monitor: { until } },
   );
+}
+
+/**
+ * Put a monitor on a running record of the registry and keep the job.
+ * Shared by the model's `{"monitor": id}` and plugin monitors
+ * (`shell-declared-monitor.ts`), so both end the same way.
+ */
+export function attachJobMonitor(
+  jobs: ShellJobRegistry,
+  record: ShellJobRecord,
+  spec: { command: string; until: string; pattern: RegExp; origin?: string; everyLine?: boolean },
+): JobMonitor {
+  jobs.markKeep(record);
+  const monitor = new JobMonitor({
+    sessionId: record.sessionId,
+    jobId: record.id,
+    command: spec.command,
+    until: spec.until,
+    pattern: spec.pattern,
+    ...(spec.origin !== undefined ? { origin: spec.origin } : {}),
+    ...(spec.everyLine === true ? { everyLine: true } : {}),
+    job: record.job,
+    deliver: (wake) => jobs.wake.deliver(wake),
+    stillOwned: () => jobs.get(record.sessionId, record.id) === record && record.state !== "killed",
+  });
+  jobs.setMonitor(record, monitor);
+  return monitor;
 }
 
 /** Every line of these short results is the point: none may be cut. */

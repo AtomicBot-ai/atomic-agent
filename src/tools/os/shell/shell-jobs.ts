@@ -38,7 +38,9 @@ export type ShellJobStopReason =
   | "ceiling"
   | "shutdown"
   /** The person, from the TUI's `/stop` (ATO-2437). */
-  | "user";
+  | "user"
+  /** A plugin monitor whose plugin was turned off or lost its consent to run code (ATO-2438). */
+  | "plugin_off";
 
 export interface ShellJobRecord {
   /** Per session, from 1 — what the model quotes back. */

@@ -44,6 +44,13 @@ export interface JobMonitorOptions {
   command: string;
   /** The pattern as the model wrote it. */
   until: string;
+  /**
+   * Who set the monitor, for the notice: "the monitor you set" by
+   * default; a plugin's monitor names the plugin (ATO-2438).
+   */
+  origin?: string;
+  /** Every non-blank line counts (a plugin monitor with no pattern): the notice names no pattern. */
+  everyLine?: boolean;
   pattern: RegExp;
   job: CommandJob;
   deliver(wake: MonitorWake): boolean;
@@ -193,7 +200,7 @@ export class JobMonitor {
     const lines: string[] = [];
     if (count > 0) {
       lines.push(
-        `[Monitor on background job ${jobId} (${command}): ${count} new line${count === 1 ? "" : "s"} matched ${JSON.stringify(until)}.]`,
+        `[Monitor on background job ${jobId} (${command}): ${count} new line${count === 1 ? "" : "s"}${this.options.everyLine === true ? "" : ` matched ${JSON.stringify(until)}`}.]`,
       );
       const shown = this.held.slice(-MONITOR_LINES_SHOWN);
       for (const line of shown) {
@@ -208,7 +215,7 @@ export class JobMonitor {
       lines.push(`[Monitor on background job ${jobId} (${command}).]`);
     }
     lines.push(
-      "This is an automatic notice from the monitor you set, not a message from the user. Act on it if it matters for the task; otherwise answer in one short line.",
+      `This is an automatic notice from ${this.options.origin ?? "the monitor you set"}, not a message from the user. Act on it if it matters for the task; otherwise answer in one short line.`,
     );
     if (this.exitStatus !== null) {
       lines.push(`The job has exited (exit ${this.exitStatus}); the monitor is off. {"wait": ${jobId}} collects its output.`);
