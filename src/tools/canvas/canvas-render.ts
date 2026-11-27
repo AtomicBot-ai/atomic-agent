@@ -153,7 +153,9 @@ export function buildCanvasRenderTool(options: CanvasRenderToolOptions): ToolDef
   return {
     name: CANVAS_RENDER_TOOL,
     description:
-      "Draw a chart (bar, line, area, pie, table) from data, or save an HTML page you wrote, as a self-contained HTML file in the working folder that the chat shows as a canvas.",
+      "Draw a chart (bar, line, area, pie, table) from data, or save an HTML page you wrote, as a self-contained HTML file in the working folder that the chat shows as a canvas."
+      // ATO-2375: the desktop app's widget bridge (desktop/main/artifact-frame.ts).
+      + " In the desktop app a page can be a live widget: its script may call sendPrompt(text) to put a message in the user's box, and atomicWidget.state.get()/set(obj) to keep a small state.",
     readonly: false,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
       let args: Parsed;

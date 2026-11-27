@@ -462,7 +462,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     summary:
       "Show the user a chart or a page in the chat as a canvas: give `chart` (bar|line|area|pie|table) with `labels` and `series` [{ name, values }], or `html` you wrote. Saves a self-contained HTML file in the working folder and returns its path. Use it for dashboards, comparisons and any numbers the user would rather see than read.",
     argsSchema:
-      "{ title: string, chart?: 'bar' | 'line' | 'area' | 'pie' | 'table', labels?: string[] /* x axis or pie slices */, series?: [{ name: string, values: number[] /* one per label */ }] /* 1..8 */, values?: number[] /* one series, instead of series */, html?: string /* a page or fragment, instead of chart */, subtitle?: string, name?: string /* file name hint */ }",
+      "{ title: string, chart?: 'bar' | 'line' | 'area' | 'pie' | 'table', labels?: string[] /* x axis or pie slices */, series?: [{ name: string, values: number[] /* one per label */ }] /* 1..8 */, values?: number[] /* one series, instead of series */, html?: string /* a page or fragment, instead of chart; may be a live widget: in the desktop app its script can call sendPrompt(text) to put a message in the user's box and atomicWidget.state.get()/set(obj) to keep its state */, subtitle?: string, name?: string /* file name hint */ }",
     examples: [
       '{"title":"Revenue by quarter","chart":"bar","labels":["Q1","Q2","Q3","Q4"],"series":[{"name":"2025","values":[120,135,150,170]},{"name":"2026","values":[140,160,155,190]}]}',
       '{"title":"Disk usage","chart":"pie","labels":["Photos","Code","Other"],"values":[52,31,17]}',
