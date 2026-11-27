@@ -6,23 +6,22 @@
  * elsewhere in it are not read.
  *
  * The folder's own `.git/config` can name programs git runs. Every call
- * starts with GIT_SAFE_PREFIX (as src/runtime/project-instructions-git.ts
- * does): `core.fsmonitor=false` stops the index refresh from running a
- * configured fsmonitor hook, `--no-optional-locks` keeps a read from
- * writing the index. `--no-ext-diff --no-textconv` stop the configured
+ * starts with GIT_SAFE_PREFIX, the shared desktop list (git-safe-args.ts,
+ * ATO-2532: no fsmonitor, no hooks, no pager, no signature check, no
+ * index write). `--no-ext-diff --no-textconv` stop the configured
  * external diff and textconv programs.
  */
 
 import { execFile } from "node:child_process";
+
+import { gitSafeArgs } from "./git-safe-args.js";
 
 export const GIT_TIMEOUT_MS = 5_000;
 /** Most output kept from git before the message's own caps apply. */
 export const GIT_MAX_OUTPUT = 1024 * 1024;
 
 /** Global options in front of every git call made here. */
-export const GIT_SAFE_PREFIX: readonly string[] = [
-  "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
-];
+export const GIT_SAFE_PREFIX: readonly string[] = gitSafeArgs();
 
 export interface GitOutput {
   text: string;
