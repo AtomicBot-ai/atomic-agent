@@ -21,6 +21,8 @@ import {
 } from "../logbook/index.js";
 import { recipeToLink, renderRecipePrompt, STANDUP_RECIPE } from "../recipes/index.js";
 
+import { askYesNo, confirmClearAll } from "./logbook-clear-confirm.js";
+
 /**
  * `atomic-agent logbook ...` (ATO-2363): the switch and the reader for
  * the day journal. Writes only `<stateDir>/logbook/`; the capture loop
@@ -48,8 +50,8 @@ const HELP = [
   "  status [--json]                             On or off, last capture, what is kept",
   "  today | show <day> [--part morning|afternoon|evening] [--from HH:MM] [--to HH:MM] [--contains <words>]",
   "                                              Print the notes of a day",
-  "  clear --all | --day <day> [--from HH:MM --to HH:MM] | --before <day>",
-  "                                              Delete notes",
+  "  clear --all [--yes] | --day <day> [--from HH:MM --to HH:MM] | --before <day>",
+  "                                              Delete notes (--all asks first; --yes skips the question)",
   "  exclude add|remove <app> | exclude list     Apps never captured (name or bundle id)",
   "  standup [--day <day>]                       Print the standup recipe and its link",
   "",
@@ -62,6 +64,10 @@ export interface LogbookCommandDeps {
   platform?: NodeJS.Platform;
   write?: (text: string) => void;
   writeErr?: (text: string) => void;
+  /** Whether a person can answer a question (stdin and stdout are a terminal). */
+  isTty?: boolean;
+  /** Ask a yes/no question; resolves true on "y" or "yes". */
+  confirm?: (prompt: string) => Promise<boolean>;
 }
 
 class UsageError extends Error {}
@@ -79,6 +85,9 @@ export async function logbookCommand(args: string[], deps: LogbookCommandDeps = 
     now: deps.now ?? (() => new Date()),
     platform: deps.platform ?? process.platform,
     write,
+    writeErr,
+    isTty: deps.isTty ?? (process.stdin.isTTY === true && process.stdout.isTTY === true),
+    confirm: deps.confirm ?? askYesNo,
   };
   try {
     switch (sub) {
@@ -102,7 +111,7 @@ export async function logbookCommand(args: string[], deps: LogbookCommandDeps = 
       case "show":
         return show(env, rest);
       case "clear":
-        return clear(env, rest);
+        return await clear(env, rest);
       case "exclude":
         return exclude(env, rest);
       case "standup":
@@ -120,7 +129,15 @@ export async function logbookCommand(args: string[], deps: LogbookCommandDeps = 
   }
 }
 
-type Env = { stateDir: string; now: () => Date; platform: NodeJS.Platform; write: (text: string) => void };
+type Env = {
+  stateDir: string;
+  now: () => Date;
+  platform: NodeJS.Platform;
+  write: (text: string) => void;
+  writeErr: (text: string) => void;
+  isTty: boolean;
+  confirm: (prompt: string) => Promise<boolean>;
+};
 
 function option(args: readonly string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -203,7 +220,7 @@ function show(env: Env, args: readonly string[]): number {
   return 0;
 }
 
-function clear(env: Env, args: readonly string[]): number {
+async function clear(env: Env, args: readonly string[]): Promise<number> {
   const day = option(args, "--day");
   const before = option(args, "--before");
   const all = args.includes("--all");
@@ -217,6 +234,10 @@ function clear(env: Env, args: readonly string[]): number {
     const removed = clearLogbookRange(env.stateDir, key, from ? parseClock(from, "from") : 0, to ? parseClock(to, "to") : 24 * 60);
     env.write(`Deleted ${removed} note${removed === 1 ? "" : "s"} from ${key}.\n`);
     return 0;
+  }
+  if (all && !args.includes("--yes")) {
+    const stop = await confirmClearAll(env);
+    if (stop !== null) return stop;
   }
   const days = all
     ? clearLogbookDays(env.stateDir, { all: true })

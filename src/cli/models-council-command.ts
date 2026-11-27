@@ -26,6 +26,11 @@ const JUDGE_MAX_TOKENS = 2048;
 const USAGE =
   'usage: atomic-agent models council "<question>" --models <provider[:model]>,... [--judge <provider[:model]>] [--json]\n';
 
+/** Shown when fewer than two models were named: the council needs `--models` (ATO-2770). */
+const MODELS_HINT =
+  "A council compares two or more models. Name them with --models (a provider id, or <provider>:<model>), for example:\n" +
+  '  atomic-agent models council "<question>" --models openrouter:openai/gpt-5,openrouter:anthropic/claude-sonnet-4.5\n';
+
 /** What `--json` prints. */
 export interface CouncilReport {
   question: string;
@@ -111,7 +116,7 @@ export async function runModelsCouncil(
     if (members.length === 0) {
       writeErr("every model failed; nothing to judge\n");
     } else if (members.length === 1) {
-      writeErr("only one answer; nothing to compare\n");
+      writeErr(`only one answer; nothing to compare\n${memberSpecs.length < 2 ? MODELS_HINT : ""}`);
     } else {
       try {
         const reply = await judgeProvider.complete({

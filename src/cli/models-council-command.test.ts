@@ -136,6 +136,26 @@ describe("models council (ATO-2232)", () => {
     expect(h.out.join("")).not.toContain("Council summary");
   });
 
+  it("names --models with an example when no model list was given (ATO-2770)", async () => {
+    const h = harness({ or: model("Postgres", []) });
+    const code = await runModelsCouncil(["which db?"], h.deps);
+    expect(code).toBe(0);
+    expect(h.asked).toEqual([["or"]]);
+    const err = h.err.join("");
+    expect(err).toContain("only one answer; nothing to compare");
+    expect(err).toContain("Name them with --models");
+    expect(err).toMatch(/models council "<question>" --models \S+,\S+/);
+  });
+
+  it("does not repeat the --models hint when two models were named and one failed", async () => {
+    const down = fakeProvider("p", "native_tools", async () => {
+      throw new Error("401");
+    });
+    const h = harness({ "or:a": model("Postgres", []), "or:b": down });
+    await runModelsCouncil(["q", "--models", "or:a,or:b"], h.deps);
+    expect(h.err.join("")).not.toContain("Name them with --models");
+  });
+
   it("prints the answers and exits 1 when the judge fails", async () => {
     const h = harness({ "or:a": model("Postgres", [], new Error("rate limited")), "or:b": model("SQLite", []) });
     const code = await runModelsCouncil(["q", "--models", "or:a,or:b"], h.deps);

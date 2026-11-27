@@ -157,7 +157,7 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "export",
-    summary: "Save one chat as Markdown, HTML or Word (export <sessionId>|--last [--format md|html|docx])",
+    summary: "Save one chat as Markdown, HTML, Word or PDF (export <sessionId>|--last [--format md|html|docx|pdf])",
     run: exportCommand,
   },
   {
@@ -217,7 +217,7 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "logbook",
-    summary: "Day journal from screenshots, described by a local model only (start|stop|pause|status|today|clear|standup)",
+    summary: "Day journal from screenshots, described by a local model only; macOS only for now (start|stop|pause|status|today|clear|standup)",
     run: (args) => logbookCommand(args),
   },
   {
