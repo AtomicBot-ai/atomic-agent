@@ -28029,7 +28029,9 @@ async function llmEnsureModels() {
 async function llmFetchModels(p) {
   // ATO-2413: a deadline, a throw read as an error, and only the newest ask for this provider lands.
   const ask = LLMP.modelsAsk = (LLMP.modelsAsk || 0) + 1;
-  const res = await llmListAsk(() => BR.providerModels(p.id, p.kind || '', true), providerWord(p.id));
+  // A rejected ask still lands below as an error, so modelsBusy always clears.
+  const res = await llmListAsk(() => BR.providerModels(p.id, p.kind || '', true), providerWord(p.id))
+    .catch((err) => ({ok:false, error:'could not ask for the list: ' + ((err && err.message) || String(err))}));
   if (LLMP.modelsFor !== p.id || LLMP.modelsAsk !== ask) return;
   LLMP.modelsBusy = false;
   if (res.deadline && res.late) res.late.then((late) => {

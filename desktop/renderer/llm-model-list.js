@@ -51,7 +51,9 @@ function llmListDeadlineLine(word, ms) {
  *  - {ok:false, error} when the bridge threw.
  */
 function llmListAsk(ask, word, ms, timers) {
-  const t = timers || {setTimeout, clearTimeout};
+  /* The window's timers called bare: as methods of a plain object Chromium
+     throws "Illegal invocation", which rejected the ask before modelsBusy cleared. */
+  const t = timers || {setTimeout: (fn, delay) => setTimeout(fn, delay), clearTimeout: (id) => clearTimeout(id)};
   const limit = typeof ms === 'number' && ms > 0 ? ms : LLM_LIST_DEADLINE_MS;
   let answer;
   try { answer = Promise.resolve(ask()); }

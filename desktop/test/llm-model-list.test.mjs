@@ -56,6 +56,24 @@ test('a bridge that throws or rejects reads as an error, so the busy flag can cl
   assert.equal(empty.ok, false);
 });
 
+test('with no timers passed it calls the global timers bare, as the window needs', async () => {
+  // Chromium's timers throw "Illegal invocation" when called on another object; these do the same.
+  const realSet = globalThis.setTimeout, realClear = globalThis.clearTimeout;
+  const wrongThis = [];
+  function strictSet(fn, ms) { 'use strict'; if (this !== undefined && this !== globalThis) { wrongThis.push('setTimeout'); throw new TypeError('Illegal invocation'); } return realSet(fn, ms); }
+  function strictClear(id) { 'use strict'; if (this !== undefined && this !== globalThis) { wrongThis.push('clearTimeout'); throw new TypeError('Illegal invocation'); } return realClear(id); }
+  globalThis.setTimeout = strictSet;
+  globalThis.clearTimeout = strictClear;
+  try {
+    const res = await L.llmListAsk(() => Promise.resolve({ok: true, models: [{id: 'a'}]}), 'OpenRouter', 30000);
+    assert.deepEqual(res, {ok: true, models: [{id: 'a'}]});
+    assert.deepEqual(wrongThis, []);
+  } finally {
+    globalThis.setTimeout = realSet;
+    globalThis.clearTimeout = realClear;
+  }
+});
+
 test('the deadline defaults to 30 s', () => {
   assert.equal(L.LLM_LIST_DEADLINE_MS, 30000);
   assert.equal(L.llmListDeadlineLine('AI/ML API'), 'no answer from AI/ML API within 30 s');
@@ -93,6 +111,8 @@ test('renderer.js wires it: the ask has the deadline, a section with no ask star
   const fetchFn = src.slice(src.indexOf('async function llmFetchModels('), src.indexOf('function llmTakeModels('));
   assert.match(fetchFn, /llmListAsk\(\(\) => BR\.providerModels\(/);
   assert.doesNotMatch(fetchFn, /await BR\.providerModels\(/);
+  // A rejected ask turns into an error result, so the code below it clears modelsBusy.
+  assert.match(fetchFn, /providerWord\(p\.id\)\)\s*\.catch\(/);
   const section = src.slice(src.indexOf('function llmCloudSection(tab)'), src.indexOf('function llmCloudSectionStart('));
   assert.match(section, /llmListScheduleAsk\(llmEnsureModels\)/);
   const ensure = src.slice(src.indexOf('async function llmEnsureModels('), src.indexOf('async function llmFetchModels('));
