@@ -101,30 +101,14 @@ describe("localFirstTurnHead (ATO-2208)", () => {
   });
 
   it("keeps a session too long for the local window in the cloud (ATO-2537)", () => {
-    const window = (id: string) => (id === "local-llama" ? 16_384 : null);
-    expect(
-      localFirstTurnHead(input({ sessionPromptTokens: 100_000, localContextWindow: window })),
-    ).toEqual({ head: null, reason: "too-long" });
-    // Past the compaction trigger share of the window, not only past the window.
-    expect(
-      localFirstTurnHead(input({ sessionPromptTokens: 15_500, localContextWindow: window })),
-    ).toEqual({ head: null, reason: "too-long" });
-    expect(
-      localFirstTurnHead(input({ sessionPromptTokens: 15_500, localContextWindow: window, fitRatio: 0.99 })),
-    ).toEqual({ head: "local-llama" });
-    expect(
-      localFirstTurnHead(input({ sessionPromptTokens: 4_000, localContextWindow: window })),
-    ).toEqual({ head: "local-llama" });
+    expect(localFirstTurnHead(input({ tooLongFor: () => true })))
+      .toEqual({ head: null, reason: "too-long" });
+    expect(localFirstTurnHead(input({ tooLongFor: () => false })))
+      .toEqual({ head: "local-llama" });
   });
 
-  it("an unknown size or window keeps the local head", () => {
-    const window = () => 16_384;
-    expect(localFirstTurnHead(input({ sessionPromptTokens: null, localContextWindow: window })))
-      .toEqual({ head: "local-llama" });
-    expect(localFirstTurnHead(input({ sessionPromptTokens: 100_000 })))
-      .toEqual({ head: "local-llama" });
-    expect(localFirstTurnHead(input({ sessionPromptTokens: 100_000, localContextWindow: () => null })))
-      .toEqual({ head: "local-llama" });
+  it("no size check keeps the local head", () => {
+    expect(localFirstTurnHead(input())).toEqual({ head: "local-llama" });
   });
 
   it("takes a later local link whose window fits", () => {
@@ -136,8 +120,7 @@ describe("localFirstTurnHead (ATO-2208)", () => {
             { id: "local-small", local: true },
             { id: "local-big", local: true },
           ],
-          sessionPromptTokens: 60_000,
-          localContextWindow: (id) => (id === "local-big" ? 131_072 : 16_384),
+          tooLongFor: (id) => id === "local-small",
         }),
       ),
     ).toEqual({ head: "local-big" });
