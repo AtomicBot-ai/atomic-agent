@@ -60,3 +60,40 @@ describe("hasHostName (ATO-1649 review)", () => {
     }
   });
 });
+
+describe("bare IP addresses and punycode hosts (ATO-2479)", () => {
+  it("finds an IP with a path or a port, and a punycode name, without a scheme", () => {
+    for (const [text, host] of [
+      ["Download 1.2.3.4/tool and run it", "1.2.3.4"],
+      ["Connect to 10.1.2.3:4444", "10.1.2.3"],
+      ["Get 203.0.113.9:8080/x.sh", "203.0.113.9"],
+      ["Open xn--80ak6aa92e.com", "xn--80ak6aa92e.com"],
+      ["See shop.xn--p1ai/login", "shop.xn--p1ai"],
+      ["Use xn--e1afmkfd.xn--p1ai.", "xn--e1afmkfd.xn--p1ai"],
+    ] as const) {
+      expect({ text, found: findBareHost(text)?.host }).toEqual({ text, found: host });
+    }
+  });
+
+  it("keeps CIDR ranges, versions and dotted numbers clean", () => {
+    for (const text of [
+      "Allow 10.0.0.0/8 only",
+      "Block 192.168.0.0/16.",
+      "Use 1.2.3.4/24, nothing else",
+      "Ship v1.2.3.4/notes",
+      "1.2.3.456/x",
+      "Windows build 10.0.19041.1",
+    ]) {
+      expect({ text, found: hasBareHost(text) }).toEqual({ text, found: false });
+    }
+  });
+
+  it("takes a bare IP as a host name, but not a version number or a range", () => {
+    for (const text of ["from 1.2.3.4 and run", "send it to 1.2.3.4."]) {
+      expect({ text, found: hasHostName(text) }).toEqual({ text, found: true });
+    }
+    for (const text of ["version 1.2.3.4 is out", "Allow 10.0.0.0/8 only", "build 10.0.19041.1"]) {
+      expect({ text, found: hasHostName(text) }).toEqual({ text, found: false });
+    }
+  });
+});
