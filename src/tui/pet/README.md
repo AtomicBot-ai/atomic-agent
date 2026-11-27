@@ -11,8 +11,8 @@ Read the inherited [TUI instructions](../AGENTS.md) and [interface contract](../
 
 ## Ownership and entry points
 
-- [pet-machine.ts](pet-machine.ts): the state machine, the desktop pet's (`desktop/main/pet-state.ts`, ATO-2391) kept twice because the desktop build cannot import `src/`. [pet-machine.fixture.json](pet-machine.fixture.json) is the table of cases both suites replay, so the two cannot drift apart unseen.
-- [pet-inputs.ts](pet-inputs.ts): what the machine reads from `TuiState` (status, the pending approval, tool calls in flight, the newest `runHistory` entry) and `PetTuiDriver`, one machine per chip.
+- [pet-machine.ts](pet-machine.ts): the state machine, the desktop pet's (`desktop/main/pet-state.ts`, ATO-2391) kept twice because the desktop build cannot import `src/`. [pet-machine.fixture.json](pet-machine.fixture.json) is the table of cases both suites replay, so the two cannot drift apart unseen (the desktop half lands with the desktop pet PR).
+- [pet-inputs.ts](pet-inputs.ts): what the machine reads from `TuiState` (status, the pending approval, tool calls in flight other than the turn's own `reply`/`finish`, the newest `runHistory` entry) and `PetTuiDriver`, one machine per chip.
 - [pet-sprite.ts](pet-sprite.ts): the frames, plain ASCII so conhost and every font draw them; only active states move, so a resting pet never redraws the TUI.
 - [pet-chip.tsx](pet-chip.tsx): the chip the [status bar](../components/status-bar.tsx) mounts while `TuiState.pet` is on.
 
