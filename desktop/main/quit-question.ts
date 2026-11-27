@@ -163,12 +163,15 @@ export async function sampleAgentBusy(probe: AgentBusyProbe, ms: number = QUIT_P
  * invent background work.
  */
 export function backgroundQuitWork(windowChats: number, sample: AgentBusySample): { tasks: number; background: number; named?: NamedQuitWork[] } {
-  const tasks = count(sample.tasks ?? 0);
   if (sample.origins) {
     // ATO-2519: the agent named each turn; no arithmetic, no guessing the channel.
+    // Scheduler turns are counted as tasks from /api/tasks; when that probe gave no
+    // answer, they are counted here instead, so a running task still asks.
+    const tasks = sample.tasks === null ? sample.origins.filter((b) => b.origin === "scheduler").length : count(sample.tasks);
     const named = namedBackgroundWork(count(windowChats), sample.origins);
     return { tasks, background: named.reduce((sum, w) => sum + w.n, 0), named };
   }
+  const tasks = count(sample.tasks ?? 0);
   const busy = count(sample.busyTurns ?? 0);
   return { tasks, background: Math.max(0, busy - count(windowChats) - tasks) };
 }

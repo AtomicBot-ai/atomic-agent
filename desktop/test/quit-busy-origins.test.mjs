@@ -94,3 +94,12 @@ test("sampleAgentBusy with a health probe reads busyTurns and busyTurnOrigins fr
   const never = () => new Promise(() => {});
   assert.deepEqual(await sampleAgentBusy({ tasks: async () => null, health: never }, 40), { tasks: null, busyTurns: null, origins: null });
 });
+
+test("a task still asks when /api/tasks gave no answer: scheduler origins count as tasks then", () => {
+  const work = backgroundQuitWork(0, { tasks: null, busyTurns: 1, origins: o("scheduler") });
+  assert.equal(work.tasks, 1);
+  assert.notEqual(quitQuestion({ queued: 0, working: 0, ...work }), null, "the quit asks before it stops the task");
+  // With an answer from /api/tasks the scheduler turn is not counted twice.
+  assert.equal(backgroundQuitWork(0, { tasks: 1, busyTurns: 1, origins: o("scheduler") }).tasks, 1);
+  assert.equal(backgroundQuitWork(0, { tasks: 0, busyTurns: 1, origins: o("scheduler") }).tasks, 0);
+});
