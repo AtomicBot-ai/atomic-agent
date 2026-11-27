@@ -160,10 +160,10 @@ test("Edit with no file changes has no file section and one button, conversation
   assert.deepEqual(calls.at(-1), ["submit", "fixed text"]);
 });
 
-test("Roll back here keeps one button and leaves the files flag to the agent", async () => {
+test("Roll back here with no file changes keeps one button and leaves the files flag to the agent", async () => {
   const calls = [];
   fakeWindow(calls);
-  startEdit(FILES_PREVIEW);
+  startEdit(NO_FILES_PREVIEW);
   R.REWIND.mode = "back";
   assert.deepEqual(footActs(R.rewindSheetHTML()), [["rewind:go", "Roll back"]]);
   await R.rewindAct("go");
@@ -174,8 +174,8 @@ test("only a rollback passes the files flag on to the agent", () => {
   assert.deepEqual(M.rewindRequestBody(0, "x", false), { priorQuestions: 0, expectText: "x", files: false });
   assert.deepEqual(M.rewindRequestBody(0, "x", true), { priorQuestions: 0, expectText: "x", files: true });
   assert.deepEqual(M.rewindRequestBody(0, "x", "no"), { priorQuestions: 0, expectText: "x" });
-  assert.match(src("../main/chat-rewind-ipc.ts"), /route === "rewind" \? files : undefined/);
-  assert.match(src("../preload/preload.ts"), /"agent:rewind", \{ sessionId, priorQuestions, expectText, files \}/);
+  assert.match(src("../main/chat-rewind-ipc.ts"), /rollback \? files : undefined/);
+  assert.match(src("../preload/preload.ts"), /"agent:rewind", \{ sessionId, priorQuestions, expectText, files, conversation \}/);
 });
 
 /* ---------- wiring ---------- */
