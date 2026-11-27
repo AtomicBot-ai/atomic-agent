@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  hasMergeConflict,
   parseCheckRuns,
   parseCommitStatuses,
   parsePullRequestHead,
@@ -137,5 +138,17 @@ describe("parsePullRequestHead", () => {
       base: { ref: "main" },
     });
     expect(pr.headRepo).toBe("");
+  });
+
+  it("reads GitHub's merge check: a conflict, a clean PR and one still computing (ATO-2516)", () => {
+    const base = { number: 1, head: { ref: "x", sha: "s" }, base: { ref: "main" } };
+    const dirty = parsePullRequestHead({ ...base, mergeable: false, mergeable_state: "dirty" });
+    expect(dirty).toMatchObject({ mergeable: false, mergeableState: "dirty" });
+    expect(hasMergeConflict(dirty)).toBe(true);
+    const clean = parsePullRequestHead({ ...base, mergeable: true, mergeable_state: "clean" });
+    expect(hasMergeConflict(clean)).toBe(false);
+    const computing = parsePullRequestHead(base);
+    expect(computing).toMatchObject({ mergeable: null, mergeableState: "unknown" });
+    expect(hasMergeConflict(computing)).toBe(false);
   });
 });

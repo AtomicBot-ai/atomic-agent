@@ -44,6 +44,18 @@ export interface PullRequestHead {
   /** `owner/name` the head branch lives in; differs from the base repo on a fork PR. */
   headRepo: string;
   baseRef: string;
+  /**
+   * GitHub's merge check against the base (ATO-2516). `null` while
+   * GitHub is still computing it (the first read after a push often is).
+   */
+  mergeable: boolean | null;
+  /** `mergeable_state`: `dirty` means a merge conflict; `unknown` when absent. */
+  mergeableState: string;
+}
+
+/** True when GitHub says the PR cannot merge into its base without a conflict. */
+export function hasMergeConflict(pr: Pick<PullRequestHead, "mergeable" | "mergeableState">): boolean {
+  return pr.mergeable === false || pr.mergeableState === "dirty";
 }
 
 /** Conclusions that mean "this check is red". */
@@ -78,6 +90,8 @@ export function parsePullRequestHead(raw: unknown): PullRequestHead {
     // A deleted fork has `repo: null`; an empty name never matches the base.
     headRepo: typeof headRepo?.full_name === "string" ? headRepo.full_name : "",
     baseRef: base.ref,
+    mergeable: typeof rec.mergeable === "boolean" ? rec.mergeable : null,
+    mergeableState: typeof rec.mergeable_state === "string" ? rec.mergeable_state : "unknown",
   };
 }
 

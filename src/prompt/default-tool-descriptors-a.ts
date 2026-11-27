@@ -269,16 +269,16 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "github.pr.checks",
     summary:
-      "CI verdict of a pull request's head: failing and pending checks plus the log tail of failing GitHub Actions jobs. Read-only.",
+      "A pull request's fix status: CI verdict, failing and pending checks, the log tail of failing GitHub Actions jobs, merge conflict with the base, and review feedback from the repo's team. Read-only.",
     argsSchema:
-      "{ number: number, repo?: string /* owner/name */, logs?: boolean }",
+      "{ number: number, repo?: string /* owner/name */, logs?: boolean, reviews?: boolean, since?: string /* ISO time */ }",
     tier: "rare",
   },
   {
     name: "github.pr.autofix",
     summary:
-      "Opt-in CI autofix for one PR: `enable` (asks the user), `prepare` (worktree of the PR branch), `push` (that worktree's commit to the PR head only, never forced, stops after maxAttempts), `status`, `disable`. May require approval.",
-    argsSchema: `{ action: "status" | "enable" | "disable" | "prepare" | "push", number: number, repo?: string /* owner/name */, maxAttempts?: number }`,
+      "Opt-in PR autofix (CI, conflicts, review comments) for one PR: `enable` (asks the user), `prepare` (worktree of the PR branch), `merge-base` (merge the base in), `push` (that worktree's commit to the PR head only, never forced, stops after maxAttempts), `watch` / `unwatch` (background check that starts a fix round only when needed), `status`, `disable`. May require approval.",
+    argsSchema: `{ action: "status" | "enable" | "disable" | "prepare" | "merge-base" | "push" | "watch" | "unwatch", number: number, repo?: string /* owner/name */, maxAttempts?: number, everyMinutes?: number, notify?: "telegram" | "push" }`,
     tier: "rare",
   },
   {
