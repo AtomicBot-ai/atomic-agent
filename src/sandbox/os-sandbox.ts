@@ -535,7 +535,9 @@ function bwrapArgs(
   command: string,
   args: readonly string[],
 ): string[] {
-  const out = ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc"];
+  // A private pid namespace: `/proc` shows only the sandbox's own
+  // processes, so `/proc/<host pid>/root` cannot reach the hidden paths.
+  const out = ["--ro-bind", "/", "/", "--dev", "/dev", "--unshare-pid", "--proc", "/proc"];
   for (const dir of policy.writableRoots) {
     // A cache folder that does not exist yet cannot be bound; skipped.
     if (existsSync(dir)) out.push("--bind", dir, dir);

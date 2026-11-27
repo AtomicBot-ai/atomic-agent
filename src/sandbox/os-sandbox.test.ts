@@ -240,6 +240,18 @@ describe("wrapWithOsSandbox", () => {
     expect(w.args.slice(-4)).toEqual(["--", "/bin/sh", "-c", "ls"]);
   });
 
+  it("gives the Linux sandbox its own pid namespace before /proc is mounted", () => {
+    const w = wrapWithOsSandbox("/bin/sh", ["-c", "ls"], policy(), {
+      platform: "linux",
+      bwrap: "/usr/bin/bwrap",
+    });
+    if (!w.ok) throw new Error(w.reason);
+    const pid = w.args.indexOf("--unshare-pid");
+    expect(pid).toBeGreaterThan(-1);
+    expect(pid).toBeLessThan(w.args.indexOf("--proc"));
+    expect(pid).toBeLessThan(w.args.indexOf("--"));
+  });
+
   it("covers a secret file with /dev/null and a folder with tmpfs on Linux", () => {
     const home = mkdtempSync(join(tmpdir(), "atomic-sbx-home-"));
     try {
