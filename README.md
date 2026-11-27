@@ -374,6 +374,8 @@ Full TUI guide: [TUI.md](docs/user/tui.md).
 
 Keep the agent running while your laptop is closed: [run it on your own server](docs/user/self-host.md) (Docker or `atag serve --no-parent-exit`).
 
+Already use Ollama, LM Studio or the Llama app? `atomic-agent local-servers` (or `/servers`) lists, starts, loads, unloads, downloads and deletes their models, and `adopt` runs one on Atomic Agent's engine without a new download: [local-servers.md](docs/user/local-servers.md), including why the model needs at least 32K of context.
+
 </details>
 
 <details>
