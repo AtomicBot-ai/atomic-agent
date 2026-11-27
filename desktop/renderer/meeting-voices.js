@@ -33,7 +33,8 @@ function mtgVoicesHTML() {
   const phase = typeof MTG !== 'undefined' ? MTG.phase : '';
   const text = meetingVoicesText(MTGV, phase);
   if (!text) return '';
-  const skip = MTGV.download && phase !== 'finishing' ? '<button class="btn sm" data-mtgv="skip">Skip</button>' : '';
+  // Skip also in 'finishing': Make notes waits for this download, Skip lets it go on with Me / Them.
+  const skip = MTGV.download ? '<button class="btn sm" data-mtgv="skip">Skip</button>' : '';
   return '<p class="mtgsys">' + esc(text) + skip + '</p>';
 }
 
@@ -78,5 +79,5 @@ if (typeof document !== 'undefined') {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {meetingDownloadText, meetingVoicesText};
+  module.exports = {meetingDownloadText, meetingVoicesText, mtgVoicesHTML, MTGV};
 }

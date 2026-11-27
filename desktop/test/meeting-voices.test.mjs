@@ -70,6 +70,22 @@ test("a failed or skipped download: no spans, and the panel hears why", async ()
   assert.equal(spansOf({ type: "error" }), null);
 });
 
+test("Skip during Make notes: diarize stops waiting for the download at once", { timeout: 5000 }, async () => {
+  // An install that never ends on its own (a slow network, a CLI that does not stop on abort).
+  const cli = async (args, onLine) => {
+    if (args[1] === "status") { onLine(JSON.stringify({ type: "status", installed: false, supported: true, downloadBytes: 1e6 })); return { ok: true }; }
+    if (args[1] === "install") return new Promise(() => {});
+    return { ok: false };
+  };
+  const v = new MeetingVoices({ cli, enabled: () => true, emit: () => {} });
+  assert.equal(await v.prepare(), true);
+  assert.equal(v.downloading, true);
+  const waiting = v.diarize("/t/x.wav", () => {}, 60_000);
+  await new Promise((r) => setTimeout(r, 20));
+  v.cancel();
+  assert.equal(await waiting, null, "Make notes goes on with Me / Them");
+});
+
 test("the store keeps a channel whole as a WAV whose sizes are set before the diarizer reads it", () => {
   const store = new MeetingStore(() => join(base, `s-${++n}`));
   const meta = store.create(Date.now(), "en-US");
