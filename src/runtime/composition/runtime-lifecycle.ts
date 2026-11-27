@@ -63,7 +63,16 @@ export interface RuntimeLifecycleResources {
    * sends what is queued, bounded. Never rejects.
    */
   readonly traceExport?: { shutdown(): Promise<void> } | null;
+  /** SessionEnd hooks for the sessions still open (ATO-2462); waited on for at most `SESSION_END_HOOKS_GRACE_MS`. */
+  readonly sessionHooks?: { endAll(): Promise<void> } | null;
 }
+
+/**
+ * How long shutdown waits for SessionEnd hooks, like Claude Code's 1.5 s
+ * default for them: a slow hook must not hold the quit (the desktop gives
+ * the whole teardown 4 s).
+ */
+export const SESSION_END_HOOKS_GRACE_MS = 1_500;
 
 /** Owns shutdown state and the existing ordered teardown, including its bounded grace. */
 export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
@@ -116,6 +125,20 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
     // own end before the store closes (below), or that throws and ends
     // through `releaseTurn`, replaces it with what really happened.
     releaseTurnsInterrupted({ keepMarks: true });
+    // SessionEnd hooks (ATO-2462), bounded: they inform, they never hold the quit.
+    if (resources.sessionHooks) {
+      let grace: NodeJS.Timeout | undefined;
+      await Promise.race([
+        resources.sessionHooks.endAll().catch((err: unknown) => {
+          logger.warn("SessionEnd hooks failed", { error: err instanceof Error ? err.message : String(err) });
+        }),
+        new Promise<void>((done) => {
+          grace = setTimeout(done, SESSION_END_HOOKS_GRACE_MS);
+          grace.unref?.();
+        }),
+      ]);
+      clearTimeout(grace);
+    }
     // Stop task ingress and abort every running task while both stores remain
     // open. This covers scheduler, run-on-create and explicit run requests.
     const taskRunsStopped = resources.taskRunner

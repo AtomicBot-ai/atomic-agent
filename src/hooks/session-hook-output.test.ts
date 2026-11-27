@@ -46,4 +46,24 @@ describe("session hook output", () => {
   it("any block wins when several hooks ran; contexts are joined", () => {
     expect(combineSessionVerdicts([{ context: "a" }, { block: "b" }, { context: "c" }])).toEqual({ block: "b", context: "a\nc" });
   });
+  it("PermissionRequest exit 2 and a deny decision refuse; an allow is not honoured (ATO-2462)", () => {
+    expect(interpretSessionHookRun("PermissionRequest", hook, run({ exitCode: 2, stderr: "no pushes to main" }))).toEqual({ block: "no pushes to main" });
+    const deny = JSON.stringify({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "deny", message: "prod is frozen" } } });
+    expect(interpretSessionHookRun("PermissionRequest", hook, run({ stdout: deny }))).toEqual({ block: "prod is frozen" });
+    const allow = JSON.stringify({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } } });
+    expect(interpretSessionHookRun("PermissionRequest", hook, run({ stdout: allow }))).toEqual({});
+  });
+
+  it("SubagentStop exit 2 and decision block keep the worker going, like Stop", () => {
+    expect(interpretSessionHookRun("SubagentStop", hook, run({ exitCode: 2, stderr: "tests are red" }))).toEqual({ block: "tests are red" });
+    const json = JSON.stringify({ decision: "block", reason: "write the summary first" });
+    expect(interpretSessionHookRun("SubagentStop", hook, run({ stdout: json }))).toEqual({ block: "write the summary first" });
+  });
+
+  it("SessionEnd, FileChanged and Notification only observe: exit 2 is an error, stdout is not context", () => {
+    for (const event of ["SessionEnd", "FileChanged", "Notification"] as const) {
+      expect(interpretSessionHookRun(event, hook, run({ exitCode: 2, stderr: "x" })).block).toBeUndefined();
+      expect(interpretSessionHookRun(event, hook, run({ stdout: "hello" }))).toEqual({});
+    }
+  });
 });

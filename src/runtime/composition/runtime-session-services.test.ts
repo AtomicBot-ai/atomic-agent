@@ -93,6 +93,21 @@ describe("runtime session phases", () => {
     expect(events).toEqual(["trace:one", "shell:one", "outputs:one", "store:one"]);
   });
 
+  it("delete wrapper tells the SessionEnd hooks after the row is gone (ATO-2462)", () => {
+    const events: string[] = [];
+    const store = { delete(id: string) { events.push(`store:${id}`); } };
+    installRuntimeSessionDelete(
+      store,
+      () => undefined,
+      { endSession: () => [] },
+      undefined,
+      undefined,
+      (id) => { events.push(`hooks:${id}`); },
+    );
+    store.delete("one");
+    expect(events).toEqual(["store:one", "hooks:one"]);
+  });
+
   it("delete wrapper removes the chat's file checkpoints with it (ATO-1501)", async () => {
     const root = join(dir, "file-checkpoints");
     const checkpoints = new FileCheckpointStore(root);
