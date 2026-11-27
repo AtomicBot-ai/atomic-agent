@@ -119,6 +119,7 @@ import {
   type LoraAdapter,
 } from "./lora-adapter.js";
 import { noteReleaseTimeout, waitForProcessRelease } from "./process-release.js";
+import { dropNonEnginePid } from "./engine-pid-identity.js";
 import {
   buildDaemonEnv,
   resolveManagedServerApiKey,
@@ -1823,6 +1824,8 @@ export async function stopDaemon(
     throw new ForeignDaemonError(pid);
   }
 
+  // A reused pid is not ours to signal (ATO-2766).
+  if (await dropNonEnginePid(pid, pidPath, resolveLogFilePath(dataDir))) return;
   const timeoutMs = opts?.timeoutMs ?? 3000;
   if (process.platform === "win32") {
     try {
@@ -2162,6 +2165,7 @@ export async function stopEmbeddingDaemon(
     throw new ForeignDaemonError(pid);
   }
 
+  if (await dropNonEnginePid(pid, pidPath, resolveEmbeddingLogFilePath(dataDir))) return;
   const timeoutMs = opts?.timeoutMs ?? 3000;
   if (process.platform === "win32") {
     try {
