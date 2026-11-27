@@ -265,7 +265,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
   {
     name: "tasks.block",
     summary:
-      "You cannot go on without a person (missing access, a decision, broken input): move your task's board card to Blocked with the reason. It is not run again until a person moves it on.",
+      "You cannot go on without a person (missing access, a decision, broken input): move your task's board card to Blocked with the reason. It is not run again until a person runs or resumes it.",
     argsSchema: "{ reason: string /* max 2000 chars */ }",
     examples: ['{"reason":"The API key in config is rejected; I need a new one."}'],
   },
