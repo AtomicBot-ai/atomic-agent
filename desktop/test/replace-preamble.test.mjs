@@ -58,6 +58,31 @@ test("a lead-in that is the selection's own first line stays; a model's own one 
   assert.equal(strip("Here is the updated schedule:\nMon 9am", opts(null)), "Mon 9am");
 });
 
+test("the selection's own lead-in stays after the rewrite fixed a typo in it", () => {
+  const opts = (selection) => ({ selection });
+  // Round-2 review case: "udpated" fixed to "updated" by the model.
+  assert.equal(
+    strip("Here is the updated schedule:\nMon 9am", opts("Here is the udpated schedule:\nMon 9 am")),
+    "Here is the updated schedule:\nMon 9am",
+  );
+  // Case, spacing and a curly apostrophe changed.
+  assert.equal(
+    strip("Here's the  corrected figures:\n1, 2", opts("here’s the corrected figures:\n1,2")),
+    "Here's the  corrected figures:\n1, 2",
+  );
+  // A different lead-in of the model's own still goes.
+  assert.equal(strip("Here is the rewritten text:\nMon 9am", opts("Here is the udpated schedule:\nMon 9 am")), "Mon 9am");
+  // Short lines are never fuzzy-matched: "Ok." is not the person's "Hi.".
+  assert.equal(strip("Ok.\nHere is the rewritten text:\nBetter.", opts("Hi.")), "Better.");
+});
+
+test("the selection's own opening line before its lead-in keeps both", () => {
+  // Only lines[0] ("Sure!") matches the selection here; lines[i] is the lead-in after it.
+  const selection = "Sure!\nHere is the rewritten text:\nOld words.";
+  const answer = "Sure!\nHere is the rewritten text:\nNew words.";
+  assert.equal(strip(answer, { selection }), answer);
+});
+
 test("line ends made \\n, ends trimmed, nothing for nothing", () => {
   assert.equal(strip("  Here is the text:\r\n\r\nLine one\r\nLine two  "), "Line one\nLine two");
   assert.equal(strip("   "), "");

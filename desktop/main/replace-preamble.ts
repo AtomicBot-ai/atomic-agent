@@ -14,7 +14,8 @@
  * answer. A rewritten email that starts "Sure! I'd be happy to help."
  * or ends "Let me know if you have questions." is the person's text and
  * stays. So does a lead-in that is the selection's own first line ("Here
- * is the updated schedule:" in the email being fixed). Pure: no Electron,
+ * is the updated schedule:" in the email being fixed), also when the
+ * rewrite fixed a typo in it. Pure: no Electron,
  * the node tests load it from the built output.
  */
 
@@ -66,6 +67,42 @@ function firstLine(selection: unknown): string {
   return line ? line.trim() : "";
 }
 
+/** Case, spacing and curly apostrophes made plain, so a retyped line still compares. */
+const normal = (line: string): string => line.toLowerCase().replace(/[’‘]/g, "'").replace(/\s+/g, " ").trim();
+
+/** Edit distance, stopping early once it is over `max`. */
+function editDistance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, k) => k);
+  for (let x = 1; x <= a.length; x++) {
+    const row = [x];
+    let best = x;
+    for (let y = 1; y <= b.length; y++) {
+      row[y] = Math.min(prev[y] + 1, row[y - 1] + 1, prev[y - 1] + (a[x - 1] === b[y - 1] ? 0 : 1));
+      best = Math.min(best, row[y]);
+    }
+    if (best > max) return max + 1;
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+/**
+ * The line is the selection's own first line, also after the rewrite
+ * fixed a typo in it ("udpated" made "updated"): same words up to case
+ * and spacing, or a few letters apart (one in ten, at least two).
+ */
+function isOwnLine(line: string, own: string): boolean {
+  if (!own) return false;
+  const a = normal(line);
+  const b = normal(own);
+  if (a === b) return true;
+  // Short lines ("Ok" and "Hi") are too close by letters to say anything.
+  if (Math.min(a.length, b.length) < 12) return false;
+  const max = Math.max(2, Math.floor(Math.max(a.length, b.length) / 10));
+  return editDistance(a, b, max) <= max;
+}
+
 function dropLeadIn(text: string, own: string): string {
   const lines = text.split("\n");
   let i = 0;
@@ -76,8 +113,8 @@ function dropLeadIn(text: string, own: string): string {
     if (j < lines.length && isLeadIn(lines[j].trim())) i = j;
   }
   if (!isLeadIn(lines[i].trim())) return text;
-  // The person's own first line ("Here is the updated schedule:") stays.
-  if (own && (lines[i].trim() === own || lines[0].trim() === own)) return text;
+  // The person's own first line ("Here is the updated schedule:") stays, typo fixed or not.
+  if (isOwnLine(lines[i], own) || isOwnLine(lines[0], own)) return text;
   const rest = lines.slice(i + 1).join("\n").trim();
   return rest || text;
 }
