@@ -22,16 +22,23 @@ export type RewindAnswer =
 /**
  * The body the window may send: a non-negative whole position, the question's
  * text and, for a rollback, whether the files go back too (`files: false` is
- * the conversation only; left out, the agent puts the files back).
+ * the conversation only; left out, the agent puts the files back) and whether
+ * the chat does (ATO-2112: `conversation: false` is the files only).
  */
 export function rewindRequestBody(
   priorQuestions: unknown,
   expectText: unknown,
   files?: unknown,
-): { priorQuestions: number; expectText: string; files?: boolean } | null {
+  conversation?: unknown,
+): { priorQuestions: number; expectText: string; files?: boolean; conversation?: boolean } | null {
   if (typeof priorQuestions !== "number" || !Number.isInteger(priorQuestions) || priorQuestions < 0) return null;
   if (typeof expectText !== "string" || !expectText.trim()) return null;
-  return typeof files === "boolean" ? { priorQuestions, expectText, files } : { priorQuestions, expectText };
+  return {
+    priorQuestions,
+    expectText,
+    ...(typeof files === "boolean" ? { files } : {}),
+    ...(typeof conversation === "boolean" ? { conversation } : {}),
+  };
 }
 
 /** The agent's answer to one of the routes, as the window reads it. */
