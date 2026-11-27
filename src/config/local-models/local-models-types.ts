@@ -152,6 +152,15 @@ export interface UserManagedLocalLlmConfig {
    */
   cpuMoe?: CpuMoePreference;
   /**
+   * Other computers that lend memory to one model through llama.cpp RPC
+   * (ATO-2338): `"host:port"` of each one running `atomic-agent models
+   * rpc-worker`. Empty (default) means this computer alone. Needs an
+   * engine build with RPC; the launch refuses otherwise. RPC traffic is
+   * not authenticated: list only computers on a network you trust.
+   * Additive and unversioned. Applied on the next daemon start.
+   */
+  rpcServers?: string[];
+  /**
    * Stop the managed chat daemon when the last CLI session exits.
    * `true` (default) — closing the terminal frees the RAM/VRAM the
    * model was holding; a second live session keeps the daemon up (see

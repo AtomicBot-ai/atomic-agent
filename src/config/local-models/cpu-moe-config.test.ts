@@ -27,3 +27,19 @@ describe("localModels.managed.cpuMoe (ATO-2380)", () => {
     }
   });
 });
+
+describe("localModels.managed.rpcServers (ATO-2338)", () => {
+  const parsed = (value: unknown) =>
+    parseUserConfigFile({ version: USER_CONFIG_VERSION, localModels: { managed: { rpcServers: value } } })
+      .localModels.managed.rpcServers;
+
+  it("defaults to none and keeps host:port entries", () => {
+    expect(parseUserConfigFile({ version: USER_CONFIG_VERSION }).localModels.managed.rpcServers).toEqual([]);
+    expect(parsed(["192.168.1.20:50052", "studio.local:50052"])).toEqual(["192.168.1.20:50052", "studio.local:50052"]);
+  });
+
+  it("names the bad entry", () => {
+    expect(() => parsed("192.168.1.20:50052")).toThrow(/localModels\.managed\.rpcServers/);
+    expect(() => parsed(["ok.local:1", "a,b:2"])).toThrow(/localModels\.managed\.rpcServers\[1\]/);
+  });
+});

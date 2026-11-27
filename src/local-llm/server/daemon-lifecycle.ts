@@ -88,7 +88,7 @@ import {
   sharesSystemMemory,
   type ListDevices,
 } from "../backend/gpu-devices.js";
-import { managedDeviceTable } from "../backend/managed-devices.js";
+import { managedDeviceSource, managedDeviceTable } from "../backend/managed-devices.js";
 import {
   resolveSwaFullDecision,
   type SwaFullDecision,
@@ -101,6 +101,7 @@ import {
   moeShapeFromMetadata,
   type CpuMoePreference,
 } from "./cpu-moe.js";
+import { assertRpcLaunchable, rpcServerArgs } from "./rpc-peers.js";
 import {
   getEmbeddingModelDef,
   getLocalModelDef,
@@ -264,6 +265,12 @@ export interface DaemonStartOptions {
    * budget; internal. A positive value appends `--n-cpu-moe <n>`.
    */
   cpuMoeLayers?: number;
+  /**
+   * `localModels.managed.rpcServers` (ATO-2338, `rpc-peers.ts`): peers
+   * appended as `--rpc a,b`. `startDaemon` refuses them on an engine
+   * build without RPC. Empty / undefined keeps the launch byte-identical.
+   */
+  rpcServers?: readonly string[];
   /**
    * Run the throughput probe once the server is healthy (default
    * `true`): one 64-token completion whose `timings.predicted_per_second`
@@ -714,7 +721,10 @@ export function buildLlamaServerArgs(
   if (effectiveContextSize && effectiveContextSize > 0) {
     args.push("--ctx-size", String(effectiveContextSize));
   }
-  if (opts.device && opts.device !== "cpu") {
+  // With RPC peers a `--device` list would have to name them as well, or
+  // llama.cpp offloads only to the listed local device: leave it out so
+  // every local GPU and every peer is used (ATO-2338).
+  if (opts.device && opts.device !== "cpu" && (opts.rpcServers?.length ?? 0) === 0) {
     args.push("--device", opts.device);
   }
   if (
@@ -738,6 +748,7 @@ export function buildLlamaServerArgs(
   if (opts.device !== "cpu" && opts.cpuMoeLayers !== undefined && opts.cpuMoeLayers > 0) {
     args.push("--n-cpu-moe", String(opts.cpuMoeLayers));
   }
+  args.push(...rpcServerArgs(opts.rpcServers, opts.device));
   if (opts.mmprojFile) {
     args.push("--mmproj", opts.mmprojFile);
     // Vision-capable models (notably Gemma-4 with `gemma4v` projector and
@@ -1354,6 +1365,7 @@ async function startDaemonNow(
   // ATO-116: a build stamped for a newer macOS than this Mac's is refused
   // by dyld before it prints a line; say so instead of a crash or timeout.
   assertBackendRunsOnThisMac(binPath);
+  await assertRpcLaunchable(opts.rpcServers, () => managedDeviceSource(opts.dataDir, opts.engine));
 
   const model = getLocalModelDef(opts.modelId);
   // A model registered from disk launches straight from the operator's
@@ -1384,7 +1396,9 @@ async function startDaemonNow(
   // Atomic Core it is Core's own llama-server, run as Core runs it.
   const listDevices = opts.listDevices ?? managedDeviceTable(opts.dataDir, opts.engine);
   const device = await resolveManagedDevice(binPath, opts.device, {
-    multiGpu: (opts.tensorSplit?.length ?? 0) > 0,
+    // RPC peers are devices too: an auto pick of one local GPU would emit
+    // `--device <id>`, which leaves them out (review M3, ATO-2338).
+    multiGpu: (opts.tensorSplit?.length ?? 0) > 0 || (opts.rpcServers?.length ?? 0) > 0,
     listDevices,
   });
   // The header says what the KV cache really costs and whether the
@@ -1461,6 +1475,7 @@ async function startDaemonNow(
   // some layers' experts in system RAM instead of whole layers.
   const cpuMoe = decideCpuMoeLayers({
     preference: opts.cpuMoe ?? "auto",
+    rpcPeers: (opts.rpcServers?.length ?? 0) > 0,
     shape: header ? moeShapeFromMetadata(header, model.fileSizeGb * 1e9) : null,
     device,
     sharesSystemMemory,

@@ -41,6 +41,7 @@ import {
   isCpuMoePreference,
   type CpuMoePreference,
 } from "../../local-llm/server/cpu-moe.js";
+import { rpcPeerProblem } from "../../local-llm/server/rpc-peers.js";
 
 /** Pre-v41 `autoUpdate: false` was a dead default; force the live default. */
 const MANAGED_AUTO_UPDATE_DEFAULTS_VERSION = 41;
@@ -119,6 +120,19 @@ export function parseSwaFullPreference(
     field,
     `expected ${SWA_FULL_PREFERENCES.join("|")}, got ${JSON.stringify(raw)}`,
   );
+}
+
+/** `localModels.managed.rpcServers` (ATO-2338): `host:port` strings. */
+export function parseRpcServers(raw: unknown, field: string): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(field, `expected ["host:port", ...], got ${JSON.stringify(raw)}`);
+  }
+  return raw.map((entry, i) => {
+    const problem = typeof entry === "string" ? rpcPeerProblem(entry) : `expected a "host:port" string, got ${JSON.stringify(entry)}`;
+    if (problem) throw new ConfigValidationError(`${field}[${i}]`, problem);
+    return entry as string;
+  });
 }
 
 /** `localModels.managed.cpuMoe` (ATO-2380); `0` reads as `"off"`. */
@@ -444,6 +458,7 @@ export function prepareLocalModelsInputs(
       "localModels.managed.swaFull",
     ),
     cpuMoe: parseCpuMoePreference(rawManaged.cpuMoe, "localModels.managed.cpuMoe"),
+    rpcServers: parseRpcServers(rawManaged.rpcServers, "localModels.managed.rpcServers"),
   };
   const loraAdapters = parseLoraAdapters(rawManaged.loraAdapters, "localModels.managed.loraAdapters");
   if (loraAdapters) managed.loraAdapters = loraAdapters;

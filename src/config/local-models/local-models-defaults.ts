@@ -45,6 +45,7 @@ export function createLocalModelsDefaults(): UserLocalModelsConfig {
       parallel: "auto",
       swaFull: "auto",
       cpuMoe: "auto",
+      rpcServers: [],
     },
     embeddings: {
       enabled: false,
