@@ -279,6 +279,12 @@ export interface SlashDispatchResult {
     runId?: string;
   };
   /**
+   * `/usage [options]` (ATO-2442): the per-day history over every chat,
+   * with the same options as `atomic-agent usage`. The file is read on
+   * the submit path (`usage-history-command.ts`), not here.
+   */
+  readonly usageHistoryArgs?: string;
+  /**
    * `/resume`: continue the current session's last turn when a restart
    * cut it off (ATO-448). Needs the runtime, so the caller runs it.
    */
@@ -519,7 +525,12 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
           : { type: "context_panel_toggled" },
       ]);
     case "usage":
-      return pureActions([{ type: "usage_report_requested", now: Date.now() }]);
+      // ATO-2442: bare `/usage` is this chat's cost and limits, then the
+      // last days over every chat; with options (`/usage --days 30
+      // --tools`) only the history. The submit path reads the file.
+      return parsed.args.trim() === ""
+        ? pureActions([{ type: "usage_report_requested", now: Date.now() }], { usageHistoryArgs: "" })
+        : pureActions([], { usageHistoryArgs: parsed.args });
     case "chat":
       return pureActions([{ type: "ui_mode_set", mode: "chat" }]);
     case "observe":

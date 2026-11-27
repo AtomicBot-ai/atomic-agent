@@ -275,7 +275,7 @@ const V0_2_2_SLASH_COMMANDS = [
   // ATO-569: the cost and limit breakdown behind the composer readout.
   {
     name: "usage",
-    description: "show this session's cost and the account's rate limits",
+    description: "show this session's cost and limits, and tokens per day over every chat",
     aliases: ["cost"],
   },
   // The rail's fold toggle: the mouse has the « control, this is the

@@ -206,4 +206,25 @@ describe("runtime trace ownership and deferred event routing", () => {
     });
     expect(capture).toHaveBeenCalledTimes(2);
   });
+
+  it("hands every finished tool call of a session to the usage history (ATO-2442)", () => {
+    const { traces } = fixture();
+    const seen: Array<[string, boolean]> = [];
+    const routing = traces.createEventRouting({ emit: vi.fn() }, { handlers: {} }, () => null, (tool, failed) => {
+      seen.push([tool, failed]);
+    });
+    const executed = (tool: string, status: "ok" | "error"): AgentLoopEvent => ({
+      type: "llm_event",
+      event: {
+        type: "tool_call_executed",
+        result: { tool, status, summary: "", details: {}, truncated: false },
+        batchIndex: 0,
+        batchSize: 1,
+      },
+    });
+    routing.emitAgentLoopEventFor("s1", executed("fs.read", "ok"));
+    routing.emitAgentLoopEventFor("s1", executed("shell.run", "error"));
+    routing.emitAgentLoopEventFor("s1", { type: "llm_event", event: { type: "assistant_delta", text: "hi" } });
+    expect(seen).toEqual([["fs.read", false], ["shell.run", true]]);
+  });
 });

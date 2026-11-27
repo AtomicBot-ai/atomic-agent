@@ -21,6 +21,7 @@ import {
 import type { TuiAction } from "./tui-action.js";
 import { formatTuiStatus } from "./status-snapshot-tui.js";
 import { formatWhy } from "./why-snapshot-tui.js";
+import { runUsageHistoryCommand } from "./commands/usage-history-command.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
 import { NOTHING_TO_RESUME } from "./interrupted-turn-notice.js";
 import {
@@ -444,6 +445,7 @@ export function runSlashCommand(
   if (result.triggerWhySnapshot) {
     dispatch({ type: "system_message", text: formatWhy(state) });
   }
+  if (result.usageHistoryArgs !== undefined) runUsageHistoryCommand(result.usageHistoryArgs, dispatch);   // ATO-2442
   if (result.runModeVerb)
     runRunModeVerb(result.runModeVerb, state, dispatch, callbacks);
   if (result.modelModeCommand) {

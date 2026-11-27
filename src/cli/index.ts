@@ -153,7 +153,7 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "usage",
-    summary: "Tokens and cloud cost per day over every session, local vs cloud (--days N|--all, --models, --json)",
+    summary: "Tokens and cloud cost per day over every session, local vs cloud (--days N|--all, --models, --tools, --projects, --sessions, --compare <model>, --json)",
     run: usageCommand,
   },
   {

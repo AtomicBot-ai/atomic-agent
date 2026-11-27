@@ -68,6 +68,7 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /api/context-preview": "chat",
   "GET /api/capabilities": "read",
   "GET /api/model-tiers": "read",
+  "GET /api/usage": "read",
   // Settings.
   "GET /api/config": "admin",
   "PATCH /api/config": "admin",
