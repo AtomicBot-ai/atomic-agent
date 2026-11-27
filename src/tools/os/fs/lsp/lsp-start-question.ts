@@ -21,7 +21,7 @@ export const LSP_START_TOOL = "os.fs.lsp_start";
 
 export function lspStartQuestionText(question: Pick<LspStartQuestion, "root" | "server">): string {
   return (
-    `start ${question.server} in ${question.root} to check edits for errors; ` +
+    `start ${question.server} in ${question.root} to check edits for errors and look up code; ` +
     "it runs this project's own config and plugins. Asked once for this folder."
   );
 }

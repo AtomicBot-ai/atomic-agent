@@ -123,7 +123,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `tools.shell.envPassthrough` (default `["GITHUB_TOKEN", "NOTION_API_KEY"]`).
 - `tools.screen.enabled` (default `false`): the macOS `os.screen.*` computer-use tools ([OS tools](../../tools/os/README.md)); read at start.
 - `tools.screen.point` (default `true`): `os.screen.point`, which only draws marks through the desktop app, plus `os.screen.capture`, on macOS, independent of `tools.screen.enabled`; read at start.
-- `tools.lsp.enabled` (default `false`): after `os.fs.write` / `edit` / `patch` change a TypeScript, JavaScript or Python file inside a git repository, list the errors the change added, from `typescript-language-server` or `pyright-langserver` already on PATH (never installed); outside a trusted project folder the first start in a repository asks once; read at start.
+- `tools.lsp.enabled` (default `false`): after `os.fs.write` / `edit` / `patch` change a source file inside a git repository, list the errors the change added, from a language server already on PATH (never installed): `typescript-language-server`, `pyright-langserver`, `gopls`, `rust-analyzer`, `clangd`, `jdtls`, `sourcekit-lsp` or `csharp-ls`; it also registers `os.code.lsp` (definition, references, hover, symbols) on the same servers (ATO-2373); outside a trusted project folder the first start in a repository asks once; read at start.
 
 ## browser
 

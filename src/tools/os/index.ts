@@ -12,7 +12,11 @@ import { osFsListTool } from "./fs/fs-list.js";
 import { osFsGlobTool } from "./fs/fs-glob.js";
 import { buildOsFsLocateProjectTool } from "./fs/fs-locate-project.js";
 import { buildOsFsCodeMapTool } from "./code-map/index.js";
-import { buildOsCodeRewriteTool, buildOsCodeSearchTool } from "./code/index.js";
+import {
+  buildOsCodeLspTool,
+  buildOsCodeRewriteTool,
+  buildOsCodeSearchTool,
+} from "./code/index.js";
 import type { RecentSessionDir } from "./fs/fs-locate-project-sources.js";
 import { buildOsFsGrepTool } from "./fs/fs-grep.js";
 import { buildOsFsEditTool } from "./fs/fs-edit.js";
@@ -39,7 +43,7 @@ import { buildOsFsPatchTool } from "./fs/fs-patch.js";
 import { buildOsFsRestoreTool } from "./fs/fs-restore.js";
 import { buildOsFsMoveTool } from "./fs/fs-move.js";
 import { FileRestoreStore } from "./fs/fs-restore-store.js";
-import { createLspDiagnostics } from "./fs/lsp/index.js";
+import { createLspDiagnostics, createLspServerPool } from "./fs/lsp/index.js";
 import { askToStartLspThroughApprovals } from "./fs/lsp/lsp-start-question.js";
 import type { DeclaredInputsRegistry } from "./fs/fs-declared-inputs.js";
 import { osFsWatchTool } from "./fs/fs-watch.js";
@@ -239,6 +243,23 @@ export function registerOsTools(
       ...(options.shellJobs === undefined ? {} : { jobs: options.shellJobs }),
     }),
   );
+  // Opt-in (ATO-503, ATO-2373): one pool of language servers for the
+  // after-edit diagnostics and `os.code.lsp`; nothing starts until the
+  // first use inside a git repository.
+  const lspPool =
+    options.config.tools.lsp?.enabled === true
+      ? createLspServerPool({
+          // A server runs project code: outside a trusted folder the
+          // first start in a work tree asks once (trust_config).
+          askToStart: askToStartLspThroughApprovals({
+            approvals: options.approvals,
+            approvalRequired: options.approvalRequired,
+          }),
+          ...(options.isTrustedProject === undefined
+            ? {}
+            : { isTrustedProject: options.isTrustedProject }),
+        })
+      : null;
   // One option bag for every tool that replaces file content, so the
   // write, the edit, the patch and the restore share the store that
   // remembers what each session created and what was replaced in each
@@ -259,23 +280,8 @@ export function registerOsTools(
     ...(options.declaredInputs === undefined
       ? {}
       : { declaredInputs: options.declaredInputs }),
-    // Opt-in (ATO-503): nothing starts until the first edit of a
-    // TypeScript/JavaScript/Python file inside a git repository.
-    ...(options.config.tools.lsp?.enabled === true
-      ? {
-          lspDiagnostics: createLspDiagnostics({
-            enabled: true,
-            // A server runs project code: outside a trusted folder the
-            // first start in a work tree asks once (trust_config).
-            askToStart: askToStartLspThroughApprovals({
-              approvals: options.approvals,
-              approvalRequired: options.approvalRequired,
-            }),
-            ...(options.isTrustedProject === undefined
-              ? {}
-              : { isTrustedProject: options.isTrustedProject }),
-          }),
-        }
+    ...(lspPool !== null
+      ? { lspDiagnostics: createLspDiagnostics({ enabled: true, pool: lspPool }) }
       : {}),
   };
   registry.register(osFsReadTool);
@@ -369,6 +375,8 @@ export function registerOsTools(
   // the rewrite rides the same write funnel and guards as the patch.
   registry.register(buildOsCodeSearchTool());
   registry.register(buildOsCodeRewriteTool(fsMutation));
+  // Language-server navigation (ATO-2373): only with `tools.lsp.enabled`.
+  if (lspPool !== null) registry.register(buildOsCodeLspTool({ pool: lspPool }));
   registry.register(osFsWatchTool);
   registry.register(osGitStatusTool);
   registry.register(osGitLogTool);

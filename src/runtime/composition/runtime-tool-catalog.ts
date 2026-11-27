@@ -743,6 +743,8 @@ export async function connectRuntimeMcpCatalog(input: {
         point: config.tools.screen.point && process.platform === "darwin",
         control: process.platform === "darwin",
       },
+      // Boot-time too: `os.code.lsp` is registered only with the flag.
+      lsp: { enabled: config.tools.lsp?.enabled === true },
     });
     if (!liveMcpEnabled) return base;
     return mergeMcpDescriptors(

@@ -28,7 +28,7 @@ const ALL_ENABLED: ToolGateSourceConfig = {
   tasks: { enabled: true, agentToolsEnabled: true, sessionToolsEnabled: true },
   mcp: { servers: [{}] },
   llm: { runMode: { mode: "fusion" } },
-  tools: { screen: { enabled: true, point: true } },
+  tools: { screen: { enabled: true, point: true }, lsp: { enabled: true } },
 };
 
 /** The env the GitHub gate reads; a token means `github.*` is listed. */
@@ -126,6 +126,16 @@ describe("effectiveToolDescriptors", () => {
       tasks: { enabled: true, agentToolsEnabled: false },
     }).map((d) => d.name);
     expect(names.some((n) => n.startsWith("tasks."))).toBe(false);
+  });
+
+  it("lists os.code.lsp only with tools.lsp.enabled (ATO-2373)", () => {
+    expect(effectiveToolDescriptors(ALL_ENABLED).map((d) => d.name)).toContain("os.code.lsp");
+    const off = effectiveToolDescriptors({
+      ...ALL_ENABLED,
+      tools: { screen: { enabled: true, point: true } },
+    }).map((d) => d.name);
+    expect(off).not.toContain("os.code.lsp");
+    expect(off).toContain("os.code.search");
   });
 });
 

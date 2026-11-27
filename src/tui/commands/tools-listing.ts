@@ -73,7 +73,11 @@ export interface ToolGateSourceConfig {
   };
   readonly mcp: { readonly servers: readonly unknown[] };
   /** `tools.screen.enabled`; optional so hand-built test configs need not name it. */
-  readonly tools?: { readonly screen?: { readonly enabled: boolean; readonly point?: boolean } };
+  readonly tools?: {
+    readonly screen?: { readonly enabled: boolean; readonly point?: boolean };
+    /** `tools.lsp.enabled` (ATO-2373). */
+    readonly lsp?: { readonly enabled: boolean };
+  };
   readonly llm?: {
     readonly runMode?: { readonly mode?: string };
     readonly providers?: readonly { readonly kind: string; readonly apiKey?: string; readonly baseUrl?: string }[];
@@ -144,6 +148,7 @@ export function effectiveToolDescriptors(
       point: config.tools?.screen?.point === true && platform === "darwin",
       control: platform === "darwin",
     },
+    lsp: { enabled: config.tools?.lsp?.enabled === true },
   });
 }
 

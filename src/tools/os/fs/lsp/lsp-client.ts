@@ -1,6 +1,7 @@
 /**
  * One language server as a child process, speaking LSP over stdio, used
- * for one thing: "here is the file's text, what errors do you see?".
+ * for "here is the file's text, what errors do you see?" and, through
+ * `sync` + `request`, for the navigation of `os.code.lsp` (ATO-2373).
  *
  * The client opens a document with the text it is given (or sends the
  * full new text as a change) and waits for the server's
@@ -21,6 +22,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildCommandEnv } from "../../../../sandbox/command-env.js";
+import { LSP_CLIENT_CAPABILITIES } from "./lsp-capabilities.js";
 import type { LspDiagnostic } from "./lsp-delta.js";
 import {
   createJsonRpcConnection,
@@ -39,6 +41,13 @@ export interface DiagnosticsClient {
     text: string,
     timeoutMs: number,
   ): Promise<LspDiagnostic[] | null>;
+  /**
+   * Makes the server's copy of `path` hold `text` (open or full change),
+   * without waiting for diagnostics. Optional: fakes may leave it out.
+   */
+  sync?(path: string, languageId: string, text: string): void;
+  /** A plain LSP request (`textDocument/definition`, …), for navigation. */
+  request?<T = unknown>(method: string, params: unknown, timeoutMs: number): Promise<T>;
   readonly alive: boolean;
   dispose(): void;
 }
@@ -102,13 +111,7 @@ export class LspConnectionClient implements DiagnosticsClient {
         processId: process.pid,
         rootUri,
         workspaceFolders: [{ uri: rootUri, name: basename(rootDir) }],
-        capabilities: {
-          textDocument: {
-            synchronization: { didSave: false, dynamicRegistration: false },
-            publishDiagnostics: { versionSupport: true },
-          },
-          workspace: { configuration: true, workspaceFolders: true },
-        },
+        capabilities: LSP_CLIENT_CAPABILITIES,
         initializationOptions: {},
       },
       timeoutMs,
@@ -149,6 +152,30 @@ export class LspConnectionClient implements DiagnosticsClient {
       });
     }
     return result;
+  }
+
+  sync(path: string, languageId: string, text: string): void {
+    if (!this.alive) return;
+    const uri = pathToFileURL(path).href;
+    const key = uriKey(uri);
+    const doc = this.docs.get(key);
+    if (doc !== undefined && doc.text === text) return;
+    const version = (doc?.version ?? 0) + 1;
+    this.docs.set(key, { version, text, diagnostics: null });
+    if (doc === undefined) {
+      this.connection.notify("textDocument/didOpen", {
+        textDocument: { uri, languageId, version, text },
+      });
+    } else {
+      this.connection.notify("textDocument/didChange", {
+        textDocument: { uri, version },
+        contentChanges: [{ text }],
+      });
+    }
+  }
+
+  request<T = unknown>(method: string, params: unknown, timeoutMs: number): Promise<T> {
+    return this.connection.request<T>(method, params, timeoutMs);
   }
 
   dispose(): void {

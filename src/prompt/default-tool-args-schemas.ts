@@ -48,6 +48,7 @@ import { OS_FS_HASH_CONTRACT } from "../tools/os/fs/fs-hash-contract.js";
 import { OS_FS_CODE_MAP_CONTRACT } from "../tools/os/code-map/code-map-contract.js";
 import { OS_CODE_SEARCH_CONTRACT } from "../tools/os/code/code-search-contract.js";
 import { OS_CODE_REWRITE_CONTRACT } from "../tools/os/code/code-rewrite-contract.js";
+import { OS_CODE_LSP_CONTRACT } from "../tools/os/code/code-lsp-contract.js";
 import { DOCUMENT_FORMATS } from "../tools/os/read-document/extractors/extractor-types.js";
 import type { ToolDescriptor } from "./stable-prefix.js";
 import { GITHUB_TOOL_ARGS_SCHEMAS } from "./github-tool-args-schemas.js";
@@ -248,6 +249,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   [OS_FS_CODE_MAP_CONTRACT.name, OS_FS_CODE_MAP_CONTRACT.argsJsonSchema],
   [OS_CODE_SEARCH_CONTRACT.name, OS_CODE_SEARCH_CONTRACT.argsJsonSchema],
   [OS_CODE_REWRITE_CONTRACT.name, OS_CODE_REWRITE_CONTRACT.argsJsonSchema],
+  [OS_CODE_LSP_CONTRACT.name, OS_CODE_LSP_CONTRACT.argsJsonSchema],
   [OS_FS_GREP_CONTRACT.name, OS_FS_GREP_CONTRACT.argsJsonSchema],
   [OS_FS_EDIT_CONTRACT.name, OS_FS_EDIT_CONTRACT.argsJsonSchema],
   [

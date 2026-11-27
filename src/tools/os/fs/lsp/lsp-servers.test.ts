@@ -2,16 +2,47 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { findGitRoot, findOnPath, serverForPath } from "./lsp-servers.js";
+import { findGitRoot, findOnPath, serverArgs, serverForPath } from "./lsp-servers.js";
 
 describe("serverForPath (ATO-503)", () => {
-  it("maps TypeScript/JavaScript and Python files, nothing else", () => {
+  it("maps TypeScript/JavaScript and Python files", () => {
     expect(serverForPath("/r/a.ts")?.id).toBe("typescript");
     expect(serverForPath("/r/A.TSX")?.languageId("/r/A.TSX")).toBe("typescriptreact");
     expect(serverForPath("/r/a.mjs")?.languageId("/r/a.mjs")).toBe("javascript");
     expect(serverForPath("/r/a.py")?.id).toBe("pyright");
-    expect(serverForPath("/r/a.go")).toBeNull();
     expect(serverForPath("/r/README.md")).toBeNull();
+    expect(serverForPath("/r/a.rb")).toBeNull();
+  });
+});
+
+describe("serverForPath, more languages (ATO-2373)", () => {
+  it("maps Go, Rust, C/C++, Java, Swift and C# to their usual servers", () => {
+    const cases: Array<[string, string, string]> = [
+      ["/r/main.go", "gopls", "go"],
+      ["/r/lib.rs", "rust-analyzer", "rust"],
+      ["/r/a.c", "clangd", "c"],
+      ["/r/a.h", "clangd", "c"],
+      ["/r/a.cpp", "clangd", "cpp"],
+      ["/r/a.HPP", "clangd", "cpp"],
+      ["/r/A.java", "jdtls", "java"],
+      ["/r/App.swift", "sourcekit-lsp", "swift"],
+      ["/r/Program.cs", "csharp-ls", "csharp"],
+    ];
+    for (const [path, command, languageId] of cases) {
+      const spec = serverForPath(path);
+      expect(spec?.command, path).toBe(command);
+      expect(spec?.languageId(path), path).toBe(languageId);
+    }
+  });
+
+  it("gives jdtls a data folder per work tree outside it, and the others their plain args", () => {
+    const jdtls = serverForPath("/r/A.java")!;
+    const a = serverArgs(jdtls, "/work/a");
+    expect(a[0]).toBe("-data");
+    expect(a[1]).not.toContain("/work/a");
+    expect(serverArgs(jdtls, "/work/b")[1]).not.toBe(a[1]);
+    expect(serverArgs(serverForPath("/r/a.ts")!, "/work/a")).toEqual(["--stdio"]);
+    expect(serverArgs(serverForPath("/r/main.go")!, "/work/a")).toEqual([]);
   });
 });
 

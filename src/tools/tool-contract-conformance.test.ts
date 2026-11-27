@@ -114,7 +114,7 @@ const TERMINALS = {
   finish: { owner: "tools/finish + OpenAI adapter", reason: "Native adapter supplies the session terminal even when a role hides its descriptor; its wire schema overrides the catalog schema" },
 };
 const CONDITIONAL = {
-  registration: { owner: "runtime/bootstrap", reason: "Browser, memory, tasks, sessions, vision, audio and screen builders follow their enabled gates" },
+  registration: { owner: "runtime/bootstrap", reason: "Browser, memory, tasks, sessions, vision, audio, screen and os.code.lsp builders follow their enabled gates" },
   availability: { owner: "runtime/filter-disabled-tools", reason: "Web, email, GitHub, fusion, subagent, image and video definitions stay registered while unavailable descriptors are hidden" },
   mcp: { owner: "mcp/McpManager + runtime/bootstrap", reason: "Meta tools are registered once; server-qualified tools and external schemas belong to the live catalog" },
   wrapper: { owner: "tools/read-scope/confine-reads", reason: "The protection phase replaces selected definitions without changing their catalog metadata" },
@@ -266,6 +266,7 @@ const gates: ToolGateConfig = {
   image: { available: true },
   video: { available: true },
   screen: { enabled: true, point: true },
+  lsp: { enabled: true },
 };
 
 let directory: string;
@@ -294,7 +295,8 @@ beforeAll(() => {
   registry.register(replyTool);
   for (const definition of buildBrowserTools(browser, dangerous)) registry.register(definition);
   registerOsTools(registry, { ...dangerous, shellJobs, listRecentSessionDirs: () => [], config: {
-    http: USER_CONFIG_DEFAULTS.http, projects: USER_CONFIG_DEFAULTS.projects, tools: USER_CONFIG_DEFAULTS.tools,
+    // `tools.lsp.enabled` registers os.code.lsp (ATO-2373); no server starts.
+    http: USER_CONFIG_DEFAULTS.http, projects: USER_CONFIG_DEFAULTS.projects, tools: { ...USER_CONFIG_DEFAULTS.tools, lsp: { enabled: true } },
     web: { fetch: USER_CONFIG_DEFAULTS.web.fetch, search: { ...USER_CONFIG_DEFAULTS.web.search, provider: "duckduckgo", persistCache: false } },
   } });
   registerOsScreenTools(registry, { ...dangerous, enabled: true, point: true, platform: "darwin" });
@@ -355,7 +357,7 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(123);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(124);
     expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(DEFAULT_TOOL_DESCRIPTORS.length);
     expect(registry.list()).toHaveLength(registry.registrations.length);
     for (const definition of registry.registrations) {
@@ -458,6 +460,7 @@ describe("whole built-in tool catalog conformance", () => {
       { group: GATED_TOOL_NAMES.image, next: { ...gates, image: { available: false } } },
       { group: GATED_TOOL_NAMES.video, next: { ...gates, video: { available: false } } },
       { group: GATED_TOOL_NAMES.screen, next: { ...gates, screen: { enabled: false } } },
+      { group: GATED_TOOL_NAMES.lsp, next: { ...gates, lsp: { enabled: false } } },
     ];
     for (const family of families) {
       expect(names(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, family.next))).toEqual(names(DEFAULT_TOOL_DESCRIPTORS).filter((name) => !new Set<string>(family.group).has(name)));
@@ -473,6 +476,12 @@ describe("whole built-in tool catalog conformance", () => {
     expect(new Set(names(buildBrowserTools(browser, dangerous)))).toEqual(new Set(GATED_TOOL_NAMES.browser));
     const screen = new RecordingRegistry(); registerOsScreenTools(screen, { ...dangerous, enabled: true, point: true, platform: "darwin" });
     expect(names(screen.registrations)).toEqual([...GATED_TOOL_NAMES.screen]);
+    const osOff = new RecordingRegistry();
+    registerOsTools(osOff, { ...dangerous, shellJobs, listRecentSessionDirs: () => [], config: {
+      http: USER_CONFIG_DEFAULTS.http, projects: USER_CONFIG_DEFAULTS.projects, tools: { ...USER_CONFIG_DEFAULTS.tools, lsp: { enabled: false } },
+      web: { fetch: USER_CONFIG_DEFAULTS.web.fetch, search: { ...USER_CONFIG_DEFAULTS.web.search, provider: "duckduckgo", persistCache: false } },
+    } });
+    for (const name of GATED_TOOL_NAMES.lsp) expect(osOff.has(name), name).toBe(false);
   });
 
   it("keeps role order, loaded-tool unions, native wire names and grammar membership aligned", async () => {
