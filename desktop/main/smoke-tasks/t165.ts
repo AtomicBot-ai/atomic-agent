@@ -324,6 +324,9 @@ export async function checks165(js: Js, check: Check): Promise<void> {
       if (S.overlay === 'sesmenu' || S.alert) act('close');
       const i = SESSIONS.findIndex((s) => String(s.id).indexOf('smoke-ato165-') === 0);
       if (i >= 0) SESSIONS.splice(i, 1);
+      // ATO-2332: the probe went to Trash, not the agent; it leaves Trash too (no agent call).
+      TRASH.entries.filter((e) => e.id.indexOf('smoke-ato165-') === 0).forEach((e) => { if (BR.chatTrashRestore) BR.chatTrashRestore(e.id); });
+      TRASH.entries = TRASH.entries.filter((e) => e.id.indexOf('smoke-ato165-') !== 0);
       PREFS.pinned = ${show(keep.pinned)}; PREFS.seen = ${show(keep.seen)}; savePrefs(); render();
     })()`);
     if (keep.open) { await js<unknown>(`window.__openSession(${show(keep.open)})`); await wait(800); }

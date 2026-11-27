@@ -340,6 +340,12 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-586: a new incognito chat's id, and closing one (deleted on the agent); main/incognito-chats-ipc.ts. */
   incognitoOpen: () => ipcRenderer.invoke("incognito:open"),
   incognitoClose: (id: string) => ipcRenderer.invoke("incognito:close", { id }),
+  /** ATO-2332: the chat Trash: list (purges past 30 days), put, restore, delete forever, empty (main/chat-trash-ipc.ts). */
+  chatTrashList: () => ipcRenderer.invoke("chatTrash:list"),
+  chatTrashPut: (id: string, title: string) => ipcRenderer.invoke("chatTrash:put", { id, title }),
+  chatTrashRestore: (id: string) => ipcRenderer.invoke("chatTrash:restore", { id }),
+  chatTrashForget: (id: string) => ipcRenderer.invoke("chatTrash:forget", { id }),
+  chatTrashEmpty: () => ipcRenderer.invoke("chatTrash:empty"),
   /** ATO-1040: the chat's goal, and set / pause / resume / clear (main/session-goal-ipc.ts). */
   goalGet: (sessionId: string) => ipcRenderer.invoke("goal:get", { sessionId }),
   goalAction: (sessionId: string, body: { action: string; criteria?: string[]; maxRounds?: number }) =>

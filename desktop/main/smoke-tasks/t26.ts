@@ -27,7 +27,7 @@ import { BrowserWindow } from "electron";
 
 type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
-type Sent = { channel: "chat" | "steer" | "ack" | "delete"; sessionId: string | null; text: string };
+type Sent = { channel: "chat" | "steer" | "ack" | "delete" | "trash"; sessionId: string | null; text: string };
 type View = {
   sessionId: string; agentSession: string | null; busy: boolean; rows: string[];
   entry: string | null; toasts: string[]; queued: string[]; tray: string[];
@@ -103,6 +103,13 @@ class StandIn {
     return { ok: true };
   };
 
+  // ATO-2332: Delete… moves the chat to Trash (main/chat-trash-ipc.ts) instead of the agent's DELETE.
+  readonly trash: Handler = (_e, p) => {
+    const id = (p as { id?: unknown } | null)?.id;
+    this.sent.push({ channel: "trash", sessionId: typeof id === "string" ? id : null, text: "" });
+    return { ok: true, entry: { id, title: "", deletedAt: Date.now() } };
+  };
+
   private readonly quiet: Handler = () => ({ ok: false, error: QUIET });
   private readonly noParked: Handler = () => ({ ok: true, data: { undelivered: [], discarded: 0 } });
   private readonly nothing: Handler = () => true;
@@ -110,7 +117,7 @@ class StandIn {
   private channels(): Array<[string, Handler]> {
     return [
       ["agent:session", this.session], ["agent:chat", this.chat], ["agent:steer", this.steerTo],
-      ["agent:ackSteers", this.ack], ["agent:deleteSession", this.remove], ["agent:approve", this.quiet],
+      ["agent:ackSteers", this.ack], ["agent:deleteSession", this.remove], ["chatTrash:put", this.trash], ["agent:approve", this.quiet],
       ["agent:cancel", this.nothing], ["cli:chatModelsList", this.quiet], ["agent:contextPreview", this.quiet],
       ["agent:undeliveredSteers", this.noParked],
     ];
@@ -619,7 +626,7 @@ async function deletedWhileWaiting(js: Js, check: Check, agent: StandIn, w: Brow
   if (turn) await frame(js, w, { turnId: turn, kind: "done" });
   await js<boolean>(`(() => { act(${q(`del:${a}`)}); return true; })()`);
   await settle(js);
-  const deleted = agent.since(mark).some((s) => s.channel === "delete" && s.sessionId === a);
+  const deleted = agent.since(mark).some((s) => s.channel === "trash" && s.sessionId === a);   // ATO-2332
   const fresh = await newChat(js);
   const onC = await land(js, c, "smoke t26: chat C (h)");
   const kept = await js<boolean | null>(`typeof QUEUES !== 'undefined' ? QUEUES.has(${q(a)}) : null`);

@@ -59,6 +59,7 @@ import { wireIdeasIpc } from "./ideas-ipc.js";
 import { wireSessionGoalIpc } from "./session-goal-ipc.js";
 import { wireSideQuestionIpc } from "./side-question-ipc.js";
 import { wireIncognitoChatsIpc } from "./incognito-chats-ipc.js";
+import { wireChatTrashIpc } from "./chat-trash-ipc.js";
 import { wireMiniChatIpc } from "./mini-chat-ipc.js";
 import { chatPopoutTurnRefused, isChatPopout, wireChatPopoutIpc } from "./chat-popout-ipc.js";
 import { wireChatRewindIpc } from "./chat-rewind-ipc.js";
@@ -3325,6 +3326,7 @@ function wireIpc(client: AgentClient): void {
   wireSessionGoalIpc(client);
   wireSideQuestionIpc(client);   // ATO-1152: /btw
   wireIncognitoChatsIpc(client);   // ATO-586: incognito chats
+  wireChatTrashIpc(client);   // ATO-2332: Delete… moves a chat to Trash, purged after 30 days
   // ATO-1136: HTML artifacts in the chat, sandboxed (artifact-frame-ipc.ts).
   wireArtifactIpc();
   // ATO-1063: the mini chat page (mini-chat-ipc.ts): its frames, and "Open in big window".

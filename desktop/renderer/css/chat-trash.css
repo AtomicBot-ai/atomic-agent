@@ -1,0 +1,19 @@
+/* ============================================================
+   ATO-2332: the chat Trash (renderer/chat-trash.js): the folded "Trash"
+   section at the bottom of the sidebar, its rows and its footer.
+   Colours come from tokens only.
+   ============================================================ */
+
+[data-list="trash"]{margin-top:10px}
+.sb-trashrow{display:flex;align-items:center;gap:4px;height:34px;padding:0 4px 0 30px;border-radius:var(--r-pill);
+  min-width:0;color:var(--ink-2);font-size:var(--fs-ui);font-weight:500}
+.sb-trashrow:hover{background:var(--hover);color:var(--ink)}
+.sb-trashrow .t1{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.sb-trashleft{flex:none;color:var(--ink-3)}
+.sb-trashrow .iconbtn{width:26px;height:26px}
+.sb-trashrow .iconbtn svg{width:13px;height:13px}
+.sb-trashrow .iconbtn.danger:hover{color:var(--danger)}
+.sb-trashfoot{display:flex;align-items:center;gap:8px;padding:6px 8px 4px 30px;color:var(--ink-3)}
+.sb-trashfoot span{flex:1;min-width:0}
+#sidebar.rail [data-list="trash"]{display:none}
+@media (max-width:1000px){#sidebar:not(.drawer) [data-list="trash"]{display:none}}
