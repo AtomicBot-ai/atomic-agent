@@ -6665,9 +6665,9 @@ async function settingsTest(
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
   // Calm (S5): the window's own panes and nav sections, in nav order.
   // ATO-1129 (#1533): Phone push sits in Connections, after Discord. ATO-1630: Monid after Composio.
-  const PANES = ["general", "llm", "mcp", "telegram", "discord", "push", "composio", "monid", "memory", "myfiles", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
-  const LABELS = ["General", "Models", "Connections", "Memory", "My files", "Cron jobs", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];   // W2: Tasks reads "Cron jobs"
-  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", push: "connections", composio: "connections", monid: "connections", memory: "memory", myfiles: "myfiles",
+  const PANES = ["general", "llm", "mcp", "telegram", "discord", "push", "composio", "monid", "memory", "myfiles", "myapps", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
+  const LABELS = ["General", "Models", "Connections", "Memory", "My files", "My apps", "Cron jobs", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];   // W2: Tasks reads "Cron jobs"
+  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", push: "connections", composio: "connections", monid: "connections", memory: "memory", myfiles: "myfiles", myapps: "myapps",
     tasks: "tasks", webhooks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
 
   const groups = await js<string[]>("window.__menuGroups()");
@@ -6719,7 +6719,7 @@ async function settingsTest(
   check("settings: Cmd+, reopens on the section last shown", viaKey === "skills", `pane=${viaKey}`);
 
   const labels = await js<string[]>("window.__settingsLabels()");
-  check("settings: the nav names the ten sections", same(labels, LABELS), JSON.stringify(labels));
+  check("settings: the nav names the twelve sections", same(labels, LABELS), JSON.stringify(labels));
 
   // Calm (S5): the nav is the ten sections and nothing else — no keycaps,
   // no count badges, no Commands list, no rows "not available in the desktop".

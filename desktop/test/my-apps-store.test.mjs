@@ -7,6 +7,7 @@ import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
 const A = require("../out/main/my-apps-store.js");
@@ -141,10 +142,36 @@ test("the app window is locked down and wired once from main", () => {
     assert.ok(ipc.includes(s), s);
   }
   assert.doesNotMatch(ipc, /preload:/);
+  // The helpers above must actually run for every app window, not just exist.
+  const open = ipc.slice(ipc.indexOf("function openApp("), ipc.indexOf("let wired"));
+  assert.match(open, /\n  appSession\(root, id\);/, "openApp wires the app's session");
+  assert.match(open, /\n  lockDown\(win\.webContents\);/, "openApp locks the window down");
+  const lock = ipc.slice(ipc.indexOf("function lockDown("), ipc.indexOf("function openApp("));
+  assert.match(lock, /on\("will-prevent-unload", \(event\) => event\.preventDefault\(\)\)/, "a page's beforeunload cannot hold the window");
+  assert.match(lock, /setWebRTCIPHandlingPolicy\("disable_non_proxied_udp"\)/);
   const scheme = readFileSync(new URL("../main/artifact-frame-ipc.ts", import.meta.url), "utf8");
   assert.match(scheme, /\{ scheme: MY_APP_SCHEME, privileges: \{ standard: true, secure: true/);
   const main = readFileSync(new URL("../main/main.ts", import.meta.url), "utf8");
   assert.match(main, /wireMyAppsIpc\(\{ mainWindow: \(\) => win \}\)/);
   const preload = readFileSync(new URL("../preload/preload.ts", import.meta.url), "utf8");
   for (const m of ["apps:save", "apps:list", "apps:rename", "apps:delete", "apps:open"]) assert.ok(preload.includes('"' + m + '"'), m);
+});
+
+test("a saved widget keeps the bridge names: sendPrompt does nothing, state lives in localStorage", async () => {
+  const doc = A.appDocument("<p>hi</p>");
+  assert.ok(doc.indexOf(A.MY_APP_BRIDGE_SHIM) > 0 && doc.indexOf(A.MY_APP_BRIDGE_SHIM) < doc.indexOf("<p>hi</p>"), "the shim runs before the page");
+  const script = A.MY_APP_BRIDGE_SHIM.replace(/^<script>/, "").replace(/<\/script>$/, "");
+  const store = new Map();
+  const win = { localStorage: { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) } };
+  win.window = win;
+  vm.runInNewContext(script, vm.createContext(win));
+  assert.equal(win.sendPrompt("I pick B"), false);
+  assert.equal(win.atomicWidget.sendPrompt, win.sendPrompt);
+  assert.equal(await win.atomicWidget.state.get(), null);
+  assert.equal(win.atomicWidget.state.set({ clicks: 3 }), true);
+  assert.equal(JSON.stringify(await win.atomicWidget.state.get()), "{\"clicks\":3}");
+  assert.equal(win.atomicWidget.state.set("x".repeat(A.MY_APP_STATE_MAX)), false, "over 64 KB");
+  const cyc = {}; cyc.me = cyc;
+  assert.equal(win.atomicWidget.state.set(cyc), false);
+  assert.equal(JSON.stringify(await win.atomicWidget.state.get()), "{\"clicks\":3}");
 });

@@ -15,7 +15,7 @@
  * persistent session partition of its own (`persist:atomic-app-<id>`), so
  * its localStorage outlives a restart and is shared with nothing. That
  * session serves only `atomic-app://<id>/`, under the artifact CSP (no
- * network), refuses every other request, every permission and every
+ * fetch, XHR or WebSocket; WebRTC limited to proxied UDP), refuses every other request, every permission and every
  * download; the window opens no other window and navigates nowhere.
  * Precedent: Goose apps (sandboxed window), Claude Desktop installed artifacts.
  */
@@ -68,6 +68,10 @@ function appSession(root: string, id: string): Session {
 
 function lockDown(wc: WebContents): void {
   wc.setWindowOpenHandler(() => ({ action: "deny" }));
+  // No CSP directive covers RTCPeerConnection: keep its UDP (STUN lookups) off the open network.
+  wc.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
+  // A page's beforeunload never holds the window open: close, Delete and quit always go through.
+  wc.on("will-prevent-unload", (event) => event.preventDefault());
   wc.on("will-navigate", (event) => event.preventDefault());
   wc.on("will-redirect", (event) => event.preventDefault());
   wc.on("will-attach-webview", (event) => event.preventDefault());

@@ -5,7 +5,7 @@
  * `<stateDir>/apps/<id>/index.html` with an `app.json` beside it (name,
  * createdAt, the chat it came from). Settings › My apps lists them; Open
  * runs one in its own window (my-apps-ipc.ts) with no chat, no model and no
- * network. Like Goose apps (a folder of pages, opened in a sandboxed window)
+ * fetch/XHR/WebSocket. Like Goose apps (a folder of pages, opened in a sandboxed window)
  * and Claude Desktop's "install an artifact as an app" (its own window).
  *
  * The state dir is the agent's own (`~/.atomic-agent`, shared with the
@@ -141,9 +141,28 @@ export function sortApps(apps: MyAppManifest[]): MyAppManifest[] {
   return [...apps].sort((a, b) => (Date.parse(b.createdAt) - Date.parse(a.createdAt)) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
 
-/** The document an app window loads: standards mode, both colour schemes, the page. */
+/** Largest widget state an app keeps (JSON characters), as in a chat frame (ATO-2375). */
+export const MY_APP_STATE_MAX = 64 * 1024;
+
+/**
+ * A page made in the chat may call the widget bridge (ATO-2375: `sendPrompt`,
+ * `atomicWidget.state`); an app window has no chat to answer, so the same
+ * names exist here and do no harm: sendPrompt does nothing and answers
+ * false, state lives in the app's own localStorage under one key.
+ */
+export const MY_APP_BRIDGE_SHIM =
+  "<script>(function(){var K='atomicWidget.state';"
+  + "function read(){try{var v=localStorage.getItem(K);return v==null?null:JSON.parse(v);}catch(e){return null;}}"
+  + "function sendPrompt(){return false;}"
+  + "var state={get:function(){return Promise.resolve(read());},"
+  + "set:function(v){var j;try{j=JSON.stringify(v===undefined?null:v);}catch(e){return false;}"
+  + "if(typeof j!=='string'||j.length>" + MY_APP_STATE_MAX + ")return false;"
+  + "try{localStorage.setItem(K,j);}catch(e){return false;}return true;}};"
+  + "window.atomicWidget={sendPrompt:sendPrompt,state:state};window.sendPrompt=sendPrompt;})();</script>";
+
+/** The document an app window loads: standards mode, both colour schemes, the bridge shim, the page. */
 export function appDocument(html: string): string {
-  return "<!doctype html><meta charset=\"utf-8\"><meta name=\"color-scheme\" content=\"light dark\">" + html;
+  return "<!doctype html><meta charset=\"utf-8\"><meta name=\"color-scheme\" content=\"light dark\">" + MY_APP_BRIDGE_SHIM + html;
 }
 
 export function appHeaders(): Record<string, string> {

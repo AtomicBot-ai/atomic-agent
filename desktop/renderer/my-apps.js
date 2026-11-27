@@ -6,7 +6,7 @@
    An artifact card's bar (chat-artifact.js) gets "Save as app": the page on
    screen is kept by main in <stateDir>/apps/<id>/ (main/my-apps-ipc.ts,
    my-apps-store.ts) and listed in Settings › My apps, beside My files. Open
-   runs it in a window of its own, with no chat, no model and no network;
+   runs it in a window of its own, with no chat, no model and no fetch/XHR;
    it works after a restart and offline. Rename changes its name; Delete
    moves its folder to the Trash.
 
