@@ -28,11 +28,15 @@ describe("the argument-check threshold (ATO-2505)", () => {
     });
   });
 
-  it("a higher threshold leaves the 0.9 key read to the ordinary ladder; 1.0 findings still ask", () => {
-    const key = guard("cat", ["~/.ssh/id_rsa"], 0.95);
-    expect(key.rule).toBe("dangerous.read_credentials");
-    expect(key.askEveryLevel).toBeUndefined();
-    expect(guard("sh", ["-c", "echo Y3Vy | base64 -d | sh"], 1).askEveryLevel).toBe(true);
+  // Review round 1: a raised threshold silenced the 0.9 key read in
+  // bypass, and the model could set it with one config edit. Above 0.7 it
+  // now reads as 0.7.
+  it.each([0.95, 1])("a raised threshold (%s) still asks for the 0.9 key read", (value) => {
+    expect(guard("cat", ["~/.ssh/id_rsa"], value)).toMatchObject({
+      rule: "dangerous.read_credentials",
+      askEveryLevel: true,
+    });
+    expect(guard("cat", [".env"], value).askEveryLevel).toBeUndefined();
   });
 
   it.each([Number.NaN, 0.1, 2, -1])("an unusable value (%s) reads as the default", (value) => {

@@ -8,10 +8,15 @@ describe("agent.security (ATO-2505)", () => {
     expect(parseUserConfigFile({ agent: {} }).agent.security).toEqual({ argScanThreshold: 0.7, knownHosts: [] });
   });
 
-  it("reads a threshold in 0.5..1", () => {
-    expect(parseAgentSecurityConfig({ argScanThreshold: 0.85 })).toEqual({ argScanThreshold: 0.85, knownHosts: [] });
-    expect(parseAgentSecurityConfig({ argScanThreshold: 1 })).toEqual({ argScanThreshold: 1, knownHosts: [] });
+  it("reads a threshold in 0.5..0.7", () => {
+    expect(parseAgentSecurityConfig({ argScanThreshold: 0.6 })).toEqual({ argScanThreshold: 0.6, knownHosts: [] });
     expect(parseAgentSecurityConfig({ argScanThreshold: "0.5" })).toEqual({ argScanThreshold: 0.5, knownHosts: [] });
+  });
+
+  // Review round 1: one unasked edit of config.json set 1 and quieted every
+  // 0.8 and 0.9 bypass ask. A raised value now reads as the default.
+  it.each([0.85, 0.95, 1])("reads a raised threshold %s as 0.7", (value) => {
+    expect(parseAgentSecurityConfig({ argScanThreshold: value })).toEqual({ argScanThreshold: 0.7, knownHosts: [] });
   });
 
   it.each([0.2, 1.5, -1, "high", null])("refuses %j", (value) => {

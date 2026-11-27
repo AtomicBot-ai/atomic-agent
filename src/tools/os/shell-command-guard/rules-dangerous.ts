@@ -157,7 +157,8 @@ const DANGEROUS_PATTERNS: readonly PatternRule[] = [
 /**
  * The dangerous layer. `threshold` is the live
  * `agent.security.argScanThreshold` (ATO-2505); absent, or a value that
- * is not a number in 0.5..1, reads as `ASK_EVERY_LEVEL_CONFIDENCE`.
+ * is not a number in 0.5..1, reads as `ASK_EVERY_LEVEL_CONFIDENCE`, and
+ * so does a value above it.
  */
 export function buildDangerousRule(threshold?: () => number): Rule {
   return {
@@ -174,7 +175,9 @@ function readThreshold(threshold: (() => number) | undefined): number {
   try {
     const value = threshold();
     const valid = Number.isFinite(value) && value >= 0.5 && value <= 1;
-    return valid ? value : ASK_EVERY_LEVEL_CONFIDENCE;
+    // Above the default it reads as the default: the setting only makes
+    // the check stricter (review round 1 of ATO-2505).
+    return valid ? Math.min(value, ASK_EVERY_LEVEL_CONFIDENCE) : ASK_EVERY_LEVEL_CONFIDENCE;
   } catch {
     return ASK_EVERY_LEVEL_CONFIDENCE;
   }

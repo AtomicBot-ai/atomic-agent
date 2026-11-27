@@ -1,4 +1,5 @@
-import { homedir } from "node:os";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -44,5 +45,25 @@ describe("os.fs.write into a startup or SSH file in home (ATO-2505)", () => {
 
   it("leaves a project file quiet in bypass", async () => {
     expect(await writeAt("/tmp/project/notes.txt")).toHaveLength(0);
+  });
+
+  // Review round 1: the check compared written paths only, so a link to
+  // home got past it, and home itself (an extract or copy into it) gave
+  // no match.
+  it.skipIf(process.platform === "win32")("asks in bypass for a write through a symlink to home", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "atomic-fs-sensitive-link-"));
+    try {
+      await symlink(homedir(), join(dir, "h"));
+      const asked = await writeAt(join(dir, "h", ".ssh", "authorized_keys"));
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toMatchObject({ askEveryLevel: true, securityFinding: { rule: "dangerous.write_startup_file" } });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("asks in bypass for a write into the home folder itself", async () => {
+    const asked = await writeAt(homedir());
+    expect(asked[0]).toMatchObject({ askEveryLevel: true });
   });
 });
