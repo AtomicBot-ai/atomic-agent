@@ -18,6 +18,8 @@ This area owns tool registry and adapters. Read [AGENTS.md](AGENTS.md) before ch
 - [describe-tool-call.ts](describe-tool-call.ts): a tool call as one readable line ("Read config.ts", "Ran npm test · failed") for the TUI, Telegram and desktop frames
 - [files/](files/README.md): the "My files" index (ATO-1621) and its read-only `files.search` tool with page citations
 - [research/](research/README.md): `research.deep` (ATO-2133), web research through `os.web.search` / `os.web.fetch` that keeps a finding only when its quote is on the fetched page, and writes a Markdown report
+- [ui/](ui/ui-render.ts): read-only `ui.render` (ATO-2457), a ready card (decision buttons, a form, cards) the host draws itself; the result is its text form, which the TUI prints whole, and the HTTP stream hands the checked spec to the desktop as `ui` on the `tool_result` frame. A click is the person's next message; the call never waits (that is `ask_user`)
+- [canvas/](canvas/canvas-render.ts): `canvas.render` (ATO-1137); before saving an `html` page it parses the page's inline classic scripts and refuses a `<script src>` ([canvas-script-check.ts](canvas/canvas-script-check.ts), ATO-2457), so a page that would draw blank comes back to the model as an error with the line to fix
 - [logbook/](logbook/logbook-query-tool.ts): read-only `logbook.query` over the local [logbook](../logbook/README.md) (ATO-2363), offered while it is on or keeps notes; asks (`logbook_cloud`) when the serving model is not on this computer
 
 ## Ownership and dependencies
