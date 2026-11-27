@@ -11326,10 +11326,11 @@ function turnKeyRejected(ev) {
   if (entry && savedKeyInvalid(entry)) return true;
   return /can't use its API key|rejected the API key|did not accept your API key|needs an API key and none is set/i.test(String((ev && ev.error) || ''));
 }
-/** ATO-1578: the agent's verdict for a cloud model that answered empty twice in a row. */
+/** ATO-1578: the agent's verdict for a cloud model that answered empty twice in a row.
+    ATO-1686: or kept calling tools that don't exist. Both: another model, its phrase as the line. */
 function turnEmptyTwice(ev) {
   const f = (ev && ev.payload && ev.payload.failure) || {};
-  return f.cause === 'empty_response_repeated';
+  return f.cause === 'empty_response_repeated' || f.cause === 'unknown_tools_repeated';
 }
 /** The failed turn's button: Check key on a refused key, else Switch provider when the provider failed. */
 function turnFailureAct(ev) {
