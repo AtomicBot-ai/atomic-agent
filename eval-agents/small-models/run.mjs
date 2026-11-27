@@ -195,7 +195,7 @@ export async function runOne({ task, cell, thinking, repeat, serverUrl, command,
   else if (res.timedOut) verdict = { pass: false, reason: `timeout ${task.timeoutSec}s` };
   else {
     try {
-      verdict = task.check(workDir, meta, { ...ctx, trace, run: { turnsSent: res.turnsSent, replies: res.replies, totalTurns: turns.length } });
+      verdict = task.check(workDir, meta, { ...ctx, trace, run: { turnsSent: res.turnsSent, replies: res.replies, totalTurns: turns.length, stdout: res.stdout } });
     } catch (err) {
       verdict = { pass: false, reason: `checker crashed: ${String(err).slice(0, 80)}` };
     }

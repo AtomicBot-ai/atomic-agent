@@ -33,6 +33,16 @@
   },
   "models": [
     {
+      "id": "qwen3.5-2b",
+      "size": "2b",
+      "label": "Qwen3.5 2B (UD-Q4_K_XL, the desktop starter model in the app catalog)",
+      "gguf": "Qwen3.5-2B-UD-Q4_K_XL.gguf",
+      "source": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF",
+      "approxGB": 1.34,
+      "default": false,
+      "$comment": "Opt-in (ATO-1723): not in quick/release/full and not gated (no 2b in thresholds.json). Run it with --profile starter or --models qwen3.5-2b. Same file as qwen-3.5-2b in src/local-llm/catalog/models-catalog.ts, where ATO-1706 was reported."
+    },
+    {
       "id": "qwen3.5-4b",
       "size": "4b",
       "label": "Qwen3.5 4B Q4_K_M",
@@ -81,10 +91,11 @@
     }
   ],
   "profiles": {
-    "$comment": "Named subsets. 'release' is the pre-release gate; 'quick' is a smoke of the stand itself; 'full' is everything above; 'small-window' is 4B at 16K and 32K with thinking off and on, for any change to the answer reserve, compaction or the prompt budget (ATO-1582, ATO-257).",
+    "$comment": "Named subsets. 'release' is the pre-release gate; 'quick' is a smoke of the stand itself; 'full' is everything above; 'small-window' is 4B at 16K and 32K with thinking off and on, for any change to the answer reserve, compaction or the prompt budget (ATO-1582, ATO-257); 'starter' is the opt-in 2B desktop starter model, core tasks only, reported not gated (ATO-1723).",
     "quick": { "models": ["qwen3.5-4b"], "windows": [32768], "thinking": ["off"], "tasks": "core", "repeats": 1 },
     "release": { "models": ["qwen3.5-4b", "qwen3.5-9b", "qwen3.5-27b"], "windows": [32768, 65536], "thinking": ["off"], "tasks": "all", "repeats": 3 },
     "full": { "models": "default", "windows": [32768, 65536], "thinking": ["off", "on"], "tasks": "all", "repeats": 3 },
-    "small-window": { "models": ["qwen3.5-4b"], "windows": [16384, 32768], "thinking": ["off", "on"], "tasks": "all", "repeats": 3 }
+    "small-window": { "models": ["qwen3.5-4b"], "windows": [16384, 32768], "thinking": ["off", "on"], "tasks": "all", "repeats": 3 },
+    "starter": { "models": ["qwen3.5-2b"], "windows": [32768], "thinking": ["off"], "tasks": "core", "repeats": 3 }
   }
 }

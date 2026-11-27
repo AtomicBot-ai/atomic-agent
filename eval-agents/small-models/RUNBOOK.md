@@ -4,6 +4,7 @@ ATO-1118 (child of ATO-787, covers the ATO-895 compaction test set).
 
 Question it answers before a release: does Atomic Agent still finish real tasks on
 small local models (Qwen3.5 4B / 9B / 27B, Q4_K_M) with a 32K or 64K window?
+Qwen3.5 2B (the desktop starter model) is in the matrix as an opt-in row.
 
 > **Running it loads a local model for hours.** Do not start a real run (here, on the
 > second Mac, or on a rented GPU) without an explicit yes from the product owner for
@@ -16,7 +17,7 @@ small local models (Qwen3.5 4B / 9B / 27B, Q4_K_M) with a 32K or 64K window?
 |---|---|
 | `matrix.json` | Models, windows, thinking on/off, repeats, **all llama-server flags**, named profiles |
 | `thresholds.json` | Pass-rate minimums per model size for the gate |
-| `tasks/` | 16 tasks: prompt, fixture generator, deterministic checker, timeout, reference solution |
+| `tasks/` | 17 tasks: prompt, fixture generator, deterministic checker, timeout, reference solution |
 | `run.mjs` | Runner: fresh temp workspace + fresh agent state dir per run, checker, `results.jsonl` |
 | `summary.mjs` | Markdown tables + `--gate` exit code |
 | `small-models.test.ts` | Unit tests for checkers, fixtures, plan, summary, gate (no model) |
@@ -35,6 +36,7 @@ No dependencies beyond Node 22+, `python3` and `bash` (some checkers run the age
 | h3 | core | project-wide search over ~80 files with decoys (`send_webhook_legacy`, stale notes, other constants) |
 | h4 | core | `./build.sh` fails twice with planted errors; the agent has to read the error, fix the cause, rerun |
 | h5 | core | write HTML; a literal `\n` sequence instead of real newlines fails (seen on Nemotron 21.10) |
+| o1 | core | "How much RAM does this computer have?" The chat reply must contain the real RAM of the machine running the check (`os.totalmem()` at check time, +-1, GiB or GB) and none of "no access", "cannot access", "don't have access", "cloud" (ATO-1723; the 2B starter model claimed it had no access to the hardware, ATO-1706). Run the bench on the machine whose RAM you expect: the agent and the checker must see the same computer |
 | n32k, n64k, n128k, n512k, n1m | stress | needle + count question in a log of ~32K…1M tokens, generated per run from a seed (never committed, 0.1–3.5 MB). Pass needs the right answer **and** a search tool, `grep/head/tail/sed -n`, or a ranged read in the trace |
 | l1 | stress | multi-turn session that reads ~1.5x the window (13 turns at 32K, 16 at 64K), then writes all codes collected along the way; compaction has to happen and the agent has to finish (ATO-895) |
 
@@ -50,9 +52,15 @@ Checker fix vs the old private stand: t5 used `grep -rl` and on GNU grep it coun
 node eval-agents/small-models/run.mjs --dry-run --profile release --agent .
 node eval-agents/small-models/run.mjs --dry-run --profile quick --agent .
 node eval-agents/small-models/run.mjs --dry-run --profile small-window --agent .
+node eval-agents/small-models/run.mjs --dry-run --profile starter --agent .
 ```
 
 Run `small-window` (4B at 16K and 32K, thinking off and on) after any change to the answer reserve, compaction or the prompt budget: 16K is where compaction used to break (ATO-257).
+
+`starter` is opt-in: Qwen3.5 2B (UD-Q4_K_XL, the model the desktop downloads on first launch), 32K,
+thinking off, core tasks, 3 repeats. It is not part of `quick`, `release` or `full`, and the gate
+skips it (no `2b` in `thresholds.json`), so its rows are reported, not gated. Add it to one run with
+`--profile starter`, or `--models qwen3.5-2b` together with your own windows and tasks.
 
 Prints every cell, the exact llama-server command per cell, the seeded agent config,
 the number of runs and a time estimate.
@@ -154,9 +162,10 @@ Numbers below are estimates, **not measured yet**; the first release run replace
 
 | Profile | Runs | Worst case (every run times out) | Guess (~20% of timeout) |
 |---|---|---|---|
-| `quick` (4B, 32K, core, 1 repeat) | 10 | 2.0 h | ~25 min |
-| `release` (3 models x 2 windows, thinking off, all tasks, 3 repeats) | 288 | 79.5 h | ~16 h serial |
-| `full` (+ thinking on) | 576 | 159 h | ~32 h serial |
+| `quick` (4B, 32K, core, 1 repeat) | 11 | 2.1 h | ~25 min |
+| `release` (3 models x 2 windows, thinking off, all tasks, 3 repeats) | 306 | 81 h | ~16 h serial |
+| `full` (+ thinking on) | 612 | 162 h | ~32 h serial |
+| `starter` (2B, 32K, core, 3 repeats; opt-in) | 33 | 6.3 h | ~1.3 h |
 
 - **Second Mac (MacBook Pro M5, 32 GB):** fine for 4B and 9B. 27B Q4 (~16.5 GB) plus a 64K
   f16 KV cache is tight: macOS lets the GPU use about 2/3 of RAM by default. Run 27B on a
@@ -189,8 +198,10 @@ Numbers below are estimates, **not measured yet**; the first release run replace
 
 ## Adding a task
 
-Add an object to `tasks/core.mjs`, `tasks/hard.mjs` or `tasks/stress.mjs` with `id`, `set`,
+Add an object to `tasks/core.mjs`, `tasks/hard.mjs`, `tasks/own-computer.mjs` or `tasks/stress.mjs` with `id`, `set`,
 `title`, `timeoutSec`, `maxSteps`, `turns(ctx)`, `fixture(dir, ctx) -> meta`,
 `check(dir, meta, ctx) -> { pass, reason }` and a reference `solve(dir, meta, ctx)`.
 The unit test checks every task both ways: untouched fixture fails, reference solution passes.
+A task whose answer is the chat reply (like `o1`) reads `ctx.run.stdout` (one line per turn) in
+`check`, and its `solve` sets `ctx.run.stdout` to the reference reply.
 Fixtures must be generated from a seed; do not commit large files.
