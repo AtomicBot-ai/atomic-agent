@@ -22,7 +22,7 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 
 import { isSeaBuild, selfInvocation } from "../runtime/self-invocation.js";
-import { readServeRecords, type ServeRecord } from "./serve-reaper.js";
+import { LAUNCH_SERVE_ENV, readServeRecords, type ServeRecord } from "./serve-reaper.js";
 import { isAlive } from "./serve-orphan-guard.js";
 
 export interface LaunchServe {
@@ -91,6 +91,9 @@ export async function findReusableServe(
   const folder = cwd === null ? null : resolve(cwd);
   for (const record of records) {
     if (!LOOPBACK_HOSTS.has(record.host) || !alive(record.pid)) continue;
+    // A serve another `atag launch` started stops when that run's CLI
+    // exits (its orphan guard), which would take this CLI down with it.
+    if (record.launched === true) continue;
     const baseUrl = loopbackBaseUrl(record.port);
     const health = await readServeHealth(baseUrl, deps.fetch);
     if (health?.runtime !== "atomic-agent" || health.pid !== record.pid) continue;
@@ -151,7 +154,7 @@ export async function startLaunchServe(
         stdio: ["ignore", logFd, logFd],
         detached: true,
         ...(process.platform === "win32" ? { windowsHide: true } : {}),
-        env: { ...process.env },
+        env: { ...process.env, [LAUNCH_SERVE_ENV]: "1" },
       },
     );
   } finally {
