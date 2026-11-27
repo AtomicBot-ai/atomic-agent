@@ -1,6 +1,7 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import { HISTORY_TRIMMED_NOTICE } from "../agent/history-trim-warning.js";
 import { toolDisabledNotice } from "../agent/tool-disabled-notice.js";
+import { cliOutdatedNotice } from "../agent/cli-outdated-notice.js";
 import { prefixDriftInfoLine, prefixDriftWarning } from "../agent/prefix-drift-warning.js";
 import { formatUsageReport } from "../session/usage-meter.js";
 import { describeFailedAttempts, falloverSentence } from "../llm/fallback/index.js";
@@ -1167,6 +1168,10 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // resent the request without it, so the model cannot call it. The
       // loop says so once per tool per turn.
       return appendChatMessage(state, { role: "system", text: toolDisabledNotice(event.tool) });
+    case "cli_outdated":
+      // ATO-2523: the Claude Code / Codex CLI is older than we support.
+      // The loop says so once per session, before a missing flag breaks a turn.
+      return appendChatMessage(state, { role: "system", text: cliOutdatedNotice(event) });
     case "prefix_drift":
       // ATO-316: the cached prompt prefix moved between steps. A change
       // the runtime made on purpose (skills refreshed, a new model) is a

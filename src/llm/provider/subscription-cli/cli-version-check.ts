@@ -1,4 +1,5 @@
 import type { SubscriptionCliName } from "../../../config/llm-config.js";
+import type { CliOutdated, CompletionResult } from "../completion-types.js";
 import { CODEX_UPDATE } from "./cli-exit-hint.js";
 import type { CliRunner } from "./run-cli-completion.js";
 import { SubscriptionCliInvocationError } from "./subscription-cli-errors.js";
@@ -68,6 +69,17 @@ export function compareCliVersions(a: string, b: string): number {
 /** How a person updates this CLI. */
 export function cliUpdateCommand(cli: SubscriptionCliName): string {
   return cli === "claude" ? "`claude update`" : CODEX_UPDATE;
+}
+
+/**
+ * The update commands for this CLI on this platform, plain text, for the
+ * chat's outdated notice (ATO-2523). Homebrew is not offered on Windows;
+ * `claude update` works the same on every platform.
+ */
+export function cliUpdateCommands(cli: SubscriptionCliName, platform: NodeJS.Platform): readonly string[] {
+  if (cli === "claude") return ["claude update"];
+  const npm = "npm install -g @openai/codex@latest";
+  return platform === "win32" ? [npm] : [npm, "brew upgrade codex"];
 }
 
 /** The sentence for an outdated CLI, ending with a full stop. */
@@ -168,6 +180,32 @@ async function readVerdict(input: CliVersionCheckInput): Promise<CliVersionVerdi
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/**
+ * ATO-2523: the `cliOutdated` mark a completion carries when the verdict
+ * says the CLI is too old, or null. The agent loop says it once per
+ * session; a CLI new enough, or one whose version was not read, says nothing.
+ */
+export function cliOutdatedMark(
+  verdict: CliVersionVerdict | null,
+  cli: SubscriptionCliName,
+  productName: string,
+  platform: NodeJS.Platform = process.platform,
+): CliOutdated | null {
+  if (!verdict?.outdated || verdict.version === null) return null;
+  return {
+    cli,
+    productName,
+    version: verdict.version,
+    minimum: verdict.minimum,
+    updateCommands: cliUpdateCommands(cli, platform),
+  };
+}
+
+/** The completion with the mark on it, or the completion as it was. */
+export function withCliOutdated<T extends CompletionResult>(result: T, mark: CliOutdated | null): T {
+  return mark === null ? result : { ...result, cliOutdated: mark };
 }
 
 /**
