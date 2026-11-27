@@ -183,21 +183,34 @@ export function forecastDecodeSpeed(
   return { tokPerSec: Math.round(tokPerSec * 10) / 10, label: formatSpeedEstimate(tokPerSec) };
 }
 
-/** quant-fit.ts pickBestQuant, rule for rule. */
+/**
+ * quant-fit.ts pickBestQuant, rule for rule: the quants that fit fully
+ * first; experts in RAM only when none does, and there an unknown speed
+ * (always, off a Mac) does not count as pleasant.
+ */
 export function pickBestQuant(rated: readonly RatedChoice[]): number | null {
-  const eligible = rated
+  type Entry = { r: RatedChoice; index: number };
+  const eligible: Entry[] = rated
     .map((r, index) => ({ r, index }))
     .filter(({ r }) => r.bits !== null && r.bits >= MIN_AUTO_PICK_BITS);
-  const fits = eligible.filter(({ r }) => r.fit.tier === "fits");
-  const pleasant = fits.filter(({ r }) => r.speed === null || r.speed.tokPerSec >= PLEASANT_TOK_PER_SEC);
-  if (pleasant.length > 0) {
-    return pleasant.reduce((best, cur) =>
+  const smallest = (list: Entry[]) =>
+    list.reduce((best, cur) => (cur.r.sizeBytes < best.r.sizeBytes ? cur : best)).index;
+  const mostPrecise = (list: Entry[]) =>
+    list.reduce((best, cur) =>
       cur.r.bits! > best.r.bits! || (cur.r.bits === best.r.bits && cur.r.sizeBytes > best.r.sizeBytes) ? cur : best,
     ).index;
-  }
-  const smallest = (list: typeof eligible) =>
-    list.reduce((best, cur) => (cur.r.sizeBytes < best.r.sizeBytes ? cur : best)).index;
-  if (fits.length > 0) return smallest(fits);
+  const pickAmong = (list: Entry[], unknownIsPleasant: boolean): number | null => {
+    if (list.length === 0) return null;
+    const pleasant = list.filter(({ r }) =>
+      r.speed === null ? unknownIsPleasant : r.speed.tokPerSec >= PLEASANT_TOK_PER_SEC,
+    );
+    return pleasant.length > 0 ? mostPrecise(pleasant) : smallest(list);
+  };
+  const fits = eligible.filter(({ r }) => r.fit.tier === "fits");
+  const full = pickAmong(fits.filter(({ r }) => r.fit.placement !== "split"), true);
+  if (full !== null) return full;
+  const split = pickAmong(fits.filter(({ r }) => r.fit.placement === "split"), false);
+  if (split !== null) return split;
   const tight = eligible.filter(({ r }) => r.fit.tier === "tight");
   return tight.length > 0 ? smallest(tight) : null;
 }

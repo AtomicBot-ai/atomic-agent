@@ -104,3 +104,28 @@ test('experts in RAM: a 35B-A3B on an 8 GB card and 32 GB of RAM', () => {
   );
   assert.equal(repoOut.choices[0].fit.label, 'Fits, experts in RAM');
 });
+
+// ATO-2455 review: experts in RAM never raise the precision of the pick off a Mac (no speed known there).
+test('experts in RAM: the pick stays a quant that fits fully, not a 61 GB BF16', () => {
+  const {withDedicatedGpu} = require('../out/main/quant-fit.js');
+  const qwen = (choices) => ({repoId: 'unsloth/Qwen3-30B-A3B-GGUF', revision: 'main', choices, mmproj: null, hidden: null});
+  const list = [
+    choice('Qwen3-30B-A3B-Q4_K_M.gguf', 18.6),
+    choice('Qwen3-30B-A3B-Q5_K_M.gguf', 21.7),
+    choice('Qwen3-30B-A3B-Q8_0.gguf', 32.5),
+    choice('Qwen3-30B-A3B-BF16.gguf', 61.1),
+  ];
+  // 24 GB card, 64 GiB of RAM: Q8_0 and BF16 fit with experts in RAM, Q4_K_M fits fully.
+  const big = withDedicatedGpu(quantMachine('win32', 68 * GB, 'AMD Ryzen 9'), {dedicatedGpu: true, gpuBudgetGb: 24, cpuMoe: 'auto', byId: {}});
+  const onBig = rateRepoChoices(qwen(list), big);
+  const bf16 = onBig.choices.find((c) => c.bits === 16);
+  assert.equal(bf16.fit.placement, 'split');
+  assert.equal(onBig.choices[0].recommended, true);
+  assert.notEqual(onBig.choices[0].bits, 16);
+  assert.notEqual(onBig.choices[0].fit.placement, 'split');
+  // 8 GB card, 32 GB: nothing fits fully, so the smallest split quant, as before experts in RAM.
+  const small = withDedicatedGpu(quantMachine('win32', 32 * GB, 'AMD Ryzen 9'), {dedicatedGpu: true, gpuBudgetGb: 8, cpuMoe: 'auto', byId: {}});
+  const onSmall = rateRepoChoices(qwen(list), small);
+  assert.equal(onSmall.choices[0].path, 'Qwen3-30B-A3B-Q4_K_M.gguf');
+  assert.equal(onSmall.choices[0].fit.placement, 'split');
+});
