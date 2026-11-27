@@ -11162,6 +11162,9 @@ function turnFailure(ev) {
     const id = selActiveProviderId();
     const wrong = localWrongServerLine(ev, id);
     if (wrong) return {text: esc(wrong), detail: String(ev.error)};
+    // ATO-1673: a cloud refusal says which one (provider-refusal-line.js); the status stays under Details.
+    const refused = providerRefusalLine(ev, id ? providerWord(id) : '', (LIVE_CONFIG && !LIVE_CONFIG.llm) || (!!id && waitIsLocalServer(id)));
+    if (refused) return {text: esc(refused), detail: String(ev.error)};
     return {text: esc("Couldn't get a reply from " + (id ? providerWord(id) : 'the provider') + '.'
       + (turnWaited() ? ' The turn gave up' + turnWaited() + '.' : '')), detail: String(ev.error)};
   }
