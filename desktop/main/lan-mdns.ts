@@ -11,6 +11,8 @@
  * when something on that PC advertises it: a DNS-SD bridge (`_saturn._tcp`),
  * a hand-made `dns-sd -R` / `avahi-publish` entry, or a plain `_http._tcp`
  * web service on a model server's port. The subnet probe does the rest.
+ * Another Atomic Agent that shares its model answers `_atomic-model._tcp`
+ * (ATO-2483, lan-mdns-announce.ts).
  */
 
 /** The DNS-SD service types we ask for. `_http._tcp` also brings printers and routers; only those that answer like a model server are kept. */
@@ -20,6 +22,8 @@ export const MDNS_SERVICE_TYPES: readonly string[] = [
   "_llm._tcp.local",
   "_openai._tcp.local",
   "_saturn._tcp.local",
+  // ATO-2483: another Atomic Agent sharing its model (lan-mdns-announce.ts).
+  "_atomic-model._tcp.local",
 ];
 
 export const MDNS_ADDRESS = "224.0.0.251";
@@ -52,7 +56,7 @@ function lower(name: string): string {
   return name.toLowerCase().replace(/\.$/, "");
 }
 
-function encodeName(name: string): number[] {
+export function encodeName(name: string): number[] {
   const out: number[] = [];
   for (const label of name.replace(/\.$/, "").split(".")) {
     const bytes = Array.from(Buffer.from(label, "utf8"));
@@ -186,4 +190,36 @@ export function servicesFromRecords(records: readonly MdnsRecord[], serviceTypes
     });
   }
   return out;
+}
+
+export interface MdnsQuestion {
+  name: string;
+  type: number;
+  /** The QU bit: the asker wants a unicast answer. */
+  unicast: boolean;
+}
+
+/**
+ * ATO-2483: the questions of an mDNS query, for the responder that
+ * announces our shared model. A response or a malformed packet gives [].
+ * Never throws.
+ */
+export function parseMdnsQuestions(buf: Buffer): MdnsQuestion[] {
+  try {
+    if (!Buffer.isBuffer(buf) || buf.length < 12) return [];
+    if ((buf.readUInt16BE(2) & 0x8000) !== 0) return []; // an answer, not a question
+    const qd = buf.readUInt16BE(4);
+    const out: MdnsQuestion[] = [];
+    let pos = 12;
+    for (let i = 0; i < qd && i < 64; i++) {
+      const { name, next } = readName(buf, pos);
+      if (next + 4 > buf.length) break;
+      const cls = buf.readUInt16BE(next + 2);
+      out.push({ name, type: buf.readUInt16BE(next), unicast: (cls & 0x8000) !== 0 });
+      pos = next + 4;
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }

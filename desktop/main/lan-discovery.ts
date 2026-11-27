@@ -27,7 +27,7 @@ export const PROBE_CONCURRENCY = 64;
 /** The HTTP check's own limit, per request. */
 export const CHECK_TIMEOUT_MS = 3000;
 
-export type ServerKind = "llama.cpp" | "ollama" | "lmstudio" | "atomic-chat" | "atomic-agent" | "openai-compatible";
+export type ServerKind = "llama.cpp" | "ollama" | "lmstudio" | "atomic-chat" | "atomic-agent" | "atomic-agent-model" | "openai-compatible";
 
 export const KIND_WORDS: Record<ServerKind, string> = {
   "llama.cpp": "llama.cpp server",
@@ -35,6 +35,8 @@ export const KIND_WORDS: Record<ServerKind, string> = {
   lmstudio: "LM Studio",
   "atomic-chat": "Atomic Chat",
   "atomic-agent": "Atomic Agent",
+  // ATO-2483: another Atomic Agent's shared model (`/raw/v1`), a model server that needs its share key.
+  "atomic-agent-model": "Atomic Agent shared model",
   "openai-compatible": "OpenAI-compatible server",
 };
 
@@ -232,4 +234,28 @@ export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (it
   };
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
   return out;
+}
+
+/** ATO-2483: where another Atomic Agent puts its shared model: `/raw/v1` on its share port. */
+export const SHARED_MODEL_ROOT_PATH = "/raw";
+
+/**
+ * The root to check for an advertised service: `/raw` for an
+ * `_atomic-model._tcp` service whose TXT says `path=/raw/v1`, else "" (the
+ * server's own root). Any other path in a TXT is not followed.
+ */
+export function advertisedRootPath(serviceType: string, txt: readonly string[]): string {
+  if (serviceType.toLowerCase().replace(/\.$/, "") !== "_atomic-model._tcp.local") return "";
+  return txt.some((e) => e.trim().toLowerCase() === "path=/raw/v1") ? SHARED_MODEL_ROOT_PATH : "";
+}
+
+/** A check of a root ending in `/raw` that answered like a model server is another agent's shared model. */
+export function sharedModelKind(root: string, kind: ServerKind): ServerKind {
+  let path = "";
+  try {
+    path = new URL(root).pathname.replace(/\/+$/, "");
+  } catch {
+    return kind;
+  }
+  return path === SHARED_MODEL_ROOT_PATH ? "atomic-agent-model" : kind;
 }

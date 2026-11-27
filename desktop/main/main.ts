@@ -78,6 +78,7 @@ import { wireChatgptOauthIpc } from "./chatgpt-oauth-ipc.js";
 import { wireAgentHubIpc } from "./agent-hub-ipc.js";
 import { wireFitTestIpc } from "./fit-test-ipc.js";
 import { wireModelsFolderIpc } from "./models-folder-ipc.js";
+import { wireModelShareIpc } from "./model-share-ipc.js";
 import { wireInterviewInviteIpc } from "./interview-invite-ipc.js";
 import { wireRecipesIpc } from "./recipes-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
@@ -3459,6 +3460,7 @@ function wireIpc(client: AgentClient): void {
   });
   // ATO-2106: Settings › Models › "Models folder" (`atag models dir`).
   wireModelsFolderIpc({ window: () => win, isRemote: () => client.isRemote, pulling: () => pull !== null });
+  wireModelShareIpc({ client });   // ATO-2483: Settings › Models › "Share this model" and its mDNS announcement
   wireInterviewInviteIpc({ stateDir: TUI_STATE_DIR });   // ATO-1467
   wireRecipesIpc({ dir: () => app.getPath("userData") });   // ATO-1072: saved recipes (recipes-ipc.ts)
   /* Studio (Images + Video): Core's media API for the Studio pages

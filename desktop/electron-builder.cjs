@@ -156,8 +156,8 @@ const config = {
          home subnet, which raises macOS's Local Network prompt. These give
          the prompt our words and declare the service types we browse
          (main/lan-mdns.ts MDNS_SERVICE_TYPES). */
-      "NSLocalNetworkUsageDescription": "Atomic Agent looks for model servers on your home network only when you press Find on my network, and checks the address you enter.",
-      "NSBonjourServices": ["_http._tcp", "_ollama._tcp", "_llm._tcp", "_openai._tcp", "_saturn._tcp"]
+      "NSLocalNetworkUsageDescription": "Atomic Agent looks for model servers on your home network only when you press Find on my network, checks the address you enter, and, when you share your model on the network, tells other computers where it is.",
+      "NSBonjourServices": ["_http._tcp", "_ollama._tcp", "_llm._tcp", "_openai._tcp", "_saturn._tcp", "_atomic-model._tcp"]
     },
     "extraResources": [
       {

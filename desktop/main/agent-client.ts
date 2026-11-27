@@ -2083,6 +2083,30 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-2483: `GET /api/model-share`, or with `body` a `POST` that sets
+   * where the shared model listens (off / local / network) and, with
+   * `rotate`, makes a new key. The answer carries the share key; it goes to
+   * the window for Copy and is never logged. An agent from before the route
+   * answers "No route for", reported as unsupported. Never throws.
+   */
+  async modelShare(body?: { mode: string; rotate?: boolean }): Promise<{ supported: false } | { supported: true; ok: true; data: unknown } | { supported: true; ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/model-share`, {
+        method: body === undefined ? "GET" : "POST",
+        headers: this.headers(),
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
+      return { supported: true, ok: true, data: JSON.parse(text) as unknown };
+    } catch (err) {
+      return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /**
    * ATO-445: Settings › Tasks › Webhooks. `GET /api/webhooks` lists the saved
    * routes (never their secrets); `baseUrl` is where this agent answers, so
    * the screen can show the full address. An agent from before the route

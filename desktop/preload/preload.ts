@@ -357,6 +357,9 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1067: model servers on the local network, and a check of one address (main/lan-discovery-ipc.ts). View-only. */
   lanFind: () => ipcRenderer.invoke("lan:find"),
   lanCheck: (url: string) => ipcRenderer.invoke("lan:check", url),
+  // ATO-2483: Settings › Models › "Share this model" (main/model-share-ipc.ts).
+  modelShare: () => ipcRenderer.invoke("modelShare:get"),
+  modelShareSet: (mode: string, rotate?: boolean) => ipcRenderer.invoke("modelShare:set", { mode, rotate: rotate === true }),
   /** ATO-1152: `/btw`, a side question the agent answers without saving it (main/side-question-ipc.ts). */
   askSideQuestion: (question: string, sessionId?: string) =>
     ipcRenderer.invoke("agent:btw", { question, ...(sessionId ? { sessionId } : {}) }),

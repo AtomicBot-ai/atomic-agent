@@ -24,12 +24,15 @@ import {
   KIND_WORDS,
   KNOWN_PORTS,
   PROBE_CONCURRENCY,
+  SHARED_MODEL_ROOT_PATH,
+  advertisedRootPath,
   classifyServer,
   failureWords,
   hostsToProbe,
   isPrivateV4,
   mapLimit,
   normalizeCheckUrl,
+  sharedModelKind,
   subnetsFromInterfaces,
   type CheckFailure,
   type GetAnswer,
@@ -40,6 +43,8 @@ import { MDNS_ADDRESS, MDNS_PORT, buildMdnsQuery, parseMdnsPacket, servicesFromR
 
 /** How long we listen for mDNS answers. */
 const MDNS_WINDOW_MS = 1500;
+/** `atag serve`'s default port, where a shared model's `/raw/v1` also is by default (lan-discovery.ts KNOWN_PORTS). */
+const ATOMIC_AGENT_PORT = 8787;
 /** At most this many mDNS services are checked (a busy `_http._tcp` network has dozens of printers). */
 const MDNS_MAX_CHECKS = 24;
 
@@ -102,7 +107,9 @@ async function checkRoot(root: string, timeoutMs = CHECK_TIMEOUT_MS): Promise<Ch
   const tags: GetAnswer = "error" in v1 ? v1 : await getJson(`${root}/api/tags`, timeoutMs);
   const c = classifyServer(v1, tags, portOf(root));
   if (!c.ok) return { ok: false, url: root, reason: c.reason, error: failureWords(c.reason) };
-  return { ok: true, url: root, kind: c.kind, kindWord: KIND_WORDS[c.kind], models: c.models, needsKey: c.needsKey, latencyMs };
+  // ATO-2483: `<host>:<port>/raw` is another agent's shared model, not the agent.
+  const kind = sharedModelKind(root, c.kind);
+  return { ok: true, url: root, kind, kindWord: KIND_WORDS[kind], models: c.models, needsKey: c.needsKey, latencyMs };
 }
 
 export async function checkServerUrl(raw: unknown): Promise<CheckAnswer> {
@@ -122,7 +129,7 @@ function tcpOpen(host: string, port: number, timeoutMs: number): Promise<boolean
 }
 
 /** mDNS: one query out of each private interface, answers collected for MDNS_WINDOW_MS. */
-function mdnsBrowse(ownAddrs: string[]): Promise<{ answered: boolean; targets: Array<{ host: string; port: number; name: string }> }> {
+function mdnsBrowse(ownAddrs: string[]): Promise<{ answered: boolean; targets: Array<{ host: string; port: number; name: string; path: string }> }> {
   return new Promise((resolve) => {
     const records: MdnsRecord[] = [];
     const senders = new Map<string, string>(); // a record's name → the address that sent it
@@ -139,10 +146,10 @@ function mdnsBrowse(ownAddrs: string[]): Promise<{ answered: boolean; targets: A
       if (finished) return;
       finished = true;
       try { sock.close(); } catch { /* closed already */ }
-      const targets: Array<{ host: string; port: number; name: string }> = [];
+      const targets: Array<{ host: string; port: number; name: string; path: string }> = [];
       for (const s of servicesFromRecords(records)) {
         const host = s.address ?? senders.get(s.host.toLowerCase()) ?? senders.get(`${s.instance}.${s.serviceType}`.toLowerCase()) ?? null;
-        if (host && isPrivateV4(host) && !ownAddrs.includes(host)) targets.push({ host, port: s.port, name: s.instance });
+        if (host && isPrivateV4(host) && !ownAddrs.includes(host)) targets.push({ host, port: s.port, name: s.instance, path: advertisedRootPath(s.serviceType, s.txt) });
       }
       resolve({ answered, targets });
     };
@@ -183,7 +190,7 @@ async function findServers(): Promise<FindAnswer> {
 
   const mdns = (async () => {
     const found = await mdnsBrowse(own);
-    await mapLimit(found.targets.slice(0, MDNS_MAX_CHECKS), 8, async (t) => keep(await checkRoot(`http://${t.host}:${t.port}`), t.host, "mdns", t.name));
+    await mapLimit(found.targets.slice(0, MDNS_MAX_CHECKS), 8, async (t) => keep(await checkRoot(`http://${t.host}:${t.port}${t.path}`), t.host, "mdns", t.name));
     return found.answered;
   })();
 
@@ -191,7 +198,11 @@ async function findServers(): Promise<FindAnswer> {
     const pairs = hostsToProbe(subnets).flatMap((host) => KNOWN_PORTS.map(({ port }) => ({ host, port })));
     const open = await mapLimit(pairs, PROBE_CONCURRENCY, async (p) => ((await tcpOpen(p.host, p.port, CONNECT_TIMEOUT_MS)) ? p : null));
     const hits = open.filter((p): p is { host: string; port: number } => p !== null);
-    await mapLimit(hits, 8, async (p) => keep(await checkRoot(`http://${p.host}:${p.port}`), p.host, "scan", null));
+    await mapLimit(hits, 8, async (p) => {
+      keep(await checkRoot(`http://${p.host}:${p.port}`), p.host, "scan", null);
+      // ATO-2483: an agent on serve's port may also share its model there.
+      if (p.port === ATOMIC_AGENT_PORT) keep(await checkRoot(`http://${p.host}:${p.port}${SHARED_MODEL_ROOT_PATH}`), p.host, "scan", null);
+    });
   })();
 
   const [mdnsAnswered] = await Promise.all([mdns, scan]);
