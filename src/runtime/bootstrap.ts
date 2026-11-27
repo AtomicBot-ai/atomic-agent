@@ -1050,7 +1050,7 @@ export async function createAgentRuntime(
   // ATO-2363: off unless `atomic-agent logbook start`; read per tick. The TUI
   // always shows the recording chip; any other process captures only while its
   // frontend reports its own mark on screen (ATO-2534, POST /api/logbook/indicator).
-  const logbook = createRuntimeLogbook({ config, providerRegistry, logger, indicator: options.analyticsSurface === "tui" ? "tui" : "frontend" });
+  const logbook = createRuntimeLogbook({ config, providerRegistry, logger, indicator: options.analyticsSurface === "tui" ? "tui" : "frontend", tasks: { runner: taskRunner, store: taskStore } });
   // ATO-2516: polls GitHub for watched PRs; files a fix round only when one is needed.
   const prAutofixWatcher = createRuntimePrAutofixWatcher({ config, taskRunner, taskStore, logger });
   const sidecars = [mailTrigger, imapTrigger, logbook, prAutofixWatcher].filter((s): s is NonNullable<typeof s> => s !== null);

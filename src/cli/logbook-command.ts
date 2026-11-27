@@ -10,6 +10,7 @@ import {
   formatLogbookEntries,
   listLogbookDays,
   logbookDir,
+  logbookPlatformSupport,
   parseClock,
   parseDaySpec,
   readLogbookDay,
@@ -20,7 +21,7 @@ import {
   type LogbookSettings,
 } from "../logbook/index.js";
 import { recipeToLink, renderRecipePrompt, STANDUP_RECIPE } from "../recipes/index.js";
-
+import { MORE_HELP_LINES, standupScheduleCommand, titleOnlyCommand } from "./logbook-command-more.js";
 import { askYesNo, confirmClearAll } from "./logbook-clear-confirm.js";
 
 /**
@@ -40,7 +41,7 @@ const HELP = [
   "deletes the picture right away. Only the sentences are kept, in",
   "<stateDir>/logbook/<day>.jsonl. Password managers, login prompts, system settings",
   "and Atomic Agent itself are never captured. No local vision model, no capture:",
-  "screenshots never go to a cloud model. macOS only for now. Off by default.",
+  "screenshots never go to a cloud model. macOS, Windows and Linux (X11). Off by default.",
   "",
   "Subcommands:",
   "  start [--every <minutes>] [--keep <days>]   Turn it on (default every 5 min, kept 14 days)",
@@ -54,6 +55,7 @@ const HELP = [
   "                                              Delete notes (--all asks first; --yes skips the question)",
   "  exclude add|remove <app> | exclude list     Apps never captured (name or bundle id)",
   "  standup [--day <day>]                       Print the standup recipe and its link",
+  ...MORE_HELP_LINES,
   "",
   "<day> is today, yesterday or YYYY-MM-DD.",
 ].join("\n");
@@ -116,6 +118,8 @@ export async function logbookCommand(args: string[], deps: LogbookCommandDeps = 
         return exclude(env, rest);
       case "standup":
         return standup(env, rest);
+      case "title-only":
+        return titleOnlyCommand(env, rest);
       default:
         throw new UsageError(`unknown subcommand: ${sub}`);
     }
@@ -154,8 +158,9 @@ function update(env: Env, change: (s: LogbookSettings) => LogbookSettings, messa
 }
 
 function start(env: Env, args: readonly string[]): number {
-  if (env.platform !== "darwin") {
-    env.write("The logbook works on macOS only for now: it needs the front-app check that keeps password and login windows out.\n");
+  const support = logbookPlatformSupport(env.platform);
+  if (!support.supported) {
+    env.write(`${support.reason}\n`);
     return 1;
   }
   const every = option(args, "--every");
@@ -263,6 +268,8 @@ function exclude(env: Env, args: readonly string[]): number {
 }
 
 function standup(env: Env, args: readonly string[]): number {
+  const scheduled = standupScheduleCommand(env, args);
+  if (scheduled !== null) return scheduled;
   const day = option(args, "--day") ?? "yesterday";
   const link = recipeToLink(STANDUP_RECIPE);
   env.write(`${renderRecipePrompt(STANDUP_RECIPE, { day })}\n\n`);

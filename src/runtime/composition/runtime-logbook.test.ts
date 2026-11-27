@@ -20,10 +20,11 @@ describe("createRuntimeLogbook", () => {
     expect(typeof sidecar?.tick).toBe("function");
   });
 
-  it("is not built off macOS, where protected windows cannot be told apart yet", () => {
+  it("is built on Windows and Linux too (ATO-2526), and not on other systems", () => {
     for (const platform of ["linux", "win32"] as const) {
-      expect(createRuntimeLogbook({ config: { paths: { stateDir: "/nowhere" } } as never, providerRegistry: registry, logger, indicator: "tui", platform })).toBeNull();
+      expect(createRuntimeLogbook({ config: { paths: { stateDir: "/nowhere" } } as never, providerRegistry: registry, logger, indicator: "tui", platform })).not.toBeNull();
     }
+    expect(createRuntimeLogbook({ config: { paths: { stateDir: "/nowhere" } } as never, providerRegistry: registry, logger, indicator: "tui", platform: "freebsd" })).toBeNull();
   });
 
   it("builds no sidecar when told there is no mark at all", () => {
