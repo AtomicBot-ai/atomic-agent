@@ -6,7 +6,11 @@
  * browser (localStorage), and every call carries it as a bearer token.
  * ATO-2308: a phone paired by `atag pair` has no key; its calls go out
  * without one and the browser adds the device cookie, so it opens straight
- * to the chats. A 401 then means it was signed out (Revoke).
+ * to the chats. A 401 then means it was signed out (Revoke, or 30 days unused).
+ * ATO-2494: an app added to the iPhone home screen keeps its own cookies,
+ * apart from Safari, so it opens signed out even on a paired phone; there
+ * the sign-in screen leads with "Connect this app", a link to /panel/pair where
+ * the short code shown under the QR is typed.
  */
 
 export const PANEL_HTML = `<!doctype html>
@@ -28,7 +32,7 @@ export const PANEL_HTML = `<!doctype html>
 header{position:sticky;top:0;display:flex;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--paper)}
 header h1{font-size:16px;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 main{padding:12px 16px 120px}button{font:inherit;border:1px solid var(--line);background:var(--well);color:var(--ink);border-radius:10px;padding:8px 12px}
-button.p{background:var(--acc);border-color:var(--acc);color:#fff}button.bad{color:var(--bad)}
+button.p,a.p{background:var(--acc);border-color:var(--acc);color:#fff}a.p{display:block;text-align:center;text-decoration:none;border-radius:10px;padding:12px}button.bad{color:var(--bad)}
 input,textarea{font:inherit;width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--well);color:var(--ink)}
 .row{padding:12px 0;border-bottom:1px solid var(--line)}.row small{color:var(--ink2)}
 .msg{margin:10px 0;padding:10px 12px;border-radius:12px;white-space:pre-wrap;word-wrap:break-word}
@@ -62,12 +66,17 @@ const api = async (path, init) => {
   return res.json();
 };
 function forget() {
-  if (!key) { const was = paired; paired = false; login(was ? 'This phone was signed out. Run atag pair on your computer and scan the new code, or type the key.' : ''); return; }
+  if (!key) { const was = paired; paired = false; login(was ? 'This phone was signed out. Connect it again with a new code from your computer, or type the key.' : ''); return; }
   key = ''; try { localStorage.removeItem('atomic.panel.key'); } catch (e) {} login('The key was not accepted. Type it again.');
 }
+const standalone = () => { try { return navigator.standalone === true || matchMedia('(display-mode: standalone)').matches; } catch (e) { return false; } };
 function login(note) {
   clearInterval(timer); open = null; $('back').hidden = true; $('new').hidden = true; $('composer').hidden = true; $('title').textContent = 'Atomic Agent';
-  $('main').innerHTML = '<p>Run atag pair on your computer and scan its code with this phone, or type the API key this agent runs with (the --api-key of atag serve, or what atag serve --print-api-key prints).</p><input id="key" type="password" autocomplete="off"><p class="err">' + esc(note || '') + '</p><button id="go" class="p">Open</button>';
+  const app = standalone();
+  const connect = app
+    ? '<p>This app keeps its own sign-in, apart from your browser, so it needs to be connected once. On your computer, open Connect phone in Atomic Agent Settings (or run atag pair) and type the code shown under the QR.</p><p><a id="code" class="p" href="/panel/pair">Connect this app</a></p><p><small>Or type the API key this agent runs with:</small></p>'
+    : '<p>Run atag pair on your computer and scan its code with this phone, or <a id="code" href="/panel/pair">type the short code</a> shown under it, or type the API key this agent runs with (the --api-key of atag serve, or what atag serve --print-api-key prints).</p>';
+  $('main').innerHTML = connect + '<input id="key" type="password" autocomplete="off"><p class="err">' + esc(note || '') + '</p><button id="go"' + (app ? '' : ' class="p"') + '>Open</button>';
   $('go').onclick = () => { key = $('key').value.trim(); try { localStorage.setItem('atomic.panel.key', key); } catch (e) {} list(); };
 }
 async function list() {
