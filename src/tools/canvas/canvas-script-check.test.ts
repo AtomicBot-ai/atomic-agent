@@ -41,6 +41,8 @@ describe("checkPageScripts (ATO-2457)", () => {
   it("never runs the script it checks", () => {
     const g = globalThis as { __ranCanvasScript?: boolean };
     checkPageScripts("<script>globalThis.__ranCanvasScript = true;</script>");
+    // Run in a new vm context, the line above would touch only that context's globalThis: this one reaches ours.
+    checkPageScripts("<script>this.constructor.constructor('return globalThis')().__ranCanvasScript = true;</script>");
     expect(g.__ranCanvasScript).toBeUndefined();
   });
 });
