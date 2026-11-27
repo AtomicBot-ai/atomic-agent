@@ -262,12 +262,16 @@ export function buildOsSandboxPolicy(
 ): OsSandboxPolicy {
   const home = input.home ?? homedir();
   const tmp = input.tmp ?? tmpdir();
-  const named = unique(input.workspaceRoots.map((p) => real(resolve(p))));
+  const named = unique(input.workspaceRoots.map((p) => resolve(p)));
   // A working directory of `~` (or `/`) is not a project: writable, it
   // would hand the command every dotfile and tool folder of the user.
-  // Left out; the command still writes temp (ATO-1651).
+  // Left out; the command still writes temp (ATO-1651). Checked on the
+  // name as given, before the real path: on macOS `/home` is a link to
+  // `/System/Volumes/Data/home`, and a home that does not exist (or is
+  // named through a link) only matches the spelling it was given in.
+  // `isTooBroadWorkspaceRoot` still compares both spellings of each.
   const narrowedRoots = named.filter((p) => isTooBroadWorkspaceRoot(p, home));
-  const work = named.filter((p) => !narrowedRoots.includes(p));
+  const work = unique(named.filter((p) => !narrowedRoots.includes(p)).map(real));
   // No shared package cache in the home folder is writable: a package
   // planted there runs later outside the sandbox. The tools get a
   // private cache under temp instead (`sandbox-cache-env.ts`, ATO-1651).
