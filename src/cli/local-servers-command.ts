@@ -3,6 +3,7 @@ import {
   detectLocalServers,
   type DetectedLocalServer,
 } from "../llm/provider/presets/detect-local-servers.js";
+import { ACTION_NAMES, ACTIONS_HELP, runLocalServersAction, type ActionDeps } from "./local-servers-actions.js";
 
 /**
  * `atomic-agent local-servers [--json]` (ATO-2489): which model servers
@@ -12,8 +13,9 @@ import {
  * (`detectLocalServers`, ATO-2013 / ATO-2168), so the terminal, the TUI
  * and the desktop app agree on what is running.
  *
- * Read-only: one GET per server on 127.0.0.1, nothing written. The desktop
- * app runs it with `--json` for its setup step and Settings › Local.
+ * The listing is read-only: one GET per server on 127.0.0.1, nothing
+ * written. The desktop app runs it with `--json` for its setup step and
+ * Settings › Local. The actions (ATO-2490) are in local-servers-actions.ts.
  */
 
 export const LOCAL_SERVERS_HELP =
@@ -22,16 +24,21 @@ export const LOCAL_SERVERS_HELP =
     "",
     "Usage:",
     "  atomic-agent local-servers [--json]",
+    "  atomic-agent local-servers <action> <ollama|lmstudio> [model] [--json]",
     "",
     "Checks Ollama (127.0.0.1:11434), LM Studio (127.0.0.1:1234) and the Llama app",
     "or a llama-server on its default port (127.0.0.1:9931), and prints each one",
     "that answers with its models and the ones loaded in memory.",
     "",
     "  --json   Print { servers: [{ kind, label, baseUrl, presetId, models, loaded }] }",
+    "",
+    ACTIONS_HELP,
   ].join("\n") + "\n";
 
 export interface LocalServersDeps {
   readonly detect?: () => Promise<DetectedLocalServer[]>;
+  /** ATO-2490: the start / load / unload / pull / rm / adopt actions. */
+  readonly actions?: ActionDeps;
   readonly write?: (text: string) => void;
   readonly writeErr?: (text: string) => void;
 }
@@ -61,6 +68,9 @@ export async function localServersCommand(
   if (args.includes("-h") || args.includes("--help")) {
     write(LOCAL_SERVERS_HELP);
     return 0;
+  }
+  if ((ACTION_NAMES as readonly string[]).includes(args[0] ?? "")) {
+    return runLocalServersAction(args, { write, writeErr, ...deps.actions });
   }
   const json = args.includes("--json");
   const unknown = args.find((a) => a !== "--json");

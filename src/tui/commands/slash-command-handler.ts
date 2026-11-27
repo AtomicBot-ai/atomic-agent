@@ -107,6 +107,8 @@ export interface SlashDispatchResult {
   readonly triggerRewindPicker?: boolean;
   /** `/export [format] [path]` (ATO-1054): the orchestrator writes the open chat. */
   readonly chatExport?: ChatExportRequest;
+  /** `/servers [action ...]` (ATO-2490): the words after `/servers`, run like `atomic-agent local-servers`. */
+  readonly localServersArgs?: readonly string[];
   /** When true the caller should ask the orchestrator to start a fresh session. */
   readonly triggerSessionNew: boolean;
   /** With `triggerSessionNew`: start the session in its own git worktree (`/new worktree`). */
@@ -619,6 +621,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return pureActions([], { triggerRewindPicker: true });
     case "export":
       return pureActions([], { chatExport: parseExportCommand(parsed.args) });
+    case "servers":
+      return pureActions([], { localServersArgs: parsed.args.split(/\s+/).filter(Boolean) });
     case "incognito":
       return pureActions([], { triggerIncognitoSession: true });
     case "window":

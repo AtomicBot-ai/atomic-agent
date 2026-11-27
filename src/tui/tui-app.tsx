@@ -365,6 +365,8 @@ export interface TuiAppCallbacks {
   onRewindPickerRequested?(): void;
   /** `/export [format] [path]` (ATO-1054): write the open chat to a file and say where. */
   onChatExportRequested?(request: import("./commands/export-command.js").ChatExportRequest): void;
+  /** `/servers [action ...]` (ATO-2490): list or act on Ollama / LM Studio / the Llama app and say the result. */
+  onLocalServersRequested?(args: readonly string[]): void;
   /**
    * A question was picked in the `/rewind` list: check what a rewind to
    * the question at `turnIndex` of the session's turns would touch and

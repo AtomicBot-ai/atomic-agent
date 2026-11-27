@@ -184,6 +184,12 @@ const V0_2_2_SLASH_COMMANDS = [
       "open chat model picker · subcommands: pull <id> | use <id> | favorite [add|remove] | status | <base-url> · ctrl+p switches to the next favorite",
     aliases: ["models", "local"],
   },
+  // ATO-2490: the model servers running here, and their actions.
+  {
+    name: "servers",
+    description:
+      "Ollama, LM Studio and the Llama app running here · start | load | unload | pull | rm | adopt <ollama|lmstudio> [model]",
+  },
   // Added with the reasoning level (ATO-490).
   {
     name: "think",

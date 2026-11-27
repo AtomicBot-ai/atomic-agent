@@ -96,6 +96,7 @@ import {
 import { readRecentWorkingDirs } from "../session/index.js";
 import { startupModelRing } from "./model-ring/model-ring-store.js";
 import { detectLocalServers } from "../llm/provider/presets/detect-local-servers.js";
+import { runLocalServersSlash } from "./local-servers/local-servers-slash.js";
 import { createMentionFileIndex } from "./file-mentions/index.js";
 import { createMentionSender } from "./file-mentions/mention-sender.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
@@ -631,6 +632,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSessionsTrashRequested: (request) => orchestrator.sessionsTrash(request),
         onRewindPickerRequested: () => orchestrator.openRewindPicker(),
         onChatExportRequested: (request) => { void orchestrator.exportOpenChat(request); },
+        onLocalServersRequested: (args) => { void runLocalServersSlash(args, (text) => bus.emit({ type: "system_message", text })); },
         onRewindRequested: (turnIndex, expectText) => {
           void orchestrator.openRewindChoice(turnIndex, expectText);
         },
