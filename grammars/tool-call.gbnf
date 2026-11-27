@@ -23,12 +23,13 @@ other-call ::= "{" ws "\"tool\"" ws ":" ws tool-name ws "," ws "\"args\"" ws ":"
 # a `required-string` (below: non-empty, may open on an escape such as the
 # alias-skipping `\\ls`, marker guard intact); the other keys stay
 # free-form. `tool-name` does not list "os.shell.run". The job forms
-# (`{"wait": 3}`, `{"kill": 3}`, `{"jobs": true}`) carry no `cmd` and the
+# (`{"wait": 3}`, `{"kill": 3}`, `{"jobs": true}`, and `{"write": 3, …}`
+# from ATO-2277) carry no `cmd` and the
 # tool refuses one that does, so they may lead instead: a job id is a
 # positive integer, `jobs` is `true` (ATO-2425).
 shell-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.shell.run\"" ws "," ws "\"args\"" ws ":" ws shell-args ws "}"
 shell-args ::= "{" ws shell-lead ( ws "," ws pair )* ws "}"
-shell-lead ::= "\"cmd\"" ws ":" ws required-string | ( "\"wait\"" | "\"kill\"" ) ws ":" ws shell-job-id | "\"jobs\"" ws ":" ws "true"
+shell-lead ::= "\"cmd\"" ws ":" ws required-string | ( "\"wait\"" | "\"kill\"" | "\"write\"" ) ws ":" ws shell-job-id | "\"jobs\"" ws ":" ws "true"
 shell-job-id ::= [1-9] [0-9]*
 # The same hole, and the same fix, for `os.fs.read` and `os.fs.write`
 # (ATO-909): `{"tool":"os.fs.read","args":{}}` was legal and fails in the

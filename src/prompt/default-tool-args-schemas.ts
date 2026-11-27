@@ -217,7 +217,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   // ── os.shell ─────────────────────────────────────────────────────────────
   [
     "os.shell.run",
-    // Four forms share one schema: `{cmd, args, …}` runs a command;
+    // The forms share one schema: `{cmd, args, …}` runs a command;
     // `{wait}`, `{kill}` and `{jobs}` act on a job the default timeout
     // detached (F47). Nothing is required at the schema level because
     // each form requires a different key; the tool refuses a call that
@@ -234,6 +234,11 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       jobs: booleanSchema,
       // ATO-2358: come back at the first output line matching it.
       until: stringSchema,
+      // ATO-2277: an interactive job, and typing into it.
+      tty: booleanSchema,
+      write: integerSchema,
+      text: stringSchema,
+      eof: booleanSchema,
     }),
   ],
 

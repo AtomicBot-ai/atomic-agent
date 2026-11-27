@@ -271,7 +271,7 @@ describe.skipIf(process.platform === "win32")(
       const tool = shellTool(DEFAULT_WAIT_MS, jobs);
       const mixed = await tool.run({ cmd: "ls", wait: 1 }, ctx());
       expect(mixed.status).toBe("error");
-      expect(mixed.summary).toContain("pass one of cmd, wait, kill, jobs (got cmd, wait)");
+      expect(mixed.summary).toContain("pass one of cmd, wait, kill, jobs, write (got cmd, wait)");
       const bad = await tool.run({ wait: "soon" }, ctx());
       expect(bad.status).toBe("error");
       expect(bad.summary).toContain("wait must be a job id");

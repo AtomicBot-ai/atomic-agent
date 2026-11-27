@@ -983,6 +983,8 @@ describe("os.shell.run cannot be called with empty args", () => {
       expect(gbnfAccepts(g, "shell-args", '{"wait":1}'), profile.id).toBe(true);
       expect(gbnfAccepts(g, "shell-args", '{"kill":40}'), profile.id).toBe(true);
       expect(gbnfAccepts(g, "shell-args", '{"jobs":true}'), profile.id).toBe(true);
+      // ATO-2277: typing into an interactive job
+      expect(gbnfAccepts(g, "shell-args", '{"write":2,"text":"y\\n"}'), profile.id).toBe(true);
       // still refused: no id, a zero or negative id, `jobs: false`, an empty cmd
       expect(gbnfAccepts(g, "shell-args", '{"wait":0}'), profile.id).toBe(false);
       expect(gbnfAccepts(g, "shell-args", '{"kill":-1}'), profile.id).toBe(false);

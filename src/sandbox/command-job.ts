@@ -1,9 +1,9 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 
 import { CappedOutput } from "./capped-output.js";
 import { buildCommandEnv } from "./command-env.js";
-import { killProcessTree } from "./kill-process-tree.js";
+import { signalGroup } from "./signal-process-group.js";
 
 const IS_WINDOWS = process.platform === "win32";
 
@@ -32,6 +32,11 @@ export interface CommandJobOptions {
    * built by `buildSubshellInvocation` / `buildDirectInvocation`.
    */
   windowsVerbatimArguments?: boolean;
+  /**
+   * Keep stdin open for `write` (ATO-2277: an interactive `os.shell.run`
+   * job). Omitted, stdin is closed at once and the command sees EOF.
+   */
+  keepStdinOpen?: boolean;
 }
 
 export interface CommandJobExit {
@@ -82,6 +87,13 @@ export interface CommandJob {
    */
   onOutput(listener: CommandJobOutputListener): () => void;
   /**
+   * Type into the command's stdin. `false` when it is not open: started
+   * without `keepStdinOpen`, ended, or the command is gone.
+   */
+  write(text: string): boolean;
+  /** Close stdin (the command sees EOF). A no-op when it is not open. */
+  endInput(): void;
+  /**
    * Wait up to `ms` (`0` = unbounded) for the child to close, or until
    * `signal` aborts — which returns promptly and leaves the child
    * running. Rejects only when the spawn itself failed.
@@ -115,35 +127,6 @@ export async function awaitJobExit(
       durationMs: Date.now() - job.startedAt,
     }
   );
-}
-
-/**
- * Signal the child's whole process group. On POSIX the child leads its
- * own group (spawned `detached`), so `-pid` reaches everything the
- * command started — a subshell's `sleep 30 &` included. Without that a
- * background grandchild survives the kill and, still holding the stdio
- * pipes, keeps the job from closing until it exits on its own. A group
- * that is already gone falls back to the direct kill, a no-op then. On
- * Windows the tree-kill (`taskkill /T`) walks the descendants instead.
- */
-function signalGroup(child: ChildProcess, signal: NodeJS.Signals): void {
-  if (IS_WINDOWS) {
-    killProcessTree(child, { force: signal === "SIGKILL" });
-    return;
-  }
-  if (typeof child.pid === "number") {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch {
-      // group gone — fall through to the direct child
-    }
-  }
-  try {
-    child.kill(signal);
-  } catch {
-    // process already exited
-  }
 }
 
 /**
@@ -220,9 +203,10 @@ export function startCommandJob(
     stderr.append(chunk);
     hear("stderr", chunk);
   });
-  // Nothing is written, so a far end that closed early is not an error.
+  // A far end that closed early is not an error: the write says so.
   child.stdin.on("error", () => undefined);
-  child.stdin.end();
+  let stdinOpen = options.keepStdinOpen === true;
+  if (!stdinOpen) child.stdin.end();
 
   return {
     command,
@@ -245,6 +229,16 @@ export function startCommandJob(
       return () => {
         listeners.delete(listener);
       };
+    },
+    write(text) {
+      if (!stdinOpen || exit || spawnError || child.stdin.destroyed) return false;
+      child.stdin.write(text);
+      return true;
+    },
+    endInput() {
+      if (!stdinOpen) return;
+      stdinOpen = false;
+      child.stdin.end();
     },
     waitFor(ms, signal) {
       if (spawnError) return Promise.reject(spawnError);

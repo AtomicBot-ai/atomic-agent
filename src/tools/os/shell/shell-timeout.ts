@@ -123,3 +123,15 @@ export function describeShellTimeoutDefault(defaultTimeoutMs: number): string {
 export function formatShellBackgroundNotice(jobId: number): string {
   return `started in the background as job ${jobId} (kept: it survives the end of this turn and stops when the session ends) — output so far below; os.shell.run {"wait": ${jobId}, "timeoutMs": 2000} reads newer output, {"kill": ${jobId}} stops it, {"jobs": true} lists jobs`;
 }
+
+/**
+ * The first line of a `tty: true` result (ATO-2277): the job's id and
+ * how to type into it. `tty: false` when the system has no pty helper
+ * and the job reads plain pipes.
+ */
+export function formatShellInteractiveNotice(jobId: number, tty: boolean): string {
+  const terminal = tty
+    ? "on a terminal"
+    : "without a terminal on this system (plain stdin: a program that insists on a terminal will still refuse)";
+  return `started as interactive job ${jobId} ${terminal}, kept until the session ends — output so far below; os.shell.run {"write": ${jobId}, "text": "…\\n"} types a line and returns the reply, {"wait": ${jobId}, "until": "…"} waits for a line, {"kill": ${jobId}} stops it`;
+}
