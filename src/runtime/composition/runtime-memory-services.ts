@@ -496,7 +496,7 @@ export function createRuntimeMemoryConsolidator(args: Omit<MemoryServiceDependen
         minClusterSize: config.memory.consolidation.minClusterSize,
         maxClustersPerTick: config.memory.consolidation.maxClustersPerTick,
         requireSharedTag: config.memory.consolidation.requireSharedTag,
-        consolidationLeaseMs: 60_000,
+        consolidationLeaseMs: ConsolidatorJob.leaseMsFor(config.memory.consolidation.distillTimeoutMs),
         // Memory-v2 phase 6 — wire the age-based deprecation
         // threshold and the per-tick deprecation cap. Both come
         // from `memory.lessons.*` since they govern lesson rows.

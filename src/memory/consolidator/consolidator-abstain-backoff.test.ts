@@ -175,6 +175,27 @@ describe("ConsolidatorJob abstain backoff (ATO-2506)", () => {
     });
   });
 
+  it("makes an abstained note due again when its content is edited", async () => {
+    const triple = linkedTriple(f, "stubborn");
+    f.outputs = [ABSTAIN, LESSON];
+
+    await f.job.runOnce();
+    expect(f.state.getBackoff(triple[0]!)).not.toBeNull();
+
+    // Still inside the wait: without the reset the edited note (and so
+    // the cluster) stays out of the next tick.
+    f.clock += 1_000;
+    f.memoryStore.updateContent(triple[0]!, "stubborn note A, rewritten", f.clock - 500);
+    expect(f.state.getBackoff(triple[0]!)).toBeNull();
+    for (const id of triple.slice(1)) {
+      expect(f.state.getBackoff(id)).not.toBeNull();
+    }
+
+    const next = await f.job.runOnce();
+    expect(next.candidates).toBe(1);
+    expect(f.llmCalls).toBe(1);
+  });
+
   it("does not put a cluster off after a model failure", async () => {
     const triple = linkedTriple(f, "flaky");
     f.outputs = [new Error("llama-server went away"), LESSON];

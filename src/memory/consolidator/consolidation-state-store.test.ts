@@ -93,6 +93,21 @@ describe("ConsolidationStateStore", () => {
     expect(memoryStore.list().map((e) => e.id)).toContain(a.id);
   });
 
+  it("clears the backoff when a note's content or tags change", () => {
+    const [a, b, c] = ["A", "B", "C"].map((n) =>
+      memoryStore.store({ content: `note ${n}`, source: "agent", tags: ["x"] }),
+    );
+    state.deferAbstained([a!.id, b!.id, c!.id], 1_000, policy);
+
+    memoryStore.updateContent(a!.id, "note A, edited");
+    memoryStore.setTags(b!.id, ["x", "y"]);
+    memoryStore.evolveTags(c!.id, ["z"], { leaseMs: 0 });
+
+    expect(state.getBackoff(a!.id)).toBeNull();
+    expect(state.getBackoff(b!.id)).toBeNull();
+    expect(state.getBackoff(c!.id)).toBeNull();
+  });
+
   it("stores, reads back and clears the page cursor", () => {
     expect(state.readCursor()).toBeNull();
     state.writeCursor({ updatedAt: 1_234, id: 7 });

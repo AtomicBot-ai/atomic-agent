@@ -7,6 +7,7 @@ import type { ProcedureStore } from "../procedures/procedure-store.js";
 
 import { selectCandidatePage } from "./candidate-window.js";
 import { clusterEpisodes, type MemoryCluster } from "./clustering.js";
+import { consolidationLeaseMs } from "./consolidation-lease.js";
 import {
   ConsolidationStateStore,
   type AbstainBackoffPolicy,
@@ -206,6 +207,11 @@ export class ConsolidatorJob {
   private running = false;
   private readonly now: () => number;
   private readonly stateStore: ConsolidationStateStore;
+
+  /** ATO-2506. Cluster lease for a given distill timeout (see consolidation-lease.ts). */
+  static leaseMsFor(distillTimeoutMs: number): number {
+    return consolidationLeaseMs(distillTimeoutMs);
+  }
 
   constructor(
     private readonly options: ConsolidatorJobOptions,

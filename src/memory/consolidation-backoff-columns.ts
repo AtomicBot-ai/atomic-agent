@@ -13,6 +13,14 @@
  * the state dir keeps opening the file, names its own columns in every
  * statement and so never sees these. To it every note is simply due.
  */
+/**
+ * SET fragment that makes a note due again. Every write that changes a
+ * note's content or tags includes it: the model abstained from the old
+ * text, so the new one deserves a fresh try.
+ */
+export const CLEAR_CONSOLIDATION_BACKOFF_SQL =
+  "consolidation_abstains = NULL, consolidation_retry_at = NULL";
+
 export interface BackoffColumnsDb {
   exec(sql: string): unknown;
   prepare(sql: string): { get(...params: unknown[]): unknown };
