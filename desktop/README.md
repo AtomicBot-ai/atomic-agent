@@ -1194,6 +1194,16 @@ Honestly degraded, and labelled as such in the UI:
   reminder per ticked item at 9:00 local through `BR.taskCreate` (kind `at`),
   the same `task create` the Cron jobs pane uses. Nothing is created
   without the click.
+- **Settings, Meetings (ATO-2514).** `renderer/settings-meetings.js` with
+  the routes in `main/meeting-library-ipc.ts`: the transcript folder
+  (Change picks one, Use default goes back to Documents/Atomic Agent/
+  Meetings; kept in userData/meetings.json, `meeting-prefs.ts`, and read by
+  `meetingSaveDir` for every Make notes), the switches for the call's sound
+  and for speakers by voice (with the model's size and licences, Download
+  now and Remove), and the meetings saved in that folder: Open, Notes, Show
+  in folder and Delete, which asks first and moves the transcript and its
+  `.notes.md` to the Trash. Only files named like the recorder's own
+  (`meeting-library.ts`) can be opened or deleted from the page.
 - **Voice input: what is and is not possible.** `SpeechAnalyzer` is macOS
   26+, so on anything older the button is disabled and says
   `Voice input needs macOS 26 or later`; the app itself runs from

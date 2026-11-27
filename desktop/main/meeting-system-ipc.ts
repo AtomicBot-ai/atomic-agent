@@ -22,6 +22,7 @@ import { app, desktopCapturer, ipcMain, shell, type Session } from "electron";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
+import { readMeetingPrefs } from "./meeting-prefs.js";
 import type { MeetingRecorder } from "./meeting-recorder.js";
 import { MacSystemAudio, systemAudioMode } from "./meeting-system-audio.js";
 
@@ -45,12 +46,14 @@ export function displayCaptureAllowed(armed: boolean, platform: NodeJS.Platform 
 export interface MeetingSystemDeps {
   emit: (ev: unknown) => void;
   platform?: NodeJS.Platform;
-  /** Off in Settings › Meetings: microphone only. */
+  /** Off in Settings, Meetings: microphone only. Defaults to meetings.json. */
   enabled?: () => boolean;
 }
 
 export function wireMeetingSystemIpc(recorder: MeetingRecorder, deps: MeetingSystemDeps): void {
   const platform = deps.platform ?? process.platform;
+  // Settings, Meetings: Record the other side of the call (on by default).
+  const enabled = deps.enabled ?? (() => readMeetingPrefs(app.getPath("userData")).systemAudio);
   let capture: MacSystemAudio | null = null;
   const stop = () => { capture?.stop(); capture = null; };
 
@@ -58,7 +61,7 @@ export function wireMeetingSystemIpc(recorder: MeetingRecorder, deps: MeetingSys
     const mode = systemAudioMode(platform);
     const id = recorder.status().id;
     if (!recorder.armed || !id) return { ok: false, mode, error: "not-recording" };
-    if (deps.enabled && !deps.enabled()) return { ok: false, mode, error: "off" };
+    if (!enabled()) return { ok: false, mode, error: "off" };
     if (mode !== "helper") return { ok: mode !== "none", mode, ...(mode === "none" ? { error: "unsupported" } : {}) };
     const command = systemAudioHelperPath();
     if (!existsSync(command)) return { ok: false, mode, error: "system-helper-missing" };

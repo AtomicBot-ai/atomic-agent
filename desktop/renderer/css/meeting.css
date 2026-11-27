@@ -55,3 +55,7 @@
 .mttowner{font-size:12px;color:var(--ink-3)}
 .mttday{flex:none}
 .mtterr{margin:10px 0 0;color:var(--critical)}
+
+/* ATO-2514: Settings, Meetings (renderer/settings-meetings.js). */
+.ms-vacts{display:flex;justify-content:flex-end;gap:6px;margin:-4px 0 10px}
+.ms-pane .set-path{overflow-wrap:anywhere}

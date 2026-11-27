@@ -726,6 +726,14 @@ contextBridge.exposeInMainWorld("atomic", {
   meetingVoicesInstall: () => ipcRenderer.invoke("meeting:voices-install"),
   meetingVoicesCancel: () => ipcRenderer.invoke("meeting:voices-cancel"),
   meetingVoicesRemove: () => ipcRenderer.invoke("meeting:voices-remove"),
+  // ATO-2514: Settings, Meetings (main/meeting-library-ipc.ts).
+  meetingSettingsGet: () => ipcRenderer.invoke("meeting:settings-get"),
+  meetingSettingsSet: (patch: { systemAudio?: boolean; voices?: boolean; folder?: null }) => ipcRenderer.invoke("meeting:settings-set", patch),
+  meetingChooseFolder: () => ipcRenderer.invoke("meeting:choose-folder"),
+  meetingList: () => ipcRenderer.invoke("meeting:list"),
+  meetingOpen: (name: string, which?: "notes") => ipcRenderer.invoke("meeting:open", name, which),
+  meetingShow: (name: string) => ipcRenderer.invoke("meeting:show", name),
+  meetingTrash: (name: string) => ipcRenderer.invoke("meeting:trash", name),
   /** ATO-1167: the neural reading voice through Atomic Core (main/core-speech.ts). */
   ttsCoreStatus: (model: string) => ipcRenderer.invoke("tts:coreStatus", model),
   ttsCorePrepare: (model: string) => ipcRenderer.invoke("tts:corePrepare", model),
