@@ -46,6 +46,7 @@ import {
 } from "./task-types.js";
 import type { TaskCreateInput, TaskStore } from "./task-store.js";
 import { TASK_OWNER_GONE_ERROR } from "./task-store.js";
+import { holdBlockedCard, tripBoardFuse } from "./task-board-fuse.js";
 
 /**
  * Subset of `AgentRuntime` consumed by the task runner. Declared
@@ -746,7 +747,12 @@ export class TaskRunner {
       } else {
         this.maybeReport(completed, replyText, facts);
       }
-      return this.maybeRequeueRecurring(completed);
+      // A card the agent blocked in this run waits for a person (ATO-2497).
+      return holdBlockedCard(
+        this.options.store,
+        this.maybeRequeueRecurring(completed),
+        claimed.startedAt,
+      );
     } finally {
       snapshots?.stop();
       this.live.delete(claimed.id);
@@ -834,6 +840,22 @@ export class TaskRunner {
       resumes: plan.resumes,
     });
     return failed;
+  }
+
+  /**
+   * The task this runner is running in `sessionId` right now, or `null`
+   * (ATO-2497): the card the board tools (`tasks.request_review`,
+   * `tasks.block`, `tasks.comment`) act on. Only runs of this process
+   * count; a session runs one task at a time (per-session FIFO).
+   */
+  runningTaskInSession(sessionId: string): TaskRecord | null {
+    for (const taskId of this.runs.keys()) {
+      const record = this.options.store.get(taskId);
+      if (record && record.status === "running" && record.sessionId === sessionId) {
+        return record;
+      }
+    }
+    return null;
   }
 
   /**
@@ -1101,7 +1123,12 @@ export class TaskRunner {
       attempt: retried.attempts,
       maxAttempts: retried.maxAttempts,
     });
-    return retried;
+    // The board (ATO-2497): a card the agent blocked, or one that keeps
+    // failing, is paused in Blocked rather than tried again unattended.
+    return tripBoardFuse(
+      this.options.store,
+      holdBlockedCard(this.options.store, retried, task.startedAt),
+    );
   }
 
   /**

@@ -31,6 +31,11 @@ import {
 import { TaskRunLog, type TaskRunRecord } from "./task-run-log.js";
 import { TaskBoard } from "./task-board.js";
 import {
+  TaskBoardComments,
+  type BoardComment,
+  type BoardCommentInput,
+} from "./task-board-comments.js";
+import {
   buildBoardCards,
   type BoardCard,
   type BoardEntry,
@@ -220,6 +225,8 @@ export class TaskStore {
   private readonly runLog: TaskRunLog;
   /** Lane, note and assignee of each card on the task board (ATO-2257). */
   private readonly board: TaskBoard;
+  /** Each card's comment history (ATO-2497). */
+  private readonly boardComments: TaskBoardComments;
   /**
    * Why this database has no budget columns (see `ensureBudgetColumns`),
    * or `null`. Without them a task asking for a budget is refused.
@@ -260,6 +267,7 @@ export class TaskStore {
     this.dbIdentity = databaseIdentity(options.dbFile);
     this.runLog = new TaskRunLog(this.db);
     this.board = new TaskBoard(this.db);
+    this.boardComments = new TaskBoardComments(this.db);
 
     this.insertStmt = this.db.prepare(
       `INSERT INTO tasks (
@@ -831,6 +839,40 @@ export class TaskStore {
     return this.board.unavailable;
   }
 
+  /** What the board stores for one task, or `null` (no row, board off). */
+  boardEntry(id: string): BoardEntry | null {
+    return this.board.get(id);
+  }
+
+  /**
+   * Add a comment to a card (ATO-2497), its text checked by
+   * `validateBoardComment`. Returns the comment, or `null` for an
+   * unknown task or when comments are off for this open.
+   */
+  addBoardComment(
+    id: string,
+    input: BoardCommentInput,
+    now: number = Date.now(),
+  ): BoardComment | null {
+    if (!this.get(id)) return null;
+    return this.boardComments.add(id, input, now);
+  }
+
+  /** A card's comments, newest first (empty when comments are off). */
+  listBoardComments(id: string, limit = 50): BoardComment[] {
+    return this.boardComments.list(id, limit);
+  }
+
+  /** How many comments each card has, keyed by task id. */
+  boardCommentCounts(): Map<string, number> {
+    return this.boardComments.counts();
+  }
+
+  /** Why this open keeps no card comments, or `null`. */
+  get boardCommentsUnavailable(): string | null {
+    return this.boardComments.unavailable;
+  }
+
   /**
    * Drop every task bound to `sessionId` (ATO-586: an incognito chat
    * being closed). Rows are deleted, prompt and all, so nothing from the
@@ -852,6 +894,7 @@ export class TaskStore {
         .run({ sessionId, now });
       // The board's notes on the deleted rows go with them (ATO-2257).
       this.board.pruneOrphans();
+      this.boardComments.pruneOrphans();
       return deleted;
     });
     return remove();

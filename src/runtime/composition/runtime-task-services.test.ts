@@ -95,7 +95,7 @@ describe("runtime task service phases", () => {
     expect(fixture.saved.length).toBeGreaterThan(0);
     expect(fixture.resolveTelegram).toHaveBeenCalledTimes(1);
     expect(records.some((record) => record.message === "telegram task report skipped: channel not constructed")).toBe(true);
-    expect(fixture.toolRegistry.list().map((tool) => tool.name)).toEqual(["tasks.schedule", "tasks.cron", "tasks.list", "tasks.cancel", "tasks.show"]);
+    expect(fixture.toolRegistry.list().map((tool) => tool.name)).toEqual(["tasks.schedule", "tasks.cron", "tasks.list", "tasks.cancel", "tasks.show", "tasks.request_review", "tasks.block", "tasks.comment"]);
   });
 
   it("routes a notify: push task's report to ntfy, not to Telegram, with push turned on after boot (ATO-1129)", async () => {

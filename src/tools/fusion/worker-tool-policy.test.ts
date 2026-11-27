@@ -56,6 +56,10 @@ describe("worker tool policy", () => {
         "tasks.cancel",
         "tasks.cron",
         "tasks.schedule",
+        // ATO-2497: a worker runs no board card.
+        "tasks.request_review",
+        "tasks.block",
+        "tasks.comment",
       ].sort(),
     );
   });

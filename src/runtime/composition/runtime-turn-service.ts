@@ -43,6 +43,7 @@ import { continueOnStopHooks, startTurnHooks } from "./runtime-session-hooks.js"
 import type { SessionHookEngine } from "../../hooks/session-hook-engine.js";
 import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
 import { surfaceShowsQuestions, withAskUserVisibility } from "../../tools/conversation/ask-user-surface.js";
+import { withBoardCardVisibility } from "../../tools/tasks/board-card-visibility.js";
 
 export function prepareRuntimeTurnState() {
   /**
@@ -666,7 +667,11 @@ export function createRuntimeTurnService(
           ...(answerChannel !== undefined ? { answerChannel } : {}),
           ...(runOptions.questions !== undefined ? { questions: runOptions.questions } : {}),
         });
-        const toolFilter = withAskUserVisibility(runOptions.toolFilter, showsQuestions);
+        // The board card tools only on a task's run (ATO-2497).
+        const toolFilter = withBoardCardVisibility(
+          withAskUserVisibility(runOptions.toolFilter, showsQuestions),
+          runOptions.checkpoint?.taskId !== undefined,
+        );
         // A model that calls the hidden tool anyway gets an answer at
         // once rather than a question nobody can see (ask-user.ts).
         if (!showsQuestions) turnsWithoutQuestions?.add(session.id);

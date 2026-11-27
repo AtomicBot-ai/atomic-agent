@@ -52,7 +52,17 @@ const OUTBOUND_SHELL = new RegExp(
 );
 
 /** Task tools that only read; any other `tasks.*` call creates or changes a job. */
-const TASK_READ_TOOLS: ReadonlySet<string> = new Set(["tasks.get", "tasks.list", "tasks.lists.list", "tasks.show"]);
+const TASK_READ_TOOLS: ReadonlySet<string> = new Set([
+  "tasks.get",
+  "tasks.list",
+  "tasks.lists.list",
+  "tasks.show",
+  // ATO-2497: these change only the running task's own board card, and a
+  // replay runs no board task, so they refuse there: nothing to repeat.
+  "tasks.request_review",
+  "tasks.block",
+  "tasks.comment",
+]);
 
 /** MCP tool name words that read; any other MCP call counts as outbound. */
 const MCP_READ_WORDS = /^(?:search|list|get|read|fetch|query|find|describe|lookup|view)$/;
