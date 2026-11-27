@@ -427,6 +427,7 @@ export function registerRuntimeCoreTools(input: {
     ...dangerous,
     stateDir: config.paths.stateDir,
     trustConfigPaths: getTrustConfigPaths(config.paths),
+    localStepChars: () => getConfig().agent.batchToolResultCharCap,
     ...(sessionStore.isIncognito
       ? { isIncognitoSession: (sessionId: string) => sessionStore.isIncognito!(sessionId) }
       : {}),
