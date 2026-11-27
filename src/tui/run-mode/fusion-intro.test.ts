@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
-import { FUSION_MARK, describeFusionIntro } from "./fusion-intro.js";
+import { FUSION_MARK, FUSION_RUNS_EMPTY, describeFusionIntro } from "./fusion-intro.js";
 
 const rm: ResolvedRunMode = {
   stored: "fusion",
@@ -98,5 +98,12 @@ describe("describeFusionIntro", () => {
     });
     expect(text).toContain("openrouter");
     expect(text).toContain("local-llama");
+  });
+});
+
+describe("FUSION_RUNS_EMPTY (ATO-2772)", () => {
+  it("points a bare /fusion at the switch that turns Fusion on", () => {
+    expect(FUSION_RUNS_EMPTY).toContain("no unfinished fusion run in this session");
+    expect(FUSION_RUNS_EMPTY).toContain("/runmode fusion");
   });
 });

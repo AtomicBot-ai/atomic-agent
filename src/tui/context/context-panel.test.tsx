@@ -425,7 +425,30 @@ describe("parts and the tip", () => {
   it("names the server and the fix", () => {
     const body = lines(detailed(), 100, 24).join("\n");
     expect(body).toContain("tip: mcp github takes 12% of the window");
-    expect(body).toContain("turn it off in /mcp, or set agent.tools.search: on");
+    expect(body).toContain("turn it off in /mcp, or load tools on demand:");
+    expect(body).toContain("atag config set agent.tools.search on, then restart");
+  });
+
+  // ATO-2772: a long server name was cut at 14 characters with nothing
+  // to say it was cut.
+  it("cuts a long MCP server name with an ellipsis", () => {
+    const view = detailed();
+    const long = usage({
+      ...view,
+      parts: [
+        { parent: "prompt scaffold", label: "persona", tokens: 1240 },
+        {
+          parent: "prompt scaffold",
+          label: "mcp-atlassian-confluence",
+          tokens: 5000,
+          mcpServer: "mcp-atlassian-confluence",
+        },
+      ],
+    });
+    const row = lines(long, 100, 24).find((l) => l.includes("· mcp-atlas")) ?? "";
+    expect(row).toContain("· mcp-atlassian…");
+    expect(row).not.toContain("confluence");
+    expect(row).toContain("5k");
   });
 
   it("sheds the parts before the tip on a short pane", () => {

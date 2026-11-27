@@ -316,9 +316,10 @@ function renderRow(
   largest: number,
 ): string {
   // A part's label is an MCP server's name and can be any length; cut
-  // it so the numbers stay in their column.
+  // it with an ellipsis so the numbers stay in their column and the cut
+  // shows (ATO-2772).
   const label = (
-    row.part ? `   · ${row.label}`.slice(0, LABEL_WIDTH - 1) : ` ${row.label}`
+    row.part ? fitToWidth(`   · ${row.label}`, LABEL_WIDTH - 1) : ` ${row.label}`
   ).padEnd(LABEL_WIDTH);
   const tokens = formatTokens(row.tokens).padStart(TOKENS_WIDTH);
   if (usage.contextWindow === null) return `${label}${tokens}`;
