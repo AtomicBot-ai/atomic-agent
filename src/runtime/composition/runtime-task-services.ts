@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import {
@@ -12,18 +11,14 @@ import {
 } from "../../tasks/index.js";
 import type { TaskRunnerRuntime } from "../../tasks/task-runner.js";
 import {
-  chokidarWatcherFactory,
   createKeepAwake,
   createSchedulerLeadership,
-  FileTriggerManager,
-  nodeFileTriggerFs,
   parseKeepAwakeMode,
-  realFileTriggerClock,
   Scheduler,
   type KeepAwake,
   type SchedulerSidecar,
-  type FileTriggerFire,
 } from "../../scheduler/index.js";
+import { createRuntimeFileTriggers } from "./runtime-file-triggers.js";
 import { WebhookSessionStore, WEBHOOK_SESSIONS_FILENAME } from "../../http/webhook-session-store.js";
 import { registerTaskTools } from "../../tools/tasks/index.js";
 import { showDesktopNotification } from "../../tools/os/notify.js";
@@ -282,8 +277,14 @@ export function createRuntimeScheduler(args: {
       return channel !== null && channel.hasToken() && channel.state() !== "disabled";
     },
   });
-  const fileTriggers = createFileTriggers({ config, taskRunner, logger });
-  return new Scheduler({
+  // Bound below: a file trigger hit re-asks leadership just before it
+  // files (ATO-2508), and the watchers start only after the scheduler.
+  let scheduler: Scheduler | null = null;
+  const fileTriggers = createRuntimeFileTriggers({
+    config, taskRunner, logger,
+    confirmLeader: () => scheduler?.confirmLeadership() ?? false,
+  });
+  scheduler = new Scheduler({
     taskRunner,
     tickMs: config.tasks.schedulerTickMs,
     batch: config.tasks.schedulerBatch,
@@ -295,46 +296,5 @@ export function createRuntimeScheduler(args: {
       : {}),
     ...(sidecars && sidecars.length > 0 ? { sidecars } : {}),
   });
-}
-
-/**
- * File and log-line triggers (ATO-441). Watchers run only in the
- * scheduler leader (started and stopped through `onLeadershipChange`),
- * and each hit files a task the way a webhook hit does: the trigger
- * never calls `runTurn` itself. `null` when none are configured.
- */
-function createFileTriggers(args: {
-  config: Pick<AtomicAgentConfig, "tasks" | "fileTriggers">;
-  taskRunner: Pick<TaskRunner, "create">;
-  logger: StructuredLogger;
-}): FileTriggerManager | null {
-  const { config, taskRunner, logger } = args;
-  const definitions = config.fileTriggers ?? {};
-  if (Object.keys(definitions).length === 0) return null;
-  return new FileTriggerManager({
-    definitions,
-    factory: chokidarWatcherFactory,
-    fs: nodeFileTriggerFs,
-    clock: realFileTriggerClock,
-    homeDir: homedir(),
-    logger,
-    fire: (task: FileTriggerFire) => {
-      try {
-        const created = taskRunner.create({
-          ...(task.sessionId ? { sessionId: task.sessionId } : {}),
-          userMessage: task.userMessage,
-          origin: "scheduler",
-          triggerSource: "file",
-          maxAttempts: config.tasks.maxAttempts,
-          maxSteps: null,
-        });
-        logger.info("file trigger filed a task", { trigger: task.trigger, taskId: created.id });
-      } catch (err) {
-        logger.warn("file trigger could not file a task", {
-          trigger: task.trigger,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    },
-  });
+  return scheduler;
 }
