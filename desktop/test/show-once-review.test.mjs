@@ -72,9 +72,11 @@ test("a tidied SKILL.md keeps every recorded step and adds the title, summary an
   assert.equal(md.content.split("\n---\n").length, 2, "one front matter, nothing the model wrote opens another");
 });
 
-test("pictures: aimed by window id or frame, kept per step, moved into the draft, deleted on discard", async () => {
+test("pictures: aimed by window id only, kept per step, moved into the draft, deleted on discard", async () => {
   assert.deepEqual(SN.snapshotArgs({ windowId: 812 }, "/t/step-2.jpg"), ["-x", "-o", "-t", "jpg", "-l812", "/t/step-2.jpg"]);
-  assert.deepEqual(SN.snapshotArgs({ rect: { x: 10.4, y: 20, width: 300, height: 200 } }, "/f"), ["-x", "-o", "-t", "jpg", "-R10,20,300,200", "/f"]);
+  // A screen rectangle can show whatever came on top of the window (a browser, a password prompt).
+  assert.equal(SN.snapshotArgs({ rect: { x: 0, y: 0, width: 10, height: 10 } }, "/f"), null);
+  assert.deepEqual(SN.snapshotArgs({ windowId: 0, rect: { x: 10, y: 20, width: 300, height: 200 } }, "/f"), null);
   assert.equal(SN.snapshotArgs({}, "/f"), null);
   const ran = [];
   const fakeExec = async (file, args) => {
@@ -182,4 +184,11 @@ test("a recorded draft's preview shows its step pictures; other drafts show noth
   assert.equal(paints, 1);
   assert.ok(html.includes('src="data:image/jpeg;base64,AAAA"') && html.includes("Step 2"));
   assert.ok(!html.includes("javascript:"), "only a JPEG data URL is drawn");
+});
+
+test("the card says the tidy pass can send the steps to a cloud model", () => {
+  assert.ok(R.SHOW_ONCE_TIDY_HINT.includes("If that model is in the cloud, this text leaves this computer"));
+  assert.ok(R.SHOW_ONCE_KEPT.endsWith("unless you tidy it with a cloud model."), "no flat 'stays on this Mac' above a switch that is on by default");
+  const html = R.showOnceOptionsHTML({ options: { tidy: true } }, (x) => x);
+  assert.ok(html.includes("If that model is in the cloud"));
 });
