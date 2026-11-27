@@ -189,6 +189,7 @@ const ENGINE_EXIT_REASONS: ReadonlySet<string> = new Set([
   "out_of_memory",
   "model_file_missing",
   "model_file_corrupt",
+  "model_unsupported",
   "gpu_driver",
   "port_in_use",
   "crashed_unknown",
