@@ -154,6 +154,11 @@ export interface ScrubbedErrorEvent {
    * `llmFailureTags`: they stay out of the fingerprint.
    */
   cliFailureTags?: Record<string, string>;
+  /**
+   * `socket_error_code`, `socket_peer`, `undici_frame` for a global
+   * socket failure (`socket-error.ts`, ATO-1735). Context only.
+   */
+  socketTags?: Record<string, string>;
   /** Path-stripped stack frames (basenames only — no home dir / username). */
   frames: SentryStackFrame[];
 }

@@ -450,3 +450,24 @@ describe("buildEnvelope", () => {
     ]);
   });
 });
+
+describe("buildEnvelope socket tags (ATO-1735)", () => {
+  it("stamps the socket tags and keeps them out of the fingerprint", () => {
+    const base: ScrubbedErrorEvent = {
+      errorType: "TypeError",
+      source: "unhandledRejection",
+      frames: [],
+    };
+    const socketTags = {
+      socket_error_code: "ECONNRESET",
+      socket_peer: "unknown",
+      undici_frame: "yes",
+    };
+    const plain = parseEventPayload(buildEnvelope(DSN, base, META).body);
+    const tagged = parseEventPayload(
+      buildEnvelope(DSN, { ...base, socketTags }, META).body,
+    );
+    expect(tagged.tags).toMatchObject(socketTags);
+    expect(tagged.fingerprint).toEqual(plain.fingerprint);
+  });
+});
