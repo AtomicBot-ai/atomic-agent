@@ -17,6 +17,7 @@ import type { LlmFailureCategory } from "./failure-category.js";
 import { GrammarError, ModelError, ToolExecutionError } from "./llm-failures.js";
 import { isLocalEngineDown } from "./local-engine-down.js";
 import { isAtomicChatNotRunning } from "./atomic-chat-not-running.js";
+import { isContextWindowTooSmall } from "./context-window-too-small.js";
 import { RequestTooLargeError } from "./request-too-large.js";
 import { DailySpendLimitError } from "./spend-limit-error.js";
 import {
@@ -80,6 +81,7 @@ function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
   if (category === "cancelled") return "cancelled";
   if (isLocalEngineDown(err)) return "local_engine_down";
   if (isAtomicChatNotRunning(err)) return "atomic_chat_not_running";
+  if (causeChain(err).some(isContextWindowTooSmall)) return "context_window_too_small";
 
   const chain = causeChain(err);
   const webSearch = chain.find(isWebSearchError);

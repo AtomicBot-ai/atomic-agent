@@ -16,10 +16,8 @@ import {
 } from "../memory/notes-renderer.js";
 import { renderLessonsSection } from "../memory/lessons/lessons-renderer.js";
 import { renderProceduresSection } from "../memory/procedures/procedures-renderer.js";
-import {
-  packConversation,
-  pairTokenCosts,
-} from "../session/conversation-turn.js";
+import { pairTokenCosts } from "../session/conversation-turn.js";
+import { packConversationToFit } from "./fit-pinned-conversation.js";
 import type { PromptMessages } from "../llm/provider/completion-types.js";
 import {
   packedConversationTurns,
@@ -47,11 +45,10 @@ import { partitionByRole } from "../tools/tool-roles.js";
 import { renderTaskPolicy } from "./render-task-policy.js";
 import {
   checkBudget,
-  computeEffectiveConversationCap,
   CONVERSATION_CAP_AUTO,
   CONVERSATION_CAP_AUTO_FALLBACK,
   defaultBudget,
-  effectiveReplyReserve,
+  effectiveConversationBudget,
   estimateTokens,
   SESSION_SECTIONS_CAP_AUTO,
   truncateToTokens,
@@ -424,7 +421,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // them; a local one (Ollama, LM Studio, a Fusion worker leg) did not,
   // so the transcript was packed into room the schemas already took.
   const toolSchemaTokens = Math.max(0, input.toolSchemaTokens ?? 0);
-  const conversationCapEffective = computeEffectiveConversationCap({
+  // On a window the fixed part crowds, the reply reserve shares what is
+  // left with the transcript (ATO-1678); `replyReserve` reports it.
+  const { cap: conversationCapEffective, replyReserve } = effectiveConversationBudget({
     configuredCap: limits.conversation,
     ...(conversationCapAuto ? { autoFill: true } : {}),
     contextWindow: contextWindow ?? undefined,
@@ -461,10 +460,14 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       ? { packStart: projection.packStart }
       : {}),
   };
-  let packed = packConversation(
+  // On a known window the pinned task is packed to really fit the cap
+  // (ATO-1678): the pins alone used to run past it.
+  const windowKnown = contextWindow !== null && contextWindow > 0;
+  let packed = packConversationToFit(
     projection.turns,
     suffixCap,
     packOptions,
+    windowKnown,
   );
   // The operator's request, pinned only once the packer has dropped the
   // turn that carried it. It then takes its room out of the conversation
@@ -479,10 +482,11 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   if (requestSection !== null) {
     const requestTokens = estimateTokens(requestSection);
     if (requestTokens < suffixCap) {
-      packed = packConversation(
+      packed = packConversationToFit(
         projection.turns,
         suffixCap - requestTokens,
         packOptions,
+        windowKnown,
       );
     }
   }
@@ -678,11 +682,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
         projectTokens +
         taskPolicyTokens + compactionTokens + toolSchemaTokens,
     },
-    replyReserve: effectiveReplyReserve(
-      completionMaxTokens,
-      contextWindow,
-      reasoningBudgetTokens,
-    ),
+    replyReserve,
     limits,
     truncated:
       truncation.loadedSkills ||
