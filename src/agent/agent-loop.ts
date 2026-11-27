@@ -30,7 +30,7 @@ import { PLAIN_INSTRUCT_PROFILE } from "../llm/model-profile.js";
 
 import type { SessionState } from "../session/session-state.js";
 import { recordTurn } from "../session/session-state.js";
-import { assistantReplyTurn, steeredUserTurn } from "../session/conversation-turn.js";
+import { steeredUserTurn } from "../session/conversation-turn.js";
 import { formatProgressNoteStepSummary, isProgressNoteResult } from "./progress-note-reply.js";
 
 import type { ProfileFact } from "../memory/profile-store.js";
@@ -42,7 +42,8 @@ import {
 } from "./request-deadline.js";
 
 import { OUTCOME_REPEAT_WARNING_THRESHOLD, READ_REPEAT_WARNING_THRESHOLD, TEST_REPEAT_WARNING_THRESHOLD } from "./progress/loop-constants.js";
-import { formatOutcomeRepeatNotice, formatReadRepeatNotice, formatRepeatNotice, formatTestRepeatNotice, formatWanderingRedirect, formatForcedLoopReply } from "./progress/loop-notices.js";
+import { formatOutcomeRepeatNotice, formatReadRepeatNotice, formatRepeatNotice, formatTestRepeatNotice, formatWanderingRedirect } from "./progress/loop-notices.js";
+import { LOOP_FINAL_STEP_NOTICE, loopFinalStepFrom, recordForcedLoopReply, type LoopFinalStep } from "./progress/loop-final-step.js";
 import type { BatchLoopSignal } from "./dispatch/batch-contract.js";
 import { composeSteerNotice } from "./steer-notice.js";
 import { planReminderNotice } from "./plan/plan-snapshot.js";
@@ -247,6 +248,18 @@ export class AgentLoop {
     // Once the budget asked for the summary step it stays asked for: a
     // cheap retry of that step must not read as room for more work.
     let budgetSummaryDue = false;
+    // The loop breaker tripped (ATO-2004): the next step is the turn's
+    // last, a terminal-only summary; its canned reply is the fallback.
+    let loopFinal: LoopFinalStep | null = null;
+    const closeWithForcedLoopReply = (pending: LoopFinalStep): void => {
+      state = recordForcedLoopReply(state, pending, (text) =>
+        this.deps.onEvent?.({
+          type: "llm_event",
+          event: { type: "assistant_reply", text },
+        }),
+      );
+      turn.reason = "reply";
+    };
     // Non-terminal tools that ran in this turn (ATO-1476): a turn that
     // fails after one ran says so in its failure record, so "Try again"
     // never treats the turn as one that changed nothing.
@@ -288,7 +301,7 @@ export class AgentLoop {
       }
       // Leg boundary. Everything the task needs to keep running is
       // decided here, once per `legSteps` steps, and never mid-leg.
-      if (i > 0 && i % legSteps === 0 && i !== turn.lastBoundaryIndex) {
+      if (loopFinal === null && i > 0 && i % legSteps === 0 && i !== turn.lastBoundaryIndex) {
         turn.lastBoundaryIndex = i;
         if (!turn.legMadeProgress) {
           // A whole leg with nothing usable coming back is the honest
@@ -335,6 +348,17 @@ export class AgentLoop {
       let budgetPlan = budgetStepPlan(turn.spendUsd, lastStepUsd, costCeilingUsd);
       if (budgetPlan === "work" && budgetSummaryDue) budgetPlan = "summary";
       if (budgetPlan === "summary") budgetSummaryDue = true;
+      // No time or money left for the breaker's summary step: the
+      // canned stop reply closes the turn, as it did before ATO-2004.
+      if (
+        loopFinal !== null &&
+        (budgetPlan === "stop" ||
+          turn.ceilingFiredMidRequest ||
+          Date.now() - taskStartedAt >= durationCeilingMs)
+      ) {
+        closeWithForcedLoopReply(loopFinal);
+        break;
+      }
       if (budgetPlan === "stop") {
         turn.stopCause = "cost_ceiling";
         turn.reason = "max_steps";
@@ -390,7 +414,8 @@ export class AgentLoop {
       const outOfBudget = !outOfTime && budgetPlan === "summary";
       if (outOfTime) turn.stopCause = "time_ceiling";
       else if (outOfBudget) turn.stopCause = "cost_ceiling";
-      const finalizationStep = i === stepCeiling - 1 || outOfTime || outOfBudget;
+      const ceilingFinal = i === stepCeiling - 1 || outOfTime || outOfBudget;
+      const finalizationStep = ceilingFinal || loopFinal !== null;
       // Re-plan cadence (ATO-609): every `replanEveryNSteps` completed
       // steps the model is asked, in this step's `### notice`, to check
       // its live plan against what it has found and resend it. No extra
@@ -453,10 +478,16 @@ export class AgentLoop {
       }
       const effectiveTransport: ToolCallTransport =
         pinnedSlice?.toolTransport ?? this.deps.toolTransport ?? "grammar";
-      const finalizationNotice = outOfBudget
+      const ceilingNotice = outOfBudget
         ? costCeilingNotice(turn.spendUsd, costCeilingUsd)
         : "This is the final allowed step. Do not call any non-terminal tool; " +
           "summarize the completed work with reply, or end the session with finish.";
+      const finalizationNotice =
+        loopFinal === null
+          ? ceilingNotice
+          : outOfBudget
+            ? `${LOOP_FINAL_STEP_NOTICE}\n\n${ceilingNotice}`
+            : LOOP_FINAL_STEP_NOTICE;
       // The ceiling holds while waiting on a provider: the step's
       // completion request gets the task's remaining time as a deadline
       // (composed with the user's signal), so a turn parked in a queue
@@ -933,20 +964,25 @@ export class AgentLoop {
         });
         if (outcome.terminal === "session") {
           turn.reason = "finish";
-          turn.endedOnFinalizationStep = finalizationStep;
+          turn.endedOnFinalizationStep = ceilingFinal;
           state = { ...state, status: "completed" };
           break;
         }
         if (outcome.terminal === "turn") {
           turn.reason = "reply";
-          turn.endedOnFinalizationStep = finalizationStep;
+          turn.endedOnFinalizationStep = ceilingFinal;
           break;
         }
         // The reserved final step ran and the model still did not close
         // the turn: its non-terminal calls were refused at dispatch
         // (`final step: only reply or finish run here`), nothing more
         // may execute, and the ceiling that made the step final is what
-        // ends the turn — `stopCause` already names it.
+        // ends the turn — `stopCause` already names it. On the breaker's
+        // summary step the canned stop reply closes the turn instead.
+        if (loopFinal !== null) {
+          closeWithForcedLoopReply(loopFinal);
+          break;
+        }
         if (finalizationStep) {
           turn.reason = "max_steps";
           break;
@@ -1000,22 +1036,15 @@ export class AgentLoop {
         }
 
         // Breaker: the model ignored repeated vetoes of the same call, or
-        // a wandering spread crossed the escalation cap.
-        // Force a graceful synthetic reply (NOT a `loop_failed` — the
-        // turn ends with a best-effort answer, the session stays usable).
+        // a wandering spread crossed the escalation cap. No more work
+        // runs (NOT a `loop_failed`; the session stays usable): the next
+        // step is a terminal-only summary of what the turn gathered, the
+        // wrap-up Claude Code and Codex ask for at a turn cap (ATO-2004).
         const breaker = loopSignals.find((s) => s.kind === "breaker");
         if (breaker) {
-          const replyText = formatForcedLoopReply(
-            breaker.tool,
-            breaker.count,
-            breaker.detector,
-            breaker.blockedCount,
-          );
-          state = recordTurn(state, assistantReplyTurn(replyText));
-          this.deps.onEvent?.({
-            type: "llm_event",
-            event: { type: "assistant_reply", text: replyText },
-          });
+          loopFinal = loopFinalStepFrom(breaker);
+          // A trim notice asks for calls the summary step may not make.
+          turn.pendingNotice = undefined;
           this.deps.onEvent?.({
             type: "loop_detected",
             tool: breaker.tool,
@@ -1026,7 +1055,7 @@ export class AgentLoop {
             failure: loopDetectorVerdict(breaker.detector),
           });
           this.deps.logger?.warn(
-            "loop breaker tripped; forcing graceful reply",
+            "loop breaker tripped; asking for a final summary step",
             {
               sessionId: state.id,
               stepIndex: i,
@@ -1035,8 +1064,7 @@ export class AgentLoop {
               detector: breaker.detector,
             },
           );
-          turn.reason = "reply";
-          break;
+          continue;
         }
 
         // Critical vetoes: the synthetic veto result already carries the
@@ -1202,6 +1230,17 @@ export class AgentLoop {
             continue;
           }
           this.deps.logger?.warn("overflow compaction could not free room", logFields);
+        }
+        // The breaker's summary step failed: the canned stop reply closes
+        // the turn, never a retry or a failure. A user stop stays a stop.
+        if (loopFinal !== null && !options.signal.aborted) {
+          requestDeadline.dispose();
+          this.deps.logger?.warn("loop breaker summary step failed; sending the stop reply", {
+            sessionId: state.id, stepIndex: i,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          closeWithForcedLoopReply(loopFinal);
+          break;
         }
         // Still too large after the turn's one overflow compaction (or none
         // could free room): if the step fails, it fails with plain words, in
