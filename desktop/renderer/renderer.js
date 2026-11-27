@@ -2429,6 +2429,7 @@ function render() {
   if (LIVE_REPLAY) return;   // Item 38: the chat being opened renders once, after its kept frames
   imageViewerFollowsChat();   // ATO-408: the picture viewer closes when its chat is left
   const exaHeld = exaKeyHold();   // ATO-328: the Exa key field being typed in survives the rebuild
+  const qeHeld = typeof qeditHold === 'function' ? qeditHold() : null;   // ATO-2132: and the queued message's edit field
   ANX.paneTick(S.settings ? settingsPaneId(S.settingsPane) : null);   // analytics: settings_pane_viewed
   // 13/14: a whole render paints everything a waiting stream frame would have.
   dropStreamPaint();
@@ -2446,6 +2447,7 @@ function render() {
   // Backlog 28: so does a landed model's start, held by a turn in another chat.
   obFlushDeferredSoon();
   exaKeyRestore(exaHeld);
+  if (typeof qeditRestore === 'function') qeditRestore(qeHeld);
   // ATO-568: the caret goes into a worker's Steer field that was just opened.
   if (typeof fzpAfterRender === 'function') fzpAfterRender();
 }
@@ -2979,7 +2981,7 @@ function queuesSnapshot() {
   for (const [key, q] of QUEUES) if (key && !key.startsWith('turn:') && q.queued.length) out[key] = q.queued.slice();
   const here = queueKey();
   if (here && !here.startsWith('turn:') && S.queued.length) out[here] = (out[here] || []).concat(S.queued);
-  return out;
+  return qeditSnapshot(out, here);   // ATO-2132: a message being edited is still queued
 }
 /** ATO-135: tells main what is queued, when it changed (every paint of the sidebar asks). */
 function queuesKeep() {
@@ -4489,10 +4491,11 @@ function composer() {
        still kept (and logged) for diagnostics; only the strip is gone. The
        strips above stay: each carries a control (Jump, Stop) or a failure. */
     : '';
-  const q = S.queued.length ? '<div class="qtray">' + S.queued.map((t, i) =>
+  const q = (S.queued.length || qeditOn()) ? '<div class="qtray">' + qeditTray(S.queued.map((t, i) =>   // ATO-2132: the chip being edited (queue-edit.js)
       '<div class="qchip"><span class="qlb">' + (DRAIN_OWED ? 'Sent · waiting' : 'Queued') + '</span><span class="qtx">' + esc(attQueueLabel(t)) + '</span>'
       + (steerNowShown(t) ? steerNowButtonHTML(i, {esc}) : '')   // ATO-1183 (steer-now.js)
-      + '<button class="iconbtn sm qx" data-unqueue="' + i + '" aria-label="Remove">' + ic('x') + '</button></div>').join('') + '</div>' : '';
+      + qeditButtonHTML(i, {esc, ic})   // ATO-2132
+      + '<button class="iconbtn sm qx" data-unqueue="' + i + '" aria-label="Remove">' + ic('x') + '</button></div>'), {esc, ic}).join('') + '</div>' : '';
   const backend = selBackend();
   // ATO-486: the agent's live plan, above the queue (plan-bar.js).
   // ATO-1040: the chat's goal and the goal form, under the plan (goal-card.js).
@@ -8862,6 +8865,7 @@ document.addEventListener('click', (e) => {
   const fmr = t.closest('[data-fm-row]'); if (fmr) { e.preventDefault(); fmAccept(+fmr.dataset.fmRow); return; }   // ATO-1596
   const sn = t.closest('[data-steernow]'); if (sn) { ANX.messageAction('steer'); steerQueuedNow(+sn.dataset.steernow); return; }
   const uq = t.closest('[data-unqueue]'); if (uq) { ANX.messageAction('unqueue'); unqueueMessage(+uq.dataset.unqueue); return; }
+  const qe = t.closest('[data-qedit]'); if (qe) { qeditClick(qe.dataset.qedit); return; }   // ATO-2132: Edit, Save, Cancel on a queued chip
   const rv = t.closest('[data-revoke]'); if (rv) { S.grants.splice(+rv.dataset.revoke, 1); render(); toast('Grant revoked'); return; }
   const ask = t.closest('[data-ask]'); if (ask) { const q = S.q; act('close'); S.draft = q; render(); submit(); return; }
   const selOpen = t.closest('[data-sel-open]');
@@ -8951,6 +8955,7 @@ document.addEventListener('input', (e) => {
   if (e.target.dataset && e.target.dataset.whkField) { WHK.type(e.target.dataset.whkField, e.target.value); return; }
   // ATO-568: a worker's Steer field keeps its text across repaints.
   if (typeof fzpInput === 'function' && fzpInput(e)) return;
+  if (typeof qeditInput === 'function' && qeditInput(e)) return;   // ATO-2132: the queued message being edited
   if (typeof deeplinkRecipeInput === 'function' && deeplinkRecipeInput(e)) return;   // ATO-1615: a recipe card's fields (deeplink.js)
   if (typeof mcpElicitInput === 'function' && mcpElicitInput(e)) return;   // ATO-1492
   if (typeof allSettingsInput === 'function' && allSettingsInput(e, esc)) return;   // ATO-41
@@ -9946,6 +9951,7 @@ document.addEventListener('keydown', (e) => {
   if (e.isComposing || e.keyCode === 229) return;
   // ATO-568: Enter and Escape in a worker's Steer field are that field's.
   if (typeof fzpKeydown === 'function' && fzpKeydown(e)) return;
+  if (typeof qeditKeydown === 'function' && qeditKeydown(e)) return;   // ATO-2132: Enter saves, Escape cancels a queued message's edit
   const k = e.key;
   /* ATO-226: the key the chords and the ⌘ shortcuts below match on, by the
      physical key on a non-Latin layout (shortcutKey). `k` stays the typed
@@ -12056,6 +12062,7 @@ function onChatEvent(ev) {
 /** The next queued message, as the next turn of the chat on screen, whose
     queue S.queued is (Backlog 26). */
 function drainQueued() {
+  if (qeditHoldsDrain()) { DRAIN_OWED = true; render(); return; }   // ATO-2132: the head of the queue is being edited; Save or cancel runs it
   if (!S.queued.length) { DRAIN_OWED = false; return; }
   if (swxWaitsForRoute() || S.live.state !== 'connected' || openHoldsComposer()) { DRAIN_OWED = true; return; }
   if (SWX.sendError) { DRAIN_OWED = true; return; }
@@ -12069,7 +12076,7 @@ function drainQueued() {
     render(); return;
   }
   DRAIN_OWED = false;
-  const q = S.queued.shift();
+  const q = S.queued.shift(); qeditShift(0);   // ATO-2132
   if (gate.kind === 'notice') S.log.push({id:nid(), k:'system', text: esc(gate.text)});
   S.log.push({id:nid(), k:'user', text:q}); startLiveTurn(q);
 }
@@ -12147,6 +12154,7 @@ function mergeQueue(key, q) {
 /** The chat being left (another chat opened, or a new one) takes the queue
     on screen with it. Read before the view changes: queueKey() reads it. */
 function stashQueue() {
+  qeditLeave();   // ATO-2132: a message being edited goes back first, as typed
   const q = {queued:S.queued.splice(0), ahead:STEER.ahead, owed:DRAIN_OWED};
   STEER.ahead = 0; DRAIN_OWED = false;
   if (!q.queued.length) return;
@@ -12215,7 +12223,7 @@ function steerNowShown(text) {
 function steerQueuedNow(at) {
   const text = S.queued[at];
   if (typeof text !== 'string' || !steerNowShown(text)) return;
-  STEER.ahead = steerNowTake(S.queued, at, STEER.ahead);
+  STEER.ahead = steerNowTake(S.queued, at, STEER.ahead);   qeditShift(at);   // ATO-2132
   if (!S.queued.length) DRAIN_OWED = false;
   render();
   return steerOrQueue(text, {sid:S.agentSession, key:queueKey(), card: approvalOpen(S.pending)});
@@ -12223,6 +12231,7 @@ function steerQueuedNow(at) {
 /** Cancel a locally accepted message, including an unsaved chat's last one. */
 function unqueueMessage(at) {
   const gone = S.queued.splice(at, 1)[0]; if (at < STEER.ahead) STEER.ahead -= 1;
+  qeditShift(at);   // ATO-2132: a message being edited behind it keeps its place
   attForgetMessage(gone);   // ATO-405: files only this queued message named
   if (!S.queued.length) {
     DRAIN_OWED = false;
@@ -12236,6 +12245,7 @@ function unqueueMessage(at) {
 }
 /** A deleted chat's queue goes with it, sent nowhere. */
 function forgetQueue(sid) {
+  qeditDrop(sid);   // ATO-2132
   QUEUES.delete(sid);
   if (sid && sid === queueKey()) { S.queued.length = 0; STEER.ahead = 0; DRAIN_OWED = false; }
 }
@@ -22250,6 +22260,7 @@ async function recoverParkedSteers(id, probe) {
   }
   if (list.length) {
     S.queued.unshift.apply(S.queued, list.map((u) => String((u && u.text) || '')));
+    qeditShiftInsert(0, list.length);   // ATO-2132: a message being edited moves down with the rest
     STEER.ahead += list.length;
     S.log.push({id:nid(), k:'system', note:true, text: list.length + ' message' + (list.length === 1 ? '' : 's')
       + ' arrived too late for the last turn here — sending ' + (list.length === 1 ? 'it' : 'them') + ' next'});

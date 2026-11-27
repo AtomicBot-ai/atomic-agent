@@ -73,6 +73,13 @@
   color:var(--ink);cursor:pointer}
 .qchip .qsteer:hover{background:var(--bd-2)}
 .qchip .qsteer:focus-visible{outline:none;box-shadow:var(--focus-ring)}
+/* ATO-2132: Edit on a chip, and the chip being edited: a field for the words, its files, Save and ×. */
+.qchip .qe svg{width:13px;height:13px}
+.qchip.qedit{flex:1 1 100%;max-width:none;height:auto;min-height:30px;padding:3px 3px 3px 11px;
+  box-shadow:inset 0 0 0 1.5px var(--accent, var(--bd-2))}
+.qchip .qefield{flex:1 1 auto;min-width:0;max-height:120px;margin:0;padding:3px 0;border:0;outline:none;resize:none;
+  background:transparent;font:inherit;line-height:1.4;color:var(--ink);field-sizing:content}
+.qchip .qfiles{flex:none;color:var(--ink-2)}
 
 /* ---- Voice strip -------------------------------------------------------
    Always in the DOM; `hidden` while idle, so the display rule below must
