@@ -17,6 +17,7 @@ import { commandOfAsync, resolveBinary } from "./agent-client.js";
 // r5 item 9 — every `atag` subprocess runs on the DESKTOP's state directory.
 import { AGENT_HOME_DIRNAME, agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor, managedDataDir } from "./local-llama-key.js";
+import { modelsDirOf } from "./disk-space.js";
 import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 
 // Moved next to the key lookup that needs it; main.ts still imports it from here.
@@ -546,7 +547,7 @@ export async function modelsList(): Promise<{ ok: boolean; models?: CatalogModel
   if (!res.ok) return { ok: false, error: res.error };
   const models: CatalogModel[] = [];
   // The table says whether the weights are on disk, and nothing about the projector.
-  const modelsDir = remoteModels ? null : join(managedDataDirNow(), "models");
+  const modelsDir = remoteModels ? null : modelsDirOf(managedDataDirNow());
   for (const line of res.stdout.split("\n")) {
     if (!line.includes("|")) continue;
     const cells = line.split("|").map((c) => c.trim());
@@ -3633,7 +3634,7 @@ export function modelIdFromPath(path: string, dataDir: string): string | null {
   const real = (p: string): string => {
     try { return realpathSync.native(p); } catch { const up = dirname(p); return up === p ? p : join(real(up), basename(p)); }
   };
-  const root = join(dataDir, "models");
+  const root = modelsDirOf(dataDir);
   const folds = process.platform === "win32" || process.platform === "darwin";
   return under(path, root) ?? under(real(path), real(root))
     ?? (folds ? under(real(path).toLowerCase(), real(root).toLowerCase()) : null);
@@ -3724,7 +3725,7 @@ export function downloadJobRunning(dataDir: string, kind: "chat" | "embedding", 
 export async function removeModelDir(dataDir: string, id: string): Promise<{ ok: boolean; error?: string }> {
   if (!MODEL_ID_RE.test(id) || id === "." || id === "..") return { ok: false, error: `not a model id: ${id}` };
   if (!dataDir || !isAbsolute(dataDir)) return { ok: false, error: "the models folder is not known" };
-  const root = join(dataDir, "models");
+  const root = modelsDirOf(dataDir);
   const dir = join(root, id);
   if (dirname(dir) !== root) return { ok: false, error: `not a model id: ${id}` };
   try {
