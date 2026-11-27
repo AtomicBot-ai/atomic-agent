@@ -63,7 +63,12 @@ export interface LocalNameDetectorOptions {
   cacheSize?: number;
   /** Characters of text per model call. Default 4000. */
   maxChunkChars?: number;
-  /** Model calls per `detect`; later paragraphs wait for the next request. Default 4. */
+  /**
+   * Model calls per `detect`. Paragraphs are queued newest message first,
+   * so the latest text is the one read; what is left over goes out with
+   * the regex masks only this time (logged through `onError`, without the
+   * text) and is read on a later request. Default 4.
+   */
   maxCallsPerDetect?: number;
   /** A failed call, for the log. Never rethrown. */
   onError?: (err: unknown, modelId: string) => void;
@@ -135,8 +140,10 @@ export function createLocalNameDetector(options: LocalNameDetectorOptions): Loca
     };
     const pending = new Map<string, string>();
     try {
-      for (const text of readTexts()) {
-        for (const paragraph of splitParagraphs(text)) {
+      // Newest first: the latest message is what a capped or cut-short
+      // pass must not skip. Its paragraphs newest first too.
+      for (const text of [...readTexts()].reverse()) {
+        for (const paragraph of splitParagraphs(text).reverse()) {
           const key = hashOf(paragraph);
           const hit = recall(key);
           if (hit !== undefined) add(hit);
@@ -151,9 +158,12 @@ export function createLocalNameDetector(options: LocalNameDetectorOptions): Loca
 
     const deadline = AbortSignal.timeout(timeoutMs);
     const callSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
-    for (const chunk of chunksOf([...pending.entries()], maxChunkChars).slice(0, maxCalls)) {
+    const chunks = chunksOf([...pending.entries()], maxChunkChars);
+    let read = 0;
+    for (const chunk of chunks.slice(0, maxCalls)) {
       if (callSignal.aborted) break;
       calls += 1;
+      read += 1;
       let reply: string;
       try {
         // Raced against the signal: a model that ignores it still cannot
@@ -179,14 +189,24 @@ export function createLocalNameDetector(options: LocalNameDetectorOptions): Loca
         options.onError?.(new Error("local name detector: reply is not the expected JSON"), model.id);
         continue;
       }
+      // An empty answer for several paragraphs at once may be one of them
+      // talking the model out of answering: use it, but do not keep it.
+      const keep = spans.length > 0 || chunk.length === 1;
       for (const [key, paragraph] of chunk) {
         // Only a span this paragraph contains word for word counts.
         const values = spans
           .filter((s) => paragraph.includes(s.text))
           .map((s) => ({ value: s.text, kind: s.kind }));
-        remember(key, values);
+        if (keep) remember(key, values);
         add(values);
       }
+    }
+    const left = chunks.slice(read).reduce((n, chunk) => n + chunk.length, 0);
+    if (left > 0) {
+      options.onError?.(
+        new Error(`local name detector: ${left} older paragraph(s) left for a later request, regex masks only`),
+        model.id,
+      );
     }
     return [...found.values()];
   }

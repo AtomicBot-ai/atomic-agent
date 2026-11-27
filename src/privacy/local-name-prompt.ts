@@ -32,9 +32,17 @@ export const NAME_DETECTOR_SYSTEM = [
   'Answer with JSON only: {"spans":[{"text":"...","kind":"NAME"}]}. With nothing to report, answer {"spans":[]}.',
 ].join("\n");
 
-/** The user turn: the text, fenced so the model cannot read it as instructions. */
+/** A closing fence written inside the text, in any case or spacing. */
+const CLOSING_FENCE = /<\s*\/\s*text\s*>/gi;
+
+/**
+ * The user turn: the text, fenced so the model cannot read it as
+ * instructions. A `</text>` inside the text is defused (`</ text>` is
+ * written as `[/text]`), so pasted or tool text cannot close the fence
+ * early and append instructions of its own.
+ */
 export function buildNameUserPrompt(text: string): string {
-  return `Find the spans in this text.\n<text>\n${text}\n</text>`;
+  return `Find the spans in this text.\n<text>\n${text.replace(CLOSING_FENCE, "[/text]")}\n</text>`;
 }
 
 export const NAME_SPANS_SCHEMA: Record<string, unknown> = {

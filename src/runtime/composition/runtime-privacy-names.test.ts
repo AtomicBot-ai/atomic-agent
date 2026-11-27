@@ -15,10 +15,24 @@ function llm(providers: LlmProviderConfigEntry[], active: string): ResolvedLlmCo
 }
 
 describe("isLocalProviderEntry (ATO-2394)", () => {
-  it("takes llama-server and servers on this machine or the local network", () => {
+  it("takes llama-server and servers on this machine", () => {
     expect(isLocalProviderEntry({ id: "a", kind: "llama-server" }, LOCAL_URL)).toBe(true);
     expect(isLocalProviderEntry({ id: "b", kind: "openai-compatible", baseUrl: "http://localhost:1234/v1" }, LOCAL_URL)).toBe(true);
-    expect(isLocalProviderEntry({ id: "c", kind: "openai-compatible", baseUrl: "http://192.168.1.20:11434/v1" }, LOCAL_URL)).toBe(true);
+    expect(isLocalProviderEntry({ id: "c", kind: "openai-compatible", baseUrl: "http://[::1]:8080/v1" }, LOCAL_URL)).toBe(true);
+    expect(isLocalProviderEntry({ id: "d", kind: "ollama", baseUrl: "http://127.0.0.2:11434" }, LOCAL_URL)).toBe(true);
+  });
+
+  it("refuses a server on the local network: the text must not leave this machine", () => {
+    for (const baseUrl of [
+      "http://192.168.1.20:11434/v1",
+      "http://10.0.0.5:8080",
+      "http://gpu-box:8080",
+      "http://studio.local:1234",
+      "http://[fd12::1]:8080",
+    ]) {
+      expect(isLocalProviderEntry({ id: "lan", kind: "openai-compatible", baseUrl }, LOCAL_URL)).toBe(false);
+    }
+    expect(isLocalProviderEntry({ id: "lan-llama", kind: "llama-server", url: "http://192.168.1.20:9931" }, LOCAL_URL)).toBe(false);
   });
 
   it("refuses every cloud provider, and a llama-server on a public host", () => {

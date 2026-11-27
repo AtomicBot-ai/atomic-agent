@@ -6,7 +6,7 @@ import {
   type ProviderRegistry,
   type ResolvedLlmConfig,
 } from "../../llm/provider/index.js";
-import { isLocalServerUrl } from "../../llm/provider/openai/local-server-url.js";
+import { hostOfUrl, isLoopbackHost } from "../../llm/offline-network.js";
 import {
   createLocalNameDetector,
   setPrivacyNameDetector,
@@ -23,10 +23,11 @@ import type { StructuredLogger } from "../../tracing/structured-logger.js";
  * applies to the next one.
  *
  * Which model: the active text provider when it is local, else the first
- * local provider configured. "Local" is the rule the session readout and
- * the subagent pricing use (a `llama-server` entry, or one on a local
- * server URL), made stricter on one side: a `llama-server` entry pointed
- * at a public host is not local here. No local model means no pass: the
+ * local provider configured. "Local" here is stricter than the rest of
+ * the shield: this machine only (`localhost`, `127.0.0.0/8`, `::1`), for
+ * every kind, `llama-server` included. A server on the local network
+ * (RFC 1918, `.local`, a single-label host) is not used, so the unmasked
+ * text never leaves the machine for detection. No local model means no pass: the
  * request goes out with the regex masks only, and the start-up log says
  * why (`PRIVACY_NAMES_HINT`).
  */
@@ -40,12 +41,19 @@ const NAME_PASS_MAX_TOKENS = 768;
 /** The fallback-chain partition the call would sit in; it never goes through the chain. */
 const NAME_PASS_SESSION = "privacy:names";
 
-/** Whether `entry` runs on this machine or the local network. */
+/** Whether `url` points at this machine: a loopback host, nothing else. */
+function isLoopbackUrl(url: string | undefined): boolean {
+  if (url === undefined) return false;
+  const host = hostOfUrl(url);
+  return host !== null && isLoopbackHost(host);
+}
+
+/** Whether `entry` runs on this machine (loopback only; the local network does not count). */
 export function isLocalProviderEntry(entry: LlmProviderConfigEntry, localModelsUrl: string | undefined): boolean {
   if (entry.kind === "llama-server") {
-    return isLocalServerUrl(entry.url ?? entry.baseUrl ?? localModelsUrl);
+    return isLoopbackUrl(entry.url ?? entry.baseUrl ?? localModelsUrl);
   }
-  return isLocalServerUrl(entry.baseUrl ?? entry.url);
+  return isLoopbackUrl(entry.baseUrl ?? entry.url);
 }
 
 /** The provider entry the name pass runs on, or `undefined` for none. */
