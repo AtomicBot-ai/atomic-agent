@@ -495,6 +495,8 @@ Real, driven by the running agent:
   same servers under **Running on this Mac** with Use / Switch to it / In
   use and Check again. An agent without the command, or an app connected to
   an agent on another computer, shows nothing.
+  Manage on an Ollama or LM Studio row (ATO-2490): see "Ollama and LM
+  Studio models, managed and used here" below.
 - the add-provider wizard: the TUI's kind list (nothing preselected) → key /
   base URL → verification by listing the provider's models under that key →
   saved, activated, and a default model picked
@@ -858,19 +860,22 @@ Honestly degraded, and labelled as such in the UI:
   the agent reads it, from this app's environment or else `<stateDir>/.env`
   (main/hf-token.ts, ATO-853), so a repo that downloads with `atag models
   pull` also lists here.
-- **Ollama is a provider here, never a download source.** atomic-agent has
-  no Ollama download path of any kind — no registry client, nothing reading
-  `~/.ollama`, no converter; the only Ollama code in the agent is two
-  provider presets, a health-failure hint and a steer modal, with zero hits
-  under `src/local-llm`. Offering "download from Ollama" would be a
-  capability this window invented, so the Local pane carries one
-  non-interactive line pointing at the thing that does work: `Cloud › n add
-  provider › Ollama (local)`, `http://localhost:11434`. Importing a model
-  Ollama already pulled is technically possible (its blobs are real GGUF)
-  and deliberately not built: `ollama rm` would dangle the link, Ollama keeps
-  the chat template in a separate manifest layer so an imported GGUF can be
-  served under the wrong one, and the schema's mandatory `huggingFaceUrl`
-  would have to be a placeholder. Cloud rows read `llm.providers` and show `key ok` /
+- **Ollama and LM Studio models, managed and used here (ATO-2490).** The
+  agent drives them through `atag local-servers <action>` (core
+  `src/local-llm/external-servers/`): Ollama through its own API, LM Studio
+  through its `lms` tool. Settings › Local's **Manage** on a running Ollama
+  or LM Studio row lists its models with Load / Unload (Ollama's
+  `keep_alive: 0`), **Free memory**, a Download field with progress and
+  Stop, Delete (Ollama only, asked twice) and **Use here**; the section
+  offers **Start Ollama** / **Start LM Studio** for an app that did not
+  answer. Use here adds the model's file to the local models with no new
+  download and switches to it through the usual model pick. The three
+  reasons this used to be refused are handled in the core: Ollama's blob is
+  hard-linked (a link that `ollama rm` does not break, no second copy), a
+  GGUF without a chat template inside is refused in words, and the entry is
+  the same `file://` local entry "Use a .gguf file I already have" writes.
+  A blob that is not GGUF is refused too. Errors are a sentence, the app's
+  own words behind Details. Cloud rows read `llm.providers` and show `key ok` /
   `missing key` from the key NAMES present in this process's env ∪
   `<stateDir>/.env` (never values); the text-model list is the provider's
   `atag models search --json` (no pricing in it, so the `price:` facet stays

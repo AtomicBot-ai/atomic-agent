@@ -3460,7 +3460,7 @@ function wireIpc(client: AgentClient): void {
   });
   // ATO-2106: Settings › Models › "Models folder" (`atag models dir`).
   wireModelsFolderIpc({ window: () => win, isRemote: () => client.isRemote, pulling: () => pull !== null });
-  wireLocalServersIpc({ isRemote: () => client.isRemote });   // ATO-2489: Ollama / LM Studio / Llama app running here
+  wireLocalServersIpc({ isRemote: () => client.isRemote, window: () => win });   // ATO-2489: Ollama / LM Studio / Llama app running here
   wireInterviewInviteIpc({ stateDir: TUI_STATE_DIR });   // ATO-1467
   wireRecipesIpc({ dir: () => app.getPath("userData") });   // ATO-1072: saved recipes (recipes-ipc.ts)
   /* Studio (Images + Video): Core's media API for the Studio pages
