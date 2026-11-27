@@ -22,6 +22,7 @@ import type { ApprovalGate } from "../approval/approval-gate.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
 import type { ApprovalHandler } from "../approval/approval-router.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
+import type { BackgroundJobsControl } from "../tools/os/index.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import type { FileIndexApi } from "../tools/files/index.js";
 import type { ToolRole } from "../tools/tool-roles.js";
@@ -281,6 +282,13 @@ export interface AgentRuntime {
    * on its own.
    */
   steer(sessionId: string, text: string): boolean;
+  /**
+   * The sessions' background shell jobs (ATO-2436): a frontend that
+   * shows a session takes that session's monitor notices here, so the
+   * person sees the turn they start. Optional for hosts and test fakes
+   * built without one.
+   */
+  readonly backgroundJobs?: BackgroundJobsControl;
   /**
    * The running fusion workers of `parentSessionId`'s fan-out, by task
    * id, and the person's two actions on one (ATO-66, ATO-942): `stop`

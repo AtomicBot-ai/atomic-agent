@@ -116,6 +116,8 @@ import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
 import type { ReasoningLevel } from "../llm/reasoning-levels.js";
 import type { ReasoningEffort } from "../llm/provider/completion-types.js";
 import { reasoningOverrideFor } from "./commands/think-command.js";
+import type { MonitorWake } from "../tools/os/index.js";
+import { formatMonitorWakeLine } from "./monitor-wake-line.js";
 
 const DEBUG_BUNDLE_TRACE_LIMIT = 10;
 const DEBUG_BUNDLE_DIR_NAME = "atomic-agent-debug";
@@ -348,6 +350,8 @@ export class ChatOrchestrator {
   public readonly issueReport: IssueReportOrchestrator;
   private readonly sessionRail: SessionRailOrchestrator;
   private readonly stopWatchingRoute: (() => void) | null;
+  /** Removes this chat's monitor-notice handler (ATO-2436). */
+  private readonly stopTakingMonitorWakes: (() => void) | null;
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -452,6 +456,9 @@ export class ChatOrchestrator {
         this.localModels.adoptDaemonForRoute(id);
         this.skills.refresh();
       }) ?? null;
+    // ATO-2436: monitor notices for the open chat run here, in view.
+    this.stopTakingMonitorWakes =
+      runtime.backgroundJobs?.onMonitorWake((wake) => this.takeMonitorWake(wake)) ?? null;
     this.runMode = new RunModeOrchestrator({
       runtime,
       bus,
@@ -577,6 +584,33 @@ export class ChatOrchestrator {
     // operator to open the Tasks debug tab. Idempotent — opening the
     // Tasks tab later just re-uses the same interval.
     this.tasks.startAutoRefresh();
+  }
+
+  /**
+   * A monitored background job has news for a chat (ATO-2436). Only the
+   * open chat is shown here: it steers the running turn or starts the
+   * next one the way a typed message would, under a line saying why.
+   * Any other chat, or a moment this chat cannot take it, answers
+   * `false` and the runtime steers that session or queues a task.
+   */
+  private takeMonitorWake(wake: MonitorWake): boolean {
+    if (this.quitting || this.composerRoutePending) return false;
+    const session = this.session;
+    if (session === null || session.id !== wake.sessionId) return false;
+    if (this.runtime.steer(session.id, wake.text)) {
+      this.bus.emit({ type: "runtime_info", line: formatMonitorWakeLine(wake) });
+      return true;
+    }
+    if (this.currentController && this.queue.length >= MAX_QUEUED_MESSAGES) return false;
+    // The line goes first, so it reads above the turn it starts.
+    this.bus.emit({ type: "runtime_info", line: formatMonitorWakeLine(wake) });
+    if (this.currentController) {
+      this.queueAsSteer(wake.text);
+      this.emitQueue();
+    } else {
+      void this.runOneTurn(wake.text);
+    }
+    return true;
   }
 
   /**
@@ -2401,6 +2435,7 @@ export class ChatOrchestrator {
     }
     this.abortCurrentTurn();
     this.detachedTurns.abortAll();
+    this.stopTakingMonitorWakes?.();
     this.tasks.shutdown();
     this.skills.shutdown();
     this.memory.shutdown();

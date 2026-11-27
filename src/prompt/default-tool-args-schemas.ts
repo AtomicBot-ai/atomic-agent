@@ -240,6 +240,8 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       write: integerSchema,
       text: stringSchema,
       eof: booleanSchema,
+      // ATO-2436: keep listening to a job; matches arrive as notices later.
+      monitor: integerSchema,
     }),
   ],
 
