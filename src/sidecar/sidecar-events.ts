@@ -207,7 +207,7 @@ export interface ApprovalRequestPayload {
   /**
    * Where the command sends data (ATO-2116): `{kind, host, direction,
    * label}`, `host` `null` when it cannot be read. A host draws the
-   * outbound ones as `sends data to -> <label>` (`formatEgressLine`).
+   * outbound ones as `sends data to → <label>` (`formatEgressLine`).
    */
   egress?: EgressDestination[];
   /**

@@ -228,7 +228,7 @@ describe("ApprovalGate egress hold: the card names the held host (ATO-2116 revie
     const egress = emitted[0]!.egress!;
     expect(egress.filter((d) => d.unapproved === true).map((d) => d.host)).toEqual(["evil.test"]);
     expect(formatEgressLine(egress)).toBe(
-      "sends data to -> evil.test, a.example.com, b.example.com, c.example.com (+1 more)",
+      "sends data to → evil.test (new), a.example.com, b.example.com, c.example.com (+1 more)",
     );
     g.reject(emitted[0]!.approvalId, "");
     await expect(pending).resolves.toMatchObject({ approved: false });

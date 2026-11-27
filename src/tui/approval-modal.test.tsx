@@ -213,8 +213,55 @@ describe("ApprovalModal", () => {
     const frame = frameOf(request())
       .replace(/[\u2550-\u256c]/g, " ")
       .replace(/\s+/g, " ");
-    expect(frame).toContain("the composer stays live");
+    expect(frame).toContain("type a reply to the agent");
     expect(frame).not.toContain("keys work while the input is empty");
+  });
+
+  it("keeps the footer short (ATO-2759)", () => {
+    // It used to be a ~300 character paragraph on every prompt.
+    const hint = frameOf(request()).replace(/[\s\u2550-\u256c]+/g, " ");
+    const start = hint.indexOf("approve covers this call once");
+    const end = hint.indexOf("sends it)", start) + "sends it)".length;
+    expect(end - start).toBeLessThanOrEqual(160);
+    expect(hint).not.toContain("never persisted");
+  });
+
+  it("asks for a second ctrl+n before saving the always rule (ATO-2759)", () => {
+    const always = request({
+      commandShape: "git",
+      commandArgv: ["git", "status"],
+      workdir: "/work/app",
+    });
+    const idle = frameOf(always).replace(/\s+/g, " ");
+    expect(idle).toContain("ctrl+n twice");
+    const armed = (
+      render(
+        <ApprovalModal
+          request={always}
+          pathDraft={null}
+          onPathOpen={() => {}}
+          onPathChange={() => {}}
+          onPathSubmit={() => {}}
+          onPathCancel={() => {}}
+          alwaysArmed
+        />,
+      ).lastFrame() ?? ""
+    ).replace(/[\s\u2550-\u256c]+/g, " ");
+    expect(armed).toContain("press ctrl+n again to save:");
+    expect(armed).toContain("Always allow");
+  });
+
+  it("says why it asked when a new site holds the call (ATO-2759)", () => {
+    const frame = frameOf(
+      request({
+        egress: [
+          { kind: "url", host: "github.com", direction: "outbound", label: "github.com" },
+          { kind: "url", host: "evil.io", direction: "outbound", label: "evil.io", unapproved: true },
+        ],
+      }),
+    ).replace(/[\s\u2550-\u256c]+/g, " ");
+    expect(frame).toContain("sends data to → evil.io (new), github.com");
+    expect(frame).toContain("asked because a site marked (new)");
   });
 
   it("offers Allow always with the rule it saves, only where it can be saved (ATO-1142)", () => {

@@ -485,6 +485,13 @@ export interface TuiState {
    */
   approvalPreviewPage: { approvalId: string; page: number } | null;
   /**
+   * The `approvalId` whose "allow always" chord was pressed once, or
+   * `null` (ATO-2759). The rule is saved for the project and outlives
+   * the app, so the chord asks to be pressed a second time; keyed by
+   * `approvalId` so an arm left on one prompt never saves on the next.
+   */
+  approvalAlwaysArmed: string | null;
+  /**
    * Whether the composer currently holds a text selection. Lifted out of
    * the editor for exactly one reason: Ctrl+C means "copy" while text is
    * selected and "stop / quit" otherwise, and the two handlers live in
@@ -1057,6 +1064,7 @@ export function createInitialTuiState(
     pendingApproval: null,
     approvalPathDraft: null,
     approvalPreviewPage: null,
+    approvalAlwaysArmed: null,
     composerHasSelection: false,
     composerNotice: null,
     nextStepSuggestion: null,

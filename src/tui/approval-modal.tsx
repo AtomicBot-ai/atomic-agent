@@ -23,7 +23,7 @@ import {
   previewLines,
 } from "../approval/approval-preview.js";
 import { formatRiskLine } from "../approval/risk-review.js";
-import { formatEgressLine } from "../approval/egress-scan.js";
+import { formatEgressHoldNote, formatEgressLine } from "../approval/egress-scan.js";
 import {
   APPROVAL_CHORDS,
   canEditPath,
@@ -59,6 +59,11 @@ interface ApprovalModalProps {
   previewPage?: number | null;
   /** Clicking the full-command button; `ctrl+z` does the same. */
   onPreviewPage?: () => void;
+  /**
+   * The "allow always" chord was pressed once on this prompt: the button
+   * asks for the second press that saves the rule (ATO-2759).
+   */
+  alwaysArmed?: boolean;
 }
 
 /**
@@ -98,6 +103,7 @@ export function ApprovalModal({
   onPathCancel,
   previewPage = null,
   onPreviewPage = () => {},
+  alwaysArmed = false,
 }: ApprovalModalProps): ReactElement {
   // An `ask_user` question (ATO-489): numbered options, answered from the
   // composer; the deny chord skips it.
@@ -126,15 +132,20 @@ export function ApprovalModal({
   const riskLine = formatRiskLine(request);
   // Where the command sends data (ATO-2116).
   const egressLine = formatEgressLine(request.egress);
+  // Why it asked when the egress hold is the cause, bypass included (ATO-2759).
+  const egressNote = formatEgressHoldNote(request.egress);
+  // Theme colours rather than a fixed yellow, which washes out on a light
+  // terminal (ATO-2759).
+  const warn = theme.colors.warn;
   return (
     <Box
       flexDirection="column"
       borderStyle="double"
-      borderColor="yellow"
+      borderColor={warn}
       paddingX={1}
       marginY={1}
     >
-      <Text bold color="yellow">
+      <Text bold color={warn}>
         ⚠ approval required
       </Text>
       <Box marginTop={1} flexDirection="column">
@@ -151,11 +162,12 @@ export function ApprovalModal({
           {request.reason}
         </Text>
         {riskLine !== null ? (
-          <Text color={request.riskLevel === "high" ? theme.colors.error : "yellow"}>
+          <Text color={request.riskLevel === "high" ? theme.colors.error : warn}>
             {riskLine}
           </Text>
         ) : null}
-        {egressLine !== null ? <Text color="yellow">{egressLine}</Text> : null}
+        {egressLine !== null ? <Text color={warn}>{egressLine}</Text> : null}
+        {egressNote !== null ? <Text color={theme.colors.muted}>{egressNote}</Text> : null}
         {request.preview ? (
           <ApprovalPreview
             request={request}
@@ -269,7 +281,9 @@ export function ApprovalModal({
                 grant="always"
                 tone="secondary"
               >
-                {`${describeAlwaysRule(request)} · ctrl+${APPROVAL_CHORDS.grantAlways}`}
+                {alwaysArmed
+                  ? `press ctrl+${APPROVAL_CHORDS.grantAlways} again to save: ${describeAlwaysRule(request)}`
+                  : `${describeAlwaysRule(request)} · ctrl+${APPROVAL_CHORDS.grantAlways} twice`}
               </ApprovalButton>
             </Box>
           ) : null}
@@ -281,24 +295,30 @@ export function ApprovalModal({
         </Box>
       )}
       {editing ? null : (
-        <Text color="gray">{footerHint(grantCategory, request.category)}</Text>
+        <Text color={theme.colors.muted}>{footerHint(grantCategory, request.category)}</Text>
       )}
     </Box>
   );
 }
 
+/**
+ * One short line under the buttons (ATO-2759). It used to be a ~300
+ * character paragraph on every prompt, which nobody reads twice; the
+ * buttons already say what each grant covers ("this session", "in this
+ * project"), so the footer only keeps what no button says: approve is
+ * one call, the standing stance lives in the coding-mode control
+ * (issue #79), and typing a reply is an answer too.
+ */
 function footerHint(grantable: boolean, category: ApprovalCategory): string {
   // The composer stays live under this prompt, and that is a feature:
   // the operator can answer the agent in words instead of a verdict.
-  // What it no longer costs is the buttons — every one of them is a
-  // chord, so typing a message that happens to start with "yes" cannot
+  // Every button is a chord, so a message that starts with "yes" cannot
   // approve the call the way a bare `y` did.
-  const typing =
-    "the composer stays live — type to answer the agent instead (enter cancels this call and sends it)";
+  const typing = "or type a reply to the agent (enter cancels this call and sends it)";
   if (!grantable) {
     return `${formatNeverGrantedNote(category)}; approve covers this call only · ${typing}`;
   }
-  return `approve covers this call once; the session grants last until the app exits (never persisted), "always allow" is saved for this project; loosen the standing stance with the coding-mode control in the composer · ${typing}`;
+  return `approve covers this call once · fewer prompts: the coding-mode control in the composer · ${typing}`;
 }
 
 /**
