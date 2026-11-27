@@ -64,6 +64,11 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   // ATO-2363: a worker runs on the local leg, so logbook.query would read
   // the screen notes unasked and hand them to a cloud orchestrator.
   "logbook.query",
+  // ATO-2459: an app in My apps is the person's to keep; a worker's would
+  // be a change nobody saw being made.
+  "app.save",
+  "app.update",
+  "app.delete",
 ]);
 
 /** `RunTurnOptions.toolFilter` for a worker turn. */
