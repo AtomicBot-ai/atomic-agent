@@ -31,10 +31,10 @@ const FP_EDIT_KINDS = ['text', 'code', 'markdown', 'csv', 'tsv', 'html'];
 /** Unsaved editors the panel closed under, by the file's real path; this window only, never written anywhere. */
 const FP_EDIT_DRAFTS = new Map();
 
-/** The file can be edited here: text read whole, and a bridge that can save it. */
+/** The file can be edited here: UTF-8 text read whole, and a bridge that can save it. */
 function fpEditable(d) {
   const br = fpBridge();
-  return !!(d && d.ok && FP_EDIT_KINDS.indexOf(d.kind) >= 0 && typeof d.text === 'string' && !d.truncated
+  return !!(d && d.ok && FP_EDIT_KINDS.indexOf(d.kind) >= 0 && typeof d.text === 'string' && !d.truncated && d.editable !== false
     && br && typeof br.filePreviewSave === 'function');
 }
 /** The line end a text is written with: CRLF when it has any, else LF. */
@@ -133,6 +133,7 @@ function fpEditWhy(reason) {
   return reason === 'outside' ? 'It is outside the folders the preview can write to.'
     : reason === 'missing' ? 'The file is no longer there.'
     : reason === 'office' || reason === 'binary' ? 'This kind of file cannot be edited here.'
+    : reason === 'not-utf8' ? 'This file is not UTF-8 text; saving it here would damage its characters.'
     : reason === 'too-large' ? 'The text is too long to save from here.'
     : 'It could not be saved.';
 }

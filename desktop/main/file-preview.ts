@@ -26,6 +26,7 @@
 
 import { open, stat } from "node:fs/promises";
 
+import { isUtf8 } from "./file-save-check.js";
 import { IMAGE_DATA_URL_MAX_BYTES, imageTarget, sniffImageMime } from "./image-data-url.js";
 import { OFFICE_MAX_FILE_BYTES, looksZip, officePreview, officeTypeFor, type OfficePreview } from "./office-preview.js";
 import { expandHome, isAbsoluteOn, isUnder, pathFor, type Platform } from "./platform.js";
@@ -49,6 +50,8 @@ export type FilePreview =
       text?: string;
       /** The text stops before the file does. */
       truncated?: boolean;
+      /** ATO-2347: false when the file is not valid UTF-8, so Save would corrupt it; the panel offers no Edit. */
+      editable?: boolean;
       /** image: a data: URL. */
       dataUrl?: string;
       /** pdf: the whole file, base64. */
@@ -186,7 +189,8 @@ export async function filePreview(
     const truncated = st.size > textMax;
     const bytes = await read(textMax);
     if (looksBinary(bytes)) return { ...base, kind: "other", note: "binary" };
-    return { ...base, kind: previewKindFor(ext), text: decodeStart(bytes, truncated), truncated };
+    const editable = !truncated && isUtf8(bytes);
+    return { ...base, kind: previewKindFor(ext), text: decodeStart(bytes, truncated), truncated, editable };
   } catch {
     return { ok: false, reason: "missing" };
   } finally {

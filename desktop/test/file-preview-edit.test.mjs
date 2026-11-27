@@ -122,6 +122,21 @@ test("a byte order mark is kept; text that is not a string or too long is refuse
   assert.equal((await filePreviewSave(f, "x".repeat(11), null, roots, home, P, { maxBytes: 10 })).reason, "too-large");
 });
 
+test("a file that is not UTF-8 (Latin-1) is never saved and offers no Edit; its bytes stay", async () => {
+  const f = join(home, "latin1.csv");
+  const bytes = Buffer.from("name,city\nJos\xe9,M\xfcnchen\n", "latin1");
+  writeFileSync(f, bytes);
+  const read = await filePreview(f, roots, home, P);
+  assert.equal(read.editable, false, "the panel must not offer Edit for a file it cannot write back");
+  const r = await filePreviewSave(f, read.text, { size: read.size, mtimeMs: read.mtimeMs }, roots, home, P, { force: true });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "not-utf8");
+  assert.deepEqual(readFileSync(f), bytes, "no U+FFFD written over the accented letters");
+  const utf8 = join(home, "utf8.csv");
+  writeFileSync(utf8, "name,city\nJos\u00e9,M\u00fcnchen\n");
+  assert.equal((await filePreview(utf8, roots, home, P)).editable, true);
+});
+
 /* ---- renderer: the table's sort ---- */
 
 test("tsNumber reads numbers with thousands commas, percents and exponents; nothing else", () => {
@@ -258,4 +273,10 @@ test("a chat switch closing the panel keeps unsaved text; the file opened again 
   run("fpEditStop(); FP.edit = fpEditState(FP.data); filePreviewClose(); FP.open = true; FP.path = '/h/a.md';");
   await run("fpLoad(false)");
   assert.equal(run("FP.edit"), null);
+});
+
+test("Edit is not offered when main says the file is not editable", () => {
+  const { run } = loadPanel(() => ({ ok: true }));
+  assert.equal(run("fpEditable(" + JSON.stringify(doc({ editable: false })) + ")"), false);
+  assert.equal(run("fpEditable(" + JSON.stringify(doc({ editable: true })) + ")"), true);
 });

@@ -2,11 +2,14 @@
  * ATO-2347: Save from the preview panel's editor.
  *
  * The window hands main a path, the new text and the size and time of the
- * file as the panel read it. main writes only where the preview may read
- * (the same roots and path check as file-preview.ts: `~/…` or absolute, `..`
- * and links resolved, never a URL), only a file that is already there (Save
- * never creates one), only text (file-save-check.ts notEditable), and only
- * the very file the check passed (the open handle's dev/inode).
+ * file as the panel read it. main checks the path the way file-preview.ts
+ * does (`~/…` or absolute, `..` and links resolved, never a URL) against the
+ * same roots, which are wide: the whole home folder, the agent's state and
+ * temp folders and the working folder. So Save can reach any existing text
+ * file there, not only the chat's folder (narrowing it is ATO-2533). It
+ * writes only a file that is already there (Save never creates one), only
+ * UTF-8 text (file-save-check.ts notEditable, isUtf8), and only the very file
+ * the check passed (the open handle's dev/inode).
  *
  * When the file changed on disk since the panel read it, nothing is written
  * and the answer is `changed` with the file's new size and time; the window
@@ -23,7 +26,7 @@
 
 import { constants, open } from "node:fs/promises";
 
-import { changedOnDisk, hasBom, notEditable, readStamp, type DiskStamp } from "./file-save-check.js";
+import { changedOnDisk, hasBom, isUtf8, notEditable, readStamp, type DiskStamp } from "./file-save-check.js";
 import { imageTarget } from "./image-data-url.js";
 import { pathFor, type Platform } from "./platform.js";
 
@@ -33,7 +36,7 @@ export const PREVIEW_SAVE_MAX_BYTES = 2 * 1024 * 1024;
 export type FileSaveResult =
   | { ok: true; path: string; size: number; mtimeMs: number }
   | { ok: false; reason: "changed"; size: number; mtimeMs: number }
-  | { ok: false; reason: "missing" | "outside" | "office" | "binary" | "too-large" | "bad-text" | "failed" };
+  | { ok: false; reason: "missing" | "outside" | "office" | "binary" | "not-utf8" | "too-large" | "bad-text" | "failed" };
 
 /** Write `text` to `raw` for the preview's editor, unless the file changed since `stamp` (or `force`). */
 export async function filePreviewSave(
@@ -59,19 +62,23 @@ export async function filePreviewSave(
     const st = await fh.stat();
     if (st.dev !== target.dev || st.ino !== target.ino) return { ok: false, reason: "outside" };
     if (!st.isFile()) return { ok: false, reason: "missing" };
-    const head = Buffer.alloc(Math.min(8192, st.size));
+    if (st.size > max) return { ok: false, reason: "too-large" };
+    // The whole file: its encoding is checked over every byte, not just the head.
+    const whole = Buffer.alloc(st.size);
     let filled = 0;
-    while (filled < head.length) {
-      const { bytesRead } = await fh.read(head, filled, head.length - filled, filled);
+    while (filled < whole.length) {
+      const { bytesRead } = await fh.read(whole, filled, whole.length - filled, filled);
       if (bytesRead === 0) break;
       filled += bytesRead;
     }
-    const why = notEditable(ext, head.subarray(0, filled));
+    const head = whole.subarray(0, Math.min(8192, filled));
+    const why = notEditable(ext, head);
     if (why) return { ok: false, reason: why };
+    if (!isUtf8(whole.subarray(0, filled))) return { ok: false, reason: "not-utf8" };
     const now: DiskStamp = { size: st.size, mtimeMs: st.mtimeMs };
     if (!opts.force && changedOnDisk(readStamp(stamp), now)) return { ok: false, reason: "changed", ...now };
     const body = Buffer.from(text.replace(/^﻿/, ""), "utf8");
-    const bytes = hasBom(head.subarray(0, filled)) ? Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), body]) : body;
+    const bytes = hasBom(head) ? Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), body]) : body;
     let written = 0;
     while (written < bytes.length) {
       const { bytesWritten } = await fh.write(bytes, written, bytes.length - written, written);

@@ -7,9 +7,9 @@
  *    Either one different means someone else (often the agent) wrote it, and
  *    the window asks "Reload from disk" or "Overwrite", as VS Code does with
  *    "The file is newer on disk" and Kilo Desktop's files tab does.
- * 2. Is it a file the panel may write at all? Only text: never a picture, a
- *    PDF, a Word, PowerPoint or Excel file, or anything with NUL bytes in its
- *    head, whatever its name says.
+ * 2. Is it a file the panel may write at all? Only UTF-8 text: never a
+ *    picture, a PDF, a Word, PowerPoint or Excel file, anything with NUL bytes
+ *    in its head, whatever its name says, or a file in another encoding.
  *
  * Pure: no file system, no Electron, so the unit suite loads it from `out/main`.
  */
@@ -43,6 +43,20 @@ export function notEditable(ext: string, head: Uint8Array): "office" | "binary" 
   const n = Math.min(head.length, 8192);
   for (let i = 0; i < n; i++) if (head[i] === 0) return "binary";
   return null;
+}
+
+/**
+ * The whole file is valid UTF-8. The panel decodes text as UTF-8 and a bad
+ * byte becomes U+FFFD, so saving a Latin-1 or cp1251 file would replace every
+ * such byte for good; those files are never edited here.
+ */
+export function isUtf8(bytes: Uint8Array): boolean {
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** A UTF-8 byte order mark at the start of the file: kept when the file is written again. */
