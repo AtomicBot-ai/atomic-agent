@@ -20,6 +20,7 @@ import {
   UNTRUSTED_DATA_OPEN,
 } from "./experience-review.js";
 import { learnedJournalFile, readLearnedChanges, undoLearnedChange } from "./learned-journal.js";
+import { isLocalContentTool, localContentSources } from "./local-content-sources.js";
 import { listPendingDrafts, pendingDraftsDir, readPendingDraft } from "./pending-drafts.js";
 
 const at = 1;
@@ -70,6 +71,11 @@ describe("collectTurnExperience", () => {
 
 describe("shouldReviewTurn", () => {
   const experience = collectTurnExperience(turnWithSteps(12))!;
+  // The same turn without local reads or command output: nothing outside in it.
+  const clean: TurnExperience = {
+    ...experience,
+    steps: experience.steps.map((s) => (s.tool === "os.shell.run" ? { ...s, tool: "plan.update" } : s)),
+  };
   it("reviews a long turn that ended on a reply", () => {
     expect(shouldReviewTurn({ enabled: true, stepCount: 12, minSteps: 10, experience, turnEditedSkills: false }).review).toBe(true);
   });
@@ -84,10 +90,44 @@ describe("shouldReviewTurn", () => {
       .toEqual({ review: true, experience, mode: "draft" });
     expect(shouldReviewTurn({ enabled: true, stepCount: 12, minSteps: 10, experience, turnEditedSkills: false, outsideSources: [], draftOnly: true }))
       .toEqual({ review: true, experience, mode: "draft" });
-    expect(shouldReviewTurn({ enabled: true, stepCount: 12, minSteps: 10, experience, turnEditedSkills: false, outsideSources: [] }))
-      .toEqual({ review: true, experience, mode: "auto" });
+    expect(shouldReviewTurn({ enabled: true, stepCount: 12, minSteps: 10, experience: clean, turnEditedSkills: false, outsideSources: [] }))
+      .toEqual({ review: true, experience: clean, mode: "auto" });
     // A short turn stays unreviewed whatever it read.
     expect(shouldReviewTurn({ enabled: true, stepCount: 3, minSteps: 10, experience, turnEditedSkills: false, outsideSources: ["a web page"] }).review).toBe(false);
+  });
+  it("drafts a turn that read a local file or command output, even with no web taint (ATO-1650)", () => {
+    // Shell output (a `curl`, a cloned repo's README) can carry someone else's instructions.
+    expect(shouldReviewTurn({ enabled: true, stepCount: 12, minSteps: 10, experience, turnEditedSkills: false, outsideSources: [] }))
+      .toEqual({ review: true, experience, mode: "draft" });
+    for (const tool of ["os.fs.read", "os.fs.read_document", "os.fs.archive.read_entry", "os.git.show", "skill.run_script"]) {
+      const read: TurnExperience = { ...clean, steps: [...clean.steps, { tool, status: "ok", summary: "text", args: {} }] };
+      expect(shouldReviewTurn({ enabled: true, stepCount: 12, minSteps: 10, experience: read, turnEditedSkills: false, outsideSources: [] }))
+        .toEqual({ review: true, experience: read, mode: "draft" });
+    }
+    // A failed read counts too: its error can quote the file.
+    const failed: TurnExperience = { ...clean, steps: [...clean.steps, { tool: "os.fs.read", status: "error", summary: "bad", args: {} }] };
+    expect(shouldReviewTurn({ enabled: true, stepCount: 12, minSteps: 10, experience: failed, turnEditedSkills: false }))
+      .toEqual({ review: true, experience: failed, mode: "draft" });
+  });
+});
+
+describe("localContentSources", () => {
+  it("names each kind of local content once, in first-read order, and ignores tools that only write or list", () => {
+    const exp: Pick<TurnExperience, "steps"> = {
+      steps: [
+        { tool: "os.fs.write", status: "ok", summary: "", args: {} },
+        { tool: "os.shell.run", status: "ok", summary: "", args: {} },
+        { tool: "os.fs.read", status: "ok", summary: "", args: {} },
+        { tool: "os.shell.run", status: "ok", summary: "", args: {} },
+        { tool: "plan.update", status: "ok", summary: "", args: {} },
+        { tool: "constructor", status: "ok", summary: "", args: {} },
+      ],
+    };
+    expect(localContentSources(exp)).toEqual(["shell command output", "a local file"]);
+    expect(localContentSources(null)).toEqual([]);
+    expect(isLocalContentTool("os.fs.read")).toBe(true);
+    expect(isLocalContentTool("os.fs.write")).toBe(false);
+    expect(isLocalContentTool("toString")).toBe(false);
   });
 });
 
