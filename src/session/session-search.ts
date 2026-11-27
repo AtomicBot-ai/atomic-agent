@@ -416,15 +416,25 @@ export class SessionSearchIndex {
       // much of it may be behind.
       pending = (this.countStaleStmt.get() as { n: number }).n;
     }
+    return { hits: this.match(options), pending };
+  }
+
+  /**
+   * The hits for `options` from what is indexed now, with no {@link sync}
+   * first: a read, never the write lock. For a caller that keeps the
+   * index current itself, a few sessions at a time (the TUI session
+   * picker, ATO-1659), so a keystroke is not a sync.
+   */
+  match(options: SessionSearchOptions): SessionSearchHit[] {
     const limit = clampLimit(options.limit);
     const terms = searchTerms(options.query);
-    if (terms.length === 0) return { hits: [], pending };
+    if (terms.length === 0) return [];
     // Every term first; when that finds nothing, any of them.
     let hits = this.run(terms.join(" AND "), options, limit);
     if (hits.length === 0 && terms.length > 1) {
       hits = this.run(terms.join(" OR "), options, limit);
     }
-    return { hits, pending };
+    return hits;
   }
 
   private run(
