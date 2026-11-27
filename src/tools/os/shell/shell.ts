@@ -559,6 +559,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     let spawnArgs = spawnSpec.args;
     let sandboxNotice: string | null = null;
     let sandboxCacheRoot: string | null = null;
+    let sandboxFd3: Buffer | undefined;
     if (sandbox.mode === "workspace") {
       // Roots from the session's working directory only: `cwd` is a
       // model-supplied argument, so it may start the command anywhere
@@ -578,6 +579,8 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       }
       spawnCommand = wrapped.command;
       spawnArgs = wrapped.args;
+      // Linux without network: the seccomp program bwrap reads on fd 3 (ATO-2469).
+      sandboxFd3 = wrapped.fd3Input;
       // Package caches go to a private folder under temp, never the
       // shared ones in the home folder (ATO-1651).
       sandboxCacheRoot = ensureSandboxCacheRoot();
@@ -616,6 +619,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         dropSocketEnv ? withoutLocalSocketEnv(cachedEnv) : cachedEnv,
       ),
       ...(interactive ? { keepStdinOpen: true, stopDescendants: true } : {}),
+      ...(sandboxFd3 === undefined ? {} : { fd3Input: sandboxFd3 }),
       ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
       ...(spawnSpec.windowsVerbatimArguments
         ? { windowsVerbatimArguments: true }
