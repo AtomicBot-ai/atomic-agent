@@ -160,7 +160,7 @@ test("main and preload wire the recipes IPC", () => {
   const main = readFileSync(new URL("../main/main.ts", import.meta.url), "utf8");
   assert.match(main, /import \{ wireRecipesIpc \} from "\.\/recipes-ipc\.js";/);
   assert.match(main, /wireRecipesIpc\(\{ dir: \(\) => app\.getPath\("userData"\) \}\);/);
-  assert.match(main, /SIDEBAR_NAV_EXPECTED = JSON\.stringify\(\["Studio", "Cron jobs", "Skills", "Plugins", "Recipes"\]\)/);
+  assert.match(main, /SIDEBAR_NAV_EXPECTED = JSON\.stringify\(\["Studio", "Cron jobs", "Task board", "Skills", "Plugins", "Recipes"\]\)/);
   const ipc = readFileSync(new URL("../main/recipes-ipc.ts", import.meta.url), "utf8");
   for (const ch of ["recipes:list", "recipes:save", "recipes:delete"]) assert.ok(ipc.includes(`ipcMain.handle("${ch}"`), ch);
   const preload = readFileSync(new URL("../preload/preload.ts", import.meta.url), "utf8");
