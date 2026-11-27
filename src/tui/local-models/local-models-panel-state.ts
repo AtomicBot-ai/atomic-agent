@@ -5,6 +5,7 @@ import type {
   LocalModelDef,
   LocalModelId,
 } from "../../local-llm/index.js";
+import { createInitialModelsDirState, type ModelsDirPanelState } from "./models-dir-state.js";
 
 export type LocalModelsPanelMode =
   | "list"
@@ -14,7 +15,9 @@ export type LocalModelsPanelMode =
   /** Naming a Hugging Face repo — the shared reference editor. */
   | "hfRef"
   /** Choosing which GGUF from the repo just resolved. */
-  | "hfPick";
+  | "hfPick"
+  /** ATO-2504: where the models are, and moving them (models-dir-state.ts). */
+  | "modelsDir";
 
 /**
  * The Models pane's "add a model from Hugging Face" branch, in the same
@@ -244,6 +247,8 @@ export interface LocalModelsPanelState {
    */
   /** "Add a model from Hugging Face" — see {@link LocalModelsHfState}. */
   hf: LocalModelsHfState;
+  /** ATO-2504: the models folder screen (`F`). */
+  modelsDir: ModelsDirPanelState;
   embeddingOnboardingPrompt: {
     modelId: EmbeddingModelId;
     name: string;
@@ -348,6 +353,7 @@ export function createInitialLocalModelsPanelState(
     embeddingDaemon: null,
     embeddingRemoveConfirmId: null,
     hf: createInitialLocalModelsHfState(),
+    modelsDir: createInitialModelsDirState(),
     embeddingOnboardingPrompt: null,
     notifyPrompt: null,
     coreFailure: null,

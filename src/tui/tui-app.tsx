@@ -552,6 +552,12 @@ export interface TuiAppCallbacks {
     repo: HuggingFaceRepoChoices,
     cursor: number,
   ): void;
+  /** ATO-2504: `F` opened the models folder screen; ask where the folder is. */
+  onLocalModelsDirLoadRequested?(): void;
+  /** Enter on it: move every model to `target` (empty: back to the default folder). */
+  onLocalModelsDirMoveRequested?(target: string): void;
+  /** Esc during that move: stop it, the models go back. */
+  onLocalModelsDirCancelRequested?(): void;
   /** Cycle the managed daemon's GPU preference (auto → devices → cpu). */
   onLocalModelsDeviceCycleRequested?(): void | Promise<void>;
   onLocalModelsAutoUpdateToggleRequested?(): void | Promise<void>;
@@ -1597,6 +1603,8 @@ export function TuiApp({
             // keystroke and the repo name would land in the chat draft.
             state.localModelsPanel.mode === "hfRef" ||
             state.localModelsPanel.mode === "hfPick" ||
+            // ATO-2504: the models folder path is typed into one too.
+            state.localModelsPanel.mode === "modelsDir" ||
             state.localModelsPanel.removeConfirmId !== null)
         )));
 
