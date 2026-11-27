@@ -86,6 +86,7 @@ export function wirePetIpc(client: AgentClient, w: PetWiring): PetHub {
   let timer: NodeJS.Timeout | null = null;
   const relays = new Map<string, (r: RelayResult) => void>();
   let relaySeq = 0;
+  let shownId: string | null = null;   // ATO-2513: the request the last view put in the bubble
 
   const save = (patch: Partial<PetPrefs>) => {
     prefs = mergePetPrefs(prefs, patch);
@@ -99,7 +100,9 @@ export function wirePetIpc(client: AgentClient, w: PetWiring): PetHub {
     const out = machine.step({ activity, waiting: tracker.pending().length > 0 }, now);
     if (timer) { clearTimeout(timer); timer = null; }
     if (out.nextAt !== null) timer = setTimeout(refresh, Math.max(16, out.nextAt - now));
-    return petView(out.state, machine.doNotDisturb, tracker.pending());
+    const v = petView(out.state, machine.doNotDisturb, tracker.pending());
+    shownId = v.approval?.approvalId ?? null;
+    return v;
   };
   function refresh(): void {
     const v = view();
@@ -203,8 +206,8 @@ export function wirePetIpc(client: AgentClient, w: PetWiring): PetHub {
 
   ipcMain.handle("pet:answer", async (event, raw: unknown) => {
     if (!isPet(event.sender)) return { ok: false, error: "not the pet" };
-    const id = raw && typeof raw === "object" ? (raw as { approvalId?: unknown }).approvalId : null;
-    const shown = typeof id === "string" ? tracker.approval(id) : null;
+    // Only the request the bubble shows now: an answer meant for one that changed is refused (petDecision).
+    const shown = shownId ? tracker.approval(shownId) : null;
     const picked = petDecision(raw, shown);
     if ("error" in picked || !shown) return { ok: false, error: "error" in picked ? picked.error : "This request is no longer waiting." };
     const relayed = await relay(shown.approvalId, picked.decision);

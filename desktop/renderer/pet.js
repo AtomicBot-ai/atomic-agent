@@ -74,6 +74,21 @@ function petBubbleKey(key, model, focused) {
   return model.allow ? 'allow' : null;
 }
 
+/* A key answers only the request the person clicked the bubble for, after
+   it has been on screen PET_KEY_ARM_MS, and never from a held key: when the
+   shown request changes (answered, gone, the next one in the queue), the
+   keyboard is dropped and the next one needs its own click. */
+const PET_KEY_ARM_MS = 500;
+
+/**
+ * May a key press answer `model` now? `keyFor` is the approvalId shown when
+ * the person took the keyboard, `shownAt` when the bubble first drew it.
+ */
+function petKeyArmed(repeat, model, keyFor, shownAt, now) {
+  if (repeat || !model || model.approvalId !== keyFor) return false;
+  return now - shownAt >= PET_KEY_ARM_MS;
+}
+
 /** The button the keyboard lands on: Allow once, else Deny, else Open. */
 function petFirstButton(model) {
   if (!model) return null;
@@ -109,8 +124,18 @@ function petBoot() {
   let msg = '';
   let skin = null;        // ATO-2513: a made pet's frames, or null for the atom
   let keyboard = false;   // ATO-2513: the pet window has the keyboard
-  const takeKeys = () => { if (!keyboard && BR.focus) { keyboard = true; BR.focus(true); } };
-  const dropKeys = () => { if (keyboard && BR.focus) { keyboard = false; BR.focus(false); } };
+  let keyFor = null;      // the approvalId the person took the keyboard for
+  let shownId = null;     // the approvalId the bubble shows, since shownAt
+  let shownAt = 0;
+  const takeKeys = () => {
+    keyFor = shownId;
+    if (!keyboard && BR.focus) { keyboard = true; BR.focus(true); }
+  };
+  const dropKeys = () => {
+    keyFor = null;
+    if (keyboard && BR.focus) { keyboard = false; BR.focus(false); }
+  };
+  const armed = (repeat) => petKeyArmed(repeat, petBubbleModel(view, hidden), keyFor, shownAt, Date.now());
 
   const paint = () => {
     const src = petSkinSrc(skin, view ? view.state : 'idle');
@@ -124,7 +149,12 @@ function petBoot() {
     const m = petBubbleModel(view, hidden);
     bubble.hidden = !m;
     // ATO-2513: no bubble, no keyboard: the window goes back to never taking it.
-    if (!m) { msg = ''; dropKeys(); return; }
+    if (!m) { msg = ''; shownId = null; dropKeys(); return; }
+    if (m.approvalId !== shownId) {
+      shownId = m.approvalId;
+      shownAt = Date.now();
+      if (keyFor !== null) dropKeys();
+    }
     $('b-title').textContent = m.title;
     $('b-text').textContent = m.text;
     $('b-detail').textContent = m.detail;
@@ -147,19 +177,22 @@ function petBoot() {
   const answer = (decision) => {
     const m = petBubbleModel(view, hidden);
     if (!m || busy) return;
+    const answering = m.approvalId;
     busy = m.approvalId;
     msg = 'Sending…';
     paint();
     BR.answer(m.approvalId, decision).then((res) => {
       busy = null;
-      if (res && res.ok) { msg = ''; hidden.add(m.approvalId); }
+      if (res && res.ok) { msg = ''; hidden.add(answering); if (keyFor === answering) dropKeys(); }
       else msg = (res && res.error) || 'The answer did not go through. Open Atomic Agent to answer it.';
       paint();
     }, () => { busy = null; msg = 'The answer did not go through. Open Atomic Agent to answer it.'; paint(); });
   };
 
-  $('b-allow').addEventListener('click', () => answer('allow'));
-  $('b-deny').addEventListener('click', () => answer('deny'));
+  // A keyboard click (detail 0: Enter or Space on the button) is held to the same rule as the keys.
+  const pressed = (e) => !e || e.detail !== 0 || armed(false);
+  $('b-allow').addEventListener('click', (e) => { if (pressed(e)) answer('allow'); });
+  $('b-deny').addEventListener('click', (e) => { if (pressed(e)) answer('deny'); });
   $('b-open').addEventListener('click', () => BR.open());
   const hide = () => {
     const m = petBubbleModel(view, hidden);
@@ -176,12 +209,13 @@ function petBoot() {
     const id = petFirstButton(m);
     if (id && $(id)) $(id).focus();
   });
-  window.addEventListener('blur', () => { keyboard = false; });
+  window.addEventListener('blur', () => { keyboard = false; keyFor = null; });
   document.addEventListener('keydown', (e) => {
     const m = petBubbleModel(view, hidden);
     const act = petBubbleKey(e.key, m, document.activeElement && document.activeElement.id);
     if (!act) return;
     e.preventDefault();
+    if (!armed(e.repeat)) return;
     if (act === 'allow') answer('allow');
     else if (act === 'deny') answer('deny');
     else hide();
@@ -234,4 +268,4 @@ function petBoot() {
 
 if (typeof document !== 'undefined' && typeof window !== 'undefined') petBoot();
 
-if (typeof module !== 'undefined') module.exports = {petBadge, petBubbleModel, petBodyClass, petBubbleKey, petFirstButton, petKeysLine, petSkinSrc, PET_STATE_NAMES};
+if (typeof module !== 'undefined') module.exports = {petBadge, petBubbleModel, petBodyClass, petBubbleKey, petFirstButton, petKeyArmed, petKeysLine, petSkinSrc, PET_KEY_ARM_MS, PET_STATE_NAMES};

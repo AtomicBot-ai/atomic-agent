@@ -196,7 +196,11 @@ A click on the bubble lets the pet take the keyboard: Tab between the
 buttons, Enter is Allow once, Esc is Deny (Hide for a question), with a ring
 on the focused button and the keys named under them; it gives the keyboard
 back when focus leaves or the bubble goes ([pet-window.ts](main/pet-window.ts)
-`keyboard`). View › Desktop Pet › Make Your Own Pet… (also in the pet's
+`keyboard`). Keys answer only the request that was shown when the person
+clicked, after it has been on screen half a second, never from a held key;
+when the shown request changes the keyboard is dropped and the next one needs
+its own click, and main refuses an answer for any request but the one its last
+view showed (`petKeyArmed` in renderer/pet.js, `shownId` in main/pet-ipc.ts). View › Desktop Pet › Make Your Own Pet… (also in the pet's
 right-click menu, under Pet) makes four pictures from a description with
 Studio's image generation, the same Core jobs `image.generate` runs: a
 downloaded local model is free, a cloud one shows its price on the Make
