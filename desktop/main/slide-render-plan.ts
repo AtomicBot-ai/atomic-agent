@@ -32,6 +32,8 @@ export const SLIDES_IMAGE_MAX_BYTES = 15 * 1024 * 1024;   // one picture, image-
 export const SLIDES_IMAGES_TOTAL_MAX_BYTES = 24 * 1024 * 1024;
 /** Quick Look's page is laid out for this many CSS pixels (its PreviewProperties.plist Width) when the plist says nothing. */
 export const QUICKLOOK_DEFAULT_WIDTH = 753;
+/** office-preview.ts's OFFICE_LIMITS.entries: a directory this long may hide parts openZip never read. */
+export const DECK_ENTRIES_CAP = 5000;
 
 export type SlideConverterKind = "soffice" | "quicklook";
 export type SlideConverter = { kind: SlideConverterKind; command: string; args: string[]; timeoutMs: number };
@@ -86,11 +88,16 @@ export function slidesRenderableWith(platform: Platform, soffice: string | null,
  * (`*.rels`) with `TargetMode="External"`, the way a linked picture, video,
  * OLE object or hyperlink is written. LibreOffice may fetch a linked part
  * while it draws, so such a deck is not handed to it. Fails closed: no
- * archive, or a `.rels` that cannot be read within the caps, counts as
- * linking out. `zip` is office-preview.ts's `openZip` result.
+ * archive, a `.rels` that cannot be read within the caps, a directory that
+ * hit openZip's entry cap (entries past it are never looked at) or a name
+ * that appears twice (only the first copy is read) counts as linking out.
+ * `zip` is office-preview.ts's `openZip` result.
  */
-export function deckLinksOut(zip: { entries: ReadonlyMap<string, unknown>; read: (name: string) => string | null } | null): boolean {
-  if (!zip) return true;
+export function deckLinksOut(
+  zip: { entries: ReadonlyMap<string, unknown>; duplicates?: boolean; read: (name: string) => string | null } | null,
+  maxEntries = DECK_ENTRIES_CAP,
+): boolean {
+  if (!zip || zip.duplicates === true || zip.entries.size >= maxEntries) return true;
   for (const name of zip.entries.keys()) {
     if (!/\.rels$/i.test(name)) continue;
     const xml = zip.read(name);

@@ -30,7 +30,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { sniffImageMime } from "./image-data-url.js";
-import { looksZip, OFFICE_MAX_FILE_BYTES, openZip } from "./office-preview.js";
+import { looksZip, OFFICE_LIMITS, OFFICE_MAX_FILE_BYTES, openZip } from "./office-preview.js";
 import type { Platform } from "./platform.js";
 import {
   converterPlans, deckLinksOut, findSoffice, inlineAttachments, isAttachmentName, pickOutput, quickLookWidth,
@@ -130,7 +130,7 @@ async function isDeck(real: string): Promise<boolean> {
 /** Whether the deck at `real` links outside itself (or cannot be read to tell): then LibreOffice is not asked. */
 async function linksOut(real: string): Promise<boolean> {
   const bytes = await readCapped(real, OFFICE_MAX_FILE_BYTES);
-  return !bytes || deckLinksOut(openZip(bytes));
+  return !bytes || deckLinksOut(openZip(bytes), OFFICE_LIMITS.entries);
 }
 
 async function convert(real: string, platform: Platform, d: SlideRenderDeps): Promise<SlideRender | null> {

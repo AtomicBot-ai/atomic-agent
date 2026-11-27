@@ -24,11 +24,12 @@ const tmp = mkdtempSync(join(tmpdir(), "sr-tmp-"));
 after(() => { for (const d of [home, tmp]) rmSync(d, { recursive: true, force: true }); });
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 1, 2, 3]);
-/** A real (stored, uncompressed) ZIP of `files` {name: text}, enough for office-preview.ts's openZip. */
+/** A real (stored, uncompressed) ZIP of `files` ({name: text}, or [name, text] pairs to repeat a name), enough for openZip. */
 function storedZip(files) {
+  const list = Array.isArray(files) ? files : Object.entries(files);
   const locals = [], centrals = [];
   let off = 0;
-  for (const [name, text] of Object.entries(files)) {
+  for (const [name, text] of list) {
     const data = Buffer.from(text, "utf8"), nm = Buffer.from(name, "utf8"), crc = zlib.crc32(data);
     const lh = Buffer.alloc(30);
     lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt32LE(crc, 14);
@@ -40,7 +41,7 @@ function storedZip(files) {
     off += 30 + nm.length + data.length;
   }
   const cd = Buffer.concat(centrals), end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(Object.keys(files).length, 8); end.writeUInt16LE(Object.keys(files).length, 10);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(list.length, 8); end.writeUInt16LE(list.length, 10);
   end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(off, 16);
   return Buffer.concat([...locals, cd, end]);
 }
@@ -263,6 +264,21 @@ test("a deck that links outside its file is never handed to LibreOffice (review 
   assert.equal(deckLinksOut(openZip(deckBytes(EXTERNAL_RELS.replace('"External"', "'external'")))), true, "any quoting or case");
   assert.equal(deckLinksOut(null), true, "not an archive: fails closed");
   assert.equal(deckLinksOut({ entries: new Map([["ppt/_rels/presentation.xml.rels", {}]]), read: () => null }), true, "an unreadable .rels: fails closed");
+  assert.equal(require("../out/main/slide-render-plan.js").DECK_ENTRIES_CAP, require("../out/main/office-preview.js").OFFICE_LIMITS.entries, "the two caps agree");
+  // A directory padded to openZip's entry cap may hide an External .rels past it.
+  const padded = {};
+  for (let i = 0; i < 5000; i++) padded[`ppt/pad/p${i}.xml`] = "";
+  const big = openZip(deckBytes(LOCAL_RELS, padded));
+  assert.ok(big && big.entries.size >= 5000, "openZip stopped at its cap");
+  assert.equal(deckLinksOut(big), true, "a deck at the entry cap: fails closed");
+  assert.equal(deckLinksOut({ entries: new Map([["a.xml", {}], ["b.xml", {}]]), read: () => "" }, 2), true, "the cap is the limit itself");
+  // A second copy of a name: openZip keeps the first (local) one, LibreOffice may read the other.
+  const dup = openZip(storedZip([["ppt/slides/slide1.xml", "<p:sld/>"],
+    ["ppt/slides/_rels/slide1.xml.rels", LOCAL_RELS], ["ppt/slides/_rels/slide1.xml.rels", EXTERNAL_RELS]]));
+  assert.equal(dup.duplicates, true, "openZip saw the name twice");
+  assert.equal(dup.read("ppt/slides/_rels/slide1.xml.rels").includes("External"), false, "the copy it reads is the local one");
+  assert.equal(deckLinksOut(dup), true, "a duplicated name: fails closed");
+  assert.equal(openZip(deckBytes()).duplicates, false);
   // On Linux (LibreOffice only) a linked deck runs nothing and keeps its cards.
   const lo = stub(() => assert.fail("LibreOffice must not open a linked deck"));
   const linux = { env: { PATH: "" }, home, tmp, exists: (p) => p === "/usr/bin/soffice", run: lo.run };
