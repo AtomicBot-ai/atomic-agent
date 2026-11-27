@@ -239,6 +239,35 @@ describe("reply text cannot close on an unescaped prose quote (#681)", () => {
     }
   });
 
+  // ATO-2007: a note's `content` is durable prose too. Under
+  // `required-string` the merged `:"` token closed it at `Preferred mode: `.
+  it("guards the memory.notes.store content the same way, under every profile and per request", async () => {
+    const NOTE = (content: string, extra = ""): string =>
+      `[{"tool":"memory.notes.store","args":{"content":"${content}"${extra}}}]`;
+    const variants: Array<[string, string]> = [];
+    for (const profile of [PLAIN_INSTRUCT_PROFILE, QWEN_THINK_PROFILE, GEMMA4_THINK_PROFILE]) {
+      const base = withoutReasoningPrelude(await buildGrammar(profile));
+      variants.push([profile.id, base]);
+      variants.push([`${profile.id} per-request`, buildGrammarForTools(base, ["memory.notes.store", "os.fs.read"])]);
+    }
+    for (const [id, grammar] of variants) {
+      expect(grammar, id).toMatch(/^notes-store-call ::= .*"\\"content\\"" ws ":" ws reply-text /m);
+      for (const text of [...TRAPS, "Preferred mode: "]) {
+        expect(gbnfAccepts(grammar, "root", NOTE(text)), `${id} ${text}`).toBe(false);
+      }
+      for (const text of [...CLEAN, "Uses tabs.", "Preferred mode: dark"]) {
+        expect(gbnfAccepts(grammar, "root", NOTE(text)), `${id} ${text}`).toBe(true);
+      }
+      expect(gbnfAccepts(grammar, "root", NOTE("Prefer pnpm", ',"tags":["prefs"]')), id).toBe(true);
+      expect(gbnfAccepts(grammar, "root", NOTE("", ',"tags":["prefs"]')), id).toBe(false);
+    }
+    for (const profile of [GEMMA4_THINK_PROFILE, QWEN_THINK_PROFILE]) {
+      const grammar = withoutReasoningPrelude(await buildGrammar(profile));
+      expect(gbnfAccepts(grammar, "root", NOTE("x <|channel> y")), profile.id).toBe(false);
+      expect(gbnfAccepts(grammar, "root", NOTE("a<b, a|b, <div>")), profile.id).toBe(true);
+    }
+  });
+
   it("makes reply args strict: text first, optional attachments, nothing else", async () => {
     for (const [id, grammar] of await grammars()) {
       for (const bad of [

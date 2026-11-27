@@ -79,7 +79,12 @@ tool-view-call ::= "{" ws "\"tool\"" ws ":" ws "\"tool.view\"" ws "," ws "\"args
 # `tool.search` (ATO-558) needs words to search for: a non-empty `query`
 # first, `limit` and any other key free. `tool-name` does not list it.
 tool-search-call ::= "{" ws "\"tool\"" ws ":" ws "\"tool.search\"" ws "," ws "\"args\"" ws ":" ws "{" ws "\"query\"" ws ":" ws required-string ( ws "," ws pair )* ws "}" ws "}"
-notes-store-call ::= "{" ws "\"tool\"" ws ":" ws "\"memory.notes.store\"" ws "," ws "\"args\"" ws ":" ws "{" ws "\"content\"" ws ":" ws required-string ( ws "," ws pair )* ws "}" ws "}"
+# A note's `content` is durable prose, so it uses the guarded `reply-text`
+# (#681): under `required-string` a note quoting a term ended at the merged
+# `:"` / ` "` token (`Preferred mode: `). The cost, accepted: a note may not
+# end on a soft character (`:`, `=`, `,`, `(`, a space), the same limit the
+# reply text has. `reply-text` is non-empty, so `""` stays refused.
+notes-store-call ::= "{" ws "\"tool\"" ws ":" ws "\"memory.notes.store\"" ws "," ws "\"args\"" ws ":" ws "{" ws "\"content\"" ws ":" ws reply-text ( ws "," ws pair )* ws "}" ws "}"
 notes-recall-call ::= "{" ws "\"tool\"" ws ":" ws "\"memory.notes.recall\"" ws "," ws "\"args\"" ws ":" ws "{" ws ( "\"query\"" ws ":" ws string | "\"id\"" ws ":" ws value ) ( ws "," ws pair )* ws "}" ws "}"
 # `finish` is the other terminal and its `summary` is prose too, so it
 # gets the same guard as the reply text (#681): under the generic string

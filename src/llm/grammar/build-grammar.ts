@@ -173,7 +173,8 @@ const HARDENED_STRING_RULES = [
 
 /**
  * The same F37 exclusion for the reply body (#681), which the `finish`
- * summary shares (`finish-args` uses `reply-text` too). `reply-text` is its
+ * summary and the `memory.notes.store` content share (`finish-args` and
+ * `notes-store-call` use `reply-text` too). `reply-text` is its
  * own automaton (the string may not close right after a soft character,
  * see `grammars/tool-call.gbnf`), so it does not go through `chars` and
  * needs the `<|` / `|>` states folded into it. The states multiply: the
