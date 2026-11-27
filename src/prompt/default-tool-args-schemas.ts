@@ -629,6 +629,12 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
         skill: stringSchema,
         script: stringSchema,
         args: stringArraySchema,
+        // The skill's own env_keys for this run (ATO-2530). A list, not
+        // a map like `verify.run.env`, so the tool keeps a strict schema.
+        env: {
+          type: "array",
+          items: obj({ name: stringSchema, value: stringSchema }, ["name", "value"]),
+        },
         timeoutMs: numberSchema,
       },
       ["skill", "script"],

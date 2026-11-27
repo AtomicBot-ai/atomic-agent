@@ -358,6 +358,11 @@ export function registerOsTools(
       ...(options.shellPolicy?.argScanThreshold === undefined
         ? {}
         : { argScanThreshold: options.shellPolicy.argScanThreshold }),
+      // `{{secret:NAME}}` in a header value (ATO-2530), from the same
+      // `toolSecrets` as the shell's.
+      ...(options.stateDir === undefined
+        ? {}
+        : { secrets: createToolSecretSource(options.stateDir) }),
     }),
   );
   registry.register(

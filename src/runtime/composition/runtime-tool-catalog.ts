@@ -27,6 +27,7 @@ import { commandIssuedSecrets } from "../../llm/provider/openai/api-key-command.
 import { processSecrets } from "../../error-reporting/process-secrets.js";
 import { isSecretEnvName } from "../../sandbox/command-env.js";
 import { resolveExtraApiKeys } from "../../config/resolve-llm-api-key.js";
+import { createToolSecretSource } from "../../config/tool-secrets.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
 import { finishTool } from "../../tools/finish.js";
 import { buildAskUserTool, replyTool } from "../../tools/conversation/index.js";
@@ -70,7 +71,8 @@ import { loadAgentProfiles, normaliseProfileName, readSettingsAgentProfiles, typ
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { filterToolDescriptorsByConfig } from "../filter-disabled-tools.js";
 import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
-import { resolveComposioServerConfig } from "../../composio/index.js";
+import { COMPOSIO_SERVER_NAME, resolveComposioServerConfig } from "../../composio/index.js";
+import { ownMcpServerCheck } from "./own-mcp-servers.js";
 import { activePolicy, mcpServerPolicy } from "../../policy/index.js";
 import { isForeignLlamaServer } from "../../llm/run-mode/foreign-llama-server.js";
 
@@ -327,6 +329,8 @@ export function registerRuntimeCoreTools(input: {
       // Unset reads as NaN, which the guard takes as its default 0.7.
       argScanThreshold: () => getConfig().agent.security?.argScanThreshold ?? Number.NaN,
     },
+    // `{{secret:NAME}}` (ATO-2530), the same `toolSecrets` as the shell's.
+    secrets: createToolSecretSource(config.paths.stateDir),
   });
   // Always registered; each call resolves `GITHUB_TOKEN` afresh so a
   // token saved in the Integrations hub works on the next turn. The
@@ -363,6 +367,8 @@ export function registerRuntimeCoreTools(input: {
       if (name === null) return;
       void skillHistory.recordUse(name).catch((err: unknown) => reportSkillHistoryError(err, "skill usage"));
     },
+    // `{{secret:NAME}}` in a script's args and env (ATO-2530).
+    createToolSecretSource(config.paths.stateDir),
   );
   trackSkillEdits(toolRegistry, { recorder: skillHistory, onError: reportSkillHistoryError });
   // `tool.view` is registered with `tool.search` in the MCP catalog phase:
@@ -683,6 +689,21 @@ export async function connectRuntimeMcpCatalog(input: {
       : {}),
     // Browser sign-ins of remote servers live in `<stateDir>/mcp-oauth/`.
     oauthStateDir: config.paths.stateDir,
+    // `{{secret:NAME}}` in a stdio server's `env`, filled in at spawn
+    // (ATO-2530); only for the person's own servers, never a plugin's.
+    toolSecrets: createToolSecretSource(config.paths.stateDir),
+    // Decided from the live config, so a server added mid-session counts (F2072.2).
+    mayUseToolSecrets: ownMcpServerCheck({
+      liveServers: () => {
+        try {
+          return getConfig().mcp?.servers ?? [];
+        } catch {
+          return config.mcp?.servers ?? []; // config.json unreadable now: the list at start
+        }
+      },
+      alwaysOwn: new Set([COMPOSIO_SERVER_NAME]),
+      pluginServerNames: new Set(pluginMcp.servers.map((s) => s.name)),
+    }),
     // ATO-1135: a host that renders MCP Apps pages (the desktop app) says so
     // with ATOMIC_AGENT_MCP_APPS_UI; only then do clients advertise the
     // extension and read a tool's `ui://` page after a call.

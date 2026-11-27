@@ -31,7 +31,10 @@ import {
   shellRuleSegments,
   shellRunsUnreadableScript,
 } from "../os/shell/shell-command-argv.js";
-import { guardVerifyRun, verifyRunCommands } from "./verify-run-guard.js";
+import { guardVerifyCommand, guardVerifyRun, verifyRunCommands } from "./verify-run-guard.js";
+import type { ToolSecretSource } from "../../config/tool-secrets.js";
+import { describeToolSecretUse } from "../tool-secret-use.js";
+import { checkVerifySecrets, fillVerifySecrets, withPlaceholderCommandLine } from "./verify-run-secrets.js";
 
 export const VERIFY_RUN_TOOL = "verify.run";
 
@@ -45,6 +48,8 @@ export interface VerifyRunToolOptions extends DangerousToolOptions {
   shellPolicy?: ShellGuardPolicy;
   /** Test seam: replaces the real browser launch. */
   launchBrowser?: BrowserLauncher;
+  /** Tool secrets a command or `env` may name as `{{secret:NAME}}` (ATO-2530). Omitted: none. */
+  secrets?: ToolSecretSource;
 }
 
 /** What the operator is asked to approve, in one line. */
@@ -95,6 +100,14 @@ export function buildVerifyRunTool(options: VerifyRunToolOptions): ToolDefinitio
         };
       }
       const dangerous = guard.dangerous.length > 0;
+      // `{{secret:NAME}}` (ATO-2530): known names only, before any
+      // question; such a run always asks, and no fan-out scope covers it.
+      const secretUse = checkVerifySecrets(args, options.secrets);
+      if (!secretUse.ok) {
+        const message = `verify.run: ${secretUse.message}`;
+        return { tool: VERIFY_RUN_TOOL, status: "error", summary: message, details: { error: message, description }, truncated: false };
+      }
+      const secretNames = secretUse.names;
       // A fan-out's directory covers ordinary checks, never a dangerous
       // command: the operator approved a directory of work, not those.
       const commandSegments = verifyRunCommands(args).flatMap((command) =>
@@ -113,6 +126,7 @@ export function buildVerifyRunTool(options: VerifyRunToolOptions): ToolDefinitio
       );
       const scopedByFanout =
         !dangerous &&
+        secretNames.length === 0 &&
         (options.approvals.fanoutScopes?.allows(ctx.sessionId, [ctx.workingDir]) ?? false) &&
         !savedRuleOverridesScope(options.approvals, {
           sessionId: ctx.sessionId,
@@ -132,8 +146,9 @@ export function buildVerifyRunTool(options: VerifyRunToolOptions): ToolDefinitio
           {
             sessionId: ctx.sessionId,
             tool: VERIFY_RUN_TOOL,
-            category: dangerous ? "shell_dangerous" : "shell",
-            reason,
+            // Dangerous wins the label; a secret asks as `shell_secret`.
+            category: dangerous ? "shell_dangerous" : secretNames.length > 0 ? "shell_secret" : "shell",
+            reason: reason + describeToolSecretUse(secretNames),
             preview: description,
             affectedResources: [ctx.workingDir],
             commandSegments,
@@ -145,12 +160,27 @@ export function buildVerifyRunTool(options: VerifyRunToolOptions): ToolDefinitio
           ctx.signal,
         );
       }
-      const result = await runVerify(args, {
+      // After approval, and only into what is spawned.
+      let runArgs = args;
+      if (secretNames.length > 0 && options.secrets !== undefined) {
+        const filled = await fillVerifySecrets(args, secretNames, options.secrets, (before, after) => {
+          const was = guardVerifyCommand(before.cmd, before.args, ctx.workingDir, options.shellPolicy);
+          const now = guardVerifyCommand(after.cmd, after.args, ctx.workingDir, options.shellPolicy);
+          return now.action === was.action && now.rule === was.rule;
+        });
+        if (!filled.ok) {
+          const message = `verify.run: ${filled.message}`;
+          return { tool: VERIFY_RUN_TOOL, status: "error", summary: message, details: { error: message, description }, truncated: false };
+        }
+        runArgs = filled.args;
+      }
+      const ran = await runVerify(runArgs, {
         workingDir: ctx.workingDir,
         config: options.config,
         signal: ctx.signal,
         ...(options.launchBrowser === undefined ? {} : { launchBrowser: options.launchBrowser }),
       });
+      const result = runArgs === args ? ran : withPlaceholderCommandLine(ran, args, runArgs);
       const { summary, ...details } = result;
       return {
         tool: VERIFY_RUN_TOOL,
