@@ -370,6 +370,10 @@ Real, driven by the running agent:
   **Trash** section at the bottom of the sidebar, with Restore, Delete forever and Empty Trash.
   Delete forever is the real `DELETE /api/sessions/{id}`; main runs it on its own only for a chat
   that has been in Trash for 30 days. Deleting the open chat leaves an empty new one.
+  The Trash entry keeps where the chat sat (pinned, archived, its chat folder), and Restore, or
+  **Undo** on the "Moved to Trash" toast, puts it back there (ATO-2747; a folder deleted
+  meanwhile is skipped). Empty Trash says "Deleted 7 of 9 chats" when the agent took only some;
+  Trash errors are plain words, with the agent's message logged by main.
   Each list header carries a **+** on its own line: the one on Chats starts a
   new chat, the one on Tasks opens Settings › Tasks on a new task,
   and on the Tasks header `N running` sits to the left of it. The head row —

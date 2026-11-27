@@ -187,11 +187,18 @@ function sandbox(bridge) {
   const c = {
     S: { alert: null }, SESSIONS: [{ id: "s1", t: "Plan the trip" }], BR: bridge,
     esc: h.esc, ic: h.ic, toasts: [], renders: 0,
+    PREFS: { pinned: [], archived: [], seen: {} }, FOLDERS: { state: { folders: [{ id: "f1", name: "Work" }], chats: {}, auto: {} } },
+    saves: { prefs: 0, folders: 0 },
   };
+  c.archiveSet = (list, id, on) => { const rest = (list || []).filter((x) => x !== id); return on ? [id, ...rest] : rest; };
+  c.folderById = (st, id) => st.folders.find((f) => f.id === id) || null;
+  c.folderPut = (st, sid, fid) => { st.chats[sid] = fid; delete st.auto[sid]; return true; };
+  c.savePrefs = () => { c.saves.prefs++; };
+  c.saveFolders = () => { c.saves.folders++; };
   c.render = () => { c.renders++; };
   c.nameVisibleSessions = () => {};
   c.refreshSessions = async () => {};
-  c.toast = (t, s) => { c.toasts.push(t + " | " + (s || "")); };
+  c.toast = (t, s, kind) => { c.toasts.push(t + " | " + (s || "") + (kind ? " | " + kind : "")); };
   vm.createContext(c);
   vm.runInContext(src("../renderer/chat-trash.js"), c);
   return c;
