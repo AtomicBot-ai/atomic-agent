@@ -34,13 +34,19 @@ import {
   type DiscordMessageEvent,
 } from "./discord-inbound-handler.js";
 import type { DiscordLockfile } from "./discord-lockfile.js";
-import { catchUpDiscordChannels } from "./discord-catch-up.js";
+import {
+  catchUpDiscordChannels,
+  type DiscordCatchUpDeps,
+} from "./discord-catch-up.js";
 import {
   DiscordMessageCursor,
   RecentMessageIds,
   cursorPathFor,
 } from "./discord-message-cursor.js";
 import { DiscordSessionPointer } from "./discord-session-pointer.js";
+
+/** Per-channel start points for a catch-up rerun. */
+type CatchUpStart = NonNullable<DiscordCatchUpDeps["from"]>;
 
 export interface DiscordChannelDeps {
   runtime: AgentRuntime;
@@ -85,8 +91,12 @@ export class DiscordChannel implements Channel {
   private readonly cursor: DiscordMessageCursor;
   private readonly handled = new RecentMessageIds();
   private catchingUp: Promise<unknown> | null = null;
-  /** A READY arrived during a run: read the history once more after it. */
-  private catchUpAgain = false;
+  /**
+   * A READY arrived during a run: the cursor as it was at that READY,
+   * read from once more after the run. Live messages meanwhile move the
+   * cursor past the gap, so the rerun must not start from the cursor.
+   */
+  private catchUpFrom: CatchUpStart | null = null;
   private readonly inbox: AttachmentInbox;
   /**
    * `sessionId -> approval binding`. One per channel that is (or recently
@@ -235,18 +245,30 @@ export class DiscordChannel implements Channel {
   /**
    * A fresh gateway session (restart, or a drop that could not be
    * resumed) missed whatever was sent meanwhile: read it back. One run
-   * at a time; a READY during a run is remembered and starts one more
-   * run when this one ends, so the gap before that READY is read too.
+   * at a time; a READY during a run snapshots the cursor and starts one
+   * more run from that snapshot when this one ends, so the gap before
+   * that READY is read even after live messages moved the cursor.
    */
   private startCatchUp(api: DiscordApi): void {
     if (this.botUserId === null) return;
     if (this.catchingUp) {
-      this.catchUpAgain = true;
+      // The first READY of a run wins: its cursor is the oldest.
+      this.catchUpFrom ??= this.cursor
+        .entries()
+        .map(({ channelId, entry }) => ({ channelId, entry: { ...entry } }));
       return;
     }
+    this.startCatchUpFrom(api, undefined);
+  }
+
+  private startCatchUpFrom(
+    api: DiscordApi,
+    from: CatchUpStart | undefined,
+  ): void {
     this.catchingUp = catchUpDiscordChannels({
       api,
       cursor: this.cursor,
+      ...(from === undefined ? {} : { from }),
       logger: this.deps.logger,
       deliver: (event) => this.deliver(event, api),
     })
@@ -257,14 +279,15 @@ export class DiscordChannel implements Channel {
       })
       .finally(() => {
         this.catchingUp = null;
-        const again = this.catchUpAgain;
-        this.catchUpAgain = false;
+        const from = this.catchUpFrom;
+        this.catchUpFrom = null;
         if (
-          again &&
+          from !== null &&
+          this.botUserId !== null &&
           this.currentState !== "stopping" &&
           this.currentState !== "disabled"
         ) {
-          this.startCatchUp(api);
+          this.startCatchUpFrom(api, from);
         }
       });
   }
