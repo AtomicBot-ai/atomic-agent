@@ -8,7 +8,10 @@
    and the Node checks (test/privacy-shield.test.mjs). No DOM, no IPC. */
 
 const SHIELD_OLD_AGENT = 'Update the agent to use Privacy Shield.';
-const SHIELD_NO_COUNTER = 'Couldn’t read the masked counter from the agent.';
+const SHIELD_NO_COUNTER = "Couldn't read the masked counter from the agent.";
+/* ATO-2744: the sentences a failure shows; what the agent or the bridge said goes under Details. */
+const SHIELD_READ_FAILED = "Couldn't read Privacy Shield from the agent.";
+const SHIELD_SWITCH_FAILED = "Couldn't switch Privacy Shield. Try again.";
 
 function shieldCount(v) {
   return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null;
@@ -22,6 +25,7 @@ function shieldCounterLine(masked) {
 
 /* `api.read()`       → {supported:false} | {supported:true, ok:true, data:{enabled, masked}} | {supported:true, ok:false, error}
    `api.set(enabled)` → the same, after the agent switched.
+   `st.error` is null or {text, detail} (human-error.js draws it).
    `hooks` (renderer only): {render, toast, shown, gen} — repaint, a toast,
    whether Privacy is on screen, and the agent generation (a new agent resets). */
 function createPrivacyShield(api, hooks) {
@@ -32,7 +36,7 @@ function createPrivacyShield(api, hooks) {
   const take = (res) => {
     if (!res || res.supported === false) { st.supported = false; st.enabled = null; st.masked = null; st.error = null; return false; }
     st.supported = true;
-    if (!res.ok || !res.data || typeof res.data.enabled !== 'boolean') { st.error = (res && res.error) || 'could not read Privacy Shield'; return false; }
+    if (!res.ok || !res.data || typeof res.data.enabled !== 'boolean') { st.error = {text: SHIELD_READ_FAILED, detail: String((res && res.error) || '')}; return false; }
     st.error = null;
     st.enabled = res.data.enabled;
     st.masked = shieldCount(res.data.masked);
@@ -66,7 +70,7 @@ function createPrivacyShield(api, hooks) {
       st.loading = false;
       if (take(res)) return {ok: true, enabled: st.enabled};
       if (st.supported === false) return {ok: false, unsupported: true};
-      st.error = 'Couldn’t switch Privacy Shield: ' + ((res && res.error) || 'unknown error');
+      st.error = {text: SHIELD_SWITCH_FAILED, detail: String((res && res.error) || '')};
       return {ok: false};
     },
     /* Renderer: read on entry to Privacy, then every 5 s while it is open; repaint only on a change. */
@@ -107,8 +111,11 @@ function privacyShieldHTML(st, deps) {
   let help = '';
   if (old) help = '<div class="tk-help set-shield-old">' + esc(SHIELD_OLD_AGENT) + '</div>';
   else if (known) help = '<div class="tk-help set-shield-count">' + esc(shieldCounterLine(st.masked) || SHIELD_NO_COUNTER) + '</div>';
-  if (st.error && !old) help += '<div class="tk-help tk-help--warn set-shield-err">' + esc(st.error)
-    + ' <button class="set-link" data-act="shield:reload">Try again</button></div>';
+  if (st.error && !old) {
+    const said = typeof herrBodyHTML === 'function' ? herrBodyHTML(st.error) : esc(st.error.text || st.error);
+    help += '<div class="tk-help tk-help--warn set-shield-err">' + said
+      + ' <button class="set-link" data-act="shield:reload">Try again</button></div>';
+  }
   const pending = !old && !known && !st.error;
   return '<div class="tk-setrow set-shield">'
     + '<div class="body"><div class="t">Privacy Shield</div>'
@@ -122,4 +129,4 @@ function privacyShieldHTML(st, deps) {
     + '</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {SHIELD_OLD_AGENT, SHIELD_NO_COUNTER, shieldCounterLine, createPrivacyShield, privacyShieldHTML};
+if (typeof module !== 'undefined') module.exports = {SHIELD_OLD_AGENT, SHIELD_NO_COUNTER, SHIELD_READ_FAILED, SHIELD_SWITCH_FAILED, shieldCounterLine, createPrivacyShield, privacyShieldHTML};

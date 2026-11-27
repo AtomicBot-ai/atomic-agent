@@ -197,3 +197,12 @@
 /* Calm (S7): the layer a closing popover fades out on (overlayMotionExit).
    Its one child is an inert copy, placed where the popover was. */
 #ovghost{position:fixed;left:0;top:0;width:0;height:0;z-index:21;pointer-events:none}
+
+/* ATO-2744 (human-error.js): a failed panel's sentence, an optional hint
+   line, and the raw words folded under Details. */
+.herr-t{display:block}
+.herr-hint{display:block;margin-top:2px;color:var(--ink-2)}
+.herr-det{margin-top:4px;font-size:var(--fs-label);line-height:1.45;color:var(--ink-2)}
+.herr-det > summary{width:max-content;cursor:pointer;color:var(--ink-2)}
+.herr-det > summary:hover{color:var(--ink)}
+.herr-raw{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:400 var(--fs-label)/1.45 var(--font-mono);color:var(--ink-3)}

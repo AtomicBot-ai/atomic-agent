@@ -66,6 +66,19 @@ function pworkersTasks(boxes) {
   return (boxes || []).map((t) => String(t || '').trim()).filter(Boolean).slice(0, PWORKERS_MAX);
 }
 
+/** ATO-2744: a failed start as {text, hint, detail}. Git's known refusals in words (human-error.js
+    herrGitWorktree), main's sentence otherwise; the raw words, worker number and kept copies under Details. */
+function pworkersError(res) {
+  const generic = "The worker chats didn't start. Try again.";
+  if (!res) return {text: generic, hint: '', detail: ''};
+  const detail = String(res.detail || '');
+  const known = res.reason === 'git' && typeof herrGitWorktree === 'function' ? herrGitWorktree(detail) : null;
+  const kept = Number(res.kept) > 0
+    ? (Number(res.kept) === 1 ? 'One worker copy was' : Number(res.kept) + ' worker copies were') + ' already made and kept.'
+    : '';
+  return {text: (known && known.text) || String(res.error || '') || generic, hint: kept, detail};
+}
+
 /* ---- renderer side (globals from renderer.js, read at call time) ---- */
 
 function pworkersApi() {
@@ -218,10 +231,10 @@ async function pworkersStart() {
   sh.starting = true; sh.error = null;
   render();
   let res = null;
-  try { res = await api.projectsStartWorkers({coordinatorSid: sh.coordinatorSid, projectId: sh.projectId, tasks}); } catch (e) { res = {ok: false, error: String((e && e.message) || e)}; }
+  try { res = await api.projectsStartWorkers({coordinatorSid: sh.coordinatorSid, projectId: sh.projectId, tasks}); } catch (e) { res = {ok: false, error: '', detail: String((e && e.message) || e)}; }
   if (PWORKERS.sheet !== sh) return;   // closed meanwhile; main still started them, and its event brought them in
   sh.starting = false;
-  if (!res || !res.ok) { sh.error = (res && res.error) || 'The worker chats did not start'; render(); return; }
+  if (!res || !res.ok) { sh.error = pworkersError(res); render(); return; }
   pworkersTakeTurns(res);
   PWORKERS.sheet = null;
   if (S.overlay === 'pworkers') S.overlay = null;
@@ -232,7 +245,7 @@ async function pworkersStart() {
 function pworkersSheetHTML() {
   const sh = PWORKERS.sheet;
   if (!sh) return '';
-  let body = '<p class="sd-cap">Each task runs in its own new chat, in its own copy of <b>' + esc(sh.folder) + '</b>: a git worktree of the last commit'
+  let body = '<p class="sd-cap">Each task runs in its own new chat, in its own copy of <b title="' + esc(sh.folder) + '">' + esc(herrBase(sh.folder)) + '</b>: a git worktree of the last commit'
     + ' (uncommitted changes are not in it), or a plain copy for a folder without git. Your folder is not touched.'
     + ' When all of them finish, their summaries go into this chat\'s message box.</p>';
   for (let i = 0; i < PWORKERS_MAX; i++) {
@@ -242,10 +255,10 @@ function pworkersSheetHTML() {
   const last = pworkersGroupOf(PWORKERS.groups, sh.coordinatorSid);
   if (last) {
     body += '<div class="pw-last"><span class="sd-cap">Last split: ' + esc(coordinatorBadgeText(last)) + '</span><ul>'
-      + last.workers.map((w) => '<li>' + esc(w.status + ' · ' + String(w.task).split('\n')[0].slice(0, 80) + ' · ' + w.dir) + '</li>').join('')
+      + last.workers.map((w) => '<li title="' + esc(w.dir) + '">' + esc(w.status + ' · ' + String(w.task).split('\n')[0].slice(0, 80)) + '</li>').join('')
       + '</ul>' + (PWORKERS.reports.has(last.id) ? '<button class="btn btn-g sm" data-act="pwfill:' + esc(last.id) + '">Put its results in the box</button>' : '') + '</div>';
   }
-  if (sh.error) body += '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(sh.error) + '</span></div>';
+  if (sh.error) body += herrNoticeHTML(sh.error, {icon: ic('alert')});
   return sheet('Split into worker chats', body,
     '<span class="grow"></span><button class="btn btn-s sm" data-act="close">Cancel</button>'
     + '<button class="btn btn-p sm" data-act="pwstart:"' + (sh.starting ? ' disabled' : '') + '>' + (sh.starting ? '<span class="tk-spin"></span>' : '') + 'Start</button>',
@@ -282,4 +295,4 @@ function pworkersAct(k, v) {
 }
 
 if (typeof module !== 'undefined') module.exports = {PWORKERS, PWORKERS_MAX, pworkersFind, pworkersGroupOf, workerBadgeState, workerEndStatus,
-  coordinatorBadgeText, pworkersTasks, workerBadgeHTML, workerTurnEnded, pworkersAct, pworkersCanSplit, pworkersChanged, pworkersStashBack};
+  coordinatorBadgeText, pworkersTasks, pworkersError, workerBadgeHTML, workerTurnEnded, pworkersAct, pworkersCanSplit, pworkersChanged, pworkersStashBack};

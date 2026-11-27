@@ -27,7 +27,10 @@
    - Dismiss: a waiting task is cancelled (DELETE /api/tasks/{id}), so it
      never runs; a finished one only leaves this section. Either way the
      card is hidden here (localStorage, this window only); the Tasks list
-     below still has the task.
+     below still has the task. ATO-2744: on a waiting task Dismiss asks
+     first, on the card itself ("Cancel this task? It won't run." Keep /
+     Cancel task), the way My files asks before Remove; a cancel the agent
+     refused keeps the card and says so.
 
    The agent starts a mail task as soon as it files it; it has no
    "proposed, wait for Start" state yet, so Start mostly opens the chat. */
@@ -40,7 +43,8 @@ const MAILTASK_STORE_MAX = 500;
 const MAILTASK_SHOW_MAX = 8;
 const MAILTASK_WAITING = ['pending', 'paused'];
 
-const MAILTASKS = {rows: [], dismissed: null};
+/* `confirm`: the id of the waiting card whose Dismiss asks "Cancel this task?". */
+const MAILTASKS = {rows: [], dismissed: null, confirm: null};
 
 /* The line `Name: value` inside the mail frame, '' when absent. Only the
    frame's header lines count: the template above the frame is the
@@ -140,10 +144,16 @@ function mailTaskCardHTML(row) {
     : '';
   const dismiss = '<button class="btn btn-g xs" data-mailtask="dismiss" data-id="' + mailTaskEsc(row.id) + '" title="'
     + (waiting ? 'Cancel this task so it never runs, and hide it here' : 'Hide it here; the task stays in the list below') + '">Dismiss</button>';
+  const asking = waiting && MAILTASKS.confirm === row.id;
+  const acts = asking
+    ? '<span class="mailtask-ask">Cancel this task? It won\'t run.</span>'
+      + '<button class="btn btn-s xs" data-mailtask="keep" data-id="' + mailTaskEsc(row.id) + '">Keep</button>'
+      + '<button class="btn btn-df xs" data-mailtask="cancel" data-id="' + mailTaskEsc(row.id) + '">Cancel task</button>'
+    : start + dismiss;
   return '<div class="mailtask" data-mailtask-id="' + mailTaskEsc(row.id) + '">'
     + '<div class="mailtask-text"><div class="mailtask-subject">' + mailTaskEsc(row.subject || '(no subject)') + '</div>'
     + '<div class="mailtask-meta">' + meta + '</div></div>'
-    + '<div class="mailtask-acts">' + start + dismiss + '</div></div>';
+    + '<div class="mailtask-acts">' + acts + '</div></div>';
 }
 
 /* The Tasks tab's "From e-mail" section, '' when no mail task is left to show. */
@@ -170,11 +180,24 @@ async function mailTaskAct(action, id) {
     }
     return;
   }
-  if (action === 'dismiss') {
-    mailTaskDismiss(id);
+  const repaint = () => { if (typeof render === 'function') render(); };
+  if (action === 'keep') { MAILTASKS.confirm = null; repaint(); return; }
+  // A waiting task is cancelled for good: Dismiss asks first, Cancel task does it.
+  if (action === 'dismiss' && MAILTASK_WAITING.includes(row.status)) { MAILTASKS.confirm = id; repaint(); return; }
+  if (action === 'dismiss' || action === 'cancel') {
+    MAILTASKS.confirm = null;
     const br = typeof BR !== 'undefined' ? BR : null;
-    if (MAILTASK_WAITING.includes(row.status) && br && typeof br.cancelTask === 'function') await br.cancelTask(id);
-    if (typeof tasksRefresh === 'function') await tasksRefresh();
+    if (action === 'cancel' && MAILTASK_WAITING.includes(row.status) && br && typeof br.cancelTask === 'function') {
+      let res = null;
+      try { res = await br.cancelTask(id); } catch (e) { res = null; }
+      if (!res || res.ok === false) {
+        repaint();
+        if (typeof toast === 'function') toast("Couldn't cancel this task", 'It is still waiting. Try again, or cancel it in the list below.', 'bad');
+        return;
+      }
+    }
+    mailTaskDismiss(id);
+    if (typeof tasksRefresh === 'function') await tasksRefresh(); else repaint();
   }
 }
 
@@ -189,5 +212,5 @@ if (typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined') module.exports = {
   MAILTASKS, MAILTASK_NOTE, MAILTASK_STORE_MAX, MAILTASK_SHOW_MAX, mailTaskOf, mailTaskHeader, emailTasksTake,
-  emailTasksVisible, emailTasksHTML, mailTaskCardHTML, mailTaskStartVerb, mailTaskDismiss, mailTaskDismissed,
+  emailTasksVisible, emailTasksHTML, mailTaskCardHTML, mailTaskStartVerb, mailTaskDismiss, mailTaskDismissed, mailTaskAct,
 };
