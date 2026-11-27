@@ -7,6 +7,7 @@ import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 import {
   formatDotenvReadWarning,
   getConfig,
+  getStateSecretPaths,
   setConfigNoticeSink,
   type WhileBusySubmitMode,
 } from "../config/index.js";
@@ -329,7 +330,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // One file list per working directory for the session (file-mentions/).
   const mentionFiles = createMentionFileIndex();
   // ATO-2472: `@diff`, `@git:N`, ranges, folders, links and `@problems`, sent in typing order.
-  const mentionSender = createMentionSender(runtime.mentions, () => runtime.capabilities.workingDir);
+  const mentionSender = createMentionSender(
+    runtime.mentions, () => runtime.capabilities.workingDir, getStateSecretPaths(config.paths),
+  );
   const orchestrator = new ChatOrchestrator(runtime, bus, {
     maxSteps,
     llamaUrl: config.localModels.url,
