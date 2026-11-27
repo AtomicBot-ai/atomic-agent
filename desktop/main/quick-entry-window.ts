@@ -208,7 +208,7 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
       notify: (body) => {
         try { if (Notification.isSupported()) new Notification({ title: "Atomic Agent", body, silent: true }).show(); } catch { /* no notifications */ }
       },
-    }, source, raw, { focusMs: replaceFocusMs(source), pasteKey: pasteKeyLabel(w.platform) });
+    }, source, raw, { focusMs: replaceFocusMs(source), pasteKey: pasteKeyLabel(w.platform), selection });
   });
   /* ATO-2738: before anything is pasted, what the selection was and what
      the answer will put there (the same text the paste sends, the model's

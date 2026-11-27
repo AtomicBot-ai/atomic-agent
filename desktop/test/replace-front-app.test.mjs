@@ -11,13 +11,27 @@ const require = createRequire(import.meta.url);
 const F = require("../out/main/replace-front-app.js");
 const src = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
 
+/* The C# that Add-Type compiles: the -MemberDefinition single-quoted
+   string as PowerShell reads it ('' is one '). C# takes '...' as one char,
+   so DllImport('user32.dll') does not compile (CS1012). */
+function memberDefinition(script) {
+  const m = /-MemberDefinition '((?:[^']|'')*)'/.exec(script);
+  assert.ok(m, "an Add-Type -MemberDefinition '...'");
+  return m[1].replace(/''/g, "'");
+}
+function assertCompilableUser32(script) {
+  const cs = memberDefinition(script);
+  assert.ok(cs.includes('[DllImport("user32.dll")]'), cs);
+  assert.doesNotMatch(cs, /'[^']{2,}'/, "no multi-character char literal in the C#");
+}
+
 test("Windows: the read is PowerShell and user32, its answer checked, never this app", () => {
   const cmd = F.winFrontCommand();
   assert.equal(cmd.file, "powershell.exe");
   const script = cmd.args.at(-1);
   assert.match(script, /GetForegroundWindow/);
   assert.match(script, /ConvertTo-Json -Compress/);
-  assert.ok(!script.includes('"'), "single quotes only, for the command line");
+  assertCompilableUser32(script);
   assert.deepEqual(F.parseWinFront('{"hwnd":"132456","pid":4321,"name":"Notepad"}', 1), { name: "Notepad", pid: 4321, hwnd: "132456" });
   assert.equal(F.parseWinFront('{"hwnd":"132456","pid":4321,"name":"  "}', 1).name, "the app");
   assert.equal(F.parseWinFront('{"hwnd":"132456","pid":77,"name":"Atomic Agent"}', 77), null, "our own window");
@@ -30,6 +44,7 @@ test("Windows: bringing it back says ok only when that window is in front; a bad
   const cmd = F.winActivateCommand("132456");
   const script = cmd.args.at(-1);
   assert.match(script, /\[System\.IntPtr\]::new\(\[Int64\]132456\)/);
+  assertCompilableUser32(script);
   assert.match(script, /IsIconic\(\$h\)\) \{ \[void\]\[AtomicAgent\.Front\]::ShowWindow\(\$h, 9\)/, "a minimized window is restored");
   assert.match(script, /SetForegroundWindow\(\$h\)/);
   assert.match(script, /if \(\[AtomicAgent\.Front\]::GetForegroundWindow\(\) -eq \$h\) \{ 'ok' \} else \{ 'no' \}/);

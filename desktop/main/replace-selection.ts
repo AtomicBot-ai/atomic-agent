@@ -104,10 +104,10 @@ export function replaceLabel(app: SourceApp | null): string {
 export const REPLACE_MAX_CHARS = 32_000;
 
 /** The answer as it is pasted: line ends made \n, trimmed; null for nothing or too long. */
-export function replacementText(raw: unknown): string | null {
+export function replacementText(raw: unknown, selection?: string | null): string | null {
   if (typeof raw !== "string") return null;
-  // ATO-2738: without the model's lead-in, fence or quotes around the answer.
-  const text = stripModelPreamble(raw.replace(/\r\n/g, "\n").trim());
+  // ATO-2738: without the model's lead-in, fence or quotes around the answer (the selection's own first line stays).
+  const text = stripModelPreamble(raw.replace(/\r\n/g, "\n").trim(), { selection });
   if (!text || text.length > REPLACE_MAX_CHARS) return null;
   return text;
 }
@@ -133,6 +133,8 @@ export interface ReplaceOptions {
   focusMs?: number;
   /** ATO-2738: the paste chord the lines name: "⌘V" (the default) or "Ctrl+V". */
   pasteKey?: string;
+  /** ATO-2738: the selected text, so a lead-in that is its own first line is not taken off. */
+  selection?: string | null;
 }
 
 export type ReplaceOutcome =
@@ -157,7 +159,7 @@ export async function replaceInSourceApp(
   raw: unknown,
   opts: ReplaceOptions = {},
 ): Promise<ReplaceOutcome> {
-  const text = replacementText(raw);
+  const text = replacementText(raw, opts.selection);
   if (!text) return { ok: false, hidden: false, error: "There is no answer to put back." };
   if (!source) return { ok: false, hidden: false, error: "The app the text came from is not known. Select the answer and copy it instead." };
   // ATO-2738: a tool to install first (Linux); the mini chat stays and says which.

@@ -15,7 +15,7 @@ export type ReplacePreview =
 
 export function replacePreview(selection: string | null, source: SourceApp | null, raw: unknown): ReplacePreview {
   if (source && source.blocked) return { ok: false, error: source.blocked };
-  const after = replacementText(raw);
+  const after = replacementText(raw, selection);
   if (!after) return { ok: false, error: "There is no answer to put back." };
   const before = typeof selection === "string" ? selection.replace(/\r\n/g, "\n").trim() : "";
   return { ok: true, before, after, same: before === after };

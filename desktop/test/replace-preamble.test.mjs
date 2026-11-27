@@ -46,6 +46,18 @@ test("the person's own text stays: a real opening, a real closing, quotes inside
   for (const t of kept) assert.equal(strip(t), t, t);
 });
 
+test("a lead-in that is the selection's own first line stays; a model's own one still goes", () => {
+  const opts = (selection) => ({ selection });
+  for (const first of ["Here is the updated schedule:", "Here's the draft of the contract:", "Here are the corrected figures:"]) {
+    const answer = first + "\nMon 9am";
+    assert.equal(strip(answer, opts("  " + first + "\r\nMon 9 am")), answer, first);
+    assert.equal(strip(answer), "Mon 9am", "no selection: " + first);
+  }
+  assert.equal(strip("Sure!\nHere is the rewritten text:\nBetter.", opts("Old words.")), "Better.");
+  assert.equal(strip("Here is the updated schedule:\nMon 9am", opts("Mon 9 am")), "Mon 9am");
+  assert.equal(strip("Here is the updated schedule:\nMon 9am", opts(null)), "Mon 9am");
+});
+
 test("line ends made \\n, ends trimmed, nothing for nothing", () => {
   assert.equal(strip("  Here is the text:\r\n\r\nLine one\r\nLine two  "), "Line one\nLine two");
   assert.equal(strip("   "), "");

@@ -13,7 +13,9 @@
  * around the whole answer, and one pair of quotes around the whole
  * answer. A rewritten email that starts "Sure! I'd be happy to help."
  * or ends "Let me know if you have questions." is the person's text and
- * stays. Pure: no Electron, the node tests load it from the built output.
+ * stays. So does a lead-in that is the selection's own first line ("Here
+ * is the updated schedule:" in the email being fixed). Pure: no Electron,
+ * the node tests load it from the built output.
  */
 
 /** "Sure!", "Certainly.", "Of course," alone on a line. */
@@ -57,7 +59,14 @@ function unquote(text: string): string {
   return text;
 }
 
-function dropLeadIn(text: string): string {
+/** The selection's own first line, trimmed: "" when there is none. */
+function firstLine(selection: unknown): string {
+  if (typeof selection !== "string") return "";
+  const line = selection.replace(/\r\n/g, "\n").split("\n").find((l) => l.trim());
+  return line ? line.trim() : "";
+}
+
+function dropLeadIn(text: string, own: string): string {
   const lines = text.split("\n");
   let i = 0;
   const next = (from: number) => { let j = from; while (j < lines.length && !lines[j].trim()) j++; return j; };
@@ -67,8 +76,15 @@ function dropLeadIn(text: string): string {
     if (j < lines.length && isLeadIn(lines[j].trim())) i = j;
   }
   if (!isLeadIn(lines[i].trim())) return text;
+  // The person's own first line ("Here is the updated schedule:") stays.
+  if (own && (lines[i].trim() === own || lines[0].trim() === own)) return text;
   const rest = lines.slice(i + 1).join("\n").trim();
   return rest || text;
+}
+
+export interface PreambleOptions {
+  /** The selected text the answer replaces: a lead-in that is its own first line is kept. */
+  selection?: string | null;
 }
 
 /**
@@ -77,11 +93,11 @@ function dropLeadIn(text: string): string {
  * Whatever is not clearly wrapping is kept as it is; never returns "" for
  * a text that had words.
  */
-export function stripModelPreamble(raw: string): string {
+export function stripModelPreamble(raw: string, opts: PreambleOptions = {}): string {
   let text = String(raw).replace(/\r\n/g, "\n").trim();
   if (!text) return text;
   text = unfence(text);
-  text = dropLeadIn(text);
+  text = dropLeadIn(text, firstLine(opts.selection));
   text = unfence(text);
   text = unquote(text);
   return text.trim();

@@ -104,6 +104,8 @@ test("main: the preview's text is the paste's text; a blocked app or no answer s
   assert.deepEqual(P.replacePreview("x", { name: "", pid: 0, blocked: "Install wtype." }, "y"), { ok: false, error: "Install wtype." });
   assert.equal(P.replacePreview("x", null, "   ").ok, false);
   assert.equal(P.replacePreview(null, null, "y").before, "");
+  const own = "Here is the updated schedule:\nMon 9am";
+  assert.deepEqual(P.replacePreview("Here is the updated schedule:\nMon 9 am", null, own).after, own, "the selection's own first line stays");
 });
 
 test("the hooks: the click and Esc go to the preview first, the scripts and styles load in order, main and preload answer", () => {

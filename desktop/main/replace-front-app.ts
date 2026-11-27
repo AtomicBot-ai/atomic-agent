@@ -49,20 +49,26 @@ export function onPath(name: string, env: Record<string, string | undefined>, ex
 
 /* ---------------- Windows ---------------- */
 
+/*
+ * The C# goes in a PowerShell single-quoted string, where '' is one ', so
+ * C# would get DllImport('user32.dll'): a char literal, error CS1012, no
+ * type, and nothing works. A " is literal there, and Node's execFile quotes
+ * it for the command line.
+ */
 const WIN_USER32 = "Add-Type -Namespace AtomicAgent -Name Front -MemberDefinition '"
-  + "[DllImport(''user32.dll'')] public static extern System.IntPtr GetForegroundWindow(); "
-  + "[DllImport(''user32.dll'')] public static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint pid); "
-  + "[DllImport(''user32.dll'')] public static extern bool SetForegroundWindow(System.IntPtr hWnd); "
-  + "[DllImport(''user32.dll'')] public static extern bool ShowWindow(System.IntPtr hWnd, int cmd); "
-  + "[DllImport(''user32.dll'')] public static extern bool IsIconic(System.IntPtr hWnd); "
-  + "[DllImport(''user32.dll'')] public static extern bool IsWindow(System.IntPtr hWnd);';";
+  + "[DllImport(\"user32.dll\")] public static extern System.IntPtr GetForegroundWindow(); "
+  + "[DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint pid); "
+  + "[DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(System.IntPtr hWnd); "
+  + "[DllImport(\"user32.dll\")] public static extern bool ShowWindow(System.IntPtr hWnd, int cmd); "
+  + "[DllImport(\"user32.dll\")] public static extern bool IsIconic(System.IntPtr hWnd); "
+  + "[DllImport(\"user32.dll\")] public static extern bool IsWindow(System.IntPtr hWnd);';";
 
 const powershell = (script: string): KeystrokeCommand => ({
   file: "powershell.exe",
   args: ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script],
 });
 
-/** The foreground window as JSON {hwnd, pid, name}. Single quotes only, for the command line. */
+/** The foreground window as JSON {hwnd, pid, name}. */
 export function winFrontCommand(): KeystrokeCommand {
   return powershell([
     WIN_USER32,

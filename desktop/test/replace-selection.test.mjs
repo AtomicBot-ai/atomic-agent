@@ -165,7 +165,7 @@ test('the wiring: main keeps the app, the page marks the answer and asks main', 
   assert.match(qw, /replace: source \? replaceLabel\(source\) : null, selection \}/);
   assert.match(qw, /ipcMain\.handle\("app:quickEntryReplace"/);
   assert.match(qw, /event\.sender !== box\.webContents/, 'only the mini chat that has the selection');
-  assert.match(qw, /replaceInSourceApp\(\{[\s\S]*?paste: pasteIntoFrontApp,[\s\S]*?\}, source, raw, \{ focusMs: replaceFocusMs\(source\), pasteKey: pasteKeyLabel\(w\.platform\) \}\)/);
+  assert.match(qw, /replaceInSourceApp\(\{[\s\S]*?paste: pasteIntoFrontApp,[\s\S]*?\}, source, raw, \{ focusMs: replaceFocusMs\(source\), pasteKey: pasteKeyLabel\(w\.platform\), selection \}\)/, 'the selection goes along, so its own first line is kept');
   const ipc = src('../main/selected-text-ipc.ts');
   assert.match(ipc, /Promise\.all\(\[readSelectedText\(\), front\]\)/);
   assert.match(ipc, /replaceAvailable\(w\.platform\) \? readFrontApp\(\)/);
@@ -202,4 +202,13 @@ test('what is pasted: the model\'s lead-in and a fence around it all are taken o
   const {deps, log} = fakes();
   await R.replaceInSourceApp(deps, SAFARI, 'Here is the improved version:\n\n"Better words."');
   assert.ok(log.includes('paste:Better words.'));
+});
+
+test('what is pasted: a lead-in that is the selection\'s own first line stays', async () => {
+  const email = 'Here is the updated schedule for next week:\nMon 9am';
+  assert.equal(R.replacementText(email, 'Here is the updated schedule for next week:\nMon 9 am'), email);
+  assert.equal(R.replacementText(email), 'Mon 9am', 'without the selection it reads as a lead-in');
+  const {deps, log} = fakes();
+  await R.replaceInSourceApp(deps, SAFARI, email, {selection: 'Here is the updated schedule for next week:\r\nMon 9 am'});
+  assert.ok(log.includes('paste:' + email), log.join('|'));
 });
