@@ -1,4 +1,5 @@
 import { getConfig, type AtomicAgentConfig } from "../../config/index.js";
+import { createLocalModelsDefaults } from "../../config/local-models/local-models-defaults.js";
 import type { EngineWaitVerdicts } from "../../agent/agent-contract.js";
 import type { LlmFailureContext, LlmPromptBudget, LlmTruncationCounts } from "../../error-reporting/index.js";
 import { managedPortsOf } from "../../llm/describe-llama-health-failure.js";
@@ -27,7 +28,7 @@ export interface LlmFailureContextDeps {
   /**
    * The managed engine's liveness as the outage wait reads it (ATO-772).
    * Disk reads and a signal-0 probe only, nothing that waits on the
-   * engine. Asked for refused connections only.
+   * engine. Asked for refused connections and taken ports only.
    */
   readEngineLiveness?: (dataDir: string) => ManagedEngineLiveness;
   /**
@@ -43,7 +44,7 @@ export interface LlmFailureContextDeps {
   readLocalFault?: (dataDir: string) => LocalFaultTag;
   /**
    * Why the managed engine's process is gone, as a fixed word read from
-   * its log (ATO-1435). Asked for refused connections with the engine
+   * its log (ATO-1435). Asked for refused connections and taken ports with the engine
    * dead or never started only. Absent means no `engineExitReason`.
    */
   readEngineExitReason?: (dataDir: string) => EngineExitReason;
@@ -105,7 +106,8 @@ export function describeLlmFailure(
   const connectionRefused = readErrnoCode(event.error) === "ECONNREFUSED";
   if (connectionRefused) context.connectionRefused = true;
   // ATO-1277: the managed port answered 401 with our engine not running.
-  if (findLocalPortTaken(event.error) !== null) context.portHeldByOther = true;
+  const portTaken = findLocalPortTaken(event.error) !== null;
+  if (portTaken) context.portHeldByOther = true;
   const requestUrl = readRequestUrl(event.error);
   if (requestUrl !== undefined) context.requestUrl = requestUrl;
   let config: AtomicAgentConfig;
@@ -137,7 +139,16 @@ export function describeLlmFailure(
       context.localFault = "unknown";
     }
   }
-  if (connectionRefused && deps.explainEngineLiveness !== undefined) {
+  // The engine is read for a refusal and for a taken port alike (ATO-2418):
+  // a 401 on the managed port says nothing of why our engine is not there.
+  const engineProbed = connectionRefused || portTaken;
+  if (engineProbed) {
+    // Whether the managed port is still the shipped one: the TUI moves it
+    // and saves the move when something else holds it.
+    const port: unknown = config.localModels?.managed?.port;
+    if (typeof port === "number") context.managedPortCustom = port !== DEFAULT_MANAGED_PORT;
+  }
+  if (engineProbed && deps.explainEngineLiveness !== undefined) {
     try {
       const report = deps.explainEngineLiveness(config.paths.localModelsDataDir);
       context.engineLiveness = report.state;
@@ -161,7 +172,7 @@ export function describeLlmFailure(
         context.engineExitReason = "unknown";
       }
     }
-  } else if (connectionRefused && deps.readEngineLiveness !== undefined) {
+  } else if (engineProbed && deps.readEngineLiveness !== undefined) {
     try {
       context.engineLiveness = deps.readEngineLiveness(config.paths.localModelsDataDir);
     } catch {
@@ -170,6 +181,9 @@ export function describeLlmFailure(
   }
   return context;
 }
+
+/** `localModels.managed.port` as shipped. */
+const DEFAULT_MANAGED_PORT = createLocalModelsDefaults().managed.port;
 
 /** The built-in managed local link, the only one whose log is ours to read. */
 const MANAGED_LOCAL_LINK = "local-llama";
