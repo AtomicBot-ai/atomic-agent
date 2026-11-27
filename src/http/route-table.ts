@@ -56,6 +56,7 @@ import { createRenameSessionHandler } from "./route-session-title.js";
 import { createGetSessionGoalHandler, createSessionGoalActionHandler } from "./route-session-goal.js";
 import { createExportSessionHandler } from "./route-session-export.js";
 import { createSetSessionArchivedHandler } from "./route-session-archived.js";
+import { createSetSessionTrashedHandler } from "./route-session-trashed.js";
 import {
   createEscalateFusionWorkerHandler,
   createListFusionWorkersHandler,
@@ -339,6 +340,8 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "GET", path: "/api/sessions/{id}/next-step", handler: createGetSessionNextStepHandler() },
     // ATO-1150: archive or unarchive a chat (metadata.archived, seen by the desktop and the terminal).
     { method: "POST", path: "/api/sessions/{id}/archived", handler: createSetSessionArchivedHandler() },
+    // ATO-2332: the desktop's Trash (metadata.trashed); search leaves a chat in Trash out.
+    { method: "POST", path: "/api/sessions/{id}/trashed", handler: createSetSessionTrashedHandler() },
     // ATO-1298: take the last plain question and answer back, for a real retry.
     { method: "POST", path: "/api/sessions/{id}/rollback-last-turn", handler: createRollbackLastTurnHandler() },
     // ATO-864: the earlier answers a regenerate kept, and putting one back.
