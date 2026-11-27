@@ -91,6 +91,12 @@ export const FAILURE_CATALOG = {
     phrase: "This chat is too long for the model.",
     action: "new-chat-summary",
   },
+  // ATO-1678: the instructions and tool descriptions alone fill the
+  // window; a new chat would not help, a bigger context or fewer tools do.
+  context_window_too_small: {
+    phrase: "The model's context window is too small for the turned-on tools.",
+    action: "switch-model",
+  },
 
   // Provider answered with a refusal.
   rate_limited: {

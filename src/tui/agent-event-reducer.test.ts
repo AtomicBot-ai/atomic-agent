@@ -2998,6 +2998,30 @@ describe("a model that keeps calling tools that don't exist", () => {
   });
 });
 
+/* ATO-1678: a window too small for the instructions and tool schemas
+   shows the sentence that names the fix, not the generic wording. */
+describe("a context window too small for the turned-on tools", () => {
+  it("shows the error's own sentence", () => {
+    const sentence =
+      "This model's context window (16384 tokens) is too small for the agent's instructions and turned-on tools. Load the model with a bigger context, or turn off some tools or MCP servers, then try again.";
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error(sentence),
+          category: "grammar",
+          failure: failureVerdict("context_window_too_small"),
+        },
+      },
+    ]);
+    const msg = next.messages.find((m) => m.role === "system" && m.variant === "warn");
+    expect(msg?.text).toContain(sentence);
+    expect(msg?.text).not.toContain("this turn could not be completed");
+  });
+});
+
 /* ATO-1457: a turn that failed because the provider refused the API key
    offers `[check key]`, which opens that provider's key field. */
 describe("a refused API key offers the key field", () => {

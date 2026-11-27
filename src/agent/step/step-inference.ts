@@ -33,6 +33,7 @@ import type { StreamParser, StreamParseEvent } from "../../llm/grammar/stream-pa
 import { createStreamParser } from "../../llm/grammar/stream-parser.js";
 import { reasoningOpenEmittedByModel } from "../../llm/model-profile.js";
 import { estimateTokens } from "../../prompt/token-budget.js";
+import { assertPromptFitsWindow } from "./window-fit-guard.js";
 import { assertContextCapacity } from "../../llm/provider/context-capacity.js";
 import { reconcileCloudSkills } from "../../session/workspace-context.js";
 
@@ -293,6 +294,9 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
     }
   }
   deps.onEvent?.({ type: "prompt_built", prompt, slotId: slot.slotId });
+  // A window the instructions and tool schemas alone fill gets a plain
+  // error before the request, not a reply cut after a few tokens (ATO-1678).
+  assertPromptFitsWindow(prompt, deps.modelMode?.mode);
   deps.onEvent?.({
     type: "prompt_captured",
     stepIndex: ctx.stepIndex,
@@ -352,6 +356,7 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
   );
   const llmParams: LlmStreamParams = {
     ...(prompt.contextBudget ? { contextBudget: prompt.contextBudget } : {}),
+    promptWindow: prompt.contextWindow,
     ...buildLlmStreamParams({
       promptText: prompt.text,
       promptMessages: prompt.messages,
@@ -427,6 +432,8 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
       });
       if (next.cloudContext) ctx.session = { ...ctx.session, cloudContext: next.cloudContext };
       deps.onEvent?.({ type: "prompt_built", prompt: next, slotId: slot.slotId });
+      // A fallback link's own window may be too small for the tools (ATO-1678).
+      assertPromptFitsWindow(next, link.modelMode.mode);
       if (next.contextBudget) assertContextCapacity(next.text + JSON.stringify(wire?.tools ?? llmParams.tools ?? []), next.contextBudget);
       return { prompt: next.text, messages: next.messages, contextBudget: next.contextBudget,
         ...(wire ? { grammar: wire.grammar, tools: wire.tools, toolWireNames: wire.toolWireNames, toolChoice: wire.toolChoice, parallelToolCalls: wire.parallelToolCalls } : {}),

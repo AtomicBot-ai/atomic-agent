@@ -840,6 +840,10 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // call failed".
       const chatError = event.failure?.cause === "unknown_tools_repeated"
         ? `${event.failure.phrase} Pick one with /model.\nDetails: ${event.error.message}`
+        // ATO-1678: the sentence already says what fills the window and
+        // what to change; the generic wording would only bury it.
+        : event.failure?.cause === "context_window_too_small"
+        ? event.error.message
         : spendLimit !== null
         ? spendLimit.message
         : isLocalOutOfMemory(event.error)
