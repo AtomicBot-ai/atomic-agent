@@ -3,7 +3,7 @@
  * where they find it. Settings › Connections › Connect phone's switch
  * "Allow phones on this Wi-Fi", modelled on LM Studio's "Serve on Local
  * Network": off by default, and while it is off `atag serve` listens on
- * 127.0.0.1 only, as it always has (serve-launch.ts).
+ * 127.0.0.1 only, as it always has (serve-launch.ts; withServeHost below).
  *
  * On, the agent is restarted on 0.0.0.0. Nothing is opened to the network
  * without a credential: every route still needs the per-launch key (48 hex
@@ -53,6 +53,17 @@ export function writePhoneAccess(enabled: boolean, path: string = phoneAccessPat
 
 export function serveHostFor(enabled: boolean): string {
   return enabled ? ALL_INTERFACES_HOST : LOOPBACK_HOST;
+}
+
+/**
+ * `args` (serve-launch.ts serveSpawnArgs, which always says loopback) with
+ * `--host` set to `host`. Kept here rather than as a serve-launch.ts
+ * parameter so that file, which other changes rewrite, stays untouched.
+ */
+export function withServeHost(args: readonly string[], host: string): string[] {
+  const at = args.indexOf("--host");
+  if (at < 0) return [...args.slice(0, 1), "--host", host, ...args.slice(1)];
+  return args.map((arg, i) => (i === at + 1 ? host : arg));
 }
 
 /** Whether nothing listens on `port` on any interface right now. */

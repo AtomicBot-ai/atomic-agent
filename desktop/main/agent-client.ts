@@ -24,6 +24,7 @@ import {
   type TelegramPairingOp,
   type TelegramPairingResult,
 } from "./telegram-pairing.js";
+import { readPhoneAccess, serveHostFor, servePortFor, withServeHost } from "./phone-access.js";
 import {
   agentBinaryCandidates,
   bundledAgentFileName,
@@ -37,7 +38,6 @@ import {
   WINDOWS_GRACEFUL_MS,
 } from "./platform.js";
 import { serveSpawnArgs, serveSpawnEnv } from "./serve-launch.js";
-import { readPhoneAccess, serveHostFor, servePortFor } from "./phone-access.js";
 
 /**
  * Supervises one `atag serve` child process and speaks to it over the
@@ -1024,7 +1024,7 @@ export class AgentClient extends EventEmitter {
       child = spawn(
         binary,
         // ATO-1705: the key goes in the environment, not on the command line `ps` shows.
-        serveSpawnArgs(port, serveWatchArgs(process.platform, sentinel?.pid), serveHostFor(phones)),
+        withServeHost(serveSpawnArgs(port, serveWatchArgs(process.platform, sentinel?.pid)), serveHostFor(phones)),
         {
           cwd: this.status.workingDir,
           // r5 item 9: `atag serve` runs on the desktop's own state directory.

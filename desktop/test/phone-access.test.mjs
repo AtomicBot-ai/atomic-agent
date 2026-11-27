@@ -36,6 +36,16 @@ test("loopback while off, every interface while on", () => {
   assert.equal(P.serveHostFor(true), "0.0.0.0");
 });
 
+test("withServeHost sets serve's --host and leaves every other argument as it was", () => {
+  const L = require("../out/main/serve-launch.js");
+  const loopback = L.serveSpawnArgs(19193, ["--parent-pid", "77"]);
+  const lan = P.withServeHost(loopback, P.serveHostFor(true));
+  assert.equal(lan[lan.indexOf("--host") + 1], "0.0.0.0");
+  assert.deepEqual(lan.filter((a) => a !== "0.0.0.0"), loopback.filter((a) => a !== "127.0.0.1"));
+  assert.deepEqual(P.withServeHost(loopback, P.serveHostFor(false)), loopback);
+  assert.deepEqual(P.withServeHost(["serve", "--port", "1"], "0.0.0.0"), ["serve", "--host", "0.0.0.0", "--port", "1"]);
+});
+
 test("on takes the fixed port when it is free, and a free port otherwise; off never asks for it", async () => {
   const free = async () => 50123;
   let asked = 0;
