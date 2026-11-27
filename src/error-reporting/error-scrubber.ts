@@ -81,6 +81,10 @@ export interface ScrubbedErrorEvent {
   answerFailure?: string;
   /** `TruncationDetail.cause` of a truncated `ModelError`, a fixed 5-value enum. */
   truncationCause?: string;
+  /** `TruncationDetail.part` of a cut reply, a fixed 3-value enum (ATO-1678). */
+  cutPart?: string;
+  /** `ModelError.repeatedCut`: `cut` / `loop` after the step's truncation retry. */
+  cutRepeated?: string;
   /**
    * `ToolExecutionError.tool` when present. Restricted to a bounded
    * identifier shape (registry tool names such as `os.fs.read`) — never
@@ -560,6 +564,8 @@ export function scrubError(
   if (answerTags.truncationCause !== undefined) {
     event.truncationCause = answerTags.truncationCause;
   }
+  if (answerTags.cutPart !== undefined) event.cutPart = answerTags.cutPart;
+  if (answerTags.cutRepeated !== undefined) event.cutRepeated = answerTags.cutRepeated;
   if (tool !== undefined) event.tool = tool;
   if (toolErrorKind.kind !== undefined) event.toolErrorKind = toolErrorKind.kind;
   if (toolErrorKind.nameClass !== undefined) {

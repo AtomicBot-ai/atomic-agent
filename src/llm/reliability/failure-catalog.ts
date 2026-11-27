@@ -168,6 +168,12 @@ export const FAILURE_CATALOG = {
     phrase: "The model's reply was cut off before it finished.",
     action: "retry",
   },
+  // ATO-1678: cut again after the agent told the model to think less and
+  // work in smaller pieces (`repeated-truncation.ts`).
+  reply_cut_off_repeated: {
+    phrase: "The model kept writing past its reply limit. Try another model.",
+    action: "switch-model",
+  },
   unfinished_reply: {
     phrase: "The model stopped without finishing its reply.",
     action: "retry",

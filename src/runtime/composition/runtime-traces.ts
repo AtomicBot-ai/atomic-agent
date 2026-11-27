@@ -31,6 +31,7 @@ import { describeLlmFailure } from "./llm-failure-context.js";
 import { runtimeKnownSecrets } from "./runtime-tool-catalog.js";
 import { isUnreportedLocalServerFailure } from "../../llm/reliability/local-server-error.js";
 import { isUnregisteredToolStreak } from "../../llm/reliability/unregistered-tool-failure.js";
+import { isRepeatedModelLoop } from "../../llm/reliability/repeated-loop-failure.js";
 
 export function createRuntimeTraces(
   config: AtomicAgentConfig,
@@ -272,12 +273,14 @@ export function createRuntimeTraces(
       // A model that kept calling near misses of real tools, after every
       // call was answered with the closest real names, made a mistake
       // the agent handled (ATO-1674): not a report either. Other
-      // unknown-tool streaks still report.
+      // unknown-tool streaks still report. A model that looped, was told
+      // so on the retry, and looped again got stuck on its own (ATO-1678).
       if (
         event.type === "loop_failed" &&
         !isExpectedProviderLimit(event.error) &&
         !isUnreportedLocalServerFailure(event.error) &&
-        !isUnregisteredToolStreak(event.error)
+        !isUnregisteredToolStreak(event.error) &&
+        !isRepeatedModelLoop(event.error)
       ) {
         const reporter = getErrorReporter();
         captureError(reporter, event.error, {

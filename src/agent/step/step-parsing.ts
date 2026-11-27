@@ -5,7 +5,7 @@ import type { CompletionResult } from "../../llm/llama-server-client.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
 import type { ModelProfile } from "../../llm/model-profile.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
-import { completionAssumesOpenReasoning, resolveReasoning, normalizeContent, getReasoningTagOptions, memoizeText } from "./step-reasoning.js";
+import { completionAssumesOpenReasoning, cutReadingFor, resolveReasoning, normalizeContent, getReasoningTagOptions, memoizeText } from "./step-reasoning.js";
 import { openAiToolCallAdapter } from "../../llm/provider/openai/openai-tool-call-adapter.js";
 import type { ToolCallAdapter } from "../../llm/provider/adapters/tool-call-adapter.js";
 import { parseToolCalls, extractReasoning } from "../../llm/grammar/tool-call-grammar.js";
@@ -796,6 +796,7 @@ export function finishStepRepair(
     defaultReplyCap: repairCapFor(args),
     stage: "repair",
     contextWindow: deps.contextWindow ?? null,
+    cutReading: cutReadingFor(deps.profile, assumesOpenReasoning(completion)),
   });
   const retryParseDeps = parseDepsFor(completion, deps);
   if (
