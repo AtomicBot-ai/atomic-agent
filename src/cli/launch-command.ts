@@ -33,10 +33,18 @@ import {
   type LaunchServe,
   type LaunchServeDeps,
 } from "./launch-serve.js";
+import {
+  defaultPrintEnvShell,
+  formatCommandLine,
+  formatEnvLine,
+  parsePrintEnvShell,
+  PRINT_ENV_SHELLS,
+  type PrintEnvShell,
+} from "./print-env-format.js";
 import { resolveServeApiKey } from "./serve-api-key.js";
 
 export const LAUNCH_HELP = [
-  "Usage: atomic-agent launch <agent> [--model <id>] [--print-env] [-- <agent args>]",
+  "Usage: atomic-agent launch <agent> [--model <id>] [--print-env [--shell <s>]] [-- <agent args>]",
   "",
   "Start another coding CLI on Atomic Agent: it talks to `atag serve` on this machine",
   "(reused when one already runs in this folder, else started for this run and stopped after).",
@@ -48,6 +56,8 @@ export const LAUNCH_HELP = [
   "  --model <id>   Model name the CLI sends (default atomic-agent). The model active in",
   "                 Atomic Agent answers whatever the name is.",
   "  --print-env    Print the environment and command instead of running it (keys masked)",
+  "  --shell <s>    Syntax for --print-env: posix, powershell or cmd (default powershell on",
+  "                 Windows, posix elsewhere)",
   "  -- <args>      Passed to the agent unchanged, e.g. atag launch codex -- exec \"fix the tests\"",
   "",
   "Answers come from the Atomic Agent turn path (/v1/messages, /v1/responses, /v1/chat/completions):",
@@ -74,6 +84,8 @@ export interface LaunchArgs {
   readonly integration: LaunchIntegration;
   readonly model: string | null;
   readonly printEnv: boolean;
+  /** `--shell`, `null` for the platform default (ATO-2758). */
+  readonly shell: PrintEnvShell | null;
   readonly extraArgs: readonly string[];
 }
 
@@ -84,11 +96,16 @@ export function parseLaunchArgs(args: readonly string[]): LaunchArgs | { error: 
   let name: string | undefined;
   let model: string | null = null;
   let printEnv = false;
+  let shell: PrintEnvShell | null = null;
   for (let i = 0; i < own.length; i++) {
     const arg = own[i] as string;
     if (arg === "-h" || arg === "--help") return "help";
     if (arg === "--print-env") printEnv = true;
-    else if (arg === "--model") {
+    else if (arg === "--shell" || arg.startsWith("--shell=")) {
+      const value = arg === "--shell" ? own[++i] : arg.slice("--shell=".length);
+      shell = value ? parsePrintEnvShell(value) : null;
+      if (!shell) return { error: `--shell expects one of: ${PRINT_ENV_SHELLS.join(", ")}` };
+    } else if (arg === "--model") {
       const value = own[i + 1];
       if (!value || value.startsWith("-")) return { error: "--model expects a model id" };
       model = value;
@@ -105,16 +122,15 @@ export function parseLaunchArgs(args: readonly string[]): LaunchArgs | { error: 
   if (!integration) {
     return { error: `unknown agent ${name} (one of: ${LAUNCH_INTEGRATIONS.map((i) => i.id).join(", ")})` };
   }
-  return { integration, model, printEnv, extraArgs };
+  return { integration, model, printEnv, shell, extraArgs };
 }
 
-/** Shell-style lines for `--print-env`, secrets masked. */
-export function formatPrintEnv(binary: string, plan: LaunchPlan): string {
-  const quote = (v: string): string => (/^[\w@%+=:,./-]*$/.test(v) && v !== "" ? v : `'${v.replace(/'/g, `'\\''`)}'`);
+/** Lines for `--print-env` in `shell`'s syntax (print-env-format.ts), secrets masked. */
+export function formatPrintEnv(binary: string, plan: LaunchPlan, shell: PrintEnvShell = "posix"): string {
   const lines = Object.entries(plan.env).map(([name, value]) =>
-    plan.secretEnv.includes(name) ? `export ${name}=${quote(MASKED)}` : `export ${name}=${quote(value)}`,
+    formatEnvLine(shell, name, plan.secretEnv.includes(name) ? MASKED : value),
   );
-  lines.push([binary, ...plan.args].map(quote).join(" "));
+  lines.push(formatCommandLine(shell, binary, plan.args));
   return `${lines.join("\n")}\n`;
 }
 
@@ -131,6 +147,8 @@ export interface LaunchCommandDeps {
   readonly resolveKey?: (given: string | null, stateDir: string) => { key: string } | { error: string };
   readonly spawn?: typeof nodeSpawn;
   readonly serveDeps?: LaunchServeDeps;
+  /** Picks the `--print-env` syntax when `--shell` is not given. */
+  readonly platform?: NodeJS.Platform;
 }
 
 export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}): Promise<number> {
@@ -172,7 +190,8 @@ export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}
     // this process exits.
     const baseUrl = serve?.baseUrl ?? loopbackBaseUrl(8787);
     if (!serve) writeErr(`launch: no atag serve runs in ${cwd}; start one with: atag serve --cwd .\n`);
-    write(formatPrintEnv(binaryPath ?? integration.binary, buildPlan(parsed, baseUrl, key.key)));
+    const shell = parsed.shell ?? defaultPrintEnvShell(deps.platform ?? process.platform);
+    write(formatPrintEnv(binaryPath ?? integration.binary, buildPlan(parsed, baseUrl, key.key), shell));
     return 0;
   }
   if (!serve) {

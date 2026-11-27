@@ -72,6 +72,9 @@ describe("atag pair", () => {
     out = [];
     expect(await pairCommand(["--list"], deps())).toBe(0);
     expect(out.join("")).toContain(`${redeemed.device.id}  iPhone`);
+    // ATO-2758: no raw ISO stamps in the list.
+    expect(out.join("")).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
+    expect(out.join("")).toContain("last seen just now");
     expect(await pairCommand(["--revoke", redeemed.device.id], deps())).toBe(0);
     const read = readDevices(dir);
     expect(read.ok && read.data.devices).toEqual([]);
@@ -123,9 +126,13 @@ describe("atag pair", () => {
   });
 
   it("--remote without cloudflared says how to install it and opens nothing", async () => {
-    const code = await pairCommand(["--remote"], deps("0.0.0.0", { tunnel: { findBinary: () => null } }));
+    const code = await pairCommand(["--remote"], deps("0.0.0.0", { tunnel: { findBinary: () => null, platform: "darwin" } }));
     expect(code).toBe(1);
     expect(err.join("")).toContain("needs cloudflared");
+    // ATO-2758: the hint is for this command and this OS, not "run serve again".
+    expect(err.join("")).toContain("brew install cloudflared");
+    expect(err.join("")).toContain("run atag pair --remote again");
+    expect(err.join("")).not.toContain("serve again");
     const read = readDevices(dir);
     expect(read.ok && read.data.pairings).toEqual([]);
   });

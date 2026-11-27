@@ -1,5 +1,6 @@
 import { resolveStateDir } from "../config/index.js";
 import { createPairing, PAIRING_TTL_MS, readDevices, revokeDevice } from "../http/device-store.js";
+import { formatDeviceLine } from "./pair-list-format.js";
 import { openRemoteTunnel, REMOTE_WARNING, type RemoteTunnelDeps } from "./pair-remote.js";
 import { resolvePairTarget } from "./pair-target.js";
 import { isAlive } from "./serve-orphan-guard.js";
@@ -75,6 +76,8 @@ export interface PairCommandDeps {
   tunnel?: RemoteTunnelDeps;
   /** Resolves when the person presses Ctrl+C (closes the `--remote` tunnel). */
   waitForStop?: () => Promise<void>;
+  /** The clock for `--list` ages (ATO-2758). */
+  now?: () => Date;
 }
 
 async function renderTerminalQr(text: string): Promise<string> {
@@ -121,9 +124,8 @@ export async function pairCommand(args: string[], deps: PairCommandDeps = {}): P
       write("No paired devices. Pair a phone with: atag pair\n");
       return 0;
     }
-    for (const d of read.data.devices) {
-      write(`${d.id}  ${d.name.padEnd(16)} paired ${d.createdAt}  last seen ${d.lastSeenAt}\n`);
-    }
+    const now = (deps.now ?? (() => new Date()))();
+    for (const d of read.data.devices) write(`${formatDeviceLine(d, now)}\n`);
     return 0;
   }
 
