@@ -1,7 +1,7 @@
 import type { ChatMessage, ToolCardEntry, TuiState } from "../tui-state.js";
 import { estimateToolCardImageRows } from "../terminal-image/index.js";
 import { toolCardsAnnotationParts } from "./tool-cards-annotation.js";
-import { collapseMentionedFiles } from "../file-mentions/mention-block.js";
+import { collapseMentionedFiles } from "../../mentions/mention-block.js";
 
 /**
  * Estimated number of terminal rows occupied by a finalised chat

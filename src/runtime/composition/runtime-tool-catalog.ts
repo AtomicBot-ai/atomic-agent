@@ -31,7 +31,7 @@ import { finishTool } from "../../tools/finish.js";
 import { buildAskUserTool, replyTool } from "../../tools/conversation/index.js";
 import { browserScenarioDir, buildBrowserPageRenderer, buildBrowserTools, UserSiteApprovals, type BrowserExtractModelRef } from "../../tools/browser/index.js";
 import type { BrowserBackend } from "../../tools/browser/browser-backend.js";
-import { registerOsScreenTools, registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry, type WebSearchKeyHelp } from "../../tools/os/index.js";
+import { registerOsScreenTools, registerOsTools, type DeclaredInputsRegistry, type LspPoolRef, type ShellJobRegistry, type WebSearchKeyHelp } from "../../tools/os/index.js";
 import { registerVerifyTools, runChecks } from "../../tools/verify/index.js";
 import { registerGithubTools } from "../../tools/github/index.js";
 import { resolveGithubToken } from "../../github/index.js";
@@ -244,6 +244,8 @@ export function registerRuntimeCoreTools(input: {
   browserBackend?: BrowserBackend;
   /** "My files" (ATO-1621): `files.search` is registered when there is an index. */
   fileIndex?: FileIndexApi;
+  /** Gets the language-server pool, for `@problems` (ATO-2472). */
+  lspPoolRef?: LspPoolRef;
 } & Pick<RegisterMemoryToolsOptions, "profileStore" | "notesStore" | "lessonStore" | "procedureStore">): void {
   const { config, toolRegistry, dangerous, sessionStore, resolveOriginalRequest, resolvePreviousReply, declaredInputs,
     shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, logger,
@@ -285,6 +287,7 @@ export function registerRuntimeCoreTools(input: {
     // file said yes to) starts language servers without a question
     // (ATO-503). Read live, like the skill gate.
     isTrustedProject: (dir) => isProjectFolderTrusted(config.paths.userConfigFile, config.skills.projectTrust, dir),
+    ...(input.lspPoolRef === undefined ? {} : { lspPoolRef: input.lspPoolRef }),
   });
   // Computer use (ATO-525): screenshot, click, type, key — macOS, and
   // the screenshot alone on Windows and Linux (ATO-527); opt-in
