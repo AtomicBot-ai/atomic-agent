@@ -1,5 +1,5 @@
 /**
- * ATO-2172: `atag launch <claude|codex|opencode> [--model <id>] [--print-env] [-- args]`.
+ * ATO-2172: `atag launch [claude|codex|opencode] [--model <id>] [--print-env] [-- args]`.
  *
  * Starts another coding CLI pointed at this machine's `atag serve`, the way
  * `ollama launch claude` points Claude Code at Ollama: find the binary on
@@ -25,7 +25,9 @@ import {
   type LaunchIntegration,
   type LaunchPlan,
 } from "./launch-integrations.js";
+import { launchChoices, pickLaunchIntegration } from "./launch-picker.js";
 import {
+  DEFAULT_SERVE_PORT,
   findReusableServe,
   loopbackBaseUrl,
   serveAcceptsKey,
@@ -36,7 +38,7 @@ import {
 import { resolveServeApiKey } from "./serve-api-key.js";
 
 export const LAUNCH_HELP = [
-  "Usage: atomic-agent launch <agent> [--model <id>] [--print-env] [-- <agent args>]",
+  "Usage: atomic-agent launch [<agent>] [--model <id>] [--print-env] [-- <agent args>]",
   "",
   "Start another coding CLI on Atomic Agent: it talks to `atag serve` on this machine",
   "(reused when one already runs in this folder, else started for this run and stopped after).",
@@ -54,7 +56,9 @@ export const LAUNCH_HELP = [
   "the agent runs its own tools; the launched CLI's own tool calls are not offered to the model.",
   "",
   "Approvals: a serve started here refuses every approval prompt at once (the CLI cannot show one),",
-  "so the turn answers in text; a reused serve asks in http://127.0.0.1:<port>/panel.",
+  "so the turn answers in text; a reused serve asks in its /panel page (the address is printed at start).",
+  "",
+  "Without an agent name, lists the CLIs above (installed or not) and, in a terminal, asks which to start.",
 ].join("\n");
 
 export const MASKED = "<hidden: atag serve --print-api-key>";
@@ -65,13 +69,16 @@ export const MASKED = "<hidden: atag serve --print-api-key>";
  * its /panel page.
  */
 export function launchApprovalNote(serve: { baseUrl: string; started: boolean }): string {
+  // ATO-2737: the real address, not a `<port>` placeholder. A serve the
+  // person starts themselves listens on the default port.
   return serve.started
-    ? `launch: approvals are refused on this serve (the CLI cannot show them); what needs one comes back as text. To approve instead, run \`atag serve\` yourself and open http://127.0.0.1:<port>/panel\n`
+    ? `launch: approvals are refused on this serve (the CLI cannot show them); what needs one comes back as text. To approve instead, run \`atag serve --cwd .\` in another terminal and open ${loopbackBaseUrl(DEFAULT_SERVE_PORT)}/panel\n`
     : `launch: approval prompts from this serve wait in ${serve.baseUrl}/panel (or the desktop app)\n`;
 }
 
 export interface LaunchArgs {
-  readonly integration: LaunchIntegration;
+  /** `null`: no agent named, so `atag launch` lists them and asks (ATO-2737). */
+  readonly integration: LaunchIntegration | null;
   readonly model: string | null;
   readonly printEnv: boolean;
   readonly extraArgs: readonly string[];
@@ -100,7 +107,7 @@ export function parseLaunchArgs(args: readonly string[]): LaunchArgs | { error: 
     else if (name === undefined) name = arg;
     else return { error: `unexpected argument ${arg} (put the agent's own arguments after --)` };
   }
-  if (!name) return { error: "missing agent name" };
+  if (!name) return { integration: null, model, printEnv, extraArgs };
   const integration = findLaunchIntegration(name);
   if (!integration) {
     return { error: `unknown agent ${name} (one of: ${LAUNCH_INTEGRATIONS.map((i) => i.id).join(", ")})` };
@@ -131,6 +138,9 @@ export interface LaunchCommandDeps {
   readonly resolveKey?: (given: string | null, stateDir: string) => { key: string } | { error: string };
   readonly spawn?: typeof nodeSpawn;
   readonly serveDeps?: LaunchServeDeps;
+  /** ATO-2737: the picker of bare `atag launch`; defaults to stdin and stdout being a TTY. */
+  readonly isTTY?: () => boolean;
+  readonly ask?: (prompt: string) => Promise<string>;
 }
 
 export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}): Promise<number> {
@@ -145,9 +155,15 @@ export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}
     writeErr(`launch: ${parsed.error}\n\n${LAUNCH_HELP}\n`);
     return 2;
   }
-  const { integration } = parsed;
   const env = deps.env ?? process.env;
-  const binaryPath = (deps.findBinary ?? ((b: string) => findOnPath(b, env)))(integration.binary);
+  const findBinary = deps.findBinary ?? ((b: string) => findOnPath(b, env));
+  let integration = parsed.integration;
+  if (integration === null) {
+    const picked = await pickLaunchIntegration(launchChoices(findBinary), { write, writeErr, isTTY: deps.isTTY, ask: deps.ask });
+    if (picked.kind === "done") return picked.code;
+    integration = picked.integration;
+  }
+  const binaryPath = findBinary(integration.binary);
   if (!binaryPath && !parsed.printEnv) {
     writeErr(
       `launch: ${integration.displayName} is not installed (no \`${integration.binary}\` on PATH).\n` +
@@ -170,9 +186,9 @@ export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}
   if (parsed.printEnv) {
     // Printing starts nothing: a serve started here would stop as soon as
     // this process exits.
-    const baseUrl = serve?.baseUrl ?? loopbackBaseUrl(8787);
+    const baseUrl = serve?.baseUrl ?? loopbackBaseUrl(DEFAULT_SERVE_PORT);
     if (!serve) writeErr(`launch: no atag serve runs in ${cwd}; start one with: atag serve --cwd .\n`);
-    write(formatPrintEnv(binaryPath ?? integration.binary, buildPlan(parsed, baseUrl, key.key)));
+    write(formatPrintEnv(binaryPath ?? integration.binary, buildPlan(integration, parsed, baseUrl, key.key)));
     return 0;
   }
   if (!serve) {
@@ -192,14 +208,14 @@ export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}
     return 1;
   }
 
-  const plan = buildPlan(parsed, serve.baseUrl, key.key);
+  const plan = buildPlan(integration, parsed, serve.baseUrl, key.key);
   writeErr(`launch: ${integration.displayName} on Atomic Agent at ${serve.baseUrl}\n`);
   writeErr(launchApprovalNote(serve));
   return runChild(binaryPath as string, plan, env, deps.spawn ?? nodeSpawn, writeErr);
 }
 
-function buildPlan(parsed: LaunchArgs, baseUrl: string, token: string): LaunchPlan {
-  return parsed.integration.build({
+function buildPlan(integration: LaunchIntegration, parsed: LaunchArgs, baseUrl: string, token: string): LaunchPlan {
+  return integration.build({
     baseUrl,
     token,
     model: parsed.model ?? DEFAULT_LAUNCH_MODEL,

@@ -49,6 +49,9 @@ export interface LaunchServeDeps {
   readonly readyTimeoutMs?: number;
 }
 
+/** The port `atag serve` listens on without `--port` (serve-args.ts). */
+export const DEFAULT_SERVE_PORT = 8787;
+
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "0.0.0.0"]);
 const PROBE_TIMEOUT_MS = 3_000;
 const READY_TIMEOUT_MS = 90_000;
