@@ -23,6 +23,8 @@ import {
   type SessionSummaryCursor,
 } from "../session/session-summary-page.js";
 import { readSessionArchived } from "../session/session-archived.js";
+import { readSessionTrashed } from "../session/session-trashed.js";
+import { runSessionsTrash, type SessionsTrashRequest } from "./session-trash/session-trash-command.js";
 import { readSessionTitle } from "../session/session-title.js";
 import { isIncognitoSession } from "../session/incognito.js";
 import {
@@ -499,6 +501,8 @@ export class ChatOrchestrator {
         if (!state) return null;
         // ATO-1150: an archived chat stays off the rail, pinned or not.
         if (readSessionArchived(state.metadata) && state.id !== this.session?.id) return null;
+        // ATO-2474: so does a chat in Trash; `listSummaryPage` leaves it out too.
+        if (readSessionTrashed(state.metadata) && state.id !== this.session?.id) return null;
         // The rail's rows come from a SQL projection now (#367); a
         // pinned thread fetched by id is projected the same way here.
         return toPickerEntry(summariseSessionState(state));
@@ -1750,6 +1754,13 @@ export class ChatOrchestrator {
       return;
     }
     this.bus.emit({ type: "rewind_picker_opened", points });
+  }
+
+  /** `/sessions --deleted | --restore` (ATO-2474): a restored chat goes back on the rail. */
+  sessionsTrash(request: SessionsTrashRequest): void {
+    const out = runSessionsTrash(this.runtime.sessionStore, request);
+    this.bus.emit({ type: "system_message", text: out.text });
+    if (out.restoredId !== undefined) this.refreshRecentSessions();
   }
 
   /**

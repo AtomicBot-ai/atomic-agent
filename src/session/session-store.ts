@@ -23,6 +23,13 @@ import {
   withStoredTrashed,
   type StoredTrashed,
 } from "./session-trashed.js";
+import {
+  TRASHED_LIST_MAX,
+  TRASHED_LIST_SQL,
+  toTrashedSummary,
+  type TrashedRow,
+  type TrashedSessionSummary,
+} from "./session-trash-list.js";
 import { LIVE_SESSION_STATUSES } from "./session-retention.js";
 import type { SessionSummary } from "./session-summary.js";
 import {
@@ -383,6 +390,8 @@ export class SessionStore {
   private readonly summaryFirstPageStmt: Database.Statement;
   private readonly summaryNextPageStmt: Database.Statement;
   private readonly countUnreadableStmt: Database.Statement;
+  /** ATO-2474: `listTrashed`'s read, prepared on first use. */
+  private trashedListStmt: Database.Statement | null = null;
   private readonly chatLinesStmt: Database.Statement;
   private readonly deleteStmt: Database.Statement;
   private readonly finishTurnStmt: Database.Statement;
@@ -1075,6 +1084,17 @@ export class SessionStore {
     const next = withSessionTrashed(current, trashed, now);
     this.save(next);
     return next;
+  }
+
+  /**
+   * ATO-2474: the chats in Trash, newest move first, at most `limit`
+   * (`session-trash-list.ts`). Every summary page leaves them out.
+   */
+  listTrashed(limit = TRASHED_LIST_MAX): TrashedSessionSummary[] {
+    this.trashedListStmt ??= this.db.prepare(TRASHED_LIST_SQL);
+    const bound = Math.max(0, Math.min(TRASHED_LIST_MAX, Math.trunc(limit)));
+    const rows = this.trashedListStmt.all({ limit: bound }) as TrashedRow[];
+    return rows.map(toTrashedSummary);
   }
 
   load(id: string): SessionState | null {

@@ -21,6 +21,7 @@ import { describeThinkLevel, parseThinkCommand } from "./think-command.js";
 import type { ReasoningLevel } from "../../llm/reasoning-levels.js";
 import { parseLearnCommand, type LearnCommand } from "../../skills/learning/learn-command.js";
 import { parseExportCommand, type ChatExportRequest } from "./export-command.js";
+import { parseSessionsArgs, type SessionsTrashRequest } from "../session-trash/session-trash-command.js";
 import { MODEL_RING_USAGE, parseModelRingCommand, type ModelRingCommand } from "../model-ring/model-ring-command.js";
 import { parseResearchCommand } from "./research-command.js";
 import { formatKeysHelp } from "./keys-help.js";
@@ -95,6 +96,8 @@ export interface SlashDispatchResult {
   readonly triggerQuit: boolean;
   /** When true the caller should ask the orchestrator to open the session picker. */
   readonly triggerSessionPicker: boolean;
+  /** `/sessions --deleted | --restore <n|id>` (ATO-2474): list or restore chats in Trash. */
+  readonly sessionsTrash?: SessionsTrashRequest;
   /** `/rewind` (ATO-1057): ask the orchestrator to open the rewind picker. */
   readonly triggerRewindPicker?: boolean;
   /** `/export [format] [path]` (ATO-1054): the orchestrator writes the open chat. */
@@ -554,8 +557,13 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return pureActions([], {
         systemMessage: "use /sessions to switch, /new to start fresh",
       });
-    case "sessions":
-      return pureActions([], { triggerSessionPicker: true });
+    case "sessions": {
+      // ATO-2474: `--deleted` lists the chats in Trash, `--restore` brings one back.
+      const wanted = parseSessionsArgs(parsed.args);
+      if ("picker" in wanted) return pureActions([], { triggerSessionPicker: true });
+      if ("usage" in wanted) return pureActions([], { systemMessage: wanted.usage });
+      return pureActions([], { sessionsTrash: wanted.trash });
+    }
     case "new":
       // `/new worktree`: the session gets a git worktree of its own (ATO-576).
       if (/^(--)?worktree$/i.test(parsed.args.trim())) {
