@@ -14,6 +14,15 @@
  *   pet:open     the main window comes up
  *   pet:menu     the sprite's right click: Do Not Disturb, Open, Hide Pet
  *
+ * ATO-2741: the main window's Settings › General row and its palette row
+ * show and hide the pet through the same toggle the View menu uses:
+ *
+ *   pet:prefsGet     the main window reads {enabled, dnd}
+ *   pet:setEnabled   the main window shows (true) or hides (false) the pet
+ *   pet:prefsChanged sent to the main window on every change, whoever made
+ *                    it (the menu, the pet's own menu, Settings), so the
+ *                    switch, the palette row and the menu checkbox agree
+ *
  * Answers go the way the window's own card answers. When the main window's
  * page is up, the click is handed to it (pet:relayAnswer) and its card is
  * answered by its own code (renderer/pet-relay.js → answerLive), so the
@@ -51,6 +60,8 @@ export interface PetWiring {
 export interface PetHub {
   prefs(): PetPrefs;
   toggle(): void;
+  /** ATO-2741: Settings' switch; a no-op when the pet is already that way. */
+  setEnabled(on: boolean): void;
   toggleDnd(): void;
   /** A request was answered elsewhere (the window's card, its question card). */
   approvalAnswered(approvalId: string): void;
@@ -199,19 +210,31 @@ export function wirePetIpc(client: AgentClient, w: PetWiring): PetHub {
   };
   ipcMain.on("pet:open", (event) => { if (isPet(event.sender)) showMain(); });
 
+  /* ATO-2741: the main window's switch and palette row follow every change. */
+  const shown = () => ({ enabled: prefs.enabled, dnd: prefs.dnd });
+  const changed = () => {
+    w.menuChanged();
+    const main = w.mainWindow();
+    if (!main || main.isDestroyed() || main.webContents.isLoading()) return;
+    try { main.webContents.send("pet:prefsChanged", shown()); } catch { /* the page going away */ }
+  };
+
   const hub: PetHub = {
     prefs: () => ({ ...prefs }),
     toggle() {
       save({ enabled: !prefs.enabled });
       if (prefs.enabled) open();
       else close();
-      w.menuChanged();
+      changed();
+    },
+    setEnabled(on) {
+      if (prefs.enabled !== on) hub.toggle();
     },
     toggleDnd() {
       save({ dnd: !prefs.dnd });
       machine.setDoNotDisturb(prefs.dnd);
       refresh();
-      w.menuChanged();
+      changed();
     },
     approvalAnswered(approvalId) {
       if (tracker.approvalAnswered(approvalId)) refresh();
@@ -226,6 +249,13 @@ export function wirePetIpc(client: AgentClient, w: PetWiring): PetHub {
       { type: "separator" },
       { label: "Hide Pet", click: () => hub.toggle() },
     ]).popup({ window: pet.win });
+  });
+
+  ipcMain.handle("pet:prefsGet", (event) => (isMain(event.sender) ? shown() : null));
+  ipcMain.handle("pet:setEnabled", (event, on: unknown) => {
+    if (!isMain(event.sender) || typeof on !== "boolean") return null;
+    hub.setEnabled(on);
+    return shown();
   });
 
   return hub;

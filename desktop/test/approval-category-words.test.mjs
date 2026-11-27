@@ -11,6 +11,8 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
 const renderer = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
+// ATO-2741: APPR_FALLBACK moved to approval-words.js, shared with the desktop pet's bubble.
+const words = readFileSync(new URL("../renderer/approval-words.js", import.meta.url), "utf8");
 const agent = readFileSync(new URL("../../src/approval/approval-level.ts", import.meta.url), "utf8");
 
 function agentLabels() {
@@ -20,10 +22,10 @@ function agentLabels() {
   return Object.fromEntries([...body.matchAll(/^\s*([a-z_]+): "([^"]*)",/gm)].map((m) => [m[1], m[2]]));
 }
 
-function table(name) {
-  const at = renderer.indexOf("\nconst " + name + " = {");
-  assert.ok(at >= 0, name + " is a top-level const in renderer.js");
-  const text = renderer.slice(at + 1, renderer.indexOf("\n};", at) + 3);
+function table(name, source = renderer) {
+  const at = source.indexOf("\nconst " + name + " = {");
+  assert.ok(at >= 0, name + " is a top-level const");
+  const text = source.slice(at + 1, source.indexOf("\n};", at) + 3);
   const c = vm.createContext({});
   vm.runInContext(text.replace(/^const /, "var "), c);
   return c[name];
@@ -47,7 +49,7 @@ for (const name of ["CATEGORY_PLAIN", "CATEGORY_LABEL"]) {
 
 test("APPR_FALLBACK has words for every agent category but other", () => {
   // `other` falls through to "go ahead" on purpose.
-  const t = table("APPR_FALLBACK");
+  const t = table("APPR_FALLBACK", words);
   assert.deepEqual(categories.filter((id) => id !== "other" && !has(t, id)), []);
 });
 

@@ -73,6 +73,8 @@ const ANX_ACTS = (() => {
       privacy:{analytics:L, refresh:L, readscope:set(readScopes)}, notify:{toggle:L}, names:{toggle:L}, nextstep:{toggle:L},
       // ATO-523: the quick entry shortcut row (quick-entry-settings.js)
       quickentry:{toggle:L, record:L, cancel:L},
+      // ATO-2741: the desktop pet's switch and palette row (pet-settings.js)
+      petset:{toggle:L},
       // ATO-229: the update toast and General's update rows
       appupd:{update:L, notnow:L, skip:L, cancel:L, install:L, later:L, check:L, auto:L},
       // the Manage panes' own verbs (renderer.js mcpAct / skillsAct / memoryAct / tasksAct / llmAct / telegramAct / composioAct / importAct)

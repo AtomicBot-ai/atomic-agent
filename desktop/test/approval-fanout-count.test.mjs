@@ -11,6 +11,8 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
 const source = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
+// ATO-2741: the words per category moved to approval-words.js (the desktop pet uses them too).
+const words = readFileSync(new URL("../renderer/approval-words.js", import.meta.url), "utf8");
 
 function fn(name) {
   const at = source.indexOf("\nfunction " + name + "(");
@@ -25,16 +27,16 @@ function constLine(name) {
   assert.ok(at >= 0, name + " is a top-level const in renderer.js");
   return source.slice(at + 1, source.indexOf("\n", at + 1) + 1);
 }
-function constBlock(name) {
-  const at = source.indexOf("\nconst " + name + " = {");
-  assert.ok(at >= 0, name + " is a top-level const in renderer.js");
-  return source.slice(at + 1, source.indexOf("\n};", at) + 3);
+function constBlock(name, text = source) {
+  const at = text.indexOf("\nconst " + name + " = {");
+  assert.ok(at >= 0, name + " is a top-level const");
+  return text.slice(at + 1, text.indexOf("\n};", at) + 3);
 }
 
 function context() {
   const c = vm.createContext({});
   vm.runInContext(constLine("esc").replace(/^const /, "var "), c);
-  vm.runInContext(constBlock("APPR_FALLBACK").replace(/^const /, "var "), c);
+  vm.runInContext(constBlock("APPR_FALLBACK", words).replace(/^const /, "var "), c);
   for (const name of ["plural", "clipWords", "moreLines", "moreLinesNote", "apprCode", "apprAsk"]) {
     vm.runInContext(fn(name), c);
   }

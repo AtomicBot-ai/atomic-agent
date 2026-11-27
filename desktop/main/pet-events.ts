@@ -34,6 +34,8 @@ export interface PetApproval {
   approvalId: string;
   sessionId: string | null;
   tool: string;
+  /** ATO-2741: the gate's category ("shell", "http"), for the bubble's question in the main window's words; "" when none. */
+  category: string;
   /** What is asked: the preview's first line (the command), clipped; the reason when there is no preview. */
   text: string;
   /** The gate's reason, a second line under `text`, or "". */
@@ -138,6 +140,7 @@ export function petApprovalFrom(raw: unknown, now: number): PetApproval | null {
     approvalId: p.approvalId,
     sessionId: typeof p.sessionId === "string" && p.sessionId ? p.sessionId : null,
     tool: petClean(p.tool, 60) || "a tool",
+    category: typeof p.category === "string" && /^[a-z_]{1,40}$/.test(p.category) ? p.category : "",
     text,
     detail,
     risk: petRiskLine(p),

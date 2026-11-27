@@ -14,6 +14,11 @@
 
 const PET_STATE_NAMES = ['waiting', 'error', 'working', 'thinking', 'done', 'idle', 'sleeping'];
 const PET_DRAG_PX = 4;
+/* ATO-2741: the main window's words for what a request does (approval-words.js,
+   loaded first in pet.html; required in the Node checks). */
+const PET_ACTION_WORDS = typeof apprActionWords === 'function' ? apprActionWords
+  : typeof require === 'function' ? require('./approval-words.js').apprActionWords
+  : () => 'go ahead';
 
 /** The sprite's corner badge per state; do not disturb shows its moon instead. */
 function petBadge(view) {
@@ -30,11 +35,11 @@ function petBubbleModel(view, hidden) {
   const a = view && view.approval;
   if (!a || typeof a.approvalId !== 'string') return null;
   if (hidden && hidden.has(a.approvalId)) return null;
-  const tool = String(a.tool || 'a tool');
   const inWindow = !a.canAllow && !a.question;
   return {
     approvalId: a.approvalId,
-    title: a.question ? 'Atomic Agent has a question' : 'Allow ' + tool + '?',
+    // ATO-2741: "Allow it to run a command?", as the window's card words it, never the raw tool id.
+    title: a.question ? 'Atomic Agent has a question' : 'Allow it to ' + PET_ACTION_WORDS(a.category, a.tool) + '?',
     text: String(a.text || ''),
     detail: inWindow ? (a.detail ? a.detail + ' ' : '') + 'Review this one in Atomic Agent.' : String(a.detail || ''),
     risk: String(a.risk || ''),
@@ -45,6 +50,21 @@ function petBubbleModel(view, hidden) {
   };
 }
 
+/**
+ * ATO-2741: the theme the main window was set to (renderer.js atag.theme),
+ * as the mini chat reads it: 'light' or 'dark' forces it, anything else
+ * follows the system (pet.css).
+ */
+function petThemeOf(stored) {
+  return stored === 'light' || stored === 'dark' ? stored : null;
+}
+function petApplyTheme() {
+  let t = null;
+  try { t = petThemeOf(localStorage.getItem('atag.theme')); } catch (e) { /* follow the system */ }
+  if (t) document.documentElement.setAttribute('data-theme', t);
+  else document.documentElement.removeAttribute('data-theme');
+}
+
 /** The body's class list for a view: its state, and dnd. */
 function petBodyClass(view) {
   const st = view && PET_STATE_NAMES.includes(view.state) ? view.state : 'idle';
@@ -52,6 +72,9 @@ function petBodyClass(view) {
 }
 
 function petBoot() {
+  petApplyTheme();
+  // The pet stays open: a theme picked in the main window later reaches it through storage.
+  window.addEventListener('storage', (e) => { if (!e || e.key === 'atag.theme' || e.key === null) petApplyTheme(); });
   const BR = window.atomic && window.atomic.pet;
   if (!BR) return;
   const $ = (id) => document.getElementById(id);
@@ -156,4 +179,4 @@ function petBoot() {
 
 if (typeof document !== 'undefined' && typeof window !== 'undefined') petBoot();
 
-if (typeof module !== 'undefined') module.exports = {petBadge, petBubbleModel, petBodyClass, PET_STATE_NAMES};
+if (typeof module !== 'undefined') module.exports = {petBadge, petBubbleModel, petBodyClass, petThemeOf, PET_STATE_NAMES};
