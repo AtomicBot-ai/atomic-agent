@@ -455,7 +455,7 @@ Read from the process environment or from `~/.atomic-agent/.env` (a variable alr
 | `ATOMIC_AGENT_LOOP_WANDERING_ESCALATION` | `12` | env only | Calls with varied arguments to one tool before the agent is made to reply. |
 | `ATOMIC_AGENT_REPLY_POLISH` | `true` | env only | Clean up the final reply before a chat surface shows it. |
 | `ATOMIC_AGENT_SANDBOX` | `"off"` | env only | Set to workspace to run the agent's shell commands in the OS sandbox: writes only in the working folder, temp and download caches, no reads of credential folders or the state directory. Where no sandbox exists (Windows, Linux without bwrap) commands are refused. Unset or any other value: off. |
-| `ATOMIC_AGENT_SANDBOX_NETWORK` | `"off"` | env only | Set to on to let commands inside the Safe Mode sandbox reach the network; loopback always works. Unset or any other value: no network inside the sandbox. |
+| `ATOMIC_AGENT_SANDBOX_NETWORK` | `"off"` | env only | Set to on to let commands inside the Safe Mode sandbox reach the network; loopback always works. Unset or any other value: no network inside the sandbox, and no local sockets (Docker, ssh-agent, D-Bus): all of them on macOS, the known socket places on Linux (see `src/sandbox/README.md`). |
 | `ATOMIC_AGENT_BROWSER_ENABLED` | `true` | env only | Register the browser tools. |
 | `ATOMIC_AGENT_BROWSER_CHANNEL` | `"chrome"` | env only | Browser to launch: chrome, msedge or chromium. |
 | `ATOMIC_AGENT_BROWSER_HEADLESS` | `false` | env only | Run the agent's browser without a window. |

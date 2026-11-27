@@ -16,6 +16,7 @@ import {
   wrapWithOsSandbox,
   type OsSandboxSettings,
 } from "../../../sandbox/os-sandbox.js";
+import { withoutLocalSocketEnv } from "../../../sandbox/os-sandbox-sockets.js";
 import { quoteCmdArg } from "../../../sandbox/shell-invocation.js";
 import {
   requireApproval,
@@ -416,11 +417,17 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // mid-session is filtered the same way. The toolchain additions
     // (non-interactive switches, PATH folders) are fixed values applied
     // after the filter, never read from the call.
+    const commandEnv = withToolchainEnv(
+      buildCommandEnv(process.env, options.envPassthrough ?? []),
+    );
     const job = startCommandJob(spawnCommand, spawnArgs, {
       cwd,
-      env: withToolchainEnv(
-        buildCommandEnv(process.env, options.envPassthrough ?? []),
-      ),
+      // Without network the socket variables (`SSH_AUTH_SOCK`,
+      // `DOCKER_HOST`, D-Bus) are dropped too (ATO-1652).
+      env:
+        sandbox.mode === "workspace" && !sandbox.network
+          ? withoutLocalSocketEnv(commandEnv)
+          : commandEnv,
       ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
       ...(spawnSpec.windowsVerbatimArguments
         ? { windowsVerbatimArguments: true }

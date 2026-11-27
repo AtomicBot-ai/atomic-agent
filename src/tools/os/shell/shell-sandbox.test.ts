@@ -100,6 +100,26 @@ describe.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-e
       expect(existsSync(join(outside, "escaped.txt"))).toBe(false);
     });
 
+    // ATO-1652: without network the socket variables are not passed on,
+    // so a client never gets pointed at a socket the sandbox hides.
+    it("drops SSH_AUTH_SOCK and DOCKER_HOST without network, keeps them with it", async () => {
+      const saved = { ssh: process.env.SSH_AUTH_SOCK, docker: process.env.DOCKER_HOST };
+      process.env.SSH_AUTH_SOCK = "/tmp/ssh-ato1652/agent.1";
+      process.env.DOCKER_HOST = "unix:///tmp/ato1652-docker.sock";
+      try {
+        const cmd = 'echo "ssh=[$SSH_AUTH_SOCK] docker=[$DOCKER_HOST]"';
+        const off = await tool(on).run({ cmd }, ctx());
+        expect(off.summary).toContain("ssh=[] docker=[]");
+        const net = await tool({ mode: "workspace", network: true }).run({ cmd }, ctx());
+        expect(net.summary).toContain("ssh=[/tmp/ssh-ato1652/agent.1]");
+      } finally {
+        if (saved.ssh === undefined) delete process.env.SSH_AUTH_SOCK;
+        else process.env.SSH_AUTH_SOCK = saved.ssh;
+        if (saved.docker === undefined) delete process.env.DOCKER_HOST;
+        else process.env.DOCKER_HOST = saved.docker;
+      }
+    });
+
     it("runs as before when Safe Mode is off", async () => {
       await mkdir(join(outside, "d"), { recursive: true });
       const target = join(outside, "d", "free.txt");
