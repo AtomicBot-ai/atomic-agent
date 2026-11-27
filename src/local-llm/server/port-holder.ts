@@ -104,7 +104,8 @@ async function findListeningPid(
   return null;
 }
 
-async function readExecutablePath(
+/** The executable of `pid` (path, or `null` when unreadable); shared with the stop's pid check. */
+export async function readExecutablePath(
   pid: number,
   run: RunCommand,
   platform: NodeJS.Platform,

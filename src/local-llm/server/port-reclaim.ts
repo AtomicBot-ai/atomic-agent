@@ -12,6 +12,7 @@ import { isPortOpen } from "./process-release.js";
 import { readCoreSession } from "../core/core-state.js";
 import { recoverOrphanedCoreSessions, stopCoreSession } from "../core/core-sessions.js";
 import { findPortHolder, isStateDirInUse, type PortHolder } from "./port-holder.js";
+import { judgeEnginePid, type EnginePidDeps } from "./engine-pid-identity.js";
 import { hasOtherLiveSessions } from "./session-registry.js";
 
 /**
@@ -241,8 +242,14 @@ async function move(
 // The port probe lives with the stop's release wait, which uses it too.
 export { isPortOpen };
 
-/** SIGTERM, up to 5 s grace, then SIGKILL (`taskkill /F` on Windows). */
-export async function stopProcess(pid: number): Promise<void> {
+/**
+ * SIGTERM, up to 5 s grace, then SIGKILL (`taskkill /F` on Windows).
+ * The pid is looked at once more first: the holder was named a moment
+ * ago, but a pid that is now this process, its parent or no llama-server
+ * is left alone, and the port check after it moves the port (ATO-2766).
+ */
+export async function stopProcess(pid: number, identity: EnginePidDeps = {}): Promise<void> {
+  if (!(await judgeEnginePid(pid, identity)).signal) return;
   if (process.platform === "win32") {
     try {
       execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], {

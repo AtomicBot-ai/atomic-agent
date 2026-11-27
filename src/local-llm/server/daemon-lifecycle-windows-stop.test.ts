@@ -11,6 +11,16 @@ vi.mock("node:child_process", async (importOriginal) => {
   return { ...actual, execSync: execSyncMock };
 });
 
+/**
+ * The recorded pid's image as the stop's identity check reads it
+ * (ATO-2766): a llama-server unless a test says otherwise.
+ */
+const imageMock = vi.hoisted(() => vi.fn(async (_pid: number): Promise<string | null> => "C:\\atag\\backend\\llama-server.exe"));
+vi.mock("./port-holder.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./port-holder.js")>();
+  return { ...actual, runCommand: async () => null, readExecutablePath: (pid: number) => imageMock(pid) };
+});
+
 /** The ports `getConfig()` reports; a test sets them before a stop that names none. */
 const configPorts = vi.hoisted(() => ({ chat: 0, embedding: 0 }));
 vi.mock("../../config/index.js", async (importOriginal) => {
@@ -93,6 +103,8 @@ function onPlatform(platform: NodeJS.Platform): void {
 
 beforeEach(() => {
   execSyncMock.mockReset();
+  imageMock.mockReset();
+  imageMock.mockResolvedValue("C:\\atag\\backend\\llama-server.exe");
 });
 
 afterEach(async () => {
@@ -226,4 +238,63 @@ describe("stopDaemon on macOS and Linux (unchanged)", () => {
       expect(existsSync(resolveLogFilePath(dir))).toBe(false);
     });
   }
+});
+
+describe("a recorded pid that is not our llama-server any more (ATO-2766)", () => {
+  it("Windows: no taskkill of a reused pid; the pid file is dropped and the log says why", async () => {
+    onPlatform("win32");
+    const dir = dataDir();
+    writeFileSync(resolvePidFilePath(dir), "4242", "utf-8");
+    imageMock.mockResolvedValue("C:\\Program Files\\Atomic Agent\\Atomic Agent.exe");
+    const calls = fakeProcess(Number.POSITIVE_INFINITY);
+
+    await stopDaemon(dir, { port: await freePort(), timeoutMs: 300 });
+
+    expect(execSyncMock).not.toHaveBeenCalled();
+    expect(calls.filter((s) => s !== 0)).toEqual([]);
+    expect(existsSync(resolvePidFilePath(dir))).toBe(false);
+    expect(readFileSync(resolveLogFilePath(dir), "utf-8")).toContain("is Atomic Agent.exe, not llama-server");
+  });
+
+  it("Windows: an image that cannot be read fails closed", async () => {
+    onPlatform("win32");
+    const dir = dataDir();
+    writeFileSync(resolveEmbeddingPidFilePath(dir), "5151", "utf-8");
+    imageMock.mockResolvedValue(null);
+    fakeProcess(Number.POSITIVE_INFINITY);
+
+    await stopEmbeddingDaemon(dir, { port: await freePort(), timeoutMs: 300 });
+
+    expect(execSyncMock).not.toHaveBeenCalled();
+    expect(existsSync(resolveEmbeddingPidFilePath(dir))).toBe(false);
+    expect(readFileSync(resolveEmbeddingLogFilePath(dir), "utf-8")).toContain("could not be identified");
+  });
+
+  it("Windows: the agent's own pid and its parent's are never taskkilled", async () => {
+    onPlatform("win32");
+    for (const pid of [process.pid, process.ppid]) {
+      const dir = dataDir();
+      writeFileSync(resolvePidFilePath(dir), String(pid), "utf-8");
+      fakeProcess(Number.POSITIVE_INFINITY);
+
+      await stopDaemon(dir, { port: await freePort(), timeoutMs: 300 });
+
+      expect(execSyncMock).not.toHaveBeenCalled();
+      expect(existsSync(resolvePidFilePath(dir))).toBe(false);
+    }
+  });
+
+  it("macOS: a reused pid gets no SIGTERM", async () => {
+    onPlatform("darwin");
+    const dir = dataDir();
+    writeFileSync(resolvePidFilePath(dir), "4242", "utf-8");
+    imageMock.mockResolvedValue("/Applications/Safari.app/Contents/MacOS/Safari");
+    const calls = fakeProcess(Number.POSITIVE_INFINITY);
+
+    await stopDaemon(dir, { port: await freePort(), timeoutMs: 300 });
+
+    expect(calls).not.toContain("SIGTERM");
+    expect(calls).not.toContain("SIGKILL");
+    expect(existsSync(resolvePidFilePath(dir))).toBe(false);
+  });
 });
