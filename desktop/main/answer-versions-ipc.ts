@@ -8,6 +8,12 @@
  *
  * The window names the chat and, for a restore, the kept answer's index;
  * nothing else reaches the agent.
+ *
+ * ATO-2470: and the routes for every version of every question (edited
+ * messages, answers to earlier questions), message-versions.ts:
+ *
+ *   agent:messageVersions   the questions that have another version
+ *   agent:switchVersion     put one of them in the chat
  */
 
 import { ipcMain } from "electron";
@@ -20,6 +26,13 @@ import {
   type PreviousRepliesAnswer,
   type RestoreReplyAnswer,
 } from "./answer-versions.js";
+import {
+  messageVersionsAnswer,
+  switchVersionAnswer,
+  switchVersionBody,
+  type MessageVersionsAnswer,
+  type SwitchVersionAnswer,
+} from "./message-versions.js";
 
 const NOT_SAVED = { ok: false, supported: true, code: "session_not_found", error: "This chat is not saved yet" } as const;
 
@@ -42,6 +55,28 @@ export function wireAnswerVersionsIpc(client: Pick<AgentClient, "sessionRoute">)
     try {
       const res = await client.sessionRoute(sessionId, "restore-previous-reply", "POST", body, 30_000);
       return restoreReplyAnswer(res.status, res.body);
+    } catch (err) {
+      return { ok: false, supported: true, error: requestErrorText(err) };
+    }
+  });
+  ipcMain.handle("agent:messageVersions", async (_event, payload: unknown): Promise<MessageVersionsAnswer> => {
+    const { sessionId } = (payload ?? {}) as { sessionId?: unknown };
+    if (typeof sessionId !== "string" || !sessionId) return NOT_SAVED;
+    try {
+      const res = await client.sessionRoute(sessionId, "message-versions", "GET", undefined, 15_000);
+      return messageVersionsAnswer(res.status, res.body);
+    } catch (err) {
+      return { ok: false, supported: true, error: requestErrorText(err) };
+    }
+  });
+  ipcMain.handle("agent:switchVersion", async (_event, payload: unknown): Promise<SwitchVersionAnswer> => {
+    const { sessionId, priorQuestions, expectText, ref } = (payload ?? {}) as Record<string, unknown>;
+    if (typeof sessionId !== "string" || !sessionId) return NOT_SAVED;
+    const body = switchVersionBody(priorQuestions, expectText, ref);
+    if (body === null) return { ok: false, supported: true, code: "no_version", error: "No such version" };
+    try {
+      const res = await client.sessionRoute(sessionId, "switch-version", "POST", body, 30_000);
+      return switchVersionAnswer(res.status, res.body);
     } catch (err) {
       return { ok: false, supported: true, error: requestErrorText(err) };
     }
