@@ -29,17 +29,32 @@ const TOOL_NAME_RULE_RE = /^tool-name ::= .*$/m;
 
 const MCP_SERVER_TOOL = "mcp-server-tool";
 const MCP_NATIVE_TOOL = "mcp-native-tool";
+/** A named rule in the alternation (`os-tool`), not a literal (`"\"finish\""`). */
+const GROUP_RE = /^[a-z][a-z0-9-]*$/;
+
 /**
- * What each reference goes back after, so the rule reads as the static
- * grammar writes it: `mcp-native-tool` closes the built-in groups. The
- * last anchor present wins. A rule that went out and came back must be
- * byte-identical to one that never left, or the profile manager's
- * grammar drifts from the catalog's (ATO-1029).
+ * Where a reference goes back, so the rule reads as the static grammar
+ * writes it. `mcp-server-tool` follows `mcp-native-tool`. `mcp-native-tool`
+ * closes the built-in groups: before `mcp-server-tool` when that is in,
+ * else after the last named group, whatever its name, so a group added
+ * to the static line later (ATO-2261, ATO-2133) cannot end up behind it.
+ * A rule that went out and came back must be byte-identical to one that
+ * never left, or the profile manager's grammar drifts from the
+ * catalog's (ATO-1029).
  */
-const REFERENCE_ANCHORS: Readonly<Record<string, readonly string[]>> = {
-  [MCP_SERVER_TOOL]: [MCP_NATIVE_TOOL],
-  [MCP_NATIVE_TOOL]: ["verify-tool", "plan-tool", "canvas-tool"],
-};
+function insertionIndex(alternatives: readonly string[], ref: string): number {
+  if (ref === MCP_SERVER_TOOL) {
+    const native = alternatives.indexOf(MCP_NATIVE_TOOL);
+    return native === -1 ? alternatives.length : native + 1;
+  }
+  const server = alternatives.indexOf(MCP_SERVER_TOOL);
+  if (server !== -1) return server;
+  let lastGroup = -1;
+  alternatives.forEach((alt, i) => {
+    if (GROUP_RE.test(alt)) lastGroup = i;
+  });
+  return lastGroup === -1 ? alternatives.length : lastGroup + 1;
+}
 
 /**
  * Build the dynamic `mcp-server-tool` rule body as a GBNF
@@ -110,8 +125,7 @@ function setToolNameReference(grammar: string, ref: string, referenced: boolean)
     if (!referenced) {
       return `tool-name ::= ${alternatives.filter((alt) => alt !== ref).join(" | ")}`;
     }
-    const at = Math.max(-1, ...(REFERENCE_ANCHORS[ref] ?? []).map((anchor) => alternatives.indexOf(anchor)));
-    alternatives.splice(at === -1 ? alternatives.length : at + 1, 0, ref);
+    alternatives.splice(insertionIndex(alternatives, ref), 0, ref);
     return `tool-name ::= ${alternatives.join(" | ")}`;
   });
 }
