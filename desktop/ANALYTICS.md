@@ -239,7 +239,10 @@ no agent is running).
   `desktop_version`, `install_channel`, `run_mode`, `platform`, `arch`, plus
   `kind` / `reason` / `exit_code` enums. `RenderProcessGone` also carries
   `recovered` (`yes`: main reloaded the page; `no`: it crashed more than
-  twice in a minute and the person was asked instead, ATO-765). At most 30 reports per session,
+  twice in a minute and the person was asked instead, ATO-765).
+  `RenderProcessGone` and `ChildProcessGone` also carry `app_quitting`
+  (yes / no: the app had begun quitting) and `free_mem` (the machine's free
+  memory, the same buckets as the agent exit), ATO-1734. At most 30 reports per session,
   3 per signature, and across launches at most 10 identical events (same
   fingerprint and same message, numbers, paths and ids aside) per install
   per rolling hour (ATO-1286, `main/sentry/rate-limit.ts`; the count is kept
