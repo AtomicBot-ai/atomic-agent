@@ -56,18 +56,23 @@ export function stateSecretFiles(stateDir: string, modelsDir: string, home: stri
  */
 function canonicalOf(path: string): string {
   try {
-    return realpathSync(path);
+    // The native realpath gives the spelling on disk (core's canonicalOf).
+    return realpathSync.native(path);
   } catch {
     const parent = dirname(path);
     return parent === path ? path : join(canonicalOf(parent), basename(path));
   }
 }
 
-/** A check against `files` by real path, without case on Windows (core's `protectedPathCheck`). */
+/**
+ * A check against `files` by real path (core's `protectedPathCheck`). Case is
+ * folded on Windows and macOS, whose default volumes ignore it, so `@.ENV`
+ * is refused too.
+ */
 export function protectedPathCheck(files: readonly string[], platform: NodeJS.Platform = process.platform): IsProtectedPath {
-  const fold = (p: string): string => (platform === "win32" ? p.toLowerCase() : p);
+  const fold = (p: string): string => (platform === "win32" || platform === "darwin" ? p.toLowerCase() : p);
   const set = new Set(files.map((f) => fold(canonicalOf(f))));
-  return (real) => set.has(fold(real));
+  return (real) => set.has(fold(canonicalOf(real)));
 }
 
 /**

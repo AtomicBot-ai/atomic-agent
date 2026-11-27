@@ -60,6 +60,11 @@ test("the list is core's getStateSecretPaths, files only", () => {
   ].map((p) => join(p)));
 });
 
+test("macOS matches without case too, so @.ENV is refused", () => {
+  const check = S.protectedPathCheck([join(stateDir, ".env")], "darwin");
+  assert.equal(check(join(stateDir, ".ENV")), true);
+});
+
 test("Windows paths match without case", () => {
   const check = S.protectedPathCheck([join(stateDir, ".env")], "win32");
   assert.equal(check(join(stateDir, ".env").toUpperCase()), true);
