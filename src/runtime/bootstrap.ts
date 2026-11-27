@@ -970,7 +970,8 @@ export async function createAgentRuntime(
   const turnService = createRuntimeTurnService(config, {
     sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies, turnsWithoutQuestions },
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
-    inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain },
+    inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain,
+      resolveLocalContextWindow: (id) => connectedLocal.getLiveProfile().contextWindow ?? resolveCatalogContextWindow(id) },
     traces, telemetry: { observability, analyticsStateStore, turnUsageMeter, sessionUsage, metrics },
     state: turnState, lifecycle, logger,
     emitEvent: emitAgentLoopEventFor,

@@ -28,7 +28,12 @@ import type { RunModeName } from "../../config/llm-run-mode-config.js";
  *    caller's explicit `providerId`);
  *  - nothing when no local link can serve the turn: not built, no model
  *    on disk (`isUnavailable`), or it says it cannot do tools, or the
- *    message carries an image and it says it cannot see one.
+ *    message carries an image and it says it cannot see one;
+ *  - nothing when the session is already too long for the local window
+ *    (`too-long`, ATO-2537): the prompt and compaction are sized to the
+ *    turn's head, so a long cloud session started on a small local
+ *    window would be compacted down to it, and that cut is written to
+ *    the session even when the turn then goes on in the cloud.
  *
  * Pure: the caller supplies every fact.
  */
@@ -57,13 +62,28 @@ export interface LocalFirstInput {
   isRegistered: (providerId: string) => boolean;
   /** Whether this link cannot serve here now (no model downloaded). */
   isUnavailable: (providerId: string) => boolean;
+  /**
+   * Tokens the session's next prompt needs, as far as the caller knows
+   * (the last prompt's size plus the new message). Null or absent:
+   * unknown, the size check is skipped.
+   */
+  sessionPromptTokens?: number | null;
+  /** The window a local link would build the prompt against. Null: unknown. */
+  localContextWindow?: (providerId: string) => number | null;
+  /**
+   * Share of the local window the prompt may fill: past it, automatic
+   * compaction would run (`agent.compaction.triggerRatio`). Default 0.9.
+   */
+  fitRatio?: number;
 }
+
+const DEFAULT_FIT_RATIO = 0.9;
 
 export type LocalFirstDecision =
   | { head: string }
   | {
       head: null;
-      reason: "off" | "fusion" | "pinned" | "active-local" | "no-local";
+      reason: "off" | "fusion" | "pinned" | "active-local" | "no-local" | "too-long";
     };
 
 export function localFirstTurnHead(input: LocalFirstInput): LocalFirstDecision {
@@ -74,7 +94,7 @@ export function localFirstTurnHead(input: LocalFirstInput): LocalFirstDecision {
   if (active === undefined || active.local === true || input.effectiveRunMode === "local") {
     return { head: null, reason: "active-local" };
   }
-  const local = input.providers.find(
+  const usable = input.providers.filter(
     (p) =>
       p.local === true &&
       input.isRegistered(p.id) &&
@@ -82,6 +102,20 @@ export function localFirstTurnHead(input: LocalFirstInput): LocalFirstDecision {
       p.supportsTools !== false &&
       !(input.hasImage && p.supportsVision === false),
   );
-  if (local === undefined) return { head: null, reason: "no-local" };
+  if (usable.length === 0) return { head: null, reason: "no-local" };
+  const local = usable.find((p) => fitsLocalWindow(input, p.id));
+  if (local === undefined) return { head: null, reason: "too-long" };
   return { head: local.id };
+}
+
+/** Whether the session's prompt fits this link's window (unknown: yes). */
+function fitsLocalWindow(input: LocalFirstInput, providerId: string): boolean {
+  const tokens = input.sessionPromptTokens;
+  if (tokens === undefined || tokens === null || !(tokens > 0)) return true;
+  const window = input.localContextWindow?.(providerId) ?? null;
+  if (window === null || !(window > 0)) return true;
+  const ratio = input.fitRatio !== undefined && input.fitRatio > 0 && input.fitRatio <= 1
+    ? input.fitRatio
+    : DEFAULT_FIT_RATIO;
+  return tokens <= window * ratio;
 }

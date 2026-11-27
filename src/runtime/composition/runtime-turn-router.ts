@@ -6,6 +6,7 @@ import { localFirstTurnHead } from "../../llm/fallback/index.js";
 import { extractRouteFeatures, routeTurn, type RouteDecision } from "../../llm/router/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import { isLocalLinkWithoutModel } from "../local-link-availability.js";
+import { estimateTokens } from "../../prompt/token-budget.js";
 
 export interface RouteTurnProviderParams {
   config: AtomicAgentConfig;
@@ -21,6 +22,13 @@ export interface RouteTurnProviderParams {
    * link with no model on disk (`isLocalLinkWithoutModel`).
    */
   linkUnavailable?: (llm: ResolvedLlmConfig, providerId: string) => boolean;
+  /**
+   * Tokens this session's next prompt needs, as far as the caller knows
+   * (ATO-2537). Absent or null: unknown, local-first does not check size.
+   */
+  sessionPromptTokens?: number | null;
+  /** The window a local link builds its prompt against. Absent: unknown. */
+  localContextWindow?: (providerId: string) => number | null;
 }
 
 /**
@@ -87,14 +95,49 @@ function localFirstProvider(params: RouteTurnProviderParams): string | undefined
     hasImage: extractRouteFeatures(params.userMessage).hasImage,
     isRegistered: params.isRegistered,
     isUnavailable: (id) => unavailable(resolved, id),
+    ...(params.sessionPromptTokens !== undefined
+      ? { sessionPromptTokens: params.sessionPromptTokens }
+      : {}),
+    ...(params.localContextWindow !== undefined
+      ? { localContextWindow: params.localContextWindow }
+      : {}),
+    ...(params.config.agent?.compaction?.triggerRatio !== undefined
+      ? { fitRatio: params.config.agent.compaction.triggerRatio }
+      : {}),
   });
-  if (decision.head === null) return undefined;
+  if (decision.head === null) {
+    if (decision.reason === "too-long") {
+      // Sizes only: never the message.
+      params.logger.info("local-first cascade: session too long for the local window, turn stays in the cloud", {
+        sessionId: params.sessionId,
+        promptTokens: params.sessionPromptTokens ?? null,
+      });
+    }
+    return undefined;
+  }
   // The provider only: never the message.
   params.logger.info("local-first cascade: turn starts on the local model", {
     sessionId: params.sessionId,
     providerId: decision.head,
   });
   return decision.head;
+}
+
+/**
+ * What the session's next prompt needs, for the local-first size check
+ * (ATO-2537): the last prompt this session built (`contextUsage.tokens`,
+ * the provider's own count once a step completed) plus the new message.
+ * Null when no prompt was built yet: a new session is small, and an
+ * unknown size keeps today's behaviour.
+ */
+export function sessionPromptEstimate(
+  lastPromptTokens: number | null | undefined,
+  userMessage: string,
+): number | null {
+  if (lastPromptTokens === null || lastPromptTokens === undefined || !(lastPromptTokens > 0)) {
+    return null;
+  }
+  return lastPromptTokens + estimateTokens(userMessage);
 }
 
 function routerProviders(

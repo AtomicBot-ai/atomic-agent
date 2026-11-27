@@ -38,7 +38,7 @@ import type { GoalSpec, GoalState } from "../../agent/goal/index.js";
 import { createRuntimeGoalRunner } from "./runtime-goal.js";
 import { createNextStepSuggester } from "./runtime-next-step.js";
 import type { createExperienceReviewer } from "./runtime-experience-review.js";
-import { routeTurnProvider } from "./runtime-turn-router.js";
+import { routeTurnProvider, sessionPromptEstimate } from "./runtime-turn-router.js";
 import { continueOnStopHooks, startTurnHooks } from "./runtime-session-hooks.js";
 import type { SessionHookEngine } from "../../hooks/session-hook-engine.js";
 import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
@@ -107,6 +107,12 @@ export interface RuntimeTurnDependencies {
     resolveRouteVision: RuntimeProviders["resolveRouteVision"];
     resolveActiveModelName: RuntimeProviders["resolveActiveModelName"];
     fallbackChain: Pick<ProviderFallbackChain, "standingOverrideFor" | "setTurnPrimary">;
+    /**
+     * The window a local link builds its prompt against, for the
+     * local-first size check (ATO-2537). Omitted (tests, embedders): the
+     * check is skipped.
+     */
+    resolveLocalContextWindow?: (providerId: string) => number | null;
   };
   traces: Pick<RuntimeTraces, "ensureRecorder" | "pinSession" | "readContextUsage" | "clearContextUsage" | "releaseSession">;
   telemetry: {
@@ -564,6 +570,13 @@ export function createRuntimeTurnService(
       isRegistered: (id) => providerRegistry.getProvider(id) !== undefined,
       logger,
       sessionId: session.id,
+      sessionPromptTokens: sessionPromptEstimate(
+        traces.readContextUsage(session.id)?.tokens ?? session.contextUsage?.tokens ?? null,
+        userMessage,
+      ),
+      ...(deps.inference.resolveLocalContextWindow !== undefined
+        ? { localContextWindow: deps.inference.resolveLocalContextWindow }
+        : {}),
     });
     if (runOptions.providerId === undefined) {
       fallbackChain.setTurnPrimary(session.id, routedProviderId ?? null);

@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { AtomicAgentConfig } from "../../config/index.js";
-import { routeTurnProvider } from "./runtime-turn-router.js";
+import { routeTurnProvider, sessionPromptEstimate } from "./runtime-turn-router.js";
+import { estimateTokens } from "../../prompt/token-budget.js";
 
 function configWith(router: unknown): AtomicAgentConfig {
   return {
@@ -121,8 +122,43 @@ describe("routeTurnProvider local-first cascade (ATO-2208)", () => {
     expect(run(config, { ...available, pinnedProviderId: "openrouter" }).providerId).toBeUndefined();
   });
 
+  it("keeps a session too long for the local window in the cloud, and says why (ATO-2537)", () => {
+    const { providerId, info } = run(localFirstConfig({ localFirst: true }), {
+      ...available,
+      userMessage: "a secret question",
+      sessionPromptTokens: 100_000,
+      localContextWindow: () => 16_384,
+    });
+    expect(providerId).toBeUndefined();
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(info.mock.calls[0]?.[1]).toMatchObject({ promptTokens: 100_000 });
+    expect(JSON.stringify(info.mock.calls)).not.toContain("secret");
+  });
+
+  it("a session that fits the local window still starts on it", () => {
+    expect(
+      run(localFirstConfig({ localFirst: true }), {
+        ...available,
+        sessionPromptTokens: 4_000,
+        localContextWindow: () => 16_384,
+      }).providerId,
+    ).toBe("local-llama");
+  });
+
   it("a matching router rule wins over the local-first head", () => {
     const config = localFirstConfig({ localFirst: true }, { enabled: true, rules: [{ provider: "groq" }] });
     expect(run(config, available).providerId).toBe("groq");
+  });
+});
+
+describe("sessionPromptEstimate (ATO-2537)", () => {
+  it("adds the new message to the last prompt's size", () => {
+    expect(sessionPromptEstimate(50_000, "hello there")).toBe(50_000 + estimateTokens("hello there"));
+  });
+
+  it("is unknown when no prompt was built yet", () => {
+    expect(sessionPromptEstimate(null, "hi")).toBeNull();
+    expect(sessionPromptEstimate(undefined, "hi")).toBeNull();
+    expect(sessionPromptEstimate(0, "hi")).toBeNull();
   });
 });
