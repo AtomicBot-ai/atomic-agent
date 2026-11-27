@@ -17,6 +17,7 @@ import {
   type WalkBudgetLimits,
   type WalkStop,
 } from "./fs-walk-budget.js";
+import { isGuestSecretRelPath } from "../../read-scope/guest-secret-files.js";
 
 export { compileGlob } from "./fs-glob-pattern.js";
 
@@ -143,6 +144,9 @@ export function buildOsFsGlobTool(
           ) {
             continue;
           }
+          // A guest never sees a nested `.env`, key or `secrets/` entry,
+          // not even its name (ATO-2703, `guest-secret-files.ts`).
+          if (ctx.guest === true && isGuestSecretRelPath(rel)) continue;
           if (isFile && matchesAny(matchers, rel)) {
             try {
               const info = await stat(abs);
