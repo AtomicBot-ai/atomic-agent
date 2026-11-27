@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { createShellJobHostControls, SHELL_JOB_INPUT_MAX_CHARS } from "./shell-job-host.js";
+import { resetResolvedSecretValues } from "../../../sandbox/resolved-secret-values.js";
+import {
+  createShellJobHostControls,
+  secretInputMasked,
+  SHELL_JOB_INPUT_MAX_CHARS,
+} from "./shell-job-host.js";
 import { hostFacts, hostFakeJob } from "./shell-job-host-test-helpers.js";
-import { listShellJobs } from "./shell-job-calls.js";
+import { listShellJobs, runShellWait } from "./shell-job-calls.js";
 import { ShellJobRegistry } from "./shell-jobs.js";
 
 /**
@@ -17,7 +22,16 @@ function setup(options: { stdinOpen?: boolean; snapshot?: string } = {}) {
   return { registry, job, record, host: createShellJobHostControls(registry) };
 }
 
+const callCtx = (registry: ShellJobRegistry) => ({
+  jobs: registry,
+  sessionId: "s-1",
+  defaultTimeoutMs: 0,
+  signal: new AbortController().signal,
+});
+
 describe("createShellJobHostControls", () => {
+  afterEach(() => resetResolvedSecretValues());
+
   it("lists a session's jobs with what the host needs to draw a tab", () => {
     const { host } = setup();
     expect(host.list("s-1")).toEqual([
@@ -49,6 +63,27 @@ describe("createShellJobHostControls", () => {
     // Not a tool call: no watch, no stop reason, the job is still the model's.
     expect(record.lineWatch).toBeUndefined();
     expect(record.state).toBe("running");
+  });
+
+  it("masks a value typed with Hide typing on in what the model reads next, even when the job echoes it", async () => {
+    const { host, job, registry } = setup();
+    expect(host.write("s-1", 1, "Tr0ub4dor&3\n", false, { secret: true })).toBe("written");
+    expect(job.typed.filter((t) => t.length > 0)).toEqual(["Tr0ub4dor&3\n"]);
+    // A prompt that keeps echo on, then a script that prints the answer.
+    job.print("Tr0ub4dor&3\r\ngot Tr0ub4dor&3\n");
+    const seen = await runShellWait(callCtx(registry), 1, 1, false);
+    expect(seen.summary).toContain("got ");
+    expect(seen.summary).not.toContain("Tr0ub4dor&3");
+    expect(JSON.stringify(seen.details)).not.toContain("Tr0ub4dor&3");
+  });
+
+  it("does not mask a plain write, and says a short secret cannot be masked", async () => {
+    const { host, job, registry } = setup();
+    expect(host.write("s-1", 1, "Tr0ub4dor&3\n")).toBe("written");
+    job.print("got Tr0ub4dor&3\n");
+    expect((await runShellWait(callCtx(registry), 1, 1, false)).summary).toContain("Tr0ub4dor&3");
+    expect(secretInputMasked("Tr0ub4dor&3\n")).toBe(true);
+    expect(secretInputMasked("1234\r\n")).toBe(false);
   });
 
   it("closes stdin on eof", () => {
@@ -104,9 +139,9 @@ describe("createShellJobHostControls", () => {
     const { host, job, record, registry } = setup();
     expect(host.stop("s-1", 1)).toBe("stopped");
     expect(job.stops).toBe(1);
-    expect(record.stopReason).toBe("person");
+    expect(record.stopReason).toBe("user");
     expect(host.stop("s-1", 1)).toBe("not_running");
-    const seen = listShellJobs({ jobs: registry, sessionId: "s-1", defaultTimeoutMs: 0, signal: new AbortController().signal });
+    const seen = listShellJobs(callCtx(registry));
     expect(seen.summary).toContain("stopped by the user");
   });
 });

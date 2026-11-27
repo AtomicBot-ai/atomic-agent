@@ -64,7 +64,18 @@ describe("/api/sessions/{id}/shell-jobs", () => {
     const res = await post("/api/sessions/s-1/shell-jobs/2/input", { text: "hunter2\n" });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ written: true, sessionId: "s-1", jobId: 2 });
-    expect(write).toHaveBeenCalledWith("s-1", 2, "hunter2\n", false);
+    expect(write).toHaveBeenCalledWith("s-1", 2, "hunter2\n", false, { secret: false });
+  });
+
+  it("passes Hide typing on as secret, and says whether the value can be masked", async () => {
+    const write = vi.spyOn(controls(), "write").mockReturnValue("written");
+    const strong = await post("/api/sessions/s-1/shell-jobs/2/input", { text: "Tr0ub4dor&3\n", secret: true });
+    expect(strong.status).toBe(200);
+    expect(await strong.json()).toEqual({ written: true, sessionId: "s-1", jobId: 2, masked: true });
+    expect(write).toHaveBeenCalledWith("s-1", 2, "Tr0ub4dor&3\n", false, { secret: true });
+    const weak = await post("/api/sessions/s-1/shell-jobs/2/input", { text: "1234\n", secret: true });
+    expect(((await weak.json()) as { masked: boolean }).masked).toBe(false);
+    expect((await post("/api/sessions/s-1/shell-jobs/2/input", { text: "x", secret: "yes" })).status).toBe(400);
   });
 
   it("refuses a bad body or job id without touching the job, and never echoes the text", async () => {

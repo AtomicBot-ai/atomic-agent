@@ -1,4 +1,6 @@
+import { isMaskableSecretValue } from "../../../error-reporting/secret-detector.js";
 import type { CommandJob } from "../../../sandbox/command-job.js";
+import { rememberResolvedSecret } from "../../../sandbox/resolved-secret-values.js";
 import { readJobOutput, type JobOutputSlice } from "./job-output-tap.js";
 import type { ShellJobRecord, ShellJobRegistry, ShellJobState } from "./shell-jobs.js";
 
@@ -12,7 +14,12 @@ import type { ShellJobRecord, ShellJobRegistry, ShellJobState } from "./shell-jo
  * What the person types goes straight to the job's stdin. It is not a
  * tool call: it is never written to the session, the transcript, the
  * trace or a log, and the model only learns of it through what the
- * program itself prints (a password prompt on a terminal does not echo).
+ * program itself prints. A write marked `secret` (the host's Hide typing)
+ * is also added to the values masked in every tool result and trace
+ * (`resolved-secret-values.ts`), so a prompt that echoes it, or a script
+ * that prints it, does not hand it to the model; only a value the
+ * detector can mask (`isMaskableSecretValue`: 8 characters or more, not
+ * a plain word) is, and {@link secretInputMasked} says which.
  * It does not pass the command guard either: the guard and approvals are
  * there to hold the model back, and this input is the person's own.
  *
@@ -38,6 +45,21 @@ export interface ShellJobView {
   signal: string | null;
 }
 
+export interface ShellJobWriteOptions {
+  /** The person typed it hidden (a password): mask it wherever the model reads. */
+  secret?: boolean;
+}
+
+/** The value of a secret write: what was typed, without the Enter that sends it. */
+export function secretInputValue(text: string): string {
+  return text.replace(/\r?\n$/, "");
+}
+
+/** Whether a secret write of `text` is masked in what the model reads. */
+export function secretInputMasked(text: string): boolean {
+  return isMaskableSecretValue(secretInputValue(text));
+}
+
 export type ShellJobWriteOutcome = "written" | "not_found" | "closed" | "too_long";
 export type ShellJobResizeOutcome = "resized" | "not_found" | "not_supported";
 export type ShellJobStopOutcome = "stopped" | "not_found" | "not_running";
@@ -45,7 +67,7 @@ export type ShellJobStopOutcome = "stopped" | "not_found" | "not_running";
 export interface ShellJobHostControls {
   list(sessionId: string): ShellJobView[];
   read(sessionId: string, id: number, since: number): (JobOutputSlice & { job: ShellJobView }) | null;
-  write(sessionId: string, id: number, text: string, eof?: boolean): ShellJobWriteOutcome;
+  write(sessionId: string, id: number, text: string, eof?: boolean, options?: ShellJobWriteOptions): ShellJobWriteOutcome;
   resize(sessionId: string, id: number, cols: number, rows: number): ShellJobResizeOutcome;
   stop(sessionId: string, id: number): ShellJobStopOutcome;
 }
@@ -91,11 +113,13 @@ export function createShellJobHostControls(
       if (!record) return null;
       return { ...readJobOutput(record.job, since), job: viewOf(record) };
     },
-    write(sessionId, id, text, eof = false) {
+    write(sessionId, id, text, eof = false, options = {}) {
       const record = registry.get(sessionId, id);
       if (!record) return "not_found";
       if (text.length > SHELL_JOB_INPUT_MAX_CHARS) return "too_long";
       if (!takesInput(record)) return "closed";
+      // Before the write: the job may echo it at once.
+      if (options.secret === true) rememberResolvedSecret(`typed into job ${id}`, secretInputValue(text));
       if (text.length > 0 && !record.job.write(text)) return "closed";
       if (eof) record.job.endInput();
       return "written";
@@ -110,7 +134,7 @@ export function createShellJobHostControls(
     stop(sessionId, id) {
       const record = registry.get(sessionId, id);
       if (!record) return "not_found";
-      return registry.stop(record, "person") ? "stopped" : "not_running";
+      return registry.stop(record, "user") ? "stopped" : "not_running";
     },
   };
 }
