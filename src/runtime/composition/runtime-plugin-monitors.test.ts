@@ -5,6 +5,7 @@ import type { DeclaredMonitorSpec, DeclaredMonitorStart, ShellJobRecord } from "
 import { ShellJobRegistry } from "../../tools/os/index.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 import { createPluginMonitorStarter } from "./runtime-plugin-monitors.js";
+import { channelGuestMetadata } from "../../session/channel-guest-session.js";
 
 /**
  * ATO-2438: plugin monitors start with a session's turn, once per
@@ -119,6 +120,25 @@ describe("createPluginMonitorStarter (ATO-2438)", () => {
     h.starter.startFor({ id: "s-4", workingDir: "/w" });
     h.starter.startFor({ id: "s-4", workingDir: "/w" });
     expect(h.specs).toHaveLength(3);
+  });
+
+  it("starts nothing for a channel's guest session", () => {
+    const h = harness();
+    h.starter.startFor({ id: "s-guest", workingDir: "/w", metadata: channelGuestMetadata() });
+    expect(h.specs).toEqual([]);
+    h.starter.startFor({ id: "s-owner", workingDir: "/w", metadata: {} });
+    expect(h.specs.map((s) => s.sessionId)).toEqual(["s-owner"]);
+  });
+
+  it("forgets sessions the session's end reset, without starting anything twice", () => {
+    const h = harness();
+    for (let i = 0; i < 70; i += 1) {
+      h.failNext({ ok: true, record: { state: "killed", stopReason: "session_end" } as unknown as ShellJobRecord });
+      h.starter.startFor({ id: `s-${i}`, workingDir: "/w" });
+    }
+    h.starter.startFor(SESSION);
+    h.starter.startFor(SESSION);
+    expect(h.specs).toHaveLength(71);
   });
 
   it("never throws into the turn", () => {

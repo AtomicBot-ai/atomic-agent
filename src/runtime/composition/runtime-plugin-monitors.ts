@@ -7,6 +7,7 @@ import {
   type ShellJobRegistry,
 } from "../../tools/os/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
+import { isChannelGuestSession } from "../../session/channel-guest-session.js";
 
 /**
  * Plugin monitors (ATO-2438, after Claude Code's plugin `monitors`): the
@@ -23,11 +24,18 @@ import type { StructuredLogger } from "../../tracing/structured-logger.js";
  * already ran `maxJobs` jobs is tried at the next turn. On every turn, a
  * running monitor whose plugin is off, removed, switched off for that
  * monitor or no longer allowed to run code is stopped.
+ *
+ * A channel's guest session (ATO-2221) starts none: its notices would
+ * wake turns over a history the guests wrote, and the guest limits
+ * (read-only tools and memory) ride only on the guest's own turns.
  */
+
+/** Sessions remembered before the ones the session's end already reset are dropped. */
+const PRUNE_ABOVE_SESSIONS = 64;
 
 export interface PluginMonitorStarter {
   /** Called as a turn of `session` starts (not for subagent or Fusion workers). */
-  startFor(session: { id: string; workingDir: string }): void;
+  startFor(session: { id: string; workingDir: string; metadata?: Record<string, unknown> }): void;
 }
 
 export function createPluginMonitorStarter(deps: {
@@ -44,9 +52,24 @@ export function createPluginMonitorStarter(deps: {
   /** Session → monitor key → its job, or `null` when it could not start. */
   const started = new Map<string, Map<string, ShellJobRecord | null>>();
   const skippedLogged = new Set<string>();
+  /**
+   * Forget sessions whose every monitor the session's end stopped: they
+   * would start again anyway, so dropping them changes nothing.
+   */
+  const prune = (keep: string) => {
+    for (const [sessionId, monitors] of started) {
+      if (sessionId === keep) continue;
+      const allEnded = [...monitors.values()].every(
+        (record) => record !== null && record.state !== "running" && record.stopReason === "session_end",
+      );
+      if (allEnded) started.delete(sessionId);
+    }
+  };
 
   return {
     startFor(session) {
+      if (isChannelGuestSession({ metadata: session.metadata ?? {} })) return;
+      if (started.size > PRUNE_ABOVE_SESSIONS) prune(session.id);
       let current: PluginMonitorList;
       try {
         current = list(deps.stateDir);
