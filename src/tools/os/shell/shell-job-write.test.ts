@@ -62,11 +62,13 @@ describe("guardTypedText", () => {
   // so `echo !cd:2-5` can run `rm -rf out`. Never taken as safe.
   it("never allows a line that history expansion could rewrite", () => {
     expect(guardTypedText("echo hi\n", "/tmp")?.action).toBe("allow");
-    for (const line of ["echo !cd:2-5\n", "echo !!\n", "^ls^rm -rf out\n"]) {
+    for (const line of ["echo !cd:2-5\n", "echo !!\n", "^ls^pwd\n"]) {
       const verdict = guardTypedText(line, "/tmp");
       expect(verdict?.action, line).toBe("approval_required");
       expect(verdict?.rule, line).toBe("typed.history_expansion");
     }
+    // A dangerous line keeps its own, stronger prompt.
+    expect(guardTypedText("^ls^rm -rf out\n", "/tmp")?.rule).toBe("dangerous.rm_recursive");
   });
 });
 

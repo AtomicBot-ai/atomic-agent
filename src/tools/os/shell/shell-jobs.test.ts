@@ -33,6 +33,8 @@ function fakeJob(startedAt = Date.now()): FakeJob {
     output: () => ({ stdout: "", stderr: "", truncated: false }),
     waitFor: () => Promise.resolve("elapsed" as const),
     onOutput: () => () => undefined,
+    write: () => false,
+    endInput: () => undefined,
     stop() {
       job.stops += 1;
     },
