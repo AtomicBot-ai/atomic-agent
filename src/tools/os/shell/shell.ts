@@ -101,7 +101,7 @@ import {
   fillShellSecrets,
 } from "./shell-secrets.js";
 import { ghReadOnlyRule } from "../shell-command-guard/rules-trusted/gh.js";
-import { shellSecurityCheck } from "./shell-security-check.js";
+import { execShellScript, shellSecurityCheck } from "./shell-security-check.js";
 import { gogReadOnlyRule } from "../shell-command-guard/rules-trusted/gog.js";
 import { icalBuddyReadOnlyRule } from "../shell-command-guard/rules-trusted/ical-buddy.js";
 
@@ -374,7 +374,13 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // policy hands it back as a step for the operator (ATO-1223).
     // A write into a startup, SSH or credential file in home asks at
     // every level, like a credential read (ATO-2505).
-    const security = shellSecurityCheck(guardVerdict, targetPaths, cwd);
+    const security = shellSecurityCheck(
+      guardVerdict,
+      targetPaths,
+      cwd,
+      useShell ? subshellCommandLine : execShellScript(cmd, execArgs),
+      useShell && process.platform === "win32" ? "cmd" : "posix",
+    );
     const dangerous = isDangerousGuardRule(guardVerdict.rule) || security.forcesGate;
     const commandSegments = shellRuleSegments(cmd, execArgs, useShell);
     const commandUnreadable = shellRunsUnreadableScript(cmd, execArgs, useShell);

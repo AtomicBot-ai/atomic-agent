@@ -12,7 +12,7 @@ import {
   type FsMutationKind,
 } from "./fs-approval-scope.js";
 import type { DeclaredInputsRegistry } from "./fs-declared-inputs.js";
-import { sensitiveWriteReason, sensitiveWriteTargets } from "./sensitive-write-targets.js";
+import { realSensitiveWriteTargets, sensitiveWriteReason } from "./sensitive-write-targets.js";
 import type { FileRestoreStore } from "./fs-restore-store.js";
 import type { LspDiagnostics } from "./lsp/index.js";
 
@@ -195,7 +195,9 @@ export async function requireFsApproval(
   const targetPaths = request.targetPaths ?? [];
   // A shell startup file, the SSH folder or a credential file in home
   // asks at every level, bypass and fan-out scopes included (ATO-2505).
-  const sensitive = sensitiveWriteTargets(request.paths, request.workingDir);
+  // Symlinks are followed, as the category does, and the home folder
+  // itself counts (an extract or copy into it).
+  const sensitive = await realSensitiveWriteTargets(request.paths, request.workingDir);
   if (
     sensitive.length === 0 &&
     category !== "trust_config" &&

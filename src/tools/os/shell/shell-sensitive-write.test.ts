@@ -64,6 +64,41 @@ describe.skipIf(process.platform === "win32")("os.shell.run writing a startup or
     },
   );
 
+  // Review round 1 (F2069.1): a line whose targets cannot be read named
+  // no target, so the check failed open; a copy into home itself was
+  // skipped too.
+  it.each([
+    "echo ssh-ed25519 AAAA >> ~/.ssh/authorized_keys; : $(true)",
+    "echo ssh-ed25519 AAAA >> ~/.ssh/authorized_keys # `true`",
+    "echo x >> ${PWD}/../.bashrc; cat ~/.bashrc",
+    "echo ssh-ed25519 AAAA >> /Users/$USER/.ssh/authorized_keys",
+    "cp /tmp/x/.bashrc ~/",
+    "mv /tmp/x/.zshrc ~",
+  ])("asks in bypass when the targets cannot be read or are home itself: %s", async (cmd) => {
+    await expect(tool().run({ cmd }, ctx())).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatchObject({
+      askEveryLevel: true,
+      securityFinding: { rule: "dangerous.write_startup_file" },
+    });
+  });
+
+  it("asks in bypass for a direct exec of bash -c with such a line", async () => {
+    const run = tool().run(
+      { cmd: "bash", args: ["-c", "echo ssh-ed25519 AAAA >> ~/.ssh/authorized_keys; : $(true)"] },
+      ctx(),
+    );
+    await expect(run).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    expect(asked[0]).toMatchObject({ askEveryLevel: true, securityFinding: { rule: "dangerous.write_startup_file" } });
+    await expect(readFile(join(home, ".ssh", "authorized_keys"), "utf8")).rejects.toThrow();
+  });
+
+  it("leaves a dynamic line that names no sensitive file quiet in bypass", async () => {
+    const result = await tool().run({ cmd: "echo $(printf hi) > notes.txt" }, ctx());
+    expect(result.status).toBe("ok");
+    expect(asked).toHaveLength(0);
+  });
+
   it("writes a project file unasked in bypass", async () => {
     const result = await tool().run({ cmd: "echo hi > notes.txt" }, ctx());
     expect(result.status).toBe("ok");
