@@ -1,5 +1,6 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../../tool-registry.js";
+import { refuseOptionLike } from "./git-arg-guard.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
 export interface GitShowFileChange {
@@ -21,6 +22,7 @@ export const osGitShowTool: ToolDefinition = {
       typeof rawArgs.revision === "string" && rawArgs.revision.length > 0
         ? rawArgs.revision
         : "HEAD";
+    refuseOptionLike("os.git.show", "revision", revision);
     const includePatch = rawArgs.patch !== false;
 
     // Grab metadata via a structured `show --format` call with no patch,
