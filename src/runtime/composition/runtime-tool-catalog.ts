@@ -1144,13 +1144,16 @@ export function registerRuntimeFusionAndReadScope(input: {
           !isLocalServerUrl(entry.baseUrl ?? entry.url)
         );
       },
-      // The same profile loader fusion.delegate is given.
+      // The same profile loader fusion.delegate is given, settings
+      // profiles included (ATO-2002).
       resolveAgentProfiles: (dir) =>
         loadAgentProfiles({
           workingDir: dir,
           stateDir: config.paths.stateDir,
           configFile: config.paths.userConfigFile,
           startupTrust: config.skills.projectTrust,
+          settingsProfiles: () =>
+            readSettingsAgentProfiles(config.paths.userConfigFile, () => getConfig().llm?.runMode?.agentProfiles),
           pluginProfiles: () => pluginAgentProfiles(config.paths.stateDir),
         }),
       outputCharCap: config.agent.batchToolResultCharCap,

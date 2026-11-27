@@ -1,6 +1,6 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { getConfig, resetConfigCache, getStateSecretPaths, getTrustConfigPaths } from "../../config/index.js";
 import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
@@ -11,6 +11,7 @@ import type { BrowserBackend } from "../../tools/browser/browser-backend.js";
 import * as browserTools from "../../tools/browser/index.js";
 import * as osTools from "../../tools/os/index.js";
 import * as fusionTools from "../../tools/fusion/index.js";
+import * as subagentTools from "../../tools/subagent/index.js";
 import * as readScope from "../../tools/read-scope/index.js";
 import * as skillTools from "../../tools/skill/index.js";
 import { ProfileStore } from "../../memory/profile-store.js";
@@ -315,6 +316,41 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     // subagent.run registers right after fusion.delegate (ATO-1670).
     expect(toolRegistry.list().map(tool => tool.name)).toEqual(["os.fs.read", "fusion.delegate", "subagent.run"]);
     expect(builder.mock.invocationCallOrder[0]).toBeLessThan(confinement.mock.invocationCallOrder[0] ?? 0);
+  });
+});
+
+describe("settings subagent profiles reach subagent.run as they reach fusion.delegate (ATO-2002)", () => {
+  it("finds an llm.runMode.agentProfiles entry by name through both loaders", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "catalog-settings-profiles-"));
+    vi.stubEnv("ATOMIC_AGENT_STATE_DIR", directory);
+    resetConfigCache();
+    try {
+      const config = getConfig(); const toolRegistry = new ToolRegistry();
+      // Written after startup: the loaders reread config.json per call.
+      await mkdir(dirname(config.paths.userConfigFile), { recursive: true });
+      await writeFile(config.paths.userConfigFile, JSON.stringify({
+        llm: { runMode: { agentProfiles: { "settings-role": { description: "From the settings", prompt: "Check the settings path." } } } },
+      }));
+      const approvals = new ApprovalGate({ emit: () => {}, level: 5 });
+      const fusionBuilder = vi.spyOn(fusionTools, "buildFusionDelegateTool");
+      const subagentBuilder = vi.spyOn(subagentTools, "buildSubagentRunTool");
+      registerRuntimeFusionAndReadScope({ config, toolRegistry, approvals, dangerous: { approvals, approvalRequired: false }, declaredInputs: new osTools.DeclaredInputsRegistry(),
+        resolveOriginalRequest: () => undefined, runTurn: async () => externalOperation(), createEphemeralSession: () => createEmptySessionState({ id: "worker", workingDir: directory }),
+        prepareLocalLink: async () => {}, emitAgentLoopEventFor: () => {}, resolveCurrentRunMode: () => resolveRunMode(resolveLlmConfig(config)),
+        providerRegistry: { getProvider: () => undefined, modelVariant: async () => undefined }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const },
+        slotManager: { poolSize: () => 2 }, workingDir: directory, logger });
+      const fusionProfiles = fusionBuilder.mock.calls.at(-1)?.[0].resolveAgentProfiles;
+      const subagentProfiles = subagentBuilder.mock.calls.at(-1)?.[0].resolveAgentProfiles;
+      if (!fusionProfiles || !subagentProfiles) throw new Error("profile loader seam missing");
+      const viaSubagent = subagentProfiles(directory).get("settings-role");
+      expect(viaSubagent).toMatchObject({ name: "settings-role", source: "settings", prompt: "Check the settings path." });
+      expect(fusionProfiles(directory).get("settings-role")).toMatchObject({ name: "settings-role", source: "settings" });
+      // One loader, two callers: the same names on both sides.
+      expect(subagentProfiles(directory).profiles.map((p) => p.name)).toEqual(fusionProfiles(directory).profiles.map((p) => p.name));
+    } finally {
+      vi.restoreAllMocks(); vi.unstubAllEnvs(); resetConfigCache();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 
