@@ -47,7 +47,7 @@ describe.skipIf(process.platform === "win32")("guest git stays inside the workin
   it("still lets the owner use the outer repository", async () => {
     const result = await osGitShowTool.run({ revision: "HEAD" }, makeCtx(work));
     expect(result.status).toBe("ok");
-    expect(result.details.commit.subject).toBe("owner files");
+    expect((result.details.commit as { subject: string }).subject).toBe("owner files");
   });
 
   it("lets a guest use a repository rooted inside the working directory", async () => {
@@ -60,7 +60,7 @@ describe.skipIf(process.platform === "win32")("guest git stays inside the workin
     await runGitRaw(work, ["commit", "-q", "-m", "guest repo"]);
     const result = await osGitShowTool.run({ revision: "HEAD" }, guestCtx(work));
     expect(result.status).toBe("ok");
-    expect(result.details.commit.subject).toBe("guest repo");
+    expect((result.details.commit as { subject: string }).subject).toBe("guest repo");
   });
 
   it("sets the ceiling to the working directory's parent and drops GIT_DIR", () => {

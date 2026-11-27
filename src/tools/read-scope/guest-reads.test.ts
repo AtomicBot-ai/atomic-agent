@@ -156,7 +156,7 @@ describe("guest read scope", () => {
         description: name,
         readonly: true,
         argsJsonSchema: { type: "object" },
-        run: async (args) => {
+        run: async (args: unknown) => {
           ran.push(name);
           return compressToolResult({ tool: name, status: "ok", output: JSON.stringify(args) });
         },

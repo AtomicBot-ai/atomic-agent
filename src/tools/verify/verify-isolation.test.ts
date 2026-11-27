@@ -152,10 +152,12 @@ describe("F35 — nothing verification does reaches the workspace", () => {
       { kind: "service", start: { cmd: NODE, args: ["-e", server] }, ready: { port }, requests: [{ path: "/a" }, { path: "/b" }], checks: ["status 200"] },
       { workingDir: work, config: CONFIG, workspace: copies.workspace },
     );
-    expect(out.ok).toBe(true);
+    expect(out.ok, out.summary).toBe(true);
     expect(await snapshotTree(work)).toEqual(before);
     expectCopiesGone(copies.dirs);
-  }, 30_000);
+    // freePort() closes its port before the service binds it, and another
+    // test worker can take the port in between; a retry gets a new one.
+  }, { timeout: 30_000, retry: 2 });
 
   it("the copy is removed even when the run is killed on timeout", async () => {
     const before = await snapshotTree(work);
