@@ -5428,15 +5428,17 @@ function renderConsole() {
   if (!S.consoleOpen) return;
   const rows = (S.consoleTab === 'agent' ? LOGS : LLMLOGS);
   /* Soft Tactile (SH-08/09): a floating drawer — segmented tabs, a neutral
-     Save report for support button with its keycap, close. An empty tab says what
-     is true: nothing in this build writes to the LLM log. */
+     Save report for support button, close. An empty tab says what is true:
+     nothing in this build writes to the LLM log. ATO-1761: the button used to
+     show a ⌥⌘D keycap that no menu item binds (menu.ts has Option chords for
+     0, F, E and K only); the real way in is the ctrl+g d chord, so no cap. */
   const empty = S.consoleTab === 'agent'
     ? '<div class="tk-empty"><h4>Nothing logged yet</h4><p>Agent output and the app’s status lines appear here as they happen.</p></div>'
     : '<div class="tk-empty"><h4>Nothing in the LLM log</h4><p>This build does not record model requests here. The Agent log shows what the agent printed.</p></div>';
   el.innerHTML = '<div class="conhead">'
     + segControl([['agent','Agent log'],['llm','LLM log']], S.consoleTab, 'console:')
     + '<span class="grow"></span>'
-    + '<button class="btn btn-s sm" data-act="dump">' + ic('download') + 'Save report for support' + keycaps('⌥⌘D') + '</button>'
+    + '<button class="btn btn-s sm" data-act="dump">' + ic('download') + 'Save report for support</button>'
     + '<button class="iconbtn" data-act="toggle:console" title="Close console" aria-label="Close console">' + ic('x') + '</button></div>'
     + '<div class="conbody">' + (rows.length ? rows.map(([t, l, m]) =>
         '<div class="logrow"><span class="ter">' + t + '</span><span class="lvl ' + l + '">' + l + '</span>'

@@ -123,7 +123,9 @@ jobs:
           # darwin-x64 build in release.yml). Same steps as darwin-arm64:
           # Developer ID signing, notarization, the voice helper. electron-builder
           # puts the app under release/mac/ (arm64: release/mac-arm64/).
-          - { slug: darwin-x64, os: macos-15-intel, builder: "--mac --x64", artifacts: "desktop/release/*.dmg\ndesktop/release/*.zip\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
+          # Node 26 on this row only (ATO-1763): a SEA from Node 25's x64 macOS build does not start
+          # (dyld: "unsupported thread-local, larger than 4GB"); after-pack's probe caught it.
+          - { slug: darwin-x64, os: macos-15-intel, node: "26", builder: "--mac --x64", artifacts: "desktop/release/*.dmg\ndesktop/release/*.zip\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
           - { slug: win32-x64, os: windows-2022, builder: "--win --x64", artifacts: "desktop/release/*.exe\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
           # win32-arm64 is not a row here: it is built by agent-win32-arm64 and
           # package-win32-arm64 below (see the header).
@@ -167,8 +169,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           # Same pin as release.yml: the SEA needs Node >= 25.7 for
-          # `"mainFormat": "module"`.
-          node-version: "25.7"
+          # `"mainFormat": "module"`; darwin-x64 takes Node 26 (ATO-1763).
+          node-version: ${{ matrix.node || '25.7' }}
           check-latest: true
 
       # ---- agent bundle (mirrors release.yml) --------------------------------
