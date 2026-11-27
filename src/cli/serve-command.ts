@@ -17,6 +17,7 @@ import {
 } from "./serve-args.js";
 import { modelShareNotice } from "./serve-model-share-notice.js";
 import { resolveServeApiKey, serveApiKeyNotice } from "./serve-api-key.js";
+import { givenServeApiKey } from "./serve-api-key-stdin.js";
 import { watchForOrphaning } from "./serve-orphan-guard.js";
 import {
   startWebhookTunnel,
@@ -67,9 +68,15 @@ export async function serveCommand(args: string[]): Promise<number> {
     return 0;
   }
 
+  // ATO-2538: under --api-key-stdin the key is the first line of stdin.
+  const given = await givenServeApiKey(parsed, process.stdin);
+  if ("error" in given) {
+    process.stderr.write(`serve: ${given.error}\n`);
+    return 1;
+  }
   // Always a key, on loopback too: the operator's, else the persisted one
   // made on the first run. No key, no server.
-  const apiKey = resolveServeApiKey(parsed.apiKey, stateDir);
+  const apiKey = resolveServeApiKey(given.key, stateDir);
   if ("error" in apiKey) {
     process.stderr.write(`serve: ${apiKey.error}\n`);
     return 1;
@@ -88,7 +95,9 @@ export async function serveCommand(args: string[]): Promise<number> {
   // otherwise inherit it, not only the shell tool that already drops it.
   // This stops inheritance only: the launch environment itself stays
   // readable by the same user (/proc/<pid>/environ on Linux, `ps eww` on
-  // macOS), since unsetenv does not touch the original env block.
+  // macOS), since unsetenv does not touch the original env block: a
+  // spawner that wants the key in no environment at all sends it with
+  // --api-key-stdin, as the desktop does (ATO-2538).
   delete process.env.ATOMIC_AGENT_API_KEY;
 
   // ATO-625: refuse the tunnel before anything boots, so a missing

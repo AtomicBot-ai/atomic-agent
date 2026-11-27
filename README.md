@@ -548,7 +548,7 @@ atomic-agent serve \
   --cwd /path/to/work
 ```
 
-`serve` always requires an API key, on loopback too: any program on the machine can reach a loopback port, and whoever holds the key can run the agent and its tools. Pass your own with `--api-key` or `ATOMIC_AGENT_API_KEY`. Without one, `serve` generates a key on the first run, keeps it in `<state dir>/serve-api.key` (owner-only, `~/.atomic-agent/serve-api.key` by default), reuses it after, and says where it is when it starts; in a terminal it also prints the phone panel address with the key in it (`http://127.0.0.1:8787/panel#key=…`). Every authenticated route wants it as `Authorization: Bearer <key>` (or `x-api-key`):
+`serve` always requires an API key, on loopback too: any program on the machine can reach a loopback port, and whoever holds the key can run the agent and its tools. Pass your own with `--api-key`, `ATOMIC_AGENT_API_KEY`, or as the first line of stdin with `--api-key-stdin` (then it is in no argument and no environment variable, as with `docker login --password-stdin`). Without one, `serve` generates a key on the first run, keeps it in `<state dir>/serve-api.key` (owner-only, `~/.atomic-agent/serve-api.key` by default), reuses it after, and says where it is when it starts; in a terminal it also prints the phone panel address with the key in it (`http://127.0.0.1:8787/panel#key=…`). Every authenticated route wants it as `Authorization: Bearer <key>` (or `x-api-key`):
 
 ```bash
 curl -H "Authorization: Bearer $(atomic-agent serve --print-api-key)" \
