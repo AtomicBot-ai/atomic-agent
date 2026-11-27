@@ -5,7 +5,7 @@
  * agent: sherpa-onnx v1.13.8, Apache-2.0, with pyannote segmentation-3.0,
  * MIT, and 3D-Speaker CAM++ VoxCeleb, Apache-2.0). Nothing is bundled: the
  * first meeting recorded with "Tell speakers apart" on (Settings, Meetings;
- * on by default) starts `diarize install`, about 56 to 64 MB once, with its
+ * off by default, opt-in) starts `diarize install`, about 56 to 64 MB once, with its
  * progress in the meeting panel; Settings can also get or remove it.
  *
  * Capability check: `diarize status --json`. An agent from before this

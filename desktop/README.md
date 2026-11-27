@@ -1176,7 +1176,7 @@ Honestly degraded, and labelled as such in the UI:
   channels on one clock and drops microphone lines that are the call heard
   through the speakers.
 - **Speakers by voice (ATO-2514).** With `Tell speakers apart by voice` on
-  (Settings, Meetings; on by default) the recorder also keeps each channel
+  (Settings, Meetings; off by default, opt-in) the recorder also keeps each channel
   whole as `full.wav` until Make notes, then runs the agent's
   `atomic-agent diarize run` (sherpa-onnx v1.13.8, Apache-2.0; pyannote
   segmentation-3.0, MIT; 3D-Speaker CAM++, Apache-2.0) on the other side of
