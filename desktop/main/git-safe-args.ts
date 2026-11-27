@@ -20,9 +20,13 @@
  *    whatever folder git resolves it from;
  *  - `log.showSignature=false`: no `gpg.program` on `git log`;
  *  - `protocol.ext.allow=never`: no `ext::` remote helper command, in
- *    case a call ever reaches a submodule or remote.
+ *    case a call ever reaches a submodule or remote;
+ *  - `diff.submodule=short`: a repo's `diff.submodule=diff` would make
+ *    a diff or `log -p` start a child `git diff` inside a changed
+ *    submodule, where `--no-ext-diff` does not reach and the submodule's
+ *    own `diff.external` runs (review round 2, R2-1979.A).
  *
- * Diff calls add `--no-ext-diff --no-textconv` themselves
+ * Diff calls add `--no-ext-diff --no-textconv --submodule=short` themselves
  * (mention-git.ts). The system config (`GIT_CONFIG_NOSYSTEM`) is left
  * alone: it belongs to the machine's admin, not to the folder.
  *
@@ -46,5 +50,6 @@ export function gitSafeArgs(platform: NodeJS.Platform = process.platform): strin
     "-c", `core.hooksPath=${gitNullPath(platform)}`,
     "-c", "log.showSignature=false",
     "-c", "protocol.ext.allow=never",
+    "-c", "diff.submodule=short",
   ];
 }

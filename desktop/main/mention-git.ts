@@ -9,7 +9,8 @@
  * starts with GIT_SAFE_PREFIX, the shared desktop list (git-safe-args.ts,
  * ATO-2532: no fsmonitor, no hooks, no pager, no signature check, no
  * index write). `--no-ext-diff --no-textconv` stop the configured
- * external diff and textconv programs, and log's explicit
+ * external diff and textconv programs, `--submodule=short` keeps a
+ * changed submodule from starting its own diff, and log's explicit
  * `--pretty=medium` keeps a configured `format.pretty` from asking for a
  * signature check.
  */
@@ -34,7 +35,16 @@ export interface GitOutput {
 /** Runs git with `args` (the subcommand on); GIT_SAFE_PREFIX is put in front. */
 export type RunGit = (cwd: string, args: readonly string[]) => Promise<GitOutput>;
 
-const DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-textconv", "--relative"];
+/**
+ * `--submodule=short` (review round 2, R2-1979.A): with a repo's
+ * `diff.submodule=diff`, git starts a second `git diff` inside each
+ * changed submodule. The `-c` options reach that child through
+ * GIT_CONFIG_PARAMETERS, but `--no-ext-diff` and `--no-textconv` do not,
+ * so the submodule's own `diff.external` would run. `short` prints only
+ * the two commit ids and starts no child diff. The safe prefix also sets
+ * `diff.submodule=short`; the flag here wins over any config.
+ */
+const DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-textconv", "--submodule=short", "--relative"];
 
 /** `git diff HEAD`: staged and unstaged changes to tracked files under the folder. */
 export function diffArgs(): string[] {

@@ -74,7 +74,7 @@ test("every option is a global one: -c pairs and -- flags only", () => {
     if (args[i] === "-c") { assert.match(args[i + 1], /^[a-z.]+=/i); i++; continue; }
     assert.match(args[i], /^--no-/);
   }
-  for (const want of ["core.fsmonitor=false", "core.hooksPath=/dev/null", "log.showSignature=false", "--no-optional-locks"]) {
+  for (const want of ["core.fsmonitor=false", "core.hooksPath=/dev/null", "log.showSignature=false", "diff.submodule=short", "--no-optional-locks"]) {
     assert.ok(args.includes(want), want);
   }
 });
