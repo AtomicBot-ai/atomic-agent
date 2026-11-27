@@ -802,6 +802,9 @@ export function loadConfig(): AtomicAgentConfig {
       ...(user.telegram.streamReplies !== undefined
         ? { streamReplies: user.telegram.streamReplies }
         : {}),
+      ...(user.telegram.allowedUsers !== undefined
+        ? { allowedUsers: user.telegram.allowedUsers.map((u) => ({ ...u })) }
+        : {}),
     },
     discord: {
       enabled: user.discord.enabled,

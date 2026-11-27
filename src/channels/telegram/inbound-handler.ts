@@ -27,7 +27,16 @@ import {
   shouldAnnounceSender,
   withSenderIdentity,
   type SenderIdentity,
+  type SenderRole,
 } from "../sender-identity.js";
+import type { TelegramAllowedUser } from "../../config/telegram-allowed-users.js";
+import {
+  guestCommandRefusal,
+  guestTurnOptions,
+  hasGuests,
+  isGuestCommandAllowed,
+  resolveSenderRole,
+} from "./guest-access.js";
 import {
   formatAttachmentFailure,
   sendAttachments,
@@ -188,7 +197,17 @@ export interface InboundContext {
    * exercise the text path. Idempotent — the channel no-ops when the
    * binding is already current.
    */
-  ensureApprovalSession?: (sessionId: string, target: TelegramTarget) => void;
+  ensureApprovalSession?: (
+    sessionId: string,
+    target: TelegramTarget,
+    opts?: { shared?: boolean },
+  ) => void;
+  /**
+   * Guests besides the owner (`telegram.allowedUsers`, ATO-2221). Heard
+   * in groups only, with read-only tools; see `guest-access.ts`. Absent
+   * or empty: owner only, exactly as before.
+   */
+  allowedUsers?: readonly TelegramAllowedUser[];
   /**
    * Drop the approval binding for a session this chat no longer talks
    * to (`/new`, `/switch`). Optional for the same reason as above.
@@ -352,7 +371,14 @@ export async function handleInboundText(
   // echoed back through the agent. Only private chats can pair. The
   // channel logs the outcome, never the code.
   if (isPrivate && ctx.tryClaimForPairing?.(update)) return;
-  if (ctx.ownerUserId === null || fromId !== ctx.ownerUserId) {
+  // The owner, a configured guest (groups only, ATO-2221), or nobody.
+  const role = resolveSenderRole({
+    fromId,
+    isPrivate,
+    ownerUserId: ctx.ownerUserId,
+    allowedUsers: ctx.allowedUsers,
+  });
+  if (role === null) {
     ctx.logger.warn("telegram: dropping non-owner message", {
       fromId,
       chatId: update.chat.id,
@@ -372,14 +398,28 @@ export async function handleInboundText(
   // then silently fill from `legacy`.
   adoptLegacyForDm(ref, ctx);
   if (text.startsWith("/")) {
+    // A guest gets the help text and nothing else (`guest-access.ts`).
+    const verb = text.split(/\s+/)[0] ?? text;
+    if (role === "guest" && !isGuestCommandAllowed(verb)) {
+      await sendText(ctx, ref.target, guestCommandRefusal(verb));
+      return;
+    }
     await handleSlashCommand(text, ref, ctx, fromId);
     return;
   }
   // Who is speaking, and in which group/topic. Skipped in a DM: a
   // private chat only ever reaches this line for the single configured
   // `ownerUserId`, so the block would restate a constant on every turn
-  // forever. See `shouldAnnounceSender`.
-  await dispatchToRuntime(text, ref, ctx, senderOf(update, ref));
+  // forever. See `shouldAnnounceSender`. With guests configured the line
+  // also says `role=owner|guest`; without, it is byte-identical to before.
+  const announcedRole = hasGuests(ctx.allowedUsers) ? role : undefined;
+  await dispatchToRuntime(
+    text,
+    ref,
+    ctx,
+    senderOf(update, ref, announcedRole),
+    role,
+  );
 }
 
 /**
@@ -393,6 +433,7 @@ export async function handleInboundText(
 function senderOf(
   update: InboundTextUpdate,
   ref: ChatRef,
+  role?: SenderRole,
 ): SenderIdentity | null {
   if (!shouldAnnounceSender("telegram", ref.chatType)) return null;
   const from = update.from;
@@ -410,6 +451,7 @@ function senderOf(
     ...(ref.target.threadId === undefined
       ? {}
       : { threadId: String(ref.target.threadId) }),
+    ...(role === undefined ? {} : { role }),
   };
 }
 
@@ -878,6 +920,7 @@ async function dispatchToRuntime(
   ref: ChatRef,
   ctx: InboundContext,
   sender: SenderIdentity | null = null,
+  role: SenderRole = "owner",
 ): Promise<void> {
   const prompt = withSenderIdentity(text, sender);
   const session = acquireOrCreateSession(ref, ctx);
@@ -891,7 +934,23 @@ async function dispatchToRuntime(
   // turn step can request approval — `ApprovalRouter.setForSession`
   // is the only path that turns a generic `ApprovalRequest` into a
   // 2-button keyboard in this chat. Idempotent on the channel side.
-  ctx.ensureApprovalSession?.(session.id, ref.target);
+  //
+  // With guests configured (ATO-2221) a group session's approvals go to
+  // the owner's DM instead of the group, for the owner's turns too: the
+  // owner and guests share the group's session, the binding is per
+  // session, and a guest turn queued behind an owner turn would
+  // otherwise post its prompt (and its command preview) in the group.
+  // Only the owner can press the buttons either way (`approval-bridge`);
+  // a DM that cannot be delivered denies the request.
+  if (!ref.isPrivate && hasGuests(ctx.allowedUsers) && ctx.ownerUserId !== null) {
+    ctx.ensureApprovalSession?.(
+      session.id,
+      { chatId: ctx.ownerUserId },
+      { shared: true },
+    );
+  } else {
+    ctx.ensureApprovalSession?.(session.id, ref.target);
+  }
   const controller = new AbortController();
   ctx.inflight.set(ref.key, controller);
 
@@ -996,6 +1055,8 @@ async function dispatchToRuntime(
       origin: "telegram",
       signal: controller.signal,
       eventHook,
+      // A guest's turn: read-only tools, no memory writes.
+      ...(role === "guest" ? guestTurnOptions(ctx.runtime.toolRegistry) : {}),
     });
     // A steer accepted for this turn but never delivered: the chat is
     // the host here, so tell it rather than dropping the text silently.
