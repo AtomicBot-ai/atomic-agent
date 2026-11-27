@@ -66,6 +66,7 @@ import { wireTraceTreeIpc } from "./trace-tree-ipc.js";
 import { wireProjectWorkersIpc } from "./project-workers-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
 import { wireMyFilesIpc } from "./my-files-ipc.js";
+import { wireMyAppsIpc } from "./my-apps-ipc.js";
 import { wireImportFactsIpc } from "./import-facts-ipc.js";
 import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
 import { wireAgentHubIpc } from "./agent-hub-ipc.js";
@@ -3314,6 +3315,7 @@ function wireIpc(client: AgentClient): void {
   wireIncognitoChatsIpc(client);   // ATO-586: incognito chats
   // ATO-1136: HTML artifacts in the chat, sandboxed (artifact-frame-ipc.ts).
   wireArtifactIpc();
+  wireMyAppsIpc({ mainWindow: () => win });   // ATO-2383: Save as app, Settings › My apps, each app in its own window
   // ATO-1063: the mini chat page (mini-chat-ipc.ts): its frames, and "Open in big window".
   wireMiniChatIpc(client, { mainWindow: () => win, showMainWindow: () => (openWindowAgain(), win) });
   // ATO-561: "Open in new window" on a chat row (chat-popout-ipc.ts); a chat being written is not popped out.

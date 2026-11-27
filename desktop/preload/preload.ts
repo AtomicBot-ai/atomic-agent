@@ -483,6 +483,12 @@ contextBridge.exposeInMainWorld("atomic", {
   filesRemoveFolder: (path: string) => ipcRenderer.invoke("files:removeFolder", path),
   filesListFolders: () => ipcRenderer.invoke("files:listFolders"),
   filesStatus: () => ipcRenderer.invoke("files:status"),
+  /** ATO-2383: My apps (main/my-apps-ipc.ts), artifact pages kept in <stateDir>/apps and opened in their own window. */
+  appsSave: (input: { name: string; html: string; chatId?: string }) => ipcRenderer.invoke("apps:save", input),
+  appsList: () => ipcRenderer.invoke("apps:list"),
+  appsRename: (id: string, name: string) => ipcRenderer.invoke("apps:rename", id, name),
+  appsDelete: (id: string) => ipcRenderer.invoke("apps:delete", id),
+  appsOpen: (id: string) => ipcRenderer.invoke("apps:open", id),
   /** ATO-1629 / ATO-1061: facts about the person from a Claude or ChatGPT export (main/import-facts-ipc.ts). */
   importFactsInfo: () => ipcRenderer.invoke("importFacts:info"),
   importFactsPick: (source: "claude" | "chatgpt") => ipcRenderer.invoke("importFacts:pick", source),

@@ -162,7 +162,8 @@ function chatArtifactSlotHTML(key, opts) {
     : '';
   return '<div class="chat-art' + (st.state === 'ok' ? '' : ' loading') + (beside ? ' on-canvas' : '') + '" data-art="' + e(key) + '">'
     + '<div class="chat-art-bar">' + artIcon('globe') + '<span class="chat-art-title">' + e(title) + '</span>' + file
-      + (o.path && typeof publishSiteButtonHTML === 'function' ? publishSiteButtonHTML(o.path, e) : '') + expand + '</div>'   // ATO-594 (publish-site.js)
+      + (o.path && typeof publishSiteButtonHTML === 'function' ? publishSiteButtonHTML(o.path, e) : '')   // ATO-594 (publish-site.js)
+      + (st.state === 'ok' && typeof myAppsSaveButtonHTML === 'function' ? myAppsSaveButtonHTML(key, e) : '') + expand + '</div>'   // ATO-2383 (my-apps.js)
     + '<div class="chat-art-box" data-chat-art="' + e(key) + '" data-morph-keep="art:' + e(key) + '"></div>'
     + '</div>';
 }
