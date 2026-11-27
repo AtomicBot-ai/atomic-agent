@@ -137,8 +137,12 @@ test("renderer, preload and main use the same names", () => {
   const r = src("../renderer/renderer.js");
   assert.match(r, /\['eyeOff','New incognito chat','','\/incognito','session:incognito'\]/);
   assert.match(r, /\['incognito','start a new incognito chat: not saved to your chats or memory'\]/);
-  assert.match(r, /if \(a === 'session:incognito'\) \{ act\('session:new'\); incognitoArm\(BR\)\.then\(render\); return; \}/);
-  assert.match(r, /if \(a === 'session:new'\) \{ close\(\); incognitoLeave\(BR\);/);
+  assert.match(r, /if \(a === 'session:incognito'\) \{ if \(incognitoLeaveAsk\(null, \(\) => act\('session:incognito'\), close\)\) return;/);
+  assert.match(r, /act\('session:new'\); incognitoArm\(BR\)\.then\(render\); return; \}/);
+  assert.match(r, /if \(a === 'session:new'\) \{ close\(\); if \(incognitoLeaveAsk\(null, \(\) => act\('session:new'\)\)\) return;/);
+  assert.match(r, /if \(incognitoLeaveAsk\(id, \(\) => openSession\(id\)\)\) return;\s+\/\/ [^\n]*\n\s+incognitoLeave\(BR, id\);/);
+  assert.match(r, /if \(a === 'incogleave:go'\) \{ incognitoLeaveGo\(BR\); return; \}/);
+  assert.match(r, /esc\(a\.cancel \|\| 'Cancel'\)/);
   assert.match(r, /const opensChat = !S\.agentSession && !incognitoArmed\(\);/);
   assert.match(r, /const session = S\.agentSession \|\| incognitoSessionForNewChat\(\) \|\| undefined;/);
   assert.match(r, /incognitoLeave\(BR, id\);/);
@@ -155,4 +159,66 @@ test("renderer, preload and main use the same names", () => {
   assert.match(src("../main/main.ts"), /wireIncognitoChatsIpc\(client\)/);
   assert.match(src("../main/agent-client.ts"), /\.\.\.incognitoBodyField\(sessionId\),/);
   assert.match(src("../main/analytics/catalog-values.ts"), /"incognito"/);
+});
+
+// ATO-2748: leaving still deletes it, but a chat with a sent message asks first.
+test("leaving asks only when the incognito chat has a sent message", async () => {
+  reset();
+  const b = bridge();
+  assert.equal(I.incognitoLeaveNeedsAsk(null), false);   // no incognito chat
+  await I.incognitoArm(b);
+  const id = I.INCOG.id;
+  assert.equal(I.incognitoLeaveNeedsAsk(null), false);   // empty: leaves silently
+  assert.equal(I.incognitoLeaveNeedsAsk("other"), false);
+  I.incognitoSessionForNewChat();                         // the first message
+  assert.equal(I.incognitoLeaveNeedsAsk(null), true);
+  assert.equal(I.incognitoLeaveNeedsAsk("other"), true);
+  assert.equal(I.incognitoLeaveNeedsAsk(id), false);      // reopening it is no leave
+  I.incognitoLeave(b);
+  assert.equal(I.incognitoLeaveNeedsAsk(null), false);
+});
+
+test("the question: Delete chat or Stay; a running reply is named", () => {
+  const a = I.incognitoLeaveAlert(false);
+  assert.equal(a.title, "Leave and delete this chat?");
+  assert.match(a.msg, /can't be brought back/);
+  assert.equal(a.ok, "Delete chat");
+  assert.equal(a.cancel, "Stay");
+  assert.equal(a.act, "incogleave:go");
+  assert.match(I.incognitoLeaveAlert(true).msg, /still being written/);
+  assert.doesNotMatch(a.title + a.msg + I.INCOG_BANNER, /\u2014/);
+  assert.match(I.INCOG_BANNER, /deleted and can't be brought back/);
+});
+
+test("an asked leave waits; Delete chat deletes it, then does the leave", async () => {
+  reset();
+  const b = bridge();
+  const S = { alert: null };
+  globalThis.S = S;
+  let renders = 0;
+  globalThis.render = () => { renders++; };
+  try {
+    // Empty: no question, the caller goes on.
+    await I.incognitoArm(b);
+    assert.equal(I.incognitoLeaveAsk(null, () => {}), false);
+    assert.equal(S.alert, null);
+    I.incognitoSessionForNewChat();
+    const id = I.INCOG.id;
+    let left = 0, closed = 0;
+    assert.equal(I.incognitoLeaveAsk("other", () => { left++; }, () => { closed++; }), true);
+    assert.equal(S.alert.ok, "Delete chat");
+    assert.equal(closed, 1);
+    assert.equal(left, 0);
+    assert.equal(I.INCOG.id, id);           // Stay keeps it: nothing was deleted yet
+    assert.deepEqual(b.closed, []);
+    I.incognitoLeaveGo(b);
+    assert.equal(S.alert, null);
+    assert.equal(left, 1);
+    assert.equal(I.INCOG.id, null);
+    assert.deepEqual(b.closed, [id]);
+    assert.ok(renders >= 1);
+  } finally {
+    delete globalThis.S;
+    delete globalThis.render;
+  }
 });

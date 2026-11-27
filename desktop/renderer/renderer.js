@@ -6172,7 +6172,7 @@ function alertHTML() {
     + '<div class="ttl">' + esc(a.title) + '</div>'
     + '<p class="alertmsg">' + esc(a.msg) + '</p>'
     + '<div class="alertacts">'
-      + '<button class="btn btn-s" data-act="close" autofocus>Cancel</button>'
+      + '<button class="btn btn-s" data-act="close" autofocus>' + esc(a.cancel || 'Cancel') + '</button>'
       + '<button class="btn btn-df" data-act="' + a.act + '">' + esc(a.ok) + '</button></div></div></div>';
 }
 
@@ -7628,6 +7628,7 @@ function act(a) {
   if (k === 'fzp') { fzpAct(v); return; }
   // ATO-594: a page's Publish… and its confirm (publish-site.js).
   if (k === 'pubsite' || k === 'pubsitego') { publishSiteAct(k, v); return; }
+  if (a === 'incogleave:go') { incognitoLeaveGo(BR); return; }   // ATO-2748: Delete chat on the incognito leave question
   // ATO-229: the update toast and Settings › General's update rows (app-update.js).
   if (k === 'appupd') { appUpdAct(v); return; }
   // Backlog 18: the download card's verbs (dlCardAct).
@@ -7731,8 +7732,10 @@ function act(a) {
     close(); S.settings = null; S.room = 'chat'; S.draft = '/' + name + ' '; S.slash = false;
     FOCUS.entry = true; render(); return;
   }
-  if (a === 'session:incognito') { act('session:new'); incognitoArm(BR).then(render); return; }   // ATO-586
-  if (a === 'session:new') { close(); incognitoLeave(BR);   // ATO-586: leaving an incognito chat deletes it
+  if (a === 'session:incognito') { if (incognitoLeaveAsk(null, () => act('session:incognito'), close)) return;   // ATO-2748: ask before deleting one with messages
+                                   act('session:new'); incognitoArm(BR).then(render); return; }   // ATO-586
+  if (a === 'session:new') { close(); if (incognitoLeaveAsk(null, () => act('session:new'))) return;   // ATO-2748
+                             incognitoLeave(BR);   // ATO-586: leaving an incognito chat deletes it
                              if (typeof ideaCardsRefresh === 'function') ideaCardsRefresh();   // ATO-458: suggested tasks, asked again on each new chat
                              stashQueue();   // Backlog 26: what was queued in the chat being left waits for it, read before the view goes
                              liveLeave();    // Item 38: and a turn running there keeps its view for when it is opened again
@@ -22071,6 +22074,7 @@ let OPEN_SEQ = 0;
 let OPEN_CLEARED = 0;
 async function openSession(id) {
   if (!BR || !id) return;
+  if (incognitoLeaveAsk(id, () => openSession(id))) return;   // ATO-2748: asks first when it has messages
   incognitoLeave(BR, id);   // ATO-586: opening another chat deletes the incognito one
   // item 6: is a turn of this session streaming into this window right now?
   const live = [...RUNNING.values()].includes(id);
