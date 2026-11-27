@@ -236,7 +236,7 @@ const FORMS: Record<string, CompactToolForm> = {
     tier: RARE,
   },
   "research.deep": {
-    summary: "Web research with checked quotes; writes a report file. Answer from its verified findings; call it alone.",
+    summary: "Research with checked quotes on the web or in My files (sources: documents); writes a report file. Answer from its verified findings; call it alone.",
     tier: RARE,
   },
   "logbook.query": { summary: "Read the local notes about the person's screen for a day.", tier: RARE },
