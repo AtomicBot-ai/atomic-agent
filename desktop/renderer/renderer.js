@@ -9759,8 +9759,8 @@ function engfSetupRuntime() {
 async function engfAct(verb) {
   if (verb === 'dismiss') { if (ENGF.f) ENGF.dismissed = ENGF.f.at; render(); return; }
   if (verb === 'redownload') {
-    // ATO-1745: the managed model, through Settings › Models' own download (llmPull); main deletes a damaged file first.
-    const id = LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed && LIVE_CONFIG.localModels.managed.modelId;
+    // ATO-1745: the model the failure named (main's `modelId`), through Settings › Models' own download (llmPull); main deletes a damaged file first.
+    const id = ENGF.f && ENGF.f.modelId;
     if (id && engfModelFix()) llmPull('chat', id, true);
     return;
   }

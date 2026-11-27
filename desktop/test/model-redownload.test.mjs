@@ -41,3 +41,20 @@ test("only weights count: a projector or any other file in the folder is not one
   assert.equal(isWeightsFile("mmproj-model-F16.gguf.part"), false);
   assert.equal(isWeightsFile("README.md"), false);
 });
+
+test("weights are deleted only while the card says THIS model's file is damaged", () => {
+  const { mayDeleteWeights, managedModelIdIn } = require("../out/main/model-redownload.js");
+  const corrupt = { reason: "model_file_corrupt", modelId: "qwen-3.5-4b" };
+  assert.equal(mayDeleteWeights(corrupt, "qwen-3.5-4b"), true);
+  // A stale card about another model, after the config moved on: nothing is deleted.
+  assert.equal(mayDeleteWeights(corrupt, "gemma-4-e4b"), false);
+  // Any other reason, a card with no model, or no card at all: nothing is deleted.
+  for (const reason of ["load", "model_file_missing", "model_unsupported"]) {
+    assert.equal(mayDeleteWeights({ reason, modelId: "qwen-3.5-4b" }, "qwen-3.5-4b"), false, reason);
+  }
+  assert.equal(mayDeleteWeights({ reason: "model_file_corrupt", modelId: null }, "qwen-3.5-4b"), false);
+  assert.equal(mayDeleteWeights(null, "qwen-3.5-4b"), false);
+  assert.equal(managedModelIdIn({ localModels: { managed: { modelId: "qwen-3.5-4b" } } }), "qwen-3.5-4b");
+  assert.equal(managedModelIdIn({ localModels: { managed: { modelId: null } } }), null);
+  assert.equal(managedModelIdIn(null), null);
+});

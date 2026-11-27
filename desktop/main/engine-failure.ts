@@ -31,10 +31,12 @@
  * (the agent's own words, engine-exit-words.ts) is told apart from `load`:
  * a smaller model is not the fix, downloading this one again is
  * (`reason: model_file_corrupt | model_file_missing`, the card's "Download
- * model again").
+ * model again"). A good file the engine is too old to read ("unknown model
+ * architecture") is `model_unsupported`: update the app, never download or
+ * delete the file.
  */
 
-import { modelFileWordIn } from "./engine-exit-words.js";
+import { engineExitWordIn } from "./engine-exit-words.js";
 
 /** The agent's retry hint, printed at the end of every Core failure (CORE_RETRY_HINT). */
 export const CORE_RETRY = "Retry with: atomic-agent models update";
@@ -68,7 +70,7 @@ export type EngineFailureStage = "download" | "verify" | "backend" | "blocked" |
  * gone (ATO-1745); the card offers to download the model again.
  */
 export type EngineFailureReason =
-  | "unsupported" | "version" | "no_backend" | "disk" | "incomplete" | "load" | "model_file_corrupt" | "model_file_missing";
+  | "unsupported" | "version" | "no_backend" | "disk" | "incomplete" | "load" | "model_file_corrupt" | "model_file_missing" | "model_unsupported";
 export interface EngineFailure {
   stage: EngineFailureStage;
   /** One plain sentence: why the engine is not ready. */
@@ -107,10 +109,18 @@ const CPU_FALLBACK = /falling back to the CPU build|retrying start on the CPU bu
    same words are the supervisor's business, not this card's. */
 const MODEL_LOAD = /\bMODEL_LOAD_FAILED\b|failed to load (?:the )?model|(?:could not|couldn't|unable to) load (?:the )?model\b|error loading model|llama_model_load|model load(?:ing)? failed/i;
 const WHY_LOAD = "The model couldn't load on this computer. Try a smaller model, or use a cloud model.";
-const WHY_MODEL_FILE: Record<"model_file_corrupt" | "model_file_missing", string> = {
+type ModelWord = "model_file_corrupt" | "model_file_missing" | "model_unsupported";
+const WHY_MODEL_FILE: Record<ModelWord, string> = {
   model_file_corrupt: "The model file is damaged. Download the model again.",
   model_file_missing: "The model file was not found. Download the model again.",
+  // A good file the engine is too old to read: downloading it again changes nothing.
+  model_unsupported: "This model needs a newer engine. Update Atomic Agent, then start it again.",
 };
+/** The agent's word for why a model did not load, when it is about the file itself (engine-exit-words). */
+function modelWordIn(text: string | null): ModelWord | null {
+  const w = engineExitWordIn(text);
+  return w === "model_file_corrupt" || w === "model_file_missing" || w === "model_unsupported" ? w : null;
+}
 
 const WHY: Record<EngineFailureStage, string> = {
   download: "The engine download failed. Check your connection and try again.",
@@ -124,7 +134,7 @@ const WHY: Record<EngineFailureStage, string> = {
    NOT_RETRYABLE; core-install.ts, core-backend.ts, platform-assets.ts). An
    agent from after this change prints these without the retry hint; an
    older one prints the hint anyway, so the wording decides, not the hint. */
-type FixedReason = Exclude<EngineFailureReason, "incomplete" | "load" | "model_file_corrupt" | "model_file_missing">;
+type FixedReason = Exclude<EngineFailureReason, "incomplete" | "load" | ModelWord>;
 const NOT_RETRYABLE: ReadonlyArray<[RegExp, FixedReason]> = [
   [/\bENOSPC\b|\bEDQUOT\b|\bEROFS\b|no space left|not enough (?:free )?(?:disk )?space|disk (?:is )?full|read-only file system/i, "disk"],
   [/Atomic Core does not support \S+|Local models are not available yet for Windows on ARM/i, "unsupported"],
@@ -180,7 +190,7 @@ export function engineFailureIn(text: string | null | undefined, ctx: EngineFail
   // The engine is there and the model is what failed: Download again cannot help.
   if (loadFailed && stage !== "blocked") {
     // ATO-1745: its file is damaged or gone; downloading the model again is the fix, not a smaller one.
-    const file = modelFileWordIn(all) ?? modelFileWordIn(readLogLine(ctx));
+    const file = modelWordIn(all) ?? modelWordIn(readLogLine(ctx));
     if (file) return { stage: "start", why: WHY_MODEL_FILE[file], detail: clean, retryable: false, reason: file, ...fellBack };
     return { stage: "start", why: WHY_LOAD, detail: clean, retryable: false, reason: "load", ...fellBack };
   }

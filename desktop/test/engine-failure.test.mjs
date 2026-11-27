@@ -233,3 +233,14 @@ test("Core's answer alone may not say why: the server log's line is read, and on
   // A log that cannot be read leaves `load`.
   assert.equal(engineFailureIn("MODEL_LOAD_FAILED", { core: true, logLine: () => { throw new Error("EACCES"); } }).reason, "load");
 });
+
+// Review round 1: "unknown model architecture" is a good file the engine is too old for, never a damaged one.
+test("a model too new for the engine says to update the app, and is never a re-download", () => {
+  const f = engineFailureOf({ ok: false, stdout: "", error: "models start exited with code 1",
+    stderr: "llama_model_load: error loading model: error loading model architecture: unknown model architecture: 'qwen9'\nllama_model_load_from_file_impl: failed to load model\n" }, { core: true });
+  assert.equal(f.reason, "model_unsupported");
+  assert.equal(f.retryable, false);
+  assert.match(f.why, /newer engine.*Update Atomic Agent/);
+  assert.doesNotMatch(f.why, /download/i);
+  assert.equal(engineFailureIn("MODEL_LOAD_FAILED: tensor 'blk.0.ffn_down.weight' has unknown ggml type 41").reason, "model_unsupported");
+});

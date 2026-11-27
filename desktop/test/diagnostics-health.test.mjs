@@ -94,6 +94,10 @@ test('ATO-1745: a damaged or missing model file offers Download model again, nev
   const load = fixture({...down, ENGF: {f: {why: 'Try a smaller model', at: 1, retryable: false, reason: 'load'}}}).rows();
   assert.equal(load.engine.fix, null);
   eq(load.model.fix, {act: 'diag:startModel', label: 'Start model'});
+  // A model too new for the engine is a good file: no re-download, the model row keeps Start model.
+  const newer = fixture({...down, ENGF: {f: {why: 'This model needs a newer engine.', at: 1, retryable: false, reason: 'model_unsupported'}}}).rows();
+  assert.equal(newer.engine.fix, null);
+  eq(newer.model.fix, {act: 'diag:startModel', label: 'Start model'});
 });
 
 test('a stopped model is red with Start model; an external server sends to Models', () => {

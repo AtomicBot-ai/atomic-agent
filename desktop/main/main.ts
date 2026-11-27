@@ -302,7 +302,7 @@ import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
 // r7 models — the vendored catalogue metadata, for the smoke's drift check.
 import { curatedMeta, curatedMetaIds, spotlightIds } from "./model-catalog.js";
 import { catalogPullWantsProjector, weightsOnDisk, wholePullProgress, withoutLivePullGap } from "./pull-projector.js";
-import { removeDamagedWeights } from "./model-redownload.js";
+import { managedModelIdIn, mayDeleteWeights, removeDamagedWeights } from "./model-redownload.js";
 import { DOWNLOAD_CANCELLED, downloadBusyForUpdate, downloadBusyText, pausablePull, pauseFrame, removePartialDownloads, type PausablePull } from "./download-pause.js";
 import { registerDownloadPauseIpc } from "./download-pause-ipc.js";
 import { memoryQuery } from "./memory-db.js";
@@ -989,7 +989,8 @@ function send(channel: string, payload?: unknown): void {
    kept and told to the window, which draws the recovery card (Download again)
    instead of leaving a spinner; the next success clears it. A
    window opened later asks for it (engine:failure). */
-let engineFailure: (EngineFailure & { at: number }) | null = null;
+/* `modelId` (ATO-1745): the managed model the failure was about, so "Download model again" deletes only that one's file. */
+let engineFailure: (EngineFailure & { at: number; modelId?: string | null }) | null = null;
 /** What put the recovery card up, for `engine_recovery_shown.via` (analytics/catalog-values.ts ENGINE_RECOVERY_VIA). */
 type EngineVia = "launch" | "swap" | "update" | "start" | "switch" | "setup" | "settings" | "other";
 /* ATO-374: a start the agent moved to the CPU build because the GPU build
@@ -1014,7 +1015,7 @@ function noteEngine(answer: unknown, opts: { clears?: boolean; via?: EngineVia }
   // ATO-1745: the server log's line is read only once a load failed, to tell a damaged or missing model file.
   const failed = engineFailureOf(answer, { core: managedEngineNow() === "atomic-core", logLine: describeFault });
   if (failed) {
-    engineFailure = { ...failed, at: Date.now() };
+    engineFailure = { ...failed, at: Date.now(), modelId: managedModelIdIn(readConfigFile(DESKTOP_STATE_DIR)) };
     console.error(`[desktop] local-llm: the local engine is not ready (${failed.stage}): ${failed.detail || failed.why}`);
     send("engine:failure", engineFailure);
     // The agent's `models` command already sent local_engine_failed for this; the desktop counts the card it showed.
@@ -2059,14 +2060,20 @@ function wireIpc(client: AgentClient): void {
     return startModelPull(id, o?.trigger, undefined, o?.mmproj === true);
   });
   /* ATO-1745: the engine card's "Download model again". Only while the card
-     says the file is damaged are its weights deleted first (model-redownload.ts:
-     the downloader skips a file that exists); then the usual pull, and the
+     says THIS model's file is damaged are its weights deleted first
+     (model-redownload.ts mayDeleteWeights: the downloader skips a file that
+     exists); otherwise a pull runs only when no weights are there. Then the
      card goes, since the model it named is on its way back. */
   ipcMain.handle("cli:modelsRedownload", (_event, id: unknown) => {
     if (typeof id !== "string" || !id) return { ok: false, error: "model id required" };
-    if (!downloadRunning() && !REMOVING.has(id) && !client.isRemote && engineFailure?.reason === "model_file_corrupt") {
-      if (removeDamagedWeights(modelsDirOf(managedDataDirNow()), id).length) {
-        return { ok: false, error: "the damaged model file could not be deleted. Stop the local model, then try again." };
+    if (!downloadRunning() && !REMOVING.has(id) && !client.isRemote) {
+      const modelsDir = modelsDirOf(managedDataDirNow());
+      if (mayDeleteWeights(engineFailure, id)) {
+        if (removeDamagedWeights(modelsDir, id).length) {
+          return { ok: false, error: "the damaged model file could not be deleted. Stop the local model, then try again." };
+        }
+      } else if (weightsOnDisk(join(modelsDir, id))) {
+        return { ok: false, error: "this model's file is on disk and was not reported damaged, so it was kept. Start the model again." };
       }
     }
     const res = startModelPull(id, "settings");

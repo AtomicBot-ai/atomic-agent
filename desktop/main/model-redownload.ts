@@ -17,6 +17,23 @@ import { basename, join } from "node:path";
 import { isPartialDownloadFile } from "./download-pause.js";
 import { isMmprojFile } from "./huggingface.js";
 
+/** The managed model a config names (`localModels.managed.modelId`), or null. */
+export function managedModelIdIn(cfg: unknown): string | null {
+  const id = (cfg as { localModels?: { managed?: { modelId?: unknown } } } | null)?.localModels?.managed?.modelId;
+  return typeof id === "string" && id ? id : null;
+}
+
+/**
+ * Whether "Download model again" for `id` may delete its weights first: only
+ * while the failure card up says THAT model's file is damaged. A card about a
+ * missing file, a model too new for the engine, another load failure, or a
+ * model id other than the one that failed (the config changed since) deletes
+ * nothing.
+ */
+export function mayDeleteWeights(failure: { reason?: string; modelId?: string | null } | null | undefined, id: string): boolean {
+  return !!failure && failure.reason === "model_file_corrupt" && !!failure.modelId && failure.modelId === id;
+}
+
 /** A model's weights in its folder: a `.gguf` that is not a projector, or a partial download of one. */
 export function isWeightsFile(name: string): boolean {
   if (isMmprojFile(name)) return false;
