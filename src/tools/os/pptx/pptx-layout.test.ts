@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { ChartSpec } from "../ooxml/ooxml-chart.js";
 import { OS_FS_WRITE_PPTX_CONTRACT } from "./pptx-contract.js";
 import {
-  LAYOUT_TEXT_CAPS,
   MOVED_NOTES_HEADING,
   PPTX_LAYOUTS,
   fitSlideText,
   isNumberLike,
+  isComparisonLike,
   isQuoteLike,
+  isTimelineLike,
   layoutSlide,
   pickLayout,
   resolveLayout,
@@ -69,8 +70,28 @@ describe("pickLayout", () => {
     expect(pickLayout(slide({ bullets: ["Parent", ...many(7).map((b) => `  ${b}`)] }))).toBe("bullets");
   });
 
-  it("keeps a table in the bullets layout", () => {
-    expect(pickLayout(slide({ table: [["A"], ["1"]] }))).toBe("bullets");
+  it("lets a table with at most two bullets lead the slide, more keep the half/half bullets layout", () => {
+    expect(pickLayout(slide({ table: [["A"], ["1"]] }))).toBe("table");
+    expect(pickLayout(slide({ table: [["A"], ["1"]], bullets: many(2) }))).toBe("table");
+    expect(pickLayout(slide({ table: [["A"], ["1"]], bullets: many(3) }))).toBe("bullets");
+  });
+
+  it("makes a title-only slide after the first a section header (ATO-2444)", () => {
+    expect(pickLayout(slide({ title: "Part 2: Results" }), 0)).toBe("title");
+    expect(pickLayout(slide({ title: "Part 2: Results", subtitle: "What we learned" }), 3)).toBe("section");
+    expect(pickLayout(slide({ title: "“Ship small, ship often.”" }), 3)).toBe("quote");
+  });
+
+  it("reads two headed sides as a comparison and dated steps as a timeline (ATO-2444)", () => {
+    const sides = ["Before", "  Manual", "  Slow", "After", "  Automatic"];
+    expect(isComparisonLike(sides.map(parseBullet))).toBe(true);
+    expect(pickLayout(slide({ bullets: sides }))).toBe("comparison");
+    expect(isComparisonLike(["Before", "After", "  Fast"].map(parseBullet))).toBe(false);
+    const steps = ["2024: Prototype", "Q1 2025 - Beta", "Jun 2025: Launch", "Step 4: Grow"];
+    expect(isTimelineLike(steps.map(parseBullet))).toBe(true);
+    expect(pickLayout(slide({ bullets: steps }))).toBe("timeline");
+    expect(isTimelineLike(["Marketing: grow", "Sales: sell", "Support: help"].map(parseBullet))).toBe(false);
+    expect(isTimelineLike(["2024: a", "2025: b"].map(parseBullet))).toBe(false);
   });
 });
 
@@ -99,15 +120,25 @@ describe("fitSlideText", () => {
     expect(fitted.notes).toBe(`Say hi\n\n${MOVED_NOTES_HEADING}\n  - Sub of sixth\n- Eighth`);
   });
 
-  it("moves bullets past the character budget, but always keeps the first", () => {
-    const long = "x".repeat(LAYOUT_TEXT_CAPS.bullets.chars - 10);
+  it("moves bullets whose text no longer fits the box, but always keeps the first (ATO-2444: measured)", () => {
+    const long = "word ".repeat(200).trim();
     const { slide: fitted, moved } = fitSlideText(slide({ bullets: [long, "short but over"] }), "bullets");
     expect(fitted.bullets).toHaveLength(1);
     expect(moved).toBe(1);
     expect(fitted.notes).toBe(`${MOVED_NOTES_HEADING}\n- short but over`);
 
-    const huge = "y".repeat(LAYOUT_TEXT_CAPS.bullets.chars * 2);
+    const huge = "y".repeat(2_000);
     expect(fitSlideText(slide({ bullets: [huge] }), "bullets").moved).toBe(0);
+  });
+
+  it("measures width: wide letters fill the box sooner than narrow ones, and a column sooner than the full width", () => {
+    const wide = Array.from({ length: 6 }, () => "WWWW MMMM WWWW MMMM WWWW MMMM WWWW MMMM WWWW MMMM WWWW MMMM");
+    const narrow = Array.from({ length: 6 }, () => "iiii llll iiii llll iiii llll iiii llll iiii llll iiii llll");
+    expect(fitSlideText(slide({ bullets: wide }), "bullets").moved).toBeGreaterThan(0);
+    expect(fitSlideText(slide({ bullets: narrow }), "bullets").moved).toBe(0);
+    const medium = Array.from({ length: 4 }, () => "A sentence of ordinary words that runs for about one long line here");
+    expect(fitSlideText(slide({ bullets: medium }), "bullets").moved).toBe(0);
+    expect(fitSlideText(slide({ bullets: medium, chart: CHART }), "chart").moved).toBeGreaterThan(0);
   });
 
   it("uses the narrower cap beside a picture, table or chart", () => {
@@ -132,6 +163,15 @@ describe("layoutSlide", () => {
     expect(laid.slide.layout).toBe("two-column");
     expect(laid.slide.bullets).toHaveLength(12);
     expect(laid.moved).toBe(2);
+  });
+});
+
+describe("layoutSlide fallback", () => {
+  it("draws plain bullets when fitting leaves a comparison with one side", () => {
+    const right = Array.from({ length: 13 }, (_, i) => `  Point ${i + 1}`);
+    const laid = layoutSlide(slide({ bullets: ["Left", ...right, "Right", "  Only"] }));
+    expect(laid.layout).toBe("bullets");
+    expect(laid.slide.layout).toBe("bullets");
   });
 });
 

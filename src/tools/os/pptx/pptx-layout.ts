@@ -1,4 +1,5 @@
 import type { PptxBullet, PptxSlideSpec } from "./pptx-spec.js";
+import { bulletsThatFit, textAreaOf } from "./pptx-text-fit.js";
 
 /**
  * Slide layouts for `os.fs.write_pptx` and the two pure decisions around
@@ -16,37 +17,28 @@ export const PPTX_LAYOUTS = [
   "big-number",
   "image-full",
   "chart",
+  "section",
+  "comparison",
+  "timeline",
+  "table",
 ] as const;
 export type PptxLayout = (typeof PPTX_LAYOUTS)[number];
-
-export interface TextCap {
-  /** Most bullets (any level) the layout shows. */
-  bullets: number;
-  /** Most characters of bullet text, all bullets together. */
-  chars: number;
-}
-
-/**
- * What each layout holds. `bullets` is narrower when a picture, table or
- * chart takes the right half. The numbers follow the usual 6x6 slide
- * rule of thumb at the master's 24 pt body size.
- */
-export const LAYOUT_TEXT_CAPS: Record<PptxLayout, TextCap> = {
-  title: { bullets: 0, chars: 0 },
-  bullets: { bullets: 6, chars: 600 },
-  "two-column": { bullets: 12, chars: 1_000 },
-  quote: { bullets: 0, chars: 0 },
-  "big-number": { bullets: 1, chars: 120 },
-  "image-full": { bullets: 0, chars: 0 },
-  chart: { bullets: 3, chars: 240 },
-};
-export const BULLETS_BESIDE_VISUAL_CAP: TextCap = { bullets: 5, chars: 300 };
 
 /** More top-level text than one column holds: auto layout splits it in two. */
 export const TWO_COLUMN_FROM = 7;
 /** A chart with more bullets than this keeps the half/half bullets layout. */
 const CHART_FOCUS_MAX_BULLETS = 3;
 const BIG_NUMBER_MAX_CHARS = 12;
+/** A table with at most this many bullets leads its slide (`table`); more keep the half/half bullets layout. */
+const TABLE_LED_MAX_BULLETS = 2;
+/** A timeline reads at a glance with three to six steps. */
+const TIMELINE_STEPS = { min: 3, max: 6 };
+/** "2024: …", "Q3 - …", "Jan 2026: …", "Step 2: …", "Phase 1: …", "Week 3: …", "v1.0: …" (any dash or a colon). */
+const MONTH = "(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\.?";
+const STEP_LIKE = new RegExp(
+  `^(?:\\d{4}|[QH][1-4](?:\\s?\\d{2,4})?|${MONTH}(?:\\s\\d{1,4})?|(?:Step|Phase|Stage|Week|Day|Month|Sprint|Milestone)\\s\\d{1,3}|v\\d+(?:\\.\\d+)*)\\s*[:\\-\u2013\u2014]\\s*\\S`,
+  "i",
+);
 
 /** "42%", "$1.2M", "3x", "10,000", "+18 pts", "~2.5bn": a headline that is one figure. */
 const NUMBER_LIKE =
@@ -64,18 +56,41 @@ export function isQuoteLike(text: string): boolean {
   return t.length >= 8 && QUOTE_OPEN.test(t) && QUOTE_CLOSE.test(t);
 }
 
-function hasVisual(slide: PptxSlideSpec): boolean {
+/** Every bullet a top-level step that starts with a date, quarter or step number. */
+export function isTimelineLike(bullets: readonly PptxBullet[]): boolean {
+  return (
+    bullets.length >= TIMELINE_STEPS.min &&
+    bullets.length <= TIMELINE_STEPS.max &&
+    bullets.every((b) => b.level === 0 && STEP_LIKE.test(b.text))
+  );
+}
+
+/** Exactly two top-level bullets (the sides), each with sub-points under it. */
+export function isComparisonLike(bullets: readonly PptxBullet[]): boolean {
+  const heads = bullets.flatMap((b, i) => (b.level === 0 ? [i] : []));
+  if (heads.length !== 2 || heads[0] !== 0) return false;
+  const second = heads[1]!;
+  return second > 1 && second < bullets.length - 1;
+}
+
+export function hasVisual(slide: PptxSlideSpec): boolean {
   return slide.image !== undefined || slide.table !== undefined || slide.chart !== undefined;
 }
 
-/** The layout a slide gets from its content alone. */
-export function pickLayout(slide: PptxSlideSpec): PptxLayout {
+/**
+ * The layout a slide gets from its content alone. `index` is its place
+ * in the deck: a slide of only a title after the first is a section
+ * header, the first is the deck's title slide.
+ */
+export function pickLayout(slide: PptxSlideSpec, index = 0): PptxLayout {
   const count = slide.bullets.length;
   if (slide.chart !== undefined) return count <= CHART_FOCUS_MAX_BULLETS ? "chart" : "bullets";
   if (slide.image !== undefined) return count === 0 ? "image-full" : "bullets";
-  if (slide.table !== undefined) return "bullets";
+  if (slide.table !== undefined) return count <= TABLE_LED_MAX_BULLETS ? "table" : "bullets";
   if (count <= 1 && isNumberLike(slide.title)) return "big-number";
-  if (count === 0) return isQuoteLike(slide.title) ? "quote" : "title";
+  if (count === 0) return isQuoteLike(slide.title) ? "quote" : index > 0 ? "section" : "title";
+  if (isTimelineLike(slide.bullets)) return "timeline";
+  if (isComparisonLike(slide.bullets)) return "comparison";
   const topLevel = slide.bullets.filter((b) => b.level === 0).length;
   if (count >= TWO_COLUMN_FROM && topLevel >= 2) return "two-column";
   return "bullets";
@@ -90,19 +105,21 @@ export function layoutFits(layout: PptxLayout, slide: PptxSlideSpec): boolean {
       return slide.image !== undefined;
     case "chart":
       return slide.chart !== undefined;
+    case "table":
+      return slide.table !== undefined;
+    case "comparison":
+      return !hasVisual(slide) && isComparisonLike(slide.bullets);
+    case "timeline":
+      return !hasVisual(slide) && slide.bullets.length > 0 && slide.bullets.every((b) => b.level === 0);
     default:
       return !hasVisual(slide);
   }
 }
 
 /** The model's layout when it fits the content, otherwise the automatic one. */
-export function resolveLayout(slide: PptxSlideSpec): PptxLayout {
+export function resolveLayout(slide: PptxSlideSpec, index = 0): PptxLayout {
   const asked = slide.layout;
-  return asked !== undefined && layoutFits(asked, slide) ? asked : pickLayout(slide);
-}
-
-export function textCap(layout: PptxLayout, slide: PptxSlideSpec): TextCap {
-  return layout === "bullets" && hasVisual(slide) ? BULLETS_BESIDE_VISUAL_CAP : LAYOUT_TEXT_CAPS[layout];
+  return asked !== undefined && layoutFits(asked, slide) ? asked : pickLayout(slide, index);
 }
 
 /** Bullets as notes lines, two spaces per level, the way the model wrote them. */
@@ -121,20 +138,15 @@ export interface FittedSlide {
 /**
  * Keep the bullets the layout holds, in order, and move the rest to the
  * end of the speaker notes, so nothing is lost and nothing spills off
- * the slide. The first bullet stays whenever the layout shows bullets at
+ * the slide. What it holds is measured (`pptx-text-fit.ts`, ATO-2444):
+ * the text's wrapped lines in the layout's text area, not a character
+ * count. The first bullet stays whenever the layout shows bullets at
  * all (the body's autofit shrinks one long line rather than leave the
  * slide empty).
  */
 export function fitSlideText(slide: PptxSlideSpec, layout: PptxLayout): FittedSlide {
-  const cap = textCap(layout, slide);
-  let keep = 0;
-  let chars = 0;
-  for (const bullet of slide.bullets) {
-    if (keep >= cap.bullets) break;
-    if (keep > 0 && chars + bullet.text.length > cap.chars) break;
-    chars += bullet.text.length;
-    keep += 1;
-  }
+  const area = textAreaOf(layout, hasVisual(slide));
+  const keep = area === null ? 0 : bulletsThatFit(slide, area);
   const overflow = slide.bullets.slice(keep);
   if (overflow.length === 0) return { slide, moved: 0 };
   const extra = `${MOVED_NOTES_HEADING}\n${bulletLines(overflow)}`;
@@ -147,9 +159,16 @@ export interface LaidOutSlide extends FittedSlide {
 }
 
 /** Layout chosen, text fitted, and the slide stamped with the layout it renders with. */
-export function layoutSlide(slide: PptxSlideSpec): LaidOutSlide {
-  const layout = resolveLayout(slide);
+export function layoutSlide(slide: PptxSlideSpec, index = 0): LaidOutSlide {
+  const layout = resolveLayout(slide, index);
   const fitted = fitSlideText(slide, layout);
+  // A comparison whose right side lost its points to the notes is no
+  // longer two sides: it falls back to plain bullets, so what is drawn
+  // and what is reported (`layouts`, the slide's progress) agree.
+  if (!layoutFits(layout, fitted.slide)) {
+    const plain = fitSlideText(slide, "bullets");
+    return { layout: "bullets", moved: plain.moved, slide: { ...plain.slide, layout: "bullets" } };
+  }
   return { layout, moved: fitted.moved, slide: { ...fitted.slide, layout } };
 }
 
