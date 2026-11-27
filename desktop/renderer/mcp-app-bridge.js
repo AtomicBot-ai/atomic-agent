@@ -136,7 +136,8 @@ function mcpbHandle(st, d, now) {
     return r === 'filled' || r === 'sent' ? {result: {}} : err(-32000, 'The message box holds the person\'s own draft');
   }
   if (m === 'ui/open-link') {
-    const url = typeof p.url === 'string' && p.url.length <= 2048 && /^https?:\/\//i.test(p.url) ? p.url : '';
+    // The same rule as main's open-external (main.ts): lower-case scheme only, so a link answered as opened is opened.
+    const url = typeof p.url === 'string' && p.url.length <= 2048 && /^https?:\/\//.test(p.url) ? p.url : '';
     if (!url) return err(-32602, 'Only http and https links open');
     if (!mcpbMayAct(st, now)) return err(-32000, 'The person has to click in the app first');
     const br = typeof window !== 'undefined' && window.atomic ? window.atomic : null;

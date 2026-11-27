@@ -17,6 +17,10 @@ globalThis.abFocusIn = () => focused;
 globalThis.widgetDeliver = (text, title) => { delivered.push({ text, title }); return "filled"; };
 globalThis.artClampHeight = (h) => Math.min(Math.max(Math.ceil(h), 80), 1400);
 globalThis.window = { atomic: { openExternal: (u) => opened.push(u) } };
+// The real rate limit (artifact-bridge.js): one message or link per frame every AB_PROMPT_GAP_MS.
+const AB = require("../renderer/artifact-bridge.js");
+globalThis.abWidget = AB.abWidget;
+globalThis.abPromptAllowed = AB.abPromptAllowed;
 const M = require("../renderer/mcp-app-bridge.js");
 
 const KEY = "mcpapp:s1:weather:ui://weather/card";
@@ -26,6 +30,7 @@ beforeEach(() => {
   st = { key: KEY, title: "weather app", node: { contentWindow: win, style: {} }, h: 320 };
   M.MCPB.apps.clear();
   M.MCPB.arts = new Map([[KEY, st]]);
+  AB.AB.widgets.clear();
   delivered.length = 0; opened.length = 0; active = true; focused = true;
 });
 const rpc = (method, params, id) => ({ source: win, data: { jsonrpc: "2.0", method, ...(params ? { params } : {}), ...(id !== undefined ? { id } : {}) } });
@@ -85,6 +90,25 @@ test("ui/open-link opens http(s) only, after a click", () => {
   active = false;
   M.mcpAppBridgeMessage(rpc("ui/open-link", { url: "https://x.example" }, 3), now());
   assert.equal(opened.length, 1);
+});
+
+test("ui/open-link with an upper-case scheme is refused, as main refuses it, not answered as opened", () => {
+  M.mcpAppBridgeMessage(rpc("ui/open-link", { url: "HTTPS://example.com" }, 1), now());
+  assert.equal(win.got.pop().m.error.code, -32602);
+  assert.equal(opened.length, 0);
+});
+
+test("ui/message and ui/open-link share the widget rate limit: a second one inside the gap is refused", () => {
+  const t0 = now();
+  M.mcpAppBridgeMessage(rpc("ui/message", { role: "user", content: { type: "text", text: "one" } }, 1), t0);
+  assert.equal(delivered.length, 1);
+  M.mcpAppBridgeMessage(rpc("ui/message", { role: "user", content: { type: "text", text: "two" } }, 2), t0 + 100);
+  assert.equal(delivered.length, 1);
+  assert.equal(win.got.pop().m.error.code, -32000);
+  M.mcpAppBridgeMessage(rpc("ui/open-link", { url: "https://x.example" }, 3), t0 + 200);
+  assert.equal(opened.length, 0);
+  M.mcpAppBridgeMessage(rpc("ui/message", { role: "user", content: { type: "text", text: "three" } }, 4), t0 + AB.AB_PROMPT_GAP_MS);
+  assert.equal(delivered.pop().text, "three");
 });
 
 test("size, ping and display mode are answered; calls back to the server are refused; other frames are ignored", () => {
