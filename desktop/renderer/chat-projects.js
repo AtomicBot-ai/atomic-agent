@@ -135,6 +135,18 @@ function projectForNewTurn() {
   return typeof FOLDERS !== 'undefined' && folderById(FOLDERS.state, n.id) ? n.id : undefined;
 }
 
+/* ATO-2411: the folder of the project the empty chat on screen will open in
+   (PROJECTS.newFor, read but not taken; `id` names the project outright once
+   projectForNewTurn took it), or ''. The turn's model is that folder's
+   (renderer.js projectTurnModel), not the window's folder's. */
+function projectPendingFolder(id) {
+  const n = PROJECTS.newFor;
+  const pid = typeof id === 'string' && id ? id
+    : n && typeof S !== 'undefined' && !S.agentSession && S.log === n.log ? n.id : null;
+  const p = pid ? projectAny(pid) : null;
+  return p && p.folder ? p.folder : '';
+}
+
 /* A new chat New project opened in a project with no disk folder: main reads
    that project's instructions for the first turn by its id, and the chat is
    filed in it here once the turn says its session id (renderer.js). */
@@ -270,7 +282,7 @@ function projectCreateHTML() {
         ? '<span class="mono grow" title="' + esc(c.folder) + '">' + esc(c.folder) + '</span>'
           + '<button class="btn btn-s sm" data-act="pnewpick:"' + off + '>Change</button>'
           + '<button class="btn btn-s sm" data-act="pnewclear:"' + off + '>Remove</button>'
-        : '<span class="grow sd-cap">None. Chats in this project work in the folder the window shows.</span>'
+        : '<span class="grow sd-cap">None. Chats work in the folder the window shows, and the project has no model of its own. A folder can be added later in Edit project.</span>'
           + '<button class="btn btn-s sm" data-act="pnewpick:"' + off + '>Choose folder…</button>')
     + '</div>'
     + '<label class="sd-cap" for="pnew-instr">Instructions for every chat in this project <span class="sd-opt">optional</span></label>'
@@ -342,6 +354,8 @@ async function projectEditSave() {
   if ([...name].length > PROJECT_NAME_MAX) { projectEditRedraw({error: 'A project name is at most ' + PROJECT_NAME_MAX + ' characters'}); return; }
   if (e.instructions.length > PROJECT_INSTRUCTIONS_MAX) { projectEditRedraw({error: 'Instructions are at most ' + PROJECT_INSTRUCTIONS_MAX + ' characters'}); return; }
   if (e.id[0] === 'f') {
+    // ATO-2411: Choose folder… on a project with no disk folder makes it a projects-store project (project-folder-upgrade.js).
+    if (e.x && e.x.folder && typeof projectEditFolderUpgrade === 'function') { await projectEditFolderUpgrade(e, name); return; }
     const f = folderById(FOLDERS.state, e.id);
     if (!f || !folderRename(FOLDERS.state, e.id, name)) { projectEditRedraw({error: 'The project was not saved'}); return; }
     const text = e.instructions.trim();

@@ -252,16 +252,18 @@ test("Edit project shows the folder with Change folder…, the folder's AGENTS.m
   assert.deepEqual(c.opened, ["/src/app/AGENTS.md"], "opened through the reply chips' safe open");
 });
 
-test("a remote agent gets no model row, and a chat folder none of the extras", async () => {
+test("a remote agent gets no model row; a chat folder gets Choose folder… and nothing else until it has one", async () => {
   const r = load({ remote: true });
   vm.runInContext("projectAct('pedit', 'paaaaaa')", r);
   await tick();
   const html = vm.runInContext("projectEditHTML()", r);
   assert.doesNotMatch(html, /pedit-model/);
   assert.match(html, /Change folder…/);
+  // ATO-2411: the Folder row is drawn for a project with no disk folder too (project-folder-upgrade.test.mjs has the rest).
   const f = load();
   vm.runInContext("projectAct('pedit', 'f1')", f);
   const fh = vm.runInContext("projectEditHTML()", f);
+  assert.match(fh, /data-pex="folder">Choose folder…<\/button>/);
   assert.doesNotMatch(fh, /Change folder…|pedit-model|AGENTS\.md/);
   assert.equal(JSON.stringify(vm.runInContext("projectEditExtrasFields(PROJECTS.edit)", f)), "{}");
 });

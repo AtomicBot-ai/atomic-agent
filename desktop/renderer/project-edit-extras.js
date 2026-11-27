@@ -18,8 +18,11 @@
      through the reply chips' safe open, and the folder's trust when the
      window knows it (renderer.js PT, ATO-1250).
 
-   A chat folder (`f…`, no disk folder) has none of these. Loaded after
-   chat-projects.js; reads renderer.js globals at call time. */
+   A chat folder (`f…`, no disk folder; ATO-2411) gets the Folder row too,
+   with Choose folder…: a folder picked there shows the model row at once,
+   and Save turns the chat folder into a projects-store project
+   (project-folder-upgrade.js), its name, instructions and chats kept.
+   Loaded after chat-projects.js; reads renderer.js globals at call time. */
 
 const PEX_POLL_MS = 500, PEX_POLL_TICKS = 24;
 
@@ -180,7 +183,7 @@ function pexInit(e, p) {
   const shown = pexModelShown();
   e.x = {old: p, folder: '', folderErr: null, model: pexModelValue(pick), modelWas: pexModelValue(pick), file: null,
     groups: shown ? pexProviders() : []};
-  if (typeof BR !== 'undefined' && BR && typeof BR.projectsInstructionsFile === 'function') {
+  if (p.folder && typeof BR !== 'undefined' && BR && typeof BR.projectsInstructionsFile === 'function') {
     Promise.resolve().then(() => BR.projectsInstructionsFile(p.id)).then((res) => {
       pexApplyFile(e, res && res.ok && res.file ? res.file : null);
     }, () => {});
@@ -196,11 +199,27 @@ function pexTrustText(folder) {
   return sum && sum.state !== 'none' ? sum.text : '';
 }
 
-/** The folder row (hook in projectEditHTML): the folder, Change folder…, and a folder picked but not saved yet. */
+/** The folder row (hook in projectEditHTML): the folder, Change folder…, and a folder picked but not saved yet.
+    ATO-2411: a project with no disk folder shows "None" and Choose folder…. */
 function projectEditFolderHTML(e, p) {
-  if (!p || !p.folder || e.id[0] !== 'p') return '';
+  if (!p) return '';
   const x = pexInit(e, p), off = e.saving ? ' disabled' : '';
   const shown = x.folder || p.folder;
+  const err = x.folderErr ? '<p class="sd-cap tuierr">' + pexEsc(x.folderErr) + '</p>' : '';
+  if (!p.folder) {
+    return '<label class="sd-cap">Folder</label>'
+      + '<div class="sd-pnew-folder">'
+        + (shown
+          ? '<span class="mono grow" title="' + pexEsc(shown) + '">' + pexEsc(shown) + '</span>'
+            + '<button class="btn btn-s sm" data-pex="folderundo"' + off + '>Keep none</button>'
+            + '<button class="btn btn-s sm" data-pex="folder"' + off + '>Change folder…</button>'
+          : '<span class="grow sd-cap">None. Chats work in the folder the window shows.</span>'
+            + '<button class="btn btn-s sm" data-pex="folder"' + off + '>Choose folder…</button>')
+      + '</div>'
+      + (shown ? '<p class="sd-cap">Saved, new chats open there and the project gets its own model. Its chats stay in it.</p>'
+        : '<p class="sd-cap">Choose a folder to give this project its own model and a place for its new chats.</p>')
+      + err;
+  }
   return '<label class="sd-cap">Folder</label>'
     + '<div class="sd-pnew-folder">'
       + '<span class="mono grow" title="' + pexEsc(shown) + '">' + pexEsc(shown) + '</span>'
@@ -208,12 +227,13 @@ function projectEditFolderHTML(e, p) {
       + '<button class="btn btn-s sm" data-pex="folder"' + off + '>Change folder…</button>'
     + '</div>'
     + (x.folder ? '<p class="sd-cap">New chats open there; chats you already have keep their folder.</p>' : '')
-    + (x.folderErr ? '<p class="sd-cap tuierr">' + pexEsc(x.folderErr) + '</p>' : '');
+    + err;
 }
 
-/** Under the instructions (hook in projectEditHTML): the folder's AGENTS.md and the project's model. */
+/** Under the instructions (hook in projectEditHTML): the folder's AGENTS.md and the project's model.
+    Drawn once the project has a folder, saved or just picked (ATO-2411). */
 function projectEditMoreHTML(e, p) {
-  if (!p || !p.folder || e.id[0] !== 'p' || !e.x) return '';
+  if (!p || !e.x || (!p.folder && !e.x.folder)) return '';
   const x = e.x;
   const line = pexInstructionsLine(x.file, {pending: !!x.folder});
   const trust = line && line.open ? pexTrustText(p.folder) : '';
@@ -243,7 +263,8 @@ function projectEditExtrasSaved(e, p) {
   const x = e && e.x;
   if (!x || !p || typeof BR === 'undefined' || !BR) return;
   const moved = !!x.folder && !pexSameFolder(x.old.folder, p.folder);
-  if (moved && typeof BR.projectsAssign === 'function') {
+  // A chat folder given its first folder has no chats held by path: project-folder-upgrade.js files its own.
+  if (moved && x.old.folder && typeof BR.projectsAssign === 'function') {
     const rows = typeof SESSIONS !== 'undefined' ? SESSIONS : [];
     const home = typeof homeDir === 'function' ? homeDir() : '';
     const folderChats = typeof FOLDERS !== 'undefined' ? FOLDERS.state.chats : {};
