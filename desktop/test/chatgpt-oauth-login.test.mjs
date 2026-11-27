@@ -39,11 +39,15 @@ function harness(over = {}) {
   return { oauth: M.createChatgptOauth(deps), spawned, opened, runs, timers };
 }
 
+/** start() asks `login --help` first (ATO-2510), so the agent is spawned a moment later. */
+const tick = () => new Promise((r) => setImmediate(r));
+
 const AGENT_OUT = `ChatGPT sign-in (experimental; the Codex CLI provider stays the recommended way).\nOpen this link in a browser on this computer to sign in:\n\n${LINK}\n\nWaiting... (Ctrl+C to cancel; on another machine use --device)\n`;
 
 test('runs `login chatgpt --no-browser` on the bundled agent, opens the link once, returns the entry id', async () => {
   const h = harness();
   const pending = h.oauth.start();
+  await tick();
   const { bin, args, child } = h.spawned[0];
   assert.equal(bin, '/app/Resources/agent/atomic-agent');
   assert.deepEqual(args, ['login', 'chatgpt', '--no-browser']);
@@ -70,12 +74,14 @@ test('a second start while one runs joins it and spawns nothing', async () => {
   const h = harness();
   const a = h.oauth.start();
   const b = h.oauth.start();
+  await tick();
   assert.equal(a, b);
   assert.equal(h.spawned.length, 1);
   h.spawned[0].child.exit(0);
   await a;
   // After it ended, a new start is a new process.
   h.oauth.start();
+  await tick();
   assert.equal(h.spawned.length, 2);
 });
 
@@ -87,6 +93,7 @@ test('a link for any other host is never opened and the sign-in stops', async ()
   ]) {
     const h = harness();
     const pending = h.oauth.start();
+    await tick();
     const { child } = h.spawned[0];
     child.say(`Open this link:\n\n${bad}\n\n`);
     assert.deepEqual(h.opened, [], bad);
@@ -102,6 +109,7 @@ test('cancel sends SIGINT on macOS and Linux, a plain kill on Windows; the reaso
   for (const [platform, expected] of [['darwin', ['SIGINT']], ['linux', ['SIGINT']], ['win32', ['default']]]) {
     const h = harness({ deps: { platform } });
     const pending = h.oauth.start();
+    await tick();
     const { child } = h.spawned[0];
     assert.equal(h.oauth.cancel(), true);
     assert.deepEqual(child.kills, expected, platform);
@@ -113,9 +121,10 @@ test('cancel sends SIGINT on macOS and Linux, a plain kill on Windows; the reaso
   assert.equal(harness().oauth.cancel(), false);
 });
 
-test('an agent that ignores SIGINT is killed hard after a grace period', () => {
+test('an agent that ignores SIGINT is killed hard after a grace period', async () => {
   const h = harness();
   h.oauth.start();
+  await tick();
   const { child } = h.spawned[0];
   h.oauth.cancel();
   const grace = h.timers.find((t) => t.ms === 5000);
@@ -127,6 +136,7 @@ test('an agent that ignores SIGINT is killed hard after a grace period', () => {
 test('the backstop timer stops the sign-in with reason timeout', async () => {
   const h = harness();
   const pending = h.oauth.start();
+  await tick();
   const { child } = h.spawned[0];
   const backstop = h.timers.find((t) => t.ms === M.LOGIN_TIMEOUT_MS);
   backstop.fn();
@@ -144,6 +154,7 @@ test('the reason comes from the agent\'s own fixed sentences', async () => {
   for (const [said, reason] of cases) {
     const h = harness();
     const pending = h.oauth.start();
+    await tick();
     h.spawned[0].child.say(said);
     h.spawned[0].child.exit(1);
     assert.deepEqual(await pending, { ok: false, state: 'failed', reason }, said);
@@ -154,11 +165,13 @@ test('no agent binary, a spawn error or a failed browser open is a plain failure
   assert.deepEqual(await harness({ deps: { binary: () => null } }).oauth.start(), { ok: false, state: 'failed', reason: 'failed' });
   const h = harness();
   const pending = h.oauth.start();
+  await tick();
   h.spawned[0].child.emit('error', new Error('ENOENT'));
   assert.deepEqual(await pending, { ok: false, state: 'failed', reason: 'failed' });
 
   const h2 = harness({ deps: { openExternal: async () => { throw new Error('no browser'); } } });
   const p2 = h2.oauth.start();
+  await tick();
   h2.spawned[0].child.say(AGENT_OUT);
   await new Promise((r) => setImmediate(r));
   assert.deepEqual(h2.spawned[0].child.kills, ['SIGINT']);
