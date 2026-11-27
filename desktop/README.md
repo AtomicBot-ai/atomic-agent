@@ -1186,7 +1186,9 @@ Honestly degraded, and labelled as such in the UI:
   the panel (`main/meeting-voices.ts`, `meeting-voices-ipc.ts`,
   `renderer/meeting-voices.js`). An older agent, an OS without a prebuilt
   engine, a failed download or the switch off falls back to Me / Them or the
-  pause guess, and the saved file says which was used.
+  pause guess, and the saved file says which was used. When it is off, a
+  stopped recording shows one line, `Tell voices apart: Download (60 MB)`,
+  that opens Settings, Meetings.
 - **Create tasks (ATO-2514).** A reply that holds the meeting-notes
   `| # | Task | Owner | Due |` table gets `Create tasks` in its action row
   (`renderer/meeting-tasks.js`). It lists the items, all ticked, with a date

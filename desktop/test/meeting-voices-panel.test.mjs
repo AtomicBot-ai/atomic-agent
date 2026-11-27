@@ -18,6 +18,16 @@ test("the first-use download says how much, and that it happens once", () => {
   assert.equal(V.meetingVoicesText({ download: null, failed: false }, "recording"), "");
 });
 
+test("voices off (the default): a stopped recording offers it once, linked to Settings, Meetings", () => {
+  globalThis.esc = globalThis.esc || ((x) => String(x));
+  const html = V.meetingVoicesOfferHTML({ offer: true, on: false }, "stopped");
+  assert.match(html, /Tell voices apart: Download \(60 MB\)/);
+  assert.match(html, /data-act="settings:meetings"/);
+  assert.equal(V.meetingVoicesOfferHTML({ offer: true, on: false }, "recording"), "");
+  assert.equal(V.meetingVoicesOfferHTML({ offer: false, on: false }, "stopped"), "");
+  assert.equal(V.meetingVoicesOfferHTML({ offer: true, on: true }, "stopped"), "");
+});
+
 test("wiring: one MeetingVoices shared by the recorder and the routes", () => {
   assert.match(src("../main/meeting-ipc.ts"), /voices: meetingVoicesFor\(emit\),/);
   assert.match(src("../main/main.ts"), /wireMeetingVoicesIpc\(meetingVoicesFor\(\(ev\) => send\("app:meeting", ev\)\)\);/);
