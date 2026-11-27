@@ -6,16 +6,30 @@
  * editor) turns sharing back on for this computer only, never for the
  * network the person chose some earlier time.
  *
+ * `disk` is the tree on disk before this write. A write that turns
+ * sharing on from off (`config set localModels.managed.share true` over a
+ * file an older build or a hand edit left as `{share:false,
+ * shareNetwork:true}`) drops it too: enabling by a raw write is always
+ * this computer only. The network is chosen through `models share
+ * --network` or the desktop card (model-share-settings.ts).
+ *
  * Returns `tree` itself when nothing changes, else a copy without the key.
  */
-export function withoutStaleShareNetwork(tree: Record<string, unknown>): Record<string, unknown> {
+export function withoutStaleShareNetwork(tree: Record<string, unknown>, disk: Record<string, unknown> | null = null): Record<string, unknown> {
   const local = tree.localModels;
   if (!isPlainObject(local)) return tree;
   const managed = local.managed;
   if (!isPlainObject(managed) || !Object.hasOwn(managed, "shareNetwork")) return tree;
-  if (readsAsOn(managed.share)) return tree;
+  if (readsAsOn(managed.share) && (disk === null || readsAsOn(shareOf(disk)))) return tree;
   const { shareNetwork: _forgotten, ...rest } = managed;
   return { ...tree, localModels: { ...local, managed: rest } };
+}
+
+/** `localModels.managed.share` of a raw tree, `undefined` when absent. */
+function shareOf(tree: Record<string, unknown>): unknown {
+  const local = tree.localModels;
+  if (!isPlainObject(local) || !isPlainObject(local.managed)) return undefined;
+  return local.managed.share;
 }
 
 /** The values `parseBool` (config-primitives.ts) reads as true. */

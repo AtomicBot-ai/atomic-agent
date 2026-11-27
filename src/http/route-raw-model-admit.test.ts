@@ -1,10 +1,17 @@
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { getConfig, resetConfigCache } from "../config/index.js";
+import { ensureModelShareKey } from "./model-share-key.js";
+import { writeModelShareMode } from "./model-share-settings.js";
 
 import { AuthThrottle } from "./auth-throttle.js";
-import { createRawModelHandlers, RAW_MODEL_MAX_BODY_BYTES, type RawModelShareDeps } from "./route-raw-model.js";
+import { createRawModelHandlers, defaultRawModelShareDeps, RAW_MODEL_MAX_BODY_BYTES, type RawModelShareDeps } from "./route-raw-model.js";
 
 /**
  * ATO-2483: who the shared model answers, checked on the handler itself
@@ -22,10 +29,12 @@ const LAN_PEER = "192.168.1.23";
 interface FakeRes {
   res: ServerResponse;
   status: () => number;
+  body: () => string;
 }
 
 function fakeRes(): FakeRes {
   let status = 0;
+  let body = "";
   const res = Object.assign(new EventEmitter(), {
     destroyed: false,
     writableEnded: false,
@@ -37,12 +46,13 @@ function fakeRes(): FakeRes {
     write() {
       return true;
     },
-    end() {
+    end(chunk?: unknown) {
+      if (typeof chunk === "string") body += chunk;
       res.writableEnded = true;
       return res;
     },
   });
-  return { res: res as unknown as ServerResponse, status: () => status };
+  return { res: res as unknown as ServerResponse, status: () => status, body: () => body };
 }
 
 function fakeReq(remoteAddress: string, key: string | null): IncomingMessage {
@@ -68,12 +78,13 @@ function handlers(overrides: Partial<RawModelShareDeps> = {}) {
     ...overrides,
   };
   const raw = createRawModelHandlers(deps);
-  const call = async (remoteAddress: string, key: string | null): Promise<number> => {
+  const callFull = async (remoteAddress: string, key: string | null): Promise<FakeRes> => {
     const out = fakeRes();
     await raw.models(fakeReq(remoteAddress, key), out.res, {} as never);
-    return out.status();
+    return out;
   };
-  return { call, raw, forwarded: () => forwarded };
+  const call = async (remoteAddress: string, key: string | null): Promise<number> => (await callFull(remoteAddress, key)).status();
+  return { call, callFull, raw, forwarded: () => forwarded };
 }
 
 describe("raw model route in local mode (ATO-2483)", () => {
@@ -82,6 +93,20 @@ describe("raw model route in local mode (ATO-2483)", () => {
     expect(await h.call(LAN_PEER, SHARE_KEY)).toBe(404);
     expect(await h.call(`::ffff:${LAN_PEER}`, SHARE_KEY)).toBe(404);
     expect(h.forwarded()).toBe(0);
+  });
+
+  it("says why in the 404 body, and logs it once (a v0.10.0 serve on 0.0.0.0 answered the network)", async () => {
+    const lines: string[] = [];
+    const h = handlers({ localOnly: () => true, say: (line) => lines.push(line) });
+    const first = await h.callFull(LAN_PEER, SHARE_KEY);
+    await h.callFull(LAN_PEER, null);
+    expect(first.status()).toBe(404);
+    const error = (JSON.parse(first.body()) as { error: { code: string; message: string } }).error;
+    expect(error.code).toBe("model_share_local_only");
+    expect(error.message).toContain("atomic-agent models share --network");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("models share --network");
+    expect(lines[0]).not.toContain(SHARE_KEY);
   });
 
   it("still answers apps on this computer", async () => {
@@ -139,5 +164,38 @@ describe("raw model body is read only after the key (ATO-2483)", () => {
     expect(out.status()).toBe(401);
     expect(pulled).toBe(0);
     expect(h.forwarded()).toBe(0);
+  });
+});
+
+describe("raw model route, production wiring (ATO-2483)", () => {
+  let stateDir: string;
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "raw-model-wiring-"));
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    resetConfigCache();
+  });
+  afterEach(() => {
+    delete process.env.ATOMIC_AGENT_STATE_DIR;
+    resetConfigCache();
+    rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  it("the default deps (what serve uses) read local mode from the config file", () => {
+    const deps = defaultRawModelShareDeps();
+    expect(deps.localOnly).toBeTypeOf("function");
+    writeModelShareMode(getConfig().paths.userConfigFile, "local");
+    expect(deps.localOnly?.()).toBe(true);
+    writeModelShareMode(getConfig().paths.userConfigFile, "network");
+    expect(deps.localOnly?.()).toBe(false);
+  });
+
+  it("createRawModelHandlers() with no deps refuses another device in local mode", async () => {
+    writeModelShareMode(getConfig().paths.userConfigFile, "local");
+    const key = ensureModelShareKey(getConfig().paths.stateDir);
+    const raw = createRawModelHandlers();
+    const out = fakeRes();
+    await raw.models(fakeReq(LAN_PEER, key), out.res, {} as never);
+    expect(out.status()).toBe(404);
+    expect(out.body()).toContain("model_share_local_only");
   });
 });

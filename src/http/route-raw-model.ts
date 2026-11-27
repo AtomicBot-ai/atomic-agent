@@ -43,6 +43,14 @@ import { remoteMediaProblem } from "./raw-model-body-guard.js";
 export const RAW_MODEL_PREFIX = "/raw/v1";
 
 /**
+ * ATO-2483: what a caller from another device reads, and serve logs once,
+ * when the mode is "this computer". Up to v0.10.0 a serve on 0.0.0.0
+ * answered the network; this says why it stopped and how to let it in.
+ */
+export const LOCAL_ONLY_HINT =
+  "Model sharing is set to this computer only, so other devices get 404 here; to let them in, run: atomic-agent models share --network";
+
+/**
  * ATO-2483: the body cap of the raw route. Every other route keeps
  * `MAX_JSON_BODY_BYTES` (1 MiB); a chat with a photo or two inline as
  * base64 `data:` URLs (the only way remote-media guarding lets media in)
@@ -77,6 +85,8 @@ export interface RawModelShareDeps {
   fetch?: typeof fetch;
   limit?: InFlightLimit;
   throttle?: AuthThrottle;
+  /** Where the one-time "this computer only" line goes; default stderr. */
+  say?: (line: string) => void;
 }
 
 /**
@@ -124,9 +134,16 @@ export function createRawModelHandlers(deps: RawModelShareDeps = defaultRawModel
   const limit = deps.limit ?? createInFlightLimit();
   const throttle = deps.throttle ?? new AuthThrottle();
   const doFetch = deps.fetch ?? fetch;
+  const say = deps.say ?? ((line: string) => process.stderr.write(line));
+  let toldLocalOnly = false;
+  const onLocalOnly = (): void => {
+    if (toldLocalOnly) return;
+    toldLocalOnly = true;
+    say(`[atomic-agent] model share: refused a request from another device. ${LOCAL_ONLY_HINT}\n`);
+  };
 
   const handle = (method: "GET" | "POST", path: string): HttpHandler => async (req, res) => {
-    if (!admit(req, res, deps, throttle)) return;
+    if (!admit(req, res, deps, throttle, onLocalOnly)) return;
     const release = limit.tryAcquire();
     if (!release) {
       sendError(
@@ -157,10 +174,15 @@ export function createRawModelHandlers(deps: RawModelShareDeps = defaultRawModel
 }
 
 /** Switch, key, then the bearer check. `true` when the request may go on. */
-function admit(req: IncomingMessage, res: ServerResponse, deps: RawModelShareDeps, throttle: AuthThrottle): boolean {
-  // ATO-2483: in local mode a caller from another device sees the route as
-  // missing, the same answer as off, before any key is looked at.
-  if (!deps.isEnabled() || (deps.localOnly?.() === true && !isLoopbackAddress(req.socket?.remoteAddress ?? ""))) {
+function admit(req: IncomingMessage, res: ServerResponse, deps: RawModelShareDeps, throttle: AuthThrottle, onLocalOnly: () => void): boolean {
+  // ATO-2483: in local mode a caller from another device gets 404 before
+  // any key is looked at, with a body that says why (serve logs it once).
+  if (deps.isEnabled() && deps.localOnly?.() === true && !isLoopbackAddress(req.socket?.remoteAddress ?? "")) {
+    onLocalOnly();
+    sendError(res, 404, openaiError(LOCAL_ONLY_HINT, "invalid_request_error", null, "model_share_local_only"));
+    return false;
+  }
+  if (!deps.isEnabled()) {
     const method = (req.method ?? "GET").toUpperCase();
     const path = new URL(req.url ?? "/", "http://localhost").pathname;
     sendError(res, 404, openaiError(`No route for ${method} ${path}`, "invalid_request_error"));

@@ -11,6 +11,16 @@ describe("withoutStaleShareNetwork", () => {
     }
   });
 
+  it("drops it when the write turns sharing on from off: a stale network choice never comes back", () => {
+    const tree = { localModels: { managed: { share: true, shareNetwork: true } } };
+    for (const share of [false, undefined, "false"]) {
+      expect(withoutStaleShareNetwork(tree, { localModels: { managed: { share, shareNetwork: true } } })).toEqual({ localModels: { managed: { share: true } } });
+    }
+    expect(withoutStaleShareNetwork(tree, {})).toEqual({ localModels: { managed: { share: true } } });
+    // Already on before the write: the choice stays.
+    expect(withoutStaleShareNetwork(tree, { localModels: { managed: { share: true, shareNetwork: true } } })).toBe(tree);
+  });
+
   it("keeps it while sharing is on, and leaves a tree without it untouched", () => {
     const on = { localModels: { managed: { share: true, shareNetwork: true } } };
     expect(withoutStaleShareNetwork(on)).toBe(on);
