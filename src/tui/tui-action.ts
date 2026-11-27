@@ -31,6 +31,7 @@ import type { FallbackPanelAction } from "./llm-panel/fallback/fallback-panel-ac
 import type { WhileBusySubmitMode } from "../config/index.js";
 import type {
   ChatMessage,
+  RewindChoiceFacts,
   SessionPickerEntry,
   TuiTab,
   TuiUiMode,
@@ -187,6 +188,10 @@ export type TuiAction =
   | { type: "rewind_picker_cursor_moved"; delta: 1 | -1 }
   /** Put the rewind picker highlight on an absolute row (mouse click). */
   | { type: "rewind_picker_cursor_set"; row: number }
+  /** ATO-2467: a point was picked; ask what to take back while its files are checked. */
+  | { type: "rewind_choice_requested"; point: RewindPoint }
+  /** ATO-2467: what a rewind to `turnIndex` would touch; shows the choices. */
+  | { type: "rewind_choice_ready"; turnIndex: number; facts: RewindChoiceFacts }
   | { type: "coding_mode_menu_opened" }
   | { type: "coding_mode_menu_closed" }
   | { type: "coding_mode_menu_cursor_moved"; delta: number }

@@ -469,7 +469,7 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action", id: "session.rewind", label: "Rewind to a message…", group: "session",
-    slash: { name: "rewind", description: "take the chat back to an earlier message of yours and edit it; files the agent changed stay as they are", rank: 45.5 },
+    slash: { name: "rewind", description: "take the chat back to an earlier message of yours; choose chat and files, chat only or files only", rank: 45.5 },
   },
   {
     // ATO-1054: like Claude Code's `/export <file>`; after /rewind, before /plugins.

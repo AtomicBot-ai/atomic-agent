@@ -384,6 +384,8 @@ export function reduceUiAction(
     case "rewind_picker_closed":
     case "rewind_picker_cursor_moved":
     case "rewind_picker_cursor_set":
+    case "rewind_choice_requested":
+    case "rewind_choice_ready":
       return {
         ...state,
         rewindPicker: reduceRewindPicker(state.rewindPicker ?? null, action),

@@ -322,11 +322,11 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "enhance",
     description: "rewrite a prompt into a clearer one in the composer; nothing is sent",
   },
-  // ATO-1057.
+  // ATO-1057; ATO-2467 restores files too.
   {
     name: "rewind",
     description:
-      "take the chat back to an earlier message of yours and edit it; files the agent changed stay as they are",
+      "take the chat back to an earlier message of yours; choose chat and files, chat only or files only",
   },
   // ATO-1054.
   {
