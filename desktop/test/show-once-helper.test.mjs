@@ -161,5 +161,19 @@ test("the helper's source never reads a control's value and only listens", () =>
   const swift = readFileSync(join(here, "..", "native", "atomic-show-once.swift"), "utf8");
   assert.equal(/kAXValueAttribute|"AXValue"/.test(swift), false);
   assert.equal(/CGEvent\.post|AXUIElementPerformAction|CGEvent\(keyboardEventSource/.test(swift), false, "it posts no input");
-  assert.ok(swift.includes('if role == "AXSecureTextField" { return ["role": role, "label": ""] }'));
+  assert.ok(swift.includes('if isSecure(el, role) { return ["role": "AXSecureTextField", "label": ""] }'));
+  assert.ok(swift.includes("kAXSubroleAttribute"), "a password field is role AXTextField with subrole AXSecureTextField");
+});
+
+test("a password field the Mac reports as AXTextField with subrole AXSecureTextField is a password field", () => {
+  const field = { role: "AXTextField", subrole: "AXSecureTextField", label: "Password" };
+  const a = H.parseShowOnceHelperLine(JSON.stringify({ id: 7, app: safari, focused: field, element: field }));
+  assert.deepEqual(a.probe.focused, { role: "AXSecureTextField", label: "" });
+  assert.deepEqual(a.probe.element, { role: "AXSecureTextField", label: "" });
+  const log = new L.ShowOnceLog(1);
+  log.add(key(30, numbers, { focused: a.probe.focused }));
+  assert.equal(log.steps.at(-1).secure, true);
+  assert.equal(log.steps.at(-1).into, undefined, "the field is not named");
+  const jxa = readFileSync(join(here, "..", "main", "show-once-probe.ts"), "utf8");
+  assert.ok(jxa.includes('attr(el, "AXSubrole") === "AXSecureTextField"'), "the osascript path checks the subrole too");
 });

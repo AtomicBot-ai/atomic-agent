@@ -47,8 +47,11 @@ function attr(el, name) {
 function describe(el) {
   var role = attr(el, "AXRole");
   if (!role) return null;
-  // A password field is named as one; nothing else of it is read.
-  var label = role === "AXSecureTextField" ? "" : (attr(el, "AXTitle") || attr(el, "AXDescription") || "");
+  // A password field is named as one; nothing else of it is read. On the Mac
+  // it is role AXTextField with subrole AXSecureTextField (NSSecureTextField,
+  // a web password input), so the subrole is checked too.
+  if (role === "AXSecureTextField" || attr(el, "AXSubrole") === "AXSecureTextField") return { role: "AXSecureTextField", label: "" };
+  var label = attr(el, "AXTitle") || attr(el, "AXDescription") || "";
   return { role: role, label: String(label).slice(0, 120) };
 }
 function elementAt(x, y) {
@@ -124,7 +127,9 @@ function parseElement(v: unknown): ShowOnceElement | null {
   const o = v as Record<string, unknown>;
   const role = str(o.role);
   if (!role) return null;
-  return { role, label: role === "AXSecureTextField" ? "" : (str(o.label) ?? "") };
+  // A password field reports role AXTextField with subrole AXSecureTextField on the Mac.
+  if (role === "AXSecureTextField" || o.subrole === "AXSecureTextField") return { role: "AXSecureTextField", label: "" };
+  return { role, label: str(o.label) ?? "" };
 }
 
 /** The script's one JSON line (or the helper's answer, already parsed); anything else is an answer that names nothing. */
