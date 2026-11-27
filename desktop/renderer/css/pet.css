@@ -14,6 +14,8 @@
   --pet-paper: #FFFFFF;
   --pet-line: #D8DBDE;
   --pet-btn: #F1F2F4;
+  /* The app's type scale (styles.css --fs-*, ATO-1025): pet.html does not load styles.css. */
+  --fs-micro:11px; --fs-label:12px; --fs-cap:13px; --fs-lead:15px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -32,7 +34,7 @@ html, body {
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
-  font: 13px/1.35 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font: var(--fs-cap)/1.35 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--pet-ink);
 }
 
@@ -70,7 +72,7 @@ html, body {
   padding: 0 4px;
   border-radius: 10px;
   box-sizing: border-box;
-  font: 700 13px/20px Inter, -apple-system, sans-serif;
+  font: 700 var(--fs-cap)/20px Inter, -apple-system, sans-serif;
   text-align: center;
   color: #fff;
   background: var(--pet-core);
@@ -157,14 +159,14 @@ html, body {
 }
 .b-title { font-weight: 600; padding-right: 18px; overflow-wrap: anywhere; }
 .b-text { margin-top: 3px; color: var(--pet-ink-2); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.b-detail { margin-top: 2px; color: var(--pet-ink-2); font-size: 12px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.b-risk { margin-top: 3px; color: var(--pet-amber); font-size: 12px; }
-.b-msg { margin-top: 3px; font-size: 12px; color: var(--pet-ink-2); }
+.b-detail { margin-top: 2px; color: var(--pet-ink-2); font-size: var(--fs-label); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.b-risk { margin-top: 3px; color: var(--pet-amber); font-size: var(--fs-label); }
+.b-msg { margin-top: 3px; font-size: var(--fs-label); color: var(--pet-ink-2); }
 .b-detail[hidden], .b-risk[hidden], .b-msg[hidden], .b-more[hidden] { display: none; }
 .b-actions { display: flex; gap: 6px; margin-top: 8px; }
 .b-btn {
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-label);
   padding: 4px 10px;
   border-radius: 7px;
   border: 1px solid var(--pet-line);
@@ -176,7 +178,7 @@ html, body {
 .b-btn:disabled { opacity: .5; cursor: default; }
 .b-primary { background: var(--pet-blue); border-color: var(--pet-blue); color: #fff; }
 .b-quiet { margin-left: auto; }
-.b-more { margin-top: 5px; font-size: 11px; color: var(--pet-ink-2); }
+.b-more { margin-top: 5px; font-size: var(--fs-micro); color: var(--pet-ink-2); }
 .b-x {
   position: absolute;
   top: 4px;
@@ -184,7 +186,7 @@ html, body {
   border: 0;
   background: transparent;
   color: var(--pet-ink-2);
-  font-size: 15px;
+  font-size: var(--fs-lead);
   line-height: 1;
   cursor: pointer;
   padding: 2px 4px;
