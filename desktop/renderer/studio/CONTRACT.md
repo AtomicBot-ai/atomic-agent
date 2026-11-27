@@ -347,7 +347,10 @@ run from `studio-media.ts`, `daemon-watch.ts` and main's `agent:chat`.
 - Before a local generation, when the local chat model (Local models, or
   Fusion with a local seat) and the image/video model do not both fit, the
   chat model is **paused** for it: stopped as Studio's, never shown as a
-  crash, and the auto-restart holds still. Under Atomic Core (the default
+  crash, and the auto-restart holds still. Only the chat model goes
+  (`models stop --chat-only`, ATO-2461): the small embedding model stays, so
+  memory search keeps working, and the restart starts only the chat model.
+  Under Atomic Core (the default
   engine) this is always the case: Core 0.18.6 keeps one local model per GPU.
   On the plain llama-server engine both stay loaded when they fit (chat model
   + diffusion need ≤ 90 % of `machine.budgetBytes`), and the diffusion model

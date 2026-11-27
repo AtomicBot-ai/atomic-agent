@@ -2712,13 +2712,14 @@ const CHAT_ONLY_STOP_KEPT = /^stopped chat model; embedding model kept/m;
  * wants embeddings and the model is on disk. `embeddingKept` says it did. An
  * older agent ignores the flag and stops both, printing `stopped`: then
  * `embeddingKept` is false and the caller goes on as after `models stop`.
- * Told as a stop on purpose, as modelsStop is.
+ * Told as a stop on purpose, as modelsStop is, unless `repair` (ATO-2461:
+ * Studio's pause, which the app brings back itself).
  */
-export async function modelsStopChatOnly(): Promise<CliResult & { embeddingKept: boolean }> {
+export async function modelsStopChatOnly(opts: { repair?: boolean } = {}): Promise<CliResult & { embeddingKept: boolean }> {
   const h = cliStandIns.getStore();
   if (h) h.stops++;
   else stopsAskedFor++;
-  tell("stopping");
+  if (!opts.repair) tell("stopping");
   const res = await cli(["models", "stop", "--chat-only"], 30_000);
   return { ...res, embeddingKept: res.ok && CHAT_ONLY_STOP_KEPT.test(res.stdout) };
 }
