@@ -50,6 +50,7 @@ import { qualifyMcpToolName, splitMcpToolName } from "./mcp-resource-class.js";
 import { mcpServerKeepReadable } from "./mcp-sandbox-paths.js";
 import { buildMcpStdioEnv } from "./mcp-stdio-env.js";
 import { resolveMcpServerEnv } from "./mcp-env-secrets.js";
+import { resolveMcpServerHeaders } from "./mcp-header-secrets.js";
 import type { ToolSecretSource } from "../config/tool-secrets.js";
 import { maskSecrets } from "../error-reporting/secret-detector.js";
 import {
@@ -237,13 +238,16 @@ export class McpClient {
     try {
       // Secrets in a stdio server's env are fetched here, at spawn; a
       // server that cannot have them is never started.
+      const mayUseSecrets = this.deps.mayUseToolSecrets?.(this.config) ?? true;
       const serverEnv = await resolveMcpServerEnv(
         this.config,
         this.deps.toolSecrets,
-        this.deps.mayUseToolSecrets?.(this.config) ?? true,
+        mayUseSecrets,
       );
+      // Likewise a remote server's headers, at connect (`mcp-header-secrets.ts`).
+      const serverHeaders = await resolveMcpServerHeaders(this.config, this.deps.toolSecrets, mayUseSecrets);
       const transport =
-        this.deps.transportFactory?.(this.config) ?? this.buildTransport(serverEnv);
+        this.deps.transportFactory?.(this.config) ?? this.buildTransport(serverEnv, serverHeaders);
       // Attached before `client.connect()` starts the child: the SDK hands
       // out a PassThrough up front precisely so early output is not lost.
       stderrTail = attachStderrTail(
@@ -634,6 +638,7 @@ export class McpClient {
 
   private buildTransport(
     serverEnv: Readonly<Record<string, string>> | undefined = this.config.env,
+    serverHeaders?: Readonly<Record<string, string>>,
   ): StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport {
     const t = this.config.transport;
     if (t.kind === "stdio") {
@@ -701,14 +706,15 @@ export class McpClient {
           })
         : null;
     const authProvider = this.authProvider ?? undefined;
+    const headers = serverHeaders ?? t.headers;
     if (t.kind === "streamable_http") {
       return new StreamableHTTPClientTransport(new URL(t.url), {
-        requestInit: t.headers ? { headers: { ...t.headers } } : undefined,
+        requestInit: headers ? { headers: { ...headers } } : undefined,
         ...(authProvider ? { authProvider } : {}),
       });
     }
     return new SSEClientTransport(new URL(t.url), {
-      requestInit: t.headers ? { headers: { ...t.headers } } : undefined,
+      requestInit: headers ? { headers: { ...headers } } : undefined,
       ...(authProvider ? { authProvider } : {}),
     });
   }
