@@ -209,7 +209,10 @@ start two task schedulers against the same cron jobs.
   The count is forgotten after ten minutes of normal running. A deliberate
   stop (quit, folder change, model switch, Restart Agent Runtime) cancels a
   waiting attempt. A restart that brought it back adds "The agent stopped
-  unexpectedly and was restarted." to the chat; after the third failure the
+  unexpectedly and was restarted." to the chat, and the chat on screen is read
+  again: when the agent recorded its last turn as cut off, the ATO-448 Continue
+  row goes under it (`renderer/resume-after-restart.js`, ATO-2768; a click, never
+  sent by itself). After the third failure the
   chat offers a Restart agent button. Analytics `agent_restarted` with
   `trigger: auto`; the next exit report carries `auto_restart_attempt`. Off in
   a smoke run; `--smoke --smoke-task=767` arms it and kills the agent four times.
