@@ -68,6 +68,32 @@ export function distTag(version: string): "latest" | "next" {
 export type Manifest = Record<string, unknown>;
 
 /**
+ * The packages directly under a bundle's `node_modules/`, scoped ones as
+ * `@scope/name` (`@napi-rs/keyring`, `@lydell/node-pty`, ATO-2484): a
+ * scope folder is one level up from its packages, and a package left out
+ * of `bundleDependencies` is left out of the tarball. `list("")` reads
+ * node_modules itself, `list("@scope")` a scope folder; `hasManifest`
+ * says whether `<name>/package.json` exists.
+ */
+export function bundledPackageNames(
+  list: (dir: string) => readonly string[],
+  hasManifest: (name: string) => boolean,
+): string[] {
+  const names: string[] = [];
+  for (const entry of list("")) {
+    if (entry.startsWith(".")) continue;
+    if (entry.startsWith("@")) {
+      for (const inner of list(entry)) {
+        if (hasManifest(`${entry}/${inner}`)) names.push(`${entry}/${inner}`);
+      }
+      continue;
+    }
+    if (hasManifest(entry)) names.push(entry);
+  }
+  return names;
+}
+
+/**
  * A bundled dependency's manifest with nothing npm would act on at install:
  * no lifecycle scripts, no `gypfile` (which makes npm run node-gyp itself),
  * and only the dependencies that are bundled too.

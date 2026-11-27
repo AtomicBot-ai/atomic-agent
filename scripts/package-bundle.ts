@@ -24,6 +24,7 @@ import { argv, exit, stdout, stderr } from "node:process";
 import { fileURLToPath } from "node:url";
 import { pipeline } from "node:stream/promises";
 import { BUNDLE_TARGETS, currentTarget, BundleTarget } from "./bundle-targets.js";
+import { copyNodePtyRuntime } from "./copy-node-pty-runtime.js";
 
 // `new URL(...).pathname` yields `/C:/...` on Windows; `fileURLToPath`
 // returns a native path so bundle staging works cross-platform.
@@ -328,6 +329,11 @@ async function main(): Promise<number> {
 
   // The opt-in OS keychain binding: same anchored-require layout.
   await copyKeyringRuntime(stageDir);
+
+  // The pty binding for interactive shell jobs (ATO-2484): same layout.
+  const pty = await copyNodePtyRuntime(ROOT, stageDir, target);
+  for (const warning of pty.warnings) stderr.write(`warning: ${warning}\n`);
+  for (const name of pty.prebuilds) stdout.write(`bundled @lydell/${name}\n`);
 
   const readme = [
     `atomic-agent CLI (${target.slug}, Node SEA)`,
