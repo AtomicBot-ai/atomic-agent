@@ -15,6 +15,11 @@ import type { ShowOnceApp, ShowOnceElement, ShowOnceRect } from "./show-once-log
  *   key       → the frontmost app and the role of the focused element, so
  *               a password field is known as one
  *
+ * ATO-2499: the fallback. When the Accessibility helper
+ * (native/atomic-show-once.swift, show-once-helper.ts) is in the build it
+ * answers the same questions from one resident process, plus window titles
+ * and menu commands; this one-osascript-per-event path runs only without it.
+ *
  * Read-only: nothing is clicked, typed or captured. Every Accessibility
  * read is wrapped, so a Mac that refuses one answers without the element
  * and the step falls back to the app and the position. No electron import:
@@ -42,8 +47,11 @@ function attr(el, name) {
 function describe(el) {
   var role = attr(el, "AXRole");
   if (!role) return null;
-  // A password field is named as one; nothing else of it is read.
-  var label = role === "AXSecureTextField" ? "" : (attr(el, "AXTitle") || attr(el, "AXDescription") || "");
+  // A password field is named as one; nothing else of it is read. On the Mac
+  // it is role AXTextField with subrole AXSecureTextField (NSSecureTextField,
+  // a web password input), so the subrole is checked too.
+  if (role === "AXSecureTextField" || attr(el, "AXSubrole") === "AXSecureTextField") return { role: "AXSecureTextField", label: "" };
+  var label = attr(el, "AXTitle") || attr(el, "AXDescription") || "";
   return { role: role, label: String(label).slice(0, 120) };
 }
 function elementAt(x, y) {
@@ -89,9 +97,13 @@ export interface ShowOnceProbe {
   window: ShowOnceRect | null;
   element: ShowOnceElement | null;
   focused: ShowOnceElement | null;
+  /** ATO-2499: the title of the window the event happened in (the Accessibility helper only; osascript gives none). */
+  windowTitle: string | null;
+  /** The window's CGWindowID (the helper only), for a picture of it. */
+  windowId?: number | null;
 }
 
-const EMPTY: ShowOnceProbe = { app: null, window: null, element: null, focused: null };
+const EMPTY: ShowOnceProbe = { app: null, window: null, element: null, focused: null, windowTitle: null };
 
 const str = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v.slice(0, 200) : null);
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -115,20 +127,27 @@ function parseElement(v: unknown): ShowOnceElement | null {
   const o = v as Record<string, unknown>;
   const role = str(o.role);
   if (!role) return null;
-  return { role, label: role === "AXSecureTextField" ? "" : (str(o.label) ?? "") };
+  // A password field reports role AXTextField with subrole AXSecureTextField on the Mac.
+  if (role === "AXSecureTextField" || o.subrole === "AXSecureTextField") return { role: "AXSecureTextField", label: "" };
+  return { role, label: str(o.label) ?? "" };
 }
 
-/** The script's one JSON line; anything else is an answer that names nothing. */
-export function parseShowOnceProbe(stdout: string): ShowOnceProbe {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(String(stdout || "").trim());
-  } catch {
-    return { ...EMPTY };
+/** The script's one JSON line (or the helper's answer, already parsed); anything else is an answer that names nothing. */
+export function parseShowOnceProbe(stdout: string | object): ShowOnceProbe {
+  let parsed: unknown = stdout;
+  if (typeof stdout !== "object") {
+    try {
+      parsed = JSON.parse(String(stdout || "").trim());
+    } catch {
+      return { ...EMPTY };
+    }
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ...EMPTY };
   const o = parsed as Record<string, unknown>;
-  return { app: parseApp(o.app), window: parseRect(o.window), element: parseElement(o.element), focused: parseElement(o.focused) };
+  const probe: ShowOnceProbe = { app: parseApp(o.app), window: parseRect(o.window), element: parseElement(o.element), focused: parseElement(o.focused), windowTitle: str(o.windowTitle) };
+  const id = num(o.windowId);
+  if (id !== null && Number.isInteger(id) && id > 0) probe.windowId = id;
+  return probe;
 }
 
 export function showOnceProbeArgs(kind: "click" | "key", x = 0, y = 0): string[] {

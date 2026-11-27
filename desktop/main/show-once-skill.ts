@@ -1,4 +1,5 @@
-import type { ShowOnceStep } from "./show-once-log.js";
+import { isShowOnceAction, type ShowOnceStep } from "./show-once-log.js";
+import type { ShowOnceTidy } from "./show-once-tidy.js";
 
 /**
  * ATO-2401 "Show once": a recorded step log (show-once-log.ts) as a
@@ -60,6 +61,11 @@ function at(offset: { x: number; y: number } | null): string {
   return offset ? ` Recorded at (${offset.x}, ${offset.y}) from the window's top-left corner, a hint only.` : "";
 }
 
+/** A recorded menu path as the skill writes it: **File > Export To > PDF**. */
+function menuPath(path: readonly string[]): string {
+  return `**${path.join(" > ")}**`;
+}
+
 /** One step as an instruction line, or null for a step that says nothing on its own. */
 export function stepLine(s: ShowOnceStep): string | null {
   switch (s.kind) {
@@ -78,36 +84,80 @@ export function stepLine(s: ShowOnceStep): string | null {
       return `${verb} ${what} in ${s.app}.${how}${at(s.offset)}`;
     }
     case "keys":
-      return `Press \`${s.keys}\` in ${s.app} (os.screen.key { keys: "${s.keys}" }).`;
+      return `Press \`${s.keys}\` in ${s.app} (os.screen.key { keys: "${s.keys}" }).${s.menu ? ` It runs the menu command ${menuPath(s.menu)}.` : ""}`;
+    case "menu":
+      return `Choose ${menuPath(s.path)} from the menu bar in ${s.app}. Open each menu in turn: find it with os.screen.elements and press it with os.screen.press.`;
     case "text":
       return s.secure
         ? `A password goes here in ${s.app}. Never type it: ask the user to type it themselves, then go on.`
-        : `Type the text for this step in ${s.app} (os.screen.type). It was not recorded: take it from the task or ask the user.`;
+        : `Type the text for this step${s.into ? ` into the field "${s.into}"` : ""} in ${s.app} (os.screen.type). It was not recorded: take it from the task or ask the user.`;
     case "protected":
       return `The recording paused in ${s.app} (a protected app the agent cannot control). Ask the user to do this part themselves.`;
   }
 }
 
-/** The SKILL.md for a log, recorded at `recordedAt`. Null when the log has no step a person did. */
-export function compileShowOnceSkill(steps: readonly ShowOnceStep[], recordedAt: Date): CompiledShowOnceSkill | null {
-  const acted = steps.some((s) => s.kind === "click" || s.kind === "keys" || s.kind === "text");
+/**
+ * ATO-2499 replay check: what the screen should show once step `i` is done,
+ * from the window titles the recording heard (show-once-log.ts `window` /
+ * `after`). '' when the recording knows nothing to compare (no helper, a
+ * browser, a protected app).
+ */
+export function stepCheck(steps: readonly ShowOnceStep[], i: number): string {
+  const s = steps[i];
+  if (!s) return "";
+  if (s.kind === "app") {
+    const next = steps.slice(i + 1).find(isShowOnceAction);
+    return !s.browser && next && next.bundleId === s.bundleId && next.window ? ` Check: ${s.app} is in front with the window "${next.window}".` : "";
+  }
+  if (!isShowOnceAction(s)) return "";
+  const want = s.after ?? s.window;
+  if (!want) return "";
+  return s.after ? ` Check: the window "${want}" is now in front.` : ` Check: the window "${want}" is still in front.`;
+}
+
+/** The step lines of a log with their checks, numbered as the SKILL.md numbers them (line i is step i + 1). */
+export function showOnceStepLines(steps: readonly ShowOnceStep[]): string[] {
+  const out: string[] = [];
+  steps.forEach((s, i) => {
+    const line = stepLine(s);
+    if (line !== null) out.push(line + stepCheck(steps, i));
+  });
+  return out;
+}
+
+/**
+ * The SKILL.md for a log, recorded at `recordedAt`. Null when the log has
+ * no step a person did. ATO-2499 `tidy`: the chat model's title,
+ * description, summary and inputs (show-once-tidy.ts, already checked); the
+ * steps stay as recorded either way.
+ */
+export function compileShowOnceSkill(steps: readonly ShowOnceStep[], recordedAt: Date, tidy?: ShowOnceTidy | null): CompiledShowOnceSkill | null {
+  const acted = steps.some(isShowOnceAction);
   if (!acted) return null;
   const apps = showOnceApps(steps);
   const where = apps.length === 0 ? "a Mac app" : apps.length === 1 ? apps[0]! : `${apps.slice(0, -1).join(", ")} and ${apps[apps.length - 1]}`;
   const name = showOnceSkillName(apps[0] ?? null, recordedAt);
   const day = `${recordedAt.getFullYear()}-${pad(recordedAt.getMonth() + 1)}-${pad(recordedAt.getDate())}`;
-  const lines = steps.map(stepLine).filter((l): l is string => l !== null);
+  const lines = showOnceStepLines(steps);
   let description = `Repeat a routine the user showed once in ${where} (${lines.length} steps), with the os.screen tools. Use when the user asks to do that routine again.`;
   if (description.length > 300) description = `Repeat a routine the user showed once on this Mac (${lines.length} steps), with the os.screen tools.`;
+  if (tidy && tidy.description && tidy.description.length <= 300) description = tidy.description;
+  const ask = tidy && tidy.inputs.length
+    ? ["## Ask the user for", "", "Before starting, ask for anything the request did not give:", "", ...tidy.inputs.map((i) => `- ${i}`), ""]
+    : [];
   const body = [
-    `# Routine shown once in ${where}`,
+    tidy && tidy.title ? `# ${tidy.title}` : `# Routine shown once in ${where}`,
     "",
-    `The user recorded this routine once with Show once on ${day}. Only clicks, shortcuts and which app was in front were recorded: typed text and passwords were not, and nothing at all was recorded in protected apps.`,
+    ...(tidy && tidy.summary ? [tidy.summary, ""] : []),
+    `The user recorded this routine once with Show once on ${day}. Only clicks, shortcuts, menu commands and which app and window were in front were recorded: typed text and passwords were not, and nothing at all was recorded in protected apps.`,
     "",
+    ...ask,
     "## How to replay",
     "",
     "- This runs on macOS with the os.screen tools. Before a step, list the window's controls with `os.screen.elements { app }` and press the matching one with `os.screen.press { app, element }`. Use `os.screen.click` only when no control matches.",
-    "- After each step, check the window (`os.screen.elements` or `os.screen.capture { app }`). If it does not look the way the next step expects, stop and tell the user what you see.",
+    "- Replay check: after each step, look at the window (`os.screen.elements { app }` names it and its controls, or `os.screen.capture { app }`) and compare it with the step's \"Check:\" line, or with what the next step needs when there is none.",
+    "- At the first step that does not match, stop: do not try other clicks. Tell the user \"Replay stopped at step N of M: expected ..., saw ...\" and what you think went wrong.",
+    "- When every step matched, end with \"Replay check: all M steps matched.\"",
     "- Recorded positions are hints: windows move. Go by the control's name first.",
     "- Never type a password and never act in a protected app; ask the user to do those parts.",
     "- If the user asked for something slightly different from the recording (another file, another value), follow the user.",

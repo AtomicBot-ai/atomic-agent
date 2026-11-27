@@ -169,6 +169,12 @@ const config = {
         "from": "out/native/atomic-fn-key",
         "to": "native/atomic-fn-key"
       },
+      /* ATO-2499: Show once's Accessibility helper (main/show-once-helper.ts);
+         without it Show once asks osascript once per event. */
+      {
+        "from": "out/native/atomic-show-once",
+        "to": "native/atomic-show-once"
+      },
       /* Atomic Chat Core, fetched and checked against the release's
          SHA256SUMS by scripts/fetch-core.mjs. Per arch, like the app: one
          build per arch (arm64, x64), never universal. Under Resources, so the
