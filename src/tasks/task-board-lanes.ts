@@ -14,10 +14,11 @@ export type BoardLane = (typeof BOARD_LANES)[number];
 export const BOARD_NOTE_MAX_LENGTH = 2_000;
 /**
  * An assignee is an agent profile name; the same rule as
- * `agent-profiles/agent-profile.ts` (`NAME_PATTERN`), kept here so the
- * queue does not import the profiles layer.
+ * `agent-profiles/agent-profile.ts` (`NAME_PATTERN`), or a plugin's
+ * `plugin:agent` (ATO-2498), kept here so the queue does not import the
+ * profiles layer.
  */
-export const BOARD_ASSIGNEE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+export const BOARD_ASSIGNEE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}(?::[a-z0-9][a-z0-9_-]{0,63})?$/;
 
 /** What the board stores for one task; every field optional. */
 export interface BoardEntry {
@@ -138,7 +139,7 @@ export function validateBoardPatch(raw: {
     if (assignee.length > 0 && !BOARD_ASSIGNEE_PATTERN.test(assignee)) {
       throw new BoardValidationError(
         "assignee",
-        "assignee must be a profile name (lowercase letters, digits, - and _)",
+        "assignee must be a profile name (lowercase letters, digits, - and _, or plugin:agent)",
       );
     }
     patch.assignee = assignee.length > 0 ? assignee : null;

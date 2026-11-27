@@ -26,6 +26,7 @@ import {
 } from "../../scheduler/index.js";
 import { WebhookSessionStore, WEBHOOK_SESSIONS_FILENAME } from "../../http/webhook-session-store.js";
 import { registerTaskTools } from "../../tools/tasks/index.js";
+import { createBoardAssigneeResolver } from "./runtime-board-assignee.js";
 import { showDesktopNotification } from "../../tools/os/notify.js";
 import type { ToolRegistry } from "../../tools/tool-registry.js";
 import type { SessionStore } from "../../session/index.js";
@@ -90,6 +91,8 @@ export function createRuntimeTaskRunner(args: {
     store: taskStore,
     runtime: { runTurn },
     sessionLoader: sessionStore,
+    // A board card assigned to an agent profile runs as it (ATO-2498).
+    assignee: createBoardAssigneeResolver(),
     sessionFactory: {
       create: (input) => createSession(input ?? {}),
       save: (state) => sessionStore.save(state),
