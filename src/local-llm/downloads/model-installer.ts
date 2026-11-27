@@ -17,6 +17,7 @@ import {
 } from "../backend-paths.js";
 import { downloadFile, type DownloadFileOptions } from "./download-file.js";
 import { assertModelsDirUsable } from "../models-dir-guard.js";
+import { fetchGenerationConfigBeside } from "./generation-config-fetch.js";
 
 /** What a model pull lets its caller steer: progress, retry notices, cancel. */
 export type ModelDownloadOptions = Pick<
@@ -85,6 +86,11 @@ export async function downloadModel(
   assertModelsDirUsable(dataDir);
   mkdirSync(dirname(dest), { recursive: true });
   await downloadFile(model.huggingFaceUrl, dest, opts);
+  // ATO-2482: the authors' sampling, for a header that names none.
+  // Best-effort; a failure here never fails the download.
+  await fetchGenerationConfigBeside(model, dest, opts?.signal ? { signal: opts.signal } : {}).catch(
+    () => "none",
+  );
 }
 
 /**

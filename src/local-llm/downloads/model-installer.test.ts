@@ -97,7 +97,12 @@ describe("model-installer", () => {
     globalThis.fetch = fn as unknown as typeof fetch;
     await downloadModel(dir, model);
     await downloadModel(dir, model);
-    expect(fn).toHaveBeenCalledTimes(1);
+    // Only the weights count: the first pull also asks Hugging Face for
+    // a generation_config.json (ATO-2482), the second asks nothing.
+    const weightCalls = fn.mock.calls.filter((call: unknown[]) =>
+      String(call[0]).endsWith(model.filename),
+    );
+    expect(weightCalls).toHaveLength(1);
   });
 
   it("downloads mmproj projector for vision-capable models", async () => {

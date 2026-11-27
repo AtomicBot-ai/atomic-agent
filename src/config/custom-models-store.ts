@@ -44,13 +44,16 @@ function writeCustomModels(defs: readonly LocalModelDef[]): void {
 
 /**
  * Persist `def`, replacing any entry with the same id — re-adding the
- * same repo and file is a refresh, not a duplicate.
+ * same repo and file is a refresh, not a duplicate. The person's own
+ * sampling on the old entry is kept unless `def` brings its own (ATO-2482).
  */
 export function addCustomModel(def: LocalModelDef): void {
   const path = getConfig().paths.userConfigFile;
   const previous = ensureUserConfigFileSync(path);
+  const old = previous.localModels.customModels.find((m) => m.id === def.id);
   const kept = previous.localModels.customModels.filter((m) => m.id !== def.id);
-  writeCustomModels([...kept, def]);
+  const next = def.sampling === undefined && old?.sampling ? { ...def, sampling: old.sampling } : def;
+  writeCustomModels([...kept, next]);
 }
 
 /** Drop one. Returns `false` when there was nothing by that id. */

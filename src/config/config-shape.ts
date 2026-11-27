@@ -207,6 +207,8 @@ const KNOWN_KEYS_OUTSIDE_DEFAULTS: Readonly<Record<string, readonly string[]>> =
   // clears them (ATO-2106 modelsDirOverride, ATO-1106 loraAdapters,
   // ATO-2483 shareNetwork and sharePort).
   "localModels.managed": ["modelsDirOverride", "loraAdapters", "shareNetwork", "sharePort"],
+  // ATO-2482: dropped when the last per-model set is reset.
+  localModels: ["modelSamplingOverrides"],
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

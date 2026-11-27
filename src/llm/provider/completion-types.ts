@@ -188,6 +188,15 @@ export interface CompletionRequest {
    * when `localModels.modelSampling` is on. Ignored by other providers.
    */
   modelSampling?: ModelSamplingDefaults;
+  /**
+   * The person's own sampling for the serving model (ATO-2482,
+   * `localModels.modelSamplingOverrides` or an added model's
+   * `sampling`), attached by the llama-server provider. Used over
+   * `modelSampling` whether `localModels.modelSampling` is on or not;
+   * the request's explicit fields and the env overrides still win.
+   * Ignored by other providers.
+   */
+  userSampling?: ModelSamplingDefaults;
   sessionId?: string;
   signal?: AbortSignal;
   /**

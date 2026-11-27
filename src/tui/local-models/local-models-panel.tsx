@@ -23,6 +23,8 @@ import { NotifyPromptBox } from "./notify-prompt-box.js";
 import { CORE_FAILURE_NOTICE_ROWS, CoreFailureNotice } from "./core-failure-notice.js";
 import type { LocalModelDef } from "../../local-llm/index.js";
 import { renderProgressBar } from "../components/render-progress-bar.js";
+import { getConfig } from "../../config/index.js";
+import { modelSamplingLine } from "./model-sampling-line.js";
 
 /**
  * Render the per-row availability badge that combines GGUF + mmproj
@@ -337,6 +339,9 @@ export function LocalModelDetail({
           GPU ~{panel.gpuBudgetGb.toFixed(1)} GB — may fail to load / crash
         </Text>
       ) : null}
+      <Text color={theme.colors.muted}>
+        {modelSamplingLine(m, getConfig().localModels)}
+      </Text>
       <Text color={theme.colors.muted}>{enterHint} · Esc back</Text>
     </Box>
   );

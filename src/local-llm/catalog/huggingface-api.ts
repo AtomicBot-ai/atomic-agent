@@ -111,3 +111,62 @@ export function resolveHuggingFaceFileUrl(
   const encoded = filePath.split("/").map(encodeURIComponent).join("/");
   return `https://huggingface.co/${repoId}/resolve/${encodeURIComponent(revision)}/${encoded}`;
 }
+
+/** At most this much of a `generation_config.json` is read (real ones are < 1 KB). */
+const GENERATION_CONFIG_MAX_BYTES = 64 * 1024;
+
+/**
+ * The `base_model` a repo's card names (ATO-2482): the model a GGUF repo
+ * was converted from, where the authors' `generation_config.json` lives
+ * (no GGUF repo in the catalog ships one). Best-effort: any failure, a
+ * gated repo included, reads as "names none".
+ */
+export async function fetchHuggingFaceBaseModels(
+  repoId: string,
+  opts?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<string[]> {
+  let raw: unknown;
+  try {
+    raw = await fetchHfJson(`/models/${repoId}`, opts);
+  } catch {
+    return [];
+  }
+  const card = (raw as { cardData?: { base_model?: unknown } } | null)?.cardData;
+  const base = card?.base_model;
+  const list = Array.isArray(base) ? base : [base];
+  return list.filter(
+    (id): id is string =>
+      typeof id === "string" && /^[\w.-]+\/[\w.-]+$/.test(id) && id !== repoId,
+  );
+}
+
+/**
+ * A repo's `generation_config.json` as text, or `null` when it has none
+ * (404), it is gated, the network fails or the file is not small JSON.
+ * Read through the configured endpoint, like every other file fetch.
+ */
+export async function fetchHuggingFaceGenerationConfig(
+  repoId: string,
+  revision = "main",
+  opts?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<string | null> {
+  const token = huggingFaceToken();
+  const timeout = AbortSignal.timeout(opts?.timeoutMs ?? 15_000);
+  const url = `${resolveHuggingFaceEndpoint()}/${repoId}/resolve/${encodeURIComponent(revision)}/generation_config.json`;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "atomic-agent/local-llm",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      signal: opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout,
+    });
+    if (!res.ok) return null;
+    const text = await res.text();
+    if (text.length > GENERATION_CONFIG_MAX_BYTES) return null;
+    JSON.parse(text);
+    return text;
+  } catch {
+    return null;
+  }
+}
