@@ -1788,7 +1788,9 @@ without a click.
   version is newer. A feed without beta files falls back to the build's own
   channel, so the switch never hides a stable release; when betas are
   published, each stable release needs a `beta*` copy too, or beta readers
-  wait for the next beta.
+  wait for the next beta. ATO-2414: no betas are published yet, so the row is
+  hidden (`BETA_CHANNEL_SHIPPED` in `main/updater.ts`); a saved "on" keeps the
+  fallback above and still gets stable updates. Flip the flag with the first beta.
 - The person's choices are in Electron userData `updates.json` (auto-check, beta,
   skipped version, last Not now, and the install in flight, which the new
   version reads once to send `update_installed`). Never in the agent's

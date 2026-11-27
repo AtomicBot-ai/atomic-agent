@@ -93,6 +93,8 @@ export interface UpdateState {
   channel: string;
   /** ATO-575: the person reads beta builds too. */
   beta: boolean;
+  /** ATO-2414: Settings shows the beta switch only once betas are published (BETA_CHANNEL_SHIPPED). */
+  betaOffered: boolean;
   phase: UpdatePhase;
   /** The newer version, once one is known. */
   version: string | null;
@@ -144,6 +146,14 @@ export function readChannel(u: { channel: string | null; allowDowngrade: boolean
   u.channel = channel;
   u.allowDowngrade = false;
 }
+
+/**
+ * ATO-2414: no beta builds are published (the feed has no `beta*.yml`), so
+ * Settings hides "Get beta versions". Someone who turned it on earlier keeps
+ * the saved choice and the 404 fallback in lookUp(), so stable updates still
+ * come. Set to true when the first beta ships.
+ */
+export const BETA_CHANNEL_SHIPPED = false;
 
 /** ATO-575: the channel the feed is read on: `beta` when the person asked for betas, else the build's own. */
 export function effectiveChannel(buildChannel: string, prefs: Pick<UpdatePrefs, "beta">): string {
@@ -524,6 +534,7 @@ export class AppUpdateController {
       currentVersion: this.currentVersion,
       channel: effectiveChannel(this.channel, this.prefs),
       beta: this.prefs.beta,
+      betaOffered: BETA_CHANNEL_SHIPPED,
       phase: this.phase,
       version: this.version,
       notes: this.notes,

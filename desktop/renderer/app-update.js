@@ -219,9 +219,10 @@ function updAutoRowHTML(st) {
     + '</div>';
 }
 
-/* ATO-575: stable or beta. Only where the app updates itself; off, the version stays until a stable one is newer. */
+/* ATO-575: stable or beta. Only where the app updates itself; off, the version stays until a stable one is newer.
+   ATO-2414: hidden until betas are published (main's BETA_CHANNEL_SHIPPED). */
 function updBetaRowHTML(st) {
-  if (!st || !st.enabled) return '';
+  if (!st || !st.enabled || !st.betaOffered) return '';
   const on = !!st.beta;
   return '<div class="tk-setrow" id="set-upd-beta">'
       + '<div class="body"><div class="t">Get beta versions</div>'
