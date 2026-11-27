@@ -10,8 +10,16 @@
    It is the text, not the layout: Open shows the real thing. When main cut
    the file short (too many slides, rows or characters) a note says so.
 
-   Shared with the Node checks (test/office-preview.test.mjs): fpOfficeHtml.
-   Nothing here touches the DOM. */
+   ATO-2410: a deck's cards are the fallback. When main says the machine can
+   draw the slides (`office.renderable`), file-preview.js asks it for the
+   pictures and puts the answer on `office.render`: a PDF (LibreOffice), shown
+   in the same frame as a .pdf file, or Quick Look's HTML page, shown in the
+   same sandboxed frame as an .html file (ofSlidesDoc adds the CSP and a zoom
+   that fits the page to the panel). Until it answers the cards carry a
+   "Drawing the slides" note; when it cannot (`office.renderFailed`) they stay.
+
+   Shared with the Node checks (test/office-preview.test.mjs): fpOfficeHtml,
+   ofSlidesDoc. Nothing here touches the DOM. */
 
 function ofEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c])); }
 
@@ -24,11 +32,42 @@ function ofColName(i) {
 
 function ofNote(text) { return '<div class="fp-note">' + ofEsc(text) + '</div>'; }
 
-function ofSlidesHtml(o) {
+/** The deck's slides as pictures when main drew them (ATO-2410), else null. file-preview.js fills the frame in. */
+function ofSlidesFrameHtml(o, name) {
+  const r = o && o.render;
+  if (!r || !r.ok) return null;
+  if (r.kind === 'pdf' && typeof r.base64 === 'string' && r.base64) return '<iframe class="fp-frame fp-pdf" data-fp-pdf="1" title="' + ofEsc(name) + '"></iframe>';
+  if (r.kind === 'html' && typeof r.html === 'string' && r.html) return '<iframe class="fp-frame fp-slides" data-fp-slides="1" sandbox="" referrerpolicy="no-referrer" title="' + ofEsc(name) + '"></iframe>';
+  return null;
+}
+
+/**
+ * The document Quick Look's page is shown as (ATO-2410): the page itself
+ * after a CSP that allows no script, no network, no frames (the .html
+ * preview's), and a zoom that fits its fixed width to the panel. No doctype
+ * on purpose: Quick Look measures in unitless CSS lengths (`top:37;
+ * width:720`), which only quirks mode honours; a doctype would pile every
+ * slide's text into one corner.
+ */
+function ofSlidesDoc(html, csp, zoom) {
+  const z = zoom > 0 && zoom < 1 ? Math.round(zoom * 1000) / 1000 : 1;
+  const head = '<meta http-equiv="Content-Security-Policy" content="' + csp + '"><meta charset="utf-8">'
+    + '<style>html,body{margin:0;padding:0 0 8px}body{zoom:' + z + '}</style>';
+  const s = String(html == null ? '' : html);
+  const open = s.search(/<head(\s[^>]*)?>/i);
+  if (open < 0) return head + s;
+  const end = s.indexOf('>', open) + 1;
+  return s.slice(0, end) + head + s.slice(end);
+}
+
+function ofSlidesHtml(o, name) {
+  const frame = ofSlidesFrameHtml(o, name);
+  if (frame) return frame;
   const slides = Array.isArray(o.slides) ? o.slides : [];
   if (!slides.length) return '<div class="fp-msg">This presentation has no slides.</div>';
   const cut = o.truncated ? ofNote('Showing ' + slides.length + ' of ' + (o.total || slides.length) + ' slides. Open the file to see all of it.') : '';
-  return cut + '<div class="fp-office fp-deck">' + slides.map((s) => {
+  const wait = o.renderable && !o.renderFailed ? '<div class="fp-note fp-wait">Drawing the slides…</div>' : '';
+  return cut + wait + '<div class="fp-office fp-deck">' + slides.map((s) => {
     const paras = (Array.isArray(s.paras) ? s.paras : []).map((p) => '<p>' + ofEsc(p) + '</p>').join('');
     return '<section class="fp-slide"><div class="fp-slide-n">' + ofEsc(s.n) + '</div><div class="fp-slide-c">'
       + (s.title ? '<div class="fp-slide-t">' + ofEsc(s.title) + '</div>' : '')
@@ -67,10 +106,10 @@ function ofSheetHtml(o) {
 function fpOfficeHtml(d) {
   const o = d && d.office;
   if (!o) return '<div class="fp-msg">This file could not be read.</div>';
-  if (o.type === 'pptx') return ofSlidesHtml(o);
+  if (o.type === 'pptx') return ofSlidesHtml(o, d.name || 'Slides');
   if (o.type === 'docx') return ofDocHtml(o);
   if (o.type === 'xlsx') return ofSheetHtml(o);
   return '<div class="fp-msg">This file could not be read.</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {fpOfficeHtml, ofColName};
+if (typeof module !== 'undefined') module.exports = {fpOfficeHtml, ofColName, ofSlidesDoc};

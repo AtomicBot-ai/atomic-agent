@@ -279,6 +279,8 @@ contextBridge.exposeInMainWorld("atomic", {
   // → {ok:true, path, size, mtimeMs} | {ok:false, reason:"changed", size, mtimeMs} | {ok:false, reason}.
   filePreviewSave: (path: string, text: string, stamp: { size: number; mtimeMs: number }, force?: boolean) =>
     ipcRenderer.invoke("app:filePreviewSave", path, text, stamp, force === true),
+  // ATO-2410: a deck's slides as pictures; {ok:true, kind:'pdf', base64} | {ok:true, kind:'html', html, width} | {ok:false, reason}.
+  filePreviewSlides: (path: string) => ipcRenderer.invoke("app:filePreviewSlides", path),
   // ATO-1136: an HTML artifact kept in main and served sandboxed; answers {ok:true, url:'atomic-art://…/'} | {ok:false, reason}.
   artifactPut: (html: string) => ipcRenderer.invoke("app:artifactPut", html),
   artifactDrop: (url: string) => ipcRenderer.invoke("app:artifactDrop", url),

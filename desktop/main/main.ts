@@ -345,6 +345,7 @@ import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
 import { filePreviewSave } from "./file-save.js";
+import { renderSlides, slidesRenderable } from "./slide-render.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 import { buildLocalGgufModelDef, resolveLocalGgufFile } from "./local-gguf.js";
 import { discoverLocalModels, registerDiscoveredModel } from "./local-models-found.js";
@@ -3196,8 +3197,22 @@ function wireIpc(client: AgentClient): void {
      capped, nothing run. Open and Reveal go through the same check, and Open
      still never runs a file (openWithoutRunning). */
   const previewRoots = (): string[] => previewRootsFor(imageRoots(), client.isRemote ? null : client.status.workingDir);
-  ipcMain.handle("app:filePreview", (_event, p: unknown) =>
-    filePreview(p, previewRoots(), homedir(), process.platform));
+  ipcMain.handle("app:filePreview", async (_event, p: unknown) => {
+    const r = await filePreview(p, previewRoots(), homedir(), process.platform);
+    // ATO-2410: a deck says whether this machine can draw its slides; the window then asks app:filePreviewSlides.
+    if (r.ok && r.kind === "office" && r.office && r.office.type === "pptx") r.office.renderable = slidesRenderable(process.platform);
+    return r;
+  });
+  /* ATO-2410: the slides of a deck as pictures (slide-render.ts): LibreOffice's
+     PDF when it is installed, Quick Look's page on macOS, else nothing and the
+     text cards stay. The same root check as the preview; the file itself is
+     only read, the converter writes into a temporary folder of its own. */
+  ipcMain.handle("app:filePreviewSlides", async (_event, p: unknown) => {
+    const t = await previewTarget(p, previewRoots(), homedir(), process.platform);
+    if (!t.ok) return { ok: false, reason: t.reason };
+    const r = await renderSlides(t.real, process.platform);
+    return r ? { ok: true, ...r } : { ok: false, reason: "no-render" };
+  });
   ipcMain.handle("app:filePreviewAction", async (_event, p: unknown, action: unknown) => {
     const t = await previewTarget(p, previewRoots(), homedir(), process.platform);
     if (!t.ok) return { ok: false, reason: t.reason };
