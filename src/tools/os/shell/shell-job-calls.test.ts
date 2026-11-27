@@ -50,7 +50,7 @@ describe("classifyShellCall", () => {
     const both = classifyShellCall({ cmd: "ls", wait: 3 });
     expect(both).toEqual({
       kind: "invalid",
-      message: "os.shell.run: pass one of cmd, wait, kill, jobs (got cmd, wait)",
+      message: "os.shell.run: pass one of cmd, wait, kill, jobs, write (got cmd, wait)",
     });
     const three = classifyShellCall({ cmd: "ls", wait: 3, kill: 2, jobs: true });
     expect(three.kind).toBe("invalid");

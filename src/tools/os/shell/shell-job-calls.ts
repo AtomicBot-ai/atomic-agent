@@ -55,6 +55,7 @@ export type ShellCallForm =
   | { kind: "jobs" }
   | { kind: "wait"; id: number }
   | { kind: "kill"; id: number }
+  | { kind: "write"; id: number }
   | { kind: "invalid"; message: string };
 
 /**
@@ -68,7 +69,7 @@ export type ShellCallForm =
 function isPresent(key: string, value: unknown): boolean {
   if (value === undefined || value === null || value === false) return false;
   if (typeof value === "string" && value.trim() === "") return false;
-  if ((key === "wait" || key === "kill") && isZeroId(value)) return false;
+  if ((key === "wait" || key === "kill" || key === "write") && isZeroId(value)) return false;
   return true;
 }
 
@@ -76,8 +77,9 @@ function isZeroId(value: unknown): boolean {
   return value === 0 || (typeof value === "string" && value.trim() === "0");
 }
 
-function jobIdHint(kind: "wait" | "kill"): string {
-  return `os.shell.run: ${kind} must be a job id (a positive integer), e.g. {"${kind}": 3}; {"jobs": true} lists them`;
+function jobIdHint(kind: "wait" | "kill" | "write"): string {
+  const example = kind === "write" ? `{"write": 3, "text": "y\\n"}` : `{"${kind}": 3}`;
+  return `os.shell.run: ${kind} must be a job id (a positive integer), e.g. ${example}; {"jobs": true} lists them`;
 }
 
 function parseJobId(raw: unknown): number | null {
@@ -90,21 +92,21 @@ function parseJobId(raw: unknown): number | null {
   return Number.isInteger(value) && value > 0 ? value : null;
 }
 
-/** Which form a call is; exactly one of `cmd` / `wait` / `kill` / `jobs`. */
+/** Which form a call is; exactly one of `cmd` / `wait` / `kill` / `jobs` / `write` (ATO-2277). */
 export function classifyShellCall(
   rawArgs: Record<string, unknown>,
 ): ShellCallForm {
-  const present = ["cmd", "wait", "kill", "jobs"].filter((key) =>
+  const present = ["cmd", "wait", "kill", "jobs", "write"].filter((key) =>
     isPresent(key, rawArgs[key]),
   );
   if (present.length > 1) {
     return {
       kind: "invalid",
-      message: `os.shell.run: pass one of cmd, wait, kill, jobs (got ${present.join(", ")})`,
+      message: `os.shell.run: pass one of cmd, wait, kill, jobs, write (got ${present.join(", ")})`,
     };
   }
   if (isPresent("jobs", rawArgs.jobs)) return { kind: "jobs" };
-  for (const kind of ["wait", "kill"] as const) {
+  for (const kind of ["wait", "kill", "write"] as const) {
     if (!isPresent(kind, rawArgs[kind])) continue;
     const id = parseJobId(rawArgs[kind]);
     if (id === null) return { kind: "invalid", message: jobIdHint(kind) };
@@ -113,7 +115,7 @@ export function classifyShellCall(
   // No form at all, but a zero job id: the model meant a job form, so
   // say what an id is rather than that `cmd` is missing.
   if (present.length === 0) {
-    for (const kind of ["wait", "kill"] as const) {
+    for (const kind of ["wait", "kill", "write"] as const) {
       if (isZeroId(rawArgs[kind])) return { kind: "invalid", message: jobIdHint(kind) };
     }
   }
