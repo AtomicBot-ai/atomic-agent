@@ -91,7 +91,8 @@
 .fp-slide-c p.fp-slide-e{color:var(--ink-3);font-style:italic}
 /* ATO-2410: "Drawing the slides" is a wait, not a warning; Quick Look's page brings its own grey ground. */
 .fp-note.fp-wait{background:var(--panel-2);color:var(--ink-3)}
-.fp-slides{background:#acb2bb}
+/* ATO-2753: the ground around the slides follows the theme (it was a fixed light grey, a light slab in dark). */
+.fp-slides{background:var(--ground)}
 .fp-doc p{white-space:pre-wrap;overflow-wrap:anywhere}
 .fp-sheets{flex:none;margin:8px 14px 0;font:400 var(--fs-micro)/15px var(--font-ui);color:var(--ink-3);overflow-wrap:anywhere}
 .fp-prose .fp-tbl th.fp-rown{color:var(--ink-3);font-weight:400;text-align:right;font-variant-numeric:tabular-nums}
@@ -109,4 +110,6 @@
 .fp-btn:disabled{opacity:.5;cursor:default}
 .fp-prose .fp-tbl th.fp-sortable{cursor:pointer;user-select:none}
 .fp-prose .fp-tbl th.fp-sortable:hover{background:var(--hover)}
+/* ATO-2753: the headers take the keyboard too (Tab, then Enter or Space sorts). */
+.fp-prose .fp-tbl th.fp-sortable:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .fp-sort-ic{margin-left:4px;font-size:.75em;color:var(--ink-3)}
