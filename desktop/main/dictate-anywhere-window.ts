@@ -1,11 +1,9 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, Notification, screen, session, shell, systemPreferences } from "electron";
-import { join } from "node:path";
+import { app, globalShortcut, ipcMain, shell, systemPreferences } from "electron";
 
 import {
   DictateTake,
   dictateClash,
   dictateFinishTimeoutMs,
-  dictatePillBounds,
   dictateUnavailableReason,
   mergeDictatePref,
   pickDictateLocales,
@@ -13,35 +11,17 @@ import {
   writeDictatePref,
   type DictatePref,
 } from "./dictate-anywhere.js";
-import {
-  DICTATE_FAILURE_MS,
-  DICTATE_FAILURE_PILL_SIZE,
-  dictateFailureView,
-  dictateFixUrl,
-  type DictateFailure,
-  type DictateFailureView,
-} from "./dictate-errors.js";
-import {
-  HoldMachine,
-  dictatePrivacyUrl,
-  holdKeyCommand,
-  holdKeyLabel,
-  holdKeyNote,
-  holdWatchFailed,
-  holdWatchLine,
-  type HoldAction,
-  type HoldKeyLine,
-  type HoldWatchState,
-} from "./dictate-hold.js";
-import { UiohookHoldWatcher } from "./hold-key-uiohook.js";
-import { HoldKeyWatcher } from "./hold-key-watcher.js";
+import { dictateFailureView, type DictateFailure } from "./dictate-errors.js";
+import { DictatePill } from "./dictate-pill.js";
+import { wireDictatePillPage } from "./dictate-pill-ipc.js";
+import { dictatePrivacyUrl, holdKeyLabel, holdKeyNote, holdWatchFailed, holdWatchLine, type HoldAction } from "./dictate-hold.js";
+import { holdKeyWatch } from "./dictate-hold-watch.js";
 import { keystrokesAllowed, pasteIntoFrontApp } from "./keystroke-clipboard-host.js";
 import {
   SHORTCUT_TAKEN_MESSAGE,
   acceleratorLabel,
   quickEntrySkipReason,
   quickEntryStateLine,
-  quickEntryWindowLevel,
   QuickEntryShortcut,
 } from "./quick-entry.js";
 import { VoiceSession } from "./speech.js";
@@ -51,20 +31,15 @@ import { VoiceSession } from "./speech.js";
  *
  * A take has its own VoiceSession, never the composer's (main.ts `voice`):
  * the composer's microphone and this hotkey cannot end each other's take,
- * and speech.ts is only called, not changed. The pill is the page that
- * holds the microphone, in its own session partition whose permission
- * handlers allow audio only while THIS take is armed, as main.ts does for
- * the main window. It never takes the keyboard (not focusable, shown
- * inactive), so the app in front stays in front and gets the paste.
+ * and speech.ts is only called, not changed. The pill that holds the
+ * microphone is dictate-pill.ts, its page's routes dictate-pill-ipc.ts.
  *
- * Two ways in: the hold key (dictate-hold.ts: the Mac helper process or,
- * on Windows, uiohook-napi in process; its down/up through HoldMachine) or
- * the toggle combo (globalShortcut). In the hold mode the combo stands in while the watcher cannot run (no
+ * Two ways in: the hold key (dictate-hold-watch.ts) or the toggle combo
+ * (globalShortcut). In the hold mode the combo stands in while the watcher cannot run (no
  * Accessibility yet, a build without the helper), so the switch never
  * turns on to nothing.
  */
 
-const PARTITION = "dictate-anywhere";
 const MAC_HINT = "Typing into other apps needs Accessibility: System Settings › Privacy & Security › Accessibility, then turn on Atomic Agent.";
 
 export interface DictateWiring {
@@ -82,63 +57,29 @@ export interface DictateWiring {
 
 type Phase = "idle" | "starting" | "listening" | "finishing";
 
-const pills = new WeakSet<BrowserWindow>();
-
-/** True for the dictation pill: not "a window of the app" for the Dock reopen. */
-export function isDictatePill(win: BrowserWindow): boolean {
-  return pills.has(win);
-}
+// The pill's window lives in dictate-pill.ts; main.ts imports the Dock check from here.
+export { isDictatePill } from "./dictate-pill.js";
 
 export function wireDictateAnywhere(w: DictateWiring): { dispose: () => void } {
   const voice = new VoiceSession();
   let pref: DictatePref = readDictatePref(w.userData, w.platform);
   let phase: Phase = "idle";
   let take: DictateTake | null = null;
-  let pill: BrowserWindow | null = null;
   let finishTimer: NodeJS.Timeout | null = null;
-  let escHeld = false;
   /** The hold key came up while the take was still starting: finish it as soon as it listens. */
   let finishOnListen = false;
-  /* ATO-2750: a failure the pill shows (dictate-errors.ts), and the timer
-     that puts it away. The system notification is only for when the pill
-     cannot be shown. */
-  let failure: DictateFailureView | null = null;
-  let failTimer: NodeJS.Timeout | null = null;
-
-  const notify = (body: string) => {
-    try { if (Notification.isSupported()) new Notification({ title: "Dictation", body, silent: true }).show(); } catch { /* no notifications */ }
-  };
-  const tell = (payload: Record<string, unknown>) => {
-    if (pill && !pill.isDestroyed()) pill.webContents.send("app:dictate", payload);
-  };
-
-  const part = session.fromPartition(PARTITION);
-  const allowed = (wc: Electron.WebContents | null, permission: string, types: string[] | undefined) =>
-    permission === "media" && voice.armed && !!pill && !pill.isDestroyed() && wc === pill.webContents
-      && !!types && types.length > 0 && types.every((t) => t === "audio");
-  part.setPermissionRequestHandler((wc, permission, callback, details) =>
-    callback(allowed(wc, permission, (details as unknown as { mediaTypes?: string[] }).mediaTypes)));
-  part.setPermissionCheckHandler((wc, permission, _origin, details) =>
-    allowed(wc, permission, (details as unknown as { mediaTypes?: string[] }).mediaTypes));
-
-  const releaseEsc = () => {
-    if (!escHeld) return;
-    escHeld = false;
-    try { globalShortcut.unregister("Escape"); } catch { /* already gone */ }
-  };
+  /* The pill's window (dictate-pill.ts); ATO-2750: it also shows a failure,
+     and the system notification is only for when it cannot be shown. */
+  const pill = new DictatePill({ platform: w.platform, armed: () => voice.armed, onCancel: () => cancel() });
+  const tell = (payload: Record<string, unknown>) => pill.send(payload);
   const closePill = () => {
-    releaseEsc();
     if (finishTimer) { clearTimeout(finishTimer); finishTimer = null; }
-    if (failTimer) { clearTimeout(failTimer); failTimer = null; }
-    failure = null;
-    const p = pill;
-    pill = null;
-    if (p && !p.isDestroyed()) p.destroy();
+    pill.close();
   };
   const reset = () => { closePill(); take = null; phase = "idle"; finishOnListen = false; };
 
   const cancel = () => {
-    if (phase === "idle") { if (failure) closePill(); return; }   // ATO-2750: × on a failure
+    if (phase === "idle") { if (pill.failure) closePill(); return; }   // ATO-2750: × on a failure
     voice.cancel();
     reset();
   };
@@ -161,53 +102,16 @@ export function wireDictateAnywhere(w: DictateWiring): { dispose: () => void } {
     void deliver(take);
   };
 
-  /** The pill for a take, or (`forFailure`) for a failure line; false when it could not be made. */
-  const showPill = (forFailure = false): boolean => {
-    const cursor = screen.getCursorScreenPoint();
-    const displays = screen.getAllDisplays().map((d) => ({ bounds: d.bounds, workArea: d.workArea }));
-    const bounds = forFailure ? dictatePillBounds(cursor, displays, DICTATE_FAILURE_PILL_SIZE) : dictatePillBounds(cursor, displays);
-    let win: BrowserWindow;
-    try { win = new BrowserWindow({
-      ...bounds,
-      show: false, frame: false, resizable: false, movable: false, minimizable: false, maximizable: false,
-      fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, focusable: false, hasShadow: true,
-      backgroundColor: "#191C21", title: "Dictation",
-      ...(w.platform === "darwin" ? { type: "panel" as const } : {}),
-      webPreferences: {
-        preload: join(__dirname, "..", "preload", "preload.js"),
-        partition: PARTITION,
-        contextIsolation: true, nodeIntegration: false, sandbox: true,
-        autoplayPolicy: "no-user-gesture-required",
-      },
-    }); } catch { return false; }
-    pill = win;
-    pills.add(win);
-    win.setAlwaysOnTop(true, quickEntryWindowLevel(w.platform));
-    if (w.platform === "darwin") win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
-    win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-    win.webContents.on("will-navigate", (event) => event.preventDefault());
-    win.on("closed", () => { if (pill === win) cancel(); });
-    win.once("ready-to-show", () => { if (!win.isDestroyed()) win.showInactive(); });
-    void win.loadFile(join(__dirname, "..", "renderer", "dictate-anywhere.html")).catch(() => {});
-    // Esc throws the take away, as long as nothing else of ours holds it (the marks overlay).
-    if (!forFailure && !globalShortcut.isRegistered("Escape")) {
-      try { escHeld = globalShortcut.register("Escape", cancel); } catch { escHeld = false; }
-    }
-    return true;
-  };
-
-  /** ATO-2750: a failure in the pill, the raw detail in the log; a notification only when the pill cannot show. */
+  /** ATO-2750: a failure in the pill, the raw detail in the log (dictate-pill.ts showFailure). */
   const fail = (f: DictateFailure, detail?: string | null) => {
     const view = dictateFailureView(f, w.platform);
     w.log(`[desktop] dictate anywhere: ${view.line}${detail ? ` (${detail})` : ""}`);
     reset();
-    failure = view;
-    if (!showPill(true)) { failure = null; notify(view.line); return; }
-    failTimer = setTimeout(closePill, DICTATE_FAILURE_MS);
+    pill.showFailure(view);
   };
 
   const start = async () => {
-    if (failure) closePill();   // ATO-2750: a new take replaces the failure line
+    if (pill.failure) closePill();   // ATO-2750: a new take replaces the failure line
     phase = "starting";
     const probe = await voice.probe();
     const why = dictateUnavailableReason(probe);
@@ -223,7 +127,7 @@ export function wireDictateAnywhere(w: DictateWiring): { dispose: () => void } {
     if (phase !== "starting") { if (res.ok) voice.cancel(); return; }   // cancelled while it started
     if (!res.ok) { fail({ kind: "start-failed" }, res.error); return; }
     phase = "listening";
-    showPill();
+    pill.show();
     if (finishOnListen) { finishOnListen = false; finish(); }
   };
 
@@ -257,23 +161,8 @@ export function wireDictateAnywhere(w: DictateWiring): { dispose: () => void } {
     }
     cancel();
   };
-  const hold = new HoldMachine({ set: (ms, fn) => setTimeout(fn, ms), clear: (h) => clearTimeout(h as NodeJS.Timeout) }, onHold);
-  const nativeDir = app.isPackaged ? join(process.resourcesPath, "native") : join(__dirname, "..", "native");
-  const onKey = (line: HoldKeyLine) => {
-    if (line.type === "down") hold.down();
-    else if (line.type === "up") hold.up();
-    else if (line.type === "esc") hold.esc();
-    else if (line.type === "other") hold.other();
-  };
-  const onWatchState = (st: HoldWatchState) => {
-    if (st !== "ready") hold.reset();
-    if (st === "untrusted" || st === "missing" || st === "failed") w.log(`[desktop] dictate anywhere: hold key watcher ${st}`);
-    applyCombo();
-  };
-  /* Windows: uiohook-napi inside the app (loaded on the first start); the Mac: the Fn helper process. */
-  const watcher = w.platform === "win32"
-    ? new UiohookHoldWatcher(onKey, onWatchState, w.log)
-    : new HoldKeyWatcher(() => holdKeyCommand(w.platform, nativeDir), onKey, onWatchState, w.log);
+  // ATO-1064: the hold key and its watcher (dictate-hold-watch.ts).
+  const { hold, watcher } = holdKeyWatch(w.platform, w.log, onHold, () => applyCombo());
 
   const skip = quickEntrySkipReason({ smoke: w.smoke, probe: w.probe, modelsTest: w.modelsTest, envOff: process.env.ATOMIC_AGENT_NO_GLOBAL_SHORTCUT === "1" });
   const shortcut = new QuickEntryShortcut(
@@ -330,32 +219,19 @@ export function wireDictateAnywhere(w: DictateWiring): { dispose: () => void } {
   const first = applyAll();
   if (first.state === "taken") w.log(`[desktop] dictate anywhere: ${pref.accelerator} is taken by another app`);
 
-  // The pill's page.
-  ipcMain.handle("app:dictateOpened", () => {
-    const holding = hold.state === "held";
-    const label = holding ? holdKeyLabel(w.platform) ?? "" : acceleratorLabel(pref.accelerator, w.platform);
-    // ATO-2750: a failure pill draws its line and button instead of opening the microphone.
-    const failed = failure ? { line: failure.line, fixLabel: failure.fixLabel } : null;
-    return { label, hint: holding ? `let go of ${label} to type it · esc` : `${label} types it · esc`, phase, text: take?.live() ?? "", failure: failed };
-  });
-  ipcMain.on("dictate:audio", (event, chunk: unknown) => { if (pill && event.sender === pill.webContents) voice.audio(chunk); });
-  ipcMain.on("app:dictateStop", (event) => { if (pill && event.sender === pill.webContents && phase === "listening") finish(); });
-  ipcMain.on("app:dictateCancel", () => cancel());
-  ipcMain.on("app:dictateMicFailed", (event, why: unknown) => {
-    if (!pill || event.sender !== pill.webContents || failure) return;
-    const r = why && typeof why === "object" ? (why as { denied?: unknown; detail?: unknown }) : {};
-    cancel();
-    fail(r.denied === true ? { kind: "mic-off" } : { kind: "mic-failed" }, typeof r.detail === "string" ? r.detail.slice(0, 200) : null);
-  });
-  // ATO-2750: the failure pill's button: the pane it names (microphone or Accessibility), then the pill goes.
-  ipcMain.handle("app:dictateFix", async (event) => {
-    if (!pill || event.sender !== pill.webContents || !failure || !failure.fix) return { ok: false };
-    const fix = failure.fix;
-    closePill();
-    if (fix === "accessibility") keystrokesAllowed(true);   // puts Atomic Agent in the Accessibility list
-    const url = dictateFixUrl(fix, w.platform);
-    if (url) await shell.openExternal(url).catch(() => {});
-    return { ok: !!url };
+  // The pill's page (dictate-pill-ipc.ts).
+  wireDictatePillPage(pill, {
+    platform: w.platform,
+    opened: () => {
+      const holding = hold.state === "held";
+      const label = holding ? holdKeyLabel(w.platform) ?? "" : acceleratorLabel(pref.accelerator, w.platform);
+      return { label, hint: holding ? `let go of ${label} to type it · esc` : `${label} types it · esc`, phase, text: take?.live() ?? "" };
+    },
+    audio: (chunk) => voice.audio(chunk),
+    stop: () => { if (phase === "listening") finish(); },
+    cancel: () => cancel(),
+    micFailed: (denied, detail) => { cancel(); fail(denied ? { kind: "mic-off" } : { kind: "mic-failed" }, detail); },
+    close: closePill,
   });
 
   // Settings › General.

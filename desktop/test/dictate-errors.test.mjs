@@ -66,16 +66,20 @@ test('the pill draws main\'s failure, and nothing for a normal take', () => {
 
 test('the wiring: failures go to the pill, the notification only when it cannot show, no raw res.error', () => {
   const win = src('../main/dictate-anywhere-window.ts');
-  assert.doesNotMatch(win, /notify\("Dictation could not start"/, 'the raw error is not shown');
-  assert.doesNotMatch(win, /notify\(why\)|notify\(err\)|notify\(t\.error\)/);
-  assert.match(win, /if \(!showPill\(true\)\) \{ failure = null; notify\(view\.line\); return; \}/);
-  assert.equal((win.match(/notify\(/g) || []).length, 1, 'one notification left: the fallback');
+  const pillSrc = src('../main/dictate-pill.ts');
+  const pageIpc = src('../main/dictate-pill-ipc.ts');
+  assert.doesNotMatch(win, /Notification|notify\(/, 'the take never notifies itself');
+  assert.match(pillSrc, /if \(!this\.show\(true\)\) \{ this\.failure = null; notifyDictation\(view\.line\); return; \}/);
+  assert.equal((pillSrc.match(/notifyDictation\(/g) || []).length, 1, 'one notification left: the fallback');
+  assert.match(pillSrc, /if \(!forFailure && !globalShortcut\.isRegistered\("Escape"\)\)/, 'a failure pill does not take Esc');
   assert.match(win, /fail\(\{ kind: "start-failed" \}, res\.error\)/, 'the raw error goes to the log line');
   assert.match(win, /fail\(\{ kind: "mic-off" \}\)/);
   assert.match(win, /fail\(\{ kind: "paste", accessibility:/);
-  assert.match(win, /ipcMain\.handle\("app:dictateFix"/);
-  assert.match(win, /failure: failed \}/, 'the pill page is told');
-  assert.match(win, /if \(failure\) closePill\(\);\s*\/\/ ATO-2750: a new take/);
+  assert.match(win, /pill\.showFailure\(view\)/);
+  assert.match(win, /wireDictatePillPage\(pill, \{/);
+  assert.match(pageIpc, /ipcMain\.handle\("app:dictateFix"/);
+  assert.match(pageIpc, /failure: failed \}/, 'the pill page is told');
+  assert.match(win, /if \(pill\.failure\) closePill\(\);\s*\/\/ ATO-2750: a new take/);
   const pre = src('../preload/preload.ts');
   assert.match(pre, /dictateFix: \(\) => ipcRenderer\.invoke\("app:dictateFix"\)/);
   assert.match(pre, /dictateMicFailed: \(why: \{ denied: boolean; detail\?: string \}\)/);
