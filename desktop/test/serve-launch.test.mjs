@@ -32,9 +32,11 @@ test("the child environment has no ATOMIC_AGENT_API_KEY, even one the desktop in
   assert.equal(base.ATOMIC_AGENT_API_KEY, "inherited-key-123", "the base environment is not changed");
 });
 
-/* The bypass of ATO-2538, end to end: a child started the way agent-client.ts
-   starts serve reports its own environment and argv (what `/proc/<pid>/environ`
-   and `ps eww` would show) and the first line of its stdin. */
+/* The bypass of ATO-2538, end to end: a child started by startServe, the
+   function agent-client.ts starts serve with, reports its own environment and
+   argv (what `/proc/<pid>/environ` and `ps eww` would show) and the first line
+   of its stdin. Review round 2: the child is a real process spawned by that
+   function, not a spawn the test builds itself. */
 test("a child started this way gets the key on stdin and has it nowhere else", async () => {
   const token = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";
   const script = [
@@ -46,10 +48,15 @@ test("a child started this way gets the key on stdin and has it nowhere else", a
     "  process.stdout.write(JSON.stringify({ envVar: process.env.ATOMIC_AGENT_API_KEY ?? null, envHasKey, argv: process.argv, line: data.split('\\n')[0], rest: data.split('\\n').slice(1).join('') }));",
     "});",
   ].join("\n");
-  const child = spawn(process.execPath, ["-e", script, "--", ...L.serveSpawnArgs(5000, [])], {
-    ...L.serveSpawnOptions({ ...process.env, ATOMIC_AGENT_API_KEY: "inherited-key-123" }),
+  const child = L.startServe({
+    binary: process.execPath,
+    leadingArgs: ["-e", script, "--"],
+    port: 5000,
+    watchArgs: ["--parent-pid", "77"],
+    cwd: process.cwd(),
+    env: { ...process.env, ATOMIC_AGENT_API_KEY: "inherited-key-123" },
+    token,
   });
-  L.sendServeKey(child.stdin, token);
   let out = "";
   child.stdout.on("data", (c) => { out += c; });
   const code = await new Promise((resolve) => child.on("exit", resolve));
@@ -60,6 +67,8 @@ test("a child started this way gets the key on stdin and has it nowhere else", a
   assert.equal(seen.envVar, null, "no ATOMIC_AGENT_API_KEY in the child environment");
   assert.equal(seen.envHasKey, false, "the key is in no variable at all");
   assert.ok(!seen.argv.some((a) => a.includes(token)), "the key is on no command line");
+  assert.ok(!seen.argv.includes("inherited-key-123"), "nor the inherited one");
+  assert.deepEqual(seen.argv.slice(-8), ["serve", "--host", "127.0.0.1", "--port", "5000", "--api-key-stdin", "--parent-pid", "77"]);
 });
 
 test("the spawn options: no key in the env, stdin piped for it, no console window", () => {
@@ -71,18 +80,13 @@ test("the spawn options: no key in the env, stdin piped for it, no console windo
   assert.equal(opts.windowsHide, true);
 });
 
-/* Review F2014.1: the test above only holds if agent-client.ts spawns serve
-   with these same options. Its spawn takes them whole and sets no env or
-   stdio of its own, and no key variable is named anywhere in that file. */
-test("agent-client.ts spawns serve with serveSpawnOptions and adds no env or stdio", () => {
+/* Review F2014.1: the test above only holds if agent-client.ts starts serve
+   through startServe. A backstop for that one call site: it calls
+   startServe, never spawns the binary itself, and names no key variable. */
+test("agent-client.ts starts serve through startServe only", () => {
   const src = readFileSync(new URL("../main/agent-client.ts", import.meta.url), "utf8");
-  const start = src.indexOf("child = spawn(");
-  const end = src.indexOf("sendServeKey(child.stdin, token);", start);
-  assert.ok(start >= 0 && end > start, "the serve spawn and the key hand-off are found");
-  const call = src.slice(start, end);
-  assert.match(call, /\.\.\.serveSpawnOptions\(agentEnv\(\)\)/);
-  assert.doesNotMatch(call, /\benv\s*:/, "no env of its own");
-  assert.doesNotMatch(call, /\bstdio\s*:/, "no stdio of its own");
+  assert.match(src, /child = startServe\(\{/);
+  assert.doesNotMatch(src, /spawn\(\s*binary\b/, "no spawn of the agent binary of its own");
   assert.doesNotMatch(src, /ATOMIC_AGENT_API_KEY|SERVE_API_KEY_ENV/);
 });
 
