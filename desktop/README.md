@@ -481,6 +481,23 @@ Real, driven by the running agent:
   same provider step (`cloud`); Back from the URL step returns to the Custom
   list. A click scenario that wants Ollama clicks **Custom**, not
   **Cloud models**. The terminal's own wizard is unchanged.
+- model servers already running here (ATO-2489, `renderer/local-servers.js`
+  for Settings, `renderer/local-servers-setup.js` for the setup step,
+  `main/local-servers-ipc.ts`): the app runs `atag local-servers --json`, the
+  core's own probe (Ollama on 11434, LM Studio on 1234, the Llama app or a
+  llama-server on 9931, 800 ms each). When one answers, the Custom card says
+  `Found running here: Llama app, Ollama.`, the cursor starts on it, and
+  Custom opens the `found_server` step: every server found (a choice when
+  several run) with its models and what is loaded, then **Something else**
+  for the full Custom list. A pick goes the usual way: Ollama and LM Studio
+  open their preset row on the Custom list and check it at once (no key),
+  the Llama app opens the llama.cpp address step with its address filled in.
+  The closing line then says `Ollama connected`. Settings › Local lists the
+  same servers under **Running on this Mac** with Use / Switch to it / In
+  use and Check again. An agent without the command, or an app connected to
+  an agent on another computer, shows nothing.
+  Manage on an Ollama or LM Studio row (ATO-2490): see "Ollama and LM
+  Studio models, managed and used here" below.
 - the add-provider wizard: the TUI's kind list (nothing preselected) → key /
   base URL → verification by listing the provider's models under that key →
   saved, activated, and a default model picked
@@ -844,19 +861,24 @@ Honestly degraded, and labelled as such in the UI:
   the agent reads it, from this app's environment or else `<stateDir>/.env`
   (main/hf-token.ts, ATO-853), so a repo that downloads with `atag models
   pull` also lists here.
-- **Ollama is a provider here, never a download source.** atomic-agent has
-  no Ollama download path of any kind — no registry client, nothing reading
-  `~/.ollama`, no converter; the only Ollama code in the agent is two
-  provider presets, a health-failure hint and a steer modal, with zero hits
-  under `src/local-llm`. Offering "download from Ollama" would be a
-  capability this window invented, so the Local pane carries one
-  non-interactive line pointing at the thing that does work: `Cloud › n add
-  provider › Ollama (local)`, `http://localhost:11434`. Importing a model
-  Ollama already pulled is technically possible (its blobs are real GGUF)
-  and deliberately not built: `ollama rm` would dangle the link, Ollama keeps
-  the chat template in a separate manifest layer so an imported GGUF can be
-  served under the wrong one, and the schema's mandatory `huggingFaceUrl`
-  would have to be a placeholder. Cloud rows read `llm.providers` and show `key ok` /
+- **Ollama and LM Studio models, managed and used here (ATO-2490).** The
+  agent drives them through `atag local-servers <action>` (core
+  `src/local-llm/external-servers/`): Ollama through its own API, LM Studio
+  through its `lms` tool. Settings › Local's **Manage** on a running Ollama
+  or LM Studio row (`renderer/local-servers-manage.js`) lists its models
+  with Load / Unload (Ollama's `keep_alive: 0`; which models are loaded
+  comes from Ollama's `/api/ps` and LM Studio's `/api/v0/models`),
+  **Free memory**, a Download field with progress and
+  Stop, Delete (Ollama only, asked twice) and **Use here**; the section
+  offers **Start Ollama** / **Start LM Studio** for an app that did not
+  answer. Use here adds the model's file to the local models with no new
+  download and switches to it through the usual model pick. The three
+  reasons this used to be refused are handled in the core: Ollama's blob is
+  hard-linked (a link that `ollama rm` does not break, no second copy), a
+  GGUF without a chat template inside is refused in words, and the entry is
+  the same `file://` local entry "Use a .gguf file I already have" writes.
+  A blob that is not GGUF is refused too. Errors are a sentence, the app's
+  own words behind Details. Cloud rows read `llm.providers` and show `key ok` /
   `missing key` from the key NAMES present in this process's env ∪
   `<stateDir>/.env` (never values); the text-model list is the provider's
   `atag models search --json` (no pricing in it, so the `price:` facet stays

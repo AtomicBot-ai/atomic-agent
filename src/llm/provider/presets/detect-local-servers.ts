@@ -31,7 +31,8 @@ export interface DetectedLocalServer {
   readonly models: readonly string[];
   /**
    * Models already loaded in memory, where the server says (Ollama's
-   * `/api/ps`). Empty when nothing is loaded or the server does not say.
+   * `/api/ps`, LM Studio's `/api/v0/models` `state`). Empty when nothing is
+   * loaded or the server does not say.
    */
   readonly loaded: readonly string[];
 }
@@ -76,6 +77,10 @@ export const LOCAL_SERVER_TARGETS: readonly LocalServerTarget[] = [
     baseUrl: "http://127.0.0.1:1234",
     presetId: "lmstudio",
     modelsPath: "/v1/models",
+    // LM Studio's REST API lists every model with `state: "loaded"` or
+    // `"not-loaded"`; an older LM Studio without it answers 404 and only
+    // the hint is lost.
+    loadedPath: "/api/v0/models",
   },
 ];
 
@@ -121,6 +126,25 @@ export function readModelIds(kind: LocalServerKind, body: unknown): string[] | n
   return stringIds(record.data, "id");
 }
 
+/**
+ * Ids of the models loaded in memory from a `loadedPath` body. Ollama's
+ * `/api/ps` lists only loaded models; LM Studio's `/api/v0/models` lists
+ * all of them, each with a `state`.
+ */
+export function readLoadedIds(kind: LocalServerKind, body: unknown): string[] {
+  if (kind !== "lmstudio") return readModelIds(kind, body) ?? [];
+  if (!body || typeof body !== "object") return [];
+  const data = (body as Record<string, unknown>).data;
+  if (!Array.isArray(data)) return [];
+  return stringIds(
+    data.filter(
+      (item) =>
+        !!item && typeof item === "object" && (item as Record<string, unknown>).state === "loaded",
+    ),
+    "id",
+  );
+}
+
 async function getJson(
   fetchImpl: typeof fetch,
   url: string,
@@ -162,7 +186,7 @@ async function probeTarget(
           `${target.baseUrl}${target.loadedPath}`,
           probeSignal(timeoutMs, outer),
         );
-        loaded = readModelIds(target.kind, ps) ?? [];
+        loaded = readLoadedIds(target.kind, ps);
       } catch {
         // The list answered; a failed "what is loaded" only loses the hint.
       }

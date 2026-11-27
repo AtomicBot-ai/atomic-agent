@@ -344,6 +344,8 @@ export interface TuiAppCallbacks {
   onRewindPickerRequested?(): void;
   /** `/export [format] [path]` (ATO-1054): write the open chat to a file and say where. */
   onChatExportRequested?(request: import("./commands/export-command.js").ChatExportRequest): void;
+  /** `/servers [action ...]` (ATO-2490): list or act on Ollama / LM Studio / the Llama app and say the result. */
+  onLocalServersRequested?(args: readonly string[]): void;
   /**
    * Take the chat back to just before the question at `turnIndex` of
    * the session's turns: the session (held and saved) keeps only what
