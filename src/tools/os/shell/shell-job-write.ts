@@ -66,8 +66,13 @@ export function guardTypedText(
       checkShellCommandGuard({ cmd: tokens[0]!, rawArgs: tokens.slice(1), cwd }, policy);
     // An interactive bash or zsh expands history before it runs a line:
     // `echo !cd:2-5` can become `echo && rm -rf out`. The guard reads the
-    // line as typed, so such a line is never taken as safe.
-    if (verdict.action === "allow" && (line.includes("!") || line.startsWith("^"))) {
+    // line as typed, so such a line is never taken as safe: the history
+    // rule wins over any verdict short of a block or a dangerous.* prompt.
+    if (
+      verdict.action !== "block" &&
+      !verdict.rule.startsWith("dangerous.") &&
+      (line.includes("!") || line.startsWith("^"))
+    ) {
       verdict = {
         action: "approval_required",
         rule: "typed.history_expansion",
