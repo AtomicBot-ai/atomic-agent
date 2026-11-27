@@ -19,6 +19,10 @@
  *    everyday word ("Hi Anna", "Will Smith", "Max Mustermann", "Роман
  *    Иванов") is not learned on its own, or "Max 5 results" and
  *    "Роман прочитан" would be masked everywhere; the full name still is.
+ *    A two-letter part ("Li", "Ng", "Wu") is not learned alone either, but
+ *    it is learned next to its neighbour in the other orders people write
+ *    a name in: "Anna Li" also gives "Li Anna" and "Li, Anna", so the
+ *    surname is masked with the first name even when the order is turned.
  *
  * Only drops or adds whole values; never edits one.
  */
@@ -82,9 +86,31 @@ function kept(value: string, kind: ModelFoundValue["kind"]): boolean {
   return KEEP.has(lower) || (kind !== "NAME" && KEEP_ORG.has(lower));
 }
 
+/** A two-letter word of a name: masked only next to another part, never alone. */
+const SHORT_PART = /^\p{Lu}[\p{L}'’-]$/u;
+
 /** A word of a multi-word name the vault may learn and mask on its own. */
 function maskablePart(part: string): boolean {
   return NAME_PART.test(part) && !kept(part, "NAME") && !PART_STOP.has(part.toLocaleLowerCase());
+}
+
+function shortPart(part: string): boolean {
+  return SHORT_PART.test(part) && !kept(part, "NAME") && !PART_STOP.has(part.toLocaleLowerCase());
+}
+
+/**
+ * A two-letter part together with a maskable neighbour, as written and
+ * turned round: `["Anna", "Li"]` gives "Anna Li", "Li Anna", "Li, Anna".
+ */
+function shortPartPairs(parts: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i + 1 < parts.length; i++) {
+    const a = parts[i]!;
+    const b = parts[i + 1]!;
+    const pair = (shortPart(a) && maskablePart(b)) || (shortPart(b) && maskablePart(a));
+    if (pair) out.push(`${a} ${b}`, `${b} ${a}`, `${b}, ${a}`);
+  }
+  return out;
 }
 
 /** An organisation written with no capital letter and no digit: an ordinary word. */
@@ -114,6 +140,7 @@ export function refineFoundValues(found: readonly ModelFoundValue[]): ModelFound
     for (const part of parts) {
       if (maskablePart(part)) push({ value: part, kind: "NAME" });
     }
+    for (const pair of shortPartPairs(parts)) push({ value: pair, kind: "NAME" });
   }
   return out;
 }

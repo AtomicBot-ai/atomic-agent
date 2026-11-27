@@ -57,6 +57,23 @@ describe("refineFoundValues (ATO-2527)", () => {
     expect(vault.mask("Max Mustermann wrote")).not.toContain("Mustermann");
   });
 
+  it("masks a two-letter surname next to the first name, in either order, but never alone (review round 2)", () => {
+    const found = refineFoundValues([{ value: "Anna Li", kind: "NAME" }, { value: "Ed Lo", kind: "NAME" }]);
+    expect(found).toEqual([
+      { value: "Anna Li", kind: "NAME" },
+      { value: "Anna", kind: "NAME" },
+      { value: "Li Anna", kind: "NAME" },
+      { value: "Li, Anna", kind: "NAME" },
+      { value: "Ed Lo", kind: "NAME" },
+    ]);
+    const vault = new PrivacyVault();
+    vault.learn(found);
+    expect(vault.mask("Li Anna called")).not.toContain("Li");
+    expect(vault.mask("Signed: Li, Anna")).not.toContain("Li");
+    expect(vault.mask("Anna Li called")).not.toContain("Li");
+    expect(vault.mask("Li is a common word here")).toBe("Li is a common word here");
+  });
+
   it("keeps a lower-case name: people type names that way", () => {
     expect(refineFoundValues([{ value: "иван", kind: "NAME" }])).toEqual([{ value: "иван", kind: "NAME" }]);
   });

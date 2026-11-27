@@ -76,13 +76,25 @@ export interface LocalNameDetectorOptions {
   onLeftover?: (paragraphs: number, modelId: string) => void;
 }
 
+/** Filled in by `detect` for a caller that needs to know the texts were read through. */
+export interface DetectOutcome {
+  /**
+   * True only when a local model read every text: each paragraph came from
+   * the cache or from a usable reply. An error, a reply that is not the
+   * expected JSON, the deadline or the caller's signal, or the call cap
+   * leaves it false.
+   */
+  complete: boolean;
+}
+
 export interface LocalNameDetector {
   /**
    * The values found in the texts `readTexts` returns. `readTexts` is
    * called only when a local model is there to read them, so a caller
-   * pays nothing to build them otherwise.
+   * pays nothing to build them otherwise. `outcome`, when given, says
+   * whether the pass read everything.
    */
-  detect(readTexts: () => readonly string[], signal?: AbortSignal): Promise<ModelFoundValue[]>;
+  detect(readTexts: () => readonly string[], signal?: AbortSignal, outcome?: DetectOutcome): Promise<ModelFoundValue[]>;
   /** Model calls made so far. */
   readonly calls: number;
 }
@@ -132,7 +144,9 @@ export function createLocalNameDetector(options: LocalNameDetectorOptions): Loca
   async function detect(
     readTexts: () => readonly string[],
     signal?: AbortSignal,
+    outcome?: DetectOutcome,
   ): Promise<ModelFoundValue[]> {
+    if (outcome) outcome.complete = false;
     const model = options.model();
     // Refuse anything not local before reading a single text.
     if (model === null || model.local !== true) return [];
@@ -156,12 +170,16 @@ export function createLocalNameDetector(options: LocalNameDetectorOptions): Loca
       options.onError?.(err, model.id);
       return [];
     }
-    if (pending.size === 0) return [...found.values()];
+    if (pending.size === 0) {
+      if (outcome) outcome.complete = true;
+      return [...found.values()];
+    }
 
     const deadline = AbortSignal.timeout(timeoutMs);
     const callSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
     const chunks = chunksOf([...pending.entries()], maxChunkChars);
     let read = 0;
+    let failed = false;
     for (const chunk of chunks.slice(0, maxCalls)) {
       if (callSignal.aborted) break;
       calls += 1;
@@ -182,6 +200,7 @@ export function createLocalNameDetector(options: LocalNameDetectorOptions): Loca
         );
       } catch (err) {
         options.onError?.(err, model.id);
+        failed = true;
         continue;
       }
       // A reply that came back after the deadline is not used.
@@ -189,6 +208,7 @@ export function createLocalNameDetector(options: LocalNameDetectorOptions): Loca
       const spans = parseNameSpans(reply);
       if (spans === null) {
         options.onError?.(new Error("local name detector: reply is not the expected JSON"), model.id);
+        failed = true;
         continue;
       }
       // Cache per paragraph only what that paragraph proved. "No names"
@@ -208,6 +228,9 @@ export function createLocalNameDetector(options: LocalNameDetectorOptions): Loca
     if (left > 0) {
       options.onLeftover?.(left, model.id);
     }
+    // A break on the deadline or the signal leaves `read` short of the
+    // chunks too, so `left` covers it; `aborted` catches one after the last reply.
+    if (outcome) outcome.complete = !failed && left === 0 && !callSignal.aborted;
     return [...found.values()];
   }
 
