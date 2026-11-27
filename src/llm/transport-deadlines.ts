@@ -14,6 +14,7 @@ import {
   sameAgentProxy,
   setAgentProxy,
 } from "./agent-proxy.js";
+import { withLoopbackMark } from "./loopback-socket-mark.js";
 import {
   offlineNetworkInterceptor,
   setOfflineNetwork,
@@ -274,7 +275,7 @@ function buildPool(deadlines: {
   if (own !== null) {
     // `network.proxy` (ATO-87) wins over the environment's proxy. Loopback
     // is in its no-proxy list, and goes on the direct pool while offline.
-    directPool = new Agent(deadlines);
+    directPool = new Agent(withLoopbackMark(deadlines));
     return new EnvHttpProxyAgent({
       ...deadlines,
       httpProxy: own.url,
@@ -284,13 +285,14 @@ function buildPool(deadlines: {
   }
   if (!proxyConfigured(process.env)) {
     directPool = null;
-    return new Agent(deadlines).compose(offlineNetworkInterceptor());
+    // ATO-2767: sockets to this machine mark their errors (loopback-socket-mark.ts).
+    return new Agent(withLoopbackMark(deadlines)).compose(offlineNetworkInterceptor());
   }
   // With a proxy in the environment, loopback requests made while
   // offline go on a plain Agent: `EnvHttpProxyAgent` would hand them to
   // the (remote) proxy unless `no_proxy` names them. See
   // `offlineNetworkInterceptor`.
-  directPool = new Agent(deadlines);
+  directPool = new Agent(withLoopbackMark(deadlines));
   return new EnvHttpProxyAgent(deadlines).compose(
     offlineNetworkInterceptor(directPool),
   );

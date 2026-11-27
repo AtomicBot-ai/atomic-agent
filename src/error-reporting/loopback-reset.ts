@@ -12,10 +12,12 @@ import { isLoopbackPeerGone } from "./socket-error.js";
  *   window has open because a model server it does not own restarted.
  *
  * Continuing is safe for this one shape. It reaches the global handler
- * as a destroyed socket's `error` event that had no listener left: the
- * request that used the socket already failed through its own path (the
- * fetch rejected, the turn reported a transport error and can be
- * retried), so no state is half-written by it. The non-fatal
+ * as a socket error after the request on it was already failed by
+ * undici's own socket error handling (the fetch rejects, and the turn's
+ * transport error path takes it from there), so this handler has no
+ * state of its own to repair. A raw read reset names no peer; it is
+ * proven loopback only by the mark `src/llm/loopback-socket-mark.ts`
+ * puts on sockets the agent's pool opened to this machine. The non-fatal
  * `unhandledRejection` filter in `captureError` already treats the same
  * error as noise, and Node HTTP servers keep serving after one client
  * socket errors. Only a peer *proven* loopback from the error itself

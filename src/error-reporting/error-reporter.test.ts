@@ -279,6 +279,33 @@ describe("createUncaughtExceptionHandler: loopback reset", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
+  // The shape Node really emits for a read reset: no address. It is proven
+  // only by the mark the agent's HTTP pool puts on it (loopback-socket-mark.ts).
+  const rawReadReset = () =>
+    Object.assign(new Error("read ECONNRESET"), {
+      code: "ECONNRESET",
+      errno: -54,
+      syscall: "read",
+    });
+
+  it("under survive, a raw read reset marked by the pool neither exits nor reports", async () => {
+    const { handler, exit, captured } = harness("survive");
+    const err = rawReadReset();
+    Object.defineProperty(err, Symbol.for("atomic-agent.loopbackPeer"), { value: true });
+    handler(err);
+    await settle();
+    expect(exit).not.toHaveBeenCalled();
+    expect(captured).toHaveLength(0);
+  });
+
+  it("under survive, the same raw read reset without the mark still exits 1", async () => {
+    const { handler, exit, captured } = harness("survive");
+    handler(rawReadReset());
+    await settle();
+    expect(captured).toHaveLength(1);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it("by default (exit), a loopback reset still reports and exits 1", async () => {
     const { handler, exit, captured } = harness("exit");
     handler(reset("127.0.0.1"));
