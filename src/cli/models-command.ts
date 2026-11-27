@@ -29,6 +29,7 @@ import { runLocalModelsPullAndRun } from "./models-pull-run.js";
 import { runModelsAsk, runModelsToolcallBench } from "./models-toolcall-bench.js";
 import { runModelsTasks } from "./models-tasks-command.js";
 import { runModelsFitTest } from "./models-fit-test-command.js";
+import { runModelsDir } from "./models-dir-command.js";
 
 const HELP =
   [
@@ -99,6 +100,9 @@ const HELP =
     "GPU subcommands:",
     "  devices                       List GPU devices (llama-server --list-devices); active marked with *",
     "  use-device <auto|cpu|Vulkan0> Set the managed daemon's GPU (auto-picks best discrete by default)",
+    "  dir [<folder>|--reset]        Show the models folder, or move every downloaded model to",
+    "      [--json]                  <folder> (an external disk, say) and use it from then on;",
+    "                                --reset moves them back to the default folder",
     "",
     "Embedding subcommands (memory-v2 phase 1B — second daemon for /embedding):",
     "  list-embeddings               Show embedding catalog + disk presence + daemon health",
@@ -168,6 +172,8 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return await runModelsTasks(args.slice(1));
       case "fit-test":
         return await runModelsFitTest(args.slice(1));
+      case "dir":
+        return await runModelsDir(args.slice(1));
       case "list":
         return runLocalModelsList();
       case "catalog":

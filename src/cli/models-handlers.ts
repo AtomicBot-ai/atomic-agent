@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { getConfig, resetConfigCache } from "../config/index.js";
 import {
   ensureUserConfigFileSync,
@@ -303,7 +302,7 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
     });
     if (tty) process.stderr.write(`\n`);
     else if (lastLine) process.stderr.write(`done: ${lastLine}\n`);
-    const savedPath = join(dataDir, "models", m.id, m.filename);
+    const savedPath = resolveModelFilePath(dataDir, m.id, m.filename);
     process.stdout.write(`done. model saved to ${savedPath}\n`);
     if (
       mode === "with-mmproj" &&
@@ -1369,7 +1368,7 @@ export async function runLocalModelsPullEmbedding(
     await downloadEmbeddingModel(dataDir, m, { onProgress, onRetry });
     if (tty) process.stderr.write(`\n`);
     else if (lastLine) process.stderr.write(`done: ${lastLine}\n`);
-    const savedPath = join(dataDir, "models", m.id, m.filename);
+    const savedPath = resolveModelFilePath(dataDir, m.id, m.filename);
     process.stdout.write(`done. embedding model saved to ${savedPath}\n`);
     return 0;
   } catch (e) {

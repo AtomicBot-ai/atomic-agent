@@ -13,6 +13,8 @@ import { join } from "node:path";
 import { describeLocalModelsValueSources, loadConfig } from "./load-config.js";
 import { resetConfigCache } from "./config-cache.js";
 import { getUserConfigPath, writeUserConfigFileSync } from "./config-file.js";
+import { resolveModelDir, resolveModelsDir } from "../local-llm/backend-paths.js";
+import { setModelsDirOverride } from "../local-llm/models-dir-override.js";
 import {
   ENV_DEFAULTS,
   USER_CONFIG_DEFAULTS,
@@ -574,6 +576,31 @@ describe("loadConfig", () => {
     });
     resetConfigCache();
     expect(loadConfig().paths.localModelsDataDir).toBe(override);
+  });
+
+  it("points the models folder at modelsDirOverride and back to the default without it (ATO-2106)", () => {
+    const external = join(stateDir, "external-disk", "models");
+    try {
+      writeUserConfigFileSync(getUserConfigPath(stateDir), {
+        ...USER_CONFIG_DEFAULTS,
+        localModels: {
+          ...USER_CONFIG_DEFAULTS.localModels,
+          managed: { ...USER_CONFIG_DEFAULTS.localModels.managed, modelsDirOverride: external },
+        },
+      });
+      resetConfigCache();
+      const config = loadConfig();
+      expect(config.localModels.managed.modelsDirOverride).toBe(external);
+      expect(resolveModelsDir(config.paths.localModelsDataDir)).toBe(external);
+      expect(resolveModelDir(config.paths.localModelsDataDir, "qwen-3.5-4b")).toBe(join(external, "qwen-3.5-4b"));
+
+      writeUserConfigFileSync(getUserConfigPath(stateDir), USER_CONFIG_DEFAULTS);
+      resetConfigCache();
+      const plain = loadConfig();
+      expect(resolveModelsDir(plain.paths.localModelsDataDir)).toBe(join(plain.paths.localModelsDataDir, "models"));
+    } finally {
+      setModelsDirOverride(null);
+    }
   });
 
   it("resolves grammarsDir without consulting the working directory", () => {

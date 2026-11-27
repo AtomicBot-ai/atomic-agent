@@ -171,6 +171,14 @@ export interface UserManagedLocalLlmConfig {
    */
   loraAdapters?: Record<string, LoraAdapter>;
   /**
+   * Folder that holds the downloaded models (ATO-2106), for example one on
+   * an external disk. Absent (default) keeps them in `<dataDir>/models`.
+   * `atomic-agent models dir <path>` moves the models there and writes
+   * this key; `models dir --reset` moves them back and removes it. `~` is
+   * the home directory. Additive and unversioned.
+   */
+  modelsDirOverride?: string;
+  /**
    * Keep the chat daemon's prompt cache on disk between runs (ATO-456).
    * `true`: the managed server starts with `--slot-save-path`, the cache
    * of every idle slot is saved before a managed stop and the newest
