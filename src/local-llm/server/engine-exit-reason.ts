@@ -12,9 +12,10 @@ import { currentRunLog } from "./server-fault.js";
  *   - `out_of_memory`       the backend could not allocate (CUDA, Metal,
  *                           Vulkan or host memory).
  *   - `model_file_missing`  the model file could not be opened.
- *   - `model_file_corrupt`  llama.cpp could not read the model: a bad magic,
- *                           an unknown architecture or tensor type, a
- *                           truncated file.
+ *   - `model_file_corrupt`  the model file is damaged: a bad magic, a
+ *                           truncated file, tensors past its end.
+ *   - `model_unsupported`   a good file the bundled engine is too old for:
+ *                           an unknown architecture or tensor type (ATO-2535).
  *   - `gpu_driver`          the GPU backend or its driver failed to start.
  *   - `port_in_use`         the server could not take its port.
  *   - `crashed_unknown`     the log has lines, none of them recognised.
@@ -24,6 +25,7 @@ export type EngineExitReason =
   | "out_of_memory"
   | "model_file_missing"
   | "model_file_corrupt"
+  | "model_unsupported"
   | "gpu_driver"
   | "port_in_use"
   | "crashed_unknown"
@@ -37,7 +39,10 @@ export const ENGINE_EXIT_LOG_BYTES = 64 * 1024;
  * loads anything. Memory comes before the file and GPU checks, since a GPU
  * that ran out of memory also prints CUDA or Metal errors and a load that
  * ran out of memory can end in "failed to load model". A missing file comes
- * before a corrupt one, whose read errors can follow it. Patterns are the ones
+ * before a corrupt one, whose read errors can follow it. A damaged file comes
+ * before an unsupported one: "unknown model architecture" also names a good
+ * file newer than the engine, so it is never read as damage (ATO-2535, the
+ * desktop's `main/engine-exit-words.ts` split it the same way). Patterns are the ones
  * already used to judge Core's load failures (`core-cpu-backend-fallback.ts`)
  * and the server's own faults (`server-fault.ts`).
  */
@@ -53,8 +58,9 @@ const PATTERNS: ReadonlyArray<readonly [EngineExitReason, RegExp]> = [
   ],
   [
     "model_file_corrupt",
-    /invalid (?:gguf|magic)|not a gguf|failed to read (?:magic|header|key|tensor)|unknown (?:model )?architecture|unknown (?:tensor|ggml) type|invalid ggml type|tensor [^\n]*(?:out of|not within) [^\n]*bounds|wrong number of tensors|corrupt/i,
+    /invalid (?:gguf|magic)|not a gguf|failed to read (?:magic|header|key|tensor)|tensor [^\n]*(?:out of|not within) [^\n]*bounds|wrong number of tensors|corrupt/i,
   ],
+  ["model_unsupported", /unknown (?:model )?architecture|unknown (?:tensor|ggml) type|invalid ggml type/i],
   [
     "gpu_driver",
     /cuda driver version is insufficient|no cuda-capable device|ggml_cuda_init: failed|cuda error|cudaerror|vk_error|errordevicelost|device lost|failed to initialize vulkan|vulkan error|ggml_metal_init: error|failed to create metal|no gpu found|failed to load (?:cuda|vulkan|nvcuda)/i,
