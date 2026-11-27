@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -68,6 +68,31 @@ describe("sign-in folders (ATO-2496)", () => {
     expect(services.expandNow("look @auth/chatgpt.json", root)).not.toContain("at-secret");
     expect(await services.expand("look @auth/chatgpt.json:1-1 @diff", root)).not.toContain("at-secret");
   });
+
+  // Review round 2: the check was built once at boot, and a folder that
+  // did not exist yet kept its lexical path. With a symlinked state folder
+  // and `mcp-oauth/` made after start, the file was inlined.
+  it.skipIf(process.platform === "win32")(
+    "refuses a folder and a file created after start under a symlinked state folder",
+    () => {
+      const state = join(root, "state");
+      const link = join(root, "state-link");
+      mkdirSync(state);
+      symlinkSync(state, link);
+      const services = createMentionServices({
+        lspPool: () => null,
+        protectedFiles: [join(link, "http-tokens.json")],
+        protectedFolders: [`${join(link, "mcp-oauth")}/`],
+      });
+      mkdirSync(join(state, "mcp-oauth"));
+      writeFileSync(join(state, "mcp-oauth", "x.json"), '{"access_token":"oauth-secret"}\n');
+      writeFileSync(join(state, "http-tokens.json"), '{"tokens":["named-secret"]}\n');
+      for (const dir of [state, link]) {
+        expect(services.expandNow("look @mcp-oauth/x.json", dir) ?? "", dir).not.toContain("oauth-secret");
+        expect(services.expandNow("look @http-tokens.json", dir) ?? "", dir).not.toContain("named-secret");
+      }
+    },
+  );
 
   it("refuses inside the folder only, without case on macOS", () => {
     const check = protectedPathCheck([], "darwin", [`${join(root, "auth")}/`]);

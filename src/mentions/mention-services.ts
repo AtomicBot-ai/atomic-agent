@@ -6,7 +6,7 @@
  */
 
 import { realpathSync } from "node:fs";
-import { sep } from "node:path";
+import { basename, dirname, resolve, sep } from "node:path";
 
 import {
   collectWorkspaceProblems,
@@ -49,12 +49,22 @@ export interface MentionServicesOptions {
 
 // The native realpath returns the spelling on disk, as read-scope.ts
 // canonical() does; the JS one keeps the typed case, so `@.ENV` on a
-// case-insensitive macOS volume would miss the protected `.env`.
+// case-insensitive macOS volume would miss the protected `.env`. A path
+// that does not exist yet (`mcp-oauth/` before the first sign-in) keeps
+// the real path of its nearest existing parent, so a symlinked state
+// folder still matches the real path a later mention resolves to.
 function canonicalOf(path: string): string {
-  try {
-    return realpathSync.native(path);
-  } catch {
-    return path;
+  const rest: string[] = [];
+  let current = path;
+  for (;;) {
+    try {
+      return resolve(realpathSync.native(current), ...rest.reverse());
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return path;
+      rest.push(basename(current));
+      current = parent;
+    }
   }
 }
 
@@ -70,11 +80,15 @@ export function protectedPathCheck(
   folders: readonly string[] = [],
 ): IsProtectedPath {
   const fold = (p: string): string => (platform === "win32" || platform === "darwin" ? p.toLowerCase() : p);
-  const set = new Set(files.filter((f) => !f.endsWith(sep) && !f.endsWith("/")).map((f) => fold(canonicalOf(f))));
-  const prefixes = folders.map((f) => fold(canonicalOf(f.replace(/[\\/]+$/, ""))) + sep);
+  const plainFiles = files.filter((f) => !f.endsWith(sep) && !f.endsWith("/"));
+  const folderRoots = folders.map((f) => f.replace(/[\\/]+$/, ""));
+  // Built per call, not once at boot: a folder or file created after
+  // start (or a state folder whose link moved) is judged by its real
+  // path now.
   return (real) => {
     const path = fold(canonicalOf(real));
-    return set.has(path) || prefixes.some((prefix) => path.startsWith(prefix));
+    if (plainFiles.some((f) => fold(canonicalOf(f)) === path)) return true;
+    return folderRoots.some((f) => path.startsWith(fold(canonicalOf(f)) + sep));
   };
 }
 
