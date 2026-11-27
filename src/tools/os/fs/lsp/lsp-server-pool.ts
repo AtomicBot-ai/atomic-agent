@@ -108,12 +108,19 @@ export interface LspServerPool {
     startupWaitMs: number,
     job: (server: LspServer) => Promise<T>,
   ): Promise<LspPoolResult<T>>;
+  /**
+   * The servers up right now, for `@problems` (ATO-2472). Starts
+   * nothing and asks nothing.
+   */
+  running(): LspServer[];
   /** Stops every server this pool started. */
   dispose(): void;
 }
 
 interface ServerEntry {
   state: "starting" | "ready" | "failed";
+  readonly spec: LspServerSpec;
+  readonly root: string;
   /** Resolves to the client, or null when the server could not start. */
   ready: Promise<DiagnosticsClient | null>;
   client: DiagnosticsClient | null;
@@ -198,6 +205,8 @@ export function createLspServerPool(options: LspServerPoolOptions = {}): LspServ
     }
     const entry: ServerEntry = {
       state: "starting",
+      spec,
+      root,
       client: null,
       queue: Promise.resolve(),
       ready: Promise.resolve(null),
@@ -250,6 +259,14 @@ export function createLspServerPool(options: LspServerPoolOptions = {}): LspServ
       const run = entry.queue.then(() => job({ client, spec, root }));
       entry.queue = run.catch(() => null);
       return { ok: true, value: await run };
+    },
+    running() {
+      const out: LspServer[] = [];
+      for (const entry of entries.values()) {
+        if (entry.state !== "ready" || entry.client === null || !entry.client.alive) continue;
+        out.push({ client: entry.client, spec: entry.spec, root: entry.root });
+      }
+      return out;
     },
     dispose() {
       for (const entry of entries.values()) {

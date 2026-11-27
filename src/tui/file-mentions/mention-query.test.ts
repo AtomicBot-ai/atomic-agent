@@ -28,4 +28,9 @@ describe("completeMention", () => {
     expect(mention).not.toBeNull();
     expect(completeMention(buffer, mention!, "src/app.ts")).toBe("check @src/app.ts ");
   });
+
+  it("leaves a folder open with no space, so the palette shows what is inside (ATO-2472)", () => {
+    const buffer = "list @sr";
+    expect(completeMention(buffer, activeMention(buffer)!, "src/")).toBe("list @src/");
+  });
 });

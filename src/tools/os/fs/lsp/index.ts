@@ -15,3 +15,10 @@ export {
   type LspServerPool,
   type LspServerPoolOptions,
 } from "./lsp-server-pool.js";
+export {
+  collectWorkspaceProblems,
+  type FileProblems,
+  type WorkspaceProblems,
+  type WorkspaceProblemsOptions,
+} from "./lsp-workspace-problems.js";
+export type { LspDiagnostic } from "./lsp-delta.js";

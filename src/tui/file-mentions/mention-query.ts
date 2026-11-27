@@ -27,12 +27,14 @@ export function activeMention(buffer: string): ActiveMention | null {
 /**
  * Replace the trailing mention with the chosen path. The trailing space
  * closes the token, so the palette steps aside and the next word starts
- * clean.
+ * clean. A folder (`src/`) gets no space: the palette stays open on what
+ * is inside it, and Enter or a space sends the folder itself.
  */
 export function completeMention(
   buffer: string,
   mention: ActiveMention,
   path: string,
 ): string {
-  return `${buffer.slice(0, mention.start)}@${path} `;
+  const end = path.endsWith("/") ? "" : " ";
+  return `${buffer.slice(0, mention.start)}@${path}${end}`;
 }

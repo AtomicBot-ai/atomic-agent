@@ -10,6 +10,7 @@ import { createCompactionTokenCounter } from "./compaction-token-counter.js";
 import { createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills, recurringTaskTexts, startRuntimeSkillCurator } from "./composition/runtime-skills.js";
 import { createExperienceReviewer } from "./composition/runtime-experience-review.js";
+import { createRuntimeMentions } from "./composition/runtime-mentions.js";
 import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, registerRuntimeImageTools, registerRuntimeVideoTools, registerRuntimeAudioTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
 import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeSessionFactories } from "./composition/runtime-session-services.js";
 import { createInterruptedTurns } from "./interrupted-turns.js";
@@ -429,12 +430,15 @@ export async function createAgentRuntime(
   // session: the worker runner declares them, `os.fs.write` refuses to
   // replace them (`fs-declared-inputs.ts`).
   const declaredInputs = new DeclaredInputsRegistry();
+  // ATO-2472: `@` mentions for every surface, reading the tools' language servers.
+  const runtimeMentions = createRuntimeMentions(config);
   registerRuntimeCoreTools({
     config, toolRegistry, dangerous, sessionStore, logger, resolveOriginalRequest: (id) => turnRequests.get(id),
     resolvePreviousReply: (id) => turnPreviousReplies.get(id),
     canAskUser: (id) => !turnsWithoutQuestions.has(id),
     declaredInputs, shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, browserBackend,
     ...(fileIndex ? { fileIndex } : {}),
+    lspPoolRef: runtimeMentions.lspPoolRef,
     // Only the terminal UI has an `/integrations` screen that saves an Exa
     // key into this process; every other entry point keeps the desktop /
     // `.env` advice (ATO-345).
@@ -1204,6 +1208,7 @@ export async function createAgentRuntime(
     },
     reconnectMemoryEmbeddings: () => memoryEmbeddings.reconnect(),
     ...(fileIndex ? { fileIndex } : {}),
+    mentions: runtimeMentions.mentions,
     setApprovalHandlerForSession: (sessionId, handler) =>
       approvalRouter.setForSession(sessionId, handler),
     setAnalyticsEnabled,
