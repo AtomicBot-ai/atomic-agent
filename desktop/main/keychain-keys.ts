@@ -125,8 +125,16 @@ export interface KeychainDeps {
 
 export type SaveThroughAgent =
   | { ok: true; store: SecretsStoreKind }
-  /** `unsupported`: the agent does not know these commands; the caller does what it did before. */
-  | { ok: false; unsupported: boolean; error: string };
+  /** `unsupported`: the agent does not know these commands; the caller does what it did before.
+      ATO-2745: `error` is a sentence for the window; `detail` is what the agent said, for a Details fold. */
+  | { ok: false; unsupported: boolean; error: string; detail?: string };
+
+/* ATO-2745: what the window says when a key does not go through. These
+   were "not a key name: X" and "value must be one line"; the raw answer
+   stays in `detail`, behind Details. */
+export const KEY_NAME_REFUSED = "This key cannot be kept in the system keychain, so it was not saved.";
+export const KEY_ONE_LINE = "The key has a line break in it. Copy it again as one line and paste it.";
+export const KEY_SAVE_FAILED = "The key could not be saved in the system keychain.";
 
 /** What an agent from before ATO-1639 says to `config secrets set|get|unset`. */
 function unsupportedAnswer(res: AgentCliAnswer): boolean {
@@ -135,22 +143,23 @@ function unsupportedAnswer(res: AgentCliAnswer): boolean {
 
 /** Save (or with null remove) one key wherever the agent keeps keys. The value is never logged or returned. */
 export async function saveSecretThroughAgent(deps: KeychainDeps, name: string, value: string | null): Promise<SaveThroughAgent> {
-  if (!isKeychainSecretName(name)) return { ok: false, unsupported: false, error: `not a key name: ${name}` };
+  if (!isKeychainSecretName(name)) return { ok: false, unsupported: false, error: KEY_NAME_REFUSED, detail: `not a key name: ${name}` };
   if (value !== null && (value.length === 0 || /[\r\n\0]/.test(value))) {
-    return { ok: false, unsupported: false, error: "value must be one line" };
+    return { ok: false, unsupported: false, error: KEY_ONE_LINE, detail: "value must be one line" };
   }
   if (deps.route) {
     const viaRoute = await deps.route(name, value);
     if (viaRoute) {
       if (viaRoute.ok) forget(name, value);
-      return viaRoute.ok ? viaRoute : { ok: false, unsupported: false, error: viaRoute.error };
+      return viaRoute.ok ? viaRoute : { ok: false, unsupported: false, error: KEY_SAVE_FAILED, detail: viaRoute.error };
     }
   }
   const res = value === null
     ? await deps.cli(["config", "secrets", "unset", name])
     : await deps.cli(["config", "secrets", "set", name, "--json"], `${value}\n`);
   if (!res.ok) {
-    return { ok: false, unsupported: unsupportedAnswer(res), error: res.error ?? "the agent could not save the key" };
+    const said = (res.error ?? res.stderr ?? "").trim();
+    return { ok: false, unsupported: unsupportedAnswer(res), error: KEY_SAVE_FAILED, ...(said ? { detail: said } : {}) };
   }
   let store: SecretsStoreKind = "env";
   try {

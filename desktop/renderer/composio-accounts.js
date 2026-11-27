@@ -56,10 +56,15 @@ function composioAccountsHTML(st, h) {
   else if (!rows.length) body = '<div class="tk-setrow"><div class="body"><div class="d">No accounts yet. Ask the agent to connect an app; to add a second account for it, ask it to connect that app again.</div></div></div>';
   const appsWithDefault = new Set(rows.filter((r) => r.isDefault).map((r) => r.toolkit));
   for (const r of rows) {
-    const where = h.esc(r.toolkit) + (r.who ? ' · ' + h.esc(r.who) : '') + ' · <code>' + h.esc(r.id) + '</code>';
+    /* ATO-2745: Composio's account id is for support, not for reading: it moved from a <code> in the
+       line to the line's tooltip (Raycast and the Claude connectors show the account, not its id). */
+    const idTip = ' title="' + h.esc('Composio account id: ' + r.id) + '"';
+    const where = h.esc(r.toolkit) + (r.who ? ' · ' + h.esc(r.who) : '');
     if (r.alias === null) {
       const draft = st.drafts && st.drafts[r.id] ? st.drafts[r.id] : '';
-      body += '<div class="tk-setrow" data-cmpa-row="' + h.esc(r.id) + '"><div class="body"><div class="t">Not saved</div><div class="d">' + where + '</div></div>'
+      // A signed-in account with no name yet is headed by who it is, not by "Not saved".
+      body += '<div class="tk-setrow" data-cmpa-row="' + h.esc(r.id) + '"><div class="body"><div class="t">' + (r.who ? h.esc(r.who) : h.esc(r.toolkit) + ' account') + '</div>'
+        + '<div class="d"' + idTip + '>' + h.esc(r.toolkit) + ' · No name yet. Give it a name to keep it.</div></div>'
         + '<label class="tk-inpwrap sm"><input id="cmpa-name-' + h.esc(r.id) + '" data-cmpa-name="' + h.esc(r.id) + '" value="' + h.esc(draft) + '" placeholder="Name, e.g. work" aria-label="Name for this account" autocomplete="off" spellcheck="false"' + (busy ? ' disabled' : '') + '></label>'
         + '<button class="btn btn-s sm" data-act="composio:acct:save:' + h.esc(r.toolkit) + ':' + h.esc(r.id) + '"' + (busy ? ' disabled' : '') + '>Save</button></div>';
       continue;
@@ -67,10 +72,11 @@ function composioAccountsHTML(st, h) {
     const chip = r.isDefault ? '<span class="tk-chip tk-chip--sm tk-chip--green">Default</span>'
       : '<button class="btn btn-s sm" data-act="composio:acct:default:' + h.esc(r.toolkit) + ':' + h.esc(r.alias) + '"' + (busy ? ' disabled' : '') + '>Make default</button>';
     const clear = r.isDefault ? '<button class="btn btn-g sm" data-act="composio:acct:clear:' + h.esc(r.toolkit) + '" title="Let Composio use the account connected last"' + (busy ? ' disabled' : '') + '>No default</button>' : '';
-    body += '<div class="tk-setrow" data-cmpa-row="' + h.esc(r.id) + '"><div class="body"><div class="t">' + h.esc(r.alias) + '</div><div class="d">' + where
+    body += '<div class="tk-setrow" data-cmpa-row="' + h.esc(r.id) + '"><div class="body"><div class="t">' + h.esc(r.alias) + '</div><div class="d"' + idTip + '>' + where
       + (r.missing ? ' · <span class="tk-help--err">not signed in on Composio any more</span>' : '') + '</div></div>'
       + chip + clear
-      + '<button class="btn btn-danger sm" data-act="composio:acct:remove:' + h.esc(r.toolkit) + ':' + h.esc(r.alias) + '" title="Forget this name (the account stays signed in on Composio)"' + (busy ? ' disabled' : '') + '>Remove</button></div>';
+      // ATO-2745: it only forgets the name, so it says that and is not red (nothing is signed out or deleted).
+      + '<button class="btn btn-g sm" data-act="composio:acct:remove:' + h.esc(r.toolkit) + ':' + h.esc(r.alias) + '" title="The account stays signed in on Composio"' + (busy ? ' disabled' : '') + '>Forget name</button></div>';
   }
   const apps = Array.from(new Set(rows.map((r) => r.toolkit))).filter((t) => rows.filter((r) => r.toolkit === t).length > 1 && !appsWithDefault.has(t));
   const notes = (apps.length ? '<p class="sd-cap sd-block">' + h.esc(apps.join(', ')) + ': no default, so the agent uses the account connected last.</p>' : '')
@@ -127,7 +133,7 @@ function createComposioAccounts(deps) {
     }
     if (verb === 'default') return edit((br) => br.composioSetDefault(toolkit, arg), toolkit + ' now acts through "' + arg + '".');
     if (verb === 'clear') return edit((br) => br.composioSetDefault(toolkit, null), toolkit + ' has no default now: Composio uses the account connected last.');
-    if (verb === 'remove') return edit((br) => br.composioRemoveAccount(toolkit, arg), toolkit + ' account "' + arg + '" removed. It stays signed in on Composio.');
+    if (verb === 'remove') return edit((br) => br.composioRemoveAccount(toolkit, arg), 'The name "' + arg + '" is forgotten. The ' + toolkit + ' account stays signed in on Composio.');
   }
   function draft(id, value) { st.drafts[id] = String(value == null ? '' : value); }
   return {state: st, refresh, act, draft, view: () => st};

@@ -1871,7 +1871,9 @@ without a click.
   published, each stable release needs a `beta*` copy too, or beta readers
   wait for the next beta. ATO-2414: no betas are published yet, so the row is
   hidden (`BETA_CHANNEL_SHIPPED` in `main/updater.ts`); a saved "on" keeps the
-  fallback above and still gets stable updates. Flip the flag with the first beta.
+  fallback above and still gets stable updates. ATO-2745: while it is on, the row
+  is shown anyway, so it can be turned off; once off it is hidden again (VS Code
+  and Chrome keep the channel visible to people on it). Flip the flag with the first beta.
 - The person's choices are in Electron userData `updates.json` (auto-check, beta,
   skipped version, last Not now, and the install in flight, which the new
   version reads once to send `update_installed`). Never in the agent's

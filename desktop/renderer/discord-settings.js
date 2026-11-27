@@ -18,6 +18,13 @@ const DC_PORTAL_URL = 'https://discord.com/developers/applications';
 const DC_ID_RE = /^\d{15,25}$/;
 const DC_RESTART_APPLY = 'Restart the agent to apply this. The app stays open.';
 const DC_CONFIRM_MIN_MS = 400;
+/* ATO-2745: key-stored-note.js (loaded before this file; required in the Node checks). */
+const dcSavedLine = typeof keySavedLine === 'function' ? keySavedLine
+  : typeof require === 'function' ? require('./key-stored-note.js').keySavedLine : (line) => line;
+/* ATO-2745: a raw answer (the Discord library's error, a process id) goes behind Details, never in the line. */
+function dcDetailsHTML(detail, esc) {
+  return detail ? '<details class="set-errmore"><summary>Details</summary><span>' + esc(detail) + '</span></details>' : '';
+}
 
 /* The token as typed, or why it cannot be saved. The same rule as main's
    discordTokenValueError (agent-cli.ts), which checks it again. */
@@ -49,8 +56,8 @@ function dcReadBlock(v) {
 function dcInitial() {
   return {
     known:false, hasToken:null, cfg:{enabled:false, ownerUserIds:[]}, busy:false, chain:null,
-    mode:'list', tokenError:null, draftId:'', idError:null,
-    message:null, msgKind:'info', msgGen:0, owedGen:null, lastError:null,
+    mode:'list', tokenError:null, tokenErrorDetail:null, draftId:'', idError:null,
+    message:null, msgKind:'info', msgGen:0, owedGen:null, lastError:null, lastErrorDetail:null,
     confirm:null, confirmAt:0,
     restart:{phase:'idle', text:null},
     channel:null, liveLoop:false,
@@ -59,7 +66,8 @@ function dcInitial() {
 
 /* What the tab says about the bot, in one line, and whether it is set up. `owed`: a restart is owed.
    ATO-516: with the agent's live channel (`st.channel`, GET /api/discord/channel) a complete setup
-   says what the bot is doing right now; `chip` is 'connected', 'connecting' or 'not-connected'. */
+   says what the bot is doing right now; `chip` is 'connected', 'connecting' or 'not-connected'.
+   ATO-2745: `detail` is the raw part (the other process's id, Discord's own error), for a Details fold. */
 function dcStatus(st, owed) {
   const off = (line) => ({on:false, chip:'not-connected', line});
   if (st.hasToken !== true) return off('Add a bot token to start.');
@@ -75,12 +83,12 @@ function dcStatus(st, owed) {
   }
   if (ch.state === 'starting') return {on:false, chip:'connecting', line:'Connecting to Discord…'};
   if (ch.otherPoller && ch.otherPoller.where === 'this_computer') {
-    const pid = typeof ch.otherPoller.pid === 'number' ? ' (process ' + ch.otherPoller.pid + ')' : '';
-    return off('Another Atomic Agent on this computer' + pid + ' is running this bot. Quit it, then press Restart agent below.');
+    const pid = typeof ch.otherPoller.pid === 'number' ? 'Process id: ' + ch.otherPoller.pid : null;
+    return Object.assign(off('Another Atomic Agent on this computer is running this bot, for example in a terminal. Quit it, then press Restart agent below.'), {detail: pid});
   }
   if (ch.state === 'down') {
-    const why = typeof ch.lastError === 'string' && ch.lastError.trim() ? ch.lastError.trim().replace(/\.$/, '') : 'no reason given';
-    return off('The bot could not connect: ' + why + '. Check the token, then press Restart agent below.');
+    const why = typeof ch.lastError === 'string' && ch.lastError.trim() ? ch.lastError.trim() : null;
+    return Object.assign(off('The bot could not connect to Discord. Check the token, then press Restart agent below.'), {detail: why});
   }
   return off('The agent has not started the bot yet. Press Restart agent below; the app stays open.');
 }
@@ -106,8 +114,8 @@ function dcLiveLoop(ctrl, visible, repaint, timers) {
 /* What the restart left: `st` is the agent status BR.restart resolved with, or null. */
 function dcRestartResult(res, view) {
   if (!res || res.state !== 'connected') {
-    const why = res && typeof res.error === 'string' && res.error.trim() ? res.error.trim().replace(/\.$/, '') : 'no reason given';
-    return {phase:'failed', text:'The agent did not start again: ' + why + '. Press Restart agent to try again.'};
+    const why = res && typeof res.error === 'string' && res.error.trim() ? res.error.trim() : null;
+    return {phase:'failed', text:'The agent did not start again. Press Restart agent to try again.', detail: why};
   }
   const v = view || {};
   if (v.hasToken !== true) return {phase:'done', text:'The agent restarted.'};
@@ -131,16 +139,16 @@ function createDiscordSettings(api) {
   const call = (fn) => Promise.resolve().then(fn).catch((e) => ({ok:false, error:String((e && e.message) || e)}));
   const gen = () => { try { return api.agentGen(); } catch { return 0; } };
   const say = (text, kind) => {
-    st.message = text; st.msgKind = kind || 'info'; st.msgGen = gen(); st.lastError = null;
+    st.message = text; st.msgKind = kind || 'info'; st.msgGen = gen(); st.lastError = null; st.lastErrorDetail = null;
     if (st.restart.phase !== 'restarting') st.restart = {phase:'idle', text:null};
     if (kind === 'owed') st.owedGen = gen();
   };
-  const fail = (what, res) => { st.lastError = what + ': ' + ((res && res.error) || 'unknown error'); };
+  const fail = (what, res) => { st.lastError = what + '.'; st.lastErrorDetail = (res && res.error) || null; };
 
   async function refreshOnce() {
     const [cfg, tok] = await Promise.all([call(() => api.readConfig()), call(() => api.tokenPresent())]);
     if (cfg && cfg.ok) st.cfg = dcReadBlock(cfg.value);
-    else st.lastError = 'Could not read the Discord settings: ' + ((cfg && cfg.error) || 'unknown error');
+    else fail('Could not read the Discord settings', cfg);
     if (tok && tok.ok) st.hasToken = tok.has === true;
     else if (st.hasToken === null) st.hasToken = false;
     await pollChannel();
@@ -184,19 +192,25 @@ function createDiscordSettings(api) {
     cancelToken() { st.mode = 'list'; st.tokenError = null; },
     async saveToken(raw) {
       const c = dcTokenClean(raw);
+      st.tokenErrorDetail = null;
       if (!c.ok) { st.tokenError = c.error; return {ok:false, error:c.error}; }
       if (st.busy) return {ok:false};
       st.busy = true;
       const res = await call(() => api.setToken(c.value));
       st.busy = false;
-      if (!res || res.ok === false) { st.tokenError = 'Could not save the token: ' + ((res && res.error) || 'unknown error'); return {ok:false, error:st.tokenError}; }
+      if (!res || res.ok === false) {
+        st.tokenError = 'Could not save the token.';
+        st.tokenErrorDetail = [res && res.error, res && res.detail].filter(Boolean).join('\n') || null;
+        return {ok:false, error:st.tokenError};
+      }
       st.mode = 'list'; st.tokenError = null;
-      say('Token saved.', 'owed');
+      const saved = dcSavedLine('Token saved.', res);   // ATO-2745: keychain or the private file, as main says
+      say(saved, 'owed');
       await refresh();
       if (st.cfg.ownerUserIds.length && !st.cfg.enabled) {
         const w = await call(() => api.write([['discord.enabled', true]]));
         if (!w || w.ok === false) fail('Could not turn Discord on', w);
-        else say('Token saved and Discord turned on.', 'owed');
+        else say(saved.replace(/\.$/, '') + ' and Discord turned on.', 'owed');
         await refresh();
       }
       return {ok:true};
@@ -276,10 +290,10 @@ function discordPaneHTML(st, view, h) {
   if (st.mode === 'tokenPrompt') {
     body += '<div class="tk-card pad sd-tgcard">'
       + '<h3 class="sd-title">Bot token</h3>'
-      + '<p>Paste the token of your bot from the Discord Developer Portal (your application › Bot › Reset Token). It is saved on this computer, in a file only your user account can read.</p>'
+      + '<p>Paste the token of your bot from the Discord Developer Portal (your application › Bot › Reset Token). It is saved only on this computer.</p>'
       + '<label class="tk-inpwrap sd-tokwrap' + (st.tokenError ? ' is-error' : '') + '">' + ic('key')
       + '<input id="dc-token" type="password" autocomplete="off" spellcheck="false" aria-label="Discord bot token"' + (busy ? ' disabled' : '') + '></label>'
-      + (st.tokenError ? '<p class="tk-help tk-help--err">' + esc(st.tokenError) + '</p>' : '')
+      + (st.tokenError ? '<p class="tk-help tk-help--err">' + esc(st.tokenError) + '</p>' + dcDetailsHTML(st.tokenErrorDetail, esc) : '')
       + '<div class="sd-acts">' + (busy ? '<span class="sd-cap">saving…</span>' : '') + '<span class="sd-grow"></span>'
       + '<button class="btn btn-g sm" data-act="discord:tokenCancel">Cancel</button>'
       + '<button class="btn btn-p sm" data-act="discord:tokenSave"' + (busy ? ' disabled' : '') + '>Save</button></div></div>';
@@ -296,7 +310,7 @@ function discordPaneHTML(st, view, h) {
     const s = dcStatus(st, v.owed);
     body += '<div class="tk-card sd-tgstatus"><div class="tk-setrow">'
       + dcMark('', 'tk-ico--blue')
-      + '<div class="body"><div class="t">Discord</div><div class="d">' + esc(s.line) + '</div></div>'
+      + '<div class="body"><div class="t">Discord</div><div class="d">' + esc(s.line) + '</div>' + dcDetailsHTML(s.detail, esc) + '</div>'
       + '<span class="tk-chip tk-chip--sm ' + (s.on ? 'tk-chip--green' : 'tk-chip--amber') + '" data-dc-status="' + s.chip + '">'
         + (s.chip === 'connected' ? 'Connected' : s.chip === 'connecting' ? 'Connecting…' : 'Not connected') + '</span>'
       + '<button class="iconbtn sm" data-act="discord:refresh" title="Check again" aria-label="Check again">' + ic('refresh') + '</button>'
@@ -327,7 +341,7 @@ function discordPaneHTML(st, view, h) {
   const note = (text, tail) => '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + text + '</span>' + (tail || '') + '</div>';
   const speaks = st.restart.phase === 'restarting' || st.restart.phase === 'failed';
   const msg = st.message && !(v.stale && st.msgKind === 'owed') ? st.message : null;
-  let notices = st.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(st.lastError) + '</span></div>' : '';
+  let notices = st.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(st.lastError) + dcDetailsHTML(st.lastErrorDetail, esc) + '</span></div>' : '';
   if (msg && st.msgKind === 'owed' && v.owed && !speaks) notices += note(esc(msg) + ' <span class="sec">' + esc(DC_RESTART_APPLY) + '</span>', restartBtn);
   else {
     if (msg && !(st.msgKind === 'owed' && speaks)) notices += note(esc(msg));
@@ -337,7 +351,7 @@ function discordPaneHTML(st, view, h) {
     const tone = st.restart.phase === 'done' ? 'green' : st.restart.phase === 'failed' ? 'red' : 'blue';
     const icon = st.restart.phase === 'done' ? ic('check') : st.restart.phase === 'failed' ? ic('alert') : '<span class="tk-spin"></span>';
     notices += '<div class="tk-notice tk-notice--' + tone + '" data-dc-restart-result="' + st.restart.phase + '">' + icon
-      + '<span class="grow">' + esc(st.restart.text) + '</span>' + (st.restart.phase === 'failed' ? restartBtn : '') + '</div>';
+      + '<span class="grow">' + esc(st.restart.text) + dcDetailsHTML(st.restart.detail, esc) + '</span>' + (st.restart.phase === 'failed' ? restartBtn : '') + '</div>';
   }
   return '<div class="sd-pane sd-tg sd-dc">' + body + notices + '</div>';
 }

@@ -151,7 +151,8 @@ export function readChannel(u: { channel: string | null; allowDowngrade: boolean
  * ATO-2414: no beta builds are published (the feed has no `beta*.yml`), so
  * Settings hides "Get beta versions". Someone who turned it on earlier keeps
  * the saved choice and the 404 fallback in lookUp(), so stable updates still
- * come. Set to true when the first beta ships.
+ * come; ATO-2745: Settings still shows them the switch, so they can turn it
+ * off (renderer/app-update.js updBetaRowHTML). Set to true when the first beta ships.
  */
 export const BETA_CHANNEL_SHIPPED = false;
 
@@ -285,12 +286,12 @@ export const OFFLINE_CHECK_RESULT: CheckResult = {
 export function plainUpdateError(err: unknown): { reason: "offline" | "no-feed" | "other"; message: string } {
   const text = err instanceof Error ? `${err.name} ${err.message}` : String(err);
   if (/ERR_INTERNET_DISCONNECTED|ERR_NAME_NOT_RESOLVED|ERR_NETWORK_CHANGED|ERR_CONNECTION|ERR_TIMED_OUT|ERR_PROXY|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|socket hang up/i.test(text)) {
-    return { reason: "offline", message: "Couldn’t reach the update server. Check your internet connection and try again." };
+    return { reason: "offline", message: "Could not reach the update server. Check your internet connection and try again." };
   }
   if (/\b404\b|Cannot find channel|Cannot find latest|app-update\.yml|ENOENT/i.test(text)) {
     return { reason: "no-feed", message: "No update information was found for this build." };
   }
-  return { reason: "other", message: "Couldn’t check for updates. Try again later." };
+  return { reason: "other", message: "Could not check for updates. Try again later." };
 }
 
 /** Reads `channel:` from the app-update.yml electron-builder wrote (no YAML parser needed for one key). */

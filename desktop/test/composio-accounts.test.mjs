@@ -180,3 +180,24 @@ test("renderer wiring: loads before composio.js, hooked into the pane, its verbs
     assert.ok(source.includes(hook), hook);
   }
 });
+
+// ATO-2745: the account id is a tooltip, not a <code> in the line; an unnamed account is headed by who it
+// is, not "Not saved"; the button that only forgets a name says "Forget name" and is not red.
+test("ATO-2745: no raw id in the line, a sensible header, and a quiet Forget name", () => {
+  const html = R.composioAccountsHTML({ accounts: [WORK], connected: [{ id: "ca_work", toolkit: "gmail", displayName: "me@work.test" }, { id: "ca_new", toolkit: "gmail", displayName: "me@home.test" }, { id: "ca_anon", toolkit: "slack", displayName: null }], drafts: {} }, h);
+  assert.ok(!html.includes("<code>"), "no account id printed in the line");
+  assert.ok(!html.includes(">Not saved<"));
+  assert.match(html, /<div class="t">me@home\.test<\/div><div class="d" title="Composio account id: ca_new">gmail · No name yet\./);
+  assert.match(html, /<div class="t">slack account<\/div>/);
+  assert.match(html, /title="Composio account id: ca_work">gmail · me@work\.test/);
+  assert.match(html, /<button class="btn btn-g sm" data-act="composio:acct:remove:gmail:work"[^>]*>Forget name<\/button>/);
+  assert.ok(!html.includes("btn-danger"), "forgetting a name is not a red action");
+});
+
+test("ATO-2745: Forget name says what it did", async () => {
+  const said = [];
+  const br = { composioRemoveAccount: async () => ({ ok: true, accounts: [] }) };
+  const c = R.createComposioAccounts({ bridge: () => br, stateDir: () => "/s", repaint: () => {}, changed: (t) => said.push(t) });
+  await c.act("remove:gmail:work");
+  assert.deepEqual(said, ['The name "work" is forgotten. The gmail account stays signed in on Composio.']);
+});

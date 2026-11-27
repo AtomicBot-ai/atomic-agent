@@ -290,3 +290,64 @@ test("with `atag serve` up, a token goes through its route, not a process", { sk
   assert.deepEqual(seen, [["DISCORD_BOT_TOKEN", "discord-token-0123456789abcdef"]]);
   assert.deepEqual(calls(), []);
 });
+
+/* ---------------- ATO-2745: human words, and where a key really went ---------------- */
+
+test("ATO-2745: a refused name or value gets a sentence, the raw reason only as detail", async () => {
+  const deps = { cli: async () => ({ ok: true, stdout: "", stderr: "" }), route: null };
+  const name = await kk.saveSecretThroughAgent(deps, "PATH", "/tmp");
+  assert.equal(name.error, kk.KEY_NAME_REFUSED);
+  assert.equal(name.detail, "not a key name: PATH");
+  const line = await kk.saveSecretThroughAgent(deps, "X_API_KEY", "a\nb");
+  assert.equal(line.error, kk.KEY_ONE_LINE);
+  assert.doesNotMatch(line.error, /value must be one line/);
+  const refused = await kk.saveSecretThroughAgent({ cli: async () => ({ ok: false, stdout: "", stderr: "", error: "keychain is locked" }), route: null }, "X_API_KEY", "v");
+  assert.deepEqual(refused, { ok: false, unsupported: false, error: kk.KEY_SAVE_FAILED, detail: "keychain is locked" });
+  const route = await kk.saveSecretThroughAgent({ cli: async () => { throw new Error("no CLI"); }, route: async () => ({ ok: false, error: "route said no" }) }, "X_API_KEY", "v");
+  assert.equal(route.error, kk.KEY_SAVE_FAILED);
+  assert.equal(route.detail, "route said no");
+});
+
+test("ATO-2745: a bot token's answer says where it went: keychain, the file, or the file because the keychain failed", { skip: !posix }, async () => {
+  stage({ store: "keychain" });
+  const kc = await cli.desktopSecretSet(home, "TELEGRAM_BOT_TOKEN", "123:abc-kc");
+  assert.equal(kc.storedIn, "keychain");
+  assert.equal(kc.keychainFallback, undefined);
+
+  stage({ store: "keychain" });
+  process.env.FAKE_KC_FAIL = "1";
+  const fellBack = await cli.desktopSecretSet(home, "TELEGRAM_BOT_TOKEN", "123:abc-fallback");
+  assert.equal(fellBack.ok, true);
+  assert.equal(fellBack.storedIn, "file");
+  assert.equal(fellBack.keychainFallback, true, "the keychain is on but the token is in .env: the window must say so");
+  delete process.env.FAKE_KC_FAIL;
+
+  stage({ store: "keychain" });
+  process.env.FAKE_SECRETS_OLD = "1";
+  const old = await cli.desktopSecretSet(home, "TELEGRAM_BOT_TOKEN", "123:abc-old");
+  assert.equal(old.storedIn, "file");
+  assert.equal(old.keychainFallback, true);
+  delete process.env.FAKE_SECRETS_OLD;
+
+  stage();
+  const plain = await cli.desktopSecretSet(home, "TELEGRAM_BOT_TOKEN", "123:abc-env");
+  assert.equal(plain.storedIn, "file");
+  assert.equal(plain.keychainFallback, undefined, "the default .env store is no fallback");
+  const removed = await cli.desktopSecretSet(home, "TELEGRAM_BOT_TOKEN", null);
+  assert.equal(removed.storedIn, undefined, "a removal says nothing about where");
+});
+
+test("ATO-2745: a provider key the keychain did not take says so (keychainFallback); one it took does not", { skip: !posix }, async () => {
+  stage({ store: "keychain" });
+  process.env.FAKE_KC_FAIL = "1";
+  const fellBack = await cli.upsertProvider({ id: "openrouter", kind: "openrouter", apiKey: "sk-or-fallback-0123456789" });
+  assert.equal(fellBack.ok, true, fellBack.error);
+  assert.equal(fellBack.keychainFallback, true);
+  delete process.env.FAKE_KC_FAIL;
+  stage({ store: "keychain" });
+  const took = await cli.upsertProvider({ id: "openrouter", kind: "openrouter", apiKey: "sk-or-typed-0123456789" });
+  assert.equal(took.keychainFallback, undefined);
+  stage();
+  const plain = await cli.upsertProvider({ id: "openrouter", kind: "openrouter", apiKey: "sk-or-default-0123456789" });
+  assert.equal(plain.keychainFallback, undefined, "the .env store is no fallback");
+});

@@ -45,7 +45,7 @@ function tgTokenClean(raw) {
 /* The token prompt's state: `shown` is the eye's position, `hasText` whether
    the field has anything in it (so Save can be disabled without the value
    ever leaving the field), `checking` while Telegram is asked about it. */
-function tgTokenInitial() { return {error:null, submitting:false, checking:false, shown:false, hasText:false}; }
+function tgTokenInitial() { return {error:null, errorDetail:null, submitting:false, checking:false, shown:false, hasText:false}; }
 
 /* Whether Save may be pressed for what is in the field. */
 function tgTokenSaveEnabled(value) { return String(value == null ? '' : value).trim().length > 0; }
@@ -72,7 +72,7 @@ function tgConnectCardHTML(h) {
     + '<p>Talk to Atomic Agent from your phone: message your own Telegram bot and it answers from this computer. The token is stored only on this machine.</p>'
     + '<ol class="sd-steps sd-steps--left">' + TG_SETUP_STEPS.map((t) => '<li>' + h.esc(t) + '</li>').join('') + '</ol>'
     + '<div class="sd-acts"><button class="btn btn-s" data-act="telegram:botfather" title="Opens t.me/BotFather in Telegram">' + h.ic('open') + 'Open @BotFather</button>'
-    + '<button class="btn btn-p" data-act="telegram:token" title="Enter">Paste a bot token</button></div></div>';
+    + '<button class="btn btn-p" data-act="telegram:token">Paste a bot token</button></div></div>';
 }
 
 /* The token prompt: a password field with the shape as its placeholder, the
@@ -83,13 +83,15 @@ function tgTokenPromptCardHTML(t, h) {
   const eye = st.shown ? 'eyeOff' : 'eye';
   return '<div class="tk-card pad sd-tgcard" data-tg-token-prompt>'
     + '<h3 class="sd-title">Bot token</h3>'
-    + '<p>Paste the token @BotFather gave you. It is checked with Telegram once, then saved on this computer, in a file only your user account can read.</p>'
+    // ATO-2745: where it lands (keychain or file) is said after the save, from main's answer (key-stored-note.js).
+    + '<p>Paste the token @BotFather gave you. It is checked with Telegram once, then saved only on this computer.</p>'
     + '<label class="tk-inpwrap sd-tokwrap' + (st.error ? ' is-error' : '') + '">' + h.ic('key')
     + '<input id="tg-token" type="' + (st.shown ? 'text' : 'password') + '" autocomplete="off" spellcheck="false" aria-label="Bot token"'
     + ' placeholder="' + h.esc(TG_TOKEN_PLACEHOLDER) + '"' + (busy ? ' disabled' : '') + '>'
     + '<button type="button" class="iconbtn sm" data-act="telegram:tokenReveal" aria-pressed="' + (st.shown ? 'true' : 'false') + '" title="' + (st.shown ? 'Hide the token' : 'Show the token') + '" aria-label="' + (st.shown ? 'Hide the token' : 'Show the token') + '">' + h.ic(eye) + '</button>'
     + '</label>'
     + (st.error ? '<p class="tk-help tk-help--err" data-tg-token-error>' + h.esc(st.error) + '</p>' : '')
+    + (st.error && st.errorDetail ? '<details class="set-errmore"><summary>Details</summary><span>' + h.esc(st.errorDetail) + '</span></details>' : '')
     + '<div class="sd-acts">' + (st.checking ? '<span class="sd-cap">checking with Telegram…</span>' : st.submitting ? '<span class="sd-cap">saving…</span>' : '') + '<span class="sd-grow"></span>'
     + '<button class="btn btn-g sm" data-act="telegram:tokenCancel">Cancel</button>'
     + '<button class="btn btn-p sm" data-act="telegram:tokenSave"' + (busy || !st.hasText ? ' disabled' : '') + '>Save</button></div></div>';
