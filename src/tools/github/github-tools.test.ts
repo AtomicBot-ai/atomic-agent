@@ -146,6 +146,9 @@ describe("github.* tools", () => {
     ]);
     expect(tools.get("github.pr.checks")?.readonly).toBe(true);
     expect(tools.get("github.pr.checks")?.untrustedOutput).toBe("GitHub CI logs");
+    // ATO-2481: lists carry titles and names other people wrote.
+    expect(tools.get("github.pr.list")?.untrustedOutput).toBe("GitHub pull requests");
+    expect(tools.get("github.issue.list")?.untrustedOutput).toBe("GitHub issues");
     expect(tools.get("github.pr.autofix")?.readonly).toBe(false);
     expect(tools.get("github.whoami")?.readonly).toBe(true);
     expect(tools.get("github.pr.list")?.readonly).toBe(true);
