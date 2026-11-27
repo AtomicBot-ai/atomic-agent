@@ -61,8 +61,9 @@ export function getTrustConfigPaths(paths: {
     join(paths.stateDir, "plugins", "plugins.json"),
     join(paths.stateDir, "plugins", "marketplaces.json"),
     join(paths.stateDir, "plugins", "installed") + sep,
-    // The logbook's capture switch (ATO-2363): a write turns screenshots on.
-    join(paths.stateDir, "logbook", "settings.json"),
+    // The logbook folder (ATO-2363): its settings.json turns screenshots on.
+    // A directory entry, so moving a whole folder onto it asks too.
+    join(paths.stateDir, "logbook") + sep,
   ];
 }
 

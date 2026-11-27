@@ -949,8 +949,11 @@ describe("the state's secret files (ATO-877)", () => {
     expect(trust).toContain(userHooksPath(stateDir));
     expect(trust).toContain(join(pluginsRoot(stateDir), "plugins.json"));
     expect(trust).toContain(join(pluginsRoot(stateDir), "marketplaces.json"));
-    // A write to the logbook switch turns screen capture on (ATO-2363).
-    expect(trust).toContain(join(logbookDir(stateDir), LOGBOOK_SETTINGS_FILE));
+    // A write to the logbook switch turns screen capture on (ATO-2363). The
+    // whole folder is listed, so a folder moved onto it is caught as well.
+    expect(trust).toContain(logbookDir(stateDir) + sep);
+    expect(isTrustDirectoryEntry(logbookDir(stateDir) + sep)).toBe(true);
+    expect(join(logbookDir(stateDir), LOGBOOK_SETTINGS_FILE).startsWith(logbookDir(stateDir) + sep)).toBe(true);
     // A directory entry: its trailing separator is what makes it a prefix.
     expect(trust).toContain(dirname(installedPluginDir(stateDir, "x")) + sep);
     expect(isTrustDirectoryEntry(dirname(installedPluginDir(stateDir, "x")) + sep)).toBe(true);
