@@ -5,10 +5,7 @@ import {
 import { DEFAULT_FUSION_CLOUD_WORKERS } from "../../config/llm-run-mode-config.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import type { StructuredLogger } from "../../tracing/index.js";
-import {
-  builtinAgentProfileSet,
-  type AgentProfileSet,
-} from "../../agent-profiles/index.js";
+import type { AgentProfileSet } from "../../agent-profiles/index.js";
 import type { ApprovalGate } from "../../approval/approval-gate.js";
 import {
   ApprovalDeniedError,
@@ -25,7 +22,7 @@ import {
   type WorkerLegRef,
 } from "../fusion/role-models.js";
 import {
-  applyTaskProfiles,
+  loadAndApplyTaskProfiles,
   type AppliedProfileReport,
 } from "../fusion/task-profiles.js";
 import { treeLimitBreach } from "../fusion/task-tree.js";
@@ -198,7 +195,8 @@ function error(
  *  3. **Only on valid args,** at most `SUBAGENT_MAX_CHILDREN_PER_CALL`
  *     tasks, and at most `SUBAGENT_MAX_CHILDREN_PER_TURN` across the
  *     turn (the task tree's node check again).
- *  4. **Only known profiles.** `applyTaskProfiles`, as in Fusion.
+ *  4. **Only known profiles.** `loadAndApplyTaskProfiles`, the same
+ *     step Fusion runs (ATO-1743).
  *
  * Each subagent's session is stamped one level below its caller, its
  * turn runs under the `subagent` origin with the worker tool policy and
@@ -316,39 +314,22 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
         ctx.providerId !== undefined && ctx.model !== undefined
           ? { providerId: baseLeg.providerId, model: ctx.model, turnModel: ctx.model }
           : baseLeg;
-      let tasks: DelegateTask[] = parsed.tasks;
-      let profileReports: AppliedProfileReport[] = [];
-      if (tasks.some((t) => t.profile !== undefined)) {
-        let profiles: AgentProfileSet;
-        try {
-          profiles =
-            deps.resolveAgentProfiles?.(ctx.workingDir) ??
-            builtinAgentProfileSet();
-        } catch (err) {
-          deps.logger?.warn("subagent: loading agent profiles failed", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-          profiles = builtinAgentProfileSet();
-        }
-        if (profiles.diagnostics.length > 0) {
-          deps.logger?.warn("subagent: agent profile problems", {
-            diagnostics: profiles.diagnostics,
-          });
-        }
-        const profiled = applyTaskProfiles(
-          tasks,
-          profiles,
-          allowedModels(sessionLeg, mode.roles),
-        );
-        if (!profiled.ok) {
-          return error(`${SUBAGENT_RUN_TOOL}: ${profiled.error}`, {
-            field: "tasks",
-            reason: "unknown-profile",
-          });
-        }
-        tasks = profiled.tasks;
-        profileReports = profiled.applied;
+      const profiled = loadAndApplyTaskProfiles({
+        tasks: parsed.tasks,
+        workingDir: ctx.workingDir,
+        resolveAgentProfiles: deps.resolveAgentProfiles,
+        allowedModels: allowedModels(sessionLeg, mode.roles),
+        logger: deps.logger,
+        logPrefix: "subagent",
+      });
+      if (!profiled.ok) {
+        return error(`${SUBAGENT_RUN_TOOL}: ${profiled.error}`, {
+          field: "tasks",
+          reason: "unknown-profile",
+        });
       }
+      const tasks: DelegateTask[] = profiled.tasks;
+      const profileReports: AppliedProfileReport[] = profiled.applied;
 
       // Where each task runs: the session's leg, or the role model its
       // profile names when `llm.runMode.fusion.roles` configures one,
