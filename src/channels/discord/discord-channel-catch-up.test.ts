@@ -231,4 +231,47 @@ describe("DiscordChannel catch-up on READY", () => {
     expect(t.historyReads).toHaveLength(2);
     await t.channel.stop();
   });
+
+  it("the rerun reads from the cursor as it was at the second READY, not past live messages", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const t = setup([], held);
+    const atSecondReady = sf(30);
+    new DiscordMessageCursor(t.cursorPath).advance("c1", atSecondReady, "g1");
+
+    await t.channel.start();
+    await vi.waitFor(() => expect(t.socket()).not.toBeNull());
+    t.socket().frame(OP.DISPATCH, { session_id: "gs1" }, "READY");
+    await vi.waitFor(() => expect(t.historyReads).toHaveLength(1));
+    t.socket().frame(OP.DISPATCH, { session_id: "gs2" }, "READY");
+    // A live message on the new gateway session moves the cursor while
+    // the first run is still busy. The gap before gs2 is older than it.
+    const live = sf(1);
+    t.socket().frame(
+      OP.DISPATCH,
+      {
+        id: live,
+        channel_id: "c1",
+        guild_id: "g1",
+        content: `<@${BOT}> live`,
+        author: OWNER,
+        mentions: [{ id: BOT }],
+      },
+      "MESSAGE_CREATE",
+    );
+    await vi.waitFor(() => expect(t.runTurn).toHaveBeenCalledTimes(1));
+    expect(new DiscordMessageCursor(t.cursorPath).get("c1")?.lastMessageId).toBe(
+      live,
+    );
+
+    release();
+    await vi.waitFor(() => expect(t.historyReads).toHaveLength(2));
+    expect(t.historyReads[1]).toContain(
+      `/channels/c1/messages?after=${atSecondReady}`,
+    );
+    expect(t.historyReads[1]).not.toContain(`after=${live}`);
+    await t.channel.stop();
+  });
 });
