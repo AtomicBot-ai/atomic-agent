@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { compressToolResult, type CompressedToolResult } from "../../compressor/result-compressor.js";
 import type { BrowserExtractModelRef } from "../browser/extract-request.js";
 import { canvasSlug } from "../canvas/canvas-render.js";
+import { ApprovalDeniedError } from "../../approval/dangerous-tool.js";
 import { requireFsApproval, type FsDangerousToolOptions } from "../os/fs/fs-require-approval.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { findContradictions } from "./contradictions.js";
@@ -94,40 +95,26 @@ export function buildResearchDeepTool(options: ResearchDeepToolOptions): ToolDef
       const at = now();
       const report = renderResearchReport(result, at);
 
-      let path: string;
-      try {
-        path = freeReportPath(ctx.workingDir, canvasSlug(question), at);
-      } catch (err) {
-        return errorResult((err as Error).message);
-      }
-      // Throws `ApprovalDeniedError` on a no or a saved deny rule.
-      await requireFsApproval(options, {
-        kind: "write",
-        paths: [path],
-        sessionId: ctx.sessionId,
-        tool: RESEARCH_DEEP_TOOL,
-        reason: "save the research report as a new file in the working folder",
-        preview: path,
-        workingDir: ctx.workingDir,
-        ...(options.trustConfigPaths !== undefined ? { trustConfigPaths: options.trustConfigPaths } : {}),
-      }, ctx.signal);
-      try {
-        await writeFile(path, report, { encoding: "utf8", flag: "wx" });
-      } catch (err) {
-        return errorResult(`could not write the report: ${(err as Error).message}`);
-      }
+      // A report that cannot be saved (a no, a deny rule, a write error)
+      // is still returned: the research is done either way.
+      const saved = await saveReport(options, ctx, question, at, report);
       return compressToolResult(
         {
           tool: RESEARCH_DEEP_TOOL,
           status: "ok",
           output: [
-            `Saved the research report to ${path}`,
-            "Answer from its verified findings and give their links; say which claims stayed unverified. To send it as a file, pass this path in reply.attachments.",
+            "path" in saved
+              ? `Saved the research report to ${saved.path}`
+              : `Research report not saved: ${saved.notSaved}`,
+            "path" in saved
+              ? "Answer from its verified findings and give their links; say which claims stayed unverified. To send it as a file, pass this path in reply.attachments."
+              : "Answer from its verified findings and give their links; say which claims stayed unverified.",
             "",
             report,
           ].join("\n"),
           details: {
-            reportPath: path,
+            reportPath: "path" in saved ? saved.path : null,
+            ...("notSaved" in saved ? { notSaved: saved.notSaved } : {}),
             question,
             subQuestions,
             pagesRead: result.pagesRead,
@@ -141,6 +128,46 @@ export function buildResearchDeepTool(options: ResearchDeepToolOptions): ToolDef
       );
     },
   };
+}
+
+type SaveOutcome = { path: string } | { notSaved: string };
+
+/** Ask, then write the report as a new file; why not, when it was not saved. */
+async function saveReport(
+  options: ResearchDeepToolOptions,
+  ctx: { workingDir: string; sessionId: string; signal: AbortSignal },
+  question: string,
+  at: Date,
+  report: string,
+): Promise<SaveOutcome> {
+  let path: string;
+  try {
+    path = freeReportPath(ctx.workingDir, canvasSlug(question), at);
+  } catch (err) {
+    return { notSaved: (err as Error).message };
+  }
+  try {
+    // Throws `ApprovalDeniedError` on a no or a saved deny rule.
+    await requireFsApproval(options, {
+      kind: "write",
+      paths: [path],
+      sessionId: ctx.sessionId,
+      tool: RESEARCH_DEEP_TOOL,
+      reason: "save the research report as a new file in the working folder",
+      preview: path,
+      workingDir: ctx.workingDir,
+      ...(options.trustConfigPaths !== undefined ? { trustConfigPaths: options.trustConfigPaths } : {}),
+    }, ctx.signal);
+  } catch (err) {
+    if (ctx.signal.aborted || !(err instanceof ApprovalDeniedError)) throw err;
+    return { notSaved: `saving was declined (${err.message})` };
+  }
+  try {
+    await writeFile(path, report, { encoding: "utf8", flag: "wx" });
+  } catch (err) {
+    return { notSaved: `could not write ${path}: ${(err as Error).message}` };
+  }
+  return { path };
 }
 
 /** The summary is the one model text in the report; failing it keeps the checked findings. */

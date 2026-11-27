@@ -85,8 +85,22 @@ describe("number check", () => {
     const share = checkNumbers("37.5% of staff work part time", "Of its 80 staff, 30 work part time.");
     expect(share.ok).toBe(true);
     expect(share.derived).toEqual(["37.5% = 30 / 80 x 100"]);
-    expect(checkNumbers("50 people in total", "20 adults and 30 children").derived).toEqual(["50 = 20 + 30"]);
-    expect(checkNumbers("50 full-time staff", "Of its 80 staff, 30 work part time.").derived).toEqual(["50 = 80 - 30"]);
+    expect(checkNumbers("50 visitors in total", "20 visitors on Monday and 30 visitors on Tuesday").derived).toEqual(["50 = 20 + 30"]);
+    expect(checkNumbers("50 full-time staff", "Of its 80 staff, 30 staff work part time.").derived).toEqual(["50 = 80 - 30"]);
+  });
+
+  // Review round 1: a scale word or a percent sign changes the number.
+  it("does not match a number in another scale or a percent to a count", () => {
+    expect(checkNumbers("revenue was 1.2 billion", "revenue was 1.2 million").ok).toBe(false);
+    expect(checkNumbers("12% of users", "we have 12 users").ok).toBe(false);
+    expect(checkNumbers("12 users", "we have 12 users").ok).toBe(true);
+  });
+
+  // Review round 1: years are dates, and only like adds to like.
+  it("never derives a claim number from years or from unlike quantities", () => {
+    expect(checkNumbers("There was 1 recall", "Sales were 50 in 2023 and 60 in 2024")).toEqual({ ok: false, unsupported: ["1"], derived: [] });
+    expect(checkNumbers("50 people", "20 adults and 30 children").ok).toBe(false);
+    expect(checkNumbers("10 more", "Sales were 50 in 2023 and 60 in 2024").derived).toEqual(["10 = 60 - 50"]);
   });
 
   it("flags a number that neither appears nor follows from the quote", () => {

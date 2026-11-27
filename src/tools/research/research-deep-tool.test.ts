@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { ApprovalGate } from "../../approval/approval-gate.js";
-import { ApprovalDeniedError } from "../../approval/dangerous-tool.js";
 import { ToolRegistry, type ToolContext } from "../tool-registry.js";
 import { buildResearchDeepTool, RESEARCH_DEEP_TOOL, type ResearchModel } from "./index.js";
 
@@ -148,10 +147,15 @@ describe("research.deep wiring (ATO-2133)", () => {
     expect(readdirSync(work)).toEqual([]);
   });
 
-  it("asks before writing the report and writes nothing on a no", async () => {
+  // Review round 1: a no to the file keeps the research, only the file is skipped.
+  it("asks before writing the report and, on a no, returns it without writing a file", async () => {
     const approvals: ApprovalGate = new ApprovalGate({ emit: (req) => approvals.reject(req.approvalId, "denied by test") });
     const { registry } = harness(PAGES, approvals, true);
-    await expect(registry.invoke(RESEARCH_DEEP_TOOL, { question: "staff" }, ctx())).rejects.toBeInstanceOf(ApprovalDeniedError);
+    const result = await registry.invoke(RESEARCH_DEEP_TOOL, { question: "staff" }, ctx());
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("Research report not saved: saving was declined");
+    expect(result.summary).toContain("## Findings");
+    expect(result.details.reportPath).toBeNull();
     expect(readdirSync(work)).toEqual([]);
   });
 

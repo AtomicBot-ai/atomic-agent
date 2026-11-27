@@ -119,19 +119,30 @@ function roundsTo(value: number, text: string): boolean {
 }
 
 /**
+ * A bare four-digit 1900..2100 ("in 2024"): a date, not a quantity, so
+ * never an operand. "2024 - 2023" would otherwise prove any claimed 1.
+ */
+export function isYearLike(n: NumberToken): boolean {
+  return !n.percent && /^\d{4}$/.test(n.text) && n.value >= 1900 && n.value <= 2100 && SCALES[n.unit] === undefined;
+}
+
+/**
  * A claim number not written in the quote but computed from two of its
  * numbers: a sum, a difference, or a share as a percentage. Returns how,
- * or null. Kept to pairs: anything longer is a guess, not a check.
+ * or null. Kept to pairs: anything longer is a guess, not a check. Years
+ * are left out, and a sum or difference only adds like to like: the same
+ * unit word and the same percent flag ("20 visitors and 30 visitors").
  */
 export function derivedFrom(claim: NumberToken, quoteNumbers: readonly NumberToken[]): string | null {
-  const nums = quoteNumbers.slice(0, MAX_QUOTE_NUMBERS);
+  const nums = quoteNumbers.filter((n) => !isYearLike(n)).slice(0, MAX_QUOTE_NUMBERS);
   for (let i = 0; i < nums.length; i++) {
     for (let j = 0; j < nums.length; j++) {
       if (i === j) continue;
       const a = nums[i]!;
       const b = nums[j]!;
-      if (i < j && !claim.percent && same(a.value + b.value, claim.value)) return `${claim.text} = ${a.text} + ${b.text}`;
-      if (!claim.percent && a.value > b.value && same(a.value - b.value, claim.value)) return `${claim.text} = ${a.text} - ${b.text}`;
+      const alike = a.unit === b.unit && a.percent === b.percent;
+      if (alike && i < j && !claim.percent && same(a.scaled + b.scaled, claim.scaled)) return `${claim.text} = ${a.text} + ${b.text}`;
+      if (alike && !claim.percent && a.scaled > b.scaled && same(a.scaled - b.scaled, claim.scaled)) return `${claim.text} = ${a.text} - ${b.text}`;
       if (claim.percent && b.value !== 0 && roundsTo((a.value / b.value) * 100, claim.text)) {
         return `${claim.text}% = ${a.text} / ${b.text} x 100`;
       }
@@ -154,15 +165,17 @@ export interface NumberCheck {
 
 /**
  * The claim's numbers against the quote's: each must be in the quote
- * (same value, or same value after a scale word: "1.2 million" and
- * "1,200,000"), or follow from two quote numbers by {@link derivedFrom}.
+ * (same value after scale words, "1.2 million" and "1,200,000", and
+ * both a percentage or neither), or follow from two quote numbers by {@link derivedFrom}.
  */
 export function checkNumbers(claim: string, quote: string): NumberCheck {
   const quoteNumbers = numbersIn(quote);
   const unsupported: string[] = [];
   const derived: string[] = [];
   for (const n of numbersIn(claim)) {
-    const direct = quoteNumbers.some((q) => same(q.value, n.value) || same(q.scaled, n.scaled));
+    // Same scaled value and the same percent flag: "1.2 billion" is not
+    // "1.2 million", and "12%" is not "12 users".
+    const direct = quoteNumbers.some((q) => same(q.scaled, n.scaled) && q.percent === n.percent);
     if (direct) continue;
     const how = derivedFrom(n, quoteNumbers);
     if (how !== null) derived.push(how);
