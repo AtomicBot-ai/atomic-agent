@@ -17,6 +17,7 @@ import { commandOfAsync, resolveBinary } from "./agent-client.js";
 // r5 item 9 — every `atag` subprocess runs on the DESKTOP's state directory.
 import { AGENT_HOME_DIRNAME, agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor, managedDataDir } from "./local-llama-key.js";
+import { askLlamaModels } from "./llama-models-probe.js";
 import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 
 // Moved next to the key lookup that needs it; main.ts still imports it from here.
@@ -4493,6 +4494,10 @@ export interface LlamaProbeResult {
   ollama: boolean;
   /** looksLikeAtomicChatUrl(): Atomic Chat's Local API Server port (1337). */
   atomicChat: boolean;
+  /** ATO-2012: a passing /health whose /v1/models list is empty (llama-models-probe.ts). */
+  noModels?: true;
+  /** ATO-2012: a passing /health whose /v1/models still says "Loading model". */
+  loading?: true;
 }
 
 /** src/llm/llama-endpoint-url.ts llamaEndpointUrl, verbatim. */
@@ -4612,6 +4617,8 @@ export async function llamaProbe(rawUrl: string, timeoutMs = 8000): Promise<{ ok
           error: apiKey ? `http ${response.status} — the server rejected the configured API key` : `http ${response.status} — the server requires an API key (--api-key)` };
       }
     } catch { /* keep the passing /health */ }
+    // ATO-2012: a router with no model passes /health; the model list says so. Only adds a flag.
+    if (result.reachable) Object.assign(result, await askLlamaModels(llamaEndpointUrl(url, "/v1/models"), headers));
   } else if (result.kind === "unknown" && (result.status === 200 || result.status === 404)) {
     try {
       const response = await fetch(llamaEndpointUrl(url, "/v1/models"), { method: "GET", headers, signal: AbortSignal.timeout(timeoutMs) });
