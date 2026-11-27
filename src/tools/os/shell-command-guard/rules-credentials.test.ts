@@ -59,6 +59,45 @@ describe("dangerous.read_credentials (ATO-2126)", () => {
     );
   });
 
+  it("follows a cd on the line: relative reads resolve against the folder it moved to", () => {
+    for (const [line, cwd] of [
+      ["cd ~/.ssh && cat id_rsa", "/tmp/project"],
+      ["cd ~; cat .ssh/id_rsa", "/tmp/project"],
+      ["cd && tar czf /tmp/k.tgz .aws", "/tmp/project"],
+      ["cd $HOME/.config && base64 gcloud/credentials.db", "/tmp/project"],
+      ["cd .. && cat .ssh/id_ed25519", "/Users/nadia/project"],
+      ["cd ~ && cd .ssh && head -n 3 id_rsa", "/tmp/project"],
+    ] as const) {
+      expect(guardLine(line, cwd), line).toMatchObject({
+        rule: "dangerous.read_credentials",
+        askEveryLevel: true,
+      });
+    }
+  });
+
+  it("a cd into a credential folder is itself a finding at 0.9", () => {
+    for (const line of ["cd ~/.ssh", "cd ~/.aws/ && ls", "pushd $HOME/.gnupg"]) {
+      const verdict = guardLine(line);
+      expect(verdict, line).toMatchObject({
+        rule: "dangerous.read_credentials",
+        askEveryLevel: true,
+      });
+      expect(verdict.confidence).toBe(0.9);
+    }
+  });
+
+  it.each([
+    "cd ~/project && cat README.md",
+    "cd /tmp && cat id_rsa",
+    "cd ~/.config/ghostty && cat config",
+    "cat ~/.ssh/id_rsa.pub",
+    "ls ~/.ssh",
+  ])("a cd elsewhere or a public file is not a credential read: %s", (line) => {
+    const verdict = guardLine(line);
+    expect(verdict.rule).not.toBe("dangerous.read_credentials");
+    expect(verdict.askEveryLevel).toBeUndefined();
+  });
+
   it("a project .env asks as a dangerous command but not in bypass (low confidence)", () => {
     for (const [cmd, args] of [
       ["cat", [".env"]],
