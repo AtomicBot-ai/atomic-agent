@@ -38,7 +38,7 @@ import { createMcpServeServer } from "../cli/mcp-server-bridge.js";
 import { buildMcpServeTools } from "../cli/mcp-server-tools.js";
 import { getAppVersion } from "../version.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
-import { originAllowed } from "./loopback-guard.js";
+import { mcpOriginAllowed } from "./mcp-origin.js";
 import { getHeader, readJsonBody, type HttpHandler } from "./request-context.js";
 
 export const MCP_ENDPOINT_PATH = "/mcp";
@@ -220,10 +220,11 @@ function isInitialize(body: unknown): boolean {
 
 /**
  * The spec's DNS rebinding check: no `Origin` (CLI clients, Claude Code,
- * Codex), a loopback one, or one listed in `ATOMIC_AGENT_ALLOWED_ORIGINS`.
+ * Codex), a loopback one, or one listed in `ATOMIC_AGENT_ALLOWED_ORIGINS`
+ * (mcp-origin.ts, the only reader of that variable).
  */
 function checkOrigin(req: IncomingMessage, res: ServerResponse): boolean {
-  if (originAllowed(getHeader(req, "origin"))) return true;
+  if (mcpOriginAllowed(getHeader(req, "origin"))) return true;
   sendRpcError(res, 403, -32000, "Forbidden: this Origin may not use the MCP endpoint");
   return false;
 }

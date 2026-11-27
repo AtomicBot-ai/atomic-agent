@@ -117,7 +117,7 @@ export const ENV_SETTINGS: readonly EnvSetting[] = [
   env("ATOMIC_AGENT_LANG", null, "Interface language of the terminal UI when `tui.language` is `auto`: en or ru. Unset: taken from LC_ALL, LC_MESSAGES or LANG, else English."),
   env("ATOMIC_AGENT_OFFLINE", null, "Set to 1 to turn offline mode on for this process, whatever config.json says. It cannot be turned off for a running process."),
   env("ATOMIC_AGENT_PROXY", null, "Send the agent's web traffic through this HTTP(S) proxy, as `network.proxy.url` does. Wins over the config value when set.", "network.proxy.url"),
-  env("ATOMIC_AGENT_ALLOWED_ORIGINS", null, "Comma-separated web origins, besides loopback ones, that may call serve's `/mcp` endpoint from a browser (the API key is still required). Deprecated for every other route: serve always has an API key now, so they no longer read it."),
+  env("ATOMIC_AGENT_ALLOWED_ORIGINS", null, "Comma-separated web origins, besides loopback ones, that may call serve's `/mcp` endpoint from a browser; the API key is still required. Exact origins only, plus a trailing `*` for an extension scheme (`chrome-extension://*`); a lone `*` and `http(s)` wildcards are ignored. No other route reads it."),
   env("ATOMIC_AGENT_MODEL_CATALOG_URL", null, "URL of the extra local-model catalog JSON. Unset: the catalog hosted on atomicagent.io."),
   env("ATOMIC_AGENT_RERANK_URL", null, "Local reranker (llama-server /v1/rerank style) that re-orders My files search hits. Unset: off. Only a server on this machine or the local network is used."),
 
