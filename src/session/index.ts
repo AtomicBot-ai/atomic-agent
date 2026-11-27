@@ -166,6 +166,7 @@ export {
   readFusionWorkerMeta,
   readSessionDepth,
   isFusionWorkerSessionId,
+  callerDepth,
 } from "./fusion-worker-session.js";
 export type { FusionWorkerMeta, StampedFusionWorkerMeta } from "./fusion-worker-session.js";
 export {

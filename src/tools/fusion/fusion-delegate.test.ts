@@ -14,7 +14,10 @@ import { resetConfigCache } from "../../config/index.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import { createEmptySessionState, type SessionState } from "../../session/session-state.js";
 import { createRuntimeSessionFactories } from "../../runtime/composition/runtime-session-services.js";
-import { FUSION_WORKER_ID_PREFIX } from "../../session/fusion-worker-session.js";
+import {
+  FUSION_WORKER_ID_PREFIX,
+  FUSION_WORKER_METADATA_KEY,
+} from "../../session/fusion-worker-session.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { ToolContext } from "../tool-registry.js";
 import {
@@ -2650,5 +2653,55 @@ describe("fanoutQuietUnderLevel (ATO-1689)", () => {
     expect(fanoutQuietUnderLevel(2, ["/repo-backup"], "/repo")).toBe(false);
     expect(fanoutQuietUnderLevel(2, ["/repo/../etc"], "/repo")).toBe(false);
     expect(fanoutQuietUnderLevel(2, [], "/repo")).toBe(false);
+  });
+});
+
+describe("fusion.delegate refuses a worker by depth, not by name (ATO-1740)", () => {
+  const depthStamp = (depth: unknown): Record<string, unknown> => ({
+    [FUSION_WORKER_METADATA_KEY]: { parentSessionId: "s-parent", taskId: "t", depth },
+  });
+
+  it("refuses a session with an ordinary id whose metadata says depth 1", async () => {
+    // A subagent's session need not carry the worker prefix: the stamp
+    // is what makes it a worker. Without the depth check this call runs.
+    const runTurn = vi.fn(async () => turnResult());
+    const readSessionMetadata = vi.fn(() => depthStamp(1));
+    const result = await buildFusionDelegateTool(
+      deps({ runTurn, readSessionMetadata }),
+    ).run({ tasks: TASKS }, ctx({ sessionId: "s-subagent" }));
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("not available to a worker");
+    expect(result.details.reason).toBe("recursive-delegation");
+    expect(readSessionMetadata).toHaveBeenCalledWith("s-subagent");
+    expect(runTurn).not.toHaveBeenCalled();
+  });
+
+  const workerCases: Array<{ label: string; metadata: Record<string, unknown> | undefined }> = [
+    { label: "no metadata", metadata: undefined },
+    { label: "a broken stamp", metadata: { [FUSION_WORKER_METADATA_KEY]: 42 } },
+    { label: "a stamp with a broken depth", metadata: depthStamp("deep") },
+  ];
+  it.each(workerCases)("refuses a worker id with $label (fails closed)", async ({ metadata }) => {
+    const runTurn = vi.fn(async () => turnResult());
+    const result = await buildFusionDelegateTool(
+      deps({ runTurn, readSessionMetadata: () => metadata }),
+    ).run({ tasks: TASKS }, ctx({ sessionId: `${FUSION_WORKER_ID_PREFIX}abc` }));
+    expect(result.status).toBe("error");
+    expect(result.details.reason).toBe("recursive-delegation");
+    expect(runTurn).not.toHaveBeenCalled();
+  });
+
+  it("lets a depth-0 session through to the run mode check", async () => {
+    const runTurn = vi.fn(async () => turnResult());
+    const result = await buildFusionDelegateTool(
+      deps({
+        runTurn,
+        readSessionMetadata: () => ({}),
+        resolveRunMode: () => fusionMode({ effective: "cloud" }),
+      }),
+    ).run({ tasks: TASKS }, ctx({ sessionId: "s-parent" }));
+    expect(result.status).toBe("error");
+    expect(result.details.reason).toBe("not-fusion");
+    expect(runTurn).not.toHaveBeenCalled();
   });
 });
