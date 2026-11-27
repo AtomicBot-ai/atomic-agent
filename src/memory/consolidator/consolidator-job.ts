@@ -20,7 +20,8 @@ import { DistillRunner } from "./distill-runner.js";
  *                       distillation is in flight. The lease window
  *                       is `consolidationLeaseMs` (default same as
  *                       `memory.evolution.leaseMs`).
- *   3. **Cluster**      via `clusterEpisodes` (CC + tag-intersection).
+ *   3. **Cluster**      via `clusterEpisodes` (link CC + tag cohesion,
+ *                       then shared-tag groups for unlinked notes).
  *                       Clusters smaller than `minClusterSize` drop
  *                       out.
  *   4. **Distill**      each cluster via `DistillRunner` (one LLM call
