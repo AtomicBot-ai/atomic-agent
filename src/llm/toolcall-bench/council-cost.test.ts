@@ -51,4 +51,13 @@ describe("forecastCouncilCost (ATO-2432)", () => {
     expect(councilOverBudget(f, f.maxUsd)).toBeNull();
     expect(councilOverBudget(f, f.maxUsd / 2)).toMatch(/over the \$\d+\.\d+ limit; nothing was sent$/);
   });
+
+  it("refuses unpriced seats under a limit, naming them; free seats do not count", () => {
+    expect(councilOverBudget({ calls: 2, maxUsd: 0, free: [], unpriced: ["x"] }, 0.1)).toBe(
+      "the price of x is unknown, so this council cannot be kept under the $0.10 limit; nothing was sent",
+    );
+    expect(councilOverBudget({ calls: 2, maxUsd: 0, free: [], unpriced: ["x"] }, undefined)).toBeNull();
+    const local = forecastCouncilCost({ question: "q", seats: seats("local*3"), judge: "local", chairman: "local", rank: true, priceOf });
+    expect(councilOverBudget(local, 0.1)).toBeNull();
+  });
 });
