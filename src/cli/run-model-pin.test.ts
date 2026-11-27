@@ -60,6 +60,16 @@ describe("resolveRunModel", () => {
     expect(resolveRunModel("openai/gpt-4o-mini", litellm)).toEqual({ providerId: "proxy", model: "openai/gpt-4o-mini" });
   });
 
+  it("keeps a slash id on AI/ML API even with no chat model configured (ATO-2773)", () => {
+    // Its built-in default is `openai/gpt-5.5-...`, so `openai/...` here
+    // is that router's model, not the configured `openai` provider.
+    const aiml = {
+      activeTextProvider: "ai",
+      providers: [...llm.providers, { id: "ai", kind: "aimlapi" }],
+    };
+    expect(resolveRunModel("openai/gpt-4o", aiml)).toEqual({ providerId: "ai", model: "openai/gpt-4o" });
+  });
+
   it("refuses a per-turn model on a local provider and an empty value", () => {
     expect(resolveRunModel("local-llama:qwen", llm)).toMatchObject({
       error: expect.stringContaining("works on cloud providers only"),

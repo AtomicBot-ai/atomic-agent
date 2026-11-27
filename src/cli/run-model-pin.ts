@@ -60,7 +60,7 @@ export function resolveRunModel(
 
 /**
  * Whether the active provider names its models `vendor/model` (an
- * OpenRouter-style router), judged from its kind or its configured chat
+ * OpenRouter-style router, or AI/ML API), judged from its kind or its configured chat
  * model. Then `-m openai/gpt-oss` keeps meaning that provider's model.
  */
 function activeModelIdsHaveSlash(
@@ -68,6 +68,9 @@ function activeModelIdsHaveSlash(
 ): boolean {
   const active = llm.providers.find((p) => p.id === llm.activeTextProvider);
   if (!active) return false;
-  if (active.kind === "openrouter") return true;
+  // AI/ML API names its models `vendor/model` too and may run on its
+  // built-in default with no `defaultChatModel` set (model-mode.ts groups
+  // it with openrouter).
+  if (active.kind === "openrouter" || active.kind === "aimlapi") return true;
   return (active.defaultChatModel ?? active.model ?? "").includes("/");
 }
