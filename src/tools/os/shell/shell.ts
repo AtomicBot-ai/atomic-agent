@@ -19,6 +19,7 @@ import {
 import { quoteCmdArg } from "../../../sandbox/shell-invocation.js";
 import {
   requireApproval,
+  requireGuardOnShortcut,
   savedRuleDenies,
   savedRuleOverridesScope,
   type DangerousToolOptions,
@@ -357,6 +358,23 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           ...(commandArgv !== undefined ? { commandArgv } : {}),
           commandSegments,
           ...(commandUnreadable ? { commandUnreadable } : {}),
+          ...(egress.length > 0 ? { egress } : {}),
+          workdir: ctx.workingDir,
+          targetPaths,
+        },
+        ctx.signal,
+      );
+    } else if (scopedByFanout && guardVerdict.action === "approval_required") {
+      // The fan-out's yes does not cover the person's security rules (ATO-2111).
+      await requireGuardOnShortcut(
+        options,
+        {
+          sessionId: ctx.sessionId,
+          tool: "os.shell.run",
+          category: "shell",
+          reason: `${guardVerdict.reason} in ${cwd}`,
+          preview: formatShellPreview(cmd, execArgs, useShell),
+          affectedResources: [cwd],
           ...(egress.length > 0 ? { egress } : {}),
           workdir: ctx.workingDir,
           targetPaths,
