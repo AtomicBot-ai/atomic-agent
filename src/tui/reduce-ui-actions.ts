@@ -150,9 +150,19 @@ export function reduceUiAction(
       // `conversationPairsCap` still reports whatever the last prompt
       // was built against until the next turn rebuilds it. The reducer
       // for `prompt_built` retires it once measurement agrees.
-      return { ...state, contextPanelOpen: !state.contextPanelOpen };
+      return {
+        ...state,
+        contextPanelOpen: !state.contextPanelOpen,
+        contextPanelDetail: false,
+      };
+    case "context_panel_detail_shown":
+      // `/context detail`: opens (or keeps open) rather than toggles.
+      return { ...state, contextPanelOpen: true, contextPanelDetail: true };
+    case "context_panel_detail_toggled":
+      if (!state.contextPanelOpen) return state;
+      return { ...state, contextPanelDetail: !state.contextPanelDetail };
     case "context_panel_closed":
-      return { ...state, contextPanelOpen: false };
+      return { ...state, contextPanelOpen: false, contextPanelDetail: false };
     case "context_pairs_selected": {
       if (!state.contextPanelOpen) return state;
       // The value, not a step. A delta action recomputes from whatever

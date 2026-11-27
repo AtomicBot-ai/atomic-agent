@@ -517,7 +517,8 @@ export const MENU: readonly MenuNode[] = [
     group: "session",
     slash: {
       name: "context",
-      description: "show where this session's context window went",
+      description:
+        "show where this session's context window went · `/context detail` also lists each MCP server's tools",
       rank: 38,
     },
   },
