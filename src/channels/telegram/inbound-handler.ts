@@ -324,7 +324,7 @@ function helpText(ctx: InboundContext): string {
     "  /sessions — every chat this bot has a session for\n" +
     "  /switch <session-id> — point this chat at an existing session\n" +
     "  /new — rotate this chat to a fresh session (current one is archived)\n" +
-    "  /fork: copy this chat's session into a new topic (in a forum) or continue the copy here\n" +
+    "  /fork: copy this chat's session into a new topic (in a forum) or continue the copy here; /fork <n> copies it up to question n\n" +
     "  /model — show the provider and model in use; /model <provider> [model-id] switches\n" +
     "  /cron — list scheduled tasks; /cron add <cron> <task>, /cron pause|resume|delete <id> (/cron help)\n" +
     "  /cancel — abort this chat's current turn if one is running"
@@ -843,7 +843,7 @@ async function handleSlashCommand(
       return;
     }
     case "/fork":
-      for (const m of await runTelegramFork(ref, ctx)) await sendText(ctx, m.target, m.text);
+      for (const m of await runTelegramFork(ref, ctx, rest.join(" "))) await sendText(ctx, m.target, m.text);
       return;
     case "/cancel": {
       // The owner's turn here, else the guests' one (ATO-2221): guests

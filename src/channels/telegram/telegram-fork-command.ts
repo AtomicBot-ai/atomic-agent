@@ -58,8 +58,13 @@ export interface TelegramForkMessage {
 export async function runTelegramFork(
   ref: TelegramForkRef,
   deps: TelegramForkDeps,
+  /** The text after `/fork`: empty for the last question, else its number (ATO-2456). */
+  at = "",
 ): Promise<TelegramForkMessage[]> {
-  const fork = planChannelFork(deps.runtime, deps.sessionPointer.get(ref.key).current);
+  const fork = planChannelFork(deps.runtime, deps.sessionPointer.get(ref.key).current, {
+    at,
+    command: "/fork",
+  });
   if (!fork.ok) return [{ target: ref.target, text: fork.message }];
   const { source, title } = fork;
 

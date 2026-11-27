@@ -77,3 +77,37 @@ describe("DiscordApi.sendFile", () => {
     expect(init.body).toBe(JSON.stringify({ content: "hello" }));
   });
 });
+
+describe("DiscordApi.createThread (ATO-2456)", () => {
+  it("opens a public thread with no starter message and returns its id", async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ id: "t1" }), { status: 201 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new DiscordApi({ token: TOKEN });
+
+    const id = await api.createThread("c1", "y".repeat(120));
+
+    expect(id).toBe("t1");
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe("https://discord.com/api/v10/channels/c1/threads");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      name: "y".repeat(100),
+      type: 11,
+      auto_archive_duration: 1440,
+    });
+  });
+
+  it("throws when Discord refuses, so the fork can stay in place", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 400 })),
+    );
+    const api = new DiscordApi({ token: TOKEN });
+    await expect(api.createThread("c1", "x")).rejects.toThrow("HTTP 400");
+  });
+});
