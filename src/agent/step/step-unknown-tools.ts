@@ -3,6 +3,8 @@ import type { ToolCallBatch } from "../../llm/grammar/tool-call-grammar.js";
 import { ToolExecutionError } from "../../llm/index.js";
 import { resolveToolName } from "../tool-name-resolution.js";
 import { logTextPreview } from "./step-parsing.js";
+import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
+import { unregisteredToolSource } from "../policies/unregistered-tool-source.js";
 import {
   UNKNOWN_TOOL_STREAK_LIMIT,
   closestToolNames,
@@ -58,7 +60,9 @@ export function resolveBatchToolNames(
  * streak (`deps.unknownTools`); any other step resets it. On the
  * {@link UNKNOWN_TOOL_STREAK_LIMIT}th such step in a row this throws the
  * `ToolExecutionError` the step always threw, marked
- * `kind: "unregistered"` so error reports group it as one issue. With no
+ * `kind: "unregistered"` so error reports group it as one issue, and
+ * `knownElsewhere` saying whether the step's own tool list showed the
+ * name (ATO-2423, `unregistered-tool-source.ts`). With no
  * streak state wired (a caller outside the agent loop) an unknown-only
  * step throws at once, as before.
  */
@@ -82,13 +86,17 @@ export function admitUnregisteredCalls(
   });
   if (!unknownOnly || streak < UNKNOWN_TOOL_STREAK_LIMIT) return;
   const tool = unregistered[0]!;
-  const suggestions = closestToolNames(
-    tool,
-    deps.registry.list().map((definition) => definition.name),
-  );
+  const registered = deps.registry.list().map((definition) => definition.name);
+  const suggestions = closestToolNames(tool, registered);
+  const knownElsewhere = unregisteredToolSource({
+    emitted: tool,
+    advertised: ctx.toolDescriptors.map((descriptor) => descriptor.name),
+    catalog: DEFAULT_TOOL_DESCRIPTORS.map((descriptor) => descriptor.name),
+    registered,
+  });
   throw new ToolExecutionError(
     tool,
     `tool not registered in this agent: ${tool}`,
-    { kind: "unregistered", nameClass: unregisteredToolNameClass(tool, suggestions) },
+    { kind: "unregistered", nameClass: unregisteredToolNameClass(tool, suggestions), knownElsewhere },
   );
 }

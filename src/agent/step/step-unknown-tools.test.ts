@@ -111,7 +111,23 @@ describe("a call to a tool the registry does not hold", () => {
     expect(failure).toBeInstanceOf(ToolExecutionError);
     expect(failure).toMatchObject({
       category: "tool", tool: "mcp.example.toolkit", kind: "unregistered", nameClass: "mcp_like",
+      knownElsewhere: "mcp_server_missing",
     });
+  });
+
+  it("marks a streak on a tool the step's own tool list showed as ours (ATO-2423)", async () => {
+    const { ctx, deps } = fixture([{ tool: "os.fs.write", args: { path: "/fixture/a.txt" } }]);
+    // The prompt offers `os.fs.write`; the registry never got it.
+    const advertised: StepContext = {
+      ...ctx,
+      toolDescriptors: [{ name: "os.fs.write", summary: "fixture", argsSchema: "{}" }],
+    };
+    for (let i = 1; i < UNKNOWN_TOOL_STREAK_LIMIT; i += 1) {
+      await executeStep({ ...advertised, stepIndex: i }, deps);
+    }
+    await expect(
+      executeStep({ ...advertised, stepIndex: UNKNOWN_TOOL_STREAK_LIMIT }, deps),
+    ).rejects.toMatchObject({ kind: "unregistered", knownElsewhere: "prompt_advertised" });
   });
 
   it("resets the streak on a step with a real call", async () => {

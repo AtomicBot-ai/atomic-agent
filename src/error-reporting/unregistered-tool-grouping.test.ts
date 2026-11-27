@@ -47,6 +47,20 @@ describe("unregistered-tool error reports", () => {
     expect(JSON.stringify(tags)).not.toContain("os.shel.run");
   });
 
+  it("send where else the name is known, outside the fingerprint (ATO-2423)", () => {
+    const err = new ToolExecutionError("os.fs.write", "tool not registered in this agent: os.fs.write", {
+      kind: "unregistered",
+      nameClass: "other",
+      knownElsewhere: "prompt_advertised",
+    });
+    const { tags, fingerprint } = payloadOf(err);
+    expect(tags.tool_known_elsewhere).toBe("prompt_advertised");
+    expect(fingerprint).toEqual(payloadOf(unregistered("function_name", "other")).fingerprint);
+    expect(JSON.stringify(tags)).not.toContain("os.fs.write");
+    (err as { knownElsewhere?: string }).knownElsewhere = "secret words";
+    expect(payloadOf(err).tags.tool_known_elsewhere).toBeUndefined();
+  });
+
   it("drop a name class outside the enum", () => {
     const err = new ToolExecutionError("x", "m", { kind: "unregistered" });
     (err as { nameClass?: string }).nameClass = "secret words";

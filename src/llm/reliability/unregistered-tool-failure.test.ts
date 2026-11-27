@@ -25,6 +25,21 @@ describe("isUnregisteredToolStreak (ATO-1674)", () => {
     expect(isUnregisteredToolStreak(streak())).toBe(false);
   });
 
+  it("is not a near miss on a tool the step's own prompt showed (ATO-2423)", () => {
+    const advertised = new ToolExecutionError("os.fs.writ", "tool not registered in this agent: os.fs.writ", {
+      kind: "unregistered",
+      nameClass: "near_miss",
+      knownElsewhere: "prompt_advertised",
+    });
+    expect(isUnregisteredToolStreak(advertised)).toBe(false);
+    const invented = new ToolExecutionError("os.grep", "tool not registered in this agent: os.grep", {
+      kind: "unregistered",
+      nameClass: "near_miss",
+      knownElsewhere: "not_in_catalog",
+    });
+    expect(isUnregisteredToolStreak(invented)).toBe(true);
+  });
+
   it("is not any other tool or transport failure", () => {
     expect(isUnregisteredToolStreak(new ToolExecutionError("os.fs.read", "EACCES"))).toBe(false);
     expect(isUnregisteredToolStreak(new ToolExecutionError("os.fs.read", "x", { nameClass: "near_miss" }))).toBe(false);

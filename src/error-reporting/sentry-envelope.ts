@@ -76,6 +76,7 @@ export function buildEnvelope(
   if (ev.tool) tags.tool = ev.tool;
   if (ev.toolErrorKind) tags.tool_error_kind = ev.toolErrorKind;
   if (ev.toolNameClass) tags.tool_name_class = ev.toolNameClass;
+  if (ev.toolKnownElsewhere) tags.tool_known_elsewhere = ev.toolKnownElsewhere;
   if (ev.transportHost) tags.transport_host = ev.transportHost;
   if (ev.upstreamErrorType) {
     tags.upstream_error_type = ev.upstreamErrorType;

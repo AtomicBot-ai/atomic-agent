@@ -104,6 +104,7 @@ export type {
   ToolExecutionErrorKind,
   ToolExecutionErrorOptions,
   UnregisteredToolNameClass,
+  UnregisteredToolSource,
   ModelFailureReason,
   ModelFailureStage,
   TruncationCause,
