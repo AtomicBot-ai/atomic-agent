@@ -16,6 +16,9 @@ globalThis.S = { draft: "" };
 globalThis.$ = (sel) => (sel === "#entry" ? entry : null);
 globalThis.autosize = () => {};
 globalThis.toast = (t, s, kind) => toasts.push({ t, s, kind });
+// Focus: msg() puts it in the sending frame (the person clicked there); a test may move it.
+const doc = { activeElement: null, querySelectorAll() { return []; } };
+globalThis.document = doc;
 
 /** A frame of ours, as CHAT_ART keeps it. */
 function frame(key, url, title) {
@@ -31,7 +34,7 @@ beforeEach(() => {
   B.AB.arts = new Map([[a.key, a], [b.key, b]]);
   entry.value = ""; entry.focused = false; S.draft = ""; toasts.length = 0;
 });
-const msg = (from, data) => ({ source: from.win, data });
+const msg = (from, data) => { doc.activeElement = from.node; return { source: from.win, data }; };
 
 test("validators: prompt text, state JSON and error lines are checked and capped", () => {
   assert.equal(B.abPromptText("  Laptop B  "), "Laptop B");
@@ -55,11 +58,11 @@ test("a message from a frame that is not ours, or of another kind, is ignored", 
   assert.equal(entry.value, "");
 });
 
-test("a prompt fills the message box and focuses it, never sends; one per 2 s per widget", () => {
+test("a prompt fills the message box, leaves focus in the widget, never sends; one per 2 s per widget", () => {
   assert.equal(B.artifactBridgeMessage(msg(a, { atomicArtifact: "prompt", text: "I pick laptop B" }), 10_000), true);
   assert.equal(entry.value, "I pick laptop B");
   assert.equal(S.draft, "I pick laptop B");
-  assert.equal(entry.focused, true);
+  assert.equal(entry.focused, false, "the box does not take focus: a key press there must not count as a click in the widget");
   assert.match(toasts.at(-1).t, /"Pick a laptop"/);
   assert.match(toasts.at(-1).s, /Press Enter/);
   // Too soon from the same widget: nothing changes.
@@ -87,6 +90,27 @@ test("a prompt without a click or key press in the page fills nothing", () => {
   try {
     assert.equal(B.artifactBridgeMessage(msg(a, { atomicArtifact: "prompt", text: "spam" }), 10_000), false);
     assert.equal(entry.value, "");
+  } finally {
+    if (nav) Object.defineProperty(globalThis, "navigator", nav); else delete globalThis.navigator;
+  }
+});
+
+test("a prompt while focus is outside this widget fills nothing, even with the window active", () => {
+  const nav = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { value: { userActivation: { isActive: true } }, configurable: true });
+  try {
+    // The person typed in the message box (window active), the page posts on a timer.
+    const m = msg(a, { atomicArtifact: "prompt", text: "spam" });
+    doc.activeElement = entry;
+    assert.equal(B.artifactBridgeMessage(m, 10_000), false);
+    assert.equal(entry.value, "");
+    // Focus in the other widget does not count for this one.
+    doc.activeElement = b.node;
+    assert.equal(B.artifactBridgeMessage({ source: a.win, data: { atomicArtifact: "prompt", text: "spam" } }, 20_000), false);
+    assert.equal(entry.value, "");
+    // A click in this widget does.
+    assert.equal(B.artifactBridgeMessage(msg(a, { atomicArtifact: "prompt", text: "Laptop B" }), 30_000), true);
+    assert.equal(entry.value, "Laptop B");
   } finally {
     if (nav) Object.defineProperty(globalThis, "navigator", nav); else delete globalThis.navigator;
   }

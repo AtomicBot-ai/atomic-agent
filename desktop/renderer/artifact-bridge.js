@@ -11,13 +11,16 @@
      JSON at most AB_STATE_MAX, an error line at most AB_ERROR_MAX, and at
      most AB_ERRORS lines kept per page;
    - rate-limited: one prompt per AB_PROMPT_GAP_MS per artifact, and only
-     right after the person clicked or typed in the page (the frame's user
-     activation reaches this window too), so a timer in a page fills nothing.
+     right after the person clicked or typed in THIS page: the window has
+     user activation (a frame's click reaches it too) AND focus is inside
+     this artifact's frame (document.activeElement is its <iframe>). A key
+     press in the message box or a click elsewhere activates the window but
+     leaves focus outside the frame, so a timer in a page fills nothing.
 
    What each does:
 
-   - prompt: the text goes into the message box and the box takes focus, with
-     a toast naming the widget. The person presses Enter: a page never sends
+   - prompt: the text goes into the message box (focus stays in the widget,
+     so a second click there still counts), with a toast naming the widget. The person presses Enter: a page never sends
      to the model on its own (Claude artifacts' sendPrompt sends at once, as
      does OpenClaw's show-widget; here the safer default). A draft the person
      typed is never overwritten; one the last widget put there is.
@@ -91,6 +94,12 @@ function abUserActive() {
   return !ua || ua.isActive === true;
 }
 
+/** Is focus inside this artifact's frame (the person clicked or typed in it)? Outside a document (tests without one): yes. */
+function abFocusIn(st) {
+  if (typeof document === 'undefined') return true;
+  return !!st && !!st.node && document.activeElement === st.node;
+}
+
 /** The CHAT_ART entry whose frame sent `source`, or null. */
 function abEntryOf(source) {
   if (!source) return null;
@@ -115,7 +124,6 @@ function abFillComposer(text, title) {
   if (e) {
     e.value = text;
     if (typeof autosize === 'function') autosize(e);
-    e.focus();
     if (typeof e.setSelectionRange === 'function') e.setSelectionRange(text.length, text.length);
   }
   if (typeof refreshSend === 'function') refreshSend();
@@ -183,7 +191,7 @@ function artifactBridgeMessage(e, now) {
     return true;
   }
   const text = abPromptText(d.text);
-  if (!text || !abUserActive()) return false;
+  if (!text || !abUserActive() || !abFocusIn(st)) return false;
   if (!abPromptAllowed(w, typeof now === 'number' ? now : Date.now())) return false;
   abFillComposer(text, st.title);
   return true;
@@ -199,5 +207,5 @@ if (typeof MutationObserver === 'function' && typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {AB, AB_PROMPT_MAX, AB_STATE_MAX, AB_ERROR_MAX, AB_ERRORS, AB_PROMPT_GAP_MS, AB_MAX_KEYS,
-    abPromptText, abStateOf, abErrorOf, abPromptAllowed, abEntryOf, abFillComposer, abWidget, artifactBridgeMessage};
+    abPromptText, abStateOf, abErrorOf, abPromptAllowed, abEntryOf, abFocusIn, abFillComposer, abWidget, artifactBridgeMessage};
 }
