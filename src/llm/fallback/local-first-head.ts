@@ -1,0 +1,87 @@
+import type { RunModeName } from "../../config/llm-run-mode-config.js";
+
+/**
+ * Local-first cascade for a normal chat turn (ATO-2208).
+ *
+ * The configured chain runs cloud first: the active provider heads it
+ * and a local link, if any, sits at the tail (`appendLocal`). With
+ * `llm.fallback.localFirst` on, a turn whose active provider is a cloud
+ * one starts on the configured local (`llama-server`) provider instead,
+ * and when that link fails the way any primary falls over
+ * (`shouldAdvance`: unreachable, 5xx, a defective completion) the same
+ * turn goes on on the active cloud provider and the rest of the chain.
+ * The caller puts the answer first in the session's chain for the turn
+ * (`ProviderFallbackChain.setTurnPrimary`), the seam the model router
+ * already uses, so the switch is announced like every fallover
+ * (`provider_switched`) and the daily spend ceiling still guards the
+ * cloud link.
+ *
+ * Precedent: an ordered model fallback list (OpenRouter `models`,
+ * LiteLLM `fallbacks`) with the cheap model first, as in FrugalGPT.
+ *
+ * It stays out of the way of every other way the provider is chosen:
+ *  - off unless `localFirst` is true (default false);
+ *  - nothing under Fusion (it owns the choice of provider) or when the
+ *    active provider is already local (the chain already starts there;
+ *    a cloud link in `fallback.chain` is the cascade);
+ *  - nothing for a turn that is already pinned (a Fusion worker, a
+ *    caller's explicit `providerId`);
+ *  - nothing when no local link can serve the turn: not built, no model
+ *    on disk (`isUnavailable`), or it says it cannot do tools, or the
+ *    message carries an image and it says it cannot see one.
+ *
+ * Pure: the caller supplies every fact.
+ */
+
+export interface LocalFirstProvider {
+  id: string;
+  /** A `llama-server` provider: on this machine. */
+  local?: boolean;
+  supportsTools?: boolean;
+  supportsVision?: boolean;
+}
+
+export interface LocalFirstInput {
+  /** `llm.fallback.localFirst`. */
+  localFirst: boolean | undefined;
+  /** The run mode the turn actually runs under. */
+  effectiveRunMode: RunModeName;
+  activeProviderId: string;
+  /** Set when the caller already pinned the turn. */
+  pinnedProviderId?: string;
+  /** Configured providers, in config order. */
+  providers: readonly LocalFirstProvider[];
+  /** Whether the turn's message carries an image. */
+  hasImage: boolean;
+  /** Whether the provider registry built this provider. */
+  isRegistered: (providerId: string) => boolean;
+  /** Whether this link cannot serve here now (no model downloaded). */
+  isUnavailable: (providerId: string) => boolean;
+}
+
+export type LocalFirstDecision =
+  | { head: string }
+  | {
+      head: null;
+      reason: "off" | "fusion" | "pinned" | "active-local" | "no-local";
+    };
+
+export function localFirstTurnHead(input: LocalFirstInput): LocalFirstDecision {
+  if (input.localFirst !== true) return { head: null, reason: "off" };
+  if (input.effectiveRunMode === "fusion") return { head: null, reason: "fusion" };
+  if (input.pinnedProviderId !== undefined) return { head: null, reason: "pinned" };
+  const active = input.providers.find((p) => p.id === input.activeProviderId);
+  if (active === undefined || active.local === true || input.effectiveRunMode === "local") {
+    return { head: null, reason: "active-local" };
+  }
+  const local = input.providers.find(
+    (p) =>
+      p.local === true &&
+      input.isRegistered(p.id) &&
+      !input.isUnavailable(p.id) &&
+      p.supportsTools !== false &&
+      !(input.hasImage && p.supportsVision === false),
+  );
+  if (local === undefined) return { head: null, reason: "no-local" };
+  return { head: local.id };
+}
