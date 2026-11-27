@@ -481,7 +481,8 @@ Real, driven by the running agent:
   same provider step (`cloud`); Back from the URL step returns to the Custom
   list. A click scenario that wants Ollama clicks **Custom**, not
   **Cloud models**. The terminal's own wizard is unchanged.
-- model servers already running here (ATO-2489, `renderer/local-servers.js`,
+- model servers already running here (ATO-2489, `renderer/local-servers.js`
+  for Settings, `renderer/local-servers-setup.js` for the setup step,
   `main/local-servers-ipc.ts`): the app runs `atag local-servers --json`, the
   core's own probe (Ollama on 11434, LM Studio on 1234, the Llama app or a
   llama-server on 9931, 800 ms each). When one answers, the Custom card says
@@ -864,8 +865,8 @@ Honestly degraded, and labelled as such in the UI:
   agent drives them through `atag local-servers <action>` (core
   `src/local-llm/external-servers/`): Ollama through its own API, LM Studio
   through its `lms` tool. Settings › Local's **Manage** on a running Ollama
-  or LM Studio row lists its models with Load / Unload (Ollama's
-  `keep_alive: 0`), **Free memory**, a Download field with progress and
+  or LM Studio row (`renderer/local-servers-manage.js`) lists its models
+  with Load / Unload (Ollama's `keep_alive: 0`), **Free memory**, a Download field with progress and
   Stop, Delete (Ollama only, asked twice) and **Use here**; the section
   offers **Start Ollama** / **Start LM Studio** for an app that did not
   answer. Use here adds the model's file to the local models with no new
