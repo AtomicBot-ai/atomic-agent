@@ -30,6 +30,7 @@ import { Failure, SCENARIO_NAME, ask, check, main, sleep, waitTurn } from '../ha
 import { liveScenario } from './live-harness.mjs';
 import { spawnOnPseudoTerminal } from './pseudo-terminal.mjs';
 import { reply } from './scripted-model.mjs';
+import { closeSettings, openPluginsPane, paneSettled } from './settings-plugins.mjs';
 
 const run_ = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -81,19 +82,18 @@ async function processes(pattern) {
 const serveProcesses = (base) => processes((c) => c.includes(base) && /index\.js serve\b/.test(c));
 
 /* ---------------------------------------------------------------- window -- */
-async function openPluginsPane(app) {
-  await app.clickSel('.sb-settings');
-  await app.clickSel('button.setrow[data-act="settings:plugins"]');
-  await app.waitFor(`[...document.querySelectorAll('.set-plgrow')].some((r) => r.textContent.includes(${JSON.stringify(NAME)}))`,
-    'the plugin listed in Settings › Plugins', { timeout: 30000 });
-}
 const rowText = (app) => app.eval(`(document.querySelector('.set-plgrow') || { innerText: '' }).innerText.replace(/\\s+/g, ' ')`);
-const closeSettings = (app) => app.clickSel('[data-act="settings:close"]');
 
-/** The Restart button in the Plugins pane, then a new `atag serve` really running. */
+/**
+ * The Restart button in the Plugins pane, then a new `atag serve` really
+ * running. Every caller has just seen a write land in plugins.json, which is
+ * before the pane redraws with its answer (settings-plugins.mjs), so the pane
+ * settles and the button holds still first (ATO-2439).
+ */
 async function restartAgent(app, base) {
   const before = await serveProcesses(base);
-  await app.clickSel('.set-plugins [data-act="agent:restart"]');
+  await paneSettled(app, 'before Restart');
+  await app.clickSelSteady('.set-plugins [data-act="agent:restart"]');
   await until(async () => {
     const now = await serveProcesses(base);
     return now.length > 0 && now.every((pid) => !before.includes(pid));
@@ -163,16 +163,16 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
   check(!before.includes(TOOL), 'the model has no tool from a server that may not run');
 
   // ---- the consent step, by clicking --------------------------------------
-  await openPluginsPane(app);
+  await openPluginsPane(app, NAME);
   check((await rowText(app)).includes('Code off'), 'the row says the code is off', await rowText(app));
-  await app.clickSel(`[data-act="plugins:expand:${NAME}"]`);
-  await app.clickSel(`[data-act="plugins:code:${NAME}"]`);
+  await app.clickSelSteady(`[data-act="plugins:expand:${NAME}"]`);
+  await app.clickSelSteady(`[data-act="plugins:code:${NAME}"]`);
   const question = await app.waitFor(`(document.querySelector('.set-overlay') || { innerText: '' }).innerText.replace(/\\s+/g, ' ')`,
     'the Allow code question');
   app.log(`the question says: ${JSON.stringify(question)}`);
   check(/probe/.test(question), 'the question names what would run', question);
   check(pluginRecord(stateDir).runsCodeAccepted !== true, 'opening the question grants nothing');
-  await app.clickSel('[data-act="plugins:codeConfirm"]');
+  await app.clickSelSteady('[data-act="plugins:codeConfirm"]');
   await until(() => pluginRecord(stateDir).runsCodeAccepted === true, 'the consent saved in plugins.json');
   await restartAgent(app, base);
 
@@ -181,6 +181,7 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
     return text.includes('tools/list') ? text : null;
   }, 'the MCP server started and asked for its tools', 45000);
   app.log(`the MCP server wrote: ${JSON.stringify(tools)}`);
+  await paneSettled(app, 'after the restart');
   await closeSettings(app);
 
   model.script([reply('The tool is there.')]);
@@ -214,15 +215,16 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
   check(!sent.includes(FRONTMATTER_MARK), 'the template\'s frontmatter is not sent to the model');
 
   // ---- removal ----------------------------------------------------------------
-  await openPluginsPane(app);
-  await app.clickSel(`[data-act="plugins:remove:${NAME}"]`);
-  await app.clickSel('[data-act="plugins:removeConfirm"]');
+  await openPluginsPane(app, NAME);
+  await app.clickSelSteady(`[data-act="plugins:remove:${NAME}"]`);
+  await app.clickSelSteady('[data-act="plugins:removeConfirm"]');
   await until(() => !existsSync(installedDir(stateDir)), 'the plugin folder deleted');
   await until(() => pluginRecord(stateDir) === undefined, 'the plugin record gone');
   const { stdout } = await atag(dirs, ['plugin', 'list', '--json']);
   check(JSON.parse(stdout.trim().split('\n').pop()).plugins.length === 0, 'the CLI lists no plugins', stdout);
 
   await restartAgent(app, base);
+  await paneSettled(app, 'after the restart');
   await closeSettings(app);
   await until(async () => (await processes((c) => c.includes(base) && c.includes('probe.mjs'))).length === 0,
     'the removed plugin\'s MCP server stopped');
