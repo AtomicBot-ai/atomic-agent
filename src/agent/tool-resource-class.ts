@@ -151,6 +151,9 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "github.pr.create": "approval_gated",
   "github.issue.create": "approval_gated",
   "github.issue.comment": "approval_gated",
+  "github.pr.checks": "pure_read",
+  // Enable asks as `publish`, push as `git_remote` (ATO-2331).
+  "github.pr.autofix": "approval_gated",
 
   // os.git.* — local writes; approval-gated like fs writes
   "os.git.init": "approval_gated",
@@ -460,6 +463,7 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "github.pr.create": ["publish"],
     "github.issue.create": ["publish"],
     "github.issue.comment": ["publish"],
+    "github.pr.autofix": ["publish", "git_remote"],
     "os.proc.kill": ["proc_kill"],
     // A GET asks as `http`, a POST as `http_write` (level 4, ATO-1462).
     "os.http.request": ["http", "http_write"],

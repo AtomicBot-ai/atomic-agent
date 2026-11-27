@@ -564,10 +564,10 @@ describe("toStrictJsonSchema", () => {
       "vision.describe",
     ]);
     expect(converted).toBe(DEFAULT_TOOL_NAMES.length - refused.length);
-    // 95 registered schemas, 85 of them strict. Pinned as a number so
+    // 97 registered schemas, 87 of them strict. Pinned as a number so
     // the sample cannot quietly shrink.
-    expect(DEFAULT_TOOL_NAMES.length).toBe(95);
-    expect(converted).toBe(85);
+    expect(DEFAULT_TOOL_NAMES.length).toBe(97);
+    expect(converted).toBe(87);
   });
 
   /**
@@ -694,7 +694,7 @@ const DEFAULT_TOOL_NAMES: readonly string[] = [
   "fusion.delegate",
   "verify.syntax",
   "verify.run",
-  // The nine from `github-tool-args-schemas.ts`, spread into the same
+  // The eleven from `github-tool-args-schemas.ts`, spread into the same
   // registry. Left out of this list, a bound added to one of them would
   // have joined the refusal set silently — the exact surprise the pin
   // exists to prevent. Strict wire contracts: ../../docs/profiles.md.
@@ -707,6 +707,8 @@ const DEFAULT_TOOL_NAMES: readonly string[] = [
   "github.issue.list",
   "github.issue.create",
   "github.issue.comment",
+  "github.pr.checks",
+  "github.pr.autofix",
   "reply",
   "finish",
 ].sort();

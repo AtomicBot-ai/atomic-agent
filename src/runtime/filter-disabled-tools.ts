@@ -186,6 +186,8 @@ const GATED_TOOLS = {
     "github.issue.list",
     "github.issue.create",
     "github.issue.comment",
+    "github.pr.checks",
+    "github.pr.autofix",
   ],
   email: ["os.email.inbox", "os.email.send"],
   image: ["image.generate"],

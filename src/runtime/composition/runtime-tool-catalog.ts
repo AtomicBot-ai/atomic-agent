@@ -313,7 +313,12 @@ export function registerRuntimeCoreTools(input: {
   // descriptors, by contrast, are gated on the token (see
   // `rebuildToolDescriptorsFromMcp`) so the model never sees tools it
   // cannot exercise.
-  registerGithubTools(toolRegistry, dangerous);
+  registerGithubTools(toolRegistry, {
+    ...dangerous,
+    // `github.pr.autofix` pushes obey the same switch as os.git.push (ATO-2331).
+    isRemoteSyncEnabled: () => getConfig().git.remoteSync,
+    stateDir: () => config.paths.stateDir,
+  });
   // Skill scripts inherit the shell's filtered environment and its
   // passthrough list (ATO-877): one answer to "which keys reach a child".
   // Skill history (ATO-580): every `skill.view` / `skill.run_script` of a

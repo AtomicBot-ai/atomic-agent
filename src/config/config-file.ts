@@ -107,6 +107,8 @@ export function getStateSecretPaths(paths: {
     join(paths.stateDir, "atomic-mail", "session.json"),
     // ATO-2308: paired phones and pending pairing links; a written entry would let a phone in.
     join(paths.stateDir, "http-devices.json"),
+    // ATO-2331: the per-PR autofix opt-in and attempt cap; a written entry would enable pushes.
+    join(paths.stateDir, "pr-autofix", "state.json"),
   ];
 }
 

@@ -22,6 +22,9 @@ import {
   requireString,
   resolveRepo,
 } from "./github-tool-args.js";
+import { getConfig } from "../../config/index.js";
+import { buildPrChecksTool } from "./pr-checks-tool.js";
+import { buildPrAutofixTool } from "./pr-autofix-tool.js";
 
 /**
  * Estimated width of one rendered `pr.list` / `issue.list` line:
@@ -43,6 +46,13 @@ export interface GithubToolsOptions extends DangerousToolOptions {
   apiFactory?: (token: string) => GithubApi;
   /** Test seam; production reads the network kill switch (ATO-1084). */
   isOffline?: () => boolean;
+  /**
+   * The `git.remoteSync` switch for `github.pr.autofix` pushes (ATO-2331).
+   * Omitted (embedders, tests): closed, like the other network git tools.
+   */
+  isRemoteSyncEnabled?: () => boolean;
+  /** Where autofix state lives; `getConfig().paths.stateDir` when omitted. */
+  stateDir?: () => string;
 }
 
 /**
@@ -310,7 +320,16 @@ export function buildGithubTools(
     },
   };
 
-  return [whoami, prList, issueList, prCreate, issueCreate, issueComment];
+  // CI autofix (ATO-2331): read the checks, then the guarded push.
+  const prChecks = buildPrChecksTool(client);
+  const prAutofix = buildPrAutofixTool(client, {
+    approvals: options.approvals,
+    approvalRequired: options.approvalRequired,
+    isRemoteSyncEnabled: options.isRemoteSyncEnabled ?? (() => false),
+    stateDir: options.stateDir ?? (() => getConfig().paths.stateDir),
+  });
+
+  return [whoami, prList, issueList, prCreate, issueCreate, issueComment, prChecks, prAutofix];
 }
 
 export function registerGithubTools(

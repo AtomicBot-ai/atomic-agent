@@ -115,4 +115,30 @@ export const GITHUB_TOOL_ARGS_SCHEMAS: readonly [string, Schema][] = [
       ["number", "body"],
     ),
   ],
+  [
+    "github.pr.checks",
+    obj(
+      {
+        number: numberSchema,
+        repo: stringSchema,
+        logs: booleanSchema,
+      },
+      ["number"],
+    ),
+  ],
+  [
+    "github.pr.autofix",
+    obj(
+      {
+        action: {
+          type: "string",
+          enum: ["status", "enable", "disable", "prepare", "push"],
+        },
+        number: numberSchema,
+        repo: stringSchema,
+        maxAttempts: numberSchema,
+      },
+      ["action", "number"],
+    ),
+  ],
 ];
