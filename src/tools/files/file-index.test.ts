@@ -139,6 +139,29 @@ describe("FileIndex: add a folder, index it, search it", () => {
     expect(fileIndex.status()).toMatchObject({ found: 3, indexed: 2 });
   });
 
+  it("keeps the index when a folder that had files walks empty (unmounted mountpoint on Linux) (ATO-1648)", async () => {
+    const fileIndex = open();
+    await fileIndex.addFolder(docs);
+    await fileIndex.idle();
+    expect(fileIndex.status()).toMatchObject({ found: 3, indexed: 2 });
+
+    // What an unmounted mountpoint looks like: the folder is there, readable and empty.
+    for (const name of ["contract.pdf", "notes.md", "photo.png", "script.ts"]) rmSync(join(docs, name));
+    rmSync(join(docs, "node_modules"), { recursive: true });
+    rmSync(join(docs, ".hidden"), { recursive: true });
+    fileIndex.start();
+    await fileIndex.idle();
+    expect(fileIndex.status()).toMatchObject({ found: 3, indexed: 2 });
+    expect(fileIndex.status().lastError).toMatchObject({ path: docs });
+    expect(await fileIndex.search({ query: "termination" })).not.toEqual([]);
+
+    // Remounted: one file back means the folder is real again, and what is missing goes.
+    writeFileSync(join(docs, "notes.md"), "# Notes\nThe lease termination date is in March.");
+    fileIndex.start();
+    await fileIndex.idle();
+    expect(fileIndex.status()).toMatchObject({ found: 1, indexed: 1 });
+  });
+
   it("counts a file over the size cap as skipped and a reader error as failed", async () => {
     writeFileSync(join(docs, "big.txt"), "x".repeat(200));
     const fileIndex = open({
