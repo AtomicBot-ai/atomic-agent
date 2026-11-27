@@ -258,6 +258,7 @@ export class ProvidersOrchestrator {
       rows,
       runMode: resolveRunMode(resolved, {
         managedModelId: config.localModels?.managed?.modelId ?? null,
+        ...(config.localModels?.url ? { localServerUrl: config.localModels.url } : {}),
       }),
     });
   }

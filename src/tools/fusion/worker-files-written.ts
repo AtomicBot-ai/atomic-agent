@@ -1,3 +1,8 @@
+import {
+  addDiffStat,
+  diffStatOfResult,
+  type FileDiffStat,
+} from "./worker-diffstats.js";
 import { FILE_WRITING_TOOLS } from "./worker-result.js";
 
 /**
@@ -16,11 +21,16 @@ import { FILE_WRITING_TOOLS } from "./worker-result.js";
  * read from `patchPath`, or any write whose args name no path, counts as
  * one file of its own — the honest lower bound, since the row cannot
  * see inside it.
+ *
+ * It also keeps the `details.diffstat` of every ok write/edit (ATO-1700),
+ * one row per path with counts summed, for the chat's "Changed files"
+ * card: the worker's results never reach the chat's stream themselves.
  */
 export class WrittenFilesTracker {
   private readonly pending = new Map<number, readonly string[] | null>();
   private readonly paths = new Set<string>();
   private unnamed = 0;
+  private stats: FileDiffStat[] = [];
 
   /** Remember which files a call is about to write, if it is a write. */
   observeParsed(
@@ -40,9 +50,11 @@ export class WrittenFilesTracker {
 
   /** Count the call's files if it succeeded. True when the count moved. */
   observeExecuted(
-    result: { tool: string; status: string },
+    result: { tool: string; status: string; details?: Record<string, unknown> },
     batchIndex: number,
   ): boolean {
+    const stat = diffStatOfResult(result);
+    if (stat !== null) this.stats = addDiffStat(this.stats, stat);
     if (!this.pending.has(batchIndex)) return false;
     const targets = this.pending.get(batchIndex) ?? null;
     this.pending.delete(batchIndex);
@@ -60,6 +72,11 @@ export class WrittenFilesTracker {
 
   get count(): number {
     return this.paths.size + this.unnamed;
+  }
+
+  /** The files ok writes/edits changed, with lines added and removed. */
+  get diffstats(): FileDiffStat[] {
+    return this.stats.slice();
   }
 }
 

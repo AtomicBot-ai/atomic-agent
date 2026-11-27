@@ -135,7 +135,8 @@ describe("skillCommand", () => {
     vi.spyOn(process, "cwd").mockReturnValue(workspace);
     expect(await skillCommand(["list"])).toBe(0);
     expect(stdout).toMatch(/local-one\t.*\[project\]\tuntrusted/);
-    expect(stdout).toContain("untrusted: 1 project skill in this folder is not loaded until the folder is trusted: run atomic-agent skill project on --workspace ");
+    expect(stderr).toContain("untrusted: 1 project skill in this folder is not loaded until the folder is trusted: run atomic-agent skill project on --workspace ");
+    expect(stdout).not.toContain("untrusted:");
     stdout = ""; expect(await skillCommand(["list", "--workspace", workspace])).toBe(0);
     expect(stdout).toMatch(/cloud-one\t\[project\]\tnot trusted in this folder yet/);
     expect(stdout).toContain("untrusted: This folder has 2 project skills and AGENTS.md. Run atomic-agent skill project on --workspace ");

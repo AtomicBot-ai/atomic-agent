@@ -10,6 +10,7 @@ import {
 import type { DownloadFileOptions } from "../downloads/download-file.js";
 import { verifyGuardedEndpoint } from "../../llm/llama-server-auth-probe.js";
 import { getConfig } from "../../config/index.js";
+import { withChatStartPending } from "./chat-start-pending.js";
 import type { LocalLegRole } from "./worker-slots.js";
 import { holdEmbeddingForLowMemory, type EmbeddingMemoryVerdict } from "./embedding-memory-gate.js";
 import { MAX_AUTO_SLOTS, resolveConfiguredSlots } from "./worker-slots.js";
@@ -1299,6 +1300,14 @@ async function recordStartThroughput(opts: {
 }
 
 export async function startDaemon(
+  opts: DaemonStartOptions,
+): Promise<DaemonStartResult> {
+  // ATO-421: a turn that meets the refused port meanwhile reads this start
+  // as on its way, not as a dead engine, until it ends either way.
+  return withChatStartPending(opts.dataDir, () => startDaemonNow(opts));
+}
+
+async function startDaemonNow(
   opts: DaemonStartOptions,
 ): Promise<DaemonStartResult> {
   // A crashed Core may have left its model running on our pid mirror and

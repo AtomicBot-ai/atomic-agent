@@ -212,6 +212,7 @@ function currentRunMode(
 ): ResolvedRunMode {
   return resolveRunMode(resolved, {
     managedModelId: config.localModels.managed.modelId,
+    localServerUrl: config.localModels.url,
   });
 }
 

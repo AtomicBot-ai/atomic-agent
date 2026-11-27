@@ -185,6 +185,45 @@ describe("resolveRunMode", () => {
     ).toBeNull();
   });
 
+  it("never labels a foreign llama.cpp worker with the managed model (ATO-1562)", () => {
+    const providers: ResolvedLlmConfig["providers"] = [
+      { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+      { id: "my-llama", kind: "llama-server", url: "http://127.0.0.1:8080", model: "huihui-qwen3.8-27b" },
+      { id: "openrouter", kind: "openrouter", defaultChatModel: "anthropic/claude-sonnet-4.5" },
+    ];
+    const foreign = resolveRunMode(
+      llm("openrouter", { mode: "fusion", fusion: { workerProvider: "my-llama" } }, providers),
+      { managedModelId: "qwen-3.5-4b", localServerUrl: "http://127.0.0.1:19091/" },
+    );
+    expect(foreign.workerModel).toBe("huihui-qwen3.8-27b");
+
+    // The main local server is still described by the managed model.
+    const ours = resolveRunMode(
+      llm("openrouter", { mode: "fusion", fusion: { workerProvider: "local-llama" } }, providers),
+      { managedModelId: "qwen-3.5-4b", localServerUrl: "http://127.0.0.1:19091" },
+    );
+    expect(ours.workerModel).toBe("qwen-3.5-4b");
+
+    // In managed mode `local-llama` is built from the daemon's port, so
+    // its URL need not match `localModels.url`; it is still ours.
+    const managedPort = resolveRunMode(
+      llm("openrouter", { mode: "fusion", fusion: { workerProvider: "local-llama" } }, providers),
+      { managedModelId: "qwen-3.5-4b", localServerUrl: "http://127.0.0.1:8080" },
+    );
+    expect(managedPort.workerModel).toBe("qwen-3.5-4b");
+
+    // A foreign entry that names no model has no label to guess.
+    const unnamed = resolveRunMode(
+      llm(
+        "openrouter",
+        { mode: "fusion", fusion: { workerProvider: "my-llama" } },
+        providers.map((p) => (p.id === "my-llama" ? { id: p.id, kind: p.kind, url: p.url } : p)),
+      ),
+      { managedModelId: "qwen-3.5-4b", localServerUrl: "http://127.0.0.1:19091" },
+    );
+    expect(unnamed.workerModel).toBeNull();
+  });
+
   it("applies the worker defaults and honours overrides", () => {
     expect(resolveRunMode(llm("openrouter", { mode: "fusion" }))).toMatchObject(
       {

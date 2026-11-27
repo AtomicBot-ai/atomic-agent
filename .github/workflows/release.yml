@@ -64,7 +64,11 @@ jobs:
           # GitHub offers. Signed and notarized by the same macOS steps (runner.os == 'macOS').
           # Local models: Atomic Chat Core publishes an x86_64-apple-darwin build; the older managed
           # llama.cpp backend has none (src/local-llm/backend/platform-assets.ts says so at runtime).
-          - { slug: darwin-x64, os: macos-15-intel }
+          # Node 26 on this row only (ATO-1763): a SEA made from Node 25's x64 macOS build does not
+          # start, before any of our code runs (dyld: "unsupported thread-local, larger than 4GB"
+          # with postject, a segfault with `node --build-sea`), so v0.8.0's darwin-x64 binary never
+          # ran. Node's docs do not promise SEA on Intel macOS; Node 26 builds one that starts.
+          - { slug: darwin-x64, os: macos-15-intel, node: "26" }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     permissions:
@@ -87,7 +91,7 @@ jobs:
           # and other deps, so SEA must run it as an ES module. Node 22/24
           # LTS would crash at boot with `SyntaxError: Cannot use import
           # statement outside a module`.
-          node-version: "25.7"
+          node-version: ${{ matrix.node || '25.7' }}
           check-latest: true
 
       - name: Install dependencies
@@ -109,6 +113,18 @@ jobs:
 
       - name: Build Node SEA binary
         run: npm run bundle:build-binary
+
+      # ATO-1763: start the binary and open its database before anything is signed or uploaded.
+      # Every row builds on its own platform, so each runner can run what it built. The darwin-x64
+      # binary of v0.8.0 shipped without ever starting; this stops a repeat at the build.
+      - name: Check the binary starts
+        run: |
+          bin="bundle/${{ matrix.slug }}/atomic-agent"
+          [[ "${{ runner.os }}" == "Windows" ]] && bin="$bin.exe"
+          "$bin" --version
+          probe="$RUNNER_TEMP/agent-probe"; mkdir -p "$probe"
+          ATOMIC_AGENT_STATE_DIR="$probe" "$bin" task list
+          rm -rf "$probe"
 
       - name: Raise file descriptor limit (macOS)
         if: runner.os == 'macOS'
