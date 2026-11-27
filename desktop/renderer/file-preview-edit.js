@@ -17,13 +17,19 @@
    same bar shows at once.
 
    Leaving the editor, or the file, with unsaved text asks Discard / Keep
-   editing first. A file written with CRLF line ends is saved with them.
+   editing first. When the panel closes on its own (another chat on screen),
+   the unsaved text is kept in memory by the file's real path, and the editor
+   comes back with it when that file opens again in this window, as VS Code
+   keeps a dirty buffer; Save then still checks the file against the version
+   the text was begun on. A file written with CRLF line ends is saved with them.
 
    Shared with the Node checks (test/file-preview-edit.test.mjs): fpEditable,
    fpEditEol, fpEditOut, fpEditDirty, fpEditHtml, fpEditSave and the rest,
    run in a vm with file-preview.js. */
 
 const FP_EDIT_KINDS = ['text', 'code', 'markdown', 'csv', 'tsv', 'html'];
+/** Unsaved editors the panel closed under, by the file's real path; this window only, never written anywhere. */
+const FP_EDIT_DRAFTS = new Map();
 
 /** The file can be edited here: text read whole, and a bridge that can save it. */
 function fpEditable(d) {
@@ -69,6 +75,24 @@ function fpEditGuard(then) {
   if (!fpEditDirty(ed)) { FP.edit = null; return false; }
   ed.ask = typeof then === 'function' ? then : null;
   fpEditPaintBar();
+  return true;
+}
+/** The panel closes or goes to the list on its own: keep unsaved text for the file. */
+function fpEditStash() {
+  const ed = FP.edit;
+  if (!ed || !fpEditDirty(ed) || !FP.data || !FP.data.ok || !FP.data.path) return;
+  ed.ask = null; ed.saving = false; ed.error = '';
+  FP_EDIT_DRAFTS.set(FP.data.path, ed);
+}
+/** The file just read has unsaved text kept for it: the editor opens again with it. True when it did. */
+function fpEditRestore(res) {
+  if (FP.edit || !res || !res.ok || !FP_EDIT_DRAFTS.has(res.path)) return false;
+  if (!fpEditable(res)) return false;
+  const ed = FP_EDIT_DRAFTS.get(res.path);
+  FP_EDIT_DRAFTS.delete(res.path);
+  // Changed on disk since the text was begun: say so now, as Save would.
+  if (res.size !== ed.base.size || res.mtimeMs !== ed.base.mtimeMs) ed.conflict = {size: res.size, mtimeMs: res.mtimeMs};
+  FP.edit = ed;
   return true;
 }
 /** Done, or Escape: leave the editor, asking first about unsaved text. */

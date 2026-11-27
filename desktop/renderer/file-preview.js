@@ -142,6 +142,7 @@ function filePreviewShowList() {
   if (!el) return false;
   FP.seq++;   // a load still out for a file is not shown now
   if (FP.timer) { clearTimeout(FP.timer); FP.timer = 0; }
+  if (typeof fpEditStash === 'function') fpEditStash();   // ATO-2347: unsaved text is kept for when the file opens again
   FP.open = true; FP.path = ''; FP.reply = false; FP.listed = false; FP.data = null; FP.edit = null; FP.sort = null;
   el.hidden = false;
   fpApplyWidth();
@@ -165,6 +166,7 @@ function filePreviewFilesChanged(files, chatChanged, away) {
 }
 function filePreviewClose() {
   const el = fpEl();
+  if (typeof fpEditStash === 'function') fpEditStash();   // ATO-2347: unsaved text is kept for when the file opens again
   FP.open = false; FP.data = null; FP.path = ''; FP.listed = false; FP.edit = null; FP.sort = null;
   if (FP.timer) { clearTimeout(FP.timer); FP.timer = 0; }
   fpRevoke();
@@ -200,6 +202,7 @@ async function fpLoad(keepScroll) {
   const top = keepScroll && body ? body.scrollTop : 0;
   FP.data = res;
   FP.stamp = res && res.ok ? res.size + ':' + res.mtimeMs : '';
+  if (typeof fpEditRestore === 'function') fpEditRestore(res);   // ATO-2347: the editor back with its unsaved text
   fpPaintHead();
   fpPaintBody(fpBodyHtml(res));
   const after = fpEl() && fpEl().querySelector('.fp-body');

@@ -154,10 +154,10 @@ test("tsNextSort: ascending, descending, then the file's order", () => {
 
 /* ---- renderer: the panel and its editor, run in a vm ---- */
 
-function loadPanel(save) {
+function loadPanel(save, preview) {
   const calls = [];
   const ctx = vm.createContext({
-    window: { atomic: { filePreview: async () => ({ ok: false, reason: "missing" }),
+    window: { atomic: { filePreview: preview || (async () => ({ ok: false, reason: "missing" })),
       filePreviewSave: async (...a) => { calls.push(a); return save(...a); } } },
     setTimeout, clearTimeout, Intl, console,
   });
@@ -233,5 +233,29 @@ test("leaving the editor with unsaved text asks first; with none it just leaves"
   assert.equal(run("left"), 0);
   run("fpEditClick('edit-discard')");
   assert.equal(run("left"), 1);
+  assert.equal(run("FP.edit"), null);
+});
+
+test("a chat switch closing the panel keeps unsaved text; the file opened again brings the editor back with it", async () => {
+  let disk = doc();
+  const { run } = loadPanel(() => ({ ok: true }), async () => disk);
+  run("FP.open = true; FP.path = '/h/a.md'; FP.data = " + JSON.stringify(doc()) + "; FP.edit = fpEditState(FP.data); FP.edit.draft = 'unsaved';");
+  run("filePreviewClose()");   // what renderer.js does when another chat comes on screen
+  assert.equal(run("FP.edit"), null);
+  run("FP.open = true; FP.path = '/h/a.md';");
+  await run("fpLoad(false)");
+  assert.equal(run("FP.edit && FP.edit.draft"), "unsaved", "the draft is back in the editor");
+  assert.equal(run("FP.edit.conflict"), null, "the file did not change meanwhile");
+  assert.equal(run("fpEditDirty(FP.edit)"), true);
+  // Changed on disk while the panel was shut: the editor comes back saying so.
+  run("filePreviewShowList()");
+  disk = doc({ size: 50, mtimeMs: 999 });
+  run("FP.open = true; FP.path = '/h/a.md';");
+  await run("fpLoad(false)");
+  assert.equal(run("FP.edit.draft"), "unsaved");
+  assert.equal(run("JSON.stringify(FP.edit.conflict)"), JSON.stringify({ size: 50, mtimeMs: 999 }));
+  // Nothing typed: nothing kept, the file opens as a preview.
+  run("fpEditStop(); FP.edit = fpEditState(FP.data); filePreviewClose(); FP.open = true; FP.path = '/h/a.md';");
+  await run("fpLoad(false)");
   assert.equal(run("FP.edit"), null);
 });
