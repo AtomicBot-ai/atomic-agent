@@ -785,6 +785,7 @@ async function runLocalModelsStartNow(
         localLegRole,
         swaFull: cfg.localModels.managed.swaFull,
         ...(cfg.localModels.managed.cpuMoe === undefined ? {} : { cpuMoe: cfg.localModels.managed.cpuMoe }),
+        ...(cfg.localModels.managed.rpcServers?.length ? { rpcServers: cfg.localModels.managed.rpcServers } : {}),
         ...(loraAdapterForModel(cfg.localModels.managed.loraAdapters, mid)
           ? { loraAdapter: loraAdapterForModel(cfg.localModels.managed.loraAdapters, mid) }
           : {}),

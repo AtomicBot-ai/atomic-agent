@@ -88,7 +88,7 @@ import {
   sharesSystemMemory,
   type ListDevices,
 } from "../backend/gpu-devices.js";
-import { managedDeviceTable } from "../backend/managed-devices.js";
+import { managedDeviceSource, managedDeviceTable } from "../backend/managed-devices.js";
 import {
   resolveSwaFullDecision,
   type SwaFullDecision,
@@ -99,6 +99,7 @@ import {
   moeShapeFromMetadata,
   type CpuMoePreference,
 } from "./cpu-moe.js";
+import { assertRpcLaunchable, rpcServerArgs } from "./rpc-peers.js";
 import {
   getEmbeddingModelDef,
   getLocalModelDef,
@@ -262,6 +263,12 @@ export interface DaemonStartOptions {
    * budget; internal. A positive value appends `--n-cpu-moe <n>`.
    */
   cpuMoeLayers?: number;
+  /**
+   * `localModels.managed.rpcServers` (ATO-2338, `rpc-peers.ts`): peers
+   * appended as `--rpc a,b`. `startDaemon` refuses them on an engine
+   * build without RPC. Empty / undefined keeps the launch byte-identical.
+   */
+  rpcServers?: readonly string[];
   /**
    * Run the throughput probe once the server is healthy (default
    * `true`): one 64-token completion whose `timings.predicted_per_second`
@@ -736,6 +743,7 @@ export function buildLlamaServerArgs(
   if (opts.device !== "cpu" && opts.cpuMoeLayers !== undefined && opts.cpuMoeLayers > 0) {
     args.push("--n-cpu-moe", String(opts.cpuMoeLayers));
   }
+  args.push(...rpcServerArgs(opts.rpcServers, opts.device));
   if (opts.mmprojFile) {
     args.push("--mmproj", opts.mmprojFile);
     // Vision-capable models (notably Gemma-4 with `gemma4v` projector and
@@ -1352,6 +1360,7 @@ async function startDaemonNow(
   // ATO-116: a build stamped for a newer macOS than this Mac's is refused
   // by dyld before it prints a line; say so instead of a crash or timeout.
   assertBackendRunsOnThisMac(binPath);
+  await assertRpcLaunchable(opts.rpcServers, () => managedDeviceSource(opts.dataDir, opts.engine));
 
   const model = getLocalModelDef(opts.modelId);
   // A model registered from disk launches straight from the operator's

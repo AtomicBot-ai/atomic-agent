@@ -29,6 +29,7 @@ import { runLocalModelsPullAndRun } from "./models-pull-run.js";
 import { runModelsAsk, runModelsToolcallBench } from "./models-toolcall-bench.js";
 import { runModelsTasks } from "./models-tasks-command.js";
 import { runModelsFitTest } from "./models-fit-test-command.js";
+import { runModelsRpcWorker } from "./models-rpc-worker.js";
 
 const HELP =
   [
@@ -99,6 +100,10 @@ const HELP =
     "GPU subcommands:",
     "  devices                       List GPU devices (llama-server --list-devices); active marked with *",
     "  use-device <auto|cpu|Vulkan0> Set the managed daemon's GPU (auto-picks best discrete by default)",
+    "  rpc-worker [--lan|--host <ip>] Lend this computer's memory and GPU to a model on another",
+    "     [--port <n>] [--cache]     one (llama.cpp rpc-server, port 50052; loopback unless --lan,",
+    "                                no password: trusted networks only). On the main computer",
+    "                                list it in localModels.managed.rpcServers",
     "",
     "Embedding subcommands (memory-v2 phase 1B — second daemon for /embedding):",
     "  list-embeddings               Show embedding catalog + disk presence + daemon health",
@@ -214,6 +219,8 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return runLocalModelsDevices();
       case "use-device":
         return runLocalModelsUseDevice(args[1]);
+      case "rpc-worker":
+        return await runModelsRpcWorker(args.slice(1));
       case "list-embeddings":
         return runLocalModelsListEmbeddings();
       case "pull-embedding":
