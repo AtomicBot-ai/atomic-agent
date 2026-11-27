@@ -29,6 +29,9 @@ const rawJob = (over = {}) => ({
   ...over,
 });
 const cand = (id, over = {}) => ({ id, kind: "profile", key: "work_role", value: "Product owner", pinned: false, chatId: "c1", quote: "I run the product", ...over });
+// The paths here do not exist: every export looks like a small real .zip to the start check (ATO-1656,
+// test/import-facts-input.test.mjs drives the real file system).
+const zipStat = () => ({ isFile: () => true, isDirectory: () => false, size: 4096 });
 
 function fakeClient(over = {}) {
   const calls = [];
@@ -57,18 +60,22 @@ test("the step is offered only when the agent's capabilities say importFacts und
 });
 
 test("the start body reads with the local model unless this run's box is ticked", () => {
-  const local = F.factsStartBody({ source: "claude", path: "/Users/me/export.zip" });
+  const local = F.factsStartBody({ source: "claude", path: "/Users/me/export.zip" }, zipStat);
   assert.deepEqual(local, { ok: true, local: true, body: { source: "claude", path: "/Users/me/export.zip", engine: { kind: "local" } } });
-  const cloud = F.factsStartBody({ source: "chatgpt", path: "/Users/me/c.zip", cloud: { provider: "openrouter", consent: true } });
+  const cloud = F.factsStartBody({ source: "chatgpt", path: "/Users/me/c.zip", cloud: { provider: "openrouter", consent: true } }, zipStat);
   assert.deepEqual(cloud.body.engine, { kind: "cloud", provider: "openrouter", cloudConsent: true });
   assert.equal(cloud.local, false);
   // No tick, no cloud: anything but a literal true is refused before the agent is asked.
   for (const consent of [false, "true", 1, undefined]) {
-    assert.equal(F.factsStartBody({ source: "claude", path: "/x.zip", cloud: { provider: "openrouter", consent } }).ok, false);
+    assert.equal(F.factsStartBody({ source: "claude", path: "/x.zip", cloud: { provider: "openrouter", consent } }, zipStat).ok, false);
   }
-  assert.equal(F.factsStartBody({ source: "claude", path: "export.zip" }).ok, false, "a relative path");
-  assert.equal(F.factsStartBody({ source: "gemini", path: "/x.zip" }).ok, false);
-  assert.equal(F.factsStartBody({ source: "claude", path: "/x.zip", cloud: { consent: true } }).ok, false, "no provider");
+  assert.equal(F.factsStartBody({ source: "claude", path: "export.zip" }, zipStat).ok, false, "a relative path");
+  assert.equal(F.factsStartBody({ source: "gemini", path: "/x.zip" }, zipStat).ok, false);
+  assert.equal(F.factsStartBody({ source: "claude", path: "/x.zip", cloud: { consent: true } }, zipStat).ok, false, "no provider");
+  // ATO-1656: the path is looked up; without a stat of its own the real file system answers, and /Users/me/export.zip is not there.
+  const gone = F.factsStartBody({ source: "claude", path: "/Users/me/export.zip" });
+  assert.equal(gone.ok, false);
+  assert.match(gone.error, /not there any more/);
 });
 
 test("a job view is parsed from {job}, progress clamped, candidates cleaned", () => {
@@ -138,7 +145,7 @@ test("the cloud choices leave out local and network models and put the active on
 
 test("an agent on another computer is refused before anything is sent", async () => {
   const client = fakeClient({ isRemote: true });
-  const h = F.createImportFactsHandlers({ client });
+  const h = F.createImportFactsHandlers({ client, stat: zipStat });
   const started = await h.start({ source: "claude", path: "/Users/me/export.zip" });
   assert.equal(started.ok, false);
   assert.equal(started.remote, true);
@@ -153,7 +160,7 @@ test("an agent on another computer is refused before anything is sent", async ()
 
 test("a stopped agent is refused with its own words, not a network error", async () => {
   const client = fakeClient({ status: { state: "stopped" } });
-  const h = F.createImportFactsHandlers({ client });
+  const h = F.createImportFactsHandlers({ client, stat: zipStat });
   const r = await h.start({ source: "claude", path: "/x.zip" });
   assert.equal(r.ok, false);
   assert.match(r.error, /not running/);
@@ -176,7 +183,7 @@ test("start, poll until done, then save only ticked ids the job listed", async (
       "POST jobs/job-1/save": { status: 200, body: { saved: 1, skipped: 1, conflicts: [], failed: 0, receiptId: "r9" } },
     },
   });
-  const h = F.createImportFactsHandlers({ client, onFound: (i) => found.push(i), onSaved: (i) => saved.push(i) });
+  const h = F.createImportFactsHandlers({ client, stat: zipStat, onFound: (i) => found.push(i), onSaved: (i) => saved.push(i) });
   const s = await h.start({ source: "claude", path: "/Users/me/export.zip" });
   assert.equal(s.ok, true);
   assert.deepEqual(client.calls[0], { method: "POST", path: "start", body: { source: "claude", path: "/Users/me/export.zip", engine: { kind: "local" } } });
@@ -198,7 +205,7 @@ test("start, poll until done, then save only ticked ids the job listed", async (
 
 test("nothing ticked saves nothing and does not ask the agent", async () => {
   const client = fakeClient({ answers: { "GET jobs/job-1": { status: 200, body: { job: rawJob({ state: "done", candidates: [cand("c0-1")] }) } } } });
-  const h = F.createImportFactsHandlers({ client });
+  const h = F.createImportFactsHandlers({ client, stat: zipStat });
   await h.job("job-1");
   const r = await h.save("job-1", []);
   assert.deepEqual(r.result, { saved: 0, skipped: 0, conflicts: 0, failed: 0, receiptId: null });
@@ -209,7 +216,7 @@ test("an agent error on start reaches the window in words; a bad job id never re
   const client = fakeClient({
     answers: { "POST start": { status: 422, body: { error: { message: "no local model", type: "invalid_request_error", param: "engine", code: "no_local_model" } } } },
   });
-  const h = F.createImportFactsHandlers({ client });
+  const h = F.createImportFactsHandlers({ client, stat: zipStat });
   const r = await h.start({ source: "chatgpt", path: "/x.zip" });
   assert.equal(r.ok, false);
   assert.match(r.error, /No local model/);
@@ -220,7 +227,7 @@ test("an agent error on start reaches the window in words; a bad job id never re
 
 test("stop and forget call the agent's own routes", async () => {
   const client = fakeClient();
-  const h = F.createImportFactsHandlers({ client });
+  const h = F.createImportFactsHandlers({ client, stat: zipStat });
   assert.deepEqual(await h.stop("job-1"), { ok: true });
   assert.deepEqual(await h.forget("job-1"), { ok: true });
   assert.deepEqual(client.calls.map((c) => c.method + " " + c.path), ["POST jobs/job-1/stop", "DELETE jobs/job-1"]);
@@ -228,7 +235,7 @@ test("stop and forget call the agent's own routes", async () => {
 
 test("a request that never got an answer is a message, not a throw", async () => {
   const client = fakeClient({ importFactsRoute: async () => { throw new Error("ECONNREFUSED"); } });
-  const h = F.createImportFactsHandlers({ client });
+  const h = F.createImportFactsHandlers({ client, stat: zipStat });
   const r = await h.start({ source: "claude", path: "/x.zip" });
   assert.equal(r.ok, false);
   assert.match(r.error, /Could not reach the agent/);
