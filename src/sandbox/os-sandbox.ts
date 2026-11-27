@@ -18,8 +18,10 @@
  *   config, tokens); a working folder inside one is opened by itself;
  * - for a process that keeps its network (an MCP server), the
  *   ssh-agent socket can be hidden too (`hideSshAgent`);
- * - with `network: false`, no outbound IP or local-socket connection
- *   except to loopback IP, no DNS lookups and no URL opening.
+ * - with `network: false`, no outbound IP connection except to loopback
+ *   IP, no DNS lookups and no URL opening; local sockets are all denied
+ *   on macOS, and on Linux the known socket places are covered (a list:
+ *   `os-sandbox-sockets.ts`).
  *
  * Same split as Codex (`workspace-write`, network off by default inside
  * it) and Jan (shell always sandboxed, Seatbelt on macOS, bubblewrap on
@@ -31,7 +33,9 @@
  * - Linux: `bwrap` (bubblewrap) when it is installed: the root is
  *   mounted read-only, writable roots are bound back read-write, secret
  *   folders are covered with an empty tmpfs (files with `/dev/null`),
- *   `--unshare-net` drops the network.
+ *   `--unshare-net` drops the network; without network the known local
+ *   socket places are covered too (`os-sandbox-sockets.ts`), because a
+ *   socket bound to a file path outlives the network namespace.
  * - Windows, or Linux without `bwrap`: no sandbox is available. The
  *   caller refuses the command (Jan's rule: no sandbox, no shell) and
  *   says how to turn the mode off.
@@ -44,6 +48,12 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+
+import {
+  bwrapSocketMaskArgs,
+  linuxLocalSocketMasks,
+  type OsSandboxSocketMask,
+} from "./os-sandbox-sockets.js";
 
 export type OsSandboxMode = "off" | "workspace";
 
@@ -113,6 +123,13 @@ export interface OsSandboxPolicy {
    * `SSH_AUTH_SOCK` path, and the Docker sockets when `hideDocker` is on.
    */
   denySockets?: readonly string[];
+  /**
+   * Without network only: the local socket places a Linux sandbox
+   * covers (ATO-1652), since `--unshare-net` leaves sockets bound to a
+   * file path reachable. Seatbelt does not need them: it denies
+   * `(remote unix-socket)` outright.
+   */
+  localSocketMasks?: readonly OsSandboxSocketMask[];
 }
 
 export interface OsSandboxPolicyInput {
@@ -153,6 +170,14 @@ export interface OsSandboxPolicyInput {
   dockerHost?: string;
   home?: string;
   tmp?: string;
+  /**
+   * For the Linux local-socket masks without network (ATO-1652): the
+   * user's id, `XDG_RUNTIME_DIR`, and the socket variables. Default to
+   * the agent's own process and environment.
+   */
+  uid?: number;
+  runtimeDir?: string;
+  socketEnv?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -311,6 +336,7 @@ export function buildOsSandboxPolicy(
     sockets.push(...named.flatMap((p) => bothSpellings(p)));
   }
   const denySockets = unique(sockets);
+  const localSocketMasks = input.network ? [] : networkOffSocketMasks(input, home, tmp);
   return {
     writableRoots,
     ...(narrowedRoots.length > 0 ? { narrowedRoots } : {}),
@@ -319,7 +345,38 @@ export function buildOsSandboxPolicy(
     network: input.network,
     ...(input.hideSshAgent === true ? { hideSshAgent: true } : {}),
     ...(denySockets.length > 0 || input.hideSshAgent === true ? { denySockets } : {}),
+    ...(localSocketMasks.length > 0 ? { localSocketMasks } : {}),
   };
+}
+
+/**
+ * The socket places hidden when the network is off (ATO-1652): the
+ * Linux system sockets, the runtime folder, the temp-folder sockets, the
+ * Docker list, and the exact `SSH_AUTH_SOCK`, `DOCKER_HOST` and
+ * `CONTAINER_HOST` paths.
+ */
+function networkOffSocketMasks(
+  input: OsSandboxPolicyInput,
+  home: string,
+  tmp: string,
+): OsSandboxSocketMask[] {
+  const env = input.socketEnv ?? process.env;
+  const uid = input.uid ?? process.getuid?.();
+  const runtimeDir = input.runtimeDir ?? env.XDG_RUNTIME_DIR;
+  const ssh = env.SSH_AUTH_SOCK?.trim();
+  const extra = [
+    ...DOCKER_SOCKET_PATHS.map((p) => (p.startsWith("~/") ? join(home, p.slice(2)) : p)),
+    ...(ssh !== undefined && isAbsolute(ssh) ? [ssh] : []),
+    ...[dockerHostSocket(env.DOCKER_HOST), dockerHostSocket(env.CONTAINER_HOST)].filter(
+      (p): p is string => p !== null,
+    ),
+  ].flatMap((p) => bothSpellings(p));
+  return linuxLocalSocketMasks({
+    tmpDirs: unique(process.platform === "win32" ? [tmp] : ["/tmp", tmp]),
+    ...(uid === undefined ? {} : { uid }),
+    ...(runtimeDir === undefined || runtimeDir.trim() === "" ? {} : { runtimeDir }),
+    extraSockets: extra,
+  });
 }
 
 export type OsSandboxWrap =
@@ -474,7 +531,9 @@ function bwrapArgs(
   command: string,
   args: readonly string[],
 ): string[] {
-  const out = ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc"];
+  // A private pid namespace: `/proc` shows only the sandbox's own
+  // processes, so `/proc/<host pid>/root` cannot reach the hidden paths.
+  const out = ["--ro-bind", "/", "/", "--dev", "/dev", "--unshare-pid", "--proc", "/proc"];
   for (const dir of policy.writableRoots) {
     // A cache folder that does not exist yet cannot be bound; skipped.
     if (existsSync(dir)) out.push("--bind", dir, dir);
@@ -493,6 +552,15 @@ function bwrapArgs(
   for (const path of policy.denySockets ?? []) {
     if (existsSync(path)) out.push("--ro-bind", "/dev/null", path);
   }
+  // Without network, the local sockets bound to a file path too: the
+  // network namespace alone leaves them reachable (ATO-1652). Never over
+  // a writable root or a reopened folder.
+  out.push(
+    ...bwrapSocketMaskArgs(policy.localSocketMasks ?? [], [
+      ...policy.writableRoots,
+      ...policy.reopen.map((entry) => entry.path),
+    ]),
+  );
   if (!policy.network) out.push("--unshare-net");
   out.push("--die-with-parent", "--new-session", "--", command, ...args);
   return out;

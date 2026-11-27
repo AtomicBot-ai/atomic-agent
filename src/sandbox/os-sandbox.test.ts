@@ -289,6 +289,18 @@ describe("wrapWithOsSandbox", () => {
     expect(w.args.slice(-4)).toEqual(["--", "/bin/sh", "-c", "ls"]);
   });
 
+  it("gives the Linux sandbox its own pid namespace before /proc is mounted", () => {
+    const w = wrapWithOsSandbox("/bin/sh", ["-c", "ls"], policy(), {
+      platform: "linux",
+      bwrap: "/usr/bin/bwrap",
+    });
+    if (!w.ok) throw new Error(w.reason);
+    const pid = w.args.indexOf("--unshare-pid");
+    expect(pid).toBeGreaterThan(-1);
+    expect(pid).toBeLessThan(w.args.indexOf("--proc"));
+    expect(pid).toBeLessThan(w.args.indexOf("--"));
+  });
+
   it("covers a secret file with /dev/null and a folder with tmpfs on Linux", () => {
     const home = mkdtempSync(join(tmpdir(), "atomic-sbx-home-"));
     try {
@@ -374,6 +386,91 @@ describe("MCP extras (ATO-620)", () => {
       const at = w.args.lastIndexOf(sock);
       expect(w.args[at - 1]).toBe("/dev/null");
       expect(w.args[at - 2]).toBe("--ro-bind");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ATO-1652: `--unshare-net` alone leaves unix sockets bound to a file
+// path (Docker, Podman, D-Bus, ssh-agent) reachable, so without network
+// the Linux sandbox covers them.
+describe("local sockets without network on Linux (ATO-1652)", () => {
+  function socketPolicy(network: boolean, runtimeDir: string, sock: string, work = "/home/op/project") {
+    return buildOsSandboxPolicy({
+      workspaceRoots: [work],
+      network,
+      home: HOME,
+      tmp: TMP,
+      uid: 4242,
+      runtimeDir,
+      socketEnv: { SSH_AUTH_SOCK: sock, DOCKER_HOST: "tcp://127.0.0.1:2375" },
+    });
+  }
+
+  function linuxArgs(p: ReturnType<typeof buildOsSandboxPolicy>): string[] {
+    const w = wrapWithOsSandbox("ls", [], p, { platform: "linux", bwrap: "/usr/bin/bwrap" });
+    if (!w.ok) throw new Error(w.reason);
+    return w.args;
+  }
+
+  it("covers the runtime folder with tmpfs and SSH_AUTH_SOCK with /dev/null, before the command", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atomic-sbx-1652-"));
+    try {
+      const rt = join(dir, "rt");
+      mkdirSync(rt);
+      writeFileSync(join(rt, "bus"), "");
+      const sock = join(dir, "agent.7");
+      writeFileSync(sock, "");
+      const args = linuxArgs(socketPolicy(false, rt, sock));
+      expect(args[args.indexOf(rt) - 1]).toBe("--tmpfs");
+      const at = args.lastIndexOf(realpathSync(sock));
+      expect(at).toBeGreaterThan(0);
+      expect(args[at - 1]).toBe("/dev/null");
+      expect(args[at - 2]).toBe("--ro-bind");
+      expect(args.indexOf(rt)).toBeLessThan(args.indexOf("--"));
+      expect(args).toContain("--unshare-net");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the policy free of socket masks when the network is on", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atomic-sbx-1652-"));
+    try {
+      const rt = join(dir, "rt");
+      mkdirSync(rt);
+      const p = socketPolicy(true, rt, join(dir, "agent.7"));
+      expect(p.localSocketMasks).toBeUndefined();
+      expect(linuxArgs(p)).not.toContain(rt);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("lists the Linux system sockets and the user's runtime folder", () => {
+    const masks = socketPolicy(false, "/run/user/4242", "/tmp/ssh-x/agent.1").localSocketMasks ?? [];
+    const paths = masks.map((m) => m.path);
+    expect(paths).toContain("/run/user/4242");
+    expect(paths).toContain("/var/run/docker.sock");
+    expect(paths).toContain("/run/podman/podman.sock");
+    expect(paths).toContain("/tmp/ssh-x/agent.1");
+    expect(paths).toContain(join(TMP, "tmux-4242"));
+  });
+
+  it("does not hide a working folder inside the runtime folder; covers the bus there instead", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atomic-sbx-1652-"));
+    try {
+      const rt = join(dir, "rt");
+      const work = join(rt, "project");
+      mkdirSync(work, { recursive: true });
+      writeFileSync(join(rt, "bus"), "");
+      const realRt = realpathSync(rt);
+      const args = linuxArgs(socketPolicy(false, realRt, join(dir, "none"), work));
+      expect(args.filter((a, i) => a === realRt && args[i - 1] === "--tmpfs")).toEqual([]);
+      const bus = args.indexOf(join(realRt, "bus"));
+      expect(bus).toBeGreaterThan(0);
+      expect(args[bus - 1]).toBe("/dev/null");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
