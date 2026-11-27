@@ -41,6 +41,7 @@ import { isProjectFolderTrusted } from "../../skills/project-trust.js";
 import { buildToolViewTool } from "../../tools/tool-view/index.js";
 import { planUpdateTool } from "../../tools/plan/index.js";
 import { buildCanvasRenderTool } from "../../tools/canvas/index.js";
+import { uiRenderTool } from "../../tools/ui/index.js";
 import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActive } from "../../tools/tool-search/index.js";
 import { buildConversationHistoryTool, buildSessionsSearchTool, registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
 import { buildFilesSearchTool, type FileIndexApi } from "../../tools/files/index.js";
@@ -358,6 +359,9 @@ export function registerRuntimeCoreTools(input: {
     ...dangerous,
     trustConfigPaths: getTrustConfigPaths(config.paths),
   }));
+  // ATO-2457: a ready card (decision, form, cards) the host draws itself;
+  // pure, always on, no approval. The terminal prints its text form.
+  toolRegistry.register(uiRenderTool);
   // Clarifying questions with ready answers (ATO-489): through the
   // approval gate, so the turn waits like an approval and only the
   // person answers. Registered for the whole process, but each turn

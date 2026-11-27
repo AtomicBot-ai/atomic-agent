@@ -34,6 +34,7 @@
 <link rel="stylesheet" href="css/file-preview.css">
 <link rel="stylesheet" href="css/canvas-pane.css">
 <link rel="stylesheet" href="css/artifact-bridge.css">
+<link rel="stylesheet" href="css/ui-render.css">
 <link rel="stylesheet" href="css/onboarding.css">
 <link rel="stylesheet" href="css/settings.css">
 <link rel="stylesheet" href="css/my-files.css">
@@ -309,6 +310,13 @@
 <script src="publish-site.js"></script>
 <!-- ATO-1010: MCP Apps, a server's tool UI, in that same frame. -->
 <script src="mcp-app.js"></script>
+<!-- ATO-2457: where a widget's message goes (Widgets send right away), the MCP Apps
+     bridge on that frame, ui.render cards drawn by this window, and Save as PNG. -->
+<script src="widget-send.js"></script>
+<script src="mcp-app-bridge.js"></script>
+<script src="ui-render.js"></script>
+<script src="ui-render-act.js"></script>
+<script src="artifact-png.js"></script>
 <script src="tool-failures.js"></script>
 <!-- ATO-1249: the side panel's Steps and Reasoning, newest first, with a switch. -->
 <script src="insp-order.js"></script>
