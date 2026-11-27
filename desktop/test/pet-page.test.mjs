@@ -13,11 +13,12 @@ const R = require("../renderer/pet-relay.js");
 const { menuTemplate } = require("../out/main/menu.js");
 
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
-const req = (over = {}) => ({ approvalId: "ap-1", tool: "shell.exec", text: "run ls", risk: "", question: false, canAllow: true, ...over });
+const req = (over = {}) => ({ approvalId: "ap-1", tool: "shell.exec", category: "shell", text: "run ls", risk: "", question: false, canAllow: true, ...over });
 
 test("the bubble: Allow once and Deny for an ordinary request", () => {
   const m = P.petBubbleModel({ state: "waiting", approval: req(), more: 2 }, new Set());
-  assert.equal(m.title, "Allow shell.exec?");
+  // ATO-2741: the main window's words, not the raw tool id ("Allow shell.exec?").
+  assert.equal(m.title, "Allow it to run a command?");
   assert.equal(m.allow, true);
   assert.equal(m.deny, true);
   assert.equal(m.more, "2 more waiting");
@@ -127,3 +128,39 @@ for (const platform of ["darwin", "win32", "linux"]) {
     assert.equal(on[1].checked, true);
   });
 }
+
+// ATO-2741: the bubble asked "Allow shell.exec?" with the raw tool id while
+// the main window's card says what the step does. Both now read one table
+// (renderer/approval-words.js), so the pet says "Allow it to run a command?".
+test("the bubble asks in the main window's words, never with the raw tool id", () => {
+  const W = require("../renderer/approval-words.js");
+  const title = (over) => P.petBubbleModel({ state: "waiting", approval: req(over), more: 0 }, new Set()).title;
+  assert.equal(title({ category: "http", tool: "web.fetch" }), "Allow it to " + W.APPR_FALLBACK.http + "?");
+  assert.equal(title({ category: "fs_write_workspace", tool: "fs.write" }), "Allow it to change a file in this folder?");
+  assert.equal(title({ category: "", tool: "os.shell.run" }), "Allow it to run a command?", "a shell call without a category");
+  assert.equal(title({ category: "other", tool: "mystery.tool" }), "Allow it to go ahead?");
+  assert.doesNotMatch(title({ category: "", tool: "mystery.tool" }), /mystery/, "no raw tool id");
+  assert.equal(title({ category: "__proto__", tool: "x" }), "Allow it to go ahead?", "only the table's own words");
+  const html = read("../renderer/pet.html");
+  assert.match(html, /<script src="approval-words\.js"><\/script>\s*\n\s*<script src="pet\.js"><\/script>/, "the words load before pet.js");
+  const index = read("../renderer/index.html");
+  assert.ok(index.indexOf('<script src="approval-words.js">') >= 0 && index.indexOf('<script src="approval-words.js">') < index.indexOf('<script src="renderer.js">'),
+    "the main window loads the words before renderer.js");
+  assert.doesNotMatch(read("../renderer/renderer.js"), /\nconst APPR_FALLBACK = \{/, "one table, not two (a second const would not load)");
+});
+
+// ATO-2741: the bubble followed only the system's light / dark, so a forced
+// Light app on a dark Mac drew a dark bubble. It reads the main window's
+// choice (atag.theme), as the mini chat does, and follows a later pick.
+test("the bubble follows the app's forced theme", () => {
+  assert.equal(P.petThemeOf("light"), "light");
+  assert.equal(P.petThemeOf("dark"), "dark");
+  assert.equal(P.petThemeOf("system"), null);
+  assert.equal(P.petThemeOf(null), null);
+  const css = read("../renderer/css/pet.css");
+  assert.match(css, /:root:not\(\[data-theme="light"\]\)/, "a forced Light wins over a dark system");
+  assert.match(css, /:root\[data-theme="dark"\]/, "a forced Dark wins over a light system");
+  const src = read("../renderer/pet.js");
+  assert.match(src, /localStorage\.getItem\('atag\.theme'\)/);
+  assert.match(src, /addEventListener\('storage'/, "a theme picked later reaches the open pet");
+});

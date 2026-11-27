@@ -185,6 +185,13 @@ held after outside content (its note shows in the risk line), one with no
 preview or a preview the bubble cannot show whole (more than one line, or clipped),
 or the categories kept for the full card (`PET_WINDOW_ONLY_CATEGORIES`): those offer
 Review. Do Not Disturb hides the bubble and the done / failed flashes.
+Settings › General › Desktop pet and the palette's Show / Hide desktop pet
+row (ATO-2741, [pet-settings.js](renderer/pet-settings.js)) use the same
+toggle as the menu (`pet:setEnabled`), and main sends every change back
+(`pet:prefsChanged`), so the switch, the row and the menu checkbox agree;
+Windows may have no menu bar. The bubble asks in the card's words ("Allow it
+to run a command?", [approval-words.js](renderer/approval-words.js)) and
+follows the theme picked in the app, not only the system's.
 
 **Why not the NDJSON sidecar.** `dist/sidecar/main.js` exists only in a source
 checkout, and the shipped single-file binary has no `sidecar` subcommand. A
