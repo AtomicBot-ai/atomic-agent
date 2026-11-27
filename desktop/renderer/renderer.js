@@ -27921,7 +27921,7 @@ async function llmEnsureModels() {
   if (!p || !BR) return;
   if (LLMP.modelsFor === p.id && (LLMP.modelsBusy || LLMP.models.length || LLMP.modelsErr)) return;
   if (LLMP.modelsRetry) { clearTimeout(LLMP.modelsRetry); LLMP.modelsRetry = null; }
-  LLMP.modelsFor = p.id; LLMP.models = []; LLMP.modelsBusy = true; LLMP.modelsErr = null; LLMP.modelsStale = false;
+  LLMP.modelsFor = p.id; LLMP.models = llmListCacheGet(p.id) || []; LLMP.modelsBusy = true; LLMP.modelsErr = null; LLMP.modelsStale = false;   // ATO-2413: the last good list shows while it is asked again
   llmRepaint();
   await llmFetchModels(p);
 }
@@ -27932,22 +27932,30 @@ async function llmEnsureModels() {
    the list is that snapshot: the pane says so, asks once more by itself, and
    carries a Retry. A list already on screen stays while it is asked again. */
 async function llmFetchModels(p) {
-  const res = await BR.providerModels(p.id, p.kind || '', true);
-  if (LLMP.modelsFor !== p.id) return;
+  // ATO-2413: a deadline, a throw read as an error, and only the newest ask for this provider lands.
+  const ask = LLMP.modelsAsk = (LLMP.modelsAsk || 0) + 1;
+  const res = await llmListAsk(() => BR.providerModels(p.id, p.kind || '', true), providerWord(p.id));
+  if (LLMP.modelsFor !== p.id || LLMP.modelsAsk !== ask) return;
   LLMP.modelsBusy = false;
-  if (!res || !res.ok) {
-    if (!LLMP.models.length) LLMP.modelsErr = modelListFailLine(res, providerWord(p.id)) || (res && res.error) || 'could not list models';   // ATO-202
-  } else {
-    LLMP.models = res.models || []; LLMP.modelsErr = null; LLMP.modelsStale = res.stale === true;
-    if (LLMP.modelsStale && !LLMP.modelsRetry) {
-      LLMP.modelsRetry = setTimeout(() => {
-        const q = llmCloudSectionProvider(llmProvTabNow());
-        if (llmVisible() && q && q.id === p.id && LLMP.modelsFor === p.id && LLMP.modelsStale && !LLMP.modelsBusy) llmRetryModels();
-      }, 15000);
-    }
-  }
+  if (res.deadline && res.late) res.late.then((late) => {
+    if (!late || !late.ok || LLMP.modelsFor !== p.id || LLMP.modelsAsk !== ask || LLMP.modelsBusy) return;
+    llmTakeModels(p, late); llmClampCursors(); llmRepaint();
+  });
+  if (!res.ok) {
+    if (!LLMP.models.length) LLMP.modelsErr = modelListFailLine(res, providerWord(p.id)) || res.error || 'could not list models';   // ATO-202
+  } else llmTakeModels(p, res);
   llmClampCursors();
   llmRepaint();
+}
+function llmTakeModels(p, res) {
+  LLMP.models = res.models || []; LLMP.modelsErr = null; LLMP.modelsStale = res.stale === true;
+  if (!LLMP.modelsStale) llmListCachePut(p.id, LLMP.models);
+  if (LLMP.modelsStale && !LLMP.modelsRetry) {
+    LLMP.modelsRetry = setTimeout(() => {
+      const q = llmCloudSectionProvider(llmProvTabNow());
+      if (llmVisible() && q && q.id === p.id && LLMP.modelsFor === p.id && LLMP.modelsStale && !LLMP.modelsBusy) llmRetryModels();
+    }, 15000);
+  }
 }
 /* Ask for the live list again (the Retry under a built-in list, or the one timed retry). */
 function llmRetryModels() {
@@ -28073,6 +28081,8 @@ function llmCloudSection(tab) {
   const chat = (LLMP.modelsFor === p.id ? LLMP.models : []).filter((m) => m && m.kind !== 'embedding');
   chat.forEach((m) => add(m.id));
   const status = LLMP.modelsFor === p.id ? (LLMP.modelsBusy ? 'loading' : LLMP.modelsErr ? 'error' : 'ready') : 'loading';
+  // ATO-2413: "loading" with nothing asking (the config moved the section to another provider) starts the ask.
+  if (LLMP.modelsFor !== p.id && BR && t === llmProvTabNow()) llmListScheduleAsk(llmEnsureModels);
   const f = LLMP.filter.trim().toLowerCase();
   const filtered = f ? out.filter((id) => modelMatches(id, '', f)) : out;
   return {provider:p, status, error:LLMP.modelsErr, models:out, filtered, sectionStart:llmTabProviders(t).length};
@@ -29081,7 +29091,8 @@ function llmCloudModelListHTML(tab) {
     // ATO-318: the snapshot built into the app is not the provider's list; say so, with the way to ask again.
     + (section.status === 'ready' && LLMP.modelsStale ? '<div class="llm-counter llm-stale">The live list from ' + who + ' did not load, so this is the list built into the app. '
       + '<button class="llm-link" data-act="llm:modelsRetry">Try again</button></div>' : '')
-    + (section.status === 'error' ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">Couldn’t fetch the model list (' + esc(section.error || 'unknown error') + '). Showing the current model only.</span></div>' : '')
+    + (section.status === 'error' ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">Couldn’t fetch the model list (' + esc(section.error || 'unknown error') + '). Showing the current model only.</span>'
+      + '<button class="llm-link" data-act="llm:modelsRetry">Try again</button></div>' : '')   // ATO-2413
     + (visible.length ? '<div class="tk-list llm-list">' + visible.map((r, i) => llmRowHTML(r, section.sectionStart + start + i, cursor)).join('') + '</div>' : '')
     + (counter ? '<div class="llm-counter">' + esc(counter) + '</div>' : '');
 }
