@@ -76,21 +76,25 @@ export async function readServeHealth(
   }
 }
 
-/** A live serve on this machine working in `cwd`, or null. */
+/**
+ * A live serve on this machine working in `cwd`, or null. `cwd` null
+ * (ATO-2447, the bare local model) takes a serve in any folder: the
+ * `/local/v1` routes run no agent tools, so the folder does not matter.
+ */
 export async function findReusableServe(
   stateDir: string,
-  cwd: string,
+  cwd: string | null,
   deps: LaunchServeDeps = {},
 ): Promise<LaunchServe | null> {
   const alive = deps.isAlive ?? isAlive;
   const records = (deps.records ?? ((dir) => readServeRecords(dir).map((r) => r.record)))(stateDir);
-  const folder = resolve(cwd);
+  const folder = cwd === null ? null : resolve(cwd);
   for (const record of records) {
     if (!LOOPBACK_HOSTS.has(record.host) || !alive(record.pid)) continue;
     const baseUrl = loopbackBaseUrl(record.port);
     const health = await readServeHealth(baseUrl, deps.fetch);
     if (health?.runtime !== "atomic-agent" || health.pid !== record.pid) continue;
-    if (typeof health.workingDir !== "string" || resolve(health.workingDir) !== folder) continue;
+    if (folder !== null && (typeof health.workingDir !== "string" || resolve(health.workingDir) !== folder)) continue;
     return { baseUrl, port: record.port, started: false };
   }
   return null;
