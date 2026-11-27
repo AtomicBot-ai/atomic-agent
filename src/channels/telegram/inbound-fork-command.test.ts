@@ -142,7 +142,7 @@ describe("/fork on Telegram", () => {
     const createForumTopic = vi.fn(async () => {
       throw new Error("Bad Request: not enough rights to create a topic");
     });
-    const { api } = makeApi(createForumTopic);
+    const { api, sent } = makeApi(createForumTopic);
     pointer.setCurrent(String(GROUP), source.id, "Team");
 
     await handleInboundText(forumUpdate("/fork"), ctxFor(runtime, api));
@@ -150,6 +150,11 @@ describe("/fork on Telegram", () => {
     expect(createForumTopic).toHaveBeenCalledTimes(1);
     expect(saved).toHaveLength(1);
     expect(pointer.get(String(GROUP)).current).toBe(saved[0]!.id);
+    // Not silent (ATO-2757): the reply says no topic was opened and how to fix it.
+    const reply = sent.at(-1)?.text ?? "";
+    expect(reply).toContain("could not open a new topic");
+    expect(reply).toContain('"Manage topics"');
+    expect(reply).toContain(`/switch ${source.id}`);
   });
 
   it("outside a forum, moves this chat to a copy and keeps the source in its history", async () => {
@@ -171,6 +176,8 @@ describe("/fork on Telegram", () => {
     expect(entry.history).toContain(source.id);
     expect(source).toEqual(before);
     expect(sent.at(-1)?.text).toContain(`forked from ${source.id}`);
+    // Outside a forum there are no topics to talk about.
+    expect(sent.at(-1)?.text).not.toContain("topic");
   });
 
   it("refuses while a turn runs on the session and saves nothing", async () => {
