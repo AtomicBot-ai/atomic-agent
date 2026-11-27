@@ -7,7 +7,7 @@
 import "./stdio-guard.js";
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, powerSaveBlocker, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, powerSaveBlocker, safeStorage, screen, shell, systemPreferences, Tray, webFrameMain } from "electron";
 import { registerDoctorDataIpc } from "./doctor-data.js";
 import { printHtmlToPdf, registerChatExportIpc } from "./chat-export.js";
 import { ghRunner, registerChatShareIpc } from "./chat-share.js";
@@ -360,8 +360,9 @@ import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.
 import { MOVE_PROMPT, offerMove, shouldOfferMove } from "./move-to-applications.js";
 import { buildStampLabel, readBuildStamp, type BuildStamp } from "./build-stamp.js";
 // ATO-1136: HTML artifacts in the chat, served sandboxed from their own scheme (artifact-frame.ts).
-import { permissionFromSubframe, subframeNavAllowed } from "./artifact-frame.js";
-import { registerArtifactScheme, wireArtifactIpc } from "./artifact-frame-ipc.js";
+import { permissionFromSubframe } from "./artifact-frame.js";
+import { watchArtifactNavigation, type NavContents, type NavFrame } from "./artifact-nav-guard.js";
+import { registerArtifactScheme, watchArtifactChildFrames, wireArtifactIpc } from "./artifact-frame-ipc.js";
 registerArtifactScheme();
 // ATO-556: atomicagent:// links (Add to Atomic Agent buttons): a card, then an install only on a click.
 import { shouldRegisterProtocol, wireDeeplinks } from "./deeplink.js";
@@ -1215,9 +1216,15 @@ function createWindow(): BrowserWindow {
   });
   window.webContents.on("will-navigate", (event) => event.preventDefault());
   // ATO-1136: a frame in the window (an artifact, the file preview's) never goes to the web or the disk.
-  window.webContents.on("will-frame-navigate", (event) => {
-    if (!event.isMainFrame && !subframeNavAllowed(event.url)) event.preventDefault();
+  // ATO-2536 (review round 2): an artifact frame goes only to another artifact page (no blob:, data:,
+  // javascript: document of its own), a document that commits there anyway gets the guard and is sent
+  // to "Not found", and no window is ever created (artifact-nav-guard.ts).
+  watchArtifactNavigation(window.webContents as unknown as NavContents, {
+    frameFromId: (processId, routingId) => (webFrameMain.fromId(processId, routingId) ?? null) as unknown as NavFrame | null,
   });
+  // ATO-2536: no UDP for WebRTC (no STUN; TURN over TCP is left to the in-page block), and an artifact page that makes a child frame is dropped (artifact-rtc-block.ts).
+  window.webContents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
+  watchArtifactChildFrames(window.webContents);
 
   /* Item 2 (voice input): until this feature there was no permission handler
      at all, and Electron's default grants everything — the renderer could
