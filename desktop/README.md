@@ -607,6 +607,10 @@ Honestly degraded, and labelled as such in the UI:
   for the rest of the chat, and is drawn only when `/api/capabilities` lists
   it in `agent.approvalDecisions`. An agent that answers it with a 400 gets
   `allow-once` instead, and the card says the chat part did not happen.
+- **An outdated Claude Code / Codex CLI is said in the chat.** The agent
+  sends `event: cli_outdated` once per session when the CLI is older than it
+  supports (core ATO-2523); `renderer/cli-outdated-line.js` puts one line
+  before the reply with the update command as code (no Homebrew on Windows).
 - **Subscription-CLI providers** (`claude-cli`, `codex-cli`) are in Add
   provider with the TUI's labels. They have no key screen: the step says the
   signed-in CLI runs on the user's plan, warns when `ANTHROPIC_API_KEY` /
