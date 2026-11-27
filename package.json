@@ -36,6 +36,7 @@
     "eval:full": "node eval/scripts/run-full-eval.mjs",
     "eval:gaia": "node eval/scripts/run-full-eval.mjs -t gaia-style",
     "eval:summary": "node eval/scripts/summarize-run.mjs",
+    "eval:ocr": "tsx eval/scripts/ocr-bench.ts",
     "eval:promptfoo": "PROMPTFOO_DISABLE_TELEMETRY=1 npx --yes promptfoo@0.125.1 eval -c eval/promptfoo/promptfooconfig.yaml --no-cache",
     "eval:redteam": "export PROMPTFOO_DISABLE_TELEMETRY=1 PROMPTFOO_DISABLE_REMOTE_GENERATION=true && npx --yes promptfoo@0.125.1 redteam generate -c eval/promptfoo/redteam.yaml -o eval/promptfoo/redteam-generated.yaml && npx --yes promptfoo@0.125.1 eval -c eval/promptfoo/redteam-generated.yaml --no-cache",
     "eval:attacks": "node eval/scripts/run-attacks.mjs",
