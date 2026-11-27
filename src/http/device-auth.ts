@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { throttleAddress, type AuthThrottle } from "./auth-throttle.js";
 import type { DeviceSessions } from "./device-sessions.js";
-import type { PairedDevice } from "./device-store.js";
+import { DEVICE_IDLE_MS, type PairedDevice } from "./device-store.js";
 import { roleHasScope, type HttpRole, type HttpScope } from "./http-scopes.js";
 import { openaiError } from "./openai-errors.js";
 import {
@@ -19,11 +19,14 @@ import {
  *
  * HttpOnly (page script never sees it), SameSite=Strict (no other site
  * can make the browser send it), Path=/ (the panel and the API it calls),
- * Secure when the request came over HTTPS (the `--remote` tunnel). A
- * year, like a "remember this device" sign-in; Revoke ends it sooner.
+ * Secure when the request came over HTTPS (the `--remote` tunnel).
+ * ATO-2494: it lasts DEVICE_IDLE_MS (30 days) and every signed-in request
+ * sends it again with a fresh Max-Age, so a phone in use stays signed in
+ * and one left unused for 30 days is signed out (sliding expiry, like
+ * GitHub and Google device sessions); Revoke ends it sooner.
  */
 export const DEVICE_COOKIE = "atag_device";
-const COOKIE_MAX_AGE_S = 365 * 24 * 60 * 60;
+const COOKIE_MAX_AGE_S = Math.floor(DEVICE_IDLE_MS / 1000);
 
 /**
  * A paired phone is a member: it chats and answers approvals one at a
@@ -125,6 +128,8 @@ export function authorizeDeviceCookie(
     return "refused";
   }
   throttle?.succeeded(address);
+  // ATO-2494: sliding expiry, the cookie's 30 days start again from this use.
+  res.setHeader("set-cookie", deviceCookieHeader(req, secret));
   if (!SAFE_METHODS.has((req.method ?? "GET").toUpperCase()) && !sameOrigin(req)) {
     sendJson(res, 403, openaiError(
       "A paired device may change things only from the panel page itself",
