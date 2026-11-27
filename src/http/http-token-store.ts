@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { isHttpRole, type HttpRole } from "./http-scopes.js";
@@ -91,6 +91,47 @@ function writeHttpTokens(stateDir: string, tokens: StoredHttpToken[]): void {
   }
 }
 
+const LOCK_WAIT_MS = 5_000;
+const LOCK_STALE_MS = 10_000;
+
+/**
+ * ATO-2451: one writer at a time. `atag launch` adds a token per run and
+ * removes it when the CLI exits, so two launches can write at the same
+ * moment; without this one of them could drop the other's token. A lock
+ * file made with `wx`; one older than 10 s is a crashed writer's and is
+ * taken over; after 5 s of waiting the write goes ahead anyway rather
+ * than hang.
+ */
+function withTokensLock<T>(stateDir: string, fn: () => T): T {
+  const lock = `${httpTokensPath(stateDir)}.lock`;
+  mkdirSync(stateDir, { recursive: true });
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  let held = false;
+  while (!held) {
+    try {
+      closeSync(openSync(lock, "wx", 0o600));
+      held = true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") break;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
+          rmSync(lock, { force: true });
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      if (Date.now() > deadline) break;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    if (held) rmSync(lock, { force: true });
+  }
+}
+
 export type AddHttpTokenResult =
   | { ok: true; token: string; entry: StoredHttpToken }
   | { ok: false; error: string };
@@ -105,6 +146,10 @@ export function addHttpToken(
   if (!isValidHttpTokenName(name)) {
     return { ok: false, error: `invalid token name "${name}": use letters, digits, ".", "_" or "-" (up to 64)` };
   }
+  return withTokensLock(stateDir, () => addLocked(stateDir, name, role, now));
+}
+
+function addLocked(stateDir: string, name: string, role: HttpRole, now: () => Date): AddHttpTokenResult {
   const current = readHttpTokens(stateDir);
   if (!current.ok) return current;
   if (current.tokens.some((t) => t.name === name)) {
@@ -119,13 +164,29 @@ export function addHttpToken(
 export type RemoveHttpTokenResult = { ok: true } | { ok: false; error: string };
 
 export function removeHttpToken(stateDir: string, name: string): RemoveHttpTokenResult {
-  const current = readHttpTokens(stateDir);
-  if (!current.ok) return current;
-  if (!current.tokens.some((t) => t.name === name)) {
-    return { ok: false, error: `no token named "${name}"` };
-  }
-  writeHttpTokens(stateDir, current.tokens.filter((t) => t.name !== name));
-  return { ok: true };
+  return withTokensLock(stateDir, () => {
+    const current = readHttpTokens(stateDir);
+    if (!current.ok) return current;
+    if (!current.tokens.some((t) => t.name === name)) {
+      return { ok: false, error: `no token named "${name}"` };
+    }
+    writeHttpTokens(stateDir, current.tokens.filter((t) => t.name !== name));
+    return { ok: true };
+  });
+}
+
+/**
+ * ATO-2451: remove every token `drop` picks (the per-run tokens of
+ * `atag launch` runs that died without cleaning up). The names removed.
+ */
+export function removeHttpTokensWhere(stateDir: string, drop: (token: StoredHttpToken) => boolean): string[] {
+  return withTokensLock(stateDir, () => {
+    const current = readHttpTokens(stateDir);
+    if (!current.ok) return [];
+    const gone = current.tokens.filter(drop);
+    if (gone.length > 0) writeHttpTokens(stateDir, current.tokens.filter((t) => !drop(t)));
+    return gone.map((t) => t.name);
+  });
 }
 
 /**

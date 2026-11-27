@@ -16,6 +16,7 @@ import { autofixStatePath } from "../github/pr-autofix-store.js";
 import { resolveApiKeyFilePath } from "../local-llm/backend-paths.js";
 import { serveApiKeyPath } from "../cli/serve-api-key.js";
 import { modelShareKeyPath } from "../http/model-share-key.js";
+import { launchClientKeyPath } from "../cli/launch-token.js";
 import { httpDevicesPath } from "../http/device-store.js";
 import { coreSessionPath } from "../local-llm/core/core-state.js";
 import { userHooksPath } from "../hooks/hook-config.js";
@@ -979,6 +980,7 @@ describe("the state's secret files (ATO-877)", () => {
       resolveApiKeyFilePath(paths.localModelsDataDir),
       serveApiKeyPath(stateDir),
       modelShareKeyPath(stateDir),
+      launchClientKeyPath(stateDir),
       coreSessionPath(paths.localModelsDataDir, "chat"),
       coreSessionPath(paths.localModelsDataDir, "embedding"),
       resolveSessionPath(stateDir),
