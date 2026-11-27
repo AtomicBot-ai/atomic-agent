@@ -2,6 +2,7 @@ import { isBrokenPipeError } from "./broken-pipe.js";
 import { isFusionStopError } from "./fusion-stop.js";
 import { isLoopbackPeerGone, socketErrorTags } from "./socket-error.js";
 import { scrubError } from "./error-scrubber.js";
+import { isExpectedSubscriptionCliFailure } from "./subscription-cli-expected.js";
 import type { LlmFailureContext } from "./llm-failure-tags.js";
 import type { SentryClient } from "./sentry-client.js";
 
@@ -63,6 +64,9 @@ export function captureError(
   // a replacement, a hand-back) is not a defect, and the rows already
   // say why (ATO-1677).
   if (isFusionStopError(err)) return;
+  // A signed-out Claude Code or Codex, a spent plan limit, or a plan
+  // without the CLI: the account's state, told in chat (ATO-2417).
+  if (isExpectedSubscriptionCliFailure(err)) return;
   const error =
     err instanceof Error
       ? err
