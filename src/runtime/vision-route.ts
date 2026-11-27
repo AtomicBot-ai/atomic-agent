@@ -34,6 +34,33 @@ export function resolveVisionProvider(
   return registry.activeText;
 }
 
+export interface VisionModelVariantLookup extends VisionProviderLookup {
+  /** `ProviderRegistry.modelVariant`: the pinned entry built for `model`. */
+  modelVariant(id: string, model: string): Promise<LlmProvider | undefined>;
+}
+
+/**
+ * The provider serving this step when the turn runs on its own model
+ * (ATO-1588, `ToolContext.model`). Same rule as the completion's slice
+ * (`resolveSlice` in composition/runtime-inference.ts): with a model and
+ * a pinned id that is not a llama-server link, the image goes to the
+ * pinned entry's copy built for that model, so it reaches that model and
+ * the vision check is that model's. Without a model, or on llama-server
+ * (one loaded model), it is `resolveVisionProvider`. An id the registry
+ * cannot build for resolves to `undefined`, never to another provider.
+ */
+export function resolveTurnVisionProvider(
+  registry: VisionModelVariantLookup,
+  providerId: string | undefined,
+  model: string | undefined,
+  isLlamaServer: (providerId: string) => boolean,
+): LlmProvider | undefined | Promise<LlmProvider | undefined> {
+  if (providerId === undefined || model === undefined || isLlamaServer(providerId)) {
+    return resolveVisionProvider(registry, providerId);
+  }
+  return registry.modelVariant(providerId, model);
+}
+
 /**
  * Whether a provider can take `vision.describe` as far as the prompt is
  * concerned. A local `llama-server` link counts unless vision is off in

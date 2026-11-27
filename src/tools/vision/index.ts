@@ -2,11 +2,11 @@ import type { ToolRegistry } from "../tool-registry.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import {
   buildVisionDescribeTool,
-  type VisionProviderSource,
+  type VisionDescribeProviderSource,
 } from "./describe.js";
 
 export { buildVisionDescribeTool } from "./describe.js";
-export type { VisionProviderSource } from "./describe.js";
+export type { VisionDescribeProviderSource, VisionProviderSource } from "./describe.js";
 export {
   ImageTooLargeError,
   loadImageFile,
@@ -26,10 +26,10 @@ export type { SniffedImageType } from "./sniff-image-type.js";
 
 export interface RegisterVisionToolsOptions {
   /**
-   * A fixed provider or a per-call lookup (see `VisionProviderSource`).
+   * A fixed provider or a per-call lookup (see `VisionDescribeProviderSource`).
    * The runtime passes the lookup, so the tool follows the live route.
    */
-  provider: VisionProviderSource | undefined;
+  provider: VisionDescribeProviderSource | undefined;
   enabled: boolean;
   maxImagesPerCall: number;
   maxImageBytes: number;

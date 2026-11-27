@@ -24,7 +24,7 @@ import { isLocalServerUrl } from "../../llm/provider/openai/local-server-url.js"
 import { resolveModelPricingFor } from "../resolve-model-pricing.js";
 import { LearnedContextWindows } from "../learned-context-windows.js";
 import { isOllamaEntry, readOllamaContextWindow } from "../../llm/provider/ollama/ollama-context-window.js";
-import { audioRouteAvailable, resolveVisionProvider, visionRouteAvailable } from "../vision-route.js";
+import { audioRouteAvailable, resolveTurnVisionProvider, resolveVisionProvider, visionRouteAvailable } from "../vision-route.js";
 import { providerIdIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
 import { createLocalLinkPreparer } from "../../llm/local-backend-gate.js";
 import type { ProviderFallbackChain } from "../../llm/fallback/index.js";
@@ -284,6 +284,15 @@ export function createRuntimeModelContext(
     providerId: string | undefined,
   ): LlmProvider | undefined =>
     resolveVisionProvider(providerRegistry, providerId);
+  // ATO-1588: `vision.describe` on a turn with its own model sends the
+  // image to that model, the same variant the turn's completions use.
+  const resolveTurnVisionProviderForStep = (
+    providerId: string | undefined,
+    model?: string,
+  ): LlmProvider | undefined | Promise<LlmProvider | undefined> =>
+    resolveTurnVisionProvider(providerRegistry, providerId, model, (id) =>
+      providerIdIsLlamaServer(resolveLlmConfig(getConfig()), id),
+    );
   const visionOnLiveRoute = (): boolean =>
     config.vision.enabled &&
     visionRouteAvailable({
@@ -319,6 +328,7 @@ export function createRuntimeModelContext(
     resolveCatalogContextWindow,
     primeLocalContextWindow,
     resolveCurrentVisionProvider,
+    resolveTurnVisionProvider: resolveTurnVisionProviderForStep,
     visionOnLiveRoute,
     audioOnLiveRoute,
   };

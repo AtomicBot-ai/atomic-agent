@@ -505,7 +505,7 @@ export async function createAgentRuntime(
   // ATO-1276: an Ollama route learns its real window (`/api/show`) now,
   // before the first turn sizes a prompt. Silent and non-blocking.
   void modelContext.primeLocalContextWindow();
-  registerRuntimeVisionTools({ config, toolRegistry, resolveCurrentVisionProvider, logger });
+  registerRuntimeVisionTools({ config, toolRegistry, resolveCurrentVisionProvider, resolveTurnVisionProvider: modelContext.resolveTurnVisionProvider, logger });
   registerRuntimeImageTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics, emitAgentLoopEventFor });
   registerRuntimeVideoTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics, emitAgentLoopEventFor });
   registerRuntimeAudioTools({ toolRegistry, dangerous, emitAgentLoopEventFor });
