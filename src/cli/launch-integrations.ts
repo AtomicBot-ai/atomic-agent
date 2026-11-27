@@ -48,9 +48,17 @@ export interface LaunchIntegration {
   readonly displayName: string;
   /** Executable looked up on PATH. */
   readonly binary: string;
-  /** Printed when the binary is missing. */
+  /** Printed when the binary is missing: the `install` command as one line. */
   readonly installHint: string;
+  /** ATO-2450: what `atag launch` runs, after a yes, to install it. */
+  readonly install: { readonly command: string; readonly args: readonly string[] };
   build(target: LaunchTarget): LaunchPlan;
+}
+
+/** An npm global install, the way each of these CLIs documents its own. */
+function npmGlobal(pkg: string): Pick<LaunchIntegration, "install" | "installHint"> {
+  const install = { command: "npm", args: ["install", "-g", pkg] };
+  return { install, installHint: ["npm", ...install.args].join(" ") };
 }
 
 /** Name of the variable that carries the key for Codex and OpenCode. */
@@ -64,7 +72,7 @@ const claude: LaunchIntegration = {
   aliases: ["claude-code"],
   displayName: "Claude Code",
   binary: "claude",
-  installHint: "npm install -g @anthropic-ai/claude-code",
+  ...npmGlobal("@anthropic-ai/claude-code"),
   build(target) {
     // Same variables as `ollama launch claude`: the base URL without /v1
     // (Claude Code appends /v1/messages), the key as a bearer token, and
@@ -93,7 +101,7 @@ const codex: LaunchIntegration = {
   aliases: [],
   displayName: "Codex",
   binary: "codex",
-  installHint: "npm install -g @openai/codex",
+  ...npmGlobal("@openai/codex"),
   build(target) {
     // A custom model provider through `-c` overrides, so nothing is written
     // to ~/.codex/config.toml. `wire_api = "responses"`: serve answers
@@ -132,7 +140,7 @@ const opencode: LaunchIntegration = {
   aliases: [],
   displayName: "OpenCode",
   binary: "opencode",
-  installHint: "npm install -g opencode-ai",
+  ...npmGlobal("opencode-ai"),
   build(target) {
     // OPENCODE_CONFIG_CONTENT is merged over the person's own config for
     // this run only; the key stays in ATOMIC_AGENT_TOKEN via `{env:...}`.
@@ -154,7 +162,7 @@ const qwen: LaunchIntegration = {
   aliases: ["qwen-code"],
   displayName: "Qwen Code",
   binary: "qwen",
-  installHint: "npm install -g @qwen-code/qwen-code",
+  ...npmGlobal("@qwen-code/qwen-code"),
   build(target) {
     // Same as `ollama launch qwen`: the OpenAI-compatible auth type and
     // the OPENAI_* variables, `--model` and `--auth-type` unless the
@@ -178,7 +186,7 @@ const cline: LaunchIntegration = {
   aliases: ["cline-cli"],
   displayName: "Cline",
   binary: "cline",
-  installHint: "npm install -g cline",
+  ...npmGlobal("cline"),
   build(target) {
     // The Cline CLI takes no base URL on a run; its OpenAI-compatible
     // provider (`openai`) is saved first with `cline auth`, which keeps
