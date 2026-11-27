@@ -81,6 +81,12 @@ describe.skipIf(process.platform === "win32")("os.shell.run: egress (ATO-2116)",
     expect(written.map((d) => d.host)).toEqual([null]);
   });
 
+  it("a call that writes .curlrc sends to an unknown address", () => {
+    const segments = [["curl", "-d", "x", "https://github.com"]];
+    expect(shellEgress(segments, dir, { targetPaths: [join(dir, ".curlrc")] }).map((d) => d.host)).toContain(null);
+    expect(shellEgress(segments, dir).map((d) => d.host)).toEqual(["github.com"]);
+  });
+
   it("reads the push remote's host from the repository config", async () => {
     await mkdir(join(dir, ".git"));
     await writeFile(join(dir, ".git", "config"), '[remote "origin"]\n  url = git@github.com:org/repo.git\n');

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 
 import { carryUnknownConfigKeys } from "./carry-unknown-config-keys.js";
@@ -61,6 +62,8 @@ export function getTrustConfigPaths(paths: {
     join(paths.stateDir, "plugins", "plugins.json"),
     join(paths.stateDir, "plugins", "marketplaces.json"),
     join(paths.stateDir, "plugins", "installed") + sep,
+    join(homedir(), ".curlrc"), // a proxy in it reroutes curl (ATO-2116)
+    join(homedir(), ".wgetrc"),
   ];
 }
 

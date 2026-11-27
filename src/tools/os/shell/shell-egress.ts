@@ -45,6 +45,9 @@ export function shellEgress(
     gitRemote: (remote, chdir) =>
       gitRemoteUrl(chdir === undefined ? cwd : resolve(cwd, chdir), remote),
     gitStateWritten: writesGitState(facts.targetPaths ?? []),
+    httpConfigWritten: (facts.targetPaths ?? []).some((path) =>
+      [".curlrc", "_curlrc", ".wgetrc"].includes(basename(path).toLowerCase()),
+    ),
   });
   return withUnreadableScript(found, facts.commandUnreadable === true);
 }
