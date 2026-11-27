@@ -7,6 +7,7 @@ import { runRunModeVerb } from "./commands/run-mode-verb.js";
 import { runModelModeCommand } from "./commands/model-mode-command.js";
 import { runModelRingCommand } from "./model-ring/model-ring-actions.js";
 import { runPersonaCommand } from "./commands/persona-command.js";
+import { queueMoveLine } from "./commands/queue-move-command.js";
 import { describeThinkLevel } from "./commands/think-command.js";
 import {
   parseSlashCommand,
@@ -409,6 +410,13 @@ export function runSlashCommand(
   }
   if (result.queueVerb)
     runQueueVerb(result.queueVerb, state, dispatch, callbacks);
+  if (result.queueMove) {
+    // ATO-2476: `/queue next` / `/queue move` reorder what is parked.
+    const line = queueMoveLine(result.queueMove, state.queuedMessages, (from, to) =>
+      callbacks.onQueueMoveRequested?.(from, to) ?? false);
+    dispatch({ type: "runtime_info", line });
+    dispatch({ type: "system_message", text: line });
+  }
   if (result.triggerStatusSnapshot) {
     const text = formatTuiStatus(state, Date.now());
     dispatch({ type: "runtime_info", line: text.split("\n")[0] ?? text });
@@ -808,7 +816,9 @@ export function formatQueueListing(queued: readonly string[]): string {
   const lines = queued.map(
     (text, i) => `  ${i + 1}. ${text.replace(/\s+/g, " ").trim()}`,
   );
-  return [header, ...lines].join("\n");
+  // ATO-2476: the numbers above are the ones the reorder verbs take.
+  const hint = queued.length > 1 ? ["  reorder: /queue next <n> | /queue move <n> <place>"] : [];
+  return [header, ...lines, ...hint].join("\n");
 }
 
 function runTelegramVerb(

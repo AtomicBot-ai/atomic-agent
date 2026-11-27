@@ -116,6 +116,7 @@ import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
 import type { ReasoningLevel } from "../llm/reasoning-levels.js";
 import type { ReasoningEffort } from "../llm/provider/completion-types.js";
 import { reasoningOverrideFor } from "./commands/think-command.js";
+import { moveQueuedMessage } from "./queue-order.js";
 
 const DEBUG_BUNDLE_TRACE_LIMIT = 10;
 const DEBUG_BUNDLE_DIR_NAME = "atomic-agent-debug";
@@ -1655,6 +1656,20 @@ export class ChatOrchestrator {
     this.queue.length = 0;
     this.emitQueue();
     if (this.session) this.releaseDroppedResumes(this.session.id, dropped);
+  }
+
+  /**
+   * Move parked message `from` to index `to` (0-based), for `/queue next`
+   * and `/queue move` (ATO-2476). The steer watermark follows the message
+   * (queue-order.ts). False, and nothing published, when there is no such
+   * message or place or nothing would move.
+   */
+  moveQueued(from: number, to: number): boolean {
+    const ahead = moveQueuedMessage(this.queue, from, to, this.steeredAhead);
+    if (ahead === null) return false;
+    this.steeredAhead = ahead;
+    this.emitQueue();
+    return true;
   }
 
   /**

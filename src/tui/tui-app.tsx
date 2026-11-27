@@ -312,6 +312,12 @@ export interface TuiAppCallbacks {
   /** Drop every message parked behind the running turn (`/queue clear`). */
   onQueueClearRequested?(): void;
   /**
+   * Move parked message `from` to place `to`, 0-based (`/queue next`,
+   * `/queue move`, ATO-2476). False when the orchestrator's queue has no
+   * such message or place.
+   */
+  onQueueMoveRequested?(from: number, to: number): boolean;
+  /**
    * Fold a message into the turn already running (`steer` mode). The
    * orchestrator falls back to the queue when the runtime refuses —
    * the turn may have ended between the keypress and the dispatch.

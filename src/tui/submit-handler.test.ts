@@ -411,6 +411,26 @@ describe("/queue", () => {
     expect(dispatched).toContainEqual({ type: "queue_changed", queued: [] });
   });
 
+  it("/queue next asks the orchestrator to move that message to the front (ATO-2476)", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(fakeSession()),
+      status: "running",
+      queuedMessages: ["first", "second"],
+    };
+    const messages: string[] = [];
+    const onQueueMoveRequested = vi.fn(() => true);
+    handleEditorSubmit(
+      "/queue next 2",
+      state,
+      ((a: { type: string; text?: string }) => {
+        if (a.type === "system_message" && a.text) messages.push(a.text);
+      }) as never,
+      stubCallbacks({ onQueueMoveRequested }),
+    );
+    expect(onQueueMoveRequested).toHaveBeenCalledWith(1, 0);
+    expect(messages).toContain("queue: message 2 goes next");
+  });
+
   it("says so when there is nothing parked", () => {
     const messages: string[] = [];
     handleEditorSubmit(

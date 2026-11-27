@@ -15,6 +15,7 @@ import { renderToolsOverview, renderToolsSearch } from "./tools-listing.js";
 import { renderSettingsOverview, renderSettingsSearch } from "./settings-listing.js";
 import { parseModelModeCommand, MODEL_MODE_USAGE, type ModelModeCommand } from "./model-mode-command.js";
 import { parseGoalCommand, type GoalCommand } from "./goal-command.js";
+import { parseQueueMoveCommand, type QueueMove } from "./queue-move-command.js";
 import { compactionInstructionsError, normalizeCompactionInstructions } from "../../runtime/compaction-instructions.js";
 import { parsePersonaCommand, type PersonaCommand } from "./persona-command.js";
 import { describeThinkLevel, parseThinkCommand } from "./think-command.js";
@@ -176,6 +177,8 @@ export interface SlashDispatchResult {
    * orchestrator to drop its own copy of the queue.
    */
   readonly queueVerb?: "list" | "clear";
+  /** `/queue next <n>` / `/queue move <n> <place>` (ATO-2476): reorder the parked messages. */
+  readonly queueMove?: QueueMove;
   /**
    * `/steer <msg>` or `/queue <msg>`: land this one message in the given
    * mode without touching the persisted default. Ignored when no turn is
@@ -685,6 +688,8 @@ function dispatchQueueSub(args: string): SlashDispatchResult {
       systemMessage: "Enter now queues behind the running turn",
     });
   }
+  const move = parseQueueMoveCommand(raw);
+  if (move) return pureActions([], { queueMove: move });
   if (raw.length > 0) {
     return pureActions([], {
       submitWhileBusy: { mode: "queue", text: raw },
@@ -802,6 +807,7 @@ function pureActions(
     telegramVerb: undefined,
     analyticsVerb: undefined,
     queueVerb: undefined,
+    queueMove: undefined,
     submitWhileBusy: undefined,
     setWhileBusyMode: undefined,
     runModeVerb: undefined,
