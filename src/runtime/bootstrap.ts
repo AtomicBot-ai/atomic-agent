@@ -107,7 +107,7 @@ import { createLessonLifecycleHook } from "../memory/lessons/lesson-lifecycle-ho
 
 import { createMemoryHealthAnnouncer } from "./announce-memory-health.js";
 
-import { readAtomicMailApiKey } from "../atomic-mail/index.js";
+import { agentEmailAddress } from "../atomic-mail/index.js";
 import { buildCapabilities } from "../prompt/capabilities.js";
 
 import type { SkillCatalogEntry, ToolDescriptor } from "../prompt/stable-prefix.js";
@@ -306,7 +306,7 @@ export async function createAgentRuntime(
     workingDir,
     browserChannel: config.browser.channel,
     // Only an inbox this machine holds the key for is the agent's to use.
-    emailAddress: readAtomicMailApiKey() ? config.atomicMail.address : null,
+    emailAddress: agentEmailAddress(config.atomicMail),
     // ATO-1721: RAM / CPU / GPU / OS once per runtime, for local models.
     machineProbe: {
       dataDir: config.paths.localModelsDataDir,
