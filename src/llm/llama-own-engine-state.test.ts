@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -61,6 +61,23 @@ describe("readOwnEngineState: is our model behind a refusing address (ATO-1732)"
     const throws = (): ManagedEngineLiveness => { throw new Error("EACCES"); };
     expect(readOwnEngineState(url, config("managed"), throws)).toBe("unknown");
   });
+
+  // ATO-2460: no pid mirror, but our Core's session record claims the port
+  // (names it, or is there and does not read): Core's own server refused.
+  it("reads core_session, not gone, when our Core's record claims the port", () => {
+    const asked: Array<[string, number]> = [];
+    const claims = (dir: string, port: number) => { asked.push([dir, port]); return true; };
+    expect(readOwnEngineState(url, config("managed"), state("no_pid"), claims)).toBe("core_session");
+    expect(readOwnEngineState(url, config("managed"), state("dead"), claims)).toBe("core_session");
+    expect(asked[0]).toEqual(["/data/local-models", 9931]);
+  });
+
+  it("reads gone when no Core record claims the port, or the engine is llama-server", () => {
+    expect(readOwnEngineState(url, config("managed"), state("no_pid"), () => false)).toBe("gone");
+    const llama = config("managed");
+    (llama.localModels.managed as { engine?: string }).engine = "llama-server";
+    expect(readOwnEngineState(url, llama, state("no_pid"), () => true)).toBe("gone");
+  });
 });
 
 /**
@@ -101,5 +118,13 @@ describe("readOwnEngineState with no pid file on disk (ATO-1732)", () => {
     const cfg = config("managed", emptyDataDir());
     const idle = liveness({ operationLock: () => "free", startPending: () => false });
     expect(readOwnEngineState(url, cfg, idle)).toBe("gone");
+  });
+
+  it("reads core_session when core/chat.json is there but does not read (ATO-2460)", () => {
+    const dir = emptyDataDir();
+    mkdirSync(join(dir, "core"), { recursive: true });
+    writeFileSync(join(dir, "core", "chat.json"), "{half");
+    const idle = liveness({ operationLock: () => "free", startPending: () => false });
+    expect(readOwnEngineState(url, config("managed", dir), idle)).toBe("core_session");
   });
 });

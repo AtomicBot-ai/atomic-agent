@@ -817,7 +817,9 @@ export function recoverTurnStep(
     const refusal = findLlamaUnauthorized(err);
     if (refusal !== null) {
       const failingLink = readFailingLink(err);
-      if (deps.localEngineState(failingLink) === "dead") {
+      // Our Core's record claims the port (ATO-2460): its own server
+      // refused, so the key words the client gave stay.
+      if (deps.localEngineState(failingLink) === "dead" && refusal.ownEngine !== "core_session") {
         deps.logger?.warn("managed model port answered 401 with our engine not running; another program holds it", {
           sessionId: state.id,
           stepIndex: i,

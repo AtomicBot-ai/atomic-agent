@@ -8,6 +8,7 @@ import { connectCore, ensureCore, withCoreClient } from "./core-client.js";
 import { shutdownIdleCoreClient } from "./core-idle.js";
 import { noteReleaseTimeout, RELEASE_WAIT_MS, waitForProcessRelease } from "../server/process-release.js";
 import { settlePendingExit, settleUnloadedSession, waitForPendingExitOnPort } from "./core-pending-exit.js";
+import { readCoreRecordSettled } from "./core-record-read.js";
 
 /**
  * These host arguments are owned by the control contract, never duplicated in extra_args.
@@ -258,7 +259,8 @@ export async function refreshCoreKeyForUrl(dataDir: string, url: string, status:
   const port = coreLoopbackPort(url);
   if (port === null) return null;
   for (const role of ["chat", "embedding"] as const) {
-    const record = readCoreJson<CoreSessionRecord>(coreSessionPath(dataDir, role));
+    // A record that is there but did not read is read again (ATO-2460).
+    const record = await readCoreRecordSettled(coreSessionPath(dataDir, role));
     if (!record || String(record.port) !== port) continue;
     try {
       const session = await status(dataDir, role);
