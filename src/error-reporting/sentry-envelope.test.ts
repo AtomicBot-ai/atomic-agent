@@ -238,7 +238,7 @@ describe("buildEnvelope", () => {
     expect(payload.tags.upstream_error_type).toBe("exceed_context_size_error");
   });
 
-  it("stamps the upstream detail tags and leaves the fingerprint as it was (ATO-1673)", () => {
+  it("stamps the upstream detail tags and adds only the reason to the fingerprint (ATO-1673, ATO-1687)", () => {
     const base: ScrubbedErrorEvent = {
       errorType: "TransportError",
       causeType: "OpenAiHttpError",
@@ -265,7 +265,62 @@ describe("buildEnvelope", () => {
     expect(detailed.tags.upstream_error_param).toBe("messages[].content[].text");
     expect(detailed.tags.upstream_error_code).toBe("invalid_value");
     expect(plain.tags.upstream_reason).toBeUndefined();
-    expect(detailed.fingerprint).toEqual(plain.fingerprint);
+    // The reason is one more element, right after the type; param and
+    // code stay tags only.
+    expect(detailed.fingerprint).toEqual([
+      ...plain.fingerprint.slice(0, -1),
+      "empty_content",
+      plain.fingerprint.at(-1),
+    ]);
+    expect(detailed.fingerprint).not.toContain("invalid_value");
+    expect(detailed.fingerprint).not.toContain("messages[].content[].text");
+  });
+
+  it("splits out-of-credit, model-not-found and our own bad request into separate groups (ATO-1687)", () => {
+    // All three come back from the cloud with the same upstream type, so
+    // before ATO-1687 they shared one issue.
+    const base = {
+      errorType: "TransportError",
+      causeType: "OpenAiHttpError",
+      source: "llm_failure",
+      category: "transport",
+      upstreamErrorType: "invalid_request_error",
+      transportHost: "known_cloud",
+      frames: [{ filename: "openai-http.js", lineno: 519 }],
+    } as const;
+    const fingerprintOf = (httpStatus: number, upstreamReason: string) =>
+      parseEventPayload(
+        buildEnvelope(DSN, { ...base, httpStatus, upstreamReason }, META).body,
+      ).fingerprint;
+    const credit = fingerprintOf(402, "out_of_credit");
+    const model = fingerprintOf(404, "model_not_found");
+    const ours = fingerprintOf(400, "tool_result_missing");
+    expect(credit).not.toEqual(model);
+    expect(credit).not.toEqual(ours);
+    expect(model).not.toEqual(ours);
+    // Same reason twice is still one group.
+    expect(fingerprintOf(402, "out_of_credit")).toEqual(credit);
+  });
+
+  it("adds the reason even when the provider sent no upstream type (ATO-1687)", () => {
+    const ev: ScrubbedErrorEvent = {
+      errorType: "TransportError",
+      causeType: "OpenAiHttpError",
+      source: "llm_failure",
+      category: "transport",
+      httpStatus: 402,
+      upstreamReason: "out_of_credit",
+      frames: [{ filename: "openai-http.js", lineno: 519 }],
+    };
+    const payload = parseEventPayload(buildEnvelope(DSN, ev, META).body);
+    expect(payload.fingerprint).toEqual([
+      "{{ default }}",
+      "TransportError",
+      "transport",
+      "OpenAiHttpError",
+      "out_of_credit",
+      "openai-http.js",
+    ]);
   });
 
   it("omits upstream_error_type when the scrubbed event has none", () => {
