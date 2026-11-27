@@ -15,7 +15,9 @@
  *  - `core.fsmonitor=false`, `core.untrackedCache=false`;
  *  - `core.hooksPath=<null>`: `/dev/null`, or `NUL` on Windows, so no hook
  *    is found;
- *  - `log.showSignature=false`: `git log` never runs `gpg.program`;
+ *  - `log.showSignature=false`, together with the explicit `--pretty=medium`
+ *    in logArgs (a repo's `format.pretty` with `%G?` would verify a signed
+ *    commit): `git log` never runs `gpg.program`;
  *  - `protocol.ext.allow=never`: no `ext::` remote helper command.
  * `--no-ext-diff --no-textconv` stop the configured external diff and
  * textconv programs. The environment is the command environment of the
@@ -75,7 +77,8 @@ export function changedFilesArgs(): string[] {
 /** `git log -n<count> --stat -p` for the commits that touch the folder. */
 export function logArgs(count: number): string[] {
   const n = Math.max(1, Math.floor(count));
-  return ["log", `-n${n}`, "--date=iso", "--stat", "-p", ...DIFF_FLAGS, "--", "."];
+  // `medium` is git's default; naming it keeps a repo's `format.pretty` (and its %G?) out.
+  return ["log", `-n${n}`, "--date=iso", "--pretty=medium", "--stat", "-p", ...DIFF_FLAGS, "--", "."];
 }
 
 /** `git ls-files`: tracked plus untracked files under the folder, minus .gitignore. */
