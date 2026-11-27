@@ -101,6 +101,7 @@ import {
   moeShapeFromMetadata,
   type CpuMoePreference,
 } from "./cpu-moe.js";
+import { cpuMoeContextRefit } from "./cpu-moe-context.js";
 import { assertRpcLaunchable, rpcServerArgs } from "./rpc-peers.js";
 import {
   getEmbeddingModelDef,
@@ -1408,16 +1409,7 @@ async function startDaemonNow(
   const prefixReuse = header ? classifyPrefixReuse(header) : null;
   const completionMaxTokens =
     opts.completionMaxTokens ?? readConfiguredCompletionMaxTokens();
-  const {
-    contextSize,
-    autoContextCeiling,
-    autoSlotsCap,
-    kvBudgetBytes,
-    deviceBudgetBytes,
-    sharesSystemMemory,
-    note: contextNote,
-    reserveNote,
-  } = await resolveEffectiveContextSize(device, model, {
+  const contextFitOpts = {
     configured: opts.contextSize ?? 0,
     hasMmproj: Boolean(opts.mmprojFile),
     kvLayout,
@@ -1434,7 +1426,49 @@ async function startDaemonNow(
       ...(completionMaxTokens === undefined ? {} : { completionMaxTokens }),
     },
     ...(opts.offloadShrink ? { autoContextAtMost: opts.offloadShrink.to } : {}),
+  };
+  const firstFit = await resolveEffectiveContextSize(device, model, contextFitOpts);
+  // ATO-2455: experts that `"auto"` moves to RAM free GPU memory for the
+  // window, so it is fitted again with them off the GPU
+  // (`cpu-moe-context.ts`). The free figures, the swa-full budget and the
+  // experts decision below keep the first fit's whole-model view.
+  const moeShape = header ? moeShapeFromMetadata(header, model.fileSizeGb * 1e9) : null;
+  const cpuMoeRefit = cpuMoeContextRefit({
+    preference: opts.cpuMoe ?? "auto",
+    shape: moeShape,
+    firstPassLayers: decideCpuMoeLayers({
+      preference: opts.cpuMoe ?? "auto",
+      rpcPeers: (opts.rpcServers?.length ?? 0) > 0,
+      shape: moeShape,
+      device,
+      sharesSystemMemory: firstFit.sharesSystemMemory,
+      deviceBudgetBytes: firstFit.deviceBudgetBytes,
+      kvBytes: estimateLaunchKvBytes({
+        kvLayout: kvLayout ? buildKvLayout(kvLayout) : null,
+        modelSizeGb: model.fileSizeGb,
+        contextSize: firstFit.contextSize,
+        swaFull: false,
+      }),
+    }).layers,
+    configuredContext: opts.contextSize ?? 0,
+    contextSize: firstFit.contextSize,
   });
+  const refit = cpuMoeRefit
+    ? await resolveEffectiveContextSize(
+        device,
+        { ...model, fileSizeGb: Math.max(0, model.fileSizeGb - cpuMoeRefit.offDeviceGb) },
+        {
+          ...contextFitOpts,
+          autoContextAtMost: Math.min(cpuMoeRefit.atMost, opts.offloadShrink?.to ?? cpuMoeRefit.atMost),
+        },
+      )
+    : null;
+  const { kvBudgetBytes, deviceBudgetBytes, sharesSystemMemory } = firstFit;
+  const { contextSize, autoContextCeiling, autoSlotsCap, reserveNote } = refit ?? firstFit;
+  const contextNote =
+    refit && cpuMoeRefit
+      ? `fitted with experts in RAM (cpu-moe), at most ${cpuMoeRefit.atMost}` + (refit.note ? `, ${refit.note}` : "")
+      : firstFit.note;
   const swaFull =
     opts.swaFullFlag !== undefined
       ? {
@@ -1476,7 +1510,7 @@ async function startDaemonNow(
   const cpuMoe = decideCpuMoeLayers({
     preference: opts.cpuMoe ?? "auto",
     rpcPeers: (opts.rpcServers?.length ?? 0) > 0,
-    shape: header ? moeShapeFromMetadata(header, model.fileSizeGb * 1e9) : null,
+    shape: moeShape,
     device,
     sharesSystemMemory,
     deviceBudgetBytes,

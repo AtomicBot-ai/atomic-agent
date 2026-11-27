@@ -135,9 +135,14 @@ export function parseRpcServers(raw: unknown, field: string): string[] {
   });
 }
 
-/** `localModels.managed.cpuMoe` (ATO-2380); `0` reads as `"off"`. */
-export function parseCpuMoePreference(raw: unknown, field: string): CpuMoePreference {
-  if (raw === undefined || raw === null) return CPU_MOE_DEFAULT;
+/**
+ * `localModels.managed.cpuMoe` (ATO-2380); `0` reads as `"off"`. A string
+ * of digits is the count `config set localModels.managed.cpuMoe 16` hands
+ * over (ATO-2455: the desktop's Experts on CPU row writes it that way).
+ */
+export function parseCpuMoePreference(input: unknown, field: string): CpuMoePreference {
+  if (input === undefined || input === null) return CPU_MOE_DEFAULT;
+  const raw = typeof input === "string" && /^\d+$/.test(input.trim()) ? Number(input.trim()) : input;
   if (raw === 0) return "off";
   if (isCpuMoePreference(raw)) return raw;
   throw new ConfigValidationError(

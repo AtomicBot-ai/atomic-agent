@@ -9,6 +9,7 @@ export type CuratedLocalModelId =
   | "qwen-3.5-4b"
   | "qwen-3.5-9b"
   | "qwen-3.5-35b"
+  | "qwen-3-next-80b-a3b"
   | "qwen-3.6-27b"
   | "qwen-3.6-35b-a3b"
   | "qwen-3.8-27b"
@@ -367,6 +368,28 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf",
     mmprojFilename: "mmproj-F16.gguf",
     mmprojFileSizeGb: 0.9,
+  },
+  /* ATO-2455: the biggest mixture-of-experts Qwen, for a GPU with memory
+     of its own plus plenty of RAM (experts in RAM, `--n-cpu-moe`) or a
+     64 GB machine. Unranked: offered, never auto-recommended. The
+     Instruct build's template has no `<think>`, so it runs as a plain
+     instruct model with the generic tool grammar. The UD-Q4_K_XL file is
+     one GGUF (46,067,137,312 bytes on Hugging Face, 28.11.2026). */
+  {
+    id: "qwen-3-next-80b-a3b",
+    name: "Qwen3-Next 80B-A3B GGUF",
+    filename: "Qwen3-Next-80B-A3B-Instruct-UD-Q4_K_XL.gguf",
+    huggingFaceUrl:
+      "https://huggingface.co/unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF/resolve/main/Qwen3-Next-80B-A3B-Instruct-UD-Q4_K_XL.gguf",
+    fileSizeGb: 46.07,
+    sizeLabel: "46.1 GB",
+    description: "Biggest Qwen, text only, for 64 GB machines and up",
+    maxContextLength: 262_144,
+    contextLabel: "256K",
+    minRamGb: 48,
+    recommendedRamGb: 64,
+    family: "qwen",
+    supportsVision: false,
   },
   {
     id: "nemotron-3.5-30b-a3b",

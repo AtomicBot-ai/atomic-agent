@@ -51,3 +51,77 @@ describe("models recommend (text)", () => {
     expect(text).toContain("models upgrade");
   });
 });
+
+describe("models recommend with experts in RAM (ATO-2455)", () => {
+  const machine = {
+    ramGb: 32,
+    gpuBudgetGb: 8,
+    freeDiskGb: 500,
+    cpuOnly: false,
+    bandwidth: { gpuGbPerSec: 272, ramGbPerSec: 50, unified: false },
+  };
+  const snap: RecommendSnapshot = {
+    machine,
+    tiers: recommendModelTiers(machine, { expertsInRam: true }),
+    decision: decideModelUpgrade({
+      machine,
+      activeModelId: null,
+      downloadedIds: [],
+      managed: true,
+      cloudActive: false,
+    }),
+    activeModelId: null,
+  };
+
+  it("marks the tier that runs with experts in RAM and gives its speed estimate", () => {
+    const tiers = recommendJson(snap).tiers as Record<
+      string,
+      { id: string; fitLabel: string; expertsInRam: boolean; speed: string | null } | null
+    >;
+    expect(tiers.quality).toMatchObject({
+      id: "qwen-3.6-35b-a3b",
+      fitLabel: "Fits, experts in RAM",
+      expertsInRam: true,
+    });
+    expect(tiers.quality?.speed).toMatch(/tok\/s, estimate$/);
+    expect(tiers.fast?.expertsInRam).toBe(false);
+  });
+
+  it("says so on the text row", () => {
+    expect(describeRecommendation(snap)).toMatch(
+      /quality\s+.*qwen-3\.6-35b-a3b.*\(experts partly in RAM, ~\d+ tok\/s, estimate\)/,
+    );
+  });
+});
+
+describe("models recommend --json lists the models that fit with experts in RAM (ATO-2455)", () => {
+  const pc = {
+    ramGb: 32,
+    gpuBudgetGb: 8,
+    freeDiskGb: 500,
+    cpuOnly: false,
+    bandwidth: { gpuGbPerSec: 272, ramGbPerSec: 50, unified: false },
+  };
+  const snapFor = (machine: typeof pc & { cpuMoe?: "off" }): RecommendSnapshot => ({
+    machine,
+    tiers: recommendModelTiers(machine, { expertsInRam: true }),
+    decision: decideModelUpgrade({ machine, activeModelId: null, downloadedIds: [], managed: true, cloudActive: false }),
+    activeModelId: null,
+  });
+
+  it("names the GPU as dedicated and lists the MoE rows, never a dense one", () => {
+    const json = recommendJson(snapFor(pc));
+    expect(json.machine).toMatchObject({ dedicatedGpu: true, cpuMoe: "auto" });
+    const ids = (json.expertsInRam as { id: string }[]).map((e) => e.id);
+    expect(ids).toContain("qwen-3.6-35b-a3b");
+    expect(ids).not.toContain("qwen-3.6-27b");
+    expect(ids).not.toContain("qwen-3.5-4b");
+  });
+
+  it("is empty with cpuMoe off and on a machine without a dedicated GPU", () => {
+    expect(recommendJson(snapFor({ ...pc, cpuMoe: "off" })).expertsInRam).toEqual([]);
+    const json = recommendJson(snapshot("qwen-3.5-2b"));
+    expect(json.expertsInRam).toEqual([]);
+    expect(json.machine).toMatchObject({ dedicatedGpu: false });
+  });
+});
