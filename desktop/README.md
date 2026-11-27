@@ -19,12 +19,14 @@ npm start
 One child process, one transport. The main process spawns
 
 ```
-atag serve --host 127.0.0.1 --port <ephemeral> --api-key <random per launch>
+ATOMIC_AGENT_API_KEY=<random per launch> atag serve --host 127.0.0.1 --port <ephemeral>
 ```
 
 with `cwd` set to the chosen workspace, waits for `/health`, and speaks HTTP to
 it. The port is ephemeral, the bind is loopback-only, and the bearer token is
-generated per launch, so nothing outside this app can reach the agent.
+generated per launch, so nothing outside this app can reach the agent. The
+token goes in the child's environment, not on its command line, which any
+program can read with `ps` (ATO-1705, [serve-launch.ts](main/serve-launch.ts)).
 
 **Folder trust (ATO-1250).** A folder's own skills and instruction files
 (`AGENTS.md`, `.atomic-agent/skills`, …) load only after the person trusts
