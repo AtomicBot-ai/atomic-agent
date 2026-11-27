@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { checkGuestRead } from "./guest-reads.js";
 import {
   GUEST_SECRET_RG_EXCLUDES,
+  isGuestSecretHit,
   isGuestSecretPathUnder,
   isGuestSecretRelPath,
   isSecretFileName,
@@ -14,10 +15,10 @@ import {
 /** ATO-2703: what a channel guest never sees, even nested inside the working directory. */
 describe("guest secret files", () => {
   it("matches env files, keys and credential files by name, any case", () => {
-    for (const name of [".env", ".ENV", ".env.local", ".envrc", "id_rsa", "id_ed25519", "server.pem", "tls.KEY", "store.p12", ".netrc", ".npmrc", ".git-credentials", "credentials", "credentials.json", "secrets.yaml"]) {
+    for (const name of [".env", ".ENV", ".env.local", ".envrc", "id_rsa", "id_ed25519", "server.pem", "tls.KEY", "store.p12", ".netrc", ".npmrc", ".git-credentials", "credentials", "credentials.json", "secrets.yaml", "secrets.enc.yaml", "Credentials.TOML"]) {
       expect(isSecretFileName(name), name).toBe(true);
     }
-    for (const name of ["env.ts", "environment.md", "README.md", "id_rsa.pub", "keys.ts", "monkey.ts", ".pem", "secret-santa.txt"]) {
+    for (const name of ["env.ts", "environment.md", "README.md", "id_rsa.pub", "keys.ts", "monkey.ts", ".pem", "secret-santa.txt", "credentials.ts", "secrets.go", "credentials.test.ts"]) {
       expect(isSecretFileName(name), name).toBe(false);
     }
   });
@@ -43,7 +44,30 @@ describe("guest secret files", () => {
     expect(GUEST_SECRET_RG_EXCLUDES).toContain("!.env.*");
     expect(GUEST_SECRET_RG_EXCLUDES).toContain("!*.pem");
     expect(GUEST_SECRET_RG_EXCLUDES).toContain("!secrets");
+    expect(GUEST_SECRET_RG_EXCLUDES.some((g) => g.startsWith("!credentials.{") && g.includes("json"))).toBe(true);
+    // Source files named `credentials.ts` stay searchable: no catch-all prefix glob.
+    expect(GUEST_SECRET_RG_EXCLUDES).not.toContain("!credentials.*");
     expect(GUEST_SECRET_RG_EXCLUDES.every((g) => g.startsWith("!"))).toBe(true);
+  });
+});
+
+describe("isGuestSecretHit (review F1963.3)", () => {
+  const real = realpathSync(mkdtempSync(join(tmpdir(), "guest-secret-real-")));
+  const linkDir = mkdtempSync(join(tmpdir(), "guest-secret-link-"));
+  const alias = join(linkDir, "work");
+  mkdirSync(join(real, "secrets"));
+  symlinkSync(real, alias);
+  afterAll(() => {
+    rmSync(real, { recursive: true, force: true });
+    rmSync(linkDir, { recursive: true, force: true });
+  });
+
+  it("judges a real-path hit against a symlinked working directory by its folders too", () => {
+    // An index stores real paths; lexically this hit is outside `alias`.
+    expect(isGuestSecretPathUnder(alias, join(real, "secrets", "notes.md"))).toBe(false);
+    expect(isGuestSecretHit(alias, join(real, "secrets", "notes.md"))).toBe(true);
+    expect(isGuestSecretHit(alias, join(real, "docs", "notes.md"))).toBe(false);
+    expect(isGuestSecretHit(alias, "secrets/notes.md")).toBe(true);
   });
 });
 

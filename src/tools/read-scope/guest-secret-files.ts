@@ -1,4 +1,6 @@
-import { basename, isAbsolute, relative } from "node:path";
+import { basename, isAbsolute, relative, resolve } from "node:path";
+
+import { canonical } from "./read-scope.js";
 
 /**
  * Files and folders a channel guest never sees, not even by name in a
@@ -9,8 +11,8 @@ import { basename, isAbsolute, relative } from "node:path";
  * so a nested `config/.env` would still come back in the results. The
  * walking tools therefore drop these entries themselves when the call
  * comes from a guest session (`ToolContext.guest`): `os.fs.grep` (also
- * passes the matching `--iglob !…` exclusions to ripgrep), `os.fs.glob`
- * and `files.search`.
+ * passes the matching `--iglob !…` exclusions to ripgrep), `os.fs.glob`,
+ * `os.fs.code_map`, `os.code.search` and `files.search`.
  *
  * Matched case-insensitively against a path's segments:
  *  - a file whose name looks like a secret: `.env`, `.env.*`, `.envrc`,
@@ -41,8 +43,29 @@ const SECRET_FILE_NAMES: ReadonlySet<string> = new Set([
   "id_ed25519",
 ]);
 
-/** File name prefixes (lowercase): `.env.local`, `secrets.json`, `credentials.yml`. */
-const SECRET_FILE_PREFIXES: readonly string[] = [".env.", "secrets.", "credentials."];
+/** File name prefixes (lowercase) of any extension: `.env.local`, `.env.production`. */
+const SECRET_FILE_PREFIXES: readonly string[] = [".env."];
+
+/**
+ * File name prefixes (lowercase) that count only with a data extension:
+ * `secrets.json`, `credentials.yml`, `secrets.enc.yaml`. Source files of
+ * the same name (`credentials.ts`, `secrets.go`) are code, not secrets.
+ */
+const SECRET_DATA_PREFIXES: readonly string[] = ["secrets.", "credentials."];
+const DATA_EXTENSIONS: readonly string[] = [
+  "json",
+  "yaml",
+  "yml",
+  "toml",
+  "ini",
+  "txt",
+  "xml",
+  "conf",
+  "cfg",
+  "properties",
+  "env",
+  "csv",
+];
 
 /** File extensions (lowercase) of private keys and keystores. */
 const SECRET_FILE_EXTENSIONS: readonly string[] = [
@@ -71,6 +94,12 @@ export function isSecretFileName(name: string): boolean {
   const lower = name.toLowerCase();
   if (SECRET_FILE_NAMES.has(lower)) return true;
   if (SECRET_FILE_PREFIXES.some((prefix) => lower.startsWith(prefix))) return true;
+  if (
+    SECRET_DATA_PREFIXES.some((prefix) => lower.startsWith(prefix)) &&
+    DATA_EXTENSIONS.some((ext) => lower.endsWith(`.${ext}`))
+  ) {
+    return true;
+  }
   return SECRET_FILE_EXTENSIONS.some((ext) => lower.endsWith(ext) && lower.length > ext.length);
 }
 
@@ -106,6 +135,21 @@ export function isGuestSecretPathUnder(root: string, path: string): boolean {
 }
 
 /**
+ * True when a hit a walking tool found (absolute, or relative to
+ * `workingDir`) is a secret for a guest of `workingDir`. Judged against
+ * both the lexical and the canonical working directory, as
+ * `guest-reads.ts` does: an index stores real paths, so a hit under a
+ * symlinked or differently cased working directory would otherwise look
+ * like it lies outside it and be judged by its file name only.
+ */
+export function isGuestSecretHit(workingDir: string, path: string): boolean {
+  const root = resolve(workingDir);
+  const absolute = resolve(root, path);
+  return isGuestSecretPathUnder(root, absolute) ||
+    isGuestSecretPathUnder(canonical(root), canonical(absolute));
+}
+
+/**
  * ripgrep exclusions matching the rules above, for `--iglob` (case
  * insensitive). A glob without a slash matches a name at any depth, and
  * a later glob wins over an earlier one, so these go after the caller's
@@ -114,6 +158,10 @@ export function isGuestSecretPathUnder(root: string, path: string): boolean {
 export const GUEST_SECRET_RG_EXCLUDES: readonly string[] = [
   ...[...SECRET_FILE_NAMES].map((name) => `!${name}`),
   ...SECRET_FILE_PREFIXES.map((prefix) => `!${prefix}*`),
+  ...SECRET_DATA_PREFIXES.flatMap((prefix) => [
+    `!${prefix}{${DATA_EXTENSIONS.join(",")}}`,
+    `!${prefix}*.{${DATA_EXTENSIONS.join(",")}}`,
+  ]),
   ...SECRET_FILE_EXTENSIONS.map((ext) => `!*${ext}`),
   ...[...SECRET_FOLDER_NAMES].map((name) => `!${name}`),
 ];

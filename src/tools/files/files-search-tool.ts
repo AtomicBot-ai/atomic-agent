@@ -1,6 +1,6 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "../os/expand-home.js";
-import { isGuestSecretPathUnder } from "../read-scope/guest-secret-files.js";
+import { isGuestSecretHit } from "../read-scope/guest-secret-files.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { FILES_SEARCH_MAX_TOP_K } from "./file-index.js";
 import { FolderRejectedError, type FileIndexApi, type FileSearchHit } from "./file-index-types.js";
@@ -61,7 +61,7 @@ export function buildFilesSearchTool(options: FilesSearchToolOptions): ToolDefin
         // A guest never gets a passage of a `.env`, key or `secrets/` file
         // (ATO-2703, `guest-secret-files.ts`).
         const hits = ctx.guest === true
-          ? found.filter((hit) => !isGuestSecretPathUnder(ctx.workingDir, hit.path))
+          ? found.filter((hit) => !isGuestSecretHit(ctx.workingDir, hit.path))
           : found;
         return compressToolResult(
           {
