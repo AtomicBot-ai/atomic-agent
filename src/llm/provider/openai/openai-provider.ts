@@ -61,7 +61,7 @@ import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 import { openAiChatPathPrefix } from "./openai-chat-path.js";
 import type { ApiKeySource } from "./api-key-command.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
-import { isOllamaCloudHost } from "./think-tag-safe.js";
+import { needsThinkTagSafe } from "./think-tag-safe.js";
 import { describeAudioViaOpenAi } from "./openai-describe-audio.js";
 import { isAnthropicHost, isAnthropicModel } from "./prompt-cache-control.js";
 import { isLocalServerUrl } from "./local-server-url.js";
@@ -328,8 +328,15 @@ export class OpenAiProvider implements LlmProvider {
         : {}),
       ...(isDeepSeekHost(options.baseUrl) ? { reasoningRequired: true } : {}),
       ...(isGeminiOpenAiCompatUrl(options.baseUrl) ? { thoughtSignatures: true } : {}),
-      // Ollama Cloud mangles literal thinking tags in content (issue #283).
-      ...(isOllamaCloudHost(options.baseUrl) ? { thinkTagSafe: true } : {}),
+      // Ollama Cloud mangles literal thinking tags in content (issue #283),
+      // also for a cloud model reached through a local daemon (ATO-2771).
+      ...(needsThinkTagSafe({
+        id: options.id,
+        baseUrl: options.baseUrl,
+        model: options.defaultChatModel,
+      })
+        ? { thinkTagSafe: true }
+        : {}),
     };
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
