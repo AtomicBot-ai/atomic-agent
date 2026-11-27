@@ -5,6 +5,7 @@ import { survivesLoopbackReset } from "./loopback-reset.js";
 import type { LoopbackResetPolicy } from "./loopback-reset.js";
 import { scrubError } from "./error-scrubber.js";
 import { isExpectedSubscriptionCliFailure } from "./subscription-cli-expected.js";
+import { isRepeatedEmptyAnswer } from "./repeated-empty-answer.js";
 import type { LlmFailureContext } from "./llm-failure-tags.js";
 import type { SentryClient } from "./sentry-client.js";
 
@@ -72,6 +73,9 @@ export function captureError(
   // A signed-out Claude Code or Codex, a spent plan limit, or a plan
   // without the CLI: the account's state, told in chat (ATO-2417).
   if (isExpectedSubscriptionCliFailure(err)) return;
+  // The model answered nothing again after the agent's own re-ask: told
+  // in chat, and not a defect of ours (ATO-1676).
+  if (isRepeatedEmptyAnswer(err)) return;
   const error =
     err instanceof Error
       ? err
