@@ -153,6 +153,7 @@ export async function createAgentRuntime(
   // re-installing the process-global handlers.
   installGlobalErrorHandlers(observability.getErrorReporter, {
     brokenPipe: options.brokenPipe,
+    loopbackReset: options.loopbackReset,
   });
 
   const {

@@ -223,11 +223,14 @@ function originHost(origin: Dispatcher.DispatchOptions["origin"]): string | null
  * uncounted. Others are refused through the handler while offline, and
  * counted (`requestsOut`, `bytesOut`) when they are let through.
  *
- * `direct` is a plain connection pool that takes loopback requests
- * while offline. The pool this guards may be `EnvHttpProxyAgent`
- * (`HTTP_PROXY` / `HTTPS_PROXY` set), which would send a request for
- * `127.0.0.1` to the proxy: a prompt for the local model would leave
- * the machine, through a host the guard never sees. So while offline a
+ * `direct` is a plain connection pool that takes every loopback
+ * request, online or offline. The pool this guards may be
+ * `EnvHttpProxyAgent` (`HTTP_PROXY` / `HTTPS_PROXY` set), which would
+ * send a request for `127.0.0.1` to the proxy: a prompt for the local
+ * model would leave the machine, through a host the guard never sees.
+ * Where `no_proxy` does name loopback, it goes on the proxy agent's own
+ * inner pool instead, whose sockets do not mark their errors, so a local
+ * server's read reset would read as unknown again (ATO-2767). So a
  * loopback request never goes through the proxy-aware pool.
  */
 export function offlineNetworkInterceptor(
@@ -237,9 +240,7 @@ export function offlineNetworkInterceptor(
     function offlineNetworkGuard(opts, handler) {
       const host = originHost(opts.origin);
       if (host !== null && isLoopbackHost(host)) {
-        if (direct !== undefined && isOfflineNetwork()) {
-          return direct.dispatch(opts, handler);
-        }
+        if (direct !== undefined) return direct.dispatch(opts, handler);
         return dispatch(opts, handler);
       }
       if (isOfflineNetwork()) {
