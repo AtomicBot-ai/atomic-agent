@@ -36,7 +36,7 @@ describe("GET /api/secrets + PUT /api/secrets/{name}", () => {
   it("GET answers the store and names, .env by default", async () => {
     const response = await fetch(`${harness.baseUrl}/api/secrets`);
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ store: "env", keychainKeys: [] });
+    expect(await response.json()).toEqual({ store: "env", keychainKeys: [], references: {} });
   });
 
   it("GET lists the names the keychain holds, never values", async () => {
@@ -45,7 +45,8 @@ describe("GET /api/secrets + PUT /api/secrets/{name}", () => {
       JSON.stringify({ store: "keychain", keychainKeys: ["OPENROUTER_API_KEY"] }),
     );
     const response = await fetch(`${harness.baseUrl}/api/secrets`);
-    expect(await response.json()).toEqual({
+    // `references` reads the real keychain here, so only the names are pinned.
+    expect(await response.json()).toMatchObject({
       store: "keychain",
       keychainKeys: ["OPENROUTER_API_KEY"],
     });
@@ -84,6 +85,48 @@ describe("GET /api/secrets + PUT /api/secrets/{name}", () => {
     expect(process.env[NAME]).toBeUndefined();
     // Plain loopback is still served.
     expect((await fetch(`${harness.baseUrl}/api/secrets`)).status).toBe(200);
+  });
+
+  // ATO-2530: where a key saved as a reference comes from, never its value.
+  it("GET names the source of a key saved as a reference", async () => {
+    writeFileSync(envPath, `${NAME}=op://Private/OpenRouter/credential\nPLAIN_API_KEY=sk-plain\n`);
+    const body = await (await fetch(`${harness.baseUrl}/api/secrets`)).text();
+    expect(JSON.parse(body).references).toEqual({ [NAME]: "1password" });
+    expect(body).not.toContain("sk-plain");
+  });
+
+  // ATO-2530: a reference saved mid-session is resolved at once, not at the next start.
+  it("PUT a reference puts its resolved value in the environment, never the reference", async () => {
+    const value = "Resolved9Value8Live7";
+    writeFileSync(
+      join(harness.stateDir, "secret-sources.json"),
+      JSON.stringify({ command: [process.execPath, "-e", `process.stdout.write(${JSON.stringify(value)})`] }),
+    );
+    const response = await put(NAME, { value: "cmd://openrouter" });
+    const body = await response.text();
+    expect(JSON.parse(body)).toEqual({
+      name: NAME,
+      store: "env",
+      reference: { source: "command", resolved: true },
+    });
+    expect(body).not.toContain(value);
+    expect(process.env[NAME]).toBe(value);
+    // The file keeps the reference.
+    expect(readFileSync(envPath, "utf8")).toBe(`${NAME}=cmd://openrouter\n`);
+  });
+
+  it("PUT a reference that cannot be read saves it, leaves the variable unset and says why", async () => {
+    writeFileSync(
+      join(harness.stateDir, "secret-sources.json"),
+      JSON.stringify({ command: [process.execPath, "-e", "process.exit(3)"] }),
+    );
+    process.env[NAME] = "old-key";
+    // Another key than above: resolved values are cached for the process.
+    const response = await put(NAME, { value: "cmd://broken-helper" });
+    const json = (await response.json()) as { reference: { resolved: boolean; error?: string } };
+    expect(json.reference.resolved).toBe(false);
+    expect(json.reference.error).toMatch(new RegExp(`^${NAME}: `));
+    expect(process.env[NAME]).toBeUndefined();
   });
 
   it("refuses names that are not keys, bad values and bad bodies, and writes nothing", async () => {
