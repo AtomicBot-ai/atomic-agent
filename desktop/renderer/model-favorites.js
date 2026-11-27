@@ -19,7 +19,9 @@
    localStorage is moved into that file once (modelFavSync) and then dropped.
    Without the bridge (the unit tests, an old preload) the list stays in
    localStorage as before. The picker reads the file again each time it
-   opens, so a star set in the terminal shows. With no star set the picker
+   opens, and Cmd+P before each step (model-favorites-keys.js), so a star
+   set in the terminal shows and counts. A star click sends main the state
+   it asks for, not a flip (modelFavToggle). With no star set the picker
    is exactly as before.
 
    The pure part is exported for test/model-favorites.test.mjs. */
@@ -52,7 +54,7 @@ const MODEL_FAV = {keys: modelFavLegacy(), shared: false};
 /* The preload's favourites routes, or null (unit tests, an old preload). */
 function modelFavBridge() {
   const br = typeof window !== 'undefined' ? window.atomic : null;
-  return br && typeof br.modelFavLoad === 'function' && typeof br.modelFavToggle === 'function' ? br : null;
+  return br && typeof br.modelFavLoad === 'function' && typeof br.modelFavSet === 'function' ? br : null;
 }
 
 function modelFavSave() {
@@ -99,9 +101,11 @@ function modelFavIs(key) { return !!key && MODEL_FAV.keys.indexOf(key) >= 0; }
 
 /**
  * Star or unstar `key`; true when it is a favourite afterwards. Drawn at
- * once; with the bridge, main then changes the shared file (read again
- * first, so a star set in the terminal meanwhile is kept) and its list
- * replaces this one, and `after()` repaints.
+ * once; with the bridge, main then sets the same state in the shared file
+ * (read again first). It is sent as starred or not, never as a flip: main
+ * flipping the file's copy would undo a star the terminal set on this key
+ * while the picker was open. Main's list replaces this one and `after()`
+ * repaints.
  */
 function modelFavToggle(key, after) {
   if (!modelFavClean([key]).length) return false;
@@ -113,7 +117,7 @@ function modelFavToggle(key, after) {
   }
   const br = modelFavBridge();
   if (br && MODEL_FAV.shared) {
-    Promise.resolve(br.modelFavToggle(key)).then((res) => {
+    Promise.resolve(br.modelFavSet(key, at < 0)).then((res) => {
       if (!res || !Array.isArray(res.keys)) return;
       MODEL_FAV.keys = modelFavClean(res.keys);
       if (typeof after === 'function') after();

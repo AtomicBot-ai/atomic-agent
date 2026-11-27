@@ -61,8 +61,14 @@ function modelFavCurrentKey() {
   return pid && model ? pid + '|' + model : '';
 }
 
-/** Switch to the next (`dir` 1) or previous (-1) favourite, through the picker's own path (selActivate). */
+/**
+ * Switch to the next (`dir` 1) or previous (-1) favourite, through the
+ * picker's own path (selActivate). The shared file is read first
+ * (modelFavSync), as the terminal reads it on every ctrl+p: a favourite
+ * added or removed in the terminal counts at once, picker opened or not.
+ */
 async function modelFavCycle(dir) {
+  if (typeof modelFavSync === 'function') await modelFavSync();
   const keys = MODEL_FAV.keys;
   if (!keys.length) { toast('No favorite models yet', 'Star a model in the model picker, then ' + kbd('⌘P') + ' switches between them.'); return; }
   if (selBackend() === 'fusion') { toast('Favorite models do not switch under Fusion', 'Pick Local or Cloud first.'); return; }
@@ -125,5 +131,5 @@ function modelFavKeydown(e, sk) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {modelFavMod, modelFavKeyIntent, modelFavStep, modelFavSplit};
+  module.exports = {modelFavMod, modelFavKeyIntent, modelFavStep, modelFavSplit, modelFavCycle};
 }

@@ -54,3 +54,63 @@ test('the page loads it before renderer.js, the keydown asks it first, and the s
   const menu = readFileSync(new URL('../main/menu.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(menu, /CommandOrControl\+P"|CommandOrControl\+D"|alt\("P"\)|alt\("D"\)/);
 });
+
+/* review D2: Cmd+P reads the shared file first, so a favourite the terminal
+   added counts before the picker is ever opened. The renderer.js globals the
+   cycle looks up at key time are stood in on globalThis. */
+async function withGlobals(g, fn) {
+  const had = {};
+  for (const k of Object.keys(g)) { had[k] = Object.getOwnPropertyDescriptor(globalThis, k); globalThis[k] = g[k]; }
+  try { return await fn(); } finally {
+    for (const k of Object.keys(g)) { if (had[k]) Object.defineProperty(globalThis, k, had[k]); else delete globalThis[k]; }
+  }
+}
+
+test('review D2: Cmd+P re-reads the shared list first; a favourite added in the terminal is next', async () => {
+  const activated = [];
+  const toasts = [];
+  const MODEL_FAV = {keys: ['openai|a', 'openai|b']};   // what the window had
+  await withGlobals({
+    MODEL_FAV,
+    // The terminal ran `/model favorite add openai/c`; the file now holds three.
+    modelFavSync: async () => { MODEL_FAV.keys = ['openai|a', 'openai|b', 'openai|c']; return true; },
+    selBackend: () => 'cloud',
+    restartStopsTurn: () => null,
+    selActiveProviderId: () => 'openai',
+    projectTurnModel: () => null,
+    S: {agentSession: null},
+    SEL: {local: []},
+    selProviders: () => [{id: 'openai', defaultChatModel: 'b'}],
+    BSW: {readyLoaded: true, readyIds: ['openai']},
+    toast: (t) => { toasts.push(t); },
+    kbd: (x) => x,
+    providerWord: (x) => x,
+    selActivate: async (row) => { activated.push(row); },
+  }, () => K.modelFavCycle(1));
+  assert.equal(activated.length, 1);
+  assert.equal(activated[0].id, 'c');
+  assert.equal(activated[0].provider, 'openai');
+  assert.deepEqual(toasts, ['Model: c (3/3)']);
+});
+
+test('review D2: with no favourites in the window, one added in the terminal still switches', async () => {
+  const activated = [];
+  const MODEL_FAV = {keys: []};
+  await withGlobals({
+    MODEL_FAV,
+    modelFavSync: async () => { MODEL_FAV.keys = ['openai|c']; return true; },
+    selBackend: () => 'cloud',
+    restartStopsTurn: () => null,
+    selActiveProviderId: () => 'openai',
+    projectTurnModel: () => null,
+    S: {agentSession: null},
+    SEL: {local: []},
+    selProviders: () => [{id: 'openai', defaultChatModel: 'b'}],
+    BSW: {readyLoaded: false, readyIds: []},
+    toast: () => {},
+    kbd: (x) => x,
+    providerWord: (x) => x,
+    selActivate: async (row) => { activated.push(row); },
+  }, () => K.modelFavCycle(1));
+  assert.deepEqual(activated.map((r) => r.id), ['c']);
+});

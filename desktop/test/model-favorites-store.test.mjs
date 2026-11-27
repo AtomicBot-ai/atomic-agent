@@ -48,18 +48,35 @@ test('a star reads the file again first, so one set in the terminal meanwhile is
   ST.writeFavKeys(dir, ['openai|gpt-5']);
   // The terminal adds one behind the window's back.
   writeFileSync(join(dir, ST.MODEL_FAVORITES_FILE), JSON.stringify({ models: ['openai/gpt-5', 'anthropic/claude-opus'] }));
-  assert.deepEqual(ST.modelFavToggle(dir, 'openrouter|a/b'), { ok: true, keys: ['openai|gpt-5', 'anthropic|claude-opus', 'openrouter|a/b'], on: true });
-  assert.deepEqual(ST.modelFavToggle(dir, 'openai|gpt-5'), { ok: true, keys: ['anthropic|claude-opus', 'openrouter|a/b'], on: false });
-  assert.deepEqual(ST.modelFavToggle(dir, 'not a key').ok, false);
+  assert.deepEqual(ST.modelFavSet(dir, 'openrouter|a/b', true), { ok: true, keys: ['openai|gpt-5', 'anthropic|claude-opus', 'openrouter|a/b'], on: true });
+  assert.deepEqual(ST.modelFavSet(dir, 'openai|gpt-5', false), { ok: true, keys: ['anthropic|claude-opus', 'openrouter|a/b'], on: false });
+  assert.deepEqual(ST.modelFavSet(dir, 'not a key', true).ok, false);
   assert.deepEqual(fileOf(), { models: ['anthropic/claude-opus', 'openrouter/a/b'] });
+});
+
+test('review D1: a star on a model the terminal starred while the picker was open keeps it (a set, not a flip)', () => {
+  // The picker drew [gpt-5]; the terminal then ran `/model favorite add openrouter/a/b`.
+  ST.writeFavKeys(dir, ['openai|gpt-5']);
+  writeFileSync(join(dir, ST.MODEL_FAVORITES_FILE), JSON.stringify({ models: ['openai/gpt-5', 'openrouter/a/b'] }));
+  // The window drew a/b unstarred, so its click asks for "starred".
+  assert.deepEqual(ST.modelFavSet(dir, 'openrouter|a/b', true), { ok: true, keys: ['openai|gpt-5', 'openrouter|a/b'], on: true });
+  assert.deepEqual(fileOf(), { models: ['openai/gpt-5', 'openrouter/a/b'] });
+  // The mirror: the terminal removed it; the window's unstar must not put it back.
+  writeFileSync(join(dir, ST.MODEL_FAVORITES_FILE), JSON.stringify({ models: ['openai/gpt-5'] }));
+  assert.deepEqual(ST.modelFavSet(dir, 'openrouter|a/b', false), { ok: true, keys: ['openai|gpt-5'], on: false });
+  assert.deepEqual(fileOf(), { models: ['openai/gpt-5'] });
+  // `on` must be a boolean: a bare key is refused, nothing written.
+  assert.equal(ST.modelFavSet(dir, 'openrouter|a/b').ok, false);
+  assert.deepEqual(fileOf(), { models: ['openai/gpt-5'] });
 });
 
 test('a full list drops its oldest, as the picker always did', () => {
   const full = Array.from({ length: ST.MODEL_FAVORITES_MAX }, (_, i) => 'openai|m' + i);
-  const next = ST.toggleFavKey(full, 'openai|new');
-  assert.equal(next.keys.length, ST.MODEL_FAVORITES_MAX);
-  assert.equal(next.keys[0], 'openai|m1');
-  assert.equal(next.keys.at(-1), 'openai|new');
+  const next = ST.setFavKey(full, 'openai|new', true);
+  assert.equal(next.length, ST.MODEL_FAVORITES_MAX);
+  assert.equal(next[0], 'openai|m1');
+  assert.equal(next.at(-1), 'openai|new');
+  assert.deepEqual(ST.setFavKey(full, 'openai|m3', true), full);
 });
 
 test('main wires the routes on the agent state dir, and the preload exposes them', () => {
@@ -68,5 +85,7 @@ test('main wires the routes on the agent state dir, and the preload exposes them
   assert.match(main, /wireModelFavoritesIpc\(\{ stateDir: DESKTOP_STATE_DIR \}\);/);
   const pre = readFileSync(new URL('../preload/preload.ts', import.meta.url), 'utf8');
   assert.match(pre, /modelFavLoad: \(legacy\?: string\[\]\) => ipcRenderer\.invoke\("modelFav:load", legacy\)/);
-  assert.match(pre, /modelFavToggle: \(key: string\) => ipcRenderer\.invoke\("modelFav:toggle", key\)/);
+  assert.match(pre, /modelFavSet: \(key: string, on: boolean\) => ipcRenderer\.invoke\("modelFav:set", key, on\)/);
+  const ipc = readFileSync(new URL('../main/model-favorites-ipc.ts', import.meta.url), 'utf8');
+  assert.match(ipc, /ipcMain\.handle\("modelFav:set", \(_event, key: unknown, on: unknown\) => modelFavSet\(deps\.stateDir, key, on\)\);/);
 });

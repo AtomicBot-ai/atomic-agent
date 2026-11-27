@@ -14,7 +14,9 @@
  * The window keys a favourite `provider|model` (renderer/model-favorites.js);
  * the file spells it `provider/model`, split on the FIRST separator either
  * way (model ids carry slashes, provider ids never do). Every change reads
- * the file again first, so a star set in the terminal meanwhile is kept.
+ * the file again first and sets the one key to the state the window asked
+ * for (starred or not), never a flip of what the file holds, so a star set
+ * or taken out in the terminal meanwhile is kept, the same key included.
  * Pure except the fs helpers at the bottom, which never throw.
  */
 
@@ -68,11 +70,15 @@ export function mergeFavKeys(fileKeys: readonly string[], legacyKeys: unknown): 
   return cleanFavKeys([...fileKeys, ...cleanFavKeys(legacyKeys)]);
 }
 
-/** Star or unstar `key`, as the window always did: a full list drops its oldest. */
-export function toggleFavKey(keys: readonly string[], key: string): { keys: string[]; on: boolean } {
-  if (keys.includes(key)) return { keys: keys.filter((k) => k !== key), on: false };
+/**
+ * `key` starred (`on`) or not. Already so: the list as it is. A new star
+ * goes last and a full list drops its oldest, as the window always did.
+ */
+export function setFavKey(keys: readonly string[], key: string, on: boolean): string[] {
+  if (keys.includes(key) === on) return [...keys];
+  if (!on) return keys.filter((k) => k !== key);
   const next = [...keys, key];
-  return { keys: next.length > MODEL_FAVORITES_MAX ? next.slice(next.length - MODEL_FAVORITES_MAX) : next, on: true };
+  return next.length > MODEL_FAVORITES_MAX ? next.slice(next.length - MODEL_FAVORITES_MAX) : next;
 }
 
 /** The file's list as window keys; a missing or broken file is no favourites. */
@@ -113,12 +119,17 @@ export function modelFavLoad(stateDir: string, legacy: unknown): { ok: true; key
   return { ok: true, keys: merged, saved: writeFavKeys(stateDir, merged) };
 }
 
-/** `modelFav:toggle`: read the file again, star or unstar `key`, write it. */
-export function modelFavToggle(stateDir: string, key: unknown): { ok: boolean; keys: string[]; on: boolean } {
+/**
+ * `modelFav:set`: read the file again, set `key` starred (`on` true) or not,
+ * write it when that changed it. `on` is the state the window drew, so a
+ * click on a star the terminal changed meanwhile never undoes the terminal.
+ */
+export function modelFavSet(stateDir: string, key: unknown, on: unknown): { ok: boolean; keys: string[]; on: boolean } {
   const keys = readFavKeys(stateDir);
   const [clean] = cleanFavKeys([key]);
-  if (!clean) return { ok: false, keys, on: false };
-  const next = toggleFavKey(keys, clean);
-  if (!writeFavKeys(stateDir, next.keys)) return { ok: false, keys, on: keys.includes(clean) };
-  return { ok: true, keys: next.keys, on: next.on };
+  if (!clean || typeof on !== "boolean") return { ok: false, keys, on: clean ? keys.includes(clean) : false };
+  const next = setFavKey(keys, clean, on);
+  const same = next.length === keys.length && next.every((k, i) => k === keys[i]);
+  if (!same && !writeFavKeys(stateDir, next)) return { ok: false, keys, on: keys.includes(clean) };
+  return { ok: true, keys: next, on: next.includes(clean) };
 }

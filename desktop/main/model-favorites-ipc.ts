@@ -8,15 +8,18 @@
  *                    means the merge could not be written, so the window
  *                    draws the merged list and keeps its old one for the
  *                    next try.
- *   modelFav:toggle  (key) → {ok, keys, on}. Reads the file again, stars or
- *                    unstars `key`, writes it. {ok:false, keys} when the key
- *                    is not one or the file could not be written (`keys` is
- *                    then the list as it stands).
+ *   modelFav:set     (key, on) → {ok, keys, on}. Reads the file again, sets
+ *                    `key` starred (`on` true) or not, writes it. The window
+ *                    sends the state it drew, not a flip, so a change the
+ *                    terminal made meanwhile is kept. {ok:false, keys} when
+ *                    the key is not one, `on` is not a boolean or the file
+ *                    could not be written (`keys` is then the list as it
+ *                    stands).
  */
 
 import { ipcMain } from "electron";
 
-import { modelFavLoad, modelFavToggle } from "./model-favorites-store.js";
+import { modelFavLoad, modelFavSet } from "./model-favorites-store.js";
 
 export interface ModelFavoritesIpcDeps {
   /** The agent's state dir (`~/.atomic-agent` on a default install), shared with the terminal. */
@@ -25,5 +28,5 @@ export interface ModelFavoritesIpcDeps {
 
 export function wireModelFavoritesIpc(deps: ModelFavoritesIpcDeps): void {
   ipcMain.handle("modelFav:load", (_event, legacy: unknown) => modelFavLoad(deps.stateDir, legacy));
-  ipcMain.handle("modelFav:toggle", (_event, key: unknown) => modelFavToggle(deps.stateDir, key));
+  ipcMain.handle("modelFav:set", (_event, key: unknown, on: unknown) => modelFavSet(deps.stateDir, key, on));
 }

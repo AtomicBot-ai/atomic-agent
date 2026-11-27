@@ -125,7 +125,7 @@ function fakeBridge(file) {
   return {
     calls,
     modelFavLoad: async (legacy) => { calls.push(['load', legacy]); for (const k of legacy || []) if (!file.includes(k)) file.push(k); return {ok: true, keys: [...file], saved: true}; },
-    modelFavToggle: async (key) => { calls.push(['toggle', key]); const at = file.indexOf(key); if (at >= 0) file.splice(at, 1); else file.push(key); return {ok: true, keys: [...file], on: at < 0}; },
+    modelFavSet: async (key, on) => { calls.push(['set', key, on]); const at = file.indexOf(key); if (!on && at >= 0) file.splice(at, 1); else if (on && at < 0) file.push(key); return {ok: true, keys: [...file], on}; },
   };
 }
 
@@ -171,10 +171,29 @@ test('ATO-2500: a star goes to the shared file (not localStorage) and its answer
     let repainted = 0;
     assert.equal(F.modelFavToggle('openai|gpt-5', () => { repainted++; }), true);
     await tick();
-    assert.deepEqual(br.calls.at(-1), ['toggle', 'openai|gpt-5']);
+    assert.deepEqual(br.calls.at(-1), ['set', 'openai|gpt-5', true]);
     assert.deepEqual(F.MODEL_FAV.keys, ['anthropic|claude-opus', 'openai|gpt-5']);
     assert.equal(repainted, 1);
     assert.equal(store.has(F.MODEL_FAV_KEY), false);
+  });
+});
+
+test('review D1: the window sends the state it drew; a star the terminal added while the picker was open is kept', async () => {
+  const file = ['anthropic|claude-opus'];
+  const br = fakeBridge(file);
+  await withWindow(br, memStorage(), async () => {
+    await F.modelFavSync();   // the picker opens: [claude-opus]
+    file.push('openai|gpt-5');   // the terminal: /model favorite add openai/gpt-5
+    // The window still draws gpt-5 unstarred; the click asks for "starred".
+    assert.equal(F.modelFavToggle('openai|gpt-5', () => {}), true);
+    await tick();
+    assert.deepEqual(br.calls.at(-1), ['set', 'openai|gpt-5', true]);
+    assert.deepEqual(F.MODEL_FAV.keys, ['anthropic|claude-opus', 'openai|gpt-5']);
+    assert.deepEqual(file, ['anthropic|claude-opus', 'openai|gpt-5']);
+    // And an unstar asks for "not starred".
+    assert.equal(F.modelFavToggle('openai|gpt-5', () => {}), false);
+    await tick();
+    assert.deepEqual(br.calls.at(-1), ['set', 'openai|gpt-5', false]);
   });
 });
 

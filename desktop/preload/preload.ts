@@ -510,7 +510,7 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1113: "Run overnight": pick its folder (the chat's own does not change), then start the task. */
   /** ATO-2500: the model picker's favourites, in the file the terminal uses (main/model-favorites-ipc.ts). */
   modelFavLoad: (legacy?: string[]) => ipcRenderer.invoke("modelFav:load", legacy),
-  modelFavToggle: (key: string) => ipcRenderer.invoke("modelFav:toggle", key),
+  modelFavSet: (key: string, on: boolean) => ipcRenderer.invoke("modelFav:set", key, on),
   /** ATO-1467: the interview invite (main/interview-invite-ipc.ts). */
   interviewCheck: (input: { busy: boolean; onboarding: boolean; error: boolean }) => ipcRenderer.invoke("interview:check", input),
   interviewShown: (input: { busy: boolean; onboarding: boolean; error: boolean }) => ipcRenderer.invoke("interview:shown", input),
