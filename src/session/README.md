@@ -24,6 +24,8 @@ The optional version-1 [cloud context journal](cloud-context.ts) records the exa
 
 [Search over past chats](session-search.ts) (ATO-1149) is an FTS5 index of the chat lines `listChatLines` reads, in the same file. It is filled at search time, not on writes: each search reads changed transcripts without the write lock and writes them 25 sessions per transaction, up to 500 per search. Every channel is indexed with a `source` label and task sessions rank lower; incognito chats, Fusion workers and sessions stamped `metadata.internal` / `metadata.subagent` are never indexed (`classifySessionForSearch`).
 
+The agent rereads its own compacted history with `conversation.history` ([conversation-history.ts](../tools/memory/conversation-history.ts), ATO-2261): word search or a ranged read over the records before `compaction.coveredThrough` of the calling session only (tool calls and output included), within a 16,000-character window. `renderCompactionContext` ends the summary with a line pointing at it.
+
 ## Task-specific reading
 
 Read README.md for state/retention changes; ../runtime/docs/lifecycle.md for concurrency and shutdown.

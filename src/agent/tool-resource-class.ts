@@ -217,6 +217,8 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "memory.procedures.recall": "pure_read",
   "memory.notes.recall": "pure_read",
   "memory.sessions.search": "pure_read",
+  // ATO-2261: reads the compacted part of the calling session only.
+  "conversation.history": "pure_read",
   // ATO-1621: reads the My files index (its own SQLite file), nothing else.
   "files.search": "pure_read",
   "memory.profile.set": "memory_write",

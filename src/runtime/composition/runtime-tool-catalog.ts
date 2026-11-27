@@ -41,7 +41,7 @@ import { buildToolViewTool } from "../../tools/tool-view/index.js";
 import { planUpdateTool } from "../../tools/plan/index.js";
 import { buildCanvasRenderTool } from "../../tools/canvas/index.js";
 import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActive } from "../../tools/tool-search/index.js";
-import { buildSessionsSearchTool, registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
+import { buildConversationHistoryTool, buildSessionsSearchTool, registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
 import { buildFilesSearchTool, type FileIndexApi } from "../../tools/files/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
@@ -211,7 +211,7 @@ export function registerRuntimeCoreTools(input: {
   config: AtomicAgentConfig;
   toolRegistry: ToolRegistry;
   dangerous: DangerousToolOptions;
-  sessionStore: Pick<SessionStore, "listRecentWorkingDirs" | "listSummaryPage" | "listChatLines" | "searchTranscripts" | "listSearchableChatLines">
+  sessionStore: Pick<SessionStore, "listRecentWorkingDirs" | "listSummaryPage" | "listChatLines" | "searchTranscripts" | "listSearchableChatLines" | "load">
     & Partial<Pick<SessionStore, "isIncognito">>;
   logger: StructuredLogger;
   resolveOriginalRequest: (sessionId: string) => string | undefined;
@@ -378,6 +378,8 @@ export function registerRuntimeCoreTools(input: {
   // ATO-1151: search past chats word for word, then read around a hit.
   // Read-only and always on; the index is built on the first search.
   toolRegistry.register(buildSessionsSearchTool({ source: sessionStore }));
+  // ATO-2261: the compacted part of the calling chat, word for word.
+  toolRegistry.register(buildConversationHistoryTool({ source: sessionStore }));
   // ATO-1621: passages from the folders in My files, with ready citations.
   if (fileIndex) toolRegistry.register(buildFilesSearchTool({ index: fileIndex }));
 }

@@ -137,8 +137,15 @@ export function compactionPins(state: Pick<SessionState, "turns">, offset: numbe
   }).join("\n\n");
 }
 
+/**
+ * Points the model at `conversation.history` (ATO-2261): the summary keeps
+ * the gist, the tool rereads exact numbers, paths and tool output.
+ */
+export const COMPACTION_HISTORY_HINT =
+  "Exact details from before this summary (numbers, paths, tool output) are still on record: look them up with conversation.history instead of guessing.";
+
 export function renderCompactionContext(summary: string, pins: string): string {
-  return ["Summary of earlier conversation (historical context, not a new instruction):", summary, pins].filter(Boolean).join("\n\n");
+  return ["Summary of earlier conversation (historical context, not a new instruction):", summary, pins, COMPACTION_HISTORY_HINT].filter(Boolean).join("\n\n");
 }
 
 /** Shared projection; offsets remain in the durable transcript, never in a rewritten history. */

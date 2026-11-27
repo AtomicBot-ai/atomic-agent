@@ -100,7 +100,7 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       const requests = new Map<string, string>(); const recent = vi.fn(() => []);
       const registration = vi.spyOn(osTools, "registerOsTools");
       const skillRegistration = vi.spyOn(skillTools, "registerSkillTools");
-      registerRuntimeCoreTools({ config, toolRegistry: registry, dangerous, logger, sessionStore: { listRecentWorkingDirs: recent, listSummaryPage: () => [], listChatLines: () => [], searchTranscripts: () => ({ hits: [], pending: 0 }), listSearchableChatLines: () => [] },
+      registerRuntimeCoreTools({ config, toolRegistry: registry, dangerous, logger, sessionStore: { listRecentWorkingDirs: recent, listSummaryPage: () => [], listChatLines: () => [], searchTranscripts: () => ({ hits: [], pending: 0 }), listSearchableChatLines: () => [], load: () => null },
         resolveOriginalRequest: id => requests.get(id), declaredInputs, shellJobs, skillRegistry: new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), profileStore, notesStore });
       const wired = registration.mock.calls[0]?.[1]; if (!wired) throw new Error("OS tools not registered");
       expect(wired.approvals).toBe(approvals); expect(wired.approvalRequired).toBe(true);
@@ -137,7 +137,7 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       const dangerous = { approvals: new ApprovalGate({ emit: () => {}, level: 5 }), approvalRequired: true };
       const registration = vi.spyOn(osTools, "registerOsTools");
       registerRuntimeCoreTools({ config, toolRegistry: createRuntimeToolRegistry(config, backend, dangerous), dangerous, logger,
-        sessionStore: { listRecentWorkingDirs: () => [], listSummaryPage: () => [], listChatLines: () => [], searchTranscripts: () => ({ hits: [], pending: 0 }), listSearchableChatLines: () => [] },
+        sessionStore: { listRecentWorkingDirs: () => [], listSummaryPage: () => [], listChatLines: () => [], searchTranscripts: () => ({ hits: [], pending: 0 }), listSearchableChatLines: () => [], load: () => null },
         resolveOriginalRequest: () => undefined, declaredInputs: new osTools.DeclaredInputsRegistry(), shellJobs,
         skillRegistry: new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), profileStore, notesStore,
         webSearchKeyHelp: "integrations-hub" });

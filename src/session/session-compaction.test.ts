@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assistantReplyTurn, assistantToolCallTurn, stoppedTurnMarker, toolResultTurn, userTurn, type ConversationTurn } from "./conversation-turn.js";
-import { finishedTurnCompactionCuts, preferredCompactionCuts, safeCompactionCuts } from "./session-compaction.js";
+import { COMPACTION_HISTORY_HINT, finishedTurnCompactionCuts, preferredCompactionCuts, renderCompactionContext, safeCompactionCuts } from "./session-compaction.js";
 
 const step = (path: string): ConversationTurn[] => [
   assistantToolCallTurn({ tool: "os.fs.read", args: { path } }),
@@ -19,5 +19,15 @@ describe("finished-turn compaction cuts", () => {
     const turns = [userTurn("first"), assistantReplyTurn("working on it", { progressNote: true }), ...step("/a"),
       stoppedTurnMarker(), userTurn("second"), assistantReplyTurn("done")];
     expect(finishedTurnCompactionCuts(turns)).toEqual([5, 7]);
+  });
+});
+
+// ATO-2261: after a compaction the model is told where the exact details went.
+describe("compaction context", () => {
+  it("ends with the pointer to conversation.history", () => {
+    const text = renderCompactionContext("Checked an invoice.", "");
+    expect(text).toContain("Checked an invoice.");
+    expect(text.endsWith(COMPACTION_HISTORY_HINT)).toBe(true);
+    expect(COMPACTION_HISTORY_HINT).toContain("conversation.history");
   });
 });
