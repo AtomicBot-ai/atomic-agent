@@ -72,7 +72,7 @@ interface RunArgs extends RunHeadlessArgs {
   incognito: boolean;
 }
 
-const HELP =
+export const RUN_HELP =
   [
     "atomic-agent run — chat with the agent over stdin",
     "",
@@ -88,8 +88,9 @@ const HELP =
     "  --max-steps <n>      Hard step ceiling for one task (default: agent.task.maxSteps)",
     "  --no-approval        Force approval level 5: auto-approve every dangerous tool call",
     "  --incognito          Incognito chat: nothing is saved to memory, the chat is deleted when the run ends",
-    "  --output-format <f>  text (default) | json (one result object) | stream-json (JSONL events)",
-    "  --json               Alias for --output-format stream-json",
+    "  --output-format <f>  text (default) | json (one result object at the end) | stream-json (one JSON event per line)",
+    "  --json               Same as --output-format stream-json: one JSON event per line, not one object;",
+    "                       for a single result object use --output-format json",
     "  -m, --model <m>      Model for every turn: <model> on the active provider, <provider> or <provider>:<model>",
     "  --resume <id>        Continue a saved chat (an id or a unique id prefix)",
     "  -c, --continue       Continue the newest saved chat in this folder",
@@ -566,7 +567,7 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
 export async function runAgentCommand(args: string[]): Promise<number> {
   const parsed = parseRunArgs(args);
   if ("help" in parsed) {
-    process.stdout.write(HELP);
+    process.stdout.write(RUN_HELP);
     return 0;
   }
   if ("error" in parsed) {
