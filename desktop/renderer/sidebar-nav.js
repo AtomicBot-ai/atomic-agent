@@ -2,7 +2,7 @@
  * glyphs and the narrow-window drawer, as pure functions (no DOM, no renderer
  * state) so they can be unit-tested (test/sidebar-nav.test.mjs).
  *
- * ATO-457 (U-24, owner's decision B): Tasks (now "Cron jobs") and Skills are
+ * ATO-457 (U-24, owner's decision B): Tasks (now "Scheduled tasks") and Skills are
  * standing rows under New chat, so the places ⌘ 2 and ⌘ 3 lead to have a home in the sidebar. Both
  * still open their Settings tab (renderer.js act('room:…')); the row is lit
  * while that tab is the one on screen.
@@ -14,17 +14,24 @@
  * by the window width, the sidebar toggle (and ⌘ \) opens the full sidebar as a
  * drawer over the content instead of refusing. */
 
+/* ATO-2743: the one visible name of the Tasks feature (ids, acts and `atag cron`
+   stay). The sidebar row reads it; the View menu (main/menu.ts), the palette,
+   the Settings section and the sidebar list header spell the same words, held
+   equal by test/scheduled-tasks-name.test.mjs. ChatGPT and Claude both call
+   this "Scheduled tasks"; "Task board" stays the board's own name. */
+const SCHEDULED_TASKS_LABEL = 'Scheduled tasks';
+
 /** The standing section rows under the Studio row, top to bottom. `pane` is
     the open Settings tab (null while Settings is closed).
 
-    W2 (sidebar like Claude desktop): the Tasks row is labelled "Cron jobs"
+    W2 (sidebar like Claude desktop): the Tasks row is labelled "Scheduled tasks"
     (ids, verbs and ⌘ 2 are unchanged), Skills stays, and a Plugins row opens
     Settings › Plugins. "New project" left these rows: it is the small button
     on the Projects header now (chat-projects.js). A second argument
     (the old `{projects}` option) is ignored. */
 function sidebarNavItems(pane) {
   return [
-    {id: 'tasks', label: 'Cron jobs', icon: 'timer', act: 'room:tasks', chord: '⌘ 2', on: pane === 'tasks'},
+    {id: 'tasks', label: SCHEDULED_TASKS_LABEL, icon: 'timer', act: 'room:tasks', chord: '⌘ 2', on: pane === 'tasks'},
     // ATO-2257: the task board, a room of its own (workboard.js); it is never a Settings tab.
     {id: 'board', label: 'Task board', icon: 'kanban', act: 'board:open', chord: '', on: false},
     {id: 'skills', label: 'Skills', icon: 'bookOpen', act: 'room:skills', chord: '⌘ 3', on: pane === 'skills'},
@@ -35,7 +42,7 @@ function sidebarNavItems(pane) {
 }
 
 /* W2: the sidebar's top rows draw Lucide glyphs (24px grid, 1.5 stroke) at
-   16px, so New chat, Studio, Cron jobs, Skills, Plugins and the Projects
+   16px, so New chat, Studio, Scheduled tasks, Skills, Plugins and the Projects
    button read as one thin set. Lucide is ISC licensed. */
 const LUCIDE = {
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
@@ -100,4 +107,4 @@ function sidebarToggleView(st) {
   return {open, label: open ? 'Hide sidebar (⌘ \\)' : 'Show sidebar (⌘ \\)'};
 }
 
-if (typeof module !== 'undefined') module.exports = {sidebarNavItems, railGlyph, toggleSidebar, sidebarToggleView, lucideIcon, studioMenuItems, LUCIDE};
+if (typeof module !== 'undefined') module.exports = {SCHEDULED_TASKS_LABEL, sidebarNavItems, railGlyph, toggleSidebar, sidebarToggleView, lucideIcon, studioMenuItems, LUCIDE};
