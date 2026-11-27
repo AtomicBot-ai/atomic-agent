@@ -1031,6 +1031,8 @@ export function buildStreamEventHook(
           fraction: Number.isFinite(event.fraction) ? Math.min(Math.max(event.fraction, 0), 1) : 0,
           elapsed_ms: Number.isFinite(event.elapsedMs) ? Math.max(0, Math.round(event.elapsedMs)) : 0,
           label: event.label,
+          // ATO-2444: a slide os.fs.write_pptx laid out, for the chat to draw small.
+          ...(event.slide === undefined ? {} : { slide: event.slide }),
         });
       }
       return;
