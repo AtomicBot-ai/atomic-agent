@@ -1,6 +1,7 @@
 import type { AtomicAgentConfig } from "../config/index.js";
 import { readManagedEngineLiveness, type ManagedEngineLiveness } from "../local-llm/server/engine-liveness.js";
 import { isLoopbackUrlOnPort } from "../local-llm/server/managed-api-key.js";
+import { coreRecordClaimsPort } from "../local-llm/core/core-record-read.js";
 
 /**
  * Whether the agent's own model process stands behind a llama.cpp address,
@@ -12,12 +13,18 @@ import { isLoopbackUrlOnPort } from "../local-llm/server/managed-api-key.js";
  *    ours is there (a recorded pid that is dead, or none recorded) and
  *    nothing is bringing one up (no engine lock held, no start pending).
  *    The server that answered 401 is then another program on that port.
+ *  - `core_session`: what `gone` would be, but our Atomic Core has a
+ *    session record that names that port, or one there that does not read
+ *    (ATO-2460). Core's own model server is then the likely one that
+ *    refused: the record could not be read when the key was picked, or its
+ *    pid mirror is missing. Worded as a refused key (restart the model),
+ *    never as another program on the port.
  *  - `unknown`: not the managed chat port (an External server, a custom
  *    link), a start, load or install under way (our own server may be the
  *    one answering before its pid is written), or the state could not be
  *    read. The refused-key words stay.
  */
-export type OwnEngineState = "running" | "gone" | "unknown";
+export type OwnEngineState = "running" | "gone" | "core_session" | "unknown";
 
 /**
  * The sentence a standing 401 gets when our own model is not running: the
@@ -42,6 +49,7 @@ export function readOwnEngineState(
   url: string,
   config: Pick<AtomicAgentConfig, "localModels" | "paths">,
   liveness: (dataDir: string) => ManagedEngineLiveness = readManagedEngineLiveness,
+  coreClaims: (dataDir: string, port: number) => boolean = coreRecordClaimsPort,
 ): OwnEngineState {
   const { localModels } = config;
   if (localModels.mode !== "managed") return "unknown";
@@ -54,5 +62,11 @@ export function readOwnEngineState(
     return "unknown";
   }
   if (state === "alive") return "running";
-  return state === "dead" || state === "no_pid" ? "gone" : "unknown";
+  if (state !== "dead" && state !== "no_pid") return "unknown";
+  if (localModels.managed?.engine === "llama-server") return "gone";
+  try {
+    return coreClaims(config.paths.localModelsDataDir, port) ? "core_session" : "gone";
+  } catch {
+    return "gone";
+  }
 }

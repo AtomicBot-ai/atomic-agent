@@ -58,6 +58,13 @@ describe("LlamaServerClient on a 401 with our engine gone (ATO-1732)", () => {
     expect(err.message).toContain("atomic-agent models start");
     expect(err.message).not.toContain("Another program");
   });
+
+  it("keeps the restart advice, and says so on the error, when our Core's record claims the port (ATO-2460)", async () => {
+    const err = await refusal(refusingClient("core_session"));
+    expect(err.message).toContain("atomic-agent models start");
+    expect(err.message).not.toContain("Another program");
+    expect(err.ownEngine).toBe("core_session");
+  });
 });
 
 describe("keyRefusedError with our engine gone (ATO-1732)", () => {
