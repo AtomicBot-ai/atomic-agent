@@ -109,6 +109,33 @@ describe.skipIf(process.platform === "win32")("os.shell.run until (ATO-2358)", (
     expect(jobs.list(SESSION)).toEqual([]);
   });
 
+  // Review round 1: a match only seen at the exit (an unterminated last
+  // line) must be reported as an exit, not as a running job.
+  it("a job that prints the line and then exits is collected, not reported running", async () => {
+    const tool = shellTool(jobs);
+    const result = await tool.run({ cmd: "sleep 0.2; printf 'build ready'; exit 0", until: "ready" }, ctx());
+    expect(result.details.matched).toBeUndefined();
+    expect(result.details).toMatchObject({ exitCode: 0, jobId: 1 });
+    expect(result.summary).toContain('the job printed a line matching /ready/: "build ready", then exited');
+    expect(result.summary).not.toContain("It is still running");
+    expect(jobs.list(SESSION)).toEqual([]);
+  });
+
+  // Review round 1: {cmd, until} keeps the eviction line a plain
+  // background start shows.
+  it("{cmd, until} says which job it evicted to stay within the job limit", async () => {
+    const limited = new ShellJobRegistry({ maxJobs: 1 });
+    try {
+      const tool = shellTool(limited);
+      await tool.run({ cmd: "sleep 30", background: true }, ctx());
+      const result = await tool.run({ cmd: "echo up; sleep 30", until: "up" }, ctx());
+      expect(result.details).toMatchObject({ matched: true, jobId: 2 });
+      expect(result.summary).toContain("job 1 (sleep 30) was stopped to stay within 1 running jobs");
+    } finally {
+      limited.endAll();
+    }
+  });
+
   it("refuses a bad pattern before anything runs", async () => {
     const tool = shellTool(jobs);
     const marker = join(dir, "ran");

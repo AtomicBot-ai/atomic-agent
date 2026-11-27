@@ -461,9 +461,13 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     if (background && until !== undefined) {
       // A spawn failure rejects here, as on the plain background path.
       await job.waitFor(1, ctx.signal);
-      const { record } = jobs.register(ctx.sessionId, job, facts, true);
+      const { record, evicted } = jobs.register(ctx.sessionId, job, facts, true);
       const jobCtx = { jobs, sessionId: ctx.sessionId, defaultTimeoutMs, signal: ctx.signal };
-      const result = await runShellWaitUntil(jobCtx, record, until, timeout.timeoutMs);
+      const result = await runShellWaitUntil(jobCtx, record, until, timeout.timeoutMs, {
+        notices,
+        evicted,
+        maxJobs: jobs.maxJobs,
+      });
       // A cancelled turn does not leave behind what it was starting.
       if (ctx.signal.aborted && record.state === "running") jobs.stop(record, "kill");
       return result;

@@ -26,6 +26,7 @@ export function renderShellLineMatched(
   record: ShellJobRecord,
   until: string,
   outcome: { line: WatchedLine; before: WatchedLine[]; dropped: number },
+  notices: readonly string[] = [],
 ): CompressedToolResult {
   const runningMs = Date.now() - record.job.startedAt;
   const id = record.id;
@@ -36,7 +37,7 @@ export function renderShellLineMatched(
   return renderShellResult({
     facts: record.facts,
     status: "ok",
-    notices: [notice],
+    notices: [...notices, notice],
     statusLine: `matched (job ${id}, pid ${record.job.pid ?? "?"}, running ${formatShellElapsed(runningMs)}${record.keep ? ", kept" : ""})`,
     body,
     overflow: "head",
@@ -69,4 +70,9 @@ export function formatUntilElapsedNotice(
 /** Above an exit result: the job ended without printing a matching line. */
 export function formatUntilExitedNotice(until: string, dropped: number): string {
   return `the job exited without printing a line matching /${until}/${droppedNote(dropped)}`;
+}
+
+/** Above an exit result: the matching line came, and then the job ended. */
+export function formatUntilMatchedThenExitedNotice(until: string, line: string): string {
+  return `the job printed a line matching /${until}/: ${quoteLine(line)}, then exited`;
 }
