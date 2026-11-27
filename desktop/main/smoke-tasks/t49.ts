@@ -191,7 +191,7 @@ async function telegram(js: Js, check: Check): Promise<void> {
         const saved = {mode: TG.mode, token: TG.token, lastError: TG.lastError, busy: TG.busy};
         try {
           Object.assign(TG, {mode: 'tokenPrompt', token: {error: null, submitting: false}, lastError: null});
-          const res = await tgTokenSave('smoke-t49-not-a-token');
+          const res = await tgTokenSave('smoke-t49-not-a-token', {raw: true});   // raw: past the shape and Telegram checks (ATO-426), straight to the refused write
           const box = document.createElement('div'); box.innerHTML = telegramTab();
           return {ok: res.ok, tokenError: TG.token.error, lastError: TG.lastError, shown: (box.textContent.match(/Could not save the token/g) || []).length};
         } finally { Object.assign(TG, saved); }
