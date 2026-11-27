@@ -10057,6 +10057,8 @@ document.addEventListener('keydown', (e) => {
   if (k === 'Enter' && e.target.id === 'mcp-name' && MCP.addModal) { e.preventDefault(); mcpAddSubmit(MCP.addModal.json); return; }
   // ATO-328: Enter in an Exa key field saves it, in the chat card and in Settings alike, through act() as the Save click does (ui_action exakey:save:*).
   if (k === 'Enter' && !mod && e.target.dataset && e.target.dataset.exaKey) { e.preventDefault(); ANX.via('key'); act('exakey:save:' + e.target.dataset.exaKey); return; }
+  // ATO-2010: Enter in the small provider window's address or key field is its Next (first run has its own, obCloudKey).
+  if (k === 'Enter' && !mod && !e.shiftKey && !e.isComposing && (e.target.id === 'wiz-url' || e.target.id === 'wiz-key') && !OB.open && WIZ.phase === 'configure') { e.preventDefault(); if (!WIZ.stepping) act('wiz:next'); return; }
   /* ATO-226: by `sk`, so ⌘K, ⌘N, ⌘. and the rest work on a Russian layout
      too. ⌘N, ⌘\, ⌘1-4, ⌘, and ⌘/ are also menu accelerators, which macOS
      and Windows already match on a Russian layout; with the page taking
