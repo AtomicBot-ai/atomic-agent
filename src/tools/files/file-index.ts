@@ -29,6 +29,8 @@ const DEFAULT_MAX_FILE_BYTES = 50 * 1024 * 1024;
 const DEFAULT_MAX_FILES_PER_FOLDER = 20_000;
 /** Closest vector candidates one search keeps; every stored vector is still looked at. */
 const DEFAULT_SCAN_LIMIT = 2_000;
+/** Most characters of one file's text `passageText` returns. */
+export const PASSAGE_TEXT_MAX = 400_000;
 
 export interface FileIndexOptions {
   /** `<stateDir>/files-index.sqlite`, or `:memory:` in tests. */
@@ -175,6 +177,12 @@ export class FileIndex implements FileIndexApi {
       },
       { query: options.query, under, topK, ...(options.signal ? { signal: options.signal } : {}) },
     );
+  }
+
+  /** ATO-2507: the indexed text of a file or one PDF page, at most {@link PASSAGE_TEXT_MAX} characters. */
+  passageText(path: string, page?: number): string | null {
+    if (this.closed) return null;
+    return this.store.fileText(path, page !== undefined && Number.isInteger(page) && page > 0 ? page : null, PASSAGE_TEXT_MAX);
   }
 
   /** Whether vector candidates come from `sqlite-vec` (true) or a scan. */
