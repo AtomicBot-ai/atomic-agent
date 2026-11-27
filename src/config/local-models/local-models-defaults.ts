@@ -27,7 +27,7 @@ export function createLocalModelsDefaults(): UserLocalModelsConfig {
     thinking: "auto",
     reasoningBudgetTokens: 0,
     drySampler: false,
-    modelSampling: false,
+    modelSampling: true,
     strictToolArgs: false,
     managed: {
       engine: "atomic-core",

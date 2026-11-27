@@ -72,6 +72,8 @@ describe("config shape map (ATO-764)", () => {
     expect(knownConfigKeys("localModels.managed").has("modelsDirOverride")).toBe(true);
     expect(knownConfigKeys("localModels.managed").has("loraAdapters")).toBe(true);
     expect(knownConfigKeys("localModels.managed").has("dataDirOverride")).toBe(true);
+    // ATO-2482: written only when set, so a reset of the last set sticks.
+    expect(knownConfigKeys("localModels").has("modelSamplingOverrides")).toBe(true);
   });
 
   it("descends the llm blocks and knows every pin a caller can clear", () => {

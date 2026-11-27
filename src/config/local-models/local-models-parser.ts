@@ -19,6 +19,7 @@ import {
 import { parseUrl } from "../config-values.js";
 import { parseCustomLocalModels } from "../custom-models-schema.js";
 import { parseLoraAdapters } from "./lora-adapters-parser.js";
+import { parseModelSamplingOverrides } from "./model-sampling-config.js";
 import { isKnownLocalModelId, type LocalModelDef } from "../../local-llm/catalog/models-catalog.js";
 import {
   BACKEND_VARIANT_PREFERENCES,
@@ -69,6 +70,15 @@ const UNBOUNDED_REASONING_DEFAULT_VERSION = 78;
 
 /** The reasoning budget the schema wrote before v78, never an operator's choice. */
 const UNCHOSEN_REASONING_BUDGET_TOKENS = 1500;
+/**
+ * v80 turns `localModels.modelSampling` on by default (ATO-2480): a local
+ * model runs with the temperature / top-p / top-k its authors recommend
+ * instead of the built-in 0.2 / 0.95 / 40. Every file since ATO-2202 holds
+ * the schema's `false` (first run writes the defaults, and there was no
+ * switch for it outside `config set`), so an older file's `false` is not
+ * a choice and moves to `true`. From v80 an explicit `false` is honoured.
+ */
+const MODEL_SAMPLING_DEFAULT_VERSION = 80;
 
 export function parseLocalTemplateSetting(
   raw: unknown,
@@ -279,6 +289,16 @@ function parseOptionalManagedModelId(
     return null;
   }
   return s;
+}
+
+function resolveModelSampling(
+  inputVersion: number,
+  raw: unknown,
+  readDefaults: () => UserLocalModelsConfig,
+): boolean {
+  const value = parseBool(raw ?? readDefaults().modelSampling, "localModels.modelSampling");
+  if (inputVersion < MODEL_SAMPLING_DEFAULT_VERSION) return true;
+  return value;
 }
 
 /**
@@ -572,10 +592,8 @@ export function parseUserLocalModelsConfig(
       localModels.drySampler ?? readDefaults().drySampler,
       "localModels.drySampler",
     ),
-    modelSampling: parseBool(
-      localModels.modelSampling ?? readDefaults().modelSampling,
-      "localModels.modelSampling",
-    ),
+    modelSampling: resolveModelSampling(inputVersion, localModels.modelSampling, readDefaults),
+    ...samplingOverridesField(localModels.modelSamplingOverrides),
     strictToolArgs: parseBool(
       localModels.strictToolArgs ?? readDefaults().strictToolArgs,
       "localModels.strictToolArgs",
@@ -585,4 +603,15 @@ export function parseUserLocalModelsConfig(
     download,
     customModels,
   };
+}
+
+/** ATO-2482: the key only when the file names at least one set. */
+function samplingOverridesField(
+  raw: unknown,
+): Pick<UserLocalModelsConfig, "modelSamplingOverrides"> {
+  const overrides = parseModelSamplingOverrides(
+    raw,
+    "localModels.modelSamplingOverrides",
+  );
+  return overrides ? { modelSamplingOverrides: overrides } : {};
 }

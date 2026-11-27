@@ -73,3 +73,27 @@ describe("ModelProfileManager model sampling (ATO-2202)", () => {
     expect(mgr.getProfile().sampling).toEqual({ temperature: 0.7 });
   });
 });
+
+describe("ModelProfileManager served file (ATO-2482)", () => {
+  it("stamps /props.model_path on the profile, with or without a sampling reading", async () => {
+    const { mgr } = await managerWith([{ ...QWEN3_PROPS, model_path: "/models/plain.gguf" }], {});
+    await mgr.refresh();
+    expect(mgr.getProfile().modelPath).toBe("/models/plain.gguf");
+    const { mgr: none } = await managerWith([QWEN3_PROPS], {});
+    await none.refresh();
+    expect(none.getProfile().modelPath).toBeUndefined();
+  });
+
+  it("follows the file swapped behind the same profile id", async () => {
+    const { mgr } = await managerWith(
+      [
+        { ...GEMMA4_PROPS, model_path: "/models/a.gguf" },
+        { ...GEMMA4_PROPS, model_path: "/models/b.gguf" },
+      ],
+      {},
+    );
+    await mgr.refresh();
+    await mgr.refresh();
+    expect(mgr.getProfile().modelPath).toBe("/models/b.gguf");
+  });
+});

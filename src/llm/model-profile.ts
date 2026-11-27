@@ -39,6 +39,14 @@ interface BaseModelProfile {
    */
   sampling?: ModelSamplingDefaults;
   /**
+   * The weights file the server reports (`/props.model_path`), stamped
+   * by the profile manager. The llama-server provider matches its file
+   * name against the model catalog to find the entry's own sampling and
+   * the person's per-model set (ATO-2482). Absent when `/props` names no
+   * path.
+   */
+  modelPath?: string;
+  /**
    * Physical context window in tokens, read from `llama-server /props`
    * (`default_generation_settings.n_ctx`, with a root `n_ctx` fallback).
    * Absent when the probe failed or an older llama.cpp build did not

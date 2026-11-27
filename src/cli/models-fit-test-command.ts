@@ -238,7 +238,13 @@ export async function runModelsFitTest(args: string[]): Promise<number> {
   const depsFor = (signal: AbortSignal): FitTestDeps => ({
     loadModel: (modelId) => loadManagedModel(modelId, signal),
     runTask: (task, model) =>
-      createAgentTaskRunner({ modelUrl: model.url, modelApiKey: model.apiKey, timeoutMs: parsed.timeoutMs, signal })(task),
+      createAgentTaskRunner({
+        modelUrl: model.url,
+        modelApiKey: model.apiKey,
+        timeoutMs: parsed.timeoutMs,
+        modelSampling: cfg.localModels.modelSampling === true,
+        signal,
+      })(task),
     // After a stop no reply goes to the judge.
     judge: async (task, reply) => {
       if (signal.aborted) throw new Error("stopped");
