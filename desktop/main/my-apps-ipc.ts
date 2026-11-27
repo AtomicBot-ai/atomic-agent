@@ -6,6 +6,13 @@
  *   apps:rename   (id, name) → {ok, app} | {ok:false, reason}
  *   apps:delete   (id) → {ok} | {ok:false, reason}; the folder goes to the Trash
  *   apps:open     (id) → {ok} | {ok:false, reason}; its own window, or the open one focused
+ *   ATO-2459:
+ *   apps:versions (id) → {ok, versions}: the earlier pages, newest first (my-apps-versions.ts)
+ *   apps:restore  (id, version) → {ok, app}; the open window reloads
+ *   apps:install  (id) → {ok, path}: a launcher in the OS app menu (my-apps-install.ts)
+ *   apps:uninstall (id) → {ok, removed}
+ *   apps:list also says, per app, whether it is installed and how many versions it has,
+ *   and whether Install can work in this build (`install.supported`).
  *
  * Only the main window may call them. The pure part (ids, manifest, paths,
  * the scheme's answer) is my-apps-store.ts; the scheme itself is made
@@ -20,7 +27,14 @@
  * Precedent: Goose apps (sandboxed window), Claude Desktop installed artifacts.
  */
 
-import { BrowserWindow, ipcMain, session, shell, type Session, type WebContents } from "electron";
+import { homedir } from "node:os";
+
+import { app, BrowserWindow, ipcMain, session, shell, type Session, type WebContents } from "electron";
+
+import type { DeeplinkRequest } from "./deeplink.js";
+import { appOpenRequestId } from "./my-apps-deeplink.js";
+import { installApp, installedShortcut, installSupported, uninstallApp, type InstallHost } from "./my-apps-install.js";
+import { listAppVersions, restoreAppVersion } from "./my-apps-versions.js";
 
 import { DESKTOP_STATE_DIR } from "./state-dir.js";
 import {
@@ -46,6 +60,21 @@ export interface MyAppsIpcDeps {
 }
 
 const windows = new Map<string, BrowserWindow>();
+/** The apps folder wireMyAppsIpc was given; a launcher's link opens from it too. */
+let currentRoot = appsRoot(DESKTOP_STATE_DIR);
+
+function installHost(): InstallHost {
+  const host: InstallHost = {
+    platform: process.platform,
+    home: homedir(),
+    env: process.env,
+    execPath: process.execPath,
+    // Unpackaged runs register no atomicagent:// handler, so a launcher could not open anything.
+    resourcesPath: app.isPackaged ? process.resourcesPath : null,
+  };
+  if (process.platform === "win32") host.writeShortcutLink = (path, operation, link) => shell.writeShortcutLink(path, operation, link);
+  return host;
+}
 const wiredSessions = new Set<string>();
 
 function appSession(root: string, id: string): Session {
@@ -122,11 +151,18 @@ function openApp(root: string, id: unknown): { ok: true; focused: boolean } | { 
   return { ok: true, focused: false };
 }
 
+/** ATO-2459: an installed launcher's `atomicagent://app/open?id=` link (my-apps-deeplink.ts). False: not handled here. */
+export function openAppFromDeeplink(request: DeeplinkRequest): boolean {
+  const id = appOpenRequestId(request);
+  return id !== null && openApp(currentRoot, id).ok;
+}
+
 let wired = false;
 export function wireMyAppsIpc(deps: MyAppsIpcDeps): void {
   if (wired) return;
   wired = true;
   const root = deps.root ?? appsRoot(DESKTOP_STATE_DIR);
+  currentRoot = root;
   const fromMain = (wc: WebContents) => {
     const main = deps.mainWindow();
     return !!main && !main.isDestroyed() && main.webContents === wc;
@@ -141,7 +177,9 @@ export function wireMyAppsIpc(deps: MyAppsIpcDeps): void {
 
   ipcMain.handle("apps:list", (event) => {
     if (!fromMain(event.sender)) return refused;
-    return { ok: true, apps: listApps(root) };
+    const host = installHost();
+    const apps = listApps(root).map((a) => ({ ...a, installed: installedShortcut(host, root, a.id) !== null, versions: listAppVersions(root, a.id).length }));
+    return { ok: true, apps, install: { supported: installSupported(host) } };
   });
 
   ipcMain.handle("apps:rename", (event, id: unknown, name: unknown) => {
@@ -149,6 +187,8 @@ export function wireMyAppsIpc(deps: MyAppsIpcDeps): void {
     const r = renameApp(root, id, name);
     const win = r.ok ? windows.get(r.app.id) : undefined;
     if (r.ok && win && !win.isDestroyed()) win.setTitle(r.app.name);
+    // An installed launcher takes the new name too (ATO-2459).
+    if (r.ok && installedShortcut(installHost(), root, r.app.id)) installApp(installHost(), root, r.app.id);
     return r;
   });
 
@@ -158,6 +198,7 @@ export function wireMyAppsIpc(deps: MyAppsIpcDeps): void {
     if (!dir || !isAppId(id)) return { ok: false, reason: "bad-id" };
     const win = windows.get(id);
     if (win && !win.isDestroyed()) win.close();
+    uninstallApp(installHost(), root, id);   // ATO-2459: no launcher left pointing at nothing
     // The Trash first, so a wrong click can be undone; the disk itself when there is none.
     const trashed = await shell.trashItem(dir).then(() => true, () => false);
     const r = trashed ? { ok: true as const } : deleteAppFiles(root, id);
@@ -170,5 +211,29 @@ export function wireMyAppsIpc(deps: MyAppsIpcDeps): void {
   ipcMain.handle("apps:open", (event, id: unknown) => {
     if (!fromMain(event.sender)) return refused;
     return openApp(root, id);
+  });
+
+  ipcMain.handle("apps:versions", (event, id: unknown) => {
+    if (!fromMain(event.sender)) return refused;
+    if (!isAppId(id)) return { ok: false, reason: "bad-id" };
+    return { ok: true, versions: listAppVersions(root, id) };
+  });
+
+  ipcMain.handle("apps:restore", (event, id: unknown, version: unknown) => {
+    if (!fromMain(event.sender)) return refused;
+    const r = restoreAppVersion(root, id, version);
+    const win = r.ok ? windows.get(r.app.id) : undefined;
+    if (win && !win.isDestroyed()) win.webContents.reload();
+    return r;
+  });
+
+  ipcMain.handle("apps:install", (event, id: unknown) => {
+    if (!fromMain(event.sender)) return refused;
+    return installApp(installHost(), root, id);
+  });
+
+  ipcMain.handle("apps:uninstall", (event, id: unknown) => {
+    if (!fromMain(event.sender)) return refused;
+    return uninstallApp(installHost(), root, id);
   });
 }

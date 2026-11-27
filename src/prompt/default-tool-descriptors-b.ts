@@ -214,6 +214,36 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     examples: ['{"day":"yesterday","part":"afternoon"}'],
     tier: "rare",
   },
+  // ATO-2459: My apps, the pages the desktop opens as apps of their own (<stateDir>/apps).
+  {
+    name: "app.save",
+    summary:
+      "Save a self-contained HTML page (inline CSS and JS, no network) as a new app in the person's My apps; it opens in its own window from Apps in the desktop app. Use when they ask to make or keep a small tool (a converter, a tracker, a game). Returns the id for app.update.",
+    argsSchema: "{ name: string /* short, shown in My apps */, html: string /* the whole page, max 4 MB */ }",
+    examples: ['{"name":"Currency converter","html":"<!doctype html><title>Converter</title>..."}'],
+    tier: "rare",
+  },
+  {
+    name: "app.update",
+    summary:
+      "Change an app in My apps: html replaces the whole page (read it first with app.list and its id), name renames it, restoreVersion puts an earlier page back. The replaced page is kept as a version.",
+    argsSchema: "{ id: string, html?: string /* the whole new page */, name?: string, restoreVersion?: number /* from app.list */ }",
+    examples: ['{"id":"currency-converter-a1b2c3","html":"<!doctype html>..."}', '{"id":"currency-converter-a1b2c3","restoreVersion":2}'],
+    tier: "rare",
+  },
+  {
+    name: "app.delete",
+    summary: "Remove an app from My apps (and its launcher). Only when the person asks.",
+    argsSchema: "{ id: string }",
+    tier: "rare",
+  },
+  {
+    name: "app.list",
+    summary: "List the apps in My apps; with an id, that app's versions and its current page.",
+    argsSchema: "{ id?: string }",
+    examples: ["{}", '{"id":"currency-converter-a1b2c3"}'],
+    tier: "rare",
+  },
   {
     name: "tasks.schedule",
     summary: "Schedule a one-shot task; current session or newSession.",

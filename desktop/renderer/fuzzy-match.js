@@ -45,6 +45,8 @@ function fuzzyRank(q, title, extra) {
   if (t.split(/[\s·]+/).some((w) => w.startsWith(q))) return 2;
   if (t.includes(q)) return 3;
   if ((e.cx || '').toLowerCase().includes(q)) return 4;
+  // ATO-2743: a row's extra search words ("cron" finds Scheduled tasks).
+  if ((e.kw || '').toLowerCase().split(/\s+/).some((w) => w && w.startsWith(q))) return 4;
   // The slash alias ("/llm", "/feed"): typed with or without its slash.
   if ((e.sc || '').startsWith('/') && e.sc.slice(1).startsWith(q.replace(/^\//, ''))) return 2;
   const s = fuzzyLibScore(q, t);

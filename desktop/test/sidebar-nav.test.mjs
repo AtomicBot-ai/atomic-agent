@@ -4,30 +4,41 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 const {sidebarNavItems, railGlyph, toggleSidebar, sidebarToggleView, lucideIcon, studioMenuItems, LUCIDE} = createRequire(import.meta.url)('../renderer/sidebar-nav.js');
 
-// ATO-457 (U-24), W2: under Studio, Cron jobs (the Tasks tab), Skills and Plugins are standing rows, whatever the agent holds.
-// ATO-2257: the Task board row sits under Cron jobs and opens its own room.
-test('the section rows are Cron jobs, Task board, Skills, Plugins, Recipes, reaching the ⌘ 2 / ⌘ 3 verbs, the board, Settings › Plugins and the recipes sheet', () => {
+// ATO-457 (U-24), W2: under Studio, Scheduled tasks (the Tasks tab, ATO-2743), Skills and Plugins are standing rows, whatever the agent holds.
+// ATO-2257: the Task board row sits under Scheduled tasks and opens its own room.
+// ATO-2459: an Apps row last, opening Settings › My apps.
+test('the section rows are Scheduled tasks, Task board, Skills, Plugins, Recipes, Apps, reaching the ⌘ 2 / ⌘ 3 verbs, the board, Settings › Plugins, the recipes sheet and Settings › My apps', () => {
   const items = sidebarNavItems(null);
-  assert.deepEqual(items.map((n) => n.label), ['Cron jobs', 'Task board', 'Skills', 'Plugins', 'Recipes']);
-  assert.deepEqual(items.map((n) => n.id), ['tasks', 'board', 'skills', 'plugins', 'recipes'], 'the internal ids stay');
-  assert.deepEqual(items.map((n) => n.act), ['room:tasks', 'board:open', 'room:skills', 'settings:plugins', 'recipe:gallery']);
-  assert.deepEqual(items.map((n) => n.chord), ['⌘ 2', '', '⌘ 3', '', '']);
-  assert.deepEqual(items.map((n) => n.icon), ['timer', 'kanban', 'bookOpen', 'puzzle', 'scrollText']);
+  assert.deepEqual(items.map((n) => n.label), ['Scheduled tasks', 'Task board', 'Skills', 'Plugins', 'Recipes', 'Apps']);
+  assert.deepEqual(items.map((n) => n.id), ['tasks', 'board', 'skills', 'plugins', 'recipes', 'apps'], 'the internal ids stay');
+  assert.deepEqual(items.map((n) => n.act), ['room:tasks', 'board:open', 'room:skills', 'settings:plugins', 'recipe:gallery', 'settings:myapps']);
+  assert.deepEqual(items.map((n) => n.chord), ['⌘ 2', '', '⌘ 3', '', '', '']);
+  assert.deepEqual(items.map((n) => n.icon), ['timer', 'kanban', 'bookOpen', 'puzzle', 'scrollText', 'appWindow']);
   assert.ok(items.every((n) => !n.on), 'nothing is lit while Settings is closed');
   // The old {projects} option no longer adds a New project row.
-  assert.deepEqual(sidebarNavItems(null, {projects: true}).map((n) => n.label), ['Cron jobs', 'Task board', 'Skills', 'Plugins', 'Recipes']);
+  assert.deepEqual(sidebarNavItems(null, {projects: true}).map((n) => n.label), ['Scheduled tasks', 'Task board', 'Skills', 'Plugins', 'Recipes', 'Apps']);
+});
+
+// ATO-2459 review: the smokes' "renderer painted" check compares the painted rows
+// (Studio, then these) with main.ts SIDEBAR_NAV_EXPECTED exactly; a new row must land in both.
+test('main.ts SIDEBAR_NAV_EXPECTED is Studio followed by every section row', () => {
+  const main = readFileSync(new URL('../main/main.ts', import.meta.url), 'utf8');
+  const m = main.match(/const SIDEBAR_NAV_EXPECTED = JSON\.stringify\((\[[^\]]*\])\)/);
+  assert.ok(m, 'SIDEBAR_NAV_EXPECTED is a JSON.stringify of a literal list');
+  assert.deepEqual(JSON.parse(m[1]), ['Studio', ...sidebarNavItems(null).map((n) => n.label)]);
 });
 
 test('the row whose Settings tab is open is the lit one', () => {
-  assert.deepEqual(sidebarNavItems('tasks').map((n) => n.on), [true, false, false, false, false]);
-  assert.deepEqual(sidebarNavItems('skills').map((n) => n.on), [false, false, true, false, false]);
-  assert.deepEqual(sidebarNavItems('plugins').map((n) => n.on), [false, false, false, true, false]);
-  assert.deepEqual(sidebarNavItems('memory').map((n) => n.on), [false, false, false, false, false]);
+  assert.deepEqual(sidebarNavItems('tasks').map((n) => n.on), [true, false, false, false, false, false]);
+  assert.deepEqual(sidebarNavItems('skills').map((n) => n.on), [false, false, true, false, false, false]);
+  assert.deepEqual(sidebarNavItems('plugins').map((n) => n.on), [false, false, false, true, false, false]);
+  assert.deepEqual(sidebarNavItems('myapps').map((n) => n.on), [false, false, false, false, false, true]);
+  assert.deepEqual(sidebarNavItems('memory').map((n) => n.on), [false, false, false, false, false, false]);
 });
 
 // W2: the top rows draw thin Lucide glyphs, 24px grid at 1.5 stroke.
 test('every row icon is a Lucide glyph at stroke 1.5; an unknown name draws nothing', () => {
-  for (const n of ['plus', 'sparkles', 'timer', 'kanban', 'bookOpen','puzzle', 'image', 'video', 'folderPlus', 'scrollText']) {
+  for (const n of ['plus', 'sparkles', 'timer', 'kanban', 'bookOpen','puzzle', 'image', 'video', 'folderPlus', 'scrollText', 'appWindow']) {
     const svg = lucideIcon(n);
     assert.match(svg, /viewBox="0 0 24 24"/, n);
     assert.match(svg, /stroke-width="1\.5"/, n);
@@ -61,7 +72,7 @@ test('the sidebar draws one Studio row first in the section rows, and its popove
 
 test('the View menu and the section rows name the same ⌘ 2 / ⌘ 3 places', () => {
   const menu = readFileSync(new URL('../main/menu.ts', import.meta.url), 'utf8');
-  assert.match(menu, /item\("Cron jobs", "room:tasks", "CommandOrControl\+2"\)/);
+  assert.match(menu, /item\("Scheduled tasks", "room:tasks", "CommandOrControl\+2"\)/);
   assert.match(menu, /item\("Skills", "room:skills", "CommandOrControl\+3"\)/);
 });
 
