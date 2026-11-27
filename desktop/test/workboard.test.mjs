@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
 const M = require("../out/main/workboard-move.js");
@@ -188,6 +189,94 @@ test("the thread shows its states, oldest first, with a notice's details behind 
   assert.match(html, /Atomic Agent/);
   assert.match(html, /<summary>Details<\/summary><pre>Last error: &lt;timeout&gt;<\/pre>/);
   assert.match(html, /data-act="board:comment:t-1"/);
+});
+
+/* ---- renderer half, run in a vm with stub globals (no DOM) ---- */
+
+function boardRoom() {
+  const listeners = {};
+  const calls = { runTask: [], toasts: [], renders: 0 };
+  const ctx = vm.createContext({
+    console,
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    S: { room: "board" },
+    BR: { runTask: async (id) => { calls.runTask.push(id); return { ok: true }; } },
+    render: () => { calls.renders += 1; },
+    toast: (...args) => { calls.toasts.push(args); },
+    document: {
+      visibilityState: "visible",
+      addEventListener: (type, fn) => { (listeners[type] ||= []).push(fn); },
+      querySelectorAll: () => [],
+    },
+  });
+  for (const f of ["workboard-thread.js", "workboard.js"]) {
+    vm.runInContext(readFileSync(new URL(`../renderer/${f}`, import.meta.url), "utf8"), ctx, { filename: f });
+  }
+  const fire = (type, target) => { for (const fn of listeners[type] || []) fn({ target }); };
+  return { ctx, calls, fire, get: (expr) => vm.runInContext(expr, ctx) };
+}
+
+test("Run now on a waiting card asks first, and Run anyway runs it once", async () => {
+  const room = boardRoom();
+  room.get("WB").cards = [card("t-1", "todo", { waitingOn: ["t-9"] }), card("t-2", "todo")];
+  room.get("boardAct")("run:t-1");
+  assert.equal(room.calls.runTask.length, 0);
+  assert.equal(room.get("WX").confirmRun, "t-1");
+  room.get("boardAct")("runanyway:t-1");
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(room.calls.runTask, ["t-1"]);
+  assert.equal(room.get("WX").confirmRun, null);
+  // A card that waits on nothing runs at once.
+  room.get("boardAct")("run:t-2");
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(room.calls.runTask, ["t-1", "t-2"]);
+});
+
+test("the board does not refresh under an open thread", async () => {
+  const room = boardRoom();
+  let loads = 0;
+  room.get("BR").taskBoard = async () => { loads += 1; return { ok: true, data: { cards: [] } }; };
+  room.get("WX").thread = { id: "t-1" };
+  room.get("WB").timer = null;
+  const realInterval = room.ctx.setInterval;
+  let tick = null;
+  room.ctx.setInterval = (fn) => { tick = fn; return 1; };
+  room.get("wbPoll")();
+  tick();
+  assert.equal(loads, 0);
+  room.get("WX").thread = null;
+  tick();
+  assert.equal(loads, 1);
+  room.ctx.setInterval = realInterval;
+});
+
+test("a tick past the 20-card cap is undone, not kept on screen", () => {
+  const room = boardRoom();
+  room.get("WB").draft = { note: "", assignee: "", dependsOn: [] };
+  const boxes = [];
+  for (let i = 0; i < 21; i += 1) {
+    const box = { checked: true, getAttribute: (name) => (name === "data-wb-dep" ? `t-${i}` : null) };
+    boxes.push(box);
+    room.fire("change", box);
+  }
+  const picked = room.get("WB").draft.dependsOn;
+  assert.equal(picked.length, 20);
+  assert.equal(boxes.filter((b) => b.checked).length, picked.length);
+  assert.equal(boxes[20].checked, false);
+  assert.equal(room.calls.toasts.length, 1);
+});
+
+test("a late profile list for another card does not land in the open form", async () => {
+  const room = boardRoom();
+  let answer;
+  room.get("BR").boardProfiles = () => new Promise((r) => { answer = r; });
+  room.get("WB").editing = "t-1";
+  const loading = room.get("wxLoadProfiles")("t-1");
+  room.get("WB").editing = "t-2";
+  room.get("WX").profiles = { list: [{ name: "mine" }], loading: false, error: null };
+  answer({ ok: true, data: { profiles: [{ name: "theirs" }] } });
+  await loading;
+  assert.deepEqual(room.get("WX").profiles.list.map((p) => p.name), ["mine"]);
 });
 
 test("ATO-2498 hooks: script tag, IPC, client and preload", () => {

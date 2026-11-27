@@ -114,6 +114,7 @@ async function wxLoadProfiles(taskId) {
   WX.profiles = {list: null, loading: true, error: null};
   let res = null;
   try { res = typeof BR.boardProfiles === 'function' ? await BR.boardProfiles(taskId) : null; } catch { res = null; }
+  if (WB.editing !== taskId) return;   // the form moved on to another card
   const list = res && res.ok && res.data && Array.isArray(res.data.profiles) ? res.data.profiles.filter((p) => p && typeof p.name === 'string') : null;
   WX.profiles = {list, loading: false, error: list ? null : 'unreadable'};
   render();
@@ -167,7 +168,13 @@ function wxAct(verb, id) {
 function wxInstall(doc) {
   doc.addEventListener('change', (e) => {
     const box = e.target && e.target.getAttribute && e.target.getAttribute('data-wb-dep');
-    if (box && WB.draft) WB.draft.dependsOn = wxToggleDep(WB.draft.dependsOn, box, !!e.target.checked);
+    if (!box || !WB.draft) return;
+    WB.draft.dependsOn = wxToggleDep(WB.draft.dependsOn, box, !!e.target.checked);
+    // Past the cap the tick is not kept: untick the box and say why.
+    if (e.target.checked && !WB.draft.dependsOn.includes(box)) {
+      e.target.checked = false;
+      toast('A card can wait on ' + WX_DEPS_MAX + ' cards at most', 'Untick one to pick another.', 'bad');
+    }
   });
   doc.addEventListener('input', (e) => {
     if (e.target && e.target.hasAttribute && e.target.hasAttribute('data-wb-comment') && WX.thread) WX.thread.draft = e.target.value;
