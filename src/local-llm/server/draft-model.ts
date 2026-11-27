@@ -23,6 +23,18 @@ import { vocabSizeFromMetadata } from "../catalog/gguf-metadata.js";
  * `core/core-speculative.ts`), so under Core the draft is skipped and
  * the reason logged.
  *
+ * Engine facts (TurboQuant `b10298-2.1.0`, `common/arg.cpp`,
+ * `common/speculative.cpp`, `tools/server/server-context.cpp`):
+ * - `--model-draft` only names the file. The server loads it either way,
+ *   but drafts only when `--spec-type` names a type other than `none`
+ *   (the default), so the launch passes `--spec-type draft-simple`, the
+ *   type for a separate small model of the same family.
+ * - The draft's context is built from a copy of the main parameters: its
+ *   window is the main `--ctx-size` and it inherits `--swa-full`, while
+ *   its cache type is the draft's own (f16 unless set). `--ctx-size-draft`
+ *   is parsed but never read in this build, so the launch does not pass
+ *   it; the draft cache is weighed at the main window.
+ *
  * Precedent: LM Studio's "Speculative Decoding" draft picker (off by
  * default, compatible drafts only); llama.cpp's `llama-server -md`.
  */
@@ -120,13 +132,16 @@ export interface DraftLaunchInput {
   /** The chat model's cache cannot drop rejected tokens (recurrent / hybrid). */
   targetRecurrent: boolean;
   vocabProblem: string | null;
-  /** The window the chat model was fitted to; the draft's cache is sized to it. */
+  /** The window the chat model was fitted to; the engine gives the draft the same one. */
   contextSize: number;
   /** What the cache may take on the device (`resolveEffectiveContextSize`); `null` unknown. */
   kvBudgetBytes: number | null;
   /** What the chat model's cache takes at `contextSize`. */
   mainKvBytes: number;
-  /** The draft's cache at `contextSize` (f16, llama.cpp's draft default). */
+  /**
+   * The draft's cache at `contextSize` (f16, llama.cpp's draft default),
+   * whole-context on its sliding layers when the launch has `--swa-full`.
+   */
   draftKvBytes: number;
   /** `--device` of the launch, mirrored to the draft so it lands where it was weighed. */
   pinnedDevice: string | null;
@@ -170,17 +185,37 @@ export function decideDraftLaunch(input: DraftLaunchInput): DraftLaunchDecision 
     if (cost > left) return skip(`needs ${gib(cost)}, only ${gib(Math.max(0, left))} left after the context window`);
     fit = `${gib(cost)} of ${gib(left)} left after the context window`;
   }
-  const args = ["--model-draft", input.candidate.path, "--gpu-layers-draft", "999"];
-  if (input.contextSize > 0) args.push("--ctx-size-draft", String(input.contextSize));
+  const args = [
+    "--model-draft", input.candidate.path,
+    "--spec-type", DRAFT_SPEC_TYPE,
+    "--gpu-layers-draft", "999",
+  ];
   if (input.pinnedDevice) args.push("--device-draft", input.pinnedDevice);
   return { args, draft: name, reason: `draft: on (${name}, ${fit})` };
 }
 
-/** The flags `decideDraftLaunch` emits, each of which a build's `--help` must list. */
+/** The `--spec-type` that drafts with a separate small model. */
+export const DRAFT_SPEC_TYPE = "draft-simple";
+
+/**
+ * The flags `decideDraftLaunch` emits that a build's `--help` does not
+ * list, plus `--spec-type <type>` when the help lists the flag but not
+ * that type (a build that cannot draft with a separate model).
+ */
 export function draftFlagsMissing(args: readonly string[], helpText: string): string[] {
-  return args
-    .filter((a) => a.startsWith("--"))
-    .filter((flag) => !new RegExp(`(^|[\\s,])${flag.replace(/-/g, "\\-")}(?![\\w-])`, "m").test(helpText));
+  const listed = (word: string): boolean =>
+    new RegExp(`(^|[\\s,])${word.replace(/-/g, "\\-")}(?![\\w-])`, "m").test(helpText);
+  const missing: string[] = [];
+  args.forEach((arg, i) => {
+    if (!arg.startsWith("--")) return;
+    if (!listed(arg)) {
+      missing.push(arg);
+      return;
+    }
+    const value = args[i + 1];
+    if (arg === "--spec-type" && value !== undefined && !listed(value)) missing.push(`${arg} ${value}`);
+  });
+  return missing;
 }
 
 /**

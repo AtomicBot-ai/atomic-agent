@@ -30,6 +30,12 @@ export function resolveDraftLaunch(input: {
   binPath: string;
   targetHeader: GgufMetadata | null;
   contextSize: number;
+  /**
+   * The launch's `--swa-full` decision. The engine copies it into the
+   * draft's context, so the draft's sliding layers then keep the whole
+   * window too, as `mainKvBytes` already counts for the chat model.
+   */
+  swaFull: boolean;
   kvBudgetBytes: number | null;
   mainKvBytes: number;
   pinnedDevice: string | null;
@@ -66,6 +72,7 @@ export function resolveDraftLaunch(input: {
       modelSizeGb: candidate.sizeBytes / 1e9,
       contextSize: input.contextSize,
       cacheType: "f16",
+      swaFull: input.swaFull,
     }),
     pinnedDevice: input.pinnedDevice,
   });

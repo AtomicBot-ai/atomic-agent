@@ -97,12 +97,15 @@ describe("draftVocabProblem", () => {
 });
 
 describe("decideDraftLaunch", () => {
-  it("adds the draft on the GPU, sized to the fitted window, when it fits what the window left", () => {
+  it("adds the draft on the GPU, with the draft-simple type, when it fits what the window left", () => {
     const d = decideDraftLaunch(launch());
+    // Without --spec-type the engine loads the draft but never drafts.
     expect(d.args).toEqual([
-      "--model-draft", "/m/gemma-4-e4b/e4b.gguf", "--gpu-layers-draft", "999",
-      "--ctx-size-draft", "65536", "--device-draft", "Metal0",
+      "--model-draft", "/m/gemma-4-e4b/e4b.gguf", "--spec-type", "draft-simple",
+      "--gpu-layers-draft", "999", "--device-draft", "Metal0",
     ]);
+    // --ctx-size-draft is a no-op on the engine; the draft inherits --ctx-size.
+    expect(d.args).not.toContain("--ctx-size-draft");
     expect(d.draft).toBe("gemma-4-e4b");
     expect(d.reason).toMatch(/^draft: on \(gemma-4-e4b, /);
   });
@@ -142,6 +145,7 @@ describe("draftFlagsMissing", () => {
   it("names the draft flags a build's --help does not list", () => {
     const help = "-md,   --model-draft FNAME\n-ngld, --gpu-layers-draft N\n-cd,   --ctx-size-draft N\n";
     expect(draftFlagsMissing(["--model-draft", "/m", "--gpu-layers-draft", "999", "--ctx-size-draft", "1"], help)).toEqual([]);
+    expect(draftFlagsMissing(["--model-draft", "/m", "--spec-type", "draft-simple"], help)).toEqual(["--spec-type"]);
     expect(draftFlagsMissing(["--model-draft", "/m", "--device-draft", "Metal0"], help)).toEqual(["--device-draft"]);
     expect(draftFlagsMissing(["--model-draft", "/m"], "--model-draft-x")).toEqual(["--model-draft"]);
   });
@@ -153,5 +157,28 @@ describe("draftRetryOptions", () => {
     expect(draftRetryOptions({ draftModel: "auto" }, [], new Error("boom"))).toBeNull();
     const abort = Object.assign(new Error("stop"), { name: "AbortError" });
     expect(draftRetryOptions({ draftModel: "auto" }, ["--model-draft", "/m"], abort)).toBeNull();
+  });
+});
+
+describe("draftFlagsMissing --spec-type", () => {
+  // The b10298 help layout: the flag, then every type the build knows.
+  const help =
+    "-md,   --spec-draft-model, --model-draft FNAME\n" +
+    "--spec-type none,ngram-cache,draft-simple,draft-eagle3,draft-mtp\n" +
+    "-ngld, --gpu-layers-draft N\n";
+
+  it("passes a build that lists --spec-type with draft-simple", () => {
+    expect(draftFlagsMissing(decideDraftLaunch(launch({ pinnedDevice: null })).args, help)).toEqual([]);
+  });
+
+  it("turns the draft off on a build whose --spec-type lacks draft-simple", () => {
+    const noSimple = help.replace("draft-simple,", "");
+    expect(draftFlagsMissing(["--model-draft", "/m", "--spec-type", "draft-simple"], noSimple)).toEqual([
+      "--spec-type draft-simple",
+    ]);
+    // A longer type name is not the one asked for.
+    expect(draftFlagsMissing(["--spec-type", "draft-simple"], "--spec-type none,draft-simple-x")).toEqual([
+      "--spec-type draft-simple",
+    ]);
   });
 });

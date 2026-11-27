@@ -1518,6 +1518,7 @@ async function startDaemonNow(
     binPath,
     targetHeader: header,
     contextSize,
+    swaFull: swaFull.enabled,
     kvBudgetBytes,
     mainKvBytes: estimateLaunchKvBytes({
       kvLayout: kvLayout ? buildKvLayout(kvLayout) : null,
