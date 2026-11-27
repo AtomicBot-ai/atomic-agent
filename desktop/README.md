@@ -370,6 +370,10 @@ Real, driven by the running agent:
   **Trash** section at the bottom of the sidebar, with Restore, Delete forever and Empty Trash.
   Delete forever is the real `DELETE /api/sessions/{id}`; main runs it on its own only for a chat
   that has been in Trash for 30 days. Deleting the open chat leaves an empty new one.
+  The Trash entry keeps where the chat sat (pinned, archived, its chat folder), and Restore, or
+  **Undo** on the "Moved to Trash" toast, puts it back there (ATO-2747; a folder deleted
+  meanwhile is skipped). Empty Trash says "Deleted 7 of 9 chats" when the agent took only some;
+  Trash errors are plain words, with the agent's message logged by main.
   The agent owns the mark (ATO-2474, `main/chat-trash-sync.ts`, `renderer/chat-trash-view.js`):
   its lists, the terminal included, leave a chat in Trash out, and `GET /api/sessions` says
   `trashed` on each row, so a chat restored in the terminal (`/sessions --restore`) leaves this

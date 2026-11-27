@@ -7446,6 +7446,8 @@ function toastHTML(t) {
     + ic(bad ? 'alert' : info ? 'download' : 'check') + '</span>'
     + '<span class="toast-body"><span class="toast-t">' + esc(t.t) + '</span>'
     + (t.s ? '<span class="toast-s">' + esc(t.s) + '</span>' : '') + '</span>'
+    // ATO-2747: an optional action (Undo), as Finder's and Slack's: toastact runs it and dismisses the toast.
+    + (t.action ? '<button class="btn btn-s sm toast-act" data-act="toastact:' + t.id + '">' + esc(t.action.label) + '</button>' : '')
     // r2: every toast can be dismissed before its 6 s are up. Icon only, so
     // the toast's textContent (what the drivers read) is unchanged.
     + '<button class="iconbtn sm toast-x" data-act="toastx:' + t.id + '" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button>';
@@ -7527,11 +7529,11 @@ function toastsClearCard() {
     live[i].hidden = true;
   }
 }
-function toast(t, s, kind) {
+function toast(t, s, kind, action) {
   const id = ++S.toastId;
-  S.toasts.push({id, t, s, kind});
+  S.toasts.push({id, t, s, kind, action});
   renderToasts();
-  setTimeout(() => { S.toasts = S.toasts.filter((x) => x.id !== id); renderToasts(); }, 6000);
+  setTimeout(() => { S.toasts = S.toasts.filter((x) => x.id !== id); renderToasts(); }, action ? 10000 : 6000);
 }
 /* ATO-186: a toast about the chat on screen ("Window cleared") is that
    chat's: it goes when another chat is opened (openSession) or a new chat is
@@ -7625,6 +7627,7 @@ function act(a) {
   if (k === 'meeting') { close(); render(); meetingAct(v || ''); return; }   // ATO-2333: File › Record a Meeting (meeting-panel.js)
   if (a === 'close') { close(); render(); if (menuWas) chatMenuFocusBack(menuWas); return; }
   if (k === 'toastx') { S.toasts = S.toasts.filter((x) => String(x.id) !== v); renderToasts(); return; }
+  if (k === 'toastact') { const t = S.toasts.find((x) => String(x.id) === v); S.toasts = S.toasts.filter((x) => x !== t); renderToasts(); if (t && t.action) act(t.action.act); return; }   // ATO-2747
   // ATO-568: one Fusion worker's Stop / Steer (fusion-panel.js).
   if (k === 'fzp') { fzpAct(v); return; }
   // ATO-594: a page's Publish… and its confirm (publish-site.js).
@@ -7973,7 +7976,7 @@ function act(a) {
                            // Backlog 25: and here, for a turn that started while the question was up.
                            if (deleteRefused(v)) { close(); render(); return; }
                            chatTrashPut(v).then((res) => {   // ATO-2332: to Trash, not the agent's DELETE
-                             if (!res || !res.ok) { close(); render(); toast('Could not move the chat to Trash', (res && res.error) || ''); return; }
+                             if (!res || !res.ok) { close(); render(); toast('Could not move the chat to Trash', (res && res.error) || '', 'bad'); return; }
                              const i = SESSIONS.findIndex((x) => x.id === v);
                              const gone = i >= 0 ? SESSIONS[i].t : v;
                              if (i >= 0) SESSIONS.splice(i, 1);
@@ -7994,7 +7997,7 @@ function act(a) {
                              const wasOpen = S.sessionId === v;
                              if (wasOpen) { S.sessionId = ''; S.agentSession = null; S.log = []; S.history = []; S.busy = false;
                                             forgetApprovalCard(); clearPlanOffer(); S.room = 'chat'; FOCUS.entry = true; }
-                             close(); render(); toast('Moved to Trash', gone);
+                             close(); render(); toast('Moved to Trash', gone, '', {label: 'Undo', act: 'trash:restore:' + v});   // ATO-2747
                              if (wasOpen) { refreshContext(); refreshSkillList(); }
                            });
                            return; }
