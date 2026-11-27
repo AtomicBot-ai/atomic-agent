@@ -597,7 +597,7 @@ export interface TuiAppCallbacks {
   /** Revalidate a cloud skill and format its explicit request before normal submission. */
   prepareSkillInvocation?(name: string, input: string): string;
   /** Render a plugin command (`plugin:command`) with its arguments into the message to send. */
-  preparePluginCommand?(name: string, args: string): string;
+  preparePluginCommand?(name: string, args: string, sessionId?: string): string | Promise<string>;
   /** Refresh the skills panel, count and slash catalog for the selected workspace. */
   onSkillsRefreshRequested?(): void;
   /** `/learn` (ATO-67): list the skills the agent learned, or undo one. */
