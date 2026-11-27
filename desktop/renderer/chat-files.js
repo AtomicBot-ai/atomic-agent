@@ -12,7 +12,11 @@
    - the files a reply delivers (`replyFiles`) and the files a turn wrote
      ("Saved to", `attach`);
    - the files a reply names that main found (the reply's own chips:
-     replyPathKnown), never a path main has not confirmed;
+     replyPathKnown), never a path main has not confirmed. ATO-2412: both
+     ways renderer.js renderProseFresh finds a path count, the `~/…` or `/…`
+     in prose (CF_TEXT_PATH) and a code span that is one path and nothing
+     else (`/Users/n/My Docs/sales.docx`, spaces allowed: cfCodeSpanPaths),
+     so the panel and the chips never disagree;
    - files the agent wrote (os.fs.write / edit / patch, a call that succeeded),
      the Office files it made or changed (ATO-2409: os.fs.docx, os.fs.xlsx
      except `op: read`, os.fs.write_pptx; the `path` of the call, made
@@ -63,6 +67,31 @@ function cfTextPictures(text) {
   CF_TEXT_PATH.lastIndex = 0;
   let m;
   while ((m = CF_TEXT_PATH.exec(String(text || '')))) if (CF_PICTURE.test(m[1]) && !found.includes(m[1])) found.push(m[1]);
+  return found;
+}
+
+/* ATO-2412: a code span's text that is one path, as renderer.js codeSpanIsPath
+   takes it on either platform: `~/…` or `/…` (`~\…`, `C:\…`), spaces and all,
+   not a URL. Fences are left out: a path in a code block is code. */
+const CF_CODE_SPAN = /`([^`\n]+)`/g;
+const CF_SPAN_PATH = /^(?:~\/|\/)[^\/\s]|^(?:~\\|[A-Za-z]:[\\/])\S/;
+
+/** A reply's text without its fenced blocks: the renderer chips no path inside a fence. */
+function cfProseText(text) {
+  return String(text || '').replace(/```[\s\S]*?(?:```|$)/g, '');
+}
+
+/** The paths a reply's code spans hold (`/Users/n/My Docs/sales.docx`), once each, in order. */
+function cfCodeSpanPaths(text) {
+  const found = [];
+  const src = cfProseText(text);
+  CF_CODE_SPAN.lastIndex = 0;
+  let m;
+  while ((m = CF_CODE_SPAN.exec(src))) {
+    const s = m[1].trim();
+    if (!s || s.length > 1024 || /[\0<>"]/.test(s) || /:\/\//.test(s) || !CF_SPAN_PATH.test(s)) continue;
+    if (!found.includes(s)) found.push(s);
+  }
   return found;
 }
 
@@ -178,11 +207,15 @@ function chatFilesOf(log, deps) {
     }
     if (m.k === 'assistant' && !m.placeholder) {
       if (typeof d.replyPath === 'function') {
-        const text = String(m.text || '');
+        const text = cfProseText(m.text);   // ATO-2412: a path in a fence is code, as the reply draws it
+        const named = [];
         CF_TEXT_PATH.lastIndex = 0;
         let mt;
-        while ((mt = CF_TEXT_PATH.exec(text))) {
-          const v = d.replyPath(mt[1]);
+        while ((mt = CF_TEXT_PATH.exec(text))) named.push(mt[1]);
+        // ATO-2412: a code span that is one path (spaces and all) is a chip in the reply, so it is a file here.
+        for (const raw of cfCodeSpanPaths(text)) if (!named.includes(raw)) named.push(raw);
+        for (const raw of named) {
+          const v = d.replyPath(raw);
           if (v && v.ok && v.abs && v.kind === 'file') add(v.abs, 'reply');
         }
       }
@@ -302,5 +335,5 @@ function cfStatSoon() {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {chatFilesOf, cfShotPath, cfTextPictures, turnPictures, CF_SHOTS, CF_OFFICE, cfOfficeWrite, chatFilesByName, cfGeneratedPaths, cfAbsolute, cfKind, cfFolder, chatFilesTabsHTML, chatFilesListHTML};
+  module.exports = {chatFilesOf, cfShotPath, cfTextPictures, cfCodeSpanPaths, turnPictures, CF_SHOTS, CF_OFFICE, cfOfficeWrite, chatFilesByName, cfGeneratedPaths, cfAbsolute, cfKind, cfFolder, chatFilesTabsHTML, chatFilesListHTML};
 }
