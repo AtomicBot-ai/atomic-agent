@@ -62,6 +62,8 @@ test("Windows helper: Windows PowerShell 5.1, the script as -EncodedCommand, nev
   assert.ok(!/ValuePattern|TextPattern|SendKeys|mouse_event|SendInput/.test(W.SHOW_ONCE_WIN_SCRIPT), "reads names only, posts no input");
   assert.match(W.SHOW_ONCE_WIN_SCRIPT, /IsPassword\) \{ return @\{ role = 'AXSecureTextField'; label = '' \}/);
   assert.match(W.SHOW_ONCE_WIN_SCRIPT, /\{"ready":true\}/);
+  // A UWP app's top-level window belongs to ApplicationFrameHost; the app is its child window's process.
+  assert.match(W.SHOW_ONCE_WIN_SCRIPT, /-ieq 'ApplicationFrameHost'\) \{\s+\$real = \[AtomicShowOnce\]::ChildPid\(\$h, \$procId\)/);
 });
 
 test("the prober on Windows runs PowerShell on the helper's protocol; with no PowerShell nothing is named", async () => {
@@ -115,6 +117,8 @@ test("Windows and Linux apps: browsers, protected apps and Atomic Agent itself b
   assert.equal(C.showOnceAppClass(app("firefox"), 1), "browser");
   assert.equal(C.showOnceAppClass(app("keepassxc"), 1), "protected");
   assert.equal(C.showOnceAppClass(app("systemsettings.exe", "Settings"), 1), "protected");
+  // A UWP frame whose real app was not reached is never an open app (Settings, Windows Security).
+  assert.equal(C.showOnceAppClass(app("applicationframehost.exe", "Application Frame Host"), 1), "unknown");
   assert.equal(C.showOnceAppClass(app("consent.exe", "Consent UI"), 1), "protected");
   assert.equal(C.showOnceAppClass(app("gnome-control-center"), 1), "protected");
   assert.equal(C.showOnceAppClass(app("atomic agent.exe", "Atomic Agent"), 1), "own");
@@ -129,11 +133,20 @@ test("keys off the Mac: Ctrl chords are kept, the Windows key, Alt+Tab and Ctrl+
   assert.deepEqual(C.classifyKey(k(3667, { ctrl: true, alt: true }), "win32"), { kind: "ignore" });
   assert.deepEqual(C.classifyKey(k(1, { ctrl: true }), "win32"), { kind: "ignore" }, "Ctrl+Esc");
   assert.deepEqual(C.classifyKey(k(31, { meta: true })), { kind: "keys", keys: "cmd+s" }, "the Mac is unchanged");
+  // AltGr reaches the Windows hook as Ctrl+Alt: `@` (AltGr+Q, German) and `ż` (AltGr+Z, Polish) are typing.
+  assert.equal(C.classifyKey(k(16, { ctrl: true, alt: true }), "win32").kind, "text");
+  assert.equal(C.classifyKey(k(44, { ctrl: true, alt: true, shift: true }), "win32").kind, "text");
+  assert.deepEqual(C.classifyKey(k(16, { ctrl: true, alt: true })), { kind: "keys", keys: "ctrl+alt+q" }, "on the Mac Ctrl+Option is a chord");
   const log = new L.ShowOnceLog(1, "win32");
   const notepad = { name: "Notepad", bundleId: "notepad.exe", pid: 9 };
   log.add({ kind: "key", at: 0, ...k(31, { ctrl: true }), app: notepad, focused: null, windowTitle: null });
   log.add({ kind: "key", at: 10, ...k(32, { meta: true }), app: notepad, focused: null, windowTitle: null });
   assert.deepEqual(log.steps.filter((s) => s.kind === "keys").map((s) => s.keys), ["ctrl+s"]);
+  const typed = new L.ShowOnceLog(1, "win32");
+  for (const [i, e] of [k(30), k(16, { ctrl: true, alt: true }), k(48)].entries()) {
+    typed.add({ kind: "key", at: i, ...e, app: notepad, focused: null, windowTitle: null });
+  }
+  assert.deepEqual(typed.steps.filter((s) => s.kind !== "app").map((s) => s.kind), ["text"], "a@b is one text step, no ctrl+alt+q");
 });
 
 test("a Windows or Linux SKILL.md walks the user through each step; the Mac one is unchanged", () => {

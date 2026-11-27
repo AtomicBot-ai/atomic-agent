@@ -11,7 +11,12 @@ import { win32 } from "node:path";
  *           {id, app:{name,bundleId,pid}, window:{x,y,width,height}, windowTitle, element, focused}
  *
  * The app is the process that owns the top-level window (user32
- * WindowFromPoint / GetForegroundWindow, GetWindowThreadProcessId); its
+ * WindowFromPoint / GetForegroundWindow, GetWindowThreadProcessId). A UWP
+ * app (Settings, Windows Security) has its top-level window owned by
+ * ApplicationFrameHost.exe, so for that host the app is the process of its
+ * first child window from another process (the app's CoreWindow,
+ * `SystemSettings.exe`); none found, it stays the host, which
+ * show-once-classify.ts records nothing for. Its
  * bundleId is the executable name, lowercased (`notepad.exe`), which
  * show-once-classify.ts matches against its Windows lists. The control is
  * read with UI Automation (AutomationElement.FromPoint / FocusedElement):
@@ -43,6 +48,13 @@ public static class AtomicShowOnce {
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   public static string Title(IntPtr h) { var s = new StringBuilder(512); GetWindowText(h, s, 512); return s.ToString(); }
+  public delegate bool ChildProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr h, ChildProc f, IntPtr l);
+  public static uint ChildPid(IntPtr h, uint host) {
+    uint found = 0;
+    EnumChildWindows(h, (c, l) => { uint p; GetWindowThreadProcessId(c, out p); if (p != 0 && p != host) { found = p; return false; } return true; }, IntPtr.Zero);
+    return found;
+  }
 }
 "@
 [void][AtomicShowOnce]::SetProcessDPIAware()
@@ -66,6 +78,10 @@ function AppOf($h) {
   [void][AtomicShowOnce]::GetWindowThreadProcessId($h, [ref]$procId)
   if ($procId -eq 0) { return $null }
   $p = Get-Process -Id $procId
+  if ($null -ne $p -and ([string]$p.ProcessName) -ieq 'ApplicationFrameHost') {
+    $real = [AtomicShowOnce]::ChildPid($h, $procId)
+    if ($real -ne 0) { $procId = $real; $p = Get-Process -Id $procId }
+  }
   if ($null -eq $p) { return $null }
   $name = [string]$p.ProcessName
   try { $d = [string]$p.MainModule.FileVersionInfo.FileDescription; if ($d) { $name = $d } } catch {}

@@ -82,6 +82,8 @@ export function showOnceAppClass(app: ShowOnceApp | null, ownPid: number): ShowO
   if (!app.bundleId) return "unknown";
   const lower = app.bundleId.toLowerCase();
   if (lower === "io.atomicagent.desktop" || lower === "atomic agent.exe" || lower === "atomic-agent-desktop") return "own";
+  // A UWP window (Settings, Windows Security) whose real app show-once-win.ts could not reach: not named, not recorded.
+  if (lower === "applicationframehost.exe") return "unknown";
   if (DESKTOP_PROTECTED_EXES.has(lower)) return "protected";
   if (DESKTOP_BROWSER_EXES.has(lower)) return "browser";
   if (idMatches(SHOW_ONCE_PROTECTED_BUNDLE_IDS, lower) || PROTECTED_NAME_RE.test(app.name || "")) return "protected";
@@ -116,7 +118,9 @@ export type KeyKind = { kind: "ignore" } | { kind: "text" } | { kind: "keys"; ke
  * What one keydown is: nothing (a modifier alone), typing, or a chord to keep.
  * ATO-2499 `platform`: off the Mac the meta key is the Windows (Super) key,
  * whose chords belong to the desktop (Win+R, Win+D), so they are left out,
- * as are Alt+Tab, Alt+Esc, Ctrl+Esc and Ctrl+Alt+Delete.
+ * as are Alt+Tab, Alt+Esc, Ctrl+Esc and Ctrl+Alt+Delete. AltGr reaches the
+ * Windows hook as Ctrl+Alt, so Ctrl+Alt on a typing key (`@` is AltGr+Q on a
+ * German layout) is typing there, never a chord that would name the character.
  */
 export function classifyKey(e: { keycode: number; meta: boolean; ctrl: boolean; alt: boolean; shift: boolean }, platform: string = "darwin"): KeyKind {
   if (MODIFIER_CODES.has(e.keycode)) return { kind: "ignore" };
@@ -126,6 +130,7 @@ export function classifyKey(e: { keycode: number; meta: boolean; ctrl: boolean; 
     || (e.ctrl && e.alt && (e.keycode === 3667 || e.keycode === 83)))) {
     return { kind: "ignore" };
   }
+  if (platform !== "darwin" && e.ctrl && e.alt && text !== undefined) return { kind: "text" };
   const mods = [e.ctrl ? "ctrl" : "", e.alt ? "alt" : "", e.shift ? "shift" : "", e.meta ? "cmd" : ""].filter(Boolean);
   // App and space switching, Spotlight and launchers, Force Quit: the agent's screen guard refuses
   // these chords (refusedChordReason in screen-protected.ts), so a replay could not press them anyway.
