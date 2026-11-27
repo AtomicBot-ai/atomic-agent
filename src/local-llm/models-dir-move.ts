@@ -162,7 +162,7 @@ export async function moveModelsDir(
   const skipped: string[] = [];
   for (const e of all) {
     if (await isOwnedModelEntry(src, e)) entries.push(e);
-    else if (!IGNORED_IN_TARGET.has(e)) skipped.push(e);
+    else if (!isFolderJunk(e)) skipped.push(e);
   }
   await mkdir(dst, { recursive: true });
 

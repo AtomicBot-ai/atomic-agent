@@ -153,6 +153,19 @@ describe("moveModelsDir (ATO-2106)", () => {
     await expect(moveModelsDir(from, to)).rejects.toThrow("is not empty");
   });
 
+  it("does not report folder junk of the current folder as left in place, any case", async () => {
+    for (const name of [".DS_Store", "Thumbs.db", "desktop.ini"]) writeFileSync(join(from, name), "");
+    const result = await moveModelsDir(from, to, {
+      rename: async () => {
+        throw exdev();
+      },
+    });
+    expect(result.moved).toEqual(["qwen-a", "qwen-b"]);
+    expect(result.skipped).not.toContain(".DS_Store");
+    expect(result.skipped).not.toContain("Thumbs.db");
+    expect(result.skipped).not.toContain("desktop.ini");
+  });
+
   it("leaves foreign files and folders of the current folder where they are", async () => {
     writeFileSync(join(from, "tax-return.pdf"), "private");
     mkdirSync(join(from, "Photos"), { recursive: true });
