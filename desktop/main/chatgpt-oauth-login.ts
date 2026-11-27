@@ -16,9 +16,17 @@
  *
  * Electron-free (openExternal, spawn and run are injected) so it is under
  * unit test (desktop/test/chatgpt-oauth-login.test.mjs).
+ *
+ * ATO-2510: when `login --help` lists `--json` on the `login chatgpt` line
+ * the agent runs with `--json` and its JSON lines are read
+ * (chatgpt-oauth-events.ts); an older agent still gets the sentence matching
+ * below. It reuses the once-per-run help probe and checks the flag itself, not
+ * a version number; `--json` on an older agent would be "unknown option".
  */
 
-export type ChatgptOauthReason = "timeout" | "no_account" | "cancelled" | "failed";
+import { createLoginJsonReader, helpHasLoginJson, type ChatgptOauthReason } from "./chatgpt-oauth-events.js";
+
+export type { ChatgptOauthReason } from "./chatgpt-oauth-events.js";
 
 export interface ChatgptOauthResult {
   ok: boolean;
@@ -137,20 +145,34 @@ export function createChatgptOauth(deps: ChatgptOauthDeps): ChatgptOauth {
   const setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const clearTimer = deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
   let current: { promise: Promise<ChatgptOauthResult>; stop: (why: "cancelled" | "timeout" | "failed") => void } | null = null;
-  let supportedOnce: Promise<boolean> | null = null;
+  let helpOnce: Promise<{ chatgpt: boolean; json: boolean }> | null = null;
+
+  /** Once per app run (cached): what the bundled agent's `login --help` lists. */
+  function capabilities(): Promise<{ chatgpt: boolean; json: boolean }> {
+    helpOnce ??= (async () => {
+      if (!deps.binary()) return { chatgpt: false, json: false };
+      try {
+        const r = await deps.run(["login", "--help"], 15_000);
+        const help = `${r.stdout}\n${r.stderr}`;
+        const chatgpt = helpHasChatgptLogin(help);
+        return { chatgpt, json: chatgpt && helpHasLoginJson(help) };
+      } catch {
+        return { chatgpt: false, json: false };
+      }
+    })();
+    return helpOnce;
+  }
 
   function begin(): Promise<ChatgptOauthResult> {
     const binary = deps.binary();
     if (!binary) return Promise.resolve({ ok: false, state: "failed", reason: "failed" });
-    let child: OauthChild;
-    try {
-      child = deps.spawn(binary, ["login", "chatgpt", "--no-browser"]);
-    } catch {
-      return Promise.resolve({ ok: false, state: "failed", reason: "failed" });
-    }
+    let child: OauthChild | null = null;
+    let json = false;
     let output = "";
     let opened = false;
     let stopped: "cancelled" | "timeout" | "failed" | null = null;
+    let jsonProviderId: string | undefined;
+    let jsonReason: ChatgptOauthReason | undefined;
     let hardKill: unknown = null;
     let settle!: (r: ChatgptOauthResult) => void;
     const promise = new Promise<ChatgptOauthResult>((resolve) => { settle = resolve; });
@@ -170,55 +192,89 @@ export function createChatgptOauth(deps: ChatgptOauthDeps): ChatgptOauth {
     function stop(why: "cancelled" | "timeout" | "failed"): void {
       if (done || stopped) return;
       stopped = why;
+      // Stopped while the help probe ran: nothing was spawned yet.
+      if (!child) {
+        finish({ ok: false, state: "failed", reason: why });
+        return;
+      }
+      const proc = child;
       try {
         // The agent turns SIGINT into "Sign-in cancelled." and closes its
         // receiver; Windows has no SIGINT for a child, so it is ended outright.
-        if (deps.platform === "win32") child.kill();
-        else child.kill("SIGINT");
+        if (deps.platform === "win32") proc.kill();
+        else proc.kill("SIGINT");
       } catch { /* already gone */ }
       if (deps.platform !== "win32") {
-        hardKill = setTimer(() => { try { child.kill("SIGKILL"); } catch { /* gone */ } }, CANCEL_GRACE_MS);
+        hardKill = setTimer(() => { try { proc.kill("SIGKILL"); } catch { /* gone */ } }, CANCEL_GRACE_MS);
       }
     }
 
-    child.stdout?.on("data", (chunk) => {
-      if (output.length < MAX_OUTPUT) output += String(chunk);
+    const openOnce = (url: string | null): void => {
       if (opened || stopped) return;
-      const url = authorizationUrlIn(output);
+      // A sign-in link for any other host is never opened.
       if (!url) {
-        // A sign-in link for any other host is never opened.
-        const other = ANY_AUTHORIZE.exec(output);
-        if (other && (other[1] !== "https" || other[2] !== "auth.openai.com")) stop("failed");
+        stop("failed");
         return;
       }
       opened = true;
       deps.openExternal(url).catch(() => stop("failed"));
-    });
-    child.on("error", () => finish({ ok: false, state: "failed", reason: stopped ?? "failed" }));
-    child.on("exit", (code) => {
-      if (code === 0 && !stopped) {
-        const providerId = providerIdIn(output);
-        finish({ ok: true, state: "signed_in", ...(providerId ? { providerId } : {}) });
+    };
+
+    const reader = createLoginJsonReader();
+    const onJson = (chunk: string): void => {
+      for (const event of reader.push(chunk)) {
+        if (event.type === "authorization_url") openOnce(event.url);
+        else if (event.type === "signed_in") jsonProviderId = event.providerId;
+        else jsonReason = event.reason;
+      }
+    };
+    const onText = (chunk: string): void => {
+      if (output.length < MAX_OUTPUT) output += chunk;
+      if (opened || stopped) return;
+      const url = authorizationUrlIn(output);
+      if (url) {
+        openOnce(url);
         return;
       }
-      finish({ ok: false, state: "failed", reason: stopped ?? failureReason(output) });
-    });
+      const other = ANY_AUTHORIZE.exec(output);
+      if (other && (other[1] !== "https" || other[2] !== "auth.openai.com")) openOnce(null);
+    };
+
+    const spawnAgent = (): void => {
+      if (done) return;
+      let proc: OauthChild;
+      try {
+        proc = deps.spawn(binary, ["login", "chatgpt", "--no-browser", ...(json ? ["--json"] : [])]);
+      } catch {
+        finish({ ok: false, state: "failed", reason: "failed" });
+        return;
+      }
+      child = proc;
+      proc.stdout?.on("data", (chunk) => {
+        if (json) onJson(String(chunk));
+        else onText(String(chunk));
+      });
+      proc.on("error", () => finish({ ok: false, state: "failed", reason: stopped ?? "failed" }));
+      proc.on("exit", (code) => {
+        if (code === 0 && !stopped) {
+          const providerId = json ? jsonProviderId : providerIdIn(output);
+          finish({ ok: true, state: "signed_in", ...(providerId ? { providerId } : {}) });
+          return;
+        }
+        finish({ ok: false, state: "failed", reason: stopped ?? (json ? (jsonReason ?? "failed") : failureReason(output)) });
+      });
+    };
 
     current = { promise, stop };
+    capabilities().then(
+      (caps) => { json = caps.json; spawnAgent(); },
+      () => spawnAgent(),
+    );
     return promise;
   }
 
   async function supported(): Promise<boolean> {
-    supportedOnce ??= (async () => {
-      if (!deps.binary()) return false;
-      try {
-        const r = await deps.run(["login", "--help"], 15_000);
-        return helpHasChatgptLogin(`${r.stdout}\n${r.stderr}`);
-      } catch {
-        return false;
-      }
-    })();
-    return supportedOnce;
+    return (await capabilities()).chatgpt;
   }
 
   return {
