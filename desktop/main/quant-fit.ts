@@ -14,11 +14,18 @@
  * engine, so off a Mac the GPU is unknown here. The fit then goes by RAM
  * alone, and no speed is forecast, because a guess at a card we cannot
  * see would be a number with nothing behind it.
+ *
+ * ATO-2455: the agent does see the card, and says so in `models recommend
+ * --json` (moe-fit.ts). With those facts (`withDedicatedGpu`) a
+ * mixture-of-experts quant that overflows the card fits with its experts
+ * partly in RAM, the agent's src/local-llm/catalog/moe-split-fit.ts rule
+ * copied rule for rule.
  */
 
 import { cpus, totalmem } from "node:os";
 
 import type { HuggingFaceGgufChoice, HuggingFaceRepoChoices } from "./huggingface.js";
+import type { MoeFitFacts } from "./moe-fit.js";
 
 export interface QuantMachine {
   /** Physical RAM, decimal GB. */
@@ -27,12 +34,18 @@ export interface QuantMachine {
   gpuBudgetGb: number | null;
   /** Apple Silicon shared-pool bandwidth, GB/s; `null` when unknown. */
   unifiedGbPerSec: number | null;
+  /**
+   * ATO-2455: a GPU with memory of its own, as the agent read it
+   * (`withDedicatedGpu`): its memory for the weights, decimal GB. Absent
+   * on a Mac and when the agent did not say.
+   */
+  dedicatedGpuGb?: number;
 }
 
 export interface QuantFit {
   tier: "fits" | "tight" | "too-big";
-  label: "Fits well" | "Tight fit" | "Too big";
-  placement: "gpu" | "ram" | "disk";
+  label: "Fits well" | "Fits, experts in RAM" | "Tight fit" | "Too big";
+  placement: "gpu" | "split" | "ram" | "disk";
 }
 
 export interface SpeedForecast {
@@ -114,7 +127,30 @@ export function activeShareFromName(name: string): number {
   return active / total;
 }
 
-export function quantFitFor(weightsGb: number, machine: QuantMachine): QuantFit {
+/** The agent's GPU facts on this machine, when it gave them and experts may go to RAM. */
+export function withDedicatedGpu(machine: QuantMachine, facts: MoeFitFacts | null): QuantMachine {
+  if (!facts || !facts.dedicatedGpu || facts.cpuMoe === "off" || facts.gpuBudgetGb === null) return machine;
+  if (machine.unifiedGbPerSec !== null) return machine;
+  return { ...machine, dedicatedGpuGb: facts.gpuBudgetGb };
+}
+
+/** moe-split-fit.ts moeSplitFor, rule for rule; `null`: no split. */
+export function moeSplitFor(weightsGb: number, activeShare: number, machine: QuantMachine): QuantFit | null {
+  const card = machine.dedicatedGpuGb;
+  if (card === undefined || !(activeShare > 0 && activeShare < 1)) return null;
+  const gpu = card * GPU_WEIGHTS_SHARE;
+  if (!(gpu > 0) || !(weightsGb > gpu) || weightsGb * activeShare > gpu) return null;
+  const ramPartGb = weightsGb - gpu;
+  if (Math.ceil(ramPartGb * 1.5) + 2 <= machine.ramGb) {
+    return { tier: "fits", label: "Fits, experts in RAM", placement: "split" };
+  }
+  if (Math.ceil(ramPartGb * 1.2) <= machine.ramGb) return { tier: "tight", label: "Tight fit", placement: "split" };
+  return null;
+}
+
+export function quantFitFor(weightsGb: number, machine: QuantMachine, activeShare = 1): QuantFit {
+  const split = moeSplitFor(weightsGb, activeShare, machine);
+  if (split) return split;
   if (machine.gpuBudgetGb !== null && weightsGb <= machine.gpuBudgetGb * GPU_WEIGHTS_SHARE) {
     return { tier: "fits", label: "Fits well", placement: "gpu" };
   }
@@ -177,8 +213,8 @@ export function rateRepoChoices(
 ): HuggingFaceRepoChoices & { choices: readonly RatedChoice[] } {
   const rated: RatedChoice[] = repo.choices.map((choice) => {
     const weightsGb = choice.sizeBytes / BYTES_PER_GB;
-    const fit = quantFitFor(weightsGb, machine);
     const share = activeShareFromName(`${repo.repoId} ${choice.path}`);
+    const fit = quantFitFor(weightsGb, machine, share);
     return {
       ...choice,
       bits: quantBitsFromName(choice.path),

@@ -82,3 +82,25 @@ test("a single named file is rated but not marked", () => {
   assert.equal(rated.choices[0].recommended, false);
   assert.equal(rated.choices[0].fit.label, "Fits well");
 });
+
+// ATO-2455: with the agent's GPU facts, an MoE quant that overflows the card fits with experts in RAM.
+test('experts in RAM: a 35B-A3B on an 8 GB card and 32 GB of RAM', () => {
+  const {withDedicatedGpu} = require('../out/main/quant-fit.js');
+  const pc = quantMachine('win32', 32 * GB, 'AMD Ryzen 9');
+  const facts = {dedicatedGpu: true, gpuBudgetGb: 8, cpuMoe: 'auto', byId: {}};
+  const withGpu = withDedicatedGpu(pc, facts);
+  assert.equal(withGpu.dedicatedGpuGb, 8);
+  assert.deepEqual(quantFitFor(22.4, withGpu, 3 / 35), {tier: 'fits', label: 'Fits, experts in RAM', placement: 'split'});
+  // Same size, dense: the old RAM verdict.
+  assert.equal(quantFitFor(22.4, withGpu).label, 'Tight fit');
+  // No facts, off, or a Mac: no split.
+  assert.equal(withDedicatedGpu(pc, null), pc);
+  assert.equal(withDedicatedGpu(pc, {...facts, cpuMoe: 'off'}), pc);
+  const mac = quantMachine('darwin', 32 * GB, 'Apple M2 Pro');
+  assert.equal(withDedicatedGpu(mac, facts), mac);
+  const repoOut = rateRepoChoices(
+    {repoId: 'unsloth/Qwen3.6-35B-A3B-GGUF', revision: 'main', choices: [choice('Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf', 22.4)], mmproj: null, hidden: null},
+    withGpu,
+  );
+  assert.equal(repoOut.choices[0].fit.label, 'Fits, experts in RAM');
+});

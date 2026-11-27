@@ -28762,6 +28762,7 @@ function llmAdvancedHTML(mode) {
           + llmTuneRowHTML('Device', 'Auto runs the model on the GPU when there is one. A change applies the next time the model server starts.',
               btn('llm:device', device === 'auto' ? 'Auto' : device === 'cpu' ? 'CPU' : device, 'Try the next device: auto, each GPU, CPU'))
           + lcsSlotsRowHTML() // ATO-336: local-context-slots.js
+          + cmoeRowHTML() // ATO-2455: local-cpu-moe.js
           // The log itself is Diagnostics' (Д58: one place for it); this is the way there.
           + llmTuneRowHTML('Server log', 'What the local model server printed. It opens in Settings › Diagnostics.',
               btn('diag:llmlogs', 'Open', 'The local model server’s log, in Diagnostics'))
@@ -28809,6 +28810,8 @@ function llmFitBadge(m, ram) {
   const have = Number(ram) || 0;
   if (!m || !have) return null;
   const fit = fitFor(m, have);
+  const split = cmoeFitBadge(m, fit, llmManaged().cpuMoe); // ATO-2455: local-cpu-moe.js
+  if (split) return split;
   const rec = Number(m.recommendedRamGb) || 0, min = Number(m.minRamGb) || 0;
   let why;
   if (fit.known) {
@@ -30555,6 +30558,7 @@ function llmAct(what) {
   if (verb === 'tune') { llmTuneSet(rest[0], rest[1]); return; }
   if (verb === 'device') { llmDeviceCycle(); return; }
   if (verb === 'ctx' || verb === 'slots') { lcsSet(verb, rest[0]); return; } // ATO-336
+  if (verb === 'cmoe') { cmoeSet(rest[0]); return; } // ATO-2455: local-cpu-moe.js
   if (verb === 'cancelPull') { if (BR) BR.cancelPull(); LLMP.pulling = null; llmRepaint(); return; }
   // Details' Copy (Д56): one value of the route, as drawn.
   if (verb === 'copy') { const f = llmRouteFacts()[+arg]; if (f) copyText(f.value, 'Copied', f.label); return; }
