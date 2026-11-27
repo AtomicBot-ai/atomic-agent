@@ -221,15 +221,18 @@ describe("computeEffectiveConversationCap", () => {
 });
 
 describe("effectiveReplyReserve", () => {
-  it("keeps a configured cap that fits in half the window", () => {
+  it("keeps a configured cap that fits the window's reserve", () => {
     expect(effectiveReplyReserve(4096, 32_768)).toBe(4096);
-    // The default on a 32k window is exactly half: untouched.
-    expect(effectiveReplyReserve(16_384, 32_768)).toBe(16_384);
+    // ATO-1581: the default on a 32k window is held to a quarter (8192),
+    // no longer half.
+    expect(effectiveReplyReserve(16_384, 32_768)).toBe(8192);
   });
 
   it("holds a cap bigger than the window to half of it", () => {
-    // completionMaxTokens raised to 96k for long runs, on a 32k model.
-    expect(effectiveReplyReserve(96_000, 32_768)).toBe(16_384);
+    // completionMaxTokens raised to 96k for long runs, on a 32k model:
+    // a quarter of it since ATO-1581, half on 48k and up.
+    expect(effectiveReplyReserve(96_000, 32_768)).toBe(8192);
+    expect(effectiveReplyReserve(96_000, 49_152)).toBe(24_576);
   });
 
   it("keeps the configured figure when the window is unknown", () => {
@@ -244,13 +247,14 @@ describe("effectiveReplyReserve", () => {
   /**
    * ATO-257: on a 16k window half of it (8192) plus the ~7.7k scaffold
    * plus the margin left the transcript nothing, so compaction never had
-   * room. A small window keeps 16k (or three quarters of itself) for the
-   * prompt instead.
+   * room. A small window keeps 24k (or three quarters of itself) for the
+   * prompt instead (16k before ATO-1581).
    */
-  it("shrinks the reserve on a window under 32k", () => {
+  it("shrinks the reserve on a window under 48k", () => {
     expect(effectiveReplyReserve(16_384, 8192)).toBe(2048);
     expect(effectiveReplyReserve(16_384, 16_384)).toBe(4096);
-    expect(effectiveReplyReserve(16_384, 24_576)).toBe(8192);
+    expect(effectiveReplyReserve(16_384, 24_576)).toBe(6144);
+    expect(effectiveReplyReserve(16_384, 32_768)).toBe(8192);
     expect(effectiveReplyReserve(96_000, 16_384)).toBe(4096);
     // Never below 1024 while the cap and half the window allow it.
     expect(effectiveReplyReserve(16_384, 3000)).toBe(1024);
@@ -259,8 +263,10 @@ describe("effectiveReplyReserve", () => {
     expect(effectiveReplyReserve(2048, 16_384)).toBe(2048);
   });
 
-  it("leaves windows from 32k up at the configured cap or half the window", () => {
-    expect(effectiveReplyReserve(16_384, 32_768)).toBe(16_384);
+  it("leaves windows from 48k up at the configured cap or half the window", () => {
+    expect(effectiveReplyReserve(16_384, 49_152)).toBe(16_384);
+    expect(effectiveReplyReserve(16_384, 65_536)).toBe(16_384);
+    expect(effectiveReplyReserve(96_000, 65_536)).toBe(32_768);
     expect(effectiveReplyReserve(16_384, 131_072)).toBe(16_384);
     expect(effectiveReplyReserve(96_000, 131_072)).toBe(65_536);
     expect(effectiveReplyReserve(8192, 32_768)).toBe(8192);
@@ -280,7 +286,7 @@ describe("effectiveReplyReserve", () => {
 
     it("keeps the reserve when the budget already fits it", () => {
       expect(effectiveReplyReserve(16_384, 16_384, 2000)).toBe(4096);
-      expect(effectiveReplyReserve(16_384, 32_768, 4000)).toBe(16_384);
+      expect(effectiveReplyReserve(16_384, 32_768, 4000)).toBe(8192);
     });
 
     it("never goes past half the window or the configured cap", () => {
@@ -326,9 +332,10 @@ describe("computeEffectiveConversationCap with a reply cap past the window", () 
   /**
    * The QA report behind this: `completionMaxTokens: 96000` on a 32.8k
    * window. Subtracting the whole cap left a negative remainder and the
-   * transcript sat on the 512-token floor every step.
+   * transcript sat on the 512-token floor every step. Since ATO-1581 a
+   * 32k window reserves a quarter of itself.
    */
-  it("budgets half the window for the reply instead of the floor", () => {
+  it("budgets a quarter of a 32k window for the reply instead of the floor", () => {
     const cap = computeEffectiveConversationCap({
       configuredCap: 32_000,
       stablePrefixTokens: 2000,
@@ -337,8 +344,8 @@ describe("computeEffectiveConversationCap with a reply cap past the window", () 
       completionMaxTokens: 96_000,
       contextWindow: 32_768,
     });
-    // 32768 - 2000 - 400 - 2000 - 16384 - 512
-    expect(cap).toBe(11_472);
+    // 32768 - 2000 - 400 - 2000 - 8192 - 512
+    expect(cap).toBe(19_664);
     expect(cap).toBeGreaterThan(CONVERSATION_CAP_FLOOR);
   });
 
@@ -363,8 +370,8 @@ describe("minUsableContextWindow", () => {
   });
 
   it("judges a window by the reserve the budget holds on it", () => {
-    // 96k on a 32k window reserves 16 384, so 32k is usable: no warning.
-    expect(minUsableContextWindow(96_000, 32_768)).toBe(8000 + 16_384 + 512);
+    // 96k on a 32k window reserves 8192, so 32k is usable: no warning.
+    expect(minUsableContextWindow(96_000, 32_768)).toBe(8000 + 8192 + 512);
     expect(32_768).toBeGreaterThanOrEqual(minUsableContextWindow(96_000, 32_768));
     // A window too small for the scaffolding plus its reserve still is.
     expect(minUsableContextWindow(96_000, 8000)).toBe(8000 + 2000 + 512);

@@ -245,8 +245,9 @@ export const AGENT_FIXED_PROMPT_TOKENS_COMPACT = 4000;
  * stops generating when its window is full.
  *
  * Half the window keeps a configured cap that fits untouched (the default
- * 16384 on a 32k window is exactly half) and splits a window that cannot
- * hold the cap evenly between what the model reads and what it writes.
+ * 16384 on a 48k window or larger) and splits a window that cannot hold
+ * the cap evenly between what the model reads and what it writes. Under
+ * 48k {@link SMALL_WINDOW_PROMPT_ROOM} holds the reserve lower still.
  */
 export const REPLY_RESERVE_MAX_WINDOW_SHARE = 0.5;
 
@@ -254,7 +255,7 @@ export const REPLY_RESERVE_MAX_WINDOW_SHARE = 0.5;
  * Prompt room a small window keeps before the reply reserve may take
  * its full {@link REPLY_RESERVE_MAX_WINDOW_SHARE}.
  *
- * Half the window is fine from 32k up, but on a 16k local model the
+ * Half the window is fine from 48k up, but on a 16k local model the
  * agent's own scaffolding (persona, tool catalog, instructions: about
  * 7.7k with the default tools) plus an 8k reply reserve plus the safety
  * margin already exceed the window. The transcript then sat on
@@ -262,8 +263,14 @@ export const REPLY_RESERVE_MAX_WINDOW_SHARE = 0.5;
  * manual `/compact` had about 100 tokens for its summary. Below
  * 2 x this figure the reserve shrinks so the prompt keeps this much,
  * down to {@link SMALL_WINDOW_REPLY_SHARE} of the window.
+ *
+ * 24k, not 16k (ATO-1581): at 16k a 32k window still reserved half of
+ * itself (16384) for a reply that rarely needs it, and the transcript
+ * got the rest after the scaffold. 24k holds a 32k window to a quarter
+ * (8192); 8k and 16k windows reserve what they did (the quarter floor
+ * bound them already), and 48k and up are unchanged.
  */
-export const SMALL_WINDOW_PROMPT_ROOM = 16_384;
+export const SMALL_WINDOW_PROMPT_ROOM = 24_576;
 
 /** Smallest share of a small window the reply reserve keeps. */
 export const SMALL_WINDOW_REPLY_SHARE = 0.25;
@@ -288,8 +295,9 @@ export const MIN_REPLY_AFTER_REASONING_TOKENS = 1024;
  * window under 2 x {@link SMALL_WINDOW_PROMPT_ROOM} no more than leaves
  * the prompt that room (but at least {@link SMALL_WINDOW_REPLY_SHARE} of
  * the window, and at least {@link MIN_SMALL_WINDOW_REPLY_RESERVE}). The
- * figures: 8k window 2048, 16k 4096, 24k 8192, 32k and up half the
- * window, as before. An unknown window keeps the configured figure
+ * figures: 8k window 2048, 16k 4096, 24k 6144, 32k 8192 (a quarter
+ * each, ATO-1581), 48k and up the configured cap or half the window, as
+ * before. An unknown window keeps the configured figure
  * (nothing to compare it against), and a non-positive cap (`0`, "no
  * client-side cap") reserves nothing, as before.
  *

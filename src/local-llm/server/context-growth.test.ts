@@ -122,15 +122,17 @@ describe("decideContextGrowth", () => {
   });
 
   it("grows only past three quarters of the prompt's room (the window less the reply reserve)", () => {
-    // 32,768 with the default 16,384 reply cap: the reserve is half the
-    // window, so the prompt has 16,384 and the trigger is past 12,288.
+    // 32,768 with the default 16,384 reply cap: the reserve is a quarter
+    // of the window (ATO-1581), so the prompt has 24,576 and the trigger
+    // is past 18,432.
     const reserve = effectiveReplyReserve(CAP, 32_768);
-    expect(reserve).toBe(16_384);
+    expect(reserve).toBe(8192);
     const at = (promptTokens: number) =>
       decideContextGrowth({ currentContext: 32_768, ceiling: 262_144, promptTokens, replyReserveTokens: reserve });
     expect(at(7_500)).toBeNull();
+    expect(at(12_289)).toBeNull();
     expect(at((32_768 - reserve) * CONTEXT_GROWTH_TRIGGER_SHARE)).toBeNull();
-    expect(at(12_289)).toBe(65_536);
+    expect(at(18_433)).toBe(65_536);
   });
 
   it("takes one step per call, even for a conversation that has outgrown several", () => {
