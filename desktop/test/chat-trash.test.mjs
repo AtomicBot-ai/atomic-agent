@@ -71,6 +71,60 @@ test("the file round-trips, and a missing or broken file is an empty Trash", () 
   }
 });
 
+test("ATO-2747: an entry keeps where the chat sat (pinned, archived, folder) through the file", () => {
+  const dir = mkdtempSync(join(tmpdir(), "chat-trash-"));
+  try {
+    const path = join(dir, "chat-trash.json");
+    let list = M.trashPut([], "a", "A", NOW, { pinned: true, folder: "f1" });
+    list = M.trashPut(list, "b", "B", NOW - DAY, { archived: true, folder: "", pinned: "yes" });
+    M.writeTrash(path, list);
+    assert.deepEqual(M.readTrash(path), [
+      { id: "a", title: "A", deletedAt: NOW, pinned: true, folder: "f1" },
+      { id: "b", title: "B", deletedAt: NOW - DAY, archived: true },   // a malformed field is left out
+    ]);
+    // A chat put again keeps its first place, as it keeps its first date.
+    assert.deepEqual(M.trashPut(list, "a", "A", NOW + DAY, { archived: true })[0], list[0]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("ATO-2747: an entry written before the place fields still reads, with none of them", () => {
+  assert.deepEqual(M.coerceTrash({ entries: [{ id: "old", title: "Old chat", deletedAt: NOW }] }),
+    [{ id: "old", title: "Old chat", deletedAt: NOW }]);
+  assert.deepEqual(M.coercePlace(null), {});
+  assert.deepEqual(M.coercePlace({ id: "x", title: "y" }), {});
+});
+
+test("ATO-2747: Empty Trash counts what went and what stayed (Deleted 7 of 9)", async () => {
+  const entries = Array.from({ length: 9 }, (_, i) => ({ id: "s" + i, title: "", deletedAt: NOW - i }));
+  const out = await M.emptyTrash(entries, async (id) => { if (id === "s3" || id === "s7") throw new Error("HTTP 503"); });
+  assert.equal(out.total, 9);
+  assert.equal(out.purged.length, 7);
+  assert.equal(out.failed, 2);
+  assert.deepEqual(out.entries.map((e) => e.id), ["s3", "s7"]);   // still in Trash
+  assert.equal(out.detail, "HTTP 503");   // for the log only
+  const all = await M.emptyTrash(entries, async () => {});
+  assert.deepEqual([all.failed, all.total, all.entries.length, "detail" in all], [0, 9, 0, false]);
+});
+
+test("ATO-2747: Trash IPC answers in plain words, never the raw message, status or path", () => {
+  const ipc = src("../main/chat-trash-ipc.ts");
+  assert.doesNotMatch(ipc, /error: (refused|err\.message|requestErrorText)/, "no raw text in an answer");
+  assert.doesNotMatch(ipc, /error: err instanceof Error/);
+  for (const text of Object.values(M.TRASH_ERRORS)) {
+    assert.doesNotMatch(text, /HTTP|\d{3}|\/|\\|ECONN|EACCES/, text);
+    assert.doesNotMatch(text, /\u2014/);
+  }
+  assert.match(ipc, /console\.warn\(`\[desktop\] chat trash: \$\{kind\}: \$\{detail\}`\)/, "details go to the log");
+  const empty = ipc.slice(ipc.indexOf('ipcMain.handle("chatTrash:empty"'));
+  assert.match(empty, /failed: out\.failed, total: out\.total/);
+  const restore = ipc.slice(ipc.indexOf('ipcMain.handle("chatTrash:restore"'), ipc.indexOf('ipcMain.handle("chatTrash:forget"'));
+  assert.match(restore, /entry: before\.find/, "restore answers with where the chat sat");
+  assert.match(ipc, /trashPut\(readTrash\(trashPath\(\)\), id, title, Date\.now\(\), coercePlace\(payload\)\)/);
+  assert.match(src("../preload/preload.ts"), /ipcRenderer\.invoke\("chatTrash:put", \{ \.\.\.\(place \|\| \{\}\), id, title \}\)/);
+});
+
 test("stampTrashed tells the agent (POST /api/sessions/{id}/trashed) and reads its answer", async () => {
   const calls = [];
   const route = (status, body = null) => async (...args) => { calls.push(args); return { status, body }; };
@@ -90,7 +144,7 @@ test("wiring: put stamps the chat before it is listed in Trash, restore clears i
   const put = ipc.slice(ipc.indexOf('ipcMain.handle("chatTrash:put"'), ipc.indexOf('ipcMain.handle("chatTrash:restore"'));
   const restore = ipc.slice(ipc.indexOf('ipcMain.handle("chatTrash:restore"'), ipc.indexOf('ipcMain.handle("chatTrash:forget"'));
   assert.ok(put.includes("await stamp(id, true)") && put.indexOf("await stamp(id, true)") < put.indexOf("writeTrash("), "put stamps first");
-  assert.match(put, /if \(refused\) return \{ ok: false, error: refused \};/);
+  assert.match(put, /if \(refused\) return failed\("hide", refused\);/);
   assert.ok(restore.includes("await stamp(id, false)") && restore.indexOf("await stamp(id, false)") < restore.indexOf("writeTrash("), "restore clears first");
   assert.match(ipc, /client\.sessionRoute\(sid, path, method, body, 10_000\)/);
 });
@@ -133,11 +187,18 @@ function sandbox(bridge) {
   const c = {
     S: { alert: null }, SESSIONS: [{ id: "s1", t: "Plan the trip" }], BR: bridge,
     esc: h.esc, ic: h.ic, toasts: [], renders: 0,
+    PREFS: { pinned: [], archived: [], seen: {} }, FOLDERS: { state: { folders: [{ id: "f1", name: "Work" }], chats: {}, auto: {} } },
+    saves: { prefs: 0, folders: 0 },
   };
+  c.archiveSet = (list, id, on) => { const rest = (list || []).filter((x) => x !== id); return on ? [id, ...rest] : rest; };
+  c.folderById = (st, id) => st.folders.find((f) => f.id === id) || null;
+  c.folderPut = (st, sid, fid) => { st.chats[sid] = fid; delete st.auto[sid]; return true; };
+  c.savePrefs = () => { c.saves.prefs++; };
+  c.saveFolders = () => { c.saves.folders++; };
   c.render = () => { c.renders++; };
   c.nameVisibleSessions = () => {};
   c.refreshSessions = async () => {};
-  c.toast = (t, s) => { c.toasts.push(t + " | " + (s || "")); };
+  c.toast = (t, s, kind) => { c.toasts.push(t + " | " + (s || "") + (kind ? " | " + kind : "")); };
   vm.createContext(c);
   vm.runInContext(src("../renderer/chat-trash.js"), c);
   return c;
