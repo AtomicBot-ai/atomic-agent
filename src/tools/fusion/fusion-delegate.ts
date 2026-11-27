@@ -715,6 +715,14 @@ export function buildFusionDelegateTool(
       // Except after the user declined a file in those directories this
       // turn: the workers would write it unasked under the standing yes,
       // so re-delegating a declined write is asked about again.
+      //
+      // The turn state is tied to this turn (ATO-1759), so a
+      // `subagent.run` later in it reads this fan-out's answer and its
+      // refused command note instead of dropping them, and state another
+      // turn left is not read here.
+      if (ctx.turnId !== undefined) {
+        deps.approvals.fanoutScopes?.enterTurn(ctx.sessionId, ctx.turnId);
+      }
       const declinedInScope =
         deps.approvals.hasDeclinedUnder?.(ctx.sessionId, writeScope) ?? false;
       const alreadyApproved =

@@ -40,6 +40,8 @@ export class FanoutScopeRegistry {
   private readonly dirsBySession = new Map<string, readonly string[]>();
   private readonly turnScopeBySession = new Map<string, readonly string[]>();
   private readonly commandsRefusedInTurn = new Set<string>();
+  /** The turn the session's turn state belongs to (`enterTurn`, ATO-1759). */
+  private readonly turnIdBySession = new Map<string, string>();
 
   /**
    * Authorise `dirs` (absolute, already resolved) for `sessionId`.
@@ -116,6 +118,27 @@ export class FanoutScopeRegistry {
   clearTurnGrant(sessionId: string): void {
     this.turnScopeBySession.delete(sessionId);
     this.commandsRefusedInTurn.delete(sessionId);
+    this.turnIdBySession.delete(sessionId);
+  }
+
+  /**
+   * Tie the session's turn state (the standing answer and the refused
+   * command note) to `turnId` (ATO-1759). State another turn left is
+   * dropped first. `fusion.delegate` and `subagent.run` both call it, so
+   * one tool sees what the other decided in this turn instead of wiping
+   * it: before, `subagent.run` dropped every grant it had not given
+   * itself, the refused command note with it, and the next fan-out went
+   * out without the question its workers needed.
+   */
+  enterTurn(sessionId: string, turnId: string): void {
+    const at = this.turnIdBySession.get(sessionId);
+    if (at !== undefined && at !== turnId) this.clearTurnGrant(sessionId);
+    this.turnIdBySession.set(sessionId, turnId);
+  }
+
+  /** Whether the session's turn state was last tied to `turnId` (`enterTurn`). */
+  turnStateIsFrom(sessionId: string, turnId: string): boolean {
+    return this.turnIdBySession.get(sessionId) === turnId;
   }
 
   /**
