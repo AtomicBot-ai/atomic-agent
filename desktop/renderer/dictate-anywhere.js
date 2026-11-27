@@ -34,6 +34,8 @@
 
   if (!BR || !BR.dictateOpened) return;
   const opened = await BR.dictateOpened().catch(() => null);
+  // ATO-2750: a failure line from main, with its settings button; the microphone is not opened.
+  if (opened && opened.failure && typeof daShowFailure === 'function') { daShowFailure(opened.failure, BR); return; }
   if (opened && (opened.hint || opened.label)) hintEl.textContent = opened.hint || (opened.label + ' types it · esc');
   if (BR.onDictate) BR.onDictate(show);
   document.getElementById('da-done').addEventListener('click', () => { if (BR.dictateStop) BR.dictateStop(); });
@@ -57,8 +59,7 @@
   } catch (err) {
     stopMic();
     const name = (err && err.name) || '';
-    if (BR.dictateMicFailed) BR.dictateMicFailed(name === 'NotAllowedError' || name === 'SecurityError'
-      ? 'Microphone access is turned off for Atomic Agent.'
-      : 'The microphone could not be opened' + (err && err.message ? ': ' + err.message : '.'));
+    // ATO-2750: main words it (dictate-errors.ts); the browser's own message goes to the log only.
+    if (BR.dictateMicFailed) BR.dictateMicFailed({denied: name === 'NotAllowedError' || name === 'SecurityError', detail: String((err && err.message) || name || '')});
   }
 })();

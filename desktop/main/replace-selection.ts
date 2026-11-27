@@ -101,8 +101,12 @@ export function replacementText(raw: unknown): string | null {
 export interface ReplaceDeps {
   /** macOS Accessibility, as keystroke-clipboard-host.ts `keystrokesAllowed`; `prompt` shows the system's request. */
   allowed: (prompt: boolean) => boolean;
-  /** Puts the mini chat away (destroys it), so it is not where the paste lands. */
+  /** Puts the mini chat out of sight (kept alive), so it is not where the paste lands. */
   hide: () => void;
+  /** ATO-2750: brings it back after a failed paste, to say so there; false when it is gone. */
+  bringBack: () => boolean;
+  /** Closes it for good once the answer is in place. */
+  close: () => void;
   /** Brings the source app to the front; false when it could not (it quit, macOS refused). */
   activate: (app: SourceApp) => Promise<boolean>;
   sleep: (ms: number) => Promise<void>;
@@ -110,7 +114,7 @@ export interface ReplaceDeps {
   paste: (text: string) => Promise<PasteResult>;
   /** Leaves the text on the clipboard for a paste by hand. */
   copy: (text: string) => void;
-  /** A line for the user once the mini chat is gone (a system notification). */
+  /** A line for the user when the mini chat could not come back (a system notification). */
   notify: (line: string) => void;
 }
 
@@ -121,15 +125,16 @@ export interface ReplaceOptions {
 
 export type ReplaceOutcome =
   | { ok: true; restored: boolean }
-  /** `hidden`: the mini chat is already gone, the line went to `notify`; else the page shows `error`. */
-  | { ok: false; hidden: boolean; error: string };
+  /** `hidden`: the mini chat is already gone, the line went to `notify`; else the page shows `error`.
+      `copy` (ATO-2750): the page offers "Copy answer" beside the line. */
+  | { ok: false; hidden: boolean; error: string; copy?: true };
 
 /** The same line the "Use selected text" switch shows: the read and the paste need the same permission. */
 export const REPLACE_ACCESSIBILITY_HINT = SELECTED_TEXT_ACCESSIBILITY_HINT;
 
 /**
  * The answer in place of the selection: checked first while the mini chat
- * can still say what is wrong; then the mini chat goes away, the source app
+ * can still say what is wrong; then the mini chat goes out of sight, the source app
  * comes back to the front, and the paste runs (keeping and putting back the
  * user's clipboard). The app is brought back before any key is pressed, and
  * when it cannot be, nothing is pressed: a ⌘V into some other app would be
@@ -158,9 +163,7 @@ export async function replaceInSourceApp(
   }
   if (!back) {
     try { deps.copy(text); } catch { /* best effort */ }
-    const line = `Could not switch back to ${source.name}. The answer is on the clipboard: press ⌘V there.`;
-    deps.notify(line);
-    return { ok: false, hidden: true, error: line };
+    return failed(deps, `Could not switch back to ${source.name}. The answer is on the clipboard: press ⌘V there.`);
   }
   await deps.sleep(opts.focusMs ?? 150);
   let out: PasteResult;
@@ -169,10 +172,25 @@ export async function replaceInSourceApp(
   } catch {
     out = { pasted: false, reason: "failed" };
   }
-  if (out.pasted) return { ok: true, restored: out.restored };
-  const line = out.reason === "no-keystroke"
-    ? `The answer is on the clipboard: press ⌘V in ${source.name}.`
-    : "The answer could not be pasted. It is kept in the chat in the main window.";
-  deps.notify(line);
-  return { ok: false, hidden: true, error: line };
+  if (out.pasted) {
+    try { deps.close(); } catch { /* already gone */ }
+    return { ok: true, restored: out.restored };
+  }
+  if (out.reason === "no-keystroke") return failed(deps, `The answer is on the clipboard: press ⌘V in ${source.name}.`);
+  return failed(deps,
+    `The answer could not be pasted into ${source.name}. Copy it and paste it by hand.`,
+    "The answer could not be pasted. It is kept in the chat in the main window.");
+}
+
+/**
+ * ATO-2750: a failure after the mini chat went out of sight. It comes back
+ * with the line and "Copy answer" (Raycast keeps its window with the error
+ * the same way); only when it cannot does the line go to a notification.
+ */
+function failed(deps: ReplaceDeps, line: string, gone = line): ReplaceOutcome {
+  let back = false;
+  try { back = deps.bringBack(); } catch { back = false; }
+  if (back) return { ok: false, hidden: false, error: line, copy: true };
+  deps.notify(gone);
+  return { ok: false, hidden: true, error: gone };
 }
