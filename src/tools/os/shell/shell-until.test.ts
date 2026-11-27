@@ -88,7 +88,7 @@ describe.skipIf(process.platform === "win32")("os.shell.run until (ATO-2358)", (
     expect(none.status).toBe("ok");
     expect(none.details).toMatchObject({ detached: true, jobId: 1 });
     expect(none.details.matched).toBeUndefined();
-    expect(none.summary).toContain("no line of job 1 matched /error/ within 400 ms");
+    expect(none.summary).toContain("no line of job 1 matched /error/ within 0.4 s");
   });
 
   it("a job that exits without a match is collected with the reason", async () => {
