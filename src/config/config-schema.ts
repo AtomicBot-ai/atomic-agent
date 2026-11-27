@@ -1299,6 +1299,9 @@ export interface UserConfigFile {
 // Unversioned, additive: `llm.runMode.fusion.roles` (`plan|build|review|
 // explore|utility` → provider id) and `mixLocalModels` (default false),
 // ATO-943. An older file has neither and runs every task on the worker leg.
+// Unversioned, additive: `llm.runMode.fusion.roleModels` (role → model
+// name on that role's provider). A separate key, so an older build that
+// reads it skips it and runs each role on its entry's model.
 // Unversioned, additive: `llm.runMode.fusion.outcomeJournal` (default
 // true), ATO-949. `false` keeps no outcome rows and states no past-run
 // summary; an older file has none and journals.

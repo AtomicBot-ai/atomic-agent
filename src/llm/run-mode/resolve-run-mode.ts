@@ -215,6 +215,27 @@ function turnModelFor(
 }
 
 /**
+ * The wire model for a role that names its own model (`roleModels`) on
+ * a shared entry. As `turnModelFor`, except on the orchestrator's
+ * provider while the orchestrator asks for another model: there an
+ * unnamed request would take the orchestrator's model
+ * (`fusionLinkModel`), so the role names its own even when it is the
+ * entry's chat model, as the worker leg does.
+ */
+function roleTurnModel(
+  entry: LlmProviderConfigEntry,
+  model: string,
+  orchestrator: LlmProviderConfigEntry | undefined,
+  orchestratorTurnModel: string | undefined,
+): string | undefined {
+  const own = turnModelFor(entry, model);
+  if (own !== undefined) return own;
+  return orchestratorTurnModel !== undefined && entry.id === orchestrator?.id
+    ? model
+    : undefined;
+}
+
+/**
  * Project the `llm.runMode` block onto the providers that actually exist.
  *
  * `llm.activeTextProvider` stays AUTHORITATIVE — `runMode.mode` is purely
@@ -344,8 +365,13 @@ export function resolveRunMode(
   for (const role of FUSION_ROLES) {
     const entry = byId(fusion?.roles?.[role]);
     if (entry === undefined) continue;
+    // A role's own model on a shared entry (`roleModels`): one provider
+    // serving several roles, each with its model. Not on a llama-server
+    // entry, which serves the model it loaded whatever the name says.
+    const ownModel = isLocalKind(entry) ? undefined : fusion?.roleModels?.[role];
     const model =
-      entry.id === worker?.id
+      ownModel ??
+      (entry.id === worker?.id
         ? workerModelLabel
         : entry.id === orchestrator?.id
           ? (fusion?.orchestratorModel ??
@@ -354,9 +380,13 @@ export function resolveRunMode(
             null)
           : isLocalKind(entry)
             ? (entry.model ?? entry.defaultChatModel ?? null)
-            : (entry.defaultChatModel ?? entry.model ?? null);
+            : (entry.defaultChatModel ?? entry.model ?? null));
     const turnModel =
-      entry.id === worker?.id ? workerTurnModel : turnModelFor(entry, model);
+      ownModel === undefined
+        ? entry.id === worker?.id
+          ? workerTurnModel
+          : turnModelFor(entry, model)
+        : roleTurnModel(entry, ownModel, orchestrator, orchestratorTurnModel);
     byRole[role] = {
       providerId: entry.id,
       model,
@@ -381,20 +411,34 @@ export function resolveRunMode(
   // The judge reads in a fresh context; any configured provider may be
   // it: the pinned judge, else the review role's model (ATO-943), else
   // the orchestrator leg.
+  const pinnedJudge = byId(fusion?.judgeProvider);
+  // Without its own pin the judge is the review role's model; when that
+  // role names its own model (`roleModels.review`), the judge asks for it
+  // too. Without one, the judge reads the entry as before.
+  const reviewRole =
+    pinnedJudge === undefined &&
+    fusion?.roleModels?.review !== undefined &&
+    byRole.review !== undefined &&
+    !byRole.review.local
+      ? byRole.review
+      : undefined;
   const judgeEntry =
-    byId(fusion?.judgeProvider) ??
+    pinnedJudge ??
     byId(fusion?.roles?.review) ??
     orchestrator;
   const judgeModel =
     judgeEntry === undefined
       ? null
-      : ((judgeEntry.id === orchestrator?.id
-          ? fusion?.orchestratorModel
-          : undefined) ??
-        judgeEntry.defaultChatModel ??
-        judgeEntry.model ??
-        null);
-  const judgeTurnModel = turnModelFor(judgeEntry, judgeModel);
+      : reviewRole !== undefined
+        ? reviewRole.model
+        : ((judgeEntry.id === orchestrator?.id
+            ? fusion?.orchestratorModel
+            : undefined) ??
+          judgeEntry.defaultChatModel ??
+          judgeEntry.model ??
+          null);
+  const judgeTurnModel =
+    reviewRole !== undefined ? reviewRole.turnModel : turnModelFor(judgeEntry, judgeModel);
   const judge =
     fusion?.judge !== "on" || judgeEntry === undefined
       ? null
