@@ -2,6 +2,7 @@ import { selectManagedEngine } from "../../local-llm/engine-selection.js";
 import { retireIdleCore } from "../../local-llm/core/core-sessions.js";
 import { CORE_FALLBACK_LINE, CoreUnavailableError, shouldFallBackFromCore, type CoreFailureInfo } from "../../local-llm/core/core-errors.js";
 import { ModelOperationQueue } from "./model-operation-queue.js";
+import { ModelsDirOrchestrator } from "./models-dir-orchestrator.js";
 import { hostRamGb } from "../../local-llm/backend/host-ram.js";
 import { totalmem } from "node:os";
 
@@ -349,6 +350,12 @@ export class LocalModelsOrchestrator {
    */
   private outOfMemoryCeiling: { modelId: string; atMost: number } | null = null;
   private readonly operations = new ModelOperationQueue();
+  /** ATO-2504: Models › models folder, moved in this orchestrator's model-operation turn. */
+  readonly modelsDir = new ModelsDirOrchestrator({
+    emit: (action) => this.bus.emit(action),
+    inTurn: (body) => this.operations.run(body, undefined, false),
+    refresh: () => this.refresh(),
+  });
   private selectionRevision = 0;
   private closing = false;
   private chatReadyError: string | null = null;
