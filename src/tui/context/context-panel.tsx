@@ -276,6 +276,7 @@ function buildRows(
     reservedForReply,
     usage.contextWindow,
     usage.tokens,
+    usage.replyReserve,
   );
   if (reserved > 0) {
     rows.push({
@@ -297,17 +298,22 @@ function buildRows(
  * window), and never more than
  * the prompt left of the window. The desktop's context popover ports
  * this rule (`ctxReplyReserve` in desktop/renderer/renderer.js).
+ *
+ * `budgetReserve`: the figure the last prompt's budget really held back
+ * (`ContextUsageView.replyReserve`). On a window the instructions and
+ * tool schemas crowd it is smaller than `effectiveReplyReserve`
+ * (ATO-1678), so it wins when known.
  */
 export function replyReserveShown(
   replyCap: number | null,
   contextWindow: number,
   promptTokens: number,
+  budgetReserve?: number,
 ): number {
   if (replyCap === null || replyCap <= 0) return 0;
-  return Math.min(
-    effectiveReplyReserve(replyCap, contextWindow),
-    Math.max(0, contextWindow - promptTokens),
-  );
+  const full = effectiveReplyReserve(replyCap, contextWindow);
+  const planned = budgetReserve !== undefined ? Math.min(budgetReserve, full) : full;
+  return Math.min(planned, Math.max(0, contextWindow - promptTokens));
 }
 
 function renderRow(

@@ -25,8 +25,9 @@ import { readJsonBody, sendError, sendJson, type HttpHandler } from "./request-c
  * (those rows appear only after a real turn). `replyCap` is
  * `config.localModels.completionMaxTokens`, what the TUI panel is handed
  * as `reservedForReply`; `reservedForReply` is the part of it the prompt
- * budget really holds back on this window (`effectiveReplyReserve`, the
- * figure `computeEffectiveConversationCap` subtracts) — a 96k cap on a
+ * budget really holds back on this window (the built prompt's
+ * `replyReserve`, the figure `computeEffectiveConversationCap` subtracts,
+ * shared with the transcript on a crowded window, ATO-1678): a 96k cap on a
  * 32k window is not a 96k reservation. A panel drawing it still clamps it
  * to what the prompt left of the window (the TUI's `replyReserveShown`,
  * the desktop's `ctxReplyReserve`), so it can show less than this.
@@ -68,12 +69,29 @@ export function createContextPreviewHandler(): HttpHandler {
       basis: "built",
       usage: contextUsageFromPrompt(prompt),
       contextWindow: prompt.contextWindow,
-      reservedForReply: effectiveReplyReserve(
+      reservedForReply: previewReplyReserve(
+        prompt,
         getConfig().localModels.completionMaxTokens,
-        prompt.contextWindow,
       ),
       replyCap: getConfig().localModels.completionMaxTokens,
       pairsCap: prompt.conversationPairsCap,
     });
   };
+}
+
+/**
+ * The reservation the preview reports: the budget's own figure when the
+ * built prompt carries one. On a window the instructions and tool
+ * schemas crowd it is the shared reserve, below `effectiveReplyReserve`
+ * (ATO-1678). Exported for the test.
+ */
+export function previewReplyReserve(
+  prompt: Pick<BuiltPrompt, "replyReserve" | "contextBudget" | "contextWindow">,
+  replyCap: number,
+): number {
+  return (
+    prompt.replyReserve ??
+    prompt.contextBudget?.replyReserve ??
+    effectiveReplyReserve(replyCap, prompt.contextWindow)
+  );
 }

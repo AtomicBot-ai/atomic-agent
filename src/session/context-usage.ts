@@ -71,6 +71,13 @@ export interface ContextUsageState {
    * dial redraws the gauge while the operator is looking at it.
    */
   pairCosts: readonly number[];
+  /**
+   * The reply reserve the prompt budget held back (`BuiltPrompt.replyReserve`,
+   * or the cloud budget's). On a window the fixed part crowds it is the
+   * shared figure, below `effectiveReplyReserve` (ATO-1678). Absent on
+   * snapshots saved before the field existed.
+   */
+  replyReserve?: number;
   /** Per-section breakdown, for the detail view. Empty before the first prompt. */
   sections: readonly ContextUsageSection[];
   /**
@@ -189,8 +196,17 @@ export function contextUsageFromPrompt(prompt: BuiltPrompt): ContextUsageState {
     conversationPairsCap: prompt.conversationPairsCap,
     conversationBoundBy: prompt.conversationBoundBy,
     pairCosts: prompt.pairCosts,
+    ...budgetReplyReserve(prompt),
     sections,
     parts,
     toolSearchActive: prefixOffersToolSearch(prompt.stablePrefix),
   };
+}
+
+/** The reserve the prompt's budget held back, when it reports one. */
+function budgetReplyReserve(prompt: BuiltPrompt): { replyReserve?: number } {
+  const reserve = prompt.replyReserve ?? prompt.contextBudget?.replyReserve;
+  return reserve !== undefined && Number.isFinite(reserve) && reserve >= 0
+    ? { replyReserve: reserve }
+    : {};
 }

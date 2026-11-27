@@ -112,4 +112,21 @@ describe("a local native-tools step on a window its tools fill (ATO-1678)", () =
     const { ctx, deps } = fixture(262_144);
     expect(() => prepareStepInference(ctx, deps)).not.toThrow();
   });
+
+  it("refuses a fallback onto a link whose window the tools fill", () => {
+    const { ctx, deps } = fixture(262_144);
+    const primaryDeps: StepDependencies = {
+      ...deps,
+      modelModePolicy: { activeProviderId: "primary", providers: [] },
+      modelMode: { mode: "local", source: "provider", providerId: "primary", modelId: null },
+    };
+    const prepared = prepareStepInference(ctx, primaryDeps);
+    const linkMode = { mode: "local" as const, source: "provider" as const, providerId: "small", modelId: null };
+    expect(() =>
+      prepared.llmParams.prepareForLink!({ modelMode: linkMode, transport: "native_tools", contextWindow: 4096 }),
+    ).toThrow(ContextWindowTooSmallError);
+    expect(() =>
+      prepared.llmParams.prepareForLink!({ modelMode: linkMode, transport: "native_tools", contextWindow: 262_144 }),
+    ).not.toThrow();
+  });
 });

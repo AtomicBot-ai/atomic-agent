@@ -10,7 +10,9 @@ import {
   type ConversationTurn,
 } from "../session/conversation-turn.js";
 import type { CapabilitiesSummary, ToolDescriptor } from "./stable-prefix.js";
-import { CONVERSATION_CAP_FLOOR } from "./token-budget.js";
+import { CONVERSATION_CAP_FLOOR, effectiveReplyReserve } from "./token-budget.js";
+import { contextUsageFromPrompt } from "../session/context-usage.js";
+import { previewReplyReserve } from "../http/route-context-preview.js";
 
 /**
  * ATO-1678 (Sentry CLI-Q4, v0.10.0): window 32 768, tool schemas
@@ -87,6 +89,14 @@ describe("a local prompt on a window the tool schemas crowd (ATO-1678)", () => {
   it("packs the pinned task within the transcript cap", () => {
     const prompt = crowdedPrompt();
     expect(prompt.tokens.conversation).toBeLessThanOrEqual(prompt.conversationCapEffective);
+  });
+
+  it("reports the shared reserve to the context readouts, not the full one", () => {
+    const prompt = crowdedPrompt();
+    expect(prompt.replyReserve).toBeLessThan(effectiveReplyReserve(16_384, WINDOW));
+    // The TUI panel's snapshot and `/api/context-preview`.
+    expect(contextUsageFromPrompt(prompt).replyReserve).toBe(prompt.replyReserve);
+    expect(previewReplyReserve(prompt, 16_384)).toBe(prompt.replyReserve);
   });
 
   it("leaves the reply its reserve inside the window", () => {

@@ -431,6 +431,8 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
       });
       if (next.cloudContext) ctx.session = { ...ctx.session, cloudContext: next.cloudContext };
       deps.onEvent?.({ type: "prompt_built", prompt: next, slotId: slot.slotId });
+      // A fallback link's own window may be too small for the tools (ATO-1678).
+      assertPromptFitsWindow(next, link.modelMode.mode);
       if (next.contextBudget) assertContextCapacity(next.text + JSON.stringify(wire?.tools ?? llmParams.tools ?? []), next.contextBudget);
       return { prompt: next.text, messages: next.messages, contextBudget: next.contextBudget,
         ...(wire ? { grammar: wire.grammar, tools: wire.tools, toolWireNames: wire.toolWireNames, toolChoice: wire.toolChoice, parallelToolCalls: wire.parallelToolCalls } : {}),
