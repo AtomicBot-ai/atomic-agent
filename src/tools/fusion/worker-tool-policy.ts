@@ -37,6 +37,10 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   "tasks.schedule",
   "tasks.cron",
   "tasks.cancel",
+  // A worker runs no board card of its own (ATO-2497).
+  "tasks.request_review",
+  "tasks.block",
+  "tasks.comment",
   "memory.profile.set",
   "memory.profile.remove",
   "memory.notes.store",

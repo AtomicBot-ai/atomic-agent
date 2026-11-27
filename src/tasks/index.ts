@@ -20,6 +20,23 @@ export {
   validateBoardPatch,
 } from "./task-board-lanes.js";
 export type { BoardCard, BoardEntry, BoardLane, BoardPatch } from "./task-board-lanes.js";
+export {
+  BOARD_COMMENT_AUTHORS,
+  BOARD_COMMENT_KINDS,
+  BOARD_COMMENT_MAX_LENGTH,
+  BOARD_COMMENTS_KEPT_PER_TASK,
+  validateBoardComment,
+} from "./task-board-comments.js";
+export type {
+  BoardComment,
+  BoardCommentAuthor,
+  BoardCommentInput,
+  BoardCommentKind,
+} from "./task-board-comments.js";
+export {
+  BOARD_FAILURE_FUSE_RUNS,
+  failedRunStreak,
+} from "./task-board-fuse.js";
 export type { TaskRunOutcome, TaskRunRecord } from "./task-run-log.js";
 export {
   isPausedTask,

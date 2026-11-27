@@ -28,6 +28,7 @@ import { currentBrowserScope, onBrowserWorkerEnd, runInBrowserScope, type Browse
 import { EMPTY_CONTEXT_USAGE } from "../../session/context-usage.js";
 import { estimateTokens } from "../../prompt/token-budget.js";
 import { routeTurnProvider } from "./runtime-turn-router.js";
+import { resolveStepGrammar } from "../../agent/step/step-inference.js";
 
 // The real router, watched: the size facts it is handed (ATO-2537).
 vi.mock("./runtime-turn-router.js", async (importOriginal) => {
@@ -180,20 +181,79 @@ describe("runtime turn ownership recipes", () => {
       expect(filter!("ask_user"), id).toBe(false);
       expect(filter!("fs.read"), id).toBe(true);
     }
-    // Surfaces that draw the question card get no filter at all.
+    // Surfaces that draw the question card keep it (their filter only
+    // hides the board card tools a chat turn never gets, ATO-2497).
     for (const [id, extra] of [
       ["tui", { origin: "tui" as const }],
       ["telegram", { origin: "telegram" as const }],
       ["cli", {}],
       ["declared", { origin: "http" as const, answerChannel: "desktop" as const, questions: true }],
     ] as const) {
-      expect(await optionsFor(id, extra), id).not.toHaveProperty("toolFilter");
+      const filter = (await optionsFor(id, extra))?.toolFilter;
+      expect(filter, id).toBeDefined();
+      expect(filter!("ask_user"), id).toBe(true);
+      expect(filter!("fs.read"), id).toBe(true);
     }
     // A caller's own filter still applies on a desktop turn.
     const own = await optionsFor("own", { origin: "sidecar", toolFilter: (name) => name !== "fs.write" });
     expect(own?.toolFilter?.("fs.write")).toBe(false);
     expect(own?.toolFilter?.("ask_user")).toBe(false);
     expect(own?.toolFilter?.("fs.read")).toBe(true);
+  });
+
+  it("offers the board card tools only on a task's run (ATO-2497)", async () => {
+    const optionsFor = async (id: string, extra: Parameters<typeof fixture.service.executeTurn>[2]) => {
+      await fixture.service.executeTurn(session(id), "request", extra);
+      return fixture.loop.runTurn.mock.calls.at(-1)?.[1];
+    };
+    const board = ["tasks.request_review", "tasks.block", "tasks.comment"];
+    for (const [id, extra] of [
+      ["tui", { origin: "tui" as const }],
+      ["sidecar", { origin: "sidecar" as const }],
+      // The scheduler's origin alone is not a task run: the task id is.
+      ["scheduler-no-task", { origin: "scheduler" as const }],
+    ] as const) {
+      const filter = (await optionsFor(id, extra))?.toolFilter;
+      for (const name of board) expect(filter!(name), `${id} ${name}`).toBe(false);
+      expect(filter!("tasks.list"), id).toBe(true);
+    }
+    const task = await optionsFor("task-run", {
+      origin: "scheduler",
+      checkpoint: { taskId: "t-1", resumes: 0, request: "request" },
+    });
+    for (const name of board) expect(task?.toolFilter?.(name) ?? true, name).toBe(true);
+    // A caller's own filter still applies on a task's run.
+    const own = await optionsFor("task-own", {
+      origin: "scheduler",
+      checkpoint: { taskId: "t-2" },
+      toolFilter: (name) => name !== "tasks.comment",
+    });
+    expect(own?.toolFilter?.("tasks.comment")).toBe(false);
+    expect(own?.toolFilter?.("tasks.block")).toBe(true);
+  });
+
+  it("keeps a chat turn's grammar byte-identical while hiding the board card tools (ATO-2497)", async () => {
+    const optionsFor = async (id: string, extra: Parameters<typeof fixture.service.executeTurn>[2]) => {
+      await fixture.service.executeTurn(session(id), "request", extra);
+      return fixture.loop.runTurn.mock.calls.at(-1)?.[1];
+    };
+    const grammar = "tool-name ::= old\n";
+    const descriptors = ["reply", "finish", "tasks.list", "tasks.comment", "tasks.block", "tasks.request_review"]
+      .map((name) => ({ name, summary: name, argsSchema: "{}" }));
+    const grammarFor = (toolFilter: ((name: string) => boolean) | undefined) => resolveStepGrammar(
+      toolFilter !== undefined ? { toolFilter } : {},
+      { grammar, registry: {} as never },
+      descriptors,
+      false,
+      false,
+    );
+    // A TUI turn had no filter: the base grammar goes out untouched.
+    const tui = (await optionsFor("tui-grammar", { origin: "tui" }))?.toolFilter;
+    expect(tui?.("tasks.comment")).toBe(false);
+    expect(grammarFor(tui)).toBe(grammar);
+    // A desktop turn already narrowed for ask_user still narrows.
+    const desktop = (await optionsFor("desktop-grammar", { origin: "sidecar" }))?.toolFilter;
+    expect(grammarFor(desktop)).not.toBe(grammar);
   });
 
   it("records a desktop turn as unable to ask for the length of the turn only (ATO-489)", async () => {

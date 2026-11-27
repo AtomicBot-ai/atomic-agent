@@ -177,6 +177,10 @@ const GATED_TOOLS = {
     "tasks.list",
     "tasks.cancel",
     "tasks.show",
+    // ATO-2497; also hidden on every turn that does not run a task.
+    "tasks.request_review",
+    "tasks.block",
+    "tasks.comment",
   ],
   sessions: [
     "sessions.list",

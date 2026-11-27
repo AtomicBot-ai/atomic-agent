@@ -241,6 +241,9 @@ const FIXED: Readonly<Record<string, Phrase>> = {
   "tasks.list": P(V.listed, "tasks"),
   "tasks.show": P(V.lookedAt, "a task"),
   "tasks.cancel": P(V.cancelled, "a task"),
+  "tasks.request_review": P(V.moved, "the task to review"),
+  "tasks.block": P(V.moved, "the task to blocked"),
+  "tasks.comment": P(V.commented, "on the task"),
   // ATO-2459: My apps.
   "app.save": P(V.created, "an app in My apps"),
   "app.update": P(V.edited, "an app in My apps"),

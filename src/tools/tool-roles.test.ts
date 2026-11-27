@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { resourceClassFor } from "../agent/tool-resource-class.js";
 import { WORKER_EXCLUDED_TOOLS } from "./fusion/worker-tool-policy.js";
+import { BOARD_CARD_TOOLS } from "./tasks/board-card-visibility.js";
 import {
   TOOL_ROLES,
   descriptorsForRole,
@@ -78,6 +79,10 @@ describe("tool roles", () => {
       "fusion.delegate",
       "tool.view",
       "tool.search",
+      // ATO-2497: a task's orchestrator moves its own card.
+      "tasks.request_review",
+      "tasks.block",
+      "tasks.comment",
       "memory.profile.list",
       "memory.profile.history",
       "memory.notes.recall",
@@ -124,6 +129,13 @@ describe("tool roles", () => {
       // level 4 — but it runs against a throwaway copy of the workspace,
       // which is why the fusion gate admits it as a read (`readonly`).
       if (d.name === "verify.run") continue;
+      // ATO-2497: the board card tools write only the running task's card
+      // (a serialised `tasks_write`), and the gate admits them as
+      // `readonly`, like `plan.update` (pinned in tasks-board-card.test.ts).
+      if (BOARD_CARD_TOOLS.has(d.name)) {
+        expect(resourceClassFor(d.name), d.name).toBe("tasks_write");
+        continue;
+      }
       expect(resourceClassFor(d.name), d.name).toMatch(/^(pure_read|terminal)$/);
     }
   });

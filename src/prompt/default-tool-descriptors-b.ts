@@ -283,6 +283,27 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     argsSchema: "{ id: string }",
     tier: "rare",
   },
+  // ATO-2497: the card of the task this turn runs. Offered only on a
+  // task's run (`board-card-visibility.ts`), never on a chat turn.
+  {
+    name: "tasks.request_review",
+    summary:
+      "Your task is done and a person should check it: move its board card to Review, with an optional note on what to check.",
+    argsSchema: "{ note?: string /* max 2000 chars */ }",
+    examples: ['{"note":"Draft is in report.md; please check the numbers in section 2."}'],
+  },
+  {
+    name: "tasks.block",
+    summary:
+      "You cannot go on without a person (missing access, a decision, broken input): move your task's board card to Blocked with the reason. It is not run again until a person runs or resumes it.",
+    argsSchema: "{ reason: string /* max 2000 chars */ }",
+    examples: ['{"reason":"The API key in config is rejected; I need a new one."}'],
+  },
+  {
+    name: "tasks.comment",
+    summary: "Add a comment to your task's board card: progress, a finding, a question for later.",
+    argsSchema: "{ text: string /* max 2000 chars */ }",
+  },
   {
     name: "sessions.list",
     summary:
