@@ -105,6 +105,12 @@ describe("LlamaServerClient with localModels.modelSampling (ATO-2202)", () => {
     expect(bodies[0]?.top_k).toBe(20);
   });
 
+  it("sends the model's sampling with the default config (ATO-2480)", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    await capturingClient(bodies).complete({ prompt: "p", modelSampling: QWEN_SAMPLING });
+    expect(bodies[0]).toMatchObject({ temperature: 0.6, top_k: 20, min_p: 0, repeat_penalty: 1.0 });
+  });
+
   it("keeps the request's explicit temperature over the model's", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     await capturingClient(bodies, true).complete({
@@ -116,8 +122,9 @@ describe("LlamaServerClient with localModels.modelSampling (ATO-2202)", () => {
     expect(bodies[0]?.top_k).toBe(20);
   });
 
-  it("sends the built-in sampling when the flag is off or absent", async () => {
+  it("sends the built-in sampling when the config or the client turns it off", async () => {
     const bodies: Array<Record<string, unknown>> = [];
+    getConfig().localModels.modelSampling = false;
     await capturingClient(bodies).complete({ prompt: "p", modelSampling: QWEN_SAMPLING });
     getConfig().localModels.modelSampling = true;
     await capturingClient(bodies, false).complete({ prompt: "p", modelSampling: QWEN_SAMPLING });
@@ -131,17 +138,19 @@ describe("LlamaServerClient with localModels.modelSampling (ATO-2202)", () => {
 });
 
 describe("localModels.modelSampling config", () => {
-  it("defaults to off, also for a file written before the field existed", () => {
-    expect(USER_CONFIG_DEFAULTS.localModels.modelSampling).toBe(false);
-    expect(parseUserConfigFile({}).localModels.modelSampling).toBe(false);
+  it("defaults to on, also for a file written before the field existed (ATO-2480)", () => {
+    expect(USER_CONFIG_DEFAULTS.localModels.modelSampling).toBe(true);
+    expect(parseUserConfigFile({}).localModels.modelSampling).toBe(true);
     expect(
       parseUserConfigFile({ version: 77, localModels: { thinking: "on" } }).localModels.modelSampling,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("accepts a boolean and rejects anything else", () => {
+    expect(parseUserConfigFile({ localModels: { modelSampling: false } }).localModels.modelSampling).toBe(false);
     expect(parseUserConfigFile({ localModels: { modelSampling: true } }).localModels.modelSampling).toBe(true);
     expect(() => parseUserConfigFile({ localModels: { modelSampling: 3 } })).toThrow(/localModels\.modelSampling/);
+    expect(() => parseUserConfigFile({ version: 79, localModels: { modelSampling: 3 } })).toThrow(/localModels\.modelSampling/);
   });
 });
 

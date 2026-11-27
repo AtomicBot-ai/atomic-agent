@@ -354,6 +354,33 @@ describe("local model configuration domain seams", () => {
     expect(parsed.managed.port).toBe(19555);
   });
 
+  it.each([
+    { version: 79, raw: false, expected: true },
+    { version: 74, raw: false, expected: true },
+    { version: 79, raw: true, expected: true },
+    { version: 79, raw: undefined, expected: true },
+    { version: 80, raw: false, expected: false },
+    { version: 80, raw: true, expected: true },
+    { version: 80, raw: undefined, expected: true },
+  ])("moves the schema's old false model sampling to true at v80 (v$version / $raw)", ({ version, raw, expected }) => {
+    const input = { thinking: "on", drySampler: false, modelSampling: raw, managed: { port: 19555 } };
+    const parsed = schema.parseUserConfigFile({ version, localModels: input }).localModels;
+    expect(parsed.modelSampling).toBe(expected);
+    expect(parseLocal(input, version).modelSampling).toBe(expected);
+    // The migration touches model sampling only.
+    expect(parsed.drySampler).toBe(false);
+    expect(parsed.thinking).toBe("on");
+    expect(parsed.managed.port).toBe(19555);
+  });
+
+  it("writes v80 so a later false model sampling survives reloads (ATO-2480)", () => {
+    const migrated = schema.parseUserConfigFile({ version: 79, localModels: { modelSampling: false } });
+    expect(migrated.localModels.modelSampling).toBe(true);
+    expect(migrated.version).toBe(80);
+    migrated.localModels.modelSampling = false;
+    expect(schema.parseUserConfigFile(JSON.parse(JSON.stringify(migrated))).localModels.modelSampling).toBe(false);
+  });
+
   it("writes the current version so a later 1500 choice survives reloads", () => {
     const migrated = schema.parseUserConfigFile({ version: 77, localModels: { reasoningBudgetTokens: 1500 } });
     expect(migrated.localModels.reasoningBudgetTokens).toBe(0);
