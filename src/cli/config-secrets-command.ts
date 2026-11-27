@@ -9,6 +9,8 @@ import {
   secretNameError,
   type SecretsMigrationResult,
 } from "../config/index.js";
+import { printSecretRefs } from "./config-secrets-refs.js";
+import { isRawModeTerminal, readHiddenLine } from "./hidden-line-prompt.js";
 
 /**
  * `atomic-agent config secrets [status|keychain|env]` (ATO-474): show or
@@ -26,11 +28,15 @@ export const SECRETS_HELP =
     "                            Secret Service) and save new ones there",
     "  secrets env               Move them back to <stateDir>/.env (the default)",
     "  secrets status --json     The same as JSON: {\"store\", \"keychainKeys\"} (names only)",
-    "  secrets set <NAME>        Save one key read from stdin (one line) wherever keys",
-    "                            live now; prints where it went (--json for JSON)",
+    "  secrets set <NAME>        Save one key wherever keys live now. In a terminal it",
+    "                            asks for the value and does not show it; piped, it",
+    "                            reads one line from stdin. Prints where it went",
+    "                            (--json for JSON)",
     "  secrets get <NAME>        Print one saved key's value (for the desktop app);",
     "                            exit 1 when it is not saved",
     "  secrets unset <NAME>      Remove one saved key from .env and the OS keychain",
+    "  secrets refs              List saved keys written as references (op://, bw://,",
+    "                            cmd://) and the {{secret:NAME}} names tools may use",
     "",
     "NAME must end in _KEY, _TOKEN, _SECRET or _PASSWORD. The value is never",
     "taken as an argument, so it does not show up in the process list.",
@@ -55,6 +61,8 @@ export function handleSecrets(
       return getOne(args.slice(1), stateDir);
     case "unset":
       return unsetOne(args.slice(1), stateDir);
+    case "refs":
+      return printSecretRefs(stateDir);
     case "keychain":
       return report(moveSecretsToKeychain(stateDir), "the OS keychain");
     case "env":
@@ -103,7 +111,10 @@ async function readAll(stdin: NodeJS.ReadableStream): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** `secrets set NAME`: the value comes on stdin, one line; a final newline is dropped. */
+/**
+ * `secrets set NAME`: in a terminal, a prompt and a hidden read
+ * (ATO-2756); from a pipe, one line of stdin, a final newline dropped.
+ */
 async function setOne(
   args: string[],
   stateDir: string,
@@ -111,7 +122,21 @@ async function setOne(
 ): Promise<number> {
   const name = nameArg(args, "set");
   if (!name) return 1;
-  const raw = await readAll(stdin);
+  let raw: string;
+  if (isRawModeTerminal(stdin)) {
+    const typed = await readHiddenLine(
+      stdin,
+      process.stderr,
+      `Paste the value for ${name} and press Enter (it will not be shown): `,
+    );
+    if (typed === null) {
+      process.stderr.write("Cancelled; nothing was saved.\n");
+      return 130;
+    }
+    raw = typed;
+  } else {
+    raw = await readAll(stdin);
+  }
   const value = raw.replace(/\r?\n$/, "").trim();
   try {
     const saved = saveSecret(stateDir, name, value);

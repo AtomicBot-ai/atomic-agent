@@ -1,6 +1,7 @@
 import { execFile, spawnSync } from "node:child_process";
 
 import { rememberResolvedSecret } from "../sandbox/resolved-secret-values.js";
+import { missingCliMessage } from "./secret-ref-install-hint.js";
 import {
   parseSecretRef,
   planSecretRef,
@@ -88,12 +89,16 @@ function finish(name: string, prepared: { cacheKey: string; plan: SecretRefPlan 
   const program = prepared.plan.program;
   // One trailing newline is the CLI's, not the secret's.
   const value = out.stdout.replace(/\r?\n$/, "");
-  if (out.failure === "not-found") throw new SecretRefError(`${name}: ${program} was not found`);
+  if (out.failure === "not-found") {
+    throw new SecretRefError(missingCliMessage(name, program, "not-found") ?? `${name}: ${program} was not found`);
+  }
   if (out.failure === "timeout") throw new SecretRefError(`${name}: ${program} timed out`);
   if (out.failure === "too-large") {
     throw new SecretRefError(`${name}: ${program} printed more than ${SECRET_REF_MAX_OUTPUT_BYTES} bytes`);
   }
-  if (out.failure === "could-not-run") throw new SecretRefError(`${name}: ${program} could not run`);
+  if (out.failure === "could-not-run") {
+    throw new SecretRefError(missingCliMessage(name, program, "could-not-run") ?? `${name}: ${program} could not run`);
+  }
   if (out.exitCode !== 0) {
     throw new SecretRefError(
       `${name}: ${program} failed (exit code ${out.exitCode ?? "none"})${stderrHint(out.stderr, value)}`,
