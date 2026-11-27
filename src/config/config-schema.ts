@@ -1222,6 +1222,12 @@ export interface UserConfigFile {
 // carries the schema's value (first run writes the defaults, v25
 // rewrote `"writes"`), so it migrates to `"writes"`; `"always"` is kept.
 // From v79 an explicit `"never"` is honoured.
+// v80: `localModels.modelSampling` defaults to `true` (ATO-2480): a local
+// model runs with its authors' temperature / top-p / top-k instead of the
+// built-in 0.2 / 0.95 / 40. An older file's `false` was written by the
+// schema (first run writes the defaults, and only `config set` could
+// change it), so it migrates to `true`. From v80 an explicit `false` is
+// honoured.
 // Unversioned, additive: `tools.shell.envPassthrough` (default
 // `["GITHUB_TOKEN", "NOTION_API_KEY"]`, ATO-347). `os.shell.run` and
 // `os.git.*` no longer inherit the agent's provider keys, bot tokens or
@@ -1250,10 +1256,10 @@ export interface UserConfigFile {
 // ATO-332). `true` adds llama.cpp's DRY anti-repeat sampler fields to
 // every `/completion` request, window 256 tokens (`src/llm/dry-sampler.ts`); only llama.cpp
 // engines receive them. An older file has no field and reads as off.
-// Unversioned, additive: `localModels.modelSampling` (default `false`,
-// ATO-2202). `true` sends the loaded model's own recommended sampling
-// (`src/local-llm/catalog/gguf-sampling.ts`) where the request names
-// none. An older file has no field and reads as off.
+// `localModels.modelSampling` (ATO-2202). `true` sends the loaded model's
+// own recommended sampling (`src/local-llm/catalog/gguf-sampling.ts`)
+// where the request names none. Added unversioned with default `false`;
+// v80 makes it `true` (see below).
 // Unversioned, additive: `skills.selfLearning` (`enabled` true,
 // `minSteps` 10, ATO-67). An older file has no block and reads the
 // defaults, so self-learning is on after an upgrade, as in OpenClaw.
@@ -1316,7 +1322,7 @@ export interface UserConfigFile {
 // file). An older file has no field and reads the default, as before.
 // Unversioned, additive: top-level `channels` (chat channels beyond
 // Telegram and Discord keyed by id, ATO-1169). Missing reads as `{}`.
-export const USER_CONFIG_VERSION = 79;
+export const USER_CONFIG_VERSION = 80;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -1471,6 +1477,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   76,
   77,
   78,
+  79,
   USER_CONFIG_VERSION,
 ];
 

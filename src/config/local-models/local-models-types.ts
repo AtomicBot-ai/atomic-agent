@@ -439,8 +439,9 @@ export interface UserLocalModelsConfig {
    * top-k, min-p and the repeat penalty. A value the request sets itself
    * and the `ATOMIC_AGENT_LLAMA_*` overrides still win; a field the
    * model does not name keeps the built-in default (0.2 / 0.95 / 40).
-   * llama.cpp-family engines only. Default `false`, unversioned and
-   * additive: an older file has no field and reads as off.
+   * llama.cpp-family engines only. Default `true` since v80 (ATO-2480;
+   * it was `false` from ATO-2202): an older file's `false` migrates to
+   * `true`, and an explicit `false` in a v80+ file is honoured.
    */
   modelSampling: boolean;
   /**
