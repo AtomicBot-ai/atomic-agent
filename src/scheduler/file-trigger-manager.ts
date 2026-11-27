@@ -1,5 +1,6 @@
 import type { FileTriggerConfig } from "../config/file-trigger-config.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
+import type { FileTriggerClaims } from "./file-trigger-claims.js";
 import { resolveTriggerRoot } from "./file-trigger-guard.js";
 import {
   FileTriggerWatcher,
@@ -14,6 +15,13 @@ import {
  * only while this process leads the scheduler (`setLeader`), so two
  * processes sharing one state dir never both file a task for the same
  * file; leadership loss and shutdown close every watcher.
+ *
+ * A former leader closes its watchers only on its next scheduler tick,
+ * so right after a hand-over both processes watch for a moment
+ * (ATO-2508). Each hit therefore asks `confirmLeader` (the lock, read
+ * again now) and then takes a shared `claims` record before it files:
+ * the former leader drops the hit and stands by, and if both still
+ * pass, only one wins the claim.
  *
  * `reload` swaps the definitions: removed or changed entries stop, new
  * or changed ones start (if leading). Bootstrap wires the definitions
@@ -30,6 +38,10 @@ export interface FileTriggerManagerOptions {
   homeDir: string;
   /** Files the task; must not throw (log and drop instead). */
   fire(task: FileTriggerFire): void;
+  /** Whether this process still leads, asked right before each hit files. */
+  confirmLeader?: () => boolean;
+  /** Cross-process run record per hit (see `file-trigger-claims.ts`). */
+  claims?: FileTriggerClaims;
   logger?: StructuredLogger;
   maxWatchers?: number;
 }
@@ -142,11 +154,24 @@ export class FileTriggerManager {
       factory: this.options.factory,
       fs: this.options.fs,
       clock: this.options.clock,
-      fire: (task) => this.options.fire(task),
+      fire: (task, claimKey) => this.fireIfOwner(task, claimKey),
       ...(this.options.logger ? { logger: this.options.logger } : {}),
     });
     watcher.start();
     this.options.logger?.info("file trigger watching", { trigger: name, path: root.path });
     return watcher;
+  }
+
+  private fireIfOwner(task: FileTriggerFire, claimKey: string): void {
+    if (!this.leading) return;
+    if (this.options.confirmLeader && !this.options.confirmLeader()) {
+      this.options.logger?.info("file trigger hit left to the leading process", { trigger: task.trigger });
+      return;
+    }
+    if (this.options.claims && !this.options.claims.claim(claimKey)) {
+      this.options.logger?.info("file trigger hit already filed by another process", { trigger: task.trigger });
+      return;
+    }
+    this.options.fire(task);
   }
 }

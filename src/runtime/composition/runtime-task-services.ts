@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import {
@@ -12,18 +11,14 @@ import {
 } from "../../tasks/index.js";
 import type { TaskRunnerRuntime } from "../../tasks/task-runner.js";
 import {
-  chokidarWatcherFactory,
   createKeepAwake,
   createSchedulerLeadership,
-  FileTriggerManager,
-  nodeFileTriggerFs,
   parseKeepAwakeMode,
-  realFileTriggerClock,
   Scheduler,
   type KeepAwake,
   type SchedulerSidecar,
-  type FileTriggerFire,
 } from "../../scheduler/index.js";
+import { createRuntimeFileTriggers } from "./runtime-file-triggers.js";
 import { WebhookSessionStore, WEBHOOK_SESSIONS_FILENAME } from "../../http/webhook-session-store.js";
 import { registerTaskTools } from "../../tools/tasks/index.js";
 import { showDesktopNotification } from "../../tools/os/notify.js";
@@ -103,18 +98,10 @@ export function createRuntimeTaskRunner(args: {
     enabled: config.tasks.enabled,
     runOnCreate: config.tasks.runOnCreate,
     minIntervalMs: config.tasks.minIntervalMs,
-    // One sink, routed per `TaskReport.notify`: phone push (ATO-1129)
-    // goes straight to ntfy, everything else is the Telegram route. The
-    // Telegram channel is constructed
-    // after the runner — it needs the finished runtime object — so the
-    // sink resolves the same live reference the shutdown path uses,
-    // assigned further below, at delivery time. A report that fires in
-    // the window before that assignment (a due task on an early
-    // scheduler tick while bootstrap is still, e.g., awaiting MCP
-    // connects) is warn-logged and dropped, never lost silently; skips
-    // never affect the task's own status, and the runner isolates sink
-    // rejections. Skip-path logging is pinned by the sink's own unit
-    // tests in telegram-channel.test.ts.
+    // One sink, routed per `TaskReport.notify`: phone push (ATO-1129) goes
+    // to ntfy, the rest to Telegram. The channel is built after the runner,
+    // so the sink resolves the live reference at delivery time; a report
+    // before that is warn-logged and dropped (telegram-channel.test.ts).
     reportSink: routeTaskReports({
       telegram: createTaskReportSink({ config, resolveTelegram, logger }),
       push: createPushTaskReportSink({
@@ -282,8 +269,14 @@ export function createRuntimeScheduler(args: {
       return channel !== null && channel.hasToken() && channel.state() !== "disabled";
     },
   });
-  const fileTriggers = createFileTriggers({ config, taskRunner, logger });
-  return new Scheduler({
+  // Bound below: a file trigger hit re-asks leadership just before it
+  // files (ATO-2508), and the watchers start only after the scheduler.
+  let scheduler: Scheduler | null = null;
+  const fileTriggers = createRuntimeFileTriggers({
+    config, taskRunner, logger,
+    confirmLeader: () => scheduler?.confirmLeadership() ?? false,
+  });
+  scheduler = new Scheduler({
     taskRunner,
     tickMs: config.tasks.schedulerTickMs,
     batch: config.tasks.schedulerBatch,
@@ -295,46 +288,5 @@ export function createRuntimeScheduler(args: {
       : {}),
     ...(sidecars && sidecars.length > 0 ? { sidecars } : {}),
   });
-}
-
-/**
- * File and log-line triggers (ATO-441). Watchers run only in the
- * scheduler leader (started and stopped through `onLeadershipChange`),
- * and each hit files a task the way a webhook hit does: the trigger
- * never calls `runTurn` itself. `null` when none are configured.
- */
-function createFileTriggers(args: {
-  config: Pick<AtomicAgentConfig, "tasks" | "fileTriggers">;
-  taskRunner: Pick<TaskRunner, "create">;
-  logger: StructuredLogger;
-}): FileTriggerManager | null {
-  const { config, taskRunner, logger } = args;
-  const definitions = config.fileTriggers ?? {};
-  if (Object.keys(definitions).length === 0) return null;
-  return new FileTriggerManager({
-    definitions,
-    factory: chokidarWatcherFactory,
-    fs: nodeFileTriggerFs,
-    clock: realFileTriggerClock,
-    homeDir: homedir(),
-    logger,
-    fire: (task: FileTriggerFire) => {
-      try {
-        const created = taskRunner.create({
-          ...(task.sessionId ? { sessionId: task.sessionId } : {}),
-          userMessage: task.userMessage,
-          origin: "scheduler",
-          triggerSource: "file",
-          maxAttempts: config.tasks.maxAttempts,
-          maxSteps: null,
-        });
-        logger.info("file trigger filed a task", { trigger: task.trigger, taskId: created.id });
-      } catch (err) {
-        logger.warn("file trigger could not file a task", {
-          trigger: task.trigger,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    },
-  });
+  return scheduler;
 }
