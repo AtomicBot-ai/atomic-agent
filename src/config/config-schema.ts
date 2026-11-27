@@ -696,6 +696,8 @@ export interface AtomicAgentConfig {
     fallback?: {
       chain?: readonly string[];
       appendLocal?: boolean;
+      /** Start each chat turn on the local model, cloud on failure (ATO-2208). Default false. */
+      localFirst?: boolean;
       failureThreshold?: number;
       cooldownMs?: readonly number[];
       probeThrottleMs?: number;

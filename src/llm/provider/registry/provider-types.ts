@@ -128,6 +128,12 @@ export type LlmFallbackConfig = {
   chain?: readonly string[];
   /** Auto-append the configured local (llama-server) provider to the tail. Default false (ATO-349). */
   appendLocal?: boolean;
+  /**
+   * Start each normal chat turn on the configured local (llama-server)
+   * provider, the active cloud provider answering on a fallover-worthy
+   * failure (ATO-2208, `local-first-head.ts`). Default false.
+   */
+  localFirst?: boolean;
   /** Consecutive advance-worthy failures before switching (non-immediate signals). */
   failureThreshold?: number;
   /** Escalating cooldown ladder in ms; the last entry is the cap. */

@@ -144,6 +144,7 @@ const LLM_KEYS: Record<keyof UserLlmFileConfig, true> = {
 const LLM_FALLBACK_KEYS: Record<keyof UserLlmFallbackConfig, true> = {
   chain: true,
   appendLocal: true,
+  localFirst: true,
   failureThreshold: true,
   cooldownMs: true,
   probeThrottleMs: true,
