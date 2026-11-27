@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { getConfig, resetConfigCache, getStateSecretPaths, getTrustConfigPaths } from "../../config/index.js";
+import { getConfig, resetConfigCache, getStateSecretDirectories, getStateSecretPaths, getTrustConfigPaths } from "../../config/index.js";
 import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 import { ApprovalGate } from "../../approval/approval-gate.js";
@@ -311,7 +311,8 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     expect(wired.workerSupportsSlotAffinity("missing")).toBe(false);
     expect(protectedReads.approvals).toBe(dangerous);
     // The secret-file guard gets the state's own list (ATO-877).
-    expect(protectedReads.stateSecrets).toEqual({ stateDir: config.paths.stateDir, files: getStateSecretPaths(config.paths) });
+    // ATO-2496: plus the sign-in folders, which ask on a read tool too.
+    expect(protectedReads.stateSecrets).toEqual({ stateDir: config.paths.stateDir, files: getStateSecretPaths(config.paths), secretDirectories: getStateSecretDirectories(config.paths.stateDir) });
     config.agent.readScope = "unrestricted"; expect(protectedReads.readScope?.()).toBe("unrestricted");
     config.agent.readScope = "working-dir"; expect(protectedReads.readScope?.()).toBe("working-dir");
     // subagent.run registers right after fusion.delegate (ATO-1670).

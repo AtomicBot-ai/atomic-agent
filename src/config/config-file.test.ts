@@ -977,13 +977,14 @@ describe("the state's secret files (ATO-877)", () => {
     expect(getStateSecretPaths(paths)).toEqual([
       ...getTrustConfigPaths(paths),
       resolveApiKeyFilePath(paths.localModelsDataDir),
-      serveApiKeyPath(stateDir),
-      modelShareKeyPath(stateDir),
       coreSessionPath(paths.localModelsDataDir, "chat"),
       coreSessionPath(paths.localModelsDataDir, "embedding"),
       resolveSessionPath(stateDir),
-      httpDevicesPath(stateDir),
     ]);
+    // ATO-2496: the caller keys sit in the trust surface, so a write asks too.
+    for (const key of [serveApiKeyPath(stateDir), modelShareKeyPath(stateDir), httpDevicesPath(stateDir)]) {
+      expect(getTrustConfigPaths(paths)).toContain(key);
+    }
     expect(getStateSecretPaths(paths)).toContain(getDotenvPath(stateDir));
     expect(getStateSecretPaths(paths)).toContain(paths.userConfigFile);
   });
