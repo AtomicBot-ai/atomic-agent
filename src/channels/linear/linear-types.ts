@@ -141,6 +141,31 @@ export interface LinearIssueData {
   assigneeId?: string | null;
 }
 
+/**
+ * `agentSession` of an `AgentSessionEvent` (Linear Agents API, ATO-2464):
+ * someone mentioned or delegated to the agent installed as a Linear app.
+ */
+export interface LinearAgentSessionData {
+  id?: string;
+  issueId?: string;
+  issue?: { id?: string; identifier?: string; title?: string; url?: string } | null;
+  /** The comment that started the session, when one did. */
+  comment?: { id?: string; body?: string } | null;
+  creatorId?: string;
+  creator?: { id?: string; name?: string } | null;
+}
+
+/** `agentActivity` of a `prompted` event: the person's follow-up, or a stop signal. */
+export interface LinearAgentActivityData {
+  id?: string;
+  userId?: string;
+  user?: { id?: string; name?: string } | null;
+  /** `stop` when the person pressed Stop in Linear. */
+  signal?: string | null;
+  content?: { type?: string; body?: string } | null;
+  body?: string;
+}
+
 /** One webhook payload. */
 export interface LinearWebhookPayload {
   /** `create`, `update`, `remove`. */
@@ -156,10 +181,41 @@ export interface LinearWebhookPayload {
   webhookTimestamp?: number;
   webhookId?: string;
   organizationId?: string;
+  /** `AgentSessionEvent` only (`action` is `created` or `prompted`). */
+  agentSession?: LinearAgentSessionData;
+  agentActivity?: LinearAgentActivityData;
+  /** Linear's own summary of the issue and thread, for `created`. */
+  promptContext?: string;
 }
 
-/** Where a reply goes: the issue, optionally the top-level comment of a thread. */
+/**
+ * What a post is, for an agent session (Linear Agents API activity
+ * types): `thought` (working on it), `response` (the answer),
+ * `elicitation` (asking the person, here: approvals), `error`. A plain
+ * comment ignores it.
+ */
+export type LinearActivityKind = "thought" | "response" | "elicitation" | "error";
+
+const SEEN_CAP = 500;
+
+/** Add `key` to a bounded set; false when it was already there (a redelivery). */
+export function rememberOnce(seen: Set<string>, key: string): boolean {
+  if (seen.has(key)) return false;
+  seen.add(key);
+  if (seen.size > SEEN_CAP) {
+    const oldest = seen.values().next().value;
+    if (oldest !== undefined) seen.delete(oldest);
+  }
+  return true;
+}
+
+/**
+ * Where a reply goes: the issue, optionally the top-level comment of a
+ * thread; or, with `agentSessionId`, the Linear agent session (an
+ * activity instead of a comment). `issueId` is then the conversation key.
+ */
 export interface LinearTarget {
   issueId: string;
   parentId?: string;
+  agentSessionId?: string;
 }
