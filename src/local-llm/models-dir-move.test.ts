@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { isSameOrInside, moveModelsDir, ModelsDirMoveError } from "./models-dir-move.js";
+import { isFolderJunk, isSameOrInside, moveModelsDir, ModelsDirMoveError } from "./models-dir-move.js";
 
 function exdev(): NodeJS.ErrnoException {
   const err = new Error("cross-device link not permitted") as NodeJS.ErrnoException;
@@ -131,6 +131,26 @@ describe("moveModelsDir (ATO-2106)", () => {
     writeFileSync(join(to, ".DS_Store"), "");
     const result = await moveModelsDir(from, to);
     expect(result.moved).toEqual(["qwen-a", "qwen-b"]);
+  });
+
+  it("ATO-2742: accepts a new folder that holds only Windows, macOS and KDE junk files", async () => {
+    mkdirSync(to, { recursive: true });
+    for (const name of ["desktop.ini", "Thumbs.db", "ehthumbs.db", "._.DS_Store", ".directory", ".ds_store", "Desktop.ini"]) {
+      writeFileSync(join(to, name), "");
+    }
+    const result = await moveModelsDir(from, to);
+    expect(result.moved).toEqual(["qwen-a", "qwen-b"]);
+  });
+
+  it("ATO-2742: a junk name is matched whole, so a real file still counts", async () => {
+    expect(isFolderJunk("Thumbs.db")).toBe(true);
+    expect(isFolderJunk("DESKTOP.INI")).toBe(true);
+    expect(isFolderJunk("thumbs.db.bak")).toBe(false);
+    expect(isFolderJunk("my-desktop.ini")).toBe(false);
+    mkdirSync(to, { recursive: true });
+    writeFileSync(join(to, "desktop.ini"), "");
+    writeFileSync(join(to, "notes.txt"), "mine");
+    await expect(moveModelsDir(from, to)).rejects.toThrow("is not empty");
   });
 
   it("leaves foreign files and folders of the current folder where they are", async () => {
