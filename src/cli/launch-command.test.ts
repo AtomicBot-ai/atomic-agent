@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import type { spawn as nodeSpawn } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 
-import { launchCommand, MASKED, parseLaunchArgs, type LaunchCommandDeps } from "./launch-command.js";
+import { launchApprovalNote, launchCommand, MASKED, parseLaunchArgs, type LaunchCommandDeps } from "./launch-command.js";
 import type { LaunchServe } from "./launch-serve.js";
 
 const SERVE: LaunchServe = { baseUrl: "http://127.0.0.1:41234", port: 41234, started: false };
@@ -43,7 +43,7 @@ describe("atag launch (ATO-2172)", () => {
     const parsed = parseLaunchArgs(["codex", "--model", "qwen", "--", "exec", "--json"]);
     expect(parsed).toMatchObject({ model: "qwen", printEnv: false, extraArgs: ["exec", "--json"] });
     expect(parseLaunchArgs(["nope"])).toEqual({ error: expect.stringContaining("unknown agent nope") });
-    expect(parseLaunchArgs([])).toEqual({ error: "missing agent name" });
+    expect(parseLaunchArgs([])).toMatchObject({ integration: null });
     expect(parseLaunchArgs(["claude", "--help"])).toBe("help");
   });
 
@@ -130,5 +130,38 @@ describe("atag launch (ATO-2172)", () => {
   it("an unknown agent is a usage error", async () => {
     const r = await run(["gemini"]);
     expect(r.code).toBe(2);
+  });
+
+  it("bare `atag launch` without a terminal lists the CLIs and exits 0 without the help (ATO-2737)", async () => {
+    const { spawn, calls } = fakeSpawn(0);
+    const r = await run([], { spawn, isTTY: () => false, findBinary: (b) => (b === "claude" ? "/usr/local/bin/claude" : null) });
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/1\. claude\s+Claude Code\s+installed/);
+    expect(r.out).toContain("not installed (npm install -g @openai/codex)");
+    expect(r.out).toContain("atag launch <name>");
+    expect(r.err).not.toContain("missing agent name");
+    expect(r.err).not.toContain("Usage:");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("bare `atag launch` in a terminal starts the CLI picked by number (ATO-2737)", async () => {
+    const { spawn, calls } = fakeSpawn(0);
+    const r = await run([], { spawn, isTTY: () => true, ask: async () => "2" });
+    expect(r.code).toBe(0);
+    expect(calls[0]?.cmd).toBe("/usr/local/bin/codex");
+  });
+
+  it("bare `atag launch` in a terminal: Enter starts nothing, a wrong answer is a usage error (ATO-2737)", async () => {
+    const { spawn, calls } = fakeSpawn(0);
+    expect((await run([], { spawn, isTTY: () => true, ask: async () => "" })).code).toBe(0);
+    expect((await run([], { spawn, isTTY: () => true, ask: async () => "vim" })).code).toBe(2);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("the approval note names a real address, never a <port> placeholder (ATO-2737)", () => {
+    const started = launchApprovalNote({ baseUrl: "http://127.0.0.1:41234", started: true });
+    expect(started).toContain("http://127.0.0.1:8787/panel");
+    expect(started).not.toContain("<port>");
+    expect(launchApprovalNote({ baseUrl: "http://127.0.0.1:41234", started: false })).toContain("http://127.0.0.1:41234/panel");
   });
 });
