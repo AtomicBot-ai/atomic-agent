@@ -25,6 +25,7 @@ import { resolveLlmConfig } from "../../llm/provider/registry/provider-types.js"
 import type { TurnProgress } from "../../session/turn-progress.js";
 import { INTERRUPTED_TURN_ENDING } from "../../session/session-store.js";
 import { currentBrowserScope, onBrowserWorkerEnd, runInBrowserScope, type BrowserRunScope } from "../../tools/browser/browser-run-scope.js";
+import { resolveStepGrammar } from "../../agent/step/step-inference.js";
 
 function deferred<T>() {
   let resolve: (value: T) => void = () => { throw new Error("promise not initialized"); };
@@ -220,6 +221,30 @@ describe("runtime turn ownership recipes", () => {
     });
     expect(own?.toolFilter?.("tasks.comment")).toBe(false);
     expect(own?.toolFilter?.("tasks.block")).toBe(true);
+  });
+
+  it("keeps a chat turn's grammar byte-identical while hiding the board card tools (ATO-2497)", async () => {
+    const optionsFor = async (id: string, extra: Parameters<typeof fixture.service.executeTurn>[2]) => {
+      await fixture.service.executeTurn(session(id), "request", extra);
+      return fixture.loop.runTurn.mock.calls.at(-1)?.[1];
+    };
+    const grammar = "tool-name ::= old\n";
+    const descriptors = ["reply", "finish", "tasks.list", "tasks.comment", "tasks.block", "tasks.request_review"]
+      .map((name) => ({ name, summary: name, argsSchema: "{}" }));
+    const grammarFor = (toolFilter: ((name: string) => boolean) | undefined) => resolveStepGrammar(
+      toolFilter !== undefined ? { toolFilter } : {},
+      { grammar, registry: {} as never },
+      descriptors,
+      false,
+      false,
+    );
+    // A TUI turn had no filter: the base grammar goes out untouched.
+    const tui = (await optionsFor("tui-grammar", { origin: "tui" }))?.toolFilter;
+    expect(tui?.("tasks.comment")).toBe(false);
+    expect(grammarFor(tui)).toBe(grammar);
+    // A desktop turn already narrowed for ask_user still narrows.
+    const desktop = (await optionsFor("desktop-grammar", { origin: "sidecar" }))?.toolFilter;
+    expect(grammarFor(desktop)).not.toBe(grammar);
   });
 
   it("records a desktop turn as unable to ask for the length of the turn only (ATO-489)", async () => {

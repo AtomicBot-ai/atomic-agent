@@ -26,6 +26,7 @@ import {
   type TaskRunSummaryCollector,
 } from "./task-run-summary.js";
 import { isRecurring, resolveScheduledFor } from "./task-schedule.js";
+import { readyTaskBatch } from "./task-ready-batch.js";
 import {
   finishHeartbeatRun,
   planHeartbeatRun,
@@ -1056,10 +1057,11 @@ export class TaskRunner {
   async drainPending(opts: DrainOptions = {}): Promise<DrainOutcome> {
     if (!this.options.enabled) return emptyOutcome();
     const limit = opts.limit ?? 1_000;
-    const pending = this.options.store.listPending({
+    const pending = this.readyBatch(limit, (n, offset) => this.options.store.listPending({
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
-      limit,
-    });
+      limit: n,
+      offset,
+    }));
     return this.drainBatch(pending, opts.signal);
   }
 
@@ -1075,8 +1077,14 @@ export class TaskRunner {
     signal?: AbortSignal,
   ): Promise<DrainOutcome> {
     if (!this.options.enabled) return emptyOutcome();
-    const due = this.options.store.listDue(now, limit);
+    const due = this.readyBatch(limit, (n, offset) => this.options.store.listDue(now, n, offset));
     return this.drainBatch(due, signal);
+  }
+
+  /** A batch without the cards still waiting on others (`readyTaskBatch`). */
+  private readyBatch(limit: number, page: (limit: number, offset: number) => TaskRecord[]): TaskRecord[] {
+    const store = this.options.store;
+    return readyTaskBatch(page, limit, store.boardDependencyMap(), (id) => store.boardWaitingOn(id));
   }
 
   private async drainBatch(
@@ -1085,7 +1093,8 @@ export class TaskRunner {
   ): Promise<DrainOutcome> {
     const outcome = emptyOutcome();
     // A card waiting on cards not yet done is left for a later drain
-    // (ATO-2498); an explicit runOne ("Run now") still runs it.
+    // (ATO-2498); an explicit runOne ("Run now") still runs it. The
+    // batch already pages past them (`readyBatch`); this is the guard.
     const ready = tasks.filter((t) => this.options.store.boardWaitingOn(t.id).length === 0);
     if (ready.length === 0) return outcome;
     const grouped = groupBySession(ready);

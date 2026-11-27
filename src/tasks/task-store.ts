@@ -313,19 +313,19 @@ export class TaskStore {
       `SELECT * FROM tasks WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`,
     );
     this.listPendingStmt = this.db.prepare(
-      `SELECT * FROM tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?`,
+      `SELECT * FROM tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT ? OFFSET ?`,
     );
     this.listPendingBySessionStmt = this.db.prepare(
       `SELECT * FROM tasks
          WHERE status = 'pending' AND session_id = ?
-         ORDER BY created_at ASC LIMIT ?`,
+         ORDER BY created_at ASC LIMIT ? OFFSET ?`,
     );
     this.listDueStmt = this.db.prepare(
       `SELECT * FROM tasks
          WHERE status = 'pending'
            AND (scheduled_for IS NULL OR scheduled_for <= ?)
          ORDER BY scheduled_for ASC, created_at ASC
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
     );
     const claimOwner = withOwners ? ",\n              run_owner = @owner" : "";
     // The claim names its owner in the same write, with the claim's own
@@ -606,15 +606,17 @@ export class TaskStore {
    * to drain only its session.
    */
   listPending(
-    options: { sessionId?: string; limit?: number } = {},
+    options: { sessionId?: string; limit?: number; offset?: number } = {},
   ): TaskRecord[] {
     const limit = options.limit ?? 100;
+    const offset = options.offset ?? 0;
     const rows = options.sessionId
       ? (this.listPendingBySessionStmt.all(
           options.sessionId,
           limit,
+          offset,
         ) as TaskRow[])
-      : (this.listPendingStmt.all(limit) as TaskRow[]);
+      : (this.listPendingStmt.all(limit, offset) as TaskRow[]);
     return rows.map(rowToRecord);
   }
 
@@ -626,8 +628,8 @@ export class TaskStore {
    * deterministically. Uses the dedicated `idx_tasks_due` partial index;
    * this is the only query path the scheduler takes to find work.
    */
-  listDue(now: number, limit = 100): TaskRecord[] {
-    const rows = this.listDueStmt.all(now, limit) as TaskRow[];
+  listDue(now: number, limit = 100, offset = 0): TaskRecord[] {
+    const rows = this.listDueStmt.all(now, limit, offset) as TaskRow[];
     return rows.map(rowToRecord);
   }
 

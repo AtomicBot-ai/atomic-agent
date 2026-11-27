@@ -16,7 +16,9 @@ export const BOARD_CARD_TOOLS: ReadonlySet<string> = new Set([
  * turn runs a task (`checkpoint.taskId`, set by the task runner for
  * every run: a schedule, a retry, "Run now" on the board). The same
  * shape as `withAskUserVisibility`: a hidden tool leaves the prompt
- * catalog, the native wire and the grammar, and dispatch refuses it.
+ * catalog and the native wire, and dispatch refuses it. On a turn that
+ * had no filter the runtime marks this one prompt-only, so the grammar
+ * keeps its bytes (`promptOnlyToolFilter`).
  * A chat turn never sees them, so its prompt is the one it had before
  * these tools existed; a session that runs tasks pays one cold read
  * when it switches between a task turn and a chat turn, as on a role
