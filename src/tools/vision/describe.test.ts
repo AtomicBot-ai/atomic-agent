@@ -166,7 +166,7 @@ describe("buildVisionDescribeTool", () => {
 
   it("checks vision for the turn's model, not the entry's default (ATO-1588)", async () => {
     const base = fakeProvider();
-    const textOnly = fakeProvider({ capabilities: { vision: false, visionSource: "absent" } });
+    const textOnly = fakeProvider({ capabilities: { vision: false, visionSource: "absent" } as ProviderCapabilities });
     const tool = buildVisionDescribeTool({
       provider: async (_providerId, model) => (model === "text-model" ? textOnly : base),
       maxImagesPerCall: 2,
