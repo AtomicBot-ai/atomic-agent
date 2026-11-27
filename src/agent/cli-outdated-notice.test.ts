@@ -29,7 +29,7 @@ describe("cliOutdatedNotice", () => {
   });
 
   it("has no long dash", () => {
-    expect(cliOutdatedNotice(CLAUDE)).not.toMatch(/—/);
+    expect(cliOutdatedNotice(CLAUDE)).not.toMatch(/\u2014/);
   });
 });
 
