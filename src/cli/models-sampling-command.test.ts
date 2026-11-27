@@ -8,6 +8,8 @@ describe("models sampling args (ATO-2482)", () => {
     expect(parseSamplingArgs(["qwen-3.5-4b", "--no-thinking", "--temperature", "0.7", "--top-p", "0.8", "--json"]))
       .toEqual({ id: "qwen-3.5-4b", values: { temperature: 0.7, topP: 0.8 }, mode: "noThinking", reset: false, json: true });
     expect(parseSamplingArgs(["qwen-3.5-4b", "--reset"])).toMatchObject({ reset: true, values: {} });
+    expect(parseSamplingArgs(["q", "--set", '{"temperature":0.5,"noThinking":{"topP":0.8}}']))
+      .toMatchObject({ replace: { temperature: 0.5, noThinking: { topP: 0.8 } } });
   });
 
   it("refuses what it cannot do", () => {
@@ -18,6 +20,8 @@ describe("models sampling args (ATO-2482)", () => {
     expect(parseSamplingArgs(["a", "--reset", "--top-k", "20"])).toHaveProperty("error");
     expect(parseSamplingArgs(["a", "b"])).toHaveProperty("error");
     expect(parseSamplingArgs(["a", "--wat"])).toHaveProperty("error");
+    expect(parseSamplingArgs(["a", "--set", "{nope"])).toHaveProperty("error");
+    expect(parseSamplingArgs(["a", "--set", "{}", "--top-k", "2"])).toHaveProperty("error");
   });
 
   it("merges new values into the person's set, per mode or for both", () => {
