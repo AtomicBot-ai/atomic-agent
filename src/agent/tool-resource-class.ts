@@ -232,6 +232,12 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "logbook.query": "approval_gated",
   "memory.profile.set": "memory_write",
   "memory.profile.remove": "memory_write",
+  // ATO-2459: My apps. app.list reads <stateDir>/apps; the writes ask
+  // first through the fs ladder (app-tool-shared.ts), so they run solo.
+  "app.list": "pure_read",
+  "app.save": "approval_gated",
+  "app.update": "approval_gated",
+  "app.delete": "approval_gated",
   "memory.notes.store": "memory_write",
   "memory.notes.forget": "memory_write",
 
@@ -494,6 +500,10 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "sessions.send": ["session_cross"],
     // Screen notes into a cloud model's context; a loopback model never asks.
     "logbook.query": ["logbook_cloud"],
+    // ATO-2459: an app is a file under the state dir, asked like one.
+    "app.save": FS_WRITE_CATEGORIES,
+    "app.update": FS_WRITE_CATEGORIES,
+    "app.delete": ["fs_trash", "trust_config", "other"],
     // Asks like a file write onto its output (`categorizeFsMutation`).
     "video.render_html": FS_WRITE_CATEGORIES,
   };

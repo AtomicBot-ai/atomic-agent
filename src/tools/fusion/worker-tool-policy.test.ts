@@ -31,6 +31,10 @@ describe("worker tool policy", () => {
   it("hides exactly the delegation, subagent, session-ending, scheduling, memory-writing and screen tools", () => {
     expect([...WORKER_EXCLUDED_TOOLS].sort()).toEqual(
       [
+        // ATO-2459: My apps writes stay with the orchestrator's turn.
+        "app.delete",
+        "app.save",
+        "app.update",
         "canvas.render",
         "ask_user",
         // ATO-2363: screen notes never reach a cloud orchestrator unasked.
@@ -75,6 +79,7 @@ describe("worker tool policy", () => {
       "memory.profile.history",
       "memory.lessons.recall",
       "mcp.resource.read",
+      "app.list",
     ]) {
       expect(isWorkerVisibleTool(name), name).toBe(true);
     }
