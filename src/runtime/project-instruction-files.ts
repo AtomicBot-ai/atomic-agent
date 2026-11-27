@@ -1,6 +1,7 @@
 import { readdirSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { readWorkspaceFile, isWithinWorkspace } from "../skills/workspace-files.js";
+import { rulePathPatterns } from "./project-path-rules.js";
 
 /**
  * Which files count as project instructions, and how they rank: names,
@@ -11,7 +12,9 @@ export const rootNames = ["AGENTS.md", "AGENT.md", "CLAUDE.md", ".claude/CLAUDE.
 /** Rules written for other tools: root only, lowest priority, never expanded for imports. */
 export const foreignRootNames = ["GEMINI.md", ".cursorrules", ".github/copilot-instructions.md"];
 export const cursorRulesDir = ".cursor/rules";
-/** Only this many Cursor rule files (sorted by name) are considered, so a large folder stays bounded. */
+/** Atomic Agent's own rule files: always on, or scoped to paths by `paths:` frontmatter (ATO-2247). */
+export const ownRulesDir = ".atomic-agent/rules";
+/** Only this many rule files per folder (sorted by name) are considered, so a large folder stays bounded. */
 const maxCursorRules = 16;
 const FOREIGN_PRIORITY = 0;
 
@@ -42,12 +45,19 @@ export function isCursorRule(path: string): boolean {
   return parts.length >= 3 && parts.slice(-3, -1).join("/") === cursorRulesDir;
 }
 
+/** A root `.atomic-agent/rules/*.md` file: applies to the whole workspace, like a root file. */
+export function isOwnRule(path: string): boolean {
+  const parts = slashed(path).split("/");
+  return parts.length === 3 && parts.slice(0, 2).join("/") === ownRulesDir;
+}
+
 export function isForeign(path: string): boolean {
   return foreignRootNames.includes(slashed(path)) || isCursorRule(path);
 }
 
 export function priorityOf(path: string): number {
   if (isForeign(path)) return FOREIGN_PRIORITY;
+  if (isOwnRule(path)) return 1;
   return basename(path) === "AGENTS.md" ? 4 : basename(path) === "AGENT.md" ? 3 : basename(dirname(path)) === ".claude" ? 1 : 2;
 }
 
@@ -76,38 +86,56 @@ export function ancestorDirs(root: string, top: string): string[] {
   return dirs;
 }
 
+/** Root rule files, split by when they apply. */
+export interface RuleFiles {
+  /** Always on: loaded with the other instruction files. */
+  always: string[];
+  /** Scoped by `paths:`/`globs:`: attached once the agent touches a matching file (ATO-2247). */
+  scoped: string[];
+}
+
+/** True when a rule file loads with the other instruction files on every step. */
+export function ruleAlwaysApplies(path: string, content: string): boolean {
+  return isOwnRule(path) ? rulePathPatterns(content).length === 0 : cursorRuleAlwaysApplies(content);
+}
+
 /**
- * Top-level `.cursor/rules/*.mdc` and `*.md` files, sorted by name and capped.
- * The folder is listed only when it resolves inside the workspace. Rules that
- * are not always on are dropped here, so they never take a file slot from a
- * nested instruction file; the loader checks again on the real pass.
+ * Top-level `.cursor/rules/*.mdc` and `*.md` files and `.atomic-agent/rules/*.md`
+ * files, sorted by name and capped per folder. A folder is listed only when it
+ * resolves inside the workspace. Rules scoped to paths go to `scoped`, so they
+ * never take a file slot from a nested instruction file; Cursor rules picked
+ * by `description` or attached by hand are dropped. The loader checks again.
  */
-export function listCursorRules(root: string, report: (category: string, item: string) => void): string[] {
-  const dir = join(root, cursorRulesDir);
-  let names: string[];
-  try {
-    const actual = realpathSync(dir);
-    if (!isWithinWorkspace(root, actual) || !statSync(actual).isDirectory()) return [];
-    names = readdirSync(actual).filter(name => /\.(mdc|md)$/i.test(name) && !name.startsWith(".")).sort();
-  } catch { return []; }
-  if (names.length > maxCursorRules) {
-    for (const dropped of names.slice(maxCursorRules)) report(`Cursor rules exceed ${maxCursorRules} files; later files were not loaded`, `${cursorRulesDir}/${dropped}`);
-    names = names.slice(0, maxCursorRules);
+export function listRuleFiles(root: string, report: (category: string, item: string) => void): RuleFiles {
+  const out: RuleFiles = { always: [], scoped: [] };
+  const folders = [[cursorRulesDir, /\.(mdc|md)$/i, "Cursor rules"], [ownRulesDir, /\.md$/i, "Project rules"]] as const;
+  for (const [dir, pattern, label] of folders) {
+    let names: string[];
+    try {
+      const actual = realpathSync(join(root, dir));
+      if (!isWithinWorkspace(root, actual) || !statSync(actual).isDirectory()) continue;
+      names = readdirSync(actual).filter(name => pattern.test(name) && !name.startsWith(".")).sort();
+    } catch { continue; }
+    if (names.length > maxCursorRules) {
+      for (const dropped of names.slice(maxCursorRules)) report(`${label} exceed ${maxCursorRules} files; later files were not loaded`, `${dir}/${dropped}`);
+      names = names.slice(0, maxCursorRules);
+    }
+    for (const path of names.map(name => `${dir}/${name}`)) {
+      let file: { path: string; content: string } | null;
+      // Unreadable or odd files stay in the list; the loader reports them.
+      try { file = readWorkspaceFile(root, join(root, path)); } catch { out.always.push(path); continue; }
+      if (!file || file.content.includes("\0") || ruleAlwaysApplies(path, file.content)) out.always.push(path);
+      else if (rulePathPatterns(file.content).length) out.scoped.push(path);
+      else report("Skipped Cursor rules that apply only on request", path);
+    }
   }
-  return names.map(name => `${cursorRulesDir}/${name}`).filter(path => {
-    let file: { path: string; content: string } | null;
-    // Unreadable or odd files stay in the list; the loader reports them.
-    try { file = readWorkspaceFile(root, join(root, path)); } catch { return true; }
-    if (!file || file.content.includes("\0") || cursorRuleAlwaysApplies(file.content)) return true;
-    report("Skipped Cursor rules that apply only to matching files or on request", path);
-    return false;
-  });
+  return out;
 }
 
 /**
  * Cursor applies a rule on every request only with `alwaysApply: true`; rules
- * scoped by `globs`, chosen by `description` or attached by hand are not
- * loaded. A plain file without frontmatter is treated as always on.
+ * scoped by `globs` become path rules, and rules chosen by `description` or
+ * attached by hand are not loaded. A plain file without frontmatter is always on.
  */
 export function cursorRuleAlwaysApplies(content: string): boolean {
   const match = /^\uFEFF?---\r?\n(?:([\s\S]*?)\r?\n)?---(?:\r?\n|$)/.exec(content);

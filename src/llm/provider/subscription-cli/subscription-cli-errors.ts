@@ -86,6 +86,7 @@ export type SubscriptionCliFailureKind =
   | "input_truncated"
   | "exited"
   | "limit_reached"
+  | "plan_required"
   | "not_json"
   | "reported_error"
   | "turn_failed";
@@ -107,11 +108,33 @@ const LIMIT_PATTERNS = [
   /\busage limit\b/i,
   /\brate[ _-]?limit/i,
   /\blimit reached\b/i,
-  /\bhit your (?:usage )?limit\b/i,
+  // "hit your limit", "hit your usage limit", Claude Code's "hit your
+  // weekly limit" (ATO-2417).
+  /\bhit your (?:\w+ )?limit\b/i,
   /\bquota\b/i,
   /\bstatus 429\b/i,
   /\b429 too many requests\b/i,
+  // Codex: "You hit your spend cap set in your workspace", "Your API key
+  // has reached its spend limit"; Claude Code: "Credit balance is too
+  // low" (ATO-2417).
+  /\bhit your spend cap\b/i,
+  /\breached its spend limit\b/i,
+  /\bcredit balance is too low\b/i,
 ];
+
+/**
+ * The account's plan does not include the CLI at all, as Codex says it
+ * to a free ChatGPT account: "To use Codex with your ChatGPT plan,
+ * upgrade to Plus" (ATO-2417). Waiting does not lift it, upgrading does.
+ */
+const PLAN_REQUIRED_PATTERNS = [
+  /\bto use codex with your chatgpt plan\b/i,
+  /\bupgrade to plus\b/i,
+];
+
+export function looksLikePlanRequired(text: string): boolean {
+  return PLAN_REQUIRED_PATTERNS.some((re) => re.test(text));
+}
 
 export function looksLikeUsageLimit(text: string): boolean {
   return LIMIT_PATTERNS.some((re) => re.test(text));
@@ -128,10 +151,15 @@ export class SubscriptionCliInvocationError extends Error {
     super(message);
     this.name = "SubscriptionCliInvocationError";
     this.exitCode = exitCode;
-    this.failureKind =
-      KINDS_WITH_CLI_TEXT.has(failureKind) && looksLikeUsageLimit(message)
+    this.failureKind = !KINDS_WITH_CLI_TEXT.has(failureKind)
+      ? failureKind
+      : // A limit first: Codex words a free plan's spent allowance as
+        // "You've hit your usage limit. Upgrade to Plus ...".
+        looksLikeUsageLimit(message)
         ? "limit_reached"
-        : failureKind;
+        : looksLikePlanRequired(message)
+          ? "plan_required"
+          : failureKind;
   }
 }
 
@@ -154,6 +182,15 @@ const AUTH_PATTERNS = [
   /\bauthentication_failed\b/i,
   /\bfailed to authenticate\b/i,
   /\boauth (?:session|token) (?:has )?expired\b/i,
+  // The API's own error type inside Claude Code's "API Error: 401 {...}".
+  /\bauthentication_error\b/i,
+  // Codex's expired, revoked or reused refresh token (ATO-2417), for
+  // example "Your access token could not be refreshed because your
+  // refresh token has expired. Please log out and sign in again." Several
+  // `codex exec` processes refreshing at once (Fusion workers) also land
+  // here, with "was already used".
+  /\baccess token could not be refreshed\b/i,
+  /\bplease (?:log out and )?sign in again\b/i,
 ];
 
 export function looksLikeAuthFailure(text: string): boolean {

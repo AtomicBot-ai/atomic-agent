@@ -15,6 +15,7 @@ import {
 } from "./parse-sse-chunk.js";
 import { extractPartialReplyTextFromToolArguments } from "./tool-arguments-stream-parser.js";
 import { attachGenerationId } from "./generation-id.js";
+import type { ContextOverflowCounts } from "../../reliability/context-overflow-counts.js";
 
 /**
  * A provider reported an error inside the SSE stream itself. Thrown by
@@ -26,6 +27,11 @@ export class OpenAiSseError extends Error {
     readonly status: number | null,
     message: string,
     readonly generationId: string | null,
+    /**
+     * `n_ctx` / `n_prompt_tokens` of a llama.cpp overflow reported inside
+     * the stream, for the overflow compaction (ATO-2420). Numbers only.
+     */
+    readonly counts?: ContextOverflowCounts,
   ) {
     super(message);
     this.name = "OpenAiSseError";
@@ -179,6 +185,7 @@ export function createOpenAiStreamConsumer(
                 chunk.error.status,
                 chunk.error.message,
                 generationId,
+                chunk.error.counts,
               );
             }
             // A service can abandon its own generation with a finish reason

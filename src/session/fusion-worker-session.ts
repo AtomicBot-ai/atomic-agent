@@ -124,3 +124,21 @@ export function childFusionWorkerDepth(
 export function isFusionWorkerSessionId(id: string): boolean {
   return id.startsWith(FUSION_WORKER_ID_PREFIX);
 }
+
+/**
+ * The depth of the calling session, read from its session data. Fails
+ * closed: a session whose id carries the worker prefix (`s-w-`) is at
+ * least depth 1 even when its stamp is missing or broken, since only
+ * `createFusionWorkerSession` mints such ids. Hiding a delegating tool
+ * from workers is not the guard; this is. Both `fusion.delegate` and
+ * `subagent.run` refuse a caller at depth 1 or more with it (ATO-1740).
+ */
+export function callerDepth(
+  sessionId: string,
+  metadata: Record<string, unknown> | undefined,
+): number {
+  const stamped = readSessionDepth(metadata);
+  return isFusionWorkerSessionId(sessionId)
+    ? Math.max(stamped, FUSION_WORKER_DEFAULT_DEPTH)
+    : stamped;
+}

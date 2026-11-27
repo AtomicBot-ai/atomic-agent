@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { approvalRequestPayload, resolveApprovalResponse } from "./approval-payload.js";
 import { MessageRouter } from "./message-router.js";
 import { StdioProtocol } from "./stdio-protocol.js";
+import { TurnCancelScope } from "./turn-cancel-scope.js";
 import { getConfig } from "../config/index.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { activeTextProviderIsLlamaServer } from "../llm/provider/registry/active-text-provider.js";
@@ -33,7 +34,8 @@ import { canvasRecordOf } from "../tools/canvas/index.js";
 interface ActiveSession {
   session: SessionState;
   runtime: AgentRuntime;
-  controller: AbortController;
+  /** Fresh signal per cancel, so a turn after a cancel can run (ATO-1645). */
+  cancelScope: TurnCancelScope;
   eventSink: (event: AgentLoopEvent) => void;
 }
 
@@ -65,7 +67,7 @@ export async function bootstrapSidecar(): Promise<{
 
   const disposeActive = async (): Promise<void> => {
     if (!active) return;
-    active.controller.abort();
+    active.cancelScope.dispose();
     try {
       await active.runtime.shutdown();
     } catch {
@@ -305,11 +307,10 @@ export async function bootstrapSidecar(): Promise<{
           ? { metadata: request.payload.metadata }
           : {}),
       });
-      const controller = new AbortController();
       active = {
         runtime,
         session,
-        controller,
+        cancelScope: new TurnCancelScope(),
         eventSink: forwardAgentEvent(session.id),
       };
       protocol.emitEvent("session_started", {
@@ -329,6 +330,9 @@ export async function bootstrapSidecar(): Promise<{
     }
     const { runtime } = active;
     const sessionId = request.payload.sessionId;
+    // Taken once, at arrival: a `cancel` aborts this signal and arms a
+    // new one for later messages (ATO-1645).
+    const signal = active.cancelScope.signal;
     // Route through the per-session turn controller so two rapid
     // `send_message` requests on the same NDJSON stream serialise
     // FIFO. Re-reading `active.session` inside the run callback is
@@ -339,7 +343,7 @@ export async function bootstrapSidecar(): Promise<{
     const result = await runtime.turnController.enqueue({
       sessionId,
       origin: "sidecar",
-      signal: active.controller.signal,
+      signal,
       run: async () => {
         if (!active || active.session.id !== sessionId) {
           throw new Error(
@@ -355,7 +359,7 @@ export async function bootstrapSidecar(): Promise<{
           // `typeof` rather than `=== undefined`: a JSON client may send
           // `null`, which the old `??` also treated as "not given".
           ...(typeof maxSteps === "number" ? { maxSteps } : {}),
-          signal: active.controller.signal,
+          signal,
           // The desktop app: picks the reply's `### answer-style`.
           origin: "sidecar",
           // A person reads this chat and answers `approval_request`s, so
@@ -411,7 +415,7 @@ export async function bootstrapSidecar(): Promise<{
       if (!active) return { cancelled: false };
       const compacting = active.runtime.cancelSessionCompaction(request.payload.sessionId);
       if (active.session.id !== request.payload.sessionId) return { cancelled: compacting };
-      active.controller.abort();
+      active.cancelScope.cancel();
       return { cancelled: true };
     },
   );

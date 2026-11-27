@@ -125,6 +125,9 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // os.code.* — structural search (read) and rewrite (fs write funnel)
   "os.code.search": "pure_read",
   "os.code.rewrite": "approval_gated",
+  // Language-server navigation (ATO-2373): reads only; a first server
+  // start asks inside the call, like the after-edit diagnostics.
+  "os.code.lsp": "pure_read",
 
   // os.git.* — read-only shell-outs
   "os.git.status": "pure_read",
@@ -151,6 +154,9 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "github.pr.create": "approval_gated",
   "github.issue.create": "approval_gated",
   "github.issue.comment": "approval_gated",
+  "github.pr.checks": "pure_read",
+  // Enable asks as `publish`, push as `git_remote` (ATO-2331).
+  "github.pr.autofix": "approval_gated",
 
   // os.git.* — local writes; approval-gated like fs writes
   "os.git.init": "approval_gated",
@@ -217,8 +223,13 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "memory.procedures.recall": "pure_read",
   "memory.notes.recall": "pure_read",
   "memory.sessions.search": "pure_read",
+  // ATO-2261: reads the compacted part of the calling session only.
+  "conversation.history": "pure_read",
   // ATO-1621: reads the My files index (its own SQLite file), nothing else.
   "files.search": "pure_read",
+  // ATO-2363: reads the logbook's day files under the state dir; asks first
+  // (`logbook_cloud`) when the serving model is not on this computer.
+  "logbook.query": "approval_gated",
   "memory.profile.set": "memory_write",
   "memory.profile.remove": "memory_write",
   "memory.notes.store": "memory_write",
@@ -264,6 +275,9 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "fusion.delegate": "approval_gated",
   // Same for subagent.run (ATO-1670): several subagent turns in one call.
   "subagent.run": "approval_gated",
+  // ATO-2133: searches, page reads and model calls inside one call, then
+  // a report written through the fs funnel: solo.
+  "research.deep": "approval_gated",
 
   // verify.* — read-only checks. `verify.syntax` spawns nothing that
   // writes (node --check, tsc --noEmit, python compile(), bash -n), so
@@ -423,6 +437,9 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "os.fs.write": FS_WRITE_CATEGORIES,
     // ATO-1137: the same funnel (`requireFsApproval`, kind `write`).
     "canvas.render": FS_WRITE_CATEGORIES,
+    // ATO-2133: its os.web.fetch calls may ask (`http`, `http_write`),
+    // then the report is a new file through the same funnel.
+    "research.deep": [...FS_WRITE_CATEGORIES, "http", "http_write"],
     "os.fs.edit": FS_WRITE_CATEGORIES,
     // A patch that deletes a file asks as `fs_trash` (`fs-patch.ts`).
     "os.fs.patch": [...FS_WRITE_CATEGORIES, "fs_trash"],
@@ -452,6 +469,7 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "github.pr.create": ["publish"],
     "github.issue.create": ["publish"],
     "github.issue.comment": ["publish"],
+    "github.pr.autofix": ["publish", "git_remote"],
     "os.proc.kill": ["proc_kill"],
     // A GET asks as `http`, a POST as `http_write` (level 4, ATO-1462).
     "os.http.request": ["http", "http_write"],
@@ -474,6 +492,8 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     // Another chat's messages, read or written (ATO-570).
     "sessions.read": ["session_cross"],
     "sessions.send": ["session_cross"],
+    // Screen notes into a cloud model's context; a loopback model never asks.
+    "logbook.query": ["logbook_cloud"],
     // Asks like a file write onto its output (`categorizeFsMutation`).
     "video.render_html": FS_WRITE_CATEGORIES,
   };
@@ -491,6 +511,8 @@ const SOLO_REGARDLESS_OF_APPROVAL: ReadonlySet<string> = new Set([
   // Its turns run inside the call, like a fan-out (ATO-1670); the
   // per-turn child count also relies on one call per step.
   "subagent.run",
+  // A fan-out of searches and page reads in one call (ATO-2133).
+  "research.deep",
   "ask_user",
 ]);
 

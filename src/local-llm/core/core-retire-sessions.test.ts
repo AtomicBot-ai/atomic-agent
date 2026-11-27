@@ -79,7 +79,9 @@ describe("unloading the agent's sessions on a retired Core (ATO-304)", () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     await unloadRetiredCoreSessions(dir, client, 300);
     expect(readFileSync(join(dir, "llama-server.log"), "utf8")).toContain(`pid ${pid} was still running`);
-    expect(existsSync(coreSessionPath(dir, "chat"))).toBe(false);
+    // Still answering on its port with the old key: the record stays, marked, so
+    // the load that follows waits for it instead of meeting it (ATO-1748).
+    expect(JSON.parse(readFileSync(coreSessionPath(dir, "chat"), "utf8"))).toMatchObject({ pid, awaitingExit: true });
   });
 
   it("does not wait on macOS or Linux", async () => {

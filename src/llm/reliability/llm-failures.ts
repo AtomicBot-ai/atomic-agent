@@ -1,10 +1,12 @@
 import type { ToolCallTransport } from "../provider/completion-types.js";
 import type {
+  GrammarFailurePath,
   LlmFailureCategory,
   ModelFailureReason,
   ModelFailureStage,
   TruncationDetail,
 } from "./failure-category.js";
+import type { ModelCompletionFacts } from "./model-completion-facts.js";
 
 export interface LlmFailureOptions {
   cause?: unknown;
@@ -40,6 +42,11 @@ export interface ModelErrorOptions extends LlmFailureOptions {
    * model instead of "Retry".
    */
   repeatedOnCloud?: boolean;
+  /**
+   * The defective completion's shape (ATO-2421): finish reason, whether
+   * reasoning came back, the server's token counts. Report-only.
+   */
+  completion?: ModelCompletionFacts;
 }
 
 /**
@@ -90,15 +97,31 @@ export class TransportError extends LlmFailure {
  */
 export class GrammarError extends LlmFailure {
   readonly category = "grammar" as const;
+  /** Which path raised it (ATO-2422); absent for older throw sites. */
+  readonly path?: GrammarFailurePath;
+  /** The tool-call transport the failed reply was parsed under. */
+  readonly transport?: ToolCallTransport;
+  /** The failed reply was served without the grammar (ATO-1675). */
+  readonly grammarSkipped?: true;
 
   constructor(
     message: string,
     readonly rawPreview: string,
-    options?: LlmFailureOptions,
+    options?: GrammarErrorOptions,
   ) {
     super(message, options);
     this.name = "GrammarError";
+    if (options?.path !== undefined) this.path = options.path;
+    if (options?.transport !== undefined) this.transport = options.transport;
+    if (options?.grammarSkipped === true) this.grammarSkipped = true;
   }
+}
+
+/** `GrammarError` extras: the fixed facts its report tags carry (ATO-2422). */
+export interface GrammarErrorOptions extends LlmFailureOptions {
+  path?: GrammarFailurePath;
+  transport?: ToolCallTransport;
+  grammarSkipped?: boolean;
 }
 
 /**
@@ -157,6 +180,9 @@ export class ModelError extends LlmFailure {
   /** See `ModelErrorOptions.repeatedOnCloud`. */
   readonly repeatedOnCloud?: boolean;
 
+  /** See `ModelErrorOptions.completion`. */
+  readonly completion?: ModelCompletionFacts;
+
   constructor(
     readonly reason: ModelFailureReason,
     message: string,
@@ -176,6 +202,9 @@ export class ModelError extends LlmFailure {
     if (options?.repeatedOnCloud === true) {
       this.repeatedOnCloud = true;
     }
+    if (options?.completion !== undefined) {
+      this.completion = options.completion;
+    }
   }
 }
 
@@ -193,9 +222,25 @@ export type ToolExecutionErrorKind = "unregistered";
  */
 export type UnregisteredToolNameClass = "near_miss" | "mcp_like" | "other";
 
+/**
+ * Where else an unregistered name is known (`unregistered-tool-source.ts`,
+ * ATO-2423): in the tool list the step's prompt showed
+ * (`prompt_advertised`, our bug), in our static catalog but switched off
+ * here (`gated_off`), an MCP name of a server with no registered tool
+ * (`mcp_server_missing`) or of a server that has others
+ * (`mcp_tool_missing`), or nowhere (`not_in_catalog`).
+ */
+export type UnregisteredToolSource =
+  | "prompt_advertised"
+  | "gated_off"
+  | "mcp_server_missing"
+  | "mcp_tool_missing"
+  | "not_in_catalog";
+
 export interface ToolExecutionErrorOptions extends LlmFailureOptions {
   kind?: ToolExecutionErrorKind;
   nameClass?: UnregisteredToolNameClass;
+  knownElsewhere?: UnregisteredToolSource;
 }
 
 /**
@@ -210,6 +255,7 @@ export class ToolExecutionError extends LlmFailure {
   readonly category = "tool" as const;
   readonly kind?: ToolExecutionErrorKind;
   readonly nameClass?: UnregisteredToolNameClass;
+  readonly knownElsewhere?: UnregisteredToolSource;
 
   constructor(
     readonly tool: string,
@@ -220,6 +266,7 @@ export class ToolExecutionError extends LlmFailure {
     this.name = "ToolExecutionError";
     if (options?.kind !== undefined) this.kind = options.kind;
     if (options?.nameClass !== undefined) this.nameClass = options.nameClass;
+    if (options?.knownElsewhere !== undefined) this.knownElsewhere = options.knownElsewhere;
   }
 }
 

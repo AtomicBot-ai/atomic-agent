@@ -71,6 +71,13 @@ export interface ToolContext {
    */
   incognito?: boolean;
   /**
+   * True when the call runs in a channel guest's session (ATO-2221,
+   * `session/channel-guest-session.ts`): every read is confined to the
+   * working directory, secrets excluded, at every approval level
+   * (`read-scope/guest-reads.ts`). Absent otherwise.
+   */
+  guest?: boolean;
+  /**
    * The provider id this step's completions are pinned to
    * (`StepDependencies.providerId` — a fusion worker runs on the local
    * leg). Absent ⇒ the step runs on the active text provider. Read by

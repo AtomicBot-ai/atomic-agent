@@ -13,6 +13,11 @@ export function subscriptionCliStatusLine(
 ): { text: string; tone: StatusLineTone } {
   if (!report) return { text: `Checking the ${cli} CLI…`, tone: "muted" };
   const product = report.productName;
+  // ATO-1685: an outdated CLI fails our flags, so it outranks "ready";
+  // a sign-in still comes first, since it is the step to take now.
+  if (report.outdated && (report.state === "ready" || report.state === "unknown")) {
+    return { text: report.outdated.message, tone: "warn" };
+  }
   switch (report.state) {
     case "ready":
       return { text: `✓ ready: ${product}${report.version ? ` ${report.version}` : ""}, signed in`, tone: "ok" };

@@ -240,6 +240,7 @@ export type UserModelEntry = {
 export type UserLlmFallbackConfig = {
   chain?: string[];
   appendLocal?: boolean;
+  localFirst?: boolean;
   failureThreshold?: number;
   cooldownMs?: number[];
   probeThrottleMs?: number;
@@ -872,6 +873,15 @@ export function parseLlmFallbackConfig(
       );
     }
     out.appendLocal = obj.appendLocal;
+  }
+  if (obj.localFirst !== undefined) {
+    if (typeof obj.localFirst !== "boolean") {
+      throw new ConfigValidationError(
+        `${field}.localFirst`,
+        "expected boolean",
+      );
+    }
+    out.localFirst = obj.localFirst;
   }
   if (obj.failureThreshold !== undefined) {
     out.failureThreshold = parsePositiveInt(

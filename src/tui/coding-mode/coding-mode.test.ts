@@ -57,6 +57,12 @@ describe("the coding-mode ring", () => {
     expect(codingModeLook("plan").tone).toBe("accent");
     expect(codingModeLook("bypass").tone).toBe("error");
   });
+
+  it("says the bypass credential check covers macOS/Linux paths only (ATO-2126)", () => {
+    // Windows paths (`%USERPROFILE%\.ssh`, `type`, `Get-Content`) are not
+    // matched yet, so the mode text must not read as universal.
+    expect(codingModeLook("bypass").summary).toContain("macOS/Linux");
+  });
 });
 
 describe("what a mode means to the runtime", () => {

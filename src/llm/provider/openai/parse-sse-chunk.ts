@@ -1,6 +1,20 @@
 import type { ReasoningExtractor } from "./reasoning-extractor.js";
 import { readThoughtSignature } from "../gemini/gemini-thought-signature.js";
 import { extractPartialReplyTextFromToolArguments } from "./tool-arguments-stream-parser.js";
+import {
+  readContextOverflowCounts,
+  type ContextOverflowCounts,
+} from "../../reliability/context-overflow-counts.js";
+
+/**
+ * A mid-stream error. `counts`: an `exceed_context_size_error`'s `n_ctx` /
+ * `n_prompt_tokens`, when the event carries them (ATO-2420).
+ */
+export interface OpenAiStreamError {
+  status: number | null;
+  message: string;
+  counts?: ContextOverflowCounts;
+}
 
 export interface OpenAiToolCallDelta {
   /**
@@ -54,10 +68,11 @@ export function parseOpenAiSseEvent(
   id: string | null;
   /**
    * A mid-stream error event (`{"error": {"code": 504, "message": …}}`,
-   * how OpenRouter reports an upstream that died after output started).
-   * The consumer throws on it; a chunk carrying one has no delta.
+   * how OpenRouter reports an upstream that died after output started),
+   * or llama.cpp's own `error:` event line (ATO-2420). The consumer
+   * throws on it; a chunk carrying one has no delta.
    */
-  error: { status: number | null; message: string } | null;
+  error: OpenAiStreamError | null;
 } {
   const dataLines: string[] = [];
   for (const line of rawEvent.split("\n")) {
@@ -79,7 +94,7 @@ export function parseOpenAiSseEvent(
       usage: null,
       toolCallDeltas: [],
       id: null,
-      error: null,
+      error: readErrorEventLine(rawEvent),
     };
   }
   const joined = dataLines.join("\n");
@@ -218,9 +233,36 @@ function readUsage(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/**
+ * llama.cpp reports a failure after the stream opened as an `error:`
+ * event line, not a `data:` one (`error: {"code":400,"message":…,
+ * "type":"exceed_context_size_error","n_ctx":…}`), on its OpenAI-compatible
+ * route too. Read only for `data:` lines, a context overflow there ended
+ * as an empty reply and the overflow compaction never ran (ATO-2420).
+ * The native client reads the same line (`parseSseErrorEvent`).
+ */
+function readErrorEventLine(rawEvent: string): OpenAiStreamError | null {
+  for (const line of rawEvent.split("\n")) {
+    if (!line.startsWith("error:")) continue;
+    const text = line.slice(6).trim();
+    let payload: unknown = null;
+    try {
+      payload = JSON.parse(text) as unknown;
+    } catch {
+      // Not JSON: the line's text is the message.
+    }
+    if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+      return { status: null, message: text.length > 0 ? text : "stream error" };
+    }
+    const inner = (payload as { error?: unknown }).error;
+    return readStreamError(inner !== null && typeof inner === "object" ? inner : payload);
+  }
+  return null;
+}
+
 function readStreamError(
   value: unknown,
-): { status: number | null; message: string } | null {
+): OpenAiStreamError | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
@@ -235,7 +277,9 @@ function readStreamError(
     typeof error.message === "string" && error.message.length > 0
       ? error.message
       : "stream error";
-  return { status: code, message };
+  const counts = readContextOverflowCounts(JSON.stringify({ error: value }));
+  const hasCounts = counts.contextWindow !== undefined || counts.promptTokens !== undefined;
+  return { status: code, message, ...(hasCounts ? { counts } : {}) };
 }
 
 /**

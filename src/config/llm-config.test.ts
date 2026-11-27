@@ -193,6 +193,17 @@ describe("llm-config", () => {
     });
   });
 
+  it("parses localFirst (ATO-2208)", () => {
+    const parsed = parseUserConfigFile(baseLlm({ localFirst: true }));
+    expect(parsed.llm?.fallback).toMatchObject({ localFirst: true });
+  });
+
+  it("rejects a non-boolean localFirst", () => {
+    expect(() => parseUserConfigFile(baseLlm({ localFirst: "yes" }))).toThrow(
+      /localFirst/,
+    );
+  });
+
   it("rejects a non-boolean appendLocal", () => {
     expect(() =>
       parseUserConfigFile(

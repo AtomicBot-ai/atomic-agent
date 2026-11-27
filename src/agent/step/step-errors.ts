@@ -2,6 +2,7 @@ import type { StepContext } from "./step-contract.js";
 import { LlmFailure, classifyFailure, CancelledError, LlamaServerError, TransportError, GrammarError, OpenAiHttpError, isRequestSizeRejection, humanizeOpenAiHttpError, ToolExecutionError } from "../../llm/index.js";
 import { ToolCallParseError } from "../../llm/grammar/tool-call-grammar.js";
 import { isLlamaSizeRefusal, toRequestTooLargeError } from "../../llm/reliability/request-too-large.js";
+import { isGrammarRefusal } from "../../llm/grammar-refusal.js";
 import { SubscriptionCliInvocationError } from "../../llm/provider/subscription-cli/subscription-cli-errors.js";
 import { isGroqRequestTooLarge } from "../../llm/provider/openai/groq-plan-limit.js";
 
@@ -80,7 +81,11 @@ export function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
       });
     }
     if (isLlamaSizeRefusal(err)) return toRequestTooLargeError(err);
-    return new GrammarError(err.message, "", { cause: err });
+    // Which refusal, as a fixed word for the report (ATO-2422).
+    const path = isGrammarRefusal(err.status, err.message, err.body?.type)
+      ? "server_refused_grammar"
+      : "server_refused_request";
+    return new GrammarError(err.message, "", { cause: err, path });
   }
   // Cloud provider failures — any status — are provider-boundary
   // problems, not tool bugs. A 429 or a dead key must never read as
@@ -101,7 +106,7 @@ export function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
     });
   }
   if (err instanceof ToolCallParseError) {
-    return new GrammarError(err.message, "", { cause: err });
+    return new GrammarError(err.message, "", { cause: err, path: "parse_failed" });
   }
   if (isAbortError(err)) {
     return new CancelledError(

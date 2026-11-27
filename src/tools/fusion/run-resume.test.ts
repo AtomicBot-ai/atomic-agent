@@ -256,6 +256,21 @@ describe("resuming a fusion run (ATO-617)", () => {
       expect(store.listResumable()).toEqual([]);
     });
 
+    it("lists a carried task's changed files in its row and in details.diffstats (ATO-1756)", async () => {
+      const files = [{ path: "/repo/one.ts", added: 7, removed: 2 }];
+      const run = store.start({
+        sessionId: "s-parent", workingDir: "/repo", args: { tasks: TASKS }, tasks: TASKS, waveCount: 1,
+      });
+      run.recordTask(row("t1", { diffstats: files }));
+      run.finish("interrupted");
+      const d = deps({ runCheckpoints: store });
+      const result = await buildFusionDelegateTool(d).run({ resume: run.runId }, ctx());
+      expect(d.ran.sort()).toEqual(["t2", "t3"]);
+      const details = result.details as { tasks: WorkerTaskResult[]; diffstats?: unknown };
+      expect(details.tasks.find((t) => t.id === "t1")!.diffstats).toEqual(files);
+      expect(details.diffstats).toEqual(files);
+    });
+
     it("does not re-run a task with side effects without confirmation", async () => {
       const checkpoint = cutOff(["t1"], ["t2"]);
       const d = deps({ runCheckpoints: store });

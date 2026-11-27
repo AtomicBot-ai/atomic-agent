@@ -19,6 +19,7 @@ import {
 } from "./local-model-picks.js";
 import { handleHfPickKey } from "./onboarding-hf-keys.js";
 import { handleOnboardingKey } from "./onboarding-key-bindings.js";
+import { customBranchFor } from "./onboarding-local-servers.js";
 import { buildImportOptionRows, buildImportPickRows } from "./import-step.js";
 import type { OnboardingUiState } from "./onboarding-state.js";
 
@@ -107,6 +108,19 @@ function pickBackend(
     return;
   }
   if (choice === "custom") {
+    // ATO-2013: a server found running here is where Custom goes.
+    const branch = ctx.state.onboarding ? customBranchFor(ctx.state.onboarding) : null;
+    if (branch?.kind === "provider_list") {
+      ctx.dispatch({
+        type: "providers_wizard_opened",
+        wizard: { ...createProvidersWizardState("add"), detectedLocal: branch.detected },
+      });
+      ctx.dispatch({ type: "onboarding_step_set", step: "cloud" });
+      return;
+    }
+    if (branch?.kind === "llama_url") {
+      ctx.dispatch({ type: "onboarding_url_changed", field: "chat", value: branch.url });
+    }
     ctx.dispatch({ type: "onboarding_step_set", step: "custom_chat_url" });
     return;
   }

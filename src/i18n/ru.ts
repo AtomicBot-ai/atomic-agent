@@ -52,4 +52,5 @@ export const ru: Readonly<Record<MessageKey, string>> = {
   "onboarding.choose.custom.label": "Свой сервер",
   "onboarding.choose.custom.detail1": "URL вашего OpenAI-совместимого API или llama-server.",
   "onboarding.choose.custom.detail2": "Ничего не скачиваем и больше ни о чём не спрашиваем.",
+  "onboarding.choose.custom.found": "Уже запущено здесь: {servers}.",
 };

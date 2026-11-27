@@ -15,6 +15,7 @@ export function filterCloudCompletionRequest(
     slotId: _slotId,
     cachePrompt: _cachePrompt,
     imageData: _imageData,
+    modelSampling: _modelSampling,
     ...rest
   } = request;
   return rest;

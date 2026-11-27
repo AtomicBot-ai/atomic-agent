@@ -51,20 +51,29 @@ export function skillSlashCommands(panel: SkillsPanelState): readonly SlashComma
 /**
  * Plugin commands as `/plugin:command`, plus the bare `/command` alias when
  * nothing else claims it. A built-in or a skill with the same name wins:
- * the plugin entry (or its alias) is dropped.
+ * the plugin entry (or its alias) is dropped. The operator's own commands
+ * (rows with a `source`) use their name as is and are tagged
+ * `(project)` or `(profile)` in the palette.
  */
 export function pluginSlashCommands(rows: readonly PluginCommandRow[], taken: readonly SlashCommandDef[] = []): readonly SlashCommandDef[] {
   if (rows.length === 0) return [];
   const takenNames = new Set(taken.map(cmd => cmd.name));
-  const usable = rows.filter(row => resolveSlashCommand(row.name) === null && !takenNames.has(row.name));
-  const usableNames = new Set(usable.map(row => row.name));
+  // Rows arrive project, profile, then plugin commands: the first row with a name wins.
+  const usable: PluginCommandRow[] = [];
+  const usableNames = new Set<string>();
+  for (const row of rows) {
+    if (resolveSlashCommand(row.name) !== null || takenNames.has(row.name) || usableNames.has(row.name)) continue;
+    usable.push(row);
+    usableNames.add(row.name);
+  }
   const aliases = shortCommandAliases(
     usable,
     alias => resolveSlashCommand(alias) !== null || takenNames.has(alias) || usableNames.has(alias),
   );
   return usable.map(row => {
     const alias = aliases.get(row.name);
-    const description = row.argumentHint ? `${row.description} ${row.argumentHint}`.trim() : row.description;
+    const described = row.argumentHint ? `${row.description} ${row.argumentHint}`.trim() : row.description;
+    const description = row.source ? `${described} (${row.source})` : described;
     return alias
       ? { name: row.name, description, aliases: [alias], pluginCommand: row.name }
       : { name: row.name, description, pluginCommand: row.name };

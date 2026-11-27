@@ -1,9 +1,9 @@
-# Hooks (PreToolUse / PostToolUse)
+# Hooks
 
 Status: draft
 Owner: src/hooks/
 
-User and plugin commands that run before and after a tool call, in the Claude Code `hooks.json` format. Read [AGENTS.md](AGENTS.md) before changing it.
+User and plugin commands that run before and after a tool call and on session events (SessionStart, UserPromptSubmit, Stop, PreCompact), in the Claude Code `hooks.json` format. Read [AGENTS.md](AGENTS.md) before changing it.
 
 ## Where hooks come from
 
@@ -43,6 +43,21 @@ stdin is JSON: `session_id`, `cwd`, `hook_event_name`, `tool_name` (Claude name 
 
 Matching hooks of one event run in parallel; deny beats ask beats allow.
 
+## Session events
+
+Same files, runner, timeouts and environment as the tool hooks ([session-hook-engine.ts](session-hook-engine.ts), [session-hook-output.ts](session-hook-output.ts)). stdin always has `session_id`, `cwd`, `hook_event_name`, `permission_mode`, `transcript_path: null`.
+
+| Event | When | Matcher tested against | Extra stdin | What it can do |
+|---|---|---|---|---|
+| `SessionStart` | before the first turn this process runs for a session | `source`: `startup` (no earlier turn) or `resume` | `source` | stdout / `additionalContext` is context for every turn of the session |
+| `UserPromptSubmit` | before every turn, before anything is saved | ignored | `prompt` | exit 2, `decision: "block"` or `continue: false` refuses the message (`HookBlockedPromptError`, nothing saved); stdout / `additionalContext` is context |
+| `Stop` | after a turn the model ended with a reply or finish | ignored | `stop_hook_active`, `last_assistant_message` | after a reply, exit 2 or `decision: "block"` + `reason` sends the agent back to work with the reason as its next message, at most 3 times per turn |
+| `PreCompact` | before a compaction builds its checkpoint | `trigger`: `manual` or `auto` | `trigger`, `custom_instructions` | observes only; exit 2 is logged |
+
+SessionStart output is kept for the session in this process and shown on every turn as `### hook-session-start` (`RunTurnOptions.sessionHookContext`), so the cloud journal keeps one entry and never retracts it; a new process fires SessionStart again with `resume` and replaces it. UserPromptSubmit output is `### hook-context` on every step of that one turn only (`RunTurnOptions.hookContext`). Both sit after the conversation, so the stable prefix does not move. Stop does not run after a cancel, a failure or a ceiling stop, and none of these events run for Fusion worker or subagent turns. They never touch approval: a continuation's tool calls go through the same gate.
+
+Wired in `runtime/composition/runtime-session-hooks.ts` (called from `executeTurn`, so `runTurn` and the sidecar both get them) and `runtime/context-compaction-runner.ts` (`beforeCompact`); the engine is built in `runtime/bootstrap.ts` and passed explicitly.
+
 ## Entry points
 
 - [hook-engine.ts](hook-engine.ts): `ToolHookEngine`, `runWithToolHooks`, stdin shape; installed at boot in `runtime/bootstrap.ts`.
@@ -53,7 +68,7 @@ Matching hooks of one event run in parallel; deny beats ask beats allow.
 
 ## Not done yet
 
-SessionStart, Stop, UserPromptSubmit and the other Claude events parse but are not fired. No UI or CLI for hooks. Hooks also run for Fusion worker calls, which go through the same executor.
+SessionEnd, Notification / PermissionRequest, SubagentStop and a FileChanged watcher parse (where Claude names them) but are not fired. No UI or CLI for hooks. Hooks also run for Fusion worker calls, which go through the same executor.
 
 ## Validation
 

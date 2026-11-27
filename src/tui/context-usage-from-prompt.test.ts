@@ -99,4 +99,52 @@ describe("contextUsageFromPrompt", () => {
         .contextWindow,
     ).toBeNull();
   });
+
+  /**
+   * ATO-2355: the native `tools` payload is in `total`, so without its
+   * own row the panel's rows did not add up to its title.
+   */
+  it("lists the native tool schemas as their own section", () => {
+    const base = builtPrompt();
+    const usage = contextUsageFromPrompt(
+      builtPrompt({ tokens: { ...base.tokens, toolSchema: 3100 } }),
+    );
+    expect(usage.sections).toContainEqual({ label: "tool schemas", tokens: 3100 });
+  });
+
+  /**
+   * ATO-2355: the scaffold row is broken down from the prefix text the
+   * prompt actually carries, and the parts add up to the row.
+   */
+  it("breaks the prompt scaffold into parts that sum to it", () => {
+    const stablePrefix = [
+      "### system",
+      "You are the agent.",
+      "",
+      "### tools",
+      "# common (full)",
+      "- os.fs.read — Read a file.",
+      "  args: { path: string }",
+      "- mcp.github.create_issue — [mcp:github] Open an issue.",
+      "  args: { repo: string, title: string, body: string }",
+      "",
+      "### instructions",
+      "Emit a JSON ARRAY.",
+    ].join("\n");
+    const base = builtPrompt();
+    const usage = contextUsageFromPrompt(
+      builtPrompt({ stablePrefix, tokens: { ...base.tokens, stablePrefix: 5240 } }),
+    );
+    const parts = usage.parts ?? [];
+    expect(parts.map((p) => p.label)).toEqual([
+      "persona",
+      "built-in tools",
+      "mcp github",
+      "instructions",
+    ]);
+    expect(parts.every((p) => p.parent === "prompt scaffold")).toBe(true);
+    expect(parts.reduce((a, p) => a + p.tokens, 0)).toBe(5240);
+    expect(parts.find((p) => p.label === "mcp github")?.mcpServer).toBe("github");
+    expect(usage.toolSearchActive).toBe(false);
+  });
 });

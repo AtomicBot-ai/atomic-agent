@@ -166,6 +166,7 @@ const SEARCH_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.locate_project",
   "os.fs.code_map",
   "os.code.search",
+  "os.code.lsp",
   "os.fs.archive.list",
 ]);
 

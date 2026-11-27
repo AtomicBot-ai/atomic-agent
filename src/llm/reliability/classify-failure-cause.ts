@@ -161,11 +161,43 @@ function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
   if (category === "transport") {
     return waitCauseToId(classifyProviderWaitCause(err));
   }
+  // ATO-1686: the model kept calling tools that do not exist until the
+  // step's streak limit stopped the turn. Not a tool that broke. But
+  // when the name was one we showed it ourselves or one of a missing MCP
+  // server's tools (ATO-2423 `knownElsewhere`), the fix is ours or the
+  // setup's, so "try another model" would be the wrong advice
+  // (ATO-2492): that falls through to the plain tool failure.
+  if (
+    chain.some(
+      (l) =>
+        l instanceof ToolExecutionError &&
+        l.kind === "unregistered" &&
+        !isKnownOnOurSide(l),
+    )
+  ) {
+    return "unknown_tools_repeated";
+  }
   if (chain.some((l) => l instanceof ToolExecutionError)) return "tool_crashed";
   if (category === "grammar") return "unreadable_reply";
   if (category === "model") return "unfinished_reply";
   if (category === "tool") return "tool_crashed";
   return "unknown";
+}
+
+/**
+ * `knownElsewhere` values that put an unknown-tool streak on our side or
+ * the setup's rather than the model's. Read by shape: the field comes
+ * with ATO-2423 (#1806) and is absent on errors built without it.
+ */
+const KNOWN_ON_OUR_SIDE: ReadonlySet<string> = new Set([
+  "prompt_advertised",
+  "mcp_server_missing",
+  "mcp_tool_missing",
+]);
+
+function isKnownOnOurSide(err: ToolExecutionError): boolean {
+  const known = (err as { knownElsewhere?: unknown }).knownElsewhere;
+  return typeof known === "string" && KNOWN_ON_OUR_SIDE.has(known);
 }
 
 function modelCause(err: ModelError): FailureCauseId {

@@ -56,6 +56,8 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
   // Both read what they search (ATO-696); the rewrite then asks to write.
   ["os.code.search", pathArg],
   ["os.code.rewrite", pathArg],
+  // The file asked about (ATO-2373); hits outside the scope show no code.
+  ["os.code.lsp", pathArg],
   [
     "os.fs.glob",
     // `cwd` wins over `path` inside the tool; either names the root.

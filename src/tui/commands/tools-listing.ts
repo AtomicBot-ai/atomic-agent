@@ -4,6 +4,7 @@ import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { resolveGithubToken } from "../../github/index.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
 import { filterToolDescriptorsByConfig } from "../../runtime/filter-disabled-tools.js";
+import { logbookToolOffered } from "../../logbook/logbook-store.js";
 import { openRouterImageKey } from "../../tools/image/openrouter-key.js";
 
 /**
@@ -73,11 +74,17 @@ export interface ToolGateSourceConfig {
   };
   readonly mcp: { readonly servers: readonly unknown[] };
   /** `tools.screen.enabled`; optional so hand-built test configs need not name it. */
-  readonly tools?: { readonly screen?: { readonly enabled: boolean; readonly point?: boolean } };
+  readonly tools?: {
+    readonly screen?: { readonly enabled: boolean; readonly point?: boolean };
+    /** `tools.lsp.enabled` (ATO-2373). */
+    readonly lsp?: { readonly enabled: boolean };
+  };
   readonly llm?: {
     readonly runMode?: { readonly mode?: string };
     readonly providers?: readonly { readonly kind: string; readonly apiKey?: string; readonly baseUrl?: string }[];
   };
+  /** Where the logbook lives (ATO-2363); without it `logbook.query` is not listed. */
+  readonly paths?: { readonly stateDir: string };
 }
 
 /**
@@ -144,6 +151,8 @@ export function effectiveToolDescriptors(
       point: config.tools?.screen?.point === true && platform === "darwin",
       control: platform === "darwin",
     },
+    lsp: { enabled: config.tools?.lsp?.enabled === true },
+    logbook: { enabled: config.paths !== undefined && logbookToolOffered(config.paths.stateDir) },
   });
 }
 

@@ -31,6 +31,12 @@ export {
   type KeyRefusalKind,
 } from "./link-failure-kind.js";
 export { shouldAdvance, type AdvanceDecision } from "./should-advance.js";
+export {
+  localFirstTurnHead,
+  type LocalFirstDecision,
+  type LocalFirstInput,
+  type LocalFirstProvider,
+} from "./local-first-head.js";
 export { runWithFallback } from "./run-with-fallback.js";
 export { falloverSentence } from "./fallover-sentence.js";
 export {

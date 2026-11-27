@@ -27,7 +27,7 @@ Project files follow [project folder trust](../skills/docs/project-trust.md): ea
 
 ## Wiring
 
-`src/tools/fusion/task-profiles.ts` applies profiles to a fan-out's tasks; `worker-prompt.ts` quotes the instructions; `worker-tool-policy.ts` `workerToolFilterFor` builds the turn's tool filter. The runtime passes `resolveAgentProfiles` in `src/runtime/composition/runtime-tool-catalog.ts`, with the settings from `readSettingsAgentProfiles` (falling back to `getConfig()`). Outside Fusion a turn names a profile through `subagent.run` (ATO-1670, `src/tools/subagent/`), which applies it the same way.
+`src/tools/fusion/task-profiles.ts` applies profiles to a fan-out's tasks; `worker-prompt.ts` quotes the instructions; `worker-tool-policy.ts` `workerToolFilterFor` builds the turn's tool filter. The runtime passes `resolveAgentProfiles` in `src/runtime/composition/runtime-tool-catalog.ts`, with the settings from `readSettingsAgentProfiles` (falling back to `getConfig()`). Outside Fusion a turn names a profile through `subagent.run` (ATO-1670, `src/tools/subagent/`), which is given the same loader, settings included (ATO-2002), and applies it the same way.
 
 ## Validation
 

@@ -98,6 +98,12 @@ describe("modelParamProfile — Claude models without sampling parameters (ATO-1
     "claude-opus-5.5",
     "claude-opus-5-5-20261101",
     "claude-opus-5-20261101",
+    // Vertex, Bedrock cross-region and the rest of the 5.x family (#1554).
+    "claude-opus-5-5@20261101",
+    "global.anthropic.claude-sonnet-5-5-20261101-v1:0",
+    "claude-haiku-5-5",
+    "claude-fable-5-1",
+    "publishers/anthropic/models/claude-opus-5-5@20261101",
     // An unknown future version falls on the side of the line that omits.
     "claude-sonnet-6",
   ])("forbids temperature but keeps max_tokens for %s", (model) => {

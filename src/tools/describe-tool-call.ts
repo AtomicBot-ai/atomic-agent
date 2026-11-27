@@ -255,6 +255,8 @@ const FIXED: Readonly<Record<string, Phrase>> = {
   "github.issue.create": P(V.created, "a GitHub issue"),
   "github.issue.comment": P(V.commented, "on a GitHub issue"),
   "github.pr.create": P(V.created, "a pull request"),
+  "github.pr.checks": P(V.checked, "a pull request's CI"),
+  "github.pr.autofix": P(V.ran, "PR autofix"),
   fusion_worker: P(V.ran, "a worker"),
 };
 

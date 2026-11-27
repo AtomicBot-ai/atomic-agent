@@ -87,9 +87,25 @@ export type TemperatureLesson =
 export function temperatureLessonFromError(
   err: unknown,
 ): TemperatureLesson | undefined {
-  const value = allowedTemperatureFromError(err);
-  if (value !== undefined) return { kind: "fixed", value };
   if (!(err instanceof Error)) return undefined;
-  if ((err as { status?: unknown }).status !== 400) return undefined;
-  return parseTemperatureRefused(err.message) ? { kind: "forbidden" } : undefined;
+  const status = (err as { status?: unknown }).status;
+  return temperatureLessonFromResponse(
+    typeof status === "number" ? status : undefined,
+    err.message,
+  );
+}
+
+/**
+ * The same lesson read off a raw answer (status and body text), for the
+ * callers that hold a `Response` rather than a thrown error: the key
+ * check and the contract probe (#1554).
+ */
+export function temperatureLessonFromResponse(
+  status: number | undefined,
+  text: string,
+): TemperatureLesson | undefined {
+  if (status !== 400) return undefined;
+  const value = parseAllowedTemperature(text);
+  if (value !== undefined) return { kind: "fixed", value };
+  return parseTemperatureRefused(text) ? { kind: "forbidden" } : undefined;
 }

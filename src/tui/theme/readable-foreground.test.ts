@@ -29,6 +29,8 @@ function usage(percent: number, droppedTurns = 0): ContextUsageView {
     droppedPairs: 0,
     pairCosts: [percent * 10],
     sections: [],
+    parts: [],
+    toolSearchActive: false,
   };
 }
 

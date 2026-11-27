@@ -4,6 +4,7 @@ import {
   SKIP_THOUGHT_SIGNATURE,
   thoughtSignatureExtraContent,
 } from "../gemini/gemini-thought-signature.js";
+import { neutralizeThinkTagsInMessage } from "./think-tag-safe.js";
 
 /**
  * The prompt as real chat messages for a native-tools provider.
@@ -82,6 +83,13 @@ export interface NativeMessageOptions {
    * history without it; every other service gets no such field.
    */
   thoughtSignatures?: boolean;
+  /**
+   * Ollama Cloud (issue #283): rewrite literal `<think>` / `</think>` /
+   * `<thinking>` / `</thinking>` in every message's content and tool-call
+   * arguments to visible brackets (`think-tag-safe.ts`). Reasoning fields
+   * are kept. Absent, the messages are exactly as before.
+   */
+  thinkTagSafe?: boolean;
 }
 
 /**
@@ -290,7 +298,9 @@ export function buildNativeMessages(
     // message after it.
     out.push({ role: "user", content: CONTINUE_AFTER_ASSISTANT });
   }
-  return out;
+  return options.thinkTagSafe === true
+    ? out.map(neutralizeThinkTagsInMessage)
+    : out;
 }
 
 /**

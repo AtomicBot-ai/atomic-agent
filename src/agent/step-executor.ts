@@ -2,6 +2,7 @@ export type { ApprovalBarrierReport } from "./step/step-batch-policy.js";
 export { approvalBarrierSegments, emptyApprovalBarrierReport, formatApprovalBarrierNotice } from "./step/step-batch-policy.js";
 import { chatLinesOf, groundingTextsOf } from "../memory/name-grounding.js";
 import { isIncognitoSession } from "../session/incognito.js";
+import { isChannelGuestSession } from "../session/channel-guest-session.js";
 import { createStepBatchPolicy, executeCallsInOrder, emptyApprovalBarrierReport, executeWithApprovalBarriers, formatApprovalBarrierNotice } from "./step/step-batch-policy.js";
 import { parseStepBatch, finishStepBatchRepair } from "./step/step-batch-parsing.js";
 import { prepareStepDispatch } from "./step/step-evidence.js";
@@ -27,6 +28,7 @@ import { executeBatch, toBatchInputs } from "./dispatch/batch-scheduler.js";
 import { toolLogFields } from "./tool-log-fields.js";
 
 import { ModelError, detectModelFailure } from "../llm/index.js";
+import { completionFactsOf } from "../llm/reliability/model-completion-facts.js";
 // The detector moved to the llm layer so the stream consumer can share its
 // rules; re-exported for existing importers.
 export {
@@ -199,6 +201,7 @@ async function executeStepInner(
           ...(initialModelFailure.truncation
             ? { truncation: initialModelFailure.truncation }
             : {}),
+          completion: completionFactsOf(completion),
         },
       );
     }
@@ -280,6 +283,8 @@ async function executeStepInner(
     userGroundingTexts,
     // ATO-586: memory write tools refuse in an incognito chat.
     ...(isIncognitoSession(ctx.session) ? { incognito: true } : {}),
+    // ATO-2221: a channel guest's reads stay in the working directory.
+    ...(isChannelGuestSession(ctx.session) ? { guest: true } : {}),
     // A pinned step (fusion worker) runs its model-calling tools on the
     // same provider as its completions — `vision.describe` reads this.
     ...(deps.providerId !== undefined ? { providerId: deps.providerId } : {}),

@@ -1,12 +1,18 @@
 import { arch, platform } from "node:os";
 import type { CapabilitiesSummary } from "./stable-prefix.js";
 import { runCommand } from "../sandbox/command-runner.js";
+import { probeMachineLine, type MachineLineProbeInput } from "./machine-line.js";
 
 export interface BuildCapabilitiesInput {
   workingDir: string;
   browserChannel: string;
   /** The agent's own e-mail address, when an Atomic Mail inbox is registered. */
   emailAddress?: string | null;
+  /**
+   * ATO-1721: probe this machine for the `machine:` line (RAM, CPU, GPU,
+   * OS). Omitted, the line is never built.
+   */
+  machineProbe?: MachineLineProbeInput;
 }
 
 /**
@@ -18,10 +24,11 @@ export interface BuildCapabilitiesInput {
 export async function buildCapabilities(
   input: BuildCapabilitiesInput,
 ): Promise<CapabilitiesSummary> {
-  const [hasClipboard, hasWmctrl, hasNotifications] = await Promise.all([
+  const [hasClipboard, hasWmctrl, hasNotifications, machine] = await Promise.all([
     probeClipboard(),
     probeWmctrl(),
     probeNotifications(),
+    input.machineProbe ? probeMachineLine(input.machineProbe) : Promise.resolve(null),
   ]);
   return {
     platform: platform(),
@@ -32,6 +39,7 @@ export async function buildCapabilities(
     hasWmctrl,
     hasNotifications,
     ...(input.emailAddress ? { emailAddress: input.emailAddress } : {}),
+    ...(machine ? { machine } : {}),
   };
 }
 

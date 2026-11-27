@@ -115,6 +115,19 @@ export interface ToolGateConfig {
    * `os.screen.capture` under `enabled`; omitted means `true`.
    */
   screen: { enabled: boolean; point?: boolean; control?: boolean };
+  /**
+   * Language-server navigation gate (ATO-2373): `tools.lsp.enabled`,
+   * read at boot like the registration. Absent or `false` drops
+   * `os.code.lsp`, which is then not registered either
+   * (`registerOsTools`).
+   */
+  lsp?: { enabled: boolean };
+  /**
+   * Logbook gate (ATO-2363): `logbook.query` is offered while the
+   * logbook is on or still keeps notes (`logbookToolOffered`). Absent
+   * or `false` drops it; the tool stays registered.
+   */
+  logbook?: { enabled: boolean };
 }
 
 /**
@@ -141,7 +154,8 @@ const GATED_TOOLS = {
     "browser.annotate",
     "browser.scenario",
   ],
-  webSearch: ["os.web.search"],
+  // research.deep searches first: no search, nothing to research (ATO-2133).
+  webSearch: ["os.web.search", "research.deep"],
   vision: ["vision.describe"],
   audio: ["audio.listen"],
   memoryProfile: [
@@ -185,6 +199,8 @@ const GATED_TOOLS = {
     "github.issue.list",
     "github.issue.create",
     "github.issue.comment",
+    "github.pr.checks",
+    "github.pr.autofix",
   ],
   email: ["os.email.inbox", "os.email.send"],
   image: ["image.generate"],
@@ -198,6 +214,8 @@ const GATED_TOOLS = {
     "os.screen.press",
     "os.screen.point",
   ],
+  lsp: ["os.code.lsp"],
+  logbook: ["logbook.query"],
 } as const;
 
 /**
@@ -273,6 +291,12 @@ export function filterToolDescriptorsByConfig(
   }
   if (!gates.video.available) {
     for (const name of GATED_TOOLS.video) disabled.add(name);
+  }
+  if (gates.lsp?.enabled !== true) {
+    for (const name of GATED_TOOLS.lsp) disabled.add(name);
+  }
+  if (gates.logbook?.enabled !== true) {
+    for (const name of GATED_TOOLS.logbook) disabled.add(name);
   }
   const screenControl = gates.screen.control !== false;
   const screenPoint = gates.screen.point === true && screenControl;

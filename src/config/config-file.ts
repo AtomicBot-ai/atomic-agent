@@ -13,6 +13,7 @@ import {
   type UserConfigFile,
 } from "./config-schema.js";
 import { writeOwnerOnlyFileAtomicSync } from "./owner-only-file.js";
+import { SECRET_SOURCES_FILE } from "./secret-refs.js";
 import { SECRETS_STORE_FILE } from "./secret-store.js";
 
 /** Resolve the absolute path to the user config file inside a state dir. */
@@ -29,13 +30,15 @@ export function getDotenvPath(stateDir: string): string {
  * The agent's own trust surface: `config.json` (holds
  * `agent.approvalLevel`), `.env` (API keys / bot tokens loaded at
  * boot), `secrets-store.json` (whether they load from the OS keychain
- * instead), `approval-rules.json` (saved "always allow" rules,
+ * instead), `secret-sources.json` (the command that resolves secret
+ * references, run at start, and the tool secrets a shell command may
+ * use), `approval-rules.json` (saved "always allow" rules,
  * `src/approval/approval-rules-store.ts`) and what the agent runs from
  * its own state with no further question: `hooks.json` (commands run
  * on every tool call, re-read on change), the plugin records
  * (`plugins/plugins.json` holds the runs-code consent,
- * `plugins/marketplaces.json` the pinned sources) and the installed
- * plugin files. The names are spelled here because config sits below
+ * `plugins/marketplaces.json` the pinned sources), the installed
+ * plugin files and the logbook switch (`logbook/settings.json`). The names are spelled here because config sits below
  * approval, hooks and plugins, and `config-file.test.ts` pins them
  * against the owners' constants. A silent rewrite of any is a
  * self-escalation vector, so the
@@ -56,11 +59,18 @@ export function getTrustConfigPaths(paths: {
     getDotenvPath(paths.stateDir),
     // Opt-in OS keychain switch and the names it holds (ATO-474).
     join(paths.stateDir, SECRETS_STORE_FILE),
+    // Secret-reference helper argv run at start and the tool secrets a
+    // command may use (ATO-2339, ATO-476).
+    join(paths.stateDir, SECRET_SOURCES_FILE),
     join(paths.stateDir, "approval-rules.json"),
     join(paths.stateDir, "hooks.json"),
+    // Plain-text security rules the reviewer enforces (ATO-2111).
+    join(paths.stateDir, "guard.md"),
     join(paths.stateDir, "plugins", "plugins.json"),
     join(paths.stateDir, "plugins", "marketplaces.json"),
     join(paths.stateDir, "plugins", "installed") + sep,
+    // The logbook's capture switch (ATO-2363): a write turns screenshots on.
+    join(paths.stateDir, "logbook", "settings.json"),
   ];
 }
 
@@ -94,9 +104,15 @@ export function getStateSecretPaths(paths: {
     ...getTrustConfigPaths(paths),
     join(paths.localModelsDataDir, "llama-server.key"),
     join(paths.stateDir, "serve-api.key"),
+    // ATO-2336: the key other apps use the shared model with (`modelShareKeyPath`).
+    join(paths.stateDir, "model-share.key"),
     join(paths.localModelsDataDir, "core", "chat.json"),
     join(paths.localModelsDataDir, "core", "embedding.json"),
     join(paths.stateDir, "atomic-mail", "session.json"),
+    // ATO-2308: paired phones and pending pairing links; a written entry would let a phone in.
+    join(paths.stateDir, "http-devices.json"),
+    // ATO-2331: the per-PR autofix opt-in and attempt cap; a written entry would enable pushes.
+    join(paths.stateDir, "pr-autofix", "state.json"),
   ];
 }
 

@@ -11,7 +11,8 @@ import { isIndexablePath } from "./file-text.js";
  * caches, `Library`, virtualenvs, …), every hidden file and folder, and
  * symlinks (no loops, nothing outside the folder). Files over `maxBytes`
  * are reported with `tooLarge` so they count as skipped rather than
- * vanish. Stops after `maxFiles` files.
+ * vanish. Keeps the first `maxFiles` files and reports the walk as
+ * truncated only when it saw at least one more.
  */
 export interface WalkedFile {
   path: string;
@@ -47,7 +48,9 @@ export const IGNORED_DIR_NAMES: ReadonlySet<string> = new Set(
 export async function walkFolder(root: string, options: WalkOptions): Promise<WalkedFile[]> {
   const found: WalkedFile[] = [];
   const stack = [root];
-  while (stack.length > 0 && found.length < options.maxFiles) {
+  // One file past the cap proves the folder holds more; exactly maxFiles is complete.
+  let more = false;
+  while (stack.length > 0 && !more) {
     if (options.signal?.aborted) break;
     const dir = stack.pop()!;
     let entries: Dirent[];
@@ -67,15 +70,18 @@ export async function walkFolder(root: string, options: WalkOptions): Promise<Wa
         continue;
       }
       if (!entry.isFile() || !isIndexablePath(path)) continue;
+      if (found.length >= options.maxFiles) {
+        more = true;
+        break;
+      }
       try {
         const info = await stat(path);
         found.push({ path, mtimeMs: info.mtimeMs, size: info.size, tooLarge: info.size > options.maxBytes });
       } catch {
         continue;
       }
-      if (found.length >= options.maxFiles) break;
     }
   }
-  if (options.report && found.length >= options.maxFiles) options.report.truncated = true;
+  if (options.report && more) options.report.truncated = true;
   return found;
 }

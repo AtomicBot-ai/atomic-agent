@@ -15,6 +15,8 @@ const localModelTypeOwners = new Set([
   'src/local-llm/catalog/models-catalog.ts',
   'src/local-llm/backend/windows-backend-variant.ts',
   'src/local-llm/server/swa-full.ts',
+  'src/local-llm/server/cpu-moe.ts',
+  'src/local-llm/server/rpc-peers.ts',
 ]);
 const localModelDefaultOwners = new Set([
   'src/config/local-models/local-models-types.ts',

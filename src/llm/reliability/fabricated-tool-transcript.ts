@@ -57,6 +57,11 @@ export const STREAM_FABRICATION_ABORT_MIN_LINES = 6;
 export interface FabricatedToolTranscript {
   calls: number;
   results: number;
+  /**
+   * Set when the calls were tagged `<tool_call>` blocks no parser could
+   * run (`tagged-tool-call-text.ts`) rather than transcript lines.
+   */
+  taggedBlocks?: number;
 }
 
 /**

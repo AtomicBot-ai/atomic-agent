@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildStablePrefix,
+  COMPACT_NATIVE_TOOLS_SYSTEM_PERSONA,
+  COMPACT_SYSTEM_PERSONA,
   DEFAULT_SYSTEM_PERSONA,
   NATIVE_TOOLS_SYSTEM_PERSONA,
   SYSTEM_PERSONA_INPUTS_LINE,
@@ -138,6 +140,32 @@ describe("the run-commands-yourself line (ATO-1252)", () => {
       expect(persona).toContain("run task steps yourself with `os.shell.run`");
       expect(persona).toContain("never print commands for the user to type");
       expect(persona).toMatch(/Hand over only a step that needs them \(browser sign-in, password or `sudo`, keychain, a terminal question\)/);
+    }
+  });
+});
+
+/**
+ * ATO-1720 / ATO-1706: on a local Qwen 3.5 2B, asked about the computer,
+ * the agent said it had no access to the hardware and suggested the
+ * cloud. Every persona (full and compact, both transports; cloud models
+ * too, since the agent still runs on the user's machine) says it runs on
+ * the user's computer and to look machine facts up with `os.shell.run`.
+ */
+describe("the own-computer line (ATO-1720)", () => {
+  it("is in every persona exactly once and names the shell tool", () => {
+    for (const persona of [
+      DEFAULT_SYSTEM_PERSONA,
+      NATIVE_TOOLS_SYSTEM_PERSONA,
+      COMPACT_SYSTEM_PERSONA,
+      COMPACT_NATIVE_TOOLS_SYSTEM_PERSONA,
+    ]) {
+      const line = persona.split("\n").find(l => l.startsWith("You run on the user's"));
+      expect(line).toBeDefined();
+      expect(persona.match(/^You run on the user's/gm)).toHaveLength(1);
+      expect(line).toContain("hardware, OS, disk");
+      expect(line).toContain("with `os.shell.run`");
+      expect(line).toContain("never say you lack access or suggest the cloud");
+      expect(line).not.toContain("\u2014");
     }
   });
 });

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { ApprovalGate, type ApprovalRequest } from "../../approval/approval-gate.js";
 import { ApprovalDeniedError } from "../../approval/dangerous-tool.js";
 import { ToolRegistry, type ToolContext } from "../tool-registry.js";
+import { DEFAULT_TOOL_DESCRIPTORS_B } from "../../prompt/default-tool-descriptors-b.js";
 import { buildCanvasRenderTool, canvasRecordOf, canvasSlug, CANVAS_RENDER_TOOL } from "./index.js";
 
 let work: string;
@@ -175,5 +176,18 @@ describe("canvasRecordOf", () => {
     expect(canvasRecordOf(ok({ canvas: { ...canvas, kind: "svg" } }))).toBeUndefined();
     // An unknown chart type is dropped, the canvas still opens.
     expect(canvasRecordOf(ok({ canvas: { ...canvas, chart: "radar" } }))).toEqual({ path: canvas.path, title: "A", kind: "chart", bytes: 10 });
+  });
+});
+
+describe("canvas.render live widgets (ATO-2375)", () => {
+  it("tells the model a page may call sendPrompt and atomicWidget.state in the desktop app", () => {
+    const description = tool().description;
+    expect(description).toContain("sendPrompt(text)");
+    expect(description).toContain("atomicWidget.state.get()/set(obj)");
+    const descriptor = DEFAULT_TOOL_DESCRIPTORS_B.find((d) => d.name === CANVAS_RENDER_TOOL);
+    expect(descriptor?.argsSchema).toContain("sendPrompt(text)");
+    expect(descriptor?.argsSchema).toContain("atomicWidget.state.get()/set(obj)");
+    // The one-liner the prompt lists stays as it was: the widget note loads with the full args.
+    expect(descriptor?.summary).not.toContain("sendPrompt");
   });
 });

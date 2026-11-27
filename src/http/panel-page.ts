@@ -4,6 +4,9 @@
  * The page holds no data: it asks for the agent's API key (or takes it from
  * a `#key=…` fragment, the address serve prints) and keeps it in the
  * browser (localStorage), and every call carries it as a bearer token.
+ * ATO-2308: a phone paired by `atag pair` has no key; its calls go out
+ * without one and the browser adds the device cookie, so it opens straight
+ * to the chats. A 401 then means it was signed out (Revoke).
  */
 
 export const PANEL_HTML = `<!doctype html>
@@ -47,18 +50,24 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'
 let key = ''; try { key = localStorage.getItem('atomic.panel.key') || ''; } catch (e) {}
 const fromHash = /^#key=(.+)$/.exec(location.hash);
 if (fromHash) { try { key = decodeURIComponent(fromHash[1]).trim(); localStorage.setItem('atomic.panel.key', key); } catch (e) {} history.replaceState(null, '', location.pathname + location.search); }
-let open = null, timer = null, approvals = new Map();
+let open = null, timer = null, approvals = new Map(), paired = false;
+const auth = () => key ? {authorization: 'Bearer ' + key} : {};
 const api = async (path, init) => {
-  const res = await fetch(path, Object.assign({}, init, {headers: Object.assign({'content-type': 'application/json', authorization: 'Bearer ' + key}, (init && init.headers) || {})}));
-  if (res.status === 401) { forget(); throw new Error('The key was not accepted.'); }
+  const res = await fetch(path, Object.assign({}, init, {headers: Object.assign({'content-type': 'application/json'}, auth(), (init && init.headers) || {})}));
+  // Signed out: the key box is up now, so callers stop polling and keep it there.
+  if (res.status === 401) { forget(); const e = new Error('signed out'); e.loggedOut = true; throw e; }
+  if (!key && res.ok) paired = true;
   if (res.status === 429) throw new Error('Too many wrong keys from this device; wait a minute.');
   if (!res.ok) throw new Error('The agent answered ' + res.status);
   return res.json();
 };
-function forget() { key = ''; try { localStorage.removeItem('atomic.panel.key'); } catch (e) {} login('The key was not accepted. Type it again.'); }
+function forget() {
+  if (!key) { const was = paired; paired = false; login(was ? 'This phone was signed out. Run atag pair on your computer and scan the new code, or type the key.' : ''); return; }
+  key = ''; try { localStorage.removeItem('atomic.panel.key'); } catch (e) {} login('The key was not accepted. Type it again.');
+}
 function login(note) {
   clearInterval(timer); open = null; $('back').hidden = true; $('new').hidden = true; $('composer').hidden = true; $('title').textContent = 'Atomic Agent';
-  $('main').innerHTML = '<p>Type the API key this agent runs with (the --api-key of atag serve, or what atag serve --print-api-key prints).</p><input id="key" type="password" autocomplete="off"><p class="err">' + esc(note || '') + '</p><button id="go" class="p">Open</button>';
+  $('main').innerHTML = '<p>Run atag pair on your computer and scan its code with this phone, or type the API key this agent runs with (the --api-key of atag serve, or what atag serve --print-api-key prints).</p><input id="key" type="password" autocomplete="off"><p class="err">' + esc(note || '') + '</p><button id="go" class="p">Open</button>';
   $('go').onclick = () => { key = $('key').value.trim(); try { localStorage.setItem('atomic.panel.key', key); } catch (e) {} list(); };
 }
 async function list() {
@@ -69,7 +78,7 @@ async function list() {
       '<div class="row" data-id="' + esc(s.id) + '"><div>' + esc(s.title || s.id) + '</div><small>' + esc(s.status) + ' · ' + new Date(s.updatedAt).toLocaleString() + '</small></div>').join('');
     for (const el of document.querySelectorAll('.row')) el.onclick = () => show(el.dataset.id);
     wireApprovals();
-  } catch (e) { $('main').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
+  } catch (e) { if (e.loggedOut) return; $('main').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
   timer = setInterval(() => { if (!open) list(); }, 10000);
 }
 async function show(id) {
@@ -84,9 +93,10 @@ async function show(id) {
         : t.kind === 'assistant_tool_call' ? '<div class="tool">⚙ ' + esc(t.tool) + '</div>' : '').join('')
         + (s.status === 'running' ? '<p class="tool">Working…</p>' : '');
       wireApprovals();
-    } catch (e) { $('main').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
+    } catch (e) { if (e.loggedOut) return false; $('main').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
   };
-  await paint(); window.scrollTo(0, document.body.scrollHeight);
+  if (await paint() === false) return;
+  window.scrollTo(0, document.body.scrollHeight);
   timer = setInterval(() => { if (open === id) paint(); }, 3000);
 }
 async function send() {
@@ -95,7 +105,7 @@ async function send() {
   const body = {model: 'atomic-agent', stream: false, messages: [{role: 'user', content: text}]};
   if (open) body.session_id = open;
   // A refused message (a turn already running, an error) comes back to the box, with why.
-  const failed = (e) => { $('text').value = text; const p = document.createElement('p'); p.className = 'err'; p.textContent = e.message; $('main').appendChild(p); };
+  const failed = (e) => { if (e.loggedOut) return; $('text').value = text; const p = document.createElement('p'); p.className = 'err'; p.textContent = e.message; $('main').appendChild(p); };
   const pending = api('/v1/chat/completions', {method: 'POST', body: JSON.stringify(body)});
   if (!open) { const r = await pending.catch((e) => { failed(e); return null; }); if (r && r.session_id) show(r.session_id); }
   else { pending.catch(failed); setTimeout(() => show(open), 500); }
@@ -112,9 +122,9 @@ function wireApprovals() {
 }
 async function watchApprovals() {
   for (;;) {
-    if (!key) { await new Promise((r) => setTimeout(r, 2000)); continue; }
+    if (!key && !paired) { await new Promise((r) => setTimeout(r, 2000)); continue; }
     try {
-      const res = await fetch('/api/events', {headers: {authorization: 'Bearer ' + key}});
+      const res = await fetch('/api/events', {headers: auth()});
       // A wrong key, or one throttled: stop asking (each try counts against the address) until it is typed again.
       if (res.status === 401) { forget(); continue; }
       if (res.status === 429) { await new Promise((r) => setTimeout(r, 60000)); continue; }
@@ -135,7 +145,8 @@ async function watchApprovals() {
 $('back').onclick = () => list();
 $('new').onclick = () => { open = null; $('title').textContent = 'New chat'; $('main').innerHTML = ''; $('composer').hidden = false; $('back').hidden = false; $('new').hidden = true; clearInterval(timer); };
 $('send').onclick = () => send();
-if (key) list(); else login('');
+// With no key, try the device cookie first; a 401 shows the key box.
+list();
 watchApprovals();
 })();
 `;

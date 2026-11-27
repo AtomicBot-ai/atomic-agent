@@ -105,6 +105,8 @@ export interface BatchExecutionContext {
   userGroundingTexts?: readonly string[];
   /** The session is an incognito chat (`ToolContext.incognito`, ATO-586). */
   incognito?: boolean;
+  /** The session is a channel guest's (`ToolContext.guest`, ATO-2221). */
+  guest?: boolean;
   /** The step's provider pin, handed to every call (`ToolContext.providerId`). */
   providerId?: string;
   /** The turn's model on the pinned link (`ToolContext.model`). */

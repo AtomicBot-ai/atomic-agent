@@ -821,3 +821,41 @@ describe("isDeepSeekHost (ATO-1397)", () => {
     expect(isDeepSeekHost(undefined)).toBe(false);
   });
 });
+
+describe("OpenAiProvider thinking tags on Ollama Cloud (issue #283)", () => {
+  const PROMPT = "keep <think> and </thinking> as written";
+  const sentRaw = async (baseUrl: string): Promise<string> => {
+    const fetchImpl = fakeFetch({ role: "assistant", content: "ok" });
+    await new OpenAiProvider({
+      id: "test", baseUrl, apiKey: "", defaultChatModel: "qwen-test",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    }).complete({ prompt: PROMPT });
+    const init = (fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1];
+    return String(init.body);
+  };
+  const describedRaw = async (baseUrl: string): Promise<string> => {
+    const fetchImpl = fakeFetch({ role: "assistant", content: "a cat" });
+    await new OpenAiProvider({
+      id: "test", baseUrl, apiKey: "", defaultChatModel: "qwen-test", supportsVision: true,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    }).describeImage({ prompt: PROMPT, images: [{ id: 0, bytes: new Uint8Array([1]), mimeType: "image/png" }] });
+    const init = (fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1];
+    return String(init.body);
+  };
+
+  it("sends visible brackets to ollama.com, for a turn and for a describe call", async () => {
+    for (const raw of [await sentRaw("https://ollama.com"), await describedRaw("https://ollama.com")]) {
+      expect(raw).toContain("keep [think] and [/thinking] as written");
+      expect(raw).not.toMatch(/<\/?think(ing)?>/);
+    }
+  });
+
+  it("sends the tags verbatim to local Ollama, OpenAI and DeepSeek", async () => {
+    for (const baseUrl of ["http://localhost:11434", "https://api.openai.com/v1", "https://api.deepseek.com"]) {
+      for (const raw of [await sentRaw(baseUrl), await describedRaw(baseUrl)]) {
+        expect(raw).toContain(PROMPT);
+        expect(raw).not.toContain("[think]");
+      }
+    }
+  });
+});

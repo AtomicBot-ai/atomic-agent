@@ -35,6 +35,13 @@ import {
   SWA_FULL_PREFERENCES,
   type SwaFullPreference,
 } from "../../local-llm/server/swa-full.js";
+import {
+  CPU_MOE_DEFAULT,
+  CPU_MOE_MAX_PINNED_LAYERS,
+  isCpuMoePreference,
+  type CpuMoePreference,
+} from "../../local-llm/server/cpu-moe.js";
+import { rpcPeerProblem } from "../../local-llm/server/rpc-peers.js";
 
 /** Pre-v41 `autoUpdate: false` was a dead default; force the live default. */
 const MANAGED_AUTO_UPDATE_DEFAULTS_VERSION = 41;
@@ -112,6 +119,30 @@ export function parseSwaFullPreference(
   throw new ConfigValidationError(
     field,
     `expected ${SWA_FULL_PREFERENCES.join("|")}, got ${JSON.stringify(raw)}`,
+  );
+}
+
+/** `localModels.managed.rpcServers` (ATO-2338): `host:port` strings. */
+export function parseRpcServers(raw: unknown, field: string): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(field, `expected ["host:port", ...], got ${JSON.stringify(raw)}`);
+  }
+  return raw.map((entry, i) => {
+    const problem = typeof entry === "string" ? rpcPeerProblem(entry) : `expected a "host:port" string, got ${JSON.stringify(entry)}`;
+    if (problem) throw new ConfigValidationError(`${field}[${i}]`, problem);
+    return entry as string;
+  });
+}
+
+/** `localModels.managed.cpuMoe` (ATO-2380); `0` reads as `"off"`. */
+export function parseCpuMoePreference(raw: unknown, field: string): CpuMoePreference {
+  if (raw === undefined || raw === null) return CPU_MOE_DEFAULT;
+  if (raw === 0) return "off";
+  if (isCpuMoePreference(raw)) return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected "auto", "off" or a whole number 1..${CPU_MOE_MAX_PINNED_LAYERS}, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -398,6 +429,11 @@ export function prepareLocalModelsInputs(
         readDefaults().managed.promptDiskCache,
       "localModels.managed.promptDiskCache",
     ),
+    // ATO-2336: additive and unversioned; a file without it reads as off.
+    share: parseBool(
+      rawManaged.share ?? readDefaults().managed.share,
+      "localModels.managed.share",
+    ),
     device: parseNonEmptyString(
       rawManaged.device ?? readDefaults().managed.device,
       "localModels.managed.device",
@@ -426,9 +462,14 @@ export function prepareLocalModelsInputs(
       rawManaged.swaFull ?? readDefaults().managed.swaFull,
       "localModels.managed.swaFull",
     ),
+    cpuMoe: parseCpuMoePreference(rawManaged.cpuMoe, "localModels.managed.cpuMoe"),
+    rpcServers: parseRpcServers(rawManaged.rpcServers, "localModels.managed.rpcServers"),
   };
   const loraAdapters = parseLoraAdapters(rawManaged.loraAdapters, "localModels.managed.loraAdapters");
   if (loraAdapters) managed.loraAdapters = loraAdapters;
+  if (rawManaged.modelsDirOverride !== undefined && rawManaged.modelsDirOverride !== null) {
+    managed.modelsDirOverride = parseNonEmptyString(rawManaged.modelsDirOverride, "localModels.managed.modelsDirOverride");
+  }
 
   const rawEmbeddings =
     (localModels.embeddings as Record<string, unknown> | undefined) ?? {};
@@ -530,6 +571,10 @@ export function parseUserLocalModelsConfig(
     drySampler: parseBool(
       localModels.drySampler ?? readDefaults().drySampler,
       "localModels.drySampler",
+    ),
+    modelSampling: parseBool(
+      localModels.modelSampling ?? readDefaults().modelSampling,
+      "localModels.modelSampling",
     ),
     strictToolArgs: parseBool(
       localModels.strictToolArgs ?? readDefaults().strictToolArgs,

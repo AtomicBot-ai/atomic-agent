@@ -1,3 +1,4 @@
+import type { DetectedLocalServer } from "../../llm/provider/presets/detect-local-servers.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import type { ProviderRow } from "./providers-panel-state.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
@@ -112,6 +113,8 @@ export type ProvidersAction =
       providerId: string | null;
     }
   | { type: "providers_wizard_updated"; wizard: ProvidersWizardState }
+  /** ATO-2013: local servers found running while the wizard is open. */
+  | { type: "providers_wizard_local_detected"; servers: readonly DetectedLocalServer[] }
   | { type: "providers_wizard_closed" }
   | { type: "providers_wizard_submit_started" }
   | { type: "providers_wizard_failed"; error: string }

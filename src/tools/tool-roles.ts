@@ -74,6 +74,7 @@ const MEMORY_READ_TOOLS: readonly string[] = [
   "memory.lessons.recall",
   "memory.procedures.recall",
   "memory.sessions.search",
+  "conversation.history",
 ];
 
 interface RoleSpec {

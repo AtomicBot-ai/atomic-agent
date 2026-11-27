@@ -44,6 +44,12 @@ export {
 } from "./state-secrets.js";
 export type { StateSecrets } from "./state-secrets.js";
 export { confineReads, confineWorkerReads } from "./confine-reads.js";
+export {
+  checkGuestRead,
+  GUEST_GIT_TOOLS,
+  GUEST_READ_REFUSAL_REASON,
+} from "./guest-reads.js";
+export type { GuestReadOptions } from "./guest-reads.js";
 export type { ConfineReadsOptions } from "./confine-reads.js";
 // The worker-era name of the targets map, kept so fusion code reads the same.
 export { READ_TOOL_TARGETS as WORKER_READ_TOOL_TARGETS } from "./read-scope-targets.js";

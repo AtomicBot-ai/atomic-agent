@@ -757,28 +757,106 @@ function matchPluginConsent(
 const SECRETS_VALUE_VERBS: ReadonlySet<string> = new Set(["get", "set", "unset"]);
 
 /**
- * The agent touching one saved key through its own CLI: `atomic-agent
- * config secrets get|set|unset NAME` (ATO-1639). `get` prints the value
- * from .env or the OS keychain without naming either file, so the
- * path-based state-secret check never sees it, and output masking does
- * not survive `| base64`. Only the desktop app and a person run these;
- * like plugin consent they ask every time below full trust and no `shell`
- * grant covers them. Matched on the words after `config`, not the binary
- * name (`atag`, `npx atomic-agent`, `node dist/index.js`).
+ * The `config secrets` subcommands that move every saved key between
+ * `.env` and the OS keychain (ATO-1647). `env` takes them out of the
+ * keychain into a plaintext file; `keychain` moves them back.
+ */
+const SECRETS_STORE_VERBS: ReadonlySet<string> = new Set(["env", "keychain"]);
+
+/** The next word at or after `from` that is not an option, with its index. */
+function nextNonOption(
+  words: readonly string[],
+  from: number,
+): { word: string; index: number } | null {
+  for (let i = from; i < words.length; i += 1) {
+    const word = words[i]!;
+    if (!word.startsWith("-")) return { word, index: i };
+  }
+  return null;
+}
+
+/** Every `config secrets` subcommand; under `xargs` anything else is a placeholder. */
+const SECRETS_KNOWN_VERBS: ReadonlySet<string> = new Set([
+  "status",
+  ...SECRETS_VALUE_VERBS,
+  ...SECRETS_STORE_VERBS,
+]);
+
+const SECRETS_LINE_CHOSEN: ArgvCheck = {
+  id: "dangerous.secrets_store_move",
+  reason: "run a config secrets subcommand that is only known when the line runs",
+};
+
+/** `{}` of `xargs -I{}` and `find -exec`, or any unknown word when xargs runs the line. */
+function isPlaceholderVerb(verb: string, fedByXargs: boolean): boolean {
+  if (verb.includes("{}")) return true;
+  return fedByXargs && !SECRETS_KNOWN_VERBS.has(verb.toLowerCase());
+}
+
+/**
+ * The agent touching saved keys through its own CLI: `atomic-agent
+ * config secrets get|set|unset NAME` (ATO-1639) and `config secrets
+ * env|keychain` (ATO-1647). `get` prints the value from .env or the OS
+ * keychain without naming either file, so the path-based state-secret
+ * check never sees it, and output masking does not survive `| base64`.
+ * `env` silently moves every key out of the keychain into a plaintext
+ * `.env`, a downgrade a prompt injection could ask for. Only the desktop
+ * app and a person run these; like plugin consent they ask every time
+ * below full trust and no `shell` grant covers them. Matched on the
+ * words after `config`, not the binary name (`atag`, `npx atomic-agent`,
+ * `node dist/index.js`); options between the words are skipped. A word
+ * only known when the line runs asks too: the subcommand (`secrets $S`),
+ * the `config` or `secrets` word before a known or computed subcommand
+ * (`atag $A secrets env`, `atag config $S env`, the way
+ * `gitInvocations` reads `$g push -f`), and a subcommand that `xargs`
+ * or `find -exec` supplies (`echo env | xargs atag config secrets`,
+ * `xargs -I{} atag config secrets {}`, `xargs -I% ... secrets %`).
  */
 function matchSecretsAccess(
   segments: readonly (readonly string[])[],
 ): ArgvCheck | null {
   for (const words of segments) {
-    for (let i = 0; i < words.length - 2; i += 1) {
-      if (words[i] !== "config" || words[i + 1] !== "secrets") continue;
-      const verb = words[i + 2];
-      if (verb !== undefined && SECRETS_VALUE_VERBS.has(verb)) {
+    for (let i = 0; i < words.length; i += 1) {
+      const first = words[i]!;
+      const configComputed = !first.startsWith("-") && isComputedWord(first);
+      if (first !== "config" && !configComputed) continue;
+      const secrets = nextNonOption(words, i + 1);
+      if (secrets === null) continue;
+      const secretsComputed = isComputedWord(secrets.word);
+      if (secrets.word.toLowerCase() !== "secrets" && !secretsComputed) continue;
+      const fedByXargs = words
+        .slice(0, i)
+        .some((word) => programName(word) === "xargs");
+      const verb = nextNonOption(words, secrets.index + 1)?.word;
+      if (verb === undefined) {
+        if (fedByXargs && !configComputed && !secretsComputed) return SECRETS_LINE_CHOSEN;
+        continue;
+      }
+      const lower = verb.toLowerCase();
+      const verbComputed = isComputedWord(verb);
+      // Two computed words in a row (`cp $A $B $C`) say nothing about
+      // this CLI; only a literal subcommand after them makes a match.
+      if (configComputed && secretsComputed && !SECRETS_KNOWN_VERBS.has(lower)) continue;
+      if (SECRETS_VALUE_VERBS.has(lower)) {
         return {
           id: "dangerous.secrets_value_access",
-          reason: `read or change a saved API key (config secrets ${verb})`,
+          reason: `read or change a saved API key (config secrets ${lower})`,
         };
       }
+      if (SECRETS_STORE_VERBS.has(lower)) {
+        return {
+          id: "dangerous.secrets_store_move",
+          reason:
+            lower === "env"
+              ? "move every saved API key out of the OS keychain into the plaintext .env (config secrets env)"
+              : "move every saved API key between .env and the OS keychain (config secrets keychain)",
+        };
+      }
+      if (configComputed || secretsComputed) {
+        if (verbComputed) return SECRETS_LINE_CHOSEN;
+        continue;
+      }
+      if (verbComputed || isPlaceholderVerb(verb, fedByXargs)) return SECRETS_LINE_CHOSEN;
     }
   }
   return null;

@@ -342,7 +342,7 @@ describe("mapCliFailure next step for an exit the person can fix (ATO-1679)", ()
   const CODEX_HINT =
     "update it the way you installed it (for example `npm install -g @openai/codex@latest` or `brew upgrade codex`) and retry.";
   const GIT_BASH_HINT =
-    "Claude Code on Windows needs Git for Windows (git-bash). Install it from https://git-scm.com/downloads/win or set CLAUDE_CODE_GIT_BASH_PATH to your bash.exe, then restart Atomic Agent.";
+    "Claude Code on Windows needs Git for Windows (git-bash). Install it from https://git-scm.com/downloads/win or set CLAUDE_CODE_GIT_BASH_PATH to your bash.exe, or update Claude Code to 2.1.120 or newer (`claude update`), which no longer needs it. Then restart Atomic Agent.";
 
   it("tells an old Claude Code on Windows to update when it refuses our flags", () => {
     const err = mapCliFailure({
@@ -428,5 +428,72 @@ describe("mapCliFailure next step for an exit the person can fix (ATO-1679)", ()
     });
     expect(err).toBeInstanceOf(SubscriptionCliAuthError);
     expect(err.message).not.toContain("may be older");
+  });
+});
+
+describe("honest account states the CLIs report (ATO-2417)", () => {
+  it("reads Codex's expired, revoked or reused refresh token as signed out", () => {
+    for (const text of [
+      "Your access token could not be refreshed because your refresh token has expired. Please log out and sign in again.",
+      "Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.",
+      "Your access token could not be refreshed because your refresh token was revoked. Please log out and sign in again.",
+      "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
+      'API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}',
+    ]) {
+      expect(looksLikeAuthFailure(text)).toBe(true);
+    }
+  });
+
+  it("maps a Codex refresh-token failure on stderr to the auth error with its hint", () => {
+    const err = mapCliFailure({
+      ...base,
+      binary: "codex",
+      authHint: "Run `codex login`.",
+      stderr:
+        "Error: Your access token could not be refreshed because your refresh token has expired. Please log out and sign in again.",
+    });
+    expect(err).toBeInstanceOf(SubscriptionCliAuthError);
+    expect(err.message).toContain("Run `codex login`.");
+  });
+
+  it("names the newer limit and billing wordings as a limit", () => {
+    for (const text of [
+      "You've hit your weekly limit · resets Oct 9 at 10pm",
+      "You hit your spend cap set in your workspace. Increase your spend cap to continue.",
+      "Your API key has reached its spend limit.",
+      "Credit balance is too low",
+    ]) {
+      expect(new SubscriptionCliInvocationError(`codex turn failed: ${text}`, 1, "turn_failed").failureKind).toBe(
+        "limit_reached",
+      );
+    }
+  });
+
+  it("names a plan that does not include Codex as plan_required", () => {
+    const err = new SubscriptionCliInvocationError(
+      "codex turn failed: To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.",
+      1,
+      "turn_failed",
+    );
+    expect(err.failureKind).toBe("plan_required");
+  });
+
+  it("keeps a spent allowance a limit even when it says to upgrade", () => {
+    const err = new SubscriptionCliInvocationError(
+      "codex turn failed: You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus).",
+      1,
+      "turn_failed",
+    );
+    expect(err.failureKind).toBe("limit_reached");
+  });
+
+  it("leaves ordinary failures and our own messages alone", () => {
+    expect(new SubscriptionCliInvocationError('"codex" exited with code 1: boom', 1).failureKind).toBe("exited");
+    expect(
+      new SubscriptionCliInvocationError('"codex" timed out after 1000ms (upgrade to plus)', null, "timeout").failureKind,
+    ).toBe("timeout");
+    for (const text of ["5-hour limit reached; resets at 14:00", "Overloaded", "sign in to GitHub to continue"]) {
+      expect(looksLikeAuthFailure(text)).toBe(false);
+    }
   });
 });

@@ -127,6 +127,39 @@ describe("createApiKeyCommandSource", () => {
     await expect(source.get()).resolves.toBe("$(whoami)");
   });
 
+  // ATO-1716: a command for one provider must not see the agent's other keys.
+  it("hands the command a filtered environment, built per run", async () => {
+    const seen: NodeJS.ProcessEnv[] = [];
+    const run: RunKeyCommand = async (_argv, _timeoutMs, env) => {
+      seen.push(env);
+      return TOKEN;
+    };
+    const base: NodeJS.ProcessEnv = { PATH: "/usr/bin", HOME: "/home/op", OPENAI_API_KEY: "leak-openai", BW_SESSION: "bw" };
+    const source = createApiKeyCommandSource(["bw", "get", "password", "groq"], { label: "p", run, baseEnv: () => base });
+
+    await source.get();
+    expect(seen[0]).toEqual({ PATH: "/usr/bin", HOME: "/home/op", BW_SESSION: "bw" });
+    base.GROQ_API_KEY = "added-later";
+    source.invalidate();
+    await source.get();
+    expect(seen[1]?.GROQ_API_KEY).toBeUndefined();
+    expect(seen[1]?.OPENAI_API_KEY).toBeUndefined();
+  });
+
+  it("runs the real command without the agent's provider keys", async () => {
+    // Bootstrap puts <stateDir>/.env keys into the agent's own process.env.
+    vi.stubEnv("OPENAI_API_KEY", "leak-openai");
+    try {
+      const source = createApiKeyCommandSource(
+        [process.execPath, "-e", "process.stdout.write(process.env.OPENAI_API_KEY ? 'leaked' : 'clean')"],
+        { label: "p" },
+      );
+      await expect(source.get()).resolves.toBe("clean");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("names a missing binary without running anything else", async () => {
     const source = createApiKeyCommandSource(["atomic-agent-no-such-binary-xyz"], { label: "p" });
     await expect(source.get()).rejects.toThrow(/command not found/);

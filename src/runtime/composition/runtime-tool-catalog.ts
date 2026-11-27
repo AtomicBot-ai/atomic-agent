@@ -23,6 +23,7 @@ import { FileCheckpointStore, fileCheckpointsRoot } from "../../tools/os/fs/fs-c
 import { checkpointBeforeInvoke } from "../../tools/os/fs/fs-checkpoint-targets.js";
 import { knownSecretsFromEnv, type KnownSecret } from "../../error-reporting/secret-detector.js";
 import { commandIssuedSecrets } from "../../llm/provider/openai/api-key-command.js";
+import { processSecrets } from "../../error-reporting/process-secrets.js";
 import { isSecretEnvName } from "../../sandbox/command-env.js";
 import { resolveExtraApiKeys } from "../../config/resolve-llm-api-key.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
@@ -41,10 +42,13 @@ import { buildToolViewTool } from "../../tools/tool-view/index.js";
 import { planUpdateTool } from "../../tools/plan/index.js";
 import { buildCanvasRenderTool } from "../../tools/canvas/index.js";
 import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActive } from "../../tools/tool-search/index.js";
-import { buildSessionsSearchTool, registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
+import { buildConversationHistoryTool, buildSessionsSearchTool, registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
 import { buildFilesSearchTool, type FileIndexApi } from "../../tools/files/index.js";
+import { buildResearchDeepTool } from "../../tools/research/index.js";
+import { registerLogbookTools } from "../../tools/logbook/index.js";
+import { logbookNotesStayLocal, logbookToolOffered } from "../../logbook/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
-import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
+import { registerVisionTools, type VisionDescribeProviderSource, type VisionProviderSource } from "../../tools/vision/index.js";
 import { IMAGE_GENERATE_TOOL, openRouterImageKey, registerImageTools } from "../../tools/image/index.js";
 import { registerVideoTools, VIDEO_GENERATE_TOOL, VIDEO_RENDER_HTML_TOOL } from "../../tools/video/index.js";
 import { AUDIO_TRANSCRIBE_TOOL, registerAudioListenTools, registerAudioTools } from "../../tools/audio/index.js";
@@ -78,7 +82,8 @@ const SECRET_HEADER = /authorization|api[-_]?key|token|secret|password|cookie|au
  * (loaded into `process.env`) and the credentials stored in the config
  * file: provider keys and secret headers, the local server's key,
  * webhook secrets, MCP servers' secret env values and headers, and the
- * tokens provider key commands printed this process (Vertex AI). Read
+ * tokens provider key commands printed this process (Vertex AI), and
+ * secrets held in memory only (serve's API key, `processSecrets`). Read
  * per call, so a key added through `/providers` mid-session is covered.
  */
 export function runtimeKnownSecrets(
@@ -108,6 +113,8 @@ export function runtimeKnownSecrets(
   }
   // Tokens printed by provider key commands (Vertex AI) live only in memory.
   for (const secret of commandIssuedSecrets()) add(secret.label, secret.value);
+  // The key `serve` runs with, when no env variable carries it (ATO-1705).
+  for (const secret of processSecrets()) add(secret.label, secret.value);
   add("local-models-key", config.localModels?.apiKey);
   for (const [name, hook] of Object.entries(config.webhooks ?? {})) {
     add(`webhook-${name}-secret`, hook.secret);
@@ -185,6 +192,16 @@ export function createRuntimeToolRegistry(
       toolRegistry.register(tool);
     }
   }
+  // ATO-2133: web research through this registry's os.web.search and
+  // os.web.fetch (registered later; looked up per call), on the same
+  // side-call model as browser.extract. The report goes through the fs
+  // write funnel like canvas.render.
+  toolRegistry.register(buildResearchDeepTool({
+    ...dangerous,
+    trustConfigPaths: getTrustConfigPaths(config.paths),
+    tools: toolRegistry,
+    model: browserExtract,
+  }));
   return toolRegistry;
 }
 
@@ -211,7 +228,7 @@ export function registerRuntimeCoreTools(input: {
   config: AtomicAgentConfig;
   toolRegistry: ToolRegistry;
   dangerous: DangerousToolOptions;
-  sessionStore: Pick<SessionStore, "listRecentWorkingDirs" | "listSummaryPage" | "listChatLines" | "searchTranscripts" | "listSearchableChatLines">
+  sessionStore: Pick<SessionStore, "listRecentWorkingDirs" | "listSummaryPage" | "listChatLines" | "searchTranscripts" | "listSearchableChatLines" | "load">
     & Partial<Pick<SessionStore, "isIncognito">>;
   logger: StructuredLogger;
   resolveOriginalRequest: (sessionId: string) => string | undefined;
@@ -298,7 +315,12 @@ export function registerRuntimeCoreTools(input: {
   // descriptors, by contrast, are gated on the token (see
   // `rebuildToolDescriptorsFromMcp`) so the model never sees tools it
   // cannot exercise.
-  registerGithubTools(toolRegistry, dangerous);
+  registerGithubTools(toolRegistry, {
+    ...dangerous,
+    // `github.pr.autofix` pushes obey the same switch as os.git.push (ATO-2331).
+    isRemoteSyncEnabled: () => getConfig().git.remoteSync,
+    stateDir: () => config.paths.stateDir,
+  });
   // Skill scripts inherit the shell's filtered environment and its
   // passthrough list (ATO-877): one answer to "which keys reach a child".
   // Skill history (ATO-580): every `skill.view` / `skill.run_script` of a
@@ -378,20 +400,43 @@ export function registerRuntimeCoreTools(input: {
   // ATO-1151: search past chats word for word, then read around a hit.
   // Read-only and always on; the index is built on the first search.
   toolRegistry.register(buildSessionsSearchTool({ source: sessionStore }));
+  // ATO-2261: the compacted part of the calling chat, word for word.
+  toolRegistry.register(buildConversationHistoryTool({ source: sessionStore }));
   // ATO-1621: passages from the folders in My files, with ready citations.
   if (fileIndex) toolRegistry.register(buildFilesSearchTool({ index: fileIndex }));
+  // ATO-2363: reads the local logbook; its descriptor is gated live below.
+  // It asks first when the model serving the step is not on this computer.
+  registerLogbookTools(toolRegistry, {
+    ...dangerous,
+    stateDir: config.paths.stateDir,
+    notesStayLocal: (providerId) => {
+      const live = getConfig();
+      const llm = resolveLlmConfig(live);
+      return logbookNotesStayLocal({
+        entries: llm.providers,
+        providerId: providerId ?? llm.activeTextProvider,
+        fallbackChain: llm.fallback?.chain,
+        localModelsUrl: live.localModels.url,
+      });
+    },
+  });
 }
 
 export function registerRuntimeVisionTools(input: {
   config: AtomicAgentConfig;
   toolRegistry: ToolRegistry;
-  resolveCurrentVisionProvider: RegisterVisionToolsOptions["provider"];
+  resolveCurrentVisionProvider: VisionProviderSource;
+  /**
+   * ATO-1588: `vision.describe`'s lookup, which also follows the turn's
+   * own model. Absent: the describe tool uses `resolveCurrentVisionProvider`.
+   */
+  resolveTurnVisionProvider?: VisionDescribeProviderSource;
   logger: StructuredLogger;
 }): void {
-  const { config, toolRegistry, resolveCurrentVisionProvider, logger } = input;
+  const { config, toolRegistry, resolveCurrentVisionProvider, resolveTurnVisionProvider, logger } = input;
 
   registerVisionTools(toolRegistry, {
-    provider: config.vision.enabled ? resolveCurrentVisionProvider : undefined,
+    provider: config.vision.enabled ? (resolveTurnVisionProvider ?? resolveCurrentVisionProvider) : undefined,
     enabled: config.vision.enabled,
     maxImagesPerCall: config.vision.maxImagesPerCall,
     maxImageBytes: config.vision.maxImageBytes,
@@ -743,6 +788,9 @@ export async function connectRuntimeMcpCatalog(input: {
         point: config.tools.screen.point && process.platform === "darwin",
         control: process.platform === "darwin",
       },
+      // Boot-time too: `os.code.lsp` is registered only with the flag.
+      lsp: { enabled: config.tools.lsp?.enabled === true },
+      logbook: { enabled: logbookToolOffered(config.paths.stateDir) },
     });
     if (!liveMcpEnabled) return base;
     return mergeMcpDescriptors(
@@ -793,7 +841,7 @@ export async function connectRuntimeMcpCatalog(input: {
       resolveContextWindow?.(),
     );
   const liveDescriptorGates = (): string =>
-    `${resolveCurrentRunMode().effective === "fusion"}|${visionOnLiveRoute()}|${audioOnLiveRoute()}|${openRouterImageKey(getConfig()) !== undefined}|${toolSearchOn()}`;
+    `${resolveCurrentRunMode().effective === "fusion"}|${visionOnLiveRoute()}|${audioOnLiveRoute()}|${openRouterImageKey(getConfig()) !== undefined}|${toolSearchOn()}|${logbookToolOffered(config.paths.stateDir)}`;
   let cachedDescriptorGates = liveDescriptorGates();
   let cachedToolDescriptors = applyToolSearch(fullToolDescriptors, toolSearchOn());
   const rebuildToolDescriptors = (): readonly ToolDescriptor[] => {
@@ -912,7 +960,41 @@ export function registerRuntimeFusionAndReadScope(input: {
   const mintedSessions = new MintedSessionMetadata();
   const createTrackedEphemeralSession: FusionDelegateDeps["createEphemeralSession"] = (meta, dir, inherit) =>
     mintedSessions.remember(createEphemeralSession(meta, dir, inherit));
-
+  // What a local worker leg is checked and renewed with after a worker on
+  // it was cut off, for fusion.delegate and subagent.run alike (ATO-2430,
+  // issue #490): both send their local workers through the same runner.
+  const localLegSeams: Pick<
+    FusionDelegateDeps,
+    "renewLocalTransport" | "probeSlotOccupancy" | "probeLocalHealth" | "probeLocalHealthFor"
+  > = {
+    // A local worker sent after one was cut off, on a server that still
+    // answers, goes out on fresh connections (ATO-1357).
+    renewLocalTransport: () => renewTransportPool(),
+    probeSlotOccupancy: async () => {
+      try {
+        return readSlotOccupancy(await llama.fetchSlots());
+      } catch {
+        return null;
+      }
+    },
+    // Asked before a local worker is sent after one was cut off
+    // (ATO-917): a server that stopped answering fails the task now.
+    probeLocalHealth: () => llama.probeHealth(),
+    // Per local server (ATO-1318): this client only ever asks the main
+    // local server (`localModels.url`), so it is the probe for a leg on
+    // that server alone. A second local server has no probe here and
+    // its leg is not checked, rather than checked against the wrong one.
+    probeLocalHealthFor: (providerId) => {
+      const entry = resolveLlmConfig(getConfig()).providers.find((p) => p.id === providerId);
+      if (entry === undefined || entry.kind !== "llama-server") return undefined;
+      const main = getConfig().localModels.url;
+      const same = (a: string, b: string): boolean =>
+        a.trim().replace(/\/+$/, "") === b.trim().replace(/\/+$/, "");
+      return entry.url === undefined || same(entry.url, main)
+        ? () => llama.probeHealth()
+        : undefined;
+    },
+  };
 
   // The orchestrator's fan-out. Registered UNCONDITIONALLY: the tool
   // re-reads `resolveRunMode()` on every call and refuses when fusion is
@@ -929,6 +1011,7 @@ export function registerRuntimeFusionAndReadScope(input: {
       runTurn: (session, userMessage, turnOptions) =>
         runTurn(session, userMessage, turnOptions),
       createEphemeralSession: createTrackedEphemeralSession,
+      readSessionMetadata: (sessionId) => mintedSessions.read(sessionId),
       resolveOriginalRequest: resolveOriginalRequest,
       declaredInputs,
       // The worker leg's pricing, when the catalogue or a hand-priced
@@ -943,33 +1026,7 @@ export function registerRuntimeFusionAndReadScope(input: {
       // so the speed a worker's time limit is sized from is the speed
       // its own completions run at.
       localTokensPerSecond: () => llama.measuredTokensPerSecond(),
-      // A local worker sent after one was cut off, on a server that still
-      // answers, goes out on fresh connections (ATO-1357).
-      renewLocalTransport: () => renewTransportPool(),
-      probeSlotOccupancy: async () => {
-        try {
-          return readSlotOccupancy(await llama.fetchSlots());
-        } catch {
-          return null;
-        }
-      },
-      // Asked before a local worker is sent after one was cut off
-      // (ATO-917): a server that stopped answering fails the task now.
-      probeLocalHealth: () => llama.probeHealth(),
-      // Per local server (ATO-1318): this client only ever asks the main
-      // local server (`localModels.url`), so it is the probe for a leg on
-      // that server alone. A second local server has no probe here and
-      // its leg is not checked, rather than checked against the wrong one.
-      probeLocalHealthFor: (providerId) => {
-        const entry = resolveLlmConfig(getConfig()).providers.find((p) => p.id === providerId);
-        if (entry === undefined || entry.kind !== "llama-server") return undefined;
-        const main = getConfig().localModels.url;
-        const same = (a: string, b: string): boolean =>
-          a.trim().replace(/\/+$/, "") === b.trim().replace(/\/+$/, "");
-        return entry.url === undefined || same(entry.url, main)
-          ? () => llama.probeHealth()
-          : undefined;
-      },
+      ...localLegSeams,
       // ATO-1562: a llama.cpp server that is not this agent's own serves
       // whatever it loaded; its worker rows are labelled with that name.
       // Asked per fan-out, bounded by the client's probe timeout. The
@@ -1127,6 +1184,9 @@ export function registerRuntimeFusionAndReadScope(input: {
       workerSupportsSlotAffinity: (providerId) =>
         providerRegistry.getProvider(providerId)?.capabilities
           .supportsSlotAffinity ?? false,
+      // A local subagent sent after one was cut off is checked and sent on
+      // fresh connections, as a Fusion worker is (ATO-2430, issue #490).
+      ...localLegSeams,
       // Declared `files` are asked about once per call, as a fan-out is.
       approvalRequired: dangerous.approvalRequired,
       agentStateDir: config.paths.stateDir,
@@ -1144,13 +1204,16 @@ export function registerRuntimeFusionAndReadScope(input: {
           !isLocalServerUrl(entry.baseUrl ?? entry.url)
         );
       },
-      // The same profile loader fusion.delegate is given.
+      // The same profile loader fusion.delegate is given, settings
+      // profiles included (ATO-2002).
       resolveAgentProfiles: (dir) =>
         loadAgentProfiles({
           workingDir: dir,
           stateDir: config.paths.stateDir,
           configFile: config.paths.userConfigFile,
           startupTrust: config.skills.projectTrust,
+          settingsProfiles: () =>
+            readSettingsAgentProfiles(config.paths.userConfigFile, () => getConfig().llm?.runMode?.agentProfiles),
           pluginProfiles: () => pluginAgentProfiles(config.paths.stateDir),
         }),
       outputCharCap: config.agent.batchToolResultCharCap,

@@ -227,7 +227,7 @@ export class TelegramChannel implements Channel {
    */
   private readonly approvalSubscriptions = new Map<
     string,
-    { target: TelegramTarget; unsubscribe: () => void }
+    { target: TelegramTarget; unsubscribe: () => void; shared?: boolean }
   >();
   private currentState: ChannelStatus["state"] = "disabled";
   private currentError: string | null = null;
@@ -442,8 +442,10 @@ export class TelegramChannel implements Channel {
         }),
         mediaGroups: this.mediaGroups,
         botIdentity: this.currentBotIdentity,
-        ensureApprovalSession: (sessionId, target) =>
-          this.ensureApprovalSession(sessionId, target),
+        ensureApprovalSession: (sessionId, target, opts) =>
+          this.ensureApprovalSession(sessionId, target, opts),
+        // Guests (ATO-2221); captured at (re)start like the owner id.
+        allowedUsers: this.deps.config.telegram.allowedUsers ?? [],
         releaseApprovalSession: (sessionId) =>
           this.releaseApprovalSession(sessionId),
         tryClaimForPairing: (u) => this.handlePairingClaim(u),
@@ -465,6 +467,7 @@ export class TelegramChannel implements Channel {
             command: "new",
             description: "Start a fresh session for this chat",
           },
+          { command: "fork", description: "Copy this chat's session into a new branch" },
           {
             command: "model",
             description: "Show or switch the provider and model",
@@ -1226,7 +1229,9 @@ export class TelegramChannel implements Channel {
   private ensureApprovalSession(
     sessionId: string,
     target: TelegramTarget,
+    opts: { shared?: boolean } = {},
   ): void {
+    const shared = opts.shared === true;
     const existing = this.approvalSubscriptions.get(sessionId);
     if (
       existing &&
@@ -1239,9 +1244,14 @@ export class TelegramChannel implements Channel {
     this.approvalSubscriptions.delete(sessionId);
     // A chat has exactly one current session, so any other session still
     // bound to this same chat/topic is stale (hand-edited pointer, a
-    // pointer to a pruned session) and would leak.
+    // pointer to a pruned session) and would leak. A `shared` binding
+    // (a group session whose approvals go to the owner's DM, ATO-2221)
+    // is not the target chat's own session: it neither sweeps nor is
+    // swept.
     for (const [otherId, sub] of this.approvalSubscriptions) {
       if (
+        !shared &&
+        sub.shared !== true &&
         sub.target.chatId === target.chatId &&
         sub.target.threadId === target.threadId
       ) {
@@ -1257,7 +1267,11 @@ export class TelegramChannel implements Channel {
         void bridge.dispatch(request, target.chatId, target.threadId);
       },
     );
-    this.approvalSubscriptions.set(sessionId, { target, unsubscribe });
+    this.approvalSubscriptions.set(sessionId, {
+      target,
+      unsubscribe,
+      ...(shared ? { shared: true } : {}),
+    });
   }
 
   /** Drop the approval binding for a session no chat talks to anymore. */

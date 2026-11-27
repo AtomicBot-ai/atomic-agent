@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,6 +13,7 @@ import { dedupe, gate, parseJsonl, renderMarkdown } from "./summary.mjs";
 import { t4Expected, t4Files } from "./tasks/core.mjs";
 import { checkHtml, makeBigModule, makeSearchProject, onlyFunctionChanged } from "./tasks/hard.mjs";
 import { TASKS as RAW_TASKS, getTask as rawGetTask, selectTasks } from "./tasks/index.mjs";
+import { checkRamReply } from "./tasks/own-computer.mjs";
 import { longSessionParts, longSessionTurns, makeNeedleLog, makeNotes } from "./tasks/stress.mjs";
 
 // The task modules are plain .mjs (the runner needs no build); give them a shape here.
@@ -158,6 +159,49 @@ describe("h5 HTML checker", () => {
   });
 });
 
+describe("o1 answers about its own computer (ATO-1706)", () => {
+  const GIB = 1024 ** 3;
+  const realGib = Math.round(totalmem() / GIB);
+  const o1Check = (stdout: string | undefined) => {
+    const t = getTask("o1");
+    const d = freshDir("o1");
+    const meta = t.fixture(d, { window: 32768 });
+    return t.check(d, meta, { window: 32768, run: { turnsSent: 1, replies: 1, totalTurns: 1, stdout } });
+  };
+
+  it("passes the reference answer with this machine's real RAM", () => {
+    const t = getTask("o1");
+    const d = freshDir("o1-solved");
+    const ctx: { window: number; run?: { stdout?: string } } = { window: 32768 };
+    const meta = t.fixture(d, ctx);
+    t.solve(d, meta, ctx);
+    expect(ctx.run?.stdout).toContain(`${realGib} GB`);
+    expect(t.check(d, meta, ctx)).toEqual({ pass: true, reason: "" });
+    expect(o1Check(`You have ${realGib} GB of RAM.`).pass).toBe(true);
+  });
+
+  it("fails the ATO-1706 refusal and the cloud suggestion", () => {
+    expect(o1Check("I have no access to your hardware").reason).toMatch(/no access/);
+    expect(o1Check(`It has ${realGib} GB, but for more power try a cloud model.`).reason).toMatch(/cloud/);
+    expect(o1Check("I don\u2019t have access to system details.").pass).toBe(false);
+    expect(o1Check(undefined).reason).toBe("no reply");
+  });
+
+  it("fails a wrong number", () => {
+    expect(o1Check(`This computer has ${realGib * 3 + 7} GB of RAM.`).pass).toBe(false);
+  });
+
+  it("accepts GiB or decimal GB within 1 and rejects anything further", () => {
+    const sixteenGib = 16 * GIB; // 17.18 decimal GB
+    expect(checkRamReply("16 GB", sixteenGib).pass).toBe(true);
+    expect(checkRamReply("about 17.2 GB", sixteenGib).pass).toBe(true);
+    expect(checkRamReply("15.5 GB usable", sixteenGib).pass).toBe(true);
+    expect(checkRamReply("8 GB", sixteenGib).pass).toBe(false);
+    expect(checkRamReply("32 GB", sixteenGib).pass).toBe(false);
+    expect(checkRamReply("I cannot access that", sixteenGib).pass).toBe(false);
+  });
+});
+
 describe("needles and long session", () => {
   it("needle log reaches the token target and has exactly one AUDIT line", () => {
     const { text, count } = makeNeedleLog(64_000);
@@ -246,6 +290,23 @@ describe("plan", () => {
       expect(c.server.args).toContain(String(c.window));
     }
     expect(plan.runs).toBe(2 * 2 * TASKS.length * 3);
+  });
+
+  it("2B is opt-in: not in quick, release or full; only the starter profile or --models picks it", () => {
+    for (const profile of ["quick", "release", "full"]) {
+      const ids = buildPlan({ profile }, matrix).cells.map((c: { model: { id: string } }) => c.model.id);
+      expect(ids).not.toContain("qwen3.5-2b");
+    }
+    const starter = buildPlan({ profile: "starter" }, matrix);
+    expect(starter.cells.map((c: { model: { id: string } }) => c.model.id)).toEqual(["qwen3.5-2b"]);
+    expect(starter.cells[0]?.server.args.join(" ")).toContain("Qwen3.5-2B-UD-Q4_K_XL.gguf");
+    expect(starter.tasks.map((t: { id: string }) => t.id)).toContain("o1");
+  });
+
+  it("quick profile runs the core set, o1 included", () => {
+    const plan = buildPlan({ profile: "quick" }, matrix);
+    expect(plan.tasks.map((t: { id: string }) => t.id)).toContain("o1");
+    expect(plan.runs).toBe(selectTasks("core").length);
   });
 
   it("--server-url needs exactly one model and one window", () => {

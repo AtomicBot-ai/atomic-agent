@@ -30,6 +30,8 @@ export interface ServeArgs {
   tunnel: TunnelRequest | null;
   /** ATO-693: serve the A2A agent card and JSON-RPC endpoint (needs an API key). */
   a2a: boolean;
+  /** ATO-2172: refuse every approval prompt at once (the serve `atag launch` starts). */
+  refuseApprovals: boolean;
 }
 
 export const HELP =
@@ -52,6 +54,7 @@ export const HELP =
     "                      that sends 10 wrong keys in a minute waits a minute",
     "  --print-api-key     Print the key serve runs with (generating it if needed) and exit,",
     "                      e.g. curl -H \"Authorization: Bearer $(atomic-agent serve --print-api-key)\"",
+    "  --refuse-approvals  Refuse every approval prompt at once (set by `atag launch`, whose clients cannot answer one)",
     "  --no-approval       Force approval level 5: auto-approve every dangerous tool call (dev / trusted use only)",
     "  --parent-pid <p>    Watch this pid instead of the actual parent (for spawners that double-fork)",
     "  --no-parent-exit    Keep running after the parent exits — the way to daemonise from a shell,",
@@ -85,6 +88,9 @@ export const HELP =
     "  POST /v1/messages/count_tokens           Rough input token estimate for Anthropic clients",
     "  POST /v1/responses                       OpenAI Responses API (Codex, Agents SDK; stream or sync)",
     "  GET  /v1/models                          Single-model catalog (public)",
+    "  GET  /raw/v1/models, POST /raw/v1/chat/completions  The bare local model for other apps:",
+    "                                           off unless `atomic-agent models share`, its own key",
+    "                                           only, one request at a time",
     "  GET  /health                             Liveness + llama-server reachability (public)",
     "  GET  /api/capabilities                   Runtime wiring summary",
     "  GET|PATCH /api/config                    Read or merge-write the user config file",
@@ -93,6 +99,7 @@ export const HELP =
     "  POST /api/skills/install, /uninstall     Manage installed skills",
     "  GET  /api/sessions, GET /api/sessions/{id}, DELETE /api/sessions/{id}",
     "  POST /api/sessions/{id}/archived         Archive or unarchive a chat: { archived: true|false }",
+    "  POST /api/sessions/{id}/trashed          Move a chat to Trash or out (hidden from search): { trashed: true|false }",
     "  POST /api/sessions/{id}/steer            Fold a message into the turn already running",
     "  GET  /api/sessions/{id}/steer            Steers a turn accepted but never delivered",
     "  DELETE /api/sessions/{id}/steer          Acknowledge those: ?through={seq} and/or ?discarded={n}",
@@ -122,6 +129,7 @@ export function parseArgs(
   let tunnelName: string | null = null;
   let tunnelHostname: string | null = null;
   let a2a = process.env.ATOMIC_AGENT_SERVE_A2A === "1";
+  let refuseApprovals = false;
   for (let i = 0; i < args.length; i += 1) {
     const flag = args[i];
     switch (flag) {
@@ -158,6 +166,9 @@ export function parseArgs(
         apiKeyProvided = true;
         break;
       }
+      case "--refuse-approvals":
+        refuseApprovals = true;
+        break;
       case "--no-approval":
         noApproval = true;
         break;
@@ -256,6 +267,7 @@ export function parseArgs(
     workingDir: workingDir ?? process.cwd(),
     apiKey,
     noApproval,
+    refuseApprovals,
     parentPid,
     noParentExit,
     reapOnly,

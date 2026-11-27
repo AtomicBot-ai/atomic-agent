@@ -1,3 +1,5 @@
+import type { ModelSamplingDefaults } from "../local-llm/catalog/gguf-sampling.js";
+
 export type ReasoningStyle = "none" | "think-tags" | "channel-tags";
 
 /**
@@ -27,6 +29,15 @@ interface BaseModelProfile {
    * means `"partial"`.
    */
   prefixReuse?: PrefixReuse;
+  /**
+   * The sampling the model's authors recommend, from its GGUF header's
+   * `general.sampling.*` keys or a sibling `generation_config.json`
+   * (`gguf-sampling.ts`, ATO-2202). Set by the profile manager from
+   * `/props.model_path`; the llama-server client uses it under the
+   * request's own values when `localModels.modelSampling` is on.
+   * Absent when the model names none.
+   */
+  sampling?: ModelSamplingDefaults;
   /**
    * Physical context window in tokens, read from `llama-server /props`
    * (`default_generation_settings.n_ctx`, with a root `n_ctx` fallback).

@@ -452,6 +452,8 @@ export function formatUsageReport(
       lines.push(`    ${r.providerId} ${scope} ${r.name}: ${formatLimit(r, now)}${count}`);
     }
   }
+  // ATO-2352: the per-day history lives in the terminal command.
+  lines.push("  tokens and cost per day, all sessions: atomic-agent usage --days 7");
   return lines.join("\n");
 }
 

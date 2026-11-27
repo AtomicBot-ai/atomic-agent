@@ -93,6 +93,9 @@ export function handleProvidersWizardKey(
           ...createProvidersWizardState(wizard.mode, {
             ...(wizard.providerId ? { providerId: wizard.providerId } : {}),
           }),
+          // Keep what the local-server check found: the list it returns to
+          // must be the one the operator left, detected rows on top.
+          ...(wizard.detectedLocal ? { detectedLocal: wizard.detectedLocal } : {}),
           phase: "pick_kind",
           cursor: cursorForPreviousPick(wizard),
         },
@@ -261,6 +264,7 @@ export function handleProvidersWizardKey(
       const row = kindRowAtCursor(
         clampCursor(wizard.cursor, len),
         wizard.search,
+        wizard.detectedLocal,
       );
       if (typeof row === "object") {
         const preset = findProviderPreset(row.presetId);

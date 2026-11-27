@@ -166,6 +166,7 @@ export {
   readFusionWorkerMeta,
   readSessionDepth,
   isFusionWorkerSessionId,
+  callerDepth,
 } from "./fusion-worker-session.js";
 export type { FusionWorkerMeta, StampedFusionWorkerMeta } from "./fusion-worker-session.js";
 export {
@@ -238,3 +239,11 @@ export {
   readSessionArchivedSetAt,
   withSessionArchived,
 } from "./session-archived.js";
+export {
+  SESSION_TRASHED_METADATA_KEY,
+  SESSION_TRASHED_SET_AT_KEY,
+  readSessionTrashed,
+  readSessionTrashedSetAt,
+  withSessionTrashed,
+  withStoredTrashed,
+} from "./session-trashed.js";

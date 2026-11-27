@@ -18,6 +18,7 @@ import { toStrictOpenAiTools } from "./openai-strict-tools.js";
 import { normalizeToolSchemaBooleans } from "./tool-schema-booleans.js";
 import { nameEscape } from "./openai-tool-call-adapter.js";
 import { applyAnthropicCacheControl } from "./prompt-cache-control.js";
+import { neutralizeThinkTags } from "./think-tag-safe.js";
 import { assertContextCapacity } from "../context-capacity.js";
 import { estimateTokens } from "../../../prompt/token-budget.js";
 
@@ -82,6 +83,12 @@ export interface OpenAiBodyOptions {
    * `NativeMessageOptions.thoughtSignatures`.
    */
   thoughtSignatures?: boolean;
+  /**
+   * Ollama Cloud corrupts literal thinking tags in message content
+   * (issue #283): they go out as visible brackets, in both layouts. See
+   * `think-tag-safe.ts`. Absent, the body is byte-identical.
+   */
+  thinkTagSafe?: boolean;
 }
 
 /**
@@ -182,6 +189,7 @@ function assembleOpenAiChatBody(
       : {}),
     // Gemini 3 refuses a tool history without its signatures (ATO-1680).
     ...(options.thoughtSignatures ? { thoughtSignatures: true } : {}),
+    ...(options.thinkTagSafe ? { thinkTagSafe: true } : {}),
   };
   const messages =
     resolveMessageShape(filtered, options) === "native" && filtered.messages
@@ -192,9 +200,12 @@ function assembleOpenAiChatBody(
       : [
           {
             role: "user",
-            content: responseFormat
-              ? ensureJsonMention(filtered.prompt)
-              : filtered.prompt,
+            content: flatContent(
+              responseFormat
+                ? ensureJsonMention(filtered.prompt)
+                : filtered.prompt,
+              options,
+            ),
           },
         ];
   // OpenAI's reasoning models reject the field outright (`Unsupported
@@ -391,6 +402,11 @@ function assembleOpenAiChatBody(
     delete merged.temperature;
   }
   return merged;
+}
+
+/** The flat prompt as it goes out: tags neutralized for Ollama Cloud only. */
+function flatContent(text: string, options: OpenAiBodyOptions): string {
+  return options.thinkTagSafe ? neutralizeThinkTags(text) : text;
 }
 
 function checkedBody(body: Record<string, unknown>, request: CompletionRequest): Record<string, unknown> {

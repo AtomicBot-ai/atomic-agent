@@ -25,6 +25,8 @@ export type TurnOrigin =
   | "msteams"
   /** A message from the WhatsApp channel (ATO-502). */
   | "whatsapp"
+  /** A mention or assignment in a Linear issue (ATO-2324). */
+  | "linear"
   /**
    * A fusion worker turn, submitted by the orchestrator turn on the
    * parent session — not a person sending a message. Treated like

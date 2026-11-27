@@ -9,10 +9,10 @@
 
 import type { PrivacyVault, UnmaskOptions } from "./privacy-vault.js";
 
-const KINDS = ["SECRET", "CARD", "IBAN", "EMAIL", "PHONE"] as const;
+const KINDS = ["SECRET", "CARD", "IBAN", "EMAIL", "PHONE", "NAME", "ADDRESS", "ORG"] as const;
 
-/** Longest placeholder: `[SECRET_999999]`. */
-const MAX_PLACEHOLDER = 15;
+/** Longest placeholder: `[ADDRESS_999999]`. */
+const MAX_PLACEHOLDER = 16;
 
 /**
  * Where a still-open placeholder starts at the end of `text`, or

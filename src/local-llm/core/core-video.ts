@@ -4,7 +4,7 @@ import { submitUnlessAborted } from "./core-image.js";
 
 /**
  * Video generation through Atomic Core's video jobs (`src/server/control/routes/diffusion-video.ts`
- * in atomic-chat-core; the same at v0.16.0 and v0.18.6):
+ * in atomic-chat-core; the same at v0.16.0, v0.18.6 and v0.24.10):
  *
  * - `POST /atomic/v1/diffusion/video/jobs` takes a `VideoGenerateRequest`
  *   (`src/contracts/diffusion.ts`) and answers `{jobId}`;

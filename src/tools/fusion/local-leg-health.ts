@@ -18,7 +18,8 @@
  * instead of a silent 15-to-45-minute burn.
  *
  * One instance per `fusion.delegate` tool, i.e. per runtime: the wedge
- * outlives the fan-out that caused it.
+ * outlives the fan-out that caused it. `subagent.run` keeps its own, for
+ * its local subagents on the same runner (ATO-2430).
  */
 export type LocalHealthAnswer = "answered" | "unanswered";
 

@@ -21,7 +21,8 @@ export const GRAMMAR_EXIT_TOOL = "reply";
  * `path`, `os.fs.write` a non-empty `path` and a `content` string; the
  * rest (ATO-1114) are held to their own tool's check the same way, as
  * the grammar file lists. `finish` is here for its prose `summary`: it
- * uses the guarded `reply-text` rule, like the reply text (#681). Listed
+ * uses the guarded `reply-text` rule, like the reply text (#681), and so
+ * does the `memory.notes.store` content (ATO-2007). Listed
  * in the order the branches appear in the rule.
  */
 const DEDICATED_BRANCHES: ReadonlyArray<{ tool: string; rule: string }> = [

@@ -16,6 +16,13 @@ import {
   withArchivedMetadata,
   withSessionArchived,
 } from "./session-archived.js";
+import {
+  SESSION_TRASHED_METADATA_KEY,
+  SESSION_TRASHED_SET_AT_KEY,
+  withSessionTrashed,
+  withStoredTrashed,
+  type StoredTrashed,
+} from "./session-trashed.js";
 import { LIVE_SESSION_STATUSES } from "./session-retention.js";
 import type { SessionSummary } from "./session-summary.js";
 import {
@@ -67,6 +74,7 @@ import {
   SessionSearchIndex,
   forgetSessionSearchRows,
   searchableSessionSource,
+  type SessionSearchHit,
   type SessionSearchOptions,
   type SessionSearchResult,
 } from "./session-search.js";
@@ -213,8 +221,8 @@ function endingParams(ending: TurnEnding): {
   };
 }
 
-/** What a write needs to know about the row it is about to replace. */
-interface StoredRow {
+/** What a write needs to know about the row it is about to replace. ATO-2332: and its Trash flag. */
+interface StoredRow extends StoredTrashed {
   /** The generated title, `null` when there is none. */
   title: string | null;
   /** When the operator set that title, `null` for a generated one. */
@@ -475,7 +483,9 @@ export class SessionStore {
               json_extract(payload, '$.metadata.${SESSION_TITLE_USER_SET_AT_KEY}') AS titleSetByUserAt,
               json_extract(payload, '$.${ARCHIVED_TURNS_KEY}.count') AS archivedCount,
               json_extract(payload, '$.metadata.${SESSION_ARCHIVED_METADATA_KEY}') AS chatArchived,
-              json_extract(payload, '$.metadata.${SESSION_ARCHIVED_SET_AT_KEY}') AS chatArchivedSetAt
+              json_extract(payload, '$.metadata.${SESSION_ARCHIVED_SET_AT_KEY}') AS chatArchivedSetAt,
+              json_extract(payload, '$.metadata.${SESSION_TRASHED_METADATA_KEY}') AS chatTrashed,
+              json_extract(payload, '$.metadata.${SESSION_TRASHED_SET_AT_KEY}') AS chatTrashedSetAt
        FROM sessions WHERE id = ?`,
     );
     this.selectStoredBareStmt = this.db.prepare(
@@ -669,7 +679,7 @@ export class SessionStore {
         warnArchivedWriteSkipped(state.id);
         throw ROLLBACK;
       }
-      const row = this.serialize(withStoredArchive(withStoredTitle(state, stored), stored), archive);
+      const row = this.serialize(withStoredTrashed(withStoredArchive(withStoredTitle(state, stored), stored), stored), archive);
       const result = progressStatements.checkpoint.run({
         id: state.id,
         owner,
@@ -865,7 +875,7 @@ export class SessionStore {
         this.insertStmt.run(this.serialize(next, archive));
         return;
       }
-      next = withStoredArchive(withStoredTitle(next, stored), stored);
+      next = withStoredTrashed(withStoredArchive(withStoredTitle(next, stored), stored), stored);
       const update = endsTurn ? this.finishTurnStmt : this.updateStmt;
       update.run(this.serialize(next, archive));
     }, undefined);
@@ -931,6 +941,8 @@ export class SessionStore {
           archivedCount?: unknown;
           chatArchived?: unknown;
           chatArchivedSetAt?: unknown;
+          chatTrashed?: unknown;
+          chatTrashedSetAt?: unknown;
         }
       | undefined;
     try {
@@ -963,6 +975,13 @@ export class SessionStore {
         typeof row.chatArchivedSetAt === "number" &&
         Number.isFinite(row.chatArchivedSetAt)
           ? row.chatArchivedSetAt
+          : null,
+      // ATO-2332: the same two for the desktop's Trash (session-trashed.ts withStoredTrashed).
+      chatTrashed: row.chatTrashed === 1 || row.chatTrashed === true,
+      chatTrashedSetAt:
+        typeof row.chatTrashedSetAt === "number" &&
+        Number.isFinite(row.chatTrashedSetAt)
+          ? row.chatTrashedSetAt
           : null,
     };
   }
@@ -1036,6 +1055,24 @@ export class SessionStore {
     const current = this.load(id);
     if (current === null) return null;
     const next = withSessionArchived(current, archived, now);
+    this.save(next);
+    return next;
+  }
+
+  /**
+   * ATO-2332: move a stored session to the desktop's Trash (`trashed: true`)
+   * or out of it (`session-trashed.ts`); search leaves a chat in Trash out.
+   * Returns the saved state, or `null` when there is no such session.
+   * `updatedAt` is left as it was, as for archive.
+   */
+  setSessionTrashed(
+    id: string,
+    trashed: boolean,
+    now: number = Date.now(),
+  ): SessionState | null {
+    const current = this.load(id);
+    if (current === null) return null;
+    const next = withSessionTrashed(current, trashed, now);
     this.save(next);
     return next;
   }
@@ -1121,10 +1158,34 @@ export class SessionStore {
    * `SessionSearchUnavailableError` when the index cannot be created.
    */
   searchTranscripts(options: SessionSearchOptions): SessionSearchResult {
+    return this.transcriptIndex().search(options);
+  }
+
+  /**
+   * Bring the search index up to date by at most `budget` changed
+   * sessions and say how many are left (ATO-1659). With
+   * {@link matchTranscripts} it lets a caller spread the sync over
+   * several ticks instead of paying it inside one search. Throws
+   * `SessionSearchUnavailableError` when the index cannot be created.
+   */
+  syncTranscriptIndex(budget: number): number {
+    return this.transcriptIndex().sync(budget);
+  }
+
+  /**
+   * {@link searchTranscripts} without the sync first: hits from what is
+   * indexed now. Throws `SessionSearchUnavailableError` when the index
+   * cannot be created.
+   */
+  matchTranscripts(options: SessionSearchOptions): SessionSearchHit[] {
+    return this.transcriptIndex().match(options);
+  }
+
+  private transcriptIndex(): SessionSearchIndex {
     this.searchIndex ??= new SessionSearchIndex(this.db, (id) =>
       this.listChatLines(id),
     );
-    return this.searchIndex.search(options);
+    return this.searchIndex;
   }
 
   /**

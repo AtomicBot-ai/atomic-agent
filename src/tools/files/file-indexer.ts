@@ -117,9 +117,14 @@ export class FileIndexer {
       }
       // Only a file missing under a folder the walk did read is gone. An
       // unreadable root (unmounted drive, network share, permissions) or a
-      // walk cut at maxFiles keeps every known file and its vectors.
+      // walk cut at maxFiles keeps every known file and its vectors. So
+      // does a folder that held files and now walks empty: on Linux an
+      // unmounted mountpoint reads as an empty folder (Syncthing refuses
+      // to sync an emptied folder root for the same reason).
       if (report.unreadable.includes(folder)) {
         this.lastError = { path: folder, message: "folder is not readable right now; kept its index", at: this.now().toISOString() };
+      } else if (seen.length === 0 && known.size > 0) {
+        this.lastError = { path: folder, message: "folder looks empty now (unmounted drive?); kept its index", at: this.now().toISOString() };
       } else if (!report.truncated) {
         const blocked = report.unreadable.map((dir) => dir + sep);
         store.deleteFiles(

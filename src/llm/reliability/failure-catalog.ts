@@ -204,6 +204,13 @@ export const FAILURE_CATALOG = {
     phrase: "A tool failed unexpectedly.",
     action: "retry",
   },
+  // ATO-1686: the unknown-tool streak ended the turn (`step-unknown-tools.ts`).
+  // Every call already got the closest real tool names; "Retry" would ask
+  // the same model again, so another model is the button.
+  unknown_tools_repeated: {
+    phrase: "This model keeps calling tools that don't exist. Try another model.",
+    action: "switch-model",
+  },
 
   // Not a failure, and the catch-all.
   cancelled: {

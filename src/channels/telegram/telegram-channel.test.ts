@@ -408,6 +408,7 @@ describe("TelegramChannel", () => {
       "sessions",
       "switch",
       "new",
+      "fork",
       "model",
       "cron",
       "cancel",

@@ -1,5 +1,5 @@
 /**
- * The seven Discord REST calls this channel makes, over `fetch`.
+ * The Discord REST calls this channel makes, over `fetch`.
  *
  * Rate limits are respected the cheap way: on a 429 we honour
  * `retry_after` once and retry. That is enough for a single-operator
@@ -165,6 +165,29 @@ export class DiscordApi {
       form,
     )) as { id?: unknown } | undefined;
     return typeof body?.id === "string" ? body.id : null;
+  }
+
+  /**
+   * Up to `limit` (max 100) messages posted after `afterId`, as raw
+   * objects. Discord returns them newest first; the caller sorts. Used
+   * by the catch-up after a restart (ATO-2248).
+   */
+  async listMessagesAfter(
+    channelId: string,
+    afterId: string,
+    limit = 100,
+  ): Promise<ReadonlyArray<Record<string, unknown>>> {
+    const n = Math.max(1, Math.min(100, Math.floor(limit)));
+    const body = await this.request(
+      "GET",
+      `/channels/${channelId}/messages?after=${encodeURIComponent(afterId)}&limit=${n}`,
+    );
+    return Array.isArray(body)
+      ? body.filter(
+          (m): m is Record<string, unknown> =>
+            m !== null && typeof m === "object",
+        )
+      : [];
   }
 
   /** Open (or reuse) the DM channel with a user. */

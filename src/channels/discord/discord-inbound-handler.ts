@@ -31,6 +31,7 @@ import {
   formatDiscordAttachmentFailure,
   sendDiscordAttachments,
 } from "./discord-outbound-attachments.js";
+import { mentionWordCommand } from "./discord-mention-commands.js";
 import type { DiscordSessionPointer } from "./discord-session-pointer.js";
 
 /**
@@ -90,6 +91,11 @@ export interface DiscordInboundContext {
   tryClaimForPairing?: (event: DiscordMessageEvent) => boolean;
   onMessageReceived?: () => void;
   /**
+   * A message passed the owner gate and is about to be handled; the
+   * channel moves its catch-up cursor here (ATO-2248).
+   */
+  onAccepted?: (event: DiscordMessageEvent) => void;
+  /**
    * Where inbound files land — `<stateDir>/inbox/discord` in
    * production, a tmp dir in tests. The agent is told the saved path
    * and reads it with the ordinary fs / vision tools.
@@ -123,6 +129,8 @@ const HELP_TEXT = [
   "  `/new` — rotate this channel to a fresh session (current one is archived)",
   "  `/model` — show the provider and model in use; `/model <provider> [model-id]` switches",
   "  `/cancel` — abort this channel's current turn if one is running",
+  "",
+  "In a channel, `@bot stop` and `@bot status` work like `/cancel` and `/status`.",
 ].join("\n");
 
 /** Where a message came from, resolved once per event. */
@@ -184,6 +192,7 @@ async function route(
   }
 
   ctx.onMessageReceived?.();
+  ctx.onAccepted?.(event);
   const text = stripMention(
     typeof event.content === "string" ? event.content : "",
     ctx.botUserId,
@@ -218,8 +227,15 @@ async function route(
     await dispatchWithAttachments(text, attachments, ref, sender, ctx);
     return;
   }
-  if (text.startsWith("/")) {
-    await handleSlashCommand(text, ref, ctx);
+  // "@bot stop" / "@bot status" are the slash commands, so a turn can
+  // be stopped without remembering the slash form (ATO-2248).
+  const command = text.startsWith("/")
+    ? text
+    : mentionsBot
+      ? mentionWordCommand(text)
+      : null;
+  if (command !== null) {
+    await handleSlashCommand(command, ref, ctx);
     return;
   }
   await dispatchToRuntime(text, ref, ctx, sender);
@@ -318,6 +334,10 @@ async function handleSlashCommand(
       );
       return;
     }
+    case "/fork":
+      // ATO-2235: the Discord API client cannot open threads yet.
+      await send(ctx, ref.channelId, "Fork is not available on Discord yet. Use `/new` to start a fresh session.");
+      return;
     case "/cancel": {
       const controller = ctx.inflight.get(ref.channelId);
       if (!controller) {

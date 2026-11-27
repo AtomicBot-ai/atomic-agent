@@ -1,5 +1,6 @@
 import type { ApprovalGate, RuleCheck } from "./approval-gate.js";
 import type { ApprovalCategory } from "./approval-level.js";
+import type { EgressDestination } from "./egress-scan.js";
 
 export interface DangerousToolOptions {
   approvals: ApprovalGate;
@@ -30,6 +31,8 @@ export interface ApprovalPrompt {
   commandSegments?: readonly (readonly string[])[];
   /** A script fed to a shell no rule can read; see `ApprovalRequest.commandUnreadable`. */
   commandUnreadable?: boolean;
+  /** Where the call sends data; see `ApprovalRequest.egress`. */
+  egress?: readonly EgressDestination[];
   /** Session working directory; see `ApprovalRequest.workdir`. */
   workdir?: string;
   /**
@@ -42,6 +45,8 @@ export interface ApprovalPrompt {
    * See `ApprovalRequest.targetPaths`.
    */
   targetPaths?: readonly string[];
+  /** Asks at every level, bypass included; see `ApprovalRequest.askEveryLevel`. */
+  askEveryLevel?: true;
 }
 
 /**
@@ -168,6 +173,43 @@ export function savedRuleDenies(
 }
 
 /**
+ * For a call a fan-out scope settles without the gate's `request`: the
+ * person's plain-text security rules still review it (ATO-2111). Throws
+ * the refusal (never the user's decision) when they block it or the
+ * reviewer gives no answer.
+ */
+export async function requireGuardOnShortcut(
+  options: DangerousToolOptions,
+  prompt: ApprovalPrompt,
+  signal: AbortSignal,
+): Promise<void> {
+  if (!options.approvalRequired) return;
+  const reason = await options.approvals.guardRefusal?.(
+    {
+      sessionId: prompt.sessionId,
+      tool: prompt.tool,
+      category: prompt.category,
+      reason: prompt.reason,
+      ...(prompt.preview !== undefined ? { preview: prompt.preview } : {}),
+      ...(prompt.affectedResources !== undefined
+        ? { affectedResources: [...prompt.affectedResources] }
+        : {}),
+      ...(prompt.egress !== undefined && prompt.egress.length > 0
+        ? { egress: prompt.egress.map((d) => ({ ...d })) }
+        : {}),
+      ...(prompt.workdir !== undefined ? { workdir: prompt.workdir } : {}),
+      ...(prompt.targetPaths !== undefined && prompt.targetPaths.length > 0
+        ? { targetPaths: [...prompt.targetPaths] }
+        : {}),
+    },
+    signal,
+  );
+  if (reason !== null && reason !== undefined) {
+    throw new ApprovalDeniedError(prompt.tool, reason, { byUser: false });
+  }
+}
+
+/**
  * Shared helper used by dangerous tools (shell.run, fs.write,
  * skill.run_script, …). Centralising it ensures every tool sends the same
  * approval payload shape and honours the `approvalRequired` override in a
@@ -200,6 +242,9 @@ export async function requireApproval(
         ? { commandSegments: prompt.commandSegments.map((words) => [...words]) }
         : {}),
       ...(prompt.commandUnreadable === true ? { commandUnreadable: true } : {}),
+      ...(prompt.egress !== undefined && prompt.egress.length > 0
+        ? { egress: prompt.egress.map((d) => ({ ...d })) }
+        : {}),
       ...(prompt.workdir !== undefined ? { workdir: prompt.workdir } : {}),
       ...(prompt.redirectablePath !== undefined
         ? { redirectablePath: prompt.redirectablePath }
@@ -207,6 +252,7 @@ export async function requireApproval(
       ...(prompt.targetPaths !== undefined && prompt.targetPaths.length > 0
         ? { targetPaths: [...prompt.targetPaths] }
         : {}),
+      ...(prompt.askEveryLevel === true ? { askEveryLevel: true as const } : {}),
     },
     { signal },
   );

@@ -1,6 +1,7 @@
 import type { LocalModelDef } from "../../local-llm/catalog/models-catalog.js";
 import type { BackendVariantPreference, CoreBackendVariant } from "../../local-llm/backend/windows-backend-variant.js";
 import type { SwaFullPreference } from "../../local-llm/server/swa-full.js";
+import type { CpuMoePreference } from "../../local-llm/server/cpu-moe.js";
 import type { LoraAdapter } from "../../local-llm/server/lora-adapter.js";
 
 export type LocalLlmMode = "external" | "managed";
@@ -141,6 +142,25 @@ export interface UserManagedLocalLlmConfig {
    */
   swaFull: SwaFullPreference;
   /**
+   * Experts of a mixture-of-experts model on the CPU (`--n-cpu-moe`,
+   * ATO-2380): `"auto"` (default) moves the fewest layers' experts to
+   * system RAM when the model does not fit a GPU with memory of its own;
+   * `"off"` never; a number 1..512 pins that many layers. Dense models,
+   * Apple silicon and CPU-only launches ignore it (see `cpu-moe.ts`).
+   * Additive and unversioned: absent means `"auto"`. Applied on the next
+   * daemon start.
+   */
+  cpuMoe?: CpuMoePreference;
+  /**
+   * Other computers that lend memory to one model through llama.cpp RPC
+   * (ATO-2338): `"host:port"` of each one running `atomic-agent models
+   * rpc-worker`. Empty (default) means this computer alone. Needs an
+   * engine build with RPC; the launch refuses otherwise. RPC traffic is
+   * not authenticated: list only computers on a network you trust.
+   * Additive and unversioned. Applied on the next daemon start.
+   */
+  rpcServers?: string[];
+  /**
    * Stop the managed chat daemon when the last CLI session exits.
    * `true` (default) — closing the terminal frees the RAM/VRAM the
    * model was holding; a second live session keeps the daemon up (see
@@ -171,6 +191,14 @@ export interface UserManagedLocalLlmConfig {
    */
   loraAdapters?: Record<string, LoraAdapter>;
   /**
+   * Folder that holds the downloaded models (ATO-2106), for example one on
+   * an external disk. Absent (default) keeps them in `<dataDir>/models`.
+   * `atomic-agent models dir <path>` moves the models there and writes
+   * this key; `models dir --reset` moves them back and removes it. `~` is
+   * the home directory. Additive and unversioned.
+   */
+  modelsDirOverride?: string;
+  /**
    * Keep the chat daemon's prompt cache on disk between runs (ATO-456).
    * `true`: the managed server starts with `--slot-save-path`, the cache
    * of every idle slot is saved before a managed stop and the newest
@@ -181,6 +209,10 @@ export interface UserManagedLocalLlmConfig {
    * `false` (default): nothing is written.
    */
   promptDiskCache: boolean;
+  /**
+   * Share the local model with other apps and devices (ATO-2336): `true` makes `atomic-agent serve` answer `GET /raw/v1/models` and `POST /raw/v1/chat/completions`, the bare model with no agent, for callers that send the share key (`atomic-agent models share` turns this on and prints the key). Off when absent (the default): those routes answer 404. Additive and unversioned: a file without the key reads as `false`.
+   */
+  share: boolean;
 }
 
 /**
@@ -298,6 +330,11 @@ export interface RuntimeLocalModelsConfig {
    */
   drySampler?: boolean;
   /**
+   * Mirrors `UserConfigFile.localModels.modelSampling`. Optional so a
+   * hand-built runtime config that predates the field reads as off.
+   */
+  modelSampling?: boolean;
+  /**
    * Mirrors `UserConfigFile.localModels.strictToolArgs`. Optional so a
    * hand-built runtime config that predates the field reads as off.
    */
@@ -395,6 +432,17 @@ export interface UserLocalModelsConfig {
    * an older file has no field and reads as off.
    */
   drySampler: boolean;
+  /**
+   * Use the sampling a local model's authors recommend (ATO-2202): the
+   * `general.sampling.*` keys of its GGUF header, else a
+   * `generation_config.json` next to the file, for temperature, top-p,
+   * top-k, min-p and the repeat penalty. A value the request sets itself
+   * and the `ATOMIC_AGENT_LLAMA_*` overrides still win; a field the
+   * model does not name keeps the built-in default (0.2 / 0.95 / 40).
+   * llama.cpp-family engines only. Default `false`, unversioned and
+   * additive: an older file has no field and reads as off.
+   */
+  modelSampling: boolean;
   /**
    * Hold a local model's tool ARGUMENTS to each tool's JSON Schema on
    * the grammar path, not only its tool names (ATO-633): a key the

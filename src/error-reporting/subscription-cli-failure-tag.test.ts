@@ -114,6 +114,14 @@ describe("cli_reason tag (ATO-1679)", () => {
     ["command_not_recognized", "'claude' is not recognized as an internal or external command,\r\noperable program or batch file."],
     ["path_not_found", "The system cannot find the path specified."],
     ["path_not_found", "The system cannot find the file specified."],
+    // ATO-2417.
+    ["context_overflow", "Prompt is too long"],
+    [
+      "context_overflow",
+      "Codex ran out of room in the model's context window. Start a new thread or clear earlier history before retrying.",
+    ],
+    ["vendor_unavailable", 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}'],
+    ["vendor_unavailable", "Selected model is at capacity. Please try a different model."],
     ["other", "Segmentation fault"],
   ];
 
@@ -157,6 +165,26 @@ describe("cli_reason tag (ATO-1679)", () => {
     const limit = failure({ stderr: "Claude AI usage limit reached|1762000000" });
     expect(extractSubscriptionCliFailureTags(limit)).toEqual({ cli_failure: "limit_reached", cli_exit_code: "1" });
     expect(extractSubscriptionCliFailureTags(new SubscriptionCliNotInstalledError("claude"))).toEqual({ cli_failure: "not_installed" });
+  });
+
+  it("says when the failing CLI was older than we support (ATO-1685)", () => {
+    const err = Object.assign(failure({ stderr: "boom" }), { cliVersionOutdated: true });
+    expect(extractSubscriptionCliFailureTags(err)).toEqual({
+      cli_failure: "exited",
+      cli_exit_code: "1",
+      cli_reason: "other",
+      cli_version_outdated: "true",
+    });
+    expect(extractSubscriptionCliFailureTags(failure({ stderr: "boom" }))?.cli_version_outdated).toBeUndefined();
+  });
+
+  it("names a plan without the CLI as plan_required (ATO-2417)", () => {
+    const plan = new SubscriptionCliInvocationError(
+      "codex turn failed: To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.",
+      null,
+      "turn_failed",
+    );
+    expect(extractSubscriptionCliFailureTags(plan)).toEqual({ cli_failure: "plan_required" });
   });
 
   it("reaches the Sentry tags without the text and leaves the fingerprint alone", () => {

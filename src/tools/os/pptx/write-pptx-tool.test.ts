@@ -66,8 +66,9 @@ describe("os.fs.write_pptx", () => {
     expect(prompts).toHaveLength(1);
     expect(prompts[0]!.tool).toBe("os.fs.write_pptx");
     expect(prompts[0]!.preview).toContain("1. Launch plan");
-    expect(prompts[0]!.preview).toContain("2. Goals (2 bullets, notes)");
+    expect(prompts[0]!.preview).toContain("2. Goals (2 bullets, notes) [bullets]");
     expect(result.details).toMatchObject({ slides: 2, notes: 1, images: 0, replaced: false, theme: "light" });
+    expect(result.details).toMatchObject({ layouts: ["title", "bullets"], movedToNotes: 0 });
     expect(result.summary).toContain("Created");
 
     const target = join(dir, "decks/plan.pptx");

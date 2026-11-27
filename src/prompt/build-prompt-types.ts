@@ -181,6 +181,19 @@ export interface BuildPromptInput {
    * stable prefix never moves.
    */
   routeNote?: string;
+  /**
+   * Text the user's UserPromptSubmit hooks printed for this
+   * turn (ATO-2198). Rendered as `### hook-context` after `### route` and `### hook-session-start`,
+   * in the tail for the same reason.
+   */
+  hookContext?: string;
+  /**
+   * What SessionStart hooks printed for this session (ATO-2198). Rendered
+   * as `### hook-session-start` right before `### hook-context`, in the tail;
+   * the runtime passes the same text on every turn, so the cloud journal
+   * keeps one entry and never retracts it.
+   */
+  sessionHookContext?: string;
   profile?: ModelProfile;
   /**
    * Suppress the llama-server template artifacts around the generation

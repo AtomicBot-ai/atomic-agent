@@ -22,9 +22,15 @@ other-call ::= "{" ws "\"tool\"" ws ":" ws tool-name ws "," ws "\"args\"" ws ":"
 # planned (Nemotron 3.5 Bolt E4B, 23.10.2026). Here `cmd` comes first and is
 # a `required-string` (below: non-empty, may open on an escape such as the
 # alias-skipping `\\ls`, marker guard intact); the other keys stay
-# free-form. `tool-name` does not list "os.shell.run".
+# free-form. `tool-name` does not list "os.shell.run". The job forms
+# (`{"wait": 3}`, `{"kill": 3}`, `{"jobs": true}`, and `{"write": 3, …}`
+# from ATO-2277) carry no `cmd` and the
+# tool refuses one that does, so they may lead instead: a job id is a
+# positive integer, `jobs` is `true` (ATO-2425).
 shell-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.shell.run\"" ws "," ws "\"args\"" ws ":" ws shell-args ws "}"
-shell-args ::= "{" ws "\"cmd\"" ws ":" ws required-string ( ws "," ws pair )* ws "}"
+shell-args ::= "{" ws shell-lead ( ws "," ws pair )* ws "}"
+shell-lead ::= "\"cmd\"" ws ":" ws required-string | ( "\"wait\"" | "\"kill\"" | "\"write\"" ) ws ":" ws shell-job-id | "\"jobs\"" ws ":" ws "true"
+shell-job-id ::= [1-9] [0-9]*
 # The same hole, and the same fix, for `os.fs.read` and `os.fs.write`
 # (ATO-909): `{"tool":"os.fs.read","args":{}}` was legal and fails in the
 # tool. Each tool's own check is the bar: read needs a non-empty `path`;
@@ -79,7 +85,12 @@ tool-view-call ::= "{" ws "\"tool\"" ws ":" ws "\"tool.view\"" ws "," ws "\"args
 # `tool.search` (ATO-558) needs words to search for: a non-empty `query`
 # first, `limit` and any other key free. `tool-name` does not list it.
 tool-search-call ::= "{" ws "\"tool\"" ws ":" ws "\"tool.search\"" ws "," ws "\"args\"" ws ":" ws "{" ws "\"query\"" ws ":" ws required-string ( ws "," ws pair )* ws "}" ws "}"
-notes-store-call ::= "{" ws "\"tool\"" ws ":" ws "\"memory.notes.store\"" ws "," ws "\"args\"" ws ":" ws "{" ws "\"content\"" ws ":" ws required-string ( ws "," ws pair )* ws "}" ws "}"
+# A note's `content` is durable prose, so it uses the guarded `reply-text`
+# (#681): under `required-string` a note quoting a term ended at the merged
+# `:"` / ` "` token (`Preferred mode: `). The cost, accepted: a note may not
+# end on a soft character (`:`, `=`, `,`, `(`, a space), the same limit the
+# reply text has. `reply-text` is non-empty, so `""` stays refused.
+notes-store-call ::= "{" ws "\"tool\"" ws ":" ws "\"memory.notes.store\"" ws "," ws "\"args\"" ws ":" ws "{" ws "\"content\"" ws ":" ws reply-text ( ws "," ws pair )* ws "}" ws "}"
 notes-recall-call ::= "{" ws "\"tool\"" ws ":" ws "\"memory.notes.recall\"" ws "," ws "\"args\"" ws ":" ws "{" ws ( "\"query\"" ws ":" ws string | "\"id\"" ws ":" ws value ) ( ws "," ws pair )* ws "}" ws "}"
 # `finish` is the other terminal and its `summary` is prose too, so it
 # gets the same guard as the reply text (#681): under the generic string
@@ -106,7 +117,7 @@ reply-soft ::= [ :(\[{=,]
 tool-call-array ::= "[" ws tool-call ( ws "," ws tool-call ){0,15} ws "]"
 tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | sessions-tool | vision-tool | image-tool | audio-tool | fusion-tool | subagent-tool | files-tool | verify-tool | plan-tool | canvas-tool | mcp-native-tool
 browser-tool ::= "\"browser." ( "navigate" | "click" | "type" | "read_aria" | "search" | "tabs" | "scroll" | "debug" | "extract" | "act" ) "\""
-os-tool ::= "\"os." ( "fs.read_document" | "fs.docx" | "fs.xlsx" | "fs.trash" | "fs.locate_project" | "fs.code_map" | "code.search" | "code.rewrite" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.restore" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "fs.write_pptx" | "web.crawl" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" | "screen.point" | "screen.capture" | "screen.click" | "screen.type" | "screen.key" | "screen.elements" | "screen.press" ) "\""
+os-tool ::= "\"os." ( "fs.read_document" | "fs.docx" | "fs.xlsx" | "fs.trash" | "fs.locate_project" | "fs.code_map" | "code.search" | "code.rewrite" | "code.lsp" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.restore" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "fs.write_pptx" | "web.crawl" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" | "screen.point" | "screen.capture" | "screen.click" | "screen.type" | "screen.key" | "screen.elements" | "screen.press" ) "\""
 discovery-tool ::= "\"skill.run_script\""
 memory-tool ::= "\"memory." ( "profile.set" | "profile.remove" | "profile.list" | "profile.history" | "notes.forget" | "lessons.recall" | "procedures.recall" | "sessions.search" ) "\""
 tasks-tool ::= "\"tasks." ( "schedule" | "cron" | "list" | "cancel" | "show" ) "\""

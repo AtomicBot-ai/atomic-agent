@@ -54,6 +54,8 @@ export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   "os.fs.glob",
   "os.fs.grep",
   "os.fs.code_map",
+  // Only a descriptor while `tools.lsp.enabled` is on (ATO-2373).
+  "os.code.lsp",
   "os.fs.locate_project",
   "os.fs.move",
   "os.fs.trash",

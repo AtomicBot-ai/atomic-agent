@@ -82,7 +82,11 @@ export function OnboardingStepBody(props: {
           />
         ) : null}
         {onboarding.step === "choose" ? (
-          <OnboardingChooseStep cursor={onboarding.cursor} fit={props.fit} />
+          <OnboardingChooseStep
+            cursor={onboarding.cursor}
+            fit={props.fit}
+            {...(onboarding.detectedLocal ? { detected: onboarding.detectedLocal } : {})}
+          />
         ) : null}
         {onboarding.step === "local_pick" ? (
           <OnboardingLocalPickStep
