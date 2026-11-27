@@ -86,6 +86,7 @@ import { resolveLlmConfig } from "../llm/provider/index.js";
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 import { SessionUsageLedger, forwardWorkerUsage } from "../session/usage-meter.js";
 import { DAILY_SPEND_FILE_NAME, DailySpendStore, dailySpendViewFor } from "../session/daily-spend.js";
+import { USAGE_HISTORY_FILE_NAME, UsageHistoryStore } from "../session/usage-history.js";
 import { hasPricedCloudLink } from "./resolve-model-pricing.js";
 
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
@@ -485,6 +486,11 @@ export async function createAgentRuntime(
     path: join(config.paths.stateDir, DAILY_SPEND_FILE_NAME),
     resetHourUtc: () => getConfig().llm?.costTracking?.dailyResetHourUtc ?? 0,
   });
+  // ATO-2352: tokens and spend per day and model, for `atomic-agent usage`.
+  const usageHistory = new UsageHistoryStore({
+    path: join(config.paths.stateDir, USAGE_HISTORY_FILE_NAME),
+    resetHourUtc: () => getConfig().llm?.costTracking?.dailyResetHourUtc ?? 0,
+  });
   const sessionUsage = new SessionUsageLedger({
     onChange: (sessionId, usage) => {
       // Only when a configured cloud link has a known price: with none,
@@ -534,7 +540,7 @@ export async function createAgentRuntime(
   const { prepareLocalLink, llmComplete, llmCompleteStream } = connectRuntimeFallback(options, {
     fallbackChain, resolveActiveLlmSlice, localBackend: connectedLocal.localBackend, profileManager,
     costAccumulator, turnUsageMeter, sessionUsage, dailySpend, resolveModelPricing, resolveCatalogContextWindow,
-    providerRegistry,
+    providerRegistry, usageHistory,
   });
   // Smart approval (ATO-465): off unless `agent.smartApproval`, read live.
   installRiskReviewer({

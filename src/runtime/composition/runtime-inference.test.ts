@@ -17,6 +17,7 @@ import { TurnUsageMeter } from "../../analytics/index.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 import { OpenAiHttpError } from "../../llm/provider/openai/openai-http.js";
 import { DailySpendStore } from "../../session/daily-spend.js";
+import { UsageHistoryStore } from "../../session/usage-history.js";
 import { DailySpendLimitError } from "../../llm/reliability/spend-limit-error.js";
 import { connectRuntimeFallback, connectRuntimeProviders, createRuntimeModelContext, createRuntimeProviderReloads, type RuntimeProviders } from "./runtime-inference.js";
 
@@ -416,6 +417,47 @@ describe("runtime provider/context/fallback/reload phases", () => {
           content: "answer",
         });
       }
+    });
+  });
+
+  describe("per-day token history (ATO-2352)", () => {
+    function withHistory() {
+      const dir = mkdtempSync(join(tmpdir(), "usage-history-"));
+      const usageHistory = new UsageHistoryStore({ path: join(dir, "usage-history.json"), now: () => Date.UTC(2026, 10, 12, 12) });
+      const fixture = fallback();
+      return { usageHistory, deps: { ...fixture.deps, usageHistory } };
+    }
+
+    it("records a streamed priced cloud completion's tokens and cost under today", async () => {
+      const fixture = withHistory();
+      const served = providers.providerRegistry.getProvider("served");
+      if (!served) throw new Error("served fixture missing");
+      vi.spyOn(served, "completeStream").mockImplementation(async function* () {
+        yield { delta: "answer", reasoningDelta: "", done: false };
+        return completion();
+      });
+      const wired = connectRuntimeFallback({}, fixture.deps);
+      if (!wired.llmCompleteStream) throw new Error("stream fixture missing");
+      const stream = wired.llmCompleteStream({ ...params, providerId: "served" });
+      let next = await stream.next();
+      while (!next.done) next = await stream.next();
+      const row = fixture.usageHistory.read().days["2026-11-12"]?.[0];
+      expect(row).toMatchObject({ billing: "cloud", providerId: "served", model: "priced-model", calls: 1, inputTokens: 10, outputTokens: 5, pricedCalls: 1 });
+      expect(row?.usd).toBeCloseTo(0.00002);
+    });
+
+    it("records a local completion from its timings, as local and unbilled", async () => {
+      const fixture = withHistory();
+      const localLink = providers.providerRegistry.getProvider("local");
+      if (!localLink) throw new Error("local fixture missing");
+      const local: CompletionResult = { ...completion("local-id"), timing: { promptMs: 1, predictedMs: 2, promptTokens: 300, predictedTokens: 20 }, cacheHitTokens: 100 };
+      delete local.usage;
+      vi.spyOn(localLink, "complete").mockResolvedValue(local);
+      const wired = connectRuntimeFallback({}, fixture.deps);
+      await wired.llmComplete({ ...params, providerId: "local" });
+      expect(fixture.usageHistory.read().days["2026-11-12"]?.[0]).toMatchObject({
+        billing: "local", model: "local-id", inputTokens: 300, outputTokens: 20, cachedTokens: 100, usd: 0, unpricedCalls: 0,
+      });
     });
   });
 

@@ -33,6 +33,7 @@ import { doctorCommand } from "./doctor-command.js";
 import { dataCommand } from "./data-command.js";
 import { setupCommand } from "./setup-command.js";
 import { idCommand } from "./id-command.js";
+import { usageCommand } from "./usage-command.js";
 import { policyCommand } from "./policy-command.js";
 import { pushCommand } from "./push-command.js";
 import { providersCommand } from "./providers-command.js";
@@ -140,6 +141,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "trace",
     summary: "Inspect append-only session traces (list|show|export)",
     run: traceCommand,
+  },
+  {
+    name: "usage",
+    summary: "Tokens and cloud cost per day over every session, local vs cloud (--days N|--all, --models, --json)",
+    run: usageCommand,
   },
   {
     name: "export",

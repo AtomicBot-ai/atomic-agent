@@ -19,6 +19,7 @@ import {
   isOverDailyLimit,
   type DailySpendStore,
 } from "../../session/daily-spend.js";
+import type { UsageHistoryStore } from "../../session/usage-history.js";
 import { DailySpendLimitError } from "../../llm/reliability/spend-limit-error.js";
 import { isLocalServerUrl } from "../../llm/provider/openai/local-server-url.js";
 import { resolveModelPricingFor } from "../resolve-model-pricing.js";
@@ -348,6 +349,8 @@ export function connectRuntimeFallback(
     sessionUsage?: SessionUsageLedger;
     /** Today's spend over every session, and the daily ceiling's source (ATO-649). */
     dailySpend?: DailySpendStore;
+    /** Tokens and spend per day and model, for `atomic-agent usage` (ATO-2352). */
+    usageHistory?: Pick<UsageHistoryStore, "record">;
     resolveModelPricing: RuntimeModelContext["resolveModelPricing"];
     resolveCatalogContextWindow?: RuntimeModelContext["resolveCatalogContextWindow"];
     /** Builds a pinned provider's per-turn model copy (ATO-1148). */
@@ -364,6 +367,7 @@ export function connectRuntimeFallback(
     resolveModelPricing,
     sessionUsage,
     dailySpend,
+    usageHistory,
   } = deps;
   // How a link bills: a local server (any kind pointed at this machine)
   // bills nothing, a subscription CLI bills by the plan, the rest per
@@ -388,6 +392,24 @@ export function connectRuntimeFallback(
     dailySpend.record(
       priceCompletion({ usage: result.usage, ...(model ? { model } : {}), ...linkBilling(servedProviderId) }),
     );
+  };
+  // ATO-2352: every metered completion's tokens into the per-day
+  // history, local ones included (their tokens come from the timings).
+  const recordUsageHistory = (
+    result: CompletionResult,
+    servedProviderId: string,
+    metered: NonNullable<ReturnType<typeof completionUsageForTurn>>,
+    model: ResolvedModel | undefined,
+  ): void => {
+    if (!usageHistory) return;
+    const billing = linkBilling(servedProviderId);
+    usageHistory.record({
+      providerId: servedProviderId,
+      modelId: result.modelId,
+      usage: metered,
+      ...billing,
+      price: priceCompletion({ ...(result.usage ? { usage: result.usage } : {}), ...(model ? { model } : {}), ...billing }),
+    });
   };
   // ATO-649: refuse a paid link once today's spend reached
   // `costTracking.dailyLimitUsd`, before anything is sent. Thrown from the
@@ -464,6 +486,7 @@ export function connectRuntimeFallback(
     }
     const model = result.usage ? resolveModelPricing(result.modelId, servedProviderId) : undefined;
     recordDailySpend(result, servedProviderId, model);
+    recordUsageHistory(result, servedProviderId, metered, model);
     recordSessionUsage(params.sessionId, result, servedProviderId, true, model);
     if (costAccumulator && result.usage) {
       costAccumulator.recordTurn({
@@ -499,6 +522,7 @@ export function connectRuntimeFallback(
     }
     const model = result.usage ? resolveModelPricing(result.modelId, servedProviderId) : undefined;
     recordDailySpend(result, servedProviderId, model);
+    recordUsageHistory(result, servedProviderId, metered, model);
     // ATO-1289: most chat turns stream, so the cost accumulator must see
     // a streamed completion exactly as it sees a unary one (same gate,
     // no session required) — otherwise `costTracking` only ever counts
