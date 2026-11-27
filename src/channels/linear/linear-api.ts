@@ -9,7 +9,12 @@
  * `Bearer <token>`. The key is never put in an error message.
  */
 
-import { LINEAR_COMMENT_LIMIT, LINEAR_GRAPHQL_URL, type LinearTarget } from "./linear-types.js";
+import {
+  LINEAR_COMMENT_LIMIT,
+  LINEAR_GRAPHQL_URL,
+  type LinearActivityKind,
+  type LinearTarget,
+} from "./linear-types.js";
 
 export class LinearApiError extends Error {
   constructor(
@@ -36,6 +41,8 @@ export interface LinearApiDeps {
 const VIEWER_QUERY = "query AtomicAgentViewer { viewer { id name } }";
 const COMMENT_CREATE_MUTATION =
   "mutation AtomicAgentCommentCreate($input: CommentCreateInput!) { commentCreate(input: $input) { success comment { id } } }";
+const AGENT_ACTIVITY_MUTATION =
+  "mutation AtomicAgentActivityCreate($input: AgentActivityCreateInput!) { agentActivityCreate(input: $input) { success agentActivity { id } } }";
 
 export function linearAuthHeader(apiKey: string): string {
   return apiKey.startsWith("lin_api_") ? apiKey : `Bearer ${apiKey}`;
@@ -78,6 +85,23 @@ export class LinearApi {
       throw new LinearApiError("Linear did not create the comment", "bad_response");
     }
     return result.comment.id;
+  }
+
+  /**
+   * Post to a Linear agent session (Agents API, ATO-2464): `thought`
+   * while working, `response` for the answer, `elicitation` to ask,
+   * `error` when it failed. Needs a token of the agent installed as an
+   * app (`actor=app`). Returns the activity id.
+   */
+  async createAgentActivity(agentSessionId: string, kind: LinearActivityKind, body: string): Promise<string> {
+    const input = { agentSessionId, content: { type: kind, body: fitCommentBody(body) } };
+    const data = await this.query(AGENT_ACTIVITY_MUTATION, { input });
+    const result = (data as { agentActivityCreate?: { success?: unknown; agentActivity?: { id?: unknown } } })
+      .agentActivityCreate;
+    if (result?.success !== true || typeof result.agentActivity?.id !== "string") {
+      throw new LinearApiError("Linear did not record the agent activity", "bad_response");
+    }
+    return result.agentActivity.id;
   }
 
   /** One GraphQL call; resolves `data`, throws `LinearApiError` (`auth` when the key is refused). */

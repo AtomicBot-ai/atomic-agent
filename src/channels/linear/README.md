@@ -70,9 +70,15 @@ Skip the webhook and the tunnel: save only `LINEAR_API_KEY` and leave `LINEAR_WE
 - A mention on an issue the agent is still answering is queued, not refused: the comment "Queued: ..." says so, and the requests run in order. At most 4 requests per issue are held, the running one included ([linear-turn-queue.ts](linear-turn-queue.ts)).
 - Files attached to the comment that mentions the agent (Linear uploads, `https://uploads.linear.app/...`) are downloaded with the API key and saved to `<stateDir>/inbox/linear/<date>/`; the agent gets their local paths like files sent on Telegram or Discord. Up to 5 files and 25 MB each; the key is sent to `uploads.linear.app` only, never along a redirect ([linear-attachments.ts](linear-attachments.ts)).
 
-## Not yet supported
+## As a Linear app: agent sessions (ATO-2464)
 
-Linear Agent sessions (`AgentSessionEvent`, the "agent" app actor).
+Installed in the workspace as a Linear app (OAuth with `actor=app`, scopes `app:assignable` and `app:mentionable`), Atomic Agent shows up in Linear as its own member: people @mention it or delegate an issue to it, and Linear opens an **agent session** with live progress, the way Cursor, Devin and Codex work in Linear. Put the app's access token in `LINEAR_API_KEY` (an OAuth token is sent as `Bearer`) and enable the app webhook's **Agent session events**; they come signed to the same `/linear/webhook` endpoint ([linear-agent-session.ts](linear-agent-session.ts)).
+
+- `created`: the channel answers "Working on it." as a `thought` at once (Linear marks a session unresponsive after ten seconds without one), then runs the request with Linear's own `promptContext` and posts the answer as a `response`. A failure is an `error` activity.
+- `prompted`: a follow-up in the session continues the issue's conversation (the same session as comment mentions on that issue). Stop in Linear cancels the running turn. `yes <code>` answers an approval, which the agent posts as an `elicitation`; `/status`, `/new` and `/cancel` work as in comments.
+- Only owners drive it: a session started (or a follow-up written) by anyone else gets an `error` activity saying so, and nothing runs. When a follow-up carries no author, the session's creator stands in.
+- The comment that started a session can also arrive as a Comment webhook; it runs once. Leave `options.mention` at a handle that is not the app's own, so an app mention is handled as a session, not also as a comment.
+- Agent sessions need the webhook: polling reads comments and assignments only.
 
 ## Files
 

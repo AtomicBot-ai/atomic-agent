@@ -35,6 +35,8 @@ export { LINEAR_HELP_TEXT, parseLinearCommand, runLinearCommand } from "./linear
 export type { LinearCommand } from "./linear-commands.js";
 export { LinearTurnQueue, LINEAR_QUEUE_LIMIT } from "./linear-turn-queue.js";
 export { LinearApprovalBindings } from "./linear-approval-bindings.js";
+export { agentSessionJob, stripLeadingMention, LINEAR_AGENT_NOT_OWNER } from "./linear-agent-session.js";
+export type { LinearJob } from "./linear-inbound-handler.js";
 export { createLinearEndpoint, LINEAR_DEFAULT_POLL_MS } from "./linear-endpoint.js";
 export { LinearPoller, LINEAR_KEY_REFUSED } from "./linear-poller.js";
 export type { LinearPollerDeps } from "./linear-poller.js";
