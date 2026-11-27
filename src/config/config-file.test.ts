@@ -7,7 +7,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 
 import { getApprovalRulesPath } from "../approval/approval-rules-store.js";
@@ -997,6 +997,13 @@ describe("the state's secret files (ATO-877)", () => {
     // model must not be able to grant itself an "always allow".
     expect(getTrustConfigPaths(paths)).toContain(getApprovalRulesPath(stateDir));
     expect(getStateSecretPaths(paths)).toContain(getApprovalRulesPath(stateDir));
+  });
+
+  it("protects ~/.curlrc and ~/.wgetrc, which can reroute curl and wget (ATO-2116)", () => {
+    const stateDir = join(tmpdir(), "atomic-state");
+    const trust = getTrustConfigPaths({ stateDir, userConfigFile: getUserConfigPath(stateDir) });
+    expect(trust).toContain(join(homedir(), ".curlrc"));
+    expect(trust).toContain(join(homedir(), ".wgetrc"));
   });
 
   it("protects the OS keychain switch like .env (ATO-474)", () => {

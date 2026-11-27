@@ -66,6 +66,7 @@ export function scanGit(
 ): EgressDestination[] {
   let chdir: string | undefined;
   let unresolvable = indirect;
+  let alias = false;
   let i = 0;
   for (; i < args.length; i += 1) {
     const arg = args[i]!;
@@ -76,7 +77,8 @@ export function scanGit(
     if (name === "-C" && value !== undefined) {
       chdir = chdir === undefined || value.startsWith("/") ? value : `${chdir}/${value}`;
     } else if (name === "-c" && value !== undefined) {
-      if (/^(?:remote|url|branch|include|includeif)\./i.test(value)) unresolvable = true;
+      if (/^(?:remote|url|branch|include|includeif|alias)\./i.test(value)) unresolvable = true;
+      if (/^alias\./i.test(value)) alias = true;
     } else if (name !== "-C" && name !== "-c" && GLOBAL_VALUE.has(name)) {
       unresolvable = true;
     }
@@ -85,6 +87,10 @@ export function scanGit(
   const sub = args[i];
   const rest = args.slice(i + 1);
   const usable = unresolvable ? undefined : resolver;
+  // `git -c alias.p="!git push https://x" p`: what runs is in the alias, not readable here.
+  if (alias) {
+    return [{ kind: "git_remote", host: null, direction: "outbound", label: "a git alias set on the command line" }];
+  }
   if (sub === "push") {
     let repo: string | undefined;
     for (let k = 0; k < rest.length; k += 1) {
