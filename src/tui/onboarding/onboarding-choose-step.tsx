@@ -5,7 +5,9 @@ import { widestLine } from "./centre-onboarding-block.js";
 import type { OnboardingFit } from "./onboarding-fit.js";
 import { handleOnboardingStepKey } from "./onboarding-step-keys.js";
 import { ROW_MARKER, rowPrefix } from "./onboarding-rows.js";
-import { ONBOARDING_CHOICES } from "./onboarding-state.js";
+import { ONBOARDING_CHOICES, type OnboardingChoice } from "./onboarding-state.js";
+import { customDetailLine } from "./onboarding-local-servers.js";
+import type { DetectedLocalServer } from "../../llm/provider/presets/detect-local-servers.js";
 import { theme } from "../theme/theme.js";
 import { t } from "../../i18n/index.js";
 
@@ -51,13 +53,27 @@ function labelCell(
   return `${rowPrefix(selected)}${fit.rowDetails ? label.padEnd(LABEL_COLUMNS) : label}`;
 }
 
+/**
+ * A row's first detail line. The Custom row names the local servers
+ * found running here (ATO-2013); shared by the measure and the render.
+ */
+function firstDetail(
+  choice: OnboardingChoice,
+  detected: readonly DetectedLocalServer[] | undefined,
+): string {
+  return choice.id === "custom" ? customDetailLine(detected, choice.detail[0]) : choice.detail[0];
+}
+
 /** Widest line this step draws, for the block that centres it. */
-export function measureOnboardingChooseStep(fit: OnboardingFit): number {
+export function measureOnboardingChooseStep(
+  fit: OnboardingFit,
+  detected?: readonly DetectedLocalServer[],
+): number {
   const lines: string[] = fit.explainer ? [...explainerLines()] : [];
   for (const choice of ONBOARDING_CHOICES) {
     // Measured as selected: the marker and the indent are the same width.
     lines.push(
-      `${labelCell(true, choice.label, fit)}${fit.rowDetails ? choice.detail[0] : ""}`,
+      `${labelCell(true, choice.label, fit)}${fit.rowDetails ? firstDetail(choice, detected) : ""}`,
     );
     if (fit.rowDetails)
       lines.push(`${" ".repeat(DETAIL_COLUMN)}${choice.detail[1]}`);
@@ -68,6 +84,8 @@ export function measureOnboardingChooseStep(fit: OnboardingFit): number {
 export function OnboardingChooseStep(props: {
   cursor: number;
   fit: OnboardingFit;
+  /** Local servers found running here; the Custom row names them. */
+  detected?: readonly DetectedLocalServer[];
 }): ReactElement {
   return (
     <Box flexDirection="column" flexShrink={0}>
@@ -102,7 +120,7 @@ export function OnboardingChooseStep(props: {
                   {labelCell(selected, choice.label, props.fit)}
                 </Text>
                 {props.fit.rowDetails ? (
-                  <Text color={theme.colors.muted}>{choice.detail[0]}</Text>
+                  <Text color={theme.colors.muted}>{firstDetail(choice, props.detected)}</Text>
                 ) : null}
               </Box>
               {props.fit.rowDetails ? (

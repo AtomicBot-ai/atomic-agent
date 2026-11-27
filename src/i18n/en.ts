@@ -56,6 +56,7 @@ export const en = {
   "onboarding.choose.custom.label": "Custom endpoint",
   "onboarding.choose.custom.detail1": "An OpenAI-compatible or llama-server URL you already run.",
   "onboarding.choose.custom.detail2": "Nothing is downloaded, nothing else is asked.",
+  "onboarding.choose.custom.found": "Found running here: {servers}.",
 } as const;
 
 export type MessageKey = keyof typeof en;

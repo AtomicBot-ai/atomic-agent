@@ -9,6 +9,7 @@ import {
   type WizardFilterRow,
 } from "./providers-wizard-filter.js";
 import { kindRowId, labelForKindRow } from "./providers-wizard-kind-labels.js";
+import { orderKindOptionsForDetected } from "./detected-kind-rows.js";
 import {
   catalogEntryLookupForKind,
   listAimlapiChatModels,
@@ -65,19 +66,24 @@ export const KIND_OPTIONS: readonly WizardKindOption[] = KIND_ROW_ORDER.map(
   (row) => ({ row, id: kindRowId(row), label: labelForKindRow(row) }),
 );
 
-/** The provider rows left after the search box, in list order. */
+/**
+ * The provider rows left after the search box, in list order. Local
+ * servers found running (`detected`, ATO-2013) come first.
+ */
 export function visibleKindRows(
   search: string | null,
+  detected?: ProvidersWizardState["detectedLocal"],
 ): readonly WizardKindOption[] {
-  return filterWizardRows(KIND_OPTIONS, search);
+  return filterWizardRows(orderKindOptionsForDetected(KIND_OPTIONS, detected), search);
 }
 
 /** Maps the `pick_kind` cursor index to the row of the filtered list. */
 export function kindRowAtCursor(
   cursor: number,
   search: string | null,
+  detected?: ProvidersWizardState["detectedLocal"],
 ): ProvidersWizardKindRow {
-  return visibleKindRows(search)[cursor]?.row ?? "openrouter";
+  return visibleKindRows(search, detected)[cursor]?.row ?? "openrouter";
 }
 
 export function isCuratedCatalogKind(
@@ -168,14 +174,16 @@ export function isWizardFirstScreen(wizard: ProvidersWizardState): boolean {
  * row the operator came from, so stepping back and forth is stable.
  */
 export function cursorForPreviousPick(wizard: ProvidersWizardState): number {
+  // The list as it is drawn: a detected local server sits on top.
+  const rows = visibleKindRows(null, wizard.detectedLocal).map((option) => option.row);
   if (wizard.presetId) {
-    const idx = KIND_ROW_ORDER.findIndex(
+    const idx = rows.findIndex(
       (row) => typeof row === "object" && row.presetId === wizard.presetId,
     );
     if (idx >= 0) return idx;
   }
   if (wizard.kind) {
-    const idx = KIND_ROW_ORDER.indexOf(wizard.kind);
+    const idx = rows.indexOf(wizard.kind);
     if (idx >= 0) return idx;
   }
   return 0;
@@ -205,7 +213,7 @@ export function visibleRowsForPhase(
   wizard: ProvidersWizardState,
 ): readonly WizardFilterRow[] {
   const { phase, kind, search } = wizard;
-  if (phase === "pick_kind") return visibleKindRows(search);
+  if (phase === "pick_kind") return visibleKindRows(search, wizard.detectedLocal);
   if (phase === "pick_chat_model" && kind && isCuratedCatalogKind(kind)) {
     return filterWizardRows(
       chatRowsForPricing(kind, wizard.pricingFilter),

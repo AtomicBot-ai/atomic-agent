@@ -778,6 +778,10 @@ export interface TuiAppCallbacks {
   ): void;
   /** Providers tab: abandon a running pre-save key check. */
   onProvidersWizardSubmitCancel?(): void;
+  /** ATO-2013: look for Ollama / LM Studio / the Llama app running here. */
+  onDetectLocalServers?(): Promise<
+    readonly import("../llm/provider/presets/detect-local-servers.js").DetectedLocalServer[]
+  >;
   /**
    * The first-run flow wrote config and is handing over to the agent.
    * The runtime is already up by then, so its provider registry has to

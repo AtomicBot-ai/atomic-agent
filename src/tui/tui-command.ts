@@ -92,6 +92,7 @@ import {
   resolveStartupWorkingDir,
 } from "./startup-working-dir.js";
 import { readRecentWorkingDirs } from "../session/index.js";
+import { detectLocalServers } from "../llm/provider/presets/detect-local-servers.js";
 import { createMentionFileIndex, expandFileMentions } from "./file-mentions/index.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
 import {
@@ -850,6 +851,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.providers.completeWizard(wizard),
         onProvidersWizardSubmitCancel: () =>
           orchestrator.providers.cancelWizardVerification(),
+        onDetectLocalServers: () => detectLocalServers(),
         onProvidersRemove: (id) =>
           void orchestrator.providers.removeProviderById(id),
         onImportPreview: (form) => orchestrator.import.preview(form),

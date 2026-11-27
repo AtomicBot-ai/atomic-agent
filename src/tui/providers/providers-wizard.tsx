@@ -46,6 +46,7 @@ import type { ProvidersWizardState } from "./providers-wizard-state.js";
 import type { WizardMouseRoute } from "./route-wizard-key.js";
 import { CHECKING_KEY_HINT } from "./providers-wizard-measure.js";
 import { pickListHints, renderPickList } from "./wizard-pick-list.js";
+import { useLocalServerDetection } from "./use-local-server-detection.js";
 import { BrandBadge } from "../brand/brand-badge.js";
 import { modelBrand, providerBrand } from "../brand/brand-badges.js";
 
@@ -446,6 +447,8 @@ export function ProvidersWizard(props: {
   mouseRoute?: WizardMouseRoute;
 }): ReactElement {
   const w = props.wizard;
+  // Before any early return: the hook order must not depend on the phase.
+  useLocalServerDetection(w);
   const maxRows = props.maxRows === undefined ? {} : { maxRows: props.maxRows };
   const route =
     props.mouseRoute === undefined ? {} : { route: props.mouseRoute };
@@ -453,7 +456,7 @@ export function ProvidersWizard(props: {
     w.mode === "configure" ? `configure ${w.providerId}` : "add provider";
 
   if (w.phase === "pick_kind") {
-    const kindRows = visibleKindRows(w.search);
+    const kindRows = visibleKindRows(w.search, w.detectedLocal);
     return renderPickList({
       title: `LLM provider — ${modeLabel}`,
       options: kindRows,
