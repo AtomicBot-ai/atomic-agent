@@ -66,6 +66,22 @@ test("Manage shows on Ollama and LM Studio rows only, and opens their models", (
   assert.doesNotMatch(none, /data-lsv="manage:/);
 });
 
+test("an LM Studio model the core reports loaded offers Unload and Free memory", () => {
+  const lms = { ...LMS, loaded: ["qwen/qwen3-8b"] };
+  const html = R.lsvSectionHTML(fresh({ servers: [OLLAMA, lms], open: "lmstudio" }), h());
+  assert.match(html, /data-lsv="unload:1:0"/);
+  assert.match(html, /data-lsv="freeall:1"/);
+  assert.doesNotMatch(html, /data-lsv="load:1:0"/);
+  // What main reads from `atag local-servers --json` keeps LM Studio's loaded list.
+  assert.deepEqual(M.parseLocalServers(JSON.stringify({ servers: [lms] }))[0].loaded, ["qwen/qwen3-8b"]);
+});
+
+test("the Download field has an id, so a repaint keeps its focus and caret", () => {
+  const html = R.lsvManageHTML(OLLAMA, 0, h(fresh({ open: "ollama" })));
+  assert.match(html, /<input [^>]*id="lsv-pull-ollama"/);
+  assert.match(R.lsvManageHTML(LMS, 1, h(fresh({ open: "lmstudio" }))), /id="lsv-pull-lmstudio"/);
+});
+
 test("LM Studio has no Delete; a delete on Ollama asks first", () => {
   const lm = R.lsvManageHTML(LMS, 1, h(fresh({ open: "lmstudio" })));
   assert.doesNotMatch(lm, /data-lsv="rm:/);

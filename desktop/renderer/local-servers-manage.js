@@ -104,7 +104,9 @@ function lsvManageHTML(server, i, h) {
   const pull = pulling
     ? '<div class="lsv-pull" role="status"><span class="tk-spin"></span><span class="grow">Downloading ' + e(act.model) + '… '
       + e(lsvProgressWords(st.progress)) + '</span><button class="btn btn-g sm" type="button" data-lsv="stop">Stop</button></div>'
-    : '<div class="lsv-pull"><input class="tk-inp mono lsv-pull-in" type="text" spellcheck="false" autocomplete="off" data-lsv-pull="' + e(server.kind) + '"'
+    // The id lets a repaint put the focus and caret back (paneFocusKeep) and
+    // holds the 5 s poll off while typing (llmTyping in renderer.js).
+    : '<div class="lsv-pull"><input class="tk-inp mono lsv-pull-in" id="lsv-pull-' + e(server.kind) + '" type="text" spellcheck="false" autocomplete="off" data-lsv-pull="' + e(server.kind) + '"'
       + ' aria-label="' + e('Model to download in ' + lsvName(server)) + '" placeholder="' + e('Model to download, for example ' + example) + '"'
       + ' value="' + e(draft) + '"' + off + '>'
       + '<button class="btn btn-s sm" type="button" data-lsv="pull:' + i + '"' + off + '>Download</button></div>';

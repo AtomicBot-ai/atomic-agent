@@ -866,7 +866,9 @@ Honestly degraded, and labelled as such in the UI:
   `src/local-llm/external-servers/`): Ollama through its own API, LM Studio
   through its `lms` tool. Settings › Local's **Manage** on a running Ollama
   or LM Studio row (`renderer/local-servers-manage.js`) lists its models
-  with Load / Unload (Ollama's `keep_alive: 0`), **Free memory**, a Download field with progress and
+  with Load / Unload (Ollama's `keep_alive: 0`; which models are loaded
+  comes from Ollama's `/api/ps` and LM Studio's `/api/v0/models`),
+  **Free memory**, a Download field with progress and
   Stop, Delete (Ollama only, asked twice) and **Use here**; the section
   offers **Start Ollama** / **Start LM Studio** for an app that did not
   answer. Use here adds the model's file to the local models with no new
