@@ -16,7 +16,11 @@
  * purpose" (review F2078.1): a typed name whose lookup fails is not read,
  * and a typed name whose answer holds a local address (an intranet wiki, or
  * a mixed public and private answer) gets its first request as typed while
- * every redirect after it is checked and pinned like a public link's. A
+ * every redirect after it is checked and pinned like a public link's. The
+ * one exception (review round 2) is a redirect back to the typed host
+ * itself (`/` to `/Main_Page`, http to https): same name, and the typed port
+ * or the new scheme's default port. It reaches nothing the first request
+ * could not, so it goes as typed too; any other host is still checked. A
  * public link never lands on a host that is local by its text.
  *
  * With a proxy (`network.proxy` or the proxy variables) the proxy makes the
@@ -114,16 +118,26 @@ async function startOf(url: URL, vetHost: VetHost): Promise<Start> {
   }
 }
 
+function portOf(url: URL): string {
+  return url.port || (url.protocol === "https:" ? "443" : "80");
+}
+
+/** A hop back to the typed host: the same name, on the typed port or the scheme's default one. */
+function isTypedHost(typed: URL, hop: URL): boolean {
+  return hop.hostname === typed.hostname && (hop.port === "" || portOf(hop) === portOf(typed));
+}
+
 /** Fetch `url`, following up to MAX_URL_REDIRECTS redirects, each checked before it connects. */
 export async function fetchCheckedHops(url: string, o: HopOptions): Promise<FinalAnswer> {
-  let current = new URL(url);
+  const typed = new URL(url);
+  let current = typed;
   const start = await startOf(current, o.vetHost);
   for (let hop = 0; ; hop++) {
     if (current.protocol !== "http:" && current.protocol !== "https:") throw new UrlSkip("redirected away from http");
     if (hop > 0 && offlineRefusal(current.href, "@link") !== null) throw new UrlSkip("offline mode is on");
     // The base rule, now on every hop: a link not typed as local never lands on one.
     if (hop > 0 && start.kind !== "local" && isLocalHost(current.hostname)) throw new UrlSkip("redirected to a local address");
-    const asTyped = start.kind === "local" || (hop === 0 && start.kind === "named-local");
+    const asTyped = start.kind === "local" || (start.kind === "named-local" && (hop === 0 || isTypedHost(typed, current)));
     let pool: Agent | undefined;
     if (!asTyped) {
       let addresses: readonly string[];
