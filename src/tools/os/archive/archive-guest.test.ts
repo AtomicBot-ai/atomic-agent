@@ -23,6 +23,12 @@ beforeAll(async () => {
   zip.file("deploy/secrets/token.txt", "token guest-must-not-see\n");
   zip.file("Config\\.ENV.local", "X=guest-must-not-see\n");
   zip.file("README.md", "hello from the backup\n");
+  // An archive inside the archive: its `.env` was never judged by name.
+  const inner = new JSZip();
+  inner.file(".env", "API_KEY=sk-nested-guest-must-not-see\n");
+  const innerBytes = await inner.generateAsync({ type: "nodebuffer" });
+  zip.file("inner.zip", innerBytes);
+  zip.file("data.bin", innerBytes);
   await writeFile(join(dir, "backup.zip"), await zip.generateAsync({ type: "nodebuffer" }));
 });
 afterAll(async () => {
@@ -47,6 +53,20 @@ describe("os.fs.archive for a guest (ATO-2805)", () => {
     }
     const ok = await tool.run({ path: "backup.zip", entry: "README.md" }, ctx(true));
     expect(ok.summary).toContain("hello from the backup");
+  });
+
+  it("refuses an entry that is itself an archive, by name or by bytes, in any encoding", async () => {
+    const tool = buildOsFsArchiveReadEntryTool();
+    for (const entry of ["inner.zip", "data.bin"]) {
+      for (const as of ["base64", "utf8"]) {
+        const result = await tool.run({ path: "backup.zip", entry, as }, ctx(true));
+        expect(result.status, `${entry} ${as}`).toBe("error");
+        expect(result.details?.reason, entry).toBe("guest-nested-archive");
+        expect(JSON.stringify(result), entry).not.toMatch(/UEsDB|sk-nested/);
+      }
+    }
+    const owner = await tool.run({ path: "backup.zip", entry: "inner.zip", as: "base64" }, ctx(false));
+    expect(owner.status).toBe("ok");
   });
 
   it("hides secret entry names from a guest's list", async () => {
