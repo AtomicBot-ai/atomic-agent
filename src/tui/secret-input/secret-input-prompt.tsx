@@ -6,7 +6,7 @@ import { theme } from "../theme/theme.js";
 import { applySecretKey, maskSecret } from "./secret-input-keys.js";
 
 /**
- * The TUI's card for a `shell_secret` request (ATO-2486), drawn in the
+ * The TUI's card for a `shell_secret_input` request (ATO-2486), drawn in the
  * approval prompt's place: which job asks for what, and a masked field.
  * The composer stands down while it is up (`tui-app.tsx`), so a key
  * typed here reaches no draft, history or steer. Enter sends, Esc or the

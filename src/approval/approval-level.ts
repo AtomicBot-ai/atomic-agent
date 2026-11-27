@@ -173,7 +173,7 @@ export type ApprovalCategory =
    * model never sees it. Only a person can answer, so no level, grant,
    * rule or reviewer does (`null` below), like `user_question`.
    */
-  | "shell_secret"
+  | "shell_secret_input"
   /**
    * Reading another chat's messages or sending a request into another
    * chat (`sessions.read`, `sessions.send`, ATO-570). The other chat is
@@ -260,7 +260,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel | null> = 
   // Never: even full trust cannot pick an answer for the person.
   user_question: null,
   // Never: only the person knows the secret.
-  shell_secret: null,
+  shell_secret_input: null,
   session_cross: 5,
   logbook_cloud: 5,
   other: 5,
@@ -367,7 +367,7 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   // Each question is its own; there is nothing to allow "for the session".
   user_question: false,
   // Each secret is typed when it is asked for.
-  shell_secret: false,
+  shell_secret_input: false,
   // "Let it read and message my other chats for this session" is the
   // operator's call; each prompt still names the chat.
   session_cross: true,
@@ -417,7 +417,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   local_model_restart: "local model · restart",
   hook_ask: "hook · confirm",
   user_question: "question for you",
-  shell_secret: "terminal · secret input",
+  shell_secret_input: "terminal · secret input",
   session_cross: "another chat · read / send",
   logbook_cloud: "logbook · notes to a cloud model",
   other: "uncategorised",

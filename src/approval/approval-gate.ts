@@ -192,7 +192,7 @@ export interface ApprovalRequest {
    */
   question?: UserQuestion;
   /**
-   * Set only on a `shell_secret` request (ATO-2486, `shell-secret.ts`):
+   * Set only on a `shell_secret_input` request (ATO-2486, `shell-secret.ts`):
    * which job asks for what. A surface that knows it draws a masked
    * field and answers with `ApprovalDecision.secret`.
    */
@@ -255,7 +255,7 @@ export interface ApprovalDecision {
    */
   answer?: UserQuestionAnswer;
   /**
-   * What the person typed for a `shell_secret` request (ATO-2486). It
+   * What the person typed for a `shell_secret_input` request (ATO-2486). It
    * goes into the job's input and nowhere else: the gate records only
    * the verdict, and no caller may log or echo it. Ignored when denied.
    */

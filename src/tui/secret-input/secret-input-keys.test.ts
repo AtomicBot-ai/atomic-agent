@@ -19,7 +19,7 @@ const REQUEST: ApprovalRequest = {
   approvalId: "sec-1",
   sessionId: "s1",
   tool: "os.shell.run",
-  category: "shell_secret",
+  category: "shell_secret_input",
   reason: "job 1 (sudo apt update) asks for sudo password",
   secretInput: {
     jobId: 1,

@@ -155,7 +155,7 @@ export interface ApprovalResponsePayload {
    */
   answer?: { selected?: Array<string | number>; other?: string };
   /**
-   * With `approved: true` on a `shell_secret` request (ATO-2486): what
+   * With `approved: true` on a `shell_secret_input` request (ATO-2486): what
    * the person typed into the masked field. It goes into the job's input
    * only; a host never logs, stores or echoes it. An approve without a
    * usable value fails the request and it stays open.
@@ -254,7 +254,7 @@ export interface ApprovalRequestPayload {
    */
   question?: UserQuestion;
   /**
-   * Set on a `shell_secret` request (ATO-2486): an interactive shell job
+   * Set on a `shell_secret_input` request (ATO-2486): an interactive shell job
    * asks for a password. Draw a masked field and answer with
    * `approval_response.secret`; a deny skips it.
    */

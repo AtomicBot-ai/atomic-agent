@@ -132,7 +132,7 @@ export function createResolveApprovalHandler(): HttpHandler {
       }
       // A job's password (ATO-2486) is typed, not allowed: an approve
       // without the value would only tell the model nothing was typed.
-      if (pending?.category === "shell_secret") {
+      if (pending?.category === "shell_secret_input") {
         sendError(
           res,
           400,

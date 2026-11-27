@@ -5,7 +5,7 @@
  * naming what is asked; the value goes from the person straight into the
  * job's input and never reaches the model.
  *
- * It travels as an `ApprovalRequest` of category `shell_secret` with
+ * It travels as an `ApprovalRequest` of category `shell_secret_input` with
  * this object in `request.secretInput`, so the turn pauses where an
  * approval pauses it and every surface that receives approvals sees it.
  * The value comes back in `ApprovalDecision.secret`. The gate records
@@ -36,7 +36,7 @@ export const SHELL_SECRET_PROMPT_LINE_MAX = 200;
 export const SHELL_SECRET_MAX_CHARS = 1_024;
 
 /** The category every surface checks (`request.category === SHELL_SECRET_CATEGORY`). */
-export const SHELL_SECRET_CATEGORY = "shell_secret" as const;
+export const SHELL_SECRET_CATEGORY = "shell_secret_input" as const;
 
 /**
  * The value as it goes into the job, or an error naming what is wrong

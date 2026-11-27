@@ -20,7 +20,7 @@ interface SecretBody {
  * `POST /api/shell/secret`: answer a password an interactive shell job
  * asks for (ATO-2486). The request reaches the client as an ordinary
  * `approval_request` on `GET /api/events` with `category:
- * "shell_secret"` and a `secretInput` object (`jobId`, `label`,
+ * "shell_secret_input"` and a `secretInput` object (`jobId`, `label`,
  * `commandLine`, `promptLine`), replayed on reconnect like any pending
  * approval.
  *

@@ -59,7 +59,7 @@ const TAINT_SENSITIVE: Record<ApprovalCategory, boolean> = {
   // there is nothing to hold; `true` would route it to the reviewer.
   user_question: false,
   // The same for a secret the person types into a shell job (ATO-2486).
-  shell_secret: false,
+  shell_secret_input: false,
   // Sends into another chat or reads its private context (ATO-570).
   session_cross: true,
   // Screen notes leave the machine in the model's context (ATO-2363).

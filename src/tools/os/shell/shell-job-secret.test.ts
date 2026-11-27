@@ -128,7 +128,7 @@ describe.skipIf(process.platform === "win32")("os.shell.run write secret (ATO-24
     const gate = new ApprovalGate({
       emit: (req) => {
         asked.push(req);
-        if (req.category === "shell_secret") {
+        if (req.category === "shell_secret_input") {
           gate.resolve({ approvalId: req.approvalId, ...answer });
         } else {
           gate.resolve({ approvalId: req.approvalId, approved: true });
@@ -169,7 +169,7 @@ describe.skipIf(process.platform === "win32")("os.shell.run write secret (ATO-24
     expect(JSON.stringify(result.details)).not.toContain(VALUE);
     expect(result.details).toMatchObject({ secret: true, typed: true, jobId: 1 });
     // the request named the job and what it asks for, and no one could grant it for later
-    const request = asked.find((req) => req.category === "shell_secret");
+    const request = asked.find((req) => req.category === "shell_secret_input");
     expect(request?.secretInput).toMatchObject({ jobId: 1, label: "sudo password" });
     expect(request?.secretInput?.promptLine).toContain("Password:");
     expect(`${request?.reason} ${request?.preview}`).not.toContain(VALUE);
@@ -240,6 +240,6 @@ describe.skipIf(process.platform === "win32")("os.shell.run write secret (ATO-24
     const result = await shell.run({ write: 1, secret: "sudo password", text: "hunter2\n" }, ctx());
     expect(result.status).toBe("error");
     expect(result.summary).toContain("`secret` replaces `text`");
-    expect(asked.some((req) => req.category === "shell_secret")).toBe(false);
+    expect(asked.some((req) => req.category === "shell_secret_input")).toBe(false);
   });
 });
