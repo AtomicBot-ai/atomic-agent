@@ -649,6 +649,8 @@ contextBridge.exposeInMainWorld("atomic", {
   handoffReveal: (path: string) => ipcRenderer.invoke("cli:handoffReveal", path),
   // ATO-1157: the Agents sheet's list of Claude Code / Codex sessions (main/agent-hub-ipc.ts).
   hubScan: () => ipcRenderer.invoke("hub:scan"),
+  // ATO-2737: the line "Open on local model" types, naming the app's own agent by full path.
+  hubLaunchCommand: (agent: string) => ipcRenderer.invoke("hub:launchCommand", agent),
   // ATO-556: atomicagent:// links — main keeps what came in until the window takes it; `deeplink:new` says there is more.
   deeplinkTake: () => ipcRenderer.invoke("app:deeplinkTake"),
   onDeeplink: (cb: () => void) => on("deeplink:new", () => cb()),

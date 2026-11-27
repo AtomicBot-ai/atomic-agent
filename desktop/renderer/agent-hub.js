@@ -10,8 +10,9 @@
    existing "Continue from Claude Code / Codex" path, handoff.js) or opened
    in Terminal with the agent's own resume command typed, not run
    (terminal-open, macOS only), or opened in Terminal with
-   `atag launch claude|codex` typed, which runs that CLI on Atomic Agent
-   through `atag serve` (ATO-2172).
+   `<the app's own agent> launch claude|codex` typed, which runs that CLI on
+   Atomic Agent through `atag serve` (ATO-2172; ATO-2737: main names the
+   bundled agent by full path, main/hub-launch-command.ts).
 
    Opened from the palette ("Agents: who is waiting for you") and from the
    handoff sheet's footer. */
@@ -64,11 +65,22 @@ function hubResumeCommand(row) {
   return '';
 }
 
-/** ATO-2172: `atag launch` for a row's agent, typed into Terminal in the row's folder, or ''. */
-function hubLaunchCommand(row) {
-  if (row && row.agent === 'claude-code') return 'atag launch claude';
-  if (row && row.agent === 'codex') return 'atag launch codex';
+/** ATO-2172: the name `atag launch` takes for a row's agent, or ''. */
+function hubLaunchAgent(row) {
+  if (row && row.agent === 'claude-code') return 'claude';
+  if (row && row.agent === 'codex') return 'codex';
   return '';
+}
+
+/** ATO-2737: the bare `atag launch` line, typed only when main cannot name the app's own agent (an older preload). */
+function hubLaunchCommand(row) {
+  const agent = hubLaunchAgent(row);
+  return agent ? 'atag launch ' + agent : '';
+}
+
+/** The local-model button's tooltip: what it does, not the long path it types. */
+function hubLaunchTitle(row) {
+  return 'Runs ' + (HUB_AGENT_LABELS[row && row.agent] || 'the agent') + ' on your local model, in Terminal';
 }
 
 function hubRowMeta(row, rel) {
@@ -88,8 +100,8 @@ function hubRowHTML(row, o) {
   const term = opts.terminalOk && hubResumeCommand(row)
     ? '<button class="btn btn-g sm" data-act="hub:term:' + hubEsc(key) + '" title="' + hubEsc(hubResumeCommand(row)) + '">Open in Terminal</button>'
     : '';
-  const local = opts.terminalOk && hubLaunchCommand(row)
-    ? '<button class="btn btn-g sm" data-act="hub:local:' + hubEsc(key) + '" title="' + hubEsc(hubLaunchCommand(row)) + '">Open on local model</button>'
+  const local = opts.terminalOk && hubLaunchAgent(row)
+    ? '<button class="btn btn-g sm" data-act="hub:local:' + hubEsc(key) + '" title="' + hubEsc(hubLaunchTitle(row)) + '">Open on local model</button>'
     : '';
   return '<div class="row hubrow"><i class="' + hubDotClass(row) + '"></i>'
     + '<span class="main"><span class="t">' + hubEsc(row.title || '(untitled)') + '</span>'
@@ -167,13 +179,27 @@ function hubOpenTerminal(row, command) {
     .then((r) => { if (!r || r.ok !== true) fail(r && r.message); }, () => fail());
 }
 
+/** ATO-2737: main builds the line (the app's own agent by full path); the bare `atag` only when this build cannot ask. */
+async function hubOpenLocal(row) {
+  const agent = hubLaunchAgent(row);
+  if (!agent) return;
+  let command = hubLaunchCommand(row);
+  if (BR && typeof BR.hubLaunchCommand === 'function') {
+    let res = null;
+    try { res = await BR.hubLaunchCommand(agent); } catch { res = null; }
+    if (res && res.ok === false && res.reason === 'remote') { toast("Couldn't open Terminal", res.message || '', 'bad'); return; }
+    if (res && res.ok === true && typeof res.command === 'string' && res.command) command = res.command;
+  }
+  hubOpenTerminal(row, command);
+}
+
 /** `hub:<verb>` from act(): open · refresh · go:<agent>:<id> · term:<agent>:<id> · local:<agent>:<id>. */
 function hubAct(v) {
   if (v === 'open') { S.overlay = 'hub'; AG_HUB.error = null; hubLoad(); return; }
   if (v === 'refresh') { hubLoad(); return; }
   if (v.indexOf('go:') === 0) { const row = hubFind(v.slice(3)); if (row) hubContinue(row); return; }
   if (v.indexOf('term:') === 0) { const row = hubFind(v.slice(5)); if (row) hubOpenTerminal(row, hubResumeCommand(row)); return; }
-  if (v.indexOf('local:') === 0) { const row = hubFind(v.slice(6)); if (row) hubOpenTerminal(row, hubLaunchCommand(row)); return; }
+  if (v.indexOf('local:') === 0) { const row = hubFind(v.slice(6)); if (row) hubOpenLocal(row); return; }
 }
 
-if (typeof module !== 'undefined') module.exports = {hubEsc, hubFolder, hubGroupRows, hubDotClass, hubResumeCommand, hubLaunchCommand, hubRowMeta, hubRowHTML, hubListHTML, HUB_GROUPS};
+if (typeof module !== 'undefined') module.exports = {hubEsc, hubFolder, hubGroupRows, hubDotClass, hubResumeCommand, hubLaunchAgent, hubLaunchCommand, hubLaunchTitle, hubOpenLocal, hubRowMeta, hubRowHTML, hubListHTML, HUB_GROUPS};

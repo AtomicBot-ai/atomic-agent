@@ -8,6 +8,10 @@
  * Connected to an agent on another computer, the sessions on THIS computer
  * are not the ones that agent can continue (the same rule as handoff.ts),
  * so the scan is refused in words.
+ *
+ * ATO-2737: `hub:launchCommand(agent)` → { ok: true, command } | { ok: false,
+ * reason, message }, the line "Open on local model" types: the app's own
+ * agent by full path (hub-launch-command.ts), refused when remote.
  */
 
 import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
@@ -15,6 +19,8 @@ import { homedir } from "node:os";
 import { ipcMain } from "electron";
 
 import { scanAgentSessions, type HubFsDeps } from "./agent-hub-scan.js";
+import { resolveBinary } from "./agent-client.js";
+import { hubLaunchAnswer } from "./hub-launch-command.js";
 
 export const HUB_REMOTE_MESSAGE =
   "This app is connected to an agent on another computer. Its Claude Code and Codex sessions are listed there.";
@@ -49,4 +55,6 @@ export function wireAgentHubIpc(opts: { isRemote: () => boolean }): void {
       return { ok: false, reason: "failed", message: err instanceof Error ? err.message : String(err) };
     }
   });
+  ipcMain.handle("hub:launchCommand", (_event, agent: unknown) =>
+    hubLaunchAnswer(agent, { isRemote: opts.isRemote(), platform: process.platform, binPath: opts.isRemote() ? null : resolveBinary() }));
 }
