@@ -10,15 +10,21 @@ import { logbookCommand } from "./logbook-command.js";
 
 const NOW = new Date(2026, 10, 27, 16, 0);
 
-function harness(platform: NodeJS.Platform = "darwin") {
+function harness(platform: NodeJS.Platform = "darwin", tty: { isTty: boolean; answer?: boolean } = { isTty: false }) {
   const stateDir = mkdtempSync(join(tmpdir(), "atomic-logbook-cli-"));
   let out = "";
   let err = "";
+  const asked: string[] = [];
   const run = (...args: string[]) =>
     logbookCommand(args, {
       stateDir,
       now: () => NOW,
       platform,
+      isTty: tty.isTty,
+      confirm: async (prompt) => {
+        asked.push(prompt);
+        return tty.answer ?? false;
+      },
       write: (t) => {
         out += t;
       },
@@ -26,7 +32,7 @@ function harness(platform: NodeJS.Platform = "darwin") {
         err += t;
       },
     });
-  return { stateDir, run, out: () => out, err: () => err, reset: () => { out = ""; err = ""; } };
+  return { stateDir, run, asked, out: () => out, err: () => err, reset: () => { out = ""; err = ""; } };
 }
 
 describe("atomic-agent logbook", () => {
@@ -72,7 +78,36 @@ describe("atomic-agent logbook", () => {
     expect(await h.run("clear", "--day", "2026-11-26")).toBe(0);
     expect(listLogbookDays(h.stateDir)).toEqual(["2026-11-27"]);
     expect(await h.run("clear")).toBe(2);
-    expect(await h.run("clear", "--all")).toBe(0);
+    expect(await h.run("clear", "--all", "--yes")).toBe(0);
+    expect(listLogbookDays(h.stateDir)).toEqual([]);
+  });
+
+  it("clear --all asks first in a terminal and keeps the notes on no (ATO-2770)", async () => {
+    const no = harness("darwin", { isTty: true, answer: false });
+    appendLogbookEntry(no.stateDir, { at: new Date(2026, 10, 26, 9, 0).toISOString(), app: "Mail", bundleId: null, text: "a" });
+    appendLogbookEntry(no.stateDir, { at: new Date(2026, 10, 27, 9, 0).toISOString(), app: "Mail", bundleId: null, text: "b" });
+    appendLogbookEntry(no.stateDir, { at: new Date(2026, 10, 27, 10, 0).toISOString(), app: "Mail", bundleId: null, text: "c" });
+    expect(await no.run("clear", "--all")).toBe(0);
+    expect(no.asked).toEqual(["Delete all 3 notes (2 days)? This cannot be undone. [y/N] "]);
+    expect(no.out()).toBe("Nothing deleted.\n");
+    expect(listLogbookDays(no.stateDir)).toEqual(["2026-11-26", "2026-11-27"]);
+
+    const yes = harness("darwin", { isTty: true, answer: true });
+    appendLogbookEntry(yes.stateDir, { at: new Date(2026, 10, 27, 9, 0).toISOString(), app: "Mail", bundleId: null, text: "a" });
+    expect(await yes.run("clear", "--all")).toBe(0);
+    expect(yes.asked).toHaveLength(1);
+    expect(listLogbookDays(yes.stateDir)).toEqual([]);
+  });
+
+  it("clear --all without a terminal deletes nothing unless --yes is given", async () => {
+    const h = harness();
+    appendLogbookEntry(h.stateDir, { at: new Date(2026, 10, 27, 9, 0).toISOString(), app: "Mail", bundleId: null, text: "a" });
+    expect(await h.run("clear", "--all")).toBe(1);
+    expect(h.asked).toEqual([]);
+    expect(h.err()).toContain("atomic-agent logbook clear --all --yes");
+    expect(listLogbookDays(h.stateDir)).toEqual(["2026-11-27"]);
+    expect(await h.run("clear", "--all", "--yes")).toBe(0);
+    expect(h.asked).toEqual([]);
     expect(listLogbookDays(h.stateDir)).toEqual([]);
   });
 

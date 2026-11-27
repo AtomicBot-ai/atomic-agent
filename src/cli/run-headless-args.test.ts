@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseRunArgs } from "./run-agent.js";
+import { parseRunArgs, RUN_HELP } from "./run-agent.js";
 
 /** ATO-2307: the headless flags of `atomic-agent run`. */
 describe("run headless flags", () => {
@@ -63,5 +63,16 @@ describe("run headless flags", () => {
       error: "--incognito starts a new chat, so it cannot run with --resume or --continue",
     });
     expect(parseRunArgs(["  "])).toEqual({ error: "the prompt argument is empty" });
+  });
+});
+
+/** ATO-2770: `--json` stays the JSONL stream; the help says so and names the one-object form. */
+describe("run help on --json", () => {
+  it("says --json is one event per line and points at --output-format json for one object", () => {
+    const at = RUN_HELP.indexOf("  --json ");
+    expect(at).toBeGreaterThan(-1);
+    const entry = RUN_HELP.slice(at, RUN_HELP.indexOf("\n  -m,", at));
+    expect(entry).toContain("one JSON event per line");
+    expect(entry).toContain("--output-format json");
   });
 });
