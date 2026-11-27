@@ -1187,6 +1187,13 @@ Honestly degraded, and labelled as such in the UI:
   `renderer/meeting-voices.js`). An older agent, an OS without a prebuilt
   engine, a failed download or the switch off falls back to Me / Them or the
   pause guess, and the saved file says which was used.
+- **Create tasks (ATO-2514).** A reply that holds the meeting-notes
+  `| # | Task | Owner | Due |` table gets `Create tasks` in its action row
+  (`renderer/meeting-tasks.js`). It lists the items, all ticked, with a date
+  each (the due date when it is a real date, else tomorrow) and creates one
+  reminder per ticked item at 9:00 local through `BR.taskCreate` (kind `at`),
+  the same `task create` the Cron jobs pane uses. Nothing is created
+  without the click.
 - **Voice input: what is and is not possible.** `SpeechAnalyzer` is macOS
   26+, so on anything older the button is disabled and says
   `Voice input needs macOS 26 or later`; the app itself runs from
