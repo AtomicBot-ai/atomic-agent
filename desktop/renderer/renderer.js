@@ -7653,6 +7653,8 @@ function act(a) {
   if (a === 'sel:addProvider') { closeSelector(); act('settings:llm'); act('llm:add'); return; }
   // ATO-1372: the picker's Get vision files chip.
   if (a.startsWith('sel:vision:')) { selVisionFetch(a.slice('sel:vision:'.length)); return; }
+  // ATO-2169: a model row's star (model-favorites.js); the picker stays open.
+  if (a.startsWith('sel:fav:')) { if (typeof modelFavToggle === 'function') modelFavToggle(a.slice('sel:fav:'.length)); render(); return; }
   if (a === 'wiz:subRecheck') { wizSubRecheck(WIZ.row); return; }
   if (a === 'wiz:subLogin') { wizSubLogin(WIZ.row); return; }
   if (a === 'wiz:subCopy') { wizSubCopy(WIZ.row); return; }
@@ -19786,10 +19788,11 @@ function selGroupedRows(current, currentRows) {
       : selCloudRows(g.id, (SEL_GROUPS.get(g.id) || {}).models, null);
     for (const r of rows) { r.group = g.id; out.push(r); }
   }
-  SEL.groups = groups;
+  const pin = typeof modelFavPin === 'function' ? modelFavPin(groups, out) : {groups, rows: out};   // ATO-2169: Favorites first
+  SEL.groups = pin.groups;
   // A provider whose key turned good after the list opened has not been asked yet.
   if (groups.some((g) => g.id !== current && g.id !== LOCAL_GROUP && !SEL_GROUPS.has(g.id))) queueMicrotask(selLoadGroups);
-  return out;
+  return pin.rows;
 }
 /* Every other group's catalogue, each on its own. A list already in hand is
    kept for the session (a live one from selLoadModels first); a group that
@@ -20111,7 +20114,8 @@ function selectorHTML() {
               + ' title="Download the vision projector so this model reads images">' + ic('download') + esc(r.visionLabel) + '</span>' : '')
           /* An unlit cell, not a lit one: this is a state we could not
              confirm, not a fault we found. It goes out when a turn succeeds. */
-          + (r.unverified ? '<span class="ann caution">Unverified</span>' : '');
+          + (r.unverified ? '<span class="ann caution">Unverified</span>' : '')
+          + (groups && typeof modelFavStarHTML === 'function' ? modelFavStarHTML(r, {esc, ic}) : '');   // ATO-2169
         const name = selRowName(r);
         return (r.type === 'action' && i > 0 ? '<div class="tk-sep selsep"></div>' : '')
           + '<button class="modelrow' + (r.active ? ' on' : '') + (r.type === 'localBusy' || r.disabled ? ' off" aria-disabled="true' : '') + '" data-sel-row="' + i + '" data-id="' + esc(r.id) + '">'
@@ -20130,7 +20134,9 @@ function selectorHTML() {
      or error line; ungrouped, the one list keeps its lines on top. */
   /* The current route's group (first) keeps the list's own lines, the ones
      the drivers read; the other groups' lines are their own. */
-  const groupsHTML = groups ? groups.map((g, gi) => {
+  const favLead = groups && groups[0] && groups[0].fav ? 1 : 0;   // ATO-2169: Favorites is not the route's own group
+  const groupsHTML = groups ? groups.map((g, gAt) => {
+    const gi = gAt - favLead;
     const own = [];
     rows.forEach((r, i) => { if (r.group === g.id) own.push(rowHTML(r, i)); });
     const bare = gi > 0 && !own.length && !g.busy && !g.err;
