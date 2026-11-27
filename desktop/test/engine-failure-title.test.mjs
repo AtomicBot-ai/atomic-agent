@@ -20,7 +20,7 @@ test("a damaged or missing model file says the file needs downloading again", ()
 test("a model too new for the engine says so, in the body's own word", () => {
   const why = "This model needs a newer engine. Update Atomic Agent, then start it again.";
   const title = T.engfTitleOf({ why, reason: "model_unsupported" });
-  assert.equal(title, "This model needs a newer engine");
+  assert.equal(title, "Update Atomic Agent to run this model");
   assert.ok(why.includes("newer engine"));
 });
 

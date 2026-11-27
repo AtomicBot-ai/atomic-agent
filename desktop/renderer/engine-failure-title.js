@@ -12,7 +12,7 @@
 
 const ENGF_TITLE = 'The local engine isn\u2019t ready';
 const ENGF_TITLE_MODEL_FILE = 'The model file needs to be downloaded again';
-const ENGF_TITLE_UNSUPPORTED = 'This model needs a newer engine';
+const ENGF_TITLE_UNSUPPORTED = 'Update Atomic Agent to run this model';
 
 /** The title for a failure word: the model's own trouble, or the engine's. */
 function engfTitleOf(f) {
