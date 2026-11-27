@@ -68,7 +68,7 @@ describe("reclaimManagedPort", () => {
     expect(out).toMatchObject({ kind: "stopped", pid: 46051 });
     expect(d.stopped).toEqual([46051]);
     expect(describeReclaim(out, "chat server", 19091)).toBe(
-      `local-llm: chat server — stopped a leftover llama-server pid 46051 (llama-server) — nothing of ${QA} is running`,
+      `local-llm: chat server — stopped a leftover llama-server pid 46051 (llama-server): nothing of ${QA} is running`,
     );
   });
 
@@ -131,6 +131,42 @@ describe("reclaimManagedPort", () => {
     const d = deps({ holder: holder(OWN, 5), servedModels: async () => ["nomic-embed-text-v1.5"] });
     await reclaimManagedPort({ ...req, role: "embedding", port: 19091, alias: "nomic-embed-text-v1.5" }, d);
     expect(d.pidFiles).toEqual([[OWN, "embedding", 5]]);
+  });
+});
+
+describe("reclaimManagedPort with move: false (models start, ATO-2458)", () => {
+  const keep: ReclaimRequest = { ...req, move: false };
+
+  it("leaves a stranger on the port: held, nothing stopped, no other port probed", async () => {
+    const probed: number[] = [];
+    const d = deps({ holder: holder(null) });
+    d.portOpen = async (p) => (probed.push(p), p === 19091);
+    const out = await reclaimManagedPort(keep, d);
+    expect(out).toEqual({
+      kind: "held",
+      why: "port 19091 is held by pid 46051 (llama-server), which is not an atomic-agent server",
+    });
+    expect(d.stopped).toEqual([]);
+    expect(probed.every((p) => p === 19091)).toBe(true);
+  });
+
+  it("never moves off another state dir that is still in use, nor off a holder that would not let go", async () => {
+    for (const d of [
+      deps({ holder: holder(QA), liveSessions: () => true }),
+      deps({ holder: holder(QA), stopProcess: async () => {} }),
+      deps({ holder: null }),
+    ]) {
+      expect(await reclaimManagedPort(keep, d)).toMatchObject({ kind: "held" });
+    }
+  });
+
+  it("still stops another state dir's abandoned server and our own wedged one, and adopts our own", async () => {
+    const leftover = deps({ holder: holder(QA) });
+    expect(await reclaimManagedPort(keep, leftover)).toMatchObject({ kind: "stopped", pid: 46051 });
+    const wrongModel = deps({ holder: holder(OWN, 61655), servedModels: async () => ["gemma-4-12b"] });
+    expect(await reclaimManagedPort(keep, wrongModel)).toMatchObject({ kind: "stopped", pid: 61655 });
+    const same = deps({ holder: holder(OWN, 61655), servedModels: async () => [req.alias] });
+    expect(await reclaimManagedPort(keep, same)).toEqual({ kind: "adopted", pid: 61655 });
   });
 });
 
