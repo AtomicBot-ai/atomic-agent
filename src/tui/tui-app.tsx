@@ -84,6 +84,7 @@ import {
 import { MenuPopup } from "./menu/menu-popup.js";
 import type { MenuNode } from "./menu/menu-registry.js";
 import { ApprovalModal } from "./approval-modal.js";
+import { isShellSecretRequest, submitShellSecret } from "./secret-input/secret-input-keys.js";
 import { cycleModelRing } from "./model-ring/model-ring-actions.js";
 import { ChatLog } from "./chat/chat-log.js";
 import {
@@ -272,6 +273,11 @@ export interface TuiAppCallbacks {
    * checked against it (`parseTypedUserQuestionAnswer`).
    */
   onQuestionAnswer?(approvalId: string, answer: UserQuestionAnswer): void;
+  /**
+   * The value typed into a `shell_secret` request's masked field
+   * (ATO-2486), for the job's input only: never logged or echoed.
+   */
+  onSecretInput?(approvalId: string, value: string): void;
   /**
    * Remove a session for good. Confirmed by the operator in the dialog
    * the rail's `x` opens — the host does the deleting and decides where
@@ -1501,8 +1507,10 @@ export function TuiApp({
     // operator answers the agent in the same field they always type in,
     // and `approvalHotkey` decides per keystroke whether it is a
     // decision or text. The one exception is the prompt's own target
-    // field, which owns input while it is open.
+    // field, which owns input while it is open, and a secret's masked
+    // field (ATO-2486), which owns it the same way.
     state.approvalPathDraft === null &&
+    !isShellSecretRequest(state.pendingApproval) &&
     // The update offer claims y / n / Esc; keep the editor unfocused so
     // those keystrokes never leak into the input buffer. The post-update
     // "press any key to restart" prompt claims every key for the same reason.
@@ -2830,6 +2838,14 @@ export function TuiApp({
                       }
                       onPreviewPage={() =>
                         dispatch({ type: "approval_preview_paged" })
+                      }
+                      onSecretSubmit={(value) =>
+                        state.pendingApproval
+                          ? submitShellSecret(state.pendingApproval, value, {
+                              dispatch,
+                              onSecretInput: callbacks.onSecretInput,
+                            })
+                          : false
                       }
                     />
                   </Box>

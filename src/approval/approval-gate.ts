@@ -49,6 +49,7 @@ import {
   UntrustedTaint,
 } from "./untrusted-taint.js";
 import type { UserQuestion, UserQuestionAnswer } from "./user-question.js";
+import type { ShellSecretPrompt } from "./shell-secret.js";
 import { EgressSessionHosts, unknownOutbound } from "./egress-hold.js";
 import { withUnreadableScript, type EgressDestination } from "./egress-scan.js";
 import {
@@ -182,6 +183,12 @@ export interface ApprovalRequest {
    * shows `reason` (the question) and `preview` (the numbered options).
    */
   question?: UserQuestion;
+  /**
+   * Set only on a `shell_secret` request (ATO-2486, `shell-secret.ts`):
+   * which job asks for what. A surface that knows it draws a masked
+   * field and answers with `ApprovalDecision.secret`.
+   */
+  secretInput?: ShellSecretPrompt;
 }
 
 /**
@@ -239,6 +246,12 @@ export interface ApprovalDecision {
    * untouched; `ask_user` checks it again. Ignored when denied.
    */
   answer?: UserQuestionAnswer;
+  /**
+   * What the person typed for a `shell_secret` request (ATO-2486). It
+   * goes into the job's input and nowhere else: the gate records only
+   * the verdict, and no caller may log or echo it. Ignored when denied.
+   */
+  secret?: string;
 }
 
 export type ApprovalEmitter = (request: ApprovalRequest) => void;
