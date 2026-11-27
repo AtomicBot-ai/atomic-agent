@@ -56,6 +56,7 @@ import { createTurnPhaseTracker } from "./stream-turn-phase.js";
 import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
 import { claimScreenOverlay } from "../tools/os/screen/screen-overlay-hosts.js";
 import { buildSlowFirstTokenHint } from "./slow-first-token-hint.js";
+import { officeFileFrame } from "./office-file-frame.js";
 import type { UndeliveredSteer } from "./undelivered-steers.js";
 import {
   buildFinalAssistantPayload,
@@ -716,6 +717,8 @@ export function buildStreamEventHook(
           ...diffstatFrame(inner.result),
           // ATO-1701: the files a fusion fan-out's workers changed.
           ...diffstatsFrame(inner.result),
+          // ATO-2518: the file an ok Office writer made or changed.
+          ...officeFileFrame(inner.result),
           // ATO-1135: an MCP App's page for this call, for the chat to render.
           ...mcpAppFrame(inner.result),
           // ATO-1145: the call's approval records, as the transcript keeps
