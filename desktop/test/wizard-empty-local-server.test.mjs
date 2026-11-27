@@ -51,10 +51,39 @@ test("a failed list is not an empty server", () => {
   assert.equal(saidNoModels("models search did not return JSON: \"oops\""), false);
 });
 
-test("the wizard asks it only for a server on this machine", () => {
+// ATO-2011: an address of your own (a Tailscale 100.x, a domain) with no model read "Could not
+// check this key"; it is asked for any custom address now, and a llama.cpp still loading its
+// model ("http 503: Loading model") is said as that, not as "had a problem answering (HTTP 503)".
+function wizNextBody() {
   const at = source.indexOf("\nasync function wizNextStep(");
   assert.ok(at >= 0, "wizNextStep is in renderer.js");
-  const body = source.slice(at, source.indexOf("\n}\n", at));
-  assert.match(body, /: local && wizSaidNoModels\(said\)\n\s*\? Name \+ ' at ' \+ where \+ ' has no models yet\. '/);
-  assert.equal((body.match(/wizSaidNoModels\(/g) || []).length, 1, "used in the local line only");
+  return source.slice(at, source.indexOf("\n}\n", at));
+}
+
+test("the wizard asks it for a server on this machine and for any address of your own", () => {
+  const body = wizNextBody();
+  assert.match(body, /: \(local \|\| k\.custom\) && wizSaidNoModels\(said\)\n\s*\? Name \+ ' at ' \+ where \+ \(k\.custom \? ' has no models loaded\. Load a model into the server' : ' has no models yet\. Add one in ' \+ name\)/);
+  assert.doesNotMatch(body, /: local && wizSaidNoModels\(said\)/);
+  // The key-free lines come before the cloud fallback that names the key.
+  assert.ok(body.indexOf("wizSaidNoModels(said)\n") < body.indexOf("'Could not check this key with '"));
+});
+
+test("an empty server of your own does not light the key field", () => {
+  const body = wizNextBody();
+  assert.match(body, /const notTheKey = [^;]*\|\| \(k\.custom && !refused && wizSaidNoModels\(said\)\)/);
+});
+
+test("llama.cpp's 503 Loading model is said as a model still loading, ahead of the HTTP 5xx line", () => {
+  const body = wizNextBody();
+  const decl = body.match(/const loadingModel = ([^;]*);/);
+  assert.ok(decl, "loadingModel is read off the answer");
+  const loading = (status, said, k) => vm.runInNewContext(decl[1], {status, said, k});
+  assert.equal(loading(503, "http 503: Loading model", {custom: true}), true);
+  assert.equal(loading(503, "could not list models from \"mine\": http 503: Loading model", {local: true}), true);
+  assert.equal(loading(503, "http 503: Service Unavailable", {custom: true}), false);
+  assert.equal(loading(502, "http 502: Loading model", {custom: true}), false);
+  assert.equal(loading(503, "http 503: Loading model", {}), false, "a cloud provider's 503 keeps its own line");
+  const at = body.indexOf(": loadingModel\n");
+  assert.ok(at >= 0 && at < body.indexOf(": status >= 500\n"));
+  assert.match(body.slice(at, at + 200), /is still loading its model\. Wait a moment, then try again\./);
 });
