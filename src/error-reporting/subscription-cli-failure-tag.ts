@@ -37,6 +37,7 @@ const KNOWN_INVOCATION_KINDS: ReadonlySet<string> = new Set([
   "not_json",
   "reported_error",
   "turn_failed",
+  "no_result_envelope",
 ]);
 
 /** The CLI error classes that need no field to say what happened. */

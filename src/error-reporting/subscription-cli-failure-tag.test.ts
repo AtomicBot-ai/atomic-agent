@@ -7,6 +7,7 @@ import {
   SubscriptionCliNotInstalledError,
   mapCliFailure,
 } from "../llm/provider/subscription-cli/subscription-cli-errors.js";
+import { noResultEnvelopeError } from "../llm/provider/subscription-cli/cli-no-result-error.js";
 import { scrubError } from "./error-scrubber.js";
 import { parseSentryDsn } from "./sentry-config.js";
 import { buildEnvelope, buildFingerprint } from "./sentry-envelope.js";
@@ -46,6 +47,12 @@ describe("cli_failure / cli_exit_code tags (ATO-1446)", () => {
     expect(extractSubscriptionCliFailureTags(failure({ timedOut: true, exitCode: null }))).toEqual({ cli_failure: "timeout" });
     expect(extractSubscriptionCliFailureTags(failure({ truncated: true }))?.cli_failure).toBe("output_too_large");
     expect(extractSubscriptionCliFailureTags(failure({ inputTruncated: true }))?.cli_failure).toBe("input_truncated");
+  });
+
+  it("names a stream with no final result line as no_result_envelope, with no reason (ATO-2522)", () => {
+    const err = noResultEnvelopeError("/opt/tools/claude", "Claude Code");
+    expect(extractSubscriptionCliFailureTags(err)).toEqual({ cli_failure: "no_result_envelope", cli_exit_code: "0" });
+    expect(tagsOf(err)).toMatchObject({ cli_failure: "no_result_envelope", cli_exit_code: "0" });
   });
 
   it("names a usage limit as limit_reached", () => {
