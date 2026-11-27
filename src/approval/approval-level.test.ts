@@ -22,6 +22,7 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "http_write",
   "shell",
   "shell_dangerous",
+  "shell_secret",
   "script",
   "proc_kill",
   "publish",
@@ -58,10 +59,11 @@ describe("session-grant eligibility", () => {
     );
   });
 
-  it("grants every category except trust_config, state_secret, email, browser_secret, local_model_restart, hook_ask, user_question, browser_take_over, shell_dangerous and fusion_fanout", () => {
+  it("grants every category except trust_config, state_secret, email, browser_secret, local_model_restart, hook_ask, user_question, browser_take_over, shell_dangerous, shell_secret and fusion_fanout", () => {
     for (const category of ALL_CATEGORIES) {
       expect(isGrantableCategory(category)).toBe(
         category !== "shell_dangerous" &&
+          category !== "shell_secret" &&
           category !== "fusion_fanout" &&
           category !== "trust_config" &&
           category !== "state_secret" &&
@@ -94,6 +96,14 @@ describe("session-grant eligibility", () => {
     );
   });
 
+  it("shell_secret asks below full trust, is never granted, and is not called dangerous (ATO-2530)", () => {
+    expect(isGrantableCategory("shell_secret")).toBe(false);
+    expect(isAutoApprovedAt(4, "shell_secret")).toBe(false);
+    expect(isAutoApprovedAt(5, "shell_secret")).toBe(true);
+    expect(formatApprovalCategory("shell_secret")).toBe("command · uses a secret");
+    expect(formatApprovalCategory("shell_secret")).not.toContain("dangerous");
+  });
+
   it("trust_config is the one non-grantable category (mirrors its level-5 pin)", () => {
     expect(isGrantableCategory("trust_config")).toBe(false);
     // The grant-side half of the trust_config invariant lines up with the
@@ -119,6 +129,8 @@ describe("approval ladder", () => {
       shell: 4,
       // rm -rf, git reset --hard, sudo: only full trust runs them unasked.
       shell_dangerous: 5,
+      // A command handed a tool secret: each use asks (ATO-2530).
+      shell_secret: 5,
       script: 4,
       proc_kill: 4,
       publish: 4,

@@ -1,4 +1,5 @@
 import { setDotenvKey } from "./dotenv-writer.js";
+import { applySavedSecretToEnv, type AppliedSecret } from "./apply-saved-secret.js";
 import { ConfigValidationError, type UserConfigFile } from "./config-schema.js";
 import { ensureUserConfigFileSync, writeUserConfigFileSync } from "./config-file.js";
 import { getConfig, resetConfigCache } from "./config-cache.js";
@@ -139,7 +140,7 @@ export function writeProviderApiKeyToDotenv(
    * second service would overwrite the first one's key.
    */
   envVarOverride?: string,
-): void {
+): AppliedSecret {
   const trimmed = apiKey.trim();
   if (trimmed.length === 0) {
     throw new LlmAddProviderError("API key is empty");
@@ -148,8 +149,10 @@ export function writeProviderApiKeyToDotenv(
   setDotenvKey(getConfig().paths.stateDir, envKey, trimmed);
   // Always mirror into the live environment, not only when unset: key
   // resolution reads `process.env`, so a session that just rewrote .env
-  // must start using the new key now, not after a restart.
-  process.env[envKey] = trimmed;
+  // must start using the new key now, not after a restart. A reference
+  // (`op://…`) is resolved first, so the provider never gets it as a key
+  // (ATO-2530).
+  return applySavedSecretToEnv(getConfig().paths.stateDir, envKey, trimmed);
 }
 
 function mergeProviderIntoBlock(

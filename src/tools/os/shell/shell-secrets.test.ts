@@ -110,7 +110,8 @@ describe.skipIf(process.platform === "win32")("os.shell.run with {{secret:NAME}}
     );
     // `printf` alone would run unasked; a secret always goes to the gate.
     expect(asked).toHaveLength(1);
-    expect(asked[0]!.category).toBe("shell_dangerous");
+    // Its own category, not "dangerous shell command" (ATO-2530).
+    expect(asked[0]!.category).toBe("shell_secret");
     expect(asked[0]!.preview).toContain("{{secret:DEMO_TOKEN}}");
     expect(asked[0]!.preview).not.toContain(VALUE);
     expect(asked[0]!.reason).toContain("uses secret DEMO_TOKEN");

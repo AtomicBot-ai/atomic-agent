@@ -430,10 +430,10 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     // A command the guard's dangerous layer matched asks as
     // `shell_dangerous`, which only full trust silences and no grant
     // reaches (ATO-1220): below level 5 a shell batch is not unattended.
-    "os.shell.run": ["shell", "shell_dangerous"],
+    "os.shell.run": ["shell", "shell_dangerous", "shell_secret"],
     // Same rung as a shell command: it runs one, in a copy, and a
     // dangerous one asks as `shell_dangerous` too (ATO-1266).
-    "verify.run": ["shell", "shell_dangerous"],
+    "verify.run": ["shell", "shell_dangerous", "shell_secret"],
     "os.fs.write": FS_WRITE_CATEGORIES,
     // ATO-1137: the same funnel (`requireFsApproval`, kind `write`).
     "canvas.render": FS_WRITE_CATEGORIES,
