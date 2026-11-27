@@ -255,6 +255,7 @@ export async function executeBatch(
         stepIndex: ctx.stepIndex,
         signal: ctx.signal,
         ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
+        ...(ctx.toolFilter !== undefined ? { toolFilter: ctx.toolFilter } : {}),
         ...(ctx.readRoots !== undefined ? { readRoots: ctx.readRoots } : {}),
         ...(ctx.userGroundingTexts !== undefined
           ? { userGroundingTexts: ctx.userGroundingTexts }

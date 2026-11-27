@@ -18,6 +18,14 @@ export interface RunHeadlessArgs {
   outputLastMessage: string | null;
   /** Positional words: one turn with this message, stdin is not read as messages. */
   prompt: string | null;
+  /** `--output-schema`: a JSON Schema file, or the schema itself when it starts with `{` (ATO-2440). */
+  outputSchema: string | null;
+  /** `--allowed-tools`: the only tools the run may see; empty = no narrowing. */
+  allowedTools: string[];
+  /** `--disallowed-tools`: tools the run never sees. */
+  disallowedTools: string[];
+  /** `--ephemeral`: the chat is deleted when the run ends; memory is still written. */
+  ephemeral: boolean;
 }
 
 export function emptyHeadlessArgs(): RunHeadlessArgs {
@@ -27,6 +35,10 @@ export function emptyHeadlessArgs(): RunHeadlessArgs {
     resume: null,
     outputLastMessage: null,
     prompt: null,
+    outputSchema: null,
+    allowedTools: [],
+    disallowedTools: [],
+    ephemeral: false,
   };
 }
 
@@ -85,6 +97,28 @@ export function readHeadlessFlag(
       acc.outputLastMessage = v;
       return i + 1;
     }
+    case "--output-schema": {
+      const v = value();
+      if (v === null || v.startsWith("-")) {
+        return { error: "--output-schema needs a JSON Schema file (or the schema as JSON)" };
+      }
+      acc.outputSchema = v;
+      return i + 1;
+    }
+    case "--allowed-tools":
+    case "--allowedTools":
+    case "--disallowed-tools":
+    case "--disallowedTools": {
+      const v = value();
+      const names = v === null || v.startsWith("-") ? [] : splitToolList(v);
+      if (names.length === 0) return { error: `${flag} needs tool names, e.g. os.fs.read,os.fs.*` };
+      const list = flag.startsWith("--allowed") ? acc.allowedTools : acc.disallowedTools;
+      for (const name of names) if (!list.includes(name)) list.push(name);
+      return i + 1;
+    }
+    case "--ephemeral":
+      acc.ephemeral = true;
+      return i;
     default:
       if (flag.startsWith("-")) return null;
       acc.prompt = acc.prompt === null ? flag : `${acc.prompt} ${flag}`;
@@ -100,8 +134,19 @@ export function headlessArgsConflict(
   if (acc.resume !== null && incognito) {
     return "--incognito starts a new chat, so it cannot run with --resume or --continue";
   }
+  if (acc.resume !== null && acc.ephemeral) {
+    return "--ephemeral deletes the chat when the run ends, so it cannot run with --resume or --continue";
+  }
   if (acc.prompt !== null && acc.prompt.trim().length === 0) {
     return "the prompt argument is empty";
   }
   return null;
+}
+
+/** `a,b c` and `a, b`: a tool list split on commas and spaces (Claude Code takes both). */
+export function splitToolList(value: string): string[] {
+  return value
+    .split(/[,\s]+/)
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
 }

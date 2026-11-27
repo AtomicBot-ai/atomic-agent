@@ -115,11 +115,12 @@ describe("run in headless mode (ATO-2307)", () => {
 
   const base = (): string[] => ["--cwd", workingDir, "--no-approval"];
 
-  it("runs one turn with the prompt argument and leaves stdin lines alone", async () => {
+  it("runs one turn with the prompt argument; piped stdin joins it, never a second turn", async () => {
+    // ATO-2440: the piped line is part of the one task, as in `codex exec`.
     feedStdin(["a piped line\n"]);
     const code = await runAgentCommand([...base(), "say", "hi"]);
     expect(code).toBe(0);
-    expect(turnMessages).toEqual(["say hi"]);
+    expect(turnMessages).toEqual(["say hi\n\n<stdin>\na piped line\n</stdin>"]);
     expect(stdout).toBe("hello there\n");
   }, 60_000);
 

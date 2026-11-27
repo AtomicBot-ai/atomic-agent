@@ -5,6 +5,7 @@ import { createContextCompaction, logCompactionOutcome } from "./context-compact
 import { enhancePrompt, promptEnhancePartition } from "./prompt-enhancer.js";
 import { askSideQuestion, sideQuestionPartition } from "./side-question.js";
 import { completePlain, PLAIN_COMPLETE_PARTITION, type PlainCompleteInput } from "./plain-complete.js";
+import { shapeStructuredAnswer, type StructuredAnswerInput } from "./structured-answer.js";
 import { createBackgroundCompaction } from "./compaction-background.js";
 import { createCompactionTokenCounter } from "./compaction-token-counter.js";
 import { createWorkspaceLoader } from "./session-workspace.js";
@@ -1195,6 +1196,10 @@ export async function createAgentRuntime(
           logger.debug("plain completion failed", { error: err instanceof Error ? err.message : String(err) }),
       });
     },
+    shapeStructuredAnswer: (input: StructuredAnswerInput) =>
+      lifecycle.isShutdown()
+        ? Promise.resolve({ ok: false as const, reason: "shutting down" })
+        : shapeStructuredAnswer(input, browserExtract.current),
     refreshSkills,
     refreshMcp,
     reloadLlmProviders,

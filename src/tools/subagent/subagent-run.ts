@@ -470,6 +470,7 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
             );
         return runWorkerTasks(runnerDeps, {
           parentSessionId: ctx.sessionId,
+          ...(ctx.toolFilter === undefined ? {} : { parentToolFilter: ctx.toolFilter }),
           tasks: group.tasks,
           maxWorkers,
           providerId: group.leg.providerId,

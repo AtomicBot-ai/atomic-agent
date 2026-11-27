@@ -49,6 +49,12 @@ export interface ToolContext {
    */
   toolRole?: ToolRole;
   /**
+   * The turn's `RunTurnOptions.toolFilter`, when one is set (ATO-2440).
+   * A tool that starts worker turns (`subagent.run`, `fusion.delegate`)
+   * hands it on, so a worker never sees a tool the turn itself hides.
+   */
+  toolFilter?: (name: string) => boolean;
+  /**
    * Absolute paths the user named in this session's own messages
    * (`userNamedPaths`, `src/tools/read-scope/`), recomputed by the step
    * from the transcript. Under `agent.readScope: "working-dir"` a read
