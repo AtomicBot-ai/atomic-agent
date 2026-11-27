@@ -8,6 +8,7 @@ import { GATED_TOOL_NAMES } from "./filter-disabled-tools.js";
 import { ToolRegistry, type ToolDefinition } from "../tools/tool-registry.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { READ_TOOL_TARGETS } from "../tools/read-scope/read-scope-targets.js";
+import { GUEST_GIT_TOOLS } from "../tools/read-scope/guest-reads.js";
 import * as readProtection from "../tools/read-scope/confine-reads.js";
 import { SKILL_EDIT_TOOLS } from "../tools/skill/skill-edit-tracker.js";
 
@@ -82,7 +83,8 @@ describe("runtime tool contract composition", () => {
         expect({ ...definition, run: first.run }).toEqual(first);
       }
       expect(new Set(native.map((definition) => definition.name)).size).toBe(native.length - trackedAgain.length);
-      const expectedReplacements = [...READ_TOOL_TARGETS.keys(), "os.shell.run", "verify.run"].filter((name) => runtime?.toolRegistry.has(name));
+      // Same order as confine-reads.ts installs them (guest git since ATO-2221).
+      const expectedReplacements = [...READ_TOOL_TARGETS.keys(), ...GUEST_GIT_TOOLS, "os.shell.run", "verify.run"].filter((name) => runtime?.toolRegistry.has(name));
       expect(replacements.map((definition) => definition.name)).toEqual(expectedReplacements);
       for (const definition of replacements) {
         const original = [...native].reverse().find((candidate) => candidate.name === definition.name);
