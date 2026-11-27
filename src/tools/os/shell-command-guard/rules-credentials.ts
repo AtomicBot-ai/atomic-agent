@@ -42,10 +42,14 @@ const READERS: ReadonlySet<string> = new Set([
   "xxd", "hexdump", "base64", "base32", "grep", "egrep", "rg", "awk", "sed",
   "cp", "scp", "rsync", "tar", "zip", "7z", "gzip", "curl", "wget", "nc",
   "ncat",
+  // cmd and PowerShell readers: PowerShell takes `~/.ssh` and `$HOME/.aws`
+  // with forward slashes too (ATO-2728, review round 1).
+  "type", "findstr", "certutil", "copy", "xcopy", "get-content", "gc", "select-string",
+  "sls", "copy-item", "cpi", "compress-archive", "format-hex", "fhx", "import-clixml",
 ]);
 
 /** Copy programs whose last operand is the destination, not a read. */
-const COPIERS: ReadonlySet<string> = new Set(["cp", "scp", "rsync"]);
+const COPIERS: ReadonlySet<string> = new Set(["cp", "scp", "rsync", "copy", "xcopy", "copy-item", "cpi"]);
 
 const SECRET_CONFIDENCE = 0.9;
 const LOW_CONFIDENCE = 0.6;

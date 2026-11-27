@@ -58,15 +58,8 @@ describe("the coding-mode ring", () => {
     expect(codingModeLook("bypass").tone).toBe("error");
   });
 
-  it("says the bypass credential check covers macOS/Linux paths only (ATO-2126)", () => {
-    // Windows paths (`%USERPROFILE%\.ssh`, `type`, `Get-Content`) are not
-    // matched yet, so the mode text must not read as universal.
-    expect(codingModeLook("bypass").summary).toContain("macOS and Linux only");
-  });
-
-  it("says plainly that Windows credential reads are not caught, and that new sites still ask (ATO-2759)", () => {
+  it("does not read as \"nothing asks\", and says new sites still ask (ATO-2759, ATO-2728)", () => {
     const summary = codingModeLook("bypass").summary;
-    expect(summary).toContain("on Windows those reads are not caught");
     expect(summary).toContain("site not approved in this chat");
     expect(summary).not.toContain("nothing asks for the rest");
   });

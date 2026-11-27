@@ -92,7 +92,7 @@ const LOOKS: Readonly<Record<CodingMode, CodingModeLook>> = {
     detail: "almost never asks",
     tone: "error",
     summary:
-      "bypass permissions: almost nothing asks for the rest of this session. Still asks: data going to a site not approved in this chat, a command that runs an encoded script, and one that reads credential files (checked on macOS and Linux only; on Windows those reads are not caught). Hardline shell-guard rules still block.",
+      "bypass permissions: most calls run without asking for the rest of this session. Still asks: data going to a site not approved in this chat, a command that runs an encoded script, and one that reads credential files. Hardline shell-guard rules still block.",
   },
 };
 

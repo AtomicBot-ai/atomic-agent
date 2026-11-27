@@ -3,6 +3,9 @@ import { argScanVerdict, type ArgScanFinding } from "./arg-scan-finding.js";
 import { matchDangerousArgv } from "./rules-dangerous-argv.js";
 import { matchCredentialRead } from "./rules-credentials.js";
 import { matchEncodedExec } from "./rules-encoded-exec.js";
+import { matchWindowsCredentialRead } from "./rules-credentials-windows.js";
+import { matchWindowsEncodedExec } from "./rules-encoded-exec-windows.js";
+import { powershellCommandLines } from "./powershell-command-lines.js";
 
 interface PatternRule {
   id: string;
@@ -150,7 +153,15 @@ export const dangerousRule: Rule = {
     // Credential reads and encoded commands first: they carry a
     // confidence and, above the threshold, ask at every level (ATO-2126),
     // so a `sudo` or `eval` on the same line must not shadow them.
-    const finding = strongestFinding(matchCredentialRead(input, raw), matchEncodedExec(input));
+    // Windows paths and PowerShell have their own readers (ATO-2728);
+    // the line a `powershell -c` runs is read by the POSIX rule too.
+    const finding = strongestFinding(
+      matchCredentialRead(input, raw),
+      matchEncodedExec(input),
+      matchWindowsCredentialRead(input, raw.cwd),
+      matchWindowsEncodedExec(input),
+      ...powershellCommandLines(input, raw.cwd).map((inner) => matchCredentialRead(inner, raw)),
+    );
     if (finding !== null) return argScanVerdict(finding);
     for (const pattern of DANGEROUS_PATTERNS) {
       const line = pattern.caseSensitive ? input.joined : input.joinedLower;
