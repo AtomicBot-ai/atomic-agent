@@ -26,6 +26,12 @@ export interface BuildPromptInput {
    * before, only the cloud budget did). Absent on the grammar transport.
    */
   toolSchemaTokens?: number;
+  /**
+   * `toolSchemaTokens` split into built-in tools and one part per MCP
+   * server, summing to it (ATO-2453). Set only together with it, by
+   * `toolSchemaPromptInput`; absent when no MCP tool is on the wire.
+   */
+  toolSchemaParts?: readonly import("./prompt-part-shares.js").PromptPart[];
   /** Stage 1 metadata only: does not change rendering or budgets yet. */
   modelMode?: import("../llm/model-mode.js").ResolvedModelMode;
   session: SessionState;
@@ -358,4 +364,10 @@ export interface BuiltPrompt {
    * Absent on the cloud prompt, which carries the whole text.
    */
   project?: { name: string | null; tokens: number; truncated: boolean };
+  /**
+   * What `tokens.toolSchema` is made of, by MCP server (ATO-2453): the
+   * input's `toolSchemaParts`, passed through when the schemas were
+   * counted. Absent otherwise.
+   */
+  toolSchemaParts?: readonly import("./prompt-part-shares.js").PromptPart[];
 }

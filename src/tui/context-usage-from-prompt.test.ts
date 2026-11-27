@@ -160,4 +160,48 @@ describe("contextUsageFromPrompt", () => {
     ).toBe(16_384);
     expect("replyReserve" in contextUsageFromPrompt(builtPrompt())).toBe(false);
   });
+
+  /**
+   * ATO-2453: the server's part also lists its tools, and they add up
+   * to the part.
+   */
+  it("lists an MCP server's tools under its scaffold part", () => {
+    const stablePrefix = [
+      "### tools",
+      "- mcp.github.create_issue — [mcp:github] Open an issue with a long description.",
+      "  args: { repo: string, title: string, body: string, labels: string[] }",
+      "- mcp.github.list_prs — [mcp:github] List PRs.",
+      "  args: { repo: string }",
+    ].join("\n");
+    const base = builtPrompt();
+    const usage = contextUsageFromPrompt(
+      builtPrompt({ stablePrefix, tokens: { ...base.tokens, stablePrefix: 900 } }),
+    );
+    const github = (usage.parts ?? []).find((p) => p.mcpServer === "github");
+    expect(github?.tools?.map((t) => t.label)).toEqual(["create_issue", "list_prs"]);
+    expect(github?.tools?.reduce((a, t) => a + t.tokens, 0)).toBe(github?.tokens);
+  });
+
+  /** ATO-2453: the native `tools` array's split rides under its own row. */
+  it("breaks the tool schemas row down by MCP server", () => {
+    const base = builtPrompt();
+    const toolSchemaParts = [
+      { label: "built-in tools", tokens: 1100 },
+      { label: "mcp github", tokens: 2000, mcpServer: "github", tools: [{ label: "create_issue", tokens: 2000 }] },
+    ];
+    const usage = contextUsageFromPrompt(
+      builtPrompt({ tokens: { ...base.tokens, toolSchema: 3100 }, toolSchemaParts }),
+    );
+    const parts = (usage.parts ?? []).filter((p) => p.parent === "tool schemas");
+    expect(parts.map((p) => p.label)).toEqual(["built-in tools", "mcp github"]);
+    expect(parts.reduce((a, p) => a + p.tokens, 0)).toBe(3100);
+    expect(parts[1]?.tools).toEqual([{ label: "create_issue", tokens: 2000 }]);
+  });
+
+  it("drops the schema split when the schemas are not counted", () => {
+    const usage = contextUsageFromPrompt(
+      builtPrompt({ toolSchemaParts: [{ label: "mcp github", tokens: 2000, mcpServer: "github" }] }),
+    );
+    expect((usage.parts ?? []).some((p) => p.parent === "tool schemas")).toBe(false);
+  });
 });

@@ -266,6 +266,10 @@ export type TuiAction =
   | { type: "menu_closed" }
   /** Flip the composer's context detail panel (chip click, `/context`). */
   | { type: "context_panel_toggled" }
+  /** `/context detail`: open the panel with each MCP server's tools listed (ATO-2453). */
+  | { type: "context_panel_detail_shown" }
+  /** `d` in the open panel: list or fold the per-tool rows (ATO-2453). */
+  | { type: "context_panel_detail_toggled" }
   /** `/usage`: print the session's spend and limits (ATO-569). `now` keeps the reducer pure. */
   | { type: "usage_report_requested"; now: number }
   | { type: "context_panel_closed" }

@@ -32,8 +32,8 @@ import { turnProgressWanted } from "./turn-progress-opt-in.js";
 import type { StreamParser, StreamParseEvent } from "../../llm/grammar/stream-parser.js";
 import { createStreamParser } from "../../llm/grammar/stream-parser.js";
 import { reasoningOpenEmittedByModel } from "../../llm/model-profile.js";
-import { estimateTokens } from "../../prompt/token-budget.js";
 import { assertPromptFitsWindow } from "./window-fit-guard.js";
+import { measureToolSchema, toolSchemaPromptInput, type ToolSchemaMeasure } from "../../prompt/tool-schema-parts.js";
 import { assertContextCapacity } from "../../llm/provider/context-capacity.js";
 import { reconcileCloudSkills } from "../../session/workspace-context.js";
 
@@ -112,9 +112,9 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
     // The `tools` array a native-tools link sends beside the text takes
     // window room in every model mode (ATO-1678): a local link (Ollama,
     // LM Studio, a Fusion worker leg) was budgeted without it.
-    ...(deps.toolTransport === "native_tools" ? {
-      toolSchemaTokens: nativeToolSchemaTokens(stepDescriptors, deps),
-    } : {}),
+    ...(deps.toolTransport === "native_tools"
+      ? toolSchemaPromptInput(nativeToolSchema(stepDescriptors, deps))
+      : {}),
     // A chat's reasoning level bounds the grammar's think block with its
     // own budget (`resolveStepGrammar`, ATO-490); the reply reserve must
     // plan for that bound, not `localModels.reasoningBudgetTokens`
@@ -207,12 +207,14 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
  * `tools` array, so none is budgeted (ATO-1678). Exported for the tests.
  */
 export function grammarFallbackPromptInput(promptInput: BuildPromptInput): BuildPromptInput {
-  return {
+  const input: BuildPromptInput = {
     ...promptInput,
     toolTransport: "grammar",
     toolSchemaTokens: 0,
     suppressReasoningPrefill: false,
   };
+  delete input.toolSchemaParts;
+  return input;
 }
 
 /**
@@ -224,12 +226,16 @@ export function nativeToolSchemaTokens(
   descriptors: readonly ToolDescriptor[],
   deps: Pick<StepDependencies, "toolCallAdapter" | "strictTools">,
 ): number {
+  return nativeToolSchema(descriptors, deps).tokens;
+}
+
+/** The same array, also split by MCP server for `/context` (ATO-2453). */
+export function nativeToolSchema(
+  descriptors: readonly ToolDescriptor[],
+  deps: Pick<StepDependencies, "toolCallAdapter" | "strictTools">,
+): ToolSchemaMeasure {
   const adapter = deps.toolCallAdapter ?? openAiToolCallAdapter;
-  return estimateTokens(
-    JSON.stringify(
-      adapter.descriptorsToTools(descriptors, { strict: deps.strictTools === true }),
-    ),
-  );
+  return measureToolSchema(adapter, descriptors, { strict: deps.strictTools === true });
 }
 
 export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
@@ -424,9 +430,12 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
       const linkPromptInput: BuildPromptInput = { ...(linked?.promptInput ?? promptInput) };
       delete linkPromptInput.compactPrompt;
       delete linkPromptInput.compactPromptWindow;
+      delete linkPromptInput.toolSchemaParts;
       const next = buildPrompt({ ...linkPromptInput, session: ctx.session, modelMode: link.modelMode,
         toolTransport: link.transport, contextWindow: link.contextWindow, profileWindowApplies: false,
-        toolSchemaTokens: link.transport === "native_tools" ? nativeToolSchemaTokens(linkDescriptors, linkDeps) : 0,
+        ...(link.transport === "native_tools"
+          ? toolSchemaPromptInput(nativeToolSchema(linkDescriptors, linkDeps))
+          : { toolSchemaTokens: 0 }),
         suppressReasoningPrefill: link.transport === "native_tools" || template.useServerTemplate,
         completionMaxTokens: link.maxTokens ?? ctx.maxOutputTokens ?? getConfig().localModels.completionMaxTokens,
       });

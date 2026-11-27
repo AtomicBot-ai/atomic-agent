@@ -45,7 +45,7 @@ import { getConfig } from "../config/index.js";
 import { describeLocalModelsValueSources } from "../config/load-config.js";
 import type { SessionState } from "../session/session-state.js";
 import type { CompletionResult } from "../llm/provider/completion-types.js";
-import { estimateTokens } from "../prompt/token-budget.js";
+import { NO_TOOL_SCHEMA, measureToolSchema } from "../prompt/tool-schema-parts.js";
 
 import { TurnController } from "./turn-controller.js";
 import { SteeringInbox } from "./steering-inbox.js";
@@ -598,9 +598,9 @@ export async function createAgentRuntime(
       id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined,
     ),
     resolveToolTransport: (id?: string) => resolveActiveLlmSlice(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined).transport,
-    resolveToolSchemaTokens: (id: string, descriptors: readonly ToolDescriptor[]) => {
+    resolveToolSchema: (id: string, descriptors: readonly ToolDescriptor[]) => {
       const slice = resolveActiveLlmSlice(fallbackChain.standingOverrideFor(id) ?? undefined);
-      return estimateTokens(JSON.stringify(slice.adapter?.descriptorsToTools(descriptors, { strict: slice.strictTools }) ?? []));
+      return slice.adapter ? measureToolSchema(slice.adapter, descriptors, { strict: slice.strictTools }) : NO_TOOL_SCHEMA;
     },
     profileWindowApplies: (id?: string) => resolveActiveLlmSlice(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined).isLlamaServer,
     resolveCatalogContextWindow: (id?: string) => resolveCatalogContextWindow(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined),
