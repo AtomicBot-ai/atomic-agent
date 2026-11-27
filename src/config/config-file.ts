@@ -13,6 +13,7 @@ import {
   type UserConfigFile,
 } from "./config-schema.js";
 import { writeOwnerOnlyFileAtomicSync } from "./owner-only-file.js";
+import { SECRET_SOURCES_FILE } from "./secret-refs.js";
 import { SECRETS_STORE_FILE } from "./secret-store.js";
 
 /** Resolve the absolute path to the user config file inside a state dir. */
@@ -29,7 +30,9 @@ export function getDotenvPath(stateDir: string): string {
  * The agent's own trust surface: `config.json` (holds
  * `agent.approvalLevel`), `.env` (API keys / bot tokens loaded at
  * boot), `secrets-store.json` (whether they load from the OS keychain
- * instead), `approval-rules.json` (saved "always allow" rules,
+ * instead), `secret-sources.json` (the command that resolves secret
+ * references, run at start, and the tool secrets a shell command may
+ * use), `approval-rules.json` (saved "always allow" rules,
  * `src/approval/approval-rules-store.ts`) and what the agent runs from
  * its own state with no further question: `hooks.json` (commands run
  * on every tool call, re-read on change), the plugin records
@@ -56,6 +59,9 @@ export function getTrustConfigPaths(paths: {
     getDotenvPath(paths.stateDir),
     // Opt-in OS keychain switch and the names it holds (ATO-474).
     join(paths.stateDir, SECRETS_STORE_FILE),
+    // Secret-reference helper argv run at start and the tool secrets a
+    // command may use (ATO-2339, ATO-476).
+    join(paths.stateDir, SECRET_SOURCES_FILE),
     join(paths.stateDir, "approval-rules.json"),
     join(paths.stateDir, "hooks.json"),
     join(paths.stateDir, "plugins", "plugins.json"),

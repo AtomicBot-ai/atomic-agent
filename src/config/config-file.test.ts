@@ -17,6 +17,7 @@ import { serveApiKeyPath } from "../cli/serve-api-key.js";
 import { coreSessionPath } from "../local-llm/core/core-state.js";
 import { userHooksPath } from "../hooks/hook-config.js";
 import { secretsStorePath } from "./secret-store.js";
+import { SECRET_SOURCES_FILE } from "./secret-refs.js";
 import { installedPluginDir, pluginsRoot } from "../plugins/plugin-store.js";
 import {
   ensureUserConfigFileSync,
@@ -997,5 +998,20 @@ describe("the state's secret files (ATO-877)", () => {
       localModelsDataDir: join(stateDir, "models"),
     };
     expect(getTrustConfigPaths(paths)).toContain(secretsStorePath(stateDir));
+  });
+
+  it("protects the secret-reference sources like .env (ATO-2339, ATO-476)", () => {
+    const stateDir = join(tmpdir(), "atomic-state");
+    const paths = {
+      stateDir,
+      userConfigFile: getUserConfigPath(stateDir),
+      localModelsDataDir: join(stateDir, "models"),
+    };
+    // Its `command` runs at start and its `toolSecrets` widen what a
+    // command may use: a silent write would be a self-escalation.
+    const sources = join(stateDir, SECRET_SOURCES_FILE);
+    expect(sources).toBe(join(stateDir, "secret-sources.json"));
+    expect(getTrustConfigPaths(paths)).toContain(sources);
+    expect(getStateSecretPaths(paths)).toContain(sources);
   });
 });
