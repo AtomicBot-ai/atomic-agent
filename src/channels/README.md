@@ -13,10 +13,11 @@ This area owns remote chat adapters. Read [AGENTS.md](AGENTS.md) before changing
 - [model-command.ts](model-command.ts)
 - [model-switch.ts](model-switch.ts)
 - [chat-session-map.ts](chat-session-map.ts)
-- [channel-fork.ts](channel-fork.ts): `/fork` and `/fork <n>`, the session copy shared by the Telegram, Slack and Discord commands (ATO-2235, ATO-2456)
+- [channel-fork.ts](channel-fork.ts): `/fork`, the session copy shared by the Telegram and Slack commands (ATO-2235)
 - [reconnect-backoff.ts](reconnect-backoff.ts)
 - [telegram-channel.ts](telegram/telegram-channel.ts)
 - [discord-channel.ts](discord/discord-channel.ts)
+- [discord-fork-command.ts](discord/discord-fork-command.ts): `/fork` and `/fork <n>` on Discord, a thread per fork; [channel-fork.ts](channel-fork.ts) is shared with Telegram and Slack, whose `!switch` is [slack-switch-command.ts](slack/slack-switch-command.ts) (ATO-2456)
 - [signal/index.ts](signal/index.ts) — Signal through a user-run signal-cli daemon
 - [slack-channel.ts](slack/slack-channel.ts) and [slack/index.ts](slack/index.ts) (Slack, Socket Mode)
 - [imessage-channel.ts](imessage/imessage-channel.ts) — iMessage on macOS through the external `imsg` CLI
