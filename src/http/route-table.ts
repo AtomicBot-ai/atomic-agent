@@ -152,6 +152,7 @@ import { a2aRoutes, type A2aOptions } from "./route-a2a.js";
 import { createMcpEndpointHandlers, MCP_ENDPOINT_PATH } from "./route-mcp-endpoint.js";
 import type { PrometheusRegistry } from "../tracing/prometheus-registry.js";
 import { createRawModelHandlers, RAW_MODEL_PREFIX, type RawModelShareDeps } from "./route-raw-model.js";
+import { createLocalModelHandlers, LOCAL_MODEL_PREFIX, type LocalModelDeps } from "./route-local-model.js";
 
 export interface RouteTableOptions {
   /**
@@ -170,6 +171,8 @@ export interface RouteTableOptions {
   rawModel?: RawModelShareDeps;
   /** ATO-2308: phones paired by QR. Omitted, the pairing routes answer 404. */
   devices?: DeviceSessions | null;
+  /** ATO-2447: where the `/local/v1` routes send requests; tests inject their own (route-local-model.ts). */
+  localModel?: LocalModelDeps;
 }
 
 /**
@@ -194,6 +197,7 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
   const mcpEndpoint = createMcpEndpointHandlers();
   // ATO-2336: one in-flight cap shared by both raw routes.
   const rawModel = createRawModelHandlers(options.rawModel);
+  const localModel = createLocalModelHandlers(options.localModel);
   return [
     {
       method: "GET",
@@ -244,6 +248,12 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "POST", path: "/v1/messages", handler: createAnthropicMessagesHandler() },
     { method: "POST", path: "/v1/messages/count_tokens", handler: createAnthropicCountTokensHandler() },
     { method: "POST", path: "/v1/responses", handler: createResponsesHandler() },
+    // ATO-2447: the bare local model for `atag launch`, behind the serve key (route-local-model.ts).
+    { method: "GET", path: `${LOCAL_MODEL_PREFIX}/models`, handler: localModel.models },
+    { method: "POST", path: `${LOCAL_MODEL_PREFIX}/chat/completions`, handler: localModel.chatCompletions },
+    { method: "POST", path: `${LOCAL_MODEL_PREFIX}/responses`, handler: localModel.responses },
+    { method: "POST", path: `${LOCAL_MODEL_PREFIX}/messages`, handler: localModel.messages },
+    { method: "POST", path: `${LOCAL_MODEL_PREFIX}/messages/count_tokens`, handler: localModel.countTokens },
     // ATO-694: the same turn as AG-UI events, for AG-UI web frontends (route-ag-ui.ts).
     { method: "POST", path: "/api/ag-ui", handler: createAgUiRunHandler() },
     {

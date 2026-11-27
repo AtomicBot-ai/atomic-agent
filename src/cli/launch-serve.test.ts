@@ -61,6 +61,18 @@ describe("launch serve reuse (ATO-2172)", () => {
     expect(probed).toBe(0);
   });
 
+  it("never reuses a serve another atag launch started, in any folder or none (ATO-2447)", async () => {
+    const deps = {
+      records: () => [record({ launched: true })],
+      isAlive: () => true,
+      fetch: healthFetch({ runtime: "atomic-agent", pid: 4242, workingDir: "/work" }),
+    };
+    expect(await findReusableServe("/state", null, deps)).toBeNull();
+    expect(await findReusableServe("/state", "/work", deps)).toBeNull();
+    const own = await findReusableServe("/state", null, { ...deps, records: () => [record({ launched: false })] });
+    expect(own?.port).toBe(41234);
+  });
+
   it("serveAcceptsKey is false on 401 and true on 200", async () => {
     const status = (s: number) => (async () => new Response("{}", { status: s })) as unknown as typeof fetch;
     expect(await serveAcceptsKey("http://127.0.0.1:1", "k", status(401))).toBe(false);
