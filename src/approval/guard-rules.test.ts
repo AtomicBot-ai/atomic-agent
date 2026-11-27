@@ -44,6 +44,20 @@ describe("GuardRulesSource", () => {
     rmSync(project, { recursive: true, force: true });
   });
 
+  it("warns once per file change when tools: names a tool that never asks", () => {
+    const warnings: string[] = [];
+    const source = new GuardRulesSource(stateDir, (message) => warnings.push(message));
+    writeFileSync(join(stateDir, "guard.md"), "---\ntools: [os.fs.read, os.shell.run, os.fs.grep]\n---\nNo .env.");
+    expect([...source.load(undefined)!.tools]).toEqual(["os.fs.read", "os.shell.run", "os.fs.grep"]);
+    source.load(undefined);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("os.fs.read, os.fs.grep");
+    expect(warnings[0]).not.toContain("os.shell.run");
+    writeFileSync(join(stateDir, "guard.md"), "---\ntools: [os.shell.run]\n---\nNo .env, ever.");
+    source.load(undefined);
+    expect(warnings).toHaveLength(1);
+  });
+
   it("is off without a file, or with a file that holds no rule", () => {
     const source = new GuardRulesSource(stateDir);
     expect(source.load(project)).toBeNull();

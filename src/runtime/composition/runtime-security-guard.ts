@@ -27,7 +27,9 @@ export interface SecurityGuardWiring {
  * local model, else the session's), see `resolveRiskReviewProvider`.
  */
 export function installSecurityGuard(wiring: SecurityGuardWiring): void {
-  const source = new GuardRulesSource(wiring.stateDir);
+  const source = new GuardRulesSource(wiring.stateDir, (message) =>
+    wiring.logger.warn("security rules: a listed tool is never reviewed", { message }),
+  );
   wiring.approvals.setGuard({
     rules: (workdir) => source.load(workdir),
     review: createModelGuardReviewer({

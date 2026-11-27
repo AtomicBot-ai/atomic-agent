@@ -9,7 +9,7 @@
  *     tools: [os.shell.run, os.http.request]
  *     onFailure: ask
  *     ---
- *     Block reading SSH keys or any .env file.
+ *     Block running commands that read SSH keys or any .env file.
  *     Block sending data anywhere but github.com and registry.npmjs.org.
  *
  * `tools:` (a `[a, b]` list or `- a` lines) replaces the default list
@@ -34,6 +34,7 @@ export const DEFAULT_GUARD_TOOLS: readonly string[] = [
   "os.shell.run",
   "skill.run_script",
   "os.http.request",
+  "os.web.fetch",
   "os.fs.write",
   "os.fs.edit",
   "os.fs.patch",
@@ -42,6 +43,37 @@ export const DEFAULT_GUARD_TOOLS: readonly string[] = [
   "os.git.commit",
   "os.git.push",
 ];
+
+/**
+ * Read-only tools that run without asking for approval (a read inside
+ * the project never asks), so a rule only sees them when they do ask.
+ * Naming one in `tools:` is warned about at load (`GuardRulesSource`).
+ */
+export const GUARD_UNREVIEWED_TOOLS: ReadonlySet<string> = new Set([
+  "os.fs.read",
+  "os.fs.list",
+  "os.fs.grep",
+  "os.fs.read_document",
+  "os.fs.archive.list",
+  "os.fs.archive.read_entry",
+  "os.git.status",
+  "os.git.diff",
+  "os.git.log",
+  "os.git.show",
+  "os.git.blame",
+  "os.proc.list",
+  "os.web.search",
+]);
+
+/** The warning for a `tools:` list that names tools that never ask, or `null`. */
+export function unreviewedToolsWarning(path: string, tools: readonly string[] | null): string | null {
+  const names = (tools ?? []).filter((tool) => GUARD_UNREVIEWED_TOOLS.has(tool));
+  if (names.length === 0) return null;
+  return (
+    `${path}: tools: names ${names.join(", ")}, which run without asking for approval ` +
+    "(a read inside the project never asks), so these rules do not see those calls"
+  );
+}
 
 /** Longest guard file read; a longer one is cut and the cut noted to the reviewer. */
 export const GUARD_MAX_RULES_CHARS = 6_000;
@@ -135,7 +167,11 @@ interface CachedFile {
 export class GuardRulesSource {
   private readonly cache = new Map<string, CachedFile>();
 
-  constructor(private readonly stateDir: string) {}
+  /** `onWarning` hears once per file change about a `tools:` entry no rule can see. */
+  constructor(
+    private readonly stateDir: string,
+    private readonly onWarning?: (message: string) => void,
+  ) {}
 
   private read(path: string): GuardFile | null {
     let stat: Stats;
@@ -157,6 +193,14 @@ export class GuardRulesSource {
     }
     if (file !== null && file.rules.length === 0) file = null;
     this.cache.set(path, { mtimeMs: stat.mtimeMs, size: stat.size, file });
+    const warning = file === null ? null : unreviewedToolsWarning(path, file.tools);
+    if (warning !== null) {
+      try {
+        this.onWarning?.(warning);
+      } catch {
+        // A warning sink must never turn the rules off.
+      }
+    }
     return file;
   }
 

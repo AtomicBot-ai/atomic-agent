@@ -54,3 +54,45 @@ describe.skipIf(process.platform === "win32")("os.shell.run: security rules on a
     await expect(stat(join(dir, "made.txt"))).resolves.toBeTruthy();
   });
 });
+
+describe.skipIf(process.platform === "win32")("os.shell.run: security rules on trusted read-only tools (ATO-2111)", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "atomic-shell-guard-trusted-"));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function ctx(): ToolContext {
+    return { workingDir: dir, sessionId: "s1", stepIndex: 0, signal: new AbortController().signal };
+  }
+
+  it.each([
+    [{ cmd: "icalBuddy", args: ["eventsToday"] }],
+    [{ cmd: "gh", args: ["api", "repos/org/private"] }],
+  ])("a block refuses %j, which the shell guard trusts and runs unasked", async (call) => {
+    const reviewed: string[] = [];
+    const gate = new ApprovalGate({ level: 1, emit: () => undefined });
+    gate.setGuard({
+      rules: () => ({
+        sets: [{ source: "user", rules: "Never read my calendar or call GitHub." }],
+        tools: new Set(["os.shell.run"]),
+        onFailure: "ask",
+      }),
+      review: async (request) => {
+        reviewed.push(request.tool);
+        return { decision: "block", reason: "reads private data" };
+      },
+    });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    await expect(tool.run(call, ctx())).rejects.toMatchObject({
+      name: "ApprovalDeniedError",
+      byUser: false,
+      message: expect.stringContaining("Blocked by your security rules: reads private data"),
+    });
+    expect(reviewed).toEqual(["os.shell.run"]);
+  });
+});

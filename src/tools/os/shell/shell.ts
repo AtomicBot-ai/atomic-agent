@@ -80,6 +80,9 @@ import {
   formatInteractiveHandoff,
 } from "./interactive-prompt.js";
 import { waitWatchingForPrompt } from "./wait-watching-for-prompt.js";
+import { ghReadOnlyRule } from "../shell-command-guard/rules-trusted/gh.js";
+import { gogReadOnlyRule } from "../shell-command-guard/rules-trusted/gog.js";
+import { icalBuddyReadOnlyRule } from "../shell-command-guard/rules-trusted/ical-buddy.js";
 
 export {
   isOpaqueInterpreterShape,
@@ -94,6 +97,18 @@ export {
 export function isDangerousGuardRule(rule: string): boolean {
   return rule.startsWith("dangerous.");
 }
+
+/**
+ * The trusted read-only tools the guard runs unasked (`rules-trusted/`):
+ * `gh` reads, `gog`, `icalBuddy`. They read private data (a calendar,
+ * private repositories), so the person's security rules (ATO-2111)
+ * still review them when a guard file covers `os.shell.run`.
+ */
+const TRUSTED_READ_ONLY_RULES: ReadonlySet<string> = new Set([
+  ghReadOnlyRule.id,
+  gogReadOnlyRule.id,
+  icalBuddyReadOnlyRule.id,
+]);
 
 export interface OsShellToolOptions extends DangerousToolOptions {
   /**
@@ -365,8 +380,12 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         },
         ctx.signal,
       );
-    } else if (scopedByFanout && guardVerdict.action === "approval_required") {
-      // The fan-out's yes does not cover the person's security rules (ATO-2111).
+    } else if (
+      (scopedByFanout && guardVerdict.action === "approval_required") ||
+      (guardVerdict.action === "allow" && TRUSTED_READ_ONLY_RULES.has(guardVerdict.rule))
+    ) {
+      // The fan-out's yes does not cover the person's security rules
+      // (ATO-2111), nor does the guard's trust in a read-only tool.
       await requireGuardOnShortcut(
         options,
         {
