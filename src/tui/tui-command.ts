@@ -606,8 +606,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
         onRewindPickerRequested: () => orchestrator.openRewindPicker(),
         onChatExportRequested: (request) => { void orchestrator.exportOpenChat(request); },
-        onRewindRequested: (turnIndex, expectText) =>
-          orchestrator.rewindTo(turnIndex, expectText),
+        onRewindRequested: (turnIndex, expectText) => {
+          void orchestrator.openRewindChoice(turnIndex, expectText);
+        },
+        onRewindScopeChosen: (turnIndex, expectText, scope) => {
+          void orchestrator.rewindTo(turnIndex, expectText, scope);
+        },
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
         searchSessions: pickerSearch.search,
         sessionSearchStatus: pickerSearch,

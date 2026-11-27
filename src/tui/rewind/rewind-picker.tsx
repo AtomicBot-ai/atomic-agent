@@ -6,11 +6,15 @@ import { MouseListRow } from "../mouse/mouse-list-row.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import { handleEditorSubmit } from "../submit-handler.js";
 import { theme } from "../theme/theme.js";
+import type { RewindChoiceState } from "../tui-state.js";
+import { RewindChoice } from "./rewind-choice.js";
 
 export interface RewindPickerProps {
   /** The chat's earlier questions, newest first. */
   points: readonly RewindPoint[];
   cursor: number;
+  /** ATO-2467: set once a point is picked; the box then asks what to take back. */
+  choice?: RewindChoiceState | null;
 }
 
 const MAX_ROWS = 10;
@@ -18,12 +22,13 @@ const MAX_ROWS = 10;
 /**
  * `/rewind` (ATO-1057): the chat's earlier questions, rendered above the
  * editor while `state.rewindPicker` is set. Keys are the editor's own,
- * like the session picker's: Up/Down move, Enter takes the chat back to
- * just before the highlighted question, Esc closes. A click selects, a
- * second click (or Enter) rewinds.
+ * like the session picker's: Up/Down move, Enter picks the highlighted
+ * question and asks what to take back ([RewindChoice]), Esc closes. A
+ * click selects, a second click (or Enter) picks.
  */
 export function RewindPicker(props: RewindPickerProps): ReactElement {
-  const { points, cursor } = props;
+  const { points, cursor, choice } = props;
+  if (choice) return <RewindChoice choice={choice} />;
   const clamped = Math.max(0, Math.min(cursor, points.length - 1));
   const windowStart = computeWindowStart(clamped, points.length, MAX_ROWS);
   const visible = points.slice(windowStart, windowStart + MAX_ROWS);
@@ -37,8 +42,8 @@ export function RewindPicker(props: RewindPickerProps): ReactElement {
       flexDirection="column"
     >
       <Text color={theme.colors.muted}>
-        rewind to a message ({points.length}) — Enter removes it and everything
-        after, then puts it back here to edit · Esc to cancel
+        rewind to a message ({points.length}) · Enter to choose what to take
+        back · Esc to cancel
       </Text>
       {windowStart > 0 ? (
         <Text color={theme.colors.muted}>↑ {windowStart} newer</Text>
