@@ -16,14 +16,17 @@ import type { ApprovalRouter } from "../../approval/approval-router.js";
 import type { ChannelStatus } from "../../runtime/channel-status.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
+import { createAttachmentInbox, type AttachmentInbox } from "../attachments/inbox.js";
 import type { Channel } from "../channel.js";
 import { ChatSessionMap } from "../chat-session-map.js";
 import { backoffMs } from "../reconnect-backoff.js";
 import { LinearApi, LinearApiError, fitCommentBody } from "./linear-api.js";
 import { LinearApprovalBridge } from "./linear-approval-bridge.js";
+import { downloadLinearUpload } from "./linear-attachments.js";
 import { handleLinearEvent } from "./linear-inbound-handler.js";
 import { LinearOwnComments } from "./linear-own-comments.js";
 import { LinearServer, type LinearServerDeps } from "./linear-server.js";
+import { LinearTurnQueue } from "./linear-turn-queue.js";
 import {
   LINEAR_API_KEY_KEY,
   LINEAR_WEBHOOK_SECRET_KEY,
@@ -54,6 +57,8 @@ export interface LinearChannelDeps {
   /** `options.onAssign`; `null` means "on unless the API key is an owner's own". */
   onAssign: boolean | null;
   sessionMapPath: string;
+  /** `<stateDir>/inbox/linear`: where files attached to a comment land. Absent: attachments are not read. */
+  inboxDir?: string;
   lock: { acquire(): void; release(): void };
   /** Explicit secrets win over the env: the test seam. */
   apiKey?: string | null;
@@ -76,7 +81,8 @@ export class LinearChannel implements Channel {
   private lockHeld = false;
   private secrets: string[] = [];
   private readonly ownerIds: readonly string[];
-  private readonly inflight = new Map<string, AbortController>();
+  private readonly turns = new LinearTurnQueue();
+  private inbox: AttachmentInbox | null = null;
   private readonly seen = new Set<string>();
   private readonly deliveries = new Set<string>();
   private readonly own = new LinearOwnComments();
@@ -132,6 +138,7 @@ export class LinearChannel implements Channel {
     }
     if (this.state() !== "starting") return;
     this.api = api;
+    this.inbox = this.deps.inboxDir === undefined ? null : createAttachmentInbox({ dir: this.deps.inboxDir });
     this.bridge = new LinearApprovalBridge({
       post: (target, body) => this.post(target, body),
       approvals: this.deps.approvals,
@@ -193,6 +200,8 @@ export class LinearChannel implements Channel {
       }
     }
     if (this.api === null) return;
+    const apiKey = this.secrets[0];
+    const inbox = this.inbox;
     const viewerIsOwner = this.viewerId !== null && this.ownerIds.includes(this.viewerId);
     void handleLinearEvent(payload, {
       runtime: this.deps.runtime,
@@ -206,7 +215,15 @@ export class LinearChannel implements Channel {
       onAssign: this.deps.onAssign ?? !viewerIsOwner,
       own: this.own,
       bridge: this.bridge,
-      inflight: this.inflight,
+      turns: this.turns,
+      ...(inbox !== null && apiKey !== undefined
+        ? {
+            attachments: {
+              inbox,
+              download: (url: string) => downloadLinearUpload(url, apiKey, this.deps.fetchImpl),
+            },
+          }
+        : {}),
       seen: this.seen,
       ensureApprovalSession: (sessionId, target) => this.bindApprovals(sessionId, target),
       releaseApprovalSession: (sessionId) => this.releaseApprovals(sessionId),
@@ -238,13 +255,13 @@ export class LinearChannel implements Channel {
     this.setState("stopping");
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     this.retryTimer = null;
-    for (const controller of this.inflight.values()) controller.abort();
-    this.inflight.clear();
+    this.turns.cancelAll();
     for (const binding of this.approvalBindings.values()) binding.unsubscribe();
     this.approvalBindings.clear();
     this.bridge?.clear();
     this.bridge = null;
     this.api = null;
+    this.inbox = null;
     const endpoint = this.endpoint;
     this.endpoint = null;
     await endpoint?.close();
