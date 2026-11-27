@@ -34,6 +34,8 @@ import type {
 import { resolveFusionMachineFacts } from "./fusion-machine-facts.js";
 import { renderRequestSection, requestInView } from "./request-section.js";
 import { buildStablePrefix } from "./stable-prefix.js";
+import { capabilitiesForServedModel } from "./machine-line.js";
+import { servedProviderOnThisMachine } from "../llm/provider/provider-on-this-machine.js";
 import {
   applyCompactToolForms,
   compactSkillCatalogBudget,
@@ -228,7 +230,11 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     // only moves `session.workingDir`. Local mode prepares no workspace,
     // so gating on it left the old folder in the prompt (issue #1121).
     // The prefix still moves only when the folder does.
-    capabilities: { ...input.capabilities, workingDir: input.session.workingDir },
+    // ATO-1721: the machine line only for a model served on this machine.
+    capabilities: capabilitiesForServedModel(
+      { ...input.capabilities, workingDir: input.session.workingDir },
+      servedProviderOnThisMachine(config, input.modelMode?.providerId),
+    ),
     skillCatalog: effectiveCatalog?.entries ?? input.skillCatalog,
     ...(effectiveCatalog ? { skillCatalogDropped: effectiveCatalog.dropped } : input.skillCatalogDropped !== undefined
       ? { skillCatalogDropped: input.skillCatalogDropped }

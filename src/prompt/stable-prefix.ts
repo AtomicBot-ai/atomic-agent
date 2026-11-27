@@ -82,6 +82,12 @@ export interface CapabilitiesSummary {
   hasNotifications: boolean;
   /** The agent's own e-mail address (Atomic Mail), when an inbox exists. */
   emailAddress?: string | null;
+  /**
+   * ATO-1721: `16 GB RAM, Intel Core i5-8250U, no GPU, Windows 10`, read
+   * once per runtime (`machine-line.ts`). Only fixed facts, so the prefix
+   * stays byte-stable; dropped for a model not served on this machine.
+   */
+  machine?: string | null;
 }
 
 export interface SkillCatalogEntry {
@@ -574,6 +580,7 @@ export function formatToolForLoadedTail(
 export function formatCapabilities(caps: CapabilitiesSummary): string {
   return [
     `platform: ${caps.platform}/${caps.arch}`,
+    ...(caps.machine ? [`machine: ${caps.machine}`] : []),
     `browser: ${caps.browserChannel}`,
     `working_dir: ${caps.workingDir}`,
     `clipboard: ${caps.hasClipboard ? "yes" : "no"}`,
