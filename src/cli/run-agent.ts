@@ -3,9 +3,7 @@ import { resolve } from "node:path";
 import { Readable } from "node:stream";
 
 import {
-  formatApprovalCategory,
   formatApprovalLevel,
-  formatNeverGrantedNote,
   resolveBootApprovalLevel,
 } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
@@ -26,18 +24,10 @@ import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import {
-  canGrantCategory,
-  describeCategoryGrant,
-  describeMcpToolGrant,
-  canGrantShape,
-  type ApprovalGrantScope,
-  type ApprovalRequest,
-} from "../approval/approval-gate.js";
-import {
-  canGrantAlways,
-  describeAlwaysRule,
-} from "../approval/approval-rules.js";
-import { siteGrantHost } from "../approval/site-grants.js";
+  promptApproval,
+  type CliApprovalAnswer,
+} from "./run-approval-prompt.js";
+import { RUN_HELP } from "./run-help.js";
 import { formatSkillCatalogOmittedNote } from "../skills/index.js";
 import { createStderrSink } from "../tracing/structured-logger.js";
 import {
@@ -76,6 +66,8 @@ import {
   type RunTokenTotals,
 } from "./run-json-events.js";
 
+export { formatCliApprovalPrompt, isApprovalAnswer } from "./run-approval-prompt.js";
+
 interface RunArgs extends RunHeadlessArgs {
   workingDir: string;
   maxSteps: number | null;
@@ -83,38 +75,6 @@ interface RunArgs extends RunHeadlessArgs {
   /** ATO-586: an incognito chat, deleted when the run ends. */
   incognito: boolean;
 }
-
-const HELP =
-  [
-    "atomic-agent run — chat with the agent over stdin",
-    "",
-    "Usage:",
-    "  atomic-agent run [options]           interactive: one message per line",
-    '  echo "<goal>" | atomic-agent run     one-shot: answer on stdout, logs on stderr',
-    "                                       (each piped line is a separate turn)",
-    '  atomic-agent run [options] "<goal>"  one turn with this message',
-    '  cat log | atomic-agent run "<goal>"  the piped text is added to the message',
-    "",
-    "Options:",
-    "  --cwd <dir>          Working directory for OS tools (default: current directory)",
-    "  --working-dir <dir>  Alias for --cwd",
-    "  --max-steps <n>      Hard step ceiling for one task (default: agent.task.maxSteps)",
-    "  --no-approval        Force approval level 5: auto-approve every dangerous tool call",
-    "  --incognito          Incognito chat: nothing is saved to memory, the chat is deleted when the run ends",
-    "  --output-format <f>  text (default) | json (one result object) | stream-json (JSONL events)",
-    "  --json               Alias for --output-format stream-json",
-    "  -m, --model <m>      Model for every turn: <model> on the active provider, <provider> or <provider>:<model>",
-    "  --resume <id>        Continue a saved chat (an id or a unique id prefix)",
-    "  -c, --continue       Continue the newest saved chat in this folder",
-    "  -o, --output-last-message <file>  Write the last reply to this file",
-    "  --output-schema <file|json>  The final answer must be JSON matching this JSON Schema",
-    "  --allowed-tools <a,b>        Only these tools are offered (os.fs.read, os.fs.*, Read, Bash)",
-    "  --disallowed-tools <a,b>     These tools are never offered; neither list approves anything",
-    "  --ephemeral          Delete the chat when the run ends (memory is still kept)",
-    "",
-    "In-session:  /quit exits · /abort cancels the current turn",
-    "Exit codes:  0 replied · 1 failed · 2 usage error · 3 answer did not match --output-schema",
-  ].join("\n") + "\n";
 
 export function parseRunArgs(
   args: string[],
@@ -182,124 +142,6 @@ export function parseRunArgs(
     incognito,
     ...headless,
   };
-}
-
-interface CliApprovalAnswer {
-  approved: boolean;
-  grant?: ApprovalGrantScope;
-}
-
-/**
- * The text `promptApproval` writes before reading the answer: what is
- * asked, the grant options this request allows, and — when the category
- * can never be granted for the session — a note naming that category.
- */
-export function formatCliApprovalPrompt(request: ApprovalRequest): string {
-  const grantCategory = canGrantCategory(request);
-  const grantShape = canGrantShape(request);
-  const lines = [
-    "",
-    `» approval required for tool: ${request.tool}`,
-    `  kind: ${formatApprovalCategory(request.category)}`,
-    `  reason: ${request.reason}`,
-  ];
-  if (request.preview) lines.push(`  preview: ${request.preview}`);
-  if (request.affectedResources?.length) {
-    lines.push(`  affects: ${request.affectedResources.join(", ")}`);
-  }
-  const options = ["y = approve once"];
-  if (grantCategory) {
-    options.push(
-      siteGrantHost(request) !== null
-        ? `s = allow ${describeCategoryGrant(request)} this session`
-        : describeMcpToolGrant(request) !== null
-          ? `s = allow ${describeMcpToolGrant(request)} this session`
-        : request.grantKey !== undefined
-          ? `s = allow this kind to ${request.grantKey} this session`
-        : "s = allow this kind this session",
-    );
-  }
-  if (grantShape) {
-    options.push(`a = allow all ${request.commandShape} this session`);
-  }
-  // Saved, unlike the two above (ATO-1142).
-  if (canGrantAlways(request)) {
-    options.push(`w = ${describeAlwaysRule(request)}`);
-  }
-  options.push("N = deny");
-  if (!grantCategory) {
-    lines.push(`  (${formatNeverGrantedNote(request.category)})`);
-  }
-  lines.push(`  approve? [${options.join(", ")}] `);
-  return lines.join("\n");
-}
-
-/**
- * Whether a stdin line answers an approval prompt: one of the offered
- * keys (`y`, `s`, `a`, `w`, `n`), `yes` / `no`, or an empty line (Enter,
- * the default `N`), in any case. Anything else is a message for the
- * agent, not an answer.
- */
-export function isApprovalAnswer(line: string): boolean {
-  return /^(y|yes|n|no|s|a|w|)$/.test(line.trim().toLowerCase());
-}
-
-/**
- * Interactive approval over stdin. We ask the operator to confirm each
- * dangerous action; `y`/`yes` approves this call, `s` also grants the
- * category for the session, `a` grants this shell command shape, `w`
- * saves an "always allow" rule for this project (`canGrantAlways`).
- * Any other answer (`n`, `no`, Enter, a grant key this request does not
- * offer) is a refusal. The grant options mirror the TUI prompt;
- * they are offered here too because a CLI operator has the same physical
- * access to the machine. A category that is never grantable
- * (`isGrantableCategory`: trust config, e-mail, fusion fan-out) only
- * ever shows `y/N`.
- *
- * The answer is the next line of the same stdin queue the chat loop
- * reads (ATO-802), so a piped "y" written together with the next
- * message answers this prompt and the message stays queued for the
- * next turn. Only a line shaped like an answer (`isApprovalAnswer`) is
- * taken: any other line is a refusal and stays queued as the next
- * message, so a driver that pipes "task\ncontinue" without answering
- * loses nothing to the prompt. EOF before an answer is a refusal.
- */
-async function promptApproval(
-  request: ApprovalRequest,
-  lines: StdinLineQueue,
-): Promise<CliApprovalAnswer> {
-  const grantCategory = canGrantCategory(request);
-  const grantShape = canGrantShape(request);
-  process.stderr.write(formatCliApprovalPrompt(request));
-  const head = await lines.peek();
-  if (head === null) return { approved: false };
-  if (!isApprovalAnswer(head)) {
-    process.stderr.write(
-      "\n  denied: the next input line is not an answer, kept as the next message\n",
-    );
-    return { approved: false };
-  }
-  await lines.next();
-  const answer = head.trim().toLowerCase();
-  if (answer === "s" && grantCategory) {
-    process.stderr.write(
-      `\n  granted: ${formatApprovalCategory(request.category)} for this session\n`,
-    );
-    return { approved: true, grant: "category" };
-  }
-  if (answer === "a" && grantShape) {
-    process.stderr.write(
-      `\n  granted: ${request.commandShape} commands for this session\n`,
-    );
-    return { approved: true, grant: "shape" };
-  }
-  if (answer === "w" && canGrantAlways(request)) {
-    process.stderr.write(
-      `\n  saved: ${describeAlwaysRule(request)} (approval-rules.json in the agent's state folder)\n`,
-    );
-    return { approved: true, grant: "always" };
-  }
-  return { approved: /^(y|yes)$/.test(answer) };
 }
 
 /** Transport failures that mean "nothing answered at the configured URL". */
@@ -592,7 +434,7 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
 export async function runAgentCommand(args: string[]): Promise<number> {
   const parsed = parseRunArgs(args);
   if ("help" in parsed) {
-    process.stdout.write(HELP);
+    process.stdout.write(RUN_HELP);
     return 0;
   }
   if ("error" in parsed) {

@@ -1220,6 +1220,7 @@ export function buildFusionDelegateTool(
             ...(originalRequest === undefined ? {} : { originalRequest }),
             ...(contract === undefined ? {} : { contract }),
             parentSessionId: ctx.sessionId,
+            ...(ctx.toolFilter === undefined ? {} : { parentToolFilter: ctx.toolFilter }),
             tasks,
             maxWorkers,
             providerId: workerProviderId,
@@ -1299,6 +1300,7 @@ export function buildFusionDelegateTool(
             ...(originalRequest === undefined ? {} : { originalRequest }),
             ...(contract === undefined ? {} : { contract }),
             parentSessionId: ctx.sessionId,
+            ...(ctx.toolFilter === undefined ? {} : { parentToolFilter: ctx.toolFilter }),
             tasks,
             maxWorkers: local
               ? 1
