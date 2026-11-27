@@ -225,6 +225,8 @@ export function buildOsFsXlsxTool(options: FsDangerousToolOptions): ToolDefiniti
         details: {
           path: absolute,
           op: args.op,
+          // ATO-2518: whether the file is new, for the chat's "Changed files" row.
+          change: result.existed ? "updated" : "created",
           sheet: sheetName,
           ...(written === null ? {} : { range: written }),
           formulas,
@@ -299,6 +301,7 @@ async function chartOp(
     details: {
       path: absolute,
       op: "chart",
+      change: result.existed ? "updated" : "created",
       sheet: placement.sheetName,
       range: placement.range,
       anchor: placement.anchor,
