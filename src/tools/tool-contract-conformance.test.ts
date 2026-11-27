@@ -41,6 +41,7 @@ import { registerSkillTools } from "./skill/index.js";
 import { buildToolViewTool } from "./tool-view/index.js";
 import { planUpdateTool } from "./plan/index.js";
 import { buildCanvasRenderTool } from "./canvas/index.js";
+import { uiRenderTool } from "./ui/index.js";
 import { buildAskUserTool } from "./conversation/index.js";
 import { buildToolSearchTool } from "./tool-search/index.js";
 import { buildConversationHistoryTool, buildSessionsSearchTool, registerMemoryTools } from "./memory/index.js";
@@ -310,6 +311,7 @@ beforeAll(() => {
   registry.register(buildToolViewTool());
   registry.register(planUpdateTool);
   registry.register(buildCanvasRenderTool(dangerous));
+  registry.register(uiRenderTool);
   registry.register(buildAskUserTool({ approvals: dangerous.approvals }));
   // Runtime registers it beside the live descriptor list (runtime-tool-catalog).
   registry.register(buildToolSearchTool({ catalog: () => ({ descriptors: DEFAULT_TOOL_DESCRIPTORS, deferred: new Set() }) }));

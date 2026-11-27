@@ -212,6 +212,22 @@ describe("tool_result over SSE", () => {
     for (const frame of sent.slice(1)) expect(frame).not.toHaveProperty("canvas");
   });
 
+  it("carries the card an ok ui.render showed as ui, and nothing otherwise (ATO-2457)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const ui = { kind: "decision", title: "Which plan?", options: [{ label: "Fast" }, { label: "Safe" }] };
+
+    hook({ type: "step_started", stepIndex: 0 });
+    hook(executed(result({ tool: "ui.render", summary: "Choice: Which plan?", details: { ui } }), 0));
+    hook(executed(result({ tool: "ui.render", status: "error", summary: "bad args", details: { ui } }), 1));
+    hook(executed(result({ tool: "os.fs.write", details: { ui } }), 2));
+    hook(executed(result({ tool: "ui.render", details: { ui: { ...ui, kind: "slider" } } }), 3));
+
+    const sent = frames(sse, "tool_result");
+    expect(sent[0]!.ui).toEqual(ui);
+    for (const frame of sent.slice(1)) expect(frame).not.toHaveProperty("ui");
+  });
+
   it("carries an ok os.screen.point's marks as screen_marks, and nothing otherwise (ATO-1018)", () => {
     const sse = makeSse();
     const hook = buildStreamEventHook(sse.writer as never, env(true));
