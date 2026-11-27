@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -161,6 +161,19 @@ describe("models dir (ATO-2106)", () => {
       expect(out.join("")).toContain(`the models on ${unplugged} stay there`);
       expect(configTree().localModels?.managed?.modelsDirOverride).toBeUndefined();
     });
+  });
+
+  it("--json says custom from the same fresh read as dir, not the cached config (ATO-2503)", async () => {
+    getConfig();
+    const moved = join(stateDir, "Volumes", "USB", "models");
+    mkdirSync(moved, { recursive: true });
+    const file = getConfig().paths.userConfigFile;
+    // Another process (the desktop) moved the folder; this one never reset its config cache.
+    writeFileSync(file, JSON.stringify({ version: USER_CONFIG_VERSION, localModels: { managed: { modelsDirOverride: moved } } }));
+    const later = new Date(Date.now() + 5_000);
+    utimesSync(file, later, later);
+    expect(await runModelsDir(["--json"], deps())).toBe(0);
+    expect(JSON.parse(out.join(""))).toMatchObject({ dir: moved, custom: true });
   });
 
   it("rejects a folder and --reset together", async () => {

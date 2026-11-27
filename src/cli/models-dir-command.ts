@@ -13,6 +13,7 @@ import {
   chatStartPending,
   getDaemonStatus,
   getEmbeddingDaemonStatus,
+  getModelsDirOverride,
   isDownloadJobLive,
   listDownloadJobs,
   modelsDirUnreachableMessage,
@@ -106,7 +107,9 @@ export async function runModelsDir(args: readonly string[], deps: ModelsDirDeps 
 
   const unreachable = unreachableModelsDir();
   if (!reset && positional.length === 0) {
-    const custom = cfg.localModels.managed.modelsDirOverride !== undefined;
+    // Same source as `current`: config.json re-read on change, not the cached
+    // config, so a long-lived TUI never says "default" next to a moved folder.
+    const custom = getModelsDirOverride() !== null;
     const reachable = unreachable === null;
     write(json ? `${JSON.stringify({ dir: current, defaultDir, custom, reachable })}\n` : `${current}\n`);
     if (!json && !reachable) writeErr(`models dir: ${modelsDirUnreachableMessage(current)}\n`);
