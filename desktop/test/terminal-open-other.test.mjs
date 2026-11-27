@@ -105,7 +105,7 @@ test("Linux: clipboard + a 0600 command file; the terminal runs the constant lau
   assert.equal(s.args[0], "-e");
   assert.equal(s.args.length, 2);
   assert.ok(!s.args.some((a) => a.includes("rm -rf")), "the command is not in the argv");
-  assert.deepEqual(s.files, ["cmd", "cwd", "open.command", "zdot"]);
+  assert.deepEqual(s.files, [["cmd", "cwd", "open.command", "zdot"]], "one launcher, and what its folder holds");
   const dir = join(s.args[1], "..");
   assert.equal(readFileSync(join(dir, "cmd"), "utf8"), CMD);
   assert.equal(readFileSync(join(dir, "cwd"), "utf8"), proj);
