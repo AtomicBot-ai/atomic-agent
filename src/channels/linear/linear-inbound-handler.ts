@@ -18,14 +18,18 @@
  */
 
 import type { AgentLoopEvent } from "../../agent/agent-contract.js";
+import { buildAttachmentUserMessage, type AttachmentInbox } from "../attachments/inbox.js";
 import { describeFailedAttempts } from "../../llm/fallback/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { SessionState } from "../../session/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { ChatSessionMap } from "../chat-session-map.js";
 import type { LinearApprovalBridge } from "./linear-approval-bridge.js";
+import { findLinearUploads, receiveLinearUploads, type LinearDownload } from "./linear-attachments.js";
+import { parseLinearCommand, runLinearCommand } from "./linear-commands.js";
 import { mentionsAgent, stripAgentMention } from "./linear-mention.js";
 import type { LinearOwnComments } from "./linear-own-comments.js";
+import type { LinearTurnQueue } from "./linear-turn-queue.js";
 import {
   scrubLinearError,
   type LinearCommentData,
@@ -38,7 +42,7 @@ export interface LinearInboundContext {
   runtime: AgentRuntime;
   /** Post a comment. Records it in `own` first so its echo is ignored. */
   post: (target: LinearTarget, body: string) => Promise<void>;
-  sessions: Pick<ChatSessionMap, "get" | "setCurrent">;
+  sessions: Pick<ChatSessionMap, "get" | "setCurrent" | "rotate">;
   logger: StructuredLogger;
   /** Linear user ids allowed to drive the agent. Empty refuses everyone. */
   ownerIds: readonly string[];
@@ -49,9 +53,11 @@ export interface LinearInboundContext {
   /** Start a session when an issue is assigned to `viewerId`. */
   onAssign: boolean;
   own: Pick<LinearOwnComments, "isOwn">;
-  bridge: Pick<LinearApprovalBridge, "tryAnswer"> | null;
-  /** `issueId -> AbortController` for the turn in flight. */
-  inflight: Map<string, AbortController>;
+  bridge: Pick<LinearApprovalBridge, "tryAnswer" | "pendingIn"> | null;
+  /** The running and queued turns of each issue. */
+  turns: LinearTurnQueue;
+  /** Where uploads in a comment land; absent turns attachments off (tests). */
+  attachments?: { inbox: AttachmentInbox; download: (url: string) => Promise<LinearDownload> };
   /** Recently handled comment / assignment keys, so a redelivery runs once. */
   seen: Set<string>;
   ensureApprovalSession?: (sessionId: string, target: LinearTarget) => void;
@@ -107,7 +113,25 @@ async function commentJob(payload: LinearWebhookPayload, ctx: LinearInboundConte
     });
     return null;
   }
-  const ask = stripAgentMention(body, ctx.handles) || "Take a look at this issue.";
+  const stripped = stripAgentMention(body, ctx.handles);
+  const command = parseLinearCommand(stripped);
+  if (command !== null) {
+    const reply = runLinearCommand(command, {
+      issueId,
+      sessions: ctx.sessions,
+      turns: ctx.turns,
+      pendingApprovals: ctx.bridge?.pendingIn(issueId) ?? 0,
+      ...(ctx.releaseApprovalSession ? { releaseApprovalSession: ctx.releaseApprovalSession } : {}),
+    });
+    await post(ctx, target, reply);
+    return null;
+  }
+  let ask = stripped || "Take a look at this issue.";
+  const uploads = ctx.attachments ? findLinearUploads(body) : [];
+  if (ctx.attachments && uploads.length > 0) {
+    const outcomes = await receiveLinearUploads(uploads, { ...ctx.attachments, logger: ctx.logger });
+    ask = buildAttachmentUserMessage(stripped, outcomes);
+  }
   const issue = data.issue;
   const ref = issue?.identifier ?? issueId;
   const header = issue?.title ? `[Linear issue ${ref}: ${issue.title}]` : `[Linear issue ${ref}]`;
@@ -142,34 +166,41 @@ function assignJob(payload: LinearWebhookPayload, ctx: LinearInboundContext): Li
 }
 
 async function dispatchToRuntime(job: LinearJob, ctx: LinearInboundContext): Promise<void> {
-  if (ctx.inflight.has(job.issueId)) {
-    await post(ctx, job.target, "I am already working on this issue. Mention me again once I have answered.");
+  if (!ctx.turns.hasRoom(job.issueId)) {
+    await post(ctx, job.target, "Too many requests are waiting on this issue. Mention me again once I have answered.");
     return;
   }
-  const session = acquireOrCreateSession(job, ctx);
-  // Bound before any step can ask, so a prompt lands in this thread.
-  ctx.ensureApprovalSession?.(session.id, job.target);
-  const controller = new AbortController();
-  ctx.inflight.set(job.issueId, controller);
+  // Queued, not refused: runTurn runs one session's turns in order.
+  const queued = ctx.turns.busy(job.issueId);
+  const controller = ctx.turns.add(job.issueId);
+  if (queued) {
+    await post(ctx, job.target, "Queued: I will get to this once I finish the current request on this issue.");
+  }
 
   let reply: string | null = null;
   let failure: Error | null = null;
+  // A queued request cancelled before it started says nothing: `/cancel` already answered.
+  let started = false;
   const eventHook = (event: AgentLoopEvent): void => {
+    started = true;
     if (event.type === "llm_event" && event.event.type === "assistant_reply" && event.event.progressNote !== true) {
       reply = event.event.text;
     }
     if (event.type === "loop_failed") failure = event.error;
   };
   try {
+    const session = acquireOrCreateSession(job, ctx);
+    // Bound before any step can ask, so a prompt lands in this thread.
+    ctx.ensureApprovalSession?.(session.id, job.target);
     await ctx.runtime.runTurn(session, job.prompt, { origin: "linear", signal: controller.signal, eventHook });
   } catch (err) {
     failure = err instanceof Error ? err : new Error(String(err));
   } finally {
-    if (ctx.inflight.get(job.issueId) === controller) ctx.inflight.delete(job.issueId);
+    ctx.turns.remove(job.issueId, controller);
   }
 
   if (controller.signal.aborted) {
-    await post(ctx, job.target, "Turn cancelled.");
+    if (started) await post(ctx, job.target, "Turn cancelled.");
   } else if (reply !== null) {
     await post(ctx, job.target, reply);
   } else if (failure !== null) {
