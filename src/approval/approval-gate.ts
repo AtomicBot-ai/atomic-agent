@@ -244,6 +244,16 @@ export interface ApprovalDecision {
 export type ApprovalEmitter = (request: ApprovalRequest) => void;
 
 /**
+ * Hooks around a prompt to a person (`src/hooks/permission-hooks.ts`):
+ * `beforePrompt` may return a reason to refuse instead of asking, never
+ * an approval; `onPrompt` hears that the prompt went out.
+ */
+export interface ApprovalPromptHooks {
+  beforePrompt(request: ApprovalRequest, signal?: AbortSignal): Promise<string | undefined>;
+  onPrompt(request: ApprovalRequest): void;
+}
+
+/**
  * What the gate does for a session's request that would otherwise
  * prompt. `refuse` resolves it denied with `reason`, emitting nothing:
  * for a session with nobody at the other end of a prompt (a fusion
@@ -449,6 +459,8 @@ export class ApprovalGate {
   private readonly guardChecked = new Set<string>();
   /** Approval ids whose guard review failed under `onFailure: ask`: a person decides. */
   private readonly guardHeld = new Set<string>();
+  /** PermissionRequest / Notification hooks (ATO-2462); unset = none. */
+  private promptHooks: ApprovalPromptHooks | undefined;
 
   constructor(options: { emit: ApprovalEmitter; level?: ApprovalLevel }) {
     this.emitter = options.emit;
@@ -857,6 +869,50 @@ export class ApprovalGate {
         automatic: true,
       });
     }
+    // PermissionRequest hooks may refuse before the person is asked (ATO-2462).
+    if (this.promptHooks !== undefined) return this.requestAfterPromptHooks(request, this.promptHooks, signal);
+    return this.promptPerson(request, signal);
+  }
+
+  /** Install (or with `undefined`, remove) the PermissionRequest / Notification hooks. */
+  setPromptHooks(hooks: ApprovalPromptHooks | undefined): void {
+    this.promptHooks = hooks;
+  }
+
+  /**
+   * The PermissionRequest hooks run on a request about to prompt. A
+   * reason refuses it (`automatic`, the person is never asked); anything
+   * else, a hook that throws included, prompts as before. They can never
+   * approve: hooks only tighten.
+   */
+  private async requestAfterPromptHooks(
+    request: ApprovalRequest,
+    hooks: ApprovalPromptHooks,
+    signal: AbortSignal | undefined,
+  ): Promise<ApprovalDecision> {
+    let refusal: string | undefined;
+    try {
+      refusal = await hooks.beforePrompt(request, signal);
+    } catch {
+      refusal = undefined;
+    }
+    if (signal?.aborted) {
+      throw new ApprovalGateError("approval aborted before a decision was made", request.approvalId);
+    }
+    if (refusal !== undefined) {
+      return {
+        approvalId: request.approvalId,
+        approved: false,
+        reason: `Blocked by a PermissionRequest hook: ${refusal}`,
+        automatic: true,
+      };
+    }
+    return this.promptPerson(request, signal);
+  }
+
+  /** Park `request` for a person's decision and send it to the surfaces. */
+  private promptPerson(request: ApprovalRequest, signal: AbortSignal | undefined): Promise<ApprovalDecision> {
+    const { approvalId } = request;
     return new Promise<ApprovalDecision>((resolve, reject) => {
       const onAbort = (): void => {
         this.pending.delete(approvalId);
@@ -884,6 +940,12 @@ export class ApprovalGate {
       }
       signal?.addEventListener("abort", onAbort, { once: true });
       this.emitter(request);
+      // Notification hooks: the person is being asked (ATO-2462).
+      try {
+        this.promptHooks?.onPrompt(request);
+      } catch {
+        // A hook seam never takes the prompt down.
+      }
     });
   }
 

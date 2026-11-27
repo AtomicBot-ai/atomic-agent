@@ -119,7 +119,7 @@ import { AgentLoop } from "../agent/agent-loop.js";
 import { TurnUsageMeter } from "../analytics/index.js";
 
 import { installGlobalErrorHandlers } from "../error-reporting/index.js";
-import { SessionHookEngine, ToolHookEngine, installToolHooks } from "../hooks/index.js";
+import { PermissionHooks, SessionHookEngine, ToolHookEngine, installToolHooks } from "../hooks/index.js";
 import { activePolicy, installPolicy, loadPolicy, policyRuleMatch } from "../policy/index.js";
 
 /**
@@ -276,6 +276,8 @@ export async function createAgentRuntime(
   installToolHooks(new ToolHookEngine({ stateDir: config.paths.stateDir, approvals, logger }));
   // Same files: SessionStart / UserPromptSubmit / Stop / PreCompact (ATO-2198).
   const sessionHooks = new SessionHookEngine({ stateDir: config.paths.stateDir, logger });
+  // PermissionRequest / Notification when a person is about to be asked (ATO-2462).
+  approvals.setPromptHooks(new PermissionHooks(sessionHooks, logger));
 
   // Issue #112. Every local text probe below hangs off this one answer,
   // and it is available here — hundreds of lines before
@@ -402,6 +404,7 @@ export async function createAgentRuntime(
   installRuntimeSessionDelete(
     sessionStore, dropRecorder, shellJobs, toolOutputSpill,
     new FileCheckpointStore(fileCheckpointsRoot(config.paths.stateDir)),
+    (id) => void sessionHooks.endSession(id, "deleted").catch(() => undefined),
   );
 
   // `browser.extract` calls the model (ATO-699); the completer is built
@@ -923,6 +926,7 @@ export async function createAgentRuntime(
     get analytics() { return observability.getAnalytics(); },
     get errorReporter() { return observability.getErrorReporter(); },
     traceExport: { shutdown: traces.shutdownTraceExport },
+    sessionHooks,
   });
   const { shutdown } = lifecycle;
   const refreshSkills = notePrefixInvalidation(

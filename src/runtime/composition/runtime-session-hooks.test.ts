@@ -3,7 +3,7 @@ import type { RunTurnResult } from "../../agent/agent-contract.js";
 import { HookBlockedPromptError, MAX_STOP_HOOK_CONTINUATIONS, type TurnStopFacts } from "../../hooks/session-hook-engine.js";
 import { assistantReplyTurn, userTurn } from "../../session/conversation-turn.js";
 import { createEmptySessionState, type SessionState } from "../../session/session-state.js";
-import { continueOnStopHooks, startTurnHooks } from "./runtime-session-hooks.js";
+import { continueOnStopHooks, startTurnHooks, subagentStopHooks } from "./runtime-session-hooks.js";
 
 const session = (turns: SessionState["turns"] = []): SessionState => ({
   ...createEmptySessionState({ id: "s1", workingDir: "/work" }),
@@ -79,5 +79,28 @@ describe("continueOnStopHooks", () => {
     const again = vi.fn(async () => replied("x"));
     await continueOnStopHooks({ afterTurn }, replied("Done."), ac.signal, again);
     expect(again).not.toHaveBeenCalled();
+  });
+});
+
+describe("subagentStopHooks (ATO-2462)", () => {
+  it("asks SubagentStop with the parent's session and the worker's id, and a block runs the worker again", async () => {
+    let calls = 0;
+    const afterSubagentTurn = vi.fn(async () => (++calls === 1 ? "write the summary" : undefined));
+    const seam = subagentStopHooks({ afterSubagentTurn }, "parent", "subagent");
+    const again = vi.fn(async () => replied("summary written"));
+    const result = await continueOnStopHooks(seam, replied("done"), undefined, again);
+    expect(afterSubagentTurn).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      sessionId: "parent", agentId: "s1", agentType: "subagent", lastReply: "done", stopHookActive: false,
+    }));
+    expect(again).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("write the summary"));
+    expect(result.stepCount).toBe(4);
+  });
+
+  it("a Fusion worker is a fusion-worker; no engine means no hooks", async () => {
+    const afterSubagentTurn = vi.fn(async () => undefined);
+    await continueOnStopHooks(subagentStopHooks({ afterSubagentTurn }, "parent", "fusion"), replied("ok"), undefined, vi.fn());
+    expect(afterSubagentTurn).toHaveBeenCalledWith(expect.objectContaining({ agentType: "fusion-worker" }));
+    expect(subagentStopHooks(undefined, "parent", "subagent")).toBeNull();
+    expect(subagentStopHooks({}, "parent", "subagent")).toBeNull();
   });
 });

@@ -40,7 +40,7 @@ import { createNextStepSuggester } from "./runtime-next-step.js";
 import type { createExperienceReviewer } from "./runtime-experience-review.js";
 import { routeTurnProvider } from "./runtime-turn-router.js";
 import { localFirstSessionSize } from "./local-first-fit.js";
-import { continueOnStopHooks, startTurnHooks } from "./runtime-session-hooks.js";
+import { continueOnStopHooks, startTurnHooks, subagentStopHooks } from "./runtime-session-hooks.js";
 import type { SessionHookEngine } from "../../hooks/session-hook-engine.js";
 import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
 import { surfaceShowsQuestions, withAskUserVisibility } from "../../tools/conversation/ask-user-surface.js";
@@ -138,8 +138,8 @@ export interface RuntimeTurnDependencies {
    * `runtime-experience-review.ts`). Omitted (tests, embedders): no review.
    */
   experienceReview?: Pick<ReturnType<typeof createExperienceReviewer>, "maybeReview">;
-  /** SessionStart / UserPromptSubmit / Stop hooks (ATO-2198). Absent: none run. */
-  sessionHooks?: Pick<SessionHookEngine, "beforeTurn" | "afterTurn">;
+  /** SessionStart / UserPromptSubmit / Stop hooks (ATO-2198), SubagentStop / SessionEnd (ATO-2462). Absent: none run. */
+  sessionHooks?: Pick<SessionHookEngine, "beforeTurn" | "afterTurn"> & Partial<Pick<SessionHookEngine, "afterSubagentTurn" | "endSession">>;
   /**
    * `isStopping` (ATO-1688): the host has begun to stop. Omitted, the
    * shutdown itself is the only sign (`isShutdown`).
@@ -527,12 +527,19 @@ export function createRuntimeTurnService(
             attended: currentBrowserScope()?.attended ?? false,
             workerOf: worker.parentSessionId,
           };
-          return await runInBrowserScope(browserScope, () => loop.runTurn(session, {
-            userMessage,
+          const runWorker = (state: SessionState, message: string) => runInBrowserScope(browserScope, () => loop.runTurn(state, {
+            userMessage: message,
             modelModePolicy,
             ephemeral: true,
             ...buildLoopTurnBudget(runOptions),
           }));
+          // A SubagentStop hook may keep the worker going (ATO-2462).
+          return await continueOnStopHooks(
+            subagentStopHooks(deps.sessionHooks, worker.parentSessionId, runOptions.origin),
+            await runWorker(session, userMessage),
+            runOptions.signal,
+            runWorker,
+          );
         } finally {
           turnRequests.delete(session.id);
           turnPreviousReplies?.delete(session.id);
@@ -784,7 +791,11 @@ export function createRuntimeTurnService(
           ...(runOptions.memoryReadOnly === true ? { memoryReadOnly: true } : {}),
         });
         // `finish` ended the whole session: its kept jobs go with it.
-        if (finished.status === "completed") shellJobs.endSession(session.id);
+        if (finished.status === "completed") {
+          shellJobs.endSession(session.id);
+          // SessionEnd hooks (ATO-2462), fire-and-forget like naming.
+          void sessionHooks?.endSession?.(session.id, "finished").catch(() => undefined);
+        }
         return { ...result, session: finished };
       } catch (err) {
         // The loop hands back a state for every ending it can classify —
