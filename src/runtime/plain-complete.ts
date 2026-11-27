@@ -59,10 +59,17 @@ export const PLAIN_COMPLETE_EMIT_SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
 };
 
+/** Longest deadline a caller may ask for (a model council seat on a slow local model, ATO-2432). */
+export const PLAIN_COMPLETE_MAX_TIMEOUT_MS = 300_000;
+
 export interface PlainCompleteInput {
   readonly prompt: string;
   readonly system?: string;
   readonly maxTokens?: number;
+  /** Sampling temperature; absent keeps the model's default (council Self-MoA samples, ATO-2432). */
+  readonly temperature?: number;
+  /** The caller's own deadline, at most `PLAIN_COMPLETE_MAX_TIMEOUT_MS`; absent keeps the default. */
+  readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
 }
 
@@ -176,6 +183,7 @@ export function buildPlainCompleteRequest(
       grammar: "",
       slotId: -1,
       signal,
+      ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
     };
   }
   return {
@@ -185,6 +193,7 @@ export function buildPlainCompleteRequest(
     slotId: deps.slotId(),
     maxTokens,
     signal,
+    ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
     // Thinking off through the model's own template, as the session
     // namer and `/enhance` do: on raw text a thinking model opens a
     // `<think>` block and the reasoning becomes the answer.
@@ -199,6 +208,14 @@ export function buildPlainCompleteRequest(
           },
         }),
   };
+}
+
+/** The deadline used: the caller's (clamped), else the host's, else the default. */
+export function plainCompleteTimeoutMs(requested: number | undefined, host: number | undefined): number {
+  if (requested !== undefined && Number.isFinite(requested) && requested > 0) {
+    return Math.min(Math.floor(requested), PLAIN_COMPLETE_MAX_TIMEOUT_MS);
+  }
+  return host ?? PLAIN_COMPLETE_TIMEOUT_MS;
 }
 
 /**
@@ -220,7 +237,7 @@ export async function completePlain(
   const timer = setTimeout(() => {
     timedOut = true;
     abort.abort();
-  }, deps.timeoutMs ?? PLAIN_COMPLETE_TIMEOUT_MS);
+  }, plainCompleteTimeoutMs(input.timeoutMs, deps.timeoutMs));
   timer.unref?.();
   try {
     const result = await deps.complete(buildPlainCompleteRequest(input, deps, abort.signal));
