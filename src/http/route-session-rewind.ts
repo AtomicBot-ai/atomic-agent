@@ -19,7 +19,8 @@ import { readJsonBody, sendError, sendJson, type HandlerContext, type HttpHandle
  *
  *  - `GET  /api/sessions/{id}/rewind-points` — the questions it can go back to.
  *  - `POST /api/sessions/{id}/rewind/preview` — what a rollback would do.
- *  - `POST /api/sessions/{id}/rewind` — do it: files first, then the chat.
+ *  - `POST /api/sessions/{id}/rewind` — do it: files first, then the chat
+ *    (`files: false` the chat only, `conversation: false` the files only).
  *  - `POST /api/sessions/{id}/fork` — a new chat with the history through that question's answer.
  *
  * A question is named the way `rollback-last-turn` names one: `priorQuestions`
@@ -47,7 +48,7 @@ interface Point {
   priorQuestions: number;
   text: string;
   at: number;
-  body: { files?: unknown };
+  body: { files?: unknown; conversation?: unknown };
 }
 
 export function createListRewindPointsHandler(): HttpHandler {
@@ -92,8 +93,18 @@ export function createRewindHandler(preview: boolean): HttpHandler {
       });
       return;
     }
-    // `files: false` takes back only the conversation.
+    // `files: false` takes back only the conversation; `conversation: false` only the files.
     const restoreFiles = point.body.files !== false;
+    if (point.body.conversation === false) {
+      if (!restoreFiles) {
+        sendError(res, 400, openaiError("files and conversation cannot both be false", "invalid_request_error", "conversation"));
+        return;
+      }
+      // The chat stays as it is, and so do the copies: a later rollback still finds them.
+      const done = await applyFileRestore(store, session.id, files);
+      sendJson(res, 200, { id: session.id, text, ...done, notRestorable, incomplete: files.incomplete });
+      return;
+    }
     // A compaction started on this chat would summarise the rows removed.
     ctx.runtime.cancelSessionCompaction(session.id);
     const done = restoreFiles
@@ -138,7 +149,7 @@ async function readPoint(
   ctx: HandlerContext,
 ): Promise<Point | null> {
   const id = ctx.params.id ?? "";
-  let body: { priorQuestions?: unknown; expectText?: unknown; files?: unknown } | null;
+  let body: { priorQuestions?: unknown; expectText?: unknown; files?: unknown; conversation?: unknown } | null;
   try {
     body = (await readJsonBody<unknown>(req)) as typeof body;
   } catch (err) {

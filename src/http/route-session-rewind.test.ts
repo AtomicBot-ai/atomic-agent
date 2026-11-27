@@ -123,6 +123,33 @@ describe("rewind and fork routes (ATO-1056, ATO-1058)", () => {
     expect(harness.runtime.sessionStore.load("rw-1")?.turns).toHaveLength(4);
   });
 
+  it("puts back only the files with conversation: false and keeps the chat and the copies (ATO-2112)", async () => {
+    const { a, b } = seed();
+    await replayFiles("rw-1", a, b);
+    const cancel = vi.spyOn(harness.runtime, "cancelSessionCompaction");
+    const res = await post("rw-1/rewind", { priorQuestions: 1, expectText: "change it", conversation: false });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      id: "rw-1", text: "change it", restored: [a], deleted: [b], failed: [], notRestorable: [], incomplete: false,
+    });
+    expect(readFileSync(a, "utf8")).toBe("v1");
+    expect(existsSync(b)).toBe(false);
+    expect(harness.runtime.sessionStore.load("rw-1")?.turns).toHaveLength(10);
+    expect(cancel).not.toHaveBeenCalled();
+    // The copies stay: going back to the very start still finds the first write.
+    const again = await post("rw-1/rewind/preview", { priorQuestions: 0, expectText: "make a.txt" });
+    expect(((await again.json()) as { files: unknown }).files).toEqual([{ path: a, action: "delete" }]);
+  });
+
+  it("refuses files: false with conversation: false and changes nothing", async () => {
+    const { a, b } = seed();
+    await replayFiles("rw-1", a, b);
+    const res = await post("rw-1/rewind", { priorQuestions: 1, expectText: "change it", files: false, conversation: false });
+    expect(res.status).toBe(400);
+    expect(readFileSync(a, "utf8")).toBe("v2");
+    expect(harness.runtime.sessionStore.load("rw-1")?.turns).toHaveLength(10);
+  });
+
   it("refuses a question that is not the one given, while a turn runs, and for an unknown chat", async () => {
     const { a, b } = seed();
     await replayFiles("rw-1", a, b);
