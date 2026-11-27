@@ -22241,6 +22241,7 @@ async function recoverParkedSteers(id, probe) {
   }
   if (list.length) {
     S.queued.unshift.apply(S.queued, list.map((u) => String((u && u.text) || '')));
+    qeditShiftInsert(0, list.length);   // ATO-2132: a message being edited moves down with the rest
     STEER.ahead += list.length;
     S.log.push({id:nid(), k:'system', note:true, text: list.length + ' message' + (list.length === 1 ? '' : 's')
       + ' arrived too late for the last turn here — sending ' + (list.length === 1 ? 'it' : 'them') + ' next'});

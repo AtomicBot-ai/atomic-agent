@@ -178,6 +178,12 @@ function qeditShift(removedAt) {
   if (qeditOn() && removedAt < QEDIT.at) QEDIT.at -= 1;
 }
 
+/** `count` messages went into the queue on screen at `insertedAt` (late
+    steers put at its front): the one being edited moves down with the rest. */
+function qeditShiftInsert(insertedAt, count) {
+  if (qeditOn() && insertedAt <= QEDIT.at && count > 0) QEDIT.at += count;
+}
+
 /** Whether the next drain must wait: the message at the head of the queue is
     in the field, and sending the one behind it would jump the line. Save or
     cancel puts it back and runs it (qeditFinish, through DRAIN_OWED). */

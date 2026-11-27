@@ -202,6 +202,16 @@ test('review fix: removing a chip in front of the one being edited keeps its pla
   assert.deepEqual([...w.S.queued], ['b', 'c']);
 });
 
+test('review fix: late steers put at the front move the message being edited down with the rest', () => {
+  const w = world();
+  w.S.queued.push('a', 'b');
+  w.qeditStart(1);                         // b in the field: a
+  w.S.queued.unshift('x'); w.STEER.ahead += 1; w.qeditShiftInsert(0, 1);   // a late steer, as the recovery puts it
+  w.QE.value = "b'";
+  w.qeditFinish(true);
+  assert.deepEqual([...w.S.queued], ['x', 'a', "b'"]);
+});
+
 test('review fix: while the first message is edited the drain waits; Save releases it and the edited one runs first', () => {
   const w = world();
   w.S.queued.push('a', 'b');
@@ -235,6 +245,7 @@ test('wiring: loaded before renderer.js, drawn in the tray, keys, input, clicks,
   assert.match(r, /return qeditSnapshot\(out, here\);/);
   assert.match(r, /function drainQueued\(\) \{\n\s*if \(qeditHoldsDrain\(\)\) \{ DRAIN_OWED = true; render\(\); return; \}/);
   assert.match(r, /const q = S\.queued\.shift\(\); qeditShift\(0\);/);
+  assert.match(r, /S\.queued\.unshift\.apply\(S\.queued, [^\n]*\n\s*qeditShiftInsert\(0, list\.length\);/);
   assert.match(r, /STEER\.ahead = steerNowTake\(S\.queued, at, STEER\.ahead\);\s+qeditShift\(at\);/);
   assert.match(r, /const gone = S\.queued\.splice\(at, 1\)\[0\];[^\n]*\n\s*qeditShift\(at\);/);
   // The real attachments format round-trips through the edit.
