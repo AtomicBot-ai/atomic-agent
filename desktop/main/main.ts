@@ -28,7 +28,7 @@ import { newChatSessionId } from "./chat-session.js";
 import { ChatWorktrees, gitExecWith, registerChatWorktreeIpc } from "./chat-worktree-ipc.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
-import { backgroundQuitWork, busyTurnsOf, quitQuestion, sampleAgentBusy, workingChatCount, type AgentBusySample } from "./quit-question.js";
+import { backgroundQuitWork, quitQuestion, sampleAgentBusy, workingChatCount, type AgentBusySample } from "./quit-question.js";
 import { busyPorts, modelPortsOf, onSmokeStopSignal, portsHeldByRun, runSmokeGuarded, signalExitCode, smokeMayStopModels, smokeOwnsItsState, smokeScreenshot } from "./smoke-exit.js";
 import { randomUUID } from "node:crypto";
 import { freemem, homedir, tmpdir, totalmem } from "node:os";
@@ -11761,7 +11761,7 @@ let queuedQuitAsked = false;
    scheduled task, a Telegram reply), asked of the agent once per quit before
    the question: before-quit is synchronous, so the first one asks and quits
    again with the answer (as VS Code's lifecycle does its async quit vetoes). */
-let quitAgentWork: { tasks: number; background: number } | null = null;
+let quitAgentWork: ReturnType<typeof backgroundQuitWork> | null = null;
 let quitAgentProbe: Promise<void> | null = null;
 
 // Never leave the agent running after the app is gone.
@@ -11784,7 +11784,7 @@ app.on("before-quit", (event) => {
       const client = agent;
       /* A remote agent's turns run on its own computer; a quit stops none of them. */
       const probe: Promise<AgentBusySample> = client && !client.isRemote && client.status.state === "connected"
-        ? sampleAgentBusy({ tasks: () => client.runningTaskCount(), busyTurns: () => client.turnsHealth().then(busyTurnsOf) })
+        ? sampleAgentBusy({ tasks: () => client.runningTaskCount(), health: () => client.turnsHealth() })
         : Promise.resolve({ tasks: null, busyTurns: null });
       quitAgentProbe = probe.then((sample) => { quitAgentWork = backgroundQuitWork(workingChatCount(liveTurnRecords()), sample); app.quit(); });
       return;

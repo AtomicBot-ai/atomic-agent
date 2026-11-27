@@ -74,6 +74,33 @@ export interface TurnSubmission<T> {
    * signal into `runTurn`).
    */
   signal?: AbortSignal;
+  /**
+   * ATO-2519: why a scheduled turn woke (`session.metadata.wakeReason.source`:
+   * "scheduler", "webhook", "file", ...). Reported with the turn by
+   * `busyTurns()`; the controller never branches on it.
+   */
+  wakeReason?: string;
+}
+
+/**
+ * ATO-2519: one turn with a `run()` body in flight, as `busyTurns()`
+ * reports it: where it came from, and for a scheduled turn why it woke.
+ */
+export interface BusyTurn {
+  sessionId: string;
+  origin: TurnOrigin;
+  wakeReason?: string;
+}
+
+/**
+ * ATO-2519: `session.metadata.wakeReason.source` (stamped by
+ * `TaskRunner` before a scheduled turn), or undefined when there is none.
+ */
+export function wakeReasonSource(metadata: Readonly<Record<string, unknown>> | undefined): string | undefined {
+  const wake = metadata?.["wakeReason"];
+  if (!wake || typeof wake !== "object") return undefined;
+  const source = (wake as { source?: unknown }).source;
+  return typeof source === "string" && source.length > 0 ? source : undefined;
 }
 
 /**
@@ -103,7 +130,8 @@ export interface TurnSubmission<T> {
 export class TurnController {
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly currentHooks = new Map<string, TurnEventHook>();
-  private readonly busy = new Set<string>();
+  /** Session id to the turn running on it (one per session: the FIFO allows no more). */
+  private readonly busy = new Map<string, BusyTurn>();
   private readonly onHookError?: (
     err: unknown,
     context: { sessionId: string; origin: TurnOrigin },
@@ -141,7 +169,7 @@ export class TurnController {
    *    survives.
    */
   async enqueue<T>(submission: TurnSubmission<T>): Promise<T> {
-    const { sessionId, eventHook, signal, run } = submission;
+    const { sessionId, eventHook, signal, run, origin, wakeReason } = submission;
     if (signal?.aborted) {
       throw abortReason(signal);
     }
@@ -167,7 +195,7 @@ export class TurnController {
       if (eventHook) {
         this.currentHooks.set(sessionId, eventHook);
       }
-      this.busy.add(sessionId);
+      this.busy.set(sessionId, { sessionId, origin, ...(wakeReason ? { wakeReason } : {}) });
       try {
         return await run();
       } finally {
@@ -234,7 +262,16 @@ export class TurnController {
    * many sessions are already executing.
    */
   busySessionIds(): readonly string[] {
-    return [...this.busy];
+    return [...this.busy.keys()];
+  }
+
+  /**
+   * ATO-2519: the same turns as `busySessionIds()`, each with its origin
+   * (and wake reason), so a caller can say what is running: a Telegram
+   * reply, an API request, a scheduled task. Copies, in start order.
+   */
+  busyTurns(): readonly BusyTurn[] {
+    return [...this.busy.values()].map((t) => ({ ...t }));
   }
 }
 
