@@ -10,9 +10,14 @@
  * one (DNS rebinding). The same rules `os.web.fetch` and `os.http.request`
  * apply with curl's `--resolve`.
  *
- * A link the person typed as local (`@http://localhost:3000`, or a name that
- * resolves to this network, like an intranet wiki) is on purpose and is read
- * as before, redirects included.
+ * Only the link's text says it was typed as local (`@http://localhost:3000`,
+ * a private IP, a `.local` name: mention-hosts.ts); such a link is read as
+ * typed, redirects included. A lookup error never makes a link "local on
+ * purpose" (review F2078.1): a typed name whose lookup fails is not read,
+ * and a typed name whose answer holds a local address (an intranet wiki, or
+ * a mixed public and private answer) gets its first request as typed while
+ * every redirect after it is checked and pinned like a public link's. A
+ * public link never lands on a host that is local by its text.
  *
  * With a proxy (`network.proxy` or the proxy variables) the proxy makes the
  * connection, so each hop is still checked by name but not pinned: the
@@ -81,23 +86,31 @@ function canPin(): boolean {
   return currentAgentProxy() === null && !proxyConfigured(process.env);
 }
 
+function resolvesLocal(err: SsrfBlockedError): boolean {
+  return /private\/internal/.test(err.message);
+}
+
 function blockedReason(err: SsrfBlockedError): string {
-  return /private\/internal/.test(err.message) ? "redirected to a local address" : "could not be fetched";
+  return resolvesLocal(err) ? "redirected to a local address" : "could not be fetched";
 }
 
 /**
- * The typed link's own addresses, or `null` when the person typed a local
- * link (by its text, or a name that resolves to this network).
+ * How the typed link starts. `local`: typed as local by its text, read as
+ * typed with its redirects. `named-local`: a typed name whose answer holds a
+ * local address; only the first request goes as typed. `public`: the checked
+ * addresses, pinned from the first hop.
  */
-async function startOf(url: URL, vetHost: VetHost): Promise<readonly string[] | null> {
-  if (isLocalHost(url.hostname)) return null;
+type Start = { kind: "local" } | { kind: "named-local" } | { kind: "public"; addresses: readonly string[] };
+
+async function startOf(url: URL, vetHost: VetHost): Promise<Start> {
+  if (isLocalHost(url.hostname)) return { kind: "local" };
   try {
-    return await vetHost(url);
+    return { kind: "public", addresses: await vetHost(url) };
   } catch (err) {
-    // A typed name on this network, or one that does not resolve: the read
-    // goes ahead as typed and the network says what happens.
-    if (err instanceof SsrfBlockedError) return null;
-    throw err;
+    if (!(err instanceof SsrfBlockedError)) throw err;
+    // A failed lookup checked nothing, so it is not read (F2078.1).
+    if (!resolvesLocal(err)) throw new UrlSkip("could not be fetched");
+    return { kind: "named-local" };
   }
 }
 
@@ -105,15 +118,17 @@ async function startOf(url: URL, vetHost: VetHost): Promise<readonly string[] | 
 export async function fetchCheckedHops(url: string, o: HopOptions): Promise<FinalAnswer> {
   let current = new URL(url);
   const start = await startOf(current, o.vetHost);
-  const onPurpose = start === null;
   for (let hop = 0; ; hop++) {
     if (current.protocol !== "http:" && current.protocol !== "https:") throw new UrlSkip("redirected away from http");
     if (hop > 0 && offlineRefusal(current.href, "@link") !== null) throw new UrlSkip("offline mode is on");
+    // The base rule, now on every hop: a link not typed as local never lands on one.
+    if (hop > 0 && start.kind !== "local" && isLocalHost(current.hostname)) throw new UrlSkip("redirected to a local address");
+    const asTyped = start.kind === "local" || (hop === 0 && start.kind === "named-local");
     let pool: Agent | undefined;
-    if (!onPurpose) {
+    if (!asTyped) {
       let addresses: readonly string[];
       try {
-        addresses = hop === 0 && start !== null ? start : await o.vetHost(current);
+        addresses = hop === 0 && start.kind === "public" ? start.addresses : await o.vetHost(current);
       } catch (err) {
         if (err instanceof SsrfBlockedError) throw new UrlSkip(blockedReason(err));
         throw err;
