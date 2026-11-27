@@ -1913,12 +1913,12 @@ describe("executeBatch refuses a call with unknown argument keys (F40)", () => {
     const result = out.results[0]!.compressed!;
     expect(result.status).toBe("error");
     expect(result.summary).toBe(
-      'unknown argument `-e` for os.shell.run (expected: cmd, args, cwd, timeoutMs, keep, background, wait, kill, jobs, until, tty, write, text, eof, monitor; put the script in args: ["-c", "…"]) — the call was not run; re-emit it with the right keys',
+      'unknown argument `-e` for os.shell.run (expected: cmd, args, cwd, timeoutMs, keep, background, wait, kill, jobs, until, tty, write, text, eof, monitor, secret; put the script in args: ["-c", "…"]) — the call was not run; re-emit it with the right keys',
     );
     expect(result.summary).not.toContain("rename");
     expect(result.details).toEqual({
       unknownKeys: ["-e"],
-      expectedKeys: ["cmd", "args", "cwd", "timeoutMs", "keep", "background", "wait", "kill", "jobs", "until", "tty", "write", "text", "eof", "monitor"],
+      expectedKeys: ["cmd", "args", "cwd", "timeoutMs", "keep", "background", "wait", "kill", "jobs", "until", "tty", "write", "text", "eof", "monitor", "secret"],
     });
     expect(out.cancelled).toBe(false);
   });
@@ -1938,7 +1938,7 @@ describe("executeBatch refuses a call with unknown argument keys (F40)", () => {
     );
     expect(run).not.toHaveBeenCalled();
     expect(out.results[0]!.compressed!.summary).toBe(
-      "unknown argument `-args` for os.shell.run (expected: cmd, args, cwd, timeoutMs, keep, background, wait, kill, jobs, until, tty, write, text, eof, monitor; did you mean `args`?) — the call was not run; re-emit it with the right keys",
+      "unknown argument `-args` for os.shell.run (expected: cmd, args, cwd, timeoutMs, keep, background, wait, kill, jobs, until, tty, write, text, eof, monitor, secret; did you mean `args`?) — the call was not run; re-emit it with the right keys",
     );
   });
 

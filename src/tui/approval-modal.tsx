@@ -43,6 +43,7 @@ import { MouseTarget, useMouseCommands } from "./mouse/mouse-context.js";
 import { isPrimaryPress } from "./mouse/mouse-event.js";
 import { MOUSE_LAYER_MODAL } from "./mouse/mouse-registry.js";
 import { QuestionPrompt } from "./question-prompt.js";
+import { SecretInputPrompt } from "./secret-input/secret-input-prompt.js";
 
 interface ApprovalModalProps {
   request: ApprovalRequest;
@@ -65,6 +66,11 @@ interface ApprovalModalProps {
    * asks for the second press that saves the rule (ATO-2759).
    */
   alwaysArmed?: boolean;
+  /**
+   * The value typed into a `shell_secret` request's masked field
+   * (ATO-2486); `false` keeps the field open.
+   */
+  onSecretSubmit?: (value: string) => boolean;
 }
 
 /**
@@ -105,7 +111,25 @@ export function ApprovalModal({
   previewPage = null,
   onPreviewPage = () => {},
   alwaysArmed = false,
+  onSecretSubmit,
 }: ApprovalModalProps): ReactElement {
+  // A password an interactive shell job asks for (ATO-2486): a masked
+  // field, never the composer; the deny chord or Esc skips it.
+  if (request.secretInput && onSecretSubmit) {
+    return (
+      <SecretInputPrompt
+        // A new request starts with an empty field.
+        key={request.approvalId}
+        prompt={request.secretInput}
+        onSubmit={onSecretSubmit}
+        skipButton={
+          <ApprovalButton request={request} approved={false} tone="danger">
+            {`skip · esc or ctrl+${APPROVAL_CHORDS.deny}`}
+          </ApprovalButton>
+        }
+      />
+    );
+  }
   // An `ask_user` question (ATO-489): numbered options, answered from the
   // composer; the deny chord skips it.
   if (request.question) {

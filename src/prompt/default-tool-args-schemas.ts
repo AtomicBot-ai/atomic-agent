@@ -242,6 +242,8 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       eof: booleanSchema,
       // ATO-2436: keep listening to a job; matches arrive as notices later.
       monitor: integerSchema,
+      // ATO-2486: what the job asks for; the user types the value.
+      secret: stringSchema,
     }),
   ],
 

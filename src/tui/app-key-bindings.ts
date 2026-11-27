@@ -42,6 +42,7 @@ import type { TuiState } from "./tui-state.js";
 import { handleUninstallKey } from "./uninstall/uninstall-key-bindings.js";
 import type { UninstallChoice } from "./uninstall/uninstall-state.js";
 import { handleIssueReportKey } from "./issue-report/issue-report-key-bindings.js";
+import { isShellSecretRequest } from "./secret-input/secret-input-keys.js";
 
 /**
  * Number of **terminal rows** a single PageUp / PageDown keypress
@@ -433,6 +434,12 @@ export function handleAppKey(
     state.pendingApproval &&
     state.pendingApproval.sessionId === state.session.sessionId
   ) {
+    // A secret's masked field (ATO-2486) owns the keyboard: no key of
+    // it may reach a panel, the rail or a hotkey behind the card.
+    if (isShellSecretRequest(state.pendingApproval)) {
+      handleApprovalKey(input, key, state.pendingApproval, ctx);
+      return true;
+    }
     return handleApprovalKey(input, key, state.pendingApproval, ctx);
   }
   // A settled successful self-update parks the UI on a "press any key to
@@ -1138,6 +1145,12 @@ export function approvalHotkey(
   if (request.sessionId !== state.session.sessionId) return null;
   // The target field owns every key while it is open.
   if (state.approvalPathDraft !== null) return null;
+  // A secret the person types (ATO-2486): the masked field takes the
+  // typing; Esc and the deny chord skip it, nothing approves it.
+  if (isShellSecretRequest(request)) {
+    if (key.escape) return "deny";
+    return key.ctrl && !key.meta && input.toLowerCase() === APPROVAL_CHORDS.deny ? "deny" : null;
+  }
   // Esc keeps the old rule, and keeps it for the old reason: it is the
   // editor's "clear the draft" key too, so only an empty buffer lets it
   // abort the run. Unlike the letters it was never a *decision* — the

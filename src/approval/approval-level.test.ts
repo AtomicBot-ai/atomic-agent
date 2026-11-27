@@ -44,6 +44,7 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "local_model_restart",
   "hook_ask",
   "user_question",
+  "shell_secret",
   "session_cross",
   "logbook_cloud",
   "other",
@@ -72,6 +73,7 @@ describe("session-grant eligibility", () => {
           category !== "local_model_restart" &&
           category !== "hook_ask" &&
           category !== "user_question" &&
+          category !== "shell_secret" &&
           category !== "browser_take_over",
       );
     }
@@ -164,6 +166,8 @@ describe("approval ladder", () => {
       hook_ask: 5,
       // A question only the person can answer (ATO-489).
       user_question: null,
+      // A password a shell job asks for: only the person types it (ATO-2486).
+      shell_secret: null,
       // Another chat's messages, read or written (ATO-570).
       session_cross: 5,
       // Screen notes going to a cloud model (ATO-2363).

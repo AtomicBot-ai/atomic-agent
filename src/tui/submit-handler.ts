@@ -45,6 +45,7 @@ import {
 import { pickerQuery, visiblePickerSessions } from "./session-rail/session-search.js";
 import { approvalSessionOnScreen } from "./commands/command-shell-session.js";
 import { submitWhenShellDone } from "./commands/command-shell-submit.js";
+import { isShellSecretRequest } from "./secret-input/secret-input-keys.js";
 
 type Dispatch = (action: TuiAction) => void;
 
@@ -117,6 +118,12 @@ export function handleEditorSubmit(
   if (trimmed.startsWith("/")) {
     return;
   }
+
+  // A secret a shell job asks for (ATO-2486) is typed into its masked
+  // field, never here: composer text must not become a steer or a deny
+  // reason while one is up (the composer is unfocused then; this keeps
+  // a stray submit honest).
+  if (isShellSecretRequest(state.pendingApproval)) return;
 
   // An `ask_user` question (ATO-489): what was typed is the answer, a
   // number, several, or the person's own words. One that does not fit

@@ -85,6 +85,7 @@ import {
   createResolveApprovalHandler,
 } from "./route-approval.js";
 import { createAnswerQuestionHandler } from "./route-question.js";
+import { createShellSecretHandler } from "./route-shell-secret.js";
 import {
   createAddApprovalRuleHandler,
   createDeleteApprovalRuleHandler,
@@ -450,6 +451,8 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     },
     // ATO-489: the answer to an `ask_user` question shown from /api/events.
     { method: "POST", path: "/api/question/answer", handler: createAnswerQuestionHandler() },
+    // ATO-2486: a password an interactive shell job asks for, typed by the person.
+    { method: "POST", path: "/api/shell/secret", handler: createShellSecretHandler() },
     // ATO-1492: an MCP server's question to the person, shown from
     // /api/events?elicitation=1. Never through the approval routes.
     { method: "GET", path: "/api/mcp/elicitation", handler: createListMcpElicitationsHandler() },

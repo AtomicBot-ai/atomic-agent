@@ -592,6 +592,11 @@ export async function tuiCommand(args: string[]): Promise<number> {
           // ATO-489: the answer is the `ask_user` tool's result.
           runtime.approvals.resolve({ approvalId, approved: true, answer });
         },
+        onSecretInput: (approvalId, secret) => {
+          // ATO-2486: straight into the job's input; no reason string,
+          // no log line carries the value.
+          runtime.approvals.resolve({ approvalId, approved: true, secret });
+        },
         onApprovalReply: (approvalId, message) => {
           // Order matters: resolve first so the blocked tool call fails
           // fast with the operator's words, then steer. Steering before

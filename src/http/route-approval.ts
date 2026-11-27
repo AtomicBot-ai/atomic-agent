@@ -130,6 +130,16 @@ export function createResolveApprovalHandler(): HttpHandler {
         );
         return;
       }
+      // A job's password (ATO-2486) is typed, not allowed: an approve
+      // without the value would only tell the model nothing was typed.
+      if (pending?.category === "shell_secret") {
+        sendError(
+          res,
+          400,
+          openaiError("this asks for a password; send it with POST /api/shell/secret"),
+        );
+        return;
+      }
     }
     const inChat = grant === "shape";
     if (grant === "always") {
