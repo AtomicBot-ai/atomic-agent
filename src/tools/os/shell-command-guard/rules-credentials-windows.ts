@@ -52,7 +52,8 @@ import { COPIERS, copyOperands, homeFolderCopy } from "./windows-copy-operands.j
  *   different commands.
  * A copy or archive of the whole home folder (`robocopy %USERPROFILE%
  * D:\x /E`, `Compress-Archive -Path $HOME`) takes the credential folders
- * with it and asks too. Each is a `dangerous.read_credentials` finding,
+ * with it and asks too, and a provider variable (`${C:\Users\x\.ssh\id_rsa}`)
+ * is a read on its own. Each is a `dangerous.read_credentials` finding,
  * so the reason says what the command reads.
  */
 
@@ -79,6 +80,8 @@ const CD: ReadonlySet<string> = new Set(["cd", "chdir", "pushd", "set-location",
 const CODE_RUNNER = /^(?:python[0-9.]*|py|node|perl|ruby)$/;
 const CODE_FLAG = /^(?:-[a-z]*[ce]|--eval|--print)$/;
 const DOTNET_READ = /\[(?:system\.)?io\.file\]::(?:read|copy|open)/;
+/** A PowerShell provider variable is the file's content: `${C:\Users\x\.ssh\id_rsa}`. */
+const PROVIDER_READ = /\$\{[^{}\s]*[/\\][^{}]*\}/;
 const SAVED_CREDENTIALS: readonly RegExp[] = [
   /(?:^|[\s;&|(])cmdkey(?:\.exe)?\s+[/-]list\b/,
   /(?:^|[\s;&|(])vaultcmd(?:\.exe)?\s+[/-]list(?:creds|properties)?\b/,
@@ -238,7 +241,11 @@ function commandFinding(command: string, inHome: boolean): ArgScanFinding | null
   const codeRunner = programs.some(
     (name, i) => CODE_RUNNER.test(name) && words.slice(i + 1).some((w) => CODE_FLAG.test(w)),
   );
-  const reads = codeRunner || DOTNET_READ.test(command) || programs.some((name) => READERS.has(name));
+  const reads =
+    codeRunner ||
+    DOTNET_READ.test(command) ||
+    PROVIDER_READ.test(command) ||
+    programs.some((name) => READERS.has(name));
   // Without a reader only a `<` redirect of the path itself reads it.
   const read = reads ? (onlyDestination(words, hits) ? [] : hits) : hits.filter((hit) => hit.redirected);
   return anyHit(read, "reads a credential file");

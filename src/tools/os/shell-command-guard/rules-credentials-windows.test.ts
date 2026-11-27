@@ -174,6 +174,8 @@ describe("review round 2 (#1945): fail closed on forms the guard cannot follow",
     "gc ${env:HOMEDRIVE}${env:HOMEPATH}\\.ssh\\id_rsa",
     String.raw`gc $([Environment]::GetFolderPath('UserProfile'))\.ssh\id_rsa`,
     String.raw`powershell -c "[IO.File]::ReadAllText($HOME+'\.ssh\id_rsa')"`,
+    // A provider variable is the file's content, with no reader at all.
+    "$k = ${C:\\Users\\x\\.ssh\\id_rsa}",
     // A variable the guard does not know, and an 8.3 short name.
     String.raw`type %FOO%\.ssh\id_rsa`,
     String.raw`type %USERPROFILE%\SSH~1\id_rsa`,
@@ -204,6 +206,7 @@ describe("review round 2 (#1945): fail closed on forms the guard cannot follow",
     String.raw`copy C:\tmp\x %USERPROFILE%`,
     // A listing, a pipeline into no reader, a braced public key, `..` elsewhere.
     "dir ${HOME}\\.ssh",
+    "$k = ${C:\\Users\\x\\notes.txt}",
     "gc ${HOME}\\.ssh\\id_rsa.pub",
     "dir ~/.ssh | Measure-Object",
     "ls ~/.ssh | wc -l",
