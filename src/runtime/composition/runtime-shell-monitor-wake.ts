@@ -1,4 +1,5 @@
 import type { SessionStore } from "../../session/index.js";
+import { isChannelGuestSession } from "../../session/channel-guest-session.js";
 import type { TaskRunner } from "../../tasks/index.js";
 import type { MonitorWake, ShellJobRegistry } from "../../tools/os/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
@@ -18,8 +19,12 @@ import type { StructuredLogger } from "../../tracing/structured-logger.js";
  *     entered again from inside.
  *
  * A session the store does not know (a fusion worker, a chat never
- * saved) gets no task: there would be nothing to run it in. `false`
- * leaves the lines with the monitor, which offers them again later.
+ * saved) gets no task: there would be nothing to run it in. A channel's
+ * guest session (ATO-2221) gets none either: a task turn would run
+ * without the guest's read-only tools and memory, over a history the
+ * guests wrote; only a guest turn that is already running hears it.
+ * `false` leaves the lines with the monitor, which offers them again
+ * later.
  */
 export function installShellMonitorWake(args: {
   shellJobs: Pick<ShellJobRegistry, "wake">;
@@ -33,7 +38,8 @@ export function installShellMonitorWake(args: {
   shellJobs.wake.setFallback((wake: MonitorWake) => {
     if (steer(wake.sessionId, wake.text)) return true;
     if (!tasksEnabled) return false;
-    if (sessionStore.load(wake.sessionId) === null) return false;
+    const session = sessionStore.load(wake.sessionId);
+    if (session === null || isChannelGuestSession(session)) return false;
     try {
       const task = taskRunner.create({
         sessionId: wake.sessionId,
