@@ -3,6 +3,7 @@ import { MAX_PENDING_STEERS } from "../runtime/steering-inbox.js";
 import type { SessionState } from "../session/session-state.js";
 import { readSessionArchived } from "../session/session-archived.js";
 import { readSessionTitle } from "../session/session-title.js";
+import { readSessionTrashed, readSessionTrashedSetAt } from "../session/session-trashed.js";
 import {
   SESSION_SEARCH_MAX_LIMIT,
   SESSION_SEARCH_MAX_QUERY_CHARS,
@@ -77,6 +78,10 @@ export function createListSessionsHandler(): HttpHandler {
         nextStep: suggestionsOn ? readSessionNextStep(s) : null,
         // ATO-1150: the operator archived this chat (POST /api/sessions/{id}/archived).
         archived: readSessionArchived(s.metadata),
+        // ATO-2474: the chat is in Trash (POST /api/sessions/{id}/trashed) and
+        // since when; the desktop draws it in its Trash section, not its lists.
+        trashed: readSessionTrashed(s.metadata),
+        trashedAt: readSessionTrashed(s.metadata) ? readSessionTrashedSetAt(s.metadata) : null,
       })),
     });
   };

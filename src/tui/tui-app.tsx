@@ -336,6 +336,8 @@ export interface TuiAppCallbacks {
   onReasoningLevelChanged?(level: ReasoningLevel): void;
   /** Ask the orchestrator to emit the recent-sessions list to the bus. */
   onSessionPickerRequested?(): void;
+  /** `/sessions --deleted | --restore` (ATO-2474): list Trash in the chat, or restore a chat from it. */
+  onSessionsTrashRequested?(request: import("./session-trash/session-trash-command.js").SessionsTrashRequest): void;
   /**
    * `/rewind` (ATO-1057): open the picker of the chat's earlier
    * questions, or say in the chat why it cannot (a turn is running,

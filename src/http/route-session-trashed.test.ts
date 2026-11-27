@@ -39,6 +39,24 @@ describe("POST /api/sessions/{id}/trashed", () => {
     expect(harness.runtime.sessionStore.load(session.id)?.metadata?.trashed).toBeUndefined();
   });
 
+  // ATO-2474: the list says which chats are in Trash and since when.
+  it("GET /api/sessions marks a chat in Trash with trashed and trashedAt", async () => {
+    harness = await startTestHarness();
+    const session = harness.runtime.createSession();
+    const row = async () => {
+      const res = await fetch(`${harness!.baseUrl}/api/sessions?scope=all`);
+      const body = (await res.json()) as { sessions: Array<{ id: string; trashed: boolean; trashedAt: number | null }> };
+      return body.sessions.find((s) => s.id === session.id);
+    };
+    expect(await row()).toMatchObject({ trashed: false, trashedAt: null });
+    await setTrashed(harness, session.id, { trashed: true });
+    const after = await row();
+    expect(after?.trashed).toBe(true);
+    expect(typeof after?.trashedAt).toBe("number");
+    await setTrashed(harness, session.id, { trashed: false });
+    expect(await row()).toMatchObject({ trashed: false, trashedAt: null });
+  });
+
   it("answers 404 for a session that is not stored", async () => {
     harness = await startTestHarness();
     expect((await setTrashed(harness, "missing", { trashed: true })).status).toBe(404);
