@@ -399,6 +399,7 @@ contextBridge.exposeInMainWorld("atomic", {
   quickEntryOpened: () => ipcRenderer.invoke("app:quickEntryOpened"),
   quickEntryDraft: (text: string) => ipcRenderer.send("app:quickEntryDraft", text),
   quickEntryHide: () => ipcRenderer.send("app:quickEntryHide"),
+  quickEntryReplace: (text: string) => ipcRenderer.invoke("app:quickEntryReplace", text),
   quickEntrySubmit: (text: string) => ipcRenderer.invoke("app:quickEntrySubmit", text),
   onQuickEntry: (cb: (payload: unknown) => void) => on("app:quickEntry", cb),
   quickEntryTake: () => ipcRenderer.invoke("app:quickEntryTake"),

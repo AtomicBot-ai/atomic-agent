@@ -256,7 +256,9 @@ function mcRowsHTML(st) {
   return st.rows.map((r) => {
     if (r.k === 'user') return '<div class="mc-row mc-user"><div class="prose usr">' + mcEsc(r.text) + '</div></div>';
     if (r.k === 'note') return '<div class="mc-row mc-note' + (r.tone === 'bad' ? ' bad' : '') + '">' + mcEsc(r.text) + '</div>';
-    return '<div class="mc-row mc-reply"><div class="prose">' + mcReplyHTML(r.text) + '</div></div>';
+    // ATO-2268: "Replace in <app>" under an answer to the selection (mini-chat-selection.js).
+    const put = typeof mcReplaceHTML === 'function' ? mcReplaceHTML(r, st.replaceLabel, st.reply === r, mcEsc) : '';
+    return '<div class="mc-row mc-reply"><div class="prose">' + mcReplyHTML(r.text) + '</div>' + put + '</div>';
   }).join('');
 }
 
@@ -306,6 +308,19 @@ function mcBoot() {
   });
   // A link in a reply opens in the browser, as in the main window; nothing navigates this page.
   $('mc-log').addEventListener('click', (e) => {
+    // ATO-2268: the answer put back in place of the selection; main hides this window when it goes.
+    const put = e.target && e.target.closest ? e.target.closest('[data-replace]') : null;
+    if (put) {
+      const row = st.rows.find((r) => String(r.id) === put.getAttribute('data-replace'));
+      if (!row || !BR.quickEntryReplace) return;
+      put.disabled = true;
+      BR.quickEntryReplace(row.text).then((res) => {
+        if (res && (res.ok || res.hidden)) return;
+        st.rows.push({id: ++st.seq, k: 'note', tone: 'bad', text: (res && res.error) || 'The text could not be replaced.'});
+        repaint();
+      }, () => { put.disabled = false; });
+      return;
+    }
     const a = e.target && e.target.closest ? e.target.closest('a') : null;
     if (!a) return;
     e.preventDefault();
@@ -404,7 +419,9 @@ function mcBoot() {
     const input = $('mc-input');
     const typed = input.value;
     const text = selection && typed.trim() && typeof mcComposeWithSelection === 'function' ? mcComposeWithSelection(typed, selection) : typed;
+    const withSelection = text !== typed;
     if (!mcSend(st, text)) return;
+    if (withSelection && st.reply) st.reply.replace = true;   // ATO-2268: its answer can go back in place of the selection
     if (selection) dropSelection();
     input.value = '';
     if (BR.quickEntryDraft) BR.quickEntryDraft('');
@@ -455,6 +472,7 @@ function mcBoot() {
     }
     // ATO-985: the selection main read before this window took the keyboard, with the language Translate used last.
     if (typeof opened.selection === 'string' && opened.selection) {
+      st.replaceLabel = typeof opened.replace === 'string' && opened.replace ? opened.replace : null;   // ATO-2268
       const saved = BR.selectedTextGet ? BR.selectedTextGet().catch(() => null) : Promise.resolve(null);
       saved.then((info) => { if (!st.rows.length) showSelection(opened.selection, info && info.translateTo); });
     }
