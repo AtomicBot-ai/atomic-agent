@@ -137,6 +137,18 @@ test("Edit on a message with changed files lists them and offers both ways", () 
   ]);
 });
 
+test("while a rewind runs the spinner sits on the button that was clicked, not on the last one", () => {
+  fakeWindow([]);
+  startEdit(FILES_PREVIEW);
+  for (const [act, spun] of [["rewind:go-chat", "Conversation only"], ["rewind:go", "Roll back files and conversation, then resend"]]) {
+    Object.assign(R.REWIND, { busy: true, busyAct: act });
+    const foot = R.rewindSheetHTML().split("<f>")[1];
+    const spinning = [...foot.matchAll(/<button[^>]*>(<span class="tk-spin"><\/span>)?([^<]*)</g)].filter((m) => m[1]).map((m) => m[2]);
+    assert.deepEqual(spinning, [spun], act);
+  }
+  Object.assign(R.REWIND, { busy: false, busyAct: null });
+});
+
 for (const [act, files] of [["go", true], ["go-chat", false]]) {
   test(`Edit's ${act} button rolls back with files: ${files} before it resends`, async () => {
     const calls = [];

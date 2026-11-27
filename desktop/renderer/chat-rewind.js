@@ -120,7 +120,7 @@ function rewindRefusalText(r) {
 
 /* ---- renderer side (globals from renderer.js, read at call time) ---- */
 
-const REWIND = {supported: true, mode: null, id: null, sid: null, prior: 0, text: '', preview: null, loading: false, busy: false, error: null, draft: ''};
+const REWIND = {supported: true, mode: null, id: null, sid: null, prior: 0, text: '', preview: null, loading: false, busy: false, busyAct: null, error: null, draft: ''};
 
 function rewindReady() {
   return typeof BR !== 'undefined' && BR && BR.rewindPreview && REWIND.supported && S.agentSession && !S.busy && !S.pending;
@@ -151,7 +151,7 @@ function rewindStart(mode, id) {
   const q = rewindQuestionFor(S.log, m);
   if (!q || !rewindReady()) return;
   Object.assign(REWIND, {mode, id: q.id, sid: S.agentSession, prior: priorQuestions(q), text: String(q.text || ''),
-    preview: null, error: null, busy: false, loading: mode !== 'fork', draft: attToEditor(String(q.text || ''))});
+    preview: null, error: null, busy: false, busyAct: null, loading: mode !== 'fork', draft: attToEditor(String(q.text || ''))});
   if (mode === 'fork') { rewindFork(); return; }
   S.overlay = 'rewind';
   render();
@@ -195,7 +195,7 @@ function rewindSheetHTML() {
   const foot = buttons.map(([a, label], i) => {
     const kind = i < buttons.length - 1 ? 'btn-s' : edit ? 'btn-p' : 'btn-df';
     return '<button class="btn ' + kind + ' sm" data-act="' + a + '"' + (disabled ? ' disabled' : '') + '>'
-      + (REWIND.busy && i === buttons.length - 1 ? '<span class="tk-spin"></span>' : '') + esc(label) + '</button>';
+      + (REWIND.busy && a === REWIND.busyAct ? '<span class="tk-spin"></span>' : '') + esc(label) + '</button>';
   }).join('');
   return sheet(edit ? 'Edit message' : 'Roll back to this message', body,
     '<span class="grow"></span><button class="btn btn-s sm" data-act="close">Cancel</button>' + foot, 'sheet-rewind');
@@ -212,9 +212,10 @@ async function rewindConfirm(files) {
   const typed = String((entry ? entry.value : S.draft) || '').trim();
   if (typed || (typeof ATT !== 'undefined' && ATT.items.length)) { REWIND.error = 'Your draft is in the way. Send or clear the composer first.'; render(); return; }
   const sid = REWIND.sid;
-  REWIND.busy = true; REWIND.error = null; render();
+  // The spinner goes on the button that was clicked (go-chat is the only one passing files: false).
+  REWIND.busy = true; REWIND.busyAct = files === false ? 'rewind:go-chat' : 'rewind:go'; REWIND.error = null; render();
   const r = await BR.rewind(sid, REWIND.prior, REWIND.text, files).catch((err) => ({ok: false, supported: true, error: String(err)}));
-  REWIND.busy = false;
+  REWIND.busy = false; REWIND.busyAct = null;
   if (!r || !r.ok) { REWIND.error = rewindRefusalText(r); render(); return; }
   S.overlay = null;
   await openSession(sid);
