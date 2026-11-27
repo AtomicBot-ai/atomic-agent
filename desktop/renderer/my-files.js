@@ -198,6 +198,7 @@ function myFilesAct(what) {
   if (verb === 'remove' && index !== null) { MF.confirm = index; mfRepaint(); return; }
   if (verb === 'removeCancel') { MF.confirm = null; mfRepaint(); return; }
   if (verb === 'removeConfirm' && index !== null) { mfRemove(index); return; }
+  if (verb === 'ocr' && typeof mfOcrToggle === 'function') { mfOcrToggle(); return; }   // ATO-2501, my-files-ocr.js
 }
 
 /* ---- drawing ---- */
@@ -266,7 +267,8 @@ function myFilesTab() {
   } else {
     body = '<div class="tk-list mf-list">' + rows.map(mfRowHTML).join('') + '</div>';
   }
-  return '<div class="set-pane mf-pane">' + about + head + remote + err + msg + mfProgressHTML() + body + '</div>';
+  const ocr = typeof mfOcrSectionHTML === 'function' ? mfOcrSectionHTML() : '';   // ATO-2501, my-files-ocr.js
+  return '<div class="set-pane mf-pane">' + about + head + remote + err + msg + mfProgressHTML() + body + ocr + '</div>';
 }
 
 if (typeof module !== 'undefined') module.exports = {mfPercent, mfProgressText, mfFolderMeta, mfParseAct, mfBase, MF_INTRO, MF_POLL_MS};

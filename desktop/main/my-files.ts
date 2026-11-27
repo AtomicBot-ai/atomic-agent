@@ -9,6 +9,7 @@
  *   POST   /api/files/folders {path}   → { folder: Folder }   400 { error: { code, message } }
  *   DELETE /api/files/folders {path}   → { removed: boolean }
  *   GET    /api/files/status           → Status
+ *   POST   /api/files/retry            → { requeued: number }   (ATO-2501, my-files-ocr.ts)
  *
  * A runtime without a file index answers 501; an agent from before the
  * routes answers the router's 404 "No route for …". Both are `unsupported`,
@@ -20,6 +21,7 @@
 export const MY_FILES_PATHS = {
   folders: "/api/files/folders",
   status: "/api/files/status",
+  retry: "/api/files/retry",
 } as const;
 
 export interface MyFilesFolder {
@@ -41,6 +43,10 @@ export interface MyFilesStatus {
   updatedAt: string;
   /** Derived here so the screen does not repeat the rule: `!running && indexed + failed + skipped >= found`. */
   done: boolean;
+  /** ATO-2501: scanned pages OCR read; 0 from an agent that does not report it. */
+  ocrPages: number;
+  /** ATO-2501: why files were skipped, most files first; empty from an older agent. */
+  skippedReasons: { reason: string; count: number }[];
 }
 
 export type MyFilesFailure = {
@@ -118,6 +124,8 @@ export function parseStatus(raw: unknown): MyFilesStatus | null {
     skipped,
     updatedAt: str(r.updatedAt),
     done: !r.running && indexed + failed + skipped >= found,
+    ocrPages: num(r.ocrPages),
+    skippedReasons: parseSkippedReasons(r.skippedReasons),
   };
   const current = str(r.current).trim();
   if (current) status.current = current;
@@ -126,6 +134,20 @@ export function parseStatus(raw: unknown): MyFilesStatus | null {
     status.lastError = { path: str(le.path), message: str(le.message), at: str(le.at) };
   }
   return status;
+}
+
+/** At most 8 `{reason, count}` rows with a reason and a positive count; anything else is dropped. */
+export function parseSkippedReasons(raw: unknown): { reason: string; count: number }[] {
+  if (!Array.isArray(raw)) return [];
+  const rows: { reason: string; count: number }[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const reason = str((item as Record<string, unknown>).reason).trim().slice(0, 500);
+    const count = num((item as Record<string, unknown>).count);
+    if (reason && count > 0) rows.push({ reason, count });
+    if (rows.length === 8) break;
+  }
+  return rows;
 }
 
 /** True when `/api/capabilities` says the agent has the file index (`fileIndex: true`, top level or under `agent` / `features`). */
@@ -160,7 +182,7 @@ export function interpretFailure(status: number, text: string): MyFilesFailure {
   return { ok: false, reason: "error", error: message || `HTTP ${status}`, status };
 }
 
-function parseJson(text: string): unknown {
+export function parseJson(text: string): unknown {
   try {
     return text ? JSON.parse(text) : null;
   } catch {
@@ -214,9 +236,9 @@ export interface MyFilesEnv {
   timeoutMs?: number;
 }
 
-const REMOTE: MyFilesFailure = { ok: false, reason: "remote", error: MY_FILES_TEXT.remote };
+export const REMOTE: MyFilesFailure = { ok: false, reason: "remote", error: MY_FILES_TEXT.remote };
 
-async function call(env: MyFilesEnv, method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<{ status: number; text: string } | MyFilesFailure> {
+export async function call(env: MyFilesEnv, method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<{ status: number; text: string } | MyFilesFailure> {
   let t: MyFilesTarget;
   try {
     t = env.target();
@@ -236,7 +258,7 @@ async function call(env: MyFilesEnv, method: "GET" | "POST" | "DELETE", path: st
   }
 }
 
-const failed = (r: { status: number; text: string } | MyFilesFailure): r is MyFilesFailure => "ok" in r;
+export const failed = (r: { status: number; text: string } | MyFilesFailure): r is MyFilesFailure => "ok" in r;
 
 /**
  * The four calls. Each never throws. Listing and status also work on a remote

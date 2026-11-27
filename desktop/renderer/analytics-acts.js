@@ -86,7 +86,7 @@ const ANX_ACTS = (() => {
       plugins:{refresh:L, expand:L, toggle:L, part:L, code:L, codeConfirm:L, codeCancel:L, remove:L, removeConfirm:L, removeCancel:L,
         install:L, installAnyway:L, installDismiss:L},
       // ATO-1626: Settings › My files (renderer/my-files.js); the folder index is cut off.
-      myfiles:{refresh:L, add:L, remove:L, removeConfirm:L, removeCancel:L},
+      myfiles:{refresh:L, add:L, remove:L, removeConfirm:L, removeCancel:L, ocr:L},
       memory:{auto:L, back:L, ch:set(memChannels), cycle:L, expand:L, filter:set(memFilters), jump:L,
         neighbor:L, open:L, page:UPDOWN, refresh:L},
       tasks:{auto:L, back:L, cancel:L, cancelConfirm:L, cancelKeep:L, clearSearch:L, detail:L,

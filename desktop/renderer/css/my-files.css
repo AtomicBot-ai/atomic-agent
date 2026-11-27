@@ -29,4 +29,14 @@
 .mf-confirm{flex:none;display:flex;align-items:center;gap:6px}
 .mf-ask{font-size:var(--fs-cap);color:var(--ink-2)}
 
+/* ATO-2501: the scans, photos and audio switch, and why files were skipped (my-files-ocr.js). */
+.mfo{display:flex;flex-direction:column;gap:10px}
+.mfo-skips{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:var(--r-card);background:var(--well)}
+.mfo-h{margin:0;font-size:var(--fs-cap);font-weight:600;color:var(--ink)}
+.mfo-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px}
+.mfo-reason{display:flex;align-items:baseline;gap:8px;font-size:var(--fs-cap);color:var(--ink-2)}
+.mfo-n{flex:none;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.mfo-det summary{cursor:pointer;font-size:var(--fs-label);color:var(--ink-3)}
+.mfo-det pre{margin:6px 0 0;white-space:pre-wrap;word-break:break-word;font-size:var(--fs-label);color:var(--ink-3)}
+
 @media (prefers-reduced-motion: reduce){.mf-fill{transition:none}}
