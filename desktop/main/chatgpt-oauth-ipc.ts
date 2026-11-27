@@ -5,6 +5,8 @@
  *   chatgptOauth:start  → { ok, state: "signed_in" | "failed", reason?, providerId? }
  *   chatgptOauth:cancel → { ok, state: "cancelled" | "idle" }
  *   chatgptOauth:status → { ok, signedIn, plan, supported }
+ *   chatgptOauth:signOut → { ok, state: "signed_out" | "failed", hadSignIn?, reason?, detail? }
+ *     (ATO-2511, chatgpt-oauth-signout.ts; `detail` is shown only behind "Details")
  *
  * Nothing else crosses to the window: not the sign-in link, not the agent's
  * output, not a token. The sign-in is stopped when the window that started
@@ -17,6 +19,7 @@ import { app, ipcMain, shell } from "electron";
 import { resolveBinary } from "./agent-client.js";
 import { atagRun } from "./agent-cli.js";
 import { createChatgptOauth, type OauthChild } from "./chatgpt-oauth-login.js";
+import { chatgptSignOut } from "./chatgpt-oauth-signout.js";
 import { agentEnv } from "./state-dir.js";
 
 export function wireChatgptOauthIpc(): void {
@@ -40,4 +43,9 @@ export function wireChatgptOauthIpc(): void {
   });
   ipcMain.handle("chatgptOauth:cancel", () => ({ ok: true, state: oauth.cancel() ? "cancelled" : "idle" }));
   ipcMain.handle("chatgptOauth:status", () => oauth.status());
+  // ATO-2511: a sign-in still waiting on the browser is stopped first, so it cannot write tokens back after the sign-out.
+  ipcMain.handle("chatgptOauth:signOut", () => {
+    oauth.cancel();
+    return chatgptSignOut({ run: (args, timeoutMs) => atagRun(args, timeoutMs) });
+  });
 }
