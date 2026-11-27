@@ -7,6 +7,8 @@
  *   <userData>/meetings/<id>/chunk-0000.json  a transcribed chunk; its audio is gone by then
  *   <userData>/meetings/<id>/them/chunk-*     ATO-2514: the same for the other side of
  *                                             the call (system audio), when it was recorded
+ *   <userData>/meetings/<id>[/them]/full.wav  ATO-2514: the whole channel, only while
+ *                                             speakers are told apart by voice; gone with the folder
  *
  * Audio lives here only until it is transcribed: each chunk's WAV is deleted
  * as soon as its JSON is written, and the whole folder is deleted once the
@@ -16,9 +18,9 @@
  *
  * No electron: test/meeting-store.test.mjs runs it in a temp folder.
  */
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import { chunkBase, pcmSeconds, planRecovery, wavSeconds, type RecoveryPlan } from "./meeting-plan.js";
+import { chunkBase, pcmSeconds, planRecovery, WAV_HEADER_BYTES, wavHeader, wavSeconds, type RecoveryPlan } from "./meeting-plan.js";
 import type { ChunkTranscript } from "./meeting-transcript.js";
 import type { TranscriptSegment } from "./transcribe-file.js";
 import { pcmToWav } from "./whisper-dictation.js";
@@ -32,6 +34,8 @@ export interface MeetingMeta {
   locale: string;
   /** ATO-2514: seconds after the start when the other side's first frame came; absent when it never did. */
   themLead?: number;
+  /** ATO-2514: each channel is also kept whole (full.wav) for the diarizer. */
+  voices?: boolean;
 }
 
 export interface StoredMeeting {
@@ -76,6 +80,7 @@ export class MeetingStore {
       if (raw.id !== id || typeof raw.startedAt !== "number") return null;
       const meta: MeetingMeta = { id, startedAt: raw.startedAt, locale: typeof raw.locale === "string" ? raw.locale : "" };
       if (typeof raw.themLead === "number" && Number.isFinite(raw.themLead) && raw.themLead >= 0) meta.themLead = raw.themLead;
+      if (raw.voices === true) meta.voices = true;
       return meta;
     } catch {
       return null;
@@ -93,6 +98,26 @@ export class MeetingStore {
   appendPcm(id: string, index: number, frame: Uint8Array, ch: MeetingChannel = "me"): void {
     if (ch === "them") mkdirSync(this.channelDir(id, ch), { recursive: true });
     appendFileSync(join(this.channelDir(id, ch), `${chunkBase(index)}.pcm`), frame);
+  }
+
+  /** ATO-2514: one frame onto the channel's whole recording; the header goes first. */
+  appendFull(id: string, frame: Uint8Array, ch: MeetingChannel = "me"): void {
+    const dir = this.channelDir(id, ch);
+    const path = join(dir, "full.wav");
+    if (!existsSync(path)) { mkdirSync(dir, { recursive: true }); writeFileSync(path, wavHeader(0)); }
+    appendFileSync(path, frame);
+  }
+
+  /** ATO-2514: the whole recording with its sizes set from the file (a crash left them at 0); null when there is none. */
+  fullWav(id: string, ch: MeetingChannel = "me"): string | null {
+    const path = join(this.channelDir(id, ch), "full.wav");
+    let size: number;
+    try { size = statSync(path).size; } catch { return null; }
+    const data = size - WAV_HEADER_BYTES - ((size - WAV_HEADER_BYTES) % 2);
+    if (data <= 0) return null;
+    const fd = openSync(path, "r+");
+    try { writeSync(fd, wavHeader(data), 0, WAV_HEADER_BYTES, 0); } finally { closeSync(fd); }
+    return path;
   }
 
   /**

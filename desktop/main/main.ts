@@ -310,6 +310,7 @@ import { FileTranscriber, appleSpeechEngine, findOnPath, whisperFileEngine } fro
 // ATO-2333: Record a meeting, transcribed live in chunks on this machine.
 import { meetingRecorderFor, wireMeetingIpc } from "./meeting-ipc.js";
 import { displayCaptureAllowed, wireMeetingLoopback, wireMeetingSystemIpc } from "./meeting-system-ipc.js";   // ATO-2514: the other side of the call
+import { meetingVoicesFor, wireMeetingVoicesIpc } from "./meeting-voices-ipc.js";   // ATO-2514: speakers by voice
 // Item 7 part B (Skills / Memory / MCP tabs)
 import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
@@ -3420,6 +3421,7 @@ function wireIpc(client: AgentClient): void {
   wireMiniChatIpc(client, { mainWindow: () => win, showMainWindow: () => (openWindowAgain(), win) });
   wireMeetingIpc(meeting);   // ATO-2333: Record a meeting (meeting-ipc.ts)
   wireMeetingSystemIpc(meeting, { emit: (ev) => send("app:meeting", ev) });   // ATO-2514: Me and Them
+  wireMeetingVoicesIpc(meetingVoicesFor((ev) => send("app:meeting", ev)));   // ATO-2514: speakers by voice (the recorder's own MeetingVoices)
   // ATO-561: "Open in new window" on a chat row (chat-popout-ipc.ts); a chat being written is not popped out.
   wireChatPopoutIpc({ mainWindow: () => win, liveSessionIds: () => [...liveTurns.values()].map((t) => t.sessionId) });
   // ATO-1056/1058: Roll back here, Edit and Fork from here on a message (chat-rewind-ipc.ts).

@@ -4,6 +4,7 @@
  */
 import type { SpeakerMethod } from "./meeting-speakers.js";
 import type { MeetingChannel, MeetingStore } from "./meeting-store.js";
+import type { MeetingVoices, VoicesEvent } from "./meeting-voices.js";
 import type { TranscribeEngine, TranscriptSegment } from "./transcribe-file.js";
 
 export type MeetingEvent =
@@ -11,7 +12,11 @@ export type MeetingEvent =
   | { type: "segments"; id: string; index: number; segments: TranscriptSegment[]; channel: MeetingChannel }
   | { type: "chunk-failed"; id: string; index: number; error: string; channel: MeetingChannel }
   /** The recording ended: the person's Stop, the window closing, the disk. */
-  | { type: "stopped"; id: string; reason: string };
+  | { type: "stopped"; id: string; reason: string }
+  /** ATO-2514: Make notes is telling the speakers apart by voice (meeting-voices.ts). */
+  | { type: "voices-run"; id: string; fraction: number }
+  /** ATO-2514: the diarizer's first-use download (no meeting id: it is one for the app). */
+  | VoicesEvent;
 
 export interface MeetingRecorderDeps {
   store: MeetingStore;
@@ -20,6 +25,8 @@ export interface MeetingRecorderDeps {
   saveDir: () => string;
   emit: (ev: MeetingEvent) => void;
   now?: () => number;
+  /** ATO-2514: speakers told apart by voice; absent, the meeting uses channels or pauses. */
+  voices?: Pick<MeetingVoices, "prepare" | "diarize">;
 }
 
 export interface MeetingFinish {
