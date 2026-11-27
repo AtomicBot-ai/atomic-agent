@@ -130,15 +130,27 @@ describe("GET /health", () => {
 
     const tunnelled = (await (await fetch(`${harness.baseUrl}/health?llama=0`, {
       headers: { "cf-connecting-ip": "203.0.113.50" },
-    })).json()) as { runtime: string; pid?: number; ppid?: number; busyTurns?: number };
+    })).json()) as Record<string, unknown> & { runtime: string; llama: Record<string, unknown> };
     expect(tunnelled.runtime).toBe("atomic-agent");
     expect(tunnelled.pid).toBeUndefined();
     expect(tunnelled.ppid).toBeUndefined();
     expect(tunnelled.busyTurns).toBeUndefined();
+    // A folder path names the user and the project; Allow phones on this Wi-Fi opens this route to the LAN.
+    expect(tunnelled).not.toHaveProperty("workingDir");
+    expect(tunnelled.llama).not.toHaveProperty("url");
+    expect(tunnelled.llama).not.toHaveProperty("error");
+    expect(tunnelled.llama).toHaveProperty("reachable");
 
-    const local = (await (await fetch(`${harness.baseUrl}/health?llama=0`)).json()) as { pid?: number; busyTurns?: number };
+    const local = (await (await fetch(`${harness.baseUrl}/health?llama=0`)).json()) as {
+      pid?: number;
+      busyTurns?: number;
+      workingDir?: string;
+      llama: { url?: string };
+    };
     expect(local.pid).toBe(process.pid);
     expect(local.busyTurns).toBe(0);
+    expect(typeof local.workingDir).toBe("string");
+    expect(typeof local.llama.url).toBe("string");
   });
 
   it("leaves the llama probe out for ?llama=0 and still counts the turns", async () => {
