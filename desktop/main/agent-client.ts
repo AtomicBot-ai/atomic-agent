@@ -1399,6 +1399,13 @@ export class AgentClient extends EventEmitter {
     this.request<unknown>("GET", `/api/task-board?limit=${encodeURIComponent(String(limit))}`);
   moveTaskCard = (id: string, body: Record<string, unknown>) =>
     this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/board`, body);
+  /* ATO-2498: a card's comment thread and the profiles it can be assigned to. */
+  boardComments = (id: string) =>
+    this.request<unknown>("GET", `/api/tasks/${encodeURIComponent(id)}/board/comments?limit=100`);
+  addBoardComment = (id: string, text: string) =>
+    this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/board/comments`, { text });
+  boardProfiles = (taskId?: string) =>
+    this.request<unknown>("GET", `/api/task-board/profiles${taskId ? `?taskId=${encodeURIComponent(taskId)}` : ""}`);
   /* ATO-458 — suggested tasks (ideas-ipc.ts): rebuilt from failed tasks and
      stopped goals, then accepted (filed as a task) or dismissed for good.
      404 "no route" on an agent from before them, 404 when tasks are off. */
