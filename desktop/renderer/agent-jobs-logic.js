@@ -137,8 +137,11 @@ function ajIsTextField(el) {
  * message, and with Hide typing on an echo of it is masked for the model
  * when the value can be masked (8 characters or more, not a plain word).
  */
-function ajPromptToast(opened) {
-  const where = opened ? 'Type it in the terminal panel.' : 'Click \u201cAgent job needs you\u201d over the chat box to type it.';
+function ajPromptToast(opened, panelOpen) {
+  // The "Agent job needs you" chip is drawn only while the panel is folded.
+  const where = opened ? 'Type it in the terminal panel.'
+    : panelOpen ? 'Click the field in the terminal panel under the chat to type it.'
+      : 'Click \u201cAgent job needs you\u201d over the chat box to type it.';
   return ['The agent\u2019s command is asking you', where + ' It goes to the command, not to the chat. '
     + 'If the command shows it again, the agent sees it hidden, unless it is short or a single plain word.'];
 }

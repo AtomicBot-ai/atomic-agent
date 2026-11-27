@@ -97,8 +97,9 @@ async function ajPullOutputs(bridge, sid) {
   }
 }
 
-/** A job asking for a password: its tab, typing hidden, once per prompt; while
-    the person types elsewhere only the chip asks (a click opens the field). */
+/** A job asking for a password: its tab, typing hidden, once per prompt. Typing
+    is always hidden; only the caret stays where the person is typing (the
+    chip, or the open panel's field, asks instead). */
 function ajNoticePrompt(id) {
   const job = AJ.jobs.find((j) => j.id === id);
   if (!job || !job.interactive || !ajIsLive(job)) return;
@@ -106,10 +107,11 @@ function ajNoticePrompt(id) {
   const at = AJ.next[id] || 0;
   if (!secret || AJ.asked[id] === at) return;
   AJ.asked[id] = at;
-  const open = !ajTypingElsewhere();
-  if (open || !AJ.open) Object.assign(AJ, {selected: id, taking: true, hide: true});
-  if (open) { AJ.open = true; ajWantFocus = true; }
-  if (typeof toast === 'function') toast(...ajPromptToast(open));
+  const focus = !ajTypingElsewhere();
+  const panelOpen = AJ.open;
+  Object.assign(AJ, {selected: id, taking: true, hide: true});
+  if (focus) { AJ.open = true; ajWantFocus = true; }
+  if (typeof toast === 'function') toast(...ajPromptToast(focus, panelOpen));
 }
 
 /** The card of a shell_secret request asks for its job's tab (a click: the caret may move). */

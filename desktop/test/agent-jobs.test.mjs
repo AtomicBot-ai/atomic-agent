@@ -136,6 +136,9 @@ test('the prompt toast promises only what the agent does', () => {
     assert.match(body, /short or a single plain word/);
   }
   assert.match(ajPromptToast(false)[1], /Agent job needs you/);
+  // The chip is not drawn while the panel is open: the toast points at the panel's field.
+  assert.doesNotMatch(ajPromptToast(false, true)[1], /Agent job needs you/);
+  assert.match(ajPromptToast(false, true)[1], /field in the terminal panel/);
 });
 
 test('after a hidden send the person is told when the agent could not mask it', () => {
@@ -190,6 +193,21 @@ test('a password prompt never takes the caret from the composer; the chip asks i
   vm.runInContext(`AJ.next[1] = 30; ajNoticePrompt(1);`, ctx);
   assert.equal(vm.runInContext('ajWantFocus', ctx), true);
   assert.equal(vm.runInContext('AJ.open', ctx), true);
+});
+
+test('with the panel open and the caret in the chat box, a password prompt still hides typing', () => {
+  const {ctx, document, toasts, field} = loadPanel();
+  vm.runInContext('AJ.open = true; AJ.hide = false; AJ.taking = false; AJ.selected = null;', ctx);
+  document.activeElement = {tagName: 'TEXTAREA'};
+  vm.runInContext(`AJ.raw[1] = '[sudo] password for n: '; AJ.next[1] = 24; ajNoticePrompt(1);`, ctx);
+  assert.equal(vm.runInContext('AJ.hide', ctx), true);
+  assert.equal(vm.runInContext('AJ.taking', ctx), true);
+  assert.equal(vm.runInContext('AJ.selected', ctx), 1);
+  // The caret stays in the chat box.
+  assert.equal(vm.runInContext('ajWantFocus', ctx), false);
+  assert.equal(field.focused, 0);
+  assert.doesNotMatch(toasts[0][1], /Agent job needs you/);
+  assert.match(toasts[0][1], /field in the terminal panel/);
 });
 
 test('a password the agent asked for (shell_secret) answers that request, not the job\'s stdin', async () => {
