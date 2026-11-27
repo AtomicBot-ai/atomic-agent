@@ -107,3 +107,18 @@ test("ATO-2744: a file the index could not read is named in words, with the macO
   assert.ok(src.includes("<p>Reading folders…</p>") && !src.includes("reading folders…"));
   assert.match(src, /const err = MF\.err \? herrNoticeHTML\(MF\.err, \{icon: ic\('alert'\), cls: 'tuierr mf-note'\}\) : '';/);
 });
+
+test("ATO-2744: Open Privacy Settings on macOS only, for a permission error, when the bridge can open it", () => {
+  Object.assign(globalThis, require("../renderer/human-error.js"));
+  const { mfLastErrorHTML } = require("../renderer/my-files.js");
+  const le = { path: "/Users/me/a.pdf", message: "EPERM: operation not permitted, open '/Users/me/a.pdf'" };
+  const btn = 'data-act="myfiles:privacy">Open Privacy Settings</button>';
+  assert.ok(mfLastErrorHTML(le, "darwin", true).includes(btn));
+  assert.ok(!mfLastErrorHTML(le, "darwin", false).includes(btn), "no bridge, no button");
+  assert.ok(!mfLastErrorHTML(le, "win32", true).includes(btn));
+  assert.ok(!mfLastErrorHTML(le, "linux", true).includes(btn));
+  assert.ok(!mfLastErrorHTML({ path: "/x", message: "ENOENT: no such file" }, "darwin", true).includes(btn), "only for a permission error");
+  const src = readFileSync(new URL("../renderer/my-files.js", import.meta.url), "utf8");
+  assert.ok(src.includes("BR.privacyOpen('fullDiskAccess')"));
+  assert.ok(readFileSync(new URL("../renderer/my-apps.js", import.meta.url), "utf8").includes("<p>Reading apps…</p>"));
+});

@@ -262,3 +262,19 @@ test("ATO-2744: an empty recording points at Input Monitoring on macOS; Show in 
   await c.act("reveal");
   assert.deepEqual(opened, ["/u/.atomic-agent/skills-pending/d1"]);
 });
+
+test("ATO-2744: Open Input Monitoring settings under an empty recording, on macOS with the bridge only", async () => {
+  const empty = { ...base, last: { kind: "empty" } };
+  const btn = 'data-act="skills:showOnce:inputMonitoring">Open Input Monitoring settings</button>';
+  assert.ok(R.showOnceCardHTML(empty, esc, { platform: "darwin", privacy: true }).includes(btn));
+  assert.ok(!R.showOnceCardHTML(empty, esc, { platform: "darwin", privacy: false }).includes(btn));
+  assert.ok(!R.showOnceCardHTML(empty, esc, { platform: "win32", privacy: true }).includes(btn));
+  const asked = [];
+  const br = { showOnceState: async () => empty, onShowOnceState: () => () => {}, privacyOpen: async (p) => { asked.push(p); return { ok: true }; } };
+  const c = R.createShowOnceController({ api: () => br, paint: () => {} });
+  c.cardHTML(esc);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(c.cardHTML(esc).includes(btn), "the controller passes the bridge's privacy:open in");
+  await c.act("inputMonitoring");
+  assert.deepEqual(asked, ["inputMonitoring"]);
+});

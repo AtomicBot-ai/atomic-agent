@@ -103,13 +103,15 @@ function mfThrown(e) {
   return {text: "Couldn't reach the agent. Try Refresh.", hint: '', detail: String((e && e.message) || e || '')};
 }
 
-/* The file the index last failed on: its name in words, the macOS privacy hint for EPERM / EACCES,
-   the path and the agent's words under Details. */
-function mfLastErrorHTML(le, platform) {
+/* The file the index last failed on: its name in words, the macOS privacy hint for EPERM / EACCES
+   (with Open Privacy Settings when the bridge has privacy:open), the path and the agent's words under Details. */
+function mfLastErrorHTML(le, platform, canOpenPrivacy) {
   if (!le || !le.message || typeof herrFsRead !== 'function') return '';
   const e = herrFsRead(le.message, mfBase(le.path) || 'a file', platform);
   e.detail = [le.path || '', String(le.message)].filter(Boolean).join('\n');
-  return '<div class="mf-lasterr">' + herrBodyHTML(e) + '</div>';
+  const open = platform === 'darwin' && canOpenPrivacy && herrIsPermission(le.message)
+    ? ' <button class="btn btn-s sm" data-act="myfiles:privacy">Open Privacy Settings</button>' : '';
+  return '<div class="mf-lasterr">' + herrBodyHTML(e) + open + '</div>';
 }
 
 function mfApplyFailure(res) {
@@ -217,6 +219,7 @@ function myFilesAct(what) {
   const {verb, index} = mfParseAct(what);
   if (verb === 'refresh') { mfRefreshFolders().then(() => mfRefreshStatus()); return; }
   if (verb === 'add') { mfAdd(); return; }
+  if (verb === 'privacy') { if (typeof BR !== 'undefined' && BR && typeof BR.privacyOpen === 'function') BR.privacyOpen('fullDiskAccess'); return; }
   if (verb === 'remove' && index !== null) { MF.confirm = index; mfRepaint(); return; }
   if (verb === 'removeCancel') { MF.confirm = null; mfRepaint(); return; }
   if (verb === 'removeConfirm' && index !== null) { mfRemove(index); return; }
@@ -234,7 +237,8 @@ function mfProgressHTML() {
       + '<span class="mf-fill' + (pct === null ? ' mf-fill--wait' : '') + '" style="width:' + (pct === null ? 100 : pct) + '%"></span></div>'
     : '';
   const cur = st.running && st.current ? '<span class="mf-cur mono" title="' + esc(st.current) + '">' + esc(mfBase(st.current)) + '</span>' : '';
-  const last = mfLastErrorHTML(st.lastError, typeof PLATFORM !== 'undefined' ? PLATFORM : '');
+  const last = mfLastErrorHTML(st.lastError, typeof PLATFORM !== 'undefined' ? PLATFORM : '',
+    typeof BR !== 'undefined' && !!BR && typeof BR.privacyOpen === 'function');
   return '<div class="mf-progress' + (st.running ? ' is-running' : '') + '" aria-live="polite">'
     + '<div class="mf-ptext">' + (st.running ? '<span class="tk-spin" aria-hidden="true"></span>' : ic('check')) + '<span class="grow">' + esc(text) + '</span>' + cur + '</div>'
     + bar + last + '</div>';

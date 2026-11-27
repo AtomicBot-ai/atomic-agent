@@ -1,6 +1,7 @@
 import { BrowserWindow, Menu, Tray, app, ipcMain, nativeImage, shell, systemPreferences } from "electron";
 
 import { loadUiohook } from "./hold-key-uiohook.js";
+import { registerPrivacyPaneIpc } from "./privacy-pane.js";
 import { pendingDraftsRoot, saveShowOnceDraft } from "./show-once-draft.js";
 import { SHOW_ONCE_LIMITS, ShowOnceLog, type ShowOnceEvent } from "./show-once-log.js";
 import { runShowOnceProbe, type ShowOnceProbe } from "./show-once-probe.js";
@@ -243,6 +244,8 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
   ipcMain.handle("showOnce:start", () => start());
   ipcMain.handle("showOnce:stop", () => finish(true));
   ipcMain.handle("showOnce:cancel", () => finish(false));
+  // ATO-2744: the named Privacy panes (Full Disk Access for My files, Input Monitoring for Show once).
+  registerPrivacyPaneIpc({ ipcMain, openExternal: (url) => shell.openExternal(url), platform: process.platform });
   ipcMain.handle("showOnce:openAccessibility", () =>
     shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility").then(() => true, () => false));
   app.on("before-quit", () => { if (hook) { release(); log = null; startedAt = null; } });
