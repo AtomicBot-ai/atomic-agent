@@ -9,8 +9,10 @@ import { previousReplyText } from "../../prompt/request-section.js";
 import type { SessionState } from "../../session/index.js";
 
 /**
- * SessionStart and UserPromptSubmit for a turn about to run: the context
- * the hooks added for the model, if any. A UserPromptSubmit block throws
+ * SessionStart and UserPromptSubmit for a turn about to run: what the hooks
+ * added for the model. `session` (SessionStart) is the same on every turn
+ * of the session; `turn` (UserPromptSubmit) is this turn's only. A
+ * UserPromptSubmit block throws
  * `HookBlockedPromptError` before anything about the turn is written, so
  * the refused message is not saved (as in Claude Code).
  */
@@ -19,8 +21,8 @@ export async function startTurnHooks(
   session: SessionState,
   userMessage: string,
   signal: AbortSignal | undefined,
-): Promise<string | undefined> {
-  if (!engine) return undefined;
+): Promise<TurnHookContext> {
+  if (!engine) return {};
   const outcome = await engine.beforeTurn({
     sessionId: session.id,
     cwd: session.workingDir,
@@ -29,7 +31,16 @@ export async function startTurnHooks(
     ...(signal ? { signal } : {}),
   });
   if (outcome.kind === "blocked") throw new HookBlockedPromptError(outcome.reason);
-  return outcome.context;
+  return {
+    ...(outcome.sessionContext !== undefined ? { session: outcome.sessionContext } : {}),
+    ...(outcome.context !== undefined ? { turn: outcome.context } : {}),
+  };
+}
+
+/** The hook text a turn's prompt carries (`RunTurnOptions.sessionHookContext` / `hookContext`). */
+export interface TurnHookContext {
+  session?: string;
+  turn?: string;
 }
 
 /**

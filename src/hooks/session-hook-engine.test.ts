@@ -28,23 +28,32 @@ describe("session hook engine", () => {
     expect(inputs.ctx).toMatchObject({ hook_event_name: "UserPromptSubmit", prompt: "fix the build", session_id: "s1", cwd: "/work" });
   });
 
+  it("UserPromptSubmit text belongs to its own turn, SessionStart text to the session", async () => {
+    let n = 0;
+    const run = vi.fn(async (hook: HookCommand) => result(hook.command === "start" ? { stdout: "project: atomic" } : { stdout: `prompt ${++n}` }));
+    const engine = new SessionHookEngine({ stateDir: "/s", load: loaded({ hooks: { SessionStart: entry("start"), UserPromptSubmit: entry("ctx") } }), run });
+    expect(await engine.beforeTurn(turn)).toEqual({ kind: "proceed", sessionContext: "project: atomic", context: "prompt 1" });
+    expect(await engine.beforeTurn({ ...turn, isNewSession: false })).toEqual({ kind: "proceed", sessionContext: "project: atomic", context: "prompt 2" });
+  });
+
   it("UserPromptSubmit exit 2 blocks the turn", async () => {
     const { run } = runner({ guard: { exitCode: 2, stderr: "no prod deploys on Friday" } });
     const engine = new SessionHookEngine({ stateDir: "/s", load: loaded({ hooks: { UserPromptSubmit: entry("guard") } }), run });
     expect(await engine.beforeTurn(turn)).toEqual({ kind: "blocked", reason: "no prod deploys on Friday" });
   });
 
-  it("SessionStart fires once per session, with startup or resume as source and matcher", async () => {
+  it("SessionStart fires once per session, with startup or resume as source and matcher; its text stays for every turn", async () => {
     const { run, inputs } = runner({ start: { stdout: "hello" } });
     const engine = new SessionHookEngine({
       stateDir: "/s",
       load: loaded({ hooks: { SessionStart: [...entry("start", "startup"), ...entry("resumed", "resume")] } }),
       run,
     });
-    expect(await engine.beforeTurn(turn)).toEqual({ kind: "proceed", context: "hello" });
+    expect(await engine.beforeTurn(turn)).toEqual({ kind: "proceed", sessionContext: "hello" });
     expect(inputs.start).toMatchObject({ hook_event_name: "SessionStart", source: "startup" });
     expect(inputs.resumed).toBeUndefined();
-    await engine.beforeTurn(turn);
+    // Turn 2: the hook does not run again, but its text is still there.
+    expect(await engine.beforeTurn({ ...turn, isNewSession: false })).toEqual({ kind: "proceed", sessionContext: "hello" });
     expect(run).toHaveBeenCalledTimes(1);
     await engine.beforeTurn({ ...turn, sessionId: "s2", isNewSession: false });
     expect(inputs.resumed).toMatchObject({ source: "resume", session_id: "s2" });

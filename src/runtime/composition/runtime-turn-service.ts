@@ -685,10 +685,12 @@ export function createRuntimeTurnService(
           sessionId: session.id,
           attended: isAttendedTurn(runOptions.origin, runOptions.interactive),
         };
-        const runLoop = (state: SessionState, message: string, context?: string) => runInBrowserScope(browserScope, () => loop.runTurn(state, {
+        const runLoop = (state: SessionState, message: string, promptHookText?: string) => runInBrowserScope(browserScope, () => loop.runTurn(state, {
           userMessage: message,
           modelModePolicy,
-          ...(context !== undefined ? { hookContext: context } : {}),
+          // SessionStart text on every turn and continuation; UserPromptSubmit's on its own turn.
+          ...(hookContext.session !== undefined ? { sessionHookContext: hookContext.session } : {}),
+          ...(promptHookText !== undefined ? { hookContext: promptHookText } : {}),
           // The same record the workers' briefs quote, pinned into the
           // orchestrator's own prompt once the packer drops its carrier.
           ...(turnRequest !== undefined
@@ -709,7 +711,7 @@ export function createRuntimeTurnService(
         // A Stop hook may send the agent back to work (ATO-2198).
         const result = await continueOnStopHooks(
           sessionHooks,
-          await runLoop(session, userMessage, hookContext),
+          await runLoop(session, userMessage, hookContext.turn),
           runOptions.signal,
           (state, message) => runLoop(state, message),
         );

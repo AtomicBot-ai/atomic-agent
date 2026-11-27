@@ -25,7 +25,13 @@ export interface TurnStartFacts {
 
 export type TurnStartOutcome =
   | { kind: "blocked"; reason: string }
-  | { kind: "proceed"; context?: string };
+  | {
+      kind: "proceed";
+      /** What SessionStart printed for this session; returned on every turn, not only the first. */
+      sessionContext?: string;
+      /** What UserPromptSubmit printed for this turn only. */
+      context?: string;
+    };
 
 /** How a turn just ended, for the Stop hooks. */
 export interface TurnStopFacts {
@@ -57,8 +63,13 @@ const NEVER = new AbortController().signal;
  */
 export class SessionHookEngine {
   private readonly logged = new Set<string>();
-  /** Sessions this process already fired SessionStart for. */
-  private readonly started = new Set<string>();
+  /**
+   * Sessions this process already fired SessionStart for, with what it
+   * printed. Kept for the session's life in this process, as Claude Code
+   * keeps SessionStart context for the whole session; a new process fires
+   * SessionStart again (`resume`) and fills it anew.
+   */
+  private readonly started = new Map<string, string | undefined>();
 
   constructor(private readonly options: SessionHookEngineOptions) {}
 
@@ -107,22 +118,26 @@ export class SessionHookEngine {
 
   /**
    * SessionStart (first turn this process runs for the session), then
-   * UserPromptSubmit. A UserPromptSubmit block refuses the prompt; the
-   * contexts of both are returned for the turn's prompt.
+   * UserPromptSubmit. A UserPromptSubmit block refuses the prompt. The
+   * SessionStart text comes back on every turn of the session; the
+   * UserPromptSubmit text belongs to this turn only.
    */
   async beforeTurn(facts: TurnStartFacts): Promise<TurnStartOutcome> {
-    const contexts: string[] = [];
     const where = { cwd: facts.cwd, ...(facts.signal ? { signal: facts.signal } : {}) };
     if (!this.started.has(facts.sessionId)) {
-      this.started.add(facts.sessionId);
+      this.started.set(facts.sessionId, undefined);
       const source = facts.isNewSession ? "startup" : "resume";
       const start = await this.runEvent("SessionStart", { ...base("SessionStart", facts), source }, { ...where, target: source });
-      if (start.context) contexts.push(start.context);
+      this.started.set(facts.sessionId, start.context);
     }
+    const sessionContext = this.started.get(facts.sessionId);
     const submit = await this.runEvent("UserPromptSubmit", { ...base("UserPromptSubmit", facts), prompt: facts.prompt }, where);
     if (submit.block !== undefined) return { kind: "blocked", reason: submit.block };
-    if (submit.context) contexts.push(submit.context);
-    return contexts.length > 0 ? { kind: "proceed", context: contexts.join("\n") } : { kind: "proceed" };
+    return {
+      kind: "proceed",
+      ...(sessionContext !== undefined ? { sessionContext } : {}),
+      ...(submit.context ? { context: submit.context } : {}),
+    };
   }
 
   /** Stop: the reason to keep working, or undefined to let the turn end. */

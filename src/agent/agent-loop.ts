@@ -551,6 +551,9 @@ export class AgentLoop {
             ...(options.hookContext !== undefined
               ? { hookContext: options.hookContext }
               : {}),
+            ...(options.sessionHookContext !== undefined
+              ? { sessionHookContext: options.sessionHookContext }
+              : {}),
             ...(options.answerChannel !== undefined
               ? { answerChannel: options.answerChannel }
               : {}),

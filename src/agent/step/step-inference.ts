@@ -161,6 +161,7 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
       : {}),
     ...(ctx.routeNote !== undefined ? { routeNote: ctx.routeNote } : {}),
     ...(ctx.hookContext !== undefined ? { hookContext: ctx.hookContext } : {}),
+    ...(ctx.sessionHookContext !== undefined ? { sessionHookContext: ctx.sessionHookContext } : {}),
     ...(ctx.answerChannel !== undefined
       ? { answerChannel: ctx.answerChannel }
       : {}),

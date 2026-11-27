@@ -17,9 +17,9 @@ const replied = (text: string, over: Partial<RunTurnResult> = {}): RunTurnResult
 });
 
 describe("startTurnHooks", () => {
-  it("returns the hooks' context and says whether the session is new", async () => {
-    const beforeTurn = vi.fn(async () => ({ kind: "proceed" as const, context: "on main" }));
-    expect(await startTurnHooks({ beforeTurn }, session(), "fix it", undefined)).toBe("on main");
+  it("returns the session and turn hook texts apart and says whether the session is new", async () => {
+    const beforeTurn = vi.fn(async () => ({ kind: "proceed" as const, sessionContext: "project: atomic", context: "on main" }));
+    expect(await startTurnHooks({ beforeTurn }, session(), "fix it", undefined)).toEqual({ session: "project: atomic", turn: "on main" });
     expect(beforeTurn).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "s1", cwd: "/work", prompt: "fix it", isNewSession: true }));
     await startTurnHooks({ beforeTurn }, session([userTurn("hi")]), "again", undefined);
     expect(beforeTurn).toHaveBeenLastCalledWith(expect.objectContaining({ isNewSession: false }));
@@ -32,7 +32,7 @@ describe("startTurnHooks", () => {
   });
 
   it("no engine: nothing runs", async () => {
-    expect(await startTurnHooks(null, session(), "x", undefined)).toBeUndefined();
+    expect(await startTurnHooks(null, session(), "x", undefined)).toEqual({});
   });
 });
 

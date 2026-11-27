@@ -49,12 +49,12 @@ Same files, runner, timeouts and environment as the tool hooks ([session-hook-en
 
 | Event | When | Matcher tested against | Extra stdin | What it can do |
 |---|---|---|---|---|
-| `SessionStart` | before the first turn this process runs for a session | `source`: `startup` (no earlier turn) or `resume` | `source` | stdout / `additionalContext` is context for that turn |
+| `SessionStart` | before the first turn this process runs for a session | `source`: `startup` (no earlier turn) or `resume` | `source` | stdout / `additionalContext` is context for every turn of the session |
 | `UserPromptSubmit` | before every turn, before anything is saved | ignored | `prompt` | exit 2, `decision: "block"` or `continue: false` refuses the message (`HookBlockedPromptError`, nothing saved); stdout / `additionalContext` is context |
 | `Stop` | after a turn the model ended with a reply or finish | ignored | `stop_hook_active`, `last_assistant_message` | after a reply, exit 2 or `decision: "block"` + `reason` sends the agent back to work with the reason as its next message, at most 3 times per turn |
 | `PreCompact` | before a compaction builds its checkpoint | `trigger`: `manual` or `auto` | `trigger`, `custom_instructions` | observes only; exit 2 is logged |
 
-Context is shown to the model as `### hook-context` after the conversation, on every step of that one turn (`RunTurnOptions.hookContext`), so the stable prefix does not move. Stop does not run after a cancel, a failure or a ceiling stop, and none of these events run for Fusion worker or subagent turns. They never touch approval: a continuation's tool calls go through the same gate.
+SessionStart output is kept for the session in this process and shown on every turn as `### hook-session-start` (`RunTurnOptions.sessionHookContext`), so the cloud journal keeps one entry and never retracts it; a new process fires SessionStart again with `resume` and replaces it. UserPromptSubmit output is `### hook-context` on every step of that one turn only (`RunTurnOptions.hookContext`). Both sit after the conversation, so the stable prefix does not move. Stop does not run after a cancel, a failure or a ceiling stop, and none of these events run for Fusion worker or subagent turns. They never touch approval: a continuation's tool calls go through the same gate.
 
 Wired in `runtime/composition/runtime-session-hooks.ts` (called from `executeTurn`, so `runTurn` and the sidecar both get them) and `runtime/context-compaction-runner.ts` (`beforeCompact`); the engine is built in `runtime/bootstrap.ts` and passed explicitly.
 

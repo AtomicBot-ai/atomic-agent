@@ -397,6 +397,8 @@ export interface StepContext {
   routeNote?: string;
   /** `RunTurnOptions.hookContext`, rendered as `### hook-context` (`build-prompt.ts`). */
   hookContext?: string;
+  /** `RunTurnOptions.sessionHookContext`, rendered as `### hook-session-start` (`build-prompt.ts`). */
+  sessionHookContext?: string;
   /** `RunTurnOptions.answerChannel`, rendered as `### answer-style` (`answer-style.ts`). */
   answerChannel?: import("../../prompt/answer-style.js").AnswerChannel;
   /** The turn's reasoning effort — see `LlmStreamParams.reasoningEffort`. */

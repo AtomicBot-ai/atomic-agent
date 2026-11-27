@@ -997,6 +997,16 @@ describe("buildPrompt", () => {
     expect(withContext.messages.system).toBe(without.messages.system);
   });
 
+  it("renders sessionHookContext as ### hook-session-start before ### hook-context, outside the stable prefix (ATO-2198)", () => {
+    const base = { session: mkSession(), toolDescriptors: TOOLS, capabilities: CAPS, skillCatalog: SKILLS };
+    const turn2 = buildPrompt({ ...base, sessionHookContext: "project: atomic" });
+    expect(turn2.stablePrefix).toBe(buildPrompt(base).stablePrefix);
+    const startIdx = turn2.tail.indexOf("### hook-session-start\nproject: atomic");
+    expect(startIdx).toBeGreaterThan(turn2.tail.indexOf("### conversation"));
+    const both = buildPrompt({ ...base, sessionHookContext: "project: atomic", hookContext: "prompt 1" });
+    expect(both.tail.indexOf("### hook-session-start")).toBeLessThan(both.tail.indexOf("### hook-context"));
+  });
+
   it("does not include transientNotice in the stable prefix", () => {
     const withNotice = buildPrompt({
       session: mkSession(),

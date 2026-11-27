@@ -18,6 +18,8 @@ import { SteeringInbox } from "../steering-inbox.js";
 import { createRuntimeTraces } from "./runtime-traces.js";
 import { connectRuntimeProviders } from "./runtime-inference.js";
 import { createRuntimeTurnService, prepareRuntimeTurnState, stoppedForMoney, type RuntimeTurnDependencies } from "./runtime-turn-service.js";
+import { SessionHookEngine } from "../../hooks/session-hook-engine.js";
+import { parseHooksObject } from "../../hooks/hook-config.js";
 import { resolveModelMode } from "../../llm/model-mode.js";
 import { resolveLlmConfig } from "../../llm/provider/registry/provider-types.js";
 import type { TurnProgress } from "../../session/turn-progress.js";
@@ -685,13 +687,14 @@ describe("runtime turn ownership recipes", () => {
 
   it("session hooks: hook context reaches the loop, a Stop block runs it again, a blocked prompt saves nothing (ATO-2198)", async () => {
     const afterTurn = vi.fn(async () => undefined as string | undefined).mockResolvedValueOnce("tests are red");
-    const beforeTurn = vi.fn(async () => ({ kind: "proceed" as const, context: "on branch main" }));
+    const beforeTurn = vi.fn(async () => ({ kind: "proceed" as const, sessionContext: "project: atomic", context: "on branch main" }));
     const service = createRuntimeTurnService(fixture.config, { ...fixture.deps, sessionHooks: { beforeTurn, afterTurn } });
     const output = await service.executeTurn(session("hooked"), "request");
     expect(fixture.loop.runTurn).toHaveBeenCalledTimes(2);
-    expect(fixture.loop.runTurn.mock.calls[0]?.[1]).toMatchObject({ userMessage: "request", hookContext: "on branch main" });
+    expect(fixture.loop.runTurn.mock.calls[0]?.[1]).toMatchObject({ userMessage: "request", hookContext: "on branch main", sessionHookContext: "project: atomic" });
     expect(fixture.loop.runTurn.mock.calls[1]?.[1]?.userMessage).toContain("tests are red");
     expect(fixture.loop.runTurn.mock.calls[1]?.[1]).not.toHaveProperty("hookContext");
+    expect(fixture.loop.runTurn.mock.calls[1]?.[1]).toMatchObject({ sessionHookContext: "project: atomic" });
     expect(output.stepCount).toBe(2);
     expect(fixture.rows.get("hooked")).toBe(output.session);
 
@@ -704,6 +707,23 @@ describe("runtime turn ownership recipes", () => {
     expect(fixture.events).toEqual([]);
     expect(fixture.rows.has("refused")).toBe(false);
     expect(fixture.loop.runTurn).toHaveBeenCalledTimes(2);
+  });
+
+  it("SessionStart text from the real engine still reaches turn 2; UserPromptSubmit text does not carry over (ATO-2198)", async () => {
+    let prompts = 0;
+    const engine = new SessionHookEngine({
+      stateDir: dir,
+      load: () => parseHooksObject({ hooks: {
+        SessionStart: [{ hooks: [{ type: "command", command: "start" }] }],
+        UserPromptSubmit: [{ hooks: [{ type: "command", command: "ctx" }] }],
+      } }, { kind: "user", file: join(dir, "hooks.json") }),
+      run: async (hook) => ({ exitCode: 0, stdout: hook.command === "start" ? "project: atomic" : `prompt ${++prompts}`, stderr: "", timedOut: false, durationMs: 1 }),
+    });
+    const service = createRuntimeTurnService(fixture.config, { ...fixture.deps, sessionHooks: engine });
+    const first = await service.executeTurn(session("kept"), "one");
+    await service.executeTurn(first.session, "two");
+    const second = fixture.loop.runTurn.mock.calls.at(-1)?.[1];
+    expect(second).toMatchObject({ userMessage: "two", sessionHookContext: "project: atomic", hookContext: "prompt 2" });
   });
 
   it("subagent turns run no session hooks (ATO-2198)", async () => {
