@@ -22798,7 +22798,8 @@ function wizSubLineHTML(l, cls, warnCls) {
 }
 /* ATO-845: "Sign in with Claude". ATO-2739: Codex names the terminal, so it never reads like the browser sign-in beside it. */
 function wizSubLoginButton(k) {
-  if (k.subscriptionCli === 'codex') return 'Sign in with Codex in ' + (/win/i.test(navigator.platform || '') ? 'PowerShell' : 'Terminal');
+  /* Windows: subscription-cli-login.ts opens Command Prompt (cmd.exe /k), so the label names that window. */
+  if (k.subscriptionCli === 'codex') return 'Sign in with Codex in ' + (/win/i.test(navigator.platform || '') ? 'Command Prompt' : 'Terminal');
   return 'Sign in with ' + (k.plan || wizService(k));
 }
 /* ATO-2739: the terminal sign-in steps back to a plain button when the browser one leads (chatgpt-oauth-step.js). */

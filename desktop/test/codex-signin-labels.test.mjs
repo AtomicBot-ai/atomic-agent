@@ -48,7 +48,7 @@ test('the terminal sign-in and the browser sign-in have different labels, on eve
   const mac = loadButtons(SIGNED_OUT, 'MacIntel', fresh());
   const win = loadButtons(SIGNED_OUT, 'Win32', fresh());
   assert.equal(mac.label(codex), 'Sign in with Codex in Terminal');
-  assert.equal(win.label(codex), 'Sign in with Codex in PowerShell');
+  assert.equal(win.label(codex), 'Sign in with Codex in Command Prompt');
   for (const label of [mac.label(codex), win.label(codex)]) assert.notEqual(label, S.CHATGPT_OAUTH_BUTTON);
   assert.equal(S.CHATGPT_OAUTH_BUTTON, 'Sign in with ChatGPT in the browser');
   const block = S.chatgptOauthBlockHTML(fresh(), esc, false, SIGNED_OUT);
@@ -245,4 +245,13 @@ test('"within 90 s" in the wizard and the model picker is main\'s own deadline o
   assert.ok(said.length >= 2);
   for (const line of said) assert.equal(line, 'did not come back within ' + ms[1] + ' s');
   assert.equal(L.LLM_LIST_DEADLINE_MS, 30000);
+});
+
+test('the Windows label names the window main really opens for the sign-in (cmd.exe = Command Prompt)', () => {
+  const login = readFileSync(new URL('../main/subscription-cli-login.ts', import.meta.url), 'utf8');
+  const win32 = login.slice(login.indexOf('if (platform === "win32")'), login.indexOf('if (platform === "linux")'));
+  assert.match(win32, /command: "cmd\.exe"/);
+  const win = loadButtons(SIGNED_OUT, 'Win32', fresh());
+  assert.match(win.label(codex), /in Command Prompt$/);
+  assert.doesNotMatch(win.label(codex), /PowerShell/);
 });
