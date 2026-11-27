@@ -19,13 +19,14 @@ export interface LogbookSaveBody {
 
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
-const MAX_APPS = 100;
+/** The runtime keeps 50 apps per list (MAX_EXCLUDED_APPS in src/logbook/logbook-settings.ts) and refuses more. */
+export const MAX_APPS = 50;
 
 function intIn(v: unknown, min: number, max: number): number | null {
   return typeof v === "number" && Number.isInteger(v) && v >= min && v <= max ? v : null;
 }
 
-/** One app per entry, trimmed, no empty ones or repeats, at most 100. */
+/** One app per entry, trimmed, no empty ones or repeats. The length is checked by logbookSaveBody. */
 export function cleanAppList(v: unknown): string[] | null {
   if (!Array.isArray(v)) return null;
   const out: string[] = [];
@@ -34,7 +35,7 @@ export function cleanAppList(v: unknown): string[] | null {
     const name = item.trim().slice(0, 200);
     if (name && !out.some((o) => o.toLowerCase() === name.toLowerCase())) out.push(name);
   }
-  return out.slice(0, MAX_APPS);
+  return out;
 }
 
 /** Settings' Save or its on/off switch, as PATCH /api/logbook/settings takes it; a string says what is wrong. */
@@ -60,6 +61,7 @@ export function logbookSaveBody(input: unknown): LogbookSaveBody | string {
     if (o[key] === undefined) continue;
     const list = cleanAppList(o[key]);
     if (!list) return "Apps are listed by name, one per line.";
+    if (list.length > MAX_APPS) return `At most ${MAX_APPS} apps in one list.`;
     body[key] = list;
   }
   if (o.standupAt !== undefined) {

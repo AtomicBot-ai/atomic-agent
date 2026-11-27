@@ -22,6 +22,14 @@ test("Save sends only what the runtime takes, and says what is wrong otherwise",
   assert.equal(P.logbookSaveBody({}), "Nothing to save.");
 });
 
+test("more apps than the runtime keeps are refused, not cut (the runtime keeps 50)", () => {
+  const names = (n) => Array.from({ length: n }, (_, i) => `App ${i + 1}`);
+  assert.equal(P.MAX_APPS, 50);
+  assert.equal(P.logbookSaveBody({ excludeApps: names(51) }), "At most 50 apps in one list.");
+  assert.equal(P.logbookSaveBody({ titleOnlyApps: names(51) }), "At most 50 apps in one list.");
+  assert.deepEqual(P.logbookSaveBody({ excludeApps: names(50) }), { excludeApps: names(50) });
+});
+
 test("a day is today, yesterday or a date; a delete names notes or the whole day", () => {
   assert.equal(P.cleanDay("yesterday"), "yesterday");
   assert.equal(P.cleanDay("2026-11-27"), "2026-11-27");
