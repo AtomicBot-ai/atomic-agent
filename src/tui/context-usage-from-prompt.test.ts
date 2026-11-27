@@ -147,4 +147,17 @@ describe("contextUsageFromPrompt", () => {
     expect(parts.find((p) => p.label === "mcp github")?.mcpServer).toBe("github");
     expect(usage.toolSearchActive).toBe(false);
   });
+
+  /**
+   * ATO-2495: the desktop popover drew its own reply reserve from the raw
+   * cap and missed the small-window rule; the readout now carries the
+   * figure the budget held back, local or cloud.
+   */
+  it("carries the reply reserve the budget held back", () => {
+    expect(contextUsageFromPrompt(builtPrompt({ replyReserve: 6_144 })).replyReserve).toBe(6_144);
+    expect(
+      contextUsageFromPrompt(builtPrompt({ contextBudget: { window: 200_000, replyReserve: 16_384 } })).replyReserve,
+    ).toBe(16_384);
+    expect("replyReserve" in contextUsageFromPrompt(builtPrompt())).toBe(false);
+  });
 });
