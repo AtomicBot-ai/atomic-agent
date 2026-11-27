@@ -67,7 +67,7 @@ await thread.steer("Also check the tests");  // false when no turn is running
 await agent.close();           // `shutdown`, then stops the process
 ```
 
-After a cancel, start a new thread for further work.
+A cancel stops only the turn in flight (and any `run()` queued behind it). The thread stays usable: the next `run()` on it continues the same conversation.
 
 ## Things to know
 
