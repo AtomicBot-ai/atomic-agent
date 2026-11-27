@@ -27,7 +27,7 @@ import { newChatSessionId } from "./chat-session.js";
 import { ChatWorktrees, gitExecWith, registerChatWorktreeIpc } from "./chat-worktree-ipc.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
-import { quitQuestion, workingChatCount } from "./quit-question.js";
+import { backgroundQuitWork, busyTurnsOf, quitQuestion, sampleAgentBusy, workingChatCount, type AgentBusySample } from "./quit-question.js";
 import { busyPorts, modelPortsOf, onSmokeStopSignal, portsHeldByRun, runSmokeGuarded, signalExitCode, smokeMayStopModels, smokeOwnsItsState, smokeScreenshot } from "./smoke-exit.js";
 import { randomUUID } from "node:crypto";
 import { freemem, homedir, tmpdir, totalmem } from "node:os";
@@ -11637,6 +11637,12 @@ function retireStudioCoreOnQuit(): Promise<unknown> {
    kept across a closed window, not across a quit. ATO-1696: so does one with
    a chat still working, whose reply the quit would cut off. Once per quit. */
 let queuedQuitAsked = false;
+/* ATO-1758: the turns the agent runs that this window never streams (a
+   scheduled task, a Telegram reply), asked of the agent once per quit before
+   the question: before-quit is synchronous, so the first one asks and quits
+   again with the answer (as VS Code's lifecycle does its async quit vetoes). */
+let quitAgentWork: { tasks: number; background: number } | null = null;
+let quitAgentProbe: Promise<void> | null = null;
 
 // Never leave the agent running after the app is gone.
 app.on("before-quit", (event) => {
@@ -11652,7 +11658,20 @@ app.on("before-quit", (event) => {
   if (!SMOKE && !FIRST_RUN_PROBE && !quitShutdown && !queuedQuitAsked && !installing && (windowUp || process.platform === "darwin" || inTray)) {
     /* ATO-1696: a turn still running asks too (in the chat on screen or one
        left in the background); one dialog when there are both. */
-    const ask = quitQuestion({ queued: queuedMessageCount(), working: workingChatCount(liveTurnRecords()) });
+    if (!quitAgentWork) {
+      event.preventDefault();
+      if (quitAgentProbe) return;   // a second Quit while the agent is asked: the first one's answer quits
+      const client = agent;
+      /* A remote agent's turns run on its own computer; a quit stops none of them. */
+      const probe: Promise<AgentBusySample> = client && !client.isRemote && client.status.state === "connected"
+        ? sampleAgentBusy({ tasks: () => client.runningTaskCount(), busyTurns: () => client.turnsHealth().then(busyTurnsOf) })
+        : Promise.resolve({ tasks: null, busyTurns: null });
+      quitAgentProbe = probe.then((sample) => { quitAgentWork = backgroundQuitWork(workingChatCount(liveTurnRecords()), sample); app.quit(); });
+      return;
+    }
+    const ask = quitQuestion({ queued: queuedMessageCount(), working: workingChatCount(liveTurnRecords()), ...quitAgentWork });
+    quitAgentWork = null;
+    quitAgentProbe = null;
     if (ask) {
       const opts = {
         type: "warning" as const,
