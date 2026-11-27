@@ -155,6 +155,7 @@ const STOP_WORDING: Record<ShellJobStopReason, string> = {
   ceiling: "at the job ceiling",
   shutdown: "at shutdown",
   user: "by the user",
+  plugin_off: "because its plugin was turned off or may no longer run code",
 };
 
 export interface ShellDetachRender {

@@ -32,6 +32,14 @@ export interface PluginMcpPermission {
   keys?: string[];
 }
 
+/** A background command the plugin starts with each session (ATO-2438). */
+export interface PluginMonitorPermission {
+  name: string;
+  command: string;
+  /** The line pattern; absent means every line. */
+  until?: string;
+}
+
 export interface PluginScriptFile {
   /** Path inside the plugin, POSIX separators. */
   path: string;
@@ -45,6 +53,7 @@ export interface PluginPermissionSnapshot {
   runsCode: boolean;
   hooks: PluginHookCommand[];
   mcpServers: PluginMcpPermission[];
+  monitors: PluginMonitorPermission[];
   scripts: PluginScriptFile[];
   /**
    * Hash of every file the plugin ships that is not compared on its own
@@ -76,6 +85,9 @@ export function pluginPermissionSnapshot(bundle: PluginBundle): PluginPermission
     hooks: readHooks(bundle),
     mcpServers: Object.entries(bundle.mcpServers)
       .map(([name, raw]) => mcpPermission(name, raw))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    monitors: bundle.monitors
+      .map(m => ({ name: m.name, command: m.command, ...(m.until !== undefined ? { until: m.until } : {}) }))
       .sort((a, b) => a.name.localeCompare(b.name)),
     scripts,
     ...readTree(bundle, scripts),
@@ -172,7 +184,7 @@ function readScripts(bundle: PluginBundle): PluginScriptFile[] {
 function readTree(bundle: PluginBundle, scripts: readonly PluginScriptFile[]): Pick<PluginPermissionSnapshot, "treeSha256" | "treeComplete"> {
   const tree = createHash("sha256");
   const listed = new Set(scripts.map(s => s.path));
-  const parsed = new Set([bundle.hooksFile, bundle.manifest.mcpPath ?? join(bundle.root, ".mcp.json")]);
+  const parsed = new Set([bundle.hooksFile, bundle.manifest.mcpPath ?? join(bundle.root, ".mcp.json"), bundle.monitorsFile]);
   let files = 0;
   let treeComplete = true;
   const visit = (dir: string, depth: number) => {
@@ -206,6 +218,9 @@ export interface PluginPermissionDiff {
   mcpChanged: Array<{ before: PluginMcpPermission; after: PluginMcpPermission }>;
   hooksAdded: PluginHookCommand[];
   hooksRemoved: PluginHookCommand[];
+  /** New monitors, and monitors whose command or pattern changed. */
+  monitorsAdded: PluginMonitorPermission[];
+  monitorsRemoved: PluginMonitorPermission[];
   scriptsAdded: string[];
   scriptsChanged: string[];
   scriptsRemoved: string[];
@@ -219,7 +234,8 @@ export interface PluginPermissionDiff {
   /**
    * Anything that needs consent changed (new or changed local MCP server,
    * new or changed server that receives the user's keys, new or changed
-   * hook, new or changed script; or the plugin starts needing consent).
+   * hook, new or changed monitor, new or changed script; or the plugin
+   * starts needing consent).
    * When true an earlier "yes, it may run code" no longer covers it.
    * URL changes of a remote server without keys are shown but do not reset
    * consent: it runs nothing here and gets nothing of the user's.
@@ -234,7 +250,7 @@ export function diffPluginPermissions(oldBundle: PluginBundle | null, newBundle:
 
 /** Pure diff of two snapshots. */
 export function diffPermissionSnapshots(before: PluginPermissionSnapshot | null, after: PluginPermissionSnapshot): PluginPermissionDiff {
-  const old = before ?? { name: after.name, version: "", runsCode: false, hooks: [], mcpServers: [], scripts: [], treeSha256: "", treeComplete: true, skills: [], commands: [], agents: [] };
+  const old = before ?? { name: after.name, version: "", runsCode: false, hooks: [], mcpServers: [], monitors: [], scripts: [], treeSha256: "", treeComplete: true, skills: [], commands: [], agents: [] };
   const oldMcp = new Map(old.mcpServers.map(m => [m.name, m]));
   const newMcp = new Map(after.mcpServers.map(m => [m.name, m]));
   const mcpAdded = after.mcpServers.filter(m => !oldMcp.has(m.name));
@@ -247,6 +263,12 @@ export function diffPermissionSnapshots(before: PluginPermissionSnapshot | null,
   const newHooks = new Set(after.hooks.map(hookKey));
   const hooksAdded = after.hooks.filter(h => !oldHooks.has(hookKey(h)));
   const hooksRemoved = old.hooks.filter(h => !newHooks.has(hookKey(h)));
+  // A snapshot made before monitors existed has none.
+  const monitorKey = (m: PluginMonitorPermission) => `${m.name}\0${m.command}\0${m.until ?? ""}`;
+  const oldMonitors = new Set((old.monitors ?? []).map(monitorKey));
+  const newMonitors = new Set((after.monitors ?? []).map(monitorKey));
+  const monitorsAdded = (after.monitors ?? []).filter(m => !oldMonitors.has(monitorKey(m)));
+  const monitorsRemoved = (old.monitors ?? []).filter(m => !newMonitors.has(monitorKey(m)));
   const oldScripts = new Map(old.scripts.map(s => [s.path, s.sha256]));
   const newScripts = new Set(after.scripts.map(s => s.path));
   const scriptsAdded = after.scripts.filter(s => !oldScripts.has(s.path)).map(s => s.path);
@@ -262,6 +284,7 @@ export function diffPermissionSnapshots(before: PluginPermissionSnapshot | null,
     mcpAdded.some(codeMcp) ||
     mcpChanged.some(c => codeMcp(c.after) || codeMcp(c.before)) ||
     hooksAdded.length > 0 ||
+    monitorsAdded.length > 0 ||
     scriptsAdded.length > 0 ||
     scriptsChanged.length > 0 ||
     treeChanged;
@@ -272,6 +295,8 @@ export function diffPermissionSnapshots(before: PluginPermissionSnapshot | null,
     mcpChanged,
     hooksAdded,
     hooksRemoved,
+    monitorsAdded,
+    monitorsRemoved,
     scriptsAdded,
     scriptsChanged,
     scriptsRemoved,
@@ -308,6 +333,7 @@ export function describePluginCode(snapshot: PluginPermissionSnapshot): string[]
     else if (m.keys?.length) lines.push(`MCP server ${m.name} at ${m.url ?? "an unknown address"}${keysNote(m)}`);
   }
   for (const h of snapshot.hooks) lines.push(`hook on ${h.event}${h.matcher ? ` (${h.matcher})` : ""}: ${h.command}`);
+  for (const m of snapshot.monitors ?? []) lines.push(`monitor ${m.name}, runs in the background from each chat's first message: ${m.command}`);
   for (const s of snapshot.scripts) lines.push(`script file ${s.path}`);
   return lines;
 }
@@ -330,6 +356,8 @@ export function describePermissionDiff(diff: PluginPermissionDiff): string[] {
   for (const m of diff.mcpRemoved) lines.push(`MCP server ${m.name} was removed`);
   for (const h of diff.hooksAdded) lines.push(`New or changed hook on ${h.event}${h.matcher ? ` (${h.matcher})` : ""}: ${h.command}`);
   if (diff.hooksRemoved.length) lines.push(`${diff.hooksRemoved.length} hook(s) removed`);
+  for (const m of diff.monitorsAdded) lines.push(`New or changed monitor ${m.name} runs: ${m.command}`);
+  if (diff.monitorsRemoved.length) lines.push(`${diff.monitorsRemoved.length} monitor(s) removed`);
   for (const s of diff.scriptsAdded) lines.push(`New script file ${s}`);
   for (const s of diff.scriptsChanged) lines.push(`Changed script file ${s}`);
   if (diff.scriptsRemoved.length) lines.push(`${diff.scriptsRemoved.length} script file(s) removed`);
@@ -349,6 +377,8 @@ export function codeConsentIdOf(snapshot: PluginPermissionSnapshot): string {
   const canonical = JSON.stringify({
     mcp: snapshot.mcpServers.filter(m => m.transport === "local" || m.keys?.length).map(m => [m.name, m.command ?? m.url ?? "", m.env ?? "", m.keys ?? []]),
     hooks: snapshot.hooks.map(h => [h.event, h.matcher ?? "", h.command]),
+    // Only when there are monitors, so the id of every other plugin stays what it was.
+    ...((snapshot.monitors ?? []).length > 0 ? { monitors: snapshot.monitors.map(m => [m.name, m.command, m.until ?? ""]) } : {}),
     scripts: snapshot.scripts.map(s => [s.path, s.sha256]),
     tree: snapshot.treeSha256,
   });

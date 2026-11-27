@@ -40,6 +40,10 @@ export interface PluginManifest {
   hooksInline?: Record<string, unknown>;
   mcpPath?: string;
   mcpInline?: Record<string, unknown>;
+  /** `experimental.monitors` (or a top-level `monitors`) as a path inside the plugin. */
+  monitorsPath?: string;
+  /** The same key as an inline array, kept raw for `readMonitorEntries`. */
+  monitorsInline?: unknown[];
   /** Manifest keys we recognise but do not support yet (outputStyles, lspServers, ...). */
   unsupportedKeys: string[];
 }
@@ -64,6 +68,23 @@ export interface PluginAgentEntry {
   file: string;
 }
 
+/**
+ * A background command the plugin declares (`monitors/monitors.json`,
+ * Claude Code's plugin monitors, ATO-2438). It starts with a session's
+ * first turn, as a kept job of that session, and each matching line it
+ * prints reaches the agent as a monitor notice.
+ */
+export interface PluginMonitorEntry {
+  /** Unique within the plugin; the part id is `monitor:<name>`. */
+  name: string;
+  /** Shell command line as declared; `${CLAUDE_PLUGIN_ROOT}` is expanded when it starts. */
+  command: string;
+  /** Short summary, shown in the notice and in the plugin views. */
+  description: string;
+  /** Case-insensitive line pattern (our addition); absent means every non-blank line. */
+  until?: string;
+}
+
 export interface PluginBundle {
   name: string;
   root: string;
@@ -76,6 +97,10 @@ export interface PluginBundle {
   hooksFile?: string;
   /** Raw `mcpServers` map (name -> Claude-style entry), merged from file and manifest. */
   mcpServers: Record<string, Record<string, unknown>>;
+  /** Monitors that start with a session (`when: "always"`); skipped entries are in `notes`. */
+  monitors: PluginMonitorEntry[];
+  /** Absolute path of the monitors file, when the plugin ships one. */
+  monitorsFile?: string;
   /** Plain-language notes about what we skip, shown to the user. */
   notes: string[];
 }
