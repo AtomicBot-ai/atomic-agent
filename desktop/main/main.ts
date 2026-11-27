@@ -29,6 +29,7 @@ import { ChatWorktrees, gitExecWith, registerChatWorktreeIpc } from "./chat-work
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { backgroundQuitWork, busyTurnsOf, quitQuestion, sampleAgentBusy, workingChatCount, type AgentBusySample } from "./quit-question.js";
+import { noticeWhileChecking } from "./quit-checking.js";
 import { busyPorts, modelPortsOf, onSmokeStopSignal, portsHeldByRun, runSmokeGuarded, signalExitCode, smokeMayStopModels, smokeOwnsItsState, smokeScreenshot } from "./smoke-exit.js";
 import { randomUUID } from "node:crypto";
 import { freemem, homedir, tmpdir, totalmem } from "node:os";
@@ -11787,6 +11788,8 @@ app.on("before-quit", (event) => {
         ? sampleAgentBusy({ tasks: () => client.runningTaskCount(), busyTurns: () => client.turnsHealth().then(busyTurnsOf) })
         : Promise.resolve({ tasks: null, busyTurns: null });
       quitAgentProbe = probe.then((sample) => { quitAgentWork = backgroundQuitWork(workingChatCount(liveTurnRecords()), sample); app.quit(); });
+      // ATO-2754: a slow answer says "Checking running chats…" in the window (quit-checking.ts).
+      noticeWhileChecking(quitAgentProbe, (on) => { if (win && !win.isDestroyed()) win.webContents.send("app:quitChecking", { on }); });
       return;
     }
     const ask = quitQuestion({ queued: queuedMessageCount(), working: workingChatCount(liveTurnRecords()), ...quitAgentWork });
