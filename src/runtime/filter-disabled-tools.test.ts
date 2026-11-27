@@ -27,6 +27,7 @@ const ALL_OPEN: ToolGateConfig = {
   image: { available: true },
   video: { available: true },
   screen: { enabled: true, point: true },
+  lsp: { enabled: true },
 };
 
 function nameSet(
@@ -247,6 +248,7 @@ describe("filterToolDescriptorsByConfig", () => {
       ...GATED_TOOL_NAMES.image,
       ...GATED_TOOL_NAMES.video,
       ...GATED_TOOL_NAMES.screen,
+      ...GATED_TOOL_NAMES.lsp,
     ];
     for (const dropped of allGated) {
       expect(names.has(dropped)).toBe(false);
@@ -294,9 +296,26 @@ describe("filterToolDescriptorsByConfig", () => {
       ...GATED_TOOL_NAMES.image,
       ...GATED_TOOL_NAMES.video,
       ...GATED_TOOL_NAMES.screen,
+      ...GATED_TOOL_NAMES.lsp,
     ];
     for (const name of allGated) {
       expect(known.has(name)).toBe(true);
+    }
+  });
+});
+
+describe("lsp gate (ATO-2373)", () => {
+  it("keeps os.code.lsp only when tools.lsp.enabled is on; absent means off", () => {
+    expect(GATED_TOOL_NAMES.lsp).toEqual(["os.code.lsp"]);
+    const on = nameSet(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, ALL_OPEN));
+    expect(on.has("os.code.lsp")).toBe(true);
+    const withoutLsp: ToolGateConfig = { ...ALL_OPEN };
+    delete withoutLsp.lsp;
+    for (const gates of [{ ...ALL_OPEN, lsp: { enabled: false } }, withoutLsp]) {
+      const off = nameSet(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, gates));
+      expect(off.has("os.code.lsp")).toBe(false);
+      expect(off.has("os.code.search")).toBe(true);
+      expect(off.size).toBe(on.size - 1);
     }
   });
 });

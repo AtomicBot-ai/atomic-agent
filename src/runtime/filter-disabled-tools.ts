@@ -115,6 +115,13 @@ export interface ToolGateConfig {
    * `os.screen.capture` under `enabled`; omitted means `true`.
    */
   screen: { enabled: boolean; point?: boolean; control?: boolean };
+  /**
+   * Language-server navigation gate (ATO-2373): `tools.lsp.enabled`,
+   * read at boot like the registration. Absent or `false` drops
+   * `os.code.lsp`, which is then not registered either
+   * (`registerOsTools`).
+   */
+  lsp?: { enabled: boolean };
 }
 
 /**
@@ -201,6 +208,7 @@ const GATED_TOOLS = {
     "os.screen.press",
     "os.screen.point",
   ],
+  lsp: ["os.code.lsp"],
 } as const;
 
 /**
@@ -276,6 +284,9 @@ export function filterToolDescriptorsByConfig(
   }
   if (!gates.video.available) {
     for (const name of GATED_TOOLS.video) disabled.add(name);
+  }
+  if (gates.lsp?.enabled !== true) {
+    for (const name of GATED_TOOLS.lsp) disabled.add(name);
   }
   const screenControl = gates.screen.control !== false;
   const screenPoint = gates.screen.point === true && screenControl;

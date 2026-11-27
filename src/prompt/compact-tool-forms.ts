@@ -113,6 +113,10 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Syntax-aware search and replace (ast-grep); dry-run unless apply=true (may require approval).",
     tier: RARE,
   },
+  "os.code.lsp": {
+    summary:
+      "Language-server navigation: definition, references, hover or symbols at path:line (1-based); col or query names the symbol.",
+  },
   "os.fs.edit": {
     summary:
       "Replace text in a file (may require approval). oldString must match the file text exactly (copy it from os.fs.read, same indentation) and be unique unless replaceAll.",

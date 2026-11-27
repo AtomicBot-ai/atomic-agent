@@ -125,6 +125,9 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // os.code.* — structural search (read) and rewrite (fs write funnel)
   "os.code.search": "pure_read",
   "os.code.rewrite": "approval_gated",
+  // Language-server navigation (ATO-2373): reads only; a first server
+  // start asks inside the call, like the after-edit diagnostics.
+  "os.code.lsp": "pure_read",
 
   // os.git.* — read-only shell-outs
   "os.git.status": "pure_read",
