@@ -13,6 +13,7 @@ import { SessionNotFoundError } from "../session-not-found-error.js";
 import type { ResolvedModelMode } from "../../llm/model-mode.js";
 import { reconcileCloudSkills, type WorkspacePrepareOptions } from "../../session/workspace-context.js";
 import { isIncognitoSession } from "../../session/incognito.js";
+import { isChannelGuestSession } from "../../session/channel-guest-session.js";
 
 export interface RuntimePromptPreviewDependencies {
   prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal, options?: WorkspacePrepareOptions) => import("../../session/workspace-context.js").SessionWorkspace;
@@ -91,8 +92,9 @@ export function buildRuntimePromptInput(config: AtomicAgentConfig, deps: Runtime
       suppressReasoningPrefill: transport === "native_tools",
       contextWindow,
       ...(deps.profileWindowApplies ? { profileWindowApplies: deps.profileWindowApplies(session.id) } : {}),
-      // None in an incognito chat (ATO-586, decision 8), as on a real turn.
-      ...(config.memory.profile.enabled && !isIncognitoSession(session)
+      // None in an incognito chat (ATO-586, decision 8) or a channel
+      // guest's session (ATO-2729), as on a real turn.
+      ...(config.memory.profile.enabled && !isIncognitoSession(session) && !isChannelGuestSession(session)
         ? { profileFacts: deps.profileStore.listForPrompt() }
         : {}),
       ...(userMessage !== undefined
