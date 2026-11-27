@@ -26,6 +26,7 @@ import {
 } from "./serve-webhook-tunnel.js";
 import {
   formatReapOutcomes,
+  LAUNCH_SERVE_ENV,
   registerServe,
   reapOrphanedServes,
 } from "./serve-reaper.js";
@@ -239,6 +240,7 @@ export async function serveCommand(args: string[]): Promise<number> {
       cwd: parsed.workingDir,
       startedAt: new Date().toISOString(),
       strongKey: apiKey.key.length >= MIN_NETWORK_KEY_LENGTH,
+      launched: process.env[LAUNCH_SERVE_ENV] === "1",
     });
     // Each new server tidies up after the generation before it. Failures
     // here are never fatal — the sweep is housekeeping, not startup — and
