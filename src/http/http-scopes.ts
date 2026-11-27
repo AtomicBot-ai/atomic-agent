@@ -111,6 +111,7 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /api/sessions/{id}/goal": "chat",
   "GET /api/sessions/{id}/next-step": "read",
   "POST /api/sessions/{id}/archived": "chat",
+  "POST /api/sessions/{id}/trashed": "chat",
   "POST /api/sessions/{id}/rollback-last-turn": "chat",
   "GET /api/sessions/{id}/previous-replies": "read",
   "POST /api/sessions/{id}/restore-previous-reply": "chat",

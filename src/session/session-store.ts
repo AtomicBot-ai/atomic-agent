@@ -16,6 +16,7 @@ import {
   withArchivedMetadata,
   withSessionArchived,
 } from "./session-archived.js";
+import { withSessionTrashed } from "./session-trashed.js";
 import { LIVE_SESSION_STATUSES } from "./session-retention.js";
 import type { SessionSummary } from "./session-summary.js";
 import {
@@ -1036,6 +1037,24 @@ export class SessionStore {
     const current = this.load(id);
     if (current === null) return null;
     const next = withSessionArchived(current, archived, now);
+    this.save(next);
+    return next;
+  }
+
+  /**
+   * ATO-2332: move a stored session to the desktop's Trash (`trashed: true`)
+   * or out of it (`session-trashed.ts`); search leaves a chat in Trash out.
+   * Returns the saved state, or `null` when there is no such session.
+   * `updatedAt` is left as it was, as for archive.
+   */
+  setSessionTrashed(
+    id: string,
+    trashed: boolean,
+    now: number = Date.now(),
+  ): SessionState | null {
+    const current = this.load(id);
+    if (current === null) return null;
+    const next = withSessionTrashed(current, trashed, now);
     this.save(next);
     return next;
   }
