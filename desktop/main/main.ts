@@ -59,6 +59,7 @@ import { wireLanDiscoveryIpc } from "./lan-discovery-ipc.js";
 import { wireTaskControlsIpc } from "./task-controls-ipc.js";
 import { wireWorkboardIpc } from "./workboard-ipc.js";
 import { wireIdeasIpc } from "./ideas-ipc.js";
+import { wireUsageIpc } from "./usage-ipc.js";
 import { wireSessionGoalIpc } from "./session-goal-ipc.js";
 import { wireSideQuestionIpc } from "./side-question-ipc.js";
 import { wireIncognitoChatsIpc } from "./incognito-chats-ipc.js";
@@ -3438,6 +3439,7 @@ function wireIpc(client: AgentClient): void {
   wireWorkboardIpc({ client });
   // ATO-458: suggested tasks on the empty chat screen (ideas-ipc.ts, renderer/suggestion-cards.js).
   wireIdeasIpc({ client });
+  wireUsageIpc({ client });   // ATO-2442: Settings › Usage (usage-ipc.ts, renderer/usage-tab.js)
   // ATO-1091: Settings › Models › "Find the best model for my tasks" (`atag models fit-test`).
   wireFitTestIpc({
     window: () => win,
