@@ -654,6 +654,21 @@ Honestly degraded, and labelled as such in the UI:
   Project skills are read in place. Remove project copies from the source
   directory shown in the detail. Global uninstall and Skills Hub behavior
   retain their existing HTTP/CLI paths.
+- **Show once** (ATO-2401, macOS, local agent only) is the Record card above
+  Pending review. Nothing listens until Record is clicked; while it records,
+  the card turns red and a menu bar item says "● Recording steps" (one click
+  stops and saves, its right-click menu also discards). It stops on its own
+  after 10 minutes or 200 steps, and on quit without saving. Clicks (the
+  app, the window and the Accessibility name of the control), shortcuts and
+  action keys are kept; typed characters never are (a run of typing is one
+  "type the text here" step), nor anything in protected apps (the agent's
+  screen guard list plus password managers by name), nor control labels in
+  browsers. No screenshots. Stop compiles the steps into a SKILL.md
+  (`main/show-once-skill.ts`, replayed with the os.screen tools) and saves it
+  as a learned-skill draft in `<stateDir>/skills-pending/<id>/`, where
+  Pending review shows, approves or discards (deletes) it through the
+  agent's own `atag skill learned`. Needs Accessibility for Atomic Agent;
+  the listener is uiohook-napi, whose macOS prebuilds ship for this.
 - **Memory** reads `<stateDir>/memory.sqlite` read-only (`sqlite3`, falling
   back to `node:sqlite`) with the stores' own statements, named and
   parameterised in the main process — the agent has no memory route.
