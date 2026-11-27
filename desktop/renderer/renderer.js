@@ -7617,6 +7617,7 @@ function act(a) {
   if (a === 'voice' || a.indexOf('voice:') === 0) { voiceAct(a); return; }
   // ATO-532: File › Attach App Window… opens the composer's window picker (window-snapshot.js).
   if (a === 'attach:window') { close(); render(); wsnapOpen(); return; }
+  if (k === 'meeting') { close(); render(); meetingAct(v || ''); return; }   // ATO-2333: File › Record a Meeting (meeting-panel.js)
   if (a === 'close') { close(); render(); if (menuWas) chatMenuFocusBack(menuWas); return; }
   if (k === 'toastx') { S.toasts = S.toasts.filter((x) => String(x.id) !== v); renderToasts(); return; }
   // ATO-568: one Fusion worker's Stop / Steer (fusion-panel.js).

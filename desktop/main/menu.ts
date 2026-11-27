@@ -79,6 +79,8 @@ export function menuTemplate(
         sep,
         // ATO-532: the composer's window picker (renderer/window-snapshot.js); no chord.
         item("Attach App Window…", "attach:window"),
+        // ATO-2333: the live meeting recorder (renderer/meeting-panel.js); no chord.
+        item("Record a Meeting…", "meeting:open"),
         sep,
         item("Open Workspace…", "workspace:choose", "Shift+CommandOrControl+O"),
         sep,

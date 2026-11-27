@@ -306,6 +306,8 @@ import { checkTelegramToken } from "./telegram-token-check.js";   // ATO-426: a 
 import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 // ATO-1074: an audio file transcribed on this machine, with timestamps.
 import { FileTranscriber, appleSpeechEngine, findOnPath, whisperFileEngine } from "./transcribe-file.js";
+// ATO-2333: Record a meeting, transcribed live in chunks on this machine.
+import { meetingRecorderFor, wireMeetingIpc } from "./meeting-ipc.js";
 // Item 7 part B (Skills / Memory / MCP tabs)
 import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
@@ -499,7 +501,7 @@ const voice = new VoiceSession();
    session's: a dictation and a file can run side by side. The engine is the
    one place that knows it is Apple's; ATO-1076: on Windows and Linux it is
    the whisper.cpp binary and model voice input found or downloaded. */
-const fileTranscriber = new FileTranscriber(process.platform === "darwin"
+const transcribeEngine = process.platform === "darwin"
   ? appleSpeechEngine({
     command: speechHelperPath,
     probe: () => voice.probe(),
@@ -510,7 +512,11 @@ const fileTranscriber = new FileTranscriber(process.platform === "darwin"
     paths: () => voice.whisperPaths(),
     chosen: () => readVoicePrefs().locales,
     ffmpeg: () => findOnPath("ffmpeg", { env: process.env, platform: process.platform, home: homedir() }),
-  }));
+  });
+const fileTranscriber = new FileTranscriber(transcribeEngine);
+/* ATO-2333: Record a meeting (meeting-ipc.ts): the same engine, its own runs.
+   Its `armed` opens the microphone gate below exactly as voice.armed does. */
+const meeting = meetingRecorderFor(transcribeEngine, (ev) => send("app:meeting", ev));
 
 /* ATO-1167: the neural reading voice (main/core-speech.ts). The same Core
    as Studio; it reads only on a Core with the audio module (0.20.6+). */
@@ -1259,7 +1265,7 @@ function voicePermissionVerdict(
   details: { mediaTypes?: string[] } | undefined,
 ): boolean {
   if (permission === "clipboard-sanitized-write" || permission === "clipboard-read") return true;
-  if (permission !== "media" || !voice.armed) return false;
+  if (permission !== "media" || !(voice.armed || meeting.armed)) return false;
   const types = details?.mediaTypes ?? [];
   return types.length > 0 && types.every((t) => t === "audio");
 }
@@ -3368,6 +3374,7 @@ function wireIpc(client: AgentClient): void {
   wireMyAppsIpc({ mainWindow: () => win });   // ATO-2383: Save as app, Settings › My apps, each app in its own window
   // ATO-1063: the mini chat page (mini-chat-ipc.ts): its frames, and "Open in big window".
   wireMiniChatIpc(client, { mainWindow: () => win, showMainWindow: () => (openWindowAgain(), win) });
+  wireMeetingIpc(meeting);   // ATO-2333: Record a meeting (meeting-ipc.ts)
   // ATO-561: "Open in new window" on a chat row (chat-popout-ipc.ts); a chat being written is not popped out.
   wireChatPopoutIpc({ mainWindow: () => win, liveSessionIds: () => [...liveTurns.values()].map((t) => t.sessionId) });
   // ATO-1056/1058: Roll back here, Edit and Fork from here on a message (chat-rewind-ipc.ts).

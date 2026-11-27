@@ -473,6 +473,9 @@ function attMenuHTML() {
        listens for data-wsnap-open); Run overnight is a mode now, on the mode
        chip under the input (composer-mode.js). */
     + '<button class="attmenurow" role="menuitem" data-wsnap-open="1">' + ic('appwin') + '<span>Window</span></button>'
+    // ATO-2333: start recording a meeting (meeting-panel.js listens for data-meeting-open).
+    + (typeof meetingOffer === 'function' && meetingOffer()
+      ? '<button class="attmenurow" role="menuitem" data-meeting-open="1">' + ic('mic') + '<span>Record meeting</span></button>' : '')
     + '</div>';
 }
 /** Always emitted (hidden when empty), so attRepaint can swap it without a render(). */

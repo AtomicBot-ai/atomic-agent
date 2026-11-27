@@ -701,6 +701,17 @@ contextBridge.exposeInMainWorld("atomic", {
   transcribeFile: (req: { job: string; path: string }) => ipcRenderer.invoke("speech:transcribeFile", req),
   transcribeCancel: (job: string) => ipcRenderer.invoke("speech:transcribeCancel", job),
   onTranscribe: (cb: (payload: unknown) => void) => on("app:transcribe", cb),
+  /** ATO-2333: Record a meeting (main/meeting-ipc.ts). `meetingAudio` is a send, like voiceAudio. */
+  meetingAvailable: () => ipcRenderer.invoke("meeting:available"),
+  meetingStart: () => ipcRenderer.invoke("meeting:start"),
+  meetingAudio: (chunk: Uint8Array, peak: number) => ipcRenderer.send("meeting:audio", chunk, peak),
+  meetingStop: () => ipcRenderer.invoke("meeting:stop"),
+  meetingStatus: () => ipcRenderer.invoke("meeting:status"),
+  meetingFinish: (id: string) => ipcRenderer.invoke("meeting:finish", id),
+  meetingDiscard: (id: string) => ipcRenderer.invoke("meeting:discard", id),
+  meetingRecoverable: () => ipcRenderer.invoke("meeting:recoverable"),
+  meetingReveal: (path: string) => ipcRenderer.invoke("meeting:reveal", path),
+  onMeeting: (cb: (payload: unknown) => void) => on("app:meeting", cb),
   /** ATO-1167: the neural reading voice through Atomic Core (main/core-speech.ts). */
   ttsCoreStatus: (model: string) => ipcRenderer.invoke("tts:coreStatus", model),
   ttsCorePrepare: (model: string) => ipcRenderer.invoke("tts:corePrepare", model),
