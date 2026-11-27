@@ -80,6 +80,29 @@ describe("handoffToCommand (ATO-1158)", () => {
     expect(readdirSync(dir)).toEqual([]);
   });
 
+  it("takes the newest chat that is not in Trash as latest (ATO-2474)", async () => {
+    const trashed = createEmptySessionState({ id: "s-0", workingDir: "/work", metadata: { title: "Gone", trashed: true } });
+    trashed.turns = [{ kind: "user", text: "Old plan", at: 2 }];
+    const kept = chat();
+    const store = {
+      load: () => null,
+      listByWorkingDir: () => [trashed, kept],
+      listRecent: () => [trashed, kept],
+    } as unknown as HandoffToStore;
+    let printed = "";
+    const code = await handoffToCommand(["--to", "codex"], {
+      store,
+      cwd: tempDir(),
+      stdout: (text) => {
+        printed += text;
+      },
+      stderr: () => undefined,
+    });
+    expect(code).toBe(0);
+    expect(printed).toContain("# Handoff: Task");
+    expect(printed).not.toContain("Gone");
+  });
+
   it("exits 1 when there is no chat to hand off", async () => {
     const empty = {
       load: () => null,

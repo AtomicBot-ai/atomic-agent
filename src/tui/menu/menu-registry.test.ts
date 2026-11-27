@@ -127,7 +127,7 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "sessions",
-    description: "open session picker to switch threads",
+    description: "open session picker to switch threads · `/sessions --deleted` lists chats in Trash · `/sessions --restore <n>` brings one back",
   },
   {
     name: "new",
