@@ -263,7 +263,7 @@ test("a chat switch closing the panel keeps unsaved text; the file opened again 
   assert.equal(run("FP.edit.conflict"), null, "the file did not change meanwhile");
   assert.equal(run("fpEditDirty(FP.edit)"), true);
   // Changed on disk while the panel was shut: the editor comes back saying so.
-  run("filePreviewShowList()");
+  run("filePreviewClose()");   // filePreviewShowList() needs the panel's element, which this vm has no document for
   disk = doc({ size: 50, mtimeMs: 999 });
   run("FP.open = true; FP.path = '/h/a.md';");
   await run("fpLoad(false)");
