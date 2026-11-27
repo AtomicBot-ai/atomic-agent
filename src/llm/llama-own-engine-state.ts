@@ -1,5 +1,5 @@
 import type { AtomicAgentConfig } from "../config/index.js";
-import { readChatDaemonPidState, type ChatDaemonPidState } from "../local-llm/server/daemon-lifecycle.js";
+import { readManagedEngineLiveness, type ManagedEngineLiveness } from "../local-llm/server/engine-liveness.js";
 import { isLoopbackUrlOnPort } from "../local-llm/server/managed-api-key.js";
 
 /**
@@ -8,11 +8,14 @@ import { isLoopbackUrlOnPort } from "../local-llm/server/managed-api-key.js";
  *
  *  - `running`: the address is the managed chat port and our recorded
  *    model process is alive.
- *  - `gone`: the address is the managed chat port and no model process of
- *    ours is there (no pid recorded, or a recorded pid that is dead). The
- *    server that answered 401 is then another program on that port.
+ *  - `gone`: the address is the managed chat port, no model process of
+ *    ours is there (a recorded pid that is dead, or none recorded) and
+ *    nothing is bringing one up (no engine lock held, no start pending).
+ *    The server that answered 401 is then another program on that port.
  *  - `unknown`: not the managed chat port (an External server, a custom
- *    link), or the pid could not be read. The refused-key words stay.
+ *    link), a start, load or install under way (our own server may be the
+ *    one answering before its pid is written), or the state could not be
+ *    read. The refused-key words stay.
  */
 export type OwnEngineState = "running" | "gone" | "unknown";
 
@@ -30,24 +33,26 @@ export const FOREIGN_KEY_REFUSAL_ADVICE =
   "Close that program and start the model again, or set a different port in localModels.managed.port.";
 
 /**
- * Read from our pid records only (`readChatDaemonPidState`, the same
- * reading as the `daemon_state` tag of an `llm_failure` report), never
- * from the operating system's port table.
+ * Read with `readManagedEngineLiveness`, the same lock-aware reading the
+ * turn's `LocalPortTakenError` conversion uses (ATO-1277): a held engine
+ * lock or a pending start reads `unknown`, never `gone`. Pid records and
+ * the lock only, never the operating system's port table.
  */
 export function readOwnEngineState(
   url: string,
   config: Pick<AtomicAgentConfig, "localModels" | "paths">,
-  readPidState: (dataDir: string) => ChatDaemonPidState = readChatDaemonPidState,
+  liveness: (dataDir: string) => ManagedEngineLiveness = readManagedEngineLiveness,
 ): OwnEngineState {
   const { localModels } = config;
   if (localModels.mode !== "managed") return "unknown";
   const port = localModels.managed?.port;
   if (typeof port !== "number" || !isLoopbackUrlOnPort(url, [port])) return "unknown";
-  let state: ChatDaemonPidState;
+  let state: ManagedEngineLiveness;
   try {
-    state = readPidState(config.paths.localModelsDataDir);
+    state = liveness(config.paths.localModelsDataDir);
   } catch {
     return "unknown";
   }
-  return state === "alive" ? "running" : "gone";
+  if (state === "alive") return "running";
+  return state === "dead" || state === "no_pid" ? "gone" : "unknown";
 }
