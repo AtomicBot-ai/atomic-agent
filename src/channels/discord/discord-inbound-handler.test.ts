@@ -495,6 +495,33 @@ describe("handleDiscordMessage — per-channel sessions", () => {
     expect(ctx.sent[0]).not.toContain("not available");
   });
 
+  it("/fork with the @mention after the command still forks, at the question named (review #2023)", async () => {
+    const source = createEmptySessionState({
+      id: "s-old",
+      workingDir: "/tmp/test",
+      metadata: { discordChannel: true },
+    });
+    source.turns = [
+      { kind: "user", text: "first", at: 1 },
+      { kind: "assistant_reply", text: "One.", at: 2 },
+      { kind: "user", text: "second", at: 3 },
+      { kind: "assistant_reply", text: "Two.", at: 4 },
+    ];
+    source.turnCount = 2;
+    source.macroTurnStarts = [2, 4];
+    for (const content of [`/fork <@${BOT}>`, `/fork 2 <@!${BOT}>`]) {
+      const pointer = fakePointer({ c1: { current: "s-old" } });
+      const save = vi.fn();
+      const ctx = makeCtx({ sessionPointer: pointer as never });
+      Object.assign(ctx.runtime, {
+        sessionStore: { load: (id: string) => (id === "s-old" ? source : null), save },
+      });
+      await handleDiscordMessage(msg({ guild_id: "g1", mentions: [{ id: BOT }], content }), ctx);
+      expect(save, content).toHaveBeenCalledTimes(1);
+      expect(ctx.sent.join("\n"), content).not.toContain("This chat has");
+    }
+  });
+
   it("/status reports this channel's session", async () => {
     const pointer = fakePointer({
       c1: { current: "s-here" },

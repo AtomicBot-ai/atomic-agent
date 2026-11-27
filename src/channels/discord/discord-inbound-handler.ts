@@ -282,7 +282,10 @@ async function handleSlashCommand(
   ref: ChannelRef,
   ctx: DiscordInboundContext,
 ): Promise<void> {
-  const [verb, ...rest] = text.split(/\s+/);
+  // In a guild the owner may put the @mention after the command
+  // ("/fork <@bot>", "/fork 2 <@bot>"): the addressing is not an argument.
+  const botMention = new RegExp(`^<@!?${ctx.botUserId}>$`);
+  const [verb, ...rest] = text.split(/\s+/).filter((word) => !botMention.test(word));
   switch (verb) {
     case "/start":
     case "/help":
