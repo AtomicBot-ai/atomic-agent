@@ -122,6 +122,13 @@ describe("scanEgress (ATO-2116)", () => {
       ]);
     });
 
+    // Review round 1 (F2105.1): git pushes to every pushurl of a remote.
+    it("names every host a remote with several push URLs points at", () => {
+      const urls = ["https://github.com/me/r.git", "https://evil.example/x.git", "git@github.com:me/r.git"];
+      expect(out("git push origin main", () => urls)).toEqual(["github.com", "evil.example"]);
+      expect(out("git push", () => [])).toEqual([null]);
+    });
+
     it("shows the remote by name when its URL cannot be read", () => {
       const found = outboundDestinations(scan("git push origin main", () => null));
       expect(found).toEqual([

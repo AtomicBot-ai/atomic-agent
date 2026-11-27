@@ -92,7 +92,7 @@ const LOOKS: Readonly<Record<CodingMode, CodingModeLook>> = {
     detail: "almost never asks",
     tone: "error",
     summary:
-      "bypass permissions: most calls run without asking for the rest of this session. Still asks: data going to a site not approved in this chat, a command that runs an encoded script, and one that reads credential files. Hardline shell-guard rules still block.",
+      "bypass permissions: most calls run without asking for the rest of this session. Still asks: reading credentials, an encoded script, a change to a startup or SSH file, a secret sent out, and the first send to a host that is not known yet. Hardline shell-guard rules still block.",
   },
 };
 

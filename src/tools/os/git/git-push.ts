@@ -11,6 +11,7 @@ import {
   resolveGithubToken,
   scrubGithubToken,
 } from "../../../github/index.js";
+import { gitPushEgress } from "../../../approval/egress-tool-destinations.js";
 import { requireBranchName } from "./git-checkout.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
@@ -72,7 +73,10 @@ export function buildOsGitPushTool(options: OsGitPushOptions): ToolDefinition {
       );
       if (refused) return refused;
 
-      const remoteUrl = await readRemoteUrl(repo, ctx, remote);
+      // Every URL the push goes to: `git push origin` writes to each
+      // pushurl, not only the first (review round 1 of ATO-2528).
+      const remoteUrls = await readRemoteUrls(repo, ctx, remote);
+      const remoteUrl = remoteUrls[0] ?? "";
       const invocation = buildPushInvocation({
         remote,
         branch,
@@ -89,8 +93,9 @@ export function buildOsGitPushTool(options: OsGitPushOptions): ToolDefinition {
           sessionId: ctx.sessionId,
           tool: "os.git.push",
           reason: `push ${branch} to ${remote}`,
-          preview: `git ${invocation.args.join(" ")}\nremote: ${remoteUrl}${invocation.authenticated ? "\nauth: GitHub token from the Integrations tab" : ""}`,
-          affectedResources: [remoteUrl],
+          preview: `git ${invocation.args.join(" ")}\nremote: ${remoteUrls.join(", ")}${invocation.authenticated ? "\nauth: GitHub token from the Integrations tab" : ""}`,
+          affectedResources: remoteUrls,
+          egress: gitPushEgress(remoteUrls, remote),
         },
         ctx.signal,
       );
@@ -206,15 +211,16 @@ async function hasUpstream(
   return res.exitCode === 0 && res.stdout.trim().length > 0;
 }
 
-async function readRemoteUrl(
+/** Every push URL of `remote`, `insteadOf` rewrites applied, in git's order. */
+async function readRemoteUrls(
   repo: string | undefined,
   ctx: { workingDir: string; signal: AbortSignal },
   remote: string,
-): Promise<string> {
+): Promise<string[]> {
   const res = await runGit({
     repo,
     workingDir: ctx.workingDir,
-    args: ["remote", "get-url", "--push", remote],
+    args: ["remote", "get-url", "--push", "--all", remote],
     signal: ctx.signal,
     timeoutMs: 5_000,
   });
@@ -223,5 +229,8 @@ async function readRemoteUrl(
       `os.git.push: remote ${JSON.stringify(remote)} is not configured: ${res.stderr.trim()}`,
     );
   }
-  return res.stdout.trim();
+  return res.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 }

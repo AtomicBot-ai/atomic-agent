@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { gitRemoteUrl, parseGitConfig } from "./git-remote-url.js";
+import { gitRemoteUrl, gitRemoteUrls, parseGitConfig } from "./git-remote-url.js";
 
 describe("gitRemoteUrl (ATO-2116)", () => {
   let root: string;
@@ -49,6 +49,32 @@ describe("gitRemoteUrl (ATO-2116)", () => {
     );
     expect(gitRemoteUrl(dir, null, noGlobal)).toBe("https://push.example.com/me/repo.git");
     expect(gitRemoteUrl(dir, "origin", noGlobal)).toBe("https://github.com/org/repo.git");
+  });
+
+  // Review round 1 (F2105.1): only the last pushurl was read, but `git
+  // push` sends to each of them (or to each url when there is none).
+  it("reads every pushurl of a remote, else every url", () => {
+    const dir = repo(
+      [
+        '[remote "origin"]',
+        "  url = https://github.com/org/repo.git",
+        "  pushurl = https://evil.example/x.git",
+        "  pushurl = https://github.com/org/repo.git",
+        '[remote "mirror"]',
+        "  url = https://github.com/org/repo.git",
+        "  url = https://evil.example/y.git",
+        "",
+      ].join("\n"),
+    );
+    expect(gitRemoteUrls(dir, "origin", noGlobal)).toEqual([
+      "https://evil.example/x.git",
+      "https://github.com/org/repo.git",
+    ]);
+    expect(gitRemoteUrls(dir, "mirror", noGlobal)).toEqual([
+      "https://github.com/org/repo.git",
+      "https://evil.example/y.git",
+    ]);
+    expect(gitRemoteUrls(dir, "upstream", noGlobal)).toBeNull();
   });
 
   it("falls back to origin when nothing names a push remote", () => {

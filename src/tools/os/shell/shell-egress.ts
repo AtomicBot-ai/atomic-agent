@@ -4,7 +4,8 @@ import {
   withUnreadableScript,
   type EgressDestination,
 } from "../../../approval/egress-scan.js";
-import { gitRemoteUrl } from "../../../approval/git-remote-url.js";
+import { gitRemoteUrls } from "../../../approval/git-remote-url.js";
+import { publishRegistryUrl } from "../../../approval/publish-registry.js";
 
 export interface ShellEgressFacts {
   /**
@@ -43,8 +44,10 @@ export function shellEgress(
 ): EgressDestination[] {
   const found = scanEgress(commandSegments, {
     gitRemote: (remote, chdir) =>
-      gitRemoteUrl(chdir === undefined ? cwd : resolve(cwd, chdir), remote),
+      gitRemoteUrls(chdir === undefined ? cwd : resolve(cwd, chdir), remote),
     gitStateWritten: writesGitState(facts.targetPaths ?? []),
+    // The registry a publish goes to, from `.npmrc` / cargo config (ATO-2528).
+    publishRegistry: (program, name) => publishRegistryUrl(cwd, program, name),
     httpConfigWritten: (facts.targetPaths ?? []).some((path) =>
       [".curlrc", "_curlrc", ".wgetrc"].includes(basename(path).toLowerCase()),
     ),

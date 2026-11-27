@@ -14,11 +14,15 @@ import { hasUrlScheme, hostOfGitUrl, normaliseHost } from "./egress-host.js";
 import type { EgressDestination } from "./egress-scan.js";
 
 /**
- * Reads the URL a push to `remote` (`null`: the push default) would use,
+ * Reads the URLs a push to `remote` (`null`: the push default) would use,
  * from `chdir` (the `-C` folder, relative to the command's own folder)
- * when set. `null` when it cannot be read.
+ * when set: one, or every pushurl of the remote. `null` when it cannot be
+ * read.
  */
-export type GitRemoteResolver = (remote: string | null, chdir: string | undefined) => string | null;
+export type GitRemoteResolver = (
+  remote: string | null,
+  chdir: string | undefined,
+) => string | readonly string[] | null;
 
 const GLOBAL_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"]);
 const PUSH_VALUE = new Set(["--repo", "-o", "--push-option", "--receive-pack", "--exec"]);
@@ -34,12 +38,23 @@ export function gitSubcommand(args: readonly string[]): string | undefined {
   return undefined;
 }
 
-function remoteEntry(remote: string | null, resolver: GitRemoteResolver | undefined, chdir: string | undefined): EgressDestination | null {
+/** One entry per host the push goes to: git pushes to every pushurl of a remote. */
+function remoteEntries(
+  remote: string | null,
+  resolver: GitRemoteResolver | undefined,
+  chdir: string | undefined,
+): EgressDestination[] {
   const label = remote === null ? "the default git remote" : `git remote "${remote}"`;
-  const url = resolver?.(remote, chdir) ?? null;
-  const host = url === null ? null : hostOfGitUrl(url);
-  if (host === "local") return null;
-  return { kind: "git_remote", host, direction: "outbound", label: host ?? label };
+  const resolved = resolver?.(remote, chdir) ?? null;
+  const urls: readonly (string | null)[] =
+    resolved === null ? [null] : typeof resolved === "string" ? [resolved] : resolved.length > 0 ? resolved : [null];
+  const found: EgressDestination[] = [];
+  for (const url of urls) {
+    const host = url === null ? null : hostOfGitUrl(url);
+    if (host === "local" || found.some((entry) => entry.host === host)) continue;
+    found.push({ kind: "git_remote", host, direction: "outbound", label: host ?? label });
+  }
+  return found;
 }
 
 function operandEntry(
@@ -115,15 +130,9 @@ export function scanGit(
       repo ??= arg;
       break;
     }
-    if (repo === undefined) {
-      const entry = remoteEntry(null, usable, chdir);
-      return entry === null ? [] : [entry];
-    }
+    if (repo === undefined) return remoteEntries(null, usable, chdir);
     const entry = operandEntry(repo, "outbound");
-    if (entry === "name") {
-      const named = remoteEntry(repo, usable, chdir);
-      return named === null ? [] : [named];
-    }
+    if (entry === "name") return remoteEntries(repo, usable, chdir);
     return entry === null ? [] : [entry];
   }
   if (sub === "send-email") {

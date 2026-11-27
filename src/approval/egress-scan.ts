@@ -30,6 +30,7 @@ import {
   scanCopy,
   scanInlineScript,
   scanPublish,
+  type PublishRegistryResolver,
   scanSocat,
   scanSocket,
   scanSsh,
@@ -80,6 +81,8 @@ export interface EgressScanOptions {
    * which can set a proxy: a send is then to an unknown address.
    */
   httpConfigWritten?: boolean;
+  /** Reads the registry a publish goes to from the project's config (`publish-registry.ts`). */
+  publishRegistry?: PublishRegistryResolver;
 }
 
 const ENV_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -197,7 +200,14 @@ function scanSegment(
   if (program === "aws" && args[0] === "s3") return scanBucket("s3", args.slice(2));
   if (program === "gsutil") return scanBucket("gs", args.slice(1));
   if (program === "gcloud" && args[0] === "storage") return scanBucket("gs", args.slice(2));
-  if (PUBLISH_PROGRAMS.has(program)) return scanPublish(program, args);
+  if (PUBLISH_PROGRAMS.has(program)) {
+    // After a `cd` (or another change of folder) the project config read
+    // from `cwd` is not the one the publish uses: unknown, not the public
+    // default (review round 1 of ATO-2528).
+    const registry =
+      call.gitUnsafe && options.publishRegistry !== undefined ? () => null : options.publishRegistry;
+    return scanPublish(program, args, registry);
+  }
   if (SCRIPT_PROGRAMS.test(program)) return scanInlineScript(program, args);
   return [];
 }

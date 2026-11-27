@@ -69,6 +69,7 @@ import { ApprovalRulesStore } from "../approval/approval-rules-store.js";
 import { ApprovalRouter } from "../approval/approval-router.js";
 import { installRiskReviewer } from "./composition/runtime-risk-review.js";
 import { installSecurityGuard } from "./composition/runtime-security-guard.js";
+import { installKnownHosts } from "./composition/runtime-known-hosts.js";
 
 import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 
@@ -594,6 +595,8 @@ export async function createAgentRuntime(
   approvals.setTaintReview(() => getConfig().agent.taintReview);
   // Egress hold (ATO-2116): a host on `http.hostAllowlist` may receive a command's data unasked.
   approvals.setEgressAllowlist(() => getConfig().http.hostAllowlist);
+  // Durable known hosts (ATO-2528): `agent.security.knownHosts`, grown by "allow always".
+  installKnownHosts(approvals);
   browserExtract.current = {
     complete: (params) => llmComplete(params),
     transport: (providerId) => resolveActiveLlmSlice(providerId).transport,
