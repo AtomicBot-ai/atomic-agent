@@ -43,7 +43,7 @@ export const SUPERVISOR_KINDS = ["restarting", "restarted", "restart_failed", "g
  * ATO-1739: a missing or damaged model file and a GPU driver are the agent's own words (src/local-llm/server/engine-exit-reason.ts).
  */
 export const ENGINE_FAULTS = [
-  "oom", "port_in_use", "load_failed", "missing_lib", "crash", "model_file_missing", "model_file_corrupt", "gpu_driver", "unknown",
+  "oom", "port_in_use", "load_failed", "missing_lib", "crash", "model_file_missing", "model_file_corrupt", "model_unsupported", "gpu_driver", "unknown",
 ] as const;
 /**
  * ATO-278: why the local model server did not start (`local_backend_started.reason`, start_failed only) or
@@ -54,7 +54,7 @@ export const ENGINE_FAULTS = [
  * or any other exit with no line recognised (`early_exit`).
  */
 export const BACKEND_FAIL_REASONS = [
-  "oom", "port_in_use", "load_failed", "missing_lib", "crash", "model_file_missing", "model_file_corrupt", "gpu_driver",
+  "oom", "port_in_use", "load_failed", "missing_lib", "crash", "model_file_missing", "model_file_corrupt", "model_unsupported", "gpu_driver",
   "dll_init_failed", "early_exit", "timeout", "exited_after_ready", "other",
 ] as const;
 export const CODING_MODES = ["default", "plan", "auto", "bypass", "other"] as const;
