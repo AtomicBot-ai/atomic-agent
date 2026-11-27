@@ -64,6 +64,14 @@ export const GUEST_SECRET_EXCLUDES: readonly string[] = [
  * the file whatever the excludes say. Peeling makes git refuse a blob or
  * tree instead. `A..B`, `A...B`, `A..` and `^A` keep their meaning.
  */
+/**
+ * Flags a guest's diff and show always get. `--submodule=short` keeps a
+ * changed submodule as one commit line, so `diff.submodule=diff` in the
+ * repo config cannot print the submodule's own patch (with its `.env`),
+ * which the pathspec excludes above never reach (review round 2).
+ */
+export const GUEST_DIFF_FLAGS: readonly string[] = ["--submodule=short"];
+
 export function guestCommitRevision(revision: string): string {
   const parts = revision.split(/(\.\.\.?)/);
   return parts
