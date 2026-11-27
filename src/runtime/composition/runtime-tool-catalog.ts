@@ -912,7 +912,41 @@ export function registerRuntimeFusionAndReadScope(input: {
   const mintedSessions = new MintedSessionMetadata();
   const createTrackedEphemeralSession: FusionDelegateDeps["createEphemeralSession"] = (meta, dir, inherit) =>
     mintedSessions.remember(createEphemeralSession(meta, dir, inherit));
-
+  // What a local worker leg is checked and renewed with after a worker on
+  // it was cut off, for fusion.delegate and subagent.run alike (ATO-2430,
+  // issue #490): both send their local workers through the same runner.
+  const localLegSeams: Pick<
+    FusionDelegateDeps,
+    "renewLocalTransport" | "probeSlotOccupancy" | "probeLocalHealth" | "probeLocalHealthFor"
+  > = {
+    // A local worker sent after one was cut off, on a server that still
+    // answers, goes out on fresh connections (ATO-1357).
+    renewLocalTransport: () => renewTransportPool(),
+    probeSlotOccupancy: async () => {
+      try {
+        return readSlotOccupancy(await llama.fetchSlots());
+      } catch {
+        return null;
+      }
+    },
+    // Asked before a local worker is sent after one was cut off
+    // (ATO-917): a server that stopped answering fails the task now.
+    probeLocalHealth: () => llama.probeHealth(),
+    // Per local server (ATO-1318): this client only ever asks the main
+    // local server (`localModels.url`), so it is the probe for a leg on
+    // that server alone. A second local server has no probe here and
+    // its leg is not checked, rather than checked against the wrong one.
+    probeLocalHealthFor: (providerId) => {
+      const entry = resolveLlmConfig(getConfig()).providers.find((p) => p.id === providerId);
+      if (entry === undefined || entry.kind !== "llama-server") return undefined;
+      const main = getConfig().localModels.url;
+      const same = (a: string, b: string): boolean =>
+        a.trim().replace(/\/+$/, "") === b.trim().replace(/\/+$/, "");
+      return entry.url === undefined || same(entry.url, main)
+        ? () => llama.probeHealth()
+        : undefined;
+    },
+  };
 
   // The orchestrator's fan-out. Registered UNCONDITIONALLY: the tool
   // re-reads `resolveRunMode()` on every call and refuses when fusion is
@@ -943,33 +977,7 @@ export function registerRuntimeFusionAndReadScope(input: {
       // so the speed a worker's time limit is sized from is the speed
       // its own completions run at.
       localTokensPerSecond: () => llama.measuredTokensPerSecond(),
-      // A local worker sent after one was cut off, on a server that still
-      // answers, goes out on fresh connections (ATO-1357).
-      renewLocalTransport: () => renewTransportPool(),
-      probeSlotOccupancy: async () => {
-        try {
-          return readSlotOccupancy(await llama.fetchSlots());
-        } catch {
-          return null;
-        }
-      },
-      // Asked before a local worker is sent after one was cut off
-      // (ATO-917): a server that stopped answering fails the task now.
-      probeLocalHealth: () => llama.probeHealth(),
-      // Per local server (ATO-1318): this client only ever asks the main
-      // local server (`localModels.url`), so it is the probe for a leg on
-      // that server alone. A second local server has no probe here and
-      // its leg is not checked, rather than checked against the wrong one.
-      probeLocalHealthFor: (providerId) => {
-        const entry = resolveLlmConfig(getConfig()).providers.find((p) => p.id === providerId);
-        if (entry === undefined || entry.kind !== "llama-server") return undefined;
-        const main = getConfig().localModels.url;
-        const same = (a: string, b: string): boolean =>
-          a.trim().replace(/\/+$/, "") === b.trim().replace(/\/+$/, "");
-        return entry.url === undefined || same(entry.url, main)
-          ? () => llama.probeHealth()
-          : undefined;
-      },
+      ...localLegSeams,
       // ATO-1562: a llama.cpp server that is not this agent's own serves
       // whatever it loaded; its worker rows are labelled with that name.
       // Asked per fan-out, bounded by the client's probe timeout. The
@@ -1127,6 +1135,9 @@ export function registerRuntimeFusionAndReadScope(input: {
       workerSupportsSlotAffinity: (providerId) =>
         providerRegistry.getProvider(providerId)?.capabilities
           .supportsSlotAffinity ?? false,
+      // A local subagent sent after one was cut off is checked and sent on
+      // fresh connections, as a Fusion worker is (ATO-2430, issue #490).
+      ...localLegSeams,
       // Declared `files` are asked about once per call, as a fan-out is.
       approvalRequired: dangerous.approvalRequired,
       agentStateDir: config.paths.stateDir,
