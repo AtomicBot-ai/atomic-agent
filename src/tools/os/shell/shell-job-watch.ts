@@ -69,15 +69,31 @@ export class JobLineWatch {
   private readonly wakers = new Set<() => void>();
   private readonly unsubscribe: () => void;
 
-  constructor(private readonly job: CommandJob) {
+  /**
+   * `fromNow` (a monitor, ATO-2436): only output printed after this
+   * point counts, so a line the job printed before the monitor existed
+   * never wakes the session.
+   */
+  constructor(
+    private readonly job: CommandJob,
+    options: { fromNow?: boolean } = {},
+  ) {
     // Subscribe, then read the snapshot: no output can arrive between
     // the two (one thread), so nothing is missed or seen twice.
     this.unsubscribe = job.onOutput((text, stream) => this.take(text, stream));
-    const seen = job.output();
-    this.take(seen.stdout, "stdout");
-    this.take(seen.stderr, "stderr");
+    if (options.fromNow !== true) {
+      const seen = job.output();
+      this.take(seen.stdout, "stdout");
+      this.take(seen.stderr, "stderr");
+    }
     const atExit = () => this.flushAtExit();
     job.exit.then(atExit, atExit);
+  }
+
+  /** Stop hearing the job (a monitor turned off); a pending wait returns at its bound. */
+  close(): void {
+    this.unsubscribe();
+    this.wake();
   }
 
   /** The job is gone: its unterminated last lines count too. Once. */

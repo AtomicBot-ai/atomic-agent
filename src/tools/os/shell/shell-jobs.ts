@@ -1,6 +1,8 @@
 import type { CommandJob } from "../../../sandbox/command-job.js";
 import type { ShellCommandFacts } from "./shell-result.js";
 import type { JobLineWatch } from "./shell-job-watch.js";
+import type { JobMonitor } from "./shell-job-monitor.js";
+import { ShellMonitorWakeRouter } from "./shell-monitor-wake.js";
 
 /**
  * The jobs `os.shell.run` detached instead of killing (F47), per
@@ -49,6 +51,8 @@ export interface ShellJobRecord {
   stopReason: ShellJobStopReason | null;
   /** Made by the first `{"wait": id, "until": …}` (ATO-2358), then kept. */
   lineWatch?: JobLineWatch;
+  /** Set by `{"monitor": id, "until": …}` (ATO-2436); ends with the record. */
+  monitor?: JobMonitor;
 }
 
 export interface ShellJobRegistryOptions {
@@ -73,6 +77,12 @@ export class ShellJobRegistry {
     ShellJobRecord,
     ReturnType<typeof setTimeout>
   >();
+  /**
+   * Where monitor notices go (ATO-2436). The bootstrap sets the
+   * runtime's fallback and frontends add themselves; a private registry
+   * has neither, so its monitors are refused.
+   */
+  readonly wake = new ShellMonitorWakeRouter();
 
   constructor(options: ShellJobRegistryOptions = {}) {
     this.jobMaxMs = positiveOr(options.jobMaxMs, DEFAULT_SHELL_JOB_MAX_MS);
@@ -148,13 +158,23 @@ export class ShellJobRegistry {
     record.state = "killed";
     record.stopReason = reason;
     this.clearCeiling(record);
+    // A stopped job says nothing more: its monitor ends with the stop.
+    record.monitor?.close();
     record.job.stop();
     return true;
+  }
+
+  /** Put a monitor on a record, replacing (and ending) the one it had. */
+  setMonitor(record: ShellJobRecord, monitor: JobMonitor | undefined): void {
+    record.monitor?.close();
+    if (monitor === undefined) delete record.monitor;
+    else record.monitor = monitor;
   }
 
   /** Forget a record whose result was reported (a `wait` or a `kill` collected it). */
   drop(record: ShellJobRecord): void {
     this.clearCeiling(record);
+    record.monitor?.close();
     const records = this.bySession.get(record.sessionId);
     if (!records) return;
     const index = records.indexOf(record);
