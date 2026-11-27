@@ -15,6 +15,8 @@ import { Chip, tracked } from "./chip.js";
 import { sessionTitleLine } from "./session-title.js";
 import { planStatusTag } from "./plan-strip.js";
 import { LogbookChip, logbookChipLabel, useLogbookChipState } from "./logbook-chip.js";
+import { PetChip } from "../pet/pet-chip.js";
+import { PET_CHIP_MAX_CELLS } from "../pet/pet-sprite.js";
 import {
   planUpdateBanner,
   UpdateBanner,
@@ -79,7 +81,8 @@ export function StatusBar({
   // ATO-2363: `● logbook` while screenshots are taken; its cells come out of the same budget.
   const logbookState = useLogbookChipState();
   const logbookLabel = logbookChipLabel(logbookState);
-  const planCells = (planTag === null ? 0 : planTag.length + 4) + (logbookLabel === null ? 0 : logbookLabel.length + 2);
+  // ATO-2513: the pet (`/pet`, off by default) takes its widest frame and word from the same budget.
+  const planCells = (planTag === null ? 0 : planTag.length + 4) + (logbookLabel === null ? 0 : logbookLabel.length + 2) + (state.pet ? PET_CHIP_MAX_CELLS : 0);
   const { columns } = useTerminalSize();
   // The banner outlives the modal (`updateBanner` survives
   // `update_dismissed`) and then narrates the whole lifecycle: the
@@ -133,6 +136,7 @@ export function StatusBar({
         </>
       ) : null}
       <LogbookChip state={logbookState} />
+      {state.pet ? <PetChip view={state} /> : null}
       {/* Nothing on the chat surface: `RUN` named a place nobody is
           confused about being in, and it sat where the session's own
           name goes. The menu is still Esc, and the rail — restored by
