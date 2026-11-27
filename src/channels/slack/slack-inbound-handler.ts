@@ -134,13 +134,21 @@ export function stripMention(text: string, botUserId: string): string {
   return text.replace(new RegExp(`^\\s*<@${botUserId}(\\|[^>]*)?>`), "");
 }
 
+/** Remove every `<@U…>` / `<@U…|name>` naming the bot, anywhere in `text`. */
+export function stripBotMentions(text: string, botUserId: string): string {
+  return text.replace(new RegExp(`<@${botUserId}(\\|[^>]*)?>`, "g"), "").trim();
+}
+
 /** Returns false for an unknown verb, so it goes to the agent as text. */
 export async function handleCommand(
   verb: string,
-  args: string,
+  rawArgs: string,
   ref: SlackRef,
   ctx: SlackInboundContext,
 ): Promise<boolean> {
+  // In a channel the bot is @mentioned to be heard, often after the
+  // command (`!fork 2 <@BOT>`): the mention is not an argument.
+  const args = stripBotMentions(rawArgs, ctx.botUserId);
   switch (verb) {
     case "help":
     case "start":
