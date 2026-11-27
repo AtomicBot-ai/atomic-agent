@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { throttleAddress, type AuthThrottle } from "./auth-throttle.js";
 import type { DeviceSessions } from "./device-sessions.js";
+import type { PairedDevice } from "./device-store.js";
 import { roleHasScope, type HttpRole, type HttpScope } from "./http-scopes.js";
 import { openaiError } from "./openai-errors.js";
 import {
@@ -24,7 +25,12 @@ import {
 export const DEVICE_COOKIE = "atag_device";
 const COOKIE_MAX_AGE_S = 365 * 24 * 60 * 60;
 
-/** A paired phone is a member: it chats and answers approvals, it never changes settings. */
+/**
+ * A paired phone is a member: it chats and answers approvals one at a
+ * time. It never changes settings (admin routes), and the routes that
+ * read `HandlerContext.pairedDevice` refuse it an Always allow rule and a
+ * change of a chat's folder.
+ */
 export const DEVICE_ROLE: HttpRole = "member";
 
 /** The value of cookie `name` in the request, or `null`. */
@@ -91,7 +97,8 @@ export interface DeviceAuthInput {
  * Auth by the device cookie. `"absent"` when it does not apply (no
  * store, a keyless server, or the request carries a key or token, which
  * then goes through the usual check unchanged). Otherwise the cookie
- * decides: `"allowed"`, or `"refused"` with the response already sent.
+ * decides: the device it signed in (`{ device }`), or `"refused"` with
+ * the response already sent.
  * A wrong cookie counts against the address like a wrong key.
  */
 export function authorizeDeviceCookie(
@@ -99,7 +106,7 @@ export function authorizeDeviceCookie(
   res: ServerResponse,
   input: DeviceAuthInput,
   throttle?: AuthThrottle,
-): "absent" | "allowed" | "refused" {
+): "absent" | "refused" | { device: Pick<PairedDevice, "id" | "name"> } {
   if (input.apiKey === null || !input.devices) return "absent";
   if (getBearerToken(req) !== null || getHeader(req, "x-api-key") !== null) return "absent";
   const secret = readCookie(req, DEVICE_COOKIE);
@@ -127,7 +134,7 @@ export function authorizeDeviceCookie(
     ));
     return "refused";
   }
-  if (roleHasScope(DEVICE_ROLE, input.scope)) return "allowed";
+  if (roleHasScope(DEVICE_ROLE, input.scope)) return { device: { id: device.id, name: device.name } };
   sendJson(res, 403, openaiError(
     `Paired device "${device.name}" (${device.id}) cannot use ${input.route}: it needs the ${input.scope} scope`,
     "permission_error",

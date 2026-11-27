@@ -107,6 +107,17 @@ export function createResolveApprovalHandler(): HttpHandler {
       return;
     }
     const { approved, grant } = parsed;
+    // ATO-2308: a paired phone answers one request at a time; a rule that
+    // runs later calls unasked is saved only from this computer.
+    if (grant === "always" && ctx.pairedDevice) {
+      sendJson(res, 403, openaiError(
+        "A paired device cannot save an Always allow rule; answer allow-once, allow-in-chat or deny, or choose Always allow on this computer",
+        "permission_error",
+        null,
+        "device_cannot_allow_always",
+      ));
+      return;
+    }
     if (approved) {
       // An `ask_user` question (ATO-489) is answered with a choice, not an
       // Allow: a bare approve would reach the model as no answer at all.

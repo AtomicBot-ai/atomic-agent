@@ -23,6 +23,12 @@ export interface HttpCaller {
   role: HttpRole;
 }
 
+/** What a signed-in request carries on to its handler. */
+export interface RequestAuth {
+  /** ATO-2308: set when a paired phone's cookie signed the request in. */
+  pairedDevice?: { id: string; name: string };
+}
+
 export interface ScopedAuthInput {
   apiKey: string | null;
   namedTokens: readonly StoredHttpToken[];
@@ -55,8 +61,9 @@ export function identifyCaller(
 }
 
 /**
- * ATO-583: auth plus scope for one request. Returns `true` when the
- * handler may run; otherwise the response is already sent.
+ * ATO-583: auth plus scope for one request. Returns what the handler
+ * needs to know about the caller when it may run (truthy); otherwise
+ * `false`, with the response already sent.
  *
  * Without named tokens, or without a serve key, this is `enforceAuth`
  * unchanged: no key means an open loopback server, one key means that key
@@ -69,11 +76,12 @@ export function authorizeRequest(
   res: ServerResponse,
   input: ScopedAuthInput,
   throttle?: AuthThrottle,
-): boolean {
+): RequestAuth | false {
   const byDevice = authorizeDeviceCookie(req, res, input, throttle);
-  if (byDevice !== "absent") return byDevice === "allowed";
+  if (byDevice === "refused") return false;
+  if (byDevice !== "absent") return { pairedDevice: byDevice.device };
   if (input.apiKey === null || input.namedTokens.length === 0) {
-    return enforceAuth(req, res, input.apiKey, throttle);
+    return enforceAuth(req, res, input.apiKey, throttle) ? {} : false;
   }
   const address = throttleAddress(req);
   const wait = throttle ? throttle.retryAfter(address) : 0;
@@ -89,7 +97,7 @@ export function authorizeRequest(
     return false;
   }
   throttle?.succeeded(address);
-  if (roleHasScope(caller.role, input.scope)) return true;
+  if (roleHasScope(caller.role, input.scope)) return {};
   sendJson(
     res,
     403,

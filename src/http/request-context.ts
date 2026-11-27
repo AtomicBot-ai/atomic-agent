@@ -38,6 +38,12 @@ export interface HandlerContext {
    * broker into the runtime as `onMcpElicitation` (serve does).
    */
   elicitations?: McpElicitationBroker;
+  /**
+   * ATO-2308: the paired phone whose cookie signed this request in; unset
+   * for the serve key and named tokens. Routes that must not let a phone
+   * make a lasting change check it.
+   */
+  pairedDevice?: { readonly id: string; readonly name: string };
 }
 
 export type HttpHandler = (

@@ -45,7 +45,7 @@ function sendPage(res: ServerResponse, status: number, html: string): void {
 
 const CONFIRM_PAGE = page(
   "Connect this phone",
-  "<p>This phone will open your Atomic Agent panel without typing the API key. It can chat and answer the agent's questions, not change settings. You can sign it out any time with <code>atag pair --revoke</code>.</p>"
+  "<p>This phone will open your Atomic Agent panel without typing the API key. It can chat and answer the agent's questions and approvals one at a time. It cannot change settings, save an Always allow rule, or move a chat to another folder. You can sign it out any time with <code>atag pair --revoke</code>.</p>"
     + '<form method="post"><button type="submit">Connect this phone</button></form>',
 );
 

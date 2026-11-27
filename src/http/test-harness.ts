@@ -37,6 +37,7 @@ import { ApprovalBus } from "./approval-bus.js";
 import { CompletionRegistry } from "./completion-registry.js";
 import { createHttpServer, type HttpServerHandle } from "./http-server.js";
 import type { McpElicitationBroker } from "../mcp/mcp-elicitation-broker.js";
+import type { DeviceSessions } from "./device-sessions.js";
 import { buildRouteTable } from "./route-table.js";
 import type { A2aOptions } from "./route-a2a.js";
 
@@ -151,6 +152,8 @@ export interface HarnessOptions {
   elicitations?: McpElicitationBroker;
   /** ATO-693: mount the A2A routes, as `serve --a2a` does. */
   a2a?: A2aOptions | null;
+  /** ATO-2308: paired phones signed in by cookie, as serve wires them. Needs `apiKey`. */
+  deviceSessions?: DeviceSessions;
 }
 
 export interface Harness {
@@ -271,6 +274,7 @@ export async function startTestHarness(
     approvalBus,
     completionRegistry,
     ...(options.elicitations ? { elicitations: options.elicitations } : {}),
+    ...(options.deviceSessions ? { deviceSessions: options.deviceSessions } : {}),
   });
 
   return {

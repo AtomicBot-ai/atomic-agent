@@ -17,7 +17,7 @@ import { enforceLoopbackGuard } from "./loopback-guard.js";
 import { routeKey, scopeForRoute, type HttpScope } from "./http-scopes.js";
 import type { StoredHttpToken } from "./http-token-store.js";
 import type { DeviceSessions } from "./device-sessions.js";
-import { authorizeRequest } from "./scoped-auth.js";
+import { authorizeRequest, type RequestAuth } from "./scoped-auth.js";
 
 /** ATO-1126: one per process; loopback callers are never counted. */
 const authThrottle = new AuthThrottle();
@@ -262,16 +262,23 @@ async function dispatch(
     );
     return;
   }
-  if (matched.route.requiresAuth && !authorizeRequest(req, res, {
-    apiKey: baseCtx.apiKey,
-    namedTokens: namedTokens?.() ?? [],
-    scope: matched.route.scope,
-    route: matched.route.key,
-    ...(deviceSessions ? { devices: deviceSessions } : {}),
-  }, authThrottle)) {
-    return;
+  let auth: RequestAuth = {};
+  if (matched.route.requiresAuth) {
+    const result = authorizeRequest(req, res, {
+      apiKey: baseCtx.apiKey,
+      namedTokens: namedTokens?.() ?? [],
+      scope: matched.route.scope,
+      route: matched.route.key,
+      ...(deviceSessions ? { devices: deviceSessions } : {}),
+    }, authThrottle);
+    if (!result) return;
+    auth = result;
   }
-  const ctx: HandlerContext = { ...baseCtx, params: matched.params };
+  const ctx: HandlerContext = {
+    ...baseCtx,
+    params: matched.params,
+    ...(auth.pairedDevice ? { pairedDevice: auth.pairedDevice } : {}),
+  };
   await matched.route.handler(req, res, ctx);
 }
 
