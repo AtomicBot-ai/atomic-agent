@@ -36,7 +36,7 @@ export function readPluginBundle(root: string): PluginBundle {
   if (manifest.mcpInline) Object.assign(mcpServers, mcpMap(manifest.mcpInline));
 
   for (const key of manifest.unsupportedKeys) notes.push(`Skipped "${key}": not supported yet.`);
-  if (agents.length) notes.push(`${agents.length} subagent profile(s) found; they are listed but only used once subagent profiles land.`);
+  if (agents.length) notes.push(`${agents.length} subagent profile(s) found; a Fusion task or a \`subagent.run\` task can name them with \`profile\`.`);
   if (format !== "claude" && format !== "conventional") notes.push(`Read as a ${format} package; only skills, commands, agents, hooks and MCP servers are used.`);
 
   return { name: manifest.name, root: absRoot, format, manifest, skills, commands, agents, hooksFile, mcpServers, notes };

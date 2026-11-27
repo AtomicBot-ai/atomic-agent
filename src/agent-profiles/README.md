@@ -3,7 +3,7 @@
 Status: current
 Owner: src/agent-profiles/
 
-A subagent profile is a named role a Fusion task can be handed to (ATO-566): `fusion.delegate { tasks: [{ id, instructions, profile: "review" }] }`. The worker then gets the profile's instructions in its brief, the profile's tool allowlist, and the profile's model when the task named none.
+A subagent profile is a named role a Fusion task can be handed to (ATO-566): `fusion.delegate { tasks: [{ id, instructions, profile: "review" }] }`. The worker then gets the profile's instructions in its brief, the profile's tool allowlist, and the profile's model when the task named none. Outside Fusion, `subagent.run` takes `profile` on its tasks too, for built-in, project, user and plugin profiles (see [Wiring](#wiring)).
 
 ## Format
 
