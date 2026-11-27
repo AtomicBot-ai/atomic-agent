@@ -20,7 +20,7 @@ import type { TurnExperience } from "./experience-review.js";
  * (`agent.taintReview`), which is a separate decision.
  *
  * A map from the tool name to the label shown on the draft. Tools
- * not named here (writes, listings of names, status checks) are not
+ * not named here (writes, listings of file names, status checks) are not
  * counted; tools with `untrustedOutput` already reach the review through
  * the taint.
  */
@@ -33,6 +33,9 @@ const LOCAL_CONTENT_TOOLS: ReadonlyMap<string, string> = new Map(Object.entries(
   "os.fs.docx": "a local document",
   "os.fs.xlsx": "a local spreadsheet",
   "os.fs.archive.read_entry": "a file inside an archive",
+  "os.code.search": "local file contents",
+  // Symbol names are short, but they are still text from the files.
+  "os.fs.code_map": "local code symbols",
   // Command and code output.
   "os.shell.run": "shell command output",
   "skill.run_script": "script output",

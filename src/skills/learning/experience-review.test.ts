@@ -129,6 +129,18 @@ describe("localContentSources", () => {
     expect(isLocalContentTool("os.fs.write")).toBe(false);
     expect(isLocalContentTool("toString")).toBe(false);
   });
+
+  it("counts code search results and code maps as local file text (ATO-1650 review)", () => {
+    const exp: Pick<TurnExperience, "steps"> = {
+      steps: [
+        { tool: "os.code.search", status: "ok", summary: "", args: {} },
+        { tool: "os.fs.code_map", status: "ok", summary: "", args: {} },
+      ],
+    };
+    expect(localContentSources(exp)).toEqual(["local file contents", "local code symbols"]);
+    expect(isLocalContentTool("os.code.search")).toBe(true);
+    expect(isLocalContentTool("os.fs.code_map")).toBe(true);
+  });
 });
 
 describe("parseReviewDecision", () => {
