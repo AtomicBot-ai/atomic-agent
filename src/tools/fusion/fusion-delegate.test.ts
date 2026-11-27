@@ -1969,6 +1969,47 @@ describe("fusion.delegate models by role (ATO-943)", () => {
     });
   });
 
+  it("runs two roles on one shared provider entry with a model each", async () => {
+    const asked = new Map<string, [string | undefined, string | undefined]>();
+    // One OpenRouter entry serving review and plan, a model each (roleModels).
+    const shared: NonNullable<ResolvedRunMode["roles"]> = {
+      byRole: {
+        review: { providerId: "openrouter", model: "deepseek/deepseek-v4.1", turnModel: "deepseek/deepseek-v4.1", local: false },
+        plan: { providerId: "openrouter", model: "anthropic/claude-opus-5.5", turnModel: "anthropic/claude-opus-5.5", local: false },
+      },
+      mixLocalModels: false,
+      localLegProviderIds: ["local-llama"],
+    };
+    const result = await buildFusionDelegateTool(
+      deps({
+        resolveRunMode: () => fusionMode({ roles: shared }),
+        workerSupportsSlotAffinity: affine,
+        runTurn: async (session, _msg, options) => {
+          const meta = session.metadata?.fusionWorker as { taskId: string };
+          asked.set(meta.taskId, [options.providerId, options.model]);
+          return turnResult();
+        },
+      }),
+    ).run(
+      {
+        tasks: [
+          { id: "r", instructions: "check", role: "review" },
+          { id: "p", instructions: "outline", role: "plan" },
+        ],
+      },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    // Keyed by provider alone, both tasks would run on the first model.
+    expect(Object.fromEntries(asked)).toEqual({
+      r: ["openrouter", "deepseek/deepseek-v4.1"],
+      p: ["openrouter", "anthropic/claude-opus-5.5"],
+    });
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows[0]).toMatchObject({ model: "deepseek/deepseek-v4.1", modelRole: "review" });
+    expect(rows[1]).toMatchObject({ model: "anthropic/claude-opus-5.5", modelRole: "plan" });
+  });
+
   it("refuses a model that is not on the allowed list before any worker starts", async () => {
     const runTurn = vi.fn(async () => turnResult());
     const result = await buildFusionDelegateTool(
