@@ -10,7 +10,8 @@
  *                Documents/Atomic Agent/Meetings
  *   systemAudio  record the other side of a call as Them (on by default)
  *   voices       tell speakers apart by voice, downloading the diarizer on
- *                first use (on by default)
+ *                first use (off by default: it downloads about 60 MB, including a
+ *                sherpa-onnx binary we do not sign, so it is opt-in)
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, normalize } from "node:path";
@@ -22,7 +23,7 @@ export interface MeetingPrefs {
 }
 
 export const MEETING_PREFS_FILE = "meetings.json";
-export const MEETING_PREFS_DEFAULTS: Readonly<MeetingPrefs> = { folder: null, systemAudio: true, voices: true };
+export const MEETING_PREFS_DEFAULTS: Readonly<MeetingPrefs> = { folder: null, systemAudio: true, voices: false };
 
 /** An absolute folder path, normalized; anything else is null. */
 export function cleanFolder(v: unknown): string | null {
@@ -38,7 +39,7 @@ export function parseMeetingPrefs(raw: unknown): MeetingPrefs {
   return {
     folder: cleanFolder(o.folder),
     systemAudio: o.systemAudio !== false,
-    voices: o.voices !== false,
+    voices: o.voices === true,
   };
 }
 
