@@ -1,4 +1,5 @@
 import { PROVIDER_PRESETS } from "../llm/provider/presets/provider-presets.js";
+import { completionFactsTags, type LlmCompletionFacts } from "./completion-facts-tags.js";
 
 /**
  * Turn-level context the runtime attaches to an `llm_failure` report: which
@@ -92,6 +93,14 @@ export interface LlmFailureContext {
    * server's units: what the window really held. Sent as `cut_*` tags.
    */
   truncationCounts?: LlmTruncationCounts;
+  /**
+   * The shape of the completion a `ModelError` was raised on
+   * (ATO-2421). Sent as `finish_reason`, `reasoning_present`,
+   * `served_prompt_tokens`, `served_reply_tokens`.
+   */
+  completionFacts?: LlmCompletionFacts;
+  /** `ollama` / `llama_server` / `other` for the failing link. Sent as `server_kind`. */
+  serverKind?: string;
 }
 
 /** {@link LlmFailureContext.promptBudget}. Every field a token count. */
@@ -318,6 +327,8 @@ function reportedCount(value: number): string {
  * `prompt_window` and `prompt_reply_reserve`; a truncated reply adds
  * `cut_prompt_tokens`, `cut_reply_tokens` and `cut_reply_cap` (ATO-1678).
  * Counts only, for every engine: no prompt text is read here.
+ * A model failure adds its completion's shape and the server kind
+ * (`completion-facts-tags.ts`, ATO-2421).
  */
 export function sanitizeLlmFailureTags(
   context: LlmFailureContext | undefined,
@@ -401,5 +412,6 @@ export function sanitizeLlmFailureTags(
     tags.cut_reply_tokens = reportedCount(cut.completionTokens);
     tags.cut_reply_cap = cut.requestedMaxTokens === undefined ? "none" : safeCount(cut.requestedMaxTokens);
   }
+  Object.assign(tags, completionFactsTags(context.completionFacts, context.serverKind));
   return Object.keys(tags).length > 0 ? tags : undefined;
 }

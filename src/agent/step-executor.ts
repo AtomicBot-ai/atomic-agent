@@ -27,6 +27,7 @@ import { executeBatch, toBatchInputs } from "./dispatch/batch-scheduler.js";
 import { toolLogFields } from "./tool-log-fields.js";
 
 import { ModelError, detectModelFailure } from "../llm/index.js";
+import { completionFactsOf } from "../llm/reliability/model-completion-facts.js";
 // The detector moved to the llm layer so the stream consumer can share its
 // rules; re-exported for existing importers.
 export {
@@ -199,6 +200,7 @@ async function executeStepInner(
           ...(initialModelFailure.truncation
             ? { truncation: initialModelFailure.truncation }
             : {}),
+          completion: completionFactsOf(completion),
         },
       );
     }

@@ -14,6 +14,7 @@ import { getReasoningTurnFraming } from "../../llm/model-profile.js";
 import type { BuiltPrompt } from "../../prompt/build-prompt.js";
 import { DEFAULT_REASONING_BUDGET_TOKENS, effectiveReasoningBudgetTokens, estimateReasoningTokens } from "../../llm/reasoning-budget.js";
 import { detectModelFailure, ModelError } from "../../llm/index.js";
+import { completionFactsOf } from "../../llm/reliability/model-completion-facts.js";
 
 
 export type ToolCallBatchParseResult =
@@ -829,6 +830,7 @@ export function finishStepRepair(
         ...(retryModelFailure.truncation
           ? { truncation: retryModelFailure.truncation }
           : {}),
+        completion: completionFactsOf(completion),
       },
     );
   }

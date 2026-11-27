@@ -21,6 +21,7 @@ import {
   type ManagedEngineLivenessReport,
 } from "../../local-llm/index.js";
 import { resolveTurnLocalEngine } from "./runtime-turn-service.js";
+import { readCompletionFacts, serverKindOf } from "./model-failure-facts.js";
 
 export interface LlmFailureContextDeps {
   readConfig: () => AtomicAgentConfig;
@@ -89,6 +90,9 @@ export function describeLlmFailure(
   if (promptBudget !== undefined) context.promptBudget = promptBudget;
   const truncation = readTruncationCounts(event.error);
   if (truncation !== undefined) context.truncationCounts = truncation;
+  // ATO-2421: what the defective completion looked like, by shape only.
+  const completionFacts = readCompletionFacts(event.error);
+  if (completionFacts !== undefined) context.completionFacts = completionFacts;
   if (event.outage) {
     context.outageWaitedMs = event.outage.waitedMs;
     context.outageAttempts = event.outage.attempts;
@@ -117,6 +121,9 @@ export function describeLlmFailure(
       context.managedPorts = managedPortsOf(config.localModels);
     }
     context.providerId = readFailingLink(event.error) ?? resolveLlmConfig(config).activeTextProvider;
+    if (completionFacts !== undefined) {
+      context.serverKind = serverKindOf(resolveLlmConfig(config), context.providerId);
+    }
     const localEngine = resolveTurnLocalEngine(config, context.providerId);
     if (localEngine === undefined) return context;
     context.localEngine = localEngine;
