@@ -316,7 +316,14 @@ export function resolveRunMode(
     worker.id !== "local-llama" &&
     opts.localServerUrl !== undefined &&
     isForeignLlamaServer(worker, opts.localServerUrl);
+  // Our own daemon serves `localModels.managed.modelId` whatever
+  // `fusion.workerModel` says, so a stored pick that no longer matches it
+  // (the model was changed with /model or in the desktop) is not shown
+  // as the worker (ATO-1483): the label names the model that answers.
+  const workerOnOurDaemon =
+    worker !== undefined && isLocalKind(worker) && !workerIsForeign;
   const workerModelLabel =
+    (workerOnOurDaemon ? opts.managedModelId ?? undefined : undefined) ??
     fusion?.workerModel ??
     (worker !== undefined && isLocalKind(worker)
       ? workerIsForeign
