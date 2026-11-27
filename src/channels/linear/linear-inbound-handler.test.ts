@@ -157,6 +157,16 @@ describe("handleLinearEvent: comments", () => {
     expect(runTurn).not.toHaveBeenCalled();
     expect(posted[0]?.body).toBe("Approved.");
   });
+
+  it.each(["yes ABCD", "always ABCD"])("does not let a non-owner settle an approval with %j", async (body) => {
+    const tryAnswer = vi.fn(() => "Approved.");
+    const { ctx, runTurn, posted } = makeCtx({ bridge: { tryAnswer } });
+    await handleLinearEvent(comment(body, { userId: "u-stranger" }), ctx);
+    expect(tryAnswer).not.toHaveBeenCalled();
+    expect(ctx.post).not.toHaveBeenCalled();
+    expect(posted).toEqual([]);
+    expect(runTurn).not.toHaveBeenCalled();
+  });
 });
 
 describe("handleLinearEvent: assignment", () => {
