@@ -2,7 +2,13 @@ import { EventEmitter } from "node:events";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { captureError, guardStdioStream } from "./error-reporter.js";
+import {
+  captureError,
+  createUncaughtExceptionHandler,
+  guardStdioStream,
+} from "./error-reporter.js";
+import { LOOPBACK_RESET_NOTE } from "./loopback-reset.js";
+import type { LoopbackResetPolicy } from "./loopback-reset.js";
 import type { GuardedStream } from "./error-reporter.js";
 import type { SentryClient } from "./sentry-client.js";
 import type { ScrubbedErrorEvent } from "./error-scrubber.js";
@@ -198,5 +204,113 @@ describe("guardStdioStream", () => {
     // A second broken-pipe report changes nothing.
     emitter.emit("error", brokenPipe());
     expect(exit).not.toHaveBeenCalled();
+  });
+});
+
+// ATO-2767: a local llama-server restarting reset a socket under a
+// request, and the uncaught error ended `atag serve` (exit 1).
+describe("createUncaughtExceptionHandler: loopback reset", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function harness(loopbackReset: LoopbackResetPolicy) {
+    const exit = vi
+      .spyOn(process, "exit")
+      .mockImplementation(() => undefined as never);
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const { client, captured } = fakeClient();
+    (client as unknown as { flush: () => Promise<boolean> }).flush = vi.fn(
+      async () => true,
+    );
+    const handler = createUncaughtExceptionHandler(() => client, {
+      soleUncaughtHandler: true,
+      brokenPipe: "mute",
+      loopbackReset,
+    });
+    return { handler, exit, stderr, captured };
+  }
+
+  /** Let the fatal path's flush settle, so its `exit(1)` has run. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  const reset = (address: string) =>
+    Object.assign(new Error("read ECONNRESET"), {
+      code: "ECONNRESET",
+      address,
+    });
+
+  it("under survive, a loopback reset neither exits nor reports", async () => {
+    const { handler, exit, stderr, captured } = harness("survive");
+    handler(reset("127.0.0.1"));
+    await settle();
+    expect(exit).not.toHaveBeenCalled();
+    expect(captured).toHaveLength(0);
+    const written = stderr.mock.calls.map((c) => String(c[0]));
+    expect(written).toEqual([LOOPBACK_RESET_NOTE]);
+  });
+
+  it("under survive, a dead stderr does not turn the note into a crash", async () => {
+    const { handler, exit, stderr, captured } = harness("survive");
+    stderr.mockImplementation(() => {
+      throw new Error("write EPIPE");
+    });
+    expect(() => handler(reset("::1"))).not.toThrow();
+    await settle();
+    expect(exit).not.toHaveBeenCalled();
+    expect(captured).toHaveLength(0);
+  });
+
+  it("under survive, a reset from a remote peer still reports and exits 1", async () => {
+    const { handler, exit, captured } = harness("survive");
+    handler(reset("203.0.113.7"));
+    await settle();
+    expect(captured).toHaveLength(1);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("under survive, a reset it cannot prove is loopback still exits 1", async () => {
+    const { handler, exit, captured } = harness("survive");
+    handler(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
+    await settle();
+    expect(captured).toHaveLength(1);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  // The shape Node really emits for a read reset: no address. It is proven
+  // only by the mark the agent's HTTP pool puts on it (loopback-socket-mark.ts).
+  const rawReadReset = () =>
+    Object.assign(new Error("read ECONNRESET"), {
+      code: "ECONNRESET",
+      errno: -54,
+      syscall: "read",
+    });
+
+  it("under survive, a raw read reset marked by the pool neither exits nor reports", async () => {
+    const { handler, exit, captured } = harness("survive");
+    const err = rawReadReset();
+    Object.defineProperty(err, Symbol.for("atomic-agent.loopbackPeer"), { value: true });
+    handler(err);
+    await settle();
+    expect(exit).not.toHaveBeenCalled();
+    expect(captured).toHaveLength(0);
+  });
+
+  it("under survive, the same raw read reset without the mark still exits 1", async () => {
+    const { handler, exit, captured } = harness("survive");
+    handler(rawReadReset());
+    await settle();
+    expect(captured).toHaveLength(1);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("by default (exit), a loopback reset still reports and exits 1", async () => {
+    const { handler, exit, captured } = harness("exit");
+    handler(reset("127.0.0.1"));
+    await settle();
+    expect(captured).toHaveLength(1);
+    expect(exit).toHaveBeenCalledWith(1);
   });
 });
