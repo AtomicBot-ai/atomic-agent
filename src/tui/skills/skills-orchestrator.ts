@@ -29,6 +29,7 @@ import {
 } from "../../skills/index.js";
 import { listPluginCommands, renderPluginCommand } from "../../plugins/plugin-commands.js";
 import { listUserCommands, renderUserCommand, type UserCommandOptions } from "../../plugins/user-commands.js";
+import { userCommandWarnings, type UserCommandWarning } from "./user-command-warnings.js";
 import { isProjectFolderTrusted } from "../../skills/project-trust.js";
 import { expandFileMentions } from "../file-mentions/expand-mentions.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
@@ -90,6 +91,8 @@ export class SkillsOrchestrator {
   } | null = null;
   /** Last plugin-command listing error, so a repeating failure is reported once. */
   private pluginCommandsError: string | null = null;
+  /** Keys of the command-file warnings already shown (ATO-2773). */
+  private readonly reportedCommandWarnings = new Set<string>();
   /** Memoised ClawHub client, rebuilt when the configured apiBase changes. */
   private clawHub: { client: ClawHubClient; apiBase: string } | null = null;
   private readonly skillsSh = new SkillsShClient();
@@ -157,7 +160,10 @@ export class SkillsOrchestrator {
    */
   private refreshPluginCommands(): void {
     try {
-      const own = listUserCommands(this.userCommandOptions()).commands.map(c => ({ name: c.name, command: c.name,
+      const options = this.userCommandOptions();
+      const listed = listUserCommands(options);
+      this.reportUserCommandWarnings(userCommandWarnings(listed, options.workingDir));
+      const own = listed.commands.map(c => ({ name: c.name, command: c.name,
         description: c.description, source: c.source, ...(c.argumentHint ? { argumentHint: c.argumentHint } : {}) }));
       const { commands } = listPluginCommands(this.runtime.config.paths.stateDir);
       this.bus.emit({
@@ -171,6 +177,15 @@ export class SkillsOrchestrator {
       // Refresh runs on every palette open and every 5 s: report a failure once.
       if (msg !== this.pluginCommandsError) this.bus.emit({ type: "runtime_info", line: `plugin commands refresh failed: ${msg}` });
       this.pluginCommandsError = msg;
+    }
+  }
+
+  /** ATO-2773: each skipped or half-read command file once, in the chat. */
+  private reportUserCommandWarnings(warnings: readonly UserCommandWarning[]): void {
+    for (const warning of warnings) {
+      if (this.reportedCommandWarnings.has(warning.key)) continue;
+      this.reportedCommandWarnings.add(warning.key);
+      this.bus.emit({ type: "system_message", text: warning.text, variant: "warn" });
     }
   }
 

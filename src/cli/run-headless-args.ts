@@ -10,7 +10,7 @@ export type RunOutputFormat = "text" | "json" | "stream-json";
 
 export interface RunHeadlessArgs {
   outputFormat: RunOutputFormat;
-  /** `--model`: a model id, a provider id, or `<provider>:<model>`. */
+  /** `--model`: a model id, a provider id, or `<provider>/<model>` (`:` works too). */
   model: string | null;
   /** `--resume <id>` (an id or unique id prefix), or `latest` for `--continue`. */
   resume: string | null;
@@ -64,7 +64,7 @@ export function readHeadlessFlag(
     case "--model":
     case "-m": {
       const v = value();
-      if (v === null) return { error: `${flag} needs a model id or <provider>:<model>` };
+      if (v === null) return { error: `${flag} needs a model id or <provider>/<model>` };
       acc.model = v;
       return i + 1;
     }

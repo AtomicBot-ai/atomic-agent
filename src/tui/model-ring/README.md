@@ -7,7 +7,7 @@ Read the inherited [TUI instructions](../AGENTS.md) and [interface contract](../
 
 ## What it does
 
-A short list of favorite chat models (ATO-2169), at most nine, each `provider/model` (local models are `local-llama/<id>`). `/model favorite` lists them, `/model favorite add` puts the current model in (or `add <provider/model>` another), `remove` takes one out, `clear` empties the list. Ctrl+P switches the next turn to the next favorite, wrapping, and a composer notice names it with its place (`Model: openai/gpt-5 (2/3)`); the composer's model control shows the new model as for any other switch. It stands down under Fusion, during a running turn, under the slash palette, a panel modal or a pending approval, and says why it cannot switch (no API key, not downloaded) instead of switching.
+A short list of favorite chat models (ATO-2169), at most nine, each `provider/model` (local models are `local-llama/<id>`; `provider:model`, the `run -m` spelling, is accepted too and shown with the slash, ATO-2773). `/model favorite` lists them, `/model favorite add` puts the current model in (or `add <provider/model>` another), `remove` takes one out, `clear` empties the list. Ctrl+P switches the next turn to the next favorite, wrapping, and a composer notice names it with its place (`Model: openai/gpt-5 (2/3)`); the composer's model control shows the new model as for any other switch. It stands down under Fusion, during a running turn, under the slash palette, a panel modal or a pending approval, and says why it cannot switch (no API key, not downloaded) instead of switching.
 
 ## Ownership and entry points
 

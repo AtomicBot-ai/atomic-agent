@@ -58,6 +58,22 @@ describe("listUserCommands", () => {
     expect(diagnostics[0]).toContain("bad name");
   });
 
+  // ATO-2773: these used to be collected and then dropped without a word.
+  it("marks a file it skips and one whose front matter it ignores", () => {
+    put(join(opts.stateDir, "commands", "bad name.md"), "x\n");
+    put(join(opts.stateDir, "commands", "deploy.md"), "---\ndescription: [unclosed\n---\nDeploy it\n");
+    const { commands, problems } = listUserCommands(opts);
+    expect(commands.map(c => c.name)).toEqual(["deploy"]);
+    expect(problems).toEqual([
+      expect.objectContaining({ file: join(opts.stateDir, "commands", "bad name.md"), skipped: true }),
+      expect.objectContaining({
+        file: join(opts.stateDir, "commands", "deploy.md"),
+        skipped: false,
+        reason: expect.stringMatching(/^could not parse front matter at line \d+, so its description/),
+      }),
+    ]);
+  });
+
   it("does not list the profile folder twice when the working folder is the home of the state folder", () => {
     const home = { ...opts, workingDir: root, stateDir: join(root, ".atomic-agent") };
     expect(userCommandDirs(home).map(d => d.source)).toEqual(["project", "profile"]);

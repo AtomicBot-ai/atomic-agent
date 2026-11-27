@@ -51,7 +51,7 @@ describe("run headless flags", () => {
       error: "--output-format must be text, json or stream-json",
     });
     expect(parseRunArgs(["--model"])).toEqual({
-      error: "--model needs a model id or <provider>:<model>",
+      error: "--model needs a model id or <provider>/<model>",
     });
     expect(parseRunArgs(["--resume", "--json"])).toEqual({ error: "--resume needs a chat id" });
     expect(parseRunArgs(["-o"])).toEqual({ error: "-o needs a file path" });

@@ -1,3 +1,4 @@
+import { splitProviderModel } from "../../llm/provider/provider-model-ref.js";
 import type { TuiState } from "../tui-state.js";
 
 /**
@@ -23,14 +24,13 @@ export const LOCAL_RING_PROVIDER = "local-llama";
 export const MODEL_RING_MAX = 9;
 
 /**
- * `provider/model`, split on the FIRST slash: provider ids never carry
- * one, model ids often do (`openrouter/anthropic/claude-sonnet`).
+ * `provider/model` or `provider:model` (ATO-2773, the spelling `run -m`
+ * takes), split on the FIRST separator: provider ids never carry one,
+ * model ids often do (`openrouter/anthropic/claude-sonnet`,
+ * `ollama/qwen3:8b`). Stored and shown with the slash.
  */
 export function parseModelRingEntry(raw: string): ModelRingEntry | null {
-  const text = raw.trim();
-  const at = text.indexOf("/");
-  if (at <= 0 || at === text.length - 1 || /\s/.test(text)) return null;
-  return { provider: text.slice(0, at), model: text.slice(at + 1) };
+  return splitProviderModel(raw);
 }
 
 export function formatModelRingEntry(entry: ModelRingEntry): string {

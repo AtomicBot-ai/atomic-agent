@@ -27,6 +27,39 @@ describe("resolveRunModel", () => {
     expect(resolveRunModel("openai:", llm)).toEqual({ providerId: "openai" });
   });
 
+  // ATO-2773: `/model favorite` writes provider/model; the same id works here.
+  it("splits <provider>/<model> when the head is a configured provider", () => {
+    const anthropicActive = {
+      activeTextProvider: "anthropic",
+      providers: [
+        ...llm.providers,
+        { id: "anthropic", kind: "openai-compatible", defaultChatModel: "claude-sonnet-4-5" },
+      ],
+    };
+    expect(resolveRunModel("openai/gpt-5", anthropicActive)).toEqual({ providerId: "openai", model: "gpt-5" });
+    expect(resolveRunModel("openai/gpt-5", llm)).toEqual({ providerId: "openai", model: "gpt-5" });
+    // Not a provider head: still one model id on the active provider.
+    expect(resolveRunModel("qwen/qwen3-coder", llm)).toEqual({ providerId: "openai", model: "qwen/qwen3-coder" });
+    // A colon before the slash is the provider separator, as before.
+    expect(resolveRunModel("openai:org/model", llm)).toEqual({ providerId: "openai", model: "org/model" });
+  });
+
+  it("keeps a slash id on a router whose own model ids carry a slash", () => {
+    const routerActive = {
+      activeTextProvider: "or",
+      providers: [...llm.providers, { id: "or", kind: "openrouter", defaultChatModel: "openrouter/auto" }],
+    };
+    expect(resolveRunModel("openai/gpt-oss-120b", routerActive)).toEqual({ providerId: "or", model: "openai/gpt-oss-120b" });
+    expect(resolveRunModel("or/auto", routerActive)).toEqual({ providerId: "or", model: "or/auto" });
+    // The colon still names the other provider.
+    expect(resolveRunModel("openai:gpt-5", routerActive)).toEqual({ providerId: "openai", model: "gpt-5" });
+    const litellm = {
+      activeTextProvider: "proxy",
+      providers: [...llm.providers, { id: "proxy", kind: "openai-compatible", defaultChatModel: "openai/gpt-4o" }],
+    };
+    expect(resolveRunModel("openai/gpt-4o-mini", litellm)).toEqual({ providerId: "proxy", model: "openai/gpt-4o-mini" });
+  });
+
   it("refuses a per-turn model on a local provider and an empty value", () => {
     expect(resolveRunModel("local-llama:qwen", llm)).toMatchObject({
       error: expect.stringContaining("works on cloud providers only"),
@@ -34,8 +67,11 @@ describe("resolveRunModel", () => {
     expect(resolveRunModel("ollama:qwen3:8b", llm)).toMatchObject({
       error: expect.stringContaining("works on cloud providers only"),
     });
+    expect(resolveRunModel("ollama/qwen3:8b", llm)).toMatchObject({
+      error: expect.stringContaining("works on cloud providers only"),
+    });
     expect(resolveRunModel(" ", llm)).toEqual({
-      error: "--model needs a model id or <provider>:<model>",
+      error: "--model needs a model id or <provider>/<model>",
     });
   });
 });
