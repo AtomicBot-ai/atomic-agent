@@ -67,7 +67,7 @@ describe("local model configuration domain seams", () => {
     const root = schema.parseUserConfigFile({}).localModels;
     expect(parsed).toStrictEqual(defaults);
     expect(root).toStrictEqual(defaults);
-    expect(Object.keys(defaults)).toEqual(["url", "mode", "completionMaxTokens", "requestTimeoutMs", "useServerTemplate", "thinking", "reasoningBudgetTokens", "drySampler", "strictToolArgs", "managed", "embeddings", "download", "customModels"]);
+    expect(Object.keys(defaults)).toEqual(["url", "mode", "completionMaxTokens", "requestTimeoutMs", "useServerTemplate", "thinking", "reasoningBudgetTokens", "drySampler", "modelSampling", "strictToolArgs", "managed", "embeddings", "download", "customModels"]);
     // Order-independent and open-ended: each managed key has its own test,
     // and parallel PRs add keys here (wave 10: cpuMoe, rpcServers, share).
     expect(Object.keys(defaults.managed)).toEqual(expect.arrayContaining(["engine", "modelId", "port", "dataDirOverride", "autoUpdate", "stopOnExit", "autoRestart", "promptDiskCache", "device", "backendVariant", "coreBackendVariant", "contextSize", "tensorSplit", "parallel", "swaFull"]));

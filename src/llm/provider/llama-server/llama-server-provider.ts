@@ -134,12 +134,25 @@ export class LlamaServerProvider implements LlmProvider {
    * render failure, sends the raw text as before. The grammar rides
    * along either way.
    */
-  private async rendered(request: CompletionRequest): Promise<CompletionRequest> {
+  private async rendered(input: CompletionRequest): Promise<CompletionRequest> {
+    const request = this.withModelSampling(input);
     if (request.chat === undefined) return request;
     const modelKey = `${this.getProfile().id}/${this.getModelId?.() ?? ""}`;
     const prompt = await this.templates.render(request.chat, modelKey);
     if (prompt === null) return request;
     return { ...request, prompt };
+  }
+
+  /**
+   * Hand the client the loaded model's recommended sampling (ATO-2202),
+   * read from its header by the profile manager. The client decides
+   * whether to use it (`localModels.modelSampling`) and keeps the
+   * request's own fields above it.
+   */
+  private withModelSampling(request: CompletionRequest): CompletionRequest {
+    if (request.modelSampling !== undefined) return request;
+    const sampling = this.getProfile().sampling;
+    return sampling ? { ...request, modelSampling: sampling } : request;
   }
 
   async health(): Promise<ProviderHealthResult> {

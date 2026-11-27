@@ -322,6 +322,11 @@ export interface RuntimeLocalModelsConfig {
    */
   drySampler?: boolean;
   /**
+   * Mirrors `UserConfigFile.localModels.modelSampling`. Optional so a
+   * hand-built runtime config that predates the field reads as off.
+   */
+  modelSampling?: boolean;
+  /**
    * Mirrors `UserConfigFile.localModels.strictToolArgs`. Optional so a
    * hand-built runtime config that predates the field reads as off.
    */
@@ -419,6 +424,17 @@ export interface UserLocalModelsConfig {
    * an older file has no field and reads as off.
    */
   drySampler: boolean;
+  /**
+   * Use the sampling a local model's authors recommend (ATO-2202): the
+   * `general.sampling.*` keys of its GGUF header, else a
+   * `generation_config.json` next to the file, for temperature, top-p,
+   * top-k, min-p and the repeat penalty. A value the request sets itself
+   * and the `ATOMIC_AGENT_LLAMA_*` overrides still win; a field the
+   * model does not name keeps the built-in default (0.2 / 0.95 / 40).
+   * llama.cpp-family engines only. Default `false`, unversioned and
+   * additive: an older file has no field and reads as off.
+   */
+  modelSampling: boolean;
   /**
    * Hold a local model's tool ARGUMENTS to each tool's JSON Schema on
    * the grammar path, not only its tool names (ATO-633): a key the

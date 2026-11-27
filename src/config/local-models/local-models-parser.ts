@@ -569,6 +569,10 @@ export function parseUserLocalModelsConfig(
       localModels.drySampler ?? readDefaults().drySampler,
       "localModels.drySampler",
     ),
+    modelSampling: parseBool(
+      localModels.modelSampling ?? readDefaults().modelSampling,
+      "localModels.modelSampling",
+    ),
     strictToolArgs: parseBool(
       localModels.strictToolArgs ?? readDefaults().strictToolArgs,
       "localModels.strictToolArgs",
