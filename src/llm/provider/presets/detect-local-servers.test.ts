@@ -4,6 +4,7 @@ import {
   describeDetectedServer,
   detectLocalServers,
   LOCAL_SERVER_TARGETS,
+  readLoadedIds,
   readModelIds,
 } from "./detect-local-servers.js";
 
@@ -73,6 +74,36 @@ describe("detectLocalServers", () => {
     expect(describeDetectedServer(found[0]!)).toBe("Llama app (llama.cpp) (1 model)");
   });
 
+  it("reads which LM Studio models are loaded from its REST model list", async () => {
+    const { fetch } = fakeFetch({
+      "http://127.0.0.1:1234/v1/models": {
+        object: "list",
+        data: [{ id: "qwen/qwen3-8b" }, { id: "google/gemma-3-4b" }],
+      },
+      "http://127.0.0.1:1234/api/v0/models": {
+        object: "list",
+        data: [
+          { id: "qwen/qwen3-8b", type: "llm", state: "loaded" },
+          { id: "google/gemma-3-4b", type: "llm", state: "not-loaded" },
+        ],
+      },
+    });
+    const found = await detectLocalServers({ fetch });
+    expect(found).toHaveLength(1);
+    expect(found[0]!.kind).toBe("lmstudio");
+    expect(found[0]!.loaded).toEqual(["qwen/qwen3-8b"]);
+    expect(describeDetectedServer(found[0]!)).toBe("LM Studio (2 models, 1 loaded)");
+  });
+
+  it("keeps LM Studio with nothing loaded when its REST list is missing", async () => {
+    const { fetch } = fakeFetch({
+      "http://127.0.0.1:1234/v1/models": { object: "list", data: [{ id: "qwen/qwen3-8b" }] },
+      "http://127.0.0.1:1234/api/v0/models": 404,
+    });
+    const found = await detectLocalServers({ fetch });
+    expect(found[0]!.loaded).toEqual([]);
+  });
+
   it("keeps Ollama when only its loaded-models call fails", async () => {
     const { fetch } = fakeFetch({
       "http://127.0.0.1:11434/api/tags": { models: [] },
@@ -107,6 +138,21 @@ describe("detectLocalServers", () => {
     const { fetch, calls } = fakeFetch({});
     await detectLocalServers({ fetch, targets: [LOCAL_SERVER_TARGETS[1]!] });
     expect(calls).toEqual(["http://127.0.0.1:11434/api/tags"]);
+  });
+});
+
+describe("readLoadedIds", () => {
+  it("keeps only LM Studio models whose state is loaded", () => {
+    expect(
+      readLoadedIds("lmstudio", {
+        data: [{ id: "a", state: "loaded" }, { id: "b", state: "not-loaded" }, { id: "c" }],
+      }),
+    ).toEqual(["a"]);
+    expect(readLoadedIds("lmstudio", { models: [] })).toEqual([]);
+  });
+
+  it("reads Ollama's /api/ps list as it is", () => {
+    expect(readLoadedIds("ollama", { models: [{ name: "qwen3:8b" }] })).toEqual(["qwen3:8b"]);
   });
 });
 

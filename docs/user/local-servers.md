@@ -17,7 +17,7 @@ Atomic Agent runs models on its own engine (llama.cpp), but it also works with a
 atomic-agent local-servers
 ```
 
-prints each app that answers, its models, and which ones are loaded in memory. In the TUI the same list is `/servers`. In the desktop app it is the "Running on this Mac" list in Settings › Local (and a setup step when the app finds one).
+prints each app that answers, its models, and which ones are loaded in memory (Ollama's `/api/ps`, LM Studio's `/api/v0/models`; an older LM Studio without that list shows nothing loaded). In the TUI the same list is `/servers`. In the desktop app it is the "Running on this Mac" list in Settings › Local (and a setup step when the app finds one).
 
 ## Start, load, download, delete
 
@@ -44,9 +44,9 @@ atomic-agent local-servers adopt lmstudio qwen/qwen3-8b
 
 adds the model you already downloaded to Atomic Agent's local models without downloading it again, and with `--use` switches to it.
 
-- An LM Studio model is a plain `.gguf` file; it is used where it lies.
+- An LM Studio model is a plain `.gguf` file; it is used where it lies. A key with a quant (`publisher/model@q8_0`) takes only the file of that quant.
 - An Ollama model is stored as a file without a name ending. Atomic Agent links it into its own folder as `ollama-<name>.gguf`. A hard link takes no extra disk space and keeps working after `ollama rm`. When the two folders are on different disks it makes a symbolic link instead, and if that is not allowed either (Windows without the right), it stops and tells you the size; `--copy` copies the file.
-- A model is refused, with a sentence saying why, when its file is not GGUF (newer Ollama formats) or carries no chat template inside it (it would answer in the wrong format here). Keep using those through their app.
+- A model is refused, with a sentence saying why, when its file is not GGUF (newer Ollama formats, LM Studio's MLX models on a Mac) or carries no chat template inside it (it would answer in the wrong format here). Keep using those through their app.
 
 ## Give the model at least 32K of context
 
