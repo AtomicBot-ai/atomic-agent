@@ -58,10 +58,10 @@ const truncated = (cause: "context_window" | "reply_cap", repetitive?: true) =>
     },
   });
 
+type Sample = readonly [string, unknown, FailureCauseId, FailureAction];
+
 /** One sample raw error per cause, as the loop would hand it over. */
-const SAMPLES: ReadonlyArray<
-  readonly [string, unknown, FailureCauseId, FailureAction]
-> = [
+const SAMPLES: ReadonlyArray<Sample> = [
   [
     "a Metal out-of-memory from llama-server",
     stepFailure(
@@ -291,6 +291,34 @@ const SAMPLES: ReadonlyArray<
         nameClass: "other",
       }),
     }),
+    "unknown_tools_repeated",
+    "switch-model",
+  ],
+  // ATO-2492: a streak on a tool we showed it ourselves, or on a missing
+  // MCP server's tool, is not the model's fault: no "try another model".
+  ...(["prompt_advertised", "mcp_server_missing", "mcp_tool_missing"] as const).map(
+    (knownElsewhere): Sample => [
+      `an unknown-tool streak known on our side (${knownElsewhere})`,
+      Object.assign(
+        new ToolExecutionError("os.grep", "tool not registered in this agent: os.grep", {
+          kind: "unregistered",
+          nameClass: "near_miss",
+        }),
+        { knownElsewhere },
+      ),
+      "tool_crashed",
+      "retry",
+    ],
+  ),
+  [
+    "an unknown-tool streak the model invented (not_in_catalog)",
+    Object.assign(
+      new ToolExecutionError("function_name", "tool not registered in this agent: function_name", {
+        kind: "unregistered",
+        nameClass: "other",
+      }),
+      { knownElsewhere: "not_in_catalog" },
+    ),
     "unknown_tools_repeated",
     "switch-model",
   ],
