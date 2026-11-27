@@ -36,6 +36,15 @@ export type { LogbookClearScope, LogbookEntry } from "./logbook-store.js";
 export { parseLogbookStatus, readLogbookStatus, writeLogbookStatus } from "./logbook-status.js";
 export type { LogbookOutcome, LogbookStatus } from "./logbook-status.js";
 
+export {
+  INDICATOR_TTL_MS,
+  indicatorState,
+  parseLogbookIndicator,
+  readLogbookIndicator,
+  writeLogbookIndicator,
+} from "./logbook-indicator.js";
+export type { IndicatorState, LogbookIndicator } from "./logbook-indicator.js";
+
 export { logbookSkipReason } from "./logbook-skip.js";
 export type { FrontApp } from "./logbook-skip.js";
 
@@ -68,5 +77,21 @@ export type { LogbookQuery } from "./logbook-query.js";
 export { captureLogbookFrame, cleanObservation, LOGBOOK_PROMPT } from "./logbook-capture.js";
 export type { LogbookCaptureDeps, LogbookCaptureOutcome } from "./logbook-capture.js";
 
-export { createLogbookSidecar, PRUNE_EVERY_MS } from "./logbook-sidecar.js";
+export { createLogbookSidecar, INDICATOR_AWAY_REASON, INDICATOR_HIDDEN_REASON, PRUNE_EVERY_MS } from "./logbook-sidecar.js";
 export type { LogbookSidecar, LogbookSidecarDeps } from "./logbook-sidecar.js";
+
+export {
+  logbookPlatformSupport,
+  logbookState,
+  readLogbookView,
+  UNSUPPORTED_PLATFORM_REASON,
+} from "./logbook-view.js";
+export type { LogbookPlatformSupport, LogbookState, LogbookView } from "./logbook-view.js";
+
+export {
+  applyLogbookAction,
+  DEFAULT_PAUSE_MINUTES,
+  MAX_PAUSE_MINUTES,
+  parseLogbookAction,
+} from "./logbook-actions.js";
+export type { LogbookAction, LogbookActionResult } from "./logbook-actions.js";

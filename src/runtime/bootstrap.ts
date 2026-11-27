@@ -1021,9 +1021,10 @@ export async function createAgentRuntime(
   const imapTrigger = createRuntimeImapTrigger({
     config, taskRunner, createSession, webhookSessionStore, logger,
   });
-  // ATO-2363: off unless `atomic-agent logbook start`; read per tick. Only
-  // the TUI shows the recording chip, so only it captures.
-  const logbook = createRuntimeLogbook({ config, providerRegistry, logger, indicatorVisible: options.analyticsSurface === "tui" });
+  // ATO-2363: off unless `atomic-agent logbook start`; read per tick. The TUI
+  // always shows the recording chip; any other process captures only while its
+  // frontend reports its own mark on screen (ATO-2534, POST /api/logbook/indicator).
+  const logbook = createRuntimeLogbook({ config, providerRegistry, logger, indicator: options.analyticsSurface === "tui" ? "tui" : "frontend" });
   const sidecars = [mailTrigger, imapTrigger, logbook].filter((s): s is NonNullable<typeof s> => s !== null);
   const scheduler = createRuntimeScheduler({
     config, taskRunner, logger, metrics, resolveTelegram: () => telegramChannelForShutdown,
