@@ -4,7 +4,8 @@
  * after symlinks must both be inside the chat folder.
  *
  *   @src/a.ts:10-40   those lines, numbered like `cat -n`
- *   @src/             the folder's file list (git ls-files when it is a
+ *   @src/             the folder's file list (git ls-files through the
+ *                     guarded runGit of mention-git.ts when it is a
  *                     checkout, else the bounded walk), capped
  */
 
@@ -14,12 +15,12 @@ import { isAbsolute, resolve } from "node:path";
 import {
   BINARY_SNIFF_BYTES,
   inside,
-  listGitFiles,
   readHead,
   resolveMentionedFile,
   walkFiles,
   type FileIndexLimits,
 } from "./file-mentions.js";
+import { lsFilesArgs, runGit, type RunGit } from "./mention-git.js";
 
 /** Most of a file scanned for a line range. */
 export const RANGE_SCAN_BYTES = 2 * 1024 * 1024;
@@ -71,13 +72,21 @@ export function resolveMentionedDir(root: string, token: string): string | null 
 
 export type ListFolder = (dir: string) => Promise<string[]>;
 
-export const listFolder: ListFolder = async (dir) => {
-  try {
-    return await listGitFiles(dir, FOLDER_LIMITS);
-  } catch {
-    return walkFiles(dir, FOLDER_LIMITS);
-  }
-};
+export function createListFolder(git: RunGit = runGit): ListFolder {
+  return async (dir) => {
+    try {
+      const out = await git(dir, lsFilesArgs());
+      const paths = out.text.split("\0").filter((p) => p.length > 0);
+      // A cut answer ends in half a path.
+      if (out.cut) paths.pop();
+      return paths.slice(0, FOLDER_MAX_FILES);
+    } catch {
+      return walkFiles(dir, FOLDER_LIMITS);
+    }
+  };
+}
+
+export const listFolder: ListFolder = createListFolder();
 
 /** The listing as the block carries it: one path per line, relative to the chat folder. */
 export function folderListing(shown: string, paths: readonly string[]): string {

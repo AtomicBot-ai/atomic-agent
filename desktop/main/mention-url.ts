@@ -3,8 +3,13 @@
  * http(s) only, a time limit over the whole read, and a byte cap: the body
  * is read in chunks and the read is cancelled past the cap. Only text
  * answers are used (HTML is reduced to its words); anything else is named,
- * not inlined.
+ * not inlined. A public link that redirects to this computer or the local
+ * network is refused (mention-hosts.ts); a local link typed as such is read.
+ * HTML is cut down by mention-html.ts in linear time.
  */
+
+import { isLocalHost } from "./mention-hosts.js";
+import { htmlToText } from "./mention-html.js";
 
 export const URL_TIMEOUT_MS = 8_000;
 /** Most raw bytes read from one page (HTML markup is cut down after). */
@@ -35,7 +40,13 @@ export function createFetchUrl(
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetchImpl(url, { signal: controller.signal, redirect: "follow", headers: { accept: "text/html, text/plain, */*;q=0.5" } });
-      if (!/^https?:/i.test(res.url || url)) throw new UrlSkip("redirected away from http");
+      const final = res.url || url;
+      if (!/^https?:/i.test(final)) throw new UrlSkip("redirected away from http");
+      // A typed local host is on purpose; a public link landing on one is not.
+      if (!isLocalHost(new URL(url).hostname) && isLocalHost(new URL(final).hostname)) {
+        await res.body?.cancel().catch(() => undefined);
+        throw new UrlSkip("redirected to a local address");
+      }
       if (!res.ok) throw new UrlSkip(`HTTP ${res.status}`);
       const type = res.headers.get("content-type") ?? "text/plain";
       if (!TEXT_TYPE.test(type.trim())) throw new UrlSkip(`not a text page (${type.split(";")[0]})`);
@@ -80,28 +91,4 @@ async function readCapped(res: Response, maxBytes: number): Promise<{ bytes: Uin
   let at = 0;
   for (const c of chunks) { out.set(c, at); at += c.length; }
   return { bytes: out, cut };
-}
-
-const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " " };
-
-/** The words of an HTML page: scripts, styles and tags out, block ends as line breaks. */
-export function htmlToText(html: string): string {
-  return html
-    .replace(/<(script|style|noscript|svg|head)\b[\s\S]*?<\/\1\s*>/gi, " ")
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<(br|\/p|\/div|\/li|\/h[1-6]|\/tr|\/pre|\/section|\/article)\b[^>]*>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (whole, name: string) => {
-      const n = name.toLowerCase();
-      if (n.startsWith("#x")) return safeChar(parseInt(n.slice(2), 16), whole);
-      if (n.startsWith("#")) return safeChar(parseInt(n.slice(1), 10), whole);
-      return ENTITIES[n] ?? whole;
-    })
-    .replace(/[ \t\f\v\r]+/g, " ")
-    .replace(/ *\n[ \n]*/g, "\n")
-    .trim();
-}
-
-function safeChar(code: number, fallback: string): string {
-  return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : fallback;
 }

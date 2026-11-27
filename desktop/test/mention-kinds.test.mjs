@@ -85,3 +85,64 @@ test("an error status, a binary answer and a non-http link are refused with a re
     (err) => err instanceof U.UrlSkip);
   assert.equal(called, false);
 });
+
+// ---------------------------------------------------------------- linear HTML
+
+const H = require("../out/main/mention-html.js");
+const HALF_MB = 512 * 1024;
+
+test("512 KB of hostile markup is reduced in linear time, not frozen on", () => {
+  for (const [name, body] of [
+    ["unclosed comments", "<!--".repeat(HALF_MB / 4)],
+    ["unclosed scripts", "<script".repeat(Math.floor(HALF_MB / 7))],
+    ["scripts with no end tag", "<script>".repeat(HALF_MB / 8)],
+    ["bare angle brackets", "<".repeat(HALF_MB)],
+    ["tags with no end", "<a".repeat(HALF_MB / 2)],
+  ]) {
+    const started = performance.now();
+    H.htmlToText(body);
+    const took = performance.now() - started;
+    assert.ok(took < 500, `${name}: ${Math.round(took)} ms`);
+  }
+});
+
+test("the scan keeps text, a bare < and line ends; an unclosed comment drops the rest", () => {
+  assert.equal(H.htmlToText("<p>a < b</p><p>c</p>"), "a < b\nc");
+  assert.equal(H.htmlToText("<!DOCTYPE html><div>one<br>two</div>"), "one\ntwo");
+  assert.equal(H.htmlToText("kept <!-- never closed <p>gone</p>"), "kept");
+  assert.equal(H.htmlToText("<SCRIPT>x()</Script >after"), "after");
+});
+
+// ---------------------------------------------------------------- local addresses
+
+const N = require("../out/main/mention-hosts.js");
+
+test("loopback, private and link-local hosts are local; public ones are not", () => {
+  for (const host of ["localhost", "app.localhost", "127.0.0.1", "10.1.2.3", "172.20.0.1", "192.168.1.1",
+    "169.254.169.254", "100.100.1.1", "0.0.0.0", "[::1]", "[fe80::1]", "[fd12::1]", "[::ffff:7f00:1]", "printer.local"]) {
+    assert.equal(N.isLocalHost(host), true, host);
+  }
+  for (const host of ["example.com", "8.8.8.8", "172.32.0.1", "[2606:4700::1111]", "localhost.example.com"]) {
+    assert.equal(N.isLocalHost(host), false, host);
+  }
+});
+
+/** A fetch answer as fetch gives it after redirects (`url` is the final address). */
+const landed = (finalUrl, body = "inside") => async () => ({
+  ok: true, status: 200, url: finalUrl,
+  headers: new Headers({ "content-type": "text/plain" }),
+  body: new Response(body).body,
+});
+
+test("a public link that redirects to a local address is refused", async () => {
+  for (const target of ["http://127.0.0.1/admin", "http://169.254.169.254/latest/meta-data/", "http://192.168.1.1/"]) {
+    await assert.rejects(U.createFetchUrl(landed(target))("https://public.example/go"),
+      (err) => err instanceof U.UrlSkip && err.message === "redirected to a local address", target);
+  }
+});
+
+test("a local link typed on purpose is still read, and a public landing is fine", async () => {
+  assert.equal((await U.createFetchUrl(landed("http://localhost:3000/"))("http://localhost:3000")).text, "inside");
+  assert.equal((await U.createFetchUrl(landed("http://127.0.0.1:8080/b"))("http://localhost:8080/a")).text, "inside");
+  assert.equal((await U.createFetchUrl(landed("https://www.example.com/"))("https://example.com/")).text, "inside");
+});
