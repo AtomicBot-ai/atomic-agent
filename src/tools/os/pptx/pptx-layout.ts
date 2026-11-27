@@ -1,5 +1,5 @@
 import type { PptxBullet, PptxSlideSpec } from "./pptx-spec.js";
-import { bulletsThatFit, textAreaOf } from "./pptx-text-fit.js";
+import { bulletsThatFit, comparisonBulletsThatFit, comparisonSides, textAreaOf } from "./pptx-text-fit.js";
 
 /**
  * Slide layouts for `os.fs.write_pptx` and the two pure decisions around
@@ -145,13 +145,27 @@ export interface FittedSlide {
  * slide empty).
  */
 export function fitSlideText(slide: PptxSlideSpec, layout: PptxLayout): FittedSlide {
-  const area = textAreaOf(layout, hasVisual(slide));
-  const keep = area === null ? 0 : bulletsThatFit(slide, area);
-  const overflow = slide.bullets.slice(keep);
+  const [kept, overflow] = layout === "comparison" ? fitComparison(slide) : fitInOrder(slide, layout);
   if (overflow.length === 0) return { slide, moved: 0 };
   const extra = `${MOVED_NOTES_HEADING}\n${bulletLines(overflow)}`;
   const notes = slide.notes === undefined ? extra : `${slide.notes}\n\n${extra}`;
-  return { slide: { ...slide, bullets: slide.bullets.slice(0, keep), notes }, moved: overflow.length };
+  return { slide: { ...slide, bullets: kept, notes }, moved: overflow.length };
+}
+
+function fitInOrder(slide: PptxSlideSpec, layout: PptxLayout): [PptxBullet[], PptxBullet[]] {
+  const area = textAreaOf(layout, hasVisual(slide));
+  const keep = area === null ? 0 : bulletsThatFit(slide, area);
+  return [slide.bullets.slice(0, keep), slide.bullets.slice(keep)];
+}
+
+/** Each side fitted in its own column; what a side cannot hold goes to the notes, left side first. */
+function fitComparison(slide: PptxSlideSpec): [PptxBullet[], PptxBullet[]] {
+  const [left, right] = comparisonSides(slide.bullets);
+  const [keepLeft, keepRight] = comparisonBulletsThatFit(slide);
+  return [
+    [...left.slice(0, keepLeft), ...right.slice(0, keepRight)],
+    [...left.slice(keepLeft), ...right.slice(keepRight)],
+  ];
 }
 
 export interface LaidOutSlide extends FittedSlide {
@@ -162,8 +176,8 @@ export interface LaidOutSlide extends FittedSlide {
 export function layoutSlide(slide: PptxSlideSpec, index = 0): LaidOutSlide {
   const layout = resolveLayout(slide, index);
   const fitted = fitSlideText(slide, layout);
-  // A comparison whose right side lost its points to the notes is no
-  // longer two sides: it falls back to plain bullets, so what is drawn
+  // A comparison with a side that lost all its points to the notes is
+  // no longer two sides: it falls back to plain bullets, so what is drawn
   // and what is reported (`layouts`, the slide's progress) agree.
   if (!layoutFits(layout, fitted.slide)) {
     const plain = fitSlideText(slide, "bullets");

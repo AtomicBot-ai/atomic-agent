@@ -32,7 +32,8 @@ export interface TextArea {
 const HALF = (BODY_BOX.cx - GAP) / 2;
 
 /**
- * Each layout's text area, or null for a layout that shows no bullets.
+ * Each layout's text area, or null for a layout that shows no bullets
+ * or fits its text another way (a comparison: `comparisonBulletsThatFit`).
  * Two columns are one area as wide as a column and twice as tall: the
  * split lands near the middle, so either column holds about half.
  */
@@ -44,9 +45,6 @@ export function textAreaOf(layout: string, hasVisual: boolean): TextArea | null 
         : { widthEmu: BODY_BOX.cx, heightEmu: BODY_BOX.cy, maxBullets: 6 };
     case "two-column":
       return { widthEmu: HALF, heightEmu: BODY_BOX.cy * 2, maxBullets: 12 };
-    case "comparison":
-      // The two headings are top-level bullets, so they count against the room too.
-      return { widthEmu: HALF, heightEmu: BODY_BOX.cy * 2, maxBullets: 14 };
     case "chart":
       return { widthEmu: (BODY_BOX.cx - GAP) / 3, heightEmu: BODY_BOX.cy, maxBullets: 3 };
     case "big-number":
@@ -96,3 +94,51 @@ export function bulletsThatFit(
   return keep;
 }
 
+
+/** The two sides of a comparison: each top-level bullet is a side's heading, its sub-points the list under it. */
+export function comparisonSides(bullets: readonly PptxBullet[]): [PptxBullet[], PptxBullet[]] {
+  const second = bullets.findIndex((b, i) => i > 0 && b.level === 0);
+  return second < 0 ? [bullets.slice(), []] : [bullets.slice(0, second), bullets.slice(second)];
+}
+
+/** The comparison's lead-in box above the columns (`comparisonSlide`). */
+const COMPARISON_LEAD_EMU = 548_640;
+/** A side's heading plus six points: the 6x6 rule per column. */
+const COMPARISON_SIDE_MAX = 7;
+/** Bold letters run wider than the regular widths `wrappedLines` assumes. */
+const BOLD_WIDEN = 1.08;
+
+/**
+ * How many bullets of each comparison side fit, heading included
+ * (ATO-2444 review). The sides are not one area: each is drawn in its
+ * own column (`comparisonSlide`), as wide as half the body and as tall
+ * as the body less the lead-in, the heading at 24 pt bold and the
+ * sub-points lifted one level with explicit bullet indents. A side keeps
+ * its heading and the leading points that fit; the split is fixed at
+ * the second heading, so one long side cannot borrow the other's room.
+ */
+export function comparisonBulletsThatFit(
+  slide: Pick<PptxSlideSpec, "subtitle"> & { bullets: readonly PptxBullet[] },
+): [number, number] {
+  const top = slide.subtitle === undefined ? 0 : COMPARISON_LEAD_EMU;
+  const room = (BODY_BOX.cy - top) * 0.92;
+  const fitSide = (side: readonly PptxBullet[]): number => {
+    const [head, ...points] = side;
+    if (head === undefined) return 0;
+    let used = wrappedLines(head.text, HALF / BOLD_WIDEN, LEVEL_PT[0]!) * LEVEL_PT[0]! * 1.2 * EMU_PER_PT;
+    let keep = 1;
+    for (const point of points) {
+      if (keep >= COMPARISON_SIDE_MAX) break;
+      const level = Math.max(0, point.level - 1);
+      const pt = levelPt(level, 1);
+      const lines = wrappedLines(point.text, HALF - (HANGING + level * PER_LEVEL), pt);
+      const height = lines * pt * 1.2 * EMU_PER_PT + SPACE_BEFORE_PT * EMU_PER_PT;
+      if (used + height > room) break;
+      used += height;
+      keep += 1;
+    }
+    return keep;
+  };
+  const [left, right] = comparisonSides(slide.bullets);
+  return [fitSide(left), fitSide(right)];
+}

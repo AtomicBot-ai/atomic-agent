@@ -16,8 +16,11 @@ import {
 } from "./pptx-shapes.js";
 import type { PptxBullet, PptxSlideSpec } from "./pptx-spec.js";
 import { tableShape } from "./pptx-table.js";
+import { comparisonSides } from "./pptx-text-fit.js";
 import type { PptxPalette } from "./pptx-theme.js";
 import { SLIDE_HEIGHT, xfrm, type Box } from "./pptx-xml.js";
+
+export { comparisonSides };
 
 /**
  * The layouts ATO-2444 added: a section header, a two-sided comparison,
@@ -48,12 +51,6 @@ export function sectionSlide(slide: PptxSlideSpec, palette: PptxPalette): string
     );
   }
   return shapes.join("");
-}
-
-/** The two sides of a comparison: each top-level bullet is a side's heading, its sub-points the list under it. */
-export function comparisonSides(bullets: readonly PptxBullet[]): [PptxBullet[], PptxBullet[]] {
-  const second = bullets.findIndex((b, i) => i > 0 && b.level === 0);
-  return second < 0 ? [bullets.slice(), []] : [bullets.slice(0, second), bullets.slice(second)];
 }
 
 function sideParagraphs(side: readonly PptxBullet[], palette: PptxPalette): string {

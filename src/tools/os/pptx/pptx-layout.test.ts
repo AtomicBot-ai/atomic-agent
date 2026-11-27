@@ -166,12 +166,34 @@ describe("layoutSlide", () => {
   });
 });
 
-describe("layoutSlide fallback", () => {
-  it("draws plain bullets when fitting leaves a comparison with one side", () => {
-    const right = Array.from({ length: 13 }, (_, i) => `  Point ${i + 1}`);
-    const laid = layoutSlide(slide({ bullets: ["Left", ...right, "Right", "  Only"] }));
-    expect(laid.layout).toBe("bullets");
-    expect(laid.slide.layout).toBe("bullets");
+describe("layoutSlide comparison fit", () => {
+  const texts = (l: { slide: PptxSlideSpec }) => l.slide.bullets.map((b) => b.text);
+
+  it("fits each side in its own column, at the lifted size, not one tall area (review of #2071)", () => {
+    const point = "  Manual export of every report by hand weekly";
+    const laid = layoutSlide(slide({ bullets: ["Before", ...Array<string>(9).fill(point), "After", "  One click"] }));
+    // Nine two-line points at 24 pt do not fit one column BODY_BOX.cy tall.
+    expect(laid.layout).toBe("comparison");
+    expect(laid.moved).toBeGreaterThan(0);
+    expect(texts(laid).slice(-2)).toEqual(["After", "One click"]);
+    expect(laid.slide.notes).toContain(`${MOVED_NOTES_HEADING}\n  - Manual export`);
+  });
+
+  it("holds a heading and six points per side, the right side kept whatever the left holds", () => {
+    const left = Array.from({ length: 13 }, (_, i) => `  Point ${i + 1}`);
+    const laid = layoutSlide(slide({ bullets: ["Left", ...left, "Right", "  Only"] }));
+    expect(laid.layout).toBe("comparison");
+    expect(laid.moved).toBe(7);
+    expect(texts(laid)).toEqual(["Left", ...left.slice(0, 6).map((t) => t.trim()), "Right", "Only"]);
+  });
+
+  it("draws plain bullets when a side keeps no points", () => {
+    const huge = `  ${"word ".repeat(300).trim()}`;
+    for (const bullets of [["Left", "  a", "Right", huge], ["Left", huge, "Right", "  b"]]) {
+      const laid = layoutSlide(slide({ bullets }));
+      expect(laid.layout, bullets[1]).toBe("bullets");
+      expect(laid.slide.layout).toBe("bullets");
+    }
   });
 });
 
