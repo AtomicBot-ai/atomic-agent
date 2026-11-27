@@ -59,6 +59,22 @@ describe("privacyNamesStatus (ATO-2527)", () => {
     });
   });
 
+  it("does not promise masking when the chat runs on a ChatGPT sign-in or a vendor CLI", () => {
+    for (const kind of ["subscription-oauth", "subscription-cli"]) {
+      const llm = {
+        ...withLocal,
+        activeTextProvider: "sub",
+        providers: [...(withLocal as unknown as { providers: unknown[] }).providers, { id: "sub", kind }],
+      } as unknown as AtomicAgentConfig["llm"];
+      expect(privacyNamesStatus(withNames(true, llm))).toEqual({
+        enabled: true,
+        state: "provider-not-shielded",
+        model: { provider: "lmstudio", model: "qwen3-4b" },
+      });
+      expect(privacyNamesStatus(withNames(false, llm)).state).toBe("off");
+    }
+  });
+
   it("does not count a llama-server on another computer", () => {
     expect(privacyNamesStatus(withNames(true, undefined, "http://192.168.1.20:9931")).state).toBe("no-local-model");
     expect(privacyNamesStatus(withNames(true, undefined)).state).toBe("ready");

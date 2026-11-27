@@ -6,7 +6,7 @@
  * the tab draws no row for it.
  */
 
-export type NamesState = "off" | "ready" | "no-local-model";
+export type NamesState = "off" | "ready" | "no-local-model" | "provider-not-shielded";
 
 export interface NamesPanelState {
   enabled: boolean;
@@ -31,7 +31,7 @@ export function readPrivacyNamesControl(control: unknown): PrivacyNamesControl |
   return names as PrivacyNamesControl;
 }
 
-const STATES: ReadonlySet<string> = new Set(["off", "ready", "no-local-model"]);
+const STATES: ReadonlySet<string> = new Set(["off", "ready", "no-local-model", "provider-not-shielded"]);
 
 /** Snapshot the names switch. Never throws; an unreadable status gives `null`. */
 export function snapshotPrivacyNames(control: PrivacyNamesControl | null): NamesPanelState | null {
@@ -54,6 +54,9 @@ const REGEX_ONLY = "only emails, phone numbers, cards and keys are hidden";
  * happens without one. `shieldOn` is the main Privacy Shield switch.
  */
 export function namesHintLine(names: NamesPanelState, shieldOn: boolean): string {
+  if (names.state === "provider-not-shielded") {
+    return "The current chat model (a ChatGPT sign-in or a Claude Code or Codex CLI) is not covered by Privacy Shield, so nothing is hidden from it.";
+  }
   if (names.state === "ready" && names.model) {
     const lead = shieldOn ? "" : "Works when Privacy Shield is on. ";
     return `${lead}Read by ${names.model} on this computer before a cloud request. If that model is not running, ${REGEX_ONLY}.`;

@@ -86,17 +86,49 @@ describe("Privacy Shield names before the cloud call (ATO-2527)", () => {
     expect(model.complete.mock.invocationCallOrder[0]).toBeLessThan(fetchImpl.mock.invocationCallOrder[0]!);
   });
 
-  it("does not send the assistant's own replies to the local model", async () => {
+  it("masks a name only an old assistant reply carries (imported or pre-restart chat)", async () => {
+    // F1986.1: an imported session, or the chat before a restart (vaults
+    // live in memory), has replies this vault never put values back into.
+    setPrivacyShieldEnabled(true);
+    const model = readingModel([{ text: "Мария Соколова", kind: "NAME" }]);
+    setPrivacyNameDetector(createLocalNameDetector({ model: () => model }));
+    const fetchImpl = vi.fn(async () => okResponse());
+    const cloud = new OpenAiProvider({ id: "cloud", baseUrl: "https://api.example.invalid", apiKey: "", defaultChatModel: "m", fetchImpl: fetchImpl as unknown as typeof fetch });
+    await cloud.complete(nativeRequest("nothing here", "Мария Соколова просит счёт"));
+    const sent = sentBody(fetchImpl);
+    expect(sent).not.toContain("Мария");
+    expect(sent).not.toContain("Соколова");
+    expect(sent).toContain("[NAME_1]");
+  });
+
+  it("reads assistant replies on the vault's first pass only", async () => {
     setPrivacyShieldEnabled(true);
     const model = readingModel([]);
     setPrivacyNameDetector(createLocalNameDetector({ model: () => model }));
     const fetchImpl = vi.fn(async () => okResponse());
     const cloud = new OpenAiProvider({ id: "cloud", baseUrl: "https://api.example.invalid", apiKey: "", defaultChatModel: "m", fetchImpl: fetchImpl as unknown as typeof fetch });
-    await cloud.complete(nativeRequest("nothing here", "A long reply the cloud wrote itself."));
-    const shown = model.complete.mock.calls.map((c) => c[0].user).join("\n");
-    expect(shown).toContain("read my last email");
-    expect(shown).toContain("nothing here");
-    expect(shown).not.toContain("A long reply the cloud wrote itself.");
+    await cloud.complete(nativeRequest("nothing here", "A reply from before this vault."));
+    const first = model.complete.mock.calls.map((c) => c[0].user).join("\n");
+    expect(first).toContain("A reply from before this vault.");
+    model.complete.mockClear();
+    // Later replies came from the cloud through this vault: not read again.
+    await cloud.complete(nativeRequest("still nothing", "A reply the cloud wrote through this vault."));
+    const second = model.complete.mock.calls.map((c) => c[0].user).join("\n");
+    expect(second).toContain("still nothing");
+    expect(second).not.toContain("A reply the cloud wrote through this vault.");
+  });
+
+  it("keeps the first pass for when a local model is there", async () => {
+    setPrivacyShieldEnabled(true);
+    let model: LocalNameModel | null = null;
+    setPrivacyNameDetector(createLocalNameDetector({ model: () => model }));
+    const fetchImpl = vi.fn(async () => okResponse());
+    const cloud = new OpenAiProvider({ id: "cloud", baseUrl: "https://api.example.invalid", apiKey: "", defaultChatModel: "m", fetchImpl: fetchImpl as unknown as typeof fetch });
+    await cloud.complete(nativeRequest("nothing here", "Мария Соколова просит счёт"));
+    model = readingModel([{ text: "Мария Соколова", kind: "NAME" }]);
+    await cloud.complete(nativeRequest("nothing here", "Мария Соколова просит счёт"));
+    const second = String(((fetchImpl.mock.calls[1] as unknown[] | undefined)?.[1] as RequestInit).body);
+    expect(second).not.toContain("Мария");
   });
 
   it("masks a name split across two content parts of one message", async () => {

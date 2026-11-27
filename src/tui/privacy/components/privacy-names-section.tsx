@@ -29,7 +29,7 @@ export function PrivacyNamesSection({
         {busy ? <Text color={theme.colors.muted}>{"  "}…</Text> : null}
       </Box>
       <Box>
-        <Text color={names.state === "no-local-model" ? theme.colors.warn : theme.colors.muted}>
+        <Text color={names.state === "no-local-model" || names.state === "provider-not-shielded" ? theme.colors.warn : theme.colors.muted}>
           {"   "}
           {namesHintLine(names, shield.enabled)}
         </Text>

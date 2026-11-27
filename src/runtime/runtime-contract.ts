@@ -249,7 +249,7 @@ export interface PrivacyNamesControl {
 /** See `runtime-privacy-names-status.ts`. */
 export interface PrivacyNamesStatus {
   enabled: boolean;
-  state: "off" | "ready" | "no-local-model";
+  state: "off" | "ready" | "no-local-model" | "provider-not-shielded";
   /** The local provider the pass would use, or `null` for none. */
   model: { provider: string; model: string | null } | null;
 }
