@@ -50,6 +50,16 @@ describe("messageTextsForNames (ATO-2394)", () => {
     ).toEqual(["Hi, I am Anna Lee", "from Acme", "Bob Ray replied"]);
     expect(messageTextsForNames(undefined)).toEqual([]);
   });
+
+  it("reads assistant replies too on a vault's first pass", () => {
+    const messages = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "Anna Lee asked for the invoice" },
+      { role: "assistant", content: null },
+    ];
+    expect(messageTextsForNames(messages)).toEqual(["hello"]);
+    expect(messageTextsForNames(messages, { replies: true })).toEqual(["hello", "Anna Lee asked for the invoice"]);
+  });
 });
 
 describe("learnNamesForRequest (ATO-2394)", () => {

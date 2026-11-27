@@ -240,6 +240,25 @@ export interface PrivacyShieldControl {
    * `lastRequest`, how many its latest cloud request carried).
    */
   stats(sessionId?: string): PrivacyShieldStats;
+  /**
+   * Names, addresses and organisations found by a local model
+   * (ATO-2527, `privacy.shield.localNames`). `setEnabled` persists the
+   * key; the pass reads it per request.
+   */
+  readonly localNames?: PrivacyNamesControl;
+}
+
+export interface PrivacyNamesControl {
+  status(): PrivacyNamesStatus;
+  setEnabled(enabled: boolean): Promise<void>;
+}
+
+/** See `runtime-privacy-names-status.ts`. */
+export interface PrivacyNamesStatus {
+  enabled: boolean;
+  state: "off" | "ready" | "no-local-model" | "provider-not-shielded";
+  /** The local provider the pass would use, or `null` for none. */
+  model: { provider: string; model: string | null } | null;
 }
 
 export interface PrivacyShieldStats {

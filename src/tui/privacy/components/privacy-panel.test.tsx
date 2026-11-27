@@ -128,4 +128,17 @@ describe("PrivacyPanel", () => {
     expect(frame).toContain("Privacy Shield");
     expect(frame).not.toContain("m: shield");
   });
+
+  it("draws the names row with its model hint, and the n key (ATO-2527)", () => {
+    const shield = { supported: true, enabled: true, masked: 0, sessionMasked: null };
+    const missing = renderFlat({ shield: { ...shield, names: { enabled: true, state: "no-local-model", model: null } } });
+    expect(missing).toContain("names, addresses, organisations on");
+    expect(missing).toContain("None is set up, so only emails, phone numbers, cards and keys are hidden.");
+    expect(missing).toContain("n: names off");
+    const ready = renderFlat({ shield: { ...shield, names: { enabled: false, state: "off", model: "qwen3-4b (lmstudio)" } } });
+    expect(ready).toContain("names, addresses, organisations off");
+    expect(ready).toContain("When on, qwen3-4b (lmstudio) on this computer finds them");
+    expect(ready).toContain("n: names on");
+    expect(renderFlat({ shield })).not.toContain("n: names");
+  });
 });

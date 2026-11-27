@@ -4,6 +4,7 @@ import {
   isPrivacyShieldEnabled,
   privacyNameDetector,
   privacyVaultFor,
+  refineFoundValues,
   type PrivacyVault,
 } from "../../../privacy/index.js";
 
@@ -37,26 +38,63 @@ export function shieldVaultFor(
 }
 
 /**
- * The texts of outgoing `messages` the local name pass reads: every
- * message but the system prompt (that one is ours), string content and
- * the `text` of content parts.
+ * Roles whose text the local name pass reads: what the person wrote and
+ * what tools brought in (ATO-2527). Not the system prompt (ours).
  */
-export function messageTextsForNames(messages: unknown): string[] {
+const NAME_ROLES: ReadonlySet<string> = new Set(["user", "tool", "function"]);
+
+/**
+ * Vaults whose first names pass has run in this process; from then on
+ * assistant replies are skipped. A reply written after that pass came
+ * from the cloud through this vault, with the vault's values put back,
+ * so any name in it is known already or one the cloud wrote itself.
+ * Replies the vault never saw are read once, on its first pass: an
+ * imported session (Hermes, Codex, Claude Code, the Claude app, a
+ * handoff), the chat before an agent restart (vaults live in memory),
+ * and replies a local model wrote before the first cloud request.
+ */
+const repliesRead = new WeakSet<PrivacyVault>();
+
+/** Text parts joined as one string; a space only where two words would touch. */
+function joinParts(parts: readonly string[]): string {
+  let out = "";
+  for (const part of parts) {
+    if (out.length > 0 && !/\s$/u.test(out) && !/^\s/u.test(part)) out += " ";
+    out += part;
+  }
+  return out;
+}
+
+/**
+ * The texts of outgoing `messages` the local name pass reads: user and
+ * tool messages, and assistant replies when `replies` is set (the
+ * vault's first pass), string content or the `text` of content parts. The
+ * parts of one message are read as one text, so a name split across two
+ * parts (`"Call Иван"`, `" Петров"`) is seen whole; the vault then masks
+ * each part because a name's words are learned too (`refineFoundValues`).
+ */
+export function messageTextsForNames(
+  messages: unknown,
+  options: { replies?: boolean } = {},
+): string[] {
   if (!Array.isArray(messages)) return [];
   const out: string[] = [];
   for (const message of messages) {
     if (message === null || typeof message !== "object") continue;
     const { role, content } = message as Record<string, unknown>;
-    if (role === "system" || role === "developer") continue;
+    if (typeof role !== "string") continue;
+    if (!NAME_ROLES.has(role) && !(options.replies === true && role === "assistant")) continue;
     if (typeof content === "string") {
       if (content.length > 0) out.push(content);
       continue;
     }
     if (!Array.isArray(content)) continue;
+    const parts: string[] = [];
     for (const part of content) {
       const text = (part as Record<string, unknown> | null)?.text;
-      if (typeof text === "string" && text.length > 0) out.push(text);
+      if (typeof text === "string" && text.length > 0) parts.push(text);
     }
+    if (parts.length > 0) out.push(joinParts(parts));
   }
   return out;
 }
@@ -76,9 +114,18 @@ export async function learnNamesForRequest(
 ): Promise<void> {
   const detector = privacyNameDetector();
   if (detector === null) return;
+  const replies = !repliesRead.has(vault);
+  // The detector reads the texts only when a local model is there and
+  // the switch is on; only a pass that read them counts as the first.
+  const pass = { read: false };
   try {
-    const found = await detector.detect(() => messageTextsForNames(readMessages()), signal);
-    if (found.length > 0) vault.learn(found);
+    const found = await detector.detect(() => {
+      pass.read = true;
+      return messageTextsForNames(readMessages(), { replies });
+    }, signal);
+    const values = refineFoundValues(found);
+    if (values.length > 0) vault.learn(values);
+    if (pass.read && signal?.aborted !== true) repliesRead.add(vault);
   } catch {
     // The detector does not throw by contract; if it ever does, regex only.
   }

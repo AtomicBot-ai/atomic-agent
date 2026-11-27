@@ -6,6 +6,7 @@ import { theme } from "../../theme/theme.js";
 import type { PrivacyPanelState } from "../privacy-panel-state.js";
 import { offlineEgressLine, type OfflinePanelState } from "../offline-mode.js";
 import { shieldCounterLine, type ShieldPanelState } from "../privacy-shield.js";
+import { PrivacyNamesSection } from "./privacy-names-section.js";
 
 export interface PrivacyPanelProps {
   panel: PrivacyPanelState;
@@ -77,6 +78,9 @@ export function PrivacyPanel({ panel }: PrivacyPanelProps): ReactElement {
             : ""}
           {panel.shield.supported
             ? `m: shield ${panel.shield.enabled ? "off" : "on"} · `
+            : ""}
+          {panel.shield.names
+            ? `n: names ${panel.shield.names.enabled ? "off" : "on"} · `
             : ""}
           a: analytics {panel.analyticsEnabled ? "off" : "on"} · r: refresh
         </Text>
@@ -196,6 +200,7 @@ function ShieldSection({
           put back in the answer on this computer. Local models see the real text.
         </Text>
       </Box>
+      <PrivacyNamesSection shield={shield} busy={busy} />
     </Box>
   );
 }
