@@ -85,7 +85,9 @@ describe("models council (ATO-2232)", () => {
     const code = await runModelsCouncil(["which", "db?", "--models", "or:a,or:b"], h.deps);
     expect(code).toBe(0);
     expect(h.asked).toEqual([["or:a", "or:b"]]);
-    expect(seenA.map((r) => isJudgePrompt(r))).toEqual([false, true]);
+    // Answer, judge, then the chairman (the judge by default, ATO-2432); two answers are too few to rank.
+    expect(seenA.map((r) => isJudgePrompt(r))).toEqual([false, true, false]);
+    expect(String(seenA[2]!.prompt)).toContain("chairman of a model council");
     expect(seenB.map((r) => isJudgePrompt(r))).toEqual([false]);
     expect(seenA[0]!.prompt).toBe("which db?");
     const judgePrompt = String(seenA[1]!.prompt);
@@ -109,8 +111,10 @@ describe("models council (ATO-2232)", () => {
     const code = await runModelsCouncil(["which db?", "--models", "or:a,or:b", "--judge", "or:j", "--json"], h.deps);
     expect(code).toBe(0);
     expect(h.asked).toEqual([["or:a", "or:b", "or:j"]]);
-    expect(seenJudge).toHaveLength(1);
+    // It judges, then chairs (the chairman defaults to the judge, ATO-2432); it never answers.
+    expect(seenJudge).toHaveLength(2);
     expect(isJudgePrompt(seenJudge[0]!)).toBe(true);
+    expect(String(seenJudge[1]!.prompt)).toContain("chairman of a model council");
     const report = JSON.parse(h.out.join(""));
     expect(report.judge).toBe("or:j");
     expect(report.answers.map((a: { model: string }) => a.model)).toEqual(["or:a", "or:b"]);
@@ -148,6 +152,30 @@ describe("models council (ATO-2232)", () => {
     const h = harness({});
     expect(await runModelsCouncil(["--models", "or:a,or:b"], h.deps)).toBe(2);
     expect(h.asked).toEqual([]);
+  });
+
+  it("prints the chairman's final answer first, then the summary (ATO-2432)", async () => {
+    const h = harness({ "or:a": model("Postgres", []), "or:b": model("SQLite", []) });
+    expect(await runModelsCouncil(["q", "--models", "or:a,or:b"], h.deps)).toBe(0);
+    const text = h.out.join("");
+    expect(text.indexOf("== Final answer (chairman: or:a) ==")).toBe(0);
+    expect(text.indexOf("== Council summary")).toBeGreaterThan(0);
+    expect(h.err.join("")).toMatch(/^Up to 4 requests, at most \$/);
+  });
+
+  it("--dry-run prints the forecast and asks nobody; --no-chairman skips the last stage", async () => {
+    const seen: CompletionRequest[] = [];
+    const h = harness({ "or:a": model("Postgres", seen), "or:b": model("SQLite", []) });
+    expect(await runModelsCouncil(["q", "--models", "or:a,or:b", "--dry-run"], h.deps)).toBe(0);
+    expect(h.asked).toEqual([]);
+    expect(seen).toEqual([]);
+    expect(await runModelsCouncil(["q", "--models", "or:a,or:b", "--no-chairman"], h.deps)).toBe(0);
+    expect(seen.map((r) => isJudgePrompt(r))).toEqual([false, true]);
+  });
+
+  it("refuses a bad --max-usd as a usage error", async () => {
+    const h = harness({});
+    expect(await runModelsCouncil(["q", "--max-usd", "lots"], h.deps)).toBe(2);
   });
 
   it("exits 1 when no model could be built", async () => {

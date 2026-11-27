@@ -666,6 +666,19 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.council",
+    label: "Model council",
+    group: "run",
+    slash: {
+      name: "council",
+      description:
+        "ask several models at once: `/council <question>`. They answer, rank each other with the names hidden, and a chairman writes the final answer; nothing is saved to the chat",
+      // Between /btw (35.75) and /research (35.8), the other asides.
+      rank: 35.77,
+    },
+  },
+  {
+    kind: "action",
     id: "run.research",
     label: "Deep research",
     group: "run",

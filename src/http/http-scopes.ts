@@ -57,6 +57,8 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /v1/responses": "chat",
   // ATO-1152: the side question.
   "POST /api/btw": "chat",
+  // ATO-2432: the model council.
+  "POST /api/council": "chat",
   "POST /api/ag-ui": "chat",
   "POST /api/complete": "chat",
   "POST /api/context-preview": "chat",
