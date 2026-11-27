@@ -21,6 +21,7 @@ import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { refusedToolNames } from "../policies/fusion-orchestrator-mode.js";
 import { withoutReasoningPrelude, withUnboundedReasoningPrelude } from "../../llm/grammar/reasoning-prelude.js";
 import { buildGrammarForTools } from "../../llm/grammar/build-grammar.js";
+import { isPromptOnlyToolFilter } from "./prompt-only-tool-filter.js";
 import { applyStrictToolArgs } from "../../llm/grammar/strict-tool-args.js";
 import { getDefaultArgsJsonSchema } from "../../prompt/default-tool-args-schemas.js";
 import type { PromptMessages, ToolCallTransport } from "../../llm/provider/completion-types.js";
@@ -529,10 +530,10 @@ export const TERMINAL_TOOL_NAMES: readonly string[] = ["reply", "finish"];
  *    (`wouldRefuse`) — the model keeps the descriptors and loses the
  *    ability to spend a step on a call that ends in a refusal;
  *  - a turn with a `toolFilter` (a fusion worker) drops what the filter
- *    hides, `finish` included.
+ *    hides, `finish` included, unless the filter is prompt-only.
  * The candidate set is the step's own descriptor list (`reply` and
- * `finish` are descriptors too), so the grammar can never admit a name
- * the prompt does not describe. The base grammar stays in charge of any
+ * `finish` are descriptors too), so a narrowed grammar never admits a
+ * name the prompt does not describe. The base grammar stays in charge of any
  * unrestricted step: its grouped rules are what the static grammar tests
  * pin, and a step that narrows nothing has no reason to rewrite them.
  */
@@ -563,7 +564,10 @@ export function stepGrammarToolNames(
       restricted = true;
     }
   }
-  if (ctx.toolFilter) {
+  // A prompt-only filter (`promptOnlyToolFilter`) leaves the grammar
+  // alone: it hides a few names on a turn that had no filter, and
+  // dispatch refuses them.
+  if (ctx.toolFilter && !isPromptOnlyToolFilter(ctx.toolFilter)) {
     const filter = ctx.toolFilter;
     names = names.filter((name) => filter(name));
     restricted = true;

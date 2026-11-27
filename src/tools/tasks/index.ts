@@ -7,6 +7,7 @@ import { buildTasksCronTool } from "./tasks-cron.js";
 import { buildTasksListTool } from "./tasks-list.js";
 import { buildTasksCancelTool } from "./tasks-cancel.js";
 import { buildTasksShowTool } from "./tasks-show.js";
+import { buildBoardCardTools } from "./tasks-board-card.js";
 import { INCOGNITO_TASK_REFUSAL, refuseInIncognito } from "../memory/incognito-guard.js";
 
 export { buildTasksScheduleTool } from "./tasks-schedule.js";
@@ -14,6 +15,8 @@ export { buildTasksCronTool } from "./tasks-cron.js";
 export { buildTasksListTool } from "./tasks-list.js";
 export { buildTasksCancelTool } from "./tasks-cancel.js";
 export { buildTasksShowTool } from "./tasks-show.js";
+export { buildBoardCardTools } from "./tasks-board-card.js";
+export { BOARD_CARD_TOOLS, withBoardCardVisibility } from "./board-card-visibility.js";
 
 export interface RegisterTaskToolsOptions {
   taskStore: TaskStore;
@@ -40,7 +43,9 @@ export interface RegisterTaskToolsOptions {
 }
 
 /**
- * Register the five agent-side task tools. No-op when
+ * Register the agent-side task tools: the five queue tools and the
+ * three board card tools (ATO-2497; shown only on a task's run, see
+ * `board-card-visibility.ts`). No-op when
  * `agentToolsEnabled` is false — the kill switch is honoured here
  * rather than in each tool so a disabled suite never appears in the
  * tool catalog (and thus never in the grammar-driven tool picker).
@@ -68,4 +73,11 @@ export function registerTaskTools(
   );
   registry.register(buildTasksCancelTool({ taskStore: options.taskStore }));
   registry.register(buildTasksShowTool({ taskStore: options.taskStore }));
+  const runner = options.taskRunner;
+  for (const tool of buildBoardCardTools({
+    taskStore: options.taskStore,
+    runningTaskInSession: (sessionId) => runner.runningTaskInSession(sessionId),
+  })) {
+    registry.register(tool);
+  }
 }
