@@ -14,14 +14,16 @@ import {
 import type { SchedulerSidecar } from "../../scheduler/index.js";
 import { resolveScreenDeps } from "../../tools/os/screen/screen-host.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
+import { createStandupCheck, type RuntimeStandupTasks } from "./runtime-logbook-standup.js";
 
 /**
  * The logbook (ATO-2363) as a scheduler sidecar, so it runs only in the
- * process that leads the scheduler. Always built on macOS: whether it
- * captures is read from `<stateDir>/logbook/settings.json` on every
- * tick (off by default), and the provider is looked up per frame from
- * the live config, local entries only. `null` elsewhere: there is no
- * front-app check to skip protected windows on Windows and Linux yet.
+ * process that leads the scheduler. Built on macOS, Windows and Linux
+ * (ATO-2526): whether it captures is read from
+ * `<stateDir>/logbook/settings.json` on every tick (off by default), and
+ * the provider is looked up per frame from the live config, local
+ * entries only. A Linux session that cannot say which window is in front
+ * (Wayland) skips every frame with the reason in `status.json`.
  * Who may capture is `indicator` (ATO-2534):
  * - `"tui"`: the TUI's top bar always shows `● logbook`, so it captures;
  * - `"frontend"`: a process another app drives (the desktop's `serve`)
@@ -41,9 +43,12 @@ export function createRuntimeLogbook(args: {
   platform?: NodeJS.Platform;
   /** This process's pid, which the frontend's report must name (test seam). */
   pid?: number;
+  /** ATO-2526: files and cancels the morning standup's cron task; none, no standup. */
+  tasks?: RuntimeStandupTasks;
 }): SchedulerSidecar | null {
   if (args.indicator === "none") return null;
-  if ((args.platform ?? process.platform) !== "darwin") return null;
+  // ATO-2526: macOS, Windows and Linux; on Wayland each frame is skipped with the reason.
+  if (!["darwin", "win32", "linux"].includes(args.platform ?? process.platform)) return null;
   const stateDir = args.config.paths.stateDir;
   const pid = args.pid ?? process.pid;
   const framesDir = join(logbookDir(stateDir), "frames");
@@ -59,7 +64,7 @@ export function createRuntimeLogbook(args: {
         localModelsUrl: live.localModels.url,
       });
     },
-    capture: (provider, excludeApps, signal) =>
+    capture: (provider, options, signal) =>
       captureLogbookFrame(
         {
           screen,
@@ -69,7 +74,7 @@ export function createRuntimeLogbook(args: {
           workingDir: stateDir,
         },
         provider,
-        excludeApps,
+        options,
         signal,
       ),
     sweepFrames: () => rm(framesDir, { recursive: true, force: true }),
@@ -78,5 +83,11 @@ export function createRuntimeLogbook(args: {
       ? { indicator: (now: number) => indicatorState(readLogbookIndicator(stateDir), pid, now) }
       : {}),
   });
-  return { tick: (now, signal) => sidecar.tick(now, signal) };
+  const standup = args.tasks ? createStandupCheck({ stateDir, tasks: args.tasks, logger: args.logger }) : null;
+  return {
+    tick: async (now, signal) => {
+      standup?.(now);
+      await sidecar.tick(now, signal);
+    },
+  };
 }

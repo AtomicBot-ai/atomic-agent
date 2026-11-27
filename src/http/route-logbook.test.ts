@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { DEFAULT_LOGBOOK_SETTINGS, readLogbookIndicator, readLogbookSettings, writeLogbookSettings } from "../logbook/index.js";
+import { appendLogbookEntry, DEFAULT_LOGBOOK_SETTINGS, readLogbookDay, readLogbookIndicator, readLogbookSettings, writeLogbookSettings } from "../logbook/index.js";
 import { startTestHarness, type Harness } from "./test-harness.js";
 
 /** ATO-2534: the desktop's chip reads and changes the logbook through these routes. */
@@ -75,5 +75,32 @@ describe("/api/logbook", () => {
       body: JSON.stringify({ visible: "yes" }),
     });
     expect(bad.status).toBe(400);
+  });
+
+  it("saves the Settings choices without an action, and refuses a bad time (ATO-2526)", async () => {
+    const res = await patch({ titleOnlyApps: ["Mail"], excludeApps: ["Slack"], standupAt: "09:00", intervalMinutes: 10 });
+    expect(res.status).toBe(200);
+    expect(readLogbookSettings(harness.stateDir)).toMatchObject({ enabled: false, titleOnlyApps: ["Mail"], excludeApps: ["Slack"], standupAt: "09:00", intervalMinutes: 10 });
+    expect((await patch({ standupAt: "9am" })).status).toBe(400);
+  });
+
+  it("lists a day's notes and deletes one, or the whole day (ATO-2526)", async () => {
+    const day = "2026-11-26";
+    const a = { at: new Date(2026, 10, 26, 9, 0).toISOString(), app: "Mail", bundleId: "com.apple.mail", text: "a" };
+    const b = { at: new Date(2026, 10, 26, 9, 5).toISOString(), app: "Mail", bundleId: "com.apple.mail", text: "b" };
+    appendLogbookEntry(harness.stateDir, a);
+    appendLogbookEntry(harness.stateDir, b);
+    const listed = (await (await fetch(`${harness.baseUrl}/api/logbook/day?day=${day}`)).json()) as { day: string; entries: unknown[] };
+    expect(listed).toEqual({ day, entries: [a, b] });
+    expect((await fetch(`${harness.baseUrl}/api/logbook/day?day=someday`)).status).toBe(400);
+
+    const del = (body: unknown) =>
+      fetch(`${harness.baseUrl}/api/logbook/entries`, { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    expect(await (await del({ day, at: [a.at] })).json()).toEqual({ removed: 1 });
+    expect(readLogbookDay(harness.stateDir, day)).toEqual([b]);
+    expect(await (await del({ day, all: true })).json()).toEqual({ removed: 1 });
+    expect(readLogbookDay(harness.stateDir, day)).toEqual([]);
+    expect((await del({ day: "nope", all: true })).status).toBe(400);
+    expect((await del({ day })).status).toBe(400);
   });
 });
