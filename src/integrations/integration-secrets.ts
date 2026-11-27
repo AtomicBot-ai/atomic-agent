@@ -9,6 +9,7 @@
  */
 
 import { setDotenvKey } from "../config/dotenv-writer.js";
+import { applySavedSecretToEnv } from "../config/apply-saved-secret.js";
 import {
   ensureUserConfigFileSync,
   parseUserConfigFile,
@@ -188,7 +189,8 @@ export function writeFieldValue(
     return;
   }
   setDotenvKey(stateDir, envVar, trimmed);
-  env[envVar] = trimmed;
+  // A reference is resolved before it reaches the environment (ATO-2530).
+  applySavedSecretToEnv(stateDir, envVar, trimmed, { env });
 }
 
 /**

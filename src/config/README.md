@@ -28,7 +28,7 @@ This area owns configuration and compatibility. Read [AGENTS.md](AGENTS.md) befo
 - [email-trigger-config.ts](email-trigger-config.ts)
 - [load-config.ts](load-config.ts)
 - [secret-store.ts](secret-store.ts) and [secrets-migration.ts](secrets-migration.ts): opt-in OS keychain for saved keys (see [compatibility](docs/compatibility.md))
-- [secret-refs.ts](secret-refs.ts), [secret-ref-resolver.ts](secret-ref-resolver.ts), [dotenv-secret-refs.ts](dotenv-secret-refs.ts) and [tool-secrets.ts](tool-secrets.ts): `op://`, `bw://` and `cmd://` secret references and the tool secrets of `secret-sources.json` (see [compatibility](docs/compatibility.md))
+- [secret-refs.ts](secret-refs.ts), [secret-ref-resolver.ts](secret-ref-resolver.ts), [dotenv-secret-refs.ts](dotenv-secret-refs.ts) and [tool-secrets.ts](tool-secrets.ts): `op://`, `bw://`, `vault://` ([vault-secret-ref.ts](vault-secret-ref.ts)) and `cmd://` secret references, applied live when saved mid-session ([apply-saved-secret.ts](apply-saved-secret.ts)) and listed by source ([saved-secret-refs.ts](saved-secret-refs.ts)), and the tool secrets of `secret-sources.json` (see [compatibility](docs/compatibility.md))
 - [config-file.ts](config-file.ts)
 - [config-shape.ts](config-shape.ts)
 - [carry-unknown-config-keys.ts](carry-unknown-config-keys.ts)

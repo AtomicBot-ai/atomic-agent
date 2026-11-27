@@ -7,6 +7,14 @@ import {
   type SecretRefPlan,
   type SecretSources,
 } from "./secret-refs.js";
+import {
+  fetchVault,
+  fetchVaultSync,
+  planVaultRequest,
+  vaultFieldOf,
+  type VaultRequest,
+  type VaultResponse,
+} from "./vault-secret-ref.js";
 
 /**
  * Runs secret references (`secret-refs.ts`) and keeps their values in
@@ -39,7 +47,13 @@ export interface SecretSpawnOptions {
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
   maxBytes: number;
+  /** Windows `cmd.exe /c` line passed as written (`SecretRefPlan.verbatim`, ATO-2530). */
+  verbatim?: boolean;
 }
+
+/** A Vault request runner (ATO-2530); tests pass a fake, production uses `fetch`. */
+export type SyncVaultFetcher = (request: VaultRequest, timeoutMs: number) => VaultResponse;
+export type VaultFetcher = (request: VaultRequest, timeoutMs: number) => Promise<VaultResponse>;
 
 export type SyncSecretSpawner = (argv: readonly string[], options: SecretSpawnOptions) => SecretSpawnOutcome;
 export type SecretSpawner = (argv: readonly string[], options: SecretSpawnOptions) => Promise<SecretSpawnOutcome>;
@@ -59,7 +73,10 @@ export function resetSecretRefCache(): void {
   cache.clear();
 }
 
-type Prepared = { cached: string } | { cacheKey: string; plan: SecretRefPlan };
+type Prepared =
+  | { cached: string }
+  | { cacheKey: string; plan: SecretRefPlan }
+  | { cacheKey: string; vault: VaultRequest };
 
 function prepare(name: string, value: string, sources: SecretSources, env: NodeJS.ProcessEnv): Prepared {
   const ref = parseSecretRef(value, name);
@@ -71,9 +88,34 @@ function prepare(name: string, value: string, sources: SecretSources, env: NodeJ
     rememberResolvedSecret(name, hit);
     return { cached: hit };
   }
+  if (ref.kind === "vault") {
+    const request = planVaultRequest(ref, env);
+    if (typeof request === "string") throw new SecretRefError(`${name}: ${request}`);
+    return { cacheKey, vault: request };
+  }
   const plan = planSecretRef(ref, sources, env);
   if (typeof plan === "string") throw new SecretRefError(`${name}: ${plan}`);
   return { cacheKey, plan };
+}
+
+/** The Vault field as the value, cached and masked like a CLI's output. */
+function finishVault(name: string, cacheKey: string, request: VaultRequest, response: VaultResponse): string {
+  const out = vaultFieldOf(response, request);
+  if ("error" in out) throw new SecretRefError(`${name}: ${out.error}`);
+  if (out.value.length === 0) throw new SecretRefError(`${name}: the Vault field is empty`);
+  if (/[\r\n\0]/.test(out.value)) throw new SecretRefError(`${name}: the Vault field is more than one line`);
+  cache.set(cacheKey, out.value);
+  rememberResolvedSecret(name, out.value);
+  return out.value;
+}
+
+function spawnOptions(plan: SecretRefPlan): SecretSpawnOptions {
+  return {
+    env: plan.env,
+    timeoutMs: plan.timeoutMs,
+    maxBytes: SECRET_REF_MAX_OUTPUT_BYTES,
+    ...(plan.verbatim === true ? { verbatim: true } : {}),
+  };
 }
 
 /** The first stderr line, capped, with the value (if any) removed. */
@@ -111,30 +153,41 @@ export interface ResolveSecretRefDeps {
   env?: NodeJS.ProcessEnv;
 }
 
+/** Vault requests wait as long as a `cmd://` helper may run. */
+function vaultTimeout(sources: SecretSources): number {
+  return sources.timeoutMs;
+}
+
 /** Resolve `value` (a reference saved under `name`) synchronously. Throws `SecretRefError`. */
 export function resolveSecretRefSync(
   name: string,
   value: string,
-  deps: ResolveSecretRefDeps & { spawn?: SyncSecretSpawner },
+  deps: ResolveSecretRefDeps & { spawn?: SyncSecretSpawner; fetchVault?: SyncVaultFetcher },
 ): string {
   const prepared = prepare(name, value, deps.sources, deps.env ?? process.env);
   if ("cached" in prepared) return prepared.cached;
+  if ("vault" in prepared) {
+    const fetch = deps.fetchVault ?? fetchVaultSync;
+    return finishVault(name, prepared.cacheKey, prepared.vault, fetch(prepared.vault, vaultTimeout(deps.sources)));
+  }
   const spawn = deps.spawn ?? spawnSecretSync;
-  const opts = { env: prepared.plan.env, timeoutMs: deps.sources.timeoutMs, maxBytes: SECRET_REF_MAX_OUTPUT_BYTES };
-  return finish(name, prepared, spawn(prepared.plan.argv, opts));
+  return finish(name, prepared, spawn(prepared.plan.argv, spawnOptions(prepared.plan)));
 }
 
 /** Resolve `value` (a reference saved under `name`). Rejects with `SecretRefError`. */
 export async function resolveSecretRef(
   name: string,
   value: string,
-  deps: ResolveSecretRefDeps & { spawn?: SecretSpawner },
+  deps: ResolveSecretRefDeps & { spawn?: SecretSpawner; fetchVault?: VaultFetcher },
 ): Promise<string> {
   const prepared = prepare(name, value, deps.sources, deps.env ?? process.env);
   if ("cached" in prepared) return prepared.cached;
+  if ("vault" in prepared) {
+    const fetch = deps.fetchVault ?? fetchVault;
+    return finishVault(name, prepared.cacheKey, prepared.vault, await fetch(prepared.vault, vaultTimeout(deps.sources)));
+  }
   const spawn = deps.spawn ?? spawnSecret;
-  const opts = { env: prepared.plan.env, timeoutMs: deps.sources.timeoutMs, maxBytes: SECRET_REF_MAX_OUTPUT_BYTES };
-  return finish(name, prepared, await spawn(prepared.plan.argv, opts));
+  return finish(name, prepared, await spawn(prepared.plan.argv, spawnOptions(prepared.plan)));
 }
 
 function failureOf(err: unknown): SecretSpawnOutcome["failure"] {
@@ -156,6 +209,7 @@ export const spawnSecretSync: SyncSecretSpawner = (argv, options) => {
     encoding: "utf8",
     shell: false,
     windowsHide: true,
+    windowsVerbatimArguments: options.verbatim === true,
     stdio: ["ignore", "pipe", "pipe"],
   });
   const failure = r.error ? failureOf(r.error) ?? "could-not-run" : r.signal !== null ? "could-not-run" : null;
@@ -175,6 +229,7 @@ export const spawnSecret: SecretSpawner = (argv, options) =>
         encoding: "utf8",
         shell: false,
         windowsHide: true,
+        windowsVerbatimArguments: options.verbatim === true,
       },
       (err, stdout, stderr) => {
         if (!err) {
