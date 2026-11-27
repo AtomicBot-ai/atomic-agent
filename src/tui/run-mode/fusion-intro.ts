@@ -56,3 +56,11 @@ export function describeFusionIntro(rm: ResolvedRunMode): string {
     "ctrl+r opens separate inference engine and model controls for each seat. Use the swap control to trade the seats. /runmode status says what is resolved right now; /runmode cloud or /runmode local leaves fusion.",
   ].join("\n");
 }
+
+/**
+ * `/fusion` with nothing to resume. Whoever types `/fusion` with no run
+ * cut off is most often looking for the switch, so the line names it
+ * (ATO-1640, ATO-2772).
+ */
+export const FUSION_RUNS_EMPTY =
+  "no unfinished fusion run in this session · to turn Fusion on, use /runmode fusion";

@@ -40,6 +40,28 @@ describe("filterSlashCommands", () => {
     const results = filterSlashCommands("ex");
     expect(results.map((c) => c.name)).toContain("quit");
   });
+
+  // ATO-1640 / ATO-2772: someone looking for the Fusion switch types
+  // `/fusion`. That name is the unfinished-runs command, so the switch
+  // comes second, found through its search keywords.
+  it("lists /runmode under /fusion when the query is fusion", () => {
+    for (const query of ["fusion", "fus"]) {
+      const names = filterSlashCommands(query).map((c) => c.name);
+      expect(names[0]).toBe("fusion");
+      expect(names).toContain("runmode");
+    }
+  });
+
+  it("ranks a keyword-only match below every name and alias match", () => {
+    const names = filterSlashCommands("local").map((c) => c.name);
+    expect(names[0]).toBe("model");
+    expect(names.indexOf("runmode")).toBeGreaterThan(0);
+  });
+
+  it("never dispatches a search keyword", () => {
+    expect(resolveSlashCommand("fusion")?.name).toBe("fusion");
+    expect(resolveSlashCommand("cloud")).toBeNull();
+  });
 });
 
 describe("resolveSlashCommand", () => {

@@ -95,6 +95,7 @@ import { readRecentWorkingDirs } from "../session/index.js";
 import { detectLocalServers } from "../llm/provider/presets/detect-local-servers.js";
 import { createMentionFileIndex, expandFileMentions } from "./file-mentions/index.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
+import { FUSION_RUNS_EMPTY } from "./run-mode/fusion-intro.js";
 import {
   loadUninstallPreview,
   performUninstall,
@@ -802,7 +803,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           const list = runs?.listResumable(sessionId) ?? [];
           say(
             list.length === 0
-              ? "no unfinished fusion run in this session"
+              ? FUSION_RUNS_EMPTY
               : [
                   ...list.map((run) => run.summary),
                   "/fusion resume [id] continues one · /fusion discard [id] drops it",

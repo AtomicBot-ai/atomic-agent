@@ -39,7 +39,8 @@ describe("contextHint (ATO-2355)", () => {
     const hint = contextHint(view([scaffold("built-in tools", 1000), scaffold("mcp github", 5000, "github")]));
     expect(hint).toEqual([
       "tip: mcp github takes 15% of the window",
-      "turn it off in /mcp, or set agent.tools.search: on",
+      "turn it off in /mcp, or load tools on demand:",
+      "atag config set agent.tools.search on, then restart",
     ]);
   });
 
@@ -62,8 +63,19 @@ describe("contextHint (ATO-2355)", () => {
     const hint = contextHint(view([scaffold("built-in tools", 6000)]));
     expect(hint).toEqual([
       "tip: built-in tools take 18% of the window",
-      "set agent.tools.search: on to load them on demand",
+      "to load them on demand, run",
+      "atag config set agent.tools.search on, then restart",
     ]);
+  });
+
+  // ATO-2772: the tip named the key but not how to set it. The line it
+  // names must be a real `atag config set` call, short enough for the
+  // panel's 55 inner columns.
+  it("names the command that turns search mode on", () => {
+    const hint = contextHint(view([scaffold("built-in tools", 6000)])) ?? [];
+    const command = hint.at(-1) ?? "";
+    expect(command).toMatch(/^atag config set agent\.tools\.search on\b/);
+    for (const line of hint) expect(line.length).toBeLessThanOrEqual(55);
   });
 
   it("stays quiet on a big window, an unknown one, or small parts", () => {

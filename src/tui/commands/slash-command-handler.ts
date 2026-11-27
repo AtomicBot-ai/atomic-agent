@@ -23,6 +23,7 @@ import { parseLearnCommand, type LearnCommand } from "../../skills/learning/lear
 import { parseExportCommand, type ChatExportRequest } from "./export-command.js";
 import { MODEL_RING_USAGE, parseModelRingCommand, type ModelRingCommand } from "../model-ring/model-ring-command.js";
 import { parseResearchCommand } from "./research-command.js";
+import { formatKeysHelp } from "./keys-help.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -659,7 +660,7 @@ function formatSlashCommandHelp(): string {
         : "";
     return `  /${cmd.name}${aliasPart} — ${cmd.description}`;
   });
-  return ["slash commands:", ...lines].join("\n");
+  return ["slash commands:", ...lines, "", formatKeysHelp()].join("\n");
 }
 
 /**

@@ -48,6 +48,12 @@ export interface MenuSlash {
   readonly description: string;
   readonly aliases?: readonly string[];
   /**
+   * Extra words the palette search matches, ranked below every name and
+   * alias match. Unlike aliases they never dispatch: `/fusion` is its own
+   * command, yet typing it should still surface `/runmode` (ATO-2772).
+   */
+  readonly keywords?: readonly string[];
+  /**
    * Position in the slash palette listing. Kept explicit because the
    * palette order is user-visible (empty query lists the registry in
    * order, and ties in a fuzzy search break by index) and is not the
@@ -553,7 +559,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "model",
       description:
-        "open chat model picker · subcommands: pull <id> | use <id> | favorite [add|remove] | status | <base-url>",
+        "open chat model picker · subcommands: pull <id> | use <id> | favorite [add|remove] | status | <base-url> · ctrl+p switches to the next favorite",
       aliases: ["models", "local"],
       rank: 27,
     },
@@ -577,6 +583,9 @@ export const MENU: readonly MenuNode[] = [
       name: "runmode",
       description:
         "where the chat runs: `/runmode` opens the switch · `/runmode local|cloud|fusion` sets one · `/runmode status`",
+      // `fusion` and `mode` are other commands' names, so these only
+      // help the search find the switch (ATO-1640, ATO-2772).
+      keywords: ["fusion", "local", "cloud"],
       // 40 is /swarm and 41 is /report on this branch.
       rank: 42,
     },
@@ -746,7 +755,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "fusion",
       description:
-        "a fusion run cut off by a restart: `/fusion` lists them · `/fusion resume [id]` continues from the unfinished wave · `/fusion discard [id]` drops it",
+        "a fusion run cut off by a restart: `/fusion` lists them · `/fusion resume [id]` continues from the unfinished wave · `/fusion discard [id]` drops it · to turn Fusion on, use `/runmode fusion`",
       rank: 47,
     },
   },
