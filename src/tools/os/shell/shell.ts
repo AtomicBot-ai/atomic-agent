@@ -587,8 +587,11 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       sandboxNotice +=
         " Package caches (npm, npx, pip, Go, cargo, Maven, Gradle and similar) use a private sandbox cache under temp, not the shared ones in the home folder.";
       // ATO-2471: these run code later, outside the sandbox.
-      sandboxNotice +=
-        " Git hooks and `.git/config` (on macOS also creating `.git`, so `git init` fails there), shell rc files, `.envrc` and editor settings (`.vscode`, `.idea`) are read-only even in the working folder.";
+      const gitPart =
+        process.platform === "linux"
+          ? "`.git` (git commands that write the repo fail here; use the os.git.* tools)"
+          : "`.git` apart from git's own data (no `git init`, `git clone` or `git config` here; use the os.git.* tools)";
+      sandboxNotice += ` Even in the working folder these are read-only: ${gitPart}, hook folders (\`.husky\`, \`.githooks\`, the \`core.hooksPath\` folder), shell rc files, \`.envrc\`, git's and fish's config and editor settings (\`.vscode\`, \`.idea\`).`;
       if (policy.narrowedRoots !== undefined) {
         sandboxNotice +=
           " The working folder is the home folder or above it, so it is not writable inside the sandbox; only temp is. Start the session in a project folder to write files there.";

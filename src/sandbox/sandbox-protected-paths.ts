@@ -2,28 +2,36 @@
  * Paths a sandboxed command may not write even inside its working folder
  * (ATO-2471). The working folder is writable, but some files in it run
  * code later, outside the sandbox: a git hook on the user's next commit,
- * `core.hooksPath` or `core.fsmonitor` in `.git/config`, a shell rc file
- * in a dotfiles repo linked into the home folder, `.envrc` on the next
- * `cd` with direnv, a VS Code task or a JetBrains run configuration on
- * the next open. Same class as the package-cache escape of ATO-1651.
+ * `core.hooksPath` or `core.fsmonitor` in `.git/config`, a `commondir`
+ * that points git at a copy of the repo with its own hooks, a hooks
+ * folder in the work tree (husky, `core.hooksPath`), a shell rc file in
+ * a dotfiles repo linked into the home folder, `.envrc` on the next `cd`
+ * with direnv, a VS Code task or a JetBrains run configuration on the
+ * next open. Same class as the package-cache escape of ATO-1651.
  *
  * Same list as Claude Code's sandbox-runtime mandatory deny paths (shell
  * rc files, `.gitconfig`, `.gitmodules`, `.git/hooks`, `.git/config`,
- * `.vscode`, `.idea`), plus `.envrc` and fish's config; Codex keeps
- * `.git` read-only in its `workspace-write` profile.
+ * `.vscode`, `.idea`), plus `.envrc`, fish's and git's XDG config and
+ * the hook managers' files; Codex keeps `.git` read-only in its
+ * `workspace-write` profile.
  *
  * - macOS: fixed Seatbelt regexes, at any depth (no outside text goes
  *   into the profile). Seatbelt matches resolved paths, so a link to a
- *   hook does not get around it. `.git` itself cannot be created,
- *   renamed or replaced, so a hook cannot be planted in a fresh `.git`
- *   or in a copy renamed into place.
+ *   hook does not get around it. Nothing inside a `.git` is writable
+ *   except the data git itself writes (objects, refs, logs, the index,
+ *   `HEAD` and the other state files, their locks), so `config`,
+ *   `commondir`, `hooks`, `info` and a worktree's `gitdir` stay as they
+ *   are. `.git` itself cannot be created, renamed or replaced.
  * - Linux: bwrap has no patterns, so the working folders are searched
  *   (depth 3, as Claude Code does) and each protected path that exists
- *   is bound back read-only; a `.git` without a `hooks` folder is bound
- *   read-only whole, and the folders above each one are made mount
- *   points so they cannot be renamed away. A protected path that does not exist yet is not
+ *   is bound back read-only, each `.git` whole (git commands that write
+ *   the repo fail inside the sandbox there, as in Codex), and the
+ *   folders above each one are made mount points so they cannot be
+ *   renamed away. A protected path that does not exist yet is not
  *   covered on Linux (bwrap would have to create it on the user's disk
  *   as a mount point).
+ * - Both: the folder `core.hooksPath` names and the files the git
+ *   config includes (`git-hooks-path.ts`) are protected too.
  */
 import { existsSync, lstatSync, readdirSync, type Stats } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
@@ -43,10 +51,23 @@ export const PROTECTED_FILE_NAMES: readonly string[] = [
   ".envrc",
   ".gitconfig",
   ".gitmodules",
+  // Hook managers: their config names the commands a hook runs.
+  ".pre-commit-config.yaml",
+  "lefthook.yml",
+  ".lefthook.yml",
 ];
 
 /** Protected folders, wherever they are: every write inside them. */
-export const PROTECTED_DIR_NAMES: readonly string[] = [".vscode", ".idea"];
+export const PROTECTED_DIR_NAMES: readonly string[] = [
+  ".vscode",
+  ".idea",
+  // Hook folders in the work tree (husky, the usual `core.hooksPath`).
+  ".husky",
+  ".githooks",
+];
+
+/** Protected folders under a `.config` folder (fish, git's XDG config). */
+export const PROTECTED_XDG_DIRS: readonly string[] = ["fish", "git"];
 
 const escape = (name: string): string => name.replace(/[.]/g, "\\.");
 
@@ -56,22 +77,57 @@ const escape = (name: string): string => name.replace(/[.]/g, "\\.");
  * into `#"..."` literals.
  */
 export const SEATBELT_PROTECTED_PATTERNS: readonly string[] = [
-  // `.git` itself (create, rename, replace, delete) and a `.git` file.
-  "/\\.git$",
-  "/\\.git/hooks(/.*)?$",
-  "/\\.git/config$",
-  // Submodule git folders keep their own hooks and config.
-  "/\\.git/modules/(.+/)?hooks(/.*)?$",
-  "/\\.git/modules/(.+/)?config$",
   `/(${PROTECTED_FILE_NAMES.map(escape).join("|")})$`,
-  "/\\.config/fish(/.*)?$",
+  `/\\.config/(${PROTECTED_XDG_DIRS.join("|")})(/.*)?$`,
   `/(${PROTECTED_DIR_NAMES.map(escape).join("|")})(/.*)?$`,
 ];
 
-/** The Seatbelt rule; it goes after every rule that allows a write. */
-export function seatbeltProtectedWriteRule(): string {
+/** `.git` itself (create, rename, replace, delete) and all inside it. */
+export const SEATBELT_GIT_PATTERN = "/\\.git(/.*)?$";
+
+/** A git folder: the repo's, a submodule's or a linked worktree's. */
+const GIT_PREFIX = "/\\.git/(modules/.+/|worktrees/[^/]+/)?";
+
+/** Folders in a git folder that hold only git's data. */
+const GIT_DATA_DIRS = [
+  "objects", "refs", "logs", "lfs", "rr-cache", "rebase-merge", "rebase-apply",
+  "sequencer", "fsmonitor--daemon", "NOTES_MERGE_PARTIAL", "NOTES_MERGE_WORKTREE",
+];
+
+/** State files git writes in a git folder (each with its `.lock`). */
+const GIT_STATE_FILES = [
+  "HEAD", "ORIG_HEAD", "FETCH_HEAD", "MERGE_HEAD", "MERGE_MSG", "MERGE_MODE",
+  "MERGE_RR", "AUTO_MERGE", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD",
+  "BISECT_[A-Z_]+", "NOTES_MERGE_REF", "COMMIT_EDITMSG", "TAG_EDITMSG",
+  "SQUASH_MSG", "NOTES_EDITMSG", "packed-refs", "shallow", "gc\\.pid", "gc\\.log",
+];
+
+/** The index and its temporary and split copies. */
+const GIT_INDEX_FILES = ["index(\\.[^/]*)?", "sharedindex\\.[0-9a-f]+", "next-index-[0-9]+\\.lock"];
+
+/**
+ * Inside a `.git`, what git itself writes, and only that: data that
+ * never names a program. `config`, `config.worktree`, `commondir`,
+ * `gitdir`, `hooks`, `info` and anything new stay read-only.
+ */
+export const SEATBELT_GIT_WRITABLE_PATTERNS: readonly string[] = [
+  `${GIT_PREFIX}(${GIT_DATA_DIRS.join("|")})(/.*)?$`,
+  `${GIT_PREFIX}(${GIT_INDEX_FILES.join("|")}|(${GIT_STATE_FILES.join("|")})(\\.lock)?)$`,
+];
+
+/**
+ * The Seatbelt rules; they go after every rule that allows a write.
+ * `extraParams` names `-D` parameters holding more protected folders
+ * and files (`core.hooksPath`, included git config files).
+ */
+export function seatbeltProtectedWriteRule(extraParams: readonly string[] = []): string {
   const regexes = SEATBELT_PROTECTED_PATTERNS.map((re) => `(regex #"${re}")`);
-  return `(deny file-write* ${regexes.join(" ")})`;
+  const extra = extraParams.map((name) => ` (subpath (param "${name}"))`).join("");
+  const gitData = SEATBELT_GIT_WRITABLE_PATTERNS.map((re) => `(regex #"${re}")`);
+  return [
+    `(deny file-write* ${regexes.join(" ")}${extra})`,
+    `(deny file-write* (require-all (regex #"${SEATBELT_GIT_PATTERN}") (require-not (require-any ${gitData.join(" ")}))))`,
+  ].join("\n");
 }
 
 export interface ProtectedScanLimits {
@@ -101,29 +157,6 @@ function names(dir: string): string[] {
 }
 
 /**
- * What to bind read-only for one `.git`: the hooks folder (the whole
- * `.git` when it has none, so one cannot be made), the config, and the
- * same for each submodule's git folder. A `.git` file (a worktree or a
- * submodule pointer) is protected itself: rewritten, it would point git
- * at a folder of the command's choosing.
- */
-function gitProtected(gitPath: string, out: string[], depth = 0): void {
-  const st = lstat(gitPath);
-  if (st === null) return;
-  if (!st.isDirectory()) {
-    out.push(gitPath);
-    return;
-  }
-  const hooks = join(gitPath, "hooks");
-  out.push(lstat(hooks) === null ? gitPath : hooks);
-  const config = join(gitPath, "config");
-  if (lstat(config) !== null) out.push(config);
-  const modules = join(gitPath, "modules");
-  if (depth >= 3 || lstat(modules)?.isDirectory() !== true) return;
-  for (const name of names(modules)) gitProtected(join(modules, name), out, depth + 1);
-}
-
-/**
  * The protected paths that exist under the working folders (Linux).
  * Links are not followed into; a protected name that is a link is
  * listed itself (bwrap binds over what it points at).
@@ -141,18 +174,20 @@ export function findProtectedPaths(
     budget -= 1;
     for (const name of names(dir)) {
       const path = join(dir, name);
-      if (name === ".git") {
-        gitProtected(path, out);
-        continue;
-      }
-      if (PROTECTED_FILE_NAMES.includes(name) || PROTECTED_DIR_NAMES.includes(name)) {
+      // A `.git` is read-only whole: its config, hooks and `commondir`
+      // (which can point git at a copy with other hooks) all run code.
+      // A `.git` file (a worktree or submodule pointer) likewise: it
+      // would point git at a folder of the command's choosing.
+      if (name === ".git" || PROTECTED_FILE_NAMES.includes(name) || PROTECTED_DIR_NAMES.includes(name)) {
         out.push(path);
         continue;
       }
       const st = lstat(path);
       if (st === null || !st.isDirectory() || SKIP_DIRS.has(name)) continue;
-      if (name === ".config" && lstat(join(path, "fish")) !== null) {
-        out.push(join(path, "fish"));
+      if (name === ".config") {
+        for (const sub of PROTECTED_XDG_DIRS) {
+          if (lstat(join(path, sub)) !== null) out.push(join(path, sub));
+        }
       }
       if (depth < maxDepth) queue.push({ dir: path, depth: depth + 1 });
     }
@@ -171,12 +206,12 @@ function isInside(child: string, parent: string): boolean {
  * those inside a hidden (denied) folder that is not opened again:
  * binding one back would show what the tmpfs hides.
  *
- * First, every folder between a working folder and a protected path
- * (`.git` included) is bound onto itself, writable as before. That makes
- * each a mount point, and a mount point cannot be renamed or removed
- * (`EBUSY`): otherwise `mv .git old && mkdir -p .git/hooks` (or moving
- * the folder that holds a nested repo) would leave a fresh, unprotected
- * `.git` in place for the user's next commit.
+ * First, every folder between a working folder and a protected path is
+ * bound onto itself, writable as before. That makes each a mount point
+ * (as is each protected path), and a mount point cannot be renamed or
+ * removed (`EBUSY`): otherwise moving the folder that holds a nested
+ * repo (or `mv .git old && mkdir -p .git/hooks`) would leave a fresh,
+ * unprotected `.git` in place for the user's next commit.
  */
 export function bwrapProtectedArgs(
   paths: readonly string[],

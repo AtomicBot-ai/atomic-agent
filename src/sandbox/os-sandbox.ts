@@ -18,10 +18,11 @@
  *   config, tokens); a working folder inside one is opened by itself;
  * - for a process that keeps its network (an MCP server), the
  *   ssh-agent socket can be hidden too (`hideSshAgent`);
- * - no writes to git hooks and config, shell rc files, `.envrc` or
+ * - no writes to `.git` (but git's own data on macOS), hook folders
+ *   (`core.hooksPath` too), shell rc files, `.envrc`, git's config or
  *   editor configs (`.vscode`, `.idea`) even inside the working folder:
  *   they run code later, outside the sandbox (`sandbox-protected-paths.ts`,
- *   ATO-2471);
+ *   `git-hooks-path.ts`, ATO-2471);
  * - with `network: false`, no outbound IP connection except to loopback
  *   IP, no DNS lookups and no URL opening; local sockets are all denied
  *   on macOS, and on Linux the known socket places are covered (a list:
@@ -63,6 +64,7 @@ import {
   findProtectedPaths,
   seatbeltProtectedWriteRule,
 } from "./sandbox-protected-paths.js";
+import { gitHookTargets } from "./git-hooks-path.js";
 
 export type OsSandboxMode = "off" | "workspace";
 
@@ -113,6 +115,12 @@ export interface OsSandboxPolicy {
    * (`sandbox-protected-paths.ts`, ATO-2471).
    */
   workRoots?: readonly string[];
+  /**
+   * More folders and files that stay read-only inside the writable
+   * roots: the folder `core.hooksPath` names and the files the git
+   * config includes (`git-hooks-path.ts`, ATO-2471). Resolved paths.
+   */
+  protectedPaths?: readonly string[];
   /**
    * Folders and files the command may not read (credential stores,
    * agent state). Each one is listed both as named and, when it is a
@@ -356,10 +364,16 @@ export function buildOsSandboxPolicy(
   }
   const denySockets = unique(sockets);
   const localSocketMasks = input.network ? [] : networkOffSocketMasks(input, home, tmp);
+  // The hook folder git really uses and the config files it includes,
+  // where the command could write them (ATO-2471).
+  const protectedPaths = gitHookTargets({ workRoots: work, home }).filter((p) =>
+    writableRoots.some((root) => isInside(p, root)),
+  );
   return {
     writableRoots,
     ...(narrowedRoots.length > 0 ? { narrowedRoots } : {}),
     workRoots: work,
+    ...(protectedPaths.length > 0 ? { protectedPaths } : {}),
     denyRead,
     reopen,
     network: input.network,
@@ -486,7 +500,7 @@ export function buildSeatbeltProfile(policy: OsSandboxPolicy): string {
   // Git hooks and config, shell rc files, `.envrc` and editor configs
   // stay read-only inside the writable roots (ATO-2471). After every
   // rule that allows a write (the reopened folders included).
-  lines.push(seatbeltProtectedWriteRule());
+  lines.push(seatbeltProtectedWriteRule((policy.protectedPaths ?? []).map((_, i) => `P${i}`)));
   const sockets = policy.denySockets ?? [];
   if (policy.hideSshAgent === true || sockets.length > 0) {
     // After the reopen rules, so nothing reopens them. Fixed patterns,
@@ -522,6 +536,7 @@ function seatbeltArgs(
   policy.reopen.forEach((entry, i) => params.push("-D", `O${i}=${entry.path}`));
   reopenAncestors(policy).forEach((dir, i) => params.push("-D", `A${i}=${dir}`));
   (policy.denySockets ?? []).forEach((path, i) => params.push("-D", `S${i}=${path}`));
+  (policy.protectedPaths ?? []).forEach((path, i) => params.push("-D", `P${i}=${path}`));
   return [...params, "-p", buildSeatbeltProfile(policy), command, ...args];
 }
 
@@ -576,7 +591,7 @@ function bwrapArgs(
   // writable and reopened binds so nothing re-opens them (ATO-2471).
   out.push(
     ...bwrapProtectedArgs(
-      findProtectedPaths(policy.workRoots ?? []),
+      [...findProtectedPaths(policy.workRoots ?? []), ...(policy.protectedPaths ?? [])],
       policy.workRoots ?? [],
       policy.denyRead,
       policy.reopen.map((entry) => entry.path),
