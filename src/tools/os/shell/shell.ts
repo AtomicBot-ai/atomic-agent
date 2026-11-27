@@ -589,6 +589,12 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         : "Safe Mode sandbox: writes outside the working folder and temp, reads of credential folders, internet and local-socket connections, DNS and opening URLs are blocked; loopback (127.0.0.1) stays open. An `Operation not permitted` or name-resolution error comes from that, not from the command.";
       sandboxNotice +=
         " Package caches (npm, npx, pip, Go, cargo, Maven, Gradle and similar) use a private sandbox cache under temp, not the shared ones in the home folder.";
+      // ATO-2471: these run code later, outside the sandbox.
+      const gitPart =
+        process.platform === "linux"
+          ? "`.git` (git commands that write the repo fail here; use the os.git.* tools)"
+          : "`.git` apart from git's own data (no `git init`, `git clone` or `git config` here; use the os.git.* tools)";
+      sandboxNotice += ` Even in the working folder these are read-only: ${gitPart}, hook folders (\`.husky\`, \`.githooks\`, the \`core.hooksPath\` folder), shell rc files, \`.envrc\`, git's and fish's config and editor settings (\`.vscode\`, \`.idea\`).`;
       if (policy.narrowedRoots !== undefined) {
         sandboxNotice +=
           " The working folder is the home folder or above it, so it is not writable inside the sandbox; only temp is. Start the session in a project folder to write files there.";
