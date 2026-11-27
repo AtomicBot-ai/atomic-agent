@@ -9,7 +9,7 @@ Typing `@` in the composer (at the start of the buffer or after a space) opens a
 - [Palette state](use-file-mentions.ts) is composer-local React state, not reducer state. [Palette view](file-mention-palette.tsx) is drawn by TuiApp where the slash palette sits.
 - Expansion runs on an idle submit (`submit-handler.ts`, through the `expandFileMentions` callback, [sender](mention-sender.ts)): plain file mentions are inlined at once; a message with `@diff`, `@git:N`, a range, a folder, a link or `@problems` goes to `runtime.mentions.expand` and is sent when it is read. [Ordered send](ordered-send.ts) keeps a steer, queued message or approval reply typed meanwhile behind it.
 - [Block format](../../mentions/mention-block.ts): appended after the typed text. The chat bubble and input history show the typed text (plus one line per mention in the bubble); the transcript keeps the full message the model saw.
-- The file list's `git ls-files` runs with `core.fsmonitor=false` like every mention git call.
+- The file list's `git ls-files` runs with the same safe prefix as every mention git call (no fsmonitor, hooks, pager or signature program).
 
 Steered and queued messages (sent while a turn runs) are not expanded: their `@path` reaches the model as text, which it can read with its own file tools.
 

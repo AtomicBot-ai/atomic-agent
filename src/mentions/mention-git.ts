@@ -6,10 +6,17 @@
  * checkout, changes and commits elsewhere in it are not read.
  *
  * The folder's own `.git/config` can name programs git runs. Every call
- * starts with GIT_SAFE_PREFIX, the same options as
- * `src/runtime/project-instructions-git.ts`: `core.fsmonitor=false` stops
- * the index refresh from running a configured fsmonitor hook (ATO-2532),
- * `--no-optional-locks` keeps a read from writing the index.
+ * starts with gitSafePrefix(), the list the desktop hardened in ATO-2532
+ * (desktop/main/git-safe-args.ts) so nothing is lost now that the desktop
+ * reads mentions through core:
+ *  - `--no-pager`: git never starts `core.pager`;
+ *  - `--no-optional-locks`: a read does not rewrite the index (and so
+ *    fires no `post-index-change` hook);
+ *  - `core.fsmonitor=false`, `core.untrackedCache=false`;
+ *  - `core.hooksPath=<null>`: `/dev/null`, or `NUL` on Windows, so no hook
+ *    is found;
+ *  - `log.showSignature=false`: `git log` never runs `gpg.program`;
+ *  - `protocol.ext.allow=never`: no `ext::` remote helper command.
  * `--no-ext-diff --no-textconv` stop the configured external diff and
  * textconv programs. The environment is the command environment of the
  * shell tool (no provider keys) without an inherited GIT_DIR.
@@ -23,10 +30,26 @@ export const GIT_TIMEOUT_MS = 5_000;
 /** Most output kept from git before the message's own caps apply. */
 export const GIT_MAX_OUTPUT = 1024 * 1024;
 
-/** Global options in front of every git call made here. */
-export const GIT_SAFE_PREFIX: readonly string[] = [
-  "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
-];
+/** The "no folder" path for `core.hooksPath` on this platform. */
+export function gitNullPath(platform: NodeJS.Platform = process.platform): string {
+  return platform === "win32" ? "NUL" : "/dev/null";
+}
+
+/** Global options in front of every git call made here (they go before the subcommand). */
+export function gitSafePrefix(platform: NodeJS.Platform = process.platform): string[] {
+  return [
+    "--no-pager",
+    "--no-optional-locks",
+    "-c", "core.fsmonitor=false",
+    "-c", "core.untrackedCache=false",
+    "-c", `core.hooksPath=${gitNullPath(platform)}`,
+    "-c", "log.showSignature=false",
+    "-c", "protocol.ext.allow=never",
+  ];
+}
+
+/** gitSafePrefix() for this platform. */
+export const GIT_SAFE_PREFIX: readonly string[] = gitSafePrefix();
 
 export interface GitOutput {
   text: string;

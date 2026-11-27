@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GIT_SAFE_PREFIX } from "../../mentions/mention-git.js";
 import { createMentionFileIndex, listGitFilesArgs, walkFiles, type FileIndexLimits } from "./file-index.js";
 
 const limits: FileIndexLimits = { maxFiles: 100, budgetMs: 1000, freshMs: 1000 };
@@ -72,7 +73,9 @@ describe("createMentionFileIndex", () => {
 describe("listGitFilesArgs (ATO-2472)", () => {
   it("turns the folder's fsmonitor off before listing", () => {
     const args = listGitFilesArgs();
-    expect(args.slice(0, 5)).toEqual(["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false"]);
+    expect(args.slice(0, GIT_SAFE_PREFIX.length)).toEqual([...GIT_SAFE_PREFIX]);
+    expect(args).toContain("core.fsmonitor=false");
+    expect(args).toContain("--no-pager");
     expect(args).toContain("ls-files");
   });
 });
