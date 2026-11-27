@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PdfPageImage } from "../read-document/extractors/pdf-page-images.js";
+import { TESSERACT_LANGUAGE_BYTES } from "./tesseract-data.js";
 import {
   createTesseractOcrEngine,
   loadTesseract,
@@ -29,7 +30,7 @@ afterEach(() => {
 
 function withData(...langs: string[]): void {
   mkdirSync(dir, { recursive: true });
-  for (const lang of langs) writeFileSync(join(dir, `${lang}.traineddata.gz`), "data");
+  for (const lang of langs) writeFileSync(join(dir, `${lang}.traineddata.gz`), Buffer.alloc(TESSERACT_LANGUAGE_BYTES[lang]!));
 }
 
 function fakeTesseract(over: { fail?: (call: number) => Error | undefined; startError?: Error } = {}) {

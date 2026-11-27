@@ -26,8 +26,9 @@ export const TESSERACT_DATA_VERSION = "4.0.0_best_int";
 
 /**
  * Bytes of each `<lang>.traineddata.gz` this module knows, read from the
- * CDN's `Content-Length` on 28.11.2026. A language not listed here is not
- * offered for download.
+ * CDN's `Content-Length` on 28.11.2026. A file on disk counts only at
+ * exactly this size. A language not listed here is not offered for
+ * download.
  */
 export const TESSERACT_LANGUAGE_BYTES: Readonly<Record<string, number>> = {
   eng: 2_952_873,
@@ -43,7 +44,10 @@ export interface TesseractDataFile {
 
 export interface TesseractDataStatus {
   dir: string;
-  /** Known languages whose file is not on disk yet. */
+  /**
+   * Known languages whose file is not on disk yet, or is not the size
+   * listed in {@link TESSERACT_LANGUAGE_BYTES} (a cut-off or foreign file).
+   */
   missing: TesseractDataFile[];
   /** Asked-for languages this module has no file for. */
   unknown: string[];
@@ -74,7 +78,7 @@ export function tesseractDataStatus(dir: string, languages: readonly string[]): 
       continue;
     }
     const path = join(dir, tesseractDataFileName(lang));
-    if (fileSize(path) > 0) continue;
+    if (fileSize(path) === bytes) continue;
     missing.push({ lang, bytes, url: tesseractDataUrl(lang), path });
   }
   return { dir, missing, unknown, missingBytes: missing.reduce((sum, file) => sum + file.bytes, 0) };
