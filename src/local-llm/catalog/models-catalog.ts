@@ -131,6 +131,16 @@ export interface LocalModelDef {
   mmprojFilename?: string;
   /** Approximate projector size in GB, surfaced in the TUI for download UX. */
   mmprojFileSizeGb?: number;
+  /**
+   * A smaller catalog model with the same tokenizer that can draft for
+   * this one (`--model-draft`, ATO-2424). Used only when
+   * `localModels.managed.draftModel` is `"auto"`, and only when it fits
+   * beside the fitted context (`server/draft-model.ts`). Paired only on
+   * dense models without a recurrent state: speculative decoding cannot
+   * take back rejected tokens from a hybrid's state (Qwen 3.5 and later,
+   * Nemotron), and a mixture-of-experts model gains little from it.
+   */
+  draftModelId?: LocalModelId;
 }
 
 export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
@@ -219,6 +229,9 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/unsloth/gemma-4-31B-it-qat-GGUF/resolve/main/mmproj-BF16.gguf",
     mmprojFilename: "mmproj-BF16.gguf",
     mmprojFileSizeGb: 1.2,
+    // Gemma 4 family, a quarter of the weights; the launch still checks
+    // the two tokenizers match before using it (ATO-2424).
+    draftModelId: "gemma-4-e4b",
   },
   {
     id: "qwen-3.8-27b",
