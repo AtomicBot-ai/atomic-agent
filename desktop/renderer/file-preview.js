@@ -26,6 +26,12 @@
    and reveals through main's preview check (app:filePreviewAction), the same
    roots the preview reads. Another chat brings its own list.
 
+   ATO-2347: a text, code or markdown file has Edit (file-preview-edit.js):
+   the panel becomes a plain editor and Save goes through main's own check
+   (app:filePreviewSave); a file changed on disk meanwhile asks Reload from
+   disk or Overwrite. A CSV/TSV table sorts by a column when its header is
+   clicked (table-sort.js), within the rows shown.
+
    Shared with the Node checks (test/file-preview.test.mjs): parseDelimited,
    fpFormatSize, fpHtmlDoc, fpLangFor. Everything that touches the DOM is
    behind `typeof document`. */
@@ -100,7 +106,8 @@ function fpHtmlDoc(text) {
 
 /* `path` '' while open: the list of the chat's files (ATO-1256). `listed`: the file was picked from that list. */
 /* ATO-1628: `cite` the panel was opened from a citation chip; `frag` the PDF viewer's `#page=N`. */
-const FP = {open: false, path: '', reply: false, listed: false, data: null, view: 'render', seq: 0, timer: 0, blobUrl: '', stamp: '', files: [], cite: false, frag: ''};
+/* ATO-2347: `edit` the editor's state while it is open (file-preview-edit.js); `sort` the table's {col, dir} or null. */
+const FP = {open: false, path: '', reply: false, listed: false, data: null, view: 'render', seq: 0, timer: 0, blobUrl: '', stamp: '', files: [], cite: false, frag: '', edit: null, sort: null};
 
 function fpEsc(s) { return String(s).replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c])); }
 function fpIcon(n) { return typeof ic === 'function' ? ic(n) : ''; }
@@ -115,9 +122,11 @@ function filePreviewOpen(path, opts) {
   if (!el || !br || !br.filePreview || !path) return false;
   const frag = opts && opts.page > 0 ? '#page=' + Math.floor(opts.page) : '';   // ATO-1628
   const same = FP.open && FP.path === path && FP.frag === frag;
+  // ATO-2347: unsaved text asks first; the click was handled either way, so it never falls through to the system.
+  if (!same && typeof fpEditGuard === 'function' && fpEditGuard(() => filePreviewOpen(path, opts))) return true;
   FP.open = true; FP.path = path; FP.reply = !!(opts && opts.reply); FP.listed = !!(opts && opts.listed);
   FP.cite = !!(opts && opts.cite); FP.frag = frag;
-  if (!same) { FP.data = null; FP.view = 'render'; }
+  if (!same) { FP.data = null; FP.view = 'render'; FP.edit = null; FP.sort = null; }
   el.hidden = false;
   fpApplyWidth();
   fpPaintHead();
@@ -133,7 +142,8 @@ function filePreviewShowList() {
   if (!el) return false;
   FP.seq++;   // a load still out for a file is not shown now
   if (FP.timer) { clearTimeout(FP.timer); FP.timer = 0; }
-  FP.open = true; FP.path = ''; FP.reply = false; FP.listed = false; FP.data = null;
+  if (typeof fpEditStash === 'function') fpEditStash();   // ATO-2347: unsaved text is kept for when the file opens again
+  FP.open = true; FP.path = ''; FP.reply = false; FP.listed = false; FP.data = null; FP.edit = null; FP.sort = null;
   el.hidden = false;
   fpApplyWidth();
   fpPaintHead();
@@ -156,7 +166,8 @@ function filePreviewFilesChanged(files, chatChanged, away) {
 }
 function filePreviewClose() {
   const el = fpEl();
-  FP.open = false; FP.data = null; FP.path = ''; FP.listed = false;
+  if (typeof fpEditStash === 'function') fpEditStash();   // ATO-2347: unsaved text is kept for when the file opens again
+  FP.open = false; FP.data = null; FP.path = ''; FP.listed = false; FP.edit = null; FP.sort = null;
   if (FP.timer) { clearTimeout(FP.timer); FP.timer = 0; }
   fpRevoke();
   if (el) { el.hidden = true; el.innerHTML = ''; }
@@ -191,6 +202,7 @@ async function fpLoad(keepScroll) {
   const top = keepScroll && body ? body.scrollTop : 0;
   FP.data = res;
   FP.stamp = res && res.ok ? res.size + ':' + res.mtimeMs : '';
+  if (typeof fpEditRestore === 'function') fpEditRestore(res);   // ATO-2347: the editor back with its unsaved text
   fpPaintHead();
   fpPaintBody(fpBodyHtml(res));
   const after = fpEl() && fpEl().querySelector('.fp-body');
@@ -208,7 +220,11 @@ function fpPoll() {
       let r = null;
       try { r = await br.statPaths([FP.data.path]); } catch (e) { r = null; }
       const f = r && r.ok && r.files && r.files[0];
-      if (FP.open && f && f.exists && f.size + ':' + f.mtimeMs !== FP.stamp) await fpLoad(true);
+      if (FP.open && f && f.exists && f.size + ':' + f.mtimeMs !== FP.stamp) {
+        // ATO-2347: never under the editor; it says the file changed instead (file-preview-edit.js).
+        if (FP.edit && typeof fpEditDiskChanged === 'function') await fpEditDiskChanged(f);
+        else await fpLoad(true);
+      }
     }
     if (FP.open) fpPoll();
   }, FP_POLL_MS);
@@ -234,13 +250,15 @@ function fpPaintHead() {
   const name = d ? d.name : String(FP.path).split(/[\\/]/).pop();
   const togglable = d && (d.kind === 'markdown' || d.kind === 'html' || d.kind === 'csv' || d.kind === 'tsv');
   const meta = d ? [d.kind === 'other' || d.kind === 'office' ? (d.ext || 'file').replace(/^\./, '').toUpperCase() : d.kind.toUpperCase(), fpFormatSize(d.size)].filter(Boolean).join(' · ') : '';
+  const editing = FP.edit && typeof fpEditHeadHtml === 'function';   // ATO-2347: Save and Done instead
   el.querySelector('.fp-head').innerHTML = '<span class="fp-ic">' + fpIcon('doc') + '</span>'
     + '<span class="fp-title"><span class="fp-name" title="' + fpEsc(d ? d.path : FP.path) + '">' + fpEsc(name) + '</span>'
     + (meta ? '<span class="fp-meta">' + fpEsc(meta) + '</span>' : '') + '</span>'
+    + (editing ? fpEditHeadHtml() : (typeof fpEditable === 'function' && fpEditable(d) ? '<button class="fp-btn" data-fp="edit" title="Edit this file here">Edit</button>' : '')
     + (togglable ? '<button class="fp-btn fp-tog" data-fp="view" title="' + (FP.view === 'source' ? 'Show it rendered' : 'Show the source') + '">' + (FP.view === 'source' ? 'Preview' : 'Source') + '</button>' : '')
     + '<button class="fp-btn" data-fp="refresh" title="Reload the file" aria-label="Reload">↻</button>'
     + '<button class="fp-btn" data-fp="open" title="Open in its default app">Open</button>'
-    + '<button class="fp-btn" data-fp="reveal" title="' + fpEsc(fpRevealLabel()) + '" aria-label="' + fpEsc(fpRevealLabel()) + '">' + fpIcon('folder') + '</button>'
+    + '<button class="fp-btn" data-fp="reveal" title="' + fpEsc(fpRevealLabel()) + '" aria-label="' + fpEsc(fpRevealLabel()) + '">' + fpIcon('folder') + '</button>')
     + '<button class="fp-btn fp-x" data-fp="close" title="Close the preview" aria-label="Close the preview">✕</button>';
 }
 /** ATO-1256: the row of the chat's files over a previewed file (none over the list itself). */
@@ -288,6 +306,8 @@ function fpPaintBody(html) {
   // HTML: srcdoc set as a property, never parsed into this document.
   const page = body.querySelector('iframe[data-fp-html]');
   if (page && FP.data && typeof FP.data.text === 'string') page.srcdoc = fpHtmlDoc(FP.data.text);
+  // ATO-2347: the editor's text set as a property too (a leading newline would be lost in markup).
+  if (FP.edit && typeof fpEditFill === 'function') fpEditFill(body);
 }
 
 function fpTruncNote(d) {
@@ -313,11 +333,19 @@ function fpTableHtml(text, delim) {
   const cols = Math.min(FP_TABLE_COLS, shown.reduce((w, r) => Math.max(w, r.length), 0));
   const cell = (tag, v) => '<' + tag + '>' + fpEsc(v == null ? '' : v) + '</' + tag + '>';
   const head = shown[0];
-  const body = shown.slice(1, FP_TABLE_ROWS + 1);
+  // ATO-2347: sorted by the clicked column (table-sort.js), within the rows shown.
+  const sort = FP.sort && FP.sort.col < cols && typeof tsSortRows === 'function' ? FP.sort : null;
+  const body = sort ? tsSortRows(shown.slice(1, FP_TABLE_ROWS + 1), sort.col, sort.dir) : shown.slice(1, FP_TABLE_ROWS + 1);
   const cut = more || rows.length > FP_TABLE_ROWS + 1;
-  return (cut ? '<div class="fp-note">Showing the first ' + FP_TABLE_ROWS + ' rows.</div>' : '')
+  const th = (i) => {
+    const on = sort && sort.col === i;
+    const aria = on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
+    return '<th class="fp-sortable' + (on ? ' on' : '') + '" data-fp="sort" data-fp-col="' + i + '" aria-sort="' + aria + '" title="Sort by this column">'
+      + fpEsc(head[i] == null ? '' : head[i]) + (on ? '<span class="fp-sort-ic" aria-hidden="true">' + (sort.dir === 'asc' ? '▲' : '▼') + '</span>' : '') + '</th>';
+  };
+  return (cut ? '<div class="fp-note">Showing the first ' + FP_TABLE_ROWS + ' rows' + (sort ? ', sorted among themselves' : '') + '.</div>' : '')
     + '<div class="prose fp-prose"><div class="mdtbl fp-tbl"><table><thead><tr>'
-    + Array.from({length: cols}, (_, i) => cell('th', head[i])).join('') + '</tr></thead><tbody>'
+    + Array.from({length: cols}, (_, i) => th(i)).join('') + '</tr></thead><tbody>'
     + body.map((r) => '<tr>' + Array.from({length: cols}, (_, i) => cell('td', r[i])).join('') + '</tr>').join('')
     + '</tbody></table></div></div>';
 }
@@ -339,6 +367,7 @@ function fpBodyHtml(res) {
     return '<div class="fp-msg">' + fpEsc(why) + '</div>';
   }
   const d = res;
+  if (FP.edit && typeof fpEditHtml === 'function') return fpEditHtml(d);   // ATO-2347: file-preview-edit.js
   const text = typeof d.text === 'string' ? d.text : '';
   if (d.kind === 'image') return '<div class="fp-img"><img alt="' + fpEsc(d.name) + '" src="' + fpEsc(d.dataUrl || '') + '"></div>';
   if (d.kind === 'pdf') return '<iframe class="fp-frame fp-pdf" data-fp-pdf="1" title="' + fpEsc(d.name) + '"></iframe>';
@@ -396,19 +425,34 @@ if (typeof document !== 'undefined') {
     const what = b.dataset.fp;
     if (what === 'resize') return;
     e.preventDefault(); e.stopPropagation();
-    if (what === 'close') filePreviewClose();
-    else if (what === 'list') filePreviewShowList();
-    else if (what === 'pick') { if (b.dataset.fpPath) filePreviewOpen(b.dataset.fpPath, {listed: true}); }
-    else if (what === 'refresh') { if (FP.open) fpLoad(true); }
-    else if (what === 'open') fpOpenOutside();
-    else if (what === 'reveal') fpReveal();
-    else if (what === 'view') { FP.view = FP.view === 'source' ? 'render' : 'source'; fpPaintHead(); fpPaintBody(fpBodyHtml(FP.data)); }
+    const pickPath = b.dataset.fpPath;
+    const act = () => {
+      if (what === 'close') filePreviewClose();
+      else if (what === 'list') filePreviewShowList();
+      else if (what === 'pick') { if (pickPath) filePreviewOpen(pickPath, {listed: true}); }
+      else if (what === 'refresh') { if (FP.open) fpLoad(true); }
+      else if (what === 'open') fpOpenOutside();
+      else if (what === 'reveal') fpReveal();
+      else if (what === 'view') { FP.view = FP.view === 'source' ? 'render' : 'source'; fpPaintHead(); fpPaintBody(fpBodyHtml(FP.data)); }
+      else if (what === 'sort' && typeof tsNextSort === 'function') {   // ATO-2347
+        FP.sort = tsNextSort(FP.sort, parseInt(b.dataset.fpCol || '', 10));
+        fpPaintBody(fpBodyHtml(FP.data));
+      }
+      else if (typeof fpEditClick === 'function') fpEditClick(what);   // ATO-2347: Edit, Save, Done and the editor's bars
+    };
+    // ATO-2347: leaving the editor with unsaved text asks first (file-preview-edit.js).
+    if ((what === 'close' || what === 'list' || what === 'pick' || what === 'refresh' || what === 'view')
+      && typeof fpEditGuard === 'function' && fpEditGuard(act)) return;
+    act();
   }, true);
   document.addEventListener('keydown', (e) => {
     /* Capture phase and stopImmediatePropagation: renderer.js's own Esc chain
        would otherwise also run — aborting a streaming turn, or opening Settings. */
     if (e.key === 'Escape' && FP.open && e.target && e.target.closest && e.target.closest('#fpreview')) {
-      e.preventDefault(); e.stopImmediatePropagation(); filePreviewClose();
+      e.preventDefault(); e.stopImmediatePropagation();
+      // ATO-2347: Escape in the editor leaves the editor (asking first about unsaved text), not the panel.
+      if (FP.edit && typeof fpEditLeave === 'function') { fpEditLeave(); return; }
+      filePreviewClose();
     }
   }, true);
   document.addEventListener('pointerdown', (e) => {

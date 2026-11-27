@@ -254,6 +254,10 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-1053: the preview panel reads a file through main (file-preview.ts), never the disk itself.
   filePreview: (path: string) => ipcRenderer.invoke("app:filePreview", path),
   filePreviewAction: (path: string, action: "open" | "reveal") => ipcRenderer.invoke("app:filePreviewAction", path, action),
+  // ATO-2347: the panel's editor saves through main (file-save.ts). `stamp` is the size and time the panel read;
+  // → {ok:true, path, size, mtimeMs} | {ok:false, reason:"changed", size, mtimeMs} | {ok:false, reason}.
+  filePreviewSave: (path: string, text: string, stamp: { size: number; mtimeMs: number }, force?: boolean) =>
+    ipcRenderer.invoke("app:filePreviewSave", path, text, stamp, force === true),
   // ATO-1136: an HTML artifact kept in main and served sandboxed; answers {ok:true, url:'atomic-art://…/'} | {ok:false, reason}.
   artifactPut: (html: string) => ipcRenderer.invoke("app:artifactPut", html),
   artifactDrop: (url: string) => ipcRenderer.invoke("app:artifactDrop", url),

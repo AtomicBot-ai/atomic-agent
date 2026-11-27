@@ -326,6 +326,7 @@ import { isDictatePill, wireDictateAnywhere } from "./dictate-anywhere-window.js
 import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
+import { filePreviewSave } from "./file-save.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 import { buildLocalGgufModelDef, resolveLocalGgufFile } from "./local-gguf.js";
 import { discoverLocalModels, registerDiscoveredModel } from "./local-models-found.js";
@@ -3139,6 +3140,11 @@ function wireIpc(client: AgentClient): void {
     if (action === "open") return openWithoutRunning(t.real);
     return { ok: false, reason: "unknown" };
   });
+  /* ATO-2347: Save from the panel's editor (file-save.ts): the same roots and
+     path check as the read, text files only, never a new file, and nothing
+     written when the file changed since the panel read it unless `force`. */
+  ipcMain.handle("app:filePreviewSave", (_event, p: unknown, text: unknown, stamp: unknown, force: unknown) =>
+    filePreviewSave(p, text, stamp, previewRoots(), homedir(), process.platform, { force: force === true }));
   ipcMain.handle("app:imageSaveAs", async (event, p: unknown) => {
     const opened = await openImage(p, imageRoots(), homedir(), process.platform);
     if (!opened.ok) return { ok: false, reason: opened.reason };
