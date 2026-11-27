@@ -87,7 +87,7 @@ Before saving, the carried history is fitted into a local model's window (ATO-11
 
 ## Model across computers
 
-`models rpc-worker [--lan | --host <ip>] [--port <n>] [--cache]` (ATO-2338, [models-rpc-worker.ts](models-rpc-worker.ts)) lends this computer's memory and GPU to a model running on another one: it starts llama.cpp's `rpc-server` (from `ATOMIC_AGENT_RPC_SERVER`, the managed backend folder, or PATH) in the foreground on port 50052, loopback unless `--lan` or `--host`, and prints the `localModels.managed.rpcServers` value to set on the main computer. llama.cpp RPC has no authentication, so opening it to the network prints a warning. The main computer's launch adds `--rpc` and refuses an engine build whose `--help` lacks it ([rpc-peers](../local-llm/server/rpc-peers.ts)).
+`models rpc-worker [--lan | --host <ip>] [--port <n>] [--cache]` (ATO-2338, [models-rpc-worker.ts](models-rpc-worker.ts)) lends this computer's memory and GPU to a model running on another one: it starts llama.cpp's `rpc-server` (from `ATOMIC_AGENT_RPC_SERVER`, the agent's own engine folder, the folder of the llama-server Atomic Core installed, or PATH; `rpc-server.exe` on Windows, ATO-2454) with its folder on the library path, as Core runs its llama-server, in the foreground on port 50052, loopback unless `--lan` or `--host`, and prints the `localModels.managed.rpcServers` value to set on the main computer. llama.cpp RPC has no authentication, so opening it to the network prints a warning. The main computer's launch adds `--rpc` and refuses an engine build whose `--help` lacks it ([rpc-peers](../local-llm/server/rpc-peers.ts)).
 
 ## Share
 
