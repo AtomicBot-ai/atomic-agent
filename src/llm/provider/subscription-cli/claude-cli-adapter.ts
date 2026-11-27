@@ -10,6 +10,7 @@ import {
   CLAUDE_CLI_CONTEXT_WINDOW,
   CLAUDE_CLI_DEFAULT_CHAT_MODEL,
 } from "./claude-cli-models.js";
+import { cliInstallHint } from "./cli-install-hint.js";
 import {
   SubscriptionCliAuthError,
   SubscriptionCliInvocationError,
@@ -259,9 +260,9 @@ export const claudeCliAdapter: CliAdapterDescriptor = {
   schemaDelivery: "inline",
   streamMode: "ndjson",
   // Read by someone who picked "Claude Code subscription" in a menu:
-  // what to do comes first, the config escape hatch last.
-  installHint:
-    "Install Claude Code and sign in, or choose another provider. If it is installed somewhere else, set llm.providers[].subscriptionCli.binPath to the binary's absolute path.",
+  // what to do comes first, the config escape hatch last. The installer
+  // command and the binary's file name are the platform's own (ATO-1679).
+  installHint: cliInstallHint("claude", process.platform),
   authHint: "Run `claude` in a terminal and complete /login, then retry.",
   // Each of these takes precedence over the /login subscription: an API
   // key or bearer token bills per token, a base URL sends the turn to
