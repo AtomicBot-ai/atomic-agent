@@ -25,6 +25,7 @@ export {
   writeAtomicMailApiKey,
   writeCachedSession,
 } from "./atomic-mail-store.js";
+export { agentEmailAddress } from "./agent-email-address.js";
 export {
   AtomicMailService,
   CODE_TTL_MINUTES,
