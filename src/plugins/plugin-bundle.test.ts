@@ -55,6 +55,8 @@ describe("readPluginBundle", () => {
     const notes = readPluginBundle(root).notes.join("\n");
     expect(notes).toContain("outputStyles");
     expect(notes).toContain("subagent");
+    expect(notes).toContain("`subagent.run`");
+    expect(notes).not.toContain("only used once subagent profiles land");
   });
 
   it("treats a root SKILL.md as a single-skill plugin", () => {
