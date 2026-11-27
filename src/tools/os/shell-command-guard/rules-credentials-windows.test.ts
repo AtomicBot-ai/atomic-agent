@@ -88,10 +88,65 @@ describe("dangerous.read_credentials on Windows paths and readers (ATO-2728)", (
     expect(verdict.askEveryLevel).toBeUndefined();
   });
 
-  it("leaves forward-slash ~ and $HOME to the POSIX rule", () => {
-    expect(windowsFinding("cat ~/.ssh/id_rsa")).toBeNull();
-    expect(windowsFinding("cat $HOME/.aws/credentials")).toBeNull();
-    // Still asked, by the POSIX rule.
+  it("reads forward-slash ~ and $HOME too, as PowerShell takes them", () => {
+    expect(windowsFinding("gc ~/.ssh/id_rsa")).not.toBeNull();
+    expect(windowsFinding("Get-Content $HOME/.aws/credentials")).not.toBeNull();
     expect(guardLine("cat ~/.ssh/id_rsa")).toMatchObject({ askEveryLevel: true });
+  });
+});
+
+describe("review round 1 (#1945): bypasses at level 5", () => {
+  // Each line ran unasked in bypass at 6d70e1a.
+  it.each([
+    // F1945.1: `~/` and `$HOME/` with a PowerShell reader, inside `powershell -c`.
+    String.raw`powershell -c "Get-Content ~/.ssh/id_rsa"`,
+    String.raw`pwsh -c "gc $HOME/.aws/credentials"`,
+    String.raw`pwsh -NoProfile -Command "cd ~; gc .ssh/id_rsa"`,
+    String.raw`Get-Content ~/.ssh/id_ed25519`,
+    String.raw`type ~/.aws/credentials`,
+    // F1945.3: a cd into the home folder, %HOMEPATH%, Join-Path, \\?\ and UNC.
+    String.raw`cd /d %USERPROFILE% && type .ssh\id_rsa`,
+    String.raw`pushd %USERPROFILE% & type .aws\credentials`,
+    String.raw`Set-Location $env:USERPROFILE; gc .ssh\id_rsa`,
+    String.raw`type %HOMEPATH%\.ssh\id_rsa`,
+    String.raw`type $env:HOMEDRIVE$env:HOMEPATH\.ssh\id_rsa`,
+    String.raw`gc (Join-Path $env:USERPROFILE .ssh\id_rsa)`,
+    String.raw`gc (Join-Path $env:USERPROFILE '.ssh\id_rsa')`,
+    String.raw`gc ([Environment]::GetFolderPath('UserProfile') + '\.ssh\id_rsa')`,
+    String.raw`type \\?\C:\Users\x\.ssh\id_rsa`,
+    String.raw`type \\localhost\c$\Users\x\.ssh\id_rsa`,
+    String.raw`type \\?\UNC\localhost\c$\Users\x\.aws\credentials`,
+    // cmd drops `^` before `type` sees the path.
+    String.raw`type %USERPROFILE%\.s^sh\id_rsa`,
+  ])("asks at every level: %s", (line) => {
+    expect(guardLine(line), line).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.read_credentials",
+      askEveryLevel: true,
+    });
+  });
+
+  it("reads a relative entry against a tool working folder that is the home folder", () => {
+    const verdict = checkShellCommandGuard({
+      cmd: "type",
+      rawArgs: [String.raw`.ssh\id_rsa`],
+      cwd: String.raw`C:\Users\x`,
+    });
+    expect(verdict).toMatchObject({ rule: "dangerous.read_credentials", askEveryLevel: true });
+  });
+
+  it.each([
+    // The same entries below another folder are not home paths.
+    String.raw`cd /d C:\project && type .ssh\id_rsa`,
+    String.raw`cd /d %USERPROFILE% && type notes.txt`,
+    String.raw`cd /d %USERPROFILE% && type .ssh\id_rsa.pub`,
+    String.raw`gc (Join-Path $env:USERPROFILE notes.txt)`,
+    // Writes into the folder, and a key named as an ssh option, are not reads.
+    "cp /tmp/k ~/.ssh/id_rsa",
+    "Copy-Item C:/tmp/k -Destination ~/.ssh/id_rsa",
+    "ssh -i ~/.ssh/id_rsa host < /dev/null",
+  ])("is not a credential read: %s", (line) => {
+    expect(windowsFinding(line), line).toBeNull();
+    expect(guardLine(line).askEveryLevel, line).toBeUndefined();
   });
 });
