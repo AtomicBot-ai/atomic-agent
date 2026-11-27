@@ -3388,7 +3388,8 @@ function wireIpc(client: AgentClient): void {
   // ATO-67: Settings › Skills › Pending review, through `atag skill learned` (skill-drafts-ipc.ts).
   wireSkillDraftsIpc({ cwd: () => client.status.workingDir, isRemote: () => client.isRemote });
   // ATO-2401: Show once, record a routine in a Mac app as a skill draft (show-once-ipc.ts).
-  wireShowOnceIpc({ stateDir: DESKTOP_STATE_DIR, isRemote: () => client.isRemote, log: (line) => console.log(line) });
+  wireShowOnceIpc({ stateDir: DESKTOP_STATE_DIR, isRemote: () => client.isRemote, log: (line) => console.log(line),
+    complete: (body) => client.plainComplete(body) }); // ATO-2499: the tidy pass, on the chat model
   // ATO-1129: Settings › Connections › Phone push, through `atag push` (push-ipc.ts).
   wirePushIpc();
   // ATO-404/405: the composer's attachments, saved into <stateDir>/inbox/desktop.

@@ -180,6 +180,13 @@ button.set-search:hover{border-color:var(--bd)}
 .set-skdraft{display:block;padding:10px 12px}
 .set-skdraft .d{margin:4px 0 0;white-space:normal}
 .set-skdraft .acts{align-items:center;gap:8px;margin:8px 0 0}
+/* ATO-2499: Show once, the Record card's switches and a recorded draft's step pictures */
+.show-once-opts{display:flex;flex-direction:column;gap:8px;margin:8px 0 12px}
+.show-once-opt{align-items:flex-start;gap:10px}
+.show-once-opt .d{display:block;margin:2px 0 0;white-space:normal}
+.show-once-pics{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin:8px 0 12px}
+.show-once-pic{margin:0}
+.show-once-pic img{display:block;width:100%;height:auto;border-radius:6px;border:1px solid var(--line,rgba(127,127,127,.25))}
 .set-skdsrc{margin:4px 0 10px;padding-left:18px}
 
 /* Empty and loading states */

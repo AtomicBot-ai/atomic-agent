@@ -112,7 +112,7 @@ function skillEvalHTML(st, esc) {
 }
 /* ATO-67 (Nadya 18.11): skills the agent learned from a turn that read outside content wait as drafts
    until the person looks at them. main/skill-drafts-ipc.ts reads `atag skill list --json` (status
-   "pending") and runs `atag skill learned show|approve|discard <id>`; these draw the "Pending review"
+   "pending") and runs `atag skill learned show|approve|discard <id>`; these draw the "To review" (ATO-2499; was "Pending review")
    group above the skill rows, a draft's read-only preview and the Discard confirm. Every string
    from the agent (the model's reason, the skill name, the SKILL.md, the sources) goes through esc. */
 const SKILL_DRAFT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/; // main/skill-drafts-cli.ts
@@ -126,7 +126,7 @@ function skillDraftsGroup(rows) {
   const seen = new Set();
   const list = (rows || []).filter(r => r && typeof r.id === 'string' && SKILL_DRAFT_ID_RE.test(r.id) && !seen.has(r.id) && seen.add(r.id))
     .map(r => ({id: r.id, name: String(r.name || r.id), kind: r.kind === 'patch' ? 'patch' : 'create', reason: String(r.reason || '')}));
-  return list.length ? {label: 'Pending review', count: list.length, rows: list} : null;
+  return list.length ? {label: 'To review', count: list.length, rows: list} : null;
 }
 function skillDraftsListHTML(st, esc) {
   const group = skillDraftsGroup(st.rows);
@@ -134,7 +134,7 @@ function skillDraftsListHTML(st, esc) {
   const busy = id => st.busyId === id;
   return '<div class="tk-list set-sklist set-skdrafts" data-skill-drafts="' + group.count + '">'
     + '<div class="set-tlfam"><span class="set-tlgn">' + esc(group.label) + '</span> <span class="tk-chip tk-chip--sm tk-chip--amber" aria-label="' + group.count + ' pending">' + group.count + '</span>'
-    + '<span class="set-tlwhat">Learned from outside content. Nothing is saved until you approve it.</span></div>'
+    + '<span class="set-tlwhat">Skills the agent learned or you recorded with Show once. None is used until you approve it.</span></div>'
     + (st.error ? '<div class="tuierr tk-help tk-help--err">' + esc(st.error) + '</div>' : '')
     + group.rows.map(r => '<div class="tk-li set-skdraft" data-skill-draft="' + esc(r.id) + '">'
       + '<span class="t mono" title="' + esc(r.name) + '">' + esc(r.name) + '</span> '
@@ -165,7 +165,7 @@ function skillDraftDetailHTML(st, esc) {
       + '<button class="btn btn-danger sm" data-act="skills:draft:discard:' + esc(d.id) + '"' + (st.busyId ? ' disabled' : '') + '>Discard</button>'
     + '</div>'
     + '<div class="set-titlerow"><h3 class="set-dtitle mono">' + esc(d.skill || open.name || d.id) + '</h3>'
-      + '<span class="tk-chip tk-chip--sm tk-chip--amber">Pending review</span>'
+      + '<span class="tk-chip tk-chip--sm tk-chip--amber">To review</span>'
       + '<span class="tk-chip tk-chip--sm">' + skillDraftKindLabel(d.kind) + '</span></div>'
     + (d.reason ? '<p class="set-desc">' + esc(d.reason) + '</p>' : '')
     + '<p class="set-cap">' + (sources.length ? 'Learned from:' : 'No sources were recorded.') + '</p>'
