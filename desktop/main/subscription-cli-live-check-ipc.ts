@@ -18,6 +18,7 @@ import { ipcMain } from "electron";
 
 import { detectSubscriptionCli, isSubscriptionCli, type SubscriptionCli } from "./subscription-cli-detect.js";
 import { loginBinary } from "./subscription-cli-login.js";
+import { collectLiveCheckChild, type LiveCheckChild } from "./live-check-child.js";
 import {
   LIVE_CHECK_STRIP_ENV, LiveCheckCache, runLiveCheck,
   type LiveCheck, type LiveCheckStep, type RunOutcome,
@@ -52,16 +53,6 @@ function runStep(cli: SubscriptionCli, bin: string, step: LiveCheckStep): Promis
     // Windows: through cmd.exe, so an npm `.cmd` shim and a bare name on PATH both resolve.
     const command = win ? "cmd.exe" : bin;
     const args = win ? ["/d", "/s", "/c", `"${[bin === cli ? bin : `"${bin}"`, ...step.args.map(cmdArg)].join(" ")}"`] : step.args;
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    let settled = false;
-    const done = (o: Omit<RunOutcome, "stdout" | "stderr" | "timedOut">) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ ...o, stdout, stderr, timedOut });
-    };
     let child: ReturnType<typeof spawn>;
     try {
       child = spawn(command, args, {
@@ -72,14 +63,12 @@ function runStep(cli: SubscriptionCli, bin: string, step: LiveCheckStep): Promis
         ...(win ? { windowsVerbatimArguments: true } : {}),
       });
     } catch (err) {
-      resolve({ code: null, stdout, stderr, timedOut, spawnError: (err as NodeJS.ErrnoException).code ?? "spawn_failed" });
+      resolve({ code: null, stdout: "", stderr: "", timedOut: false, spawnError: (err as NodeJS.ErrnoException).code ?? "spawn_failed" });
       return;
     }
-    const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, step.timeoutMs);
-    child.stdout?.on("data", (b: Buffer) => { if (stdout.length < MAX_OUTPUT) stdout += b.toString("utf8"); });
-    child.stderr?.on("data", (b: Buffer) => { if (stderr.length < MAX_OUTPUT) stderr += b.toString("utf8"); });
-    child.once("error", (err: NodeJS.ErrnoException) => done({ code: null, spawnError: err.code ?? "spawn_failed" }));
-    child.once("close", (code) => done({ code }));
+    // The deadline settles on its own: on Windows killing cmd.exe may leave
+    // the CLI holding the pipes, so `close` is not waited for.
+    collectLiveCheckChild(child as unknown as LiveCheckChild, step.timeoutMs, MAX_OUTPUT).then(resolve);
   });
 }
 
