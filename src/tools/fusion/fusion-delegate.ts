@@ -99,6 +99,7 @@ import {
 import type { DelegateTask } from "./delegate-args.js";
 import {
   allowedModels,
+  legKey,
   resolveTaskLegs,
   unknownModels,
   type TaskLeg,
@@ -488,13 +489,18 @@ export function buildFusionDelegateTool(
         return error(modelProblem, { field: "tasks", reason: "unknown-model" });
       }
       const taskLegs = resolveTaskLegs(parsed.tasks, workerLegRef, mode.roles);
-      // The legs other than the worker leg, one per provider.
+      // The legs other than the worker leg, one per provider and model
+      // (one entry can serve two roles with a model each, roleModels).
       const roleLegs = new Map<string, TaskLeg>();
       for (const leg of taskLegs.values()) {
-        if (!leg.isWorkerLeg && !roleLegs.has(leg.providerId)) {
-          roleLegs.set(leg.providerId, leg);
+        if (!leg.isWorkerLeg && !roleLegs.has(legKey(leg))) {
+          roleLegs.set(legKey(leg), leg);
         }
       }
+      // Their providers, each once: two models on one entry share it.
+      const roleProviderIds = [
+        ...new Set([...roleLegs.values()].map((leg) => leg.providerId)),
+      ];
 
       // The turn's caps (ATO-947). Unset — the default — and nothing
       // below changes: no check, no extra signal, no timer.
@@ -534,7 +540,7 @@ export function buildFusionDelegateTool(
         const priorTrip = refusalFromTrips(
           turnBudget.trips(ctx.sessionId),
           workerProviderId,
-          [...roleLegs.keys()],
+          roleProviderIds,
         );
         if (priorTrip !== undefined) {
           return error(
@@ -584,7 +590,7 @@ export function buildFusionDelegateTool(
         });
       }
 
-      for (const providerId of roleLegs.keys()) {
+      for (const providerId of roleProviderIds) {
         try {
           await deps.warmWorkerBackend(providerId);
         } catch (err) {
@@ -1258,7 +1264,7 @@ export function buildFusionDelegateTool(
       // escalation target is dropped where it is this very model.
       const rolePricing = new Map(
         [...roleLegs.values()].map((leg) => [
-          leg.providerId,
+          legKey(leg),
           deps.resolveWorkerPricing?.(leg.providerId, leg.model),
         ]),
       );
@@ -1275,7 +1281,7 @@ export function buildFusionDelegateTool(
         allowSplit: boolean,
       ): Promise<WorkerTaskResult[]> => {
         const local = deps.workerSupportsSlotAffinity(leg.providerId);
-        const pricing = rolePricing.get(leg.providerId);
+        const pricing = rolePricing.get(legKey(leg));
         const roles = new Set(
           tasks.map((t) => taskLegs.get(t.id)?.role ?? "-"),
         );
@@ -1369,7 +1375,7 @@ export function buildFusionDelegateTool(
           ...[...roleLegs.values()].map((leg) => {
             const mine = tasks.filter((t) => {
               const own = taskLegs.get(t.id);
-              return own?.isWorkerLeg === false && own.providerId === leg.providerId;
+              return own?.isWorkerLeg === false && legKey(own) === legKey(leg);
             });
             return mine.length === 0
               ? Promise.resolve<WorkerTaskResult[]>([])
@@ -1830,7 +1836,7 @@ export function buildFusionDelegateTool(
       const pricingFor = (taskId: string): WorkerPricing | undefined => {
         const leg = taskLegs.get(taskId);
         if (leg === undefined || leg.isWorkerLeg) return workerPricing;
-        return rolePricing.get(leg.providerId);
+        return rolePricing.get(legKey(leg));
       };
       const costEstimates: {
         id: string;
@@ -1908,16 +1914,16 @@ export function buildFusionDelegateTool(
         });
       }
       let roleSpendUsd = 0;
-      for (const [providerId, pricing] of rolePricing) {
+      for (const [key, leg] of roleLegs) {
+        const pricing = rolePricing.get(key);
         if (pricing === undefined) continue;
         roleSpendUsd += fanoutSpend(
-          results.filter(
-            (r) =>
-              taskLegs.get(r.id)?.providerId === providerId &&
-              taskLegs.get(r.id)?.isWorkerLeg === false,
-          ),
+          results.filter((r) => {
+            const own = taskLegs.get(r.id);
+            return own !== undefined && own.isWorkerLeg === false && legKey(own) === key;
+          }),
           pricing,
-          providerId,
+          leg.providerId,
         ).usd;
       }
 

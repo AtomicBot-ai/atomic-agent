@@ -236,6 +236,9 @@ export interface SlashDispatchResult {
     import("../../config/index.js").RunModeName | "status" | "swap";
   /** `/runmode workers N`: persist the fusion worker count. */
   readonly runModeWorkers?: number;
+  /** `/runmode role ...` / `/runmode roles`: set or list the fusion roles. */
+  readonly runModeRole?: import("./dispatch-run-mode.js").RunModeCommand["role"];
+  readonly runModeListRoles?: boolean;
   /**
    * `/status` (ATO-965): print a status snapshot of the running turn. It
    * is built from `TuiState`, which this pure dispatcher cannot see, so
@@ -640,6 +643,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       }
       if (cmd.workers !== undefined)
         return pureActions([], { runModeWorkers: cmd.workers });
+      if (cmd.role !== undefined) return pureActions([], { runModeRole: cmd.role });
+      if (cmd.listRoles) return pureActions([], { runModeListRoles: true });
       if (cmd.swap) return pureActions([], { runModeVerb: "swap" });
       return pureActions([], { runModeVerb: cmd.status ? "status" : cmd.mode });
     }
@@ -806,6 +811,8 @@ function pureActions(
     setWhileBusyMode: undefined,
     runModeVerb: undefined,
     runModeWorkers: undefined,
+    runModeRole: undefined,
+    runModeListRoles: undefined,
     ...overrides,
   };
 }

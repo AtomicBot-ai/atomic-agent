@@ -747,6 +747,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.runMode.setMode(mode, opts),
         onFusionWorkersChangeRequested: (workers) =>
           orchestrator.runMode.setWorkers(workers),
+        onFusionRoleChangeRequested: (role, pin) =>
+          orchestrator.runMode.setRole(role, pin),
+        onFusionRolesListRequested: () => orchestrator.runMode.listRoles(),
         onFusionLegsSwapRequested: () => void orchestrator.runMode.swapLegs(),
         // `/worker stop|escalate <id>` (ATO-66) and `/worker steer <id>
         // <note>` (ATO-568): one running fusion worker, through the
