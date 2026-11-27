@@ -1,0 +1,46 @@
+/* ATO-2457: ui.render cards in a reply (ui-render.js), drawn by the window itself */
+.uir{display:flex;flex-direction:column;gap:8px;min-width:0;max-width:min(100%,620px);padding:10px 12px;border-radius:var(--r-well);
+  background:var(--well);box-shadow:inset 0 0 0 1px var(--line-hair)}
+.uir-head{display:flex;align-items:flex-start;gap:8px;min-width:0}
+.uir-title{flex:1;min-width:0;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+.uir-text{color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere}
+.uir-png{flex:none;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:0;border-radius:6px;
+  background:none;color:var(--ink-3);cursor:pointer}
+.uir-png svg{width:13px;height:13px}
+.uir-png:hover{background:var(--hover);color:var(--ink-2)}
+.uir-png:focus-visible,.uir-opt:focus-visible,.chat-art-png:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.uir-opts{display:flex;flex-wrap:wrap;gap:6px}
+.uir-opt{display:flex;flex-direction:column;align-items:flex-start;gap:2px;max-width:100%;padding:7px 12px;border:0;border-radius:8px;
+  background:var(--paper);box-shadow:inset 0 0 0 1px var(--bd-2);color:var(--ink);font:inherit;text-align:left;cursor:pointer}
+.uir-opt:hover{box-shadow:inset 0 0 0 1px var(--brand)}
+.uir-opt.on{box-shadow:inset 0 0 0 2px var(--brand)}
+.uir-opt .t{font-weight:500;overflow-wrap:anywhere}
+.uir-opt .d{font-size:var(--fs-label);color:var(--ink-3);overflow-wrap:anywhere}
+.uir-form{display:flex;flex-direction:column;gap:8px}
+.uir-field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.uir-label{font-size:var(--fs-label);color:var(--ink-2)}
+.uir-req{color:var(--danger)}
+.uir-in{width:100%;box-sizing:border-box}
+textarea.uir-in{resize:vertical;min-height:56px;font:inherit}
+.uir-check{display:flex;align-items:center;gap:8px;color:var(--ink);cursor:pointer}
+.uir-foot{display:flex;justify-content:flex-end}
+.uir-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px}
+.uir-card{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0;padding:8px 10px;border-radius:8px;
+  background:var(--paper);box-shadow:inset 0 0 0 1px var(--bd-2)}
+.uir-card.on{box-shadow:inset 0 0 0 2px var(--brand)}
+.uir-card .t{font-weight:500;color:var(--ink);overflow-wrap:anywhere}
+.uir-card .m{font-size:var(--fs-label);color:var(--ink-3)}
+.uir-card .d{font-size:var(--fs-label);color:var(--ink-2);overflow-wrap:anywhere}
+.uir-card .btn{margin-top:auto}
+.uir-note{font-size:var(--fs-label);color:var(--ink-3);min-height:0}
+.uir-note:empty{display:none}
+.uir-note[data-bad]{color:var(--danger)}
+/* Save as PNG: on the artifact bar (artifact-png.js); the card's own buttons stay out of the picture */
+.chat-art-png{flex:none;display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border:0;border-radius:6px;
+  background:none;color:var(--ink-3);font:500 var(--fs-micro)/16px var(--font-ui);cursor:pointer}
+.chat-art-png svg{width:12px;height:12px}
+.chat-art-png:hover{background:var(--hover);color:var(--ink-2)}
+.png-capturing .uir-png{visibility:hidden}
+/* A widget's errors: the lines, then the button that hands them to the agent (artifact-bridge.js) */
+.chat-art-err{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.chat-art-fix{color:var(--ink)}

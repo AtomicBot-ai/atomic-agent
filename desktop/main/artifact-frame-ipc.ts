@@ -3,14 +3,19 @@
  *
  *   app:artifactPut    keep a page, answer its `atomic-art://<token>/` URL
  *   app:artifactDrop   forget a page the window replaced
+ *   app:artifactPng    ATO-2457: save a card's box on screen as a PNG (artifact-png.ts)
  *
  * registerArtifactScheme runs before the app is ready (Electron's rule for
  * privileged schemes); wireArtifactIpc after, once.
  */
 
-import { ipcMain, protocol, session } from "electron";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import { app, BrowserWindow, dialog, ipcMain, protocol, session } from "electron";
 
 import { ARTIFACT_SCHEME, ArtifactStore } from "./artifact-frame.js";
+import { pngCaptureRect, pngFileName, pngTarget } from "./artifact-png.js";
 import { MY_APP_SCHEME } from "./my-apps-store.js";
 
 const store = new ArtifactStore();
@@ -38,4 +43,27 @@ export function wireArtifactIpc(): void {
   }
   ipcMain.handle("app:artifactPut", (_event, html: unknown) => store.put(html));
   ipcMain.handle("app:artifactDrop", (_event, url: unknown) => { store.drop(url); return { ok: true }; });
+  // → {ok:true, path} | {ok:false, reason:'canceled'|'bad-rect'|'failed'}
+  ipcMain.handle("app:artifactPng", async (event, rect: unknown, title: unknown) => {
+    const wc = event.sender;
+    const win = BrowserWindow.fromWebContents(wc);
+    if (!win) return { ok: false, reason: "failed" };
+    const [width, height] = win.getContentSize();
+    const r = pngCaptureRect(rect, wc.getZoomFactor(), { width, height });
+    if (!r) return { ok: false, reason: "bad-rect" };
+    try {
+      const image = await wc.capturePage(r);
+      if (image.isEmpty()) return { ok: false, reason: "failed" };
+      const picked = await dialog.showSaveDialog(win, {
+        defaultPath: join(app.getPath("downloads"), pngFileName(title)),
+        filters: [{ name: "PNG image", extensions: ["png"] }],
+      });
+      if (picked.canceled || !picked.filePath) return { ok: false, reason: "canceled" };
+      const path = pngTarget(picked.filePath);
+      await writeFile(path, image.toPNG());
+      return { ok: true, path };
+    } catch {
+      return { ok: false, reason: "failed" };
+    }
+  });
 }
