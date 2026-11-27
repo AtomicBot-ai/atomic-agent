@@ -23023,6 +23023,7 @@ async function wizNextStep() {
     const refused = status === 401 || status === 403;
     const unreachable = !!(listed && listed.unreachable);
     const cert = listed && listed.certificate ? String(listed.certificate) : '';
+    const loadingModel = status === 503 && (!!k.local || !!k.custom) && /\bloading model\b/i.test(said);   // ATO-2011
     /* B04: a server on this machine (Ollama, LM Studio, Atomic Chat, a custom
        loopback URL) has no key, so nothing here may blame one: an empty
        field there was never a key to check. Ollama not running read "Could
@@ -23058,10 +23059,14 @@ async function wizNextStep() {
       // ATO-202: the provider answered, with its own trouble: nothing to say about the key.
       : status === 429
       ? wizService(k) + ' is limiting requests right now (429). Wait a moment, then try again.'
+      // ATO-2011: llama.cpp answers 503 "Loading model" while its model loads; that is not the server failing.
+      : loadingModel
+      ? Name + ' at ' + where + ' is still loading its model. Wait a moment, then try again.'
       : status >= 500
       ? wizService(k) + ' had a problem answering (HTTP ' + status + '). Try again in a moment.'
-      : local && wizSaidNoModels(said)
-      ? Name + ' at ' + where + ' has no models yet. ' + (k.custom ? 'Load a model into it' : 'Add one in ' + name) + ', then try again.'
+      // ATO-2011: an address of your own with no model is that, wherever it is (Tailscale, a domain), not a key to check.
+      : (local || k.custom) && wizSaidNoModels(said)
+      ? Name + ' at ' + where + (k.custom ? ' has no models loaded. Load a model into the server' : ' has no models yet. Add one in ' + name) + ', then try again.'
       : local
       ? Name + ' at ' + where + ' didn\u2019t list its models.'
       : said
@@ -23071,7 +23076,8 @@ async function wizNextStep() {
     if (k.lan) WIZ.error = lanWizardError(where, unreachable, refused, !!WIZ.apiKey) || WIZ.error;
     WIZ.errorDetail = listed && listed.error ? {for: WIZ.error, text: listed.error} : null;
     // ATO-202: and for every line that is not about the key, the key field stays unlit (wizErrUnreachable).
-    const notTheKey = unreachable || cert || (listed && listed.timedOut) || status === 403 || status === 429 || status >= 500;
+    const notTheKey = unreachable || cert || (listed && listed.timedOut) || status === 403 || status === 429 || status >= 500
+      || (k.custom && !refused && wizSaidNoModels(said));   // ATO-2011: an empty server is not the key's fault
     WIZ.errorKind = notTheKey && !(refused && local && !WIZ.apiKey) ? {for: WIZ.error, kind: 'unreachable'} : null;
     render();
     return;
