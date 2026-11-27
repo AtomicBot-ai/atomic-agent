@@ -72,7 +72,7 @@ export function hasContextMentions(text: string, workingDir: string): boolean {
   if (tokens.length === 0) return false;
   let root: string;
   try {
-    root = realpathSync(workingDir);
+    root = realpathSync.native(workingDir);
   } catch {
     return false;
   }
@@ -132,7 +132,7 @@ export async function contextMentions(
   if (tokens.length === 0) return [];
   let root: string;
   try {
-    root = realpathSync(workingDir);
+    root = realpathSync.native(workingDir);
   } catch {
     return [];
   }

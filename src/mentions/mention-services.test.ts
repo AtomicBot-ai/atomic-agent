@@ -23,6 +23,16 @@ describe("createMentionServices", () => {
     expect(await services.expand("look @.env @diff", root)).not.toContain("sk-test");
   });
 
+  it("never inlines the key file under another letter case (macOS)", async () => {
+    const services = createMentionServices({ lspPool: () => null, protectedFiles: [join(root, ".env")] });
+    if (process.platform === "darwin") {
+      // macOS tmp is case-insensitive: `.ENV` opens `.env`.
+      expect(services.expandNow("look @.ENV", root) ?? "").not.toContain("sk-test");
+      expect(await services.expand("look @.ENV:1-5 @diff", root)).not.toContain("sk-test");
+    }
+    expect(protectedPathCheck(["/Users/me/.atomic-agent/.env"], "darwin")("/Users/me/.atomic-agent/.ENV")).toBe(true);
+  });
+
   it("answers at once for plain files and leaves the rest to expand", () => {
     const services = createMentionServices({ lspPool: () => null, protectedFiles: [] });
     expect(services.expandNow("explain @a.ts", root)).toContain('<file path="a.ts">');
