@@ -9,6 +9,7 @@ import { createBackgroundJobsControl, ShellJobRegistry, type MonitorWake } from 
 import type { LocalTurnGateFacts } from "./local-turn-gate.js";
 import type { TuiAction } from "./tui-action.js";
 import { formatMonitorWakeLine } from "./monitor-wake-line.js";
+import { channelGuestMetadata } from "../session/channel-guest-session.js";
 
 /**
  * ATO-2436, the TUI's half: a monitor notice for the open chat runs in
@@ -36,7 +37,7 @@ function wakeFor(sessionId: string): MonitorWake {
   };
 }
 
-function makeHarness() {
+function makeHarness(options: { guest?: boolean } = {}) {
   const bus = makeTuiEventBus();
   const actions: TuiAction[] = [];
   bus.subscribe((action) => actions.push(action));
@@ -45,6 +46,7 @@ function makeHarness() {
   const steered: string[] = [];
   let steerable = false;
   const session: SessionState = createEmptySessionState({ id: "s-tui", workingDir: "/work" });
+  if (options.guest === true) session.metadata = { ...session.metadata, ...channelGuestMetadata() };
   let settle: ((result: RunTurnResult) => void) | null = null;
   const runtime = {
     createSession: () => session,
@@ -146,6 +148,23 @@ describe("ChatOrchestrator monitor notices (ATO-2436)", () => {
     await h.finish();
     expect(h.jobs.wake.deliver(wakeFor("s-other"))).toBe(true);
     expect(fellBack).toBe(2);
+    expect(h.started).toEqual(["hello"]);
+  });
+});
+
+describe("ChatOrchestrator monitor notices in a guest session", () => {
+  it("starts no turn for a channel's guest session open in the TUI; the runtime keeps the notice", async () => {
+    const h = makeHarness({ guest: true });
+    let fellBack = 0;
+    h.jobs.wake.setFallback(() => {
+      fellBack += 1;
+      return false;
+    });
+    h.chat.sendMessage("hello");
+    await eventually(() => h.started.length === 1);
+    await h.finish();
+    expect(h.jobs.wake.deliver(wakeFor("s-tui"))).toBe(false);
+    expect(fellBack).toBe(1);
     expect(h.started).toEqual(["hello"]);
   });
 });

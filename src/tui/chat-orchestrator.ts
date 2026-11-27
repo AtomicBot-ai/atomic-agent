@@ -117,6 +117,7 @@ import type { ReasoningLevel } from "../llm/reasoning-levels.js";
 import type { ReasoningEffort } from "../llm/provider/completion-types.js";
 import { reasoningOverrideFor } from "./commands/think-command.js";
 import type { MonitorWake } from "../tools/os/index.js";
+import { isChannelGuestSession } from "../session/channel-guest-session.js";
 import { formatMonitorWakeLine } from "./monitor-wake-line.js";
 
 const DEBUG_BUNDLE_TRACE_LIMIT = 10;
@@ -601,6 +602,9 @@ export class ChatOrchestrator {
       this.bus.emit({ type: "runtime_info", line: formatMonitorWakeLine(wake) });
       return true;
     }
+    // A channel's guest session (ATO-2221): a turn started here would not
+    // carry the guest restrictions; leave it to a running guest turn.
+    if (isChannelGuestSession(session)) return false;
     if (this.currentController && this.queue.length >= MAX_QUEUED_MESSAGES) return false;
     // The line goes first, so it reads above the turn it starts.
     this.bus.emit({ type: "runtime_info", line: formatMonitorWakeLine(wake) });

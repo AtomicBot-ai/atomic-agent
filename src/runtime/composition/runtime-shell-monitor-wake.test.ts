@@ -6,6 +6,7 @@ import type { TaskCreateInput } from "../../tasks/task-store.js";
 import type { TaskRecord } from "../../tasks/task-types.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 import { installShellMonitorWake } from "./runtime-shell-monitor-wake.js";
+import { channelGuestMetadata } from "../../session/channel-guest-session.js";
 
 /**
  * ATO-2436, the runtime's path for a monitor notice: steer the turn
@@ -24,7 +25,7 @@ const WAKE: MonitorWake = {
   text: "[Monitor on background job 3 (npm run dev): 1 new line matched \"ready\".]",
 };
 
-function harness(options: { steers: boolean; tasksEnabled?: boolean; known?: boolean }) {
+function harness(options: { steers: boolean; tasksEnabled?: boolean; known?: boolean; guest?: boolean }) {
   const jobs = new ShellJobRegistry();
   const created: TaskCreateInput[] = [];
   const steered: string[] = [];
@@ -41,7 +42,10 @@ function harness(options: { steers: boolean; tasksEnabled?: boolean; known?: boo
       },
     },
     sessionStore: {
-      load: (id: string) => (options.known === false ? null : ({ id } as SessionState)),
+      load: (id: string) =>
+        options.known === false
+          ? null
+          : ({ id, metadata: options.guest === true ? channelGuestMetadata() : {} } as unknown as SessionState),
     },
     tasksEnabled: options.tasksEnabled ?? true,
     logger: new StructuredLogger({ level: "error", sinks: [] }),
@@ -78,5 +82,15 @@ describe("installShellMonitorWake", () => {
     const unknown = harness({ steers: false, known: false });
     expect(unknown.jobs.wake.deliver(WAKE)).toBe(false);
     expect(unknown.created).toHaveLength(0);
+  });
+
+  it("never files a task for a channel's guest session; a running guest turn still hears it", () => {
+    // A task turn would run without the guest's tool filter and read-only memory.
+    const idle = harness({ steers: false, guest: true });
+    expect(idle.jobs.wake.deliver(WAKE)).toBe(false);
+    expect(idle.created).toHaveLength(0);
+    const running = harness({ steers: true, guest: true });
+    expect(running.jobs.wake.deliver(WAKE)).toBe(true);
+    expect(running.created).toHaveLength(0);
   });
 });
