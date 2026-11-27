@@ -110,6 +110,12 @@ export interface CpuMoeDecisionInput {
   deviceBudgetBytes: number | null;
   /** The KV cache this launch's context takes on the device. */
   kvBytes: number;
+  /**
+   * RPC peers lend their memory (`localModels.managed.rpcServers`,
+   * ATO-2338): the local free figure says nothing about the fit, so
+   * `"auto"` adds no flag. A pinned count still applies.
+   */
+  rpcPeers?: boolean;
 }
 
 export interface CpuMoeDecision {
@@ -127,6 +133,9 @@ export function decideCpuMoeLayers(input: CpuMoeDecisionInput): CpuMoeDecision {
   if (typeof preference === "number") {
     const layers = Math.min(preference, shape.blockCount);
     return { layers, reason: `cpu-moe: experts of the first ${layers} layers on the CPU (pinned)` };
+  }
+  if (input.rpcPeers === true) {
+    return { layers: 0, reason: "cpu-moe: not used, RPC peers set" };
   }
   if (input.sharesSystemMemory) {
     return { layers: 0, reason: "cpu-moe: not used, the GPU shares system memory" };

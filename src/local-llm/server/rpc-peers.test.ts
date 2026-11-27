@@ -31,6 +31,13 @@ describe("rpcServerArgs / buildLlamaServerArgs --rpc", () => {
     expect(args[args.indexOf("--rpc") + 1]).toBe("10.0.0.2:50052,10.0.0.3:50052");
   });
 
+  it("drops a pinned --device next to --rpc so the peers are used", () => {
+    const args = build({ ...opts, device: "CUDA0", rpcServers: ["10.0.0.2:50052"] });
+    expect(args).not.toContain("--device");
+    expect(args).toContain("--rpc");
+    expect(build({ ...opts, device: "CUDA0" })).toContain("--device");
+  });
+
   it("stays byte-identical with no peers, and adds none on a CPU-only launch", () => {
     expect(build({ ...opts, rpcServers: [] })).toEqual(build(opts));
     expect(rpcServerArgs(["10.0.0.2:50052"], "cpu")).toEqual([]);

@@ -721,7 +721,10 @@ export function buildLlamaServerArgs(
   if (effectiveContextSize && effectiveContextSize > 0) {
     args.push("--ctx-size", String(effectiveContextSize));
   }
-  if (opts.device && opts.device !== "cpu") {
+  // With RPC peers a `--device` list would have to name them as well, or
+  // llama.cpp offloads only to the listed local device: leave it out so
+  // every local GPU and every peer is used (ATO-2338).
+  if (opts.device && opts.device !== "cpu" && (opts.rpcServers?.length ?? 0) === 0) {
     args.push("--device", opts.device);
   }
   if (
@@ -1393,7 +1396,9 @@ async function startDaemonNow(
   // Atomic Core it is Core's own llama-server, run as Core runs it.
   const listDevices = opts.listDevices ?? managedDeviceTable(opts.dataDir, opts.engine);
   const device = await resolveManagedDevice(binPath, opts.device, {
-    multiGpu: (opts.tensorSplit?.length ?? 0) > 0,
+    // RPC peers are devices too: an auto pick of one local GPU would emit
+    // `--device <id>`, which leaves them out (review M3, ATO-2338).
+    multiGpu: (opts.tensorSplit?.length ?? 0) > 0 || (opts.rpcServers?.length ?? 0) > 0,
     listDevices,
   });
   // The header says what the KV cache really costs and whether the
@@ -1470,6 +1475,7 @@ async function startDaemonNow(
   // some layers' experts in system RAM instead of whole layers.
   const cpuMoe = decideCpuMoeLayers({
     preference: opts.cpuMoe ?? "auto",
+    rpcPeers: (opts.rpcServers?.length ?? 0) > 0,
     shape: header ? moeShapeFromMetadata(header, model.fileSizeGb * 1e9) : null,
     device,
     sharesSystemMemory,

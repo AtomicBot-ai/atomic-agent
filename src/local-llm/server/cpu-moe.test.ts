@@ -101,6 +101,12 @@ describe("decideCpuMoeLayers", () => {
     expect(decideCpuMoeLayers({ ...base, deviceBudgetBytes: null }).layers).toBe(0);
   });
 
+  it("adds nothing on auto with RPC peers, but keeps a pinned count", () => {
+    const auto = decideCpuMoeLayers({ ...base, rpcPeers: true, deviceBudgetBytes: -10 * GIB });
+    expect(auto).toEqual({ layers: 0, reason: "cpu-moe: not used, RPC peers set" });
+    expect(decideCpuMoeLayers({ ...base, preference: 20, rpcPeers: true, deviceBudgetBytes: -10 * GIB }).layers).toBe(20);
+  });
+
   it("honours off and a pinned count", () => {
     expect(decideCpuMoeLayers({ ...base, preference: "off", deviceBudgetBytes: -10 * GIB }).layers).toBe(0);
     expect(decideCpuMoeLayers({ ...base, preference: 20, deviceBudgetBytes: 100 * GIB }).layers).toBe(20);
