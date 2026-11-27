@@ -128,6 +128,13 @@ export class ProviderFallbackChain {
       return { providerId: primary, isProbe: false };
     }
 
+    // A turn moved off a weak head stays off it until the turn ends
+    // (ATO-2434): the head is up, so a probe would answer and bring the
+    // rest of the turn back to the model that was judged weak.
+    if (p.headEscalated) {
+      return { providerId: p.overrideId, isProbe: false };
+    }
+
     // On an override: consider probing the primary.
     const now = this.now();
     const b = this.breaker(p, primary);
@@ -282,6 +289,33 @@ export class ProviderFallbackChain {
     return p !== undefined && turnHeadResting(p.headCooldowns, providerId, this.now());
   }
 
+  /**
+   * Move `partitionKey` off its turn head for the rest of the turn though
+   * the head answered: its answer was weak (ATO-2434,
+   * `local-first-weak-answer.ts`). The next link becomes the sticky
+   * override, announced like a fallover with `reason`, and the head is
+   * not probed again within the turn (`headEscalated`; its breaker, its
+   * failure count and the head rest are left alone: it is not down). The
+   * next turn starts on its head again.
+   * Returns the link the turn goes on on, or null when there is no turn
+   * head, the turn already left it, or nothing follows it.
+   */
+  escalateTurnHead(partitionKey: string, reason: string): string | null {
+    const p = this.partitions.get(partitionKey);
+    if (p === undefined || p.turnPrimaryId === null || p.overrideId !== null) return null;
+    const [head, next] = this.chainFor(p);
+    if (head === undefined || next === undefined) return null;
+    p.overrideId = next;
+    p.overrideCause = null;
+    p.overrideServed = false;
+    p.fallbackServed = false;
+    p.servingId = null;
+    p.announcedOverride = true;
+    p.headEscalated = true;
+    this.emit({ direction: "away", from: head, to: next, reason });
+    return next;
+  }
+
   /** Whether a fallback has served `partitionKey` since it left the primary. */
   hasFallbackServed(partitionKey = DEFAULT_PARTITION): boolean {
     return this.partitions.get(partitionKey)?.fallbackServed ?? false;
@@ -304,7 +338,8 @@ export class ProviderFallbackChain {
   standingOverrideFor(partitionKey: string): string | null {
     const p = this.partitions.get(partitionKey);
     if (!p) return null;
-    if (!p.overrideId || isStandIn(p)) return p.turnPrimaryId;
+    // An escalated turn never goes back to its head (`pickProvider`).
+    if (!p.overrideId || (!p.headEscalated && isStandIn(p))) return p.turnPrimaryId;
     return p.overrideId;
   }
 

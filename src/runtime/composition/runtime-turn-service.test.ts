@@ -363,6 +363,33 @@ describe("runtime turn ownership recipes", () => {
     expect(turnHeadCoolingDown).toHaveBeenCalledWith("s-cool", "local");
   });
 
+  it("a local-first turn gets its cloud ceiling and a weak-answer watch (ATO-2434)", async () => {
+    const route = vi.mocked(routeTurnProvider);
+    route.mockImplementationOnce((params) => {
+      params.onLocalFirstHead?.("local");
+      return undefined;
+    });
+    fixture.config.llm = {
+      ...resolveLlmConfig(fixture.config),
+      fallback: { localFirst: true, localFirstMaxTurnUsd: 0.5 },
+    } as never;
+    const escalation = { begin: vi.fn(), end: vi.fn() };
+    fixture.deps.inference.localFirst = { escalation, todaySpendUsd: () => 0 };
+    const service = createRuntimeTurnService(fixture.config, fixture.deps);
+    await service.executeTurn(session("lf"), "request");
+    expect(fixture.loop.runTurn.mock.calls.at(-1)?.[1]).toMatchObject({ taskMaxCostUsd: 0.5 });
+    expect(escalation.begin).toHaveBeenCalledWith("lf", "local");
+    // Dropped before routing and again when the turn is over.
+    expect(escalation.end).toHaveBeenCalledTimes(2);
+
+    // An ordinary turn: no ceiling of its own, no watch.
+    fixture.config.llm = { ...resolveLlmConfig(fixture.config), fallback: { localFirstMaxTurnUsd: 0.5 } } as never;
+    escalation.begin.mockClear();
+    await service.executeTurn(session("plain"), "request");
+    expect(fixture.loop.runTurn.mock.calls.at(-1)?.[1]).not.toHaveProperty("taskMaxCostUsd");
+    expect(escalation.begin).not.toHaveBeenCalled();
+  });
+
   it("unknown pins reject before enqueue and before recorder/all other turn work", async () => {
     const enqueue = vi.spyOn(fixture.turnController, "enqueue");
     await expect(fixture.service.runTurn(session(), "request", { providerId: "unknown" }))

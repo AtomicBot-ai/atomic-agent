@@ -698,6 +698,12 @@ export interface AtomicAgentConfig {
       appendLocal?: boolean;
       /** Start each chat turn on the local model, cloud on failure (ATO-2208). Default false. */
       localFirst?: boolean;
+      /** Hand a weak local answer to the cloud mid-turn (ATO-2434). Default true. */
+      localFirstEscalate?: boolean;
+      /** Cloud spend ceiling of one local-first turn, USD (ATO-2434). */
+      localFirstMaxTurnUsd?: number;
+      /** Day's spend past which local-first keeps turns local, USD (ATO-2434). */
+      localFirstMaxDayUsd?: number;
       failureThreshold?: number;
       cooldownMs?: readonly number[];
       probeThrottleMs?: number;

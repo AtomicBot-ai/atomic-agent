@@ -16,6 +16,7 @@ import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVis
 import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeSessionFactories } from "./composition/runtime-session-services.js";
 import { createInterruptedTurns } from "./interrupted-turns.js";
 import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition/runtime-turn-service.js";
+import { createLocalFirstEscalation, withLocalFirstWatch } from "./composition/local-first-escalation.js";
 import { createIncognitoSessions } from "./incognito-sessions.js";
 import { installShellMonitorWake } from "./composition/runtime-shell-monitor-wake.js";
 import { createRuntimeKeepAwake, createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
@@ -238,6 +239,8 @@ export async function createAgentRuntime(
     },
     logger,
   });
+  // ATO-2434: a weak local answer on a local-first turn goes on in the cloud.
+  const localFirstEscalation = createLocalFirstEscalation({ chain: fallbackChain, logger });
 
   // Approval requests flow through `ApprovalRouter`: per-session
   // handlers (Telegram channel, future Slack/etc.) win, otherwise the
@@ -853,7 +856,7 @@ export async function createAgentRuntime(
     // `emitAgentLoopEvent` resolves that from the per-turn ALS frame so
     // two concurrent sessions never cross-contaminate trace records or
     // per-submission hooks, and reports terminal LLM failures to Sentry.
-    onEvent: emitAgentLoopEvent,
+    onEvent: withLocalFirstWatch(localFirstEscalation, () => traces.turnContext.getStore()?.sessionId, emitAgentLoopEvent),
     metrics,
     logger,
   };
@@ -994,7 +997,8 @@ export async function createAgentRuntime(
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
     inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain,
       resolveLocalContextWindow: createLocalFirstWindowResolver({ liveWindow: () => connectedLocal.getLiveProfile().contextWindow,
-        catalogWindow: (id) => resolveCatalogContextWindow(id), readConfig: () => getConfig() }) },
+        catalogWindow: (id) => resolveCatalogContextWindow(id), readConfig: () => getConfig() }),
+      localFirst: { escalation: localFirstEscalation, todaySpendUsd: () => dailySpend.peek().usd } },
     traces, telemetry: { observability, analyticsStateStore, turnUsageMeter, sessionUsage, metrics },
     state: turnState, lifecycle, logger,
     emitEvent: emitAgentLoopEventFor,

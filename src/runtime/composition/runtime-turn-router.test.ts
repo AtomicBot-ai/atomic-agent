@@ -161,6 +161,16 @@ describe("routeTurnProvider local-first cascade (ATO-2208)", () => {
     expect(String(info.mock.calls[0]?.[0])).toContain("rests");
   });
 
+  it("tells the caller when the local-first cascade heads the turn, not a router rule (ATO-2434)", () => {
+    const onLocalFirstHead = vi.fn();
+    run(localFirstConfig({ localFirst: true }), { ...available, onLocalFirstHead });
+    expect(onLocalFirstHead).toHaveBeenCalledWith("local-llama");
+    onLocalFirstHead.mockClear();
+    const ruled = localFirstConfig({ localFirst: true }, { enabled: true, rules: [{ provider: "groq" }] });
+    run(ruled, { ...available, onLocalFirstHead });
+    expect(onLocalFirstHead).not.toHaveBeenCalled();
+  });
+
   it("checks history against the local allowance, not the whole prompt against the window", () => {
     // 32k window: 12k fixed + 16k history is a 28k prompt, under 0.9 of
     // the window, but the history allowance is about 16k and compaction
