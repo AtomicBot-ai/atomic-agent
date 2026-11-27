@@ -1,26 +1,52 @@
+import type { Writable } from "node:stream";
+
 /**
  * How the desktop starts its agent: `atag serve` on loopback, on a free
- * port, with a fresh API key per launch (ATO-1705).
+ * port, with a fresh API key per launch.
  *
- * The key goes in the child's environment (`ATOMIC_AGENT_API_KEY`), never
- * on its command line. A command line is readable by every program on the
- * machine (`ps`, Task Manager, `/proc/<pid>/cmdline`); a process's
- * environment only by its own user (on Linux `/proc/<pid>/environ` is
- * owner-only). Serve reads the variable, then removes it from its own
- * environment so nothing it starts inherits it. Jupyter takes its token
- * the same way (`JUPYTER_TOKEN`). Every `atag` the desktop can start
- * reads `ATOMIC_AGENT_API_KEY` when `--api-key` is not given.
+ * The key goes to the child on its stdin (`--api-key-stdin`, ATO-2538):
+ * one line, then the pipe is closed. It is in neither of the two places
+ * other programs can read a process from:
+ * - the command line, which every program on the machine can read
+ *   (`ps`, Task Manager, `/proc/<pid>/cmdline`), ATO-1705;
+ * - the environment, which every program of the same user can read even
+ *   after the child unsets the variable (`/proc/<pid>/environ` on Linux,
+ *   `ps eww` on macOS), the agent's own shell commands included.
+ * `docker login --password-stdin` takes its secret the same way. Any
+ * `ATOMIC_AGENT_API_KEY` the desktop itself was started with is dropped
+ * from the child's environment, so no stale key travels along either.
+ * An `atag` older than the flag refuses it and exits, rather than running
+ * with a key in its environment.
  */
 
-/** The variable `atag serve` reads its key from when no `--api-key` is given. */
+/** The variable `atag serve` would otherwise read its key from. Never set for the desktop's child. */
 export const SERVE_API_KEY_ENV = "ATOMIC_AGENT_API_KEY";
 
-/** `atag serve`'s arguments: loopback, `port`, then the platform's watch arguments. No key. */
+/** The flag that makes `atag serve` read its key from the first line of stdin. */
+export const SERVE_API_KEY_STDIN_FLAG = "--api-key-stdin";
+
+/** stdin a pipe (the key), stdout and stderr pipes (the log relay). */
+export const SERVE_STDIO: ["pipe", "pipe", "pipe"] = ["pipe", "pipe", "pipe"];
+
+/** `atag serve`'s arguments: loopback, `port`, the stdin key flag, then the platform's watch arguments. No key. */
 export function serveSpawnArgs(port: number, watchArgs: readonly string[]): string[] {
-  return ["serve", "--host", "127.0.0.1", "--port", String(port), ...watchArgs];
+  return ["serve", "--host", "127.0.0.1", "--port", String(port), SERVE_API_KEY_STDIN_FLAG, ...watchArgs];
 }
 
-/** `base` (the agent environment) with the per-launch key added. `base` is not changed. */
-export function serveSpawnEnv(base: NodeJS.ProcessEnv, token: string): NodeJS.ProcessEnv {
-  return { ...base, [SERVE_API_KEY_ENV]: token };
+/** `base` (the agent environment) without any API key in it. `base` is not changed. */
+export function serveSpawnEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...base };
+  delete env[SERVE_API_KEY_ENV];
+  return env;
+}
+
+/**
+ * Hand `token` to the child: one line on its stdin, then end the pipe so
+ * nothing else can be read from it. A child that already died leaves an
+ * EPIPE here; that is swallowed, its exit is reported on its own.
+ */
+export function sendServeKey(stdin: Writable | null, token: string): void {
+  if (!stdin) return;
+  stdin.once("error", () => undefined);
+  stdin.end(`${token}\n`);
 }
