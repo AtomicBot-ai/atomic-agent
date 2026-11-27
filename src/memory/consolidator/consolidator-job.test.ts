@@ -397,6 +397,24 @@ describe("ConsolidatorJob (phase 5, scenario 5.A)", () => {
     expect(h.memoryStore.getConsolidatedInto(c.id)).not.toBeNull();
   });
 
+  it("writes a lesson from notes that share a tag but have no links, with default requireSharedTag=true (#903)", async () => {
+    h.dispose();
+    h = makeHarness({ requireSharedTag: true });
+
+    const a = h.memoryStore.store({ content: "pnpm install failed on lockfile", source: "agent", tags: ["reflection", "pnpm"] });
+    const b = h.memoryStore.store({ content: "pnpm workspace filter syntax", source: "agent", tags: ["reflection", "pnpm"] });
+    const c = h.memoryStore.store({ content: "pnpm store path on CI", source: "agent", tags: ["reflection", "pnpm"] });
+    h.memoryStore.store({ content: "git rebase onto main", source: "agent", tags: ["reflection", "git"] });
+
+    const result = await h.job.runOnce();
+    expect(result.outcome).toBe("ok");
+    expect(result.lessonsCreated).toBe(1);
+    expect(h.llmCalls).toBe(1);
+    expect(h.memoryStore.getConsolidatedInto(a.id)).not.toBeNull();
+    expect(h.memoryStore.getConsolidatedInto(b.id)).not.toBeNull();
+    expect(h.memoryStore.getConsolidatedInto(c.id)).not.toBeNull();
+  });
+
   it("respects cooldownMs — episodes younger than cooldown are not eligible", async () => {
     // Build a fresh harness with a cooldown of 1h.
     h.dispose();
