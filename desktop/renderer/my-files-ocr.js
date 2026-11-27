@@ -20,20 +20,20 @@ const MFO = {
 };
 
 const MFO_TITLE = 'Read scans, photos and audio';
-const MFO_HELP = 'Uses the vision model running on this computer to read scanned PDFs and photos, and whisper.cpp for audio. Cloud models are never used for it. Each page or photo takes one model call, so a big folder takes a while.';
+const MFO_HELP = 'Uses the vision model running on this computer or your local network to read scanned PDFs and photos, and whisper.cpp for audio. Cloud models are never used for it. Each page or photo takes one model call, so a big folder takes a while.';
 
 /* The agent's skip reason (file-text.ts, media-text.ts) in words a person can act on. */
 function mfoSkipText(reason) {
   const r = String(reason || '');
   if (r.startsWith('scan: OCR not available (no OCR engine')) return 'Scanned PDFs: reading scans is off';
-  if (r.startsWith('scan: OCR not available (no vision model')) return 'Scanned PDFs: no vision model is running on this computer';
+  if (r.startsWith('scan: OCR not available (no vision model')) return 'Scanned PDFs: no vision model is running on this computer or your local network';
   if (/^scan: OCR not available \(.* cannot read images\)$/.test(r)) return 'Scanned PDFs: the loaded model cannot read images';
   if (r.startsWith('scan: OCR not available')) return 'Scanned PDFs: no OCR reader is ready';
   if (r.startsWith('scan: OCR failed')) return 'Scanned PDFs: reading the scan failed';
   if (r === 'scan: OCR found no text') return 'Scanned PDFs with no readable text';
   const kind = r.split(':', 1)[0];
   if (kind === 'disabled') return 'Photos and audio: reading them is off';
-  if (kind === 'no-vision-model') return 'Photos: no vision model that reads images is running on this computer';
+  if (kind === 'no-vision-model') return 'Photos: no vision model that reads images is running on this computer or your local network';
   if (kind === 'no-engine') return 'Audio: whisper.cpp is not installed';
   if (kind === 'needs-model-download') return 'Audio: the speech model is not downloaded yet';
   if (kind === 'no-model') return 'Audio: no speech model was found';

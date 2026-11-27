@@ -9,7 +9,7 @@
  *   POST   /api/files/folders {path}   → { folder: Folder }   400 { error: { code, message } }
  *   DELETE /api/files/folders {path}   → { removed: boolean }
  *   GET    /api/files/status           → Status
- *   POST   /api/files/retry            → { requeued: number }   (ATO-2501)
+ *   POST   /api/files/retry            → { requeued: number }   (ATO-2501, my-files-ocr.ts)
  *
  * A runtime without a file index answers 501; an agent from before the
  * routes answers the router's 404 "No route for …". Both are `unsupported`,
@@ -182,7 +182,7 @@ export function interpretFailure(status: number, text: string): MyFilesFailure {
   return { ok: false, reason: "error", error: message || `HTTP ${status}`, status };
 }
 
-function parseJson(text: string): unknown {
+export function parseJson(text: string): unknown {
   try {
     return text ? JSON.parse(text) : null;
   } catch {
@@ -214,14 +214,6 @@ export function interpretStatus(status: number, text: string): MyFilesResult<{ s
   return parsed ? { ok: true, status: parsed } : { ok: false, reason: "error", error: MY_FILES_TEXT.badReply, status };
 }
 
-export function interpretRetry(status: number, text: string): MyFilesResult<{ requeued: number }> {
-  if (status < 200 || status >= 300) return interpretFailure(status, text);
-  const requeued = (parseJson(text) as { requeued?: unknown } | null | undefined)?.requeued;
-  return typeof requeued === "number" && Number.isFinite(requeued) && requeued >= 0
-    ? { ok: true, requeued: Math.floor(requeued) }
-    : { ok: false, reason: "error", error: MY_FILES_TEXT.badReply, status };
-}
-
 /** The folder path the renderer sent, checked before it goes on the wire. */
 export function checkFolderPath(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
@@ -244,9 +236,9 @@ export interface MyFilesEnv {
   timeoutMs?: number;
 }
 
-const REMOTE: MyFilesFailure = { ok: false, reason: "remote", error: MY_FILES_TEXT.remote };
+export const REMOTE: MyFilesFailure = { ok: false, reason: "remote", error: MY_FILES_TEXT.remote };
 
-async function call(env: MyFilesEnv, method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<{ status: number; text: string } | MyFilesFailure> {
+export async function call(env: MyFilesEnv, method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<{ status: number; text: string } | MyFilesFailure> {
   let t: MyFilesTarget;
   try {
     t = env.target();
@@ -266,7 +258,7 @@ async function call(env: MyFilesEnv, method: "GET" | "POST" | "DELETE", path: st
   }
 }
 
-const failed = (r: { status: number; text: string } | MyFilesFailure): r is MyFilesFailure => "ok" in r;
+export const failed = (r: { status: number; text: string } | MyFilesFailure): r is MyFilesFailure => "ok" in r;
 
 /**
  * The four calls. Each never throws. Listing and status also work on a remote
@@ -297,17 +289,6 @@ export async function removeFolder(env: MyFilesEnv, rawPath: unknown) {
   if (!path) return { ok: false, reason: "invalid", error: "That folder path is not valid." } as MyFilesFailure;
   const r = await call(env, "DELETE", MY_FILES_PATHS.folders, { path });
   return failed(r) ? r : interpretRemove(r.status, r.text);
-}
-
-/**
- * ATO-2501: read again the skipped scans, photos and audio, after the
- * setting was turned on. Refused on a remote agent like add and remove:
- * its files and its models are on the other computer.
- */
-export async function retrySkipped(env: MyFilesEnv) {
-  if (env.isRemote()) return REMOTE;
-  const r = await call(env, "POST", MY_FILES_PATHS.retry, {});
-  return failed(r) ? r : interpretRetry(r.status, r.text);
 }
 
 /** Refusal for the folder picker on a remote agent: the dialog would show this computer's disks. */

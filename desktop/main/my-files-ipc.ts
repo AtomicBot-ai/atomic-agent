@@ -26,9 +26,9 @@ import {
   listFolders,
   pickRefusal,
   removeFolder,
-  retrySkipped,
   type MyFilesTarget,
 } from "./my-files.js";
+import { retrySkipped } from "./my-files-ocr.js";
 
 export interface MyFilesIpcDeps {
   window: () => BrowserWindow | null;

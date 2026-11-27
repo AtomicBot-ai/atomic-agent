@@ -49,6 +49,7 @@ test("pages read: none is no line", () => {
 
 test("the switch's words promise only what the agent does", () => {
   assert.match(MFO_HELP, /Cloud models are never used/);
+  assert.match(MFO_HELP, /on this computer or your local network/, "the core also takes a model on the local network");
   assert.doesNotMatch(MFO_TITLE + MFO_HELP, /—|nothing leaves your machine/i);
 });
 

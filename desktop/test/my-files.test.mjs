@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
 const F = require("../out/main/my-files.js");
+const O = require("../out/main/my-files-ocr.js");
 
 function fakeFetch(status, body) {
   const calls = [];
@@ -192,18 +193,18 @@ test("status carries the scanned pages read and the skip reasons, and an older a
 
 test("retry posts to /api/files/retry and reads `requeued`", async () => {
   const f = fakeFetch(200, { requeued: 3 });
-  const r = await F.retrySkipped(env(f));
+  const r = await O.retrySkipped(env(f));
   assert.deepEqual(r, { ok: true, requeued: 3 });
   assert.equal(f.calls[0].init.method, "POST");
   assert.match(f.calls[0].url, /\/api\/files\/retry$/);
-  assert.equal((await F.retrySkipped(env(fakeFetch(200, { requeued: "3" })))).ok, false, "not a number is a bad reply");
-  const old = await F.retrySkipped(env(fakeFetch(404, { error: { message: "No route for POST /api/files/retry" } })));
+  assert.equal((await O.retrySkipped(env(fakeFetch(200, { requeued: "3" })))).ok, false, "not a number is a bad reply");
+  const old = await O.retrySkipped(env(fakeFetch(404, { error: { message: "No route for POST /api/files/retry" } })));
   assert.equal(old.reason, "unsupported");
 });
 
 test("retry is refused on a remote agent and sends nothing", async () => {
   const f = fakeFetch(200, { requeued: 1 });
-  const r = await F.retrySkipped(env(f, true));
+  const r = await O.retrySkipped(env(f, true));
   assert.equal(r.reason, "remote");
   assert.equal(f.calls.length, 0);
 });
