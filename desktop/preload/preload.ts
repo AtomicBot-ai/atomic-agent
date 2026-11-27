@@ -478,6 +478,10 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-2257: the task board, cards in lanes, and a card's lane / note / assignee (main/workboard-ipc.ts). */
   taskBoard: () => ipcRenderer.invoke("agent:taskBoard"),
   moveTaskCard: (id: string, patch: unknown) => ipcRenderer.invoke("agent:moveTaskCard", id, patch),
+  /** ATO-2498: a card's comment thread and the profile picker (main/workboard-ipc.ts). */
+  boardComments: (id: string) => ipcRenderer.invoke("agent:boardComments", id),
+  addBoardComment: (id: string, text: string) => ipcRenderer.invoke("agent:addBoardComment", id, text),
+  boardProfiles: (taskId?: string) => ipcRenderer.invoke("agent:boardProfiles", taskId),
   /** ATO-458: suggested tasks for the empty chat screen (main/ideas-ipc.ts). */
   ideasRefresh: () => ipcRenderer.invoke("agent:ideasRefresh"),
   ideaAccept: (id: string) => ipcRenderer.invoke("agent:ideaAccept", id),

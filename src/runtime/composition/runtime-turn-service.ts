@@ -4,6 +4,7 @@ import type { AgentLoop } from "../../agent/agent-loop.js";
 import type { AgentLoopEvent, RunTurnResult } from "../../agent/agent-contract.js";
 import type { LlmStreamParams } from "../../agent/step/step-contract.js";
 import { memoryReadOnlyToolFilter } from "../../agent/tool-resource-class.js";
+import { promptOnlyToolFilter } from "../../agent/step/prompt-only-tool-filter.js";
 import type { CompletionResult } from "../../llm/llama-server-client.js";
 import type { ReasoningEffort } from "../../llm/provider/completion-types.js";
 import type { SlotManager } from "../../llm/slot-manager.js";
@@ -43,6 +44,7 @@ import { continueOnStopHooks, startTurnHooks } from "./runtime-session-hooks.js"
 import type { SessionHookEngine } from "../../hooks/session-hook-engine.js";
 import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
 import { surfaceShowsQuestions, withAskUserVisibility } from "../../tools/conversation/ask-user-surface.js";
+import { withBoardCardVisibility } from "../../tools/tasks/board-card-visibility.js";
 
 export function prepareRuntimeTurnState() {
   /**
@@ -666,7 +668,14 @@ export function createRuntimeTurnService(
           ...(answerChannel !== undefined ? { answerChannel } : {}),
           ...(runOptions.questions !== undefined ? { questions: runOptions.questions } : {}),
         });
-        const toolFilter = withAskUserVisibility(runOptions.toolFilter, showsQuestions);
+        // The board card tools only on a task's run (ATO-2497). A turn
+        // that had no filter keeps its grammar bytes: the hide is
+        // prompt-only there, and dispatch refuses the tools.
+        const askFilter = withAskUserVisibility(runOptions.toolFilter, showsQuestions);
+        const boardFilter = withBoardCardVisibility(askFilter, runOptions.checkpoint?.taskId !== undefined);
+        const toolFilter = askFilter === undefined && boardFilter !== undefined
+          ? promptOnlyToolFilter(boardFilter)
+          : boardFilter;
         // A model that calls the hidden tool anyway gets an answer at
         // once rather than a question nobody can see (ask-user.ts).
         if (!showsQuestions) turnsWithoutQuestions?.add(session.id);

@@ -245,6 +245,10 @@ const FORMS: Record<string, CompactToolForm> = {
   "tasks.list": { summary: "List tasks.", tier: RARE },
   "tasks.cancel": { summary: "Cancel a task.", tier: RARE },
   "tasks.show": { summary: "Show one task.", tier: RARE },
+  // ATO-2497: only on a task's run, so not collapsed.
+  "tasks.request_review": { summary: "Task done: move its card to Review for a person." },
+  "tasks.block": { summary: "Cannot go on: move the task's card to Blocked with the reason." },
+  "tasks.comment": { summary: "Comment on the running task's card." },
   "sessions.list": { summary: "List other chats.", tier: RARE },
   "sessions.read": { summary: "Read another chat (asks first).", tier: RARE },
   "sessions.send": { summary: "Send a request to another chat (asks first).", tier: RARE },

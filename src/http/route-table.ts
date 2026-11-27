@@ -92,6 +92,11 @@ import {
   createUpdateTaskBoardCardHandler,
 } from "./route-task-board.js";
 import {
+  createAddBoardCommentHandler,
+  createBoardProfilesHandler,
+  createListBoardCommentsHandler,
+} from "./route-task-board-comments.js";
+import {
   createAcceptIdeaHandler,
   createDismissIdeaHandler,
   createListIdeasHandler,
@@ -479,6 +484,10 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     // ATO-2257: the task board (cards in lanes); moving a card leaves the status alone.
     { method: "GET", path: "/api/task-board", handler: createTaskBoardHandler() },
     { method: "POST", path: "/api/tasks/{id}/board", handler: createUpdateTaskBoardCardHandler() },
+    // ATO-2498: a card's comment thread and the profiles it can be assigned to.
+    { method: "GET", path: "/api/tasks/{id}/board/comments", handler: createListBoardCommentsHandler() },
+    { method: "POST", path: "/api/tasks/{id}/board/comments", handler: createAddBoardCommentHandler() },
+    { method: "GET", path: "/api/task-board/profiles", handler: createBoardProfilesHandler() },
     {
       method: "POST",
       path: "/api/tasks/drain",

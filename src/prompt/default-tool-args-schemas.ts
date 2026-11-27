@@ -747,6 +747,10 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   ],
   ["tasks.cancel", obj({ id: stringSchema }, ["id"])],
   ["tasks.show", obj({ id: stringSchema }, ["id"])],
+  // ATO-2497: the running task's board card.
+  ["tasks.request_review", obj({ note: stringSchema })],
+  ["tasks.block", obj({ reason: stringSchema }, ["reason"])],
+  ["tasks.comment", obj({ text: stringSchema }, ["text"])],
 
   // ── sessions (ATO-570) ───────────────────────────────────────────────────
   ["sessions.list", obj({ query: stringSchema, limit: numberSchema })],

@@ -241,6 +241,10 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "tasks.schedule": "tasks_write",
   "tasks.cron": "tasks_write",
   "tasks.cancel": "tasks_write",
+  // ATO-2497: the running task's board card (lane, comments); no status change.
+  "tasks.request_review": "tasks_write",
+  "tasks.block": "tasks_write",
+  "tasks.comment": "tasks_write",
 
   // sessions.* (ATO-570) — a listing of chat names and the status of a
   // message this chat sent are plain reads; reading another chat or
