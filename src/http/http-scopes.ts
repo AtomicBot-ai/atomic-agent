@@ -66,6 +66,7 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "GET /api/local-models/list": "read",
   "GET /api/local-models/status": "read",
   "GET /api/local-models/list-embeddings": "read",
+  "GET /api/usage": "read",
   // Settings.
   "GET /api/config": "admin",
   "PATCH /api/config": "admin",
