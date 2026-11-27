@@ -721,7 +721,8 @@ Honestly degraded, and labelled as such in the UI:
   `show-once-finish.ts`); it writes the title, description, a summary and
   what to ask the user for, never the steps, and on any failure the draft
   stays as recorded. **Save a picture of the window after each step** (off)
-  takes a `screencapture` of the window (Screen Recording needed; never
+  takes a `screencapture` of the window by its window id, never a screen
+  rectangle, so only with the helper (Screen Recording needed; never
   browsers or protected apps) into the draft's `snapshots/`, shown in its
   preview under To review and deleted with the draft
   (`main/show-once-snapshots.ts`, `renderer/show-once-draft.js`).

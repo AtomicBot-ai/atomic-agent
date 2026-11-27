@@ -4,8 +4,8 @@
 //
 // Read-only. It never clicks, types, captures the screen or reads a
 // control's value (AXValue): only the app, the window's frame and title,
-// and a control's role and title or description. A password field
-// (AXSecureTextField) is named as one with no label.
+// and a control's role and title or description. A password field (role
+// or subrole AXSecureTextField) is named as one with no label.
 //
 // stdin, one command per line:
 //   click <id> <x> <y>   what is under the point (screen coordinates)
@@ -53,9 +53,15 @@ func child(_ v: CFTypeRef?) -> AXUIElement? {
   return (v as! AXUIElement)
 }
 
+/// A password field: NSSecureTextField and a web <input type=password> report
+/// role AXTextField with subrole AXSecureTextField, so both are checked.
+func isSecure(_ el: AXUIElement, _ role: String) -> Bool {
+  return role == "AXSecureTextField" || text(el, kAXSubroleAttribute as String) == "AXSecureTextField"
+}
+
 func describe(_ el: AXUIElement) -> [String: Any]? {
   guard let role = text(el, kAXRoleAttribute as String) else { return nil }
-  if role == "AXSecureTextField" { return ["role": role, "label": ""] }
+  if isSecure(el, role) { return ["role": "AXSecureTextField", "label": ""] }
   var label = text(el, kAXTitleAttribute as String) ?? ""
   if label.isEmpty { label = text(el, kAXDescriptionAttribute as String) ?? "" }
   return ["role": role, "label": clip(label)]
