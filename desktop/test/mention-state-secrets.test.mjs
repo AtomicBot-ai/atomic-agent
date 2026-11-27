@@ -18,6 +18,12 @@ writeFileSync(join(stateDir, "config.json"), JSON.stringify({ version: 1, note: 
 mkdirSync(join(stateDir, "models"), { recursive: true });
 writeFileSync(join(stateDir, "models", "llama-server.key"), "llama-key-marker\n");
 writeFileSync(join(stateDir, "notes.md"), "plain notes\n");
+// ATO-2496 (review round 1, F2093.1): the named-token file and the sign-in folders.
+writeFileSync(join(stateDir, "http-tokens.json"), '{"tokens":["http-token-marker"]}\n');
+mkdirSync(join(stateDir, "auth"), { recursive: true });
+writeFileSync(join(stateDir, "auth", "chatgpt.json"), '{"accessToken":"auth-token-marker"}\n');
+mkdirSync(join(stateDir, "mcp-oauth"), { recursive: true });
+writeFileSync(join(stateDir, "mcp-oauth", "github.json"), '{"access_token":"mcp-token-marker"}\n');
 after(() => rmSync(stateDir, { recursive: true, force: true }));
 
 const require = createRequire(import.meta.url);
@@ -56,8 +62,30 @@ test("the list is core's getStateSecretPaths, files only", () => {
     "/s/plugins/marketplaces.json", "/h/.curlrc", "/h/.wgetrc", "/s/pr-autofix/state.json",
     "/s/models/llama-server.key", "/s/serve-api.key", "/s/model-share.key",
     "/s/models/core/chat.json", "/s/models/core/embedding.json", "/s/atomic-mail/session.json",
-    "/s/http-devices.json",
+    "/s/http-devices.json", "/s/http-tokens.json",
   ].map((p) => join(p)));
+});
+
+test("the sign-in folders are core's getStateSecretDirectories", () => {
+  assert.deepEqual(S.stateSecretFolders("/s"), ["/s/auth", "/s/mcp-oauth", "/s/whatsapp-auth"].map((p) => join(p)));
+});
+
+test("the fallback keeps http-tokens.json and the sign-in folders out", async () => {
+  const tooOld = async () => null;
+  const chat = [{ role: "user", content: "check @http-tokens.json @auth/chatgpt.json @mcp-oauth/github.json @notes.md" }];
+  const out = await C.expandLastUserMessageViaCore(chat, stateDir, tooOld);
+  const text = out[0].content;
+  for (const marker of ["http-token-marker", "auth-token-marker", "mcp-token-marker"]) {
+    assert.ok(!text.includes(marker), `${marker} leaked`);
+  }
+  assert.match(text, /plain notes/);
+});
+
+test("a folder entry refuses every file inside it, not its neighbours", () => {
+  const check = S.protectedPathCheck([], "darwin", [join(stateDir, "auth")]);
+  assert.equal(check(join(stateDir, "AUTH", "copilot.json")), true);
+  assert.equal(check(join(stateDir, "auth-notes.md")), false);
+  assert.equal(check(join(stateDir, "notes.md")), false);
 });
 
 test("macOS matches without case too, so @.ENV is refused", () => {

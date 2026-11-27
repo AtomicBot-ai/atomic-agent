@@ -10,13 +10,15 @@
  *
  * The names are spelled here because the desktop cannot import core;
  * mention-state-secrets.test.mjs pins them. Folder entries of the core list
- * (`plugins/installed/`, `logbook/`) are not refused there either, so they are
- * left out here.
+ * that hold code (`plugins/installed/`, `logbook/`) are not refused there
+ * either, so they are left out here. The sign-in folders
+ * (`getStateSecretDirectories`: `auth/`, `mcp-oauth/`, `whatsapp-auth/`)
+ * are refused with every file in them (`stateSecretFolders`).
  */
 
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 
 import { managedSideFromFile } from "./local-llama-key.js";
 import { DESKTOP_STATE_DIR } from "./state-dir.js";
@@ -46,7 +48,17 @@ export function stateSecretFiles(stateDir: string, modelsDir: string, home: stri
     join(modelsDir, "core", "embedding.json"),
     join(stateDir, "atomic-mail", "session.json"),
     join(stateDir, "http-devices.json"),
+    // ATO-2496: the token hashes `atomic-agent serve` lets callers in with.
+    join(stateDir, "http-tokens.json"),
   ];
+}
+
+/**
+ * Core's `getStateSecretDirectories` for `stateDir`: folders whose every
+ * file is a sign-in (subscription tokens, MCP sign-ins, WhatsApp keys).
+ */
+export function stateSecretFolders(stateDir: string): string[] {
+  return [join(stateDir, "auth"), join(stateDir, "mcp-oauth"), join(stateDir, "whatsapp-auth")];
 }
 
 /**
@@ -65,14 +77,22 @@ function canonicalOf(path: string): string {
 }
 
 /**
- * A check against `files` by real path (core's `protectedPathCheck`). Case is
- * folded on Windows and macOS, whose default volumes ignore it, so `@.ENV`
- * is refused too.
+ * A check against `files` by real path (core's `protectedPathCheck`), and
+ * against anything inside `folders`. Case is folded on Windows and macOS,
+ * whose default volumes ignore it, so `@.ENV` is refused too.
  */
-export function protectedPathCheck(files: readonly string[], platform: NodeJS.Platform = process.platform): IsProtectedPath {
+export function protectedPathCheck(
+  files: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+  folders: readonly string[] = [],
+): IsProtectedPath {
   const fold = (p: string): string => (platform === "win32" || platform === "darwin" ? p.toLowerCase() : p);
   const set = new Set(files.map((f) => fold(canonicalOf(f))));
-  return (real) => set.has(fold(canonicalOf(real)));
+  const prefixes = folders.map((f) => fold(canonicalOf(f)).replace(/[\\/]+$/, "") + sep);
+  return (real) => {
+    const path = fold(canonicalOf(real));
+    return set.has(path) || prefixes.some((prefix) => path.startsWith(prefix));
+  };
 }
 
 /**
@@ -86,5 +106,9 @@ export const isAgentStateSecret: IsProtectedPath = (real) => {
   } catch {
     modelsDir = join(DESKTOP_STATE_DIR, "models");
   }
-  return protectedPathCheck(stateSecretFiles(DESKTOP_STATE_DIR, modelsDir))(real);
+  return protectedPathCheck(
+    stateSecretFiles(DESKTOP_STATE_DIR, modelsDir),
+    process.platform,
+    stateSecretFolders(DESKTOP_STATE_DIR),
+  )(real);
 };
