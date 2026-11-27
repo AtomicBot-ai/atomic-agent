@@ -36,3 +36,8 @@ test('pointing the updater at a channel never leaves a downgrade allowed', () =>
   U.readChannel(u, 'stable');
   assert.equal(u.allowDowngrade, false);
 });
+
+/** ATO-2414: no beta builds are published, so the switch is not offered. */
+test('the beta channel is not offered until betas ship', () => {
+  assert.equal(U.BETA_CHANNEL_SHIPPED, false);
+});
