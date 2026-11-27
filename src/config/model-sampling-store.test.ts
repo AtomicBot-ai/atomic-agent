@@ -58,6 +58,28 @@ describe("model sampling store (ATO-2482)", () => {
     expect(readModelSamplingSetting("qwen-3.5-4b")).toBeNull();
   });
 
+  it("removes the map from the file when the last set is reset", () => {
+    writeModelSamplingSetting("qwen-3.5-4b", { temperature: 0.6 });
+    writeModelSamplingSetting("gemma-4-e4b", { topK: 40 });
+    writeModelSamplingSetting("qwen-3.5-4b", null);
+    expect(file().localModels.modelSamplingOverrides).toEqual({ "gemma-4-e4b": { topK: 40 } });
+    writeModelSamplingSetting("gemma-4-e4b", null);
+    const raw = readFileSync(getUserConfigPath(stateDir), "utf8");
+    expect(raw).not.toContain("modelSamplingOverrides");
+    resetConfigCache();
+    expect(getConfig().localModels.modelSamplingOverrides?.["gemma-4-e4b"]).toBeUndefined();
+    expect(readModelSamplingSetting("gemma-4-e4b")).toBeNull();
+  });
+
+  it("keeps an added model's set when the same model is added again", () => {
+    addCustomModel(CUSTOM);
+    writeModelSamplingSetting(CUSTOM.id, { topK: 30 });
+    addCustomModel(CUSTOM);
+    expect(readModelSamplingSetting(CUSTOM.id)).toEqual({ topK: 30 });
+    addCustomModel({ ...CUSTOM, sampling: { topK: 50 } });
+    expect(readModelSamplingSetting(CUSTOM.id)).toEqual({ topK: 50 });
+  });
+
   it("keeps an added model's set on its own entry and in the live catalog", () => {
     addCustomModel(CUSTOM);
     writeModelSamplingSetting("custom-fixture", { topK: 30 });
