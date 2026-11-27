@@ -98,18 +98,10 @@ export function createRuntimeTaskRunner(args: {
     enabled: config.tasks.enabled,
     runOnCreate: config.tasks.runOnCreate,
     minIntervalMs: config.tasks.minIntervalMs,
-    // One sink, routed per `TaskReport.notify`: phone push (ATO-1129)
-    // goes straight to ntfy, everything else is the Telegram route. The
-    // Telegram channel is constructed
-    // after the runner — it needs the finished runtime object — so the
-    // sink resolves the same live reference the shutdown path uses,
-    // assigned further below, at delivery time. A report that fires in
-    // the window before that assignment (a due task on an early
-    // scheduler tick while bootstrap is still, e.g., awaiting MCP
-    // connects) is warn-logged and dropped, never lost silently; skips
-    // never affect the task's own status, and the runner isolates sink
-    // rejections. Skip-path logging is pinned by the sink's own unit
-    // tests in telegram-channel.test.ts.
+    // One sink, routed per `TaskReport.notify`: phone push (ATO-1129) goes
+    // to ntfy, the rest to Telegram. The channel is built after the runner,
+    // so the sink resolves the live reference at delivery time; a report
+    // before that is warn-logged and dropped (telegram-channel.test.ts).
     reportSink: routeTaskReports({
       telegram: createTaskReportSink({ config, resolveTelegram, logger }),
       push: createPushTaskReportSink({
