@@ -95,3 +95,17 @@ export function persistUserTuiVerboseSteps(verboseSteps: boolean): void {
   writeUserConfigFileSync(path, validated);
   resetConfigCache();
 }
+
+/**
+ * Persist the terminal pet into `tui.pet` (ATO-2513, `/pet`). Same read →
+ * merge → validate → write → reset cycle as the theme; the live
+ * `TuiState.pet` flip is the caller's job.
+ */
+export function persistUserTuiPet(pet: boolean): void {
+  const path = getConfig().paths.userConfigFile;
+  const prev = ensureUserConfigFileSync(path);
+  const draft = { ...prev, tui: { ...prev.tui, pet } };
+  const validated = parseUserConfigFile(draft);
+  writeUserConfigFileSync(path, validated);
+  resetConfigCache();
+}

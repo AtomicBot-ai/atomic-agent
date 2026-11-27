@@ -1,0 +1,51 @@
+{
+  "about": "ATO-2513: cases both pet machines replay: src/tui/pet/pet-machine.ts (pet-machine.test.ts) and desktop/main/pet-state.ts (desktop/test/pet-fixture.test.mjs). Each step sets do not disturb when `dnd` is given, reports `ended` when given, then calls step() with `activity` (default null) and `waiting` (default false) at `at`, and expects `state` and, when given, `nextAt`.",
+  "timing": { "minShowMs": 700, "doneMs": 3000, "errorMs": 6000, "sleepAfterMs": 120000 },
+  "scenarios": [
+    {
+      "name": "a quick tool call does not flicker",
+      "steps": [
+        { "at": 0, "activity": "thinking", "state": "thinking", "nextAt": null },
+        { "at": 100, "activity": "working", "state": "working", "nextAt": null },
+        { "at": 300, "activity": "thinking", "state": "working", "nextAt": 800 },
+        { "at": 800, "activity": "thinking", "state": "thinking", "nextAt": null }
+      ]
+    },
+    {
+      "name": "an approval request shows at once and holds its minimum",
+      "steps": [
+        { "at": 0, "activity": "thinking", "state": "thinking" },
+        { "at": 100, "activity": "thinking", "waiting": true, "state": "waiting", "nextAt": null },
+        { "at": 200, "activity": "thinking", "state": "waiting", "nextAt": 800 },
+        { "at": 800, "activity": "thinking", "state": "thinking", "nextAt": null }
+      ]
+    },
+    {
+      "name": "done flashes, goes back to idle, then sleeps",
+      "steps": [
+        { "at": 0, "activity": "thinking", "state": "thinking" },
+        { "at": 1000, "ended": "done", "state": "done", "nextAt": 4000 },
+        { "at": 4000, "state": "idle", "nextAt": 121000 },
+        { "at": 121000, "state": "sleeping", "nextAt": null }
+      ]
+    },
+    {
+      "name": "an error is not covered by a later done",
+      "steps": [
+        { "at": 0, "activity": "working", "state": "working" },
+        { "at": 100, "ended": "error", "state": "error", "nextAt": 6100 },
+        { "at": 200, "ended": "done", "state": "error", "nextAt": 6100 },
+        { "at": 6100, "state": "idle", "nextAt": 120200 }
+      ]
+    },
+    {
+      "name": "do not disturb has no flashes, and a stopped turn says nothing",
+      "steps": [
+        { "at": 0, "dnd": true, "activity": "thinking", "state": "thinking" },
+        { "at": 1000, "ended": "done", "state": "idle", "nextAt": 121000 },
+        { "at": 2000, "dnd": false, "activity": "thinking", "state": "thinking" },
+        { "at": 3000, "ended": "stopped", "state": "idle", "nextAt": 123000 }
+      ]
+    }
+  ]
+}

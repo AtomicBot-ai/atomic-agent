@@ -814,6 +814,7 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
       vimMode: user.tui.vimMode,
       language: user.tui.language,
       verboseSteps: user.tui.verboseSteps,
+      pet: user.tui.pet,
       notify: { ...user.tui.notify },
       onboarding: { ...user.tui.onboarding },
       sessionRail: {

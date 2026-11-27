@@ -127,6 +127,10 @@ export interface TuiConfig {
    * never reads it.
    */
   verboseSteps: boolean;
+  /**
+   * Terminal pet (ATO-2513): a small ASCII face in the top bar that shows what the agent is doing (thinking, using a tool, waiting for you, done, failed, resting), the same states as the desktop pet. Off by default; `/pet` flips it. Additive and unversioned, a file without it reads `false`. A display preference only; the agent never reads it.
+   */
+  pet: boolean;
   onboarding: OnboardingState;
   sessionRail: SessionRailConfig;
   notify: TuiNotifyConfig;
@@ -142,6 +146,7 @@ export function createTuiDefaults(): TuiConfig {
     vimMode: false,
     language: "auto",
     verboseSteps: false,
+    pet: false,
     notify: { enabled: true, minDurationMs: 30_000 },
     sessionRail: { order: [], pinned: [] },
     onboarding: {
@@ -333,6 +338,10 @@ export function parseTuiConfig(
     verboseSteps: parseBool(
       tui.verboseSteps ?? readDefaults().verboseSteps,
       "tui.verboseSteps",
+    ),
+    pet: parseBool(
+      tui.pet ?? readDefaults().pet,
+      "tui.pet",
     ),
     onboarding: parseOnboardingStateWithDefaults(
       tui.onboarding,
