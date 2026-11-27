@@ -27,6 +27,7 @@ import { join } from 'node:path';
 import { SCENARIO_NAME, check, main } from '../harness.mjs';
 import { liveScenario } from './live-harness.mjs';
 import { atag, copyFixturePlugin, installedDir, pluginRecord } from './plugin-cli.mjs';
+import { closeSettings, openPluginsPane } from './settings-plugins.mjs';
 
 const DANGEROUS = 'evil-hook';
 const SUSPICIOUS = 'fetch-note';
@@ -36,13 +37,6 @@ const NEEDS_YES = 'install needs confirmation';
 
 const lastLine = (text) => String(text).trim().split('\n').pop() ?? '';
 const results = {};
-
-async function openPluginsPane(app) {
-  await app.clickSel('.sb-settings');
-  await app.clickSel('button.setrow[data-act="settings:plugins"]');
-  await app.waitFor(`[...document.querySelectorAll('.set-plgrow')].some((r) => r.textContent.includes(${JSON.stringify(ORDINARY)}))`,
-    'the ordinary plugin listed in Settings › Plugins', { timeout: 30000 });
-}
 
 export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ app, base, stateDir, workspace, home }) => {
   const dirs = { base, stateDir, workspace, home };
@@ -75,12 +69,15 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
   check(names.join(',') === ORDINARY, 'the CLI lists only the ordinary plugin', JSON.stringify(names));
 
   // ---- what the person sees ------------------------------------------------------------
-  await openPluginsPane(app);
+  /* Opening the pane starts a list read (plugins-pane.js pluginsTabEntered)
+     and redraws when it lands, so the rows and Done can still move: wait for
+     the pane to settle first (ATO-2439). */
+  await openPluginsPane(app, ORDINARY);
   const rows = await app.eval(`[...document.querySelectorAll('.set-plgrow')].map((r) => r.innerText.replace(/\\s+/g, ' '))`);
   app.log(`Settings › Plugins shows: ${JSON.stringify(rows)}`);
   check(!rows.some((r) => r.includes(DANGEROUS) || r.includes(SUSPICIOUS)),
     'the window lists neither hostile plugin', JSON.stringify(rows));
-  await app.clickSel('[data-act="settings:close"]');
+  await closeSettings(app);
 }, {
   setup: async ({ base, stateDir, workspace, home }) => {
     const dirs = { stateDir, workspace, home };
