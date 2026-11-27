@@ -179,6 +179,18 @@ describe("dispatchSlashCommand", () => {
     expect(result.triggerSessionNew).toBe(false);
   });
 
+  it("asks for the Trash list or a restore for /sessions --deleted | --restore (ATO-2474)", () => {
+    const list = dispatchSlashCommand("/sessions --deleted");
+    expect(list.sessionsTrash).toEqual({ verb: "list" });
+    expect(list.triggerSessionPicker).toBe(false);
+    const restore = dispatchSlashCommand("/sessions --restore 3");
+    expect(restore.sessionsTrash).toEqual({ verb: "restore", target: "3" });
+    const odd = dispatchSlashCommand("/sessions --nope");
+    expect(odd.sessionsTrash).toBeUndefined();
+    expect(odd.triggerSessionPicker).toBe(false);
+    expect(odd.systemMessage).toContain("--deleted");
+  });
+
   it("signals triggerRewindPicker for /rewind (ATO-1057)", () => {
     const result = dispatchSlashCommand("/rewind");
     expect(result.triggerRewindPicker).toBe(true);

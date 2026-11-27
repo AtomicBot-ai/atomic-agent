@@ -442,7 +442,7 @@ export const MENU: readonly MenuNode[] = [
     chord: "u",
     slash: {
       name: "sessions",
-      description: "open session picker to switch threads",
+      description: "open session picker to switch threads · `/sessions --deleted` lists chats in Trash · `/sessions --restore <n>` brings one back",
       rank: 19,
     },
   },

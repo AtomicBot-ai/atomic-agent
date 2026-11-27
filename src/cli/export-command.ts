@@ -5,6 +5,7 @@ import { getConfig } from "../config/index.js";
 import {
   exportChat,
   parseChatExportFormat,
+  readSessionTrashed,
   SessionStore,
   type SessionState,
 } from "../session/index.js";
@@ -108,7 +109,8 @@ export function parseExportArgs(args: readonly string[]): ParsedExportArgs | str
   return { sessionId, last, format, out, tools };
 }
 
-/** The newest chat someone has written in; unnamed empty sessions are skipped. */
+/** The newest chat someone has written in; unnamed empty sessions and (ATO-2474) chats in Trash are skipped. */
 function lastChat(store: SessionStore): SessionState | null {
-  return store.listRecent(20).find((s) => s.turns.some((t) => t.kind === "user")) ?? null;
+  return store.listRecent(20).find((s) =>
+    s.turns.some((t) => t.kind === "user") && !readSessionTrashed(s.metadata)) ?? null;
 }

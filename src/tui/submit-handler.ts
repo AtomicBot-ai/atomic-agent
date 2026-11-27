@@ -476,6 +476,7 @@ export function runSlashCommand(
     callbacks.onQuit();
   }
   if (result.triggerSessionPicker) callbacks.onSessionPickerRequested?.();
+  if (result.sessionsTrash) callbacks.onSessionsTrashRequested?.(result.sessionsTrash);
   if (result.triggerSessionNew) {
     if (result.sessionNewWorktree) callbacks.onSessionNewRequested?.({ worktree: true });
     else callbacks.onSessionNewRequested?.();

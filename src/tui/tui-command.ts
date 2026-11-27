@@ -604,6 +604,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         // ATO-490: `/think`, for this window's next turns; never written to config.json.
         onReasoningLevelChanged: (level) => orchestrator.setReasoningLevel(level),
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
+        onSessionsTrashRequested: (request) => orchestrator.sessionsTrash(request),
         onRewindPickerRequested: () => orchestrator.openRewindPicker(),
         onChatExportRequested: (request) => { void orchestrator.exportOpenChat(request); },
         onRewindRequested: (turnIndex, expectText) =>

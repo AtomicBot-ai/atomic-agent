@@ -1,5 +1,6 @@
 import type { SessionSummary } from "./session-summary.js";
 import { ARCHIVED_TURNS_KEY } from "./turn-archive.js";
+import { SESSION_TRASHED_METADATA_KEY } from "./session-trashed.js";
 
 /**
  * One page of list rows, newest first, with the fields a list renders
@@ -37,6 +38,12 @@ import { ARCHIVED_TURNS_KEY } from "./turn-archive.js";
  * An incognito chat (ATO-586, `incognito.ts`) is never listed, so the
  * rail, the recents and the profile's name walk never see it. Its check
  * comes after `json_valid`, like every other guard.
+ *
+ * ATO-2474: neither is a chat in Trash (`metadata.trashed: true`,
+ * `session-trashed.ts`): the rail, the picker, `--continue`, the agent's
+ * `memory.sessions.list` and every other reader of these pages treat it as
+ * deleted until it is restored. `/sessions --deleted` reads Trash through
+ * its own query (`session-trash-list.ts`).
  */
 function summaryPageSql(cursored: boolean): string {
   return `
@@ -60,6 +67,7 @@ SELECT id,
   FROM sessions
  WHERE json_valid(payload) AND json_type(payload, '$.turns') = 'array'
    AND json_type(payload, '$.incognito') IS NOT 'object'
+   AND json_type(payload, '$.metadata.${SESSION_TRASHED_METADATA_KEY}') IS NOT 'true'
    AND (json_type(payload, '$.${ARCHIVED_TURNS_KEY}.firstUserText') = 'text'
         OR EXISTS (SELECT 1
                      FROM json_each(payload, '$.turns') AS t
