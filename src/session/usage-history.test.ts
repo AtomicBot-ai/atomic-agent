@@ -1,7 +1,13 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Pass-through by default; one test makes a single read fail.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, readFileSync: vi.fn(actual.readFileSync) };
+});
 
 import {
   readUsageHistory,
@@ -128,9 +134,37 @@ describe("UsageHistoryStore", () => {
     expect(readUsageHistory(path).days).toEqual({});
     writeFileSync(path, "{not json");
     expect(readUsageHistory(path).days).toEqual({});
-    writeFileSync(path, JSON.stringify({ days: { "2026-11-12": [{ billing: "nope" }], bad: [] } }));
+    writeFileSync(path, JSON.stringify({ version: 1, days: { "2026-11-12": [{ billing: "nope" }], bad: [] } }));
     expect(readUsageHistory(path).days).toEqual({});
     new UsageHistoryStore({ path, now: () => NOON }).record(cloudCall());
     expect(readUsageHistory(path).days["2026-11-12"]?.[0]?.calls).toBe(1);
+  });
+
+  it("never overwrites a history it could not read", () => {
+    const path = tempPath();
+    const store = new UsageHistoryStore({ path, now: () => NOON });
+    store.record(cloudCall());
+    store.record(cloudCall({ modelId: "other" }));
+    const before = readFileSync(path, "utf8");
+    vi.mocked(readFileSync).mockImplementationOnce(() => {
+      throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+    });
+    store.record(cloudCall());
+    expect(readFileSync(path, "utf8")).toBe(before);
+    // The next readable write adds to the full history again.
+    store.record(cloudCall());
+    expect(readUsageHistory(path).days["2026-11-12"]?.map((r) => [r.model, r.calls])).toEqual([
+      ["gpt-x", 2],
+      ["other", 1],
+    ]);
+  });
+
+  it("never overwrites a file it could not parse or a newer version's file", () => {
+    for (const text of ["{not json", JSON.stringify({ version: 2, days: {} })]) {
+      const path = tempPath();
+      writeFileSync(path, text);
+      new UsageHistoryStore({ path, now: () => NOON }).record(cloudCall());
+      expect(readFileSync(path, "utf8")).toBe(text);
+    }
   });
 });

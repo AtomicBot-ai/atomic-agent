@@ -95,7 +95,12 @@ export class UsageHistoryStore {
     const promptTokens = clean(input.usage.promptTokens);
     const output = clean(input.usage.completionTokens);
     if (promptTokens === 0 && output === 0) return;
-    const file = this.read();
+    // Only a missing file starts a new history. A file that could not be
+    // read (EACCES, EBUSY, the other process mid-rename), could not be
+    // parsed, or was written by a newer version is left alone: this call
+    // goes uncounted rather than wiping every day on record.
+    const file = readUsageHistoryForWrite(this.path);
+    if (file === null) return;
     const day = this.currentDay();
     const billing: UsageBilling = input.local ? "local" : input.plan ? "plan" : "cloud";
     const model = input.modelId ?? input.providerId;
@@ -143,7 +148,7 @@ export class UsageHistoryStore {
   }
 }
 
-/** The history at `path`; a missing or damaged file reads as empty. */
+/** The history at `path` for the report; a missing or damaged file reads as empty. */
 export function readUsageHistory(path: string): UsageHistoryFile {
   let raw: unknown;
   try {
@@ -151,6 +156,33 @@ export function readUsageHistory(path: string): UsageHistoryFile {
   } catch {
     return { version: 1, days: {} };
   }
+  return parseUsageHistory(raw);
+}
+
+/**
+ * The history at `path` before a write: empty only when the file does
+ * not exist yet, `null` when it exists but must not be replaced (any
+ * other read error, unparseable JSON, a newer `version`).
+ */
+export function readUsageHistoryForWrite(path: string): UsageHistoryFile | null {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    return (error as NodeJS.ErrnoException | null)?.code === "ENOENT" ? { version: 1, days: {} } : null;
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const version = (raw as { version?: unknown } | null)?.version;
+  if (typeof version === "number" && version > 1) return null;
+  return parseUsageHistory(raw);
+}
+
+function parseUsageHistory(raw: unknown): UsageHistoryFile {
   const days: Record<string, UsageHistoryRow[]> = {};
   const source = (raw as { days?: unknown } | null)?.days;
   if (source && typeof source === "object") {
