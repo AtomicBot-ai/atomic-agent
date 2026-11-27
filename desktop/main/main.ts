@@ -339,6 +339,7 @@ import { wireSelectedText } from "./selected-text-ipc.js";
 import { readQuickEntryPref } from "./quick-entry.js";
 import { isDictatePill, wireDictateAnywhere } from "./dictate-anywhere-window.js";
 import { wirePetIpc, type PetHub } from "./pet-ipc.js";
+import { wireApprovalNotify } from "./approval-notify-ipc.js";
 import { readPetPrefs } from "./pet-prefs.js";
 import { isPetWindow } from "./pet-window.js";
 import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
@@ -1950,6 +1951,8 @@ function wireIpc(client: AgentClient): void {
     }
   });
 
+  // ATO-2755: a notification (and the phone push) when a chat waits for your OK (approval-notify-ipc.ts).
+  const approvalNote = wireApprovalNotify(client, { mainWindow: () => win, showMainWindow: openWindowAgain, quiet: SMOKE || FIRST_RUN_PROBE });
   /* ATO-2391: the desktop pet answers through this same function when no window card takes its click. */
   const approveFromUi = async (payload: unknown) => {
     const { approvalId, decision, reason } = payload as {
@@ -1966,6 +1969,7 @@ function wireIpc(client: AgentClient): void {
       const data = await client.resolveApproval(approvalId, known, reason);
       chatTurns.approvalAnswered({ approvalId, decision: known });   // ATO-1026: the turn leaves "approval"
       petHub?.approvalAnswered(approvalId);   // ATO-2391: the pet's bubble goes
+      approvalNote.answered(approvalId);   // ATO-2755: and its notification
       return { ok: true, data };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -1995,6 +1999,7 @@ function wireIpc(client: AgentClient): void {
       const data = await client.answerQuestion(p.approvalId, answer);
       chatTurns.approvalAnswered({ approvalId: p.approvalId, decision: answer.skip ? "deny" : "allow-once" });   // ATO-1026: the turn leaves "approval"
       petHub?.approvalAnswered(p.approvalId);   // ATO-2391
+      approvalNote.answered(p.approvalId);   // ATO-2755
       return { ok: true, data };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };

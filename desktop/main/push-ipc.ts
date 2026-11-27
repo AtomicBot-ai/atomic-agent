@@ -41,11 +41,12 @@ export async function pushStatus(): Promise<{ ok: true; push: PushState } | Fail
 }
 
 /**
- * A desktop turn ended while nobody was looking (turn-notify.ts): send the
+ * A desktop turn ended while nobody was looking (turn-notify.ts), or the
+ * agent waits for an answer (approval-notify-ipc.ts, `waiting`): send the
  * same words to the phone when push is on. One attempt, 8 s, never throws.
  */
 export async function pushTurnNote(
-  note: { title: string; body: string },
+  note: { title: string; body: string; waiting?: boolean },
   fetchImpl: typeof fetch = fetch,
 ): Promise<boolean> {
   try {

@@ -186,6 +186,20 @@ preview or a preview the bubble cannot show whole (more than one line, or clippe
 or the categories kept for the full card (`PET_WINDOW_ONLY_CATEGORIES`): those offer
 Review. Do Not Disturb hides the bubble and the done / failed flashes.
 
+**"Needs your OK" notifications (ATO-2755).** A chat that stops on an
+approval card (or an ask_user question) raises a native notification,
+"Atomic Agent needs your OK", with the chat's title and the card's own
+question in plain text, and the same words go to the phone push when
+Settings › Connections › Phone push is on. One per request id however often
+the events stream replays it, none for a request that came while the window
+was focused on its chat, and it closes when the request is answered here.
+The page describes the card it drew ([approval-notify.js](renderer/approval-notify.js));
+main decides ([approval-notify.ts](main/approval-notify.ts),
+[approval-notify-ipc.ts](main/approval-notify-ipc.ts)). With no main window
+(closed to the tray or the Dock) main words it from the request itself. A
+click brings the window up and opens that chat on its card. The switch is
+the turn-end one, `tui.notify.enabled`; there is no key of its own.
+
 **Why not the NDJSON sidecar.** `dist/sidecar/main.js` exists only in a source
 checkout, and the shipped single-file binary has no `sidecar` subcommand. A
 desktop app has to work against what people installed. The sidecar also has no
