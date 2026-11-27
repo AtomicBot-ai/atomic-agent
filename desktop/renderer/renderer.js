@@ -29161,7 +29161,7 @@ function llmFusionHTML() {
     // Where the workers run and their server's Start / Stop (Д35).
     + (on ? llmNowHTML() : '')
     // The worker count is Fusion's alone: under Local or Cloud nothing fans out.
-    + (on ? llmWorkersHTML(rm) + fzrSettingsHTML(rm) : '')
+    + (on ? llmWorkersHTML(rm) + fzrSettingsHTML(rm) + fzRolesSettingsHTML(rm) : '')   // ATO-1754 (fusion-roles.js)
     + '</section>';
 }
 /* "Models on <provider>" with its filter, for the Cloud or the Custom tab. */
