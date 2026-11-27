@@ -107,6 +107,16 @@ function ajChipText(jobs, needsYou) {
   return jobs.length === 1 ? 'Agent job ended' : 'Agent jobs ended';
 }
 
+/**
+ * The terminal size that fits the screen box, from its inner size and one
+ * character's width and line height. Bounded like the agent's own limits.
+ */
+function ajFitSize(width, height, charW, lineH) {
+  if (!(width > 0 && height > 0 && charW > 0 && lineH > 0)) return null;
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  return {cols: clamp(Math.floor(width / charW), 20, 500), rows: clamp(Math.floor(height / lineH), 5, 200)};
+}
+
 /** What Send puts on the job's input: the text, then Enter. */
 function ajInputText(text, enter) {
   return String(text == null ? '' : text) + (enter === false ? '' : '\n');
@@ -114,5 +124,5 @@ function ajInputText(text, enter) {
 
 if (typeof module !== 'undefined') {
   module.exports = {AJ_MAX_LINES, AJ_MAX_RAW, ajEsc, ajScreenText, ajAppendRaw, ajLooksSecret, ajTabLabel, ajIsLive,
-    ajStateLine, ajMergeJobs, ajJobsFrom, ajChipText, ajInputText};
+    ajStateLine, ajMergeJobs, ajJobsFrom, ajChipText, ajInputText, ajFitSize};
 }

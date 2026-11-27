@@ -841,6 +841,8 @@ contextBridge.exposeInMainWorld("atomic", {
   agentJobInput: (sessionId: string, jobId: number, text: string, eof: boolean) =>
     ipcRenderer.invoke("agentJobs:input", { sessionId, jobId, text, eof }),
   agentJobStop: (sessionId: string, jobId: number) => ipcRenderer.invoke("agentJobs:stop", { sessionId, jobId }),
+  agentJobResize: (sessionId: string, jobId: number, cols: number, rows: number) =>
+    ipcRenderer.invoke("agentJobs:resize", { sessionId, jobId, cols, rows }),
 
   /** ATO-229 — app updates (main/updater.ts). Nothing downloads or installs
    *  except through updateDownload / updateInstall, each a click. Every call

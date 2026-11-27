@@ -64,3 +64,10 @@ export function agentJobErrorOf(err: unknown): { error: string; unsupported: boo
   if (/paired phone/i.test(text)) return { error: "Typing into the agent's jobs works on this computer only.", unsupported: false };
   return { error: "The agent did not answer. Try again.", unsupported: false };
 }
+
+/** A terminal size the agent takes: whole numbers from 2 to 1000, else null. */
+export function agentJobSizeOf(payload: unknown): { cols: number; rows: number } | null {
+  const { cols, rows } = (payload ?? {}) as { cols?: unknown; rows?: unknown };
+  const ok = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 2 && n <= 1_000;
+  return ok(cols) && ok(rows) ? { cols, rows } : null;
+}

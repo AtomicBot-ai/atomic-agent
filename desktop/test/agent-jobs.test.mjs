@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 
 const {
-  AJ_MAX_RAW, ajScreenText, ajAppendRaw, ajLooksSecret, ajTabLabel, ajStateLine, ajMergeJobs, ajJobsFrom, ajChipText, ajInputText,
+  AJ_MAX_RAW, ajScreenText, ajAppendRaw, ajLooksSecret, ajTabLabel, ajStateLine, ajMergeJobs, ajJobsFrom, ajChipText, ajInputText, ajFitSize,
 } = createRequire(import.meta.url)('../renderer/agent-jobs-logic.js');
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
@@ -80,6 +80,12 @@ test('Send types the text and presses Enter', () => {
   assert.equal(ajInputText('', false), '');
 });
 
+test('a native terminal is sized to the panel, within bounds', () => {
+  assert.deepEqual(ajFitSize(800, 300, 8, 20), {cols: 100, rows: 15});
+  assert.deepEqual(ajFitSize(40, 40, 8, 20), {cols: 20, rows: 5});
+  assert.equal(ajFitSize(0, 300, 8, 20), null);
+});
+
 test('the panel is wired: its own element, scripts after renderer.js, CSS, preload and main', () => {
   const html = read('../renderer/index.html');
   assert.match(html, /<div id="agentjobs" hidden><\/div>/);
@@ -88,7 +94,7 @@ test('the panel is wired: its own element, scripts after renderer.js, CSS, prelo
   assert.ok(at('src="agent-jobs-logic.js"') < at('src="agent-jobs.js"'));
   assert.match(html, /href="css\/agent-jobs\.css"/);
   const preload = read('../preload/preload.ts');
-  for (const ch of ['agentJobs:list', 'agentJobs:output', 'agentJobs:input', 'agentJobs:stop']) {
+  for (const ch of ['agentJobs:list', 'agentJobs:output', 'agentJobs:input', 'agentJobs:resize', 'agentJobs:stop']) {
     assert.ok(preload.includes(`"${ch}"`), ch + ' in preload');
     assert.ok(read('../main/agent-jobs-ipc.ts').includes(`"${ch}"`), ch + ' in main');
   }

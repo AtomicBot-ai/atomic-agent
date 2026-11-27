@@ -41,3 +41,10 @@ test('refusals in plain words; an older agent is marked unsupported', () => {
   // No raw error text or address reaches the person.
   assert.doesNotMatch(other.error, /ECONNREFUSED|127\.0\.0\.1/);
 });
+
+test('a terminal size is two whole numbers the agent takes', () => {
+  assert.deepEqual(J.agentJobSizeOf({cols: 120, rows: 40}), {cols: 120, rows: 40});
+  assert.equal(J.agentJobSizeOf({cols: 1, rows: 40}), null);
+  assert.equal(J.agentJobSizeOf({cols: 120.5, rows: 40}), null);
+  assert.equal(J.agentJobSizeOf({}), null);
+});

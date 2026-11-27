@@ -4,6 +4,7 @@
  *   agentJobs:list    the chat's shell jobs  (GET  /api/sessions/{id}/shell-jobs)
  *   agentJobs:output  output from a position (GET  …/shell-jobs/{jobId}/output)
  *   agentJobs:input   the person's typing    (POST …/shell-jobs/{jobId}/input)
+ *   agentJobs:resize  the panel's size       (POST …/shell-jobs/{jobId}/resize)
  *   agentJobs:stop    stop one job           (POST …/shell-jobs/{jobId}/stop)
  *
  * Each answers { ok: true, data } with the agent's own answer, or
@@ -20,6 +21,7 @@ import {
   agentJobInputOf,
   agentJobSessionOf,
   agentJobSinceOf,
+  agentJobSizeOf,
 } from "./agent-jobs.js";
 
 type Answer = { ok: true; data: unknown } | { ok: false; error: string; unsupported: boolean };
@@ -52,6 +54,13 @@ export function wireAgentJobsIpc(client: AgentClient): void {
     const req = agentJobInputOf(payload);
     if (!req.ok) return { ok: false, error: req.error, unsupported: false };
     return answer(() => client.shellJobInput(req.address.sessionId, req.address.jobId, req.text, req.eof));
+  });
+
+  ipcMain.handle("agentJobs:resize", async (_event, payload: unknown): Promise<Answer> => {
+    const a = agentJobAddressOf(payload);
+    const size = agentJobSizeOf(payload);
+    if (!a || !size) return gone;
+    return answer(() => client.resizeShellJob(a.sessionId, a.jobId, size.cols, size.rows));
   });
 
   ipcMain.handle("agentJobs:stop", async (_event, payload: unknown): Promise<Answer> => {

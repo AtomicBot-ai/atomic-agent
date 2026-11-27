@@ -16,7 +16,7 @@
 
 const AJ = {
   sid: null, jobs: [], closed: {}, selected: null, open: false, taking: false, hide: false,
-  raw: {}, next: {}, dropped: {}, asked: {}, unsupported: false, busy: false, err: '', timer: null,
+  raw: {}, next: {}, dropped: {}, asked: {}, size: {}, unsupported: false, busy: false, err: '', timer: null,
 };
 /** Set when the field should take the caret on the next paint. */
 let ajWantFocus = false;
@@ -32,7 +32,7 @@ function ajSelectedJob() { return AJ.jobs.find((j) => j.id === AJ.selected) || n
 
 function ajReset(sid) {
   Object.assign(AJ, {sid, jobs: [], closed: {}, selected: null, open: false, taking: false, hide: false,
-    raw: {}, next: {}, dropped: {}, asked: {}, err: ''});
+    raw: {}, next: {}, dropped: {}, asked: {}, size: {}, err: ''});
 }
 
 /* ---- polling ---- */
@@ -148,6 +148,26 @@ function ajAct(what, arg) {
   ajSchedule(0);
 }
 
+/** A job on a native pty follows the panel's size (sent once per change). */
+function ajFollowSize(screen, job) {
+  const bridge = ajBridge();
+  if (!bridge || typeof bridge.agentJobResize !== 'function' || !job || !job.resizable || !ajIsLive(job)) return;
+  const probe = document.createElement('span');
+  probe.textContent = 'MMMMMMMMMM';
+  probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre';
+  screen.appendChild(probe);
+  const box = probe.getBoundingClientRect();
+  probe.remove();
+  const cs = getComputedStyle(screen);
+  const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+  const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  const size = ajFitSize(screen.clientWidth - padX, screen.clientHeight - padY, box.width / 10, box.height);
+  const key = size ? size.cols + 'x' + size.rows : '';
+  if (!size || AJ.size[job.id] === key) return;
+  AJ.size[job.id] = key;
+  void Promise.resolve(bridge.agentJobResize(AJ.sid, job.id, size.cols, size.rows)).catch(() => undefined);
+}
+
 /* ---- drawing ---- */
 
 function ajSkeleton(host) {
@@ -190,6 +210,7 @@ function ajPaint() {
     screen.textContent = text || (job && ajIsLive(job) ? 'Waiting for output…' : 'No output.');
     if (atBottom) screen.scrollTop = screen.scrollHeight;
   }
+  ajFollowSize(screen, job);
   host.querySelector('.aj-dropped').hidden = !(job && AJ.dropped[job.id]);
   host.querySelector('.aj-state').textContent = ajStateLine(job);
   const live = ajIsLive(job);

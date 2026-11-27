@@ -1385,6 +1385,9 @@ export class AgentClient extends EventEmitter {
     );
   shellJobInput = (sessionId: string, jobId: number, text: string, eof: boolean) =>
     this.request<unknown>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/shell-jobs/${jobId}/input`, { text, eof });
+  /** `{resized:false}` when the job's terminal has a fixed size. */
+  resizeShellJob = (sessionId: string, jobId: number, cols: number, rows: number) =>
+    this.request<unknown>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/shell-jobs/${jobId}/resize`, { cols, rows });
   stopShellJob = (sessionId: string, jobId: number) =>
     this.request<unknown>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/shell-jobs/${jobId}/stop`, {});
 
