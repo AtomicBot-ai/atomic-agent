@@ -7678,6 +7678,7 @@ function act(a) {
   if (a === 'wiz:subCopy') { wizSubCopy(WIZ.row); return; }
   if (a === 'wiz:chatgptOauth') { wizChatgptOauthStart(WIZ.row); return; }   // ATO-1747
   if (a === 'wiz:chatgptOauthCancel') { chatgptOauthCancel(BR, true); render(); return; }
+  if (a === 'wiz:chatgptOauthReopen') { chatgptOauthRestart(BR, render); return; }   // ATO-2739
   if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'pick_model' ? 'configure' : WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.forId = null; render(); return; }
   if (a === 'wiz:next') { wizNext(); return; }
   /* The second of the two buttons an unchecked key offers. It is the
@@ -16357,8 +16358,8 @@ function obWizardHTML() {
         + ic('chevL') + 'Back</button><span class="grow"></span>'
         + '<button class="btn btn-s" data-act="wiz:subRecheck"' + (verifying ? ' disabled' : '') + '>Check again</button>'
         + (wizSubNeedsLogin(k) && !verifying
-          ? '<button class="btn btn-p" data-act="wiz:subLogin"' + (WIZ_SUB_POLL.opening ? ' disabled' : '') + '>' + esc(wizSubLoginButton(k)) + ic('arrowR') + '</button></div>'
-          : '<button class="btn btn-p" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
+          ? '<button class="btn ' + wizSubLoginCls(k) + '" data-act="wiz:subLogin"' + (WIZ_SUB_POLL.opening ? ' disabled' : '') + '>' + esc(wizSubLoginButton(k)) + ic('arrowR') + '</button></div>'
+          : '<button class="btn ' + wizSubNextCls(k) + '" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
             + (verifying ? 'Adding…' : esc(wizSubButton(k)) + ic('arrowR')) + '</button></div>')
       + '</div>';
   }
@@ -18631,7 +18632,7 @@ if (BR) {
        nothing at all until they were listed. Same shape as the defect the
        operator once reported as "when I click on next, nothing happens". */
     if (OB.open && OB.step === 'cloud'
-        && (a === 'wiz:model' || a === 'wiz:useDefault' || a === 'wiz:saveUnchecked' || a === 'wiz:subRecheck' || a === 'wiz:subLogin' || a === 'wiz:subCopy' || a === 'wiz:chatgptOauth' || a === 'wiz:chatgptOauthCancel')) {
+        && (a === 'wiz:model' || a === 'wiz:useDefault' || a === 'wiz:saveUnchecked' || a === 'wiz:subRecheck' || a === 'wiz:subLogin' || a === 'wiz:subCopy' || a === 'wiz:chatgptOauth' || a === 'wiz:chatgptOauthCancel' || a === 'wiz:chatgptOauthReopen')) {
       return prevAct(a);
     }
     if (OB.open && OB.step === 'cloud' && (a === 'wiz:cancel' || a === 'wiz:back')) {
@@ -22613,8 +22614,8 @@ function wizardHTML() {
       '<button class="btn btn-g xs" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button><span class="grow"></span>'
         + '<button class="btn btn-s xs" data-act="wiz:subRecheck"' + (verifying ? ' disabled' : '') + '>Check again</button>'
         + (wizSubNeedsLogin(k) && !verifying
-          ? '<button class="btn btn-p xs" data-act="wiz:subLogin"' + (WIZ_SUB_POLL.opening ? ' disabled' : '') + '>' + esc(wizSubLoginButton(k)) + '</button>'
-          : '<button class="btn btn-p xs" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
+          ? '<button class="btn ' + wizSubLoginCls(k) + ' xs" data-act="wiz:subLogin"' + (WIZ_SUB_POLL.opening ? ' disabled' : '') + '>' + esc(wizSubLoginButton(k)) + '</button>'
+          : '<button class="btn ' + wizSubNextCls(k) + ' xs" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
             + (verifying ? '<span class="tk-spin"></span>Adding\u2026' : esc(wizSubButton(k))) + '</button>'),
       lead);
   }
@@ -22807,8 +22808,21 @@ function wizSubLineHTML(l, cls, warnCls) {
     + (l.code && l.copy ? ' <button class="btn btn-g xs wiz-sub-copy" data-act="wiz:subCopy">Copy</button>' : '')
     + '</' + (cls === 'p' ? 'p' : 'div') + '>';
 }
-/* ATO-845: "Sign in with Claude" / "Sign in with ChatGPT". */
-function wizSubLoginButton(k) { return 'Sign in with ' + (k.plan || wizService(k)); }
+/* ATO-845: "Sign in with Claude". ATO-2739: Codex names the terminal, so it never reads like the browser sign-in beside it. */
+function wizSubLoginButton(k) {
+  /* Windows: subscription-cli-login.ts opens Command Prompt (cmd.exe /k), so the label names that window. */
+  if (k.subscriptionCli === 'codex') return 'Sign in with Codex in ' + (/win/i.test(navigator.platform || '') ? 'Command Prompt' : 'Terminal');
+  return 'Sign in with ' + (k.plan || wizService(k));
+}
+/* ATO-2739: the terminal sign-in steps back to a plain button when the browser one leads (chatgpt-oauth-step.js). */
+function wizSubLoginCls(k) {
+  return k.subscriptionCli === 'codex' && typeof chatgptOauthIsPrimary === 'function' && chatgptOauthIsPrimary(CHATGPT_OAUTH, wizSubStatus(k)) ? 'btn-s' : 'btn-p';
+}
+/* ATO-2739: no Codex CLI and the browser sign-in leads: the disabled "Use my ChatGPT subscription" is not a second primary. */
+function wizSubNextCls(k) {
+  return k.subscriptionCli === 'codex' && typeof chatgptOauthCliState === 'function' && chatgptOauthCliState(wizSubStatus(k)) === 'missing'
+    && chatgptOauthIsPrimary(CHATGPT_OAUTH, wizSubStatus(k)) ? 'btn-s' : 'btn-p';
+}
 /** Signed out, as far as the login file says: the step's main button is Sign in. */
 function wizSubNeedsLogin(k) { const st = wizSubStatus(k); return !!(st && st.installed && st.signedIn === false); }
 /* The sign-in poll. After the click the step asks main every few seconds
@@ -22878,7 +22892,7 @@ async function wizSubLogin(k) {
 function wizChatgptOauthHTML(k, compact) {
   if (!k || k.subscriptionCli !== 'codex' || typeof chatgptOauthBlockHTML !== 'function') return '';
   chatgptOauthAskSupported(BR, render);
-  return chatgptOauthBlockHTML(CHATGPT_OAUTH, esc, compact);
+  return chatgptOauthBlockHTML(CHATGPT_OAUTH, esc, compact, wizSubStatus(k));
 }
 function wizChatgptOauthStart(k) {
   if (!k || typeof chatgptOauthStart !== 'function') return;
@@ -28047,7 +28061,7 @@ async function llmFetchModels(p) {
   const ask = LLMP.modelsAsk = (LLMP.modelsAsk || 0) + 1;
   // A rejected ask still lands below as an error, so modelsBusy always clears.
   const res = await llmListAsk(() => BR.providerModels(p.id, p.kind || '', true), providerWord(p.id))
-    .catch((err) => ({ok:false, error:'could not ask for the list: ' + ((err && err.message) || String(err))}));
+    .catch(llmListAskFailed);   // ATO-2739: raw words only in the detail
   if (LLMP.modelsFor !== p.id || LLMP.modelsAsk !== ask) return;
   LLMP.modelsBusy = false;
   if (res.deadline && res.late) res.late.then((late) => {
@@ -28055,7 +28069,7 @@ async function llmFetchModels(p) {
     llmTakeModels(p, late); llmClampCursors(); llmRepaint();
   });
   if (!res.ok) {
-    if (!LLMP.models.length) LLMP.modelsErr = modelListFailLine(res, providerWord(p.id)) || res.error || 'could not list models';   // ATO-202
+    if (!LLMP.models.length) { LLMP.modelsErr = modelListFailLine(res, providerWord(p.id)) || res.error || 'could not list models'; LLMP.modelsErrDetail = res.detail || ''; }   // ATO-202
   } else llmTakeModels(p, res);
   llmClampCursors();
   llmRepaint();
@@ -29206,7 +29220,7 @@ function llmCloudModelListHTML(tab) {
     // ATO-318: the snapshot built into the app is not the provider's list; say so, with the way to ask again.
     + (section.status === 'ready' && LLMP.modelsStale ? '<div class="llm-counter llm-stale">The live list from ' + who + ' did not load, so this is the list built into the app. '
       + '<button class="llm-link" data-act="llm:modelsRetry">Try again</button></div>' : '')
-    + (section.status === 'error' ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">Couldn’t fetch the model list (' + esc(section.error || 'unknown error') + '). Showing the current model only.</span>'
+    + (section.status === 'error' ? '<div class="tk-notice tk-notice--red">' + ic('alert') + llmListErrorSpanHTML(section.error, esc, LLMP.modelsErrDetail)
       + '<button class="llm-link" data-act="llm:modelsRetry">Try again</button></div>' : '')   // ATO-2413
     + (visible.length ? '<div class="tk-list llm-list">' + visible.map((r, i) => llmRowHTML(r, section.sectionStart + start + i, cursor)).join('') + '</div>' : '')
     + (counter ? '<div class="llm-counter">' + esc(counter) + '</div>' : '');
