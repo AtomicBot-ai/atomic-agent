@@ -481,7 +481,8 @@ Real, driven by the running agent:
   same provider step (`cloud`); Back from the URL step returns to the Custom
   list. A click scenario that wants Ollama clicks **Custom**, not
   **Cloud models**. The terminal's own wizard is unchanged.
-- model servers already running here (ATO-2489, `renderer/local-servers.js`,
+- model servers already running here (ATO-2489, `renderer/local-servers.js`
+  for Settings, `renderer/local-servers-setup.js` for the setup step,
   `main/local-servers-ipc.ts`): the app runs `atag local-servers --json`, the
   core's own probe (Ollama on 11434, LM Studio on 1234, the Llama app or a
   llama-server on 9931, 800 ms each). When one answers, the Custom card says
