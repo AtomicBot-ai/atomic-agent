@@ -28,6 +28,7 @@ async function run(args: string[]): Promise<{ code: number; out: string; err: st
     writeErr: (t) => { err += t; },
     readHistory: () => HISTORY,
     today: () => "2026-11-12",
+    providers: () => ({ providers: [] }),
   });
   return { code, out, err };
 }
@@ -67,5 +68,53 @@ describe("usageCommand", () => {
       expect(code).toBe(2);
       expect(err).toContain("Usage: atomic-agent usage");
     }
+  });
+
+  // ATO-2442.
+  it("prints the saved-by-local estimate under the table, at the reference asked for", async () => {
+    const plain = (await run([])).out;
+    expect(plain).toMatch(/Saved by local \(estimate\): about \$0\.\d+, the 3\.4k local tokens at deepseek\/deepseek-v4-flash/);
+    const other = (await run(["--compare", "google/gemini-flash-lite-latest"])).out;
+    expect(other).toContain("google/gemini-flash-lite-latest list prices");
+    expect(other).toContain("the model you chose");
+    expect((await run(["--compare", "no-such-model"])).out).toContain("Saved by local: unknown.");
+  });
+
+  it("--tools, --projects and --sessions add their tables and column", async () => {
+    const withSplit: UsageHistoryFile = {
+      ...HISTORY,
+      tools: { "2026-11-12": { "fs.read": { calls: 2, errors: 0 } } },
+      projects: {
+        "2026-11-12": [{
+          billing: "cloud", project: "abcdef123456", label: "site", calls: 1,
+          inputTokens: 1000, outputTokens: 100, cachedTokens: 0, usd: 0.2, pricedCalls: 1, unpricedCalls: 0,
+        }],
+      },
+      sessions: { "2026-11-12": ["a1", "b2"] },
+    };
+    let out = "";
+    const code = await usageCommand(["--tools", "--projects", "--sessions"], {
+      write: (t) => { out += t; },
+      readHistory: () => withSplit,
+      today: () => "2026-11-12",
+      providers: () => ({ providers: [] }),
+    });
+    expect(code).toBe(0);
+    expect(out).toMatch(/Cloud cost\s+Sessions\n2026-11-12.*\s2\n/);
+    expect(out).toMatch(/\nTools\nTool\s+Calls\s+Errors\s+Share\nfs\.read\s+2\s+-\s+100%/);
+    expect(out).toMatch(/\nProjects\n.*\nsite\s+1\s+1\.0k\s+100\s+0%\s+\$0\.20/);
+  });
+
+  it("--json carries savedByLocal, and tools and projects when asked", async () => {
+    const out = JSON.parse((await run(["--json", "--tools", "--projects"])).out) as Record<string, unknown>;
+    expect(out.savedByLocal).toMatchObject({ status: "estimate", estimate: true, localInputTokens: 3000 });
+    expect(out.tools).toEqual([]);
+    expect(out.projects).toEqual([]);
+  });
+
+  it("refuses --compare with no model", async () => {
+    const { code, err } = await run(["--compare"]);
+    expect(code).toBe(2);
+    expect(err).toContain("--compare needs a model");
   });
 });

@@ -180,8 +180,16 @@ export async function createAgentRuntime(
     },
   });
 
+  // ATO-2352: tokens and spend per day and model, for `atomic-agent usage`;
+  // ATO-2442: also per project (the session's folder) and per tool.
+  const usageHistory = new UsageHistoryStore({
+    path: join(config.paths.stateDir, USAGE_HISTORY_FILE_NAME),
+    resetHourUtc: () => getConfig().llm?.costTracking?.dailyResetHourUtc ?? 0,
+    workingDirOf: (sessionId) => sessionStore.load(sessionId)?.workingDir,
+  });
   const { emitAgentLoopEventFor, emitAgentLoopEvent } = traces.createEventRouting(
     turnController, options, observability.getErrorReporter,
+    (tool, failed) => usageHistory.recordTool(tool, failed),
   );
 
   // Memory sub-calls run fire-and-forget and fail without a word. This
@@ -497,11 +505,6 @@ export async function createAgentRuntime(
   // on the live event only when the operator asked for it.
   const dailySpend = new DailySpendStore({
     path: join(config.paths.stateDir, DAILY_SPEND_FILE_NAME),
-    resetHourUtc: () => getConfig().llm?.costTracking?.dailyResetHourUtc ?? 0,
-  });
-  // ATO-2352: tokens and spend per day and model, for `atomic-agent usage`.
-  const usageHistory = new UsageHistoryStore({
-    path: join(config.paths.stateDir, USAGE_HISTORY_FILE_NAME),
     resetHourUtc: () => getConfig().llm?.costTracking?.dailyResetHourUtc ?? 0,
   });
   const sessionUsage = new SessionUsageLedger({

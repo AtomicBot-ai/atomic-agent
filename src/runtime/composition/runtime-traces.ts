@@ -214,6 +214,8 @@ export function createRuntimeTraces(
     turnController: Pick<TurnController, "emit">,
     options: Pick<CreateAgentRuntimeOptions, "handlers">,
     getErrorReporter: () => SentryClient | null,
+    /** Every finished tool call, for the per-tool usage history (ATO-2442). Must not throw. */
+    onToolExecuted?: (tool: string, failed: boolean) => void,
   ) => {
 
     /**
@@ -247,6 +249,9 @@ export function createRuntimeTraces(
         }
         if (event.type === "llm_event") {
           const step = event.event;
+          if (step.type === "tool_call_executed") {
+            onToolExecuted?.(step.result.tool, step.result.status === "error");
+          }
           if (step.type === "prompt_built") {
             lastTurnContextUsage.set(
               ctx.sessionId,
