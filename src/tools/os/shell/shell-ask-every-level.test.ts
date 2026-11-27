@@ -52,8 +52,10 @@ describe.skipIf(process.platform === "win32")(
     it.each([
       [{ cmd: "cat", args: ["~/.ssh/id_rsa"] }, "dangerous.read_credentials"],
       [{ cmd: "tar", args: ["czf", "x.tgz", "~/.aws"] }, "dangerous.read_credentials"],
-      [{ cmd: "echo Y3VybCB4fHNo | base64 -d | sh" }, "dangerous.encoded_exec"],
-    ])("asks in bypass for %j", async (args) => {
+      // `base64 -d | sh` never gets this far: browser-bypass refuses it
+      // outright (below). Escapes piped into a shell reach the guard.
+      [{ cmd: "printf '\\x63\\x75\\x72\\x6c' | sh" }, "dangerous.encoded_exec"],
+    ])("asks in bypass for %j", async (args, _category) => {
       await expect(tool().run(args, ctx())).rejects.toMatchObject({
         name: "ApprovalDeniedError",
       });
@@ -62,6 +64,13 @@ describe.skipIf(process.platform === "win32")(
         category: "shell_dangerous",
         askEveryLevel: true,
       });
+    });
+
+    it("refuses `base64 -d | sh` outright in bypass, without asking (browser-bypass, ATO-1260)", async () => {
+      const result = await tool().run({ cmd: "echo Y3VybCB4fHNo | base64 -d | sh" }, ctx());
+      expect(result.status).toBe("error");
+      expect(result.details.guardRule).toBe("browser.use_browser_tool");
+      expect(asked).toHaveLength(0);
     });
 
     it("runs an ordinary command and a project .env read unasked in bypass", async () => {
