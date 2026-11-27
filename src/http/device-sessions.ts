@@ -1,11 +1,14 @@
 import { statSync } from "node:fs";
 
+import { MAX_CODE_FAILURES, normalizePairingCode } from "./device-code.js";
 import {
   createPairing,
   hashDeviceSecret,
   httpDevicesPath,
+  isDeviceIdle,
   readDevices,
   redeemPairing,
+  redeemPairingCode,
   revokeDevice,
   touchDevice,
   type CreatePairingResult,
@@ -22,13 +25,24 @@ import { secretEquals } from "./secret-equal.js";
  * another terminal applies from the next request, without a restart.
  */
 export interface DeviceSessions {
-  /** The device whose session secret this is, or `null`. Records it as seen. */
+  /**
+   * The device whose session secret this is, or `null`. Records it as seen.
+   * ATO-2494: a device idle longer than DEVICE_IDLE_MS is `null` too.
+   */
   identify(secret: string): PairedDevice | null;
   redeem(token: string, deviceName: string): RedeemPairingResult;
+  /**
+   * ATO-2494: redeem by the short code typed on `/panel/pair`. After
+   * MAX_CODE_FAILURES wrong codes (all callers together) every code is
+   * refused (`reason: "locked"`) until `createPairing` makes a new one.
+   */
+  redeemCode(typed: string, deviceName: string): RedeemCodeResult;
   createPairing(): CreatePairingResult;
   list(): PairedDevice[];
   revoke(id: string): RevokeDeviceResult;
 }
+
+export type RedeemCodeResult = RedeemPairingResult | { ok: false; error: string; reason: "locked" };
 
 /** `lastSeenAt` is written at most this often per device, not on every request. */
 const TOUCH_EVERY_MS = 60_000;
@@ -43,6 +57,14 @@ export function createDeviceSessions(stateDir: string, options: DeviceSessionsOp
   let stamp = "";
   let cached: readonly PairedDevice[] = [];
   const lastTouch = new Map<string, number>();
+  // Wrong codes since the newest pairing was made; `atag pair` in another process makes them too.
+  let codeFailures = 0;
+  let codeEpoch = "";
+  const newestPairing = (): string => {
+    const read = readDevices(stateDir);
+    if (!read.ok) return codeEpoch;
+    return read.data.pairings.reduce((top, p) => (p.createdAt > top ? p.createdAt : top), "");
+  };
 
   const devices = (): readonly PairedDevice[] => {
     let next: string;
@@ -83,14 +105,36 @@ export function createDeviceSessions(stateDir: string, options: DeviceSessionsOp
       for (const device of devices()) {
         if (secretEquals(hash, device.sha256) && found === null) found = device;
       }
-      if (found) touch(found);
+      if (!found) return null;
+      // Seen more recently than the file says when the last write was skipped or failed.
+      const touched = lastTouch.get(found.id);
+      const seen = touched !== undefined ? new Date(Math.max(touched, Date.parse(found.lastSeenAt) || 0)).toISOString() : found.lastSeenAt;
+      if (isDeviceIdle({ lastSeenAt: seen }, now())) return null;
+      touch(found);
       return found;
     },
     redeem: (token, deviceName) => redeemPairing(stateDir, token, deviceName, now()),
+    redeemCode(typed, deviceName) {
+      const epoch = newestPairing();
+      if (epoch !== codeEpoch) {
+        codeEpoch = epoch;
+        codeFailures = 0;
+      }
+      if (codeFailures >= MAX_CODE_FAILURES) {
+        return { ok: false, error: "Too many wrong codes. Make a new code on the computer.", reason: "locked" };
+      }
+      const code = normalizePairingCode(typed);
+      const result: RedeemPairingResult = code === null
+        ? { ok: false, error: "This code is not valid or was already used.", reason: "unknown" }
+        : redeemPairingCode(stateDir, code, deviceName, now());
+      if (!result.ok && result.reason !== "store") codeFailures++;
+      return result;
+    },
     createPairing: () => createPairing(stateDir, now()),
     list: () => {
       const read = readDevices(stateDir);
-      return read.ok ? read.data.devices : [];
+      const at = now();
+      return read.ok ? read.data.devices.filter((d) => !isDeviceIdle(d, at)) : [];
     },
     revoke: (id) => revokeDevice(stateDir, id),
   };

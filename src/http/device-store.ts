@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { writeOwnerOnlyFileAtomicSync } from "../config/owner-only-file.js";
+import { newPairingCode } from "./device-code.js";
 import { withFileLock } from "./device-file-lock.js";
 import { secretEquals } from "./secret-equal.js";
 
@@ -23,11 +24,20 @@ export const HTTP_DEVICES_FILE = "http-devices.json";
 /** A pairing link works this long, once (OpenCode and WhatsApp Web use minutes too). */
 export const PAIRING_TTL_MS = 5 * 60_000;
 
+/**
+ * ATO-2494: a device not seen for this long is signed out, like an idle
+ * GitHub or Google device session; every use moves the end forward
+ * (`lastSeenAt`, and the cookie's Max-Age in device-auth.ts).
+ */
+export const DEVICE_IDLE_MS = 30 * 24 * 60 * 60_000;
+
 /** Pending links kept at most; the oldest goes when a new one is made. */
 const MAX_PENDING = 10;
 
 export interface PendingPairing {
   sha256: string;
+  /** ATO-2494: hex SHA-256 of the short code typed instead of scanning (device-code.ts). Older files have none. */
+  codeSha256?: string;
   createdAt: string;
   expiresAt: string;
 }
@@ -63,7 +73,14 @@ const HEX64 = /^[0-9a-f]{64}$/;
 function isPending(raw: unknown): raw is PendingPairing {
   const r = raw as Record<string, unknown> | null;
   return typeof r === "object" && r !== null && typeof r.sha256 === "string" && HEX64.test(r.sha256)
-    && typeof r.expiresAt === "string" && typeof r.createdAt === "string";
+    && typeof r.expiresAt === "string" && typeof r.createdAt === "string"
+    && (r.codeSha256 === undefined || (typeof r.codeSha256 === "string" && HEX64.test(r.codeSha256)));
+}
+
+/** Not seen within DEVICE_IDLE_MS (an unreadable date counts as idle). */
+export function isDeviceIdle(device: Pick<PairedDevice, "lastSeenAt">, now: Date): boolean {
+  const seen = Date.parse(device.lastSeenAt);
+  return !Number.isFinite(seen) || now.getTime() - seen > DEVICE_IDLE_MS;
 }
 
 function isDevice(raw: unknown): raw is PairedDevice {
@@ -122,20 +139,33 @@ function unexpired(pairings: PendingPairing[], now: Date): PendingPairing[] {
   return pairings.filter((p) => Date.parse(p.expiresAt) > now.getTime());
 }
 
-export type CreatePairingResult = { ok: true; token: string; expiresAt: string } | { ok: false; error: string };
+export type CreatePairingResult =
+  | { ok: true; token: string; code: string; expiresAt: string }
+  | { ok: false; error: string };
 
-/** A new one-time link token. The token itself exists only in the return value. */
+/**
+ * A new one-time pairing: a link token for the QR and a short code to type
+ * (ATO-2494); either one redeems it, once. Both exist only in the return value.
+ */
 export function createPairing(
   stateDir: string,
   now: Date = new Date(),
   ttlMs: number = PAIRING_TTL_MS,
 ): CreatePairingResult {
   const token = randomBytes(32).toString("base64url");
+  const code = newPairingCode();
   const expiresAt = new Date(now.getTime() + ttlMs).toISOString();
   return mutate(stateDir, (data) => {
     const kept = unexpired(data.pairings, now).slice(-(MAX_PENDING - 1));
-    data.pairings = [...kept, { sha256: hashDeviceSecret(token), createdAt: now.toISOString(), expiresAt }];
-    return { ok: true as const, token, expiresAt };
+    const entry: PendingPairing = {
+      sha256: hashDeviceSecret(token),
+      codeSha256: hashDeviceSecret(code),
+      createdAt: now.toISOString(),
+      expiresAt,
+    };
+    data.pairings = [...kept, entry];
+    data.devices = data.devices.filter((d) => !isDeviceIdle(d, now));
+    return { ok: true as const, token, code, expiresAt };
   });
 }
 
@@ -154,13 +184,37 @@ export function redeemPairing(
   deviceName: string,
   now: Date = new Date(),
 ): RedeemPairingResult {
-  const hash = hashDeviceSecret(token);
+  return redeemWhere(stateDir, (p) => p.sha256, hashDeviceSecret(token), deviceName, now);
+}
+
+/**
+ * ATO-2494: the same trade for the short code (already normalized by
+ * `normalizePairingCode`). Using the code spends the whole pairing, so
+ * its QR link stops working too, and the other way round.
+ */
+export function redeemPairingCode(
+  stateDir: string,
+  code: string,
+  deviceName: string,
+  now: Date = new Date(),
+): RedeemPairingResult {
+  return redeemWhere(stateDir, (p) => p.codeSha256 ?? "", hashDeviceSecret(code), deviceName, now);
+}
+
+function redeemWhere(
+  stateDir: string,
+  field: (p: PendingPairing) => string,
+  hash: string,
+  deviceName: string,
+  now: Date,
+): RedeemPairingResult {
   return mutate(stateDir, (data): RedeemPairingResult => {
     let found: PendingPairing | null = null;
     for (const p of data.pairings) {
-      if (secretEquals(hash, p.sha256) && found === null) found = p;
+      if (secretEquals(hash, field(p)) && found === null) found = p;
     }
     data.pairings = unexpired(data.pairings.filter((p) => p !== found), now);
+    data.devices = data.devices.filter((d) => !isDeviceIdle(d, now));
     if (!found) return { ok: false, error: "This pairing link is not valid or was already used.", reason: "unknown" };
     if (Date.parse(found.expiresAt) <= now.getTime()) {
       return { ok: false, error: "This pairing link has expired.", reason: "expired" };
