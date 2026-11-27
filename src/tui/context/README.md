@@ -9,6 +9,8 @@ Read the inherited [TUI instructions](../AGENTS.md) and [interface contract](../
 
 [context-chip.tsx](context-chip.tsx) and [context-panel.tsx](context-panel.tsx) show the latest prompt/window/transcript budget. [select-context-usage.ts](select-context-usage.ts) resolves view data and pair-count projections; [context-panel-keys.ts](context-panel-keys.ts) owns the local close/count-control input. Their tests, including usage-at-pairs.test.ts, live here.
 
+The panel lists each section's `parts` (prefix sections, built-in tools, one row per MCP server; measured in [prompt-breakdown.ts](../../prompt/prompt-breakdown.ts)) indented under it when the pane has room, and sheds them before anything else. [context-hint.ts](context-hint.ts) adds one two-line tip on a window of 64k or less when an MCP server, or the built-in catalog with `tool.search` off, takes more than 10% of it.
+
 The actual snapshot/projection belongs to [session/context-usage.ts](../../session/context-usage.ts), not the display. The pre-existing [TUI facade](../context-usage-from-prompt.ts) stays unchanged. [TuiState](../tui-state.ts), [agent-event-reducer](../agent-event-reducer.ts) and [reduce-ui-actions](../reduce-ui-actions.ts) own state/events; [TuiApp](../tui-app.tsx) and [global keys](../app-key-bindings.ts) compose panel/chip and callbacks. Persistence remains with their existing callback/command owners. Pair-count adjustment must not invent a new prompt or report an unknown window as known.
 
 ## Checks and limits

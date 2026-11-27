@@ -22,6 +22,7 @@ import { fitToWidth } from "../components/fit-to-width.js";
 import { formatTokens } from "../components/format-tokens.js";
 import { renderProgressBar } from "../components/render-progress-bar.js";
 import { isKnownLimit } from "./context-chip.js";
+import { contextHint } from "./context-hint.js";
 
 /** Panel width, clamped to the pane on narrow terminals. */
 const PREFERRED_WIDTH = 58;
@@ -151,9 +152,9 @@ export function ContextPanel({
   // The breakdown costs its own rule as well as its rows, so it needs
   // two spare lines before the first one is worth drawing.
   const roomForRows = availableRows - CHROME_ROWS - 1;
-  const bodyRows = roomForRows >= 1 ? Math.min(rows.length, roomForRows) : 0;
-  const visible = rows.slice(0, bodyRows);
-  const height = CHROME_ROWS + (visible.length > 0 ? visible.length + 1 : 0);
+  const { visible, hint } = fitBody(rows, usage, roomForRows);
+  const height =
+    CHROME_ROWS + (visible.length > 0 ? visible.length + hint.length + 1 : 0);
   const offsetTop = Math.max(0, Math.floor((availableRows - height) / 2));
   const offsetLeft = Math.max(0, Math.floor((availableColumns - width) / 2));
   return (
@@ -166,9 +167,10 @@ export function ContextPanel({
           {chromeTheme.glyphs.toolBoxHorizontal.repeat(Math.max(0, inner))}
         </Text>
       )}
-      {visible.map((row) => (
+      {visible.map((row, index) => (
         <Text
-          key={row.label}
+          // A part label ("built-in tools") can sit under two parents.
+          key={`${index}:${row.label}`}
           color={
             row.dim
               ? chromeTheme.colors.railMuted
@@ -176,6 +178,11 @@ export function ContextPanel({
           }
         >
           {fitToWidth(renderRow(row, usage, largest), inner)}
+        </Text>
+      ))}
+      {hint.map((line) => (
+        <Text key={line} color={chromeTheme.colors.accent}>
+          {fitToWidth(` ${line}`, inner)}
         </Text>
       ))}
       <Text color={chromeTheme.colors.railMuted}>
@@ -209,6 +216,44 @@ interface PanelRow {
   tokens: number;
   /** Accounting rather than content: reserved headroom and free space. */
   dim?: boolean;
+  /** One part of the row above it (ATO-2355): indented, no gauge. */
+  part?: boolean;
+}
+
+/**
+ * What fits, most useful first: every row with its parts and the tip;
+ * then the rows and the tip without the parts; then as many rows as
+ * the pane has, as before parts existed. Parts go first because the
+ * section rows already carry the totals and the tip names the culprit.
+ */
+function fitBody(
+  rows: readonly PanelRow[],
+  usage: ContextUsageView,
+  room: number,
+): { visible: readonly PanelRow[]; hint: readonly string[] } {
+  const hint = contextHint(usage) ?? [];
+  const detailed = withParts(rows, usage);
+  if (detailed.length + hint.length <= room) return { visible: detailed, hint };
+  if (rows.length + hint.length <= room) return { visible: rows, hint };
+  return { visible: rows.slice(0, Math.max(0, room)), hint: [] };
+}
+
+/** Each section row followed by its parts, in the order they were measured. */
+function withParts(
+  rows: readonly PanelRow[],
+  usage: ContextUsageView,
+): readonly PanelRow[] {
+  if (usage.parts.length === 0) return rows;
+  const out: PanelRow[] = [];
+  for (const row of rows) {
+    out.push(row);
+    if (row.dim) continue;
+    for (const part of usage.parts) {
+      if (part.parent !== row.label) continue;
+      out.push({ label: part.label, tokens: part.tokens, dim: true, part: true });
+    }
+  }
+  return out;
 }
 
 /**
@@ -270,7 +315,11 @@ function renderRow(
   usage: ContextUsageView,
   largest: number,
 ): string {
-  const label = ` ${row.label}`.padEnd(LABEL_WIDTH);
+  // A part's label is an MCP server's name and can be any length; cut
+  // it so the numbers stay in their column.
+  const label = (
+    row.part ? `   · ${row.label}`.slice(0, LABEL_WIDTH - 1) : ` ${row.label}`
+  ).padEnd(LABEL_WIDTH);
   const tokens = formatTokens(row.tokens).padStart(TOKENS_WIDTH);
   if (usage.contextWindow === null) return `${label}${tokens}`;
   const share = (row.tokens / usage.contextWindow) * 100;

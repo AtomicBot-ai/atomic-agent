@@ -36,6 +36,8 @@ function usage(overrides: Partial<ContextUsageView> = {}): ContextUsageView {
     droppedPairs: 0,
     pairCosts: [],
     sections: [],
+    parts: [],
+    toolSearchActive: false,
     ...overrides,
   };
 }

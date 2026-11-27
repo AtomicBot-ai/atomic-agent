@@ -1,4 +1,9 @@
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
+import {
+  loadedToolsParts,
+  prefixOffersToolSearch,
+  stablePrefixParts,
+} from "../prompt/prompt-breakdown.js";
 
 /**
  * What the last built prompt actually put in the model's context window.
@@ -68,11 +73,27 @@ export interface ContextUsageState {
   pairCosts: readonly number[];
   /** Per-section breakdown, for the detail view. Empty before the first prompt. */
   sections: readonly ContextUsageSection[];
+  /**
+   * What `prompt scaffold` and `loaded tools` are made of: prefix
+   * sections, built-in tools, one row per MCP server (ATO-2355). The
+   * parts of one parent sum to that parent's tokens. Absent on
+   * snapshots saved before the field existed.
+   */
+  parts?: readonly ContextUsagePart[];
+  /** `tool.search` was in the catalog, so tools already load on demand. */
+  toolSearchActive?: boolean;
 }
 
 export interface ContextUsageSection {
   label: string;
   tokens: number;
+}
+
+export interface ContextUsagePart extends ContextUsageSection {
+  /** Label of the section row this part breaks down. */
+  parent: string;
+  /** Set when the part is one MCP server's tool entries. */
+  mcpServer?: string;
 }
 
 /** A window nothing has been built against yet. */
@@ -90,6 +111,8 @@ export const EMPTY_CONTEXT_USAGE: ContextUsageState = {
   conversationBoundBy: null,
   pairCosts: [],
   sections: [],
+  parts: [],
+  toolSearchActive: false,
 };
 
 /**
@@ -99,6 +122,10 @@ export const EMPTY_CONTEXT_USAGE: ContextUsageState = {
  * to reword one of them.
  */
 export const CONVERSATION_SECTION_LABEL = "conversation";
+
+/** Rows the panel breaks down into `parts`. */
+export const PROMPT_SCAFFOLD_SECTION_LABEL = "prompt scaffold";
+export const LOADED_TOOLS_SECTION_LABEL = "loaded tools";
 
 /**
  * Order the sections are shown in: the fixed cost first, then the
@@ -111,13 +138,16 @@ const SECTIONS: readonly {
   key: keyof BuiltPrompt["tokens"];
   label: string;
 }[] = [
-  { key: "stablePrefix", label: "prompt scaffold" },
+  { key: "stablePrefix", label: PROMPT_SCAFFOLD_SECTION_LABEL },
   { key: "conversation", label: CONVERSATION_SECTION_LABEL },
   { key: "compaction", label: "context summary" },
   { key: "recalled", label: "recalled memory" },
   { key: "memoryIndex", label: "memory index" },
   { key: "worldSnapshot", label: "world snapshot" },
-  { key: "loadedTools", label: "loaded tools" },
+  { key: "loadedTools", label: LOADED_TOOLS_SECTION_LABEL },
+  // The native `tools` payload: counted in `total`, so it gets a row,
+  // or the rows would not add up to the title.
+  { key: "toolSchema", label: "tool schemas" },
   { key: "loadedSkills", label: "loaded skills" },
   { key: "sessionFacts", label: "session facts" },
   { key: "profile", label: "profile" },
@@ -137,6 +167,15 @@ export function contextUsageFromPrompt(prompt: BuiltPrompt): ContextUsageState {
     const tokens = prompt.tokens[key] ?? 0;
     if (tokens > 0) sections.push({ label, tokens });
   }
+  const parts: ContextUsagePart[] = [
+    ...stablePrefixParts(prompt.stablePrefix, prompt.tokens.stablePrefix).map(
+      (part) => ({ ...part, parent: PROMPT_SCAFFOLD_SECTION_LABEL }),
+    ),
+    ...loadedToolsParts(prompt.tail, prompt.tokens.loadedTools).map((part) => ({
+      ...part,
+      parent: LOADED_TOOLS_SECTION_LABEL,
+    })),
+  ];
   return {
     tokens: prompt.tokens.total,
     contextWindow: prompt.contextWindow,
@@ -151,5 +190,7 @@ export function contextUsageFromPrompt(prompt: BuiltPrompt): ContextUsageState {
     conversationBoundBy: prompt.conversationBoundBy,
     pairCosts: prompt.pairCosts,
     sections,
+    parts,
+    toolSearchActive: prefixOffersToolSearch(prompt.stablePrefix),
   };
 }
