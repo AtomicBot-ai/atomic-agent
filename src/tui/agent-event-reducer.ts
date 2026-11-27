@@ -89,6 +89,7 @@ import {
 } from "./issue-report/index.js";
 import { stepSpeedFromCompletion } from "../llm/step-speed.js";
 import { withReportHint } from "./chat/format-agent-error-for-chat.js";
+import { formatProviderRefusalForChat, isAccountStateFailure } from "./chat/format-provider-refusal-for-chat.js";
 import { rejectedKeyProviderId } from "./chat/rejected-key-provider.js";
 import { withoutMcpAppPage } from "../mcp/mcp-apps.js";
 import type { TuiAction } from "./tui-action.js";
@@ -838,6 +839,14 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // ATO-1686: the model kept calling tools that don't exist; the
       // catalog's sentence and where to pick another model, not "a tool
       // call failed".
+      // ATO-1673: a cloud provider that refused (credit, key, rate limit,
+      // model) says which in plain words; its sentence goes under Details.
+      const providerRefusal = formatProviderRefusalForChat(
+        event.failure,
+        event.error.message,
+        !["cloud", "fusion"].includes(selectComposerBackend(state)),
+        describeFailedAttempts(event.error),
+      );
       const chatError = event.failure?.cause === "unknown_tools_repeated"
         ? `${event.failure.phrase} Pick one with /model.\nDetails: ${event.error.message}`
         : spendLimit !== null
@@ -850,6 +859,8 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         ? formatAtomicChatNotRunningForChat()
         : badRequest !== null
           ? formatLocalServerErrorForChat(badRequest, event.error.message)
+          : providerRefusal !== null
+          ? providerRefusal
           : formatAgentErrorForChat(
         event.category,
         event.error.message,
@@ -902,7 +913,8 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           }),
           {
             role: "system",
-            text: withReportHint(failureText),
+            // ATO-1673: an empty account or a rate limit is not a bug to file.
+            text: isAccountStateFailure(event.failure) ? failureText : withReportHint(failureText),
             variant: "warn",
             retryText: failedPrompt.length > 0 ? failedPrompt : undefined,
             // ATO-1457: a refused key gets a `[check key]` button.

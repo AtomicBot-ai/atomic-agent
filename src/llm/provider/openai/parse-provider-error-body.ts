@@ -52,11 +52,13 @@ const BODY_TEXT_MAX = 2_000;
 
 /**
  * Codes and types that mean the account cannot pay for the request.
- * `insufficient_quota` is OpenAI's own; the other two are OpenRouter's
- * and Anthropic-via-OpenRouter's.
+ * `insufficient_quota` is OpenAI's own; the next two are OpenRouter's
+ * and Anthropic-via-OpenRouter's; `insufficient_user_quota` is the 403
+ * of new-api / one-api gateways for a prepaid balance that ran out
+ * (ATO-1673), which read "did not accept your API key".
  */
 const CREDIT_CODES =
-  /\b(?:credit_balance_exhausted|insufficient_credits|insufficient_quota)\b/i;
+  /\b(?:credit_balance_exhausted|insufficient_credits|insufficient_quota|insufficient_user_quota)\b/i;
 
 /** OpenRouter's "you have too many requests in flight for your balance". */
 const IN_FLIGHT_BUDGET = /\bin_flight_budget_exhausted\b/i;

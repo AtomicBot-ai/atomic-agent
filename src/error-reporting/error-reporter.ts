@@ -1,5 +1,6 @@
 import { isBrokenPipeError } from "./broken-pipe.js";
 import { isFusionStopError } from "./fusion-stop.js";
+import { isPersonRefusal } from "./person-refusal.js";
 import { isLoopbackPeerGone, socketErrorTags } from "./socket-error.js";
 import { scrubError } from "./error-scrubber.js";
 import { isExpectedSubscriptionCliFailure } from "./subscription-cli-expected.js";
@@ -75,6 +76,9 @@ export function captureError(
         });
   const scrubbed = scrubError(error, opts);
   if (scrubbed.category === "cancelled") return;
+  // The person's own account or setup refused (a key, credit, a rate
+  // limit, a model id): told in chat, not a defect (ATO-1673).
+  if (isPersonRefusal(err, scrubbed)) return;
   if (isGlobalSource(opts.source)) {
     const socketTags = socketErrorTags(err);
     if (socketTags !== undefined) scrubbed.socketTags = socketTags;

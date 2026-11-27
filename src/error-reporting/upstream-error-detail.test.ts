@@ -95,6 +95,28 @@ describe("classifyUpstreamReason (ATO-1673)", () => {
     ["OpenAI key", "Incorrect API key provided: sk-abc***. You can find your API key in your account.", "key_refused"],
     ["DeepSeek key", "Authentication Fails, Your api key: ****abcd is invalid", "key_refused"],
     ["OpenRouter no key", "No auth credentials found", "key_refused"],
+    // ATO-1673: vendor words seen on 0.9.0 refusals.
+    [
+      "new-api empty balance",
+      '{"error":{"code":"insufficient_user_quota","message":"user quota is not enough","type":"new_api_error"}}',
+      "out_of_credit",
+    ],
+    [
+      "DeepSeek balance type",
+      '{"error":{"message":"Not enough","type":"insufficient_balance_error"}}',
+      "out_of_credit",
+    ],
+    [
+      "account not activated",
+      '{"error":{"code":"activation_required","message":"Please activate your account first"}}',
+      "key_refused",
+    ],
+    [
+      "OpenRouter no tool endpoint",
+      '{"error":{"message":"No endpoints found that support tool use. To learn more about provider routing, visit: https://openrouter.ai/docs","code":404}}',
+      "tools_unsupported",
+    ],
+    ["model cannot use tools", "This model cannot use tools.", "tools_unsupported"],
   ])("%s", (_label, text, expected) => {
     expect(classifyUpstreamReason(text)).toBe(expected);
   });
