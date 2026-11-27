@@ -78,6 +78,8 @@ export interface WorkerRunnerCoreDeps {
         | "wouldPrompt"
         | "getLevel"
         | "holdsForOutsideContent"
+        | "outsideContentSources"
+        | "noteUntrustedContent"
       >
     >;
   /** Progress into the PARENT session's frame. */

@@ -109,6 +109,8 @@ export function buildGithubTools(
     description:
       "List pull requests. Args: `repo` (owner/name; default: origin of the working dir), `state` (open|closed|all, default open), `limit` (default 20). Read-only.",
     readonly: true,
+    // Titles, branch names and logins are written by other people (ATO-2481).
+    untrustedOutput: "GitHub pull requests",
     async run(rawArgs, ctx) {
       const ref = await resolveRepo(rawArgs.repo, ctx, "github.pr.list");
       const limit = parseLimit(rawArgs.limit);
@@ -152,6 +154,7 @@ export function buildGithubTools(
     description:
       "List issues. Args: `repo` (owner/name; default: origin of the working dir), `state` (open|closed|all, default open), `labels` (string[]), `limit` (default 20). Pull requests are excluded. Read-only.",
     readonly: true,
+    untrustedOutput: "GitHub issues",
     async run(rawArgs, ctx) {
       const ref = await resolveRepo(rawArgs.repo, ctx, "github.issue.list");
       const labels = parseStringArray(
