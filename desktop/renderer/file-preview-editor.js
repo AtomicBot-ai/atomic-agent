@@ -5,7 +5,9 @@
    small menu of them. It opens the previewed file in that editor at the line
    the reader is on (the caret's line in the panel's editor, else the line a
    `path:line` link opened, fpLineNow), through main's own check of the path
-   (app:openInEditor). No editor found: no button.
+   (app:openInEditor). No editor found: no button. The list is asked for
+   again once it is FP_EDITORS_FRESH_MS old (main looks again after the same
+   30 s), so an editor installed meanwhile gets its button without a restart.
 
    Precedent: GitHub Desktop's and Kilo Desktop's "Open in Visual Studio
    Code", Claude Code's /ide, VS Code's `code -g file:line`.
@@ -16,26 +18,32 @@
    Shared with the Node checks (test/file-preview-line.test.mjs):
    fpEditorButtonHtml, fpEditorMenuHtml, FP_EDITORS. */
 
-const FP_EDITORS = {list: null, asking: false, menu: false};
+const FP_EDITORS = {list: null, at: 0, asking: false, menu: false};
+const FP_EDITORS_FRESH_MS = 30000;
 
-/** Asks main once which editors there are; the head is drawn again when it answers. */
+/** Asks main which editors there are, when it has not or the answer is old; the head is drawn again when the list changed. */
 function fpEditorsLoad() {
   const br = typeof fpBridge === 'function' ? fpBridge() : null;
-  if (FP_EDITORS.list || FP_EDITORS.asking || !br || typeof br.editors !== 'function') return;
+  if (FP_EDITORS.asking || !br || typeof br.editors !== 'function') return;
+  if (FP_EDITORS.list && Date.now() - FP_EDITORS.at < FP_EDITORS_FRESH_MS) return;
   FP_EDITORS.asking = true;
+  const was = JSON.stringify(FP_EDITORS.list);
   Promise.resolve().then(() => br.editors()).then((r) => {
     FP_EDITORS.list = Array.isArray(r) ? r.filter((e) => e && typeof e.id === 'string' && typeof e.name === 'string') : [];
-  }, () => { FP_EDITORS.list = []; }).then(() => {
+  }, () => { FP_EDITORS.list = FP_EDITORS.list || []; }).then(() => {
     FP_EDITORS.asking = false;
-    if (FP.open && FP.path && FP_EDITORS.list.length && typeof fpPaintHead === 'function') fpPaintHead();
+    FP_EDITORS.at = Date.now();
+    if (JSON.stringify(FP_EDITORS.list) === was) return;
+    if (FP.open && FP.path && typeof fpPaintHead === 'function') fpPaintHead();
   });
 }
 
 /** The head's button for a file the panel shows; '' with no editor or no file. */
 function fpEditorButtonHtml(d) {
   if (!d || !d.ok || !d.path) return '';
-  if (!FP_EDITORS.list) { fpEditorsLoad(); return ''; }
+  fpEditorsLoad();
   const list = FP_EDITORS.list;
+  if (!list) return '';
   if (!list.length) return '';
   if (list.length === 1) {
     return '<button class="fp-btn" data-fpx="editor" data-fpx-id="' + fpEsc(list[0].id) + '" title="' + fpEsc('Open in ' + list[0].name) + '">' + fpEsc(list[0].name) + '</button>';

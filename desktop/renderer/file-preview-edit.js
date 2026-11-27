@@ -149,7 +149,9 @@ async function fpEditDiskChanged(f) {
   const ed = FP.edit;
   if (!ed || ed.saving) return;
   if (!fpEditDirty(ed)) { await fpEditReload(); return; }
-  if (!ed.conflict) { ed.conflict = {size: f.size, mtimeMs: f.mtimeMs}; fpEditPaintBar(); }
+  // Each newer version moves the conflict on, so Compare's diff against an older one is dropped.
+  const c = ed.conflict;
+  if (!c || c.size !== f.size || c.mtimeMs !== f.mtimeMs) { ed.conflict = {size: f.size, mtimeMs: f.mtimeMs}; fpEditPaintBar(); }
 }
 
 /** The head's buttons while editing. */

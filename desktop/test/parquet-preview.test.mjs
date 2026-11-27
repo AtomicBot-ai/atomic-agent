@@ -18,7 +18,7 @@ const require = createRequire(import.meta.url);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIX = join(HERE, "fixtures", "parquet");
 const { filePreview } = require("../out/main/file-preview.js");
-const { parquetPreview, parquetCell, topColumns, bytesForRows, looksParquet, PARQUET_MAX_ROWS } = require("../out/main/parquet-preview.js");
+const { parquetPreview, parquetCell, topColumns, bytesForRows, looksParquet, pageCompressors, PARQUET_MAX_ROWS, PARQUET_MAX_READ_BYTES } = require("../out/main/parquet-preview.js");
 
 const home = mkdtempSync(join(tmpdir(), "pq-home-"));
 after(() => rmSync(home, { recursive: true, force: true }));
@@ -62,6 +62,19 @@ test("only the first rows are read, and the file's own row count comes back", as
   } finally {
     await fh.close();
   }
+});
+
+test("every codec, Snappy too, refuses a page that claims to unpack past the read cap before allocating it", () => {
+  let called = 0;
+  const c = pageCompressors(() => { called++; });
+  assert.ok(c.SNAPPY && c.GZIP && c.BROTLI, "Snappy is not left to hyparquet's own uncapped path");
+  for (const codec of Object.keys(c)) {
+    assert.throws(() => c[codec](new Uint8Array(4), PARQUET_MAX_READ_BYTES + 1), /page too large/, codec);
+    assert.throws(() => c[codec](new Uint8Array(4), -1), /page too large/, codec);
+  }
+  assert.equal(called, 0, "the Snappy decoder never ran for a refused page");
+  const out = pageCompressors((input, page) => { called++; page.set(input); }).SNAPPY(new Uint8Array([1, 2, 3]), 3);
+  assert.deepEqual([...out], [1, 2, 3], "a page within the cap is unpacked into a buffer of its stated size");
 });
 
 test("a .parquet name on something that is not Parquet is no table", async () => {

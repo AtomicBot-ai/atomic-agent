@@ -84,6 +84,24 @@ test("Open in editor asks main once for the editors and passes the line the read
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0])), ["/h/a.py", "vscode", 7]);
 });
 
+test("Open in editor asks again once the answer is 30 s old, so an editor installed meanwhile gets its button", async () => {
+  let asked = 0;
+  const answers = [[], [{ id: "vscode", name: "VS Code" }]];
+  const run = loadPanel({ editors: async () => answers[Math.min(asked++, 1)] });
+  const settle = async () => { await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0)); };
+  run("FP.data = " + JSON.stringify(doc()) + "; FP.open = true; FP.path = '/h/a.py';");
+  run("fpEditorButtonHtml(FP.data)");
+  await settle();
+  assert.equal(run("fpEditorButtonHtml(FP.data)"), "", "no editor yet");
+  await settle();
+  assert.equal(asked, 1, "a fresh empty answer is not asked again at once");
+  run("FP_EDITORS.at -= FP_EDITORS_FRESH_MS + 1;");
+  run("fpEditorButtonHtml(FP.data)");
+  await settle();
+  assert.equal(asked, 2, "an old empty answer is asked again");
+  assert.match(run("fpEditorButtonHtml(FP.data)"), /data-fpx-id="vscode"/, "the editor installed meanwhile has its button");
+});
+
 /* ---- Compare ---- */
 
 test("the line diff: changes in hunks with context, the same text is no diff", () => {
@@ -111,8 +129,12 @@ test("a conflict offers Compare; it reads the file on disk and shows what Overwr
   assert.match(shown, /dl-add">\+b</);
   assert.match(shown, /dl-add">\+d</);
   assert.match(shown, /remove 1 line from the file on disk and add 2 lines/);
-  run("FP.edit.conflict = {size: 31, mtimeMs: 301};");
+  await run("fpEditDiskChanged({size: 30, mtimeMs: 300, exists: true})");
+  assert.match(run("fpEditBarHtml(FP.edit)"), /Hide compare/, "the poll seeing the same version keeps the diff");
+  await run("fpEditDiskChanged({size: 31, mtimeMs: 301, exists: true})");
+  assert.deepEqual(JSON.parse(run("JSON.stringify(FP.edit.conflict)")), { size: 31, mtimeMs: 301 }, "the poll moves the conflict to the newer version");
   assert.doesNotMatch(run("fpEditBarHtml(FP.edit)"), /fp-compare/, "a newer change on disk drops a diff made against the last one");
+  assert.match(run("fpEditBarHtml(FP.edit)"), /data-fp="edit-compare">Compare</);
 });
 
 test("Compare says so when the file on disk cannot be compared", async () => {
