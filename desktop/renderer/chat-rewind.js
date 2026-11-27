@@ -238,7 +238,7 @@ async function rewindConfirm(files, conversation) {
   if (typed || (typeof ATT !== 'undefined' && ATT.items.length)) { REWIND.error = 'There is a draft in the message box. Send or clear it first.'; REWIND.errorDetail = ''; render(); return; }
   const sid = REWIND.sid;
   // The spinner goes on the button that was clicked (go-chat is the only one passing files: false).
-  REWIND.busy = true; REWIND.busyAct = files === false ? 'rewind:go-chat' : 'rewind:go'; REWIND.error = null; REWIND.errorDetail = ''; render();
+  REWIND.busy = true; REWIND.busyAct = files === false ? 'rewind:go-chat' : 'rewind:go'; REWIND.error = null; render();
   const r = await BR.rewind(sid, REWIND.prior, REWIND.text, files).catch((err) => ({ok: false, supported: true, error: String(err)}));
   REWIND.busy = false; REWIND.busyAct = null;
   if (!r || !r.ok) { rewindShowFail(r); render(); return; }
