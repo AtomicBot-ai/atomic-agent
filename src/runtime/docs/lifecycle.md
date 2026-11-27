@@ -9,7 +9,7 @@ TurnController serializes turns on the same session and permits independent sess
 
 Public runTurn enqueues; executeTurn is for a caller that already holds the lock, notably sidecar integration. Nesting the queue inside itself deadlocks. Shared browser/backend resources remain shared even though sessions are independent.
 
-Steering enters a running turn at its next checkpoint. A false return means the message was not accepted; each ingress must apply its documented queue/new-turn policy rather than drop it. Query isBusy is not an atomic steering acceptance test.
+Steering enters a running turn at its next checkpoint. A false return means the message was not accepted; each ingress must apply its documented queue/new-turn policy rather than drop it. Query isBusy is not an atomic steering acceptance test. A shell monitor notice (ATO-2436, [monitor wake](../composition/runtime-shell-monitor-wake.ts)) is one such ingress: a frontend showing the session first, else steer, else a one-shot task through the task runner, so it reaches `runTurn` and never `executeTurn`; refused, the monitor keeps it and offers it again.
 
 ## Resources
 

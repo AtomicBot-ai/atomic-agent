@@ -161,6 +161,9 @@ export type {
   ShellJobView,
   ShellJobWriteOutcome,
 } from "./shell/shell-job-host.js";
+export { createBackgroundJobsControl } from "./shell/background-jobs-control.js";
+export type { BackgroundJobsControl } from "./shell/background-jobs-control.js";
+export type { MonitorWake, MonitorWakeHandler } from "./shell/shell-monitor-wake.js";
 
 export interface RegisterOsToolsOptions extends DangerousToolOptions {
   config: Pick<AtomicAgentConfig, "http" | "web" | "projects" | "tools">;

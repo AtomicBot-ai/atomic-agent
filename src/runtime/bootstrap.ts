@@ -17,6 +17,7 @@ import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeS
 import { createInterruptedTurns } from "./interrupted-turns.js";
 import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition/runtime-turn-service.js";
 import { createIncognitoSessions } from "./incognito-sessions.js";
+import { installShellMonitorWake } from "./composition/runtime-shell-monitor-wake.js";
 import { createRuntimeKeepAwake, createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
 import { connectRuntimeChannels } from "./composition/runtime-channels.js";
 import { createRuntimeImapTrigger } from "./composition/runtime-imap-trigger.js";
@@ -71,7 +72,7 @@ import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import type { BrowserExtractModelRef } from "../tools/browser/extract-request.js";
-import { createShellJobHostControls, DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
+import { createBackgroundJobsControl, createShellJobHostControls, DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
 import { FileCheckpointStore, fileCheckpointsRoot } from "../tools/os/fs/fs-checkpoint-store.js";
 import { ToolOutputSpill } from "../tools/index.js";
 import { registerSessionTools } from "../tools/sessions/index.js";
@@ -1007,6 +1008,8 @@ export async function createAgentRuntime(
     approvalLevel: () => approvals.getLevel(),
     keepAwake,
   });
+  // ATO-2436: a monitored job's matching line steers the running turn or files a task for the session.
+  installShellMonitorWake({ shellJobs, steer, taskRunner, sessionStore, tasksEnabled: config.tasks.enabled, logger });
   // Cross-chat tools (ATO-570), off unless `tasks.sessionToolsEnabled`: a send is a queued task.
   registerSessionTools(toolRegistry, {
     ...dangerous, sessionStore, taskStore, taskRunner, createSession,
@@ -1067,6 +1070,7 @@ export async function createAgentRuntime(
     turnController,
     steeringInbox,
     steer,
+    backgroundJobs: createBackgroundJobsControl(shellJobs),
     fusionWorkers: {
       running: (parentSessionId: string) => fusionLiveWorkers.running(parentSessionId),
       stop: (parentSessionId: string, taskId: string) =>
