@@ -86,7 +86,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     summary:
       "Run a script from a skill's requires_scripts (may require approval).",
     argsSchema:
-      "{ skill: string, script: string, args?: string[], timeoutMs?: number }",
+      "{ skill: string, script: string, args?: string[], env?: { name: string, value: string }[] /* only the skill's env_keys; value may be {{secret:NAME}} */, timeoutMs?: number }",
     tier: "rare",
   },
   {

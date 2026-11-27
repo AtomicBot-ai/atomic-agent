@@ -15,6 +15,7 @@ This area owns tool registry and adapters. Read [AGENTS.md](AGENTS.md) before ch
 - [tool-output-spill.ts](tool-output-spill.ts)
 - [untrusted-tool-output.ts](untrusted-tool-output.ts)
 - [tool-output-secrets.ts](tool-output-secrets.ts)
+- [tool-secret-use.ts](tool-secret-use.ts): the shared steps of `{{secret:NAME}}` (ATO-476, ATO-2530): known names before the approval, the reason's "uses secret" tail, values fetched after it and registered for masking. Used by `os.shell.run`, `os.http.request` headers, `skill.run_script` args/env, `verify.run` commands/env ([verify-run-secrets.ts](verify/verify-run-secrets.ts): always asks as `shell_secret`, never covered by a fan-out scope; the result shows the command line with placeholders) and MCP stdio `env`
 - [describe-tool-call.ts](describe-tool-call.ts): a tool call as one readable line ("Read config.ts", "Ran npm test · failed") for the TUI, Telegram and desktop frames
 - [files/](files/README.md): the "My files" index (ATO-1621) and its read-only `files.search` tool with page citations
 - [research/](research/README.md): `research.deep` (ATO-2133), web research through `os.web.search` / `os.web.fetch` that keeps a finding only when its quote is on the fetched page, and writes a Markdown report

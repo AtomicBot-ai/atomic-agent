@@ -34,6 +34,9 @@ import {
   type UrlSendSites,
 } from "./url-data-guard.js";
 import { offlineRefusal } from "../../../llm/offline-network.js";
+import type { ToolSecretSource } from "../../../config/tool-secrets.js";
+import { describeToolSecretUse } from "../../tool-secret-use.js";
+import { checkHttpSecrets, fillHttpSecretHeaders } from "./http-request-secrets.js";
 
 export type { HttpMethod } from "./http-request-fetch.js";
 export { parseCurlOutput } from "./http-request-fetch.js";
@@ -52,6 +55,8 @@ export interface OsHttpRequestOptions extends DangerousToolOptions {
   lookup?: HostLookup;
   /** Sites a chat already used under `http.urlDataGuard: "strict"` (ATO-1377). Defaults to the shared store. */
   urlSendSites?: UrlSendSites;
+  /** Tool secrets a header value may name as `{{secret:NAME}}` (ATO-2530). Omitted: none. */
+  secrets?: ToolSecretSource;
 }
 
 interface HttpArgs {
@@ -82,6 +87,18 @@ export function buildOsHttpRequestTool(
         );
       }
       const args = parseArgs(rawArgs, httpCfg.defaultTimeoutMs);
+      // `{{secret:NAME}}` in a header value (ATO-2530): refused before
+      // any question unless every name is a configured tool secret.
+      const secretUse = checkHttpSecrets(args, options.secrets);
+      if (!secretUse.ok) {
+        return compressToolResult({
+          tool: "os.http.request",
+          status: "error",
+          output: `os.http.request: ${secretUse.message}`,
+          details: { url: args.url, method: args.method },
+        });
+      }
+      const secretNames = secretUse.names;
       // ATO-1084: refused before approval, DNS or curl while offline.
       const offline = offlineRefusal(args.urlObj, "os.http.request");
       if (offline) {
@@ -118,7 +135,9 @@ export function buildOsHttpRequestTool(
       if (
         needsApproval(httpCfg.approvalMode, args.method) ||
         heldForOutsideContent(options, httpCfg, ctx.sessionId) ||
-        urlCheck !== null
+        urlCheck !== null ||
+        // A request handed a secret always asks, even under "never".
+        secretNames.length > 0
       ) {
         // Every text the prompt (and the ledger) shows has secrets in the
         // query, fragment and body masked (ATO-1471).
@@ -128,16 +147,22 @@ export function buildOsHttpRequestTool(
           {
             sessionId: ctx.sessionId,
             tool: "os.http.request",
-            category: urlCheck !== null ? "http_write" : httpApprovalCategory(args.method),
+            // A secret asks as `shell_secret` like a command that uses
+            // one: never granted, silent only at full trust (ATO-2530).
+            category:
+              secretNames.length > 0 ? "shell_secret"
+              : urlCheck !== null ? "http_write"
+              : httpApprovalCategory(args.method),
             reason:
-              urlCheck !== null
+              (urlCheck !== null
                 ? urlSendReason(shownUrl, urlCheck)
-                : `${args.method} ${shownUrl}`,
+                : `${args.method} ${shownUrl}`) +
+              describeToolSecretUse(secretNames, "when it is sent"),
             preview: buildHttpApprovalPreview(args),
             affectedResources: [shownUrl],
             // "Allow for this session" and "Allow always" cover this
             // origin only (ATO-1182, ATO-1471).
-            grantKey: args.urlObj.origin,
+            ...(secretNames.length > 0 ? {} : { grantKey: args.urlObj.origin }),
           },
           ctx.signal,
         );
@@ -161,13 +186,32 @@ export function buildOsHttpRequestTool(
         );
       }
 
+      // After approval, and only into what curl sends: the result,
+      // details and every record keep the placeholders.
+      let sentHeaders = args.headers;
+      if (secretNames.length > 0 && options.secrets !== undefined) {
+        const filled = await fillHttpSecretHeaders(args.headers, secretNames, options.secrets);
+        if (!filled.ok) {
+          return compressToolResult({
+            tool: "os.http.request",
+            status: "error",
+            output: `os.http.request: ${filled.message}`,
+            details: { url: args.url, method: args.method },
+          });
+        }
+        sentHeaders = filled.headers;
+      }
+
       let guarded;
       try {
         guarded = await executeGuardedHttpRequest(
           args.url,
           {
             method: args.method,
-            headers: args.headers,
+            headers: sentHeaders,
+            ...(secretUse.headerNames.length > 0
+              ? { originOnlyHeaders: secretUse.headerNames }
+              : {}),
             body: args.body,
             timeoutMs: args.timeoutMs,
             followRedirects: args.followRedirects,
