@@ -120,7 +120,7 @@ export interface ApprovalRequest {
   commandUnreadable?: boolean;
   /**
    * Where the call sends data (`egress-scan.ts`, ATO-2116), set by the
-   * shell tool. Surfaces show the outbound entries as `sends data to ->
+   * shell tool. Surfaces show the outbound entries as `sends data to →
    * host` (`formatEgressLine`), the risk reviewer reads them, and an
    * outbound host nobody approved holds the call for a person
    * (`egress-hold.ts`). Absent means none was found.

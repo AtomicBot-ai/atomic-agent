@@ -463,6 +463,17 @@ describe("reduceTuiState", () => {
       expect(state.approvalPreviewPage).toBeNull();
     });
 
+    it("arms Allow always for the prompt on screen and drops the arm on resolve (ATO-2759)", () => {
+      let state = raised();
+      expect(state.approvalAlwaysArmed).toBeNull();
+      state = reduceTuiState(state, { type: "approval_always_armed", approvalId: "other" });
+      expect(state.approvalAlwaysArmed).toBeNull();
+      state = reduceTuiState(state, { type: "approval_always_armed", approvalId: "a-1" });
+      expect(state.approvalAlwaysArmed).toBe("a-1");
+      state = reduceTuiState(state, { type: "approval_resolved", approvalId: "a-1", approved: false });
+      expect(state.approvalAlwaysArmed).toBeNull();
+    });
+
     it("has nothing to page when the preview fits", () => {
       const state = apply(createInitialTuiState(fakeSession()), [
         { type: "session_created", sessionId: "s-1" },
