@@ -17,10 +17,10 @@ import {
 } from "./models-catalog.js";
 
 describe("models-catalog", () => {
-  it("has exactly 14 Qwen+Gemma+Nemotron+Muse models with unique ids", () => {
-    expect(LOCAL_MODELS_CATALOG.length).toBe(14);
+  it("has exactly 15 Qwen+Gemma+Nemotron+Muse models with unique ids", () => {
+    expect(LOCAL_MODELS_CATALOG.length).toBe(15);
     const ids = new Set(LOCAL_MODELS_CATALOG.map((m) => m.id));
-    expect(ids.size).toBe(14);
+    expect(ids.size).toBe(15);
   });
 
   it("names a small starter that is never auto-recommended (ATO-1041)", () => {
@@ -71,7 +71,11 @@ describe("models-catalog", () => {
 
   it("omits mmproj fields on text-only catalog entries", () => {
     const textOnly = LOCAL_MODELS_CATALOG.filter((m) => !m.supportsVision);
-    expect(textOnly.map((m) => m.id)).toEqual(["qwen-3.5-2b", "nemotron-3.5-30b-a3b"]);
+    expect(textOnly.map((m) => m.id)).toEqual([
+      "qwen-3.5-2b",
+      "qwen-3-next-80b-a3b",
+      "nemotron-3.5-30b-a3b",
+    ]);
     for (const def of textOnly) {
       expect(def.mmprojUrl).toBeUndefined();
       expect(def.mmprojFilename).toBeUndefined();
@@ -214,5 +218,20 @@ describe("models-catalog (embedding)", () => {
         "not-an-embedding" as import("./models-catalog.js").EmbeddingModelId,
       ),
     ).toThrow(/unknown embedding model id/);
+  });
+});
+
+describe("qwen-3-next-80b-a3b (ATO-2455)", () => {
+  it("is the single-file UD-Q4_K_XL of the Instruct repo, named so the MoE share reads", () => {
+    const def = getLocalModelDef("qwen-3-next-80b-a3b");
+    expect(def.huggingFaceUrl).toBe(
+      "https://huggingface.co/unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF/resolve/main/Qwen3-Next-80B-A3B-Instruct-UD-Q4_K_XL.gguf",
+    );
+    expect(def.huggingFaceUrl.endsWith(`/${def.filename}`)).toBe(true);
+    expect(def.filename).not.toMatch(/-\d{5}-of-\d{5}\.gguf$/);
+    expect(def.fileSizeGb).toBeCloseTo(46.07, 2);
+    expect(def.name).toMatch(/80B-A3B/);
+    expect(def.recommendRank).toBeUndefined();
+    expect(def.supportsVision).toBe(false);
   });
 });

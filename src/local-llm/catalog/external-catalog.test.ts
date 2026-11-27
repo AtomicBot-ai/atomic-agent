@@ -233,6 +233,21 @@ describe("catalogCompatibility", () => {
     const pc: MachineForModels = { ...MAC, gpuBudgetGb: 12, bandwidth: undefined };
     expect(catalogCompatibility({ ...def, vramGb: 14 }, pc).fit.tier).toBe("tight");
   });
+
+  it("fits a mixture-of-experts model with experts in RAM below its RAM wish (ATO-2455)", () => {
+    const pc: MachineForModels = {
+      ramGb: 32,
+      gpuBudgetGb: 8,
+      freeDiskGb: 500,
+      cpuOnly: false,
+      bandwidth: { gpuGbPerSec: 272, ramGbPerSec: 50, unified: false },
+    };
+    // recommendedRamGb 36 > 32 would have made it a tight fit.
+    const c = catalogCompatibility(getLocalModelDef("qwen-3.6-35b-a3b"), pc);
+    expect(c.fit).toEqual({ tier: "fits", label: "Fits, experts in RAM", placement: "split" });
+    expect(c.why).toMatch(/experts in system RAM/);
+    expect(c.speed?.label).toMatch(/estimate$/);
+  });
 });
 
 describe("the catalog registry", () => {

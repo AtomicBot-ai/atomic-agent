@@ -171,3 +171,50 @@ describe("pickBestQuant", () => {
     expect(pickBestQuant(rate(MAC, files([["model.gguf", 3]])))).toBeNull();
   });
 });
+
+describe("experts in RAM (ATO-2455)", () => {
+  const QWEN_35B_A3B = 22.4;
+  const share = activeShareFromName("Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf");
+
+  it("fits a 35B-A3B on an 8 GB card with 32 GB of RAM, experts partly in RAM", () => {
+    expect(quantFitFor(QWEN_35B_A3B, PC, share)).toEqual({
+      tier: "fits",
+      label: "Fits, experts in RAM",
+      placement: "split",
+    });
+  });
+
+  it("keeps the dense verdict for the same size without an MoE name", () => {
+    expect(quantFitFor(QWEN_35B_A3B, PC)).toMatchObject({ tier: "tight", placement: "ram" });
+  });
+
+  it("says too big again when cpuMoe is off", () => {
+    expect(quantFitFor(QWEN_35B_A3B, { ...PC, cpuMoe: "off" }, share)).toMatchObject({
+      tier: "tight",
+      placement: "ram",
+    });
+    expect(quantFitFor(QWEN_35B_A3B, { ...PC, ramGb: 24, cpuMoe: "off" }, share)).toMatchObject({
+      tier: "too-big",
+    });
+  });
+
+  it("turns a too-big into a tight split when the RAM holds only the experts' part", () => {
+    // 24 GB: the whole 22.4 GB × 1.2 does not fit; the 15.6 GB in RAM × 1.2 does.
+    expect(quantFitFor(QWEN_35B_A3B, { ...PC, ramGb: 24 }, share)).toEqual({
+      tier: "tight",
+      label: "Tight fit",
+      placement: "split",
+    });
+  });
+
+  it("leaves a Mac alone: one memory, no experts on the CPU", () => {
+    expect(quantFitFor(QWEN_35B_A3B, { ...MAC, gpuBudgetGb: 16 }, share).placement).not.toBe("split");
+  });
+
+  it("rates an MoE quant from its file name and forecasts a speed for it", () => {
+    const rated = rateQuant({ path: "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", sizeBytes: QWEN_35B_A3B * GB }, PC);
+    expect(rated.fit.placement).toBe("split");
+    expect(rated.speed?.label).toMatch(/tok\/s, estimate$/);
+    expect(rated.speed!.tokPerSec).toBeGreaterThan(5);
+  });
+});

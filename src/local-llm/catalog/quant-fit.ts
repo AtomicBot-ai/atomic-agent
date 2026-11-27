@@ -12,6 +12,9 @@
  *   bandwidth divided by the bytes read per token, times an efficiency
  *   factor, with the part that spilled out of the GPU read at RAM speed.
  *   Every label says "estimate".
+ * - ATO-2455: a mixture-of-experts model that overflows a dedicated GPU
+ *   fits with its experts partly in system RAM when the RAM holds them
+ *   (`moe-split-fit.ts`), the launch's `--n-cpu-moe`.
  * - The pick is the highest-precision quant (never below 4-bit) that
  *   fits the GPU and still answers at a pleasant speed.
  *
@@ -20,18 +23,21 @@
 
 import type { MemoryBandwidth } from "../backend/memory-bandwidth.js";
 import { GPU_WEIGHTS_SHARE, type MachineForModels } from "./model-upgrade.js";
+import { activeShareFromName, moeSplitFor } from "./moe-split-fit.js";
 
 export type QuantFitTier = "fits" | "tight" | "too-big";
 
 export interface QuantFit {
   tier: QuantFitTier;
   /** The words the desktop badge already uses for catalog models. */
-  label: "Fits well" | "Tight fit" | "Too big";
+  label: "Fits well" | "Fits, experts in RAM" | "Tight fit" | "Too big";
   /**
    * Where the weights would sit: all in the GPU, partly in system RAM
    * (or all of it, on a machine without a GPU), or nowhere that fits.
+   * `"split"` (ATO-2455): a mixture-of-experts model whose experts that
+   * do not fit a dedicated GPU stay in system RAM (`--n-cpu-moe`).
    */
-  placement: "gpu" | "ram" | "disk";
+  placement: "gpu" | "split" | "ram" | "disk";
 }
 
 export interface SpeedForecast {
@@ -86,27 +92,26 @@ export function quantBitsFromName(path: string): number | null {
   return null;
 }
 
-/**
- * Share of the weights a token reads: `30B-A3B` → 0.1 for a
- * mixture-of-experts model named that way, 1 otherwise (dense, or not
- * known, which is the slow and so the safe assumption).
- */
-export function activeShareFromName(name: string): number {
-  const m = /(\d+(?:\.\d+)?)b[-_]a(\d+(?:\.\d+)?)b/i.exec(name);
-  if (!m) return 1;
-  const total = Number(m[1]);
-  const active = Number(m[2]);
-  if (!(total > 0) || !(active > 0) || active >= total) return 1;
-  return active / total;
-}
+// Lives beside the split rule so `model-upgrade.ts` can read it without
+// a cycle through this file (ATO-2455); the API stays here.
+export { activeShareFromName };
 
 /** Decimal GB of a file, the unit `MachineForModels` uses. */
 export function weightsGbOf(sizeBytes: number): number {
   return sizeBytes / BYTES_PER_GB;
 }
 
-/** Whether `weightsGb` of weights fits this machine, and where. */
-export function quantFitFor(weightsGb: number, machine: MachineForModels): QuantFit {
+/**
+ * Whether `weightsGb` of weights fits this machine, and where.
+ * `activeShare` (`activeShareFromName`) below 1 lets a mixture-of-experts
+ * model that overflows a dedicated GPU fit with its experts partly in
+ * system RAM (`moe-split-fit.ts`); omitted, the model counts as dense.
+ */
+export function quantFitFor(
+  weightsGb: number,
+  machine: MachineForModels,
+  activeShare = 1,
+): QuantFit {
   if (
     !machine.cpuOnly &&
     machine.gpuBudgetGb !== null &&
@@ -118,6 +123,20 @@ export function quantFitFor(weightsGb: number, machine: MachineForModels): Quant
   if (noGpu && Math.ceil(weightsGb * 1.5) + 2 <= machine.ramGb) {
     // Nothing to offload to (or nothing known): RAM is the whole story.
     return { tier: "fits", label: "Fits well", placement: "ram" };
+  }
+  const split = moeSplitFor({
+    weightsGb,
+    activeShare,
+    ramGb: machine.ramGb,
+    gpuWeightsGb: machine.gpuBudgetGb === null ? null : machine.gpuBudgetGb * GPU_WEIGHTS_SHARE,
+    cpuOnly: machine.cpuOnly,
+    ...(machine.bandwidth ? { bandwidth: machine.bandwidth } : {}),
+    ...(machine.cpuMoe === undefined ? {} : { cpuMoe: machine.cpuMoe }),
+  });
+  if (split) {
+    return split.comfortable
+      ? { tier: "fits", label: "Fits, experts in RAM", placement: "split" }
+      : { tier: "tight", label: "Tight fit", placement: "split" };
   }
   if (Math.ceil(weightsGb * 1.2) <= machine.ramGb) {
     return { tier: "tight", label: "Tight fit", placement: "ram" };
@@ -152,10 +171,10 @@ export function forecastDecodeSpeed(input: {
   const { weightsGb, machine } = input;
   const bandwidth: MemoryBandwidth | undefined = machine.bandwidth;
   if (!bandwidth || !(weightsGb > 0)) return null;
-  const fit = input.fit ?? quantFitFor(weightsGb, machine);
+  const share = input.activeShare ?? 1;
+  const fit = input.fit ?? quantFitFor(weightsGb, machine, share);
   if (fit.placement === "disk") return null;
 
-  const share = input.activeShare ?? 1;
   const perTokenGb =
     share < 1 ? (weightsGb * share) / MOE_ROUTING_EFFICIENCY : weightsGb;
 
@@ -172,7 +191,8 @@ export function forecastDecodeSpeed(input: {
     secondsPerToken = perTokenGb / ramRate;
   } else {
     // Discrete GPU: what fits in its share is read from VRAM, the rest
-    // from system RAM by the CPU, and the slow part dominates.
+    // from system RAM by the CPU, and the slow part dominates. The same
+    // split holds for experts kept in RAM (`placement: "split"`).
     const inGpuGb = Math.min(weightsGb, machine.gpuBudgetGb * GPU_WEIGHTS_SHARE);
     const gpuFraction = weightsGb > 0 ? inGpuGb / weightsGb : 0;
     const gpuRate = bandwidth.gpuGbPerSec * GPU_DECODE_EFFICIENCY;
@@ -201,8 +221,8 @@ export function rateQuant(
   modelName?: string,
 ): QuantRating {
   const weightsGb = weightsGbOf(file.sizeBytes);
-  const fit = quantFitFor(weightsGb, machine);
   const activeShare = activeShareFromName(`${modelName ?? ""} ${file.path}`);
+  const fit = quantFitFor(weightsGb, machine, activeShare);
   return {
     bits: quantBitsFromName(file.path),
     fit,
