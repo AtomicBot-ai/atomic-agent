@@ -51,7 +51,7 @@ test("the export path must be a real .zip or a folder; anything else is refused 
   assert.deepEqual(N.checkFactsExportPath(emptyZip), { ok: false, error: T.empty });
   assert.deepEqual(N.checkFactsExportPath(missing), { ok: false, error: T.missing });
   for (const bad of ["", "   ", "export.zip", "./export.zip", 42, null, undefined, { path: zip }, zip + "\u0000", "/" + "a".repeat(5000) + ".zip"]) {
-    assert.deepEqual(N.checkFactsExportPath(bad), { ok: false, error: T.path }, JSON.stringify(bad).slice(0, 40));
+    assert.deepEqual(N.checkFactsExportPath(bad), { ok: false, error: T.path }, String(JSON.stringify(bad)).slice(0, 40));
   }
 });
 
@@ -90,7 +90,7 @@ test("the whole payload: a plain object with only source, path and cloud", () =>
   assert.deepEqual(N.checkFactsStartInput({ source: "claude", path: folder, cloud: { provider: "anthropic", consent: true } }),
     { ok: true, input: { source: "claude", path: folder, cloud: { provider: "anthropic" } } });
   for (const bad of [null, undefined, "start", 7, [], [{ source: "claude", path: zip }], { source: "claude", path: zip, engine: { kind: "cloud" } }]) {
-    assert.deepEqual(N.checkFactsStartInput(bad), { ok: false, error: T.notValid }, JSON.stringify(bad));
+    assert.deepEqual(N.checkFactsStartInput(bad), { ok: false, error: T.notValid }, String(JSON.stringify(bad)));
   }
   assert.deepEqual(N.checkFactsStartInput({ path: zip }), { ok: false, error: T.source });
   assert.deepEqual(N.checkFactsStartInput({ source: "gemini", path: zip }), { ok: false, error: T.source });
