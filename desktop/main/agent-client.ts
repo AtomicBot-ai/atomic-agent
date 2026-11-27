@@ -239,6 +239,13 @@ export interface ProjectTrustStatus {
   hasEarlierAnswer: boolean;
   hint: string;
 }
+/** ATO-2441: the agent's `GET /api/commands` answer (src/http/route-commands.ts). */
+export interface CommandListing {
+  workingDir: string;
+  commands: Array<{ name: string; command: string; description: string; argumentHint?: string; source: string; model?: string; runsShell?: boolean }>;
+  hiddenProjectCommands: number;
+  errors: string[];
+}
 export interface ProjectTrustAnswerBody {
   sessionId?: string;
   workingDir?: string;
@@ -1917,6 +1924,52 @@ export class AgentClient extends EventEmitter {
       return { supported: true, ok: true, status: JSON.parse(text) as ProjectTrustStatus };
     } catch (err) {
       return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-2441: `GET /api/commands`, your own slash commands and plugin
+   * commands for the chat's folder (renderer/own-commands.js). An agent
+   * from before the route is reported as unsupported. Never throws.
+   */
+  async commandList(sessionId?: string | null): Promise<{ supported: false } | { supported: true; ok: true; data: CommandListing } | { supported: true; ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/commands${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ""}`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
+      return { supported: true, ok: true, data: JSON.parse(text) as CommandListing };
+    } catch (err) {
+      return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-2441: `POST /api/commands/render`, the message `/name args` sends.
+   * Shell lines run in the agent and ask through the normal approval
+   * stream, so this waits as long as they do (at most 10 lines of 60 s).
+   * A line that was not allowed answers `code: "command_refused"`.
+   */
+  async commandRender(body: { name: string; args?: string; sessionId?: string }): Promise<{ ok: true; data: { text: string; source: string; model?: string } } | { ok: false; code?: string; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/commands/render`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(11 * 60_000),
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        let code: string | undefined;
+        try { code = (JSON.parse(text) as { error?: { code?: string } }).error?.code; } catch { /* not JSON */ }
+        return { ok: false, ...(typeof code === "string" ? { code } : {}), error: errorMessage(text, res.status) };
+      }
+      return { ok: true, data: JSON.parse(text) as { text: string; source: string; model?: string } };
+    } catch (err) {
+      return { ok: false, error: requestErrorText(err) };
     }
   }
 

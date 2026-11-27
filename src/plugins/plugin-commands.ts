@@ -105,16 +105,30 @@ const USES_ARGS_RE = /\$ARGUMENTS(?![A-Za-z0-9_])|\$ARGUMENTS\[\d+\]|\$[1-9](?![
  */
 export function renderCommandTemplate(body: string, args: string, vars: CommandTemplateVars): string {
   const trimmedArgs = args.trim();
+  const out = substituteCommandArgs(body, args, vars).trimEnd();
+  if (trimmedArgs && !commandUsesArgs(body)) return `${out}\n\nARGUMENTS: ${trimmedArgs}`;
+  return out;
+}
+
+/** Whether a body names its arguments anywhere; without one they are appended as `ARGUMENTS: ...`. */
+export function commandUsesArgs(body: string): boolean {
+  return USES_ARGS_RE.test(body);
+}
+
+/**
+ * The placeholder pass of `renderCommandTemplate` alone, without the
+ * `ARGUMENTS:` fallback: what a shell line of an own command (ATO-2441)
+ * runs with.
+ */
+export function substituteCommandArgs(body: string, args: string, vars: CommandTemplateVars): string {
+  const trimmedArgs = args.trim();
   const positional = splitCommandArgs(trimmedArgs);
-  const rendered = body.replace(TEMPLATE_RE, (_m, v: string | undefined, idx: string | undefined, pos: string | undefined) => {
+  return body.replace(TEMPLATE_RE, (_m, v: string | undefined, idx: string | undefined, pos: string | undefined) => {
     if (v) return v.endsWith("ROOT") ? vars.root : vars.data;
     if (idx !== undefined) return positional[Number(idx)] ?? "";
     if (pos !== undefined) return positional[Number(pos) - 1] ?? "";
     return trimmedArgs;
   });
-  const out = rendered.trimEnd();
-  if (trimmedArgs && !USES_ARGS_RE.test(body)) return `${out}\n\nARGUMENTS: ${trimmedArgs}`;
-  return out;
 }
 
 /** Every enabled plugin command, minus the ones switched off with `command:<name>`. */
