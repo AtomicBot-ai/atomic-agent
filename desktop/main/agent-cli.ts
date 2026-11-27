@@ -2907,6 +2907,8 @@ export function providerIsUsable(entry: ProviderEntry, names: KeyEnvNames = keyN
 export function providerKeyInvalid(entry: ProviderEntry, names: KeyEnvNames = keyNamesAvailable()): boolean {
   if (entry.apiKey && entry.apiKey.length > 0) return !apiKeyCharsOk(entry.apiKey);
   if (entry.kind === "subscription-cli") return false;
+  // ATO-1747: a ChatGPT sign-in entry carries no key; the agent sends its saved sign-in token.
+  if (entry.kind === "subscription-oauth") return false;
   let name: string | undefined;
   if (entry.apiKeyEnvVar && entry.apiKeyEnvVar.length > 0) name = mayUseKeyVariable(entry, entry.apiKeyEnvVar) ? entry.apiKeyEnvVar : undefined;
   else if (entry.kind === "openrouter") name = "OPENROUTER_API_KEY";
@@ -2924,6 +2926,8 @@ export const STORED_KEY_INVALID = "its saved API key has a character keys don’
 export function providerHasKey(entry: ProviderEntry, names: KeyEnvNames = keyNamesAvailable()): boolean {
   if (entry.apiKey && entry.apiKey.length > 0) return true;
   if (entry.kind === "subscription-cli" && entry.subscriptionCli?.cli) return true;
+  // ATO-1747: `atomic-agent login chatgpt` writes the entry with no key field; the sign-in is its key.
+  if (entry.kind === "subscription-oauth") return true;
   if (entry.apiKeyEnvVar && entry.apiKeyEnvVar.length > 0) {
     return mayUseKeyVariable(entry, entry.apiKeyEnvVar) && names.nonEmpty.has(entry.apiKeyEnvVar);
   }
