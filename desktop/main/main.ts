@@ -11370,6 +11370,8 @@ if (LINUX_SANDBOX.noSandbox) {
   app.commandLine.appendSwitch("no-sandbox");
   console.error(`[desktop] running without the Chromium sandbox: ${LINUX_SANDBOX.reason}`);
 }
+/* ATO-2742: Chromium on Linux lists speech-dispatcher's voices for Read Aloud only with this switch. */
+if (process.platform === "linux") app.commandLine.appendSwitch("enable-speech-dispatcher");
 
 /* ATO-1030: a GPU process that crashed twice in a short while turned hardware
    acceleration off for the launches after it (gpu-fallback.ts). Electron only

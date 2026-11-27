@@ -8728,7 +8728,7 @@ document.addEventListener('click', (e) => {
     if (!text || !BR || typeof BR.terminalOpenWithCommand !== 'function') { fail(); return; }
     // ATO-1424 answers {ok:true, cwd, usedHome} or {ok:false, error, message}.
     Promise.resolve().then(() => BR.terminalOpenWithCommand({ command: text, cwd: workingDir() || null }))
-      .then((r) => { if (!r || r.ok !== true) fail(r && r.message); else if (typeof r.hint === 'string') toast('Terminal opened', r.hint); }, () => fail());
+      .then((r) => { if (r && r.detail) console.warn('[terminal]', r.detail); if (!r || r.ok !== true) fail(r && r.message); else if (typeof r.hint === 'string') toast('Terminal opened', r.hint); }, () => fail());
     return;
   }
   // ATO-1251: a table's Copy (TSV, pastes into a spreadsheet) and Markdown, read off the drawn cells.
@@ -23967,10 +23967,14 @@ function codeBlockFrame(pre) {
 }
 /** ATO-1426: whether a code block in `lang` gets "Open in Terminal". The
     platforms are one list (ATO-1430: Windows and Linux too); an older
-    preload without the bridge shows no button. */
+    preload without the bridge shows no button. ATO-2742: Windows opens
+    PowerShell, so there only a PowerShell block gets it and a bash block
+    keeps Copy alone (the block's language decides, as Copilot Chat's
+    "Insert into terminal" in VS Code matches the shell). */
 function codeBlockTerminalOk(lang) {
   const platforms = ['darwin', 'win32', 'linux'];
-  return platforms.includes(PLATFORM) && /^(?:bash|sh|zsh|shell|console)$/i.test(lang)
+  const shell = PLATFORM === 'win32' ? /^(?:powershell|pwsh|ps1|ps)$/i : /^(?:bash|sh|zsh|shell|console)$/i;
+  return platforms.includes(PLATFORM) && shell.test(lang)
     && !!(BR && typeof BR.terminalOpenWithCommand === 'function');
 }
 /** A code span's text that is one path and nothing else: `~/…`, `/…` (`C:\…` on Windows), not a URL. */

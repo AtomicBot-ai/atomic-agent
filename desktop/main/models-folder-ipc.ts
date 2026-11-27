@@ -29,8 +29,10 @@ import {
   folderListingIsEmpty,
   leftoversFromStdout,
   movedToFromStdout,
+  MOVE_FAILED_WORDS,
+  moveErrorDetail,
   moveErrorWords,
-  NOT_EMPTY_WORDS,
+  notEmptyWords,
   parseModelsFolderInfo,
   parseModelsMoveLine,
 } from "./models-folder.js";
@@ -41,6 +43,8 @@ export interface ModelsFolderMoveAnswer {
   dir?: string;
   leftovers?: string[];
   error?: string;
+  /** ATO-2742: the agent's raw text, shown only behind Details. */
+  detail?: string;
 }
 
 export interface ModelsFolderIpcDeps {
@@ -76,7 +80,7 @@ export function wireModelsFolderIpc(deps: ModelsFolderIpcDeps): void {
     // The agent refuses a non-empty folder as well; saying so here keeps the
     // person in the dialog flow instead of after a failed move.
     const names = await readdir(path).catch(() => [] as string[]);
-    if (!folderListingIsEmpty(names)) return { ok: false, error: NOT_EMPTY_WORDS };
+    if (!folderListingIsEmpty(names)) return { ok: false, error: notEmptyWords() };
     return { ok: true, path };
   });
 
@@ -122,7 +126,10 @@ function runMove(binary: string, args: string[], deps: ModelsFolderIpcDeps): Pro
       settled = true;
       const dir = code === 0 && !err ? movedToFromStdout(stdout) : null;
       if (dir) { resolve({ ok: true, dir, leftovers: leftoversFromStdout(stdout) }); return; }
-      resolve({ ok: false, error: err ? err.message : moveErrorWords(plainCliError(stderr), code) });
+      if (err) { resolve({ ok: false, error: MOVE_FAILED_WORDS, detail: err.message }); return; }
+      const said = plainCliError(stderr);
+      const detail = moveErrorDetail(said, code);
+      resolve({ ok: false, error: moveErrorWords(said, code), ...(detail ? { detail } : {}) });
     };
     child.on("close", (code) => finish(code));
     child.on("error", (err) => finish(null, err));

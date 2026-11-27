@@ -74,8 +74,9 @@ export function shellIsZsh(shell?: string | null): boolean {
 
 /** The message when nothing on the list is installed. */
 export function noTerminalMessage(platform: NodeJS.Platform): string {
-  if (platform === "win32") return "No terminal was found: neither Windows Terminal (wt.exe) nor PowerShell is on PATH. The command is on your clipboard.";
-  return "No terminal was found: install x-terminal-emulator, gnome-terminal, konsole or xterm. The command is on your clipboard.";
+  // ATO-2742: plain words; which programs were looked for is in the header comment, not the toast.
+  if (platform === "win32") return "No terminal was found on this computer: Windows Terminal and PowerShell are both missing. The command is on your clipboard, so you can paste it into any terminal.";
+  return "No terminal was found on this computer. Install one, such as GNOME Terminal, Konsole or xterm. The command is on your clipboard.";
 }
 
 export interface WhichEnv {
