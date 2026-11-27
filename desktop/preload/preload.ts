@@ -530,7 +530,8 @@ contextBridge.exposeInMainWorld("atomic", {
   appsOpen: (id: string) => ipcRenderer.invoke("apps:open", id),
   /** ATO-1629 / ATO-1061: facts about the person from a Claude or ChatGPT export (main/import-facts-ipc.ts). */
   importFactsInfo: () => ipcRenderer.invoke("importFacts:info"),
-  importFactsPick: (source: "claude" | "chatgpt") => ipcRenderer.invoke("importFacts:pick", source),
+  /** ATO-2740: `kind` on Windows and Linux, whose dialog picks a file or a folder, not both; macOS sends none. */
+  importFactsPick: (source: "claude" | "chatgpt", kind?: "file" | "folder") => ipcRenderer.invoke("importFacts:pick", source, kind),
   importFactsStart: (input: { source: "claude" | "chatgpt"; path: string; cloud?: { provider: string; consent: boolean } }) =>
     ipcRenderer.invoke("importFacts:start", input),
   importFactsJob: (id: string) => ipcRenderer.invoke("importFacts:job", id),
