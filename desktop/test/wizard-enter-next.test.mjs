@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 
 const src = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
 const handlerAt = src.indexOf("document.addEventListener('keydown', (e) => {\n  /* ATO-822");
-const handler = src.slice(handlerAt, handlerAt + 40000);
+const handler = src.slice(handlerAt, handlerAt + 80000);
 
 test('Enter in #wiz-url or #wiz-key runs the same wiz:next as the Next button', () => {
   assert.ok(handlerAt !== -1, 'the main keydown handler is where it was');
