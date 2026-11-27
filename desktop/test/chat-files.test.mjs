@@ -160,6 +160,42 @@ test('a bare file name in a reply is the chat\'s file of that name, the newest o
   assert.equal(CF.chatFilesByName('sales.docx'), '', 'the renderer\'s list starts empty');
 });
 
+// ATO-2412: the reply shows three chips, the panel said "None yet": the chips came from code spans holding a path with spaces.
+test('a path a reply writes in a code span, spaces and all, is listed once main confirms it, like its chip', () => {
+  const kit = '/Users/n/Documents/Atomic Agent Marketer Kit';
+  const asked = [];
+  const verdicts = new Map([
+    [kit + '/sales.docx', {ok: true, abs: kit + '/sales.docx', kind: 'file'}],
+    ['~/Documents/Atomic Agent Marketer Kit/sales.xlsx', {ok: true, abs: kit + '/sales.xlsx', kind: 'file'}],
+    [kit + '/sales.pptx', {ok: true, abs: kit + '/sales.pptx', kind: 'file'}],
+    [kit, {ok: true, abs: kit, kind: 'dir'}],
+    ['/Users/n/gone.docx', {ok: false, abs: null, kind: null}],
+  ]);
+  const text = 'The three files:\n'
+    + '- `' + kit + '/sales.docx`\n'
+    + '- `~/Documents/Atomic Agent Marketer Kit/sales.xlsx`\n'
+    + '- `' + kit + '/sales.pptx` (also at ' + kit + '/sales.pptx, no: paths with spaces are not prose chips)\n'
+    + 'They sit in `' + kit + '` next to `/Users/n/gone.docx`. Run `npm test` or `ls -la`, not `https://x.y/a b.docx`.\n'
+    + '```\n/Users/n/in-a-fence.docx\n```\n';
+  const log = [{k: 'user', text: 'paths?'}, {k: 'assistant', text}];
+  const files = CF.chatFilesOf(log, {home: '/Users/n', replyPath: (raw) => { asked.push(raw); return verdicts.get(raw) || null; }});
+  assert.deepEqual(files.map((f) => [f.path, f.from, f.kind]), [
+    [kit + '/sales.pptx', 'reply', 'file'],
+    [kit + '/sales.xlsx', 'reply', 'file'],
+    [kit + '/sales.docx', 'reply', 'file'],
+  ]);
+  assert.ok(!asked.includes('npm test') && !asked.includes('ls -la') && !asked.includes('https://x.y/a b.docx'), 'main is asked only about paths');
+  assert.ok(!asked.includes('/Users/n/in-a-fence.docx'), 'a fence is code');
+  assert.equal(asked.filter((r) => r === kit + '/sales.pptx').length, 1, 'a path is asked about once, whichever way it is written');
+  // The span pass itself.
+  assert.deepEqual(CF.cfCodeSpanPaths('see `/a b/c.txt`, `~/d e.md`, ` /f.txt `, `/a b/c.txt`, `~`, `/`, `x/y.txt`, `C:\\Docs\\a b.docx`, `//net/share`'),
+    ['/a b/c.txt', '~/d e.md', '/f.txt', 'C:\\Docs\\a b.docx']);
+  assert.deepEqual(CF.cfCodeSpanPaths('```sh\n`/in/fence.txt`\n```\nand `/out.txt`'), ['/out.txt']);
+  assert.deepEqual(CF.cfCodeSpanPaths('`/bad<x>.txt` `/bad"y.txt` `file:///z.txt` `/multi\nline.txt`'), []);
+  assert.deepEqual(CF.cfCodeSpanPaths(''), []);
+  assert.deepEqual(CF.cfCodeSpanPaths(null), []);
+});
+
 test('image.generate paths written with ~ are listed expanded, as main stats them', () => {
   const log = [{k: 'tool', name: 'image.generate', ok: true, out: 'Saved 1 picture:\n- ~/Pictures/a.png'}];
   assert.deepEqual(CF.chatFilesOf(log, {home: '/Users/n'}).map((f) => f.path), ['/Users/n/Pictures/a.png']);
