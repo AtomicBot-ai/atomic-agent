@@ -129,3 +129,7 @@ export type {
   FabricatedToolTranscript,
   FabricatedTranscriptWatcher,
 } from "./fabricated-tool-transcript.js";
+export {
+  countTaggedToolCallBlocks,
+  detectTaggedToolCallText,
+} from "./tagged-tool-call-text.js";
