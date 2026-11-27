@@ -106,8 +106,8 @@ test('the mini chat page: the chip from quickEntryOpened, sent once with the fir
 
 test('the hotkey reads the selection before the mini chat opens; the menu and the tray do not', () => {
   const qw = src('../main/quick-entry-window.ts');
-  assert.match(qw, /w\.grabSelection\(\)\.catch\(\(\) => null\)\.then\(\(sel\) => \{/);
-  assert.match(qw, /ipcMain\.handle\("app:quickEntryOpened", \(\) => \(\{ draft, label: [^\n]*, selection \}\)\)/);
+  assert.match(qw, /w\.grabSelection\(\)\.catch\([^\n]*\)\.then\(\(grab\) => \{/);
+  assert.match(qw, /ipcMain\.handle\("app:quickEntryOpened", \(\) => \(\{ draft, label: [^\n]*, selection, notice \}\)\)/);
   assert.match(qw, /win\.loadFile\(miniChatPagePath\(__dirname\)\)/, 'the page with the chip is the mini chat');
   const at = qw.indexOf('const show = () => {');
   const body = qw.slice(at, qw.indexOf('\n  };', at));
@@ -180,10 +180,10 @@ test('unset: on for macOS with Accessibility only; Windows and Linux opt in', ()
 });
 
 test('what Settings shows, and a write checked', () => {
-  assert.deepEqual(T.selectedTextInfo(N, 'darwin', true), {ok: true, on: true, hint: null, translateTo: null});
-  assert.deepEqual(T.selectedTextInfo(N, 'darwin', false), {ok: true, on: false, hint: T.SELECTED_TEXT_ACCESSIBILITY_HINT, translateTo: null});
-  assert.deepEqual(T.selectedTextInfo({use: true, translateTo: null}, 'darwin', false), {ok: true, on: true, hint: T.SELECTED_TEXT_ACCESSIBILITY_HINT, translateTo: null});
-  assert.deepEqual(T.selectedTextInfo(N, 'linux', true), {ok: true, on: false, hint: null, translateTo: null});
+  assert.deepEqual(T.selectedTextInfo(N, 'darwin', true), {ok: true, on: true, hint: null, openAccessibility: false, translateTo: null});
+  assert.deepEqual(T.selectedTextInfo(N, 'darwin', false), {ok: true, on: false, hint: T.SELECTED_TEXT_ACCESSIBILITY_HINT, openAccessibility: true, translateTo: null});
+  assert.deepEqual(T.selectedTextInfo({use: true, translateTo: null}, 'darwin', false), {ok: true, on: true, hint: T.SELECTED_TEXT_ACCESSIBILITY_HINT, openAccessibility: true, translateTo: null});
+  assert.deepEqual(T.selectedTextInfo(N, 'linux', true), {ok: true, on: false, hint: null, openAccessibility: false, translateTo: null});
   assert.deepEqual(T.mergeSelectedTextPref(N, {use: true}), {ok: true, pref: {use: true, translateTo: null}});
   assert.deepEqual(T.mergeSelectedTextPref({use: true, translateTo: 'French'}, {use: false}).pref, {use: false, translateTo: 'French'});
   assert.equal(T.mergeSelectedTextPref(N, {use: 'on'}).ok, false);

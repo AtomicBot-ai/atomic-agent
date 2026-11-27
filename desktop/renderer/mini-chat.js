@@ -465,6 +465,7 @@ function mcBoot() {
   if (BR.quickEntryOpened) BR.quickEntryOpened().then((opened) => {
     const input = $('mc-input');
     if (!opened || st.rows.length) return;
+    if (typeof mcSelectionNotice === 'function') mcSelectionNotice(opened.notice, BR);   // ATO-2736 (mini-chat-notice.js)
     if (typeof opened.draft === 'string' && opened.draft && !input.value) {
       input.value = opened.draft;
       input.setSelectionRange(input.value.length, input.value.length);
