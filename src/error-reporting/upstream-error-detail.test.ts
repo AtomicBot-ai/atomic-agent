@@ -81,6 +81,20 @@ describe("classifyUpstreamReason (ATO-1673)", () => {
     ["a bare prefill mention", "The prefill was ignored.", "other"],
     ["model id", "The model `gpt-9` does not exist or you do not have access to it.", "model_not_found"],
     ["nothing known", "Something odd happened.", "other"],
+    // ATO-2419: a refused key, whatever status it came with.
+    [
+      "Gemini key on a 400",
+      '[{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}]',
+      "key_refused",
+    ],
+    [
+      "Anthropic key",
+      '{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}',
+      "key_refused",
+    ],
+    ["OpenAI key", "Incorrect API key provided: sk-abc***. You can find your API key in your account.", "key_refused"],
+    ["DeepSeek key", "Authentication Fails, Your api key: ****abcd is invalid", "key_refused"],
+    ["OpenRouter no key", "No auth credentials found", "key_refused"],
   ])("%s", (_label, text, expected) => {
     expect(classifyUpstreamReason(text)).toBe(expected);
   });

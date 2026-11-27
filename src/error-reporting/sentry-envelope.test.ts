@@ -333,6 +333,25 @@ describe("buildEnvelope", () => {
     expect(payload.tags.upstream_error_type).toBeUndefined();
   });
 
+  it("stamps failure_owner as a tag and keeps it out of the fingerprint (ATO-2419)", () => {
+    const base: ScrubbedErrorEvent = {
+      errorType: "TransportError",
+      causeType: "OpenAiHttpError",
+      source: "llm_failure",
+      category: "transport",
+      httpStatus: 402,
+      upstreamReason: "out_of_credit",
+      frames: [{ filename: "openai-http.js", lineno: 519 }],
+    };
+    const plain = parseEventPayload(buildEnvelope(DSN, base, META).body);
+    const owned = parseEventPayload(
+      buildEnvelope(DSN, { ...base, failureOwner: "person" }, META).body,
+    );
+    expect(owned.tags.failure_owner).toBe("person");
+    expect(plain.tags.failure_owner).toBeUndefined();
+    expect(owned.fingerprint).toEqual(plain.fingerprint);
+  });
+
   it("splits two same-status failures whose only difference is the upstream type", () => {
     // Every provider failure shares causeType `OpenAiHttpError`, so the
     // existing discriminator cannot tell these two apart: llama.cpp
