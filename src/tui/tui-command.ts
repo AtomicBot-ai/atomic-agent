@@ -93,6 +93,7 @@ import {
 } from "./startup-working-dir.js";
 import { readRecentWorkingDirs } from "../session/index.js";
 import { detectLocalServers } from "../llm/provider/presets/detect-local-servers.js";
+import { runLocalServersSlash } from "./local-servers/local-servers-slash.js";
 import { createMentionFileIndex, expandFileMentions } from "./file-mentions/index.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
 import {
@@ -606,6 +607,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
         onRewindPickerRequested: () => orchestrator.openRewindPicker(),
         onChatExportRequested: (request) => { void orchestrator.exportOpenChat(request); },
+        onLocalServersRequested: (args) => { void runLocalServersSlash(args, (text) => bus.emit({ type: "system_message", text })); },
         onRewindRequested: (turnIndex, expectText) =>
           orchestrator.rewindTo(turnIndex, expectText),
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),

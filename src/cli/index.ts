@@ -24,6 +24,7 @@ import { ideasCommand } from "./ideas-command.js";
 import { overnightCommand } from "./overnight-command.js";
 import { memoryCommand } from "./memory-command.js";
 import { modelsCommand } from "./models-command.js";
+import { localServersCommand } from "./local-servers-command.js";
 import { importCommand } from "./import-command.js";
 import { handoffCommand } from "./handoff-command.js";
 import { launchCommand } from "./launch-command.js";
@@ -185,6 +186,11 @@ const COMMANDS: CommandDescriptor[] = [
     summary:
       "Manage the local-LLM runtime + GGUF models (list|pull|use|status|...) and search cloud models (search)",
     run: modelsCommand,
+  },
+  {
+    name: "local-servers",
+    summary: "Model servers already running here: Ollama, LM Studio, the Llama app (--json)",
+    run: (args) => localServersCommand(args),
   },
   {
     name: "import",
