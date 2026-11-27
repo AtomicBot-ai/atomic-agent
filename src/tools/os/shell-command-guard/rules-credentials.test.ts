@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkShellCommandGuard } from "./index.js";
+import { basenameCommand, checkShellCommandGuard } from "./index.js";
 import { ASK_EVERY_LEVEL_CONFIDENCE } from "./arg-scan-finding.js";
 
 function guard(cmd: string, rawArgs: readonly string[] = [], cwd = "/tmp/project") {
@@ -117,6 +117,30 @@ describe("dangerous.read_credentials (ATO-2126)", () => {
       });
       expect(verdict.confidence, line).toBe(0.9);
     }
+  });
+
+  it.each([
+    "K=~/.ssh; cat $K/id_rsa",
+    'K=$HOME/.ssh; cat "$K/id_rsa"',
+    "K=~/.ssh && cat $K/id_rsa",
+  ])("reads a variable when the line starts with its assignment: %s", (line) => {
+    // The shell tool hands the guard the first whitespace token as cmd
+    // (`K=~/.ssh;`); it must not be cut at its last `/` to `.ssh;`.
+    const [cmd, ...rest] = line.split(/\s+/);
+    expect(cmd).toMatch(/^K=/);
+    const verdict = guard(cmd!, rest);
+    expect(verdict, line).toMatchObject({
+      rule: "dangerous.read_credentials",
+      askEveryLevel: true,
+    });
+    expect(verdict.confidence, line).toBe(0.9);
+  });
+
+  it("keeps an assignment word whole instead of taking its basename", () => {
+    expect(basenameCommand("K=~/.ssh;")).toBe("K=~/.ssh;");
+    expect(basenameCommand("PATH=/usr/bin:/bin")).toBe("PATH=/usr/bin:/bin");
+    expect(basenameCommand("/usr/bin/git")).toBe("git");
+    expect(basenameCommand("./bin/run=1")).toBe("run=1");
   });
 
   it("finds a literal credential path inside code and option values", () => {

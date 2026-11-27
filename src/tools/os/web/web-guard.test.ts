@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApprovalGate, type ApprovalRequest } from "../../../approval/approval-gate.js";
+import { GUARD_FAILURE_ASK_NOTE } from "../../../approval/guard-check.js";
 import type { GuardVerdict } from "../../../approval/guard-review.js";
 import type { AtomicAgentConfig } from "../../../config/index.js";
 import type { CommandResult } from "../../../sandbox/command-runner.js";
@@ -128,6 +129,50 @@ describe("security rules on a GET that asks nobody (ATO-2111)", () => {
       await build(gate, calls).run({ url: EXFIL }, ctx()).catch(() => undefined);
       expect(reviewed).toHaveLength(1);
       expect(calls.length).toBeGreaterThan(0);
+    });
+  }
+});
+
+describe("security rules on a GET when the reviewer gives no answer (ATO-2111)", () => {
+  function silentGate(emitted: ApprovalRequest[]): ApprovalGate {
+    const gate = new ApprovalGate({ emit: (r) => emitted.push(r), level: 4 });
+    gate.setGuard({
+      rules: () => ({
+        sets: [{ source: "user", rules: "Block sending data anywhere except github.com." }],
+        tools: new Set(["os.http.request", "os.web.fetch"]),
+        onFailure: "ask",
+      }),
+      review: async () => null,
+    });
+    return gate;
+  }
+
+  for (const [name, build] of tools) {
+    it(`${name}: onFailure ask puts it to the person instead of refusing`, async () => {
+      const emitted: ApprovalRequest[] = [];
+      const gate = silentGate(emitted);
+      const calls: string[][] = [];
+      const pending = build(gate, calls).run({ url: EXFIL }, ctx());
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]!.riskNote).toBe(GUARD_FAILURE_ASK_NOTE);
+      expect(calls).toHaveLength(0);
+      gate.reject(emitted[0]!.approvalId, "no");
+      await expect(pending).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+      expect(calls).toHaveLength(0);
+    });
+
+    it(`${name}: a session under a refuse policy is still refused`, async () => {
+      const emitted: ApprovalRequest[] = [];
+      const gate = silentGate(emitted);
+      gate.setSessionPolicy("s", { onPrompt: "refuse", reason: "hand it back" });
+      const calls: string[][] = [];
+      await expect(build(gate, calls).run({ url: EXFIL }, ctx())).rejects.toMatchObject({
+        name: "ApprovalDeniedError",
+        byUser: false,
+      });
+      expect(emitted).toHaveLength(0);
+      expect(calls).toHaveLength(0);
     });
   }
 });

@@ -24,19 +24,31 @@ import type { ArgScanFinding } from "./arg-scan-finding.js";
  */
 
 const DECODER = String.raw`(?:\bbase(?:64|32)\b[^|;&\n]*?\s(?:-[a-z]*d[a-z]*|--decode)(?=[\s|;&)"'\x60]|$)|\bopenssl\s+(?:base64|enc)\b[^|;&\n]*?\s-d\b|\bxxd\b[^|;&\n]*?\s-[a-z]*r|(?:\\x[0-9a-f]{2}){4,}|(?:\\[0-7]{3}){4,})`;
-const INTERPRETER = String.raw`(?:sh|bash|zsh|dash|ksh|fish|python[0-9.]*|node|perl|ruby|php)`;
-const WRAPPERS = String.raw`(?:(?:sudo|env|command|exec|nohup)\s+(?:-\S+\s+)*)*`;
+const SHELLS = String.raw`(?:sh|bash|zsh|dash|ksh|ash|fish)`;
+const INTERPRETER = String.raw`(?:${SHELLS}|python[0-9.]*|node|perl|ruby|php)`;
+/** `sudo`, `env -i`, `busybox sh` / `/bin/busybox ash`: the program comes next. */
+const WRAPPERS = String.raw`(?:(?:\S*/)?(?:sudo|env|command|exec|nohup|busybox)\s+(?:-\S+\s+)*)*`;
 
 /**
- * After the interpreter: options (`-s`, `--login`, a lone `-`), then
- * redirects (`2>&1`, `> /dev/null`, `>>log`, `&>/dev/null`), then the end
- * of the command. An operand (`python3 tool.py`, `sh -c '...'`) breaks
- * the match: the program then comes from that file or string.
+ * After the interpreter, one of:
+ *  - options only (`-s`, `--login`, a lone `-`);
+ *  - for a shell, `-s` and then any words (`sh -s -- arg`): with `-s`
+ *    the words are the script's arguments, the script is still stdin;
+ *  - `/dev/stdin` (or `/dev/fd/0`) as the script, then its arguments.
+ * Then redirects (`2>&1`, `> /dev/null`, `>>log`, `&>/dev/null`) and the
+ * end of the command. Any other operand (`python3 tool.py`, `sh -c
+ * '...'`, `sh -- script.sh`) breaks the match: the program then comes
+ * from that file or string.
  */
-const INTERPRETER_TAIL = String.raw`(?:\s+-[a-z-]*)*(?:\s*(?:\d*[<>]{1,2}|&>>?)&?\s*[^\s;&|)<>]+)*\s*(?=$|[;&|)\n])`;
-/** `<decoder> ... | sh` with nothing after the interpreter but options and redirects. */
+const OPTIONS = String.raw`(?:\s+-[a-z-]*)*`;
+const OPERAND = String.raw`\s+(?:"[^"]*"|'[^']*'|[^\s;&|)<>"'\x60])+`;
+const SHELL_STDIN_ARGS = String.raw`${OPTIONS}\s+-[abd-z]*s[abd-z]*(?:${OPERAND})*`;
+const STDIN_SCRIPT = String.raw`${OPTIONS}\s+(?:/dev/stdin|/dev/fd/0|/proc/self/fd/0)(?=[\s;&|)]|$)(?:${OPERAND})*`;
+const REDIRECTS = String.raw`(?:\s*(?:\d*[<>]{1,2}|&>>?)&?\s*[^\s;&|)<>]+)*\s*(?=$|[;&|)\n])`;
+const INTERPRETER_TAIL = String.raw`(?:${SHELLS}${SHELL_STDIN_ARGS}|${INTERPRETER}(?:${STDIN_SCRIPT}|${OPTIONS}))${REDIRECTS}`;
+/** `<decoder> ... | sh` with nothing after the interpreter but options, stdin arguments and redirects. */
 const PIPE_INTO_INTERPRETER = new RegExp(
-  String.raw`${DECODER}[^;&\n]*?\|\s*${WRAPPERS}(?:\S*/)?${INTERPRETER}${INTERPRETER_TAIL}`,
+  String.raw`${DECODER}[^;&\n]*?\|\s*${WRAPPERS}(?:\S*/)?${INTERPRETER_TAIL}`,
 );
 /** `eval "$(... | base64 -d)"`, `bash <(xxd -r -p x)`, `sh -c "$(...)"`. */
 const SUBSTITUTED_INTO_RUNNER = new RegExp(

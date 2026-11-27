@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { throttleAddress } from "./auth-throttle.js";
+import { isLocalRequest, throttleAddress } from "./auth-throttle.js";
 import { DEVICE_COOKIE } from "./device-auth.js";
 import { createDeviceSessions, type DeviceSessions } from "./device-sessions.js";
 import { createHttpServer, type HttpServerHandle, type RouteDefinition } from "./http-server.js";
@@ -115,5 +115,20 @@ describe("throttleAddress", () => {
     expect(throttleAddress(req("127.0.0.1", { "cf-connecting-ip": "  " }))).toBe("127.0.0.1");
     expect(throttleAddress(req("127.0.0.1", { "cf-connecting-ip": "x".repeat(65) }))).toBe("127.0.0.1");
     expect(throttleAddress(req(undefined))).toBeUndefined();
+  });
+});
+
+describe("isLocalRequest", () => {
+  const req = (remoteAddress: string | undefined, headers: Record<string, string> = {}) =>
+    ({ socket: { remoteAddress }, headers }) as never;
+
+  it("is true only for a loopback socket without cf-connecting-ip", () => {
+    expect(isLocalRequest(req("127.0.0.1"))).toBe(true);
+    expect(isLocalRequest(req("::ffff:127.0.0.1"))).toBe(true);
+    expect(isLocalRequest(req("::1"))).toBe(true);
+    expect(isLocalRequest(req("127.0.0.1", { "cf-connecting-ip": "203.0.113.7" }))).toBe(false);
+    expect(isLocalRequest(req("127.0.0.1", { "cf-connecting-ip": "" }))).toBe(false);
+    expect(isLocalRequest(req("192.168.1.30"))).toBe(false);
+    expect(isLocalRequest(req(undefined))).toBe(false);
   });
 });

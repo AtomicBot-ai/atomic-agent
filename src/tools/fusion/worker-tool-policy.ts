@@ -61,6 +61,9 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   // Nobody watches a worker's session, so its question would reach nobody
   // (ATO-489); the gate would refuse it anyway.
   "ask_user",
+  // ATO-2363: a worker runs on the local leg, so logbook.query would read
+  // the screen notes unasked and hand them to a cloud orchestrator.
+  "logbook.query",
 ]);
 
 /** `RunTurnOptions.toolFilter` for a worker turn. */

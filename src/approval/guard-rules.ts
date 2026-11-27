@@ -71,7 +71,7 @@ export function unreviewedToolsWarning(path: string, tools: readonly string[] | 
   if (names.length === 0) return null;
   return (
     `${path}: tools: names ${names.join(", ")}, which run without asking for approval ` +
-    "(a read inside the project never asks), so these rules do not see those calls"
+    "inside the project, so these rules only see the calls that do ask (a read outside the project)"
   );
 }
 

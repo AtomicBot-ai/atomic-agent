@@ -75,6 +75,11 @@ export interface EgressScanOptions {
    * the address the call itself just wrote.
    */
   gitStateWritten?: boolean;
+  /**
+   * The call writes a curl or wget config file (`.curlrc`, `.wgetrc`),
+   * which can set a proxy: a send is then to an unknown address.
+   */
+  httpConfigWritten?: boolean;
 }
 
 const ENV_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -84,11 +89,19 @@ const PUBLISH_PROGRAMS = new Set(["npm", "pnpm", "yarn", "cargo", "twine", "poet
 /** Commands that change the folder later git commands run in. */
 const DIR_CHANGERS = new Set(["cd", "pushd", "popd", "source", "."]);
 /** git subcommands that can change where a later push goes. */
-const GIT_STATE_SUBCOMMANDS = new Set(["remote", "config", "init", "clone"]);
+const GIT_STATE_SUBCOMMANDS = new Set(["remote", "config", "init", "clone", "checkout", "switch"]);
 /** Builtins that set or drop a variable for the rest of the call. */
 const VARIABLE_SETTERS = new Set(["export", "declare", "typeset", "readonly", "local", "unset"]);
+/** Commands that run another command and may set variables for it (`env A=1 curl`, `sudo A=1 git`). */
+const WRAPPERS = new Set([
+  "env", "sudo", "doas", "nice", "nohup", "time", "timeout", "gtimeout", "stdbuf",
+  "ionice", "setsid", "chrt", "taskset", "command", "exec", "builtin", "xargs", "flock",
+]);
 /** Variables that send curl or wget through another host or another config file. */
-const PROXY_VARIABLE_RE = /^(?:(?:https?|ftp|all|socks)_proxy|curl_home|wgetrc)$/i;
+const PROXY_VARIABLE_RE =
+  /^(?:(?:https?|ftp|all|socks)_proxy|curl_home|wgetrc|system_wgetrc|home|xdg_config_home)$/i;
+/** Variables that change which repository or git config a push reads. */
+const GIT_VARIABLE_RE = /^(?:GIT_[A-Za-z0-9_]*|HOME|XDG_CONFIG_HOME)$/;
 
 /** `/usr/bin/curl`, `CURL.EXE` → `curl`. */
 function programName(word: string): string {
@@ -131,10 +144,19 @@ function readCallState(segments: readonly (readonly string[])[]): CallState {
     // also appears unwrapped, without its assignment).
     const setter = head === undefined || VARIABLE_SETTERS.has(program);
     if (setter) for (const word of words.slice(start + 1)) names.push(variableName(word));
-    if (names.some((name) => /^GIT_/.test(name))) state.gitUnsafe = true;
+    // `env A=1 curl`, `sudo A=1 git push`: the unwrapped copy has lost
+    // the assignment, so take every assignment word after a wrapper.
+    if (WRAPPERS.has(program)) {
+      for (const word of words.slice(start + 1)) {
+        if (ENV_ASSIGNMENT_RE.test(word)) names.push(variableName(word));
+      }
+    }
+    if (names.some((name) => GIT_VARIABLE_RE.test(name))) state.gitUnsafe = true;
     if (names.some((name) => PROXY_VARIABLE_RE.test(name))) state.rerouted = true;
     if (setter) continue;
     if (DIR_CHANGERS.has(program)) state.gitUnsafe = true;
+    // A sourced file can export a proxy.
+    if (program === "source" || program === ".") state.rerouted = true;
     if (program === "git") {
       const sub = gitSubcommand(words.slice(start + 1));
       if (sub !== undefined && GIT_STATE_SUBCOMMANDS.has(sub)) state.gitUnsafe = true;
@@ -150,10 +172,10 @@ function scanSegment(
 ): EgressDestination[] {
   let start = 0;
   let gitIndirect = false;
-  let rerouted = call.rerouted;
+  let rerouted = call.rerouted || options.httpConfigWritten === true;
   while (start < words.length && ENV_ASSIGNMENT_RE.test(words[start]!)) {
     const name = variableName(words[start]!);
-    if (/^GIT_/.test(name)) gitIndirect = true;
+    if (GIT_VARIABLE_RE.test(name)) gitIndirect = true;
     if (PROXY_VARIABLE_RE.test(name)) rerouted = true;
     start += 1;
   }
@@ -250,7 +272,7 @@ const EGRESS_LINE_MAX = 4;
 /** A label as one line of plain text: control characters (a newline) become a space. */
 export function cleanEgressLabel(label: string): string {
   // eslint-disable-next-line no-control-regex
-  return label.replace(/[\u0000-\u001f\u007f-\u009f  ]+/g, " ").trim();
+  return label.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]+/g, " ").trim();
 }
 
 /** No one approved it: an unreadable host, or one the gate marked held. */

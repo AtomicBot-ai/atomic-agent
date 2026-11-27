@@ -30,7 +30,7 @@ import { READ_TOOL_TARGETS, URL_LIKE } from "./read-scope-targets.js";
  *    no user-named roots, no grants);
  *  - is, or is inside, a credential folder of the home directory
  *    (`SECRET_HOME_PATHS`, `MCP_SECRET_HOME_PATHS`) or the agent's state
- *    directory, or is a `.env` / `.env.*` file;
+ *    directory, or is a `.env` / `.env.*` / `.envrc` file (any case);
  *  - for a tool that walks a folder, contains one of those folders (a
  *    working directory that is the home folder cannot be grepped whole);
  *  - is a `file:` URL.
@@ -38,7 +38,13 @@ import { READ_TOOL_TARGETS, URL_LIKE } from "./read-scope-targets.js";
  * `files.search` without a `folder` searches the owner's "My files"
  * folders, so a guest must name a folder inside the working directory.
  * Git tools are checked by their `repo` (default: the working
- * directory) and any absolute `path`. The shell is refused outright.
+ * directory) and every `path` / `paths` entry (a relative one is read
+ * against the repo). A git argument in `<rev>:<path>` form (or any `:`,
+ * which also covers pathspec magic such as `:/`), a leading `-` (an
+ * option, such as `--output=`) or a glob in a path is refused: each
+ * names files the path checks never see. The runner keeps a guest's git
+ * from climbing above the working directory (`os/git/git-guest-scope.ts`).
+ * The shell is refused outright.
  *
  * Precedent: OpenClaw runs non-owner sessions in a sandbox confined to
  * the workspace, and Claude Code's permission rules deny `Read` of
@@ -72,6 +78,32 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/** A git call's path arguments: `path` and `paths`. */
+function gitPaths(args: Record<string, unknown>): string[] {
+  return [str(args.path), ...(Array.isArray(args.paths) ? args.paths.map(str) : [])]
+    .filter((p): p is string => p !== undefined);
+}
+
+/**
+ * Why a guest's git arguments are refused, or `null`. Every string
+ * argument but `repo` (revisions, ranges, paths, patterns) is checked.
+ */
+function guestGitArgDenial(args: Record<string, unknown>): string | null {
+  for (const [key, value] of Object.entries(args)) {
+    if (key === "repo") continue;
+    const values = Array.isArray(value) ? value : [value];
+    for (const item of values) {
+      if (typeof item !== "string") continue;
+      if (item.includes(":")) return `git argument ${key}="${item}" names a file by revision or pathspec magic`;
+      if (item.startsWith("-")) return `git argument ${key}="${item}" is an option`;
+    }
+  }
+  for (const path of gitPaths(args)) {
+    if (/[*?[]/.test(path)) return `git path "${path}" is a pattern`;
+  }
+  return null;
+}
+
 /** The raw targets of a guest call; `null` when the call is refused as a whole. */
 function guestTargets(
   tool: string,
@@ -79,9 +111,10 @@ function guestTargets(
   workingDir: string,
 ): string[] | null {
   if (GUEST_GIT_TOOLS.has(tool)) {
-    const paths = [str(args.path), ...(Array.isArray(args.paths) ? args.paths.map(str) : [])]
-      .filter((p): p is string => p !== undefined && isAbsolute(p));
-    return [str(args.repo) ?? workingDir, ...paths];
+    const repo = str(args.repo) ?? workingDir;
+    // Git reads a relative path against the repo it runs in.
+    const paths = gitPaths(args).map((p) => (isAbsolute(p) ? p : join(repo, p)));
+    return [repo, ...paths];
   }
   const targetsOf = READ_TOOL_TARGETS.get(tool);
   if (targetsOf === undefined) return [];
@@ -103,8 +136,8 @@ function deniedFolders(home: string, stateDir: string | undefined): string[] {
 }
 
 function isEnvFile(path: string): boolean {
-  const name = basename(path);
-  return name === ".env" || name.startsWith(".env.");
+  const name = basename(path).toLowerCase();
+  return name === ".env" || name === ".envrc" || name.startsWith(".env.");
 }
 
 /** Why `absolute` is refused to a guest, or `null` when it may be read. */
@@ -150,6 +183,10 @@ export function checkGuestRead(
   options: GuestReadOptions = {},
 ): CompressedToolResult | null {
   if (ctx.guest !== true) return null;
+  if (GUEST_GIT_TOOLS.has(tool)) {
+    const why = guestGitArgDenial(args);
+    if (why !== null) return guestRefusal(tool, why);
+  }
   const targets = guestTargets(tool, args, ctx.workingDir);
   if (targets === null) {
     return guestRefusal(tool, `a guest must name a folder inside the working directory (${ctx.workingDir})`);

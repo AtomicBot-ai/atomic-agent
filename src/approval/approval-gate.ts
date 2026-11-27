@@ -52,6 +52,7 @@ import type { UserQuestion, UserQuestionAnswer } from "./user-question.js";
 import { EgressSessionHosts, unknownOutbound } from "./egress-hold.js";
 import { withUnreadableScript, type EgressDestination } from "./egress-scan.js";
 import {
+  GUARD_ASK_PERSON,
   GUARD_FAILURE_ASK_NOTE,
   GUARD_FAILURE_BLOCK_REASON,
   guardBlockReason,
@@ -558,12 +559,17 @@ export class ApprovalGate {
 
   /**
    * For a call a tool settles without `request` (a fan-out scope): the
-   * refusal the security rules give it, or `null` to go on. Nobody can be
-   * asked there, so a reviewer failure refuses whatever `onFailure` says.
+   * refusal the security rules give it, or `null` to go on. By default a
+   * reviewer failure refuses whatever `onFailure` says. With
+   * `askOnFailure` (a GET or a trusted read in a normal chat), a failure
+   * under `onFailure: ask` on a session with no refuse policy returns
+   * `GUARD_ASK_PERSON`: the caller then puts the call through `request`,
+   * which reviews it again and holds it for the person if it fails.
    */
   async guardRefusal(
     params: Omit<ApprovalRequest, "approvalId">,
     signal?: AbortSignal,
+    options: { askOnFailure?: boolean } = {},
   ): Promise<string | null> {
     const guard = this.guard;
     if (guard === undefined) return null;
@@ -577,6 +583,14 @@ export class ApprovalGate {
     if (rules === null) return null;
     const outcome = await runGuard(guard, request, rules, signal);
     if (outcome.kind === "allow") return null;
+    if (
+      outcome.kind === "failed" &&
+      outcome.onFailure === "ask" &&
+      options.askOnFailure === true &&
+      this.policiesBySession.get(request.sessionId)?.onPrompt !== "refuse"
+    ) {
+      return GUARD_ASK_PERSON;
+    }
     return outcome.kind === "block"
       ? guardBlockReason(outcome.reason)
       : "Blocked by your security rules: the rules reviewer gave no answer, and nobody can be asked here";

@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { getTrustConfigPaths } from "../../../config/config-file.js";
 import { categorizeFsMutation, resolveFsScope } from "./fs-approval-scope.js";
+import { getTrustConfigPaths } from "../../../config/config-file.js";
 
 describe("fs approval scope", () => {
   let root: string;
@@ -328,6 +330,18 @@ describe("fs approval scope", () => {
         ).toBe("trust_config");
       });
 
+      it("a folder moved onto the logbook folder is trust_config (ATO-2363)", async () => {
+        // The real trust list: a crafted folder holding settings.json moved
+        // onto <stateDir>/logbook would turn screen capture on unasked.
+        const trustConfigPaths = getTrustConfigPaths({ userConfigFile: configFile, stateDir });
+        expect(
+          await categorizeFsMutation("write", [join(stateDir, "logbook")], {
+            ...trustOpts(),
+            trustConfigPaths,
+          }),
+        ).toBe("trust_config");
+      });
+
       it("extraction under the directory is trust_config", async () => {
         expect(
           await categorizeFsMutation(
@@ -336,6 +350,26 @@ describe("fs approval scope", () => {
             withInstalled(),
           ),
         ).toBe("trust_config");
+      });
+    });
+
+    describe("PR autofix state (ATO-2331), with the real trust list", () => {
+      const realTrust = () => ({
+        ...trustOpts(),
+        trustConfigPaths: [...getTrustConfigPaths({ userConfigFile: configFile, stateDir })],
+      });
+
+      it("a write to pr-autofix/state.json asks as trust_config, even before the file exists", async () => {
+        const stateFile = join(stateDir, "pr-autofix", "state.json");
+        expect(await categorizeFsMutation("write", [stateFile], realTrust())).toBe("trust_config");
+        await mkdir(join(stateDir, "pr-autofix"), { recursive: true });
+        await writeFile(stateFile, "{}", "utf8");
+        expect(await categorizeFsMutation("write", [stateFile], realTrust())).toBe("trust_config");
+      });
+
+      it("a fix written in an autofix worktree stays on the scope ladder", async () => {
+        const fix = join(stateDir, "pr-autofix", "worktrees", "acme-widgets-42", "src", "a.ts");
+        expect(await categorizeFsMutation("write", [fix], realTrust())).toBe("fs_write_home");
       });
     });
   });

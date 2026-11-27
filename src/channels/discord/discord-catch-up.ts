@@ -21,6 +21,7 @@ import { DiscordApiError, type DiscordApi } from "./discord-api.js";
 import { scrubDiscordError } from "./discord-channel-types.js";
 import type { DiscordMessageEvent } from "./discord-inbound-handler.js";
 import {
+  type DiscordCursorEntry,
   compareSnowflakes,
   isSnowflake,
   snowflakeAtMs,
@@ -38,6 +39,13 @@ export const CATCH_UP_MAX_DELIVERED = 20;
 export interface DiscordCatchUpDeps {
   api: Pick<DiscordApi, "listMessagesAfter">;
   cursor: DiscordMessageCursor;
+  /**
+   * Where to start reading, per channel. Defaults to the cursor as it
+   * stands now. A rerun for a READY that came during an earlier run
+   * passes the cursor as it was at that READY: live messages since then
+   * moved the cursor past the gap that READY left.
+   */
+  from?: Array<{ channelId: string; entry: DiscordCursorEntry }>;
   /** The live inbound path; resolves when the message is handled. */
   deliver: (event: DiscordMessageEvent) => Promise<void>;
   logger: Pick<StructuredLogger, "info" | "warn">;
@@ -56,7 +64,7 @@ export interface DiscordCatchUpResult {
 export async function catchUpDiscordChannels(
   deps: DiscordCatchUpDeps,
 ): Promise<DiscordCatchUpResult> {
-  const known = deps.cursor.entries();
+  const known = deps.from ?? deps.cursor.entries();
   const counts = await Promise.all(
     known.map(({ channelId, entry }) =>
       catchUpChannel(channelId, entry.lastMessageId, entry.guildId, deps),
