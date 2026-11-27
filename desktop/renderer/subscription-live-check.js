@@ -24,6 +24,8 @@ const SUB_LIVE = new Map();
 const SUB_LIVE_FORCE = new Set();
 /** While the sign-in poll waits, a known signed-out CLI is asked again at most this often. */
 const SUB_LIVE_RECHECK_MS = 15000;
+/** ATO-2463: cli -> callbacks waiting for the next finished answer (subLiveWhenDone). */
+const SUB_LIVE_WAITERS = new Map();
 
 /** The file's status with the live answer laid over it. Pure. */
 function subLiveMerge(file, live) {
@@ -54,12 +56,29 @@ function subLiveAsk(cli, force) {
       const check = r && r.ok && r.check ? r.check : {cli, state: 'failed', via: 'none', fix: null};
       SUB_LIVE.set(cli, {checking: false, check, askedAt: prev ? prev.askedAt : Date.now()});
       repaint();
+      subLiveFlush(cli, check);
     })
     .catch(() => {
       const prev = SUB_LIVE.get(cli);
       SUB_LIVE.set(cli, {checking: false, check: {cli, state: 'failed', via: 'none', fix: null}, askedAt: prev ? prev.askedAt : Date.now()});
       repaint();
+      subLiveFlush(cli, SUB_LIVE.get(cli).check);
     });
+}
+
+/** ATO-2463: run fn(check) with the finished answer: now when one is known, else when the running ask lands. */
+function subLiveWhenDone(cli, fn) {
+  const cur = SUB_LIVE.get(cli);
+  if (cur && !cur.checking && cur.check) { fn(cur.check); return; }
+  const list = SUB_LIVE_WAITERS.get(cli) || [];
+  list.push(fn);
+  SUB_LIVE_WAITERS.set(cli, list);
+}
+function subLiveFlush(cli, check) {
+  const list = SUB_LIVE_WAITERS.get(cli);
+  if (!list) return;
+  SUB_LIVE_WAITERS.delete(cli);
+  for (const fn of list) { try { fn(check); } catch (e) { /* one waiter's failure does not stop the others */ } }
 }
 
 /** wizSubStatus's answer: the file's status, merged with the live one, which it starts once. */
@@ -99,5 +118,5 @@ function subLiveLine(st, service, cli) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {SUB_LIVE, SUB_LIVE_FORCE, SUB_LIVE_RECHECK_MS, subLiveMerge, subLiveAsk, subLiveStatus, subLiveForget, subLiveHoldsSignedOut, subLiveLine};
+  module.exports = {SUB_LIVE, SUB_LIVE_FORCE, SUB_LIVE_RECHECK_MS, SUB_LIVE_WAITERS, subLiveMerge, subLiveAsk, subLiveWhenDone, subLiveStatus, subLiveForget, subLiveHoldsSignedOut, subLiveLine};
 }
