@@ -5,6 +5,7 @@ import {
   describeCategoryGrant,
 } from "../../approval/index.js";
 import { describeMcpToolGrant } from "../../approval/approval-gate.js";
+import { fitButtonText } from "./button-text.js";
 
 /**
  * The session grants a Telegram approval prompt offers (GitHub #230):
@@ -27,9 +28,6 @@ export interface SessionGrantOffer {
   /** A shell grant: dangerous commands still ask (ATO-1220). */
   shell: boolean;
 }
-
-/** Longest grant button text; Telegram cuts long buttons badly. */
-const GRANT_BUTTON_MAX_CHARS = 60;
 
 /** Said after a shell grant, as the TUI does: risky commands still ask. */
 const RISKY_STILL_ASK = " (risky commands still ask)";
@@ -74,7 +72,7 @@ export function sessionGrantRows(
   if (offer.category !== undefined) {
     rows.push([
       {
-        text: clip(`Allow ${offer.category} this session`),
+        text: fitButtonText(`Allow ${offer.category} this session`),
         callback_data: `${prefix}${approvalId}:s`,
       },
     ]);
@@ -82,7 +80,7 @@ export function sessionGrantRows(
   if (offer.shape !== undefined) {
     rows.push([
       {
-        text: clip(`Allow all ${offer.shape} this session`),
+        text: fitButtonText(`Allow all ${offer.shape} this session`),
         callback_data: `${prefix}${approvalId}:a`,
       },
     ]);
@@ -111,10 +109,4 @@ export function sessionGrantFinalText(
     scope === "shape" ? `all ${offer.shape} commands` : offer.category;
   const note = offer.shell ? RISKY_STILL_ASK : "";
   return `✅ approved · allowed this session: ${what}${note}`;
-}
-
-function clip(text: string): string {
-  return text.length <= GRANT_BUTTON_MAX_CHARS
-    ? text
-    : `${text.slice(0, GRANT_BUTTON_MAX_CHARS - 1)}…`;
 }
