@@ -38,6 +38,7 @@ import type {
 import type { ContextUsageState } from "../session/context-usage.js";
 import type { SessionUsageState } from "../session/usage-meter.js";
 import type { RewindPoint } from "../session/session-rewind.js";
+import type { ModelRingState } from "./model-ring/model-ring.js";
 
 /**
  * Every action the reducer knows how to fold into `TuiState`. All side
@@ -176,6 +177,8 @@ export type TuiAction =
   | { type: "plan_handoff_dismissed" }
   /** `/think` (ATO-490): the reasoning level the next turns ask for. */
   | { type: "reasoning_level_set"; level: ReasoningLevel }
+  /** ATO-2500: the favorite models as last read (the file, or `--models` for the session). */
+  | { type: "model_ring_loaded"; ring: ModelRingState }
   /** `/rewind` (ATO-1057): show the chat's earlier questions, newest first. */
   | { type: "rewind_picker_opened"; points: readonly RewindPoint[] }
   | { type: "rewind_picker_closed" }
