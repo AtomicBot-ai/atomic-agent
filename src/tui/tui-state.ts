@@ -5,6 +5,7 @@ import {
   type ApprovalLevel,
 } from "../approval/approval-level.js";
 import type { CodingMode } from "./coding-mode/coding-mode.js";
+import type { ModelRingState } from "./model-ring/model-ring.js";
 import type { ReasoningLevel } from "../llm/reasoning-levels.js";
 import type { ProviderWaitCause } from "../llm/reliability/provider-wait-cause.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
@@ -992,6 +993,12 @@ export interface TuiState {
    * nothing. Optional so states built by tests need not carry it.
    */
   reasoningLevel?: ReasoningLevel;
+  /**
+   * ATO-2500: the favorite models (`/model favorite`, ctrl+p) as last
+   * read, for the composer bar's `fav 2/3`. Optional so states built by
+   * tests need not carry it; absent reads as no favorites.
+   */
+  modelRing?: ModelRingState;
   /**
    * `/rewind` (ATO-1057): the chat's earlier questions, newest first,
    * or `null`/absent when the picker is closed. Enter takes the chat

@@ -267,6 +267,9 @@ export function reduceUiAction(
     case "reasoning_level_set":
       // Display only; the submit path hands the level to the orchestrator.
       return state.reasoningLevel === action.level ? state : { ...state, reasoningLevel: action.level };
+    case "model_ring_loaded":
+      // ATO-2500: display only (the bar's `fav 2/3`); the file stays the store.
+      return { ...state, modelRing: action.ring };
     case "plan_handoff_dismissed":
       // Mode untouched: dismissing a plan is declining this one, not
       // leaving the mode you are planning in.

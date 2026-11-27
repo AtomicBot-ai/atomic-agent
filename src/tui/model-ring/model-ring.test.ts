@@ -12,8 +12,10 @@ import {
   describeModelRing,
   formatModelRingEntry,
   MODEL_RING_MAX,
+  modelRingReadoutLabel,
   nextModelRingEntry,
   parseModelRingEntry,
+  parseModelRingList,
   toggleModelRingEntry,
 } from "./model-ring.js";
 import { parseModelRingCommand } from "./model-ring-command.js";
@@ -78,6 +80,21 @@ describe("the next favorite", () => {
     expect(nextModelRingEntry([], null)).toBeNull();
   });
 
+  it("walks backwards with direction -1, wrapping; off the ring the last one is previous (ATO-2500)", () => {
+    expect(nextModelRingEntry(ring, ring[0]!, -1)).toEqual({ entry: ring[2], index: 2 });
+    expect(nextModelRingEntry(ring, ring[2]!, -1)).toEqual({ entry: ring[1], index: 1 });
+    expect(nextModelRingEntry(ring, e("openai", "elsewhere"), -1)).toEqual({ entry: ring[2], index: 2 });
+    expect(nextModelRingEntry(ring, null, -1)).toEqual({ entry: ring[2], index: 2 });
+    expect(nextModelRingEntry([], null, -1)).toBeNull();
+  });
+
+  it("the bar readout names the place on the ring, and nothing off it (ATO-2500)", () => {
+    expect(modelRingReadoutLabel(ring, e("local-llama", "b"))).toBe(" · fav 2/3");
+    expect(modelRingReadoutLabel(ring, e("openai", "elsewhere"))).toBeNull();
+    expect(modelRingReadoutLabel(ring, null)).toBeNull();
+    expect(modelRingReadoutLabel([], e("openai", "c"))).toBeNull();
+  });
+
   it("names the current model of a cloud and a managed local route, not of Fusion or an external server", () => {
     expect(currentModelRingEntry(cloudState())).toEqual(e("openrouter", "qwen/qwen3.7-max"));
     expect(currentModelRingEntry(cloudState({ chatModel: null }))).toBeNull();
@@ -110,6 +127,21 @@ describe("/model favorite parsing", () => {
   });
 });
 
+describe("--models", () => {
+  it("reads a comma list in order, repeats and blanks dropped", () => {
+    expect(parseModelRingList("openai/gpt-5, local-llama/qwen-3.5-4b,,openai/gpt-5")).toEqual({
+      ring: [e("openai", "gpt-5"), e("local-llama", "qwen-3.5-4b")],
+    });
+  });
+
+  it("names a bad entry, refuses an empty list and one past the cap", () => {
+    expect(parseModelRingList("openai/gpt-5,gpt-5")).toEqual({ error: expect.stringContaining('"gpt-5" is not provider/model') });
+    expect(parseModelRingList(" , ")).toEqual({ error: expect.stringContaining("at least one") });
+    const many = Array.from({ length: MODEL_RING_MAX + 1 }, (_, i) => `openai/m${i}`).join(",");
+    expect(parseModelRingList(many)).toEqual({ error: expect.stringContaining(`at most ${MODEL_RING_MAX}`) });
+  });
+});
+
 describe("the ring file", () => {
   let stateDir = "";
   beforeEach(() => { stateDir = mkdtempSync(join(tmpdir(), "atomic-model-ring-")); });
@@ -120,6 +152,13 @@ describe("the ring file", () => {
     expect(writeModelRing(stateDir, [e("openai", "a"), e("local-llama", "b")])).toBe(true);
     expect(readModelRing(stateDir)).toEqual([e("openai", "a"), e("local-llama", "b")]);
     expect(JSON.parse(readFileSync(join(stateDir, MODEL_RING_FILE), "utf8"))).toEqual({ models: ["openai/a", "local-llama/b"] });
+  });
+
+  it("keeps as many favorites as the desktop picker does (ATO-2500: one shared list)", () => {
+    expect(MODEL_RING_MAX).toBe(20);
+    const twenty = Array.from({ length: 20 }, (_, i) => e("openai", `m${i}`));
+    writeModelRing(stateDir, twenty);
+    expect(readModelRing(stateDir)).toEqual(twenty);
   });
 
   it("reads a broken file as no favorites", () => {

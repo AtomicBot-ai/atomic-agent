@@ -44,7 +44,7 @@ import { providersCommand } from "./providers-command.js";
 import { loginCommand, logoutCommand } from "./login-command.js";
 import { composioCommand } from "./composio-command.js";
 import { whisperCommand } from "./whisper-command.js";
-import { openUrlInBrowser, tuiCommand } from "../tui/index.js";
+import { isBareTuiLaunchFlag, openUrlInBrowser, tuiCommand } from "../tui/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import { applyOfflineModeFromConfigFile } from "./offline-from-config.js";
 import { getAppVersion } from "../version.js";
@@ -394,6 +394,8 @@ async function main(): Promise<number> {
   if (!command) {
     return tuiCommand([]);
   }
+  // ATO-2500: `atomic-agent --models a/b` is the TUI with that flag.
+  if (isBareTuiLaunchFlag(command)) return tuiCommand([command, ...rest]);
   const descriptor = COMMANDS.find((c) => c.name === command);
   if (!descriptor) {
     process.stderr.write(`unknown command: ${command}\n`);

@@ -92,6 +92,7 @@ import {
   resolveStartupWorkingDir,
 } from "./startup-working-dir.js";
 import { readRecentWorkingDirs } from "../session/index.js";
+import { startupModelRing } from "./model-ring/model-ring-store.js";
 import { detectLocalServers } from "../llm/provider/presets/detect-local-servers.js";
 import { createMentionFileIndex, expandFileMentions } from "./file-mentions/index.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
@@ -1074,6 +1075,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // chat, then send the continuation message as if it had been typed.
   if (parsed.sessionId) orchestrator.switchSession(parsed.sessionId);
   if (parsed.send) orchestrator.sendMessage(parsed.send);
+  // ATO-2500: the favorite models for the bar's `fav n/m` (`--models`, else the shared list).
+  bus.emit({ type: "model_ring_loaded", ring: startupModelRing(parsed.models, config.paths.stateDir) });
 
   bus.emit({
     type: "runtime_info",
