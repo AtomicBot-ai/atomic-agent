@@ -2371,6 +2371,7 @@ export class LocalModelsOrchestrator {
           parallel: cfg.localModels.managed.parallel,
           localLegRole,
           swaFull: cfg.localModels.managed.swaFull,
+          ...(cfg.localModels.managed.cpuMoe === undefined ? {} : { cpuMoe: cfg.localModels.managed.cpuMoe }),
           ...(loraAdapterForModel(cfg.localModels.managed.loraAdapters, mid)
             ? { loraAdapter: loraAdapterForModel(cfg.localModels.managed.loraAdapters, mid) }
             : {}),

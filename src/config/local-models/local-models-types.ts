@@ -1,6 +1,7 @@
 import type { LocalModelDef } from "../../local-llm/catalog/models-catalog.js";
 import type { BackendVariantPreference, CoreBackendVariant } from "../../local-llm/backend/windows-backend-variant.js";
 import type { SwaFullPreference } from "../../local-llm/server/swa-full.js";
+import type { CpuMoePreference } from "../../local-llm/server/cpu-moe.js";
 import type { LoraAdapter } from "../../local-llm/server/lora-adapter.js";
 
 export type LocalLlmMode = "external" | "managed";
@@ -140,6 +141,16 @@ export interface UserManagedLocalLlmConfig {
    * daemon start.
    */
   swaFull: SwaFullPreference;
+  /**
+   * Experts of a mixture-of-experts model on the CPU (`--n-cpu-moe`,
+   * ATO-2380): `"auto"` (default) moves the fewest layers' experts to
+   * system RAM when the model does not fit a GPU with memory of its own;
+   * `"off"` never; a number 1..512 pins that many layers. Dense models,
+   * Apple silicon and CPU-only launches ignore it (see `cpu-moe.ts`).
+   * Additive and unversioned: absent means `"auto"`. Applied on the next
+   * daemon start.
+   */
+  cpuMoe?: CpuMoePreference;
   /**
    * Stop the managed chat daemon when the last CLI session exits.
    * `true` (default) — closing the terminal frees the RAM/VRAM the

@@ -44,6 +44,7 @@ export function createLocalModelsDefaults(): UserLocalModelsConfig {
       tensorSplit: [],
       parallel: "auto",
       swaFull: "auto",
+      cpuMoe: "auto",
     },
     embeddings: {
       enabled: false,
