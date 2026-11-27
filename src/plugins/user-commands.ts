@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync, statSync, type Dirent } from "node:fs";
 import { join, resolve } from "node:path";
 import { frontMatterProblem } from "./command-front-matter.js";
-import { parseCommandFile, renderCommandTemplate } from "./plugin-commands.js";
+import { commandUsesArgs, parseCommandFile, substituteCommandArgs } from "./plugin-commands.js";
+import { extractShellSlots, type ShellSlot } from "./command-shell.js";
 import { projectCommandKey } from "./project-command-trust.js";
 
 /**
@@ -15,15 +16,19 @@ import { projectCommandKey } from "./project-command-trust.js";
  *    (each file only once the operator trusted its exact text, ATO-2531:
  *    a new or edited file stays hidden until the folder trust question
  *    asks about it; an untrusted file does not hide a profile command);
- * 2. `<stateDir>/commands/` (the profile, `~/.atomic-agent/commands/`).
- * Plugin commands come after both. `team/review.md` becomes `/team:review`.
+ * 2. `<stateDir>/commands/` (the profile, `~/.atomic-agent/commands/`);
+ * 3. `~/.claude/commands/`, Claude Code's own user commands (ATO-2441),
+ *    read where they are so a person moving over keeps them.
+ * Plugin commands come after all three. `team/review.md` becomes `/team:review`.
  *
  * Rendering follows the plugin rules ($ARGUMENTS, $1..$9) and turns
- * Gemini's `@{path}` into Claude's `@path`; the terminal then inlines
+ * Gemini's `@{path}` into Claude's `@path`; the frontend then inlines
  * `@path` files exactly as for a typed message (inside the working folder
- * only). Nothing is executed: `` !`command` `` stays plain text.
+ * only). Shell lines (`` !`command` ``, `!{command}`) come back as slots
+ * that run only at invocation, through the normal approval
+ * (`command-shell.ts`, `command-shell-runner.ts`).
  */
-export type UserCommandSource = "project" | "profile";
+export type UserCommandSource = "project" | "profile" | "claude";
 
 export interface UserCommand {
   /** Lower-cased name, nested folders joined with `:`. */
@@ -31,9 +36,23 @@ export interface UserCommand {
   source: UserCommandSource;
   description: string;
   argumentHint?: string;
+  /** Frontmatter `model`; carried for the frontends, the turn still runs on the current model. */
+  model?: string;
+  /** The body has shell lines, which run (and ask) only when it is invoked. */
+  runsShell?: boolean;
   file: string;
   /** The commands folder the file was found in. */
   dir: string;
+}
+
+/** An invocation ready to send, except for its shell lines. */
+export interface RenderedUserCommand {
+  command: UserCommand;
+  /** The message, with one marker per shell slot. */
+  text: string;
+  slots: ShellSlot[];
+  /** Fills `$ARGUMENTS` / `$1`.. into a slot's line before it runs. */
+  fillShellLine(line: string): string;
 }
 
 export interface UserCommandOptions {
@@ -46,6 +65,8 @@ export interface UserCommandOptions {
    * load one by one, only when this says yes.
    */
   isProjectCommandTrusted: (key: string) => boolean;
+  /** Claude Code's user commands folder (`~/.claude/commands`); absent, it is not read. */
+  claudeCommandsDir?: string;
 }
 
 /**
@@ -59,6 +80,9 @@ export interface UserCommandProblem {
   skipped: boolean;
 }
 
+/** The reason a project command file that waits for the trust question is reported with (ATO-2531). */
+export const NOT_TRUSTED_REASON = "not trusted yet";
+
 export const PROJECT_COMMAND_DIRS: readonly string[] = [".atomic-agent/commands", ".claude/commands"];
 export const PROFILE_COMMAND_DIR = "commands";
 
@@ -70,8 +94,24 @@ const SEGMENT_RE = /^[a-z0-9][a-z0-9._-]*$/;
 /** The folders searched, in precedence order. */
 export function userCommandDirs(options: UserCommandOptions): Array<{ dir: string; source: UserCommandSource }> {
   const profile = resolve(options.stateDir, PROFILE_COMMAND_DIR);
-  const project = projectCommandDirs(options.workingDir, profile);
-  return [...project.map(dir => ({ dir, source: "project" as const })), { dir: profile, source: "profile" as const }];
+  const claude = options.claudeCommandsDir ? resolve(options.claudeCommandsDir) : null;
+  const project = projectCommandDirs(options.workingDir, profile).filter(dir => dir !== claude);
+  return [
+    ...project.map(dir => ({ dir, source: "project" as const })),
+    { dir: profile, source: "profile" as const },
+    ...(claude !== null && claude !== profile ? [{ dir: claude, source: "claude" as const }] : []),
+  ];
+}
+
+/**
+ * How many project command files stay hidden because their exact text
+ * was not trusted yet (ATO-2531), so a frontend can say why `/review` is
+ * missing instead of hiding it silently (ATO-2441). A project folder that
+ * is also the profile or Claude folder (a chat in the home folder) is not
+ * counted: those load anyway.
+ */
+export function hiddenProjectCommandCount(options: UserCommandOptions): number {
+  return listUserCommands(options).problems.filter(p => p.reason === NOT_TRUSTED_REASON).length;
 }
 
 export function listUserCommands(options: UserCommandOptions): {
@@ -98,7 +138,7 @@ export function listUserCommands(options: UserCommandOptions): {
         const { parsed, content } = readCommandFile(file);
         const trustKey = source === "project" ? projectCommandKey(options.workingDir, file, content) : undefined;
         if (trustKey !== undefined && !options.isProjectCommandTrusted(trustKey)) {
-          problems.push({ file, reason: "not trusted yet", skipped: true });
+          problems.push({ file, reason: NOT_TRUSTED_REASON, skipped: true });
           continue;
         }
         seen.add(name);
@@ -111,6 +151,8 @@ export function listUserCommands(options: UserCommandOptions): {
           source,
           description: parsed.description || name,
           ...(parsed.argumentHint ? { argumentHint: parsed.argumentHint } : {}),
+          ...(parsed.model ? { model: parsed.model } : {}),
+          ...(hasShellLines(parsed.body) ? { runsShell: true } : {}),
           file,
           dir,
         });
@@ -126,10 +168,12 @@ export function listUserCommands(options: UserCommandOptions): {
 /**
  * Render `/name args` into the user's message, or null when no user
  * command has that name (the caller then tries plugin commands). The
- * folders are read again, so a file removed or a folder untrusted after
- * the palette was drawn no longer runs.
+ * folders are read again, so a file removed or one no longer trusted after
+ * the palette was drawn no longer runs. Shell lines are cut out first and
+ * come back as slots, so text from the arguments never becomes one; the
+ * `ARGUMENTS:` fallback still looks at the whole body, lines included.
  */
-export function renderUserCommand(options: UserCommandOptions, name: string, args: string): string | null {
+export function renderUserCommand(options: UserCommandOptions, name: string, args: string): RenderedUserCommand | null {
   const key = name.toLowerCase();
   const command = listUserCommands(options).commands.find(c => c.name === key);
   if (!command) return null;
@@ -139,8 +183,25 @@ export function renderUserCommand(options: UserCommandOptions, name: string, arg
   if (command.source === "project" && !options.isProjectCommandTrusted(projectCommandKey(options.workingDir, command.file, content))) {
     return null;
   }
-  const rendered = renderCommandTemplate(parsed.body, args, { root: command.dir, data: command.dir });
-  return rendered.replace(BRACED_INCLUDE_RE, "@$1");
+  const vars = { root: command.dir, data: command.dir };
+  const { body, slots } = extractShellSlots(parsed.body);
+  const trimmedArgs = args.trim();
+  let text = substituteCommandArgs(body, args, vars).trimEnd();
+  if (trimmedArgs && !commandUsesArgs(parsed.body)) text = `${text}\n\nARGUMENTS: ${trimmedArgs}`;
+  return {
+    command,
+    text: text.replace(BRACED_INCLUDE_RE, "@$1"),
+    slots,
+    fillShellLine: line => substituteCommandArgs(line, args, vars),
+  };
+}
+
+function hasShellLines(body: string): boolean {
+  try {
+    return extractShellSlots(body).slots.length > 0;
+  } catch {
+    return true; // too many lines: it still cannot run without asking
+  }
 }
 
 /** Gemini CLI's `@{path}` form; a path with spaces stays as written. */

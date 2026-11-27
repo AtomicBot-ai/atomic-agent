@@ -43,6 +43,8 @@ import {
   type TuiState,
 } from "./tui-state.js";
 import { pickerQuery, visiblePickerSessions } from "./session-rail/session-search.js";
+import { approvalSessionOnScreen } from "./commands/command-shell-session.js";
+import { submitWhenShellDone } from "./commands/command-shell-submit.js";
 
 type Dispatch = (action: TuiAction) => void;
 
@@ -299,7 +301,7 @@ function runEnhanceCurrentDraft(
  * rendered from its template (`$ARGUMENTS`, `$1`..`$9`) and then sent
  * exactly as if the user had typed it.
  */
-function prepareInvocationText(result: SlashDispatchResult, callbacks: TuiAppCallbacks): string {
+function prepareInvocationText(result: SlashDispatchResult, callbacks: TuiAppCallbacks, state: TuiState): string | Promise<string> {
   if (result.messageText !== undefined) return result.messageText;
   if (result.skillInvocation) {
     if (!callbacks.prepareSkillInvocation) throw new Error("Skill invocation is unavailable");
@@ -308,7 +310,9 @@ function prepareInvocationText(result: SlashDispatchResult, callbacks: TuiAppCal
   }
   if (!result.pluginCommandInvocation || !callbacks.preparePluginCommand) throw new Error("Plugin commands are unavailable");
   const { name, args } = result.pluginCommandInvocation;
-  const text = callbacks.preparePluginCommand(name, args);
+  // An own command with shell lines (ATO-2441) comes back as a promise; they ask in the chat on screen.
+  const text = callbacks.preparePluginCommand(name, args, approvalSessionOnScreen(state));
+  if (typeof text !== "string") return text;
   if (text.trim().length === 0) throw new Error(`plugin command /${name} rendered an empty message`);
   return text;
 }
@@ -350,9 +354,11 @@ export function runSlashCommand(
   if (result.skillInvocation || result.pluginCommandInvocation || result.messageText !== undefined) {
     if (!canTypeMessage(state)) return;
     try {
-      const text = prepareInvocationText(result, callbacks);
+      const text = prepareInvocationText(result, callbacks, state);
       dispatch({ type: "slash_palette_closed" });
-      if (canAcceptMessage(state)) {
+      if (typeof text !== "string") {
+        submitWhenShellDone(text, result.pluginCommandInvocation?.name ?? "command", state, dispatch, callbacks, submitWhileBusy);
+      } else if (canAcceptMessage(state)) {
         dispatch({ type: "message_submitted" });
         callbacks.onMessageSubmitted(text);
       } else {

@@ -27,9 +27,11 @@ import {
   type SkillTap,
   type StagedSkillInstall,
 } from "../../skills/index.js";
-import { listPluginCommands, renderPluginCommand } from "../../plugins/plugin-commands.js";
-import { listUserCommands, renderUserCommand, type UserCommandOptions } from "../../plugins/user-commands.js";
+import type { UserCommandOptions } from "../../plugins/user-commands.js";
+import { commandRunsShell, defaultClaudeCommandsDir, listCommandCatalog, prepareCommand, prepareCommandNow } from "../../plugins/command-catalog.js";
+import { createRegistryShellRunner } from "../../plugins/command-shell-runner.js";
 import { userCommandWarnings, type UserCommandWarning } from "./user-command-warnings.js";
+import { NEW_CHAT_COMMAND_SESSION_ID } from "../commands/command-shell-session.js";
 import { createProjectCommandTrust } from "../../skills/project-trust.js";
 import { expandFileMentions } from "../../mentions/expand-file-mentions.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
@@ -132,24 +134,33 @@ export class SkillsOrchestrator {
   /**
    * Render the operator's own command (ATO-2229) or a plugin command
    * template; the result is sent as the user's message. Own commands win,
-   * matching the palette; plugin names always contain `:`.
+   * matching the palette; plugin names always contain `:`. Own commands
+   * inline `@path` files like a typed message; plugin templates stay plain
+   * text. An own command with shell lines (ATO-2441) comes back as a
+   * promise: each line runs through `os.shell.run` with the normal
+   * approval, asked in `sessionId` (the chat on screen).
    */
-  preparePluginCommand(name: string, args: string): string {
+  preparePluginCommand(name: string, args: string, sessionId?: string): string | Promise<string> {
     const options = this.userCommandOptions();
-    const own = renderUserCommand(options, name, args);
-    if (own === null && !name.includes(":")) throw new Error(`command /${name} is not available`);
-    // Own commands inline `@path` files like a typed message; plugin templates stay plain text.
-    const text = own !== null ? expandFileMentions(own, options.workingDir)
-      : renderPluginCommand(this.runtime.config.paths.stateDir, name, args);
-    rememberRenderedCommand(text, args);
-    return text;
+    const expandMentions = (text: string) => expandFileMentions(text, options.workingDir);
+    if (!commandRunsShell(options, name)) {
+      const text = prepareCommandNow(options, name, args, expandMentions).text;
+      rememberRenderedCommand(text, args);
+      return text;
+    }
+    const runShell = createRegistryShellRunner({ registry: this.runtime.toolRegistry,
+      sessionId: sessionId ?? this.currentSession()?.id ?? NEW_CHAT_COMMAND_SESSION_ID, workingDir: options.workingDir });
+    return prepareCommand(options, name, args, { runShell, expandMentions }).then(({ text }) => {
+      rememberRenderedCommand(text, args);
+      return text;
+    });
   }
 
   /** Project commands load one by one, each once its exact text was trusted (ATO-2531), read live. */
   private userCommandOptions(): UserCommandOptions {
     const workingDir = this.currentSession()?.workingDir ?? this.runtime.capabilities.workingDir;
     const { paths, skills } = this.runtime.config;
-    return { stateDir: paths.stateDir, workingDir,
+    return { stateDir: paths.stateDir, workingDir, claudeCommandsDir: defaultClaudeCommandsDir(),
       isProjectCommandTrusted: createProjectCommandTrust(paths.userConfigFile, skills.projectTrust, workingDir) };
   }
 
@@ -161,15 +172,13 @@ export class SkillsOrchestrator {
   private refreshPluginCommands(): void {
     try {
       const options = this.userCommandOptions();
-      const listed = listUserCommands(options);
-      this.reportUserCommandWarnings(userCommandWarnings(listed, options.workingDir));
-      const own = listed.commands.map(c => ({ name: c.name, command: c.name,
-        description: c.description, source: c.source, ...(c.argumentHint ? { argumentHint: c.argumentHint } : {}) }));
-      const { commands } = listPluginCommands(this.runtime.config.paths.stateDir);
+      const catalog = listCommandCatalog(options);
+      // One line per file that did not load, an untrusted one included ("not trusted yet"), once per session.
+      this.reportUserCommandWarnings(userCommandWarnings(catalog.own, options.workingDir));
       this.bus.emit({
         type: "skills_plugin_commands_set",
-        commands: [...own, ...commands.map(c => ({ name: c.name, command: c.command, description: c.description,
-          ...(c.argumentHint ? { argumentHint: c.argumentHint } : {}) }))],
+        commands: catalog.rows.map(c => ({ name: c.name, command: c.command, description: c.description,
+          ...(c.source === "plugin" ? {} : { source: c.source }), ...(c.argumentHint ? { argumentHint: c.argumentHint } : {}) })),
       });
       this.pluginCommandsError = null;
     } catch (err) {

@@ -72,7 +72,7 @@ describe("plugin commands in the slash palette", () => {
     const callbacks = { onApprovalDecision() {}, onAbort() {}, onQuit() {},
       onMessageSubmitted: vi.fn(), preparePluginCommand: vi.fn(() => "Review src/a.ts") };
     handleEditorSubmit("/review src/a.ts", s, vi.fn(), callbacks);
-    expect(callbacks.preparePluginCommand).toHaveBeenCalledWith("tools:review", "src/a.ts");
+    expect(callbacks.preparePluginCommand).toHaveBeenCalledWith("tools:review", "src/a.ts", expect.any(String));
     expect(callbacks.onMessageSubmitted).toHaveBeenCalledWith("Review src/a.ts");
   });
 

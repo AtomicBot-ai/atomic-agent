@@ -85,7 +85,7 @@ describe("listUserCommands", () => {
     const { commands } = listUserCommands(opts);
     expect(commands).toHaveLength(1);
     expect(commands[0]).toMatchObject({ name: "review", source: "project" });
-    expect(renderUserCommand(opts, "review", "")).toBe("Project review");
+    expect(renderUserCommand(opts, "review", "")?.text).toBe("Project review");
   });
 
   it("reports a file whose name cannot be a command instead of loading it", () => {
@@ -121,14 +121,22 @@ describe("listUserCommands", () => {
 describe("renderUserCommand", () => {
   it("fills $ARGUMENTS and $1..$9 and turns @{path} into @path", () => {
     put(join(opts.stateDir, "commands", "review.md"), "Review $1 focusing on $2.\nAll: $ARGUMENTS\nSee @{docs/notes.md} and @src/a.ts\n");
-    expect(renderUserCommand(opts, "REVIEW", 'src/a.ts "error paths"')).toBe(
+    expect(renderUserCommand(opts, "REVIEW", 'src/a.ts "error paths"')?.text).toBe(
       'Review src/a.ts focusing on error paths.\nAll: src/a.ts "error paths"\nSee @docs/notes.md and @src/a.ts',
     );
   });
 
   it("appends the arguments when the body has no placeholder", () => {
     put(join(opts.stateDir, "commands", "fix.md"), "Fix the failing test.\n");
-    expect(renderUserCommand(opts, "fix", "parser")).toBe("Fix the failing test.\n\nARGUMENTS: parser");
+    expect(renderUserCommand(opts, "fix", "parser")?.text).toBe("Fix the failing test.\n\nARGUMENTS: parser");
+  });
+
+  it("cuts shell lines out as slots; arguments used only inside one still count (ATO-2441)", () => {
+    put(join(opts.stateDir, "commands", "log.md"), "Summarise:\n!`git log -n $1`\n");
+    const rendered = renderUserCommand(opts, "log", "5");
+    expect(rendered?.slots.map(s => s.command)).toEqual(["git log -n $1"]);
+    expect(rendered?.text).toBe(`Summarise:\n${rendered?.slots[0]?.marker}`);
+    expect(rendered?.fillShellLine("git log -n $1")).toBe("git log -n 5");
   });
 
   it("returns null for a name no user command has, so plugin commands get their turn", () => {

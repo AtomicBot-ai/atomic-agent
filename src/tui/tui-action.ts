@@ -214,6 +214,8 @@ export type TuiAction =
    * agent events will ever arrive for a turn that never started.
    */
   | { type: "turn_gate_blocked"; text: string }
+  /** ATO-2441: a slash command's shell line was not allowed or failed, so its message was not sent. */
+  | { type: "command_not_sent"; text: string; resetRun: boolean }
   | { type: "quit_requested" }
   | {
       type: "loaded_skill";

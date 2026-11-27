@@ -42,6 +42,7 @@ import {
 } from "./format-fusion-worker-line.js";
 import { reduceFusionLiveWorkers } from "./fusion-live-workers.js";
 import { nextApprovalPreviewPage } from "./approval-preview-pages.js";
+import { approvalSessionOnScreen } from "./commands/command-shell-session.js";
 import {
   appendChatMessage,
   appendFeed,
@@ -299,8 +300,9 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       // visible turn in the same press. The request stays pending at
       // the gate; the transcript gets a pointer naming the owner, and
       // `switchSession` re-raises the prompt once that owner is
-      // visible.
-      if (action.request.sessionId !== state.session.sessionId) {
+      // visible. A slash command's shell line in a new chat (ATO-2441)
+      // asks before any session exists: it counts as the chat on screen.
+      if (action.request.sessionId !== approvalSessionOnScreen(state)) {
         return appendChatMessage(state, {
           role: "system",
           text: formatBackgroundApprovalNotice(action.request),
@@ -330,7 +332,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         // turn this transcript is not showing — the visible status
         // (idle, or a run of its own) is left alone.
         status:
-          state.pendingApproval.sessionId === state.session.sessionId
+          state.pendingApproval.sessionId === approvalSessionOnScreen(state)
             ? "running"
             : state.status,
       };
@@ -474,6 +476,16 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         withMessage,
         "blocked: local model not ready",
       );
+    }
+    case "command_not_sent": {
+      // ATO-2441: a command started from an idle chat put the app in
+      // `running` (`message_submitted`) while its shell lines ran; one was
+      // refused, so no turn follows. Hand the composer back, as for a
+      // gated submit, without a run-history entry.
+      const withNote = appendChatMessage(state, { role: "system", text: action.text, variant: "warn" });
+      return action.resetRun && withNote.status !== "idle" && withNote.status !== "quitting"
+        ? finishRunWithoutHistory(withNote, "command not sent")
+        : withNote;
     }
     case "quit_requested":
       return { ...state, status: "quitting", aborting: true };

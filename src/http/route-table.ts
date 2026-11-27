@@ -41,6 +41,7 @@ import {
   createProjectTrustAnswerHandler,
   createProjectTrustStatusHandler,
 } from "./route-project-trust.js";
+import { createListCommandsHandler, createRenderCommandHandler } from "./route-commands.js";
 import {
   createFallbackLocalQuestionAnswerHandler,
   createFallbackLocalQuestionStatusHandler,
@@ -323,6 +324,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
       path: "/api/skills/uninstall",
       handler: createUninstallSkillHandler(),
     },
+    // ATO-2441: slash commands for the desktop `/` menu (route-commands.ts).
+    { method: "GET", path: "/api/commands", handler: createListCommandsHandler() },
+    { method: "POST", path: "/api/commands/render", handler: createRenderCommandHandler() },
     { method: "GET", path: "/api/project-trust", handler: createProjectTrustStatusHandler() },
     { method: "POST", path: "/api/project-trust", handler: createProjectTrustAnswerHandler() },
     // ATO-1461: the one-time "Keep the local model as the last-resort fallback?" question.

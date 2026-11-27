@@ -59,7 +59,7 @@ export function skillSlashCommands(panel: SkillsPanelState): readonly SlashComma
  * nothing else claims it. A built-in or a skill with the same name wins:
  * the plugin entry (or its alias) is dropped. The operator's own commands
  * (rows with a `source`) use their name as is and are tagged
- * `(project)` or `(profile)` in the palette.
+ * `(project)`, `(profile)` or `(~/.claude)` in the palette.
  */
 export function pluginSlashCommands(rows: readonly PluginCommandRow[], taken: readonly SlashCommandDef[] = []): readonly SlashCommandDef[] {
   if (rows.length === 0) return [];
@@ -79,7 +79,7 @@ export function pluginSlashCommands(rows: readonly PluginCommandRow[], taken: re
   return usable.map(row => {
     const alias = aliases.get(row.name);
     const described = row.argumentHint ? `${row.description} ${row.argumentHint}`.trim() : row.description;
-    const description = row.source ? `${described} (${row.source})` : described;
+    const description = row.source ? `${described} (${row.source === "claude" ? "~/.claude" : row.source})` : described;
     return alias
       ? { name: row.name, description, aliases: [alias], pluginCommand: row.name }
       : { name: row.name, description, pluginCommand: row.name };
