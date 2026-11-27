@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { compressToolResult, type CompressedToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { requireFsApproval, type FsDangerousToolOptions } from "../os/fs/fs-require-approval.js";
+import { checkPageScripts, scriptProblemsText } from "./canvas-script-check.js";
 import { CHART_TYPES, renderChartPage, renderHtmlPage, type ChartSeries, type ChartSpec, type ChartType } from "./canvas-chart.js";
 
 export const CANVAS_RENDER_TOOL = "canvas.render";
@@ -164,6 +165,12 @@ export function buildCanvasRenderTool(options: CanvasRenderToolOptions): ToolDef
       } catch (err) {
         return errorResult((err as Error).message);
       }
+      // ATO-2457: a page whose script does not parse is sent back to the
+      // model to fix, before any approval or file (canvas-script-check.ts).
+      if (args.kind === "html") {
+        const problems = checkPageScripts(args.html);
+        if (problems.length > 0) return errorResult(scriptProblemsText(problems));
+      }
       const page = args.kind === "html"
         ? renderHtmlPage(args.title, args.subtitle, args.html)
         : renderChartPage(args.title, args.subtitle, args.chart);
@@ -223,5 +230,5 @@ function errorResult(message: string): CompressedToolResult {
     tool: CANVAS_RENDER_TOOL,
     status: "error",
     output: `canvas.render: ${message}`,
-  });
+  }, { maxSummaryLength: 1_500 });
 }

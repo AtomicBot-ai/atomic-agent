@@ -155,9 +155,10 @@ files-tool ::= "\"files.search\""
 conversation-tool ::= "\"conversation.history\""
 # Web research with checked quotes (ATO-2133).
 research-tool ::= "\"research.deep\""
-# A chart or page shown in the chat (ATO-1137); asked for in plain words
-# ("show me a chart of ..."), so a local model has to be able to spell it.
-canvas-tool ::= "\"canvas.render\"" | "\"ask_user\""
+# A chart or page shown in the chat (ATO-1137), and a ready card (ui.render,
+# ATO-2457); asked for in plain words ("show me a chart of ..."), so a local
+# model has to be able to spell them.
+canvas-tool ::= "\"canvas.render\"" | "\"ask_user\"" | "\"ui.render\""
 # The local day journal (ATO-2363).
 logbook-tool ::= "\"logbook.query\""
 # My apps (ATO-2459).

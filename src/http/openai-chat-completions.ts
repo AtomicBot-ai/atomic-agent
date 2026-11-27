@@ -53,6 +53,7 @@ import { toolDisabledNotice } from "../agent/tool-disabled-notice.js";
 import { cliOutdatedNotice } from "../agent/cli-outdated-notice.js";
 import { describeToolCall } from "../tools/describe-tool-call.js";
 import { canvasRecordOf, type CanvasRecord } from "../tools/canvas/index.js";
+import { uiSpecOf } from "../tools/ui/index.js";
 import { createTurnPhaseTracker } from "./stream-turn-phase.js";
 import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
 import { claimScreenOverlay } from "../tools/os/screen/screen-overlay-hosts.js";
@@ -719,6 +720,8 @@ export function buildStreamEventHook(
           ...screenMarksFrame(inner.result),
           // ATO-1137: the canvas an ok `canvas.render` wrote, for the chat to show.
           ...canvasFrame(inner.result),
+          // ATO-2457: the card an ok `ui.render` showed, for the chat to draw.
+          ...uiFrame(inner.result),
           ...diffstatFrame(inner.result),
           // ATO-1701: the files a fusion fan-out's workers changed.
           ...diffstatsFrame(inner.result),
@@ -1239,6 +1242,16 @@ function screenMarksFrame(
 function canvasFrame(result: CompressedToolResult): { canvas?: CanvasRecord } {
   const canvas = canvasRecordOf(result);
   return canvas === undefined ? {} : { canvas };
+}
+
+/**
+ * `ui` on a `tool_result` frame (ATO-2457): the checked spec of an ok
+ * `ui.render` call (decision, form or cards), so a host can draw the card
+ * itself. The frame is the only live path: the store keeps no `details`.
+ */
+function uiFrame(result: CompressedToolResult): { ui?: ReturnType<typeof uiSpecOf> } {
+  const ui = uiSpecOf(result);
+  return ui === undefined ? {} : { ui };
 }
 
 /** Tools whose ok result carries `details.diffstat` (ATO-1187). */

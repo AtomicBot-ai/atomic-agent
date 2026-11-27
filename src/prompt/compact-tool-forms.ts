@@ -206,6 +206,10 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Show a chart (bar, line, area, pie, table) or an HTML page in the chat as a canvas.",
     tier: RARE,
   },
+  "ui.render": {
+    summary: "Show a decision (buttons), a form or cards in the chat; the user's click is their next message.",
+    tier: RARE,
+  },
   ask_user: {
     summary: "Ask the user a question with 2-8 ready answers when a choice only they can make blocks the work; waits for the answer.",
   },

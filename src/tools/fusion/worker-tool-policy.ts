@@ -60,6 +60,8 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   // Same for a canvas (ATO-1137): only the orchestrator's stream reaches
   // the chat, so a worker's chart would be a file nobody is shown.
   "canvas.render",
+  // And a card (ATO-2457): a worker's click would come back to nobody.
+  "ui.render",
   // A fan-out inside a worker, and a report file nobody is shown (ATO-2133).
   "research.deep",
   // Nobody watches a worker's session, so its question would reach nobody

@@ -64,6 +64,8 @@ describe("worker tool policy", () => {
         "tasks.request_review",
         "tasks.block",
         "tasks.comment",
+        // ATO-2457: a card only the orchestrator's chat could draw.
+        "ui.render",
       ].sort(),
     );
   });

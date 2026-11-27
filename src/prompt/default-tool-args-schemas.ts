@@ -622,6 +622,58 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["title"],
     ),
   ],
+  // ATO-2457. Nested arrays of objects keep it off the strict path like
+  // canvas.render; the tool's parser owns bounds, bare-string labels and
+  // the kind guessed from which list is given.
+  [
+    "ui.render",
+    obj(
+      {
+        kind: { type: "string", enum: ["decision", "form", "cards"] },
+        title: stringSchema,
+        text: stringSchema,
+        options: {
+          type: "array",
+          minItems: 2,
+          maxItems: 8,
+          items: obj({ label: stringSchema, description: stringSchema, message: stringSchema }, ["label"]),
+        },
+        fields: {
+          type: "array",
+          minItems: 1,
+          maxItems: 12,
+          items: obj(
+            {
+              label: stringSchema,
+              name: stringSchema,
+              type: { type: "string", enum: ["text", "textarea", "number", "select", "checkbox", "date"] },
+              options: stringArraySchema,
+              placeholder: stringSchema,
+              required: booleanSchema,
+              value: stringSchema,
+            },
+            ["label"],
+          ),
+        },
+        submit: stringSchema,
+        cards: {
+          type: "array",
+          minItems: 1,
+          maxItems: 12,
+          items: obj(
+            {
+              title: stringSchema,
+              text: stringSchema,
+              meta: stringSchema,
+              action: obj({ label: stringSchema, message: stringSchema }, ["label"]),
+            },
+            ["title"],
+          ),
+        },
+      },
+      ["kind", "title"],
+    ),
+  ],
   [
     "skill.run_script",
     obj(

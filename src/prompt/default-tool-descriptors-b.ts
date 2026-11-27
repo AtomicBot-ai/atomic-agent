@@ -547,6 +547,19 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    // ATO-2457. Rare tier like canvas.render: the one-liner picks it, the
+    // full args load through tool.view.
+    name: "ui.render",
+    summary:
+      "Show the user a ready component in the chat: `decision` (2-8 buttons), `form` (fields and a submit button) or `cards` (each with an optional action button). It does not wait: a click or a sent form becomes the user's next message, so end the turn with a short reply. For a question that must block the work, use ask_user.",
+    argsSchema:
+      "{ kind: 'decision' | 'form' | 'cards', title: string, text?: string, options?: [{ label: string, description?: string, message?: string /* sent on click; default label */ }] /* decision, 2..8 */, fields?: [{ label: string, name?: string, type?: 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'date', options?: string[] /* select */, placeholder?: string, required?: boolean, value?: string }] /* form, 1..12 */, submit?: string /* form button */, cards?: [{ title: string, text?: string, meta?: string, action?: { label: string, message?: string } }] /* cards, 1..12 */ }",
+    examples: [
+      '{"kind":"decision","title":"Which layout?","options":[{"label":"Sidebar","description":"menu on the left"},{"label":"Top bar"}]}',
+    ],
+    tier: "rare",
+  },
+  {
     // Frequent tier (ATO-489): a model that must `tool.view` first asks in
     // prose instead, and the person gets no cards to click.
     name: "ask_user",
