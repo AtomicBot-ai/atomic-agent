@@ -48,6 +48,12 @@ export interface FsScopeOptions {
    * Unit tests pass a fixed list (or `[]`) directly.
    */
   trustConfigPaths?: readonly string[];
+  /**
+   * Test seam: the platform whose file names decide trust matching.
+   * Omitted ⇒ `process.platform`. On `darwin` and `win32` the default
+   * volumes ignore case, so trust paths are compared case-folded there.
+   */
+  platform?: NodeJS.Platform;
 }
 
 /**
@@ -79,7 +85,8 @@ export async function categorizeFsMutation(
   options: FsScopeOptions,
 ): Promise<ApprovalCategory> {
   const trustPaths = options.trustConfigPaths ?? [];
-  if (await touchesTrustConfig(absolutePaths, trustPaths, kind === "extract")) {
+  const foldCase = caseInsensitivePlatform(options.platform ?? process.platform);
+  if (await touchesTrustConfig(absolutePaths, trustPaths, kind === "extract", foldCase)) {
     return "trust_config";
   }
   const scope = await resolveFsScope(absolutePaths, options);
@@ -234,6 +241,15 @@ function isContained(parent: string, child: string): boolean {
   return !rel.startsWith("..") && !isAbsolute(rel);
 }
 
+/**
+ * macOS (APFS, HFS+) and Windows (NTFS) volumes ignore case by default:
+ * `Secret-Sources.json` there is `secret-sources.json`. Linux is never
+ * folded, so the check there stays exact.
+ */
+function caseInsensitivePlatform(platform: NodeJS.Platform): boolean {
+  return platform === "darwin" || platform === "win32";
+}
+
 interface TrustTarget {
   path: string;
   /** Everything under `path` counts, not just `path` itself. */
@@ -257,22 +273,27 @@ async function touchesTrustConfig(
   absolutePaths: readonly string[],
   trustPaths: readonly string[],
   holdsTrust: boolean,
+  foldCase: boolean,
 ): Promise<boolean> {
   if (trustPaths.length === 0) return false;
+  // A trust file that does not exist yet keeps its name as typed, so a
+  // different case would otherwise miss it on a case-insensitive volume.
+  const fold = (p: string): string => (foldCase ? p.toLowerCase() : p);
   const targets = await Promise.all(
     trustPaths.map(async (entry): Promise<TrustTarget | null> => {
       const directory = isTrustDirectoryEntry(entry);
       const path = await canonicalizeMutationTarget(
         directory ? entry.replace(/[\\/]+$/, "") : entry,
       );
-      return path === null ? null : { path, directory };
+      return path === null ? null : { path: fold(path), directory };
     }),
   );
   const trust = targets.filter((t): t is TrustTarget => t !== null);
   if (trust.length === 0) return false;
   for (const path of absolutePaths) {
-    const canonical = await canonicalizeMutationTarget(path);
-    if (canonical === null) continue;
+    const resolved = await canonicalizeMutationTarget(path);
+    if (resolved === null) continue;
+    const canonical = fold(resolved);
     for (const target of trust) {
       if (canonical === target.path) return true;
       if (target.directory && isContained(target.path, canonical)) return true;

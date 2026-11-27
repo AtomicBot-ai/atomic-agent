@@ -251,6 +251,23 @@ describe("fs approval scope", () => {
       );
     });
 
+    it("a not-yet-existing trust file in another case matches on darwin and win32, never on linux", async () => {
+      const sources = join(stateDir, "secret-sources.json");
+      const mixed = join(stateDir, "Secret-Sources.JSON");
+      const opts = (platform: NodeJS.Platform) => ({
+        ...trustOpts(),
+        trustConfigPaths: [configFile, envFile, sources],
+        platform,
+      });
+      expect(await categorizeFsMutation("write", [mixed], opts("darwin"))).toBe("trust_config");
+      expect(await categorizeFsMutation("write", [mixed], opts("win32"))).toBe("trust_config");
+      expect(await categorizeFsMutation("write", [join(stateDir, "CONFIG.json")], opts("darwin"))).toBe(
+        "trust_config",
+      );
+      // Linux volumes are case-sensitive: a different name is a different file.
+      expect(await categorizeFsMutation("write", [mixed], opts("linux"))).toBe("fs_write_home");
+    });
+
     it("a normal file next to config.json is NOT trust_config", async () => {
       expect(
         await categorizeFsMutation(
