@@ -60,8 +60,8 @@ describe("the coding-mode ring", () => {
 
   it("does not read as \"nothing asks\", and says new sites still ask (ATO-2759, ATO-2728)", () => {
     const summary = codingModeLook("bypass").summary;
-    expect(summary).toContain("site not approved in this chat");
     expect(summary).not.toContain("nothing asks for the rest");
+    expect(summary).toContain("not known yet");
   });
 });
 

@@ -337,5 +337,5 @@ export function formatEgressHoldNote(
   const unreadable = held.every((d) => d.host === null);
   return unreadable
     ? "asked because where it sends data cannot be read; this asks in every mode, bypass included"
-    : "asked because a site marked (new) was not approved in this chat yet; this asks in every mode, bypass included";
+    : "asked because a site marked (new) is not known yet: not approved in this chat or saved as a known host; this asks in every mode, bypass included";
 }

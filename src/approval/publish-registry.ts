@@ -1,7 +1,7 @@
 /**
  * The registry a package publish sends to, read from the project's own
  * config files without running the tool (ATO-2528), so the card says
- * `sends data to -> npm.internal.example` rather than the public default.
+ * `sends data to → npm.internal.example` rather than the public default.
  *
  * npm, pnpm and yarn: `publishConfig.registry` in the nearest
  * `package.json`, then `@scope:registry` (for a scoped package name) or

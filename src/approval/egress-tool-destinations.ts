@@ -4,7 +4,7 @@ import type { EgressDestination } from "./egress-scan.js";
 /**
  * Where the two tools that send data without a shell send it (ATO-2528),
  * in the shape `egress-scan.ts` gives shell commands, so the card says
- * `sends data to -> github.com` and the egress hold applies to them too.
+ * `sends data to → github.com` and the egress hold applies to them too.
  * Before, only `os.shell.run` filled `ApprovalRequest.egress`: the same
  * push through `os.git.push` went out unheld.
  */
