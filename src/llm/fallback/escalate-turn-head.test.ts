@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { DEFAULT_FALLBACK_TIMING } from "./fallback-config.js";
 import { ProviderFallbackChain, type ProviderSwitchNotice } from "./provider-fallback-chain.js";
 
@@ -26,11 +27,42 @@ describe("ProviderFallbackChain.escalateTurnHead (ATO-2434)", () => {
 
   it("does not probe the head again within the turn", () => {
     const clock = { now: 1_000 };
-    const chain = chainAt(clock);
+    const notices: ProviderSwitchNotice[] = [];
+    const chain = chainAt(clock, notices);
     chain.setTurnPrimary("s1", "local");
     chain.escalateTurnHead("s1", "weak");
     clock.now += DEFAULT_FALLBACK_TIMING.probeThrottleMs - 1;
     expect(chain.pickProvider("s1").providerId).toBe("openrouter");
+    // Past the probe throttle too: a long turn stays in the cloud.
+    clock.now += DEFAULT_FALLBACK_TIMING.probeThrottleMs * 3;
+    expect(chain.pickProvider("s1")).toEqual({ providerId: "openrouter", isProbe: false });
+    chain.recordSuccess("openrouter", false, "s1");
+    clock.now += DEFAULT_FALLBACK_TIMING.probeThrottleMs * 3;
+    expect(chain.pickProvider("s1")).toEqual({ providerId: "openrouter", isProbe: false });
+    expect(chain.standingOverrideFor("s1")).toBe("openrouter");
+    expect(notices.some((n) => n.direction === "back")).toBe(false);
+  });
+
+  it("stays off the head when the cloud link fails later in the escalated turn", () => {
+    const clock = { now: 1_000 };
+    const chain = new ProviderFallbackChain({
+      resolve: () => ({ chain: ["openrouter", "groq"], timing: DEFAULT_FALLBACK_TIMING }),
+      now: () => clock.now,
+    });
+    chain.setTurnPrimary("s1", "local");
+    chain.escalateTurnHead("s1", "weak");
+    const outage = new OpenAiHttpError(
+      "openai provider 503: overloaded",
+      503,
+      "https://openrouter.ai/api/v1/chat/completions",
+      false,
+      null,
+      "openrouter",
+    );
+    expect(chain.advanceFrom("openrouter", outage, "s1")).toBe("groq");
+    clock.now += DEFAULT_FALLBACK_TIMING.probeThrottleMs * 2;
+    expect(chain.pickProvider("s1").providerId).not.toBe("local");
+    expect(chain.standingOverrideFor("s1")).not.toBe("local");
   });
 
   it("leaves the head's rest alone and gives the next turn its head back", () => {

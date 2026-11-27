@@ -80,6 +80,13 @@ export interface PartitionState {
    * (`turn-head-cooldown.ts`, ATO-2435). Survives `clearOverride`.
    */
   readonly headCooldowns: Map<string, TurnHeadCooldown>;
+  /**
+   * The turn left its head because the head's answer was weak
+   * (`escalateTurnHead`, ATO-2434), not because it failed: the head is
+   * not probed back while the override stands. Cleared with the override
+   * (`clearOverride`), so the next turn starts on its head again.
+   */
+  headEscalated: boolean;
 }
 
 export function freshPartition(): PartitionState {
@@ -93,6 +100,7 @@ export function freshPartition(): PartitionState {
     servingId: null,
     turnPrimaryId: null,
     headCooldowns: new Map(),
+    headEscalated: false,
   };
 }
 
@@ -152,4 +160,5 @@ export function clearOverride(p: PartitionState): void {
   p.overrideServed = false;
   p.fallbackServed = false;
   p.servingId = null;
+  p.headEscalated = false;
 }
