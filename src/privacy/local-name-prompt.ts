@@ -32,8 +32,14 @@ export const NAME_DETECTOR_SYSTEM = [
   'Answer with JSON only: {"spans":[{"text":"...","kind":"NAME"}]}. With nothing to report, answer {"spans":[]}.',
 ].join("\n");
 
-/** A closing fence written inside the text, in any case or spacing. */
-const CLOSING_FENCE = /<\s*\/\s*text\s*>/gi;
+/** Whitespace or a zero-width character (U+200B to U+200D, U+2060, U+FEFF). */
+const GAP = "[\\s\\u200B-\\u200D\\u2060\\uFEFF]*";
+
+/**
+ * A closing fence written inside the text, in any case, with spaces or
+ * zero-width characters anywhere in the tag (`</te\u200Bxt>`).
+ */
+const CLOSING_FENCE = new RegExp(`<${GAP}\\/${GAP}t${GAP}e${GAP}x${GAP}t${GAP}>`, "gi");
 
 /**
  * The user turn: the text, fenced so the model cannot read it as

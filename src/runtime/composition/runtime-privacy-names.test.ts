@@ -19,7 +19,22 @@ describe("isLocalProviderEntry (ATO-2394)", () => {
     expect(isLocalProviderEntry({ id: "a", kind: "llama-server" }, LOCAL_URL)).toBe(true);
     expect(isLocalProviderEntry({ id: "b", kind: "openai-compatible", baseUrl: "http://localhost:1234/v1" }, LOCAL_URL)).toBe(true);
     expect(isLocalProviderEntry({ id: "c", kind: "openai-compatible", baseUrl: "http://[::1]:8080/v1" }, LOCAL_URL)).toBe(true);
-    expect(isLocalProviderEntry({ id: "d", kind: "ollama", baseUrl: "http://127.0.0.2:11434" }, LOCAL_URL)).toBe(true);
+    expect(isLocalProviderEntry({ id: "d", kind: "qwen-openai-compatible", baseUrl: "http://127.0.0.2:11434" }, LOCAL_URL)).toBe(true);
+  });
+
+  it("judges a llama-server entry by localModels.url, where its completions go", () => {
+    // The entry names loopback, but the shared client posts to a LAN box.
+    expect(isLocalProviderEntry({ id: "a", kind: "llama-server", url: "http://127.0.0.1:9931" }, "http://192.168.1.20:9931")).toBe(false);
+    expect(isLocalProviderEntry({ id: "b", kind: "llama-server", baseUrl: "http://127.0.0.1:9931" }, "http://gpu-box:9931")).toBe(false);
+    expect(isLocalProviderEntry({ id: "c", kind: "llama-server" }, undefined)).toBe(false);
+  });
+
+  it("refuses every kind that does not send to its baseUrl, even with a loopback baseUrl", () => {
+    for (const kind of ["subscription-oauth", "subscription-cli", "openrouter", "aimlapi", "gemini", "some-future-kind"]) {
+      expect(isLocalProviderEntry({ id: kind, kind, baseUrl: "http://localhost:1" }, LOCAL_URL)).toBe(false);
+    }
+    // `url` is not where an openai-compatible entry sends.
+    expect(isLocalProviderEntry({ id: "u", kind: "openai-compatible", url: "http://localhost:1" }, LOCAL_URL)).toBe(false);
   });
 
   it("refuses a server on the local network: the text must not leave this machine", () => {

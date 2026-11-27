@@ -48,12 +48,27 @@ function isLoopbackUrl(url: string | undefined): boolean {
   return host !== null && isLoopbackHost(host);
 }
 
-/** Whether `entry` runs on this machine (loopback only; the local network does not count). */
+/**
+ * Kinds whose completions go to the entry's own `baseUrl`, so checking
+ * that URL checks where the text goes. Every other kind is refused:
+ * `subscription-oauth` / `subscription-cli` ignore `baseUrl` and talk to
+ * their own service, and the cloud kinds are cloud whatever they say.
+ */
+const BASE_URL_KINDS: ReadonlySet<string> = new Set(["openai-compatible", "qwen-openai-compatible"]);
+
+/**
+ * Whether `entry` runs on this machine (loopback only; the local network
+ * does not count), judged by the URL its completions really go to.
+ * A `llama-server` entry completes through the shared client, which
+ * always posts to `localModels.url`, so that URL must be loopback, and
+ * the entry's own `url` too when it names one.
+ */
 export function isLocalProviderEntry(entry: LlmProviderConfigEntry, localModelsUrl: string | undefined): boolean {
   if (entry.kind === "llama-server") {
-    return isLoopbackUrl(entry.url ?? entry.baseUrl ?? localModelsUrl);
+    return isLoopbackUrl(localModelsUrl) && (entry.url === undefined || isLoopbackUrl(entry.url));
   }
-  return isLoopbackUrl(entry.baseUrl ?? entry.url);
+  if (!BASE_URL_KINDS.has(entry.kind)) return false;
+  return isLoopbackUrl(entry.baseUrl);
 }
 
 /** The provider entry the name pass runs on, or `undefined` for none. */
@@ -120,6 +135,8 @@ export function installPrivacyNameDetector(deps: PrivacyNamesDeps): LocalNameDet
         provider: modelId,
         error: err instanceof Error ? err.message : String(err),
       }),
+    onLeftover: (paragraphs, modelId) =>
+      deps.logger.info(`privacy shield: ${paragraphs} paragraphs left for later`, { provider: modelId }),
   });
   setPrivacyNameDetector(detector);
   const config = getConfig();

@@ -66,12 +66,14 @@ export interface LocalNameDetectorOptions {
   /**
    * Model calls per `detect`. Paragraphs are queued newest message first,
    * so the latest text is the one read; what is left over goes out with
-   * the regex masks only this time (logged through `onError`, without the
-   * text) and is read on a later request. Default 4.
+   * the regex masks only this time (reported through `onLeftover`, by
+   * count, never the text) and is read on a later request. Default 4.
    */
   maxCallsPerDetect?: number;
   /** A failed call, for the log. Never rethrown. */
   onError?: (err: unknown, modelId: string) => void;
+  /** Paragraphs this request did not get to (call cap or budget). Not an error. */
+  onLeftover?: (paragraphs: number, modelId: string) => void;
 }
 
 export interface LocalNameDetector {
@@ -189,24 +191,22 @@ export function createLocalNameDetector(options: LocalNameDetectorOptions): Loca
         options.onError?.(new Error("local name detector: reply is not the expected JSON"), model.id);
         continue;
       }
-      // An empty answer for several paragraphs at once may be one of them
-      // talking the model out of answering: use it, but do not keep it.
-      const keep = spans.length > 0 || chunk.length === 1;
+      // Cache per paragraph only what that paragraph proved. "No names"
+      // from a call over several paragraphs may be one of them talking the
+      // model out of answering (or into one decoy span), so it is used for
+      // this request but never kept: the next request asks again.
       for (const [key, paragraph] of chunk) {
         // Only a span this paragraph contains word for word counts.
         const values = spans
           .filter((s) => paragraph.includes(s.text))
           .map((s) => ({ value: s.text, kind: s.kind }));
-        if (keep) remember(key, values);
+        if (values.length > 0 || chunk.length === 1) remember(key, values);
         add(values);
       }
     }
     const left = chunks.slice(read).reduce((n, chunk) => n + chunk.length, 0);
     if (left > 0) {
-      options.onError?.(
-        new Error(`local name detector: ${left} older paragraph(s) left for a later request, regex masks only`),
-        model.id,
-      );
+      options.onLeftover?.(left, model.id);
     }
     return [...found.values()];
   }
