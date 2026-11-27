@@ -16,18 +16,22 @@ function meetingClock(seconds) {
   return h ? h + ':' + two(m) + ':' + two(sec) : two(m) + ':' + two(sec);
 }
 
-/** The lines so far plus a chunk's segments: in time order, blanks dropped, a repeat not added twice. */
-function meetingMergeLines(lines, segments) {
+/** The lines so far plus a chunk's segments: in time order, blanks dropped, a repeat not added twice.
+    ATO-2514: `who` ("Me", "Them" or '') labels the chunk's lines. */
+function meetingMergeLines(lines, segments, who) {
   const out = Array.isArray(lines) ? lines.slice() : [];
-  const seen = new Set(out.map((l) => l.start + '|' + l.text));
+  const label = typeof who === 'string' ? who : '';
+  const seen = new Set(out.map((l) => (l.who || '') + '|' + l.start + '|' + l.text));
   for (const s of Array.isArray(segments) ? segments : []) {
     if (!s || typeof s.start !== 'number') continue;
     const text = String(s.text || '').replace(/\s+/g, ' ').trim();
     if (!text) continue;
-    const key = s.start + '|' + text;
+    const key = label + '|' + s.start + '|' + text;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({start: s.start, end: typeof s.end === 'number' ? s.end : s.start, text});
+    const line = {start: s.start, end: typeof s.end === 'number' ? s.end : s.start, text};
+    if (label) line.who = label;
+    out.push(line);
   }
   return out.sort((a, b) => a.start - b.start);
 }

@@ -13,8 +13,13 @@
  * transcript names people. A real diarizer (sherpa-onnx) replaces
  * `speakerTurns` without touching the rest.
  *
+ * ATO-2514: meeting-speakers.ts now finds the speakers (Me / Them from the
+ * two channels, voices from the diarizer) and `speakerTurns` is the
+ * fallback; the header and the notes prompt say which way was used.
+ *
  * No electron, no disk: test/meeting-transcript.test.mjs loads it from the build.
  */
+import type { SpeakerMethod } from "./meeting-speakers.js";
 import { formatTimestamp, type TranscriptSegment } from "./transcribe-file.js";
 
 /** A silence this long between two segments starts a new speaker turn. */
@@ -106,6 +111,18 @@ export interface MeetingDocumentInput {
   duration: number;
   locale: string;
   turns: readonly SpeakerTurn[];
+  /** ATO-2514: how the speakers were found; pauses when absent. */
+  method?: SpeakerMethod;
+}
+
+/** The header's Speakers line, per way of finding them. */
+export function speakersLine(method: SpeakerMethod = "pauses"): string {
+  switch (method) {
+    case "channels": return "Speakers: Me is this computer's microphone, Them is the call's sound on this computer";
+    case "channels+voice": return "Speakers: Me is this computer's microphone; the call's side is told apart by voice on this computer (Them 1, Them 2)";
+    case "voice": return "Speakers: told apart by voice on this computer (Speaker 1, Speaker 2), names not known";
+    default: return "Speakers: guessed from pauses (Speaker 1 / Speaker 2), not recognized by voice";
+  }
 }
 
 /** The saved transcript: a header the skill can read the date from, a note on speakers, the lines. */
@@ -117,7 +134,7 @@ export function meetingDocument(m: MeetingDocumentInput): string {
     `Date: ${date}`,
     `Length: ${formatTimestamp(m.duration)}`,
     `Language: ${m.locale || "unknown"}`,
-    `Speakers: guessed from pauses (Speaker 1 / Speaker 2), not recognized by voice`,
+    speakersLine(m.method),
   ].join("\n");
   const body = formatTurns(m.turns);
   return `${head}\n\n${body || "(no speech was heard)"}\n`;
@@ -128,11 +145,16 @@ export function meetingDocument(m: MeetingDocumentInput): string {
  * It names the skill so the agent loads it, and repeats the skill's two
  * hard rules: only what was said, and ask before scheduling anything.
  */
-export function minutesPrompt(fileName: string): string {
+export function minutesPrompt(fileName: string, method: SpeakerMethod = "pauses"): string {
+  const speakers = method === "pauses"
+    ? "Speaker labels were guessed from pauses; keep them unless the transcript says who is talking."
+    : method === "voice"
+      ? "Speaker labels were told apart by voice; keep them unless the transcript says who is talking."
+      : "Me is the person who recorded the meeting; Them is the other side of the call. Keep the labels unless the transcript says who is talking.";
   return [
     `Use the meeting-notes skill to write the minutes of this meeting from the attached transcript "${fileName}".`,
     "Give a short summary, the decisions, and the action items with owners and due dates, only as they were said in the meeting.",
-    "Speaker labels were guessed from pauses; keep them unless the transcript says who is talking.",
+    speakers,
     "At the end, ask whether any action item should become a scheduled task. Do not schedule anything without a yes.",
   ].join(" ");
 }

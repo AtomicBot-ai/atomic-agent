@@ -5,6 +5,8 @@
  *   <userData>/meetings/<id>/chunk-0000.pcm   the chunk being recorded (raw s16le, appended per frame)
  *   <userData>/meetings/<id>/chunk-0000.wav   a sealed chunk waiting for the transcriber
  *   <userData>/meetings/<id>/chunk-0000.json  a transcribed chunk; its audio is gone by then
+ *   <userData>/meetings/<id>/them/chunk-*     ATO-2514: the same for the other side of
+ *                                             the call (system audio), when it was recorded
  *
  * Audio lives here only until it is transcribed: each chunk's WAV is deleted
  * as soon as its JSON is written, and the whole folder is deleted once the
@@ -21,10 +23,15 @@ import type { ChunkTranscript } from "./meeting-transcript.js";
 import type { TranscriptSegment } from "./transcribe-file.js";
 import { pcmToWav } from "./whisper-dictation.js";
 
+/** ATO-2514: "me" is the microphone, "them" the other side of the call (system audio). */
+export type MeetingChannel = "me" | "them";
+
 export interface MeetingMeta {
   id: string;
   startedAt: number;
   locale: string;
+  /** ATO-2514: seconds after the start when the other side's first frame came; absent when it never did. */
+  themLead?: number;
 }
 
 export interface StoredMeeting {
@@ -48,6 +55,11 @@ export class MeetingStore {
     return join(this.root(), id);
   }
 
+  /** Where a channel's chunks live: the meeting folder for "me", its `them/` for the other side. */
+  channelDir(id: string, ch: MeetingChannel = "me"): string {
+    return ch === "them" ? join(this.dir(id), "them") : this.dir(id);
+  }
+
   /** A new, empty meeting folder. */
   create(startedAt: number, locale: string): MeetingMeta {
     let id = `m-${Math.floor(startedAt)}`;
@@ -62,23 +74,33 @@ export class MeetingStore {
     try {
       const raw = JSON.parse(readFileSync(join(this.dir(id), "meta.json"), "utf8")) as Partial<MeetingMeta>;
       if (raw.id !== id || typeof raw.startedAt !== "number") return null;
-      return { id, startedAt: raw.startedAt, locale: typeof raw.locale === "string" ? raw.locale : "" };
+      const meta: MeetingMeta = { id, startedAt: raw.startedAt, locale: typeof raw.locale === "string" ? raw.locale : "" };
+      if (typeof raw.themLead === "number" && Number.isFinite(raw.themLead) && raw.themLead >= 0) meta.themLead = raw.themLead;
+      return meta;
     } catch {
       return null;
     }
   }
 
+  /** ATO-2514: the meta file rewritten (beside and renamed, like a chunk). */
+  writeMeta(meta: MeetingMeta): void {
+    const path = join(this.dir(meta.id), "meta.json");
+    writeFileSync(`${path}.part`, JSON.stringify(meta));
+    renameSync(`${path}.part`, path);
+  }
+
   /** One frame onto the chunk being recorded. */
-  appendPcm(id: string, index: number, frame: Uint8Array): void {
-    appendFileSync(join(this.dir(id), `${chunkBase(index)}.pcm`), frame);
+  appendPcm(id: string, index: number, frame: Uint8Array, ch: MeetingChannel = "me"): void {
+    if (ch === "them") mkdirSync(this.channelDir(id, ch), { recursive: true });
+    appendFileSync(join(this.channelDir(id, ch), `${chunkBase(index)}.pcm`), frame);
   }
 
   /**
    * The chunk's raw audio becomes a WAV; the raw file goes. Answers the WAV
    * and its length, or null when there was nothing recorded in it.
    */
-  seal(id: string, index: number): { path: string; duration: number } | null {
-    const base = join(this.dir(id), chunkBase(index));
+  seal(id: string, index: number, ch: MeetingChannel = "me"): { path: string; duration: number } | null {
+    const base = join(this.channelDir(id, ch), chunkBase(index));
     let pcm: Buffer;
     try { pcm = readFileSync(`${base}.pcm`); } catch { return null; }
     const even = pcm.byteLength - (pcm.byteLength % 2);
@@ -90,29 +112,29 @@ export class MeetingStore {
     return { path: `${base}.wav`, duration: pcmSeconds(even) };
   }
 
-  wavPath(id: string, index: number): string {
-    return join(this.dir(id), `${chunkBase(index)}.wav`);
+  wavPath(id: string, index: number, ch: MeetingChannel = "me"): string {
+    return join(this.channelDir(id, ch), `${chunkBase(index)}.wav`);
   }
 
   /** Seconds in a sealed chunk's WAV (0 when it is not there). */
-  wavDuration(id: string, index: number): number {
-    try { return wavSeconds(statSync(this.wavPath(id, index)).size); } catch { return 0; }
+  wavDuration(id: string, index: number, ch: MeetingChannel = "me"): number {
+    try { return wavSeconds(statSync(this.wavPath(id, index, ch)).size); } catch { return 0; }
   }
 
   /** The chunk is transcribed: its text is kept and its audio deleted. */
-  writeTranscript(id: string, index: number, duration: number, segments: TranscriptSegment[]): void {
-    const base = join(this.dir(id), chunkBase(index));
+  writeTranscript(id: string, index: number, duration: number, segments: TranscriptSegment[], ch: MeetingChannel = "me"): void {
+    const base = join(this.channelDir(id, ch), chunkBase(index));
     const body: ChunkTranscript = { index, duration, segments };
     writeFileSync(`${base}.json.part`, JSON.stringify(body));
     renameSync(`${base}.json.part`, `${base}.json`);
     rmSync(`${base}.wav`, { force: true });
   }
 
-  transcripts(id: string): ChunkTranscript[] {
+  transcripts(id: string, ch: MeetingChannel = "me"): ChunkTranscript[] {
     const out: ChunkTranscript[] = [];
-    for (const index of planRecovery(this.names(id)).done) {
+    for (const index of planRecovery(this.names(id, ch)).done) {
       try {
-        const raw = JSON.parse(readFileSync(join(this.dir(id), `${chunkBase(index)}.json`), "utf8")) as Partial<ChunkTranscript>;
+        const raw = JSON.parse(readFileSync(join(this.channelDir(id, ch), `${chunkBase(index)}.json`), "utf8")) as Partial<ChunkTranscript>;
         out.push({
           index,
           duration: typeof raw.duration === "number" ? raw.duration : 0,
@@ -125,13 +147,13 @@ export class MeetingStore {
     return out;
   }
 
-  names(id: string): string[] {
-    try { return readdirSync(this.dir(id)); } catch { return []; }
+  names(id: string, ch: MeetingChannel = "me"): string[] {
+    try { return readdirSync(this.channelDir(id, ch)); } catch { return []; }
   }
 
   /** Raw files left by a crash next to their WAV or JSON: deleted. */
-  dropStale(id: string): void {
-    for (const index of planRecovery(this.names(id)).stale) rmSync(join(this.dir(id), `${chunkBase(index)}.pcm`), { force: true });
+  dropStale(id: string, ch: MeetingChannel = "me"): void {
+    for (const index of planRecovery(this.names(id, ch)).stale) rmSync(join(this.channelDir(id, ch), `${chunkBase(index)}.pcm`), { force: true });
   }
 
   /** Every meeting folder with a readable meta.json, oldest first. */

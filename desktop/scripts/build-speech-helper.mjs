@@ -25,12 +25,17 @@
  * down and let go (main/dictate-hold.ts). It needs no macOS 26 API, so its
  * target is the app's own floor, macOS 14. Same rules: skipped with the
  * speech helper, and a compile error fails the build.
+ *
+ * ATO-2514: and native/atomic-system-audio.swift into
+ * out/native/atomic-system-audio, the ScreenCaptureKit tap that records
+ * the other side of a call for "Record a meeting" (main/meeting-system-audio.ts).
+ * macOS 14 target on this Mac's arch (systemAudioTarget); same rules.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileFailureMessage, speechHelperPlan, speechHelperTarget } from "./speech-helper-plan.mjs";
+import { compileFailureMessage, speechHelperPlan, speechHelperTarget, systemAudioTarget } from "./speech-helper-plan.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = join(here, "..", "native", "atomic-speech.swift");
@@ -38,6 +43,8 @@ const outDir = join(here, "..", "out", "native");
 const out = join(outDir, "atomic-speech");
 const fnKeySrc = join(here, "..", "native", "atomic-fn-key.swift");
 const fnKeyOut = join(outDir, "atomic-fn-key");
+const systemAudioSrc = join(here, "..", "native", "atomic-system-audio.swift");
+const systemAudioOut = join(outDir, "atomic-system-audio");
 
 const plan = speechHelperPlan({
   platform: process.platform,
@@ -86,6 +93,21 @@ if (existsSync(fnKeySrc)) {
   } catch (err) {
     const first = err instanceof Error ? err.message.split("\n")[0] : String(err);
     console.error(`fn key helper: swiftc failed (${first}).\nThe compiler output is above. Without this helper, holding Fn to dictate into any app falls back to the key combination.`);
+    process.exit(1);
+  }
+}
+
+if (existsSync(systemAudioSrc)) {
+  try {
+    execFileSync(
+      "xcrun",
+      ["swiftc", "-O", "-swift-version", "5", "-target", systemAudioTarget(), systemAudioSrc, "-o", systemAudioOut],
+      { stdio: ["ignore", "inherit", "inherit"] },
+    );
+    console.log(`system audio helper → ${systemAudioOut}`);
+  } catch (err) {
+    const first = err instanceof Error ? err.message.split("\n")[0] : String(err);
+    console.error(`system audio helper: swiftc failed (${first}).\nThe compiler output is above. Without this helper a meeting records only the microphone, not the other side of the call.`);
     process.exit(1);
   }
 }
