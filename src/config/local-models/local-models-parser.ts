@@ -429,6 +429,11 @@ export function prepareLocalModelsInputs(
         readDefaults().managed.promptDiskCache,
       "localModels.managed.promptDiskCache",
     ),
+    // ATO-2336: additive and unversioned; a file without it reads as off.
+    share: parseBool(
+      rawManaged.share ?? readDefaults().managed.share,
+      "localModels.managed.share",
+    ),
     device: parseNonEmptyString(
       rawManaged.device ?? readDefaults().managed.device,
       "localModels.managed.device",

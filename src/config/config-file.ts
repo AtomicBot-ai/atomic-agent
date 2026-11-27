@@ -94,6 +94,8 @@ export function getStateSecretPaths(paths: {
     ...getTrustConfigPaths(paths),
     join(paths.localModelsDataDir, "llama-server.key"),
     join(paths.stateDir, "serve-api.key"),
+    // ATO-2336: the key other apps use the shared model with (`modelShareKeyPath`).
+    join(paths.stateDir, "model-share.key"),
     join(paths.localModelsDataDir, "core", "chat.json"),
     join(paths.localModelsDataDir, "core", "embedding.json"),
     join(paths.stateDir, "atomic-mail", "session.json"),

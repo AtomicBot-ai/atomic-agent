@@ -47,6 +47,13 @@ describe("local model configuration domain seams", () => {
     expect(() => parseLocal({ managed: { promptDiskCache: 7 } })).toThrow();
   });
 
+  it("keeps model sharing off unless the file turns it on (ATO-2336)", () => {
+    expect(createLocalModelsDefaults().managed.share).toBe(false);
+    expect(parseLocal({}).managed.share).toBe(false);
+    expect(parseLocal({ managed: { share: true } }).managed.share).toBe(true);
+    expect(() => parseLocal({ managed: { share: 7 } })).toThrow();
+  });
+
   it("looks for an External llama.cpp on llama-server's own default port 9931 when no url is stored", () => {
     expect(createLocalModelsDefaults().url).toBe("http://127.0.0.1:9931");
     expect(parseLocal({}).url).toBe("http://127.0.0.1:9931");

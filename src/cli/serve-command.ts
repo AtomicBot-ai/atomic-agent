@@ -8,7 +8,8 @@ import { registerProcessSecret } from "../error-reporting/process-secrets.js";
 import { PrometheusRegistry } from "../tracing/prometheus-registry.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 
-import { HELP, lanUrls, parseArgs } from "./serve-args.js";
+import { HELP, isLoopbackListenHost, lanUrls, parseArgs } from "./serve-args.js";
+import { modelShareNotice } from "./serve-model-share-notice.js";
 import { resolveServeApiKey, serveApiKeyNotice } from "./serve-api-key.js";
 import { watchForOrphaning } from "./serve-orphan-guard.js";
 import {
@@ -29,6 +30,7 @@ import {
   CompletionRegistry,
   createHttpServer,
   createHttpTokenSource,
+  isModelShareEnabled,
 } from "../http/index.js";
 import type { HttpServerHandle } from "../http/index.js";
 
@@ -195,6 +197,7 @@ export async function serveCommand(args: string[]): Promise<number> {
     for (const url of lanUrls(parsed.host, handle.port)) {
       process.stderr.write(`[atomic-agent] serve reachable at ${url}\n`);
     }
+    process.stderr.write(modelShareNotice(isModelShareEnabled(), isLoopbackListenHost(parsed.host)));
     if (parsed.tunnel && tunnelCheck) {
       tunnel = await startWebhookTunnel({
         runtime,

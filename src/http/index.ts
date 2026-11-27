@@ -44,6 +44,9 @@ export {
 } from "./webhook-tunnel-status.js";
 export type { WebhookTunnelStatus } from "./webhook-tunnel-status.js";
 export type { RouteTableOptions } from "./route-table.js";
+// ATO-2336: the shared local model (`/raw/v1`) and its key.
+export { isModelShareEnabled, RAW_MODEL_PREFIX } from "./route-raw-model.js";
+export { ensureModelShareKey, modelShareKeyPath, readModelShareKey, rotateModelShareKey } from "./model-share-key.js";
 
 export { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
 export type {

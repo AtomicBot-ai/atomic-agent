@@ -31,6 +31,7 @@ import { runModelsCouncil } from "./models-council-command.js";
 import { runModelsTasks } from "./models-tasks-command.js";
 import { runModelsFitTest } from "./models-fit-test-command.js";
 import { runModelsRpcWorker } from "./models-rpc-worker.js";
+import { runModelsShare } from "./models-share-command.js";
 
 const HELP =
   [
@@ -74,6 +75,9 @@ const HELP =
     "                                the state dir, or our hosted catalog; ATOMIC_AGENT_MODEL_",
     "                                CATALOG_URL overrides it), each with its fit for this",
     "                                machine; --refresh fetches the URL",
+    "  share [--rotate] [--off]      Let other apps and devices use the local model through",
+    "                                serve's /raw/v1 (OpenAI-compatible, its own key, off by",
+    "                                default); prints the base URL and the key to paste",
     "",
     "Fit-test subcommands:",
     "  tasks collect [--last <n>]    Write your last n tasks (default 10) as a test set;",
@@ -180,6 +184,8 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return await runModelsTasks(args.slice(1));
       case "fit-test":
         return await runModelsFitTest(args.slice(1));
+      case "share":
+        return await runModelsShare(args.slice(1));
       case "list":
         return runLocalModelsList();
       case "catalog":
