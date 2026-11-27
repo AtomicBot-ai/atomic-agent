@@ -25,6 +25,15 @@ import { resolveLlmConfig } from "../../llm/provider/registry/provider-types.js"
 import type { TurnProgress } from "../../session/turn-progress.js";
 import { INTERRUPTED_TURN_ENDING } from "../../session/session-store.js";
 import { currentBrowserScope, onBrowserWorkerEnd, runInBrowserScope, type BrowserRunScope } from "../../tools/browser/browser-run-scope.js";
+import { EMPTY_CONTEXT_USAGE } from "../../session/context-usage.js";
+import { estimateTokens } from "../../prompt/token-budget.js";
+import { routeTurnProvider } from "./runtime-turn-router.js";
+
+// The real router, watched: the size facts it is handed (ATO-2537).
+vi.mock("./runtime-turn-router.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./runtime-turn-router.js")>();
+  return { ...actual, routeTurnProvider: vi.fn(actual.routeTurnProvider) };
+});
 
 function deferred<T>() {
   let resolve: (value: T) => void = () => { throw new Error("promise not initialized"); };
@@ -247,6 +256,78 @@ describe("runtime turn ownership recipes", () => {
     await fixture.service.executeTurn(session("other"), "request");
     expect(setTurnPrimary).toHaveBeenCalledWith("other", null);
     expect(fixture.loop.runTurn.mock.calls[1]?.[1]).not.toHaveProperty("providerId");
+  });
+
+  it("hands the router the session's size and the local window (ATO-2537)", async () => {
+    const route = vi.mocked(routeTurnProvider);
+    route.mockClear();
+    const localWindow = vi.fn(() => 16_384);
+    fixture.deps.inference.resolveLocalContextWindow = localWindow;
+    const service = createRuntimeTurnService(fixture.config, fixture.deps);
+    const long: SessionState = {
+      ...session("long"),
+      contextUsage: {
+        ...EMPTY_CONTEXT_USAGE,
+        tokens: 100_000,
+        conversationTokens: 80_000,
+        sections: [
+          { label: "prompt scaffold", tokens: 15_000 },
+          { label: "conversation", tokens: 80_000 },
+          { label: "context summary", tokens: 2_000 },
+          { label: "loaded tools", tokens: 3_000 },
+        ],
+      },
+    };
+    await service.executeTurn(long, "request");
+    const params = route.mock.calls.at(-1)?.[0];
+    expect(params?.sessionSize).toEqual({
+      historyTokens: 82_000 + estimateTokens("request"),
+      fixedTokens: 18_000,
+    });
+    expect(params?.localContextWindow).toBe(localWindow);
+    // A session that never built a prompt: size unknown.
+    await service.executeTurn(session("fresh"), "request");
+    expect(route.mock.calls.at(-1)?.[0].sessionSize).toBeNull();
+  });
+
+  it("asks the session's chain whether a turn head rests (ATO-2435)", async () => {
+    const route = vi.mocked(routeTurnProvider);
+    route.mockClear();
+    const turnHeadCoolingDown = vi.fn((sessionId: string, id: string) => sessionId === "s-cool" && id === "local");
+    fixture.deps.inference.fallbackChain = { ...fixture.deps.inference.fallbackChain, turnHeadCoolingDown };
+    const service = createRuntimeTurnService(fixture.config, fixture.deps);
+    await service.executeTurn(session("s-cool"), "request");
+    const isCoolingDown = route.mock.calls.at(-1)?.[0].isCoolingDown;
+    expect(isCoolingDown?.("local")).toBe(true);
+    expect(isCoolingDown?.("other")).toBe(false);
+    expect(turnHeadCoolingDown).toHaveBeenCalledWith("s-cool", "local");
+  });
+
+  it("a local-first turn gets its cloud ceiling and a weak-answer watch (ATO-2434)", async () => {
+    const route = vi.mocked(routeTurnProvider);
+    route.mockImplementationOnce((params) => {
+      params.onLocalFirstHead?.("local");
+      return undefined;
+    });
+    fixture.config.llm = {
+      ...resolveLlmConfig(fixture.config),
+      fallback: { localFirst: true, localFirstMaxTurnUsd: 0.5 },
+    } as never;
+    const escalation = { begin: vi.fn(), end: vi.fn() };
+    fixture.deps.inference.localFirst = { escalation, todaySpendUsd: () => 0 };
+    const service = createRuntimeTurnService(fixture.config, fixture.deps);
+    await service.executeTurn(session("lf"), "request");
+    expect(fixture.loop.runTurn.mock.calls.at(-1)?.[1]).toMatchObject({ taskMaxCostUsd: 0.5 });
+    expect(escalation.begin).toHaveBeenCalledWith("lf", "local");
+    // Dropped before routing and again when the turn is over.
+    expect(escalation.end).toHaveBeenCalledTimes(2);
+
+    // An ordinary turn: no ceiling of its own, no watch.
+    fixture.config.llm = { ...resolveLlmConfig(fixture.config), fallback: { localFirstMaxTurnUsd: 0.5 } } as never;
+    escalation.begin.mockClear();
+    await service.executeTurn(session("plain"), "request");
+    expect(fixture.loop.runTurn.mock.calls.at(-1)?.[1]).not.toHaveProperty("taskMaxCostUsd");
+    expect(escalation.begin).not.toHaveBeenCalled();
   });
 
   it("unknown pins reject before enqueue and before recorder/all other turn work", async () => {

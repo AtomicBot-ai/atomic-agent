@@ -28,7 +28,15 @@ import type { RunModeName } from "../../config/llm-run-mode-config.js";
  *    caller's explicit `providerId`);
  *  - nothing when no local link can serve the turn: not built, no model
  *    on disk (`isUnavailable`), or it says it cannot do tools, or the
- *    message carries an image and it says it cannot see one.
+ *    message carries an image and it says it cannot see one;
+ *  - nothing when the session is already too long for the local window
+ *    (`too-long`, ATO-2537): the prompt and compaction are sized to the
+ *    turn's head, so a long cloud session started on a small local
+ *    window would be compacted down to it, and that cut is written to
+ *    the session even when the turn then goes on in the cloud;
+ *  - nothing while the local link rests after it failed as a turn head
+ *    (`cooling-down`, ATO-2435, `turn-head-cooldown.ts`): a local server
+ *    that hangs until the timeout would cost that wait on every turn.
  *
  * Pure: the caller supplies every fact.
  */
@@ -57,13 +65,21 @@ export interface LocalFirstInput {
   isRegistered: (providerId: string) => boolean;
   /** Whether this link cannot serve here now (no model downloaded). */
   isUnavailable: (providerId: string) => boolean;
+  /**
+   * Whether the session's next prompt would trigger compaction on this
+   * link's window (ATO-2537; the caller sizes it, see
+   * `runtime/composition/local-first-fit.ts`). Absent: never.
+   */
+  tooLongFor?: (providerId: string) => boolean;
+  /** Whether this link failed as a turn head recently and still rests. */
+  isCoolingDown?: (providerId: string) => boolean;
 }
 
 export type LocalFirstDecision =
   | { head: string }
   | {
       head: null;
-      reason: "off" | "fusion" | "pinned" | "active-local" | "no-local";
+      reason: "off" | "fusion" | "pinned" | "active-local" | "no-local" | "cooling-down" | "too-long";
     };
 
 export function localFirstTurnHead(input: LocalFirstInput): LocalFirstDecision {
@@ -74,7 +90,7 @@ export function localFirstTurnHead(input: LocalFirstInput): LocalFirstDecision {
   if (active === undefined || active.local === true || input.effectiveRunMode === "local") {
     return { head: null, reason: "active-local" };
   }
-  const local = input.providers.find(
+  const usable = input.providers.filter(
     (p) =>
       p.local === true &&
       input.isRegistered(p.id) &&
@@ -82,6 +98,15 @@ export function localFirstTurnHead(input: LocalFirstInput): LocalFirstDecision {
       p.supportsTools !== false &&
       !(input.hasImage && p.supportsVision === false),
   );
-  if (local === undefined) return { head: null, reason: "no-local" };
+  if (usable.length === 0) return { head: null, reason: "no-local" };
+  const rested = usable.filter((p) => input.isCoolingDown?.(p.id) !== true);
+  if (rested.length === 0) return { head: null, reason: "cooling-down" };
+  const local = rested.find((p) => fitsLocalWindow(input, p.id));
+  if (local === undefined) return { head: null, reason: "too-long" };
   return { head: local.id };
+}
+
+/** Whether the session fits this link's window (no size check: yes). */
+function fitsLocalWindow(input: LocalFirstInput, providerId: string): boolean {
+  return input.tooLongFor?.(providerId) !== true;
 }
