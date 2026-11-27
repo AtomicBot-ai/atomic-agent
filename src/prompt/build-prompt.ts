@@ -696,6 +696,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       ? { profileClip: profileSection.clip }
       : {}),
     ...(projectReport !== null ? { project: projectReport } : {}),
+    ...(toolSchemaTokens > 0 && input.toolSchemaParts
+      ? { toolSchemaParts: input.toolSchemaParts }
+      : {}),
     contextWindow,
     conversationCapEffective,
     conversationCapAuto,

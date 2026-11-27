@@ -651,6 +651,11 @@ export interface TuiState {
   /** The composer's context detail panel floats over the chat. */
   contextPanelOpen: boolean;
   /**
+   * The open panel lists each MCP server's tools under its row
+   * (ATO-2453). Every open through `/context` or the chip starts folded.
+   */
+  contextPanelDetail: boolean;
+  /**
    * Task count the operator is trying out in the open panel, before
    * committing it. `null` means the panel is reporting what the last
    * prompt actually did.
@@ -1102,6 +1107,7 @@ export function createInitialTuiState(
     slashPaletteCursor: 0,
     menuOpen: false,
     contextPanelOpen: false,
+    contextPanelDetail: false,
     contextPanelPairsDraft: null,
     composerSwitch: null,
     contextMenu: null,

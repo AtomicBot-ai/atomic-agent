@@ -68,6 +68,7 @@ export function buildCloudPrompt(input: BuildPromptInput, stablePrefix: string):
     conversationPairsCap: Number.MAX_SAFE_INTEGER, conversationBoundBy: null, conversationPackStart: null,
     compactionBudget: { cap, activeTokens: historyTokens + summaryTokens, activePairs: costs.length }, pairCosts: costs,
     contextBudget: { window, replyReserve },
+    ...(schemaTokens > 0 && input.toolSchemaParts ? { toolSchemaParts: input.toolSchemaParts } : {}),
   };
 }
 

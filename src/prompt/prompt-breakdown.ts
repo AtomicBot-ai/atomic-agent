@@ -4,7 +4,14 @@ import {
   describePrefixSection,
   splitStablePrefixSections,
 } from "./stable-prefix-sections.js";
-import { estimateTokens } from "./token-budget.js";
+import {
+  BUILTIN_TOOLS_PART,
+  apportionParts,
+  type MeasuredPart,
+  type PromptPart,
+} from "./prompt-part-shares.js";
+
+export { BUILTIN_TOOLS_PART, type PromptPart, type PromptToolCost } from "./prompt-part-shares.js";
 
 /**
  * What one coarse prompt section is made of (ATO-2355).
@@ -16,16 +23,8 @@ import { estimateTokens } from "./token-budget.js";
  * parts are read off the text the builder actually assembled, split on
  * the same `### ` headers and `- <tool> — ` entry lines the prompt
  * carries, so nothing here is a guess about what the builder would do.
+ * An MCP server's part also carries one row per tool (ATO-2453).
  */
-export interface PromptPart {
-  label: string;
-  tokens: number;
-  /** Set when the part is one MCP server's tool entries. */
-  mcpServer?: string;
-}
-
-/** The row for every tool entry that is not an MCP server's. */
-export const BUILTIN_TOOLS_PART = "built-in tools";
 
 const TOOLS_SECTION = "tools";
 const LOADED_TOOLS_HEADER = "### loaded-tools";
@@ -35,12 +34,6 @@ const SECTION_HEADER = /^### [a-z][a-z0-9-]*$/;
 const TOOL_ENTRY = /^- (\S+) — /;
 const SEARCH_TOOL_ENTRY = /^- tool\.search — /m;
 
-interface MeasuredText {
-  label: string;
-  text: string;
-  mcpServer?: string;
-}
-
 /**
  * The stable prefix, one part per `### ` section. The tool catalog is
  * further split into built-in tools and one part per MCP server.
@@ -49,7 +42,7 @@ interface MeasuredText {
  * prefix), so a breakdown never disagrees with the row it breaks down.
  */
 export function stablePrefixParts(prefix: string, total: number): PromptPart[] {
-  const measured: MeasuredText[] = [];
+  const measured: MeasuredPart[] = [];
   for (const section of splitStablePrefixSections(prefix)) {
     const header =
       section.name === PREFIX_HEAD_SECTION ? "" : `### ${section.name}\n`;
@@ -60,7 +53,7 @@ export function stablePrefixParts(prefix: string, total: number): PromptPart[] {
     }
     measured.push({ label: describePrefixSection(section.name), text });
   }
-  return apportion(measured, total);
+  return apportionParts(measured, total);
 }
 
 /**
@@ -73,7 +66,7 @@ export function loadedToolsParts(tail: string, total: number): PromptPart[] {
   if (body === null) return [];
   const groups = groupToolEntries(body);
   if (!groups.some((g) => g.mcpServer !== undefined)) return [];
-  return apportion(groups, total);
+  return apportionParts(groups, total);
 }
 
 /** `tool.search` is in the catalog, i.e. search mode is on. */
@@ -104,69 +97,44 @@ function loadedToolsBody(tail: string): string | null {
  * Tool entry lines grouped by owner, in first-seen order with built-in
  * first. An entry runs from its `- <name> — ` line through the lines
  * that follow it; `# ` sub-headers and blank lines are catalog chrome
- * and count as built-in.
+ * and count as built-in. A server's entries are also kept one by one,
+ * so its part can list its tools.
  */
-function groupToolEntries(text: string): MeasuredText[] {
+function groupToolEntries(text: string): MeasuredPart[] {
   const builtin: string[] = [];
-  const servers = new Map<string, string[]>();
+  const servers = new Map<string, { lines: string[]; tools: { label: string; lines: string[] }[] }>();
   let current = builtin;
+  let tool: string[] | null = null;
   for (const line of text.split("\n")) {
     const entry = TOOL_ENTRY.exec(line);
     if (entry) {
-      const server = splitMcpToolName(entry[1]!)?.server;
-      if (server === undefined) {
+      const split = splitMcpToolName(entry[1]!);
+      if (split === null) {
         current = builtin;
+        tool = null;
       } else {
-        current = servers.get(server) ?? [];
-        servers.set(server, current);
+        const group = servers.get(split.server) ?? { lines: [], tools: [] };
+        servers.set(split.server, group);
+        current = group.lines;
+        tool = [];
+        group.tools.push({ label: split.rawName, lines: tool });
       }
     } else if (line.trim() === "" || line.startsWith("#")) {
       current = builtin;
+      tool = null;
     }
     current.push(line);
+    tool?.push(line);
   }
   const builtinText = builtin.join("\n");
   return [
     // Blank separator lines alone are catalog chrome, not a built-in part.
     { label: BUILTIN_TOOLS_PART, text: builtinText.trim() === "" ? "" : builtinText },
-    ...[...servers].map(([server, lines]) => ({
+    ...[...servers].map(([server, group]) => ({
       label: `mcp ${server}`,
-      text: lines.join("\n"),
+      text: group.lines.join("\n"),
       mcpServer: server,
+      tools: group.tools.map((t) => ({ label: t.label, text: t.lines.join("\n") })),
     })),
   ];
-}
-
-/**
- * Share `total` across the parts in proportion to their measured text,
- * by largest remainder so the integers add up to `total` exactly.
- * Estimating each part on its own rounds up once per part, so the raw
- * figures sum to a little more than the whole; scaling them keeps every
- * part's relative size and the parent row's number.
- */
-function apportion(measured: readonly MeasuredText[], total: number): PromptPart[] {
-  const raw = measured.map((m) => estimateTokens(m.text));
-  const sum = raw.reduce((a, b) => a + b, 0);
-  if (sum === 0 || total <= 0) return [];
-  const exact = raw.map((r) => (r * total) / sum);
-  const shares = exact.map(Math.floor);
-  const left = total - shares.reduce((a, b) => a + b, 0);
-  const byRemainder = exact
-    .map((value, index) => ({ index, rest: value - shares[index]! }))
-    .sort((a, b) => b.rest - a.rest || a.index - b.index);
-  for (let k = 0; k < left; k += 1) {
-    const slot = byRemainder[k % byRemainder.length]!.index;
-    shares[slot] = shares[slot]! + 1;
-  }
-  const parts: PromptPart[] = [];
-  measured.forEach((m, index) => {
-    const tokens = shares[index]!;
-    if (tokens <= 0) return;
-    parts.push({
-      label: m.label,
-      tokens,
-      ...(m.mcpServer !== undefined ? { mcpServer: m.mcpServer } : {}),
-    });
-  });
-  return parts;
 }

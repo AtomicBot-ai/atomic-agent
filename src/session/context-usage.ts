@@ -74,8 +74,9 @@ export interface ContextUsageState {
   /** Per-section breakdown, for the detail view. Empty before the first prompt. */
   sections: readonly ContextUsageSection[];
   /**
-   * What `prompt scaffold` and `loaded tools` are made of: prefix
-   * sections, built-in tools, one row per MCP server (ATO-2355). The
+   * What `prompt scaffold`, `loaded tools` and `tool schemas` are made
+   * of: prefix sections, built-in tools, one row per MCP server
+   * (ATO-2355; tool schemas and per-tool rows ATO-2453). The
    * parts of one parent sum to that parent's tokens. Absent on
    * snapshots saved before the field existed.
    */
@@ -94,6 +95,12 @@ export interface ContextUsagePart extends ContextUsageSection {
   parent: string;
   /** Set when the part is one MCP server's tool entries. */
   mcpServer?: string;
+  /**
+   * That server's tools, largest first, summing to `tokens` (ATO-2453):
+   * what `/context detail` and the desktop's expanded row list. Absent on
+   * other parts and on snapshots saved before the field existed.
+   */
+  tools?: readonly ContextUsageSection[];
 }
 
 /** A window nothing has been built against yet. */
@@ -126,6 +133,7 @@ export const CONVERSATION_SECTION_LABEL = "conversation";
 /** Rows the panel breaks down into `parts`. */
 export const PROMPT_SCAFFOLD_SECTION_LABEL = "prompt scaffold";
 export const LOADED_TOOLS_SECTION_LABEL = "loaded tools";
+export const TOOL_SCHEMA_SECTION_LABEL = "tool schemas";
 
 /**
  * Order the sections are shown in: the fixed cost first, then the
@@ -147,7 +155,7 @@ const SECTIONS: readonly {
   { key: "loadedTools", label: LOADED_TOOLS_SECTION_LABEL },
   // The native `tools` payload: counted in `total`, so it gets a row,
   // or the rows would not add up to the title.
-  { key: "toolSchema", label: "tool schemas" },
+  { key: "toolSchema", label: TOOL_SCHEMA_SECTION_LABEL },
   { key: "loadedSkills", label: "loaded skills" },
   { key: "sessionFacts", label: "session facts" },
   { key: "profile", label: "profile" },
@@ -175,6 +183,11 @@ export function contextUsageFromPrompt(prompt: BuiltPrompt): ContextUsageState {
       ...part,
       parent: LOADED_TOOLS_SECTION_LABEL,
     })),
+    // The native `tools` array by MCP server (ATO-2453), measured where
+    // the array is built; only while it is counted in `total`.
+    ...((prompt.tokens.toolSchema ?? 0) > 0 ? prompt.toolSchemaParts ?? [] : []).map(
+      (part) => ({ ...part, parent: TOOL_SCHEMA_SECTION_LABEL }),
+    ),
   ];
   return {
     tokens: prompt.tokens.total,
