@@ -28964,6 +28964,7 @@ function llmLocalHTML() {
       actions: '<button class="btn btn-s sm" data-act="llm:hf">' + logoHTML('huggingface', 'xs') + 'Add from Hugging Face</button>'})
     // ATO-1091: "Find the best model for my tasks" (fit-test.js), '' while the agent has no fit-test.
     + (typeof fitModelsPaneHTML === 'function' ? fitModelsPaneHTML() : '')
+    + (typeof modelsFolderHTML === 'function' ? modelsFolderHTML() : '')   // ATO-2106 (models-folder.js)
     + lcsContextHTML() // ATO-336: local-context-slots.js
     + llmSectionHTML('Embedding models', emb, text.length, cursor, null, false, {scope: 'local',
       note: '<p class="llm-note">Used to search the agent’s memory by meaning. Without one, it searches by keyword.</p>'})

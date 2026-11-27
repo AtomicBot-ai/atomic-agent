@@ -522,6 +522,11 @@ contextBridge.exposeInMainWorld("atomic", {
   fitTestStart: (opts?: { models?: string[]; judge?: string | null }) => ipcRenderer.invoke("fitTest:start", opts ?? {}),
   fitTestCancel: () => ipcRenderer.invoke("fitTest:cancel"),
   onFitTestProgress: (cb: (payload: unknown) => void) => on("fitTest:progress", cb),
+  /** ATO-2106: where the downloaded models live, and moving them (models-folder-ipc.ts). */
+  modelsFolderInfo: () => ipcRenderer.invoke("modelsFolder:info"),
+  modelsFolderChoose: () => ipcRenderer.invoke("modelsFolder:choose"),
+  modelsFolderMove: (opts: { path?: string; reset?: boolean }) => ipcRenderer.invoke("modelsFolder:move", opts),
+  onModelsFolderProgress: (cb: (payload: unknown) => void) => on("modelsFolder:progress", cb),
   quit: () => ipcRenderer.invoke("app:quit"),
   skillList: (sessionId?: string | null) => ipcRenderer.invoke("cli:skillList", sessionId),
   configGetKey: (key: string) => ipcRenderer.invoke("cli:configGetKey", key),

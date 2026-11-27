@@ -24,6 +24,7 @@ import {
   type SupervisorState,
 } from "./daemon-supervisor.js";
 import { isLoopbackOnPort, managedDataDir } from "./local-llama-key.js";
+import { modelsDirOf } from "./disk-space.js";
 import { resolveRunMode, type RunModeConfig, type RunModeProvider } from "./run-mode.js";
 import { describeFaultIn } from "./server-fault-line.js";
 import { DESKTOP_STATE_DIR } from "./state-dir.js";
@@ -478,7 +479,7 @@ function chatModelFileBytes(cfg: WatchConfig | null): number | null {
       }
     }
   };
-  walk(join(managedDataDir(cfg?.localModels?.managed?.dataDirOverride ?? null), "models", id), 0);
+  walk(join(modelsDirOf(managedDataDir(cfg?.localModels?.managed?.dataDirOverride ?? null)), id), 0);
   return total > 0 ? total : null;
 }
 

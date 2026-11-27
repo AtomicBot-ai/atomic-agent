@@ -20,12 +20,14 @@
 import { statfs } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { modelsDirOverrideNow } from "./models-folder.js";
+
 /** What `app:diskSpace` answers. Null when the disk could not be read: the window then blocks nothing. */
 export type DiskSpace = { freeBytes: number; totalBytes: number; path: string } | null;
 
-/** The folder models are written to, under the managed data dir. */
-export function modelsDirOf(dataDir: string): string {
-  return join(dataDir, "models");
+/** The folder models are written to: under the managed data dir, or where ATO-2106 moved them (models-folder.ts). */
+export function modelsDirOf(dataDir: string, override: string | null = modelsDirOverrideNow()): string {
+  return override ?? join(dataDir, "models");
 }
 
 /**
