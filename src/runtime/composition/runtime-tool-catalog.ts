@@ -45,6 +45,8 @@ import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActi
 import { buildConversationHistoryTool, buildSessionsSearchTool, registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
 import { buildFilesSearchTool, type FileIndexApi } from "../../tools/files/index.js";
 import { buildResearchDeepTool } from "../../tools/research/index.js";
+import { registerLogbookTools } from "../../tools/logbook/index.js";
+import { logbookNotesStayLocal, logbookToolOffered } from "../../logbook/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type VisionDescribeProviderSource, type VisionProviderSource } from "../../tools/vision/index.js";
 import { IMAGE_GENERATE_TOOL, openRouterImageKey, registerImageTools } from "../../tools/image/index.js";
@@ -402,6 +404,22 @@ export function registerRuntimeCoreTools(input: {
   toolRegistry.register(buildConversationHistoryTool({ source: sessionStore }));
   // ATO-1621: passages from the folders in My files, with ready citations.
   if (fileIndex) toolRegistry.register(buildFilesSearchTool({ index: fileIndex }));
+  // ATO-2363: reads the local logbook; its descriptor is gated live below.
+  // It asks first when the model serving the step is not on this computer.
+  registerLogbookTools(toolRegistry, {
+    ...dangerous,
+    stateDir: config.paths.stateDir,
+    notesStayLocal: (providerId) => {
+      const live = getConfig();
+      const llm = resolveLlmConfig(live);
+      return logbookNotesStayLocal({
+        entries: llm.providers,
+        providerId: providerId ?? llm.activeTextProvider,
+        fallbackChain: llm.fallback?.chain,
+        localModelsUrl: live.localModels.url,
+      });
+    },
+  });
 }
 
 export function registerRuntimeVisionTools(input: {
@@ -772,6 +790,7 @@ export async function connectRuntimeMcpCatalog(input: {
       },
       // Boot-time too: `os.code.lsp` is registered only with the flag.
       lsp: { enabled: config.tools.lsp?.enabled === true },
+      logbook: { enabled: logbookToolOffered(config.paths.stateDir) },
     });
     if (!liveMcpEnabled) return base;
     return mergeMcpDescriptors(
@@ -822,7 +841,7 @@ export async function connectRuntimeMcpCatalog(input: {
       resolveContextWindow?.(),
     );
   const liveDescriptorGates = (): string =>
-    `${resolveCurrentRunMode().effective === "fusion"}|${visionOnLiveRoute()}|${audioOnLiveRoute()}|${openRouterImageKey(getConfig()) !== undefined}|${toolSearchOn()}`;
+    `${resolveCurrentRunMode().effective === "fusion"}|${visionOnLiveRoute()}|${audioOnLiveRoute()}|${openRouterImageKey(getConfig()) !== undefined}|${toolSearchOn()}|${logbookToolOffered(config.paths.stateDir)}`;
   let cachedDescriptorGates = liveDescriptorGates();
   let cachedToolDescriptors = applyToolSearch(fullToolDescriptors, toolSearchOn());
   const rebuildToolDescriptors = (): readonly ToolDescriptor[] => {

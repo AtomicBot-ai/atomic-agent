@@ -37,8 +37,8 @@ export function getDotenvPath(stateDir: string): string {
  * its own state with no further question: `hooks.json` (commands run
  * on every tool call, re-read on change), the plugin records
  * (`plugins/plugins.json` holds the runs-code consent,
- * `plugins/marketplaces.json` the pinned sources) and the installed
- * plugin files. The names are spelled here because config sits below
+ * `plugins/marketplaces.json` the pinned sources), the installed
+ * plugin files and the logbook switch (`logbook/settings.json`). The names are spelled here because config sits below
  * approval, hooks and plugins, and `config-file.test.ts` pins them
  * against the owners' constants. A silent rewrite of any is a
  * self-escalation vector, so the
@@ -67,6 +67,8 @@ export function getTrustConfigPaths(paths: {
     join(paths.stateDir, "plugins", "plugins.json"),
     join(paths.stateDir, "plugins", "marketplaces.json"),
     join(paths.stateDir, "plugins", "installed") + sep,
+    // The logbook's capture switch (ATO-2363): a write turns screenshots on.
+    join(paths.stateDir, "logbook", "settings.json"),
   ];
 }
 

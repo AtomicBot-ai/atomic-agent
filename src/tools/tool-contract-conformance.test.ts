@@ -49,6 +49,7 @@ import { buildResearchDeepTool } from "./research/index.js";
 import { registerTaskTools } from "./tasks/index.js";
 import { registerSessionTools } from "./sessions/index.js";
 import { registerVisionTools } from "./vision/index.js";
+import { registerLogbookTools } from "./logbook/index.js";
 import { registerAudioListenTools } from "./audio/index.js";
 import { registerImageTools } from "./image/index.js";
 import { registerVideoTools } from "./video/index.js";
@@ -269,6 +270,7 @@ const gates: ToolGateConfig = {
   video: { available: true },
   screen: { enabled: true, point: true },
   lsp: { enabled: true },
+  logbook: { enabled: true },
 };
 
 let directory: string;
@@ -323,6 +325,7 @@ beforeAll(() => {
   registerTaskTools(registry, taskOptions(true));
   registerSessionTools(registry, sessionOptions(true));
   registerVisionTools(registry, { enabled: true, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
+  registerLogbookTools(registry, { ...dangerous, stateDir: directory, notesStayLocal: () => true });
   registerAudioListenTools(registry, { enabled: true, provider: () => undefined, maxAudioBytes: 1024 });
   registerImageTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });
   registerVideoTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });
@@ -363,7 +366,7 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(128);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(129);
     expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(DEFAULT_TOOL_DESCRIPTORS.length);
     expect(registry.list()).toHaveLength(registry.registrations.length);
     for (const definition of registry.registrations) {
@@ -467,6 +470,7 @@ describe("whole built-in tool catalog conformance", () => {
       { group: GATED_TOOL_NAMES.video, next: { ...gates, video: { available: false } } },
       { group: GATED_TOOL_NAMES.screen, next: { ...gates, screen: { enabled: false } } },
       { group: GATED_TOOL_NAMES.lsp, next: { ...gates, lsp: { enabled: false } } },
+      { group: GATED_TOOL_NAMES.logbook, next: { ...gates, logbook: { enabled: false } } },
     ];
     for (const family of families) {
       expect(names(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, family.next))).toEqual(names(DEFAULT_TOOL_DESCRIPTORS).filter((name) => !new Set<string>(family.group).has(name)));

@@ -166,6 +166,14 @@ export type ApprovalCategory =
    * settles it (`risk-review.ts`).
    */
   | "session_cross"
+  /**
+   * `logbook.query` (ATO-2363) while the model serving the turn is not on
+   * this computer: the notes describe whatever was on the person's
+   * screen, and the answer goes into that model's context. Silent only at
+   * full trust, like `session_cross`; with a loopback model it does not
+   * ask at all.
+   */
+  | "logbook_cloud"
   | "other";
 
 /**
@@ -235,6 +243,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel | null> = 
   // Never: even full trust cannot pick an answer for the person.
   user_question: null,
   session_cross: 5,
+  logbook_cloud: 5,
   other: 5,
 };
 
@@ -339,6 +348,8 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   // "Let it read and message my other chats for this session" is the
   // operator's call; each prompt still names the chat.
   session_cross: true,
+  // "Let it read my logbook for this chat" is the operator's call.
+  logbook_cloud: true,
   other: true,
 };
 
@@ -383,6 +394,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   hook_ask: "hook · confirm",
   user_question: "question for you",
   session_cross: "another chat · read / send",
+  logbook_cloud: "logbook · notes to a cloud model",
   other: "uncategorised",
 };
 

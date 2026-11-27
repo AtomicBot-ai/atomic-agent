@@ -28,6 +28,7 @@ const ALL_OPEN: ToolGateConfig = {
   video: { available: true },
   screen: { enabled: true, point: true },
   lsp: { enabled: true },
+  logbook: { enabled: true },
 };
 
 function nameSet(
@@ -45,6 +46,16 @@ describe("filterToolDescriptorsByConfig", () => {
       ALL_OPEN,
     );
     expect(filtered).toBe(DEFAULT_TOOL_DESCRIPTORS);
+  });
+
+  it("drops logbook.query unless the logbook gate is open (ATO-2363)", () => {
+    expect(nameSet(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, ALL_OPEN)).has("logbook.query")).toBe(true);
+    const off = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, { ...ALL_OPEN, logbook: { enabled: false } });
+    expect(nameSet(off).has("logbook.query")).toBe(false);
+    const { logbook: _unused, ...absent } = ALL_OPEN;
+    void _unused;
+    expect(nameSet(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, absent)).has("logbook.query")).toBe(false);
+    expect(GATED_TOOL_NAMES.logbook).toEqual(["logbook.query"]);
   });
 
   it("drops every browser.* descriptor when the browser is disabled", () => {

@@ -239,6 +239,7 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Web research with checked quotes; writes a report file. Answer from its verified findings; call it alone.",
     tier: RARE,
   },
+  "logbook.query": { summary: "Read the local notes about the person's screen for a day.", tier: RARE },
   "tasks.schedule": { summary: "Schedule a one-shot task.", tier: RARE },
   "tasks.cron": { summary: "Schedule a recurring task.", tier: RARE },
   "tasks.list": { summary: "List tasks.", tier: RARE },

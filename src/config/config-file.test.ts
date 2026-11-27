@@ -22,6 +22,7 @@ import { userHooksPath } from "../hooks/hook-config.js";
 import { secretsStorePath } from "./secret-store.js";
 import { SECRET_SOURCES_FILE } from "./secret-refs.js";
 import { installedPluginDir, pluginsRoot } from "../plugins/plugin-store.js";
+import { LOGBOOK_SETTINGS_FILE, logbookDir } from "../logbook/logbook-settings.js";
 import {
   ensureUserConfigFileSync,
   getDotenvPath,
@@ -952,6 +953,8 @@ describe("the state's secret files (ATO-877)", () => {
     expect(trust).toContain(userHooksPath(stateDir));
     expect(trust).toContain(join(pluginsRoot(stateDir), "plugins.json"));
     expect(trust).toContain(join(pluginsRoot(stateDir), "marketplaces.json"));
+    // A write to the logbook switch turns screen capture on (ATO-2363).
+    expect(trust).toContain(join(logbookDir(stateDir), LOGBOOK_SETTINGS_FILE));
     // A directory entry: its trailing separator is what makes it a prefix.
     expect(trust).toContain(dirname(installedPluginDir(stateDir, "x")) + sep);
     expect(isTrustDirectoryEntry(dirname(installedPluginDir(stateDir, "x")) + sep)).toBe(true);

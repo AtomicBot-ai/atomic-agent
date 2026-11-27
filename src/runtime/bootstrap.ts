@@ -19,6 +19,7 @@ import { createRuntimeKeepAwake, createRuntimeTaskStores, createRuntimeTaskRunne
 import { connectRuntimeChannels } from "./composition/runtime-channels.js";
 import { createRuntimeImapTrigger } from "./composition/runtime-imap-trigger.js";
 import { createRuntimeMailTrigger } from "./composition/runtime-mail-trigger.js";
+import { createRuntimeLogbook } from "./composition/runtime-logbook.js";
 import { createOfflineModeControl } from "./composition/runtime-offline-mode.js";
 import { createPrivacyShieldControl } from "./composition/runtime-privacy-shield.js";
 import { installPrivacyNameDetector } from "./composition/runtime-privacy-names.js";
@@ -1013,7 +1014,10 @@ export async function createAgentRuntime(
   const imapTrigger = createRuntimeImapTrigger({
     config, taskRunner, createSession, webhookSessionStore, logger,
   });
-  const sidecars = [mailTrigger, imapTrigger].filter((s): s is NonNullable<typeof s> => s !== null);
+  // ATO-2363: off unless `atomic-agent logbook start`; read per tick. Only
+  // the TUI shows the recording chip, so only it captures.
+  const logbook = createRuntimeLogbook({ config, providerRegistry, logger, indicatorVisible: options.analyticsSurface === "tui" });
+  const sidecars = [mailTrigger, imapTrigger, logbook].filter((s): s is NonNullable<typeof s> => s !== null);
   const scheduler = createRuntimeScheduler({
     config, taskRunner, logger, metrics, resolveTelegram: () => telegramChannelForShutdown,
     ...(sidecars.length > 0 ? { sidecars } : {}),

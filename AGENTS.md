@@ -52,6 +52,7 @@ Other area entry points (use their underlying domain instructions for shared con
 - [policy](src/policy/README.md).
 - [hooks](src/hooks/README.md).
 - [integrations](src/integrations/README.md).
+- [logbook](src/logbook/README.md).
 - [native](src/native/README.md).
 - [notifications](src/notifications/README.md).
 - [replay](src/replay/README.md).
