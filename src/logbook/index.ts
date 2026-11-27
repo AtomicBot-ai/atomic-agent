@@ -5,6 +5,7 @@ export {
   DEFAULT_LOGBOOK_SETTINGS,
   DEFAULT_RETENTION_DAYS,
   ensureLogbookDir,
+  isStandupClock,
   LOGBOOK_DIR,
   logbookCapturing,
   logbookDir,
@@ -23,6 +24,7 @@ export {
   clearLogbookDays,
   clearLogbookRange,
   dayKey,
+  deleteLogbookEntries,
   dayKeyOffset,
   isDayKey,
   listLogbookDays,
@@ -74,8 +76,8 @@ export {
 } from "./logbook-query.js";
 export type { LogbookQuery } from "./logbook-query.js";
 
-export { captureLogbookFrame, cleanObservation, LOGBOOK_PROMPT } from "./logbook-capture.js";
-export type { LogbookCaptureDeps, LogbookCaptureOutcome } from "./logbook-capture.js";
+export { captureLogbookFrame, cleanObservation, IDLE_REASON, LOGBOOK_PROMPT, logbookCaptureOptions, titleOnlyText } from "./logbook-capture.js";
+export type { LogbookCaptureDeps, LogbookCaptureOptions, LogbookCaptureOutcome } from "./logbook-capture.js";
 
 export { createLogbookSidecar, INDICATOR_AWAY_REASON, INDICATOR_HIDDEN_REASON, PRUNE_EVERY_MS } from "./logbook-sidecar.js";
 export type { LogbookSidecar, LogbookSidecarDeps } from "./logbook-sidecar.js";
@@ -95,3 +97,26 @@ export {
   parseLogbookAction,
 } from "./logbook-actions.js";
 export type { LogbookAction, LogbookActionResult } from "./logbook-actions.js";
+
+export {
+  applyLogbookPreferences,
+  hasPreferences,
+  parseLogbookPreferences,
+  PREFERENCE_KEYS,
+} from "./logbook-preferences.js";
+export type { LogbookPreferences, ParsedPreferences } from "./logbook-preferences.js";
+
+export {
+  LOGBOOK_STANDUP_FILE,
+  readStandupState,
+  reconcileStandup,
+  STANDUP_CHECK_EVERY_MS,
+  standupCron,
+  wantedStandup,
+  writeStandupState,
+} from "./logbook-standup.js";
+export type { StandupState, StandupTasks } from "./logbook-standup.js";
+
+export { probeFrontWindow } from "./logbook-front-window.js";
+export type { FrontWindowProbe, FrontWindowResult } from "./logbook-front-window.js";
+export { DESKTOP_PROTECTED_APPS, appListMatches } from "./logbook-skip.js";

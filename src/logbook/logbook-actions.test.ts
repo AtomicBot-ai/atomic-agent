@@ -5,7 +5,7 @@ import { DEFAULT_LOGBOOK_SETTINGS, type LogbookSettings } from "./logbook-settin
 import { logbookPlatformSupport, logbookState } from "./logbook-view.js";
 
 const T0 = 1_800_000_000_000;
-const MAC = logbookPlatformSupport("darwin");
+const MAC = logbookPlatformSupport("darwin", {});
 const off: LogbookSettings = { ...DEFAULT_LOGBOOK_SETTINGS, excludeApps: [] };
 const on: LogbookSettings = { ...off, enabled: true };
 
@@ -41,7 +41,10 @@ describe("logbook actions (ATO-2534)", () => {
 
   it("starts only where the computer can run it", () => {
     expect(applyLogbookAction(off, { kind: "start" }, T0, MAC)).toMatchObject({ ok: true, settings: { enabled: true } });
-    const refused = applyLogbookAction(off, { kind: "start" }, T0, logbookPlatformSupport("win32"));
-    expect(refused.ok).toBe(false);
+    // ATO-2526: Windows and Linux on X11 run it; Wayland cannot say which window is in front.
+    expect(applyLogbookAction(off, { kind: "start" }, T0, logbookPlatformSupport("win32", {})).ok).toBe(true);
+    expect(applyLogbookAction(off, { kind: "start" }, T0, logbookPlatformSupport("linux", { DISPLAY: ":0" })).ok).toBe(true);
+    const refused = applyLogbookAction(off, { kind: "start" }, T0, logbookPlatformSupport("linux", { WAYLAND_DISPLAY: "wayland-0" }));
+    expect(refused).toMatchObject({ ok: false, message: expect.stringMatching(/Wayland/) });
   });
 });

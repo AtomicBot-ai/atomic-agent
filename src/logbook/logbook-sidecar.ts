@@ -1,4 +1,4 @@
-import type { LogbookCaptureOutcome } from "./logbook-capture.js";
+import { logbookCaptureOptions, type LogbookCaptureOptions, type LogbookCaptureOutcome } from "./logbook-capture.js";
 import type { IndicatorState } from "./logbook-indicator.js";
 import type { LogbookVisionProvider, PickLocalVisionResult } from "./logbook-local-vision.js";
 import { logbookCapturing, readLogbookSettings, type LogbookSettings } from "./logbook-settings.js";
@@ -32,7 +32,7 @@ export interface LogbookSidecarDeps {
   stateDir: string;
   /** The local vision provider for this frame, looked up on every capture. */
   resolveProvider: () => PickLocalVisionResult;
-  capture: (provider: LogbookVisionProvider, excludeApps: readonly string[], signal: AbortSignal) => Promise<LogbookCaptureOutcome>;
+  capture: (provider: LogbookVisionProvider, options: LogbookCaptureOptions, signal: AbortSignal) => Promise<LogbookCaptureOutcome>;
   /** Removes frames a crash left behind; run before the first capture. */
   sweepFrames?: () => Promise<void>;
   logger?: { warn(message: string, data?: Record<string, unknown>): void };
@@ -112,7 +112,7 @@ export function createLogbookSidecar(deps: LogbookSidecarDeps): LogbookSidecar {
           record({ lastAttemptAt: now, lastOutcome: "skipped", lastReason: pick.reason, provider: null });
           return;
         }
-        const outcome = await deps.capture(pick.provider, settings.excludeApps, signal);
+        const outcome = await deps.capture(pick.provider, logbookCaptureOptions(settings), signal);
         if (outcome.kind !== "captured") {
           record({ lastAttemptAt: now, lastOutcome: outcome.kind, lastReason: outcome.reason, provider: pick.provider.id });
           return;
