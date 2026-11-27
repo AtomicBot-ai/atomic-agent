@@ -32,7 +32,7 @@ export const LAUNCH_HELP = [
   "  --model <id>   Model name the CLI sends (default: the loaded local model; atomic-agent with --agent)",
   "  --print-env    Print the environment and command instead of running it (keys masked)",
   "  --config       Write a lasting setting into the CLI's own config file instead of running it,",
-  "                 so plain `claude` / `codex` / `opencode` use atag serve on port 8787 afterwards",
+  "                 so plain `claude` / `codex` / `opencode` / `qwen` use atag serve on port 8787 afterwards",
   "                 (a backup of the file is kept; the key itself is not written there)",
   "  --revert       Take that setting out again",
   "  -- <args>      Passed to the agent unchanged, e.g. atag launch codex -- exec \"fix the tests\"",

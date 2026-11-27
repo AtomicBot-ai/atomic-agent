@@ -77,10 +77,7 @@ function codexSpec(input: PersistInput): PersistSpec {
         `wire_api = ${tomlString("responses")}`,
       ],
     },
-    note:
-      `Codex reads the key from ${LAUNCH_TOKEN_ENV}. Add this line to your shell profile (~/.zshrc, ~/.bashrc):\n` +
-      `  export ${LAUNCH_TOKEN_ENV}="$(${input.keyCommand})"\n` +
-      `On Windows (PowerShell profile): $env:${LAUNCH_TOKEN_ENV} = (${input.keyCommand.replace(/^"([^"]+)"/, "& \"$1\"")})\n`,
+    note: exportNote("Codex", input.keyCommand),
   };
 }
 
@@ -104,10 +101,47 @@ function openCodeSpec(input: PersistInput): PersistSpec {
   };
 }
 
+export function qwenSettingsPath(home: string): string {
+  return join(home, ".qwen", "settings.json");
+}
+
+/** The export line for a CLI that reads the key from ATOMIC_AGENT_TOKEN. */
+function exportNote(cli: string, keyCommand: string): string {
+  return (
+    `${cli} reads the key from ${LAUNCH_TOKEN_ENV}. Add this line to your shell profile (~/.zshrc, ~/.bashrc):\n` +
+    `  export ${LAUNCH_TOKEN_ENV}="$(${keyCommand})"\n` +
+    `On Windows (PowerShell profile): $env:${LAUNCH_TOKEN_ENV} = (${keyCommand.replace(/^"([^"]+)"/, "& \"$1\"")})\n`
+  );
+}
+
+function qwenSpec(input: PersistInput): PersistSpec {
+  // As Ollama's qwen.go: our entry first in `modelProviders.openai`, the
+  // person's other entries kept after it, the OpenAI auth type selected.
+  const baseUrl = `${input.baseUrl}/v1`;
+  const ours = { id: input.model, name: `${input.model} (Atomic Agent)`, baseUrl, envKey: LAUNCH_TOKEN_ENV };
+  const isOurs = (entry: unknown): boolean => (entry as { envKey?: unknown } | null)?.envKey === LAUNCH_TOKEN_ENV;
+  return {
+    kind: "json",
+    file: qwenSettingsPath(input.home),
+    edits: [
+      {
+        path: ["modelProviders", "openai"],
+        value: [ours],
+        merge: (current) => [ours, ...(Array.isArray(current) ? current.filter((entry) => !isOurs(entry)) : [])],
+      },
+      { path: ["security", "auth", "selectedType"], value: "openai" },
+      { path: ["security", "auth", "baseUrl"], value: baseUrl },
+      { path: ["model", "name"], value: input.model },
+    ],
+    note: exportNote("Qwen Code", input.keyCommand),
+  };
+}
+
 const SPECS: Readonly<Record<string, (input: PersistInput) => PersistSpec>> = {
   claude: claudeSpec,
   codex: codexSpec,
   opencode: openCodeSpec,
+  qwen: qwenSpec,
 };
 
 /** The persistent setting for an integration, or null when it has none. */
