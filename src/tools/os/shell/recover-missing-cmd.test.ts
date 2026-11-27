@@ -5,7 +5,9 @@ import { compressToolResult, fullToolResult } from "../../../compressor/result-c
 import type { ToolContext } from "../../tool-registry.js";
 import {
   looksLikeScriptCode,
+  looksPosixOnly,
   markRecoveredResult,
+  missingCmdNotice,
   recoverMissingShellCmd,
 } from "./recover-missing-cmd.js";
 import { buildOsShellTool } from "./shell.js";
@@ -87,8 +89,44 @@ describe("recoverMissingShellCmd (#901)", () => {
     }
   });
 
-  it("does not read a `-c` tail on Windows, where it was written for sh", () => {
-    expect(recoverMissingShellCmd({ args: ["-c", "ls -la"] }, "win32")).toBeNull();
+  it("reads a plain `-c` tail on Windows, where it runs under cmd.exe /c", () => {
+    for (const line of ["git status", "hostname", "pytest -q", "a && b", "git log -1 | more"]) {
+      expect(looksPosixOnly(line)).toBe(false);
+      expect(
+        recoverMissingShellCmd({ args: ["-c", line], timeoutMs: 60_000 }, "win32"),
+      ).toEqual({ cmd: line, args: [], shellLine: true });
+    }
+  });
+
+  it("refuses a `-c` tail on Windows that only a POSIX shell reads as meant", () => {
+    for (const line of [
+      "echo 'x'",
+      "ls $HOME",
+      "echo $(pwd)",
+      "echo `date`",
+      "cat x 2>/dev/null",
+      "export A=1",
+      "make && export A=1",
+      "cd ~/src",
+      "ls my\\ dir",
+      "cd src; ls",
+    ]) {
+      expect(looksPosixOnly(line)).toBe(true);
+      expect(recoverMissingShellCmd({ args: ["-c", line] }, "win32")).toBeNull();
+    }
+    expect(recoverMissingShellCmd({ args: ["-c", "print('x')"] }, "win32")).toBeNull();
+  });
+
+  it("keeps reading the same `-c` tails on Linux and macOS as before", () => {
+    for (const line of ["echo 'x'", "ls $HOME", "cat x 2>/dev/null", "export A=1", "git status"]) {
+      for (const platform of ["linux", "darwin"] as const) {
+        expect(recoverMissingShellCmd({ args: ["-c", line] }, platform)).toEqual({
+          cmd: line,
+          args: [],
+          shellLine: true,
+        });
+      }
+    }
   });
 
   it("treats a leading `/x` switch as ambiguous on Windows only", () => {
@@ -123,6 +161,37 @@ function approvingTool() {
   return buildOsShellTool({ approvals: gate, approvalRequired: true });
 }
 
+describe("missingCmdNotice (#901)", () => {
+  const line = (cmd: string) => ({ cmd, args: [], shellLine: true });
+
+  it("names the shell the `-c` line went to on each OS", () => {
+    expect(missingCmdNotice(line("git status"), true, "linux")).toContain(
+      'ran the `-c` line as a shell command line (sh -c): "git status"',
+    );
+    expect(missingCmdNotice(line("git status"), true, "darwin")).toContain("(sh -c)");
+    const win = missingCmdNotice(line("git status"), true, "win32");
+    expect(win).toContain('ran the `-c` line as a shell command line (cmd.exe /c): "git status"');
+    expect(win).not.toContain("sh -c");
+  });
+
+  it("says a `-c` line that needed no shell ran directly", () => {
+    for (const platform of ["linux", "win32"] as const) {
+      const ran = missingCmdNotice(line("hostname"), true, platform);
+      expect(ran).toContain('ran it directly (no shell needed): "hostname"');
+      expect(ran).not.toMatch(/sh -c|cmd\.exe/);
+      expect(missingCmdNotice(line("hostname"), false, platform)).toContain(
+        'read the `-c` line as one program to run directly (no shell needed): "hostname"',
+      );
+    }
+  });
+
+  it("keeps the argv wording for a program named as the first arg", () => {
+    expect(
+      missingCmdNotice({ cmd: "git", args: ["status"], shellLine: false }, true, "win32"),
+    ).toContain('ran it as {"cmd":"git","args":["status"]}');
+  });
+});
+
 describe("markRecoveredResult (#901)", () => {
   it("marks a compressed result without redefining its fixed fullOutput", () => {
     const compressed = compressToolResult({
@@ -139,6 +208,22 @@ describe("markRecoveredResult (#901)", () => {
     expect(full.summary.startsWith("line one\nline two\n")).toBe(true);
     expect(full.summary).toContain("the call had no `cmd`");
     expect(compressed.details.recoveredMissingCmd).toBeUndefined();
+  });
+
+  it("uses the platform it is given for the notice", () => {
+    const compressed = compressToolResult({
+      tool: "os.shell.run",
+      status: "ok",
+      output: "ok",
+      details: { exitCode: 0 },
+    });
+    const marked = markRecoveredResult(
+      compressed,
+      { cmd: "git status", args: [], shellLine: true },
+      "win32",
+    );
+    expect(marked.summary).toContain("(cmd.exe /c)");
+    expect(fullToolResult(marked).summary).toContain("(cmd.exe /c)");
   });
 });
 
@@ -164,17 +249,13 @@ describe("a recovered call still goes through the guard and approval (#901)", ()
     expect(requests[0]!.reason).toContain("reconstructed from args");
   });
 
-  it("blocks a recovered `-c` line the guard blocks (refused outright on Windows)", async () => {
+  it("blocks a recovered `-c` line the guard blocks", async () => {
     const tool = buildOsShellTool({
       approvals: new ApprovalGate({ emit: () => undefined }),
       approvalRequired: true,
       shellPolicy: { isGitRemoteSyncEnabled: () => false },
     });
     const call = { args: ["-c", "git fetch --all && git pull"] };
-    if (process.platform === "win32") {
-      await expect(tool.run(call, ctx())).rejects.toThrow(/`cmd` must be a non-empty string/);
-      return;
-    }
     const result = await tool.run(call, ctx());
     expect(result.status).toBe("error");
     expect(result.details.guardRule).toBe("policy.git_remote_sync_off");

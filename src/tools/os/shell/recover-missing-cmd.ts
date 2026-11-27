@@ -1,5 +1,5 @@
 import type { CompressedToolResult } from "../../../compressor/result-compressor.js";
-import { coerceShellArgs } from "./shell-interpretation.js";
+import { coerceShellArgs, needsShellInterpretation } from "./shell-interpretation.js";
 
 /** A command-form call whose `cmd` was read back from its `args`. */
 export interface RecoveredShellCmd {
@@ -24,6 +24,20 @@ export function looksLikeScriptCode(line: string): boolean {
 }
 
 /**
+ * Constructs that only a POSIX shell reads the way the model meant:
+ * single quotes, `$` expansion (`$HOME`, `$(...)`), backticks, `~`,
+ * `/dev/null`, `export`, a backslash-escaped space, and `;` as a command
+ * separator (cmd.exe treats `;` as an argument delimiter, so `a; b`
+ * would run `a` with `b` as its argument). A line free of these means
+ * the same under `cmd.exe /c`: plain words, double quotes, `&&`, `|`.
+ */
+const POSIX_ONLY_RE = /['$`~;]|\/dev\/null|(?:^|[&|(]\s*)export\s|\\ /;
+
+export function looksPosixOnly(line: string): boolean {
+  return POSIX_ONLY_RE.test(line);
+}
+
+/**
  * The `cmd` a command-form call left out, read back from its `args`,
  * or `null` when the call cannot be read without guessing.
  *
@@ -38,9 +52,11 @@ export function looksLikeScriptCode(line: string): boolean {
  * Two shapes say what they mean:
  *  - `["-c", line]`: a shell tail. The line becomes `cmd`, which runs
  *    through the OS subshell as written (the documented full-command-line
- *    form), so the guard sees the real binaries. Not on Windows, where
- *    the line was written for `sh` and `cmd.exe` quotes differently, and
- *    not when the line reads as Python / Node code.
+ *    form), so the guard sees the real binaries. Not when the line reads
+ *    as Python / Node code. On Windows the line was written for `sh` and
+ *    runs under `cmd.exe /c`, so it is read only when it uses nothing a
+ *    POSIX shell reads differently (`looksPosixOnly`): `git status`,
+ *    `hostname`, `a && b`, `a | b` mean the same in both.
  *  - `[program, ...rest]` with a program that is not a flag (`-x`, or
  *    `/x` on Windows): the first token is the program.
  * Anything else is left alone and still refused.
@@ -61,10 +77,10 @@ export function recoverMissingShellCmd(
   const first = tokens[0]!.trim();
   if (first.length === 0) return null;
   if (first === "-c") {
-    if (platform === "win32") return null;
     const line = tokens[1]?.trim() ?? "";
     if (tokens.length !== 2 || line.length === 0) return null;
     if (looksLikeScriptCode(line)) return null;
+    if (platform === "win32" && looksPosixOnly(line)) return null;
     return { cmd: line, args: [], shellLine: true };
   }
   if (first.startsWith("-")) return null;
@@ -77,13 +93,26 @@ export function recoverMissingShellCmd(
  * the tail of a long output, so a line above it would be cut), so the
  * model sends `cmd` next time instead of relying on the recovery.
  * `ran` is false for a call the guard blocked or that failed before it
- * started: then the notice only says how the call was read.
+ * started: then the notice only says how the call was read. A `-c` line
+ * names the shell it went to (`cmd.exe /c` on Windows, `sh -c`
+ * elsewhere), or says it ran directly when it needed no shell at all
+ * (`hostname`), the same decision `os.shell.run` makes before spawning.
  */
-export function missingCmdNotice(recovered: RecoveredShellCmd, ran: boolean): string {
+export function missingCmdNotice(
+  recovered: RecoveredShellCmd,
+  ran: boolean,
+  platform: NodeJS.Platform = process.platform,
+): string {
   const verb = ran ? "ran" : "read";
-  const how = recovered.shellLine
-    ? `${verb} the \`-c\` line as a shell command line (sh -c): ${JSON.stringify(recovered.cmd)}`
-    : `${verb} it as ${JSON.stringify({ cmd: recovered.cmd, args: recovered.args })}`;
+  const line = JSON.stringify(recovered.cmd);
+  const shell = platform === "win32" ? "cmd.exe /c" : "sh -c";
+  const how = !recovered.shellLine
+    ? `${verb} it as ${JSON.stringify({ cmd: recovered.cmd, args: recovered.args })}`
+    : needsShellInterpretation(recovered.cmd, recovered.args, platform)
+      ? `${verb} the \`-c\` line as a shell command line (${shell}): ${line}`
+      : ran
+        ? `read the \`-c\` line as one program and ran it directly (no shell needed): ${line}`
+        : `read the \`-c\` line as one program to run directly (no shell needed): ${line}`;
   return `os.shell.run: the call had no \`cmd\`; reconstructed from args and ${how}. Next time put the program in \`cmd\` and its arguments in \`args\`.`;
 }
 
@@ -97,9 +126,10 @@ export function missingCmdNotice(recovered: RecoveredShellCmd, ran: boolean): st
 export function markRecoveredResult(
   result: CompressedToolResult,
   recovered: RecoveredShellCmd,
+  platform: NodeJS.Platform = process.platform,
 ): CompressedToolResult {
   const ran = "exitCode" in result.details || result.details.detached === true;
-  const notice = missingCmdNotice(recovered, ran);
+  const notice = missingCmdNotice(recovered, ran, platform);
   // compressToolResult defines fullOutput as a fixed property, so build a
   // fresh result (the spread drops the non-enumerable fields) and define them
   // again, the same way retainToolOutput does.
