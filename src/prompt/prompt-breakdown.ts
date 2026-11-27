@@ -125,8 +125,10 @@ function groupToolEntries(text: string): MeasuredText[] {
     }
     current.push(line);
   }
+  const builtinText = builtin.join("\n");
   return [
-    { label: BUILTIN_TOOLS_PART, text: builtin.join("\n") },
+    // Blank separator lines alone are catalog chrome, not a built-in part.
+    { label: BUILTIN_TOOLS_PART, text: builtinText.trim() === "" ? "" : builtinText },
     ...[...servers].map(([server, lines]) => ({
       label: `mcp ${server}`,
       text: lines.join("\n"),
