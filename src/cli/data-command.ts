@@ -48,6 +48,23 @@ function movedModelsDir(stateDir: string): string | null {
   }
 }
 
+/**
+ * `localModels.managed.dataDirOverride`, when set. A backup puts moved
+ * models in the default models folder under the state dir, and a restore
+ * drops `modelsDirOverride` to point there; with a data dir of its own the
+ * restored config would look in `<dataDirOverride>/models` instead and
+ * find nothing, so that case is refused (ATO-2503).
+ */
+function customDataDir(stateDir: string): string | null {
+  try {
+    const tree = readRawConfigTree(join(stateDir, "config.json")) as { localModels?: { managed?: { dataDirOverride?: unknown } } };
+    const value = tree.localModels?.managed?.dataDirOverride;
+    return typeof value === "string" && value.trim() !== "" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 /** A restored backup that carries moved models in the default folder: drop the pointer to the old folder. */
 function pointRestoredConfigAtDefaultModels(dir: string): void {
   const file = join(dir, "config.json");
@@ -106,6 +123,13 @@ export async function dataCommand(args: string[], deps: DataCommandDeps = {}): P
     const modelsDir = withModels ? movedModelsDir(real) : null;
     if (modelsDir && !existsSync(modelsDir)) {
       write(`the models folder ${modelsDir} is not there (is its disk connected?); connect it, or back up without --with-models\n`);
+      return 1;
+    }
+    if (modelsDir && customDataDir(real) !== null) {
+      write(
+        `the models were moved to ${modelsDir} and localModels.managed.dataDirOverride is set, so a restore could not put them where the config looks; ` +
+          "back up without --with-models (the restored config keeps pointing at the moved folder), or copy that folder yourself\n",
+      );
       return 1;
     }
     const r = await backupStateDir(real, file, { withModels, modelsDir, appVersion: getAppVersion(), now });

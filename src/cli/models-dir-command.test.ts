@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { PassThrough } from "node:stream";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -130,6 +131,49 @@ describe("models dir (ATO-2106)", () => {
     expect(existsSync(getConfig().paths.userConfigFile) ? configTree().localModels?.managed?.modelsDirOverride : undefined).toBeUndefined();
   });
 
+  it("--stop-on-stdin: a \"stop\" line stops the move and puts every model back (ATO-2503)", async () => {
+    const external = join(stateDir, "external-disk");
+    const input = new PassThrough();
+    const code = await runModelsDir([external, "--stop-on-stdin"], {
+      ...deps(),
+      stopInput: input,
+      busyReason: async () => {
+        input.write("stop\n");
+        await new Promise((r) => setTimeout(r, 20));
+        return null;
+      },
+    });
+    expect(code).toBe(1);
+    expect(err.join("")).toContain("the move was stopped");
+    expect(readFileSync(join(getConfig().paths.localModelsDataDir, "models", "qwen-3.5-4b", "q.gguf"), "utf8")).toBe("weights");
+    expect(existsSync(join(external, "qwen-3.5-4b"))).toBe(false);
+    expect(existsSync(getConfig().paths.userConfigFile) ? configTree().localModels?.managed?.modelsDirOverride : undefined).toBeUndefined();
+  });
+
+  it("--stop-on-stdin: stdin closing (the app quit) stops the move too (ATO-2503)", async () => {
+    const external = join(stateDir, "external-disk");
+    const input = new PassThrough();
+    const code = await runModelsDir([external, "--stop-on-stdin"], {
+      ...deps(),
+      stopInput: input,
+      busyReason: async () => {
+        input.end();
+        await new Promise((r) => setTimeout(r, 20));
+        return null;
+      },
+    });
+    expect(code).toBe(1);
+    expect(err.join("")).toContain("the move was stopped");
+  });
+
+  it("without --stop-on-stdin a \"stop\" line is ignored", async () => {
+    const external = join(stateDir, "external-disk");
+    const input = new PassThrough();
+    input.write("stop\n");
+    expect(await runModelsDir([external], { ...deps(), stopInput: input })).toBe(0);
+    expect(existsSync(join(external, "qwen-3.5-4b", "q.gguf"))).toBe(true);
+  });
+
   describe("a models folder whose disk is not connected (ATO-2503)", () => {
     let unplugged: string;
     beforeEach(() => {
@@ -161,6 +205,19 @@ describe("models dir (ATO-2106)", () => {
       expect(out.join("")).toContain(`the models on ${unplugged} stay there`);
       expect(configTree().localModels?.managed?.modelsDirOverride).toBeUndefined();
     });
+  });
+
+  it("--json says custom from the same fresh read as dir, not the cached config (ATO-2503)", async () => {
+    getConfig();
+    const moved = join(stateDir, "Volumes", "USB", "models");
+    mkdirSync(moved, { recursive: true });
+    const file = getConfig().paths.userConfigFile;
+    // Another process (the desktop) moved the folder; this one never reset its config cache.
+    writeFileSync(file, JSON.stringify({ version: USER_CONFIG_VERSION, localModels: { managed: { modelsDirOverride: moved } } }));
+    const later = new Date(Date.now() + 5_000);
+    utimesSync(file, later, later);
+    expect(await runModelsDir(["--json"], deps())).toBe(0);
+    expect(JSON.parse(out.join(""))).toMatchObject({ dir: moved, custom: true });
   });
 
   it("rejects a folder and --reset together", async () => {

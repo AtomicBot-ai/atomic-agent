@@ -13,6 +13,7 @@ import {
   chatStartPending,
   getDaemonStatus,
   getEmbeddingDaemonStatus,
+  getModelsDirOverride,
   isDownloadJobLive,
   listDownloadJobs,
   modelsDirUnreachableMessage,
@@ -31,7 +32,8 @@ import {
  * check to the config write, so no model start or download slips in
  * between (models-dir-move-lock.ts). A copy across disks prints
  * `copied <done> of <total> bytes (<model>)` lines; Ctrl+C or SIGTERM
- * stops it and puts every model back. A models folder whose disk is not
+ * stops it and puts every model back, and so does a "stop" line on stdin
+ * with `--stop-on-stdin` (the desktop's Cancel, which works on Windows). A models folder whose disk is not
  * connected is said as such, never moved from (there is nothing to move),
  * and `--reset` then only points back at the default folder.
  */
@@ -45,6 +47,8 @@ export interface ModelsDirDeps {
   busyReason?: (dataDir: string) => Promise<string | null>;
   /** Test seam: stops the move as Ctrl+C would. Without it SIGINT and SIGTERM do. */
   signal?: AbortSignal;
+  /** Test seam for `--stop-on-stdin`: the stream read for "stop" (default process.stdin). */
+  stopInput?: NodeJS.ReadableStream;
 }
 
 /** `~` is the home directory; a relative path is taken from the current one. */
@@ -82,6 +86,30 @@ function abortOnSignals(controller: AbortController): () => void {
   };
 }
 
+/**
+ * `--stop-on-stdin` (the desktop passes it): a "stop" line on stdin, or
+ * stdin closing (the app quit), stops the move like Ctrl+C, so the
+ * rollback runs. A signal cannot do that on Windows, where SIGTERM ends
+ * the process at once. The undo stops reading.
+ */
+function abortOnStdinStop(controller: AbortController, input: NodeJS.ReadableStream): () => void {
+  let seen = "";
+  const onData = (chunk: Buffer | string): void => {
+    seen = (seen + chunk.toString()).slice(-64);
+    if (/(^|\n)stop\r?(\n|$)/.test(seen)) controller.abort();
+  };
+  const onEnd = (): void => controller.abort();
+  input.on("data", onData);
+  input.on("end", onEnd);
+  input.resume();
+  return () => {
+    input.off("data", onData);
+    input.off("end", onEnd);
+    input.pause();
+    if (input === process.stdin) process.stdin.destroy();
+  };
+}
+
 function saveOverride(configPath: string, dir: string | null): void {
   const tree = readRawConfigTree(configPath);
   if (dir === null) deleteConfigPath(tree, MODELS_DIR_KEY);
@@ -96,6 +124,7 @@ export async function runModelsDir(args: readonly string[], deps: ModelsDirDeps 
   const write = deps.write ?? ((t: string) => void process.stdout.write(t));
   const writeErr = deps.writeErr ?? ((t: string) => void process.stderr.write(t));
   const json = args.includes("--json");
+  const stopOnStdin = args.includes("--stop-on-stdin");
   const reset = args.includes("--reset");
   const positional = args.filter((a) => !a.startsWith("--"));
 
@@ -106,7 +135,9 @@ export async function runModelsDir(args: readonly string[], deps: ModelsDirDeps 
 
   const unreachable = unreachableModelsDir();
   if (!reset && positional.length === 0) {
-    const custom = cfg.localModels.managed.modelsDirOverride !== undefined;
+    // Same source as `current`: config.json re-read on change, not the cached
+    // config, so a long-lived TUI never says "default" next to a moved folder.
+    const custom = getModelsDirOverride() !== null;
     const reachable = unreachable === null;
     write(json ? `${JSON.stringify({ dir: current, defaultDir, custom, reachable })}\n` : `${current}\n`);
     if (!json && !reachable) writeErr(`models dir: ${modelsDirUnreachableMessage(current)}\n`);
@@ -135,8 +166,13 @@ export async function runModelsDir(args: readonly string[], deps: ModelsDirDeps 
     return 1;
   }
   const controller = new AbortController();
-  const stopListening = deps.signal ? () => {} : abortOnSignals(controller);
-  const signal = deps.signal ?? controller.signal;
+  const stopSignals = deps.signal ? () => {} : abortOnSignals(controller);
+  const stopStdin = stopOnStdin ? abortOnStdinStop(controller, deps.stopInput ?? process.stdin) : () => {};
+  const stopListening = (): void => {
+    stopSignals();
+    stopStdin();
+  };
+  const signal = deps.signal ? AbortSignal.any([deps.signal, controller.signal]) : controller.signal;
   try {
     // Checked while holding the marker: a start or a download that begins
     // after this line meets the marker and refuses.
