@@ -61,6 +61,24 @@ export function addDiffStat(
   return out;
 }
 
+/**
+ * A file list read back from a run checkpoint (ATO-1756): entries that
+ * are not a path with two counts are dropped; anything but an array,
+ * as in a checkpoint written before the field existed, is no files.
+ */
+export function readDiffStats(raw: unknown): FileDiffStat[] {
+  if (!Array.isArray(raw)) return [];
+  let out: FileDiffStat[] = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) continue;
+    const { path, added, removed } = item as Record<string, unknown>;
+    if (typeof path !== "string" || path.length === 0) continue;
+    if (!count(added) || !count(removed)) continue;
+    out = addDiffStat(out, { path, added, removed });
+  }
+  return out;
+}
+
 /** Every worker's files on one list: one row per path, counts summed. */
 export function sumDiffStats(
   rows: readonly { diffstats?: readonly FileDiffStat[] }[],
