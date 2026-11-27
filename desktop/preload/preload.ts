@@ -716,6 +716,11 @@ contextBridge.exposeInMainWorld("atomic", {
   meetingRecoverable: () => ipcRenderer.invoke("meeting:recoverable"),
   meetingReveal: (path: string) => ipcRenderer.invoke("meeting:reveal", path),
   onMeeting: (cb: (payload: unknown) => void) => on("app:meeting", cb),
+  /** ATO-2534: the logbook's ● chip (main/logbook-ipc.ts). `logbookChipVisible` is a send, repeated every 15 s. */
+  logbookStatus: () => ipcRenderer.invoke("logbook:status"),
+  logbookAct: (action: "pause" | "resume" | "stop", minutes?: number) => ipcRenderer.invoke("logbook:act", action, minutes),
+  logbookChipVisible: (visible: boolean) => ipcRenderer.send("logbook:chipVisible", visible),
+  onLogbook: (cb: (payload: unknown) => void) => on("app:logbook", cb),
   /** ATO-1167: the neural reading voice through Atomic Core (main/core-speech.ts). */
   ttsCoreStatus: (model: string) => ipcRenderer.invoke("tts:coreStatus", model),
   ttsCorePrepare: (model: string) => ipcRenderer.invoke("tts:corePrepare", model),
