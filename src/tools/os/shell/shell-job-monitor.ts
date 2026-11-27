@@ -1,5 +1,6 @@
 import type { CommandJob } from "../../../sandbox/command-job.js";
 import { formatExitStatus } from "./shell-result.js";
+import { hideTypedSecretsText } from "./shell-job-secret.js";
 import { JobLineWatch, type WatchedLine } from "./shell-job-watch.js";
 import type { MonitorWake } from "./shell-monitor-wake.js";
 
@@ -196,7 +197,9 @@ export class JobMonitor {
       );
       const shown = this.held.slice(-MONITOR_LINES_SHOWN);
       for (const line of shown) {
-        const text = line.text.length > MONITOR_LINE_CHARS ? `${line.text.slice(0, MONITOR_LINE_CHARS)}…` : line.text;
+        // A value typed into a job (ATO-2486) is hidden before the cut, so a cut leaves no piece of it.
+        const raw = hideTypedSecretsText(this.options.sessionId, line.text);
+        const text = raw.length > MONITOR_LINE_CHARS ? `${raw.slice(0, MONITOR_LINE_CHARS)}…` : raw;
         lines.push(line.stream === "stderr" ? `[stderr] ${text}` : text);
       }
       const notShown = count - shown.length;
@@ -216,6 +219,6 @@ export class JobMonitor {
     } else {
       lines.push(`The job is still running. {"monitor": ${jobId}} turns the monitor off; {"kill": ${jobId}} stops the job.`);
     }
-    return lines.join("\n");
+    return hideTypedSecretsText(this.options.sessionId, lines.join("\n"));
   }
 }

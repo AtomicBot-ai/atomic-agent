@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { tmpdir } from "node:os";
 
 import { startCommandJob, type CommandJob } from "../../../sandbox/command-job.js";
-import { JobMonitor, type JobMonitorOptions } from "./shell-job-monitor.js";
+import { JobMonitor, MONITOR_LINE_CHARS, type JobMonitorOptions } from "./shell-job-monitor.js";
+import { rememberTypedSecret, resetTypedSecrets } from "./shell-job-secret.js";
 import type { MonitorWake } from "./shell-monitor-wake.js";
 
 /**
@@ -60,6 +61,19 @@ describe.skipIf(process.platform === "win32")("JobMonitor (ATO-2436)", () => {
   afterEach(() => {
     for (const m of monitors.splice(0)) m.close();
     for (const job of started.splice(0)) job.kill();
+    resetTypedSecrets();
+  });
+
+  it("hides a value the user typed into a job, also across the line cut (ATO-2486, #2040 x #2107)", async () => {
+    rememberTypedSecret("s-monitor", "letmein");
+    const long = `${"x".repeat(MONITOR_LINE_CHARS - 5)}letmein`;
+    const job = run(`sleep 0.2; echo 'token letmein'; echo '${long}'; sleep 30`);
+    const { wakes } = monitor(job, "letmein");
+    await until(() => wakes.length === 1);
+    const text = wakes[0]!.text;
+    expect(text).toContain("[secret hidden]");
+    expect(text).not.toContain("letmein");
+    expect(text).not.toContain("letme");
   });
 
   it("delivers a line printed after it started, not one printed before", async () => {
