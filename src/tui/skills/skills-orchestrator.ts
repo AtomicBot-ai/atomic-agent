@@ -30,7 +30,7 @@ import {
 import { listPluginCommands, renderPluginCommand } from "../../plugins/plugin-commands.js";
 import { listUserCommands, renderUserCommand, type UserCommandOptions } from "../../plugins/user-commands.js";
 import { userCommandWarnings, type UserCommandWarning } from "./user-command-warnings.js";
-import { isProjectFolderTrusted } from "../../skills/project-trust.js";
+import { createProjectCommandTrust } from "../../skills/project-trust.js";
 import { expandFileMentions } from "../../mentions/expand-file-mentions.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TuiEventBus } from "../tui-app.js";
@@ -145,12 +145,12 @@ export class SkillsOrchestrator {
     return text;
   }
 
-  /** Project commands load only in a folder the operator trusts, read live. */
+  /** Project commands load one by one, each once its exact text was trusted (ATO-2531), read live. */
   private userCommandOptions(): UserCommandOptions {
     const workingDir = this.currentSession()?.workingDir ?? this.runtime.capabilities.workingDir;
     const { paths, skills } = this.runtime.config;
     return { stateDir: paths.stateDir, workingDir,
-      projectTrusted: isProjectFolderTrusted(paths.userConfigFile, skills.projectTrust, workingDir) };
+      isProjectCommandTrusted: createProjectCommandTrust(paths.userConfigFile, skills.projectTrust, workingDir) };
   }
 
   /**

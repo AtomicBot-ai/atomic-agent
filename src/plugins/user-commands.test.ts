@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { listUserCommands, renderUserCommand, userCommandDirs, type UserCommandOptions } from "./user-commands.js";
+import { listProjectCommandTrustKeys, listUserCommands, renderUserCommand, userCommandDirs, type UserCommandOptions } from "./user-commands.js";
+import { projectCommandKey } from "./project-command-trust.js";
 
 let root: string;
 let opts: UserCommandOptions;
@@ -14,7 +15,7 @@ function put(path: string, content: string): void {
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "user-commands-"));
-  opts = { stateDir: join(root, "state"), workingDir: join(root, "work"), projectTrusted: true };
+  opts = { stateDir: join(root, "state"), workingDir: join(root, "work"), isProjectCommandTrusted: () => true };
   mkdirSync(opts.workingDir, { recursive: true });
 });
 
@@ -34,12 +35,44 @@ describe("listUserCommands", () => {
     ]);
   });
 
-  it("hides project commands while the folder is not trusted", () => {
+  it("hides project commands that were not trusted", () => {
     put(join(opts.stateDir, "commands", "commit.md"), "Commit\n");
     put(join(opts.workingDir, ".atomic-agent", "commands", "review.md"), "Review\n");
-    const names = listUserCommands({ ...opts, projectTrusted: false }).commands.map(c => c.name);
-    expect(names).toEqual(["commit"]);
-    expect(renderUserCommand({ ...opts, projectTrusted: false }, "review", "")).toBeNull();
+    const none = { ...opts, isProjectCommandTrusted: () => false };
+    expect(listUserCommands(none).commands.map(c => c.name)).toEqual(["commit"]);
+    expect(renderUserCommand(none, "review", "")).toBeNull();
+  });
+
+  /* ATO-2531: trust is per command file and per text, not for the whole folder. */
+  it("loads only the project commands whose exact text was trusted", () => {
+    const review = join(opts.workingDir, ".atomic-agent", "commands", "review.md");
+    put(review, "Review\n");
+    put(join(opts.workingDir, ".claude", "commands", "deploy.md"), "Deploy to prod\n");
+    const trusted = new Set([projectCommandKey(opts.workingDir, review, "Review\n")]);
+    const some = { ...opts, isProjectCommandTrusted: (key: string) => trusted.has(key) };
+    expect(listUserCommands(some).commands.map(c => c.name)).toEqual(["review"]);
+    expect(renderUserCommand(some, "deploy", "")).toBeNull();
+    expect(renderUserCommand(some, "review", "")).toBe("Review");
+    // Edited after the answer: hidden until asked again.
+    put(review, "Review and push to main\n");
+    expect(listUserCommands(some).commands).toEqual([]);
+    expect(renderUserCommand(some, "review", "")).toBeNull();
+  });
+
+  it("lets a profile command keep its name when the project one is not trusted", () => {
+    put(join(opts.stateDir, "commands", "review.md"), "Profile review\n");
+    put(join(opts.workingDir, ".atomic-agent", "commands", "review.md"), "Project review\n");
+    const none = { ...opts, isProjectCommandTrusted: () => false };
+    expect(renderUserCommand(none, "review", "")).toBe("Profile review");
+  });
+
+  it("lists every project command file as a trust key, with forward slashes", () => {
+    put(join(opts.workingDir, ".atomic-agent", "commands", "team", "review.md"), "Review\n");
+    put(join(opts.workingDir, ".claude", "commands", "review.md"), "Other review\n");
+    put(join(opts.stateDir, "commands", "commit.md"), "Commit\n");
+    const keys = listProjectCommandTrustKeys(opts.workingDir, opts.stateDir);
+    expect(keys.map(k => k.replace(/#[0-9a-f]{16}$/, ""))).toEqual([".atomic-agent/commands/team/review.md", ".claude/commands/review.md"]);
+    expect(keys.every(k => /#[0-9a-f]{16}$/.test(k))).toBe(true);
   });
 
   it("lets a project command win over a profile command with the same name", () => {
