@@ -50,9 +50,11 @@ export function captureError(
   // reports, because there it may well be a bug in ours.
   if (isGlobalSource(opts.source) && isBrokenPipeError(err)) return;
   // Same for a socket to this machine reset or closed under a request:
-  // a local model server restarting (ATO-1735). Global sources only,
-  // and only a proven loopback peer; a tool's own reset still reports.
-  if (isGlobalSource(opts.source) && isLoopbackPeerGone(err)) return;
+  // a local model server restarting (ATO-1735). Only an unhandled
+  // rejection, which is non-fatal: an uncaught one ends the process,
+  // so it still reports. Only a proven loopback peer; a tool's own
+  // reset still reports.
+  if (opts.source === "unhandledRejection" && isLoopbackPeerGone(err)) return;
   // Atomic Chat not being open is not a defect: the operator was told in
   // plain words to open it (ATO-1278). Matched by name, so this module
   // takes no import from the LLM layer.

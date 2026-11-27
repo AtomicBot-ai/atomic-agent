@@ -91,11 +91,22 @@ describe("captureError", () => {
       address: "127.0.0.1",
     });
 
-  it("drops a process-global reset from a loopback peer", () => {
+  it("drops an unhandled rejection that is a loopback reset", () => {
     const { client, captured } = fakeClient();
-    captureError(client, loopbackReset(), { source: "uncaughtException" });
     captureError(client, loopbackReset(), { source: "unhandledRejection" });
     expect(captured).toHaveLength(0);
+  });
+
+  // An uncaught one takes the fatal exit: the crash must stay visible.
+  it("still reports an uncaught loopback reset, with the socket tags", () => {
+    const { client, captured } = fakeClient();
+    captureError(client, loopbackReset(), { source: "uncaughtException" });
+    expect(captured).toHaveLength(1);
+    expect(captured[0].socketTags).toEqual({
+      socket_error_code: "ECONNRESET",
+      socket_peer: "loopback",
+      undici_frame: "no",
+    });
   });
 
   it("still reports a loopback reset raised by a tool", () => {
