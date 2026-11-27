@@ -26,3 +26,7 @@
 .aj-err{flex:none;padding:0 12px 6px;font-size:var(--fs-cap);color:var(--critical)}
 .aj-err:empty{display:none}
 @media (max-width:820px){.aj-panel{height:200px}}
+/* ATO-2486: the line over the field while it answers the agent's request for a job's password, and that card's prompt line. */
+.aj-ask{flex:none;padding:0 12px 4px;font-size:var(--fs-cap);color:var(--amber-text)}
+.aj-ask[hidden]{display:none}
+.ss-prompt{margin-top:4px;font-size:var(--fs-cap);color:var(--ink-2);white-space:pre-wrap;word-break:break-word}

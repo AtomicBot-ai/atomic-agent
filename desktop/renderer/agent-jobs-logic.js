@@ -35,8 +35,12 @@ function ajScreenText(raw) {
     // A bare carriage return goes back to the line start: what follows overwrites it.
     let out = '';
     for (const part of line.split('\r')) out = part.length >= out.length ? part : part + out.slice(part.length);
-    // A backspace removes the character before it.
-    while (out.indexOf('\b') >= 0) out = out.replace(/[^\b]?\u0008/, '');
+    // A backspace removes the character before it (one pass: a spinner line can hold thousands).
+    if (out.indexOf('\b') >= 0) {
+      const kept = [];
+      for (const c of out) { if (c === '\b') kept.pop(); else kept.push(c); }
+      out = kept.join('');
+    }
     return out.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
   });
   return lines.slice(-AJ_MAX_LINES).join('\n');
@@ -117,6 +121,37 @@ function ajFitSize(width, height, charW, lineH) {
   return {cols: clamp(Math.floor(width / charW), 20, 500), rows: clamp(Math.floor(height / lineH), 5, 200)};
 }
 
+/** Is `el` a field the person types into (the chat composer, a search box)? Then a prompt does not take the caret. */
+function ajIsTextField(el) {
+  if (!el || typeof el !== 'object') return false;
+  if (el.isContentEditable) return true;
+  const tag = String(el.tagName || '').toUpperCase();
+  if (tag === 'TEXTAREA') return true;
+  if (tag !== 'INPUT') return false;
+  return !/^(checkbox|radio|button|submit|reset|range|color|file|image)$/i.test(String(el.type || 'text'));
+}
+
+/**
+ * The toast at a password prompt, [title, body]. It promises only what the
+ * agent does (route-shell-jobs.ts): the typing never becomes a chat
+ * message, and with Hide typing on an echo of it is masked for the model
+ * when the value can be masked (8 characters or more, not a plain word).
+ */
+function ajPromptToast(opened) {
+  const where = opened ? 'Type it in the terminal panel.' : 'Click \u201cAgent job needs you\u201d over the chat box to type it.';
+  return ['The agent\u2019s command is asking you', where + ' It goes to the command, not to the chat. '
+    + 'If the command shows it again, the agent sees it hidden, unless it is short or a single plain word.'];
+}
+
+/** After a hidden send, [title, body] when the agent could not mask the value; null when it did. */
+function ajSecretSentNote(data) {
+  if (data && data.masked === true) return null;
+  if (data && data.masked === false) {
+    return ['Not hidden from the agent', 'That answer is short or a plain word, so if the command prints it back the agent can see it.'];
+  }
+  return ['Not hidden from the agent', 'This version of the agent can\u2019t hide it if the command prints it back. Update Atomic Agent.'];
+}
+
 /** What Send puts on the job's input: the text, then Enter. */
 function ajInputText(text, enter) {
   return String(text == null ? '' : text) + (enter === false ? '' : '\n');
@@ -124,5 +159,5 @@ function ajInputText(text, enter) {
 
 if (typeof module !== 'undefined') {
   module.exports = {AJ_MAX_LINES, AJ_MAX_RAW, ajEsc, ajScreenText, ajAppendRaw, ajLooksSecret, ajTabLabel, ajIsLive,
-    ajStateLine, ajMergeJobs, ajJobsFrom, ajChipText, ajInputText, ajFitSize};
+    ajStateLine, ajMergeJobs, ajJobsFrom, ajChipText, ajInputText, ajFitSize, ajIsTextField, ajPromptToast, ajSecretSentNote};
 }

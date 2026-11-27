@@ -5,9 +5,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 
 const {
   AJ_MAX_RAW, ajScreenText, ajAppendRaw, ajLooksSecret, ajTabLabel, ajStateLine, ajMergeJobs, ajJobsFrom, ajChipText, ajInputText, ajFitSize,
+  ajIsTextField, ajPromptToast, ajSecretSentNote,
 } = createRequire(import.meta.url)('../renderer/agent-jobs-logic.js');
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
@@ -98,7 +100,15 @@ test('the panel is wired: its own element, scripts after renderer.js, CSS, prelo
     assert.ok(preload.includes(`"${ch}"`), ch + ' in preload');
     assert.ok(read('../main/agent-jobs-ipc.ts').includes(`"${ch}"`), ch + ' in main');
   }
-  assert.match(read('../main/main.ts'), /wireAgentJobsIpc\(client\)/);
+  assert.match(read('../main/main.ts'), /wireAgentJobsIpc\(client, /);
+  // ATO-2486: the card of a job's password, before renderer.js like the question card.
+  assert.ok(at('src="shell-secret-card.js"') > 0 && at('src="shell-secret-card.js"') < at('src="renderer.js"'));
+  assert.ok(preload.includes('"agentJobs:secret"') && read('../main/agent-jobs-ipc.ts').includes('"agentJobs:secret"'));
+  assert.match(read('../main/agent-client.ts'), /\/api\/shell\/secret/);
+  const renderer = read('../renderer/renderer.js');
+  assert.match(renderer, /payload\.category === 'shell_secret' && typeof ssPrompt === 'function'/);
+  assert.match(renderer, /m\.secret && typeof ssCardHTML === 'function'/);
+  assert.match(renderer, /req\.secret && key !== 'esc' && typeof ssKey === 'function'/);
 });
 
 test('what the person types is never put into the chat', () => {
@@ -106,4 +116,96 @@ test('what the person types is never put into the chat', () => {
   // The panel never touches the transcript or the composer.
   assert.doesNotMatch(panel, /S\.log|S\.history|pushHistory|S\.draft|sendMessage/);
   assert.doesNotMatch(read('../main/agent-jobs-ipc.ts'), /console\.|log\(/);
+});
+
+test('a field the person types into is told from a button or a checkbox', () => {
+  assert.ok(ajIsTextField({tagName: 'TEXTAREA'}));
+  assert.ok(ajIsTextField({tagName: 'INPUT', type: 'text'}));
+  assert.ok(ajIsTextField({tagName: 'DIV', isContentEditable: true}));
+  assert.ok(!ajIsTextField({tagName: 'INPUT', type: 'checkbox'}));
+  assert.ok(!ajIsTextField({tagName: 'BUTTON'}));
+  assert.ok(!ajIsTextField(null));
+});
+
+test('the prompt toast promises only what the agent does', () => {
+  for (const opened of [true, false]) {
+    const [, body] = ajPromptToast(opened);
+    // The review's false promise: "It goes to the command only".
+    assert.doesNotMatch(body, /command only|never sees/i);
+    assert.match(body, /not to the chat/);
+    assert.match(body, /short or a single plain word/);
+  }
+  assert.match(ajPromptToast(false)[1], /Agent job needs you/);
+});
+
+test('after a hidden send the person is told when the agent could not mask it', () => {
+  assert.equal(ajSecretSentNote({written: true, masked: true}), null);
+  assert.match(ajSecretSentNote({written: true, masked: false})[1], /short or a plain word/);
+  // An agent from before `secret` answers without `masked`.
+  assert.match(ajSecretSentNote({written: true})[1], /version of the agent/);
+});
+
+/** agent-jobs.js in a page of its own: fake bridge, host, field and composer. */
+function loadPanel(extra = {}) {
+  const calls = [];
+  const toasts = [];
+  const field = {value: '', type: 'text', focused: 0, focus() { this.focused += 1; }};
+  const host = {hidden: true, innerHTML: '', contains: (el) => el === field, querySelector: (q) => (q === '.aj-input' ? field : null)};
+  const document = {activeElement: null, getElementById: () => host, createElement: () => ({})};
+  const BR = {
+    agentJobsList: () => Promise.resolve({ok: true, data: {jobs: []}}),
+    agentJobInput: (...args) => { calls.push(args); return Promise.resolve({ok: true, data: {written: true, masked: true}}); },
+  };
+  const ctx = vm.createContext({document, BR, toast: (...t) => toasts.push(t), setTimeout: () => 0, clearTimeout: () => undefined, ...extra});
+  vm.runInContext(read('../renderer/agent-jobs-logic.js'), ctx);
+  vm.runInContext(read('../renderer/agent-jobs.js'), ctx);
+  vm.runInContext(`AJ.sid = 's-1'; AJ.selected = 1;
+    AJ.jobs = [{id: 1, commandLine: 'sudo ls', cwd: '/w', state: 'running', interactive: true, resizable: false}];`, ctx);
+  return {ctx, calls, toasts, field, document};
+}
+
+test('Send with Hide typing on marks the text secret, so the agent masks it for the model', async () => {
+  const {ctx, calls, field} = loadPanel();
+  field.value = 'Tr0ub4dor&3';
+  vm.runInContext('AJ.hide = true', ctx);
+  await vm.runInContext('ajSend(false)', ctx);
+  assert.deepEqual(calls, [['s-1', 1, 'Tr0ub4dor&3\n', false, true]]);
+  assert.equal(field.value, '');
+  vm.runInContext('AJ.hide = false', ctx);
+  field.value = 'y';
+  await vm.runInContext('ajSend(false)', ctx);
+  assert.deepEqual(calls[1], ['s-1', 1, 'y\n', false, false]);
+});
+
+test('a password prompt never takes the caret from the composer; the chip asks instead', () => {
+  const {ctx, document, toasts} = loadPanel();
+  document.activeElement = {tagName: 'TEXTAREA'};
+  vm.runInContext(`AJ.raw[1] = '[sudo] password for n: '; AJ.next[1] = 24; ajNoticePrompt(1);`, ctx);
+  assert.equal(vm.runInContext('ajWantFocus', ctx), false);
+  assert.equal(vm.runInContext('AJ.open', ctx), false);
+  assert.equal(vm.runInContext('AJ.hide', ctx), true);
+  assert.match(toasts[0][1], /Agent job needs you/);
+  // Nobody typing elsewhere: the tab opens and its field takes the caret.
+  document.activeElement = null;
+  vm.runInContext(`AJ.next[1] = 30; ajNoticePrompt(1);`, ctx);
+  assert.equal(vm.runInContext('ajWantFocus', ctx), true);
+  assert.equal(vm.runInContext('AJ.open', ctx), true);
+});
+
+test('a password the agent asked for (shell_secret) answers that request, not the job\'s stdin', async () => {
+  const sent = [];
+  const ask = {approvalId: 'a-1', secret: {jobId: 1}};
+  const {ctx, calls, field} = loadPanel({ssOpenFor: (sid, id) => (sid === 's-1' && id === 1 ? ask : null), ssSend: (req, body) => sent.push([req, body])});
+  field.value = 'Tr0ub4dor&3';
+  await vm.runInContext('ajSend(false)', ctx);
+  assert.deepEqual(sent, [[ask, {value: 'Tr0ub4dor&3'}]]);
+  assert.deepEqual(calls, []);
+  assert.equal(field.value, '');
+});
+
+test('the backspace pass is linear: a long spinner line comes out right', () => {
+  assert.equal(ajScreenText('ab\u0008\u0008c'), 'c');
+  assert.equal(ajScreenText('\u0008\u0008a'), 'a');
+  const spinner = '|\u0008/\u0008-\u0008\\\u0008'.repeat(5_000) + 'done';
+  assert.equal(ajScreenText(spinner), 'done');
 });

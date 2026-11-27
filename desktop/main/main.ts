@@ -3407,7 +3407,10 @@ function wireIpc(client: AgentClient): void {
   wireLanDiscoveryIpc();
   // ATO-1040: the chat's goal (the TUI's /goal), read and controlled through the agent.
   wireSessionGoalIpc(client);
-  wireAgentJobsIpc(client);   // ATO-2485: the agent's shell jobs in the terminal panel
+  wireAgentJobsIpc(client, (approvalId, skipped) => {   // ATO-2485: the agent's shell jobs in the terminal panel
+    chatTurns.approvalAnswered({ approvalId, decision: skipped ? "deny" : "allow-once" });   // ATO-2486: a job's password answered
+    petHub?.approvalAnswered(approvalId);
+  });
   wireSideQuestionIpc(client);   // ATO-1152: /btw
   wireIncognitoChatsIpc(client);   // ATO-586: incognito chats
   wireChatTrashIpc(client);   // ATO-2332: Delete… moves a chat to Trash, purged after 30 days

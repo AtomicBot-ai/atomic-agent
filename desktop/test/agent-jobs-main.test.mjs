@@ -25,7 +25,10 @@ test('a bad position reads from the start', () => {
 
 test('input: text or end of input, within the agent cap', () => {
   assert.deepEqual(J.agentJobInputOf({sessionId: 's', jobId: 1, text: 'y\n', eof: false}),
-    {ok: true, address: {sessionId: 's', jobId: 1}, text: 'y\n', eof: false});
+    {ok: true, address: {sessionId: 's', jobId: 1}, text: 'y\n', eof: false, secret: false});
+  // Hide typing on: passed on so the agent masks the value for the model.
+  assert.equal(J.agentJobInputOf({sessionId: 's', jobId: 1, text: 'pw\n', secret: true}).secret, true);
+  assert.equal(J.agentJobInputOf({sessionId: 's', jobId: 1, text: 'pw\n', secret: 'yes'}).secret, false);
   assert.equal(J.agentJobInputOf({sessionId: 's', jobId: 1, text: '', eof: true}).ok, true);
   assert.equal(J.agentJobInputOf({sessionId: 's', jobId: 1, text: ''}).ok, false);
   assert.equal(J.agentJobInputOf({sessionId: 's', jobId: 1, text: 'x'.repeat(J.AGENT_JOB_INPUT_MAX_CHARS + 1)}).ok, false);
@@ -47,4 +50,17 @@ test('a terminal size is two whole numbers the agent takes', () => {
   assert.equal(J.agentJobSizeOf({cols: 1, rows: 40}), null);
   assert.equal(J.agentJobSizeOf({cols: 120.5, rows: 40}), null);
   assert.equal(J.agentJobSizeOf({}), null);
+});
+
+test('a job password answer (ATO-2486): one line, not empty, within the cap, or a skip', () => {
+  assert.deepEqual(J.agentJobSecretAnswerOf({approvalId: 'a-1', value: 'Tr0ub4dor&3\n'}),
+    {ok: true, approvalId: 'a-1', answer: {value: 'Tr0ub4dor&3'}});
+  assert.deepEqual(J.agentJobSecretAnswerOf({approvalId: 'a-1', skip: true}), {ok: true, approvalId: 'a-1', answer: {skip: true}});
+  assert.equal(J.agentJobSecretAnswerOf({approvalId: 'a-1', value: ''}).ok, false);
+  assert.equal(J.agentJobSecretAnswerOf({approvalId: 'a-1', value: 'a\nb'}).ok, false);
+  assert.equal(J.agentJobSecretAnswerOf({approvalId: 'a-1', value: 'x'.repeat(J.AGENT_JOB_SECRET_MAX_CHARS + 1)}).ok, false);
+  assert.equal(J.agentJobSecretAnswerOf({value: 'pw'}).ok, false);
+  // A refusal never names the value.
+  const refused = J.agentJobSecretAnswerOf({approvalId: 'a-1', value: 'Tr0ub4dor&3\nsecond'});
+  assert.doesNotMatch(refused.error, /Tr0ub4dor/);
 });

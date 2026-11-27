@@ -6,6 +6,7 @@
  *   agentJobs:input   the person's typing    (POST …/shell-jobs/{jobId}/input)
  *   agentJobs:resize  the panel's size       (POST …/shell-jobs/{jobId}/resize)
  *   agentJobs:stop    stop one job           (POST …/shell-jobs/{jobId}/stop)
+ *   agentJobs:secret  a job's password the agent asked for (POST /api/shell/secret, ATO-2486)
  *
  * Each answers { ok: true, data } with the agent's own answer, or
  * { ok: false, error, unsupported } in words the panel shows. The typed
@@ -19,6 +20,7 @@ import {
   agentJobAddressOf,
   agentJobErrorOf,
   agentJobInputOf,
+  agentJobSecretAnswerOf,
   agentJobSessionOf,
   agentJobSinceOf,
   agentJobSizeOf,
@@ -36,7 +38,10 @@ async function answer(call: () => Promise<unknown>): Promise<Answer> {
 
 const gone: Answer = { ok: false, error: "That job is not open any more", unsupported: false };
 
-export function wireAgentJobsIpc(client: AgentClient): void {
+/** Told when a `shell_secret` request was answered, so the turn and the pet leave "approval". */
+export type AgentJobSecretAnswered = (approvalId: string, skipped: boolean) => void;
+
+export function wireAgentJobsIpc(client: AgentClient, onSecretAnswered?: AgentJobSecretAnswered): void {
   ipcMain.handle("agentJobs:list", async (_event, sessionId: unknown): Promise<Answer> => {
     const id = agentJobSessionOf(sessionId);
     if (!id) return { ok: false, error: "No chat yet", unsupported: false };
@@ -53,7 +58,18 @@ export function wireAgentJobsIpc(client: AgentClient): void {
   ipcMain.handle("agentJobs:input", async (_event, payload: unknown): Promise<Answer> => {
     const req = agentJobInputOf(payload);
     if (!req.ok) return { ok: false, error: req.error, unsupported: false };
-    return answer(() => client.shellJobInput(req.address.sessionId, req.address.jobId, req.text, req.eof));
+    return answer(() => client.shellJobInput(req.address.sessionId, req.address.jobId, req.text, req.eof, req.secret));
+  });
+
+  // The value goes to the agent and nowhere else: not kept, not logged, not in the answer.
+  ipcMain.handle("agentJobs:secret", async (_event, payload: unknown): Promise<Answer> => {
+    const req = agentJobSecretAnswerOf(payload);
+    if (!req.ok) return { ok: false, error: req.error, unsupported: false };
+    const res = await answer(() => client.answerShellSecret(req.approvalId, req.answer));
+    if (res.ok && (res.data as { resolved?: unknown } | null)?.resolved === true) {
+      onSecretAnswered?.(req.approvalId, "skip" in req.answer);
+    }
+    return res;
   });
 
   ipcMain.handle("agentJobs:resize", async (_event, payload: unknown): Promise<Answer> => {

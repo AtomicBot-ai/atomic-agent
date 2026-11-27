@@ -33,18 +33,45 @@ export function agentJobSinceOf(raw: unknown): number {
 }
 
 export type AgentJobInput =
-  | { ok: true; address: AgentJobAddress; text: string; eof: boolean }
+  | { ok: true; address: AgentJobAddress; text: string; eof: boolean; secret: boolean }
   | { ok: false; error: string };
 
 export function agentJobInputOf(payload: unknown): AgentJobInput {
   const address = agentJobAddressOf(payload);
   if (!address) return { ok: false, error: "That job is not open any more" };
-  const { text, eof } = (payload ?? {}) as { text?: unknown; eof?: unknown };
+  const { text, eof, secret } = (payload ?? {}) as { text?: unknown; eof?: unknown; secret?: unknown };
   if (typeof text !== "string") return { ok: false, error: "Nothing to send" };
   const end = eof === true;
   if (text.length === 0 && !end) return { ok: false, error: "Nothing to send" };
   if (text.length > AGENT_JOB_INPUT_MAX_CHARS) return { ok: false, error: "That is too long to send in one go" };
-  return { ok: true, address, text, eof: end };
+  // Hide typing on: the agent masks the value wherever the model reads it.
+  return { ok: true, address, text, eof: end, secret: secret === true };
+}
+
+/** The agent's cap on a job's password (SHELL_SECRET_MAX_CHARS, ATO-2486). */
+export const AGENT_JOB_SECRET_MAX_CHARS = 1_024;
+
+export type AgentJobSecretAnswer =
+  | { ok: true; approvalId: string; answer: { value: string } | { skip: true } }
+  | { ok: false; error: string };
+
+/**
+ * The person's answer to a `shell_secret` request (ATO-2486): the value
+ * for `POST /api/shell/secret`, or a skip. Checked like the agent checks
+ * it (one line, not empty, at most 1024 characters, one trailing line
+ * break dropped); a refusal never names the value.
+ */
+export function agentJobSecretAnswerOf(payload: unknown): AgentJobSecretAnswer {
+  const { approvalId, value, skip } = (payload ?? {}) as { approvalId?: unknown; value?: unknown; skip?: unknown };
+  if (typeof approvalId !== "string" || approvalId.length === 0 || approvalId.length > 200) {
+    return { ok: false, error: "That request is not open any more" };
+  }
+  if (skip === true) return { ok: true, approvalId, answer: { skip: true } };
+  const typed = typeof value === "string" ? value.replace(/\r?\n$/, "") : "";
+  if (typed.length === 0) return { ok: false, error: "Type it first" };
+  if (typed.length > AGENT_JOB_SECRET_MAX_CHARS) return { ok: false, error: "That is too long to send in one go" };
+  if (/[\r\n\u0000]/.test(typed)) return { ok: false, error: "It must be one line" };
+  return { ok: true, approvalId, answer: { value: typed } };
 }
 
 /**

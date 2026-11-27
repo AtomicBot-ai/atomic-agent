@@ -8,7 +8,9 @@
    ("Agent job: npm init"), the job's screen, and under it Take over: a
    field whose Enter types into the job, Hide typing for a secret (switched
    on by itself at a password prompt), and Stop job. An ended job keeps its
-   last screen until its tab is closed.
+   last screen until its tab is closed. Hide typing sends as secret (the
+   agent masks it for the model when it can). A prompt never takes the caret
+   from another field. A shell_secret request (ATO-2486) is typed here too.
 
    Like Claude Code's background shells view and Cursor's "take over" on
    the agent's terminal: the agent started the program, the person answers
@@ -16,7 +18,7 @@
 
 const AJ = {
   sid: null, jobs: [], closed: {}, selected: null, open: false, taking: false, hide: false,
-  raw: {}, next: {}, dropped: {}, asked: {}, size: {}, unsupported: false, busy: false, err: '', timer: null,
+  raw: {}, next: {}, dropped: {}, asked: {}, size: {}, unsupported: false, busy: false, err: '', timer: null, wantTake: null,
 };
 /** Set when the field should take the caret on the next paint. */
 let ajWantFocus = false;
@@ -29,10 +31,18 @@ function ajBridge() { return typeof BR !== 'undefined' && BR && typeof BR.agentJ
 function ajHost() { return typeof document !== 'undefined' ? document.getElementById('agentjobs') : null; }
 function ajChatSession() { return typeof S !== 'undefined' && S && S.agentSession ? S.agentSession : null; }
 function ajSelectedJob() { return AJ.jobs.find((j) => j.id === AJ.selected) || null; }
+/** The person is typing somewhere else in the window (the composer): leave the caret there. */
+function ajTypingElsewhere() {
+  const el = typeof document !== 'undefined' ? document.activeElement : null;
+  const host = ajHost();
+  return ajIsTextField(el) && !(host && host.contains(el));
+}
+/** The open shell_secret request of this job, if any (shell-secret-card.js). */
+function ajSecretAsk(job) { return job && typeof ssOpenFor === 'function' ? ssOpenFor(AJ.sid, job.id) : null; }
 
 function ajReset(sid) {
   Object.assign(AJ, {sid, jobs: [], closed: {}, selected: null, open: false, taking: false, hide: false,
-    raw: {}, next: {}, dropped: {}, asked: {}, size: {}, err: ''});
+    raw: {}, next: {}, dropped: {}, asked: {}, size: {}, err: '', wantTake: null});
 }
 
 /* ---- polling ---- */
@@ -58,6 +68,8 @@ async function ajTick() {
   AJ.unsupported = !!(res && !res.ok && res.unsupported);
   if (res && res.ok) AJ.jobs = ajMergeJobs(AJ.jobs, ajJobsFrom(res.data), AJ.closed);
   if (AJ.selected == null || !ajSelectedJob()) AJ.selected = AJ.jobs.length ? AJ.jobs[AJ.jobs.length - 1].id : null;
+  const want = AJ.wantTake != null ? AJ.jobs.find((j) => j.id === AJ.wantTake) : null;
+  if (want) { AJ.wantTake = null; if (ajIsLive(want) && want.interactive) ajTakeSecret(want.id); }
   await ajPullOutputs(bridge, sid);
   ajPaint();
   const live = AJ.jobs.some(ajIsLive);
@@ -85,7 +97,8 @@ async function ajPullOutputs(bridge, sid) {
   }
 }
 
-/** A job asking for a password: open its tab with typing hidden, once per prompt. */
+/** A job asking for a password: its tab, typing hidden, once per prompt; while
+    the person types elsewhere only the chip asks (a click opens the field). */
 function ajNoticePrompt(id) {
   const job = AJ.jobs.find((j) => j.id === id);
   if (!job || !job.interactive || !ajIsLive(job)) return;
@@ -93,9 +106,22 @@ function ajNoticePrompt(id) {
   const at = AJ.next[id] || 0;
   if (!secret || AJ.asked[id] === at) return;
   AJ.asked[id] = at;
-  Object.assign(AJ, {open: true, selected: id, taking: true, hide: true});
-  if (typeof toast === 'function') toast('The agent’s command is asking you', 'Type it in the terminal panel. It goes to the command only, not to the chat.');
+  const open = !ajTypingElsewhere();
+  if (open || !AJ.open) Object.assign(AJ, {selected: id, taking: true, hide: true});
+  if (open) { AJ.open = true; ajWantFocus = true; }
+  if (typeof toast === 'function') toast(...ajPromptToast(open));
+}
+
+/** The card of a shell_secret request asks for its job's tab (a click: the caret may move). */
+function ajTakeSecret(id) {
+  if (AJ.unsupported || !ajBridge()) return false;
+  // Not listed yet: taken on the next poll.
+  if (!AJ.jobs.some((j) => j.id === id && ajIsLive(j) && j.interactive)) { AJ.wantTake = id; ajSchedule(0); return true; }
+  AJ.wantTake = null;
+  Object.assign(AJ, {open: true, selected: id, taking: true, hide: true, err: ''});
   ajWantFocus = true;
+  ajPaint(); ajSchedule(0);
+  return true;
 }
 
 /* ---- actions ---- */
@@ -105,13 +131,26 @@ async function ajSend(eof) {
   const job = ajSelectedJob();
   const field = ajHost() && ajHost().querySelector('.aj-input');
   if (!bridge || !job || !field || AJ.busy) return;
+  // A password the agent asked for (shell_secret) answers that request, not stdin.
+  const ask = eof ? null : ajSecretAsk(job);
+  if (ask && typeof ssSend === 'function') {
+    const value = field.value;
+    field.value = '';
+    AJ.err = '';
+    if (value) ssSend(ask, {value});
+    ajPaint();
+    return;
+  }
   const text = eof ? '' : ajInputText(field.value, true);
+  const secret = AJ.hide && !eof;
   AJ.busy = true;
   AJ.err = '';
-  const res = await Promise.resolve(bridge.agentJobInput(AJ.sid, job.id, text, !!eof)).catch(() => null);
+  const res = await Promise.resolve(bridge.agentJobInput(AJ.sid, job.id, text, !!eof, secret)).catch(() => null);
   AJ.busy = false;
   if (res && res.ok) field.value = '';
   else AJ.err = (res && res.error) || 'The agent did not answer. Try again.';
+  const note = res && res.ok && secret ? ajSecretSentNote(res.data) : null;
+  if (note && typeof toast === 'function') toast(...note);
   // A secret is never kept in the field after it was sent or refused.
   if (AJ.hide) field.value = '';
   ajPaint();
@@ -180,6 +219,7 @@ function ajSkeleton(host) {
     + '<button type="button" class="btn btn-s sm" data-aj="take">Take over</button>'
     + '<button type="button" class="btn btn-s sm" data-aj="stop">Stop job</button>'
     + '<button type="button" class="btn btn-s sm" data-aj="close">Close tab</button></div>'
+    + '<div class="aj-ask" role="status" hidden></div>'
     + '<div class="aj-take" hidden><input class="aj-input" type="text" autocomplete="off" spellcheck="false" aria-label="Type into the job">'
     + '<label class="aj-hide"><input type="checkbox" class="aj-hidebox"> Hide typing</label>'
     + '<button type="button" class="btn btn-p sm" data-aj="send">Send</button>'
@@ -223,10 +263,17 @@ function ajPaint() {
   const take = host.querySelector('.aj-take');
   take.hidden = !(canType && AJ.taking);
   const field = host.querySelector('.aj-input');
-  field.type = AJ.hide ? 'password' : 'text';
-  host.querySelector('.aj-hidebox').checked = AJ.hide;
+  // A password the agent asked for (shell_secret) is always typed hidden.
+  const ask = canType ? ajSecretAsk(job) : null;
+  const askLine = host.querySelector('.aj-ask');
+  askLine.hidden = !(ask && AJ.taking);
+  askLine.textContent = ask && typeof ssAskLine === 'function' ? ssAskLine(ask) : '';
+  field.type = AJ.hide || ask ? 'password' : 'text';
+  const hidebox = host.querySelector('.aj-hidebox');
+  hidebox.checked = AJ.hide || !!ask;
+  hidebox.disabled = !!ask;
   host.querySelector('.aj-err').textContent = AJ.err;
-  if (ajWantFocus && !take.hidden) { ajWantFocus = false; field.focus(); }
+  if (ajWantFocus && !take.hidden) { ajWantFocus = false; if (!ajTypingElsewhere()) field.focus(); }
 }
 
 if (typeof document !== 'undefined' && typeof window !== 'undefined') {
