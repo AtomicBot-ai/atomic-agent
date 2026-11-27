@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { VisionRequest } from "../llm/provider/llm-provider.js";
+import type { ProviderCapabilities, VisionRequest } from "../llm/provider/llm-provider.js";
 import type { ScreenCommandResult, ScreenDeps } from "../tools/os/screen/screen-host.js";
 import { captureLogbookFrame, cleanObservation, LOGBOOK_TEXT_MAX } from "./logbook-capture.js";
 import type { LogbookVisionProvider } from "./logbook-local-vision.js";
@@ -52,7 +52,7 @@ function provider(answer: (request: VisionRequest) => Promise<string>): LogbookV
   return {
     id: "local-llama",
     name: "llama-server",
-    capabilities: { vision: true, visionSource: "mmproj" },
+    capabilities: { vision: true, visionSource: "mmproj" } as ProviderCapabilities,
     describeImage: vi.fn(async (request: VisionRequest) => ({ text: await answer(request), durationMs: 5 })),
   };
 }
