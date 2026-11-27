@@ -2,6 +2,8 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, re
 import { dirname, join, resolve, sep } from "node:path";
 
 import { resolveStateDir } from "../config/index.js";
+import { deleteConfigPath, readRawConfigTree, writeRawUserConfigFileSync } from "../config/config-paths.js";
+import { readModelsDirOverrideFromFile } from "../config/models-dir-override-file.js";
 import { getAppVersion } from "../version.js";
 import { backupStateDir, unpackBackup } from "./data-archive.js";
 import { exportDatasetCommand } from "./data-export-dataset.js";
@@ -33,6 +35,42 @@ export interface DataCommandDeps {
   stateDir?: string;
   write?: (text: string) => void;
   now?: () => Date;
+}
+
+const MODELS_DIR_KEY = "localModels.managed.modelsDirOverride";
+
+/** The moved models folder (`models dir <folder>`) a backup with models must also take, or null. */
+function movedModelsDir(stateDir: string): string | null {
+  try {
+    return readModelsDirOverrideFromFile(join(stateDir, "config.json"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `localModels.managed.dataDirOverride`, when set. A backup puts moved
+ * models in the default models folder under the state dir, and a restore
+ * drops `modelsDirOverride` to point there; with a data dir of its own the
+ * restored config would look in `<dataDirOverride>/models` instead and
+ * find nothing, so that case is refused (ATO-2503).
+ */
+function customDataDir(stateDir: string): string | null {
+  try {
+    const tree = readRawConfigTree(join(stateDir, "config.json")) as { localModels?: { managed?: { dataDirOverride?: unknown } } };
+    const value = tree.localModels?.managed?.dataDirOverride;
+    return typeof value === "string" && value.trim() !== "" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A restored backup that carries moved models in the default folder: drop the pointer to the old folder. */
+function pointRestoredConfigAtDefaultModels(dir: string): void {
+  const file = join(dir, "config.json");
+  if (!existsSync(file)) return;
+  const tree = readRawConfigTree(file);
+  if (deleteConfigPath(tree, MODELS_DIR_KEY)) writeRawUserConfigFileSync(file, tree);
 }
 
 function stamp(now: Date): string {
@@ -81,7 +119,20 @@ export async function dataCommand(args: string[], deps: DataCommandDeps = {}): P
   if (sub === "backup") {
     const file = positional[0];
     if (!file) { write("data backup needs a file name, e.g. atomic-agent-backup.tar.gz\n"); return 2; }
-    const r = await backupStateDir(real, file, { withModels: rest.includes("--with-models"), appVersion: getAppVersion(), now });
+    const withModels = rest.includes("--with-models");
+    const modelsDir = withModels ? movedModelsDir(real) : null;
+    if (modelsDir && !existsSync(modelsDir)) {
+      write(`the models folder ${modelsDir} is not there (is its disk connected?); connect it, or back up without --with-models\n`);
+      return 1;
+    }
+    if (modelsDir && customDataDir(real) !== null) {
+      write(
+        `the models were moved to ${modelsDir} and localModels.managed.dataDirOverride is set, so a restore could not put them where the config looks; ` +
+          "back up without --with-models (the restored config keeps pointing at the moved folder), or copy that folder yourself\n",
+      );
+      return 1;
+    }
+    const r = await backupStateDir(real, file, { withModels, modelsDir, appVersion: getAppVersion(), now });
     write(`backed up ${r.files} files (${(r.bytes / 1024 ** 2).toFixed(1)} MB before compression) to ${r.file}\n`);
     write(`left out: ${r.skipped.join(", ")}. The archive holds your API keys: keep it private.\n`);
     return 0;
@@ -116,6 +167,8 @@ export async function dataCommand(args: string[], deps: DataCommandDeps = {}): P
       if (!manifest.withModels && existsSync(join(aside, "models")) && !existsSync(join(incoming, "models"))) {
         renameSync(join(aside, "models"), join(incoming, "models"));
       }
+      // ATO-2503: models that were moved out came back in the default folder.
+      if (typeof manifest.modelsFrom === "string") pointRestoredConfigAtDefaultModels(incoming);
       renameSync(incoming, real);
     } catch (err) {
       if (existsSync(join(incoming, "models")) && !existsSync(join(aside, "models"))) renameSync(join(incoming, "models"), join(aside, "models"));

@@ -24,6 +24,7 @@ import { loadExternalCatalog } from "../local-llm/catalog/external-catalog.js";
 import { setDefaultDownloadConnections } from "../local-llm/downloads/download-settings.js";
 import { setDefaultHuggingFaceEndpoint } from "../local-llm/catalog/huggingface-endpoint.js";
 import { setModelsDirOverride } from "../local-llm/models-dir-override.js";
+import { readModelsDirOverrideFromFile } from "./models-dir-override-file.js";
 import {
   setConfiguredBackendVariant,
   setConfiguredCoreBackendVariant,
@@ -257,7 +258,11 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
     setDefaultHuggingFaceEndpoint(user.localModels.download.hfEndpoint);
     // ATO-2106: where the downloaded models live, read by `resolveModelsDir`.
     const modelsDirOverride = user.localModels.managed.modelsDirOverride;
-    setModelsDirOverride(modelsDirOverride === undefined ? null : resolvePath(modelsDirOverride, modelsDirOverride));
+    // ATO-2503: and follows the file, so a move another process makes reaches a long-lived one.
+    setModelsDirOverride(modelsDirOverride === undefined ? null : resolvePath(modelsDirOverride, modelsDirOverride), {
+      file: userConfigFile,
+      read: () => readModelsDirOverrideFromFile(userConfigFile),
+    });
   }
   const grammarsDir = resolveAssetDir("ATOMIC_AGENT_GRAMMARS_DIR", "grammars");
 

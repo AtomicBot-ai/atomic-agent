@@ -153,6 +153,42 @@ describe("moveModelsDir (ATO-2106)", () => {
     expect(existsSync(join(to, ".hidden"))).toBe(false);
   });
 
+  it("reports bytes across disks, ending at the total (ATO-2503)", async () => {
+    const seen: Array<{ entry: string; done: number; total: number }> = [];
+    await moveModelsDir(from, to, {
+      rename: async () => {
+        throw exdev();
+      },
+      onBytes: (b) => seen.push(b),
+    });
+    // a.gguf 4 + b.gguf 8 + b.gguf.part 2
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((b) => b.total === 14)).toBe(true);
+    expect(seen.at(-1)).toEqual({ entry: "qwen-b", done: 14, total: 14 });
+    expect(seen.find((b) => b.entry === "qwen-a")?.done).toBe(4);
+  });
+
+  it("a stopped copy puts everything back and never commits (ATO-2503)", async () => {
+    const controller = new AbortController();
+    let commits = 0;
+    const move = moveModelsDir(from, to, {
+      rename: async () => {
+        throw exdev();
+      },
+      signal: controller.signal,
+      onProgress: (p) => {
+        if (p.index === 2) controller.abort();
+      },
+      commit: () => void (commits += 1),
+    });
+    await expect(move).rejects.toThrow(/the move was stopped/);
+    expect(commits).toBe(0);
+    expect(readFileSync(join(from, "qwen-a", "a.gguf"), "utf8")).toBe("aaaa");
+    expect(readFileSync(join(from, "qwen-b", "b.gguf"), "utf8")).toBe("bbbbbbbb");
+    expect(existsSync(join(to, "qwen-a"))).toBe(false);
+    expect(existsSync(join(to, "qwen-b"))).toBe(false);
+  });
+
   it("moves nothing but still commits when the folder is the same", async () => {
     let commits = 0;
     const result = await moveModelsDir(from, join(from, "."), { commit: () => void (commits += 1) });

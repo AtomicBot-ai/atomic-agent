@@ -94,3 +94,58 @@ describe("atag data, files that change during a backup", () => {
     }
   });
 });
+
+describe("atag data backup --with-models, models moved to another folder (ATO-2503)", () => {
+  it("takes the moved folder too, and a restore points the config back at the default folder", async () => {
+    const usb = join(root, "USB", "models");
+    mkdirSync(join(usb, "qwen-a"), { recursive: true });
+    writeFileSync(join(usb, "qwen-a", "q.gguf"), "moved weights");
+    writeFileSync(join(state, "config.json"), JSON.stringify({ version: 1, localModels: { managed: { modelsDirOverride: usb } } }));
+    const archive = join(root, "m.tar.gz");
+    expect(await run(["backup", archive, "--with-models"])).toBe(0);
+
+    expect(await run(["restore", archive, "--yes"])).toBe(0);
+    expect(readFileSync(join(state, "models", "models", "qwen-a", "q.gguf"), "utf8")).toBe("moved weights");
+    const config = JSON.parse(readFileSync(join(state, "config.json"), "utf8")) as { localModels?: { managed?: Record<string, unknown> } };
+    expect(config.localModels?.managed?.modelsDirOverride).toBeUndefined();
+    // The moved folder itself is left alone.
+    expect(readFileSync(join(usb, "qwen-a", "q.gguf"), "utf8")).toBe("moved weights");
+  });
+
+  it("refuses --with-models while the moved folder's disk is not connected", async () => {
+    const gone = join(root, "Volumes", "USB", "models");
+    writeFileSync(join(state, "config.json"), JSON.stringify({ version: 1, localModels: { managed: { modelsDirOverride: gone } } }));
+    expect(await run(["backup", join(root, "m.tar.gz"), "--with-models"])).toBe(1);
+    expect(out).toContain("is its disk connected?");
+    expect(existsSync(join(root, "m.tar.gz"))).toBe(false);
+  });
+
+  it("refuses --with-models when a data folder of its own is set too, and keeps the moved folder found without it", async () => {
+    const usb = join(root, "USB", "models");
+    mkdirSync(join(usb, "qwen-a"), { recursive: true });
+    writeFileSync(join(usb, "qwen-a", "q.gguf"), "moved weights");
+    const config = { version: 1, localModels: { managed: { dataDirOverride: join(root, "elsewhere"), modelsDirOverride: usb } } };
+    writeFileSync(join(state, "config.json"), JSON.stringify(config));
+    expect(await run(["backup", join(root, "m.tar.gz"), "--with-models"])).toBe(1);
+    expect(out).toContain("dataDirOverride is set");
+    expect(existsSync(join(root, "m.tar.gz"))).toBe(false);
+
+    out = "";
+    expect(await run(["backup", join(root, "m.tar.gz")])).toBe(0);
+    expect(await run(["restore", join(root, "m.tar.gz"), "--yes"])).toBe(0);
+    const restored = JSON.parse(readFileSync(join(state, "config.json"), "utf8")) as { localModels?: { managed?: Record<string, unknown> } };
+    expect(restored.localModels?.managed?.modelsDirOverride).toBe(usb);
+  });
+
+  it("without --with-models leaves the moved folder out", async () => {
+    const usb = join(root, "USB", "models");
+    mkdirSync(join(usb, "qwen-a"), { recursive: true });
+    writeFileSync(join(usb, "qwen-a", "q.gguf"), "moved weights");
+    writeFileSync(join(state, "config.json"), JSON.stringify({ version: 1, localModels: { managed: { modelsDirOverride: usb } } }));
+    expect(await run(["backup", join(root, "m.tar.gz")])).toBe(0);
+    expect(await run(["restore", join(root, "m.tar.gz"), "--yes"])).toBe(0);
+    expect(existsSync(join(state, "models", "models", "qwen-a"))).toBe(false);
+    const config = JSON.parse(readFileSync(join(state, "config.json"), "utf8")) as { localModels?: { managed?: Record<string, unknown> } };
+    expect(config.localModels?.managed?.modelsDirOverride).toBe(usb);
+  });
+});

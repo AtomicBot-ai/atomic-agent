@@ -547,6 +547,7 @@ contextBridge.exposeInMainWorld("atomic", {
   modelsFolderInfo: () => ipcRenderer.invoke("modelsFolder:info"),
   modelsFolderChoose: () => ipcRenderer.invoke("modelsFolder:choose"),
   modelsFolderMove: (opts: { path?: string; reset?: boolean }) => ipcRenderer.invoke("modelsFolder:move", opts),
+  modelsFolderCancel: () => ipcRenderer.invoke("modelsFolder:cancel"),
   onModelsFolderProgress: (cb: (payload: unknown) => void) => on("modelsFolder:progress", cb),
   quit: () => ipcRenderer.invoke("app:quit"),
   skillList: (sessionId?: string | null) => ipcRenderer.invoke("cli:skillList", sessionId),
