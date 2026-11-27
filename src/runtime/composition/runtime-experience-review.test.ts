@@ -50,7 +50,8 @@ describe("createExperienceReviewer", () => {
     localModels: { useServerTemplate: "auto" },
   }) as unknown as AtomicAgentConfig;
 
-  function session(steps: number, tool = "os.shell.run"): SessionState {
+  // `plan.update` reads nothing from outside, so the turn may be saved live.
+  function session(steps: number, tool = "plan.update"): SessionState {
     const turns: ConversationTurn[] = [{ kind: "user", text: "deploy the site", at: 1 }];
     for (let i = 0; i < steps; i++) {
       turns.push({ kind: "assistant_tool_call", tool, args: tool === "os.fs.write" ? { path: join(skillsDir, "x", "SKILL.md") } : { command: `s${i}` }, at: 1 });
@@ -142,6 +143,31 @@ describe("createExperienceReviewer", () => {
     const drafts = await listPendingDrafts(root);
     expect(drafts).toHaveLength(1);
     expect(drafts[0]).toMatchObject({ kind: "create", name: "sync-with-delete", sources: ["os.web.fetch"], origin: "tui", sessionId: "s-1" });
+  });
+
+  it("holds what a turn that read local files or command output learned as a draft, with no web taint (ATO-1650)", async () => {
+    for (const [tool, label] of [["os.fs.read", "a local file"], ["os.shell.run", "shell command output"]] as const) {
+      rmSync(root, { recursive: true, force: true });
+      mkdirSync(skillsDir, { recursive: true });
+      const { reviewer, llmComplete, refreshSkills } = rig();
+      expect(reviewer.maybeReview(session(12, tool), { result: reply(12), origin: "tui" })).toBe(true);
+      await reviewer.whenIdle();
+      expect(llmComplete).toHaveBeenCalledTimes(1);
+      expect(existsSync(join(skillsDir, "sync-with-delete"))).toBe(false);
+      expect(await journal()).toEqual([]);
+      expect(refreshSkills).not.toHaveBeenCalled();
+      const drafts = await listPendingDrafts(root);
+      expect(drafts).toHaveLength(1);
+      expect(drafts[0]).toMatchObject({ kind: "create", name: "sync-with-delete", sources: [label], origin: "tui" });
+    }
+  });
+
+  it("names both the web taint and the local reads on the draft, once each", async () => {
+    const { reviewer } = rig(undefined, { outsideContentSources: () => ["a web page"] });
+    expect(reviewer.maybeReview(session(12, "os.fs.read"), { result: reply(12), origin: "tui" })).toBe(true);
+    await reviewer.whenIdle();
+    const drafts = await listPendingDrafts(root);
+    expect(drafts.map((d) => d.sources)).toEqual([["a web page", "a local file"]]);
   });
 
   it("chat channels and plain HTTP callers draft, the desktop app over HTTP and the sidecar save live", async () => {
