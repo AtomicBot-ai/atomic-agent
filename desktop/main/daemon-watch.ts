@@ -134,8 +134,8 @@ function pidAlive(pid: number): boolean {
   }
 }
 
-/** One line from the end of the server's log that says what failed, or null. */
-function describeFault(): string | null {
+/** One line from the end of the server's log that says what failed, or null. Also read by main's engine card (ATO-1745). */
+export function describeFault(): string | null {
   try {
     const cfg = readConfig();
     const dir = managedDataDir(cfg?.localModels?.managed?.dataDirOverride ?? null);

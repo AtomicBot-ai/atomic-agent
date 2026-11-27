@@ -6980,7 +6980,7 @@ function diagEngineRow(backend) {
   }
   if (ENGF.f) {
     return Object.assign(row, {tone:'bad', value:ENGF.f.why, title:ENGF.f.detail || ENGF.f.why,
-      fix: ENGF.f.retryable === false ? null : {act:'engf:retry', label:'Download again'}});
+      fix: engfModelFix() || (ENGF.f.retryable === false ? null : {act:'engf:retry', label:'Download again'})});
   }
   if (DWATCH && DWATCH.kind === 'gave_up') {
     return Object.assign(row, {tone:'bad', value:'The local model server keeps stopping', fix:{act:'diag:startModel', label:'Start model'}});
@@ -6998,7 +6998,7 @@ function diagModelRow(backend) {
   const health = st ? String(st.health || '').trim().toLowerCase() : '';
   const reach = SET.health && typeof SET.health.llamaReachable === 'boolean' ? SET.health.llamaReachable : null;
   const name = (st && st.activeModel) || (backend === 'local' ? activeModel() : '');
-  const fix = external ? {act:'settings:llm', label:'Open Models settings'} : {act:'diag:startModel', label:'Start model'};
+  const fix = external ? {act:'settings:llm', label:'Open Models settings'} : engfModelFix() || {act:'diag:startModel', label:'Start model'};
   if (LLMP.daemonPhase === 'starting') return Object.assign(row, {tone:'wait', value:'Starting…'});
   // ATO-852 (agent with #721): the server answers but refuses the model's key; Settings › Models restarts it.
   if (st && st.daemonRunning && (st.keyRejected === true || /^key rejected\b/.test(health))) {
@@ -9695,11 +9695,18 @@ function engfRouteLocal() {
 function engfShown() {
   return !!ENGF.f && ENGF.dismissed !== ENGF.f.at && engfRouteLocal();
 }
+/** ATO-1745: a damaged or missing model file (main's `reason`): the way out is this model's own download, not Start or the engine. */
+function engfModelFix() {
+  const r = ENGF.f && ENGF.f.reason;
+  return r === 'model_file_corrupt' || r === 'model_file_missing' ? {act:'engf:redownload', label:'Download model again'} : null;
+}
 /** The one way out: Download again runs the engine install. None when the failure is one it cannot change (main's `retryable: false`): `why` says what to do instead. */
 function engfActsHTML(size) {
-  if (ENGF.f && ENGF.f.retryable === false) return '';
+  const mf = engfModelFix();
+  if (!mf && ENGF.f && ENGF.f.retryable === false) return '';
   const busy = typeof LLMP !== 'undefined' && (LLMP.busy || !!LLMP.pulling);
   const dis = busy ? ' disabled' : '';
+  if (mf) return '<button class="btn btn-s ' + size + '" data-act="' + mf.act + '"' + dis + ' title="Download this model again from the catalogue">' + mf.label + '</button>';
   return '<button class="btn btn-s ' + size + '" data-act="engf:retry"' + dis + ' title="Download and install the local engine again">Download again</button>';
 }
 function engfNoticeHTML() {
@@ -9751,6 +9758,12 @@ function engfSetupRuntime() {
 }
 async function engfAct(verb) {
   if (verb === 'dismiss') { if (ENGF.f) ENGF.dismissed = ENGF.f.at; render(); return; }
+  if (verb === 'redownload') {
+    // ATO-1745: the managed model, through Settings › Models' own download (llmPull); main deletes a damaged file first.
+    const id = LIVE_CONFIG && LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed && LIVE_CONFIG.localModels.managed.modelId;
+    if (id && engfModelFix()) llmPull('chat', id, true);
+    return;
+  }
   if (verb === 'retry' && ENGF.f && ENGF.f.retryable === false) return;
   const setup = engfSetupRuntime();
   // `fresh`: main forgets the active Core's install record first, so a broken copy is downloaded again rather than kept.
@@ -30092,11 +30105,12 @@ function llmVisionFetch(m) {
   llmPull('chat', m.id);
   return true;
 }
-function llmPull(kind, id) {
+function llmPull(kind, id, again) {
   if (!BR) return;
   if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes', 'info'); return; }
   LLMP.pulling = {kind, id}; LLMP.pullLog = ['starting ' + id + '…']; LLMP.pullFrame = null; llmRepaint();
-  const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : BR.modelsPull(id, {trigger: 'settings'});
+  // `again` (ATO-1745): the engine card's Download model again; main deletes a damaged file before the same pull.
+  const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : again ? BR.modelsRedownload(id) : BR.modelsPull(id, {trigger: 'settings'});
   p.then((res) => { if (res && res.ok === false) { LLMP.pulling = null; LLMP.statusErr = res.error || 'could not start the download'; llmRepaint(); } });
 }
 /* ATO-900: the memory model's card while its click runs. A step returns

@@ -210,6 +210,7 @@ import {
   chatRouteIsLocal,
   daemonWatch,
   daemonWatchState,
+  describeFault,
   hostDaemonWatch,
   onAgentFrame,
   pairEmbeddingsAtLaunch,
@@ -301,6 +302,7 @@ import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
 // r7 models — the vendored catalogue metadata, for the smoke's drift check.
 import { curatedMeta, curatedMetaIds, spotlightIds } from "./model-catalog.js";
 import { catalogPullWantsProjector, weightsOnDisk, wholePullProgress, withoutLivePullGap } from "./pull-projector.js";
+import { removeDamagedWeights } from "./model-redownload.js";
 import { DOWNLOAD_CANCELLED, downloadBusyForUpdate, downloadBusyText, pausablePull, pauseFrame, removePartialDownloads, type PausablePull } from "./download-pause.js";
 import { registerDownloadPauseIpc } from "./download-pause-ipc.js";
 import { memoryQuery } from "./memory-db.js";
@@ -1009,7 +1011,8 @@ function noteCpuFallback(answer: unknown): void {
 function noteEngine(answer: unknown, opts: { clears?: boolean; via?: EngineVia } = {}): void {
   noteCpuFallback(answer);
   // Core in play: a model it could not load is read as that, not left as a raw start error.
-  const failed = engineFailureOf(answer, { core: managedEngineNow() === "atomic-core" });
+  // ATO-1745: the server log's line is read only once a load failed, to tell a damaged or missing model file.
+  const failed = engineFailureOf(answer, { core: managedEngineNow() === "atomic-core", logLine: describeFault });
   if (failed) {
     engineFailure = { ...failed, at: Date.now() };
     console.error(`[desktop] local-llm: the local engine is not ready (${failed.stage}): ${failed.detail || failed.why}`);
@@ -2054,6 +2057,21 @@ function wireIpc(client: AgentClient): void {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
     const o = opts as { trigger?: unknown; mmproj?: unknown } | undefined;
     return startModelPull(id, o?.trigger, undefined, o?.mmproj === true);
+  });
+  /* ATO-1745: the engine card's "Download model again". Only while the card
+     says the file is damaged are its weights deleted first (model-redownload.ts:
+     the downloader skips a file that exists); then the usual pull, and the
+     card goes, since the model it named is on its way back. */
+  ipcMain.handle("cli:modelsRedownload", (_event, id: unknown) => {
+    if (typeof id !== "string" || !id) return { ok: false, error: "model id required" };
+    if (!downloadRunning() && !REMOVING.has(id) && !client.isRemote && engineFailure?.reason === "model_file_corrupt") {
+      if (removeDamagedWeights(modelsDirOf(managedDataDirNow()), id).length) {
+        return { ok: false, error: "the damaged model file could not be deleted. Stop the local model, then try again." };
+      }
+    }
+    const res = startModelPull(id, "settings");
+    if (res.ok && engineFailure) { engineFailure = null; send("engine:failure", null); }
+    return res;
   });
   /* The weights download, for the window's pull and for the launch's starter
      model (ATO-1041): one slot, one stream (`cli:pull`), so the window's
