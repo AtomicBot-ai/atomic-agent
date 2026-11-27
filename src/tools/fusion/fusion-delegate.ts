@@ -1093,6 +1093,8 @@ export function buildFusionDelegateTool(
               signal: runSignal,
             }),
             ...(contract === undefined ? {} : { contract }),
+            // ATO-2440: the run's tool filter reaches every worker.
+            ...(ctx.toolFilter === undefined ? {} : { parentToolFilter: ctx.toolFilter }),
             // ATO-1754: a task that asked for a role or model and landed
             // here says why on its `started` line.
             taskModelNote: (id) => taskLegs.get(id)?.note,
@@ -1176,6 +1178,8 @@ export function buildFusionDelegateTool(
               signal: runSignal,
             }),
             ...(contract === undefined ? {} : { contract }),
+            // ATO-2440: the run's tool filter reaches every worker.
+            ...(ctx.toolFilter === undefined ? {} : { parentToolFilter: ctx.toolFilter }),
             taskModelNote: (id) => taskLegs.get(id)?.note,
             localTokensPerSecond: null,
             ...quietWorkerOptions,

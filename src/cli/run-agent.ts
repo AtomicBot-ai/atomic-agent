@@ -1,10 +1,9 @@
 import { statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { Readable } from "node:stream";
 
 import {
-  formatApprovalCategory,
   formatApprovalLevel,
-  formatNeverGrantedNote,
   resolveBootApprovalLevel,
 } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
@@ -25,18 +24,10 @@ import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import {
-  canGrantCategory,
-  describeCategoryGrant,
-  describeMcpToolGrant,
-  canGrantShape,
-  type ApprovalGrantScope,
-  type ApprovalRequest,
-} from "../approval/approval-gate.js";
-import {
-  canGrantAlways,
-  describeAlwaysRule,
-} from "../approval/approval-rules.js";
-import { siteGrantHost } from "../approval/site-grants.js";
+  promptApproval,
+  type CliApprovalAnswer,
+} from "./run-approval-prompt.js";
+import { RUN_HELP } from "./run-help.js";
 import { formatSkillCatalogOmittedNote } from "../skills/index.js";
 import { createStderrSink } from "../tracing/structured-logger.js";
 import {
@@ -55,14 +46,28 @@ import {
 } from "./run-headless-args.js";
 import { resolveRunModel, type RunModelPin } from "./run-model-pin.js";
 import { loadResumeSession } from "./run-resume-session.js";
+import { discardEphemeralChat } from "./run-ephemeral.js";
 import {
+  SCHEMA_MISMATCH_EXIT_CODE,
+  loadOutputSchema,
+  settleStructuredAnswer,
+  withSchemaInstruction,
+} from "./run-output-schema.js";
+import { joinPromptWithStdin, readStdinContext } from "./run-stdin-context.js";
+import { buildRunToolFilter, unmatchedToolPatterns } from "./run-tool-filter.js";
+import {
+  addTurnTokens,
   createRunJsonCursor,
   runFatalResultEvent,
   runJsonEvent,
   runResultEvent,
   runStartEvent,
   type RunJsonEvent,
+  type RunTokenTotals,
 } from "./run-json-events.js";
+
+export { formatCliApprovalPrompt, isApprovalAnswer } from "./run-approval-prompt.js";
+export { RUN_HELP };
 
 interface RunArgs extends RunHeadlessArgs {
   workingDir: string;
@@ -71,34 +76,6 @@ interface RunArgs extends RunHeadlessArgs {
   /** ATO-586: an incognito chat, deleted when the run ends. */
   incognito: boolean;
 }
-
-export const RUN_HELP =
-  [
-    "atomic-agent run — chat with the agent over stdin",
-    "",
-    "Usage:",
-    "  atomic-agent run [options]           interactive: one message per line",
-    '  echo "<goal>" | atomic-agent run     one-shot: answer on stdout, logs on stderr',
-    "                                       (each piped line is a separate turn)",
-    '  atomic-agent run [options] "<goal>"  one turn with this message; stdin only answers approvals',
-    "",
-    "Options:",
-    "  --cwd <dir>          Working directory for OS tools (default: current directory)",
-    "  --working-dir <dir>  Alias for --cwd",
-    "  --max-steps <n>      Hard step ceiling for one task (default: agent.task.maxSteps)",
-    "  --no-approval        Force approval level 5: auto-approve every dangerous tool call",
-    "  --incognito          Incognito chat: nothing is saved to memory, the chat is deleted when the run ends",
-    "  --output-format <f>  text (default) | json (one result object at the end) | stream-json (one JSON event per line)",
-    "  --json               Same as --output-format stream-json: one JSON event per line, not one object;",
-    "                       for a single result object use --output-format json",
-    "  -m, --model <m>      Model for every turn: <model> on the active provider, <provider> or <provider>/<model> (: works too)",
-    "  --resume <id>        Continue a saved chat (an id or a unique id prefix)",
-    "  -c, --continue       Continue the newest saved chat in this folder",
-    "  -o, --output-last-message <file>  Write the last reply to this file",
-    "",
-    "In-session:  /quit exits · /abort cancels the current turn",
-    "Exit codes:  0 replied · 1 failed · 2 usage error",
-  ].join("\n") + "\n";
 
 export function parseRunArgs(
   args: string[],
@@ -166,124 +143,6 @@ export function parseRunArgs(
     incognito,
     ...headless,
   };
-}
-
-interface CliApprovalAnswer {
-  approved: boolean;
-  grant?: ApprovalGrantScope;
-}
-
-/**
- * The text `promptApproval` writes before reading the answer: what is
- * asked, the grant options this request allows, and — when the category
- * can never be granted for the session — a note naming that category.
- */
-export function formatCliApprovalPrompt(request: ApprovalRequest): string {
-  const grantCategory = canGrantCategory(request);
-  const grantShape = canGrantShape(request);
-  const lines = [
-    "",
-    `» approval required for tool: ${request.tool}`,
-    `  kind: ${formatApprovalCategory(request.category)}`,
-    `  reason: ${request.reason}`,
-  ];
-  if (request.preview) lines.push(`  preview: ${request.preview}`);
-  if (request.affectedResources?.length) {
-    lines.push(`  affects: ${request.affectedResources.join(", ")}`);
-  }
-  const options = ["y = approve once"];
-  if (grantCategory) {
-    options.push(
-      siteGrantHost(request) !== null
-        ? `s = allow ${describeCategoryGrant(request)} this session`
-        : describeMcpToolGrant(request) !== null
-          ? `s = allow ${describeMcpToolGrant(request)} this session`
-        : request.grantKey !== undefined
-          ? `s = allow this kind to ${request.grantKey} this session`
-        : "s = allow this kind this session",
-    );
-  }
-  if (grantShape) {
-    options.push(`a = allow all ${request.commandShape} this session`);
-  }
-  // Saved, unlike the two above (ATO-1142).
-  if (canGrantAlways(request)) {
-    options.push(`w = ${describeAlwaysRule(request)}`);
-  }
-  options.push("N = deny");
-  if (!grantCategory) {
-    lines.push(`  (${formatNeverGrantedNote(request.category)})`);
-  }
-  lines.push(`  approve? [${options.join(", ")}] `);
-  return lines.join("\n");
-}
-
-/**
- * Whether a stdin line answers an approval prompt: one of the offered
- * keys (`y`, `s`, `a`, `w`, `n`), `yes` / `no`, or an empty line (Enter,
- * the default `N`), in any case. Anything else is a message for the
- * agent, not an answer.
- */
-export function isApprovalAnswer(line: string): boolean {
-  return /^(y|yes|n|no|s|a|w|)$/.test(line.trim().toLowerCase());
-}
-
-/**
- * Interactive approval over stdin. We ask the operator to confirm each
- * dangerous action; `y`/`yes` approves this call, `s` also grants the
- * category for the session, `a` grants this shell command shape, `w`
- * saves an "always allow" rule for this project (`canGrantAlways`).
- * Any other answer (`n`, `no`, Enter, a grant key this request does not
- * offer) is a refusal. The grant options mirror the TUI prompt;
- * they are offered here too because a CLI operator has the same physical
- * access to the machine. A category that is never grantable
- * (`isGrantableCategory`: trust config, e-mail, fusion fan-out) only
- * ever shows `y/N`.
- *
- * The answer is the next line of the same stdin queue the chat loop
- * reads (ATO-802), so a piped "y" written together with the next
- * message answers this prompt and the message stays queued for the
- * next turn. Only a line shaped like an answer (`isApprovalAnswer`) is
- * taken: any other line is a refusal and stays queued as the next
- * message, so a driver that pipes "task\ncontinue" without answering
- * loses nothing to the prompt. EOF before an answer is a refusal.
- */
-async function promptApproval(
-  request: ApprovalRequest,
-  lines: StdinLineQueue,
-): Promise<CliApprovalAnswer> {
-  const grantCategory = canGrantCategory(request);
-  const grantShape = canGrantShape(request);
-  process.stderr.write(formatCliApprovalPrompt(request));
-  const head = await lines.peek();
-  if (head === null) return { approved: false };
-  if (!isApprovalAnswer(head)) {
-    process.stderr.write(
-      "\n  denied: the next input line is not an answer, kept as the next message\n",
-    );
-    return { approved: false };
-  }
-  await lines.next();
-  const answer = head.trim().toLowerCase();
-  if (answer === "s" && grantCategory) {
-    process.stderr.write(
-      `\n  granted: ${formatApprovalCategory(request.category)} for this session\n`,
-    );
-    return { approved: true, grant: "category" };
-  }
-  if (answer === "a" && grantShape) {
-    process.stderr.write(
-      `\n  granted: ${request.commandShape} commands for this session\n`,
-    );
-    return { approved: true, grant: "shape" };
-  }
-  if (answer === "w" && canGrantAlways(request)) {
-    process.stderr.write(
-      `\n  saved: ${describeAlwaysRule(request)} (approval-rules.json in the agent's state folder)\n`,
-    );
-    return { approved: true, grant: "always" };
-  }
-  return { approved: /^(y|yes)$/.test(answer) };
 }
 
 /** Transport failures that mean "nothing answered at the configured URL". */
@@ -443,6 +302,12 @@ interface ChatLoopOptions {
   eventHook?: (event: AgentLoopEvent) => void;
   /** Gets each turn's closing reply, null when the turn ended without one. */
   onReply?: (reply: string | null) => void;
+  /** `--allowed-tools` / `--disallowed-tools`: hides tools from every turn. */
+  toolFilter?: (name: string) => boolean;
+  /** Rewrites each message before it is sent (`--output-schema`'s instruction). */
+  shapeMessage?: (message: string) => string;
+  /** Gets each turn's reported token usage (ATO-2440). */
+  onTurnUsage?: (usage: { promptTokens: number; completionTokens: number } | undefined) => void;
   /** False in the JSON formats: stdout carries JSON only, not the reply lines. */
   textOutput: boolean;
   /**
@@ -492,17 +357,20 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
 
   const driveTurn = async (message: string): Promise<void> => {
     const collector = collectReply();
-    const result = await opts.runtime.runTurn(session, message, {
+    const sent = opts.shapeMessage ? opts.shapeMessage(message) : message;
+    const result = await opts.runtime.runTurn(session, sent, {
       ...(opts.maxSteps === undefined ? {} : { maxSteps: opts.maxSteps }),
       signal: opts.controller.signal,
       origin: "cli",
       ...(opts.modelPin ?? {}),
+      ...(opts.toolFilter === undefined ? {} : { toolFilter: opts.toolFilter }),
       eventHook: (event) => {
         collector.onEvent(event);
         opts.eventHook?.(event);
       },
     });
     session = result.session;
+    opts.onTurnUsage?.(result.usage);
     const reply = collector.getReply();
     opts.onReply?.(reply);
     if (!opts.textOutput) return;
@@ -587,6 +455,18 @@ export async function runAgentCommand(args: string[]): Promise<number> {
       return 2;
     }
     modelPin = pin;
+  }
+  // ATO-2440: both are checked before anything boots, like `--model`.
+  const outputSchema =
+    parsed.outputSchema === null ? null : loadOutputSchema(parsed.outputSchema);
+  if (outputSchema !== null && "error" in outputSchema) {
+    process.stderr.write(`${outputSchema.error}\n`);
+    return 2;
+  }
+  const toolFilter = buildRunToolFilter(parsed.allowedTools, parsed.disallowedTools);
+  if ("error" in toolFilter) {
+    process.stderr.write(`${toolFilter.error}\n`);
+    return 2;
   }
   // ATO-2307: in the JSON formats stdout carries JSON lines only.
   const json = parsed.outputFormat !== "text";
@@ -684,6 +564,13 @@ export async function runAgentCommand(args: string[]): Promise<number> {
       `  approval: level ${formatApprovalLevel(approvalLevel)}\n` +
       `  type /quit to exit, /abort to cancel current turn\n`,
   );
+  const unmatched = unmatchedToolPatterns(
+    toolFilter.patterns,
+    runtime.toolDescriptors.map((d) => d.name),
+  );
+  if (unmatched.length > 0) {
+    process.stderr.write(`tools: nothing matches ${unmatched.join(", ")}\n`);
+  }
 
   const controller = new AbortController();
   const onSignal = (): void => controller.abort();
@@ -692,6 +579,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
 
   let exitCode = 0;
   let incognitoSessionId: string | null = null;
+  let ephemeralSessionId: string | null = null;
   try {
     const resumed =
       parsed.resume === null
@@ -706,9 +594,28 @@ export async function runAgentCommand(args: string[]): Promise<number> {
     }
     const cursor = createRunJsonCursor();
     let lastReply: string | null = null;
+    let lastTask = parsed.prompt ?? "";
+    let tokens: RunTokenTotals | null = null;
     incognitoSessionId = parsed.incognito ? session.id : null;
+    ephemeralSessionId = parsed.ephemeral && !parsed.incognito ? session.id : null;
+    // ATO-2440: with a prompt argument, piped stdin is part of the task.
+    let prompt = parsed.prompt;
+    let stdinInput: NodeJS.ReadableStream = process.stdin;
+    if (prompt !== null && process.stdin.isTTY !== true) {
+      const piped = await readStdinContext(process.stdin);
+      prompt = joinPromptWithStdin(prompt, piped);
+      if (piped.consumed) {
+        // Read to its end: nothing is left to answer an approval with.
+        stdinInput = Readable.from([]);
+        if (piped.text.trim().length > 0 && !parsed.noApproval) {
+          process.stderr.write(
+            "stdin was read as part of the task, so approval prompts cannot be answered and are denied\n",
+          );
+        }
+      }
+    }
     stdinLines = createStdinLineQueue({
-      input: process.stdin,
+      input: stdinInput,
       output: process.stderr,
       terminal: process.stdin.isTTY === true,
     });
@@ -721,8 +628,16 @@ export async function runAgentCommand(args: string[]): Promise<number> {
       controller,
       lines: stdinLines,
       piped: process.stdin.isTTY !== true,
-      ...(parsed.prompt === null ? {} : { prompt: parsed.prompt }),
+      ...(prompt === null ? {} : { prompt }),
       ...(modelPin === undefined ? {} : { modelPin }),
+      ...(toolFilter.filter === undefined ? {} : { toolFilter: toolFilter.filter }),
+      shapeMessage: (message: string) => {
+        lastTask = message;
+        return outputSchema === null ? message : withSchemaInstruction(message, outputSchema);
+      },
+      onTurnUsage: (usage) => {
+        tokens = addTurnTokens(tokens, usage);
+      },
       ...(parsed.outputFormat === "stream-json"
         ? {
             eventHook: (event: AgentLoopEvent) => {
@@ -734,11 +649,41 @@ export async function runAgentCommand(args: string[]): Promise<number> {
       onReply: (reply) => {
         if (reply !== null) lastReply = reply;
       },
-      textOutput: !json,
+      // With a schema the answer is printed once it is settled.
+      textOutput: !json && outputSchema === null,
     });
     if (!parsed.incognito) runtime.sessionStore.save(finalSession);
+    let structured: { value: unknown } | null = null;
+    let schemaError: string | undefined;
+    if (outputSchema !== null && !isFailedSessionStatus(finalSession.status)) {
+      const shape = runtime.shapeStructuredAnswer?.bind(runtime);
+      const settled = await settleStructuredAnswer({
+        reply: lastReply,
+        task: lastTask,
+        schema: outputSchema,
+        sessionId: finalSession.id,
+        signal: controller.signal,
+        ...(modelPin === undefined ? {} : { providerId: modelPin.providerId }),
+        ...(shape === undefined ? {} : { shape }),
+      });
+      if (settled.ok) {
+        structured = { value: settled.value };
+      } else {
+        schemaError = settled.error;
+        process.stderr.write(`output schema: ${settled.error}\n`);
+      }
+    }
+    const structuredText =
+      structured === null ? null : JSON.stringify(structured.value);
+    if (outputSchema !== null && !json && structuredText !== null) {
+      process.stdout.write(`${structuredText}\n`);
+    }
     if (parsed.outputLastMessage !== null) {
-      writeFileSync(resolve(parsed.outputLastMessage), lastReply ?? "", "utf8");
+      writeFileSync(
+        resolve(parsed.outputLastMessage),
+        structuredText ?? lastReply ?? "",
+        "utf8",
+      );
     }
     process.stderr.write(
       `${JSON.stringify(
@@ -759,6 +704,8 @@ export async function runAgentCommand(args: string[]): Promise<number> {
     // session) count as 0.
     if (isFailedSessionStatus(finalSession.status)) {
       exitCode = 1;
+    } else if (outputSchema !== null && structured === null) {
+      exitCode = SCHEMA_MISMATCH_EXIT_CODE;
     }
     if (json) {
       writeJson(
@@ -767,6 +714,9 @@ export async function runAgentCommand(args: string[]): Promise<number> {
           reply: lastReply,
           durationMs: Date.now() - startedAt,
           isError: exitCode !== 0,
+          tokens,
+          ...(structured === null ? {} : { structuredOutput: structured.value }),
+          ...(schemaError === undefined ? {} : { schemaError }),
         }),
       );
     }
@@ -782,6 +732,9 @@ export async function runAgentCommand(args: string[]): Promise<number> {
     // The incognito chat goes before the store closes; one the delete
     // misses is swept at the next start.
     if (incognitoSessionId !== null) runtime.discardIncognitoSession?.(incognitoSessionId);
+    if (ephemeralSessionId !== null) {
+      discardEphemeralChat(runtime.sessionStore, config.paths.tracesDir, ephemeralSessionId);
+    }
     await runtime.shutdown();
   }
   return exitCode;

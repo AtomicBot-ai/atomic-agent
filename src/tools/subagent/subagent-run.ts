@@ -452,6 +452,8 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
             writeScope: writeScope.length === 0 ? undefined : writeScope,
             signal: runSignal,
           }),
+          // ATO-2440: the run's tool filter reaches every worker.
+          ...(ctx.toolFilter === undefined ? {} : { parentToolFilter: ctx.toolFilter }),
           ...ceilingOptionsFor(group.leg),
           origin: "subagent",
           depth: childDepth,

@@ -746,6 +746,15 @@ export interface AgentRuntime {
     input: import("./plain-complete.js").PlainCompleteInput,
   ): Promise<import("./plain-complete.js").PlainCompleteResult>;
   /**
+   * `run --output-schema` (ATO-2440): put a finished answer into a JSON
+   * Schema with one side call, grammar-constrained on a local link and
+   * structured output on a cloud one (`structured-answer.ts`). No turn,
+   * no tools, nothing written to the session. Optional like `enhancePrompt`.
+   */
+  shapeStructuredAnswer?(
+    input: import("./structured-answer.js").StructuredAnswerInput,
+  ): Promise<import("./structured-answer.js").StructuredAnswerResult>;
+  /**
    * Build — never run, never persist — the prompt the next turn would
    * open with, for a composer's context readout before any message is
    * sent (the desktop's `POST /api/context-preview`). `sessionId` null

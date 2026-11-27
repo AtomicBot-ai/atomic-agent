@@ -76,3 +76,44 @@ describe("run help on --json", () => {
     expect(entry).toContain("--output-format json");
   });
 });
+
+/** ATO-2440: the flags of the second slice. */
+describe("run headless flags, second slice", () => {
+  it("reads --output-schema, both tool lists and --ephemeral", () => {
+    expect(
+      parseRunArgs([
+        "--output-schema", "schema.json",
+        "--allowed-tools", "os.fs.read, os.fs.*",
+        "--allowedTools", "Bash",
+        "--disallowed-tools", "os.fs.write",
+        "--ephemeral",
+      ]),
+    ).toMatchObject({
+      outputSchema: "schema.json",
+      allowedTools: ["os.fs.read", "os.fs.*", "Bash"],
+      disallowedTools: ["os.fs.write"],
+      ephemeral: true,
+    });
+  });
+
+  it("defaults to no schema, no narrowing and a kept chat", () => {
+    expect(parseRunArgs([])).toMatchObject({
+      outputSchema: null,
+      allowedTools: [],
+      disallowedTools: [],
+      ephemeral: false,
+    });
+  });
+
+  it("refuses an empty tool list, a missing schema and --ephemeral with --continue", () => {
+    expect(parseRunArgs(["--allowed-tools"])).toEqual({
+      error: "--allowed-tools needs tool names, e.g. os.fs.read,os.fs.*",
+    });
+    expect(parseRunArgs(["--output-schema"])).toEqual({
+      error: "--output-schema needs a JSON Schema file (or the schema as JSON)",
+    });
+    expect(parseRunArgs(["--ephemeral", "-c"])).toEqual({
+      error: "--ephemeral deletes the chat when the run ends, so it cannot run with --resume or --continue",
+    });
+  });
+});

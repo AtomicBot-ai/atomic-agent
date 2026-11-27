@@ -148,6 +148,11 @@ export interface FusionWorkerRunnerDepsExtras {
 /** What every worker run is asked to do. */
 export interface WorkerRunnerCoreOptions {
   parentSessionId: string;
+  /**
+   * The parent turn's own `toolFilter` (`ToolContext.toolFilter`,
+   * ATO-2440): ANDed with the worker's, so a worker can only see less.
+   */
+  parentToolFilter?: (name: string) => boolean;
   tasks: readonly DelegateTask[];
   /** Concurrency ceiling, already reconciled against the slot pool. */
   maxWorkers: number;

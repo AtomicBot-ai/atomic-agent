@@ -42,6 +42,7 @@ import {
   workerToolFilterFor,
   workerRefusalFor,
 } from "./worker-tool-policy.js";
+import { withParentToolFilter } from "./worker-parent-filter.js";
 import { fingerprintToolOutcome } from "../../agent/progress/loop-fingerprints.js";
 import {
   LOCAL_LEG_UNRESPONSIVE_ERROR,
@@ -1265,7 +1266,7 @@ async function runOneTask(
       ...(options.turnModel === undefined ? {} : { model: options.turnModel }),
       maxSteps: stepBudget.value,
       taskMaxDurationMs: timeoutMs + queueBudgetMs,
-      toolFilter: workerToolFilterFor(task.agentProfile?.tools),
+      toolFilter: withParentToolFilter(workerToolFilterFor(task.agentProfile?.tools), options.parentToolFilter),
       toolRole: WORKER_TOOL_ROLE,
       ...(options.workerReasoning === undefined
         ? {}
@@ -1526,7 +1527,7 @@ async function runOneTask(
           ...(target.turnModel === undefined ? {} : { model: target.turnModel }),
           maxSteps: stepBudget.value,
           taskMaxDurationMs: timeoutMs,
-          toolFilter: workerToolFilterFor(task.agentProfile?.tools),
+          toolFilter: withParentToolFilter(workerToolFilterFor(task.agentProfile?.tools), options.parentToolFilter),
           toolRole: WORKER_TOOL_ROLE,
           signal: AbortSignal.any([
             options.signal,
