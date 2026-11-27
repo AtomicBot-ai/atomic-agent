@@ -43,6 +43,7 @@ import { providersCommand } from "./providers-command.js";
 import { loginCommand, logoutCommand } from "./login-command.js";
 import { composioCommand } from "./composio-command.js";
 import { whisperCommand } from "./whisper-command.js";
+import { diarizeCommand } from "./diarize-command.js";
 import { openUrlInBrowser, tuiCommand } from "../tui/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import { applyOfflineModeFromConfigFile } from "./offline-from-config.js";
@@ -274,6 +275,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "whisper",
     summary: "Speech to text: status, download whisper.cpp and the speech model, set the default model",
     run: whisperCommand,
+  },
+  {
+    name: "diarize",
+    summary: "Who spoke when: status, download the sherpa-onnx speaker diarizer, run it on a WAV (ATO-2514)",
+    run: diarizeCommand,
   },
   {
     name: "update",
