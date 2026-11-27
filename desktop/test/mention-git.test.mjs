@@ -10,8 +10,9 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const G = require("../out/main/mention-git.js");
 const L = require("../out/main/mention-local.js");
+const S = require("../out/main/git-safe-args.js");
 
-const SAFE = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false"];
+const SAFE = S.gitSafeArgs();
 
 /** An execFile stand-in that records the argv and answers `stdout`. */
 function recorder(stdout = "") {
@@ -30,8 +31,8 @@ test("@diff, @git:N and ls-files each run git with the fsmonitor override in fro
   await run("/repo", G.logArgs(3));
   await run("/repo", G.lsFilesArgs());
   assert.equal(calls.length, 3);
-  assert.deepEqual(calls[0].args, [...SAFE, "diff", "HEAD", "--no-color", "--no-ext-diff", "--no-textconv", "--relative", "--", "."]);
-  assert.deepEqual(calls[1].args, [...SAFE, "log", "-n3", "--date=iso", "--stat", "-p", "--no-color", "--no-ext-diff", "--no-textconv", "--relative", "--", "."]);
+  assert.deepEqual(calls[0].args, [...SAFE, "diff", "HEAD", "--no-color", "--no-ext-diff", "--no-textconv", "--submodule=short", "--relative", "--", "."]);
+  assert.deepEqual(calls[1].args, [...SAFE, "log", "-n3", "--date=iso", "--pretty=medium", "--stat", "-p", "--no-color", "--no-ext-diff", "--no-textconv", "--submodule=short", "--relative", "--", "."]);
   assert.deepEqual(calls[2].args, [...SAFE, "ls-files", "-z", "--cached", "--others", "--exclude-standard"]);
   for (const call of calls) {
     assert.equal(call.file, "git");
