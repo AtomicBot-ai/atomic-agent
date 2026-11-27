@@ -1,6 +1,8 @@
 import type { MemoryEntry } from "../memory-store.js";
 import type { LinkStore } from "../links/link-store.js";
 
+import { clusterByTag, isTopicTag } from "./tag-clusters.js";
+
 /**
  * Memory-v2 phase 5. Cluster cold-path consolidation candidates into
  * connected components of the link graph, optionally requiring that
@@ -22,6 +24,11 @@ import type { LinkStore } from "../links/link-store.js";
  *      cohesion: pick the most-common tag among the CC's members,
  *      then **keep only the members that carry that tag**. The
  *      truncated component then re-applies the size floor.
+ *   5. If `requireSharedTag` is `true` and the cap is not reached,
+ *      group the candidates no link cluster claimed by shared tag
+ *      (`clusterByTag`, rarest tag first, bounded size). The link
+ *      graph is usually far too thin for step 3 alone to reach the
+ *      floor, so without this step no lesson ever formed (#903).
  *
  * The reason for the "majority tag, then filter" step is so a CC of
  * `[E1, E2, E3, E4]` where three share `pnpm` and one is an
@@ -115,7 +122,23 @@ export function clusterEpisodes(
   }
 
   components.sort((a, b) => a.members[0]! - b.members[0]!);
-  return components.slice(0, opts.maxClusters);
+  const linked = components.slice(0, opts.maxClusters);
+  if (!opts.requireSharedTag || linked.length >= opts.maxClusters) {
+    return linked;
+  }
+  // Link clusters keep priority; tag groups fill the remaining slots
+  // from the notes no link cluster claimed (#903).
+  const claimed = new Set<number>();
+  for (const cluster of linked) {
+    for (const id of cluster.members) claimed.add(id);
+  }
+  const unclaimed = candidates.filter((entry) => !claimed.has(entry.id));
+  const byTag = clusterByTag(
+    unclaimed,
+    minSize,
+    opts.maxClusters - linked.length,
+  );
+  return [...linked, ...byTag];
 }
 
 function bfsCc(
@@ -141,7 +164,7 @@ function bfsCc(
 }
 
 /**
- * Pick the most-common tag among CC members, then return the
+ * Pick the most-common topic tag among CC members, then return the
  * subset of members that carry it. Ties broken by lexicographic
  * order so the choice stays deterministic.
  */
@@ -154,6 +177,9 @@ function trimByMajorityTag(
     const entry = byId.get(id);
     if (!entry) continue;
     for (const tag of entry.tags) {
+      // `reflection` is on every reflected note; it must not bind a
+      // cluster of unrelated notes (#903).
+      if (!isTopicTag(tag)) continue;
       counts.set(tag, (counts.get(tag) ?? 0) + 1);
     }
   }

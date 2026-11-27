@@ -4,6 +4,7 @@ import { posix, win32 } from "node:path";
 
 import type { SubscriptionCliName } from "../../../config/llm-config.js";
 import type { CliAdapterDescriptor } from "./cli-adapter-descriptor.js";
+import { compareCliVersions, minimumCliVersion, outdatedCliMessage } from "./cli-version-check.js";
 import { resolveCliBinary } from "./resolve-cli-binary.js";
 import { runCliCommand, type CliRunner } from "./run-cli-completion.js";
 import { SubscriptionCliAuthError, SubscriptionCliNotInstalledError } from "./subscription-cli-errors.js";
@@ -46,6 +47,11 @@ export interface SubscriptionCliStatusReport {
   message: string;
   /** Names (never values) of variables that move the CLI off the plan onto per-token billing. */
   billingEnvSet: string[];
+  /**
+   * ATO-1685: set when `version` is older than the one we support; the
+   * update sentence is also at the end of `message`.
+   */
+  outdated?: { minimum: string; message: string };
 }
 
 export interface SubscriptionCliStatusDeps {
@@ -137,6 +143,19 @@ function isTimeout(err: unknown): boolean {
 export async function checkSubscriptionCli(
   adapter: CliAdapterDescriptor,
   deps: SubscriptionCliStatusDeps = {},
+): Promise<SubscriptionCliStatusReport> {
+  const report = await checkLoginState(adapter, deps);
+  if (report.version === null) return report;
+  // ATO-1685: an old CLI fails our flags whatever its login says.
+  const minimum = minimumCliVersion(adapter.cli, deps.platform ?? process.platform);
+  if (compareCliVersions(report.version, minimum) >= 0) return report;
+  const message = outdatedCliMessage(adapter.cli, adapter.productName, report.version, minimum);
+  return { ...report, outdated: { minimum, message }, message: `${report.message} ${message}` };
+}
+
+async function checkLoginState(
+  adapter: CliAdapterDescriptor,
+  deps: SubscriptionCliStatusDeps,
 ): Promise<SubscriptionCliStatusReport> {
   const platform = deps.platform ?? process.platform;
   const env = deps.env ?? process.env;

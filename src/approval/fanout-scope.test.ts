@@ -114,3 +114,34 @@ describe("the turn-scoped grant", () => {
     expect(scopes.turnGrantCovers("s-1", ["/tmp/rel"])).toBe(true);
   });
 });
+
+describe("turn state tied to a turn (ATO-1759)", () => {
+  it("keeps the answer and the refused command note within the same turn", () => {
+    const scopes = new FanoutScopeRegistry();
+    scopes.enterTurn("s-1", "turn-1");
+    scopes.grantForTurn("s-1", ["/repo"]);
+    scopes.noteCommandRefused("s-1");
+    scopes.enterTurn("s-1", "turn-1");
+    expect(scopes.turnStateIsFrom("s-1", "turn-1")).toBe(true);
+    expect(scopes.turnGrantCovers("s-1", ["/repo"])).toBe(true);
+    expect(scopes.commandRefusedThisTurn("s-1")).toBe(true);
+  });
+
+  it("drops what another turn left before the new one reads it", () => {
+    const scopes = new FanoutScopeRegistry();
+    scopes.enterTurn("s-1", "turn-1");
+    scopes.grantForTurn("s-1", ["/repo"]);
+    scopes.noteCommandRefused("s-1");
+    scopes.enterTurn("s-1", "turn-2");
+    expect(scopes.turnGrantCovers("s-1", ["/repo"])).toBe(false);
+    expect(scopes.commandRefusedThisTurn("s-1")).toBe(false);
+    expect(scopes.turnStateIsFrom("s-1", "turn-2")).toBe(true);
+  });
+
+  it("forgets the turn with the grant", () => {
+    const scopes = new FanoutScopeRegistry();
+    scopes.enterTurn("s-1", "turn-1");
+    scopes.clearTurnGrant("s-1");
+    expect(scopes.turnStateIsFrom("s-1", "turn-1")).toBe(false);
+  });
+});

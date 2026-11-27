@@ -159,11 +159,11 @@ function fn(name) {
   assert.ok(at >= 0, name + " is a top-level function in renderer.js");
   return source.slice(at + 1, source.indexOf("\n}\n", at) + 2);
 }
-function prose() {
+function prose(extra) {
   const c = vm.createContext({});
   vm.runInContext(markedSource + "\n" + readFileSync(new URL("../renderer/md-render.js", import.meta.url), "utf8")
     + "\nconst IS_WIN = false;\nconst PLATFORM = 'darwin';\nconst BR = null;\nconst esc = " + esc.toString() + ";\n"
-    + "function ic() { return ''; }\n"
+    + "function ic() { return ''; }\n" + (extra || "")
     + "function replyPathChip(raw, shown) { return '<button class=\"filechip\" data-file=\"' + esc(raw) + '\">' + esc(raw) + '</button>'; }\n"
     + fn("renderMarkdown") + fn("renderProseFresh") + fn("codeBlockFrame") + fn("codeBlockTerminalOk") + fn("codeSpanIsPath")
     + "globalThis.renderProseFresh = renderProseFresh;", c);
@@ -182,6 +182,19 @@ test("renderProseFresh: a card's URL is not wrapped twice, a bare URL is still a
   const tbl = render("| a | b |\n|---|---|\n| https://ex.com | ~/x.md |");
   assert.match(tbl, /<td><a class="msglink"[^>]*>https:\/\/ex.com<\/a><\/td>/);
   assert.match(tbl, /<td><button class="filechip"/);
+});
+
+// ATO-2409: `sales.docx` in a reply, when the chat wrote a file of that name (chat-files.js chatFilesByName).
+test("renderProseFresh: a bare file name the chat wrote is its chip; an unknown name and a fence stay code", () => {
+  const known = "function chatFilesByName(n) { return n === 'sales.docx' ? '/w/Atomic Agent Marketer Kit/sales.docx' : ''; }\n";
+  const render = prose(known);
+  const chip = render("Done: `sales.docx` and `prices.docx`.");
+  assert.match(chip, /<button class="filechip" data-file="\/w\/Atomic Agent Marketer Kit\/sales\.docx">/, chip);
+  assert.ok(!chip.includes('data-file="/w/Atomic Agent Marketer Kit/prices.docx"'), "a name the chat has no file for stays code");
+  assert.match(chip, /<code class="mdcode">prices\.docx<\/code>/);
+  assert.ok(!render("```\nsales.docx\n```").includes("filechip"), "a fence is code, whatever it holds");
+  // Without the list (an older page, or before the write landed) the span is code, as before.
+  assert.match(prose()("see `sales.docx`"), /<code class="mdcode">sales\.docx<\/code>/);
 });
 
 // ATO-664: marked parses, so CommonMark/GFM cases the regexes got wrong now come out right.

@@ -3,6 +3,9 @@ import type { OpenAiHttpDeps } from "./openai-http.js";
 import { openAiPostJson } from "./openai-http.js";
 import { normaliseMessageContent } from "./openai-normalise-response.js";
 import { modelParamProfile, resolveTemperature } from "./model-params.js";
+import { neutralizeThinkTags } from "./think-tag-safe.js";
+import { temperatureLessonFromError } from "./allowed-temperature.js";
+import { bodyAfterTemperatureLesson } from "./temperature-resend.js";
 
 /**
  * The provider's body passthrough, applied to the describe call the way
@@ -12,6 +15,12 @@ import { modelParamProfile, resolveTemperature } from "./model-params.js";
 export interface DescribeImageBodyOptions {
   extraBody?: Record<string, unknown>;
   modelParams?: Record<string, unknown>;
+  /**
+   * Ollama Cloud (issue #283): the text parts go out with literal
+   * thinking tags as visible brackets (`think-tag-safe.ts`). Absent, the
+   * parts are sent as given.
+   */
+  thinkTagSafe?: boolean;
 }
 
 const RESERVED_KEYS = ["model", "messages", "stream", "tools"] as const;
@@ -73,7 +82,14 @@ export async function postUserPartsViaOpenAi(
   const temperature = resolveTemperature(profile, request.temperature, 0.1);
   const base: Record<string, unknown> = {
     model: defaultChatModel,
-    messages: [{ role: "user", content: userContent }],
+    messages: [
+      {
+        role: "user",
+        content: bodyOptions.thinkTagSafe
+          ? userContent.map(neutralizePart)
+          : userContent,
+      },
+    ],
     // Reasoning models (Qwen3.8, DeepSeek-R1) spend completion tokens on
     // their think channel before any visible description. The old 512
     // cap left them truncating mid-thought and returning empty or
@@ -89,12 +105,19 @@ export async function postUserPartsViaOpenAi(
   };
   const body = withPassthrough(base, bodyOptions, profile);
   const start = Date.now();
-  const json = await openAiPostJson(
-    deps,
-    `${apiPathPrefix}/chat/completions`,
-    body,
-    request,
-  );
+  const path = `${apiPathPrefix}/chat/completions`;
+  let json: Record<string, unknown>;
+  try {
+    json = await openAiPostJson(deps, path, body, request);
+  } catch (err) {
+    // A 400 that refused the temperature or named the one it takes gets
+    // one resend that obeys it, like a turn (#1554).
+    const resend = request.signal?.aborted
+      ? undefined
+      : bodyAfterTemperatureLesson(defaultChatModel, temperatureLessonFromError(err), body);
+    if (resend === undefined) throw err;
+    json = await openAiPostJson(deps, path, resend, request);
+  }
   const message =
     (
       json.choices as Array<{ message?: Record<string, unknown> }> | undefined
@@ -108,6 +131,12 @@ export async function postUserPartsViaOpenAi(
     text = message.reasoning_content.trim();
   }
   return { text, durationMs: Date.now() - start };
+}
+
+function neutralizePart(part: OpenAiUserContentPart): OpenAiUserContentPart {
+  return part.type === "text"
+    ? { type: "text", text: neutralizeThinkTags(part.text) }
+    : part;
 }
 
 function withPassthrough(

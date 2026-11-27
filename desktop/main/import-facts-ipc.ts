@@ -6,6 +6,9 @@
  *   importFacts:info    whether the agent has the step, the cloud models to offer
  *   importFacts:pick    the native dialog for the export .zip
  *   importFacts:start / job / stop / forget / save   the agent's /api/import/facts/*
+ *
+ * The start payload is checked in full before the agent is asked
+ * (import-facts-input.ts, ATO-1656): a renderer value is not trusted here.
  */
 
 import { dialog, ipcMain, type BrowserWindow } from "electron";

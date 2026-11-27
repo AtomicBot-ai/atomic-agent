@@ -13,14 +13,38 @@
  */
 
 import { app, type BrowserWindow } from "electron";
+import { freemem } from "node:os";
 
 import { noteSessionTrouble, windowCrashed } from "../analytics/index.js";
 import { reportError } from "./client.js";
 import type { AgentMemorySample } from "../agent-memory-sample.js";
+import { stoppedBy, turnsBucket, type AgentCloseWord } from "./agent-exit-context.js";
 import { agentExitStatus, agentRssBucket, freeMemoryBucket, lastErrorCategory, lastErrorFacts, linesBucket, shareBucket, uptimeBucket } from "./exit-reason.js";
 
+/**
+ * ATO-1734: the app at the moment a process went. `quitting` is main's own
+ * flag (set by stopForQuit, which before-quit runs); free memory is read
+ * from the OS. Sent as the same two tags AgentExited carries, so one search
+ * covers every crash: `app_quitting` yes / no, `free_mem` a bucket.
+ */
+export interface CrashMoment {
+  quitting?: () => boolean;
+  freeMemBytes?: () => number | null;
+}
+
+function momentTags(moment: CrashMoment): Record<string, string> {
+  let q: unknown;
+  let free: ReturnType<typeof freeMemoryBucket> = null;
+  try { q = moment.quitting?.(); } catch { q = undefined; }
+  try { free = freeMemoryBucket((moment.freeMemBytes ?? freemem)()); } catch { free = null; }
+  return {
+    ...(typeof q === "boolean" ? { app_quitting: q ? "yes" : "no" } : {}),
+    ...(free ? { free_mem: free } : {}),
+  };
+}
+
 /** Main process and app-wide events. Call once, early. */
-export function wireProcessErrorReporting(): void {
+export function wireProcessErrorReporting(moment: CrashMoment = {}): void {
   process.on("uncaughtExceptionMonitor", (err, origin) => {
     const e = err as Partial<Error> | undefined;
     noteSessionTrouble("crashed");
@@ -33,7 +57,7 @@ export function wireProcessErrorReporting(): void {
       source: "child-process-gone",
       name: "ChildProcessGone",
       level: "warning",
-      tags: { kind: details.type, reason: details.reason, exit_code: details.exitCode },
+      tags: { kind: details.type, reason: details.reason, exit_code: details.exitCode, ...momentTags(moment) },
     });
   });
 }
@@ -43,7 +67,7 @@ export function wireProcessErrorReporting(): void {
  * `recovered` (ATO-765): whether main is reloading the page that just went
  * (main.ts registers that listener first), sent as the `recovered` tag.
  */
-export function wireWindowErrorReporting(win: BrowserWindow, recovered: () => boolean | null = () => null): void {
+export function wireWindowErrorReporting(win: BrowserWindow, recovered: () => boolean | null = () => null, moment: CrashMoment = {}): void {
   const wc = win.webContents;
   wc.on("render-process-gone", (_e, details) => {
     if (details.reason === "clean-exit") return;
@@ -54,7 +78,7 @@ export function wireWindowErrorReporting(win: BrowserWindow, recovered: () => bo
       source: "render-process-gone",
       name: "RenderProcessGone",
       level: "warning",
-      tags: { kind: "gone", reason: details.reason, exit_code: details.exitCode, ...(r === null ? {} : { recovered: r ? "yes" : "no" }) },
+      tags: { kind: "gone", reason: details.reason, exit_code: details.exitCode, ...(r === null ? {} : { recovered: r ? "yes" : "no" }), ...momentTags(moment) },
     });
   });
   // ATO-1030: Windows logging off or shutting down ends the session without a quit.
@@ -103,13 +127,15 @@ export function reportRendererError(payload: unknown): void {
  * sentinel means the agent closed itself on `--parent-pid`, not a crash.
  */
 export function reportAgentExit(
-  detail: { exitCode?: number | null; signal?: string | null; phase?: string; uptimeMs?: number | null; sentinelAlive?: boolean | null },
+  detail: { exitCode?: number | null; signal?: string | null; phase?: string; uptimeMs?: number | null; sentinelAlive?: boolean | null; turnsInFlight?: number | null },
   lastLines: readonly string[] = [],
   /** ATO-424: the machine at the exit — free memory in bytes, and whether the app was already quitting. */
   /* ATO-1111: and the agent's own last memory sample (agent-memory-sample.ts), sent as buckets:
      a growing agent (big rss, heap near its ceiling) reads apart from a small machine. */
-  machine: { freeMemBytes?: number | null; quitting?: boolean; agentMemory?: AgentMemorySample | null; linesSinceStart?: number | null } = {},
+  /* ATO-2416: and why serve said it was closing (agent-exit-context.ts), whether the OS was ending the session. */
+  machine: { freeMemBytes?: number | null; quitting?: boolean; agentMemory?: AgentMemorySample | null; linesSinceStart?: number | null; closedBy?: AgentCloseWord | null; osEnding?: boolean } = {},
 ): void {
+  const turns = turnsBucket(detail.turnsInFlight);
   // ATO-1285: what the last lines say, as code / class / file words only (exit-reason.ts lastErrorFacts).
   const facts = lastErrorFacts(lastLines);
   const lines = linesBucket(machine.linesSinceStart);
@@ -145,6 +171,10 @@ export function reportAgentExit(
       ...(lines ? { agent_lines: lines } : {}),
       uptime: uptimeBucket(detail.uptimeMs) ?? undefined,
       ...(sentinel ? { sentinel_alive: sentinel } : {}),
+      // ATO-2416: who ended it, the word serve closed with, and whether a turn was streaming.
+      stopped_by: stoppedBy(machine.closedBy ?? null, machine.osEnding === true),
+      ...(machine.closedBy ? { agent_close: machine.closedBy } : {}),
+      ...(turns ? { turns_in_flight: turns } : {}),
     },
   });
 }

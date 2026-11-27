@@ -2,6 +2,7 @@ import type { CompletionResult, OpenAiToolCall, StreamChunk } from "../completio
 import {
   createStreamUnmasker,
   isPrivacyShieldEnabled,
+  privacyNameDetector,
   privacyVaultFor,
   type PrivacyVault,
 } from "../../../privacy/index.js";
@@ -33,6 +34,54 @@ export function shieldVaultFor(
 ): PrivacyVault | null {
   if (local || !isPrivacyShieldEnabled()) return null;
   return privacyVaultFor(sessionId);
+}
+
+/**
+ * The texts of outgoing `messages` the local name pass reads: every
+ * message but the system prompt (that one is ours), string content and
+ * the `text` of content parts.
+ */
+export function messageTextsForNames(messages: unknown): string[] {
+  if (!Array.isArray(messages)) return [];
+  const out: string[] = [];
+  for (const message of messages) {
+    if (message === null || typeof message !== "object") continue;
+    const { role, content } = message as Record<string, unknown>;
+    if (role === "system" || role === "developer") continue;
+    if (typeof content === "string") {
+      if (content.length > 0) out.push(content);
+      continue;
+    }
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      const text = (part as Record<string, unknown> | null)?.text;
+      if (typeof text === "string" && text.length > 0) out.push(text);
+    }
+  }
+  return out;
+}
+
+/**
+ * Names, addresses and organisations (ATO-2394): before the body is
+ * masked, the local name pass reads the request's messages and the vault
+ * learns what it found, so the sync `maskOpenAiBody` that follows masks
+ * those too. `readMessages` builds the unmasked `messages` and runs only
+ * when a local model is there to read them. Any failure here leaves the
+ * vault as it was: the request still goes out masked by regex.
+ */
+export async function learnNamesForRequest(
+  vault: PrivacyVault,
+  readMessages: () => unknown,
+  signal?: AbortSignal,
+): Promise<void> {
+  const detector = privacyNameDetector();
+  if (detector === null) return;
+  try {
+    const found = await detector.detect(() => messageTextsForNames(readMessages()), signal);
+    if (found.length > 0) vault.learn(found);
+  } catch {
+    // The detector does not throw by contract; if it ever does, regex only.
+  }
 }
 
 /**

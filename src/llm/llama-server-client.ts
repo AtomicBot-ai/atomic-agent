@@ -9,10 +9,17 @@ import { parseProviderErrorBody } from "./provider/openai/parse-provider-error-b
 import { readContextOverflowCounts, type ContextOverflowCounts } from "./reliability/context-overflow-counts.js";
 import { createStreamRepetitionWatcher } from "./reliability/stream-repetition-watcher.js";
 import { drySamplerFields } from "./dry-sampler.js";
+import { resolveSamplingFields } from "./model-sampling-fields.js";
 import { takePromptProgress } from "./llama-prompt-progress.js";
 import { isGrammarRefusal } from "./grammar-refusal.js";
 import { isLoopbackUrlOnPort } from "../local-llm/server/managed-api-key.js";
 import { managedPortsOf } from "./describe-llama-health-failure.js";
+import {
+  FOREIGN_KEY_REFUSAL_ADVICE,
+  FOREIGN_KEY_REFUSAL_MESSAGE,
+  readOwnEngineState,
+  type OwnEngineState,
+} from "./llama-own-engine-state.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type {
   CompletionRequest,
@@ -555,11 +562,23 @@ export interface LlamaServerClientOptions {
    */
   refreshApiKey?: (url: string) => Promise<string | null>;
   /**
+   * Asked when a 401 stands after the key refresh: whether our own model
+   * process is behind `url` (ATO-1732). Defaults to `readOwnEngineState`
+   * on the live config. Injectable for tests.
+   */
+  ownEngineState?: (url: string) => OwnEngineState;
+  /**
    * Overrides `config.localModels.drySampler`: send llama.cpp's DRY
    * anti-repeat sampler fields with every `/completion` request. When omitted, the
    * client reads the config on each request.
    */
   drySampler?: boolean;
+  /**
+   * Overrides `config.localModels.modelSampling` (ATO-2202): use the
+   * loaded model's recommended sampling (`request.modelSampling`) where
+   * the request and the env name none. Omitted, the config decides.
+   */
+  modelSampling?: boolean;
   /**
    * Debug-level phase log for every streamed completion: sent, headers,
    * first byte, and how it ended (with the phase it was in when it was
@@ -610,7 +629,9 @@ export class LlamaServerClient {
   private readonly completionRetryBackoffMsOverride: number | undefined;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly refreshApiKey: (url: string) => Promise<string | null>;
+  private readonly ownEngineState: (url: string) => OwnEngineState;
   private readonly drySamplerOverride: boolean | undefined;
+  private readonly modelSamplingOverride: boolean | undefined;
   private readonly logger:
     | (Pick<StructuredLogger, "debug"> & Partial<Pick<StructuredLogger, "warn">>)
     | undefined;
@@ -690,7 +711,9 @@ export class LlamaServerClient {
     this.sleep = options.sleep ?? defaultSleep;
     this.refreshApiKey = options.refreshApiKey ??
       ((url) => refreshCoreKeyForUrl(getConfig().paths.localModelsDataDir, url));
+    this.ownEngineState = options.ownEngineState ?? ((url) => readOwnEngineState(url, getConfig()));
     this.drySamplerOverride = options.drySampler;
+    this.modelSamplingOverride = options.modelSampling;
     this.logger = options.logger;
   }
 
@@ -1312,7 +1335,12 @@ export class LlamaServerClient {
               false,
               undefined,
               {
-                ...(streamError.type !== undefined ? { body: { type: streamError.type } } : {}),
+                // The overflow counts ride along (ATO-2420): without them
+                // the overflow compaction cannot scale the window by the
+                // server's own count of the refused prompt.
+                ...(streamError.type !== undefined
+                  ? { body: { type: streamError.type, ...streamError.counts } }
+                  : {}),
                 midStream: true,
               },
             );
@@ -1913,17 +1941,19 @@ export class LlamaServerClient {
       prompt: request.prompt,
       stream,
       cache_prompt: request.cachePrompt ?? true,
-      temperature: request.temperature ?? ENV_TEMPERATURE ?? 0.2,
-      top_p: request.topP ?? ENV_TOP_P ?? 0.95,
-      top_k: request.topK ?? ENV_TOP_K ?? 40,
+      // ATO-2202: the model's own sampling sits under the request and
+      // the env, opt-in like DRY until measured on real tasks.
+      ...resolveSamplingFields(
+        request,
+        { temperature: ENV_TEMPERATURE, topP: ENV_TOP_P, topK: ENV_TOP_K },
+        this.modelSamplingOverride ?? (config.localModels.modelSampling === true),
+      ),
       // The per-step cap first, then the turn's own ceiling (a fusion
       // worker's `workerMaxOutputTokens`), then the config knob.
       n_predict: resolveNPredict(
         request.maxTokens ?? request.maxOutputTokens,
         config.localModels.completionMaxTokens,
       ),
-      repeat_penalty: request.repeatPenalty ?? 1.1,
-      repeat_last_n: request.repeatLastN ?? 256,
     };
     // ATO-332: opt-in, off by default until measured on real tasks.
     if (this.drySamplerOverride ?? (config.localModels.drySampler === true)) {
@@ -1975,6 +2005,11 @@ export class LlamaServerClient {
     if (!key || headers.authorization === `Bearer ${key}`) return false;
     headers.authorization = `Bearer ${key}`;
     return true;
+  }
+
+  /** `ownEngineState` that never throws: a failed read keeps the key words. */
+  private readOwnEngine(url: string): OwnEngineState {
+    try { return this.ownEngineState(url); } catch { return "unknown"; }
   }
 
   private resolveRetryParams(): { maxAttempts: number; backoffMs: number } {
@@ -2030,7 +2065,7 @@ export class LlamaServerClient {
               continue;
             }
           }
-          throw keyRefusedError(err, headers.authorization !== undefined);
+          throw keyRefusedError(err, headers.authorization !== undefined, this.readOwnEngine(url));
         }
         if (!isRetryableLlamaError(err) || i >= maxAttempts) throw err;
         await this.sleep(computeBackoffMs(backoffMs, i));
@@ -2048,11 +2083,12 @@ export class LlamaServerClient {
  * shapes: an `error:` event line carrying `{code, message, type}`, and a
  * `data:` payload whose `error` is an object or a string. The status is
  * the event's numeric `code`, else 500. The detail is capped like an
- * HTTP error body's.
+ * HTTP error body's. `counts`: an `exceed_context_size_error`'s `n_ctx` /
+ * `n_prompt_tokens`, when the event carries them (ATO-2420).
  */
 export function parseSseErrorEvent(
   rawEvent: string,
-): { status: number; detail: string; type?: string } | null {
+): { status: number; detail: string; type?: string; counts?: ContextOverflowCounts } | null {
   for (const line of rawEvent.split("\n")) {
     let payload: unknown;
     if (line.startsWith("error:")) {
@@ -2080,7 +2116,9 @@ export function parseSseErrorEvent(
       typeof code === "number" && Number.isInteger(code) && code >= 400 && code < 600 ? code : 500;
     const type = typeof record["type"] === "string" ? record["type"] : undefined;
     const detail = extractLlamaErrorDetail(JSON.stringify({ error: record }));
-    return { status, detail, ...(type !== undefined ? { type } : {}) };
+    const counts = readContextOverflowCounts(JSON.stringify({ error: record }));
+    const hasCounts = counts.contextWindow !== undefined || counts.promptTokens !== undefined;
+    return { status, detail, ...(type !== undefined ? { type } : {}), ...(hasCounts ? { counts } : {}) };
   }
   return null;
 }
@@ -2298,9 +2336,20 @@ function isUnauthorized(err: unknown): err is LlamaServerError {
  * `keySent` false is a server started with `--api-key` while the agent
  * has no key for it at all (ATO-313): "refused the agent's key" and a
  * restart would send the operator the wrong way, so it names the key to set.
+ *
+ * `ownEngine` `gone` is the managed chat port answering 401 while our own
+ * model process is not there (ATO-1732): another program holds the port,
+ * so neither a restart nor a key would help. The error stays a 401
+ * `LlamaServerError`; only the words change.
  */
-export function keyRefusedError(err: LlamaServerError, keySent = true): LlamaServerError {
-  const advice = keySent
+export function keyRefusedError(
+  err: LlamaServerError,
+  keySent = true,
+  ownEngine: OwnEngineState = "unknown",
+): LlamaServerError {
+  const advice = ownEngine === "gone"
+    ? `${FOREIGN_KEY_REFUSAL_MESSAGE} ${FOREIGN_KEY_REFUSAL_ADVICE}`
+    : keySent
     ? "The local model server refused the agent's key. " +
       "For the model the agent runs, restart it (atomic-agent models stop, then atomic-agent models start); " +
       "for your own server, check localModels.apiKey or ATOMIC_AGENT_LLAMA_API_KEY."

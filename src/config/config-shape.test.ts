@@ -68,6 +68,10 @@ describe("config shape map (ATO-764)", () => {
     expect(knownConfigKeys("discord").has("ownerUserId")).toBe(true);
     expect(knownConfigKeys("memory").has("profile")).toBe(true);
     expect(knownConfigKeys("memory").has("futureKey")).toBe(false);
+    // Optional managed keys (ATO-2106, ATO-1106): known, so clearing them sticks.
+    expect(knownConfigKeys("localModels.managed").has("modelsDirOverride")).toBe(true);
+    expect(knownConfigKeys("localModels.managed").has("loraAdapters")).toBe(true);
+    expect(knownConfigKeys("localModels.managed").has("dataDirOverride")).toBe(true);
   });
 
   it("descends the llm blocks and knows every pin a caller can clear", () => {

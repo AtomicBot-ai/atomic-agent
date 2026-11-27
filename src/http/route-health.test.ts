@@ -123,6 +123,24 @@ describe("GET /health", () => {
     expect(body.busyTurns).toBe(0);
   });
 
+  it("treats a loopback request from the cloudflared tunnel as remote (ATO-2308)", async () => {
+    harness = await startTestHarness({
+      localModelsUrl: `http://127.0.0.1:${await closedPort()}`,
+    });
+
+    const tunnelled = (await (await fetch(`${harness.baseUrl}/health?llama=0`, {
+      headers: { "cf-connecting-ip": "203.0.113.50" },
+    })).json()) as { runtime: string; pid?: number; ppid?: number; busyTurns?: number };
+    expect(tunnelled.runtime).toBe("atomic-agent");
+    expect(tunnelled.pid).toBeUndefined();
+    expect(tunnelled.ppid).toBeUndefined();
+    expect(tunnelled.busyTurns).toBeUndefined();
+
+    const local = (await (await fetch(`${harness.baseUrl}/health?llama=0`)).json()) as { pid?: number; busyTurns?: number };
+    expect(local.pid).toBe(process.pid);
+    expect(local.busyTurns).toBe(0);
+  });
+
   it("leaves the llama probe out for ?llama=0 and still counts the turns", async () => {
     harness = await startTestHarness({
       localModelsUrl: `http://127.0.0.1:${await closedPort()}`,

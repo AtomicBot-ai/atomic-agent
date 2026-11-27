@@ -200,3 +200,47 @@ test("the agent's CPU switch is recognised, failed or served", () => {
   assert.equal(failed.retryable, false);
   assert.equal(engineFailureIn(`Atomic Core did not become ready. ${HINT}`).cpuFallback, undefined);
 });
+
+// ATO-1745: a model file that is damaged or gone is not "try a smaller model": the card offers this model's download again.
+test("a damaged or missing model file reads as its own sentence, apart from load", () => {
+  const corrupt = engineFailureOf({ ok: false, stdout: "", error: "models start exited with code 1",
+    stderr: "gguf_init_from_file_impl: invalid magic characters: 'xV4', expected 'GGUF'\nllama_model_load_from_file_impl: failed to load model\n" }, { core: true });
+  assert.equal(corrupt.reason, "model_file_corrupt");
+  assert.equal(corrupt.stage, "start");
+  assert.equal(corrupt.retryable, false);
+  assert.match(corrupt.why, /damaged.*download the model again/i);
+  assert.doesNotMatch(corrupt.why, /smaller model|—/);
+  const missing = engineFailureOf({ ok: false, stdout: "", error: "models start exited with code 1",
+    stderr: "gguf_init_from_file: failed to open GGUF file '/Users/someone/models/m.gguf': No such file or directory\nllama_model_load_from_file_impl: failed to load model\n" }, { core: true });
+  assert.equal(missing.reason, "model_file_missing");
+  assert.match(missing.why, /not found.*download the model again/i);
+  // A truncated file (a tensor past its end) is damaged too, as the agent names it.
+  assert.equal(engineFailureIn("MODEL_LOAD_FAILED: tensor 'blk.3.attn_q.weight' data is not within the file bounds").reason, "model_file_corrupt");
+  // Out of memory first, as the agent orders it: still `load`, still "try a smaller model".
+  const oom = engineFailureIn("MODEL_LOAD_FAILED: unable to allocate CUDA0 buffer; failed to read tensor", { core: true });
+  assert.equal(oom.reason, "load");
+});
+
+test("Core's answer alone may not say why: the server log's line is read, and only once a load failed", () => {
+  let reads = 0;
+  const logLine = () => { reads += 1; return "gguf_init_from_file_impl: invalid magic characters: 'xV4', expected 'GGUF'"; };
+  const f = engineFailureIn("MODEL_LOAD_FAILED: the model could not be loaded", { core: true, logLine });
+  assert.equal(f.reason, "model_file_corrupt");
+  assert.equal(reads, 1);
+  // Not a load failure: the log is not read, and the card is as before.
+  assert.equal(engineFailureIn(`Atomic Core did not become ready. ${HINT}`, { core: true, logLine }).reason, undefined);
+  assert.equal(reads, 1);
+  // A log that cannot be read leaves `load`.
+  assert.equal(engineFailureIn("MODEL_LOAD_FAILED", { core: true, logLine: () => { throw new Error("EACCES"); } }).reason, "load");
+});
+
+// Review round 1: "unknown model architecture" is a good file the engine is too old for, never a damaged one.
+test("a model too new for the engine says to update the app, and is never a re-download", () => {
+  const f = engineFailureOf({ ok: false, stdout: "", error: "models start exited with code 1",
+    stderr: "llama_model_load: error loading model: error loading model architecture: unknown model architecture: 'qwen9'\nllama_model_load_from_file_impl: failed to load model\n" }, { core: true });
+  assert.equal(f.reason, "model_unsupported");
+  assert.equal(f.retryable, false);
+  assert.match(f.why, /newer engine.*Update Atomic Agent/);
+  assert.doesNotMatch(f.why, /download/i);
+  assert.equal(engineFailureIn("MODEL_LOAD_FAILED: tensor 'blk.0.ffn_down.weight' has unknown ggml type 41").reason, "model_unsupported");
+});

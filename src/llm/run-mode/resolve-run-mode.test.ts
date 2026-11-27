@@ -179,7 +179,15 @@ describe("resolveRunMode", () => {
       { managedModelId: "qwen-3.5-4b" },
     );
     expect(pinned.orchestratorModel).toBe("opus");
-    expect(pinned.workerModel).toBe("gemma");
+    // The worker is our daemon, which serves the managed model: a stored
+    // pick that differs is not what answers, so it is not the label (ATO-1483).
+    expect(pinned.workerModel).toBe("qwen-3.5-4b");
+    // Without a known managed model the pick is still the label.
+    expect(
+      resolveRunMode(
+        llm("openrouter", { mode: "fusion", fusion: { workerModel: "gemma" } }),
+      ).workerModel,
+    ).toBe("gemma");
     expect(
       resolveRunMode(llm("openrouter", { mode: "fusion" })).workerModel,
     ).toBeNull();

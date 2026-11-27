@@ -121,3 +121,17 @@ test("ATO-1578: a cloud model that answered empty twice gets Switch model, not T
   const once = { kind: "error", category: "model", error: "empty", payload: { failure: { cause: "empty_response", action: "retry" } } };
   assert.notEqual(c.turnFailureAct(once).act, "switch-model");
 });
+
+test("ATO-1686: a model that keeps calling tools that don't exist gets Switch model, not Try again", () => {
+  const c = load();
+  const ev = { kind: "error", category: "tool", error: "tool not registered in this agent: os.grep",
+    payload: { failure: { cause: "unknown_tools_repeated", phrase: "This model keeps calling tools that don't exist. Try another model.", action: "switch-model" } } };
+  const a = c.turnFailureAct(ev);
+  assert.equal(a.act, "switch-model");
+  assert.equal(a.noRetry, true);
+  const html = c.sysRowHTML({ id: 1, k: "system", sev: "err", text: "x", ...a }, 1);
+  assert.match(html, /data-sel-open="model">Switch model<\/button>/);
+  // A tool that broke keeps the old row.
+  const crashed = { kind: "error", category: "tool", error: "EACCES", payload: { failure: { cause: "tool_crashed", action: "retry" } } };
+  assert.notEqual(c.turnFailureAct(crashed).act, "switch-model");
+});

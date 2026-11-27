@@ -14,6 +14,7 @@ import { pluginCommand } from "./plugin-command.js";
 import { configCommand } from "./config-command.js";
 import { serveCommand } from "./serve-command.js";
 import { httpCommand } from "./http-command.js";
+import { pairCommand } from "./pair-command.js";
 import { mcpServerCommand } from "./mcp-server-command.js";
 import { acpCommand } from "./acp-command.js";
 import { traceCommand } from "./trace-command.js";
@@ -25,14 +26,17 @@ import { memoryCommand } from "./memory-command.js";
 import { modelsCommand } from "./models-command.js";
 import { importCommand } from "./import-command.js";
 import { handoffCommand } from "./handoff-command.js";
+import { launchCommand } from "./launch-command.js";
 import { shareCommand } from "./share-command.js";
 import { recipeCommand } from "./recipe-command.js";
+import { logbookCommand } from "./logbook-command.js";
 import { uninstallCommand } from "./uninstall-command.js";
 import { updateCommand } from "./update-command.js";
 import { doctorCommand } from "./doctor-command.js";
 import { dataCommand } from "./data-command.js";
 import { setupCommand } from "./setup-command.js";
 import { idCommand } from "./id-command.js";
+import { usageCommand } from "./usage-command.js";
 import { policyCommand } from "./policy-command.js";
 import { pushCommand } from "./push-command.js";
 import { providersCommand } from "./providers-command.js";
@@ -127,6 +131,11 @@ const COMMANDS: CommandDescriptor[] = [
     run: httpCommand,
   },
   {
+    name: "pair",
+    summary: "Connect a phone to the panel by a QR code, no API key typed (--remote, --list, --revoke)",
+    run: (args) => pairCommand(args),
+  },
+  {
     name: "mcp-server",
     summary: "Serve memory search and skills to Claude Code, Codex, Cursor and other MCP clients (stdio, read-only by default)",
     run: mcpServerCommand,
@@ -140,6 +149,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "trace",
     summary: "Inspect append-only session traces (list|show|export)",
     run: traceCommand,
+  },
+  {
+    name: "usage",
+    summary: "Tokens and cloud cost per day over every session, local vs cloud (--days N|--all, --models, --json)",
+    run: usageCommand,
   },
   {
     name: "export",
@@ -185,6 +199,11 @@ const COMMANDS: CommandDescriptor[] = [
     run: (args) => handoffCommand(args, { openTui: tuiCommand }),
   },
   {
+    name: "launch",
+    summary: "Start Claude Code, Codex or OpenCode on Atomic Agent through atag serve (launch <claude|codex|opencode>)",
+    run: (args) => launchCommand(args),
+  },
+  {
     name: "share",
     summary:
       "Save a chat as one redacted HTML/Markdown file for a colleague (--gist asks, then uploads a secret gist)",
@@ -195,6 +214,11 @@ const COMMANDS: CommandDescriptor[] = [
     summary:
       "Check a shared recipe before you use it, or turn a recipe file into its link (check|link)",
     run: (args) => recipeCommand(args),
+  },
+  {
+    name: "logbook",
+    summary: "Day journal from screenshots, described by a local model only (start|stop|pause|status|today|clear|standup)",
+    run: (args) => logbookCommand(args),
   },
   {
     name: "doctor",

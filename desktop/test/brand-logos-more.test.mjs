@@ -118,7 +118,10 @@ test('the MCP catalog cards have marks for the branded servers, letters for the 
 test('Connections tabs, Telegram, Discord, Phone push, Composio and Exa wear their marks', () => {
   assert.deepEqual({ ...H.SETTINGS_PANE_LOGOS }, { telegram: 'telegram', discord: 'discord', push: 'ntfy', composio: 'composio', monid: 'monid' });
   assert.match(source, /\(SETTINGS_PANE_LOGOS\[p\] \? logoHTML\(SETTINGS_PANE_LOGOS\[p\], 'xs'\) : ''\)/);
-  assert.match(source, /logoHTML\('telegram', 'lg', 'send'\)/);
+  // ATO-426 (#1874): the Connect card's big mark moved to telegram-token.js; renderer.js hands it logoHTML.
+  assert.match(source, /tgConnectCardHTML\(\{esc, ic, logo: logoHTML\}\)/);
+  const T = require('../renderer/telegram-token.js');
+  assert.match(T.tgConnectCardHTML({ esc, ic: (n) => '<i:' + n + '>', logo: H.logoHTML }), /data-tg-connect><span class="logo logo--lg" data-fb="send"><img src="logos\/telegram\.svg"/);
   assert.match(source, /logoHTML\('telegram', '', 'send'\)/);
 
   const D = require('../renderer/discord-settings.js');

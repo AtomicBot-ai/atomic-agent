@@ -11,6 +11,15 @@ export type {
 } from "./task-store.js";
 export { TaskRunner } from "./task-runner.js";
 export { TASK_RUNS_KEPT_PER_TASK } from "./task-run-log.js";
+export {
+  BOARD_LANES,
+  BOARD_NOTE_MAX_LENGTH,
+  BoardValidationError,
+  groupCardsByLane,
+  laneForStatus,
+  validateBoardPatch,
+} from "./task-board-lanes.js";
+export type { BoardCard, BoardEntry, BoardLane, BoardPatch } from "./task-board-lanes.js";
 export type { TaskRunOutcome, TaskRunRecord } from "./task-run-log.js";
 export {
   isPausedTask,

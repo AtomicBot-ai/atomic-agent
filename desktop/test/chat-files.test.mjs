@@ -108,6 +108,94 @@ test('the turn\'s last screenshot goes under a reply with no picture of its own,
   assert.deepEqual(CF.cfTextPictures('see ~/a.png, /b/c.JPG and /d.txt and ~/a.png'), ['~/a.png', '/b/c.JPG']);
 });
 
+// ATO-2409: the Word, Excel and PowerPoint files the agent makes are the chat's files too.
+test('Office files the agent made are listed as written by it; a workbook read and a failed write are not', () => {
+  const log = [
+    {k: 'user', text: 'make sales.docx, sales.xlsx and sales.pptx'},
+    {k: 'tool', name: 'os.fs.docx', ok: true, args: JSON.stringify({path: 'Atomic Agent Marketer Kit/sales.docx', op: 'create', blocks: ['# Sales']}), out: 'created'},
+    {k: 'tool', name: 'os.fs.xlsx', ok: true, args: JSON.stringify({path: 'Atomic Agent Marketer Kit/sales.xlsx', op: 'write', rows: [['a']]}), out: 'wrote'},
+    {k: 'tool', name: 'os.fs.xlsx', ok: true, args: JSON.stringify({path: 'Atomic Agent Marketer Kit/prices.xlsx', op: 'read'}), out: 'A1: 1'},
+    {k: 'tool', name: 'os.fs.write_pptx', ok: true, args: JSON.stringify({path: '~/Decks/sales.pptx', slides: [{title: 'Q1'}]}), out: 'created'},
+    {k: 'tool', name: 'os.fs.docx', ok: false, args: JSON.stringify({path: 'failed.docx', op: 'create'}), out: 'error'},
+    {k: 'tool', name: 'os.fs.write_pptx', ok: false, outcome: 'denied', args: JSON.stringify({path: 'denied.pptx', slides: []})},
+    {k: 'assistant', text: 'Done: `sales.docx`, `sales.xlsx`, `sales.pptx`.'},
+  ];
+  const files = CF.chatFilesOf(log, {workingDir: '/Users/n/Documents', home: '/Users/n', argsOf});
+  assert.deepEqual(files.map((f) => [f.path, f.from, f.kind]), [
+    ['/Users/n/Decks/sales.pptx', 'agent', 'file'],
+    ['/Users/n/Documents/Atomic Agent Marketer Kit/sales.xlsx', 'agent', 'file'],
+    ['/Users/n/Documents/Atomic Agent Marketer Kit/sales.docx', 'agent', 'file'],
+  ]);
+  assert.ok(files.every((f) => !/prices|failed|denied/.test(f.path)), 'a read, a failed and a denied call list nothing');
+  // The writers themselves, and what each call wrote.
+  assert.deepEqual([...CF.CF_OFFICE].sort(), ['os.fs.docx', 'os.fs.write_pptx', 'os.fs.xlsx']);
+  assert.deepEqual(CF.cfOfficeWrite('os.fs.docx', {path: 'a.docx', op: 'create'}), {path: 'a.docx', created: true});
+  assert.deepEqual(CF.cfOfficeWrite('os.fs.docx', {path: 'a.docx', op: 'append'}), {path: 'a.docx', created: false});
+  assert.deepEqual(CF.cfOfficeWrite('os.fs.xlsx', {path: ' b.xlsx ', op: 'chart'}), {path: 'b.xlsx', created: false});
+  assert.deepEqual(CF.cfOfficeWrite('os.fs.write_pptx', {path: 'c.pptx', slides: []}), {path: 'c.pptx', created: true});
+  assert.equal(CF.cfOfficeWrite('os.fs.xlsx', {path: 'b.xlsx', op: 'read'}), null);
+  assert.equal(CF.cfOfficeWrite('os.fs.docx', {op: 'create'}), null);
+  assert.equal(CF.cfOfficeWrite('os.fs.docx', 'not an object'), null);
+  assert.equal(CF.cfOfficeWrite('os.fs.write', {path: 'a.txt'}), null);
+});
+
+// ATO-2409: a reply that says `sales.docx` and nothing more about where it is.
+test('a bare file name in a reply is the chat\'s file of that name, the newest one; a path or an unknown name is not', () => {
+  const files = [
+    {path: '/w/new/sales.docx', name: 'sales.docx', kind: 'file', from: 'agent'},
+    {path: '/w/old/sales.docx', name: 'sales.docx', kind: 'file', from: 'agent'},
+    {path: '/w/sales.xlsx', name: 'sales.xlsx', kind: 'file', from: 'reply'},
+  ];
+  assert.equal(CF.chatFilesByName('sales.docx', files), '/w/new/sales.docx');
+  assert.equal(CF.chatFilesByName(' sales.xlsx ', files), '/w/sales.xlsx');
+  assert.equal(CF.chatFilesByName('sales.pptx', files), '', 'a name the chat has no file for');
+  assert.equal(CF.chatFilesByName('Sales.docx', files), '', 'the name as written, case and all');
+  assert.equal(CF.chatFilesByName('/w/new/sales.docx', files), '', 'a path is the path pass\'s business');
+  assert.equal(CF.chatFilesByName('new/sales.docx', files), '');
+  assert.equal(CF.chatFilesByName('sales', files), '', 'no extension, no chip');
+  assert.equal(CF.chatFilesByName('.docx', files), '');
+  assert.equal(CF.chatFilesByName('', files), '');
+  assert.equal(CF.chatFilesByName(null, files), '');
+  assert.equal(CF.chatFilesByName('sales.docx', []), '', 'nothing written yet');
+  assert.equal(CF.chatFilesByName('sales.docx'), '', 'the renderer\'s list starts empty');
+});
+
+// ATO-2412: the reply shows three chips, the panel said "None yet": the chips came from code spans holding a path with spaces.
+test('a path a reply writes in a code span, spaces and all, is listed once main confirms it, like its chip', () => {
+  const kit = '/Users/n/Documents/Atomic Agent Marketer Kit';
+  const asked = [];
+  const verdicts = new Map([
+    [kit + '/sales.docx', {ok: true, abs: kit + '/sales.docx', kind: 'file'}],
+    ['~/Documents/Atomic Agent Marketer Kit/sales.xlsx', {ok: true, abs: kit + '/sales.xlsx', kind: 'file'}],
+    [kit + '/sales.pptx', {ok: true, abs: kit + '/sales.pptx', kind: 'file'}],
+    [kit, {ok: true, abs: kit, kind: 'dir'}],
+    ['/Users/n/gone.docx', {ok: false, abs: null, kind: null}],
+  ]);
+  const text = 'The three files:\n'
+    + '- `' + kit + '/sales.docx`\n'
+    + '- `~/Documents/Atomic Agent Marketer Kit/sales.xlsx`\n'
+    + '- `' + kit + '/sales.pptx` (also at ' + kit + '/sales.pptx, no: paths with spaces are not prose chips)\n'
+    + 'They sit in `' + kit + '` next to `/Users/n/gone.docx`. Run `npm test` or `ls -la`, not `https://x.y/a b.docx`.\n'
+    + '```\n/Users/n/in-a-fence.docx\n```\n';
+  const log = [{k: 'user', text: 'paths?'}, {k: 'assistant', text}];
+  const files = CF.chatFilesOf(log, {home: '/Users/n', replyPath: (raw) => { asked.push(raw); return verdicts.get(raw) || null; }});
+  assert.deepEqual(files.map((f) => [f.path, f.from, f.kind]), [
+    [kit + '/sales.pptx', 'reply', 'file'],
+    [kit + '/sales.xlsx', 'reply', 'file'],
+    [kit + '/sales.docx', 'reply', 'file'],
+  ]);
+  assert.ok(!asked.includes('npm test') && !asked.includes('ls -la') && !asked.includes('https://x.y/a b.docx'), 'main is asked only about paths');
+  assert.ok(!asked.includes('/Users/n/in-a-fence.docx'), 'a fence is code');
+  assert.equal(asked.filter((r) => r === kit + '/sales.pptx').length, 1, 'a path is asked about once, whichever way it is written');
+  // The span pass itself.
+  assert.deepEqual(CF.cfCodeSpanPaths('see `/a b/c.txt`, `~/d e.md`, ` /f.txt `, `/a b/c.txt`, `~`, `/`, `x/y.txt`, `C:\\Docs\\a b.docx`, `//net/share`'),
+    ['/a b/c.txt', '~/d e.md', '/f.txt', 'C:\\Docs\\a b.docx']);
+  assert.deepEqual(CF.cfCodeSpanPaths('```sh\n`/in/fence.txt`\n```\nand `/out.txt`'), ['/out.txt']);
+  assert.deepEqual(CF.cfCodeSpanPaths('`/bad<x>.txt` `/bad"y.txt` `file:///z.txt` `/multi\nline.txt`'), []);
+  assert.deepEqual(CF.cfCodeSpanPaths(''), []);
+  assert.deepEqual(CF.cfCodeSpanPaths(null), []);
+});
+
 test('image.generate paths written with ~ are listed expanded, as main stats them', () => {
   const log = [{k: 'tool', name: 'image.generate', ok: true, out: 'Saved 1 picture:\n- ~/Pictures/a.png'}];
   assert.deepEqual(CF.chatFilesOf(log, {home: '/Users/n'}).map((f) => f.path), ['/Users/n/Pictures/a.png']);

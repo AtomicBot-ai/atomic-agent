@@ -37,6 +37,7 @@
 export type UpstreamReason =
   | "context_overflow"
   | "out_of_credit"
+  | "key_refused"
   | "missing_thought_signature"
   | "missing_reasoning_content"
   | "tool_result_missing"
@@ -77,6 +78,15 @@ const REASON_PATTERNS: ReadonlyArray<readonly [UpstreamReason, RegExp]> = [
   [
     "out_of_credit",
     /insufficient[ _-]?(?:balance|credits?|funds|quota)|credit balance|out of (?:credits?|funds)|requires more credits|payment[ _-]required|credit_balance_exhausted/i,
+  ],
+  // ATO-2419: a key the provider refused, in its words. Gemini says it
+  // with a 400 ("API key not valid", `API_KEY_INVALID`), so the status
+  // alone does not; Anthropic `authentication_error` "invalid x-api-key",
+  // OpenAI "Incorrect API key provided", DeepSeek "Authentication Fails",
+  // OpenRouter "No auth credentials found".
+  [
+    "key_refused",
+    /api[ _-]?key[^.]{0,40}(?:not valid|invalid|incorrect|expired|revoked|missing|required)|(?:invalid|incorrect|missing|expired|revoked)[ _-]+(?:x-)?api[ _-]?key|API_KEY_INVALID|authentication[ _-]?(?:error|fail)|no auth credentials/i,
   ],
   ["missing_thought_signature", /thought[ _-]?signature/i],
   ["missing_reasoning_content", /reasoning_content/i],

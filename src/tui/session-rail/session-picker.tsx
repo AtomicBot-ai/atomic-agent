@@ -24,6 +24,11 @@ export interface SessionPickerProps {
    * picker only says what it is filtered by.
    */
   query?: string;
+  /**
+   * ATO-1659: the search index for this list is still being built in
+   * the background; the matches follow when it is done.
+   */
+  searching?: boolean;
 }
 
 const MAX_ROWS = 10;
@@ -36,6 +41,15 @@ const MAX_ROWS = 10;
 export function SessionPicker(props: SessionPickerProps): ReactElement {
   const { sessions, cursor, currentSessionId, morePages = false } = props;
   const query = (props.query ?? "").replace(/\s+/g, " ").trim();
+  if (props.searching === true && query.length > 0) {
+    return (
+      <Box borderStyle="round" borderColor={theme.colors.accent} paddingX={1}>
+        <Text color={theme.colors.muted}>
+          {`searching sessions for "${truncate(query, 40)}"… Esc to dismiss`}
+        </Text>
+      </Box>
+    );
+  }
   if (sessions.length === 0) {
     return (
       <Box borderStyle="round" borderColor={theme.colors.warn} paddingX={1}>

@@ -235,6 +235,62 @@ describe("advisor escalation of a stuck worker (ATO-942)", () => {
     expect(row!.status).toBe("ok");
     expect(row!.notes?.join("\n")).toMatch(/re-run on big after the local worker stayed stuck/);
   });
+
+  it("sends the re-run to the escalation provider with the escalation model, not the worker's (ATO-1653)", async () => {
+    const asked: Array<{ providerId?: string; model?: string; hasModel: boolean }> = [];
+    const stuckThenDone = async (_s: SessionState, options: TurnOptions): Promise<RunTurnResult> => {
+      asked.push({
+        providerId: options.providerId,
+        model: options.model,
+        hasModel: Object.prototype.hasOwnProperty.call(options, "model"),
+      });
+      if (options.providerId === "cloud") return done();
+      for (let i = 0; i < 3; i += 1) sameStep(options.eventHook, i);
+      await flush();
+      for (let i = 3; i < 6; i += 1) sameStep(options.eventHook, i);
+      return {
+        session: createEmptySessionState({ id: "s-x", workingDir: "/repo" }),
+        reason: options.signal?.aborted ? "cancelled" : "reply",
+        stepCount: 6,
+      } as RunTurnResult;
+    };
+    const h = harness(stuckThenDone);
+    const [row] = await runWorkerTasks(h.deps, {
+      ...BASE,
+      tasks: TASK,
+      turnModel: "small-wire",
+      signal: new AbortController().signal,
+      escalation: {
+        target: { ...TARGET, replace: true, turnModel: "big-wire" },
+        pricing: PRICING,
+      },
+    });
+    // The local turn asks for the worker's model; the re-run asks the
+    // escalation provider for the escalation model, the field that
+    // becomes the request's model (`runTurn` options.model, ATO-1560).
+    expect(asked).toEqual([
+      { providerId: "local", model: "small-wire", hasModel: true },
+      { providerId: "cloud", model: "big-wire", hasModel: true },
+    ]);
+    expect(row!.notes?.join("\n")).toMatch(/re-run on big after the local worker stayed stuck/);
+
+    // A target whose model is the entry's own chat model has no
+    // `turnModel`: the re-run names no model, so the provider's own one
+    // answers, and the worker's model never leaks onto the cloud leg.
+    asked.length = 0;
+    const plain = harness(stuckThenDone);
+    await runWorkerTasks(plain.deps, {
+      ...BASE,
+      tasks: TASK,
+      turnModel: "small-wire",
+      signal: new AbortController().signal,
+      escalation: { target: { ...TARGET, replace: true }, pricing: PRICING },
+    });
+    expect(asked).toEqual([
+      { providerId: "local", model: "small-wire", hasModel: true },
+      { providerId: "cloud", model: undefined, hasModel: false },
+    ]);
+  });
 });
 
 describe("the re-run's money is counted once (ATO-1319)", () => {

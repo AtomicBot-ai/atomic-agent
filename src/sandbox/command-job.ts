@@ -1,8 +1,10 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 
 import { CappedOutput } from "./capped-output.js";
 import { buildCommandEnv } from "./command-env.js";
-import { killProcessTree } from "./kill-process-tree.js";
+import { descendantPids, signalPids } from "./process-descendants.js";
+import { signalGroup } from "./signal-process-group.js";
 
 const IS_WINDOWS = process.platform === "win32";
 
@@ -31,6 +33,13 @@ export interface CommandJobOptions {
    * built by `buildSubshellInvocation` / `buildDirectInvocation`.
    */
   windowsVerbatimArguments?: boolean;
+  /**
+   * Keep stdin open for `write` (ATO-2277: an interactive `os.shell.run`
+   * job). Omitted, stdin is closed at once and the command sees EOF.
+   */
+  keepStdinOpen?: boolean;
+  /** POSIX: a stop also signals each descendant (a pty job's own session, ATO-2277). */
+  stopDescendants?: boolean;
 }
 
 export interface CommandJobExit {
@@ -46,6 +55,12 @@ export interface CommandJobOutput {
   /** Either stream dropped bytes to stay under its cap. */
   truncated: boolean;
 }
+
+/** Text a stream produced, as it arrives (`CommandJob.onOutput`). */
+export type CommandJobOutputListener = (
+  text: string,
+  stream: "stdout" | "stderr",
+) => void;
 
 /** Why `waitFor` returned: the child closed, the wait ran out, the signal fired. */
 export type CommandJobWait = "exited" | "elapsed" | "aborted";
@@ -67,6 +82,20 @@ export interface CommandJob {
   exited(): CommandJobExit | null;
   /** A snapshot of what both streams have produced so far. */
   output(): CommandJobOutput;
+  /**
+   * Hear each piece of output as it arrives, decoded as UTF-8 per
+   * stream (a character split across chunks arrives whole). Uncapped:
+   * the listener sees bytes the capped snapshot later drops. Returns
+   * the unsubscribe.
+   */
+  onOutput(listener: CommandJobOutputListener): () => void;
+  /**
+   * Type into the command's stdin. `false` when it is not open: started
+   * without `keepStdinOpen`, ended, or the command is gone.
+   */
+  write(text: string): boolean;
+  /** Close stdin (the command sees EOF). A no-op when it is not open. */
+  endInput(): void;
   /**
    * Wait up to `ms` (`0` = unbounded) for the child to close, or until
    * `signal` aborts — which returns promptly and leaves the child
@@ -101,35 +130,6 @@ export async function awaitJobExit(
       durationMs: Date.now() - job.startedAt,
     }
   );
-}
-
-/**
- * Signal the child's whole process group. On POSIX the child leads its
- * own group (spawned `detached`), so `-pid` reaches everything the
- * command started — a subshell's `sleep 30 &` included. Without that a
- * background grandchild survives the kill and, still holding the stdio
- * pipes, keeps the job from closing until it exits on its own. A group
- * that is already gone falls back to the direct kill, a no-op then. On
- * Windows the tree-kill (`taskkill /T`) walks the descendants instead.
- */
-function signalGroup(child: ChildProcess, signal: NodeJS.Signals): void {
-  if (IS_WINDOWS) {
-    killProcessTree(child, { force: signal === "SIGKILL" });
-    return;
-  }
-  if (typeof child.pid === "number") {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch {
-      // group gone — fall through to the direct child
-    }
-  }
-  try {
-    child.kill(signal);
-  } catch {
-    // process already exited
-  }
 }
 
 /**
@@ -187,11 +187,33 @@ export function startCommandJob(
   // awaiting `exit` itself when a spawn fails.
   exitPromise.catch(() => undefined);
 
-  child.stdout.on("data", (chunk: Buffer) => stdout.append(chunk));
-  child.stderr.on("data", (chunk: Buffer) => stderr.append(chunk));
-  // Nothing is written, so a far end that closed early is not an error.
+  const treeOf = (): number[] =>
+    options.stopDescendants === true && !IS_WINDOWS && typeof child.pid === "number"
+      ? descendantPids(child.pid)
+      : [];
+  const listeners = new Set<CommandJobOutputListener>();
+  const decoders = {
+    stdout: new StringDecoder("utf8"),
+    stderr: new StringDecoder("utf8"),
+  };
+  const hear = (stream: "stdout" | "stderr", chunk: Buffer) => {
+    if (listeners.size === 0) return;
+    const text = decoders[stream].write(chunk);
+    if (text.length === 0) return;
+    for (const listener of listeners) listener(text, stream);
+  };
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdout.append(chunk);
+    hear("stdout", chunk);
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderr.append(chunk);
+    hear("stderr", chunk);
+  });
+  // A far end that closed early is not an error: the write says so.
   child.stdin.on("error", () => undefined);
-  child.stdin.end();
+  let stdinOpen = options.keepStdinOpen === true;
+  if (!stdinOpen) child.stdin.end();
 
   return {
     command,
@@ -208,6 +230,22 @@ export function startCommandJob(
         stderr: err.text,
         truncated: out.truncated || err.truncated,
       };
+    },
+    onOutput(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    write(text) {
+      if (!stdinOpen || exit || spawnError || child.stdin.destroyed) return false;
+      child.stdin.write(text);
+      return true;
+    },
+    endInput() {
+      if (!stdinOpen) return;
+      stdinOpen = false;
+      child.stdin.end();
     },
     waitFor(ms, signal) {
       if (spawnError) return Promise.reject(spawnError);
@@ -239,14 +277,21 @@ export function startCommandJob(
     },
     stop() {
       if (exit || spawnError || stopTimer) return;
+      const tree = treeOf();
       // A polite stop first, so a build tool can flush; the escalation
       // is armed regardless, because a polite stop is free to be ignored.
+      signalPids(tree, "SIGTERM");
       signalGroup(child, "SIGTERM");
       stopTimer = setTimeout(() => signalGroup(child, "SIGKILL"), JOB_STOP_GRACE_MS);
+      // Outlives the job's close: descendants may survive the root.
+      if (tree.length > 0) {
+        setTimeout(() => signalPids(tree, "SIGKILL"), JOB_STOP_GRACE_MS).unref();
+      }
     },
     kill() {
       if (exit || spawnError) return;
       clearStop();
+      signalPids(treeOf(), "SIGKILL");
       signalGroup(child, "SIGKILL");
     },
   };

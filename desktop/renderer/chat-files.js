@@ -12,11 +12,25 @@
    - the files a reply delivers (`replyFiles`) and the files a turn wrote
      ("Saved to", `attach`);
    - the files a reply names that main found (the reply's own chips:
-     replyPathKnown), never a path main has not confirmed;
+     replyPathKnown), never a path main has not confirmed. ATO-2412: both
+     ways renderer.js renderProseFresh finds a path count, the `~/…` or `/…`
+     in prose (CF_TEXT_PATH) and a code span that is one path and nothing
+     else (`/Users/n/My Docs/sales.docx`, spaces allowed: cfCodeSpanPaths),
+     so the panel and the chips never disagree;
    - files the agent wrote (os.fs.write / edit / patch, a call that succeeded),
+     the Office files it made or changed (ATO-2409: os.fs.docx, os.fs.xlsx
+     except `op: read`, os.fs.write_pptx; the `path` of the call, made
+     absolute against the working folder, as the agent resolves it),
      pictures image.generate made, and screenshots (os.screen.capture,
      browser.screenshot: the `saved <path> (` line of their result).
    A path that no longer exists is dropped once main's stat says so.
+
+   ATO-2409: a reply that names one of these files by its bare name in a code
+   span (`sales.docx`) gets a chip for it too: renderer.js renderProseFresh asks
+   chatFilesByName, which answers with the chat's file of that name (the panel's
+   list), and main confirms the path as for any chip. The list changing bumps the
+   prose cache and asks for a repaint, so a reply drawn before the write landed
+   gets its chips.
 
    Nothing here reads a file: showing one is file-preview.js's IPC call, and
    main checks the path there (main/file-preview.ts), as it does for a chip.
@@ -27,7 +41,10 @@
 const CF_MAX = 200;
 const CF_PICTURE = /\.(png|jpe?g|webp|gif)$/i;
 const CF_VIDEO = /\.(mp4|webm|m4v)$/i;
-const CF_WRITES = new Set(['os.fs.write', 'os.fs.edit', 'os.fs.patch']);
+/* ATO-2409: the Office writers (src/tools/os/office, src/tools/os/pptx). They send no
+   diffstat, so the chat reads their `path` argument; cfOfficeWrite says when a call wrote. */
+const CF_OFFICE = new Set(['os.fs.docx', 'os.fs.xlsx', 'os.fs.write_pptx']);
+const CF_WRITES = new Set(['os.fs.write', 'os.fs.edit', 'os.fs.patch', ...CF_OFFICE]);
 const CF_SHOTS = new Set(['os.screen.capture', 'browser.screenshot']);
 /* A reply's path, as renderer.js renderProseFresh finds it (`~/…` or `/…`, a dotted extension). */
 const CF_TEXT_PATH = /(?<![\p{L}\p{N}_\/])((?:~\/|\/)(?:[\p{L}\p{N}_.@+-]+\/)*[\p{L}\p{N}_.@+-]+\.[A-Za-z0-9]{1,10})(?![\p{L}\p{N}_\/])/gu;
@@ -50,6 +67,31 @@ function cfTextPictures(text) {
   CF_TEXT_PATH.lastIndex = 0;
   let m;
   while ((m = CF_TEXT_PATH.exec(String(text || '')))) if (CF_PICTURE.test(m[1]) && !found.includes(m[1])) found.push(m[1]);
+  return found;
+}
+
+/* ATO-2412: a code span's text that is one path, as renderer.js codeSpanIsPath
+   takes it on either platform: `~/…` or `/…` (`~\…`, `C:\…`), spaces and all,
+   not a URL. Fences are left out: a path in a code block is code. */
+const CF_CODE_SPAN = /`([^`\n]+)`/g;
+const CF_SPAN_PATH = /^(?:~\/|\/)[^\/\s]|^(?:~\\|[A-Za-z]:[\\/])\S/;
+
+/** A reply's text without its fenced blocks: the renderer chips no path inside a fence. */
+function cfProseText(text) {
+  return String(text || '').replace(/```[\s\S]*?(?:```|$)/g, '');
+}
+
+/** The paths a reply's code spans hold (`/Users/n/My Docs/sales.docx`), once each, in order. */
+function cfCodeSpanPaths(text) {
+  const found = [];
+  const src = cfProseText(text);
+  CF_CODE_SPAN.lastIndex = 0;
+  let m;
+  while ((m = CF_CODE_SPAN.exec(src))) {
+    const s = m[1].trim();
+    if (!s || s.length > 1024 || /[\0<>"]/.test(s) || /:\/\//.test(s) || !CF_SPAN_PATH.test(s)) continue;
+    if (!found.includes(s)) found.push(s);
+  }
   return found;
 }
 
@@ -85,6 +127,36 @@ function cfGeneratedPaths(out) {
   let m;
   while ((m = re.exec(String(out || '')))) found.push(m[1]);
   return found;
+}
+
+/**
+ * ATO-2409: what an Office writer's call wrote: `{path, created}` from its
+ * arguments (the path as the model gave it; `created` for `op: create` and a
+ * deck, which os.fs.write_pptx always makes anew), or null when the call is
+ * not an Office writer, read a workbook (`os.fs.xlsx op: read`) or named no path.
+ */
+function cfOfficeWrite(name, args) {
+  if (!CF_OFFICE.has(name)) return null;
+  const a = args && typeof args === 'object' ? args : {};
+  const op = typeof a.op === 'string' ? a.op : '';
+  if (name === 'os.fs.xlsx' && op === 'read') return null;
+  const path = typeof a.path === 'string' ? a.path.trim() : '';
+  if (!path) return null;
+  return {path, created: name === 'os.fs.write_pptx' || op === 'create'};
+}
+
+/**
+ * ATO-2409: the chat's file a reply names by its bare name in a code span
+ * (`sales.docx`): the newest file of that exact name among `files` (the
+ * panel's list, CF.files by default), or '' when none or when `raw` is not a
+ * bare file name (a path, a folder, no extension, anything a chip cannot carry).
+ */
+function chatFilesByName(raw, files) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s || s.length > 255 || /[\\/\0\n<>"]/.test(s) || !/^[^.\s].*\.[A-Za-z0-9]{1,10}$/.test(s)) return '';
+  const list = Array.isArray(files) ? files : CF.files;
+  const hit = list.find((f) => f && f.name === s && typeof f.path === 'string');
+  return hit ? hit.path : '';
 }
 
 /** A tool argument's path, made absolute against the working folder and home. */
@@ -123,7 +195,9 @@ function chatFilesOf(log, deps) {
     if (m.k === 'tool' && m.ok === true && m.outcome == null) {
       if (CF_WRITES.has(m.name) && typeof d.argsOf === 'function') {
         const a = d.argsOf(m) || {};
-        add(cfAbsolute(a.path, d.workingDir, d.home), 'agent');
+        // ATO-2409: an Office writer's call counts when it wrote (never `os.fs.xlsx op: read`).
+        const w = CF_OFFICE.has(m.name) ? cfOfficeWrite(m.name, a) : {path: a.path};
+        if (w) add(cfAbsolute(w.path, d.workingDir, d.home), 'agent');
       } else if (m.name === 'image.generate') {
         cfGeneratedPaths(m.out).forEach((p) => add(cfAbsolute(p, '', d.home), 'image'));
       } else if (CF_SHOTS.has(m.name)) {
@@ -133,11 +207,15 @@ function chatFilesOf(log, deps) {
     }
     if (m.k === 'assistant' && !m.placeholder) {
       if (typeof d.replyPath === 'function') {
-        const text = String(m.text || '');
+        const text = cfProseText(m.text);   // ATO-2412: a path in a fence is code, as the reply draws it
+        const named = [];
         CF_TEXT_PATH.lastIndex = 0;
         let mt;
-        while ((mt = CF_TEXT_PATH.exec(text))) {
-          const v = d.replyPath(mt[1]);
+        while ((mt = CF_TEXT_PATH.exec(text))) named.push(mt[1]);
+        // ATO-2412: a code span that is one path (spaces and all) is a chip in the reply, so it is a file here.
+        for (const raw of cfCodeSpanPaths(text)) if (!named.includes(raw)) named.push(raw);
+        for (const raw of named) {
+          const v = d.replyPath(raw);
           if (v && v.ok && v.abs && v.kind === 'file') add(v.abs, 'reply');
         }
       }
@@ -226,6 +304,13 @@ function chatFilesSync() {
   if (!chatChanged && sig === CF.sig) return;
   CF.sid = sid; CF.sig = sig; CF.files = files;
   cfStatSoon();
+  /* ATO-2409: a reply's bare `sales.docx` is a chip only once the file is on
+     this list, and finished markup is cached (renderer.js PROSE_CACHE), so a
+     changed list retires that cache and asks for one transcript repaint. */
+  if (files.length && typeof PROSE_CACHE !== 'undefined' && PROSE_CACHE) {
+    PROSE_CACHE.ver++;
+    if (typeof streamPaint === 'function') streamPaint('chat');
+  }
   if (typeof filePreviewFilesChanged === 'function') filePreviewFilesChanged(files, chatChanged, sid === null);
 }
 
@@ -250,5 +335,5 @@ function cfStatSoon() {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {chatFilesOf, cfShotPath, cfTextPictures, turnPictures, CF_SHOTS, cfGeneratedPaths, cfAbsolute, cfKind, cfFolder, chatFilesTabsHTML, chatFilesListHTML};
+  module.exports = {chatFilesOf, cfShotPath, cfTextPictures, cfCodeSpanPaths, turnPictures, CF_SHOTS, CF_OFFICE, cfOfficeWrite, chatFilesByName, cfGeneratedPaths, cfAbsolute, cfKind, cfFolder, chatFilesTabsHTML, chatFilesListHTML};
 }

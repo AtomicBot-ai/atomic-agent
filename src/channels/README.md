@@ -13,6 +13,7 @@ This area owns remote chat adapters. Read [AGENTS.md](AGENTS.md) before changing
 - [model-command.ts](model-command.ts)
 - [model-switch.ts](model-switch.ts)
 - [chat-session-map.ts](chat-session-map.ts)
+- [channel-fork.ts](channel-fork.ts): `/fork`, the session copy shared by the Telegram and Slack commands (ATO-2235)
 - [reconnect-backoff.ts](reconnect-backoff.ts)
 - [telegram-channel.ts](telegram/telegram-channel.ts)
 - [discord-channel.ts](discord/discord-channel.ts)
@@ -23,6 +24,7 @@ This area owns remote chat adapters. Read [AGENTS.md](AGENTS.md) before changing
 - [googlechat-channel.ts](googlechat/googlechat-channel.ts) — Google Chat over Pub/Sub pull (ATO-506)
 - [msteams-channel.ts](msteams/msteams-channel.ts) and [msteams/index.ts](msteams/index.ts) (Microsoft Teams, Bot Framework; setup in [docs/msteams.md](docs/msteams.md))
 - [whatsapp-channel.ts](whatsapp/whatsapp-channel.ts) — WhatsApp through WhatsApp Web pairing (unofficial protocol, `baileys`; ATO-502)
+- [linear-channel.ts](linear/linear-channel.ts) and [linear/index.ts](linear/index.ts): mention or assign the agent in a Linear issue, it answers as a comment (signed webhook; setup in [linear/README.md](linear/README.md); ATO-2324)
 
 ## Ownership and dependencies
 

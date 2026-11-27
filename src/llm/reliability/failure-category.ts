@@ -106,3 +106,22 @@ export interface TruncationDetail {
  * *basename*, and the shipped build is a single bundled file).
  */
 export type ModelFailureStage = "initial" | "repair";
+
+/**
+ * Which path raised a `GrammarError` (ATO-2422). The class alone covers
+ * two different stories, a server that refused the request and a reply
+ * our parser could not read, and the report needs to tell them apart:
+ *
+ *  - `server_refused_grammar`: llama-server answered a 4xx whose words
+ *    name the grammar (`isGrammarRefusal`). On an external server the
+ *    resend without the grammar failed too; on our engine none is tried.
+ *  - `server_refused_request`: any other 4xx `toLlmFailure` files here.
+ *  - `parse_failed`: a raw `ToolCallParseError` reached `toLlmFailure`.
+ *  - `repair_failed`: the one-shot repair came back and still did not
+ *    parse or validate, and no reply could be read from it.
+ */
+export type GrammarFailurePath =
+  | "server_refused_grammar"
+  | "server_refused_request"
+  | "parse_failed"
+  | "repair_failed";

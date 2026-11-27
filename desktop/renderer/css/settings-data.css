@@ -168,6 +168,10 @@ input.tk-inp.sd-name{width:100%;font:400 var(--fs-label)/1.5 var(--font-mono)}
 .sd-tgcard.sd-inlinecard.tk-card.pad{width:auto;align-self:stretch;margin:0;padding:16px}
 .sd-cmp .tk-notice .sd-cap{flex:none}
 .sd-steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px;font-size:var(--fs-ui);line-height:1.5;color:var(--ink-2)}
+/* ATO-426: the Telegram Connect card is centred; its steps read left to right like a list. */
+.sd-tgcard.sd-center .sd-steps--left{text-align:left;align-self:stretch}
+.sd-tgcard.sd-center > .sd-acts{justify-content:center;flex-wrap:wrap;margin-top:4px}
+.sd-tokwrap .iconbtn{flex:none;color:var(--ink-3)}
 
 /* ---- Import · ST-31, ST-32 ---- */
 .sd-imphead{gap:10px}

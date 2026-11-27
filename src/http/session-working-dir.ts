@@ -1,8 +1,9 @@
 import { statSync } from "node:fs";
+import type { ServerResponse } from "node:http";
 import { isAbsolute, resolve } from "node:path";
 
 import { openaiError } from "./openai-errors.js";
-import { readJsonBody, sendError, sendJson, type HttpHandler } from "./request-context.js";
+import { readJsonBody, sendError, sendJson, type HandlerContext, type HttpHandler } from "./request-context.js";
 
 /**
  * ATO-731: each chat has its own working folder (`SessionState.workingDir`,
@@ -25,12 +26,37 @@ export function checkWorkingDir(raw: unknown): { ok: true; dir: string } | { ok:
 }
 
 /**
+ * ATO-2308: a paired phone never picks the folder the agent works in,
+ * neither by moving a chat nor by starting work somewhere else (tasks,
+ * chat completions and the routes that forward to it, an idea's Retry):
+ * the folder decides what the agent's tools reach, so only this computer
+ * chooses it. Sends `403 device_cannot_change_folder` and returns `true`
+ * for a device-signed request; `false` (nothing sent) for everyone else.
+ */
+export function refuseDeviceFolder(
+  res: ServerResponse,
+  ctx: Pick<HandlerContext, "pairedDevice">,
+  param: string,
+): boolean {
+  if (!ctx.pairedDevice) return false;
+  sendJson(res, 403, openaiError(
+    "A paired device cannot choose a chat's folder; choose it on this computer",
+    "permission_error",
+    param,
+    "device_cannot_change_folder",
+  ));
+  return true;
+}
+
+/**
  * `POST /api/sessions/{id}/working-dir` — `{ workingDir }`: move one chat to
  * another folder. `409 turn_in_progress` while that chat runs a turn (its
  * tools would change folder mid-turn); other chats' turns do not matter.
+ * `403 device_cannot_change_folder` for a paired phone (refuseDeviceFolder).
  */
 export function createSetSessionWorkingDirHandler(): HttpHandler {
   return async (req, res, ctx) => {
+    if (refuseDeviceFolder(res, ctx, "workingDir")) return;
     const id = ctx.params.id ?? "";
     let body: unknown;
     try {

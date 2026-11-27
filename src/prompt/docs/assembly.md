@@ -5,7 +5,7 @@ Owner: src/prompt/
 
 ## Stable prefix
 
-`buildStablePrefix` owns persona, rules, skill catalog, tools, capabilities and instructions. Catalog/role changes intentionally alter these bytes; loading a tool/skill or writing a profile does not. The grammar is sent per request, outside the cached prefix.
+`buildStablePrefix` owns persona, rules, skill catalog, tools, capabilities and instructions. Catalog/role changes intentionally alter these bytes; loading a tool/skill or writing a profile does not. The grammar is sent per request, outside the cached prefix. The capabilities block may carry one [`machine:` line](../machine-line.ts) (installed RAM, CPU name, GPU presence, OS name; never free memory or disk), read once per runtime and rendered only when the serving provider is on a loopback address, so hardware details stay off cloud and network providers.
 
 `### answer-style` ([answer-style.ts](../answer-style.ts)) follows `### rules` when the turn names the surface that shows the reply: terminal (TUI), desktop (sidecar), Telegram or Discord, mapped from the turn origin. It says how the final reply should read (answer first, no retold tool output, paths as code, headings only for long replies) plus that surface's limits (Telegram: no tables, under 3500 characters). A cloud model mode gets the full form (~130-150 tokens); local or unset gets a one-line short form (~40 tokens). The bytes depend only on channel and mode, so the prefix stays cache-stable within a session. Fusion workers, scheduler, HTTP and CLI turns pass no channel and get no block.
 
@@ -20,7 +20,7 @@ The actual flat assembly in `build-prompt.ts` is:
 1. Optional project (the client's project instructions, ATO-42, capped at `PROJECT_SECTION_MAX_TOKENS`), memory-index, session-facts, recalled; world.
 2. Optional request when the original user request was packed out of view.
 3. Optional context summary, then fresh conversation.
-4. Optional route, profile, lessons, procedures, loaded-skills, loaded-tools, task-policy, notice.
+4. Optional route, hook-session-start (ATO-2198: what SessionStart hooks printed, on every turn of the session), hook-context (what UserPromptSubmit hooks printed for this turn), profile, lessons, procedures, loaded-skills, loaded-tools, task-policy, notice.
 5. Respond anchor and profile-specific generation framing.
 
 Empty optional sections are omitted. Notice composition and structured messages share this contract. Sections changed by a step follow conversation; moving them above it can invalidate already read transcript context. The turn's memory snapshot is fetched before stepping.

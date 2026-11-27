@@ -77,8 +77,8 @@ export const ENV_SETTINGS: readonly EnvSetting[] = [
   env("ATOMIC_AGENT_REPLY_POLISH", true, "Clean up the final reply before a chat surface shows it."),
 
   // Safe Mode: the OS sandbox around the agent's shell commands (ATO-469, ATO-472).
-  env("ATOMIC_AGENT_SANDBOX", "off", "Set to workspace to run the agent's shell commands in the OS sandbox: writes only in the working folder, temp and download caches, no reads of credential folders or the state directory. Where no sandbox exists (Windows, Linux without bwrap) commands are refused. Unset or any other value: off."),
-  env("ATOMIC_AGENT_SANDBOX_NETWORK", "off", "Set to on to let commands inside the Safe Mode sandbox reach the network; loopback always works. Unset or any other value: no network inside the sandbox."),
+  env("ATOMIC_AGENT_SANDBOX", "off", "Set to workspace to run the agent's shell commands in the OS sandbox: writes only in the working folder (not when it is the home folder or above it) and temp, package caches in a private sandbox cache under temp, no reads of credential folders or the state directory. Where no sandbox exists (Windows, Linux without bwrap) commands are refused. Unset or any other value: off."),
+  env("ATOMIC_AGENT_SANDBOX_NETWORK", "off", "Set to on to let commands inside the Safe Mode sandbox reach the network; loopback always works. Unset or any other value: no network inside the sandbox, and no local sockets (Docker, ssh-agent, D-Bus): all of them on macOS, the known socket places on Linux (see `src/sandbox/README.md`)."),
 
   // Browser tools.
   env("ATOMIC_AGENT_BROWSER_ENABLED", ENV_DEFAULTS.BROWSER_ENABLED, "Register the browser tools."),
@@ -117,7 +117,7 @@ export const ENV_SETTINGS: readonly EnvSetting[] = [
   env("ATOMIC_AGENT_LANG", null, "Interface language of the terminal UI when `tui.language` is `auto`: en or ru. Unset: taken from LC_ALL, LC_MESSAGES or LANG, else English."),
   env("ATOMIC_AGENT_OFFLINE", null, "Set to 1 to turn offline mode on for this process, whatever config.json says. It cannot be turned off for a running process."),
   env("ATOMIC_AGENT_PROXY", null, "Send the agent's web traffic through this HTTP(S) proxy, as `network.proxy.url` does. Wins over the config value when set.", "network.proxy.url"),
-  env("ATOMIC_AGENT_ALLOWED_ORIGINS", null, "Comma-separated web origins that may call a keyless local `serve`, besides loopback ones."),
+  env("ATOMIC_AGENT_ALLOWED_ORIGINS", null, "Comma-separated web origins, besides loopback ones, that may call serve's `/mcp` endpoint from a browser (the API key is still required). Deprecated for every other route: serve always has an API key now, so they no longer read it."),
   env("ATOMIC_AGENT_MODEL_CATALOG_URL", null, "URL of the extra local-model catalog JSON. Unset: the catalog hosted on atomicagent.io."),
   env("ATOMIC_AGENT_RERANK_URL", null, "Local reranker (llama-server /v1/rerank style) that re-orders My files search hits. Unset: off. Only a server on this machine or the local network is used."),
 
@@ -145,6 +145,7 @@ export const INTERNAL_ENV_NAMES: ReadonlyMap<string, string> = new Map([
   ["ATOMIC_AGENT_API_KEY", "a secret name kept out of the shell tool's child environment"],
   ["ATOMIC_AGENT_OPENAI_API_KEY", "a secret name kept out of child process environments"],
   ["ATOMIC_AGENT_GIT_CREDENTIAL", "set only on the git child process to pass the GitHub token"],
+  ["ATOMIC_AGENT_SECRET_KEY", "set only on a cmd:// secret helper's child process to pass the key it resolves"],
   ["ATOMIC_AGENT_SURFACE", "set by the desktop app on the agent it starts"],
   ["ATOMIC_AGENT_DESKTOP_VERSION", "set by the desktop app on the agent it starts"],
   ["ATOMIC_AGENT_MCP_APPS_UI", "set by the desktop app on the agent it starts, which draws MCP Apps pages"],
@@ -156,6 +157,7 @@ export const INTERNAL_ENV_NAMES: ReadonlyMap<string, string> = new Map([
   ["ATOMIC_AGENT_INSTALL_SOURCE", "set by the install scripts for analytics"],
   ["ATOMIC_AGENT_KEYCHAIN_PROBE", "a throwaway keychain account name, not a variable"],
   ["ATOMIC_AGENT_INK_INCREMENTAL", "a one-off switch for the session-swap render measurement, not a user setting"],
+  ["ATOMIC_AGENT_TOKEN", "set by `atag launch` on the CLI it starts (Codex, OpenCode) to carry the serve key"],
 ]);
 
 /** The env variable that wins over `configKey`, or null. */

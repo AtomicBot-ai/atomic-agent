@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assessAndOcr,
+  boundOcrEngine,
   DEFAULT_OCR_LANGUAGES,
   mergeOcrText,
   type OcrEngine,
@@ -116,5 +117,40 @@ describe("mergeOcrText", () => {
     ]);
     expect(pages[0]?.text).toBe(REAL_TEXT);
     expect(pages[1]?.text).toBe("recognised");
+  });
+});
+
+describe("boundOcrEngine (ATO-2205)", () => {
+  it("sends at most maxPages pages and names the ones it left out", async () => {
+    const seen: OcrPageRequest[] = [];
+    const engine = boundOcrEngine(fakeEngine({}, seen), { maxPages: 2 });
+    const run = await engine.recognizePdfPages({ ...INPUT, pages: [3, 4, 7, 9], languages: ["rus"] });
+    expect(seen[0]?.pages).toEqual([3, 4]);
+    expect(run.pages.map((p) => p.page)).toEqual([3, 4]);
+    expect(run.warnings).toEqual([
+      "OCR page limit: recognised 2 of 4 scanned pages; pages 7, 9 were not read",
+    ]);
+  });
+
+  it("passes everything through under the limit, and hands the engine the caller's signal", async () => {
+    const seen: OcrPageRequest[] = [];
+    const controller = new AbortController();
+    const engine = boundOcrEngine(fakeEngine({ id: "inner" }, seen), { maxPages: 5, signal: controller.signal });
+    expect(engine.id).toBe("inner");
+    const run = await engine.recognizePdfPages({ ...INPUT, pages: [1, 2], languages: ["rus"] });
+    expect(seen[0]?.pages).toEqual([1, 2]);
+    expect(seen[0]?.signal).toBe(controller.signal);
+    expect(run.warnings).toEqual([]);
+  });
+
+  it("limits a whole scanned document read through assessAndOcr", async () => {
+    const seen: OcrPageRequest[] = [];
+    const pages: PageText[] = [1, 2, 3].map((page) => ({ page, text: "" }));
+    const warnings: string[] = [];
+    const out = await assessAndOcr(pages, INPUT, warnings, boundOcrEngine(fakeEngine({}, seen), { maxPages: 1 }));
+    expect(seen[0]?.pages).toEqual([1]);
+    expect(out.assessment.status).toBe("partial");
+    expect(out.assessment.pagesWithoutText).toEqual([2, 3]);
+    expect(warnings).toContain("OCR page limit: recognised 1 of 3 scanned pages; pages 2, 3 were not read");
   });
 });

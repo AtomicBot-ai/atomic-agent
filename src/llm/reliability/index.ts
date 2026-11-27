@@ -1,4 +1,5 @@
 export type {
+  GrammarFailurePath,
   LlmFailureCategory,
   ModelFailureReason,
   ModelFailureStage,
@@ -14,11 +15,13 @@ export {
   TransportError,
 } from "./llm-failures.js";
 export type {
+  GrammarErrorOptions,
   LlmFailureOptions,
   ModelErrorOptions,
   ToolExecutionErrorKind,
   ToolExecutionErrorOptions,
   UnregisteredToolNameClass,
+  UnregisteredToolSource,
 } from "./llm-failures.js";
 export { classifyFailure } from "./classify-failure.js";
 export { classifyFailureCause } from "./classify-failure-cause.js";
@@ -126,3 +129,7 @@ export type {
   FabricatedToolTranscript,
   FabricatedTranscriptWatcher,
 } from "./fabricated-tool-transcript.js";
+export {
+  countTaggedToolCallBlocks,
+  detectTaggedToolCallText,
+} from "./tagged-tool-call-text.js";

@@ -1,0 +1,24 @@
+/* ATO-2257: the task board room (workboard.js). Five lanes side by side,
+   scrolling sideways in a narrow window; cards reuse the window's buttons. */
+.wb{padding:16px 20px 24px}
+.wb-head{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.wb-head .sd-cap{margin:0;font-size:var(--fs-cap);color:var(--ink-2)}
+.wb-lanes{display:grid;grid-template-columns:repeat(5,minmax(200px,1fr));gap:12px;overflow-x:auto;padding-bottom:8px}
+.wb-lane{display:flex;flex-direction:column;min-height:240px;padding:8px;border:1px solid var(--bd);border-radius:var(--r-well);background:var(--panel-2)}
+.wb-lane--over{border-color:var(--blue);box-shadow:0 0 0 1px var(--blue) inset}
+.wb-lane-h{margin:2px 4px 8px;font-size:var(--fs-label);font-weight:600;color:var(--ink-2);text-transform:uppercase;letter-spacing:.04em}
+.wb-lane-n{font-weight:400;color:var(--ink-3)}
+.wb-cards{display:flex;flex-direction:column;gap:8px;flex:1}
+.wb-empty{margin:auto 0;padding:16px 8px;text-align:center;font-size:var(--fs-cap);color:var(--ink-3)}
+.wb-card{padding:10px;border:1px solid var(--bd);border-radius:var(--r-well);background:var(--panel);cursor:grab}
+.wb-card:active{cursor:grabbing}
+.wb-card--live{border-color:var(--brand)}
+.wb-t{font-size:var(--fs-ui);color:var(--ink);line-height:1.35;word-break:break-word}
+.wb-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;font-size:var(--fs-micro);color:var(--ink-3)}
+.wb-who{color:var(--ink-2);font-weight:600}
+.wb-note{margin-top:6px;padding:6px 8px;border-radius:var(--r-well);background:var(--well);font-size:var(--fs-cap);color:var(--ink-2);white-space:pre-wrap;word-break:break-word}
+.wb-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px}
+.wb-move{max-width:120px;font:inherit;font-size:var(--fs-cap);color:var(--ink);background:var(--panel);border:1px solid var(--bd);border-radius:var(--r-well);padding:2px 4px}
+.wb-edit{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.wb-edit textarea,.wb-edit input{font:inherit;font-size:var(--fs-cap);color:var(--ink);background:var(--panel);border:1px solid var(--bd);border-radius:var(--r-well);padding:6px 8px;resize:vertical}
+.wb-err{font-size:var(--fs-cap);color:var(--red, #c0392b)}

@@ -86,7 +86,7 @@ send `ui` events.
 | Group | Main process | Renderer |
 |---|---|---|
 | Lifecycle | `app_opened`, `app_ready`, `agent_start_failed`, `agent_restarted` (manual / switch / auto / setup_finished / workspace_change / import / telegram / other), `window_crashed`, `app_closed`, `debug_report_saved`, `analytics_disabled`, `interview_invite_shown` / `interview_invite_clicked` (via menu / card / slash) / `interview_invite_dismissed` (later / never), ATO-1467 | |
-| Setup | `provider_key_checked` (ok / rejected / unreachable / payment_required), `model_configured` | `onboarding_step`, `onboarding_skipped`, `model_picked`, `provider_setup_started`, `provider_setup_failed` (… / catalog_empty / server_unreachable / certificate / timed_out / key_rejected / provider_error / agent_crashed / not_json / no_binary / list_failed; `provider_preset`, `kind` cloud / custom, as in `model_configured`), `custom_endpoint_tested`, `subscription_login_clicked`, `subscription_terminal_opened` (opened; terminal or reason), `subscription_login_succeeded` (seconds_to_sign_in) |
+| Setup | `provider_key_checked` (ok / rejected / unreachable / payment_required), `model_configured` | `onboarding_step`, `onboarding_skipped`, `model_picked`, `provider_setup_started`, `provider_setup_failed` (… / catalog_empty / server_unreachable / certificate / timed_out / key_rejected / provider_error / agent_crashed / not_json / no_binary / list_failed; `provider_preset`, `kind` cloud / custom, as in `model_configured`), `custom_endpoint_tested`, `subscription_login_clicked`, `subscription_terminal_opened` (opened; terminal or reason), `subscription_login_succeeded` (seconds_to_sign_in; `cli` claude / codex / chatgpt-oauth, the last one the ChatGPT sign-in through the bundled agent), `subscription_oauth_login_ended` (outcome cancelled / timeout / no_account / failed; step onboarding / settings) |
 | Models and backend | `model_download_started`, `model_download_finished`, `hf_lookup`, `llama_runtime_updated`, `local_backend_started`, `local_backend_supervised`, `local_backend_crashed`, `engine_recovery_shown`, `backend_switched`, `model_switched`, `fusion_configured` | |
 | Chat | `chat_turn_ui` (outcome completed / stopped_early (step or time limit, no progress, out of credit) / failed / cancelled; `error_category`, `http_status` on a failure; `ms_to_first_activity`; `cancel_phase` waiting_first / provider_wait / approval / tool / generating / waiting_next and `cancel_by` user / app on a cancel; `prompt_tokens`, `completion_tokens`, `gen_tokens_per_s` (no-tool turns only); `provider`, `provider_kind` cloud / managed_local / lmstudio / ollama / atomic_chat / custom_server, `model_id`) | `message_action`, `approval_answered`, `approval_closed` (stopped / expired / replaced / not_waiting), `coding_mode_changed`, `plan_handoff`, `attachment_added` (image / document; size bucket; button / drop / paste), `suggestion_shown`, `suggestion_accepted` (ms_to_accept) |
 | Features | `voice_used`, `voice_setup`, `task_created`, `task_action`, `overnight_started` (has_budget, hours, notify_telegram), `import_facts` (step found / saved; source claude / chatgpt; engine local / cloud; state; found, saved, skipped counts, never a fact or a quote), `skill_installed`, `skill_action`, `telegram_setup` (enable / token_saved / token_cleared / owner_cleared), `composio_setup` (key_saved / key_removed / key_checked / enable / disable; ok / unverified / rejected / error), `import_run`, `workspace_chosen` | `ui_action`, `slash_command_used`, `settings_pane_viewed`, `session_action`, `mcp_server_added`, `mcp_server_action` |
@@ -155,17 +155,26 @@ Notes on specific properties:
   sent); `quick_deaths` its crash-loop count; `after_ms` how long a restart
   took (restarted only); `engine` as above; `fault` (restart_failed and
   gave_up only) a code for the server log's failure line: oom / port_in_use /
-  load_failed / missing_lib / crash / unknown, or null when the log names
+  load_failed / missing_lib / crash / model_file_missing /
+  model_file_corrupt / model_unsupported / gpu_driver / unknown, or null when the log names
   none. The line itself, the restart's error text and its reason are never
-  sent.
+  sent. The model file and GPU words are the agent's own
+  (`src/local-llm/server/engine-exit-reason.ts`, mirrored in
+  `main/engine-exit-words.ts`, ATO-1739). model_unsupported is a good file
+  the engine is too old to read ("unknown model architecture", "unknown
+  ggml type"); the agent's own copy still counts it as model_file_corrupt.
 - `local_backend_started.reason` (ATO-278): why the start failed, on
   `result: start_failed` only (null otherwise), as a code: oom / port_in_use /
-  load_failed / missing_lib / crash (read from the one line that names a
+  load_failed / missing_lib / crash / model_file_missing /
+  model_file_corrupt / model_unsupported / gpu_driver (read from the one line that names a
   failure in the start's error text, its stderr tail, or the server log's
   current run, after the last launch marker), timeout (the app's own time
   limit on `models start`, nothing else), exited_after_ready (the server came
-  up, then stopped answering while the start waited on it), or other. The
-  error text, the stderr and the log line are never sent.
+  up, then stopped answering while the start waited on it), dll_init_failed
+  (the server exited with Windows 0xC0000142 before it answered),
+  early_exit (it exited before it answered and no line was recognised;
+  ATO-1739, only the exit code is read), or other. The error text, the
+  stderr and the log line are never sent.
 - `local_backend_crashed` (ATO-278): the managed local server the app had
   brought up died mid-session, as the engine watchdog saw it. Sent once per
   death, as the watchdog's recovery begins, and not again while a restart of
@@ -228,7 +237,25 @@ no agent is running).
   lt_50 / lt_75 / lt_90 / gte_90, and `agent_mem_verdict` (ok / warn /
   exit). A growing agent shows a high `agent_heap`; a small machine shows a
   modest `agent_rss` with a high `agent_mem_share`.
-- Scrubbing: the message is dropped (no message type is allowlisted); the
+  ATO-2416: `stopped_by` is os (the system was shutting down or logging
+  off) / outside_signal / parent_gone / memory_guard / boot_failed / self
+  (no word of why: a crash or a kill); `agent_close` is the word serve's own
+  closing line said (sigterm / sigint / sighup / parent_exited /
+  parent_exited_busy / memory_guard / serve_failed,
+  `main/sentry/agent-exit-context.ts`), and `turns_in_flight` is 0 / 1 /
+  gt_1. `exit_status` also reads ctrl_c_exit (Windows 0xC000013A: a console
+  close, Ctrl+C or a logoff ended it). `app_quitting` is read at the exit
+  itself.
+- Scrubbing: the message is dropped (no message type is allowlisted),
+  except a `TypeError` whose text is exactly one of V8's templates
+  `Cannot read properties of undefined|null (reading '<name>')`,
+  `Cannot set properties of undefined|null (setting '<name>')`,
+  `<name> is not a function` or `<name> is not iterable` with an
+  identifier-shaped name (ASCII letters, digits, `_`, `$`, dots; at most 64
+  characters). It is sent as that template with the literal placeholder
+  `<name>`: the name itself never leaves (it can be a dynamic key, a token
+  or a person's name), only the template words and `undefined` / `null`
+  (ATO-1731, `TYPE_ERROR_TEMPLATES`); the
   type is kept only when it matches `SomethingError` / `SomethingException`
   or is one of the shell's own names, else `Error`; a renderer value that is
   not an `Error` is `NonError`. The stack's `Name: message` header is cut off
@@ -239,7 +266,10 @@ no agent is running).
   `desktop_version`, `install_channel`, `run_mode`, `platform`, `arch`, plus
   `kind` / `reason` / `exit_code` enums. `RenderProcessGone` also carries
   `recovered` (`yes`: main reloaded the page; `no`: it crashed more than
-  twice in a minute and the person was asked instead, ATO-765). At most 30 reports per session,
+  twice in a minute and the person was asked instead, ATO-765).
+  `RenderProcessGone` and `ChildProcessGone` also carry `app_quitting`
+  (yes / no: the app had begun quitting) and `free_mem` (the machine's free
+  memory, the same buckets as the agent exit), ATO-1734. At most 30 reports per session,
   3 per signature, and across launches at most 10 identical events (same
   fingerprint and same message, numbers, paths and ids aside) per install
   per rolling hour (ATO-1286, `main/sentry/rate-limit.ts`; the count is kept

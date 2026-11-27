@@ -51,20 +51,27 @@ export type TerminalOpenError =
   | "empty-command"
   | "command-too-long"
   | "control-characters"
-  | "open-failed";
+  | "open-failed"
+  | "no-terminal";
 
 export type TerminalOpenAnswer =
-  | { ok: true; cwd: string; usedHome: boolean }
+  | { ok: true; cwd: string; usedHome: boolean; terminal?: string; hint?: string }
   | { ok: false; error: TerminalOpenError; message: string };
 
 const MESSAGES: Record<TerminalOpenError, string> = {
-  "unsupported": "Opening a command in Terminal is only available on macOS for now.",
+  "unsupported": "Opening a command in a terminal is not available on this system.",
   "invalid-request": "Nothing to open: the command is missing.",
   "empty-command": "The command is empty.",
   "command-too-long": "The command is too long to open in Terminal (over 64 KB).",
   "control-characters": "The command contains hidden control characters, so it was not opened in Terminal.",
   "open-failed": "Terminal could not be opened.",
+  "no-terminal": "No terminal was found.",
 };
+
+/** The failure answer for `error`; terminal-open-other.ts (Windows, Linux) answers with it too. */
+export function terminalFail(error: TerminalOpenError, detail?: string): TerminalOpenAnswer {
+  return fail(error, detail);
+}
 
 function fail(error: TerminalOpenError, detail?: string): TerminalOpenAnswer {
   return { ok: false, error, message: detail ? `${MESSAGES[error]} ${detail}` : MESSAGES[error] };
@@ -181,8 +188,11 @@ export interface LaunchFiles {
   launcher: string;
 }
 
-/** Make the root (0700, ours, not a symlink) and one launch folder in it with the four files. */
-export function writeLaunchFiles(root: string, command: string, cwd: string): LaunchFiles {
+/**
+ * Make the root (0700, ours, not a symlink) and one launch folder in it with
+ * the four files. `launcherScript` is the Linux launcher on Linux (ATO-1430).
+ */
+export function writeLaunchFiles(root: string, command: string, cwd: string, launcherScript: string = LAUNCHER_SCRIPT): LaunchFiles {
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const st = lstatSync(root);
   if (!st.isDirectory() || st.isSymbolicLink()) throw new Error("the temp folder is not a plain folder");
@@ -197,7 +207,7 @@ export function writeLaunchFiles(root: string, command: string, cwd: string): La
     mkdirSync(join(dir, "zdot"), { mode: 0o700 });
     writeFileSync(join(dir, "zdot", ".zshenv"), ZSHENV_SCRIPT, { mode: 0o600, flag: "wx" });
     const launcher = join(dir, "open.command");
-    writeFileSync(launcher, LAUNCHER_SCRIPT, { mode: 0o700, flag: "wx" });
+    writeFileSync(launcher, launcherScript, { mode: 0o700, flag: "wx" });
     // The umask can only take bits away; set the exact modes.
     chmodSync(join(dir, "cmd"), 0o600);
     chmodSync(join(dir, "cwd"), 0o600);

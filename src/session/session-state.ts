@@ -230,6 +230,8 @@ export interface SessionState {
    *     last turn was served on. Written only by `executeTurn` after the
    *     turn; compared at the next turn's start to tell the model when
    *     the route changed. See `session-route.ts`.
+   *   - `channelGuest: true`: a channel's guest session (ATO-2221);
+   *     its reads are confined. See `channel-guest-session.ts`.
    */
   metadata: Record<string, unknown>;
   /**

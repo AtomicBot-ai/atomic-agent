@@ -17,6 +17,8 @@ import { commandOfAsync, resolveBinary } from "./agent-client.js";
 // r5 item 9 — every `atag` subprocess runs on the DESKTOP's state directory.
 import { AGENT_HOME_DIRNAME, agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor, managedDataDir } from "./local-llama-key.js";
+import { askLlamaModels } from "./llama-models-probe.js";
+import { modelsDirOf } from "./disk-space.js";
 import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 
 // Moved next to the key lookup that needs it; main.ts still imports it from here.
@@ -546,7 +548,7 @@ export async function modelsList(): Promise<{ ok: boolean; models?: CatalogModel
   if (!res.ok) return { ok: false, error: res.error };
   const models: CatalogModel[] = [];
   // The table says whether the weights are on disk, and nothing about the projector.
-  const modelsDir = remoteModels ? null : join(managedDataDirNow(), "models");
+  const modelsDir = remoteModels ? null : modelsDirOf(managedDataDirNow());
   for (const line of res.stdout.split("\n")) {
     if (!line.includes("|")) continue;
     const cells = line.split("|").map((c) => c.trim());
@@ -1174,12 +1176,23 @@ export function onDaemonLifecycle(fn: (e: DaemonLifecycle) => void): () => void 
   lifecycle = fn;
   return () => { if (lifecycle === fn) lifecycle = was; };
 }
+/* ATO-1750: told of every model server start the app makes, beside the supervisor (model-port-drift.ts). */
+const startedWatchers = new Set<() => void>();
+/** Called after each real start (never a smoke's stand-in). Hands back the undo. */
+export function onModelStarted(fn: () => void): () => void {
+  startedWatchers.add(fn);
+  return () => { startedWatchers.delete(fn); };
+}
 function tell(e: DaemonLifecycle): void {
   const h = cliStandIns.getStore();
   try {
     if (h) h.tell?.(e);   // a smoke's own start or stop: never the real supervisor's business
     else lifecycle(e);
   } catch { /* a listener never fails a start or a stop */ }
+  if (h || e !== "started") return;
+  for (const fn of startedWatchers) {
+    try { fn(); } catch { /* a watcher never fails a start */ }
+  }
 }
 /** ATO-123: the `models start` runs on their way — a model loading, for the supervisor. */
 export function startsInFlight(): number {
@@ -2907,6 +2920,8 @@ export function providerIsUsable(entry: ProviderEntry, names: KeyEnvNames = keyN
 export function providerKeyInvalid(entry: ProviderEntry, names: KeyEnvNames = keyNamesAvailable()): boolean {
   if (entry.apiKey && entry.apiKey.length > 0) return !apiKeyCharsOk(entry.apiKey);
   if (entry.kind === "subscription-cli") return false;
+  // ATO-1747: a ChatGPT sign-in entry carries no key; the agent sends its saved sign-in token.
+  if (entry.kind === "subscription-oauth") return false;
   let name: string | undefined;
   if (entry.apiKeyEnvVar && entry.apiKeyEnvVar.length > 0) name = mayUseKeyVariable(entry, entry.apiKeyEnvVar) ? entry.apiKeyEnvVar : undefined;
   else if (entry.kind === "openrouter") name = "OPENROUTER_API_KEY";
@@ -2924,6 +2939,8 @@ export const STORED_KEY_INVALID = "its saved API key has a character keys don’
 export function providerHasKey(entry: ProviderEntry, names: KeyEnvNames = keyNamesAvailable()): boolean {
   if (entry.apiKey && entry.apiKey.length > 0) return true;
   if (entry.kind === "subscription-cli" && entry.subscriptionCli?.cli) return true;
+  // ATO-1747: `atomic-agent login chatgpt` writes the entry with no key field; the sign-in is its key.
+  if (entry.kind === "subscription-oauth") return true;
   if (entry.apiKeyEnvVar && entry.apiKeyEnvVar.length > 0) {
     return mayUseKeyVariable(entry, entry.apiKeyEnvVar) && names.nonEmpty.has(entry.apiKeyEnvVar);
   }
@@ -3633,7 +3650,7 @@ export function modelIdFromPath(path: string, dataDir: string): string | null {
   const real = (p: string): string => {
     try { return realpathSync.native(p); } catch { const up = dirname(p); return up === p ? p : join(real(up), basename(p)); }
   };
-  const root = join(dataDir, "models");
+  const root = modelsDirOf(dataDir);
   const folds = process.platform === "win32" || process.platform === "darwin";
   return under(path, root) ?? under(real(path), real(root))
     ?? (folds ? under(real(path).toLowerCase(), real(root).toLowerCase()) : null);
@@ -3724,7 +3741,7 @@ export function downloadJobRunning(dataDir: string, kind: "chat" | "embedding", 
 export async function removeModelDir(dataDir: string, id: string): Promise<{ ok: boolean; error?: string }> {
   if (!MODEL_ID_RE.test(id) || id === "." || id === "..") return { ok: false, error: `not a model id: ${id}` };
   if (!dataDir || !isAbsolute(dataDir)) return { ok: false, error: "the models folder is not known" };
-  const root = join(dataDir, "models");
+  const root = modelsDirOf(dataDir);
   const dir = join(root, id);
   if (dirname(dir) !== root) return { ok: false, error: `not a model id: ${id}` };
   try {
@@ -4493,6 +4510,10 @@ export interface LlamaProbeResult {
   ollama: boolean;
   /** looksLikeAtomicChatUrl(): Atomic Chat's Local API Server port (1337). */
   atomicChat: boolean;
+  /** ATO-2012: a passing /health whose /v1/models list is empty (llama-models-probe.ts). */
+  noModels?: true;
+  /** ATO-2012: a passing /health whose /v1/models still says "Loading model". */
+  loading?: true;
 }
 
 /** src/llm/llama-endpoint-url.ts llamaEndpointUrl, verbatim. */
@@ -4612,6 +4633,8 @@ export async function llamaProbe(rawUrl: string, timeoutMs = 8000): Promise<{ ok
           error: apiKey ? `http ${response.status} — the server rejected the configured API key` : `http ${response.status} — the server requires an API key (--api-key)` };
       }
     } catch { /* keep the passing /health */ }
+    // ATO-2012: a router with no model passes /health; the model list says so. Only adds a flag.
+    if (result.reachable) Object.assign(result, await askLlamaModels(llamaEndpointUrl(url, "/v1/models"), headers));
   } else if (result.kind === "unknown" && (result.status === 200 || result.status === 404)) {
     try {
       const response = await fetch(llamaEndpointUrl(url, "/v1/models"), { method: "GET", headers, signal: AbortSignal.timeout(timeoutMs) });

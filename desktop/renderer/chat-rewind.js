@@ -12,6 +12,9 @@
      (files: false); with no file changes, one button and no file section.
    - "Fork from here" (a reply): a new chat with the history up to and
      including that reply; the original stays as it is.
+   ATO-2112: when files change, Roll back offers three ways, like Claude
+   Code's /rewind: chat and files (the default), the chat only (files: false)
+   or the files only (conversation: false, the chat stays as it is).
 
    The agent does the work (POST /api/sessions/{id}/rewind[/preview], /fork):
    it names the question by how many questions come before it and its text,
@@ -72,6 +75,8 @@ function rewindSummary(preview, workingDir) {
     cannot: (Array.isArray(p.notRestorable) ? p.notRestorable : [])
       .map((f) => rewindPathLabel(f.path, workingDir) + ' (' + (REWIND_REASON[f.reason] || 'no copy was kept') + ')'),
     warnings: [],
+    // ATO-2112: the agent takes `conversation: false`; an older one would cut the chat.
+    filesOnly: p.filesOnly === true,
   };
   if (p.incomplete) out.warnings.push('Some older file changes are no longer kept, so not every file can be put back.');
   const counts = new Map();
@@ -90,13 +95,18 @@ function rewindSummary(preview, workingDir) {
 
 /**
  * The confirm buttons of the sheet: [act, label, files flag]. Roll back sends
- * no flag (the agent's default puts files back). Edit offers both ways only
- * when files will really change; otherwise one button, conversation only.
+ * no flag (the agent's default puts files back); with files to change it also
+ * offers the chat only and the files only (ATO-2112). Edit offers both ways
+ * only when files will really change; otherwise one button, conversation only.
  */
 function rewindButtons(mode, summary) {
-  if (mode !== 'edit') return [['rewind:go', 'Roll back', undefined]];
   const s = summary || {};
   const changes = (s.restore || []).length + (s.remove || []).length > 0;
+  if (mode !== 'edit') {
+    if (!changes) return [['rewind:go', 'Roll back', undefined]];
+    const both = [['rewind:go-chat', 'Chat only', false], ['rewind:go', 'Chat and files', undefined]];
+    return s.filesOnly ? [['rewind:go-files', 'Files only', true], ...both] : both;
+  }
   if (!changes) return [['rewind:go-chat', 'Send edited message', false]];
   return [['rewind:go-chat', 'Conversation only', false], ['rewind:go', 'Roll back files and conversation, then resend', true]];
 }
@@ -136,13 +146,14 @@ function rewindActsHTML(m) {
   return '';
 }
 
-/** `rewind:<verb>:<message id>` from act(): back · edit · fork · go · go-chat (edit, conversation only). */
+/** `rewind:<verb>:<message id>` from act(): back · edit · fork · go · go-chat (conversation only) · go-files (roll back, files only). */
 function rewindAct(v) {
   const colon = v.indexOf(':');
   const verb = colon < 0 ? v : v.slice(0, colon);
   const id = colon < 0 ? '' : v.slice(colon + 1);
   if (verb === 'go') return rewindConfirm(REWIND.mode === 'edit' ? true : undefined);
   if (verb === 'go-chat') return rewindConfirm(false);
+  if (verb === 'go-files') return REWIND.mode === 'edit' || !(REWIND.preview && REWIND.preview.filesOnly === true) ? undefined : rewindConfirm(true, false);
   if (verb === 'back' || verb === 'edit' || verb === 'fork') rewindStart(verb, id);
 }
 
@@ -186,6 +197,7 @@ function rewindSheetHTML() {
       : '';
     body += '<p class="sd-cap">' + esc(s.removedText) + '</p>';
     body += (s.restore.length || s.remove.length) ? '' : '<p class="sd-cap">No files will change.</p>';
+    if (!edit && (s.restore.length || s.remove.length)) body += '<p class="sd-cap">Chat only keeps the files as they are now.' + (s.filesOnly ? ' Files only keeps the whole chat.' : '') + '</p>';
     body += list('Put back as they were', s.restore) + list('Removed (the agent created them)', s.remove) + list('Cannot be put back', s.cannot);
     body += s.warnings.map((w) => '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(w) + '</span></div>').join('');
   }
@@ -201,10 +213,11 @@ function rewindSheetHTML() {
     '<span class="grow"></span><button class="btn btn-s sm" data-act="close">Cancel</button>' + foot, 'sheet-rewind');
 }
 
-/** `files`: undefined (roll back, the agent's default), true or false (edit). */
-async function rewindConfirm(files) {
+/** `files`: undefined (roll back, the agent's default), true or false; `conversation: false` keeps the chat (ATO-2112). */
+async function rewindConfirm(files, conversation) {
   if (REWIND.busy || !REWIND.preview) return;
   const edit = REWIND.mode === 'edit';
+  if (conversation === false) return rewindFilesOnly();
   const box = document.getElementById('rw-edit');
   const draft = edit ? String(box ? box.value : REWIND.draft) : '';
   if (edit && !draft.trim()) { REWIND.error = 'The message is empty.'; render(); return; }
@@ -226,10 +239,29 @@ async function rewindConfirm(files) {
   const e = $('#entry');
   if (e) { e.value = S.draft; autosize(e); e.focus(); }
   refreshSend();
-  const n = (d.restored || []).length + (d.deleted || []).length;
-  toast(edit ? 'Message edited' : 'Rolled back', (n ? rewindPlural(n, 'file', 'files') + ' put back. ' : '')
-    + (failed.length ? failed.length + ' could not be written: ' + failed.map((f) => f.path).join(', ') : ''), failed.length ? 'bad' : undefined);
+  toast(edit ? 'Message edited' : 'Rolled back', rewindFilesText(d), failed.length ? 'bad' : undefined);
   if (edit) submit();
+}
+
+/** The toast's words for the files the agent put back and the ones it could not write. */
+function rewindFilesText(d) {
+  const failed = Array.isArray(d && d.failed) ? d.failed : [];
+  const n = ((d && d.restored) || []).length + ((d && d.deleted) || []).length;
+  return (n ? rewindPlural(n, 'file', 'files') + ' put back. ' : '')
+    + (failed.length ? failed.length + ' could not be written: ' + failed.map((f) => f.path).join(', ') : '');
+}
+
+/** Roll back, files only (ATO-2112): the files go back, the chat and the composer stay as they are. */
+async function rewindFilesOnly() {
+  const sid = REWIND.sid;
+  REWIND.busy = true; REWIND.error = null; render();
+  const r = await BR.rewind(sid, REWIND.prior, REWIND.text, true, false).catch((err) => ({ok: false, supported: true, error: String(err)}));
+  REWIND.busy = false;
+  if (!r || !r.ok) { REWIND.error = rewindRefusalText(r); render(); return; }
+  S.overlay = null;
+  render();
+  const d = r.data || {};
+  toast('Files put back', rewindFilesText(d) || 'No files needed to change.', (d.failed || []).length ? 'bad' : undefined);
 }
 
 async function rewindFork() {

@@ -23,6 +23,7 @@ import {
 import { loadExternalCatalog } from "../local-llm/catalog/external-catalog.js";
 import { setDefaultDownloadConnections } from "../local-llm/downloads/download-settings.js";
 import { setDefaultHuggingFaceEndpoint } from "../local-llm/catalog/huggingface-endpoint.js";
+import { setModelsDirOverride } from "../local-llm/models-dir-override.js";
 import {
   setConfiguredBackendVariant,
   setConfiguredCoreBackendVariant,
@@ -254,6 +255,9 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
     // thread a config value down to it.
     setDefaultDownloadConnections(user.localModels.download.connections);
     setDefaultHuggingFaceEndpoint(user.localModels.download.hfEndpoint);
+    // ATO-2106: where the downloaded models live, read by `resolveModelsDir`.
+    const modelsDirOverride = user.localModels.managed.modelsDirOverride;
+    setModelsDirOverride(modelsDirOverride === undefined ? null : resolvePath(modelsDirOverride, modelsDirOverride));
   }
   const grammarsDir = resolveAssetDir("ATOMIC_AGENT_GRAMMARS_DIR", "grammars");
 
@@ -343,6 +347,7 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
       thinking: user.localModels.thinking,
       reasoningBudgetTokens: user.localModels.reasoningBudgetTokens,
       drySampler: user.localModels.drySampler,
+      modelSampling: user.localModels.modelSampling,
       strictToolArgs: user.localModels.strictToolArgs,
       valueSources: localModelsValueSources(user.localModels),
       managed: { ...user.localModels.managed },
@@ -669,7 +674,7 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
     },
     // ATO-599: Privacy Shield, read by the cloud provider adapters.
     privacy: {
-      shield: { enabled: user.privacy.shield.enabled },
+      shield: { enabled: user.privacy.shield.enabled, localNames: user.privacy.shield.localNames },
     },
     memory: {
       profile: {
@@ -826,6 +831,9 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
       progressIndicator: user.telegram.progressIndicator,
       ...(user.telegram.streamReplies !== undefined
         ? { streamReplies: user.telegram.streamReplies }
+        : {}),
+      ...(user.telegram.allowedUsers !== undefined
+        ? { allowedUsers: user.telegram.allowedUsers.map((u) => ({ ...u })) }
         : {}),
     },
     discord: {

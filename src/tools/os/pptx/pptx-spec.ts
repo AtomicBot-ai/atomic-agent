@@ -1,4 +1,5 @@
 import { parseChartSpec, type ChartSpec } from "../ooxml/ooxml-chart.js";
+import { PPTX_LAYOUTS, type PptxLayout } from "./pptx-layout.js";
 
 /**
  * The deck a model asks `os.fs.write_pptx` for, validated. Everything
@@ -35,6 +36,11 @@ export interface PptxSlideSpec {
   table?: string[][];
   chart?: ChartSpec;
   notes?: string;
+  /**
+   * The layout the model asked for. Absent: picked from the content at
+   * build time (`pptx-layout.ts`), which also stamps the one it used.
+   */
+  layout?: PptxLayout;
 }
 
 export interface PptxDeckSpec {
@@ -118,6 +124,13 @@ function parseSlide(entry: unknown, index: number): PptxSlideSpec {
   const subtitle = optionalString(raw, "subtitle", where);
   const image = optionalString(raw, "image", where);
   const notes = optionalString(raw, "notes", where, MAX_NOTES_CHARS);
+  const layoutRaw = optionalString(raw, "layout", where);
+  const layout = layoutRaw?.trim().toLowerCase();
+  if (layout !== undefined && !(PPTX_LAYOUTS as readonly string[]).includes(layout)) {
+    throw new Error(
+      `${TOOL}: ${where}layout must be one of ${PPTX_LAYOUTS.join(", ")} (got "${layoutRaw}"); leave it out to pick one from the content`,
+    );
+  }
   const table = raw.table === undefined || raw.table === null ? undefined : parseTable(raw.table, where);
   const chart =
     raw.chart === undefined || raw.chart === null ? undefined : parseChartSpec(raw.chart, `${TOOL}: ${where}chart.`);
@@ -137,6 +150,7 @@ function parseSlide(entry: unknown, index: number): PptxSlideSpec {
     ...(table === undefined ? {} : { table }),
     ...(chart === undefined ? {} : { chart }),
     ...(notes === undefined ? {} : { notes }),
+    ...(layout === undefined ? {} : { layout: layout as PptxLayout }),
   };
 }
 

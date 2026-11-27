@@ -58,6 +58,7 @@ export const osGitLogTool: ToolDefinition = {
     const result = await runGit({
       repo,
       workingDir: ctx.workingDir,
+      guest: ctx.guest,
       args,
       signal: ctx.signal,
       timeoutMs: 20_000,

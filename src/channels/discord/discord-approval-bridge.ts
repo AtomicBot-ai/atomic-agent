@@ -19,6 +19,7 @@ import type {
 } from "../../approval/approval-gate.js";
 import { describeAlwaysRule } from "../../approval/approval-rules.js";
 import { formatRiskLine } from "../../approval/risk-review.js";
+import { formatEgressLine } from "../../approval/egress-scan.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { DiscordApi, DiscordComponentRow } from "./discord-api.js";
 import { scrubDiscordError } from "./discord-channel-types.js";
@@ -228,6 +229,10 @@ export function formatPrompt(request: ApprovalRequest): string {
   // so it is escaped: no markdown and no mention can come out of it.
   const riskLine = formatRiskLine(request);
   if (riskLine !== null) lines.push(escapeDiscordText(riskLine));
+  // Where the command sends data (ATO-2116). Hosts come from the
+  // command, so they are escaped like the reviewer's words.
+  const egressLine = formatEgressLine(request.egress);
+  if (egressLine !== null) lines.push(escapeDiscordText(egressLine));
   if (request.preview) {
     // Fence the preview: a shell command full of backticks or
     // underscores would otherwise be mangled by Discord's markdown.

@@ -10,3 +10,8 @@ export {
 } from "./lsp-diagnostics.js";
 export { joinWarnings } from "./lsp-delta.js";
 export { askToStartLspThroughApprovals, LSP_START_TOOL } from "./lsp-start-question.js";
+export {
+  createLspServerPool,
+  type LspServerPool,
+  type LspServerPoolOptions,
+} from "./lsp-server-pool.js";

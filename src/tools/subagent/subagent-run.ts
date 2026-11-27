@@ -5,10 +5,7 @@ import {
 import { DEFAULT_FUSION_CLOUD_WORKERS } from "../../config/llm-run-mode-config.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import type { StructuredLogger } from "../../tracing/index.js";
-import {
-  builtinAgentProfileSet,
-  type AgentProfileSet,
-} from "../../agent-profiles/index.js";
+import type { AgentProfileSet } from "../../agent-profiles/index.js";
 import type { ApprovalGate } from "../../approval/approval-gate.js";
 import {
   ApprovalDeniedError,
@@ -25,7 +22,7 @@ import {
   type WorkerLegRef,
 } from "../fusion/role-models.js";
 import {
-  applyTaskProfiles,
+  loadAndApplyTaskProfiles,
   type AppliedProfileReport,
 } from "../fusion/task-profiles.js";
 import { treeLimitBreach } from "../fusion/task-tree.js";
@@ -39,8 +36,9 @@ import {
   FUSION_WORKER_OPERATOR_ONLY_MARKER,
   workerRefusalFor,
 } from "../fusion/worker-tool-policy.js";
-import { runWorkerTasksCore } from "../fusion/worker-runner.js";
+import { runWorkerTasks, type WorkerRunnerDeps } from "../fusion/worker-runner.js";
 import type { WorkerRunnerCoreDeps } from "../fusion/worker-runner-core.js";
+import { subagentLocalLegHealth, type SubagentLocalLegDeps } from "./subagent-local-leg.js";
 import {
   delegateOutcome,
   formatDelegateOutput,
@@ -117,7 +115,7 @@ export function subagentRefusalFor(request: {
     : SUBAGENT_OPERATOR_ONLY_REFUSED;
 }
 
-export interface SubagentRunDeps extends WorkerRunnerCoreDeps {
+export interface SubagentRunDeps extends WorkerRunnerCoreDeps, SubagentLocalLegDeps {
   /** Live read: in Fusion the tool refuses and points at `fusion.delegate`. */
   resolveRunMode: () => ResolvedRunMode;
   /**
@@ -198,7 +196,8 @@ function error(
  *  3. **Only on valid args,** at most `SUBAGENT_MAX_CHILDREN_PER_CALL`
  *     tasks, and at most `SUBAGENT_MAX_CHILDREN_PER_TURN` across the
  *     turn (the task tree's node check again).
- *  4. **Only known profiles.** `applyTaskProfiles`, as in Fusion.
+ *  4. **Only known profiles.** `loadAndApplyTaskProfiles`, the same
+ *     step Fusion runs (ATO-1743).
  *
  * Each subagent's session is stamped one level below its caller, its
  * turn runs under the `subagent` origin with the worker tool policy and
@@ -213,11 +212,8 @@ function error(
  */
 export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
   const ledger = deps.turnLedger ?? new SubagentTurnLedger();
-  // The turn each session's standing write answer was given in. The
-  // gate's turn grant is keyed by session only and is cleared at turn
-  // start only for a Fusion turn, so outside Fusion this tool drops a
-  // grant from any other turn itself before reading it.
-  const grantTurns = new Map<string, string>();
+  // One per tool (ATO-2430, subagent-local-leg.ts).
+  const localLegHealth = subagentLocalLegHealth(deps);
   return {
     name: SUBAGENT_RUN_TOOL,
     description:
@@ -316,39 +312,22 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
         ctx.providerId !== undefined && ctx.model !== undefined
           ? { providerId: baseLeg.providerId, model: ctx.model, turnModel: ctx.model }
           : baseLeg;
-      let tasks: DelegateTask[] = parsed.tasks;
-      let profileReports: AppliedProfileReport[] = [];
-      if (tasks.some((t) => t.profile !== undefined)) {
-        let profiles: AgentProfileSet;
-        try {
-          profiles =
-            deps.resolveAgentProfiles?.(ctx.workingDir) ??
-            builtinAgentProfileSet();
-        } catch (err) {
-          deps.logger?.warn("subagent: loading agent profiles failed", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-          profiles = builtinAgentProfileSet();
-        }
-        if (profiles.diagnostics.length > 0) {
-          deps.logger?.warn("subagent: agent profile problems", {
-            diagnostics: profiles.diagnostics,
-          });
-        }
-        const profiled = applyTaskProfiles(
-          tasks,
-          profiles,
-          allowedModels(sessionLeg, mode.roles),
-        );
-        if (!profiled.ok) {
-          return error(`${SUBAGENT_RUN_TOOL}: ${profiled.error}`, {
-            field: "tasks",
-            reason: "unknown-profile",
-          });
-        }
-        tasks = profiled.tasks;
-        profileReports = profiled.applied;
+      const profiled = loadAndApplyTaskProfiles({
+        tasks: parsed.tasks,
+        workingDir: ctx.workingDir,
+        resolveAgentProfiles: deps.resolveAgentProfiles,
+        allowedModels: allowedModels(sessionLeg, mode.roles),
+        logger: deps.logger,
+        logPrefix: "subagent",
+      });
+      if (!profiled.ok) {
+        return error(`${SUBAGENT_RUN_TOOL}: ${profiled.error}`, {
+          field: "tasks",
+          reason: "unknown-profile",
+        });
       }
+      const tasks: DelegateTask[] = profiled.tasks;
+      const profileReports: AppliedProfileReport[] = profiled.applied;
 
       // Where each task runs: the session's leg, or the role model its
       // profile names when `llm.runMode.fusion.roles` configures one,
@@ -376,11 +355,19 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
             { reason: "agent-state-dir", scope: intoState },
           );
         }
-        const grantTurn = grantTurns.get(ctx.sessionId);
-        if (ctx.turnId === undefined || grantTurn !== ctx.turnId) {
-          deps.approvals.fanoutScopes?.clearTurnGrant(ctx.sessionId);
-          grantTurns.delete(ctx.sessionId);
+        // The gate's turn state is keyed by session and cleared at turn
+        // start only for a Fusion turn, so a standing answer is read only
+        // when it is tied to this very turn (ATO-1759): given here, or by
+        // a `fusion.delegate` of the same turn, whose answer and refused
+        // command note then stand instead of being dropped.
+        const scopes = deps.approvals.fanoutScopes;
+        if (
+          ctx.turnId === undefined ||
+          !(scopes?.turnStateIsFrom(ctx.sessionId, ctx.turnId) ?? false)
+        ) {
+          scopes?.clearTurnGrant(ctx.sessionId);
         }
+        if (ctx.turnId !== undefined) scopes?.enterTurn(ctx.sessionId, ctx.turnId);
         const declinedInScope =
           deps.approvals.hasDeclinedUnder?.(ctx.sessionId, writeScope) ?? false;
         const alreadyApproved =
@@ -406,17 +393,7 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
               ctx.signal,
             );
           }
-          deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
-          if (ctx.turnId !== undefined) {
-            grantTurns.delete(ctx.sessionId);
-            grantTurns.set(ctx.sessionId, ctx.turnId);
-            const oldest = grantTurns.keys().next().value;
-            if (grantTurns.size > 256 && oldest !== undefined) {
-              grantTurns.delete(oldest);
-              // Forgetting the turn must not leave its grant readable.
-              deps.approvals.fanoutScopes?.clearTurnGrant(oldest);
-            }
-          }
+          scopes?.grantForTurn(ctx.sessionId, writeScope);
         } catch (err) {
           if (err instanceof ApprovalDeniedError && (err.byUser || err.declinedEarlier)) {
             return error(err.message, { reason: "writes-denied", deniedByUser: true });
@@ -431,8 +408,9 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
       ledger.record(ctx.sessionId, turnAt, tasks.length);
       const childDepth = depth + 1;
       const originalRequest = deps.resolveOriginalRequest?.(ctx.sessionId);
-      const runnerDeps: WorkerRunnerCoreDeps = {
+      const runnerDeps: WorkerRunnerDeps = {
         ...deps,
+        localLegHealth,
         workingDir: ctx.workingDir,
         ...(ctx.modelMode === "cloud" ? { inheritWorkspace: true } : {}),
       };
@@ -490,12 +468,16 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
                 mode.cloudWorkers ?? DEFAULT_FUSION_CLOUD_WORKERS,
               ),
             );
-        return runWorkerTasksCore(runnerDeps, {
+        return runWorkerTasks(runnerDeps, {
           parentSessionId: ctx.sessionId,
           tasks: group.tasks,
           maxWorkers,
           providerId: group.leg.providerId,
           workerModel: group.leg.model,
+          // A local leg gets what a Fusion local worker gets (ATO-2430,
+          // issue #490): the local floors, the slot probe, and the check
+          // and fresh connections after a cut-off subagent.
+          localLeg: local,
           ...(group.leg.turnModel === undefined
             ? {}
             : { turnModel: group.leg.turnModel }),

@@ -239,6 +239,35 @@ describe("reply text cannot close on an unescaped prose quote (#681)", () => {
     }
   });
 
+  // ATO-2007: a note's `content` is durable prose too. Under
+  // `required-string` the merged `:"` token closed it at `Preferred mode: `.
+  it("guards the memory.notes.store content the same way, under every profile and per request", async () => {
+    const NOTE = (content: string, extra = ""): string =>
+      `[{"tool":"memory.notes.store","args":{"content":"${content}"${extra}}}]`;
+    const variants: Array<[string, string]> = [];
+    for (const profile of [PLAIN_INSTRUCT_PROFILE, QWEN_THINK_PROFILE, GEMMA4_THINK_PROFILE]) {
+      const base = withoutReasoningPrelude(await buildGrammar(profile));
+      variants.push([profile.id, base]);
+      variants.push([`${profile.id} per-request`, buildGrammarForTools(base, ["memory.notes.store", "os.fs.read"])]);
+    }
+    for (const [id, grammar] of variants) {
+      expect(grammar, id).toMatch(/^notes-store-call ::= .*"\\"content\\"" ws ":" ws reply-text /m);
+      for (const text of [...TRAPS, "Preferred mode: "]) {
+        expect(gbnfAccepts(grammar, "root", NOTE(text)), `${id} ${text}`).toBe(false);
+      }
+      for (const text of [...CLEAN, "Uses tabs.", "Preferred mode: dark"]) {
+        expect(gbnfAccepts(grammar, "root", NOTE(text)), `${id} ${text}`).toBe(true);
+      }
+      expect(gbnfAccepts(grammar, "root", NOTE("Prefer pnpm", ',"tags":["prefs"]')), id).toBe(true);
+      expect(gbnfAccepts(grammar, "root", NOTE("", ',"tags":["prefs"]')), id).toBe(false);
+    }
+    for (const profile of [GEMMA4_THINK_PROFILE, QWEN_THINK_PROFILE]) {
+      const grammar = withoutReasoningPrelude(await buildGrammar(profile));
+      expect(gbnfAccepts(grammar, "root", NOTE("x <|channel> y")), profile.id).toBe(false);
+      expect(gbnfAccepts(grammar, "root", NOTE("a<b, a|b, <div>")), profile.id).toBe(true);
+    }
+  });
+
   it("makes reply args strict: text first, optional attachments, nothing else", async () => {
     for (const [id, grammar] of await grammars()) {
       for (const bad of [
@@ -576,7 +605,11 @@ describe("the reasoning budget (F49)", () => {
     });
     // Four chained body rules, about 70 bytes each.
     expect(Math.abs(bounded.length - unbounded.length)).toBeLessThan(512);
-    expect(bounded.length).toBeLessThan(16 * 1024);
+    // A loose sanity ceiling, not a runtime limit: neither llama.cpp nor our
+    // request code caps grammar size. The F49 guard is the bounded vs
+    // unbounded delta above and the ceiling delta below; this number only
+    // grows with the tool rules.
+    expect(bounded.length).toBeLessThan(20 * 1024);
     // The config ceiling, 32,768 tokens: 66 body rules, still a few KB.
     const ceiling = await buildGrammar(QWEN_THINK_PROFILE, undefined, {
       reasoningBudgetTokens: 32768,
@@ -969,6 +1002,31 @@ describe("os.shell.run cannot be called with empty args", () => {
     }
   });
 
+  // ATO-2425: the job forms carry no `cmd` (the tool refuses one that
+  // does), so before the fix a local model could not wait for, kill or
+  // list a job at all.
+  it("accepts the job forms {wait}, {kill}, {jobs} without a cmd", async () => {
+    const plain = buildGrammarForTools(await buildGrammar(PLAIN_INSTRUCT_PROFILE), ["os.shell.run", "os.fs.read"]);
+    expect(gbnfAccepts(plain, "root", '[{"tool":"os.shell.run","args":{"wait":3}}]')).toBe(true);
+    expect(gbnfAccepts(plain, "root", '[{"tool":"os.shell.run","args":{"wait":12,"timeoutMs":60000,"keep":true}}]')).toBe(true);
+    expect(gbnfAccepts(plain, "root", '[{"tool":"os.shell.run","args":{"kill":2}}]')).toBe(true);
+    expect(gbnfAccepts(plain, "root", '[{"tool":"os.shell.run","args":{"jobs":true}}]')).toBe(true);
+    for (const profile of [PLAIN_INSTRUCT_PROFILE, QWEN_THINK_PROFILE, GEMMA4_THINK_PROFILE]) {
+      const g = await buildGrammar(profile);
+      expect(gbnfAccepts(g, "shell-args", '{"wait":1}'), profile.id).toBe(true);
+      expect(gbnfAccepts(g, "shell-args", '{"kill":40}'), profile.id).toBe(true);
+      expect(gbnfAccepts(g, "shell-args", '{"jobs":true}'), profile.id).toBe(true);
+      // ATO-2277: typing into an interactive job
+      expect(gbnfAccepts(g, "shell-args", '{"write":2,"text":"y\\n"}'), profile.id).toBe(true);
+      // still refused: no id, a zero or negative id, `jobs: false`, an empty cmd
+      expect(gbnfAccepts(g, "shell-args", '{"wait":0}'), profile.id).toBe(false);
+      expect(gbnfAccepts(g, "shell-args", '{"kill":-1}'), profile.id).toBe(false);
+      expect(gbnfAccepts(g, "shell-args", '{"jobs":false}'), profile.id).toBe(false);
+      expect(gbnfAccepts(g, "shell-args", '{"timeoutMs":5}'), profile.id).toBe(false);
+      expect(gbnfAccepts(g, "shell-args", '{"cmd":""}'), profile.id).toBe(false);
+    }
+  });
+
   it("the static grammar file has no generic way to name os.shell.run", () => {
     const { readFileSync } = require("node:fs") as typeof import("node:fs");
     const { resolve } = require("node:path") as typeof import("node:path");
@@ -1016,6 +1074,8 @@ describe("the base grammar's vocabulary", () => {
     "github.issue.comment",
     "github.issue.create",
     "github.issue.list",
+    "github.pr.autofix",
+    "github.pr.checks",
     "github.pr.create",
     "github.pr.list",
     "github.whoami",

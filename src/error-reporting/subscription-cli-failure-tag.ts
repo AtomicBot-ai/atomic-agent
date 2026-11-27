@@ -15,7 +15,9 @@
  *  - `cli_reason`: for a run that failed with the CLI's own words
  *    (`exited`, `input_truncated`, `reported_error`, `turn_failed`),
  *    what those words say, as one fixed word from `CLI_REASONS`. The
- *    message is matched here, on the machine, and only the word leaves.
+ *    message is matched here, on the machine, and only the word leaves;
+ *  - `cli_version_outdated`: `true` when the CLI was older than the
+ *    version we support (ATO-1685).
  *
  * Read by class name, so this module takes no import from the LLM
  * layer, and walked through `cause`: the step executor hands the report
@@ -30,6 +32,7 @@ const KNOWN_INVOCATION_KINDS: ReadonlySet<string> = new Set([
   "input_truncated",
   "exited",
   "limit_reached",
+  "plan_required",
   "not_json",
   "reported_error",
   "turn_failed",
@@ -72,6 +75,8 @@ export const CLI_REASONS = [
   "unknown_option",
   "command_not_recognized",
   "path_not_found",
+  "context_overflow",
+  "vendor_unavailable",
   "no_output",
   "other",
 ] as const;
@@ -104,6 +109,18 @@ const REASON_PATTERNS: ReadonlyArray<readonly [CliReason, readonly RegExp[]]> = 
   ["unknown_option", [/\bunknown option\b/i, /\bunexpected argument\b/i, /\berror: unrecognized\b/i]],
   ["command_not_recognized", [/is not recognized as an internal or external command/i]],
   ["path_not_found", [/\bcannot find the (?:path|file) specified\b/i]],
+  // The prompt did not fit the model (ATO-2417): Claude Code's "Prompt is
+  // too long", Codex's "ran out of room in the model's context window".
+  [
+    "context_overflow",
+    [/\bprompt is too long\b/i, /\bran out of room in the model's context window\b/i, /\bcontext_length_exceeded\b/i],
+  ],
+  // The vendor's side was down or full (ATO-2417): "API Error: 529
+  // Overloaded", "Selected model is at capacity", "high demand".
+  [
+    "vendor_unavailable",
+    [/\boverloaded(?:_error)?\b/i, /\bat capacity\b/i, /\bhigh demand\b/i, /\bAPI Error: 5\d\d\b/i],
+  ],
   // `mapCliFailure` writes "no output" when stderr and stdout were empty.
   ["no_output", [/:\s*no output\s*$/i]],
 ];
@@ -161,6 +178,9 @@ function tagsOf(e: Record<string, unknown>): SubscriptionCliFailureTags | undefi
       const message = e.message;
       tags.cli_reason = typeof message === "string" ? classifyCliReason(message) : "other";
     }
+    // The CLI was below the version we support when it failed (ATO-1685,
+    // `noteOutdatedCli` in cli-version-check.ts).
+    if (e.cliVersionOutdated === true) tags.cli_version_outdated = "true";
     return tags;
   }
   if (name === "SubscriptionCliCommandLineError") {

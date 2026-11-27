@@ -21,6 +21,8 @@ import { describeThinkLevel, parseThinkCommand } from "./think-command.js";
 import type { ReasoningLevel } from "../../llm/reasoning-levels.js";
 import { parseLearnCommand, type LearnCommand } from "../../skills/learning/learn-command.js";
 import { parseExportCommand, type ChatExportRequest } from "./export-command.js";
+import { MODEL_RING_USAGE, parseModelRingCommand, type ModelRingCommand } from "../model-ring/model-ring-command.js";
+import { parseResearchCommand } from "./research-command.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -31,7 +33,11 @@ export interface SlashDispatchResult {
   readonly skillInvocation?: { name: string; input: string };
   /** A plugin command: the caller renders its template and sends it as the message. */
   readonly pluginCommandInvocation?: { name: string; args: string };
+  /** A built-in command that becomes a message, sent as typed (`/research`, ATO-2133). */
+  readonly messageText?: string;
   readonly modelModeCommand?: ModelModeCommand;
+  /** `/model favorite …` (ATO-2169): the submit path reads and writes the ring. */
+  readonly modelRingCommand?: ModelRingCommand;
   /**
    * Reducer actions the caller should dispatch in order. Empty when the
    * command was unknown or required no state change.
@@ -454,6 +460,12 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return question.length === 0
         ? pureActions([], { systemMessage: SIDE_QUESTION_USAGE })
         : pureActions([], { sideQuestionText: question });
+    }
+    case "research": {
+      const research = parseResearchCommand(parsed.args);
+      return research.kind === "usage"
+        ? pureActions([], { systemMessage: research.message })
+        : pureActions([], { messageText: research.text });
     }
     case "persona":
       return pureActions([], { personaCommand: parsePersonaCommand(parsed.args) });
@@ -959,6 +971,10 @@ function dispatchModelsSub(
       { type: "providers_inline_models_ensure_requested", providerId: null },
     ]);
   }
+  if (bits[0] === "favorite" || bits[0] === "favorites" || bits[0] === "fav") {
+    const ring = parseModelRingCommand(bits.slice(1).join(" "));
+    return ring ? pureActions([], { modelRingCommand: ring }) : pureActions([], { systemMessage: MODEL_RING_USAGE });
+  }
   if (bits[0] === "pull" && bits[1]) {
     return {
       ...pureActions([
@@ -994,7 +1010,7 @@ function dispatchModelsSub(
   } catch {
     return pureActions([], {
       systemMessage:
-        "usage: /model | /model pull <id> | /model use <id> | /model status | /model <base-url>",
+        "usage: /model | /model pull <id> | /model use <id> | /model favorite | /model status | /model <base-url>",
     });
   }
 }

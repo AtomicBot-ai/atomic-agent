@@ -36,6 +36,7 @@ import {
   WATCH_SENTINEL_SOURCE,
   WINDOWS_GRACEFUL_MS,
 } from "./platform.js";
+import { serveSpawnArgs, serveSpawnEnv } from "./serve-launch.js";
 
 /**
  * Supervises one `atag serve` child process and speaks to it over the
@@ -992,20 +993,12 @@ export class AgentClient extends EventEmitter {
     try {
       child = spawn(
         binary,
-        [
-          "serve",
-          "--host",
-          "127.0.0.1",
-          "--port",
-          String(port),
-          "--api-key",
-          token,
-          ...serveWatchArgs(process.platform, sentinel?.pid),
-        ],
+        // ATO-1705: the key goes in the environment, not on the command line `ps` shows.
+        serveSpawnArgs(port, serveWatchArgs(process.platform, sentinel?.pid)),
         {
           cwd: this.status.workingDir,
           // r5 item 9: `atag serve` runs on the desktop's own state directory.
-          env: agentEnv(),
+          env: serveSpawnEnv(agentEnv(), token),
           stdio: ["ignore", "pipe", "pipe"],
           // Windows: a console child of a GUI app otherwise opens a console window.
           windowsHide: true,
@@ -1106,6 +1099,8 @@ export class AgentClient extends EventEmitter {
       phase: this.status.state === "starting" ? "starting" : "running",
       uptimeMs: at === undefined ? null : Date.now() - at,
       sentinelAlive,
+      // ATO-2416: whether a turn was streaming from it (a count, the error report's bucket).
+      turnsInFlight: this.turns.size,
     });
     this.setStatus({
       state: "error",
@@ -1398,6 +1393,12 @@ export class AgentClient extends EventEmitter {
   /** `{runs:[{id, attempt, sessionId, startedAt, endedAt, outcome, error, errorCategory}], available}`, newest first. */
   taskRuns = (id: string, limit = 50) =>
     this.request<unknown>("GET", `/api/tasks/${encodeURIComponent(id)}/runs?limit=${encodeURIComponent(String(limit))}`);
+  /* ATO-2257: the task board (workboard-ipc.ts): `{lanes, cards, counts, available}`, and a card's
+     lane / note / assignee. An agent from before these routes answers 404 "no route". */
+  taskBoard = (limit = 200) =>
+    this.request<unknown>("GET", `/api/task-board?limit=${encodeURIComponent(String(limit))}`);
+  moveTaskCard = (id: string, body: Record<string, unknown>) =>
+    this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/board`, body);
   /* ATO-458 — suggested tasks (ideas-ipc.ts): rebuilt from failed tasks and
      stopped goals, then accepted (filed as a task) or dismissed for good.
      404 "no route" on an agent from before them, 404 when tasks are off. */

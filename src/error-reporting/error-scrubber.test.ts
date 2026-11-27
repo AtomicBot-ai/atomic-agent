@@ -603,3 +603,61 @@ describe("scrubError upstream detail (ATO-1673)", () => {
     expect(ev.upstreamErrorCode).toBeUndefined();
   });
 });
+
+describe("scrubError failure_owner (ATO-2419)", () => {
+  const GEMINI = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+
+  /** The `TransportError` → `OpenAiHttpError` chain the runtime reports. */
+  function refusal(status: number, raw: string, url = GEMINI): Error {
+    const cause = Object.assign(new Error(`openai provider ${status}: ${raw.slice(0, 300)}`), {
+      name: "OpenAiHttpError",
+      status,
+      url,
+      body: parseProviderErrorBody(raw),
+    });
+    return Object.assign(new Error("humanized"), { name: "TransportError", status, url, cause });
+  }
+
+  it("reads Gemini's 400 for a bad key as the person's", () => {
+    const raw =
+      '[{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}]';
+    const ev = scrubError(refusal(400, raw), { source: "llm_failure", category: "transport" });
+    expect(ev.upstreamReason).toBe("key_refused");
+    expect(ev.failureOwner).toBe("person");
+  });
+
+  it("reads a tool result out of order as ours", () => {
+    const raw =
+      '{"error":{"message":"messages.5: `tool_use` ids were found without `tool_result` blocks immediately after","type":"invalid_request_error"}}';
+    const ev = scrubError(refusal(400, raw, "https://api.anthropic.com/v1/chat/completions"), {
+      source: "llm_failure",
+      category: "transport",
+    });
+    expect(ev.failureOwner).toBe("ours");
+  });
+
+  it("reads a 503 as the provider's and a 402 as the person's", () => {
+    const down = scrubError(refusal(503, '{"error":{"message":"Service Unavailable"}}'), {
+      source: "llm_failure",
+      category: "transport",
+    });
+    const credit = scrubError(
+      refusal(402, '{"error":{"message":"Insufficient Balance"}}', "https://api.deepseek.com/chat/completions"),
+      { source: "llm_failure", category: "transport" },
+    );
+    expect(down.failureOwner).toBe("provider");
+    expect(credit.failureOwner).toBe("person");
+  });
+
+  it("sets no owner outside an llm_failure, for a tool's failure or without a status", () => {
+    const raw = '{"error":{"message":"Service Unavailable"}}';
+    expect(scrubError(refusal(503, raw), { source: "uncaughtException" }).failureOwner).toBeUndefined();
+    expect(
+      scrubError(refusal(503, raw), { source: "llm_failure", category: "tool" }).failureOwner,
+    ).toBeUndefined();
+    expect(
+      scrubError(new TypeError("fetch failed"), { source: "llm_failure", category: "transport" })
+        .failureOwner,
+    ).toBeUndefined();
+  });
+});

@@ -144,6 +144,7 @@ const LLM_KEYS: Record<keyof UserLlmFileConfig, true> = {
 const LLM_FALLBACK_KEYS: Record<keyof UserLlmFallbackConfig, true> = {
   chain: true,
   appendLocal: true,
+  localFirst: true,
   failureThreshold: true,
   cooldownMs: true,
   probeThrottleMs: true,
@@ -201,6 +202,9 @@ const KNOWN_KEYS_OUTSIDE_DEFAULTS: Readonly<Record<string, readonly string[]>> =
   "llm.fallback": Object.keys(LLM_FALLBACK_KEYS),
   "llm.runMode": Object.keys(LLM_RUN_MODE_KEYS),
   "llm.runMode.fusion": Object.keys(LLM_FUSION_KEYS),
+  // Optional, absent from the defaults: known so a write that drops them
+  // clears them (ATO-2106 modelsDirOverride, ATO-1106 loraAdapters).
+  "localModels.managed": ["modelsDirOverride", "loraAdapters"],
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

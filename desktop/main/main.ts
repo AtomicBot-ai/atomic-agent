@@ -18,6 +18,7 @@ import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.j
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { detectSubscriptionCli, isSubscriptionCli } from "./subscription-cli-detect.js";
 import { openLoginTerminal } from "./subscription-cli-login.js";
+import { wireSubscriptionLiveCheckIpc } from "./subscription-cli-live-check-ipc.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
 import { engineBusy, retryWhileEngineBusy } from "./engine-busy-retry.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
@@ -27,7 +28,7 @@ import { newChatSessionId } from "./chat-session.js";
 import { ChatWorktrees, gitExecWith, registerChatWorktreeIpc } from "./chat-worktree-ipc.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
-import { quitQuestion, workingChatCount } from "./quit-question.js";
+import { backgroundQuitWork, busyTurnsOf, quitQuestion, sampleAgentBusy, workingChatCount, type AgentBusySample } from "./quit-question.js";
 import { busyPorts, modelPortsOf, onSmokeStopSignal, portsHeldByRun, runSmokeGuarded, signalExitCode, smokeMayStopModels, smokeOwnsItsState, smokeScreenshot } from "./smoke-exit.js";
 import { randomUUID } from "node:crypto";
 import { freemem, homedir, tmpdir, totalmem } from "node:os";
@@ -48,6 +49,7 @@ import { wireAgentLiveIpc } from "./agent-live.js";
 import { wirePluginsIpc } from "./plugins-ipc.js";
 import { wireSkillEvalIpc } from "./skill-eval-ipc.js";
 import { wireSkillDraftsIpc } from "./skill-drafts-ipc.js";
+import { wireShowOnceIpc } from "./show-once-ipc.js";
 import { pushTurnNote, wirePushIpc } from "./push-ipc.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { wireFileMentionsIpc } from "./file-mentions-ipc.js";
@@ -55,21 +57,27 @@ import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
 import { wireFusionReasoningIpc } from "./fusion-reasoning-ipc.js";
 import { wireLanDiscoveryIpc } from "./lan-discovery-ipc.js";
 import { wireTaskControlsIpc } from "./task-controls-ipc.js";
+import { wireWorkboardIpc } from "./workboard-ipc.js";
 import { wireIdeasIpc } from "./ideas-ipc.js";
 import { wireSessionGoalIpc } from "./session-goal-ipc.js";
 import { wireSideQuestionIpc } from "./side-question-ipc.js";
 import { wireIncognitoChatsIpc } from "./incognito-chats-ipc.js";
+import { wireChatTrashIpc } from "./chat-trash-ipc.js";
 import { wireMiniChatIpc } from "./mini-chat-ipc.js";
 import { chatPopoutTurnRefused, isChatPopout, wireChatPopoutIpc } from "./chat-popout-ipc.js";
 import { wireChatRewindIpc } from "./chat-rewind-ipc.js";
+import { wireAnswerVersionsIpc } from "./answer-versions-ipc.js";
 import { wireTraceTreeIpc } from "./trace-tree-ipc.js";
 import { wireProjectWorkersIpc } from "./project-workers-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
 import { wireMyFilesIpc } from "./my-files-ipc.js";
+import { wireMyAppsIpc } from "./my-apps-ipc.js";
 import { wireImportFactsIpc } from "./import-facts-ipc.js";
 import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
+import { wireChatgptOauthIpc } from "./chatgpt-oauth-ipc.js";
 import { wireAgentHubIpc } from "./agent-hub-ipc.js";
 import { wireFitTestIpc } from "./fit-test-ipc.js";
+import { wireModelsFolderIpc } from "./models-folder-ipc.js";
 import { wireInterviewInviteIpc } from "./interview-invite-ipc.js";
 import { wireRecipesIpc } from "./recipes-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
@@ -210,6 +218,7 @@ import {
   chatRouteIsLocal,
   daemonWatch,
   daemonWatchState,
+  describeFault,
   hostDaemonWatch,
   onAgentFrame,
   pairEmbeddingsAtLaunch,
@@ -286,21 +295,27 @@ import {
   useRemoteModels,
   atagRun,
   modelsRecommend,
+  onModelStarted,
   type ImportSourceId,
 } from "./agent-cli.js";
+import { readStateConfig, wireModelPortDrift } from "./model-port-drift.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
 import { checkSavedComposioKey, removeComposioKey, saveComposioKey, type ComposioDeps, type ComposioKeyResult } from "./composio-key.js";
 import { registerComposioAccountsIpc } from "./composio-accounts-ipc.js";
+import { checkTelegramToken } from "./telegram-token-check.js";   // ATO-426: a bot token checked with Telegram before it is saved
 // Item 2 (voice input): the on-device speech helper's supervisor.
 import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 // ATO-1074: an audio file transcribed on this machine, with timestamps.
 import { FileTranscriber, appleSpeechEngine, findOnPath, whisperFileEngine } from "./transcribe-file.js";
+// ATO-2333: Record a meeting, transcribed live in chunks on this machine.
+import { meetingRecorderFor, wireMeetingIpc } from "./meeting-ipc.js";
 // Item 7 part B (Skills / Memory / MCP tabs)
 import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
 // r7 models — the vendored catalogue metadata, for the smoke's drift check.
 import { curatedMeta, curatedMetaIds, spotlightIds } from "./model-catalog.js";
 import { catalogPullWantsProjector, weightsOnDisk, wholePullProgress, withoutLivePullGap } from "./pull-projector.js";
+import { managedModelIdIn, mayDeleteWeights, removeDamagedWeights } from "./model-redownload.js";
 import { DOWNLOAD_CANCELLED, downloadBusyForUpdate, downloadBusyText, pausablePull, pauseFrame, removePartialDownloads, type PausablePull } from "./download-pause.js";
 import { registerDownloadPauseIpc } from "./download-pause-ipc.js";
 import { memoryQuery } from "./memory-db.js";
@@ -323,9 +338,14 @@ import { isQuickEntryWindow, wireQuickEntry } from "./quick-entry-window.js";
 import { wireSelectedText } from "./selected-text-ipc.js";
 import { readQuickEntryPref } from "./quick-entry.js";
 import { isDictatePill, wireDictateAnywhere } from "./dictate-anywhere-window.js";
+import { wirePetIpc, type PetHub } from "./pet-ipc.js";
+import { readPetPrefs } from "./pet-prefs.js";
+import { isPetWindow } from "./pet-window.js";
 import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
+import { filePreviewSave } from "./file-save.js";
+import { renderSlides, slidesRenderable } from "./slide-render.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 import { buildLocalGgufModelDef, resolveLocalGgufFile } from "./local-gguf.js";
 import { discoverLocalModels, registerDiscoveredModel } from "./local-models-found.js";
@@ -334,6 +354,7 @@ import * as A from "./analytics/index.js";
 import { AgentMemoryTracker } from "./agent-memory-sample.js";
 import { appMemoryBytes } from "./app-memory.js";
 import { lastErrorCategory, lastErrorSentence, reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
+import { nextCloseWord, type AgentCloseWord } from "./sentry/agent-exit-context.js";
 // ATO-229: app updates, only ever on a click (main/updater.ts).
 import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
 import { MOVE_PROMPT, offerMove, shouldOfferMove } from "./move-to-applications.js";
@@ -483,7 +504,7 @@ const voice = new VoiceSession();
    session's: a dictation and a file can run side by side. The engine is the
    one place that knows it is Apple's; ATO-1076: on Windows and Linux it is
    the whisper.cpp binary and model voice input found or downloaded. */
-const fileTranscriber = new FileTranscriber(process.platform === "darwin"
+const transcribeEngine = process.platform === "darwin"
   ? appleSpeechEngine({
     command: speechHelperPath,
     probe: () => voice.probe(),
@@ -494,7 +515,11 @@ const fileTranscriber = new FileTranscriber(process.platform === "darwin"
     paths: () => voice.whisperPaths(),
     chosen: () => readVoicePrefs().locales,
     ffmpeg: () => findOnPath("ffmpeg", { env: process.env, platform: process.platform, home: homedir() }),
-  }));
+  });
+const fileTranscriber = new FileTranscriber(transcribeEngine);
+/* ATO-2333: Record a meeting (meeting-ipc.ts): the same engine, its own runs.
+   Its `armed` opens the microphone gate below exactly as voice.armed does. */
+const meeting = meetingRecorderFor(transcribeEngine, (ev) => send("app:meeting", ev));
 
 /* ATO-1167: the neural reading voice (main/core-speech.ts). The same Core
    as Studio; it reads only on a Core with the audio module (0.20.6+). */
@@ -987,7 +1012,8 @@ function send(channel: string, payload?: unknown): void {
    kept and told to the window, which draws the recovery card (Download again)
    instead of leaving a spinner; the next success clears it. A
    window opened later asks for it (engine:failure). */
-let engineFailure: (EngineFailure & { at: number }) | null = null;
+/* `modelId` (ATO-1745): the managed model the failure was about, so "Download model again" deletes only that one's file. */
+let engineFailure: (EngineFailure & { at: number; modelId?: string | null }) | null = null;
 /** What put the recovery card up, for `engine_recovery_shown.via` (analytics/catalog-values.ts ENGINE_RECOVERY_VIA). */
 type EngineVia = "launch" | "swap" | "update" | "start" | "switch" | "setup" | "settings" | "other";
 /* ATO-374: a start the agent moved to the CPU build because the GPU build
@@ -1009,9 +1035,10 @@ function noteCpuFallback(answer: unknown): void {
 function noteEngine(answer: unknown, opts: { clears?: boolean; via?: EngineVia } = {}): void {
   noteCpuFallback(answer);
   // Core in play: a model it could not load is read as that, not left as a raw start error.
-  const failed = engineFailureOf(answer, { core: managedEngineNow() === "atomic-core" });
+  // ATO-1745: the server log's line is read only once a load failed, to tell a damaged or missing model file.
+  const failed = engineFailureOf(answer, { core: managedEngineNow() === "atomic-core", logLine: describeFault });
   if (failed) {
-    engineFailure = { ...failed, at: Date.now() };
+    engineFailure = { ...failed, at: Date.now(), modelId: managedModelIdIn(readConfigFile(DESKTOP_STATE_DIR)) };
     console.error(`[desktop] local-llm: the local engine is not ready (${failed.stage}): ${failed.detail || failed.why}`);
     send("engine:failure", engineFailure);
     // The agent's `models` command already sent local_engine_failed for this; the desktop counts the card it showed.
@@ -1148,7 +1175,9 @@ function createWindow(): BrowserWindow {
       window.webContents.reload();
     }).catch(() => undefined);
   });
-  wireWindowErrorReporting(window, () => recovered);
+  wireWindowErrorReporting(window, () => recovered, { quitting: () => quitting });
+  // ATO-2416: Windows logging off or shutting down; an agent exit after it is the system's doing.
+  window.on("session-end", () => { osEnding = true; });
 
   // Renderer faults must never be silent: they surface in the app log
   // and, under --smoke, on stdout where CI can see them.
@@ -1241,7 +1270,7 @@ function voicePermissionVerdict(
   details: { mediaTypes?: string[] } | undefined,
 ): boolean {
   if (permission === "clipboard-sanitized-write" || permission === "clipboard-read") return true;
-  if (permission !== "media" || !voice.armed) return false;
+  if (permission !== "media" || !(voice.armed || meeting.armed)) return false;
   const types = details?.mediaTypes ?? [];
   return types.length > 0 && types.every((t) => t === "audio");
 }
@@ -1340,6 +1369,9 @@ const LAST_WORDS_MS = 30_000;
 let agentSaidSinceStart = 0;
 /** ATO-1285: every line the current agent wrote, INFO included, so a report can tell a silent death from one whose words were filtered. */
 let agentLinesSinceStart = 0;
+/** ATO-2416: why the current agent said it was closing (serve's own INFO line), and whether the OS is ending the session. */
+let agentClosedBy: AgentCloseWord | null = null;
+let osEnding = false;
 /** ATO-1285: the current agent's last error in plain words, for the card shown once the automatic restarts ran out. */
 function agentExitCause(): string | null {
   const n = Math.min(agentSaidSinceStart, AGENT_SAID.length);
@@ -1918,7 +1950,8 @@ function wireIpc(client: AgentClient): void {
     }
   });
 
-  ipcMain.handle("agent:approve", async (_event, payload: unknown) => {
+  /* ATO-2391: the desktop pet answers through this same function when no window card takes its click. */
+  const approveFromUi = async (payload: unknown) => {
     const { approvalId, decision, reason } = payload as {
       approvalId?: string;
       decision?: string;
@@ -1932,10 +1965,17 @@ function wireIpc(client: AgentClient): void {
     try {
       const data = await client.resolveApproval(approvalId, known, reason);
       chatTurns.approvalAnswered({ approvalId, decision: known });   // ATO-1026: the turn leaves "approval"
+      petHub?.approvalAnswered(approvalId);   // ATO-2391: the pet's bubble goes
       return { ok: true, data };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  };
+  ipcMain.handle("agent:approve", (_event, payload: unknown) => approveFromUi(payload));
+  petHub = wirePetIpc(client, {
+    userData: app.getPath("userData"), platform: process.platform, quiet: SMOKE || FIRST_RUN_PROBE,
+    mainWindow: () => win, showMainWindow: openWindowAgain, menuChanged: rebuildMenu,
+    approve: (approvalId, decision) => approveFromUi({ approvalId, decision }),
   });
 
   /* ATO-1502: an ask_user question's answer (renderer/question-card.js):
@@ -1954,6 +1994,7 @@ function wireIpc(client: AgentClient): void {
     try {
       const data = await client.answerQuestion(p.approvalId, answer);
       chatTurns.approvalAnswered({ approvalId: p.approvalId, decision: answer.skip ? "deny" : "allow-once" });   // ATO-1026: the turn leaves "approval"
+      petHub?.approvalAnswered(p.approvalId);   // ATO-2391
       return { ok: true, data };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -2054,6 +2095,27 @@ function wireIpc(client: AgentClient): void {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
     const o = opts as { trigger?: unknown; mmproj?: unknown } | undefined;
     return startModelPull(id, o?.trigger, undefined, o?.mmproj === true);
+  });
+  /* ATO-1745: the engine card's "Download model again". Only while the card
+     says THIS model's file is damaged are its weights deleted first
+     (model-redownload.ts mayDeleteWeights: the downloader skips a file that
+     exists); otherwise a pull runs only when no weights are there. Then the
+     card goes, since the model it named is on its way back. */
+  ipcMain.handle("cli:modelsRedownload", (_event, id: unknown) => {
+    if (typeof id !== "string" || !id) return { ok: false, error: "model id required" };
+    if (!downloadRunning() && !REMOVING.has(id) && !client.isRemote) {
+      const modelsDir = modelsDirOf(managedDataDirNow());
+      if (mayDeleteWeights(engineFailure, id)) {
+        if (removeDamagedWeights(modelsDir, id).length) {
+          return { ok: false, error: "the damaged model file could not be deleted. Stop the local model, then try again." };
+        }
+      } else if (weightsOnDisk(join(modelsDir, id))) {
+        return { ok: false, error: "this model's file is on disk and was not reported damaged, so it was kept. Start the model again." };
+      }
+    }
+    const res = startModelPull(id, "settings");
+    if (res.ok && engineFailure) { engineFailure = null; send("engine:failure", null); }
+    return res;
   });
   /* The weights download, for the window's pull and for the launch's starter
      model (ATO-1041): one slot, one stream (`cli:pull`), so the window's
@@ -2446,7 +2508,7 @@ function wireIpc(client: AgentClient): void {
         if (!st || controller.signal.aborted) return { ok: false, error: cancelled };
         const dataDir = st.ok && st.status ? st.status.dataDir : null;
         if (!dataDir) return { ok: false, error: `could not read the model data dir: ${st.error ?? "no data dir in \`atag models status\`"}` };
-        const dir = join(dataDir, "models", id);
+        const dir = join(modelsDirOf(dataDir), id);
         const dest = join(dir, mmprojFilename);
         const label = `${typeof name === "string" && name ? name : id} (mmproj)`;
         // Matches downloadMmproj's own early return: the installer skips when
@@ -2570,6 +2632,7 @@ function wireIpc(client: AgentClient): void {
     const status = detectSubscriptionCli(cli);
     return openLoginTerminal(cli, status.binPath);
   });
+  wireChatgptOauthIpc(); // ATO-1741: ChatGPT sign-in through the bundled agent, no terminal
   ipcMain.handle("cli:removeProvider", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
     // ATO-1441: OpenRouter's key leaves Core too once none is left (studio-forget-key.ts), in the background.
@@ -2798,6 +2861,16 @@ function wireIpc(client: AgentClient): void {
   // A restart held back for the turns runs as the last one ends — on a live agent; a dead one is started afresh by whoever starts it.
   client.on("idle", () => {
     if (client.status.state === "connected") lastTurnEnded();
+  });
+  /* ATO-1750: a model start on a port the running agent does not call (the
+     terminal agent moved it off a taken port in the shared config.json) restarts
+     the agent onto it, as a switch does: held under a turn, never at the quit. */
+  wireModelPortDrift({
+    onModelStarted,
+    agent: () => ({ state: client.status.state, remote: client.isRemote, llamaUrl: client.status.llama?.url }),
+    readConfig: () => readStateConfig(DESKTOP_STATE_DIR),
+    restart: () => restartAfterSwitch({ ok: true }, !quitting),
+    say: sayDesktop,
   });
   // Whoever starts `atag serve` again, it reads the file as it is: no restart is owed.
   client.on("status", (status: { state?: string }) => {
@@ -3124,8 +3197,22 @@ function wireIpc(client: AgentClient): void {
      capped, nothing run. Open and Reveal go through the same check, and Open
      still never runs a file (openWithoutRunning). */
   const previewRoots = (): string[] => previewRootsFor(imageRoots(), client.isRemote ? null : client.status.workingDir);
-  ipcMain.handle("app:filePreview", (_event, p: unknown) =>
-    filePreview(p, previewRoots(), homedir(), process.platform));
+  ipcMain.handle("app:filePreview", async (_event, p: unknown) => {
+    const r = await filePreview(p, previewRoots(), homedir(), process.platform);
+    // ATO-2410: a deck says whether this machine can draw its slides; the window then asks app:filePreviewSlides.
+    if (r.ok && r.kind === "office" && r.office && r.office.type === "pptx") r.office.renderable = slidesRenderable(process.platform);
+    return r;
+  });
+  /* ATO-2410: the slides of a deck as pictures (slide-render.ts): LibreOffice's
+     PDF when it is installed, Quick Look's page on macOS, else nothing and the
+     text cards stay. The same root check as the preview; the file itself is
+     only read, the converter writes into a temporary folder of its own. */
+  ipcMain.handle("app:filePreviewSlides", async (_event, p: unknown) => {
+    const t = await previewTarget(p, previewRoots(), homedir(), process.platform);
+    if (!t.ok) return { ok: false, reason: t.reason };
+    const r = await renderSlides(t.real, process.platform);
+    return r ? { ok: true, ...r } : { ok: false, reason: "no-render" };
+  });
   ipcMain.handle("app:filePreviewAction", async (_event, p: unknown, action: unknown) => {
     const t = await previewTarget(p, previewRoots(), homedir(), process.platform);
     if (!t.ok) return { ok: false, reason: t.reason };
@@ -3133,6 +3220,11 @@ function wireIpc(client: AgentClient): void {
     if (action === "open") return openWithoutRunning(t.real);
     return { ok: false, reason: "unknown" };
   });
+  /* ATO-2347: Save from the panel's editor (file-save.ts): the same roots and
+     path check as the read, text files only, never a new file, and nothing
+     written when the file changed since the panel read it unless `force`. */
+  ipcMain.handle("app:filePreviewSave", (_event, p: unknown, text: unknown, stamp: unknown, force: unknown) =>
+    filePreviewSave(p, text, stamp, previewRoots(), homedir(), process.platform, { force: force === true }));
   ipcMain.handle("app:imageSaveAs", async (event, p: unknown) => {
     const opened = await openImage(p, imageRoots(), homedir(), process.platform);
     if (!opened.ok) return { ok: false, reason: opened.reason };
@@ -3295,6 +3387,8 @@ function wireIpc(client: AgentClient): void {
   wireSkillEvalIpc({ cwd: () => client.status.workingDir });
   // ATO-67: Settings › Skills › Pending review, through `atag skill learned` (skill-drafts-ipc.ts).
   wireSkillDraftsIpc({ cwd: () => client.status.workingDir, isRemote: () => client.isRemote });
+  // ATO-2401: Show once, record a routine in a Mac app as a skill draft (show-once-ipc.ts).
+  wireShowOnceIpc({ stateDir: DESKTOP_STATE_DIR, isRemote: () => client.isRemote, log: (line) => console.log(line) });
   // ATO-1129: Settings › Connections › Phone push, through `atag push` (push-ipc.ts).
   wirePushIpc();
   // ATO-404/405: the composer's attachments, saved into <stateDir>/inbox/desktop.
@@ -3306,20 +3400,26 @@ function wireIpc(client: AgentClient): void {
   wireWindowSnapshotIpc();
   // ATO-606: the Fusion workers' reasoning level (Settings › Models, `/runmode reasoning`).
   wireFusionReasoningIpc();
+  // ATO-1684: the subscription step's live sign-in check (subscription-cli-live-check-ipc.ts).
+  wireSubscriptionLiveCheckIpc();
   // ATO-1067: "Find on my network", model servers on other PCs of this network (view-only).
   wireLanDiscoveryIpc();
   // ATO-1040: the chat's goal (the TUI's /goal), read and controlled through the agent.
   wireSessionGoalIpc(client);
   wireSideQuestionIpc(client);   // ATO-1152: /btw
   wireIncognitoChatsIpc(client);   // ATO-586: incognito chats
+  wireChatTrashIpc(client);   // ATO-2332: Delete… moves a chat to Trash, purged after 30 days
   // ATO-1136: HTML artifacts in the chat, sandboxed (artifact-frame-ipc.ts).
   wireArtifactIpc();
+  wireMyAppsIpc({ mainWindow: () => win });   // ATO-2383: Save as app, Settings › My apps, each app in its own window
   // ATO-1063: the mini chat page (mini-chat-ipc.ts): its frames, and "Open in big window".
   wireMiniChatIpc(client, { mainWindow: () => win, showMainWindow: () => (openWindowAgain(), win) });
+  wireMeetingIpc(meeting);   // ATO-2333: Record a meeting (meeting-ipc.ts)
   // ATO-561: "Open in new window" on a chat row (chat-popout-ipc.ts); a chat being written is not popped out.
   wireChatPopoutIpc({ mainWindow: () => win, liveSessionIds: () => [...liveTurns.values()].map((t) => t.sessionId) });
   // ATO-1056/1058: Roll back here, Edit and Fork from here on a message (chat-rewind-ipc.ts).
   wireChatRewindIpc(client);
+  wireAnswerVersionsIpc(client);   // ATO-2114: the ‹ 2/3 › answer switcher (answer-versions-ipc.ts)
   // ATO-639: Diagnostics' Timeline, one chat's trace as a tree (trace-tree-ipc.ts).
   wireTraceTreeIpc({ ipcMain });
   // ATO-1113: "Run overnight", a durable task in a folder with a budget and a time limit.
@@ -3334,6 +3434,8 @@ function wireIpc(client: AgentClient): void {
   wireAgentHubIpc({ isRemote: () => client.isRemote });
   // ATO-590: the Tasks tab's Pause / Resume and a task's past runs.
   wireTaskControlsIpc({ client });
+  // ATO-2257: the task board's cards and moves (renderer/workboard.js).
+  wireWorkboardIpc({ client });
   // ATO-458: suggested tasks on the empty chat screen (ideas-ipc.ts, renderer/suggestion-cards.js).
   wireIdeasIpc({ client });
   // ATO-1091: Settings › Models › "Find the best model for my tasks" (`atag models fit-test`).
@@ -3355,6 +3457,8 @@ function wireIpc(client: AgentClient): void {
       return held.hold ? afterUpdate(res, held.hold, { keptBackend: true }) : res;
     },
   });
+  // ATO-2106: Settings › Models › "Models folder" (`atag models dir`).
+  wireModelsFolderIpc({ window: () => win, isRemote: () => client.isRemote, pulling: () => pull !== null });
   wireInterviewInviteIpc({ stateDir: TUI_STATE_DIR });   // ATO-1467
   wireRecipesIpc({ dir: () => app.getPath("userData") });   // ATO-1072: saved recipes (recipes-ipc.ts)
   /* Studio (Images + Video): Core's media API for the Studio pages
@@ -3986,6 +4090,14 @@ function wireIpc(client: AgentClient): void {
     A.composioStep("key_checked", composioOutcome(res));
     return res;
   });
+  /* ATO-426 (telegram-token-check.ts): the Telegram tab's token, checked with getMe before `app:dotenvSet`
+     writes it. The value comes in once and goes into that one request; the answer, like this handler, never
+     carries or logs it. */
+  ipcMain.handle("telegram:checkToken", async (_event, payload: unknown) => {
+    const { value } = (payload ?? {}) as { value?: unknown };
+    if (typeof value !== "string" || !value) return { ok: false, rejected: true, status: 0, error: "token required" };
+    return checkTelegramToken({ token: value });
+  });
 
   /* ---- Item 2 (voice input) --------------------------------------------
      Nothing here touches the agent: 0.5.5 has no audio route, no
@@ -4113,11 +4225,13 @@ function wireIpc(client: AgentClient): void {
     const exitedAt = Date.now();
     // ATO-424: the machine's free memory at the exit itself, not 300 ms later.
     const exitFreeMem = freemem();
+    // ATO-2416: read at the exit itself, as the free memory is: a quit begun in the next 300 ms is not this exit's cause.
+    const exitQuitting = quitting;
     setTimeout(() => {
       const n = Math.min(agentSaidSinceStart, AGENT_SAID.length);
       const lines = n > 0 ? AGENT_SAID.slice(-n) : [];
       const at = n > 0 ? AGENT_SAID_AT.slice(-n) : [];
-      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS), { freeMemBytes: exitFreeMem, quitting, agentMemory: agentMemory.latest(), linesSinceStart: agentLinesSinceStart });
+      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS), { freeMemBytes: exitFreeMem, quitting: exitQuitting, agentMemory: agentMemory.latest(), linesSinceStart: agentLinesSinceStart, closedBy: agentClosedBy, osEnding });
     }, 300).unref?.();
   });
   let agentStateWas: string | undefined;
@@ -4126,6 +4240,7 @@ function wireIpc(client: AgentClient): void {
     if (status?.state === "starting" && agentStateWas !== "starting") {
       agentSaidSinceStart = 0;
       agentLinesSinceStart = 0;
+      agentClosedBy = null;
       // ATO-1111: the last memory sample is the agent's that wrote it, not the next one's.
       agentMemory.reset();
     }
@@ -4141,6 +4256,7 @@ function wireIpc(client: AgentClient): void {
   client.on("log", (event: { stream?: string; line?: string; level?: AgentLogLevel }) => {
     const line = String(event.line ?? "");
     agentLinesSinceStart += 1;
+    agentClosedBy = nextCloseWord(agentClosedBy, line);
     agentMemory.observe(line);
     /* ATO-121: agent.log tagged every stderr line ERR, and serve's routine
        INFO lines filled this ring. A structured line is tagged with its own
@@ -4188,7 +4304,7 @@ function sidebarHeadersExpected(sb: { pinnedRows?: number; folders?: number; tas
 /** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js, studio/shell.js).
     W2: Studio's one row, then Cron jobs (the Tasks tab), Skills and Plugins; New project is on the Projects header.
     ATO-1072: Recipes last (the saved recipes sheet). */
-const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Studio", "Cron jobs", "Skills", "Plugins", "Recipes"]);
+const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Studio", "Cron jobs", "Task board", "Skills", "Plugins", "Recipes"]);   // ATO-2257: Task board
 type Sb = {
   headers: string[];
   pinnedRows?: number;
@@ -6663,9 +6779,9 @@ async function settingsTest(
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
   // Calm (S5): the window's own panes and nav sections, in nav order.
   // ATO-1129 (#1533): Phone push sits in Connections, after Discord. ATO-1630: Monid after Composio.
-  const PANES = ["general", "llm", "mcp", "telegram", "discord", "push", "composio", "monid", "memory", "myfiles", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
-  const LABELS = ["General", "Models", "Connections", "Memory", "My files", "Cron jobs", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];   // W2: Tasks reads "Cron jobs"
-  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", push: "connections", composio: "connections", monid: "connections", memory: "memory", myfiles: "myfiles",
+  const PANES = ["general", "llm", "mcp", "telegram", "discord", "push", "composio", "monid", "memory", "myfiles", "myapps", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
+  const LABELS = ["General", "Models", "Connections", "Memory", "My files", "My apps", "Cron jobs", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];   // W2: Tasks reads "Cron jobs"
+  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", push: "connections", composio: "connections", monid: "connections", memory: "memory", myfiles: "myfiles", myapps: "myapps",
     tasks: "tasks", webhooks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
 
   const groups = await js<string[]>("window.__menuGroups()");
@@ -6717,7 +6833,7 @@ async function settingsTest(
   check("settings: Cmd+, reopens on the section last shown", viaKey === "skills", `pane=${viaKey}`);
 
   const labels = await js<string[]>("window.__settingsLabels()");
-  check("settings: the nav names the ten sections", same(labels, LABELS), JSON.stringify(labels));
+  check("settings: the nav names the twelve sections", same(labels, LABELS), JSON.stringify(labels));
 
   // Calm (S5): the nav is the ten sections and nothing else — no keycaps,
   // no count badges, no Commands list, no rows "not available in the desktop".
@@ -8973,7 +9089,7 @@ async function settingsTestPartC(
     // Advanced toggle that used to sit above it is gone, so its word must not be.
     check(
       "telegram tab: no token anywhere → only the Connect Telegram card, plain tab label",
-      tg.hasToken === false && tgBody.includes("Connect Telegram") && tgBody.includes("Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.")
+      tg.hasToken === false && tgBody.includes("Connect Telegram") && tgBody.includes("Talk to Atomic Agent from your phone") && tgBody.includes("The token is stored only on this machine.")
         && !!tgCta && tgCta.label === "Paste a bot token" && tgCta.key === "" && !tgBody.includes("Advanced") && tgPlain,
       `hasToken=${String(tg.hasToken)} label=${JSON.stringify(tgLabel)} action=${JSON.stringify(tgCta)}`,
     );
@@ -11242,7 +11358,7 @@ A.initAnalytics({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR, fresh
 A.configureDownloads({ stateDir: DESKTOP_STATE_DIR, hostRamGb: () => FAKE_RAM_GB ?? hostRamGb() });
 A.configureSetup({ stateDir: DESKTOP_STATE_DIR });
 A.beginSession();
-wireProcessErrorReporting();
+wireProcessErrorReporting({ quitting: () => quitting });
 
 /* ATO-1229 / ATO-1193: an AppImage (or a .deb with no AppArmor profile
    attached) on a Linux that blocks unprivileged user namespaces (Ubuntu
@@ -11308,7 +11424,7 @@ function watchCoreUpdates(): void {
 
 void app.whenReady().then(async () => {
   // ATO-1030: macOS and Linux say so before the OS shuts down (Windows: the window's `session-end`).
-  powerMonitor.on("shutdown", () => A.noteSessionTrouble("os_shutdown"));
+  powerMonitor.on("shutdown", () => { osEnding = true; A.noteSessionTrouble("os_shutdown"); });
   /* ATO-370: a mac app run from the DMG or Downloads cannot update itself.
      Ask before anything starts: Move relaunches the app from /Applications,
      so nothing of this launch should be running by then. Not now asks again
@@ -11474,7 +11590,7 @@ void app.whenReady().then(async () => {
   app.on("activate", () => {
     // ATO-1018: a marks overlay is not a window of the app. ATO-523: nor is the quick-entry box. ATO-1064: nor the dictation pill.
     // ATO-561: nor is a chat in its own window: the Dock click brings the main window back.
-    if (appWindows().filter((w) => !isQuickEntryWindow(w) && !isChatPopout(w) && !isDictatePill(w)).length === 0) openWindowAgain();
+    if (appWindows().filter((w) => !isQuickEntryWindow(w) && !isChatPopout(w) && !isDictatePill(w) && !isPetWindow(w)).length === 0) openWindowAgain();
   });
 });
 
@@ -11501,6 +11617,8 @@ const loginHost = (): LoginItemHost => ({
 let tray: Tray | null = null;
 /** ATO-1609: opens the mini chat window (quick-entry-window.ts), for the menu and the tray; set once it is wired. */
 let showMiniChat: (() => void) | null = null;
+/** ATO-2391: the desktop pet (pet-ipc.ts); set once the agent is wired. */
+let petHub: PetHub | null = null;
 
 /** The menu bar, with the Agent menu's two checkboxes as they are now; `bg:*` commands are main's own. */
 function rebuildMenu(): void {
@@ -11514,6 +11632,8 @@ function rebuildMenu(): void {
     }
     if (command === "remote:open") { openRemoteConnect(); return; }
     if (command === "mini:open") { showMiniChat?.(); return; }
+    if (command === "pet:toggle") { petHub?.toggle(); return; }
+    if (command === "pet:dnd") { petHub?.toggleDnd(); return; }
     if (command.startsWith("awake:")) {
       const mode = command.slice("awake:".length) as KeepAwakeMode;
       if (KEEP_AWAKE_MODES.includes(mode)) { writeKeepAwakeMode(userData, mode); void syncKeepAwake(); }
@@ -11529,7 +11649,7 @@ function rebuildMenu(): void {
       return;
     }
     send("app:menu", command);
-  }, { keepRunning: readBackgroundPrefs(userData).keepRunning, startAtLogin: startsAtLogin(loginHost()), keepAwake: readKeepAwakeMode(userData) });
+  }, { keepRunning: readBackgroundPrefs(userData).keepRunning, startAtLogin: startsAtLogin(loginHost()), keepAwake: readKeepAwakeMode(userData), pet: readPetPrefs(userData) });
 }
 
 /* ---- ATO-592: Keep Computer Awake (keep-awake.ts) ---- */
@@ -11637,6 +11757,12 @@ function retireStudioCoreOnQuit(): Promise<unknown> {
    kept across a closed window, not across a quit. ATO-1696: so does one with
    a chat still working, whose reply the quit would cut off. Once per quit. */
 let queuedQuitAsked = false;
+/* ATO-1758: the turns the agent runs that this window never streams (a
+   scheduled task, a Telegram reply), asked of the agent once per quit before
+   the question: before-quit is synchronous, so the first one asks and quits
+   again with the answer (as VS Code's lifecycle does its async quit vetoes). */
+let quitAgentWork: { tasks: number; background: number } | null = null;
+let quitAgentProbe: Promise<void> | null = null;
 
 // Never leave the agent running after the app is gone.
 app.on("before-quit", (event) => {
@@ -11652,7 +11778,20 @@ app.on("before-quit", (event) => {
   if (!SMOKE && !FIRST_RUN_PROBE && !quitShutdown && !queuedQuitAsked && !installing && (windowUp || process.platform === "darwin" || inTray)) {
     /* ATO-1696: a turn still running asks too (in the chat on screen or one
        left in the background); one dialog when there are both. */
-    const ask = quitQuestion({ queued: queuedMessageCount(), working: workingChatCount(liveTurnRecords()) });
+    if (!quitAgentWork) {
+      event.preventDefault();
+      if (quitAgentProbe) return;   // a second Quit while the agent is asked: the first one's answer quits
+      const client = agent;
+      /* A remote agent's turns run on its own computer; a quit stops none of them. */
+      const probe: Promise<AgentBusySample> = client && !client.isRemote && client.status.state === "connected"
+        ? sampleAgentBusy({ tasks: () => client.runningTaskCount(), busyTurns: () => client.turnsHealth().then(busyTurnsOf) })
+        : Promise.resolve({ tasks: null, busyTurns: null });
+      quitAgentProbe = probe.then((sample) => { quitAgentWork = backgroundQuitWork(workingChatCount(liveTurnRecords()), sample); app.quit(); });
+      return;
+    }
+    const ask = quitQuestion({ queued: queuedMessageCount(), working: workingChatCount(liveTurnRecords()), ...quitAgentWork });
+    quitAgentWork = null;
+    quitAgentProbe = null;
     if (ask) {
       const opts = {
         type: "warning" as const,

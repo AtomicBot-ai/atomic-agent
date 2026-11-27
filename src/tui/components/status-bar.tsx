@@ -14,6 +14,7 @@ import { getAppVersion } from "../../version.js";
 import { Chip, tracked } from "./chip.js";
 import { sessionTitleLine } from "./session-title.js";
 import { planStatusTag } from "./plan-strip.js";
+import { LogbookChip, logbookChipLabel, useLogbookChipState } from "./logbook-chip.js";
 import {
   planUpdateBanner,
   UpdateBanner,
@@ -75,7 +76,10 @@ export function StatusBar({
   // `plan 3/7` beside the title (ATO-486); its cells come out of the
   // budget the chip and the banner share.
   const planTag = planStatusTag(state.plan);
-  const planCells = planTag === null ? 0 : planTag.length + 4;
+  // ATO-2363: `● logbook` while screenshots are taken; its cells come out of the same budget.
+  const logbookState = useLogbookChipState();
+  const logbookLabel = logbookChipLabel(logbookState);
+  const planCells = (planTag === null ? 0 : planTag.length + 4) + (logbookLabel === null ? 0 : logbookLabel.length + 2);
   const { columns } = useTerminalSize();
   // The banner outlives the modal (`updateBanner` survives
   // `update_dismissed`) and then narrates the whole lifecycle: the
@@ -128,6 +132,7 @@ export function StatusBar({
           <Sep />
         </>
       ) : null}
+      <LogbookChip state={logbookState} />
       {/* Nothing on the chat surface: `RUN` named a place nobody is
           confused about being in, and it sat where the session's own
           name goes. The menu is still Esc, and the rail — restored by

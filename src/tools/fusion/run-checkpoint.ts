@@ -18,6 +18,7 @@ import {
 } from "../../session/turn-owner.js";
 import type { MergeTaskSuggestion } from "./branch-merge.js";
 import type { DelegateTask } from "./delegate-args.js";
+import type { FileDiffStat } from "./worker-diffstats.js";
 import type {
   WorkerTaskResult,
   WorkerTaskStatus,
@@ -84,6 +85,7 @@ const REPEAT_SAFE_TOOLS: ReadonlySet<string> = new Set([
   "memory.lessons.recall",
   "memory.procedures.recall",
   "memory.sessions.search",
+  "conversation.history",
   "files.search",
   "memory.profile.list",
   "memory.profile.history",
@@ -115,6 +117,12 @@ export interface CheckpointTaskResult {
   notes?: string[];
   /** The worker leg's priced spend for this task, `0` when unpriced. */
   costUsd: number;
+  /**
+   * The files the task changed, lines added and removed (ATO-1756), so a
+   * row a resume carries over still lists them. Absent when it changed
+   * none, and in a checkpoint written before the field existed.
+   */
+  diffstats?: FileDiffStat[];
 }
 
 export interface CheckpointTask {
@@ -432,6 +440,9 @@ export class FusionRunRecorder {
       ...(result.error === undefined ? {} : { error: result.error }),
       ...(result.notes === undefined ? {} : { notes: result.notes }),
       costUsd: spend,
+      ...(result.diffstats === undefined || result.diffstats.length === 0
+        ? {}
+        : { diffstats: result.diffstats.map((f) => ({ ...f })) }),
     };
     this.checkpoint.spentUsd += spend;
     this.flush();

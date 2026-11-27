@@ -36,7 +36,7 @@ import { BrowserWindow } from "electron";
 
 type Js = <T>(code: string) => Promise<T>;
 type Check = (name: string, ok: boolean, detail?: string) => void;
-type Sent = { channel: "chat" | "steer" | "approve" | "cancel" | "delete"; sessionId: string | null; text: string };
+type Sent = { channel: "chat" | "steer" | "approve" | "cancel" | "delete" | "trash"; sessionId: string | null; text: string };
 type View = {
   sessionId: string; agentSession: string | null; busy: boolean; pending: string | null; card: boolean;
   waitingStrip: boolean; stop: boolean; settings: boolean; running: string[]; waiting: string[]; rows: string[];
@@ -104,13 +104,20 @@ class StandIn {
     return { ok: true };
   };
 
+  // ATO-2332: Delete… moves the chat to Trash (main/chat-trash-ipc.ts) instead of the agent's DELETE.
+  readonly trash: Handler = (_e, p) => {
+    const id = (p as { id?: unknown } | null)?.id;
+    this.sent.push({ channel: "trash", sessionId: typeof id === "string" ? id : null, text: "" });
+    return { ok: true, entry: { id, title: "", deletedAt: Date.now() } };
+  };
+
   private readonly quiet: Handler = () => ({ ok: false, error: QUIET });
   private readonly noParked: Handler = () => ({ ok: true, data: { undelivered: [], discarded: 0 } });
 
   private channels(): Array<[string, Handler]> {
     return [
       ["agent:session", this.session], ["agent:chat", this.chat], ["agent:steer", this.steer],
-      ["agent:approve", this.approve], ["agent:cancel", this.cancel], ["agent:deleteSession", this.remove],
+      ["agent:approve", this.approve], ["agent:cancel", this.cancel], ["agent:deleteSession", this.remove], ["chatTrash:put", this.trash],
       ["cli:chatModelsList", this.quiet], ["agent:contextPreview", this.quiet],
       ["agent:undeliveredSteers", this.noParked], ["agent:ackSteers", this.quiet],
     ];
@@ -658,7 +665,7 @@ async function deleteWhileWorking(js: Js, check: Check, agent: StandIn, w: Brows
   check(
     "T25: once its turn is stopped, its card says so, Delete… asks and deletes the chat, and ⌘↩ in the empty view answers nothing",
     stopped && card.startsWith("Not answered — the run was stopped") && deleted && show(cancels(out2)) === show([turnA])
-      && out2.some((s) => s.channel === "delete" && s.sessionId === a)
+      && out2.some((s) => s.channel === "trash" && s.sessionId === a)
       && answered(out2).length === 0 && after.sessionId === "" && after.pending === null && !after.waitingStrip && !after.busy,
     `turn=${turnA} stopped=${stopped} card=${show(card)} deleted=${deleted} sent=${show(out2)} after=${show(after)}`,
   );

@@ -19,8 +19,10 @@ import { createRuntimeKeepAwake, createRuntimeTaskStores, createRuntimeTaskRunne
 import { connectRuntimeChannels } from "./composition/runtime-channels.js";
 import { createRuntimeImapTrigger } from "./composition/runtime-imap-trigger.js";
 import { createRuntimeMailTrigger } from "./composition/runtime-mail-trigger.js";
+import { createRuntimeLogbook } from "./composition/runtime-logbook.js";
 import { createOfflineModeControl } from "./composition/runtime-offline-mode.js";
 import { createPrivacyShieldControl } from "./composition/runtime-privacy-shield.js";
+import { installPrivacyNameDetector } from "./composition/runtime-privacy-names.js";
 import { holdWhileRunning } from "../scheduler/index.js";
 import type { AgentRuntime, CreateAgentRuntimeOptions } from "./runtime-contract.js";
 export type { AgentRuntime, CreateAgentRuntimeOptions, MemoryEmbeddingReconnect, RuntimeEventHandlers } from "./runtime-contract.js";
@@ -60,6 +62,7 @@ import { ApprovalRulesStore } from "../approval/approval-rules-store.js";
 
 import { ApprovalRouter } from "../approval/approval-router.js";
 import { installRiskReviewer } from "./composition/runtime-risk-review.js";
+import { installSecurityGuard } from "./composition/runtime-security-guard.js";
 
 import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 
@@ -86,6 +89,7 @@ import { resolveLlmConfig } from "../llm/provider/index.js";
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 import { SessionUsageLedger, forwardWorkerUsage } from "../session/usage-meter.js";
 import { DAILY_SPEND_FILE_NAME, DailySpendStore, dailySpendViewFor } from "../session/daily-spend.js";
+import { USAGE_HISTORY_FILE_NAME, UsageHistoryStore } from "../session/usage-history.js";
 import { hasPricedCloudLink } from "./resolve-model-pricing.js";
 
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
@@ -113,7 +117,7 @@ import { AgentLoop } from "../agent/agent-loop.js";
 import { TurnUsageMeter } from "../analytics/index.js";
 
 import { installGlobalErrorHandlers } from "../error-reporting/index.js";
-import { ToolHookEngine, installToolHooks } from "../hooks/index.js";
+import { SessionHookEngine, ToolHookEngine, installToolHooks } from "../hooks/index.js";
 import { activePolicy, installPolicy, loadPolicy, policyRuleMatch } from "../policy/index.js";
 
 /**
@@ -267,6 +271,8 @@ export async function createAgentRuntime(
   // on mtime), so editing hooks.json needs no restart. A hook's `ask` goes
   // to the same approval gate as the tools' own prompts.
   installToolHooks(new ToolHookEngine({ stateDir: config.paths.stateDir, approvals, logger }));
+  // Same files: SessionStart / UserPromptSubmit / Stop / PreCompact (ATO-2198).
+  const sessionHooks = new SessionHookEngine({ stateDir: config.paths.stateDir, logger });
 
   // Issue #112. Every local text probe below hangs off this one answer,
   // and it is available here — hundreds of lines before
@@ -301,6 +307,12 @@ export async function createAgentRuntime(
     browserChannel: config.browser.channel,
     // Only an inbox this machine holds the key for is the agent's to use.
     emailAddress: readAtomicMailApiKey() ? config.atomicMail.address : null,
+    // ATO-1721: RAM / CPU / GPU / OS once per runtime, for local models.
+    machineProbe: {
+      dataDir: config.paths.localModelsDataDir,
+      engine: config.localModels.managed.engine,
+      configuredDevice: config.localModels.managed.device,
+    },
   });
 
   // Memory-v2 phase 7a — fail-fast clamp/decay validation. The
@@ -444,6 +456,8 @@ export async function createAgentRuntime(
   const providers = await connectRuntimeProviders(config, logger, localProfile, connectedLocal);
   const { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveActiveModelName, resolveRouteVision } = providers;
   builtProviderIds = () => providerRegistry.listIds();
+  // ATO-2394: Privacy Shield's opt-in local name pass (`privacy.shield.localNames`).
+  installPrivacyNameDetector({ providerRegistry, sideCallSlotId: () => slotManager.sideCallSlotId(), logger });
 
   const bootstrapLlmSlice = resolveActiveLlmSlice();
   const textProvider = bootstrapLlmSlice.provider;
@@ -485,6 +499,11 @@ export async function createAgentRuntime(
     path: join(config.paths.stateDir, DAILY_SPEND_FILE_NAME),
     resetHourUtc: () => getConfig().llm?.costTracking?.dailyResetHourUtc ?? 0,
   });
+  // ATO-2352: tokens and spend per day and model, for `atomic-agent usage`.
+  const usageHistory = new UsageHistoryStore({
+    path: join(config.paths.stateDir, USAGE_HISTORY_FILE_NAME),
+    resetHourUtc: () => getConfig().llm?.costTracking?.dailyResetHourUtc ?? 0,
+  });
   const sessionUsage = new SessionUsageLedger({
     onChange: (sessionId, usage) => {
       // Only when a configured cloud link has a known price: with none,
@@ -505,7 +524,7 @@ export async function createAgentRuntime(
   // ATO-1276: an Ollama route learns its real window (`/api/show`) now,
   // before the first turn sizes a prompt. Silent and non-blocking.
   void modelContext.primeLocalContextWindow();
-  registerRuntimeVisionTools({ config, toolRegistry, resolveCurrentVisionProvider, logger });
+  registerRuntimeVisionTools({ config, toolRegistry, resolveCurrentVisionProvider, resolveTurnVisionProvider: modelContext.resolveTurnVisionProvider, logger });
   registerRuntimeImageTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics, emitAgentLoopEventFor });
   registerRuntimeVideoTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics, emitAgentLoopEventFor });
   registerRuntimeAudioTools({ toolRegistry, dangerous, emitAgentLoopEventFor });
@@ -534,7 +553,7 @@ export async function createAgentRuntime(
   const { prepareLocalLink, llmComplete, llmCompleteStream } = connectRuntimeFallback(options, {
     fallbackChain, resolveActiveLlmSlice, localBackend: connectedLocal.localBackend, profileManager,
     costAccumulator, turnUsageMeter, sessionUsage, dailySpend, resolveModelPricing, resolveCatalogContextWindow,
-    providerRegistry,
+    providerRegistry, usageHistory,
   });
   // Smart approval (ATO-465): off unless `agent.smartApproval`, read live.
   installRiskReviewer({
@@ -543,8 +562,16 @@ export async function createAgentRuntime(
     sideCallSlotId: () => slotManager.sideCallSlotId(),
     userRequest: (sessionId) => turnRequests.get(sessionId), logger,
   });
+  // Plain-text security rules (ATO-2111): on while a guard.md exists, read per call.
+  installSecurityGuard({
+    approvals, stateDir: config.paths.stateDir, readConfig: () => getConfig(), complete: (params) => llmComplete(params),
+    resolveTransport: (providerId) => resolveActiveLlmSlice(providerId).transport,
+    sideCallSlotId: () => slotManager.sideCallSlotId(), userRequest: (sessionId) => turnRequests.get(sessionId), logger,
+  });
   // Review after outside content (ATO-618): off unless `agent.taintReview`, read live.
   approvals.setTaintReview(() => getConfig().agent.taintReview);
+  // Egress hold (ATO-2116): a host on `http.hostAllowlist` may receive a command's data unasked.
+  approvals.setEgressAllowlist(() => getConfig().http.hostAllowlist);
   browserExtract.current = {
     complete: (params) => llmComplete(params),
     transport: (providerId) => resolveActiveLlmSlice(providerId).transport,
@@ -602,6 +629,7 @@ export async function createAgentRuntime(
     sideCallSlotId: compactionSideSlot,
     costOf: compactionCost,
     tokenCounter: createCompactionTokenCounter({ config: () => getConfig(), route: compactionRoute }),
+    beforeCompact: (facts) => sessionHooks.beforeCompact(facts),
     // ATO-676: used only when `agent.compaction.memoryFlush` is on.
     memoryNotes: {
       enabled: () => getConfig().memory.notes.enabled,
@@ -947,6 +975,7 @@ export async function createAgentRuntime(
     state: turnState, lifecycle, logger,
     emitEvent: emitAgentLoopEventFor,
     experienceReview,
+    sessionHooks,
   });
   const { steer, controlGoal } = turnService;
   const runQueuedTurn = holdWhileRunning(keepAwake, turnService.runTurn);
@@ -992,7 +1021,10 @@ export async function createAgentRuntime(
   const imapTrigger = createRuntimeImapTrigger({
     config, taskRunner, createSession, webhookSessionStore, logger,
   });
-  const sidecars = [mailTrigger, imapTrigger].filter((s): s is NonNullable<typeof s> => s !== null);
+  // ATO-2363: off unless `atomic-agent logbook start`; read per tick. Only
+  // the TUI shows the recording chip, so only it captures.
+  const logbook = createRuntimeLogbook({ config, providerRegistry, logger, indicatorVisible: options.analyticsSurface === "tui" });
+  const sidecars = [mailTrigger, imapTrigger, logbook].filter((s): s is NonNullable<typeof s> => s !== null);
   const scheduler = createRuntimeScheduler({
     config, taskRunner, logger, metrics, resolveTelegram: () => telegramChannelForShutdown,
     ...(sidecars.length > 0 ? { sidecars } : {}),

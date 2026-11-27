@@ -28,10 +28,27 @@ function chunks(texts: string[]): number[] {
   return store.saveChunks(store.nextPending()!.id, texts.map((text, ord) => ({ ord, text })), AT)!;
 }
 
-/** Whether `sqlite-vec` is installed here; it is not a dependency, so usually not. */
+/**
+ * Whether `sqlite-vec` loads here. It is a devDependency (ATO-1658), not a
+ * runtime one, so `npm ci` installs it with a prebuilt for these targets.
+ */
 const probe = openFileIndexDb(":memory:");
 const SQLITE_VEC = await loadSqliteVec(probe);
 probe.close();
+
+/** The `sqlite-vec-<os>-<arch>` packages sqlite-vec ships (win32 is "windows"). */
+const PREBUILT_TARGETS = new Set(["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-x64"]);
+
+describe("sqlite-vec in CI (ATO-1658)", () => {
+  // Without this the block below skips quietly and the vec0 path loses its
+  // coverage. Only where a prebuilt exists: win32-arm64 has none.
+  it.runIf(Boolean(process.env.CI) && PREBUILT_TARGETS.has(`${process.platform}-${process.arch}`))(
+    "loads, so the vec0 tests below run instead of skipping",
+    () => {
+      expect(SQLITE_VEC).toBe(true);
+    },
+  );
+});
 
 describe("FileVecIndex without the extension", () => {
   it("turns itself off and answers null, so search scans instead", () => {

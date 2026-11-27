@@ -10,16 +10,21 @@
  * so it gets no paths and no expansion.
  *
  * `expand` is what `agent:chat` calls on a turn's messages before they go out.
+ * ATO-2241: it also inlines `@diff`, `@git:N`, `@path:10-40`, `@folder/` and
+ * `@https://...` (context-mentions.ts), and the palette offers those words
+ * above the files (mention-kinds.ts).
  */
 
 import { ipcMain } from "electron";
 
+import { expandLastUserMessageWithContext } from "./context-mentions.js";
 import {
+  MAX_MENTION_RESULTS,
   createMentionFileIndex,
-  expandLastUserMessage,
   mentionFolder,
   searchMentions,
 } from "./file-mentions.js";
+import { contextSuggestions } from "./mention-kinds.js";
 
 const MAX_QUERY = 256;
 const MAX_SESSION_ID = 256;
@@ -64,7 +69,11 @@ export function wireFileMentionsIpc(deps: FileMentionsDeps): FileMentions {
     try {
       const sid = typeof sessionId === "string" && sessionId ? sessionId : null;
       const folder = mentionFolder(false, (await dirOf(sid)) ?? deps.defaultDir());
-      return await searchMentions(index, folder, q);
+      const found = await searchMentions(index, folder, q);
+      const words = folder ? contextSuggestions(q) : [];
+      if (words.length === 0) return found;
+      const paths = [...words, ...found.paths.filter((p) => !words.includes(p))];
+      return { ok: true, paths: paths.slice(0, MAX_MENTION_RESULTS) };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -75,7 +84,7 @@ export function wireFileMentionsIpc(deps: FileMentionsDeps): FileMentions {
       if (deps.isRemote() || !messages.some((m) => m.content.includes("@"))) return messages;
       try {
         const dir = (sessionId ? await dirOf(sessionId) : undefined) ?? turnDir();
-        return expandLastUserMessage(messages, mentionFolder(false, dir));
+        return await expandLastUserMessageWithContext(messages, mentionFolder(false, dir));
       } catch {
         return messages;
       }

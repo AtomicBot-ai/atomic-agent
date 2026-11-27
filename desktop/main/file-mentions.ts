@@ -289,12 +289,12 @@ export const DEFAULT_MENTION_LIMITS: MentionLimits = {
 };
 
 /** A NUL byte in this much of the head marks a file as binary. */
-const BINARY_SNIFF_BYTES = 8 * 1024;
+export const BINARY_SNIFF_BYTES = 8 * 1024;
 
 // A mention starts the text or follows whitespace or an opening bracket or
 // quote, so `me@site.com` is never one.
 const MENTION_TOKEN = /(^|[\s([{"'`])@([^\s@]+)/g;
-const TRAILING_PUNCTUATION = /[.,;:!?)\]}"'`]+$/;
+export const TRAILING_PUNCTUATION = /[.,;:!?)\]}"'`]+$/;
 
 /** The distinct `@words` of `text`, in order, without the `@`. */
 export function mentionTokens(text: string): string[] {
@@ -306,7 +306,7 @@ export function mentionTokens(text: string): string[] {
   return [...seen];
 }
 
-function inside(root: string, path: string): boolean {
+export function inside(root: string, path: string): boolean {
   const rel = relative(root, path);
   return rel.length > 0 && !rel.startsWith("..") && !isAbsolute(rel);
 }
@@ -329,7 +329,7 @@ export function resolveMentionedFile(root: string, token: string): string | null
   }
 }
 
-function readHead(path: string, max: number): Buffer {
+export function readHead(path: string, max: number): Buffer {
   const fd = openSync(path, "r");
   try {
     const buffer = Buffer.alloc(max);
@@ -364,13 +364,22 @@ export function expandFileMentions(
   workingDir: string,
   limits: MentionLimits = DEFAULT_MENTION_LIMITS,
 ): string {
+  return appendMentionBlock(text, mentionedFiles(text, workingDir, limits));
+}
+
+/** The files `text` mentions, read within `limits` (expandFileMentions without the block). */
+export function mentionedFiles(
+  text: string,
+  workingDir: string,
+  limits: MentionLimits = DEFAULT_MENTION_LIMITS,
+): MentionedFile[] {
   const tokens = mentionTokens(text);
-  if (tokens.length === 0) return text;
+  if (tokens.length === 0) return [];
   let root: string;
   try {
     root = realpathSync(workingDir);
   } catch {
-    return text;
+    return [];
   }
   const files: MentionedFile[] = [];
   const done = new Set<string>();
@@ -391,7 +400,7 @@ export function expandFileMentions(
       // stays prose, exactly like a path that never existed.
     }
   }
-  return appendMentionBlock(text, files);
+  return files;
 }
 
 /**

@@ -20,8 +20,9 @@ export interface VectorMirror {
  * switch keeps the old rows until the new model has covered the chunks.
  * Read back for a brute-force cosine scan, the same trade-off memory
  * recall makes (`memory/embeddings/hybrid-recall.ts`): no native vector
- * extension to load. With a query vector every row is streamed and only
- * the best `scanLimit` are kept, so old chunks are candidates too.
+ * extension to load. With a query vector every row is read, in pages
+ * that yield to the event loop, and only the best `scanLimit` are kept,
+ * so old chunks are candidates too.
  * When `sqlite-vec` is installed a mirror picks the candidates instead
  * and {@link byIds} reads them back.
  */
@@ -66,38 +67,22 @@ export class FileVectorStore {
   /**
    * The model's vectors to score, optionally only for files under `under`,
    * plus those of `alsoIds` (the keyword hits, so each keeps its re-rank).
-   * With `query`, every row is streamed and the `scanLimit` closest by
+   * With `query`, every row is read (paged, yielding) and the `scanLimit` closest by
    * cosine are kept (no chunk is out of reach because it is old). Without
    * it, the newest `scanLimit` (callers that do not score).
    */
-  scan(
+  async scan(
     model: string,
     under: string | null,
     scanLimit: number,
     alsoIds: readonly number[] = [],
     query?: Float32Array,
-  ): ChunkVector[] {
+  ): Promise<ChunkVector[]> {
     const filter = under === null ? "" : `AND f.path LIKE @under ESCAPE '\\'`;
     const params = { model, ...(under === null ? {} : { under: likePrefix(under) }) };
-    const rows: { chunkId: number; dim: number; vector: Buffer }[] = [];
+    const rows: VectorRow[] = [];
     if (query !== undefined) {
-      const stmt = this.db.prepare(
-        `SELECT v.chunk_id AS chunkId, v.dim AS dim, v.vector AS vector
-           FROM chunk_vectors AS v
-           JOIN chunks AS c ON c.id = v.chunk_id
-           JOIN files AS f ON f.id = c.file_id
-          WHERE v.model = @model ${filter}`,
-      );
-      let best: { row: { chunkId: number; dim: number; vector: Buffer }; score: number }[] = [];
-      const keep = Math.max(1, scanLimit);
-      for (const row of stmt.iterate(params) as Iterable<{ chunkId: number; dim: number; vector: Buffer }>) {
-        if (row.dim !== query.length) continue;
-        const vector = bufferToFloat32(row.vector, row.dim);
-        if (vector === null) continue;
-        best.push({ row, score: cosineSimilarity(query, vector) });
-        if (best.length >= keep * 2) best = best.sort((a, b) => b.score - a.score).slice(0, keep);
-      }
-      rows.push(...best.sort((a, b) => b.score - a.score).slice(0, keep).map((b) => b.row));
+      rows.push(...(await this.closest(filter, params, Math.max(1, scanLimit), query)));
     } else {
       rows.push(
         ...(this.db
@@ -109,11 +94,51 @@ export class FileVectorStore {
               WHERE v.model = @model ${filter}
               ORDER BY v.chunk_id DESC LIMIT @limit`,
           )
-          .all({ ...params, limit: scanLimit }) as { chunkId: number; dim: number; vector: Buffer }[]),
+          .all({ ...params, limit: scanLimit }) as VectorRow[]),
       );
     }
     const seen = new Set(rows.map((row) => row.chunkId));
     return [...decode(rows), ...this.byIds(model, alsoIds.filter((id) => !seen.has(id)))];
+  }
+
+  /**
+   * The `keep` rows closest to `query` by cosine, over every stored row.
+   * Read in pages of {@link SCAN_PAGE} by chunk id, yielding to the event
+   * loop between pages so a large index does not stall the process. A
+   * page is read with `.all()`, never an open iterator across the yield:
+   * better-sqlite3 refuses other statements on the connection while one
+   * is open, and the indexer writes on it meanwhile.
+   */
+  private async closest(
+    filter: string,
+    params: Record<string, string>,
+    keep: number,
+    query: Float32Array,
+  ): Promise<VectorRow[]> {
+    const stmt = this.db.prepare(
+      `SELECT v.chunk_id AS chunkId, v.dim AS dim, v.vector AS vector
+         FROM chunk_vectors AS v
+         JOIN chunks AS c ON c.id = v.chunk_id
+         JOIN files AS f ON f.id = c.file_id
+        WHERE v.model = @model AND v.chunk_id > @after ${filter}
+        ORDER BY v.chunk_id LIMIT @page`,
+    );
+    let best: { row: VectorRow; score: number }[] = [];
+    let after = -1;
+    for (;;) {
+      const page = stmt.all({ ...params, after, page: SCAN_PAGE }) as VectorRow[];
+      for (const row of page) {
+        if (row.dim !== query.length) continue;
+        const vector = bufferToFloat32(row.vector, row.dim);
+        if (vector === null) continue;
+        best.push({ row, score: cosineSimilarity(query, vector) });
+        if (best.length >= keep * 2) best = best.sort((a, b) => b.score - a.score).slice(0, keep);
+      }
+      if (page.length < SCAN_PAGE) break;
+      after = page[page.length - 1]!.chunkId;
+      await yieldToEventLoop();
+    }
+    return best.sort((a, b) => b.score - a.score).slice(0, keep).map((b) => b.row);
   }
 
   /** The model's vectors of these chunks (those it has). */
@@ -132,6 +157,13 @@ export class FileVectorStore {
     }
     return out;
   }
+}
+
+/** Rows scored between two yields to the event loop. */
+export const SCAN_PAGE = 2000;
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 interface VectorRow {

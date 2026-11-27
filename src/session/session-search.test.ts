@@ -260,4 +260,24 @@ describe("SessionStore.searchTranscripts", () => {
     session("s", [{ kind: "user", text: "x", at: 1 }]);
     expect(() => store.delete("s")).not.toThrow();
   });
+
+  // ATO-1659: the TUI picker syncs a few sessions per tick and then only reads.
+  it("syncs in budgets and matches what is indexed without syncing", () => {
+    const first = session("a", [{ kind: "user", text: "gamma one", at: 1 }]);
+    session("b", [{ kind: "user", text: "gamma two", at: 1 }]);
+    expect(store.matchTranscripts({ query: "gamma" })).toEqual([]);
+    expect(store.syncTranscriptIndex(1)).toBe(1);
+    expect(store.matchTranscripts({ query: "gamma" })).toHaveLength(1);
+    expect(store.syncTranscriptIndex(25)).toBe(0);
+    expect(store.matchTranscripts({ query: "gamma" })).toHaveLength(2);
+    // A change after the sync waits for the next one.
+    store.save({
+      ...first,
+      turns: [{ kind: "user", text: "delta", at: 2 }],
+      updatedAt: first.updatedAt + 1000,
+    });
+    expect(store.matchTranscripts({ query: "delta" })).toEqual([]);
+    expect(store.syncTranscriptIndex(25)).toBe(0);
+    expect(store.matchTranscripts({ query: "delta" })).toHaveLength(1);
+  });
 });

@@ -56,12 +56,14 @@ export const osGitBranchTool: ToolDefinition = {
       runGit({
         repo,
         workingDir: ctx.workingDir,
+        guest: ctx.guest,
         args,
         signal: ctx.signal,
       }),
       runGit({
         repo,
         workingDir: ctx.workingDir,
+        guest: ctx.guest,
         args: ["symbolic-ref", "--short", "-q", "HEAD"],
         signal: ctx.signal,
         timeoutMs: 5_000,

@@ -8,6 +8,7 @@ import {
 } from "../../../sandbox/command-runner.js";
 import {
   requireApproval,
+  requireGuardOnShortcut,
   type DangerousToolOptions,
 } from "../../../approval/dangerous-tool.js";
 import type { ToolDefinition } from "../../tool-registry.js";
@@ -231,6 +232,21 @@ export function buildOsWebFetchTool(
           ctx.signal,
         );
         if (urlCheck !== null) noteUrlSendAllowed(urlCheck, ctx.sessionId, options.urlSendSites);
+      } else if (gate !== undefined) {
+        // A fetch asks nobody, but the person's security rules still
+        // review it (ATO-2111): its URL alone can carry data out.
+        const shownUrl = maskUrlSecrets(args.url);
+        await requireGuardOnShortcut(
+          gate,
+          {
+            sessionId: ctx.sessionId,
+            tool: TOOL_NAME,
+            category: "http",
+            reason: `GET ${shownUrl}`,
+            affectedResources: [shownUrl],
+          },
+          ctx.signal,
+        );
       }
       let outcome: FetchOutcome;
       try {

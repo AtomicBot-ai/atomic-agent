@@ -248,7 +248,27 @@ describe("cloud project instructions", () => {
     expect(result.instructions.every(r => r.scope === ".")).toBe(true);
     expect(result.instructions.filter(r => r.body !== "OWN").every(r => r.priority === 0)).toBe(true);
     expect(result.instructions.find(r => r.body === "COPILOT")?.path).toBe(join(root, ".github/copilot-instructions.md"));
-    expect(result.diagnostics.join("\n")).toMatch(/Cursor rules that apply only to matching files or on request: \.cursor\/rules\/c-globs\.mdc/);
+    // ATO-2247: a Cursor rule scoped by globs is no longer skipped; it waits for a matching file.
+    expect(result.diagnostics.join("\n")).not.toContain("c-globs.mdc");
+    expect(result.pathRules).toEqual([{ path: ".cursor/rules/c-globs.mdc", patterns: ["src/**/*.ts"], body: "TS ONLY" }]);
+  });
+
+  it("keeps rules scoped by paths out of the instructions and returns them as path rules (ATO-2247)", () => {
+    put("AGENTS.md", "OWN");
+    put(".atomic-agent/rules/sql.md", "---\npaths: [\"*.sql\"]\n---\nSQL RULE");
+    put(".atomic-agent/rules/style.md", "STYLE RULE");
+    put(".atomic-agent/rules/notes.txt", "NOT A RULE");
+    put(".cursor/rules/docs.mdc", "---\ndescription: docs\n---\nON REQUEST");
+    const result = loadProjectInstructions(root);
+    expect(result.instructions.map(r => r.body)).toEqual(["OWN", "STYLE RULE"]);
+    expect(result.instructions.find(r => r.body === "STYLE RULE")).toMatchObject({ scope: ".", priority: 1 });
+    expect(JSON.stringify(result.instructions)).not.toContain("SQL RULE");
+    expect(result.pathRules).toEqual([{ path: ".atomic-agent/rules/sql.md", patterns: ["*.sql"], body: "SQL RULE" }]);
+    expect(result.diagnostics.join("\n")).toMatch(/Skipped Cursor rules that apply only on request: \.cursor\/rules\/docs\.mdc/);
+    // Trust counts the path rule like any other file, and an untrusted one never loads.
+    const withheld = loadProjectInstructions(root, undefined, { allow: path => path !== ".atomic-agent/rules/sql.md" });
+    expect(withheld.found).toContain(".atomic-agent/rules/sql.md");
+    expect(withheld.pathRules).toEqual([]);
   });
 
   it("caps Cursor rule files by name and drops other-tool rules before own root rules", () => {

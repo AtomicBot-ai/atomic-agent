@@ -121,6 +121,8 @@ export {
   resolveEmbeddingPidFilePath,
   resolveEmbeddingLogFilePath,
 } from "./backend-paths.js";
+export { getModelsDirOverride, setModelsDirOverride } from "./models-dir-override.js";
+export { moveModelsDir, ModelsDirMoveError } from "./models-dir-move.js";
 
 export {
   DEFAULT_GIVE_UP_AFTER_MS,

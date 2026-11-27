@@ -28,4 +28,8 @@ body.mini-chat{display:flex;flex-direction:column;height:100%;background:var(--p
 .mc-act{border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--ink);padding:3px 12px;font:inherit;font-size:var(--fs-cap);line-height:18px;cursor:pointer}
 .mc-act:hover,.mc-act:focus-visible{background:var(--lift);outline:none;border-color:var(--ink-3)}
 .mc-act[aria-expanded="true"],.mc-act.on{border-color:var(--brand);color:var(--ink)}
+/* ATO-2268: "Replace in <app>" under an answer to the selection. */
+.mc-replace-row{display:flex;margin-top:6px}
+.mc-replace{border-color:var(--brand)}
+.mc-replace:disabled{opacity:.6;cursor:default}
 @media (prefers-reduced-motion: reduce){.mc-dot{animation:none}}

@@ -17,7 +17,7 @@ import {
   requireFsApproval,
   type FsDangerousToolOptions,
 } from "../fs/fs-require-approval.js";
-import { buildPptx, type PptxImageInput } from "./pptx-build.js";
+import { buildPptx, type BuildPptxResult, type PptxImageInput } from "./pptx-build.js";
 import { OS_FS_WRITE_PPTX_CONTRACT } from "./pptx-contract.js";
 import { MAX_IMAGE_BYTES, sniffImage } from "./pptx-image.js";
 import { parseDeckSpec, type PptxDeckSpec } from "./pptx-spec.js";
@@ -85,7 +85,7 @@ export function buildOsFsWritePptxTool(options: OsFsWritePptxOptions): ToolDefin
           sessionId: ctx.sessionId,
           tool: TOOL,
           reason: `${exists ? "replace" : "create"} a ${built.slideCount}-slide PowerPoint deck at ${absolute}`,
-          preview: outline(spec),
+          preview: outline(spec, built.layouts),
           affectedResources: [absolute],
           // Replacing a deck is a whole-file replace: a no to it holds
           // for the rest of the turn, like `os.fs.write`'s.
@@ -123,18 +123,20 @@ export function buildOsFsWritePptxTool(options: OsFsWritePptxOptions): ToolDefin
               prior: replacing,
             });
 
+      const moved = built.layouts.reduce((sum, slide) => sum + slide.moved, 0);
       const parts = [
         `${built.slideCount} slide${built.slideCount === 1 ? "" : "s"}`,
         `${built.notesCount} with speaker notes`,
         `${built.imageCount} picture${built.imageCount === 1 ? "" : "s"}`,
         ...(built.tableCount > 0 ? [`${built.tableCount} table${built.tableCount === 1 ? "" : "s"}`] : []),
         ...(built.chartCount > 0 ? [`${built.chartCount} chart${built.chartCount === 1 ? "" : "s"}`] : []),
+        ...(moved > 0 ? [`${moved} bullet${moved === 1 ? "" : "s"} moved to speaker notes to fit`] : []),
         `theme ${spec.theme}`,
       ];
       return compressToolResult({
         tool: TOOL,
         status: "ok",
-        output: `${restoreNote === null ? "" : `${restoreNote.note}\n`}${exists ? "Replaced" : "Created"} ${absolute} (${parts.join(", ")}). Open it in PowerPoint, Keynote or LibreOffice to edit; read it back with os.fs.read_document.\n${outline(spec)}`,
+        output: `${restoreNote === null ? "" : `${restoreNote.note}\n`}${exists ? "Replaced" : "Created"} ${absolute} (${parts.join(", ")}). Open it in PowerPoint, Keynote or LibreOffice to edit; read it back with os.fs.read_document.\n${outline(spec, built.layouts)}`,
         details: {
           path: absolute,
           slides: built.slideCount,
@@ -144,6 +146,8 @@ export function buildOsFsWritePptxTool(options: OsFsWritePptxOptions): ToolDefin
           charts: built.chartCount,
           bytes: built.data.length,
           theme: spec.theme,
+          layouts: built.layouts.map((slide) => slide.layout),
+          movedToNotes: moved,
           replaced: exists,
           ...(restoreNote === null ? {} : { restoreCopy: restoreNote.saved }),
         },
@@ -270,8 +274,8 @@ async function loadImages(
   return images;
 }
 
-/** The deck as the operator sees it in the approval prompt and the model in the result. */
-function outline(spec: PptxDeckSpec): string {
+/** The deck as the operator sees it in the approval prompt and the model in the result, with each slide's layout. */
+function outline(spec: PptxDeckSpec, layouts: BuildPptxResult["layouts"]): string {
   const lines = spec.slides.map((slide, i) => {
     const extras = [
       slide.bullets.length > 0 ? `${slide.bullets.length} bullets` : "",
@@ -280,7 +284,12 @@ function outline(spec: PptxDeckSpec): string {
       slide.chart !== undefined ? `${slide.chart.type} chart` : "",
       slide.notes !== undefined ? "notes" : "",
     ].filter((part) => part.length > 0);
-    return `${i + 1}. ${slide.title}${extras.length > 0 ? ` (${extras.join(", ")})` : ""}`;
+    const laid = layouts[i];
+    const layout =
+      laid === undefined
+        ? ""
+        : ` [${laid.layout}${laid.moved > 0 ? `, ${laid.moved} bullet${laid.moved === 1 ? "" : "s"} moved to notes` : ""}]`;
+    return `${i + 1}. ${slide.title}${extras.length > 0 ? ` (${extras.join(", ")})` : ""}${layout}`;
   });
   const shown = lines.slice(0, 30);
   if (lines.length > shown.length) shown.push(`… and ${lines.length - shown.length} more`);

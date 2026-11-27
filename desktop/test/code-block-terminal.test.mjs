@@ -1,5 +1,5 @@
-// ATO-1426: a shell code block gets "Open in Terminal" next to Copy, on macOS
-// only for now (ATO-1422), and only when the preload has the bridge.
+// ATO-1426: a shell code block gets "Open in Terminal" next to Copy, on macOS,
+// Windows and Linux (ATO-1430), and only when the preload has the bridge.
 // codeBlockFrame and codeBlockTerminalOk are read from renderer.js as text
 // and run in a vm context with their neighbours stubbed. No deps, no build.
 import { test } from "node:test";
@@ -42,8 +42,9 @@ test("a js, python or unnamed block has no button", () => {
   }
 });
 
-test("off macOS there is no button, until the platform list says otherwise", () => {
-  for (const platform of ["win32", "linux"]) assert.doesNotMatch(frame(platform)(pre("bash")), /data-mdterm/, platform);
+test("ATO-1430: Windows and Linux get the button too; another system does not", () => {
+  for (const platform of ["win32", "linux"]) assert.match(frame(platform)(pre("bash")), /data-mdterm/, platform);
+  for (const platform of ["freebsd", "aix"]) assert.doesNotMatch(frame(platform)(pre("bash")), /data-mdterm/, platform);
 });
 
 test("an older preload without the bridge, or the demo with none, shows no button", () => {
@@ -64,6 +65,8 @@ test("the click sends the block's text as Copy reads it, with the working folder
   assert.match(body, /toast\("Couldn't open Terminal"/);
   // Anything but {ok:true} is a failure, and main's message goes into the toast.
   assert.match(body, /if \(!r \|\| r\.ok !== true\) fail\(r && r\.message\)/);
+  // ATO-1430: Windows / Linux answer with a hint ("paste with Ctrl+V"), shown in the window.
+  assert.match(body, /else if \(typeof r\.hint === 'string'\) toast\('Terminal opened', r\.hint\)/);
 });
 
 test("the button uses ATO-1424's one preload bridge for terminal:openWithCommand", () => {

@@ -34,6 +34,9 @@ A run cut off from outside (the boot sweep took it back from a dead process, or 
 
 A recurring task can be paused and resumed ([task-pause.ts](task-pause.ts), ATO-21; Telegram's `/cron pause|resume` uses it). It is a thin layer over the queue's own `paused` state (`TaskStore.pause` / `resume`, ATO-590) that returns a refusal reason instead of throwing and only takes recurring tasks; a run in progress is refused. Resume arms the next firing after now, so firings that fell inside the pause are skipped. Delete is the plain cancel.
 
+## Task board
+
+The board (ATO-2257, after Vibe Kanban and the Hermes/OpenClaw workboards) shows every task as a card in one of five lanes: `todo`, `doing`, `review`, `blocked`, `done` ([task-board-lanes.ts](task-board-lanes.ts)). It is a view over the queue, not a second status machine: a card's lane comes from the task's status (`pending`/`paused` to todo, `running` to doing, `failed`/`blocked` to blocked, `completed`/`cancelled` to done) unless someone moved it, and moving a card never claims, runs, pauses or ends the task. A lane someone set holds until the task starts a new run after the move, so a card put in review stays there when its run completes while a card run again follows its status. Each card can also carry a note and an assignee (an agent profile name, a label for now). They live in the `task_board` table of `tasks.sqlite` ([task-board.ts](task-board.ts)), added outside the numbered migrations like `task_runs`; when it cannot be added the board is off and cards sit in their status lanes. Rows of tasks deleted with their session go too. Surfaces: `TaskStore.boardCards` / `updateBoardCard`, `GET /api/task-board`, `POST /api/tasks/:id/board`; "Run now" is the existing `POST /api/tasks/:id/run`.
 
 ## Suggestions (ideas)
 

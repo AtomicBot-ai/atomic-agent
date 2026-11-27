@@ -95,3 +95,13 @@ test("renderer.js draws the card on the empty chat and asks before a send", () =
   const submit = src.slice(src.indexOf("\nfunction submit("), src.indexOf("\nfunction submit(") + 8000);
   assert.match(submit, /updHoldsNewChat\(S\.log\.length, S\.busy \|\| S\.pending\)/);
 });
+
+/** ATO-2414: General has no "Get beta versions" row until betas are published. */
+test("the beta row is hidden unless main offers betas, even for someone who had it on", () => {
+  const { c } = rendererUpdates();
+  c.setSwitchHTML = (o) => `<button data-act="${o.act}"></button>`;
+  const base = { enabled: true, autoCheck: true, currentVersion: "0.0.11", phase: "idle" };
+  assert.equal(c.updBetaRowHTML({ ...base, beta: true, betaOffered: false }), "");
+  assert.equal(c.updBetaRowHTML({ ...base, beta: false }), "");
+  assert.match(c.updBetaRowHTML({ ...base, beta: false, betaOffered: true }), /id="set-upd-beta"/);
+});

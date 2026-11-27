@@ -19,12 +19,14 @@ npm start
 One child process, one transport. The main process spawns
 
 ```
-atag serve --host 127.0.0.1 --port <ephemeral> --api-key <random per launch>
+ATOMIC_AGENT_API_KEY=<random per launch> atag serve --host 127.0.0.1 --port <ephemeral>
 ```
 
 with `cwd` set to the chosen workspace, waits for `/health`, and speaks HTTP to
 it. The port is ephemeral, the bind is loopback-only, and the bearer token is
-generated per launch, so nothing outside this app can reach the agent.
+generated per launch, so nothing outside this app can reach the agent. The
+token goes in the child's environment, not on its command line, which any
+program can read with `ps` (ATO-1705, [serve-launch.ts](main/serve-launch.ts)).
 
 **Folder trust (ATO-1250).** A folder's own skills and instruction files
 (`AGENTS.md`, `.atomic-agent/skills`, …) load only after the person trusts
@@ -162,6 +164,28 @@ waits or restarts. The chip and the chosen row show the project's model
 stay one per agent, and the local model rows say "Local model is shared by
 all projects". A remote agent keeps one model for every chat.
 
+**Desktop pet (ATO-2391).** View › Desktop Pet › Show Pet puts a small atom
+on the screen, above every app, that shows what the agent is doing: idle,
+resting, thinking, working (a tool call), done, failed, or waiting for you.
+Off by default; the choice, Do Not Disturb and the spot it was dragged to
+live in `<userData>/pet.json`, never in the agent's config. It reads the
+frames the main window already gets (`chat`, `approval`) and calls nothing,
+so it costs no tokens ([pet-events.ts](main/pet-events.ts),
+[pet-state.ts](main/pet-state.ts): priorities, at least 0.7 s per state,
+done and failed go back to idle, resting after two quiet minutes). The
+window takes clicks only over the sprite and its bubble
+([pet-window.ts](main/pet-window.ts)). A waiting request opens a bubble
+with the action (the preview's first line, e.g. the command; the gate's reason
+on a second line) and Allow once and Deny; the click is handed to the main window, which
+answers it with its own card (`answerLive`, [pet-relay.js](renderer/pet-relay.js)),
+and only when no page holds the card does main answer through
+`agent:approve`'s own function ([pet-ipc.ts](main/pet-ipc.ts)). Never
+Always allow, and never Allow for a question, a high risk verdict, a request
+held after outside content (its note shows in the risk line), one with no
+preview or a preview the bubble cannot show whole (more than one line, or clipped),
+or the categories kept for the full card (`PET_WINDOW_ONLY_CATEGORIES`): those offer
+Review. Do Not Disturb hides the bubble and the done / failed flashes.
+
 **Why not the NDJSON sidecar.** `dist/sidecar/main.js` exists only in a source
 checkout, and the shipped single-file binary has no `sidecar` subcommand. A
 desktop app has to work against what people installed. The sidecar also has no
@@ -284,8 +308,12 @@ Real, driven by the running agent:
   carries a 1–6 character extension, so a bare `/path/to/Makefile` or a
   directory stays plain text
 - files a turn actually wrote — `os.fs.write`, `os.fs.edit`, `os.fs.patch`
-  with `apply: true`, `os.fs.archive.extract` — are attached under the reply
-  as a `Saved to <path>` line per file plus a chip. The paths come from the
+  with `apply: true`, `os.fs.archive.extract`, and the Office writers
+  `os.fs.docx`, `os.fs.xlsx` (not `op: read`), `os.fs.write_pptx` (ATO-2409:
+  the `path` of the call; they also get a "created"/"updated" row on the
+  "Changed files" card, and a bare `sales.docx` in a reply is their chip) —
+  are attached under the reply as a `Saved to <path>` line per file plus a
+  chip. The paths come from the
   session store: the call's own args and the tool's own result line (`wrote N
   bytes to …`, the patch report's `✓ <file>` lines, `extracted … to <dir>`),
   each confirmed with `fs.stat` before it is drawn, so a chip is never shown
@@ -335,9 +363,13 @@ Real, driven by the running agent:
   focus and on the open chat's row) and the same menu on a right-click: Pin / Unpin,
   Mark as read / Mark as unread, Delete… Pinned chats stand in a **Pinned** section above
   Chats, the last pinned on top, and are not repeated below. Pin and read state live in
-  Electron's `prefs.json`, not in the agent. **Delete really deletes** (after a confirm):
-  `DELETE /api/sessions/{id}`, not a splice that the next load undoes; deleting the open
-  chat leaves an empty new one.
+  Electron's `prefs.json`, not in the agent. **Delete… moves the chat to Trash** (ATO-2332,
+  after a confirm; `renderer/chat-trash.js`, `main/chat-trash-ipc.ts`): the chat stays in the
+  agent's store, stamped `metadata.trashed` (`POST /api/sessions/{id}/trashed`, so the agent's
+  session search leaves it out; Restore clears it), `userData/chat-trash.json` lists it, and it is on no list but the folded
+  **Trash** section at the bottom of the sidebar, with Restore, Delete forever and Empty Trash.
+  Delete forever is the real `DELETE /api/sessions/{id}`; main runs it on its own only for a chat
+  that has been in Trash for 30 days. Deleting the open chat leaves an empty new one.
   Each list header carries a **+** on its own line: the one on Chats starts a
   new chat, the one on Tasks opens Settings › Tasks on a new task,
   and on the Tasks header `N running` sits to the left of it. The head row —
@@ -582,8 +614,13 @@ Honestly degraded, and labelled as such in the UI:
   entry the TUI writes (`kind: "subscription-cli"`, `subscriptionCli.cli`,
   Claude's default `sonnet`, no model for Codex). Their model list never goes
   to the network: main answers it from `main/subscription-cli-models.ts`, a
-  copy of the agent's Claude list. Whether the CLI is installed and signed in
-  is not checked here yet.
+  copy of the agent's Claude list. Installed and signed in come from the
+  CLI's login file (`main/subscription-cli-detect.ts`, ATO-756), and then,
+  once per pick and kept for the app's session, from the CLI itself
+  (`main/subscription-cli-live-check.ts`, ATO-1684): `claude auth status` or
+  `codex login status`, and one tiny one-turn `claude -p` only for a Claude
+  Code too old to have the status command. A dead login shows the Sign in
+  step right away; a check that fails or hangs never blocks the step.
 - **The palette search forgives.** ⌘ K ranks commands, Settings sections,
   chats, tasks and skills with `renderer/fuzzy-match.js` (ATO-669): exact,
   prefix, word prefix or slash alias, substring and context matches keep
@@ -654,6 +691,21 @@ Honestly degraded, and labelled as such in the UI:
   Project skills are read in place. Remove project copies from the source
   directory shown in the detail. Global uninstall and Skills Hub behavior
   retain their existing HTTP/CLI paths.
+- **Show once** (ATO-2401, macOS, local agent only) is the Record card above
+  Pending review. Nothing listens until Record is clicked; while it records,
+  the card turns red and a menu bar item says "● Recording steps" (one click
+  stops and saves, its right-click menu also discards). It stops on its own
+  after 10 minutes or 200 steps, and on quit without saving. Clicks (the
+  app, the window and the Accessibility name of the control), shortcuts and
+  action keys are kept; typed characters never are (a run of typing is one
+  "type the text here" step), nor anything in protected apps (the agent's
+  screen guard list plus password managers by name), nor control labels in
+  browsers. No screenshots. Stop compiles the steps into a SKILL.md
+  (`main/show-once-skill.ts`, replayed with the os.screen tools) and saves it
+  as a learned-skill draft in `<stateDir>/skills-pending/<id>/`, where
+  Pending review shows, approves or discards (deletes) it through the
+  agent's own `atag skill learned`. Needs Accessibility for Atomic Agent;
+  the listener is uiohook-napi, whose macOS prebuilds ship for this.
 - **Memory** reads `<stateDir>/memory.sqlite` read-only (`sqlite3`, falling
   back to `node:sqlite`) with the stores' own statements, named and
   parameterised in the main process — the agent has no memory route.
@@ -824,11 +876,20 @@ Honestly degraded, and labelled as such in the UI:
   `activateProvider` restart applies. Fallover events are not on the HTTP
   API, so the Fallback status line says so instead of "on primary".
 - **Telegram** shows config + `.env` facts only: `telegram.enabled`, the
-  owner, and whether `TELEGRAM_BOT_TOKEN` is set. The token prompt writes
-  the key through a port of `src/config/dotenv-writer.ts` (atomic rename,
-  0600, quoting for whitespace/shell characters); `T`/`O`/`e` clear the
-  token, unset the owner and flip `telegram.enabled`, each with the restart
-  note. Every line in the tab that asks for a restart (that note, the
+  owner, and whether `TELEGRAM_BOT_TOKEN` is set. The Connect card says what
+  the bot is for, lists the three steps and opens @BotFather
+  (`renderer/telegram-token.js`, ATO-426). The token prompt shows the token's
+  shape as its placeholder, has a Show / Hide eye, keeps Save disabled until
+  there is text, refuses a value that is not shaped like a token, and asks
+  Telegram's `getMe` once through main (`main/telegram-token-check.ts`, IPC
+  `telegram:checkToken`): a token Telegram rejects is never written, one
+  that could not be checked (offline) is written with a warning, and a good
+  one is confirmed as `@my_bot`. The write goes through a port of
+  `src/config/dotenv-writer.ts` (atomic rename, 0600, quoting for
+  whitespace/shell characters). The `e` key flips `telegram.enabled`;
+  removing the token or the owner is a button that takes a second click, and
+  no single key does either (the former `T`/`O` are gone). Every change
+  carries the restart note. Every line in the tab that asks for a restart (that note, the
   "Waiting for a restart" status and the pairing card's "Telegram is not
   running") has a primary Restart agent beside it and says the app stays
   open; the Restart the bot row's own Restart does the same (ATO-900 item 6,
@@ -1078,6 +1139,26 @@ Honestly degraded, and labelled as such in the UI:
   language downloaded yet) and off macOS nothing changes. The engine sits
   behind a small `TranscribeEngine` interface so a Windows whisper.cpp engine
   (ATO-1076) can plug in without touching the IPC or the renderer.
+- **Record a meeting (ATO-2333).** `+` → `Record meeting` or File →
+  `Record a Meeting…` opens the microphone (audio only, through the same
+  permission gate as voice input: `voicePermissionVerdict` reads
+  `meeting.armed`). A red `Recording` pill with a clock and `Stop` stays at
+  the top of the window while anything is heard; the panel under it shows the
+  transcript as it comes. The renderer sends 100 ms frames
+  (`voice-worklet.js`) on `meeting:audio`; main (`main/meeting-recorder.ts`)
+  appends each to `<userData>/meetings/<id>/chunk-NNNN.pcm` at once, closes a
+  chunk at the first half-second pause after 20 s (at 40 s at the latest,
+  `meeting-plan.ts`), seals it into a WAV and runs it through the same
+  `TranscribeEngine` as the composer's Transcribe, one chunk at a time; the
+  chunk's WAV is deleted as soon as its text is kept. `Make notes` saves
+  `Meeting <date> transcript.txt` (speaker turns guessed from pauses,
+  `meeting-transcript.ts`) into `Documents/Atomic Agent/Meetings`, adds that
+  folder to My files, deletes the meeting's audio, and opens a new chat that
+  sends the transcript to the `meeting-notes` skill (summary, decisions,
+  action items with owners, and a question before anything is scheduled).
+  `Delete recording` removes the folder. A recording a crash or a closed
+  window cut short is offered again at the next start. Not yet: system audio
+  (ScreenCaptureKit) and real speaker recognition.
 - **Voice input: what is and is not possible.** `SpeechAnalyzer` is macOS
   26+, so on anything older the button is disabled and says
   `Voice input needs macOS 26 or later`; the app itself runs from
@@ -1788,7 +1869,9 @@ without a click.
   version is newer. A feed without beta files falls back to the build's own
   channel, so the switch never hides a stable release; when betas are
   published, each stable release needs a `beta*` copy too, or beta readers
-  wait for the next beta.
+  wait for the next beta. ATO-2414: no betas are published yet, so the row is
+  hidden (`BETA_CHANNEL_SHIPPED` in `main/updater.ts`); a saved "on" keeps the
+  fallback above and still gets stable updates. Flip the flag with the first beta.
 - The person's choices are in Electron userData `updates.json` (auto-check, beta,
   skipped version, last Not now, and the install in flight, which the new
   version reads once to send `update_installed`). Never in the agent's
@@ -2031,6 +2114,7 @@ desktop/
   main/backend-switch.ts the TUI's backend/provider/model decisions, main-side
   main/main.ts           lifecycle, window, IPC, the smoke harness
   main/menu.ts           the native menu bar
+  main/pet-*.ts          the desktop pet: frames to states, the window, its routes (ATO-2391)
   main/edit-context-menu.ts  the right-click edit menu and spellcheck switch
   main/speech.ts         the one voice-input child: probe, start/stop, audio, install
   main/updater.ts        app updates (electron-updater), only ever on a click
@@ -2094,6 +2178,8 @@ Settings → Models → Advanced → Engine shows the running engine's install a
 **After a failed launch install.** When the launch installs Core's backend before starting the model and that install fails, nothing is started on top of it. The next engine install that succeeds (the download card's Retry, Settings' install, Download again) starts the model as the launch would have, once, when the route still needs it and the model is still on disk (`startAfterEngineInstall`, via `update`, so the window hears how it went). Every failed engine install, and how a background model start ended, is written to `agent.log` as well as the terminal and the console drawer (`sayDesktop`).
 
 **A model Core could not load, and the CPU build (ATO-374).** With Core as the managed engine, a start whose model did not load (Core's `MODEL_LOAD_FAILED`, or the model server's "failed to load model" / "error loading model") reads as its own sentence, "The model couldn't load on this computer. Try a smaller model, or use a cloud model.", with `reason: load` and `retryable: false`: the engine is fine, so **Download again** is not offered. When the agent moves a start to the CPU build because the GPU build could not load the model (today the managed llama.cpp start's "falling back to the CPU build" / "retrying start on the CPU build"; Core's own fallback is ATO-344), main sends `engine:cpuFallback` and the window says once on the app line, and keeps as one amber line in Settings → Models until a later start runs without the switch: "The model couldn't load on your graphics card. Switched to the CPU build, it will be slower." A failure card that follows such a switch carries the same line.
+
+**A damaged or missing model file (ATO-1745).** A load that failed because the model file is damaged (llama.cpp's "invalid magic", a tensor past the end of a truncated file) or missing ("failed to open GGUF file … No such file") is not `load`: it reads "The model file is damaged. Download the model again." or "The model file was not found. Download the model again." (`reason: model_file_corrupt | model_file_missing`). The words are the agent's own (`main/engine-exit-words.ts`, mirrored from `src/local-llm/server/engine-exit-reason.ts`), read from the start's answer and, since Core's answer may not repeat llama.cpp's line, from this run's server log line. The card, the composer strip and Settings › Diagnostics (Engine and Model rows) offer **Download model again** in place of Download again and Start model. It runs the same pull as Settings › Models' Download (`cli:modelsRedownload` → `startModelPull`); for a damaged file main first deletes the weights in the app's models folder (`main/model-redownload.ts`), since the agent's downloader skips a file that exists. The projector stays, and a model added from disk is never touched. Main deletes only when its card names that same model (`modelId`, recorded when the card went up, `mayDeleteWeights`); otherwise it pulls only when no weights are on disk. A good file the engine is too old to read ("unknown model architecture", "unknown ggml type") is `model_unsupported`: "This model needs a newer engine. Update Atomic Agent, then start it again.", with no re-download.
 
 Core release checks run after startup and every six hours, like app checks. Check for updates also runs on demand. A check never downloads or stops a model, and a machine with no Core installed yet gets no update toast (Core comes with the first model start or from the installer). An unsupported newer Core is described as needing a newer Agent build. Update now refuses while local models run. The existing app updater remains responsible for the desktop app itself.
 

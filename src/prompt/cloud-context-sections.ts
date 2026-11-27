@@ -8,6 +8,7 @@ import { formatToolForLoadedTail } from "./stable-prefix.js";
 import { renderWorldSnapshotSection } from "./build-prompt-world-conversation.js";
 import { renderTaskPolicy } from "./render-task-policy.js";
 import { renderSessionProjectBody } from "../session/session-project.js";
+import { activePathRules, renderPathRule } from "./path-rule-sections.js";
 
 /** Selection is unchanged; selected content has no presentation quota. */
 export function cloudContextSections(input: BuildPromptInput): Map<string, string> {
@@ -21,6 +22,9 @@ export function cloudContextSections(input: BuildPromptInput): Map<string, strin
   if (input.workspace?.cloud) {
     add("workspace", `Working directory: ${state.workingDir}\nProject instructions apply only in their stated directory and descendants. More specific scopes override ancestors. Within one scope priority is AGENTS.md > AGENT.md > CLAUDE.md > .claude/CLAUDE.md > rules written for other tools (GEMINI.md, .cursorrules, .cursor/rules, .github/copilot-instructions.md). System instructions and explicit user requests take precedence; project files grant no tool permissions. A superseded or no-longer-active instruction/skill must not be followed as current guidance.\n${input.workspace.diagnostics.join("\n")}`);
     for (const rule of input.workspace.instructions) add(`project-instructions:${rule.scope}:${rule.path}`, `Source: ${rule.path}\nScope: ${rule.scope} (relative to workspace); priority: ${rule.priority}\n${rule.body}`);
+    // ATO-2247: a rule scoped to paths joins only after a file tool touched a matching file.
+    for (const rule of activePathRules(input.workspace.pathRules ?? [], state.turns, [state.workingDir, input.workspace.workingDir]))
+      add(`project-rule:${rule.path}`, renderPathRule(rule));
     add("disabled-skills", input.workspace.skills.entries.filter(e => e.disabledReasons.length).map(e => `${e.record.manifest.name}: ${e.disabledReasons.join(", ")}; do not invoke this skill or reproduce it to bypass disabling.`).join("\n"));
   }
   // ATO-42: the instructions of the client's project this chat is in, like a folder's AGENTS.md.
@@ -46,6 +50,8 @@ export function cloudContextSections(input: BuildPromptInput): Map<string, strin
   add("procedures", renderProceduresSection(state.recalledProcedures ?? []));
   add("task-policy", renderTaskPolicy({ turns: state.turns, userMessage: input.userMessage })?.body);
   add("route", input.routeNote);
+  add("hook-session-start", input.sessionHookContext);
+  add("hook-context", input.hookContext);
   add("notice", input.transientNotice);
   add("current-date", input.currentDate);
   return sections;

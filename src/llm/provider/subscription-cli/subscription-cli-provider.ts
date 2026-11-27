@@ -21,6 +21,13 @@ import { resolveCliBinary } from "./resolve-cli-binary.js";
 import { offlineRefusalFor } from "../../offline-network.js";
 import { runCliCommand, type CliRunner } from "./run-cli-completion.js";
 import {
+  checkCliVersionOnce,
+  noteOutdatedCli,
+  noteOutdatedOnThrow,
+  type CliVersionCheck,
+  type CliVersionVerdict,
+} from "./cli-version-check.js";
+import {
   streamCliCommand,
   type CliStreamRunner,
 } from "./stream-cli-completion.js";
@@ -50,6 +57,13 @@ export interface SubscriptionCliProviderOptions {
   /** Test seams; default to the real spawn-backed implementations. */
   runCliImpl?: CliRunner;
   streamCliImpl?: CliStreamRunner;
+  /**
+   * ATO-1685: the once-per-process `--version` check before the first
+   * turn. `false` turns it off. Defaults to the real check, except when
+   * a test injects `runCliImpl` or `streamCliImpl`: then it is off unless
+   * given, so no test spawns a real CLI.
+   */
+  versionCheck?: CliVersionCheck | false;
 }
 
 /**
@@ -97,6 +111,8 @@ export class SubscriptionCliProvider implements LlmProvider {
   private readonly onNotice: ((message: string) => void) | undefined;
   private readonly runCli: CliRunner;
   private readonly streamCli: CliStreamRunner;
+  private readonly versionCheck: CliVersionCheck | null;
+  private versionVerdict: Promise<CliVersionVerdict | null> | null = null;
 
   constructor(options: SubscriptionCliProviderOptions) {
     const descriptor = options.descriptor;
@@ -116,6 +132,12 @@ export class SubscriptionCliProvider implements LlmProvider {
     this.onNotice = options.onNotice;
     this.runCli = options.runCliImpl ?? runCliCommand;
     this.streamCli = options.streamCliImpl ?? streamCliCommand;
+    const injected =
+      options.runCliImpl !== undefined || options.streamCliImpl !== undefined;
+    this.versionCheck =
+      options.versionCheck === false
+        ? null
+        : (options.versionCheck ?? (injected ? null : checkCliVersionOnce));
     this.capabilities = {
       vision: false,
       visionSource: "config-disabled",
@@ -133,6 +155,7 @@ export class SubscriptionCliProvider implements LlmProvider {
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     this.refuseWhenOffline();
+    const verdict = await this.checkVersion();
     const staged = await this.stageSchema(request);
     try {
       const args = this.descriptor.completeArgs(
@@ -140,6 +163,8 @@ export class SubscriptionCliProvider implements LlmProvider {
       );
       const outcome = await this.runCli(this.runOptions(args, request));
       return this.descriptor.parseResult(outcome.stdout, this.model);
+    } catch (err) {
+      throw noteOutdatedCli(err, verdict);
     } finally {
       await staged.cleanup();
     }
@@ -185,8 +210,13 @@ export class SubscriptionCliProvider implements LlmProvider {
     }
 
     this.refuseWhenOffline();
+    const verdict = await this.checkVersion();
     const args = this.descriptor.streamArgs(this.argsInput(request));
-    const lines = this.streamCli(this.runOptions(args, request));
+    // A failed run's message gets the outdated sentence in front (ATO-1685).
+    const lines = noteOutdatedOnThrow(
+      this.streamCli(this.runOptions(args, request)),
+      verdict,
+    );
     let final: string | null = null;
     let sawDelta = false;
     let rateLimits: readonly RateLimitWindow[] | undefined;
@@ -209,7 +239,12 @@ export class SubscriptionCliProvider implements LlmProvider {
     if (final === null) {
       throw new Error(`${this.binary} stream ended without a result envelope`);
     }
-    const parsed = this.descriptor.parseResult(final, this.model);
+    let parsed: CompletionResult;
+    try {
+      parsed = this.descriptor.parseResult(final, this.model);
+    } catch (err) {
+      throw noteOutdatedCli(err, verdict);
+    }
     const result: CompletionResult =
       rateLimits === undefined
         ? parsed
@@ -222,6 +257,34 @@ export class SubscriptionCliProvider implements LlmProvider {
     }
     yield { delta: "", reasoningDelta: "", done: true };
     return result;
+  }
+
+  /**
+   * ATO-1685: the CLI's version, read once per process and binary
+   * (`checkCliVersionOnce`) and capped at a few seconds. An outdated CLI
+   * is said once through `onNotice` and in front of a failed run's
+   * message; it never fails a turn by itself.
+   */
+  private checkVersion(): Promise<CliVersionVerdict | null> {
+    const check = this.versionCheck;
+    if (check === null) return Promise.resolve(null);
+    this.versionVerdict ??= check({
+      cli: this.descriptor.cli,
+      productName: this.descriptor.productName,
+      binary: this.binary,
+      cwd: this.cwd,
+      run: this.runCli,
+      installHint: this.descriptor.installHint,
+      authHint: this.descriptor.authHint,
+      stripEnv: this.descriptor.billingEnvKeys,
+    }).then(
+      (verdict) => {
+        if (verdict.outdated && verdict.message) this.onNotice?.(verdict.message);
+        return verdict;
+      },
+      () => null,
+    );
+    return this.versionVerdict;
   }
 
   /**

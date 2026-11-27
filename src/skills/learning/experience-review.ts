@@ -14,6 +14,7 @@ import {
   type LearnedChange,
 } from "./learned-journal.js";
 import { hashSkillText, readPendingDraft, removePendingDraft, savePendingDraft, type PendingDraft } from "./pending-drafts.js";
+import { localContentSources } from "./local-content-sources.js";
 import { lintLearnedSkill } from "./skill-lint.js";
 
 /**
@@ -133,7 +134,9 @@ export interface ReviewGateInput {
    * bodies, the inbox, other chats: the approval gate's taint, ATO-618).
    * Any entry makes the review hold what it learned as a draft for the
    * owner to approve (decided 18.11): text someone else wrote must not
-   * turn itself into a live skill every later turn loads.
+   * turn itself into a live skill every later turn loads. Local files and
+   * command output the turn read count too, whatever this holds
+   * (`local-content-sources.ts`, ATO-1650).
    */
   outsideSources?: readonly string[];
   /** The origin alone asks for a draft (a chat channel, a plain HTTP caller). */
@@ -150,7 +153,10 @@ export function shouldReviewTurn(input: ReviewGateInput): ReviewGateVerdict {
   if (input.stepCount < input.minSteps) return { review: false, reason: "short-turn" };
   if (input.experience === null) return { review: false, reason: "no-reply" };
   if (input.turnEditedSkills) return { review: false, reason: "skills-edited" };
-  const draft = input.draftOnly === true || (input.outsideSources?.length ?? 0) > 0;
+  const draft =
+    input.draftOnly === true ||
+    (input.outsideSources?.length ?? 0) > 0 ||
+    localContentSources(input.experience).length > 0;
   return { review: true, experience: input.experience, mode: draft ? "draft" : "auto" };
 }
 

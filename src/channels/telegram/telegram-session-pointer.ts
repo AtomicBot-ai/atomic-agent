@@ -27,3 +27,12 @@ export type TelegramChatSessionEntry = ChatSessionEntry;
 export function telegramChatKey(chatId: number, threadId?: number): string {
   return threadId === undefined ? String(chatId) : `${chatId}:${threadId}`;
 }
+
+/**
+ * Chat key of a group's guest conversation (ATO-2221): guests talk to
+ * their own session, not the owner's, so the owner's history and grants
+ * never reach a guest turn. `#` never appears in `telegramChatKey`.
+ */
+export function telegramGuestChatKey(chatKey: string): string {
+  return `${chatKey}#guests`;
+}

@@ -48,6 +48,7 @@ import { OS_FS_HASH_CONTRACT } from "../tools/os/fs/fs-hash-contract.js";
 import { OS_FS_CODE_MAP_CONTRACT } from "../tools/os/code-map/code-map-contract.js";
 import { OS_CODE_SEARCH_CONTRACT } from "../tools/os/code/code-search-contract.js";
 import { OS_CODE_REWRITE_CONTRACT } from "../tools/os/code/code-rewrite-contract.js";
+import { OS_CODE_LSP_CONTRACT } from "../tools/os/code/code-lsp-contract.js";
 import { DOCUMENT_FORMATS } from "../tools/os/read-document/extractors/extractor-types.js";
 import type { ToolDescriptor } from "./stable-prefix.js";
 import { GITHUB_TOOL_ARGS_SCHEMAS } from "./github-tool-args-schemas.js";
@@ -217,7 +218,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   // ── os.shell ─────────────────────────────────────────────────────────────
   [
     "os.shell.run",
-    // Four forms share one schema: `{cmd, args, …}` runs a command;
+    // The forms share one schema: `{cmd, args, …}` runs a command;
     // `{wait}`, `{kill}` and `{jobs}` act on a job the default timeout
     // detached (F47). Nothing is required at the schema level because
     // each form requires a different key; the tool refuses a call that
@@ -232,6 +233,13 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       wait: integerSchema,
       kill: integerSchema,
       jobs: booleanSchema,
+      // ATO-2358: come back at the first output line matching it.
+      until: stringSchema,
+      // ATO-2277: an interactive job, and typing into it.
+      tty: booleanSchema,
+      write: integerSchema,
+      text: stringSchema,
+      eof: booleanSchema,
     }),
   ],
 
@@ -248,6 +256,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   [OS_FS_CODE_MAP_CONTRACT.name, OS_FS_CODE_MAP_CONTRACT.argsJsonSchema],
   [OS_CODE_SEARCH_CONTRACT.name, OS_CODE_SEARCH_CONTRACT.argsJsonSchema],
   [OS_CODE_REWRITE_CONTRACT.name, OS_CODE_REWRITE_CONTRACT.argsJsonSchema],
+  [OS_CODE_LSP_CONTRACT.name, OS_CODE_LSP_CONTRACT.argsJsonSchema],
   [OS_FS_GREP_CONTRACT.name, OS_FS_GREP_CONTRACT.argsJsonSchema],
   [OS_FS_EDIT_CONTRACT.name, OS_FS_EDIT_CONTRACT.argsJsonSchema],
   [
@@ -679,8 +688,27 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     }),
   ],
   [
+    "conversation.history",
+    obj({ query: stringSchema, limit: numberSchema, from: numberSchema, count: numberSchema }),
+  ],
+  [
     "files.search",
     obj({ query: stringSchema, folder: stringSchema, topK: numberSchema }, ["query"]),
+  ],
+  [
+    "research.deep",
+    obj({ question: stringSchema, maxSubQuestions: numberSchema, pagesPerQuestion: numberSchema }, ["question"]),
+  ],
+  [
+    "logbook.query",
+    obj({
+      day: stringSchema,
+      part: { type: "string", enum: ["morning", "afternoon", "evening"] },
+      from: stringSchema,
+      to: stringSchema,
+      contains: stringSchema,
+      limit: numberSchema,
+    }),
   ],
 
   // ── tasks ────────────────────────────────────────────────────────────────

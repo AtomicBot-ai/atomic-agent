@@ -21,7 +21,7 @@ import type { CompressedToolResult } from "../../compressor/result-compressor.js
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import type { SlotManager } from "../../llm/slot-manager.js";
 import type { StructuredLogger } from "../../tracing/index.js";
-import { isFusionWorkerSessionId } from "../../session/fusion-worker-session.js";
+import { callerDepth } from "../../session/fusion-worker-session.js";
 import { DEFAULT_FUSION_CLOUD_WORKERS } from "../../config/llm-run-mode-config.js";
 import { getConfig } from "../../config/index.js";
 import { workerReplyAllowance } from "../../local-llm/server/worker-slots.js";
@@ -103,11 +103,11 @@ import {
   unknownModels,
   type TaskLeg,
 } from "./role-models.js";
-import { applyTaskProfiles, type AppliedProfileReport } from "./task-profiles.js";
 import {
-  builtinAgentProfileSet,
-  type AgentProfileSet,
-} from "../../agent-profiles/index.js";
+  loadAndApplyTaskProfiles,
+  type AppliedProfileReport,
+} from "./task-profiles.js";
+import type { AgentProfileSet } from "../../agent-profiles/index.js";
 import type { DelegateContract } from "./contract.js";
 import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
 import {
@@ -227,6 +227,13 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
    * project's trusted ones. Absent (tests, embedders), the built-ins.
    */
   resolveAgentProfiles?: (workingDir: string) => AgentProfileSet;
+  /**
+   * The calling session's metadata, where its depth stamp lives
+   * (ATO-1740), as `subagent.run` takes it. Absent, or no answer for the
+   * id: depth 0, except that a worker id is always at least depth 1
+   * (`callerDepth`).
+   */
+  readSessionMetadata?: (sessionId: string) => Record<string, unknown> | undefined;
 }
 
 /**
@@ -301,9 +308,12 @@ function error(
  * Three refusals, in order, all before any work starts:
  *
  *  1. **Not from inside a worker.** One level of fan-out keeps the cost
- *     model legible and the process bounded. `worker-tool-policy.ts`
- *     already hides the descriptor from a worker's catalog; this is the
- *     hard stop for a model that emits the name anyway.
+ *     model legible and the process bounded. The caller's depth comes
+ *     from its session data (`callerDepth`, ATO-1740): any session at
+ *     depth 1 or more is refused, and a worker id counts as depth 1 even
+ *     with a broken stamp. `worker-tool-policy.ts` already hides the
+ *     descriptor from a worker's catalog; this is the hard stop for a
+ *     model that emits the name anyway.
  *  2. **Only while fusion is effective.** The mode is re-read live, not
  *     captured at boot: an operator who switches the active provider in
  *     Manage → LLM leaves fusion on the next read (§"Run modes"), and a
@@ -372,7 +382,10 @@ export function buildFusionDelegateTool(
       "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. A task that needs more room than the default can say so with `maxSteps` / `timeoutMs`; both are clamped to a multiple of the configured default and the result tells you when that happened. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Give each `provides` entry a one-line `shape` (a signature, a return shape, what a field means): it is pasted into the brief of every worker that relies on it, and matching names is not matching meaning. For a function another task calls, also give an `example`: { call, expect, page? } — one small call (`PHYS.corners({x:0,y:0,w:2,h:2,a:0})`) and a JS condition over its result `r` (`r.length === 8 && 'w' in r[0]`); it is run once after the fan-out and a result that does not match fails the providing task. Browser code: set `page` to the HTML file that loads it (the call runs in that page's global scope); otherwise the provide's `in` file is loaded under node. A task may name a subagent `profile` (built-in: explore, review, research, all read-only; or one the user defined): the worker gets that profile's instructions and tool list. Args: { tasks: [{ id, instructions, title?, deliverable?, files?, maxSteps?, timeoutMs?, profile? }], maxWorkers?, contract? }. To continue a run cut off by a restart: { resume: runId, confirm?: [taskId] } and nothing else.",
     readonly: false,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
-      if (isFusionWorkerSessionId(ctx.sessionId)) {
+      // By depth, not by the id's prefix (ATO-1740): a subagent's session
+      // is a worker one level down whatever its id, and a worker id still
+      // counts as depth 1 when its stamp is missing or broken.
+      if (callerDepth(ctx.sessionId, deps.readSessionMetadata?.(ctx.sessionId)) >= 1) {
         return error(
           "fusion.delegate is not available to a worker: do the task you were given and report back in your reply.",
           { reason: "recursive-delegation" },
@@ -455,35 +468,21 @@ export function buildFusionDelegateTool(
       };
       // Subagent profiles (ATO-566): applied before the legs are picked,
       // since a profile's model can set the task's role.
-      let profileReports: AppliedProfileReport[] = [];
-      if (parsed.tasks.some((t) => t.profile !== undefined)) {
-        let profiles: AgentProfileSet;
-        try {
-          profiles =
-            deps.resolveAgentProfiles?.(ctx.workingDir) ??
-            builtinAgentProfileSet();
-        } catch (err) {
-          deps.logger.warn("fusion: loading agent profiles failed", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-          profiles = builtinAgentProfileSet();
-        }
-        if (profiles.diagnostics.length > 0) {
-          deps.logger.warn("fusion: agent profile problems", {
-            diagnostics: profiles.diagnostics,
-          });
-        }
-        const profiled = applyTaskProfiles(
-          parsed.tasks,
-          profiles,
-          allowedModels(workerLegRef, mode.roles),
-        );
-        if (!profiled.ok) {
-          return error(profiled.error, { field: "tasks", reason: "unknown-profile" });
-        }
-        parsed.tasks.splice(0, parsed.tasks.length, ...profiled.tasks);
-        profileReports = profiled.applied;
+      const profiled = loadAndApplyTaskProfiles({
+        tasks: parsed.tasks,
+        workingDir: ctx.workingDir,
+        resolveAgentProfiles: deps.resolveAgentProfiles,
+        allowedModels: allowedModels(workerLegRef, mode.roles),
+        logger: deps.logger,
+        logPrefix: "fusion",
+      });
+      if (!profiled.ok) {
+        return error(profiled.error, { field: "tasks", reason: "unknown-profile" });
       }
+      if (profiled.tasks !== parsed.tasks) {
+        parsed.tasks.splice(0, parsed.tasks.length, ...profiled.tasks);
+      }
+      const profileReports: AppliedProfileReport[] = profiled.applied;
       const modelProblem = unknownModels(parsed.tasks, workerLegRef, mode.roles);
       if (modelProblem !== undefined) {
         return error(modelProblem, { field: "tasks", reason: "unknown-model" });
@@ -715,6 +714,14 @@ export function buildFusionDelegateTool(
       // Except after the user declined a file in those directories this
       // turn: the workers would write it unasked under the standing yes,
       // so re-delegating a declined write is asked about again.
+      //
+      // The turn state is tied to this turn (ATO-1759), so a
+      // `subagent.run` later in it reads this fan-out's answer and its
+      // refused command note instead of dropping them, and state another
+      // turn left is not read here.
+      if (ctx.turnId !== undefined) {
+        deps.approvals.fanoutScopes?.enterTurn(ctx.sessionId, ctx.turnId);
+      }
       const declinedInScope =
         deps.approvals.hasDeclinedUnder?.(ctx.sessionId, writeScope) ?? false;
       const alreadyApproved =

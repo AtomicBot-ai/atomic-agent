@@ -18,7 +18,17 @@
  *   - The window's <iframe> is `sandbox="allow-scripts"` (no
  *     allow-same-origin): no Node, no preload, no access to the window's DOM,
  *     storage or bridge. The page can only post a message to its parent; the
- *     window reads one kind (its height) and ignores the rest.
+ *     window reads its height (chat-artifact.js) and, ATO-2375, the widget
+ *     bridge's few kinds (renderer/artifact-bridge.js), and ignores the rest.
+ *   - ATO-2375: a page may be a live widget (a calculator, a form, "pick one
+ *     of three"). ARTIFACT_BRIDGE_SCRIPT, put before the page's own markup,
+ *     gives it `sendPrompt(text)` (puts the text in the person's message box;
+ *     the person sends it), `atomicWidget.state.get()/set(obj)` (a small
+ *     state the window keeps for this artifact) and reports its first three
+ *     script errors per load to the window, which shows them on the card.
+ *     All of it is postMessage to the parent; the window checks, caps and
+ *     rate-limits every message (precedents: Claude artifacts' sendPrompt,
+ *     OpenClaw show-widget's bridge).
  *   - main.ts denies the frame any permission (camera, microphone, clipboard…)
  *     and any navigation away from these schemes (subframeNavAllowed).
  *
@@ -71,10 +81,52 @@ export const ARTIFACT_SIZE_SCRIPT =
   + "addEventListener('load',s);if(window.ResizeObserver)new ResizeObserver(s).observe(document.documentElement);"
   + "setTimeout(s,0);setTimeout(s,300);})();</script>";
 
-/** The document served for a page: standards mode, both colour schemes, the page, the size reporter. */
+/** ATO-2375: the most a page's `sendPrompt` text, saved state and error line may be (the window caps them again). */
+export const ARTIFACT_PROMPT_MAX = 4000;
+export const ARTIFACT_STATE_MAX = 64 * 1024;
+export const ARTIFACT_ERROR_MAX = 300;
+export const ARTIFACT_ERRORS_PER_LOAD = 3;
+
+/**
+ * ATO-2375: put before the page's markup, so it runs before the page's own
+ * script and sees its errors. Defines `window.atomicWidget` (not
+ * `window.atomic`, the app window's own bridge, which a page never has) and
+ * the alias `window.sendPrompt` (the name Claude artifacts use):
+ *
+ *   sendPrompt(text)            posts {atomicArtifact:'prompt', text}
+ *   atomicWidget.state.get()    a Promise of the state the window kept (null if none)
+ *   atomicWidget.state.set(v)   posts {atomicArtifact:'state', json} (JSON, at most 64 KB)
+ *   a script error or an unhandled rejection: {atomicArtifact:'error', message, line}, 3 per load
+ *
+ * On start it posts {atomicArtifact:'ready'}; the window answers
+ * {atomicWidget:'state', state} into the frame, and the page also gets an
+ * `atomicwidgetstate` event. Only a message from the parent window is read.
+ * Nothing here reaches the network.
+ */
+export const ARTIFACT_BRIDGE_SCRIPT =
+  "<script>(function(){var P=parent,errs=0,ready=false,cache=null,wait=[];"
+  + "function post(m){try{P.postMessage(m,'*');}catch(e){}}"
+  + "function done(v){cache=v===undefined?null:v;ready=true;var w=wait;wait=[];for(var i=0;i<w.length;i++){try{w[i](cache);}catch(e){}}}"
+  + "addEventListener('message',function(e){var d=e.data;if(e.source!==P||!d||d.atomicWidget!=='state')return;done(d.state);"
+  + "try{dispatchEvent(new CustomEvent('atomicwidgetstate',{detail:cache}));}catch(x){}});"
+  + "function sendPrompt(t){if(typeof t!=='string'||!t.trim())return false;"
+  + "post({atomicArtifact:'prompt',text:t.slice(0," + ARTIFACT_PROMPT_MAX + ")});return true;}"
+  + "var state={get:function(){return new Promise(function(r){if(ready){r(cache);return;}wait.push(r);setTimeout(function(){done(cache);},1500);});},"
+  + "set:function(v){var j;try{j=JSON.stringify(v===undefined?null:v);}catch(e){return false;}"
+  + "if(typeof j!=='string'||j.length>" + ARTIFACT_STATE_MAX + ")return false;cache=JSON.parse(j);ready=true;"
+  + "post({atomicArtifact:'state',json:j});return true;}};"
+  + "function report(m,l){if(errs>=" + ARTIFACT_ERRORS_PER_LOAD + ")return;errs++;"
+  + "post({atomicArtifact:'error',message:String(m||'Script error').slice(0," + ARTIFACT_ERROR_MAX + "),line:Number(l)||0});}"
+  + "addEventListener('error',function(e){report(e&&(e.message||(e.error&&e.error.message)),e&&e.lineno);});"
+  + "addEventListener('unhandledrejection',function(e){var r=e&&e.reason;"
+  + "report('Unhandled promise rejection: '+(r&&r.message?r.message:String(r)),0);});"
+  + "window.atomicWidget={sendPrompt:sendPrompt,state:state};window.sendPrompt=sendPrompt;"
+  + "post({atomicArtifact:'ready'});})();</script>";
+
+/** The document served for a page: standards mode, both colour schemes, the widget bridge, the page, the size reporter. */
 export function artifactDocument(html: string): string {
   return "<!doctype html><meta charset=\"utf-8\"><meta name=\"color-scheme\" content=\"light dark\">"
-    + html + ARTIFACT_SIZE_SCRIPT;
+    + ARTIFACT_BRIDGE_SCRIPT + html + ARTIFACT_SIZE_SCRIPT;
 }
 
 export type ArtifactPut = { ok: true; url: string } | { ok: false; reason: "empty" | "too-large" };

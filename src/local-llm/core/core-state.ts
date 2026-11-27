@@ -9,7 +9,7 @@ export type ManagedEngine = "llama-server" | "atomic-core";
  * one is what this build installs; older entries stay readable so an
  * existing install, its sessions and its daemon still stop cleanly.
  */
-export const CORE_VERSIONS = ["0.11.2", "0.13.6", "0.16.0", "0.18.6"] as const;
+export const CORE_VERSIONS = ["0.11.2", "0.13.6", "0.16.0", "0.18.6", "0.24.10"] as const;
 export const CORE_VERSION = CORE_VERSIONS[CORE_VERSIONS.length - 1]!;
 export const CORE_PROTOCOL = 2;
 export const CORE_REPO = "AtomicBot-ai/atomic-chat-core";
@@ -43,6 +43,12 @@ export interface CoreSession {
 export interface CoreSessionRecord extends CoreSession {
   coreVersion: string;
   instanceId: string;
+  /**
+   * Core unloaded this session, but its llama-server had not exited within
+   * the Windows release wait (ATO-1748). It is no longer a live session; the
+   * record stays so the next load on its port waits for it first.
+   */
+  awaitingExit?: boolean;
 }
 export function coreRoot(dataDir: string): string { return resolve(dataDir, "core"); }
 /**
@@ -126,7 +132,7 @@ function liveCoreOwner(dataDir: string, version: string): { instanceId: string }
 }
 export function readCoreSession(dataDir: string, role: "chat" | "embedding"): CoreSessionRecord | null {
   const record = readSessionRecord(dataDir, role);
-  if (!record) return null;
+  if (!record || record.awaitingExit) return null;
   if (liveCoreOwner(dataDir, record.coreVersion)?.instanceId !== record.instanceId) return null;
   return pidAlive(record.pid) ? record : null;
 }
@@ -138,7 +144,9 @@ export function readCoreSession(dataDir: string, role: "chat" | "embedding"): Co
  */
 export function orphanedCoreSession(dataDir: string, role: "chat" | "embedding"): CoreSessionRecord | null {
   const record = readSessionRecord(dataDir, role);
-  if (!record || liveCoreOwner(dataDir, record.coreVersion)) return null;
+  // Already unloaded (ATO-1748): nothing for a new Core to reap; its stop or
+  // the next load on its port waits for it (`core-pending-exit.ts`).
+  if (!record || record.awaitingExit || liveCoreOwner(dataDir, record.coreVersion)) return null;
   return pidAlive(record.pid) ? record : null;
 }
 /**

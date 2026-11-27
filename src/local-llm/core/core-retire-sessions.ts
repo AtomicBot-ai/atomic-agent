@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { CoreControlClient } from "./core-client.js";
 import { activeCoreVersion, coreSessionPath, readCoreJson, type CoreSessionRecord } from "./core-state.js";
 import { noteReleaseTimeout, RELEASE_WAIT_MS, waitForProcessRelease } from "../server/process-release.js";
+import { settleUnloadedSession } from "./core-pending-exit.js";
 
 /**
  * An older Core that this build no longer runs can still hold a model
@@ -39,6 +40,9 @@ export async function unloadRetiredCoreSessions(dataDir: string, client: CoreCon
     if (process.platform === "win32") {
       const released = await waitForProcessRelease(record.pid, record.port, { timeoutMs: releaseWaitMs });
       noteReleaseTimeout(join(dataDir, role === "embedding" ? "llama-embed.log" : "llama-server.log"), record.pid, record.port, released);
+      // Not exited yet: keep the record (marked) so the load on its port waits (ATO-1748).
+      settleUnloadedSession(dataDir, role, record, released);
+      continue;
     }
     const pidPath = join(dataDir, role === "chat" ? "llama-server.pid" : "llama-embed.pid");
     try { if (readFileSync(pidPath, "utf8").trim() === String(record.pid)) unlinkSync(pidPath); } catch { /* no legacy mirror */ }

@@ -29,9 +29,9 @@
  *      clip removed from Core's gallery again (`DELETE /audio/gallery/:id`):
  *      a read-aloud is not a Studio creation.
  *
- * Core below 0.20.6 has no audio module at all. The app pins Core 0.18.6
- * today (core-bundle.ts), so `status()` answers `core-too-old` until that
- * pin moves, and the settings keep the system voices.
+ * Core below 0.20.6 has no audio module at all; `status()` answers
+ * `core-too-old` there and the settings keep the system voices. The app
+ * pins Core 0.24.10 (core-bundle.ts, ATO-1646), which has it.
  *
  * No Electron here, so test/core-speech.test.mjs loads it from `out/main`.
  */

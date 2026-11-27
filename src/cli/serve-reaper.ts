@@ -52,6 +52,12 @@ export interface ServeRecord {
   readonly port: number;
   readonly cwd: string;
   readonly startedAt: string;
+  /**
+   * ATO-2308: the serve key has at least MIN_NETWORK_KEY_LENGTH characters.
+   * `atag pair --remote` puts serve on the internet only when this is true.
+   * Absent in records from older servers.
+   */
+  readonly strongKey?: boolean;
 }
 
 export type ReapVerdict =

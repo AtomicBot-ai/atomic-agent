@@ -1050,7 +1050,18 @@ export function packConversation(
   }
 
   const droppedSlice = turns.slice(0, startIndex);
-  const visibleTurns = turns.slice(startIndex);
+  // The pins can bring back a suffix the cut had dropped for its size: a
+  // short request, one call and a fresh 90 000-char `os.http.request`
+  // body is all pinned and ran to 25 000 tokens against a 2 000 budget
+  // (#1735). Bound the oversized bodies instead; the call/result pair
+  // stays, and the stored turn keeps the full text.
+  const visibleTurns = boundPinnedToolBodies(turns, startIndex, {
+    tokenCosts,
+    repeats,
+    limit: startIndex > 0 ? budget : maxTokens,
+    capTokens: Math.max(1, Math.floor((budget * lowWater) / 2)),
+    currentStart,
+  });
   const droppedPairs = countDroppedPairs(boundaries, startIndex, turns.length);
   const visiblePairs = Math.max(0, boundaries.length - droppedPairs);
 
@@ -1079,6 +1090,75 @@ export function packConversation(
       boundBy: boundBy ?? "tokens",
     },
   };
+}
+
+/**
+ * The visible suffix, with every tool result costing more than
+ * `capTokens` cut to about that size, when the suffix from `startIndex`
+ * overflows `limit`; the turns untouched otherwise. Only the pins make
+ * such a suffix (a cut alone always fits), and the cap depends on the
+ * budget only, so a bounded body renders the same on every step.
+ * A result that renders as a repeated-read pointer is left alone.
+ */
+function boundPinnedToolBodies(
+  turns: readonly ConversationTurn[],
+  startIndex: number,
+  args: {
+    tokenCosts: readonly number[];
+    repeats: ReadRepeatCosts;
+    limit: number;
+    capTokens: number;
+    currentStart: number;
+  },
+): ConversationTurn[] {
+  const visible = turns.slice(startIndex);
+  const { tokenCosts, repeats, limit, capTokens, currentStart } = args;
+  if (suffixTokens(tokenCosts, repeats, startIndex) <= limit) return visible;
+  return visible.map((turn, offset) => {
+    const i = startIndex + offset;
+    if (turn.kind !== "tool_result") return turn;
+    if ((repeats.previous[i] ?? -1) >= startIndex) return turn;
+    if ((tokenCosts[i] ?? 0) <= capTokens) return turn;
+    return boundToolResult(turn, capTokens, i >= currentStart);
+  });
+}
+
+/** Minimum body kept by `boundToolResult`, so a result never renders empty. */
+const BOUNDED_BODY_MIN_CHARS = 200;
+
+/**
+ * A copy of `turn` whose body renders within about `capTokens`. Cut from
+ * the end a tool reads from: a shell result keeps its tail (the `exit:`
+ * line), a file read cuts on a line break with its paging hint, anything
+ * else keeps its head. The note says how to get the rest.
+ */
+function boundToolResult(
+  turn: Extract<ConversationTurn, { kind: "tool_result" }>,
+  capTokens: number,
+  fresh: boolean,
+): ConversationTurn {
+  let chars = Math.max(BOUNDED_BODY_MIN_CHARS, Math.floor(capTokens * 3.6));
+  let bounded = turn;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    bounded = { ...turn, summary: boundSummary(turn, chars) };
+    if (tokenCostForTurn(bounded, fresh) <= capTokens) break;
+    if (chars <= BOUNDED_BODY_MIN_CHARS) break;
+    chars = Math.max(BOUNDED_BODY_MIN_CHARS, Math.floor(chars / 2));
+  }
+  return bounded;
+}
+
+function boundSummary(
+  turn: Extract<ConversationTurn, { kind: "tool_result" }>,
+  chars: number,
+): string {
+  const { summary } = turn;
+  if (summary.length <= chars) return summary;
+  if (turn.tool === "os.fs.read") return capReadSummary(summary, chars, undefined);
+  const note = `[context window: ${summary.length - chars} more chars of this result are not shown; repeat the call with a narrower request to see them]`;
+  return turn.tool === "os.shell.run"
+    ? `… ${note}\n${summary.slice(-chars)}`
+    : `${summary.slice(0, chars)}\n… ${note}`;
 }
 
 /**

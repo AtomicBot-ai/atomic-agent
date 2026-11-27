@@ -1,5 +1,6 @@
 import { newUntrustedNonce, wrapUntrusted } from "../tools/untrusted-text.js";
 import type { ApprovalRequest } from "./approval-gate.js";
+import { cleanEgressLabel, outboundDestinations } from "./egress-scan.js";
 import {
   formatApprovalCategory,
   isGrantableCategory,
@@ -108,10 +109,12 @@ export const RISK_REVIEW_SESSION_PREFIX = "risk:";
  * (`ReadScopeGrants.widen`), so a model's `low` would quietly move the read
  * scope the person set. `session_cross`: whether another chat's private
  * context may be read or written is the person's call, not a model's.
+ * `logbook_cloud`: the same for notes about the person's own screen.
  */
 const NEVER_REVIEWED: ReadonlySet<ApprovalCategory> = new Set<ApprovalCategory>([
   "fs_read_outside",
   "session_cross",
+  "logbook_cloud",
 ]);
 
 /**
@@ -256,6 +259,9 @@ export function riskReviewActionText(request: ApprovalRequest): string | null {
     request.category === "shell" || request.category === "script"
       ? stripShellComments(preview)
       : preview;
+  const egressLabels = [
+    ...new Set(outboundDestinations(request.egress).map((d) => `${cleanEgressLabel(d.label)} (${d.kind})`)),
+  ];
   const lines = [
     `description: ${request.reason}`,
     ...(shown.trim().length > 0 ? [`details:\n${shown}`] : []),
@@ -265,6 +271,9 @@ export function riskReviewActionText(request: ApprovalRequest): string | null {
     ...(request.targetPaths !== undefined && request.targetPaths.length > 0
       ? [`changes files: ${request.targetPaths.join(", ")}`]
       : []),
+    // Where the command sends data, as the egress scan read it (ATO-2116).
+    // Hosts come from the command, so they stay inside the untrusted block.
+    ...(egressLabels.length > 0 ? [`sends data to: ${egressLabels.join(", ")}`] : []),
   ];
   const text = lines.join("\n");
   return text.length > RISK_REVIEW_MAX_ACTION_CHARS ? null : text;

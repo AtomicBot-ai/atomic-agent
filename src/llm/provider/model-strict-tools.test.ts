@@ -24,7 +24,7 @@ const strictEntry = {
   kind: "openai-compatible",
   baseUrl: "https://gate.example/v1",
   defaultChatModel: "mercury-2.5",
-  userModels: [{ id: "mercury-2.5", supportsTools: "strict" as const }],
+  userModels: [{ id: "mercury-2.5", kind: "chat" as const, supportsTools: "strict" as const }],
 };
 
 describe("modelWantsStrictTools", () => {
@@ -64,6 +64,17 @@ describe("modelWantsStrictTools", () => {
     expect(
       modelWantsStrictTools(configWith([{ ...byModel, model: "mercury-2.5" }]), "gate"),
     ).toBe(true);
+  });
+
+  it("follows a per-turn model, not the entry's default (ATO-1590)", () => {
+    // The entry serves a model without strict by default; a turn pinned
+    // to the strict model on the same link must get the strict payload,
+    // and a turn without a model must not.
+    const resolved = configWith([
+      { ...strictEntry, defaultChatModel: "some-other-model" },
+    ]);
+    expect(modelWantsStrictTools(resolved, "gate", "mercury-2.5")).toBe(true);
+    expect(modelWantsStrictTools(resolved, "gate")).toBe(false);
   });
 
   it("is false for an unknown provider id or a link with no model", () => {

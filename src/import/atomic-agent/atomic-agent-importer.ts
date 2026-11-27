@@ -36,6 +36,8 @@ import {
   type ImportItemResult,
   type ImportReport,
 } from "../import-report.js";
+import { stripUnknownKeySources } from "../../setup-share/known-provider-env.js";
+import { providerImportReason } from "./provider-import-reason.js";
 
 /**
  * "Atomic Agent" as an import source: another Atomic Agent data folder
@@ -51,7 +53,9 @@ import {
  *  - skills     `<source>/skills/<name>/SKILL.md`.
  *  - mcp        `config.json` `mcp.servers`, added by name.
  *  - providers  `config.json` `llm.providers`, added by id; the active
- *               provider here is not changed. Inline keys only with secrets.
+ *               provider here is not changed. Inline keys only with secrets;
+ *               an `apiKeyCommand` never, a key variable name only when it
+ *               is the known one for the endpoint (provider-import-reason.ts).
  *  - cron       `tasks.sqlite`, scheduled jobs included. Off by default.
  *  - secrets    `<source>/.env` keys missing here. Off by default.
  */
@@ -304,6 +308,9 @@ export class AtomicAgentImporter {
           continue;
         }
         have.add(id);
+        // ATO-1716: a key command is a program to run, never copied, secrets or not;
+        // a key variable name next to a foreign baseUrl would send that key there.
+        const droppedKeySources = stripUnknownKeySources(p);
         // A key saved inline in the source's config is a secret: only with the secrets option.
         // So is a key sent as a header (`Authorization`, the entry's `apiKeyHeader`).
         let keyless = false;
@@ -330,7 +337,7 @@ export class AtomicAgentImporter {
           source: id,
           destination: id,
           status: "migrated",
-          ...(keyless ? { reason: "without its API key (secrets off)" } : {}),
+          ...providerImportReason(id, sourcePath, { keyless, droppedKeySources }),
         });
       }
     }

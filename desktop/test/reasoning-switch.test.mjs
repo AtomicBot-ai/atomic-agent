@@ -84,7 +84,8 @@ test('the window loads the chip before renderer.js, and renderer.js wires it in'
   assert.ok(at < html.indexOf('<script src="renderer.js"></script>'));
   const renderer = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
   assert.match(renderer, /\+ modelChipHtml\(\)\n\s*\+ reasoningChipHtml\(\)/);
-  // After the project (ATO-42), before the project's model (ATO-1148): preload chat(messages, sessionId, projectId, reasoning, turnModel).
-  assert.match(renderer, /BR\.chat\(\[\{role:'user', content:text\}\], session, forProject, reasoningTurnLevel\(session\), projectTurnModel\(session\)\)/);
+  // After the project (ATO-42), before the project's model (ATO-1148): preload chat(messages, sessionId, projectId, reasoning, turnModel);
+  // ATO-2411 (#1865): the turn model also reads the project a new chat opens in.
+  assert.match(renderer, /BR\.chat\(\[\{role:'user', content:text\}\], session, forProject, reasoningTurnLevel\(session\), projectTurnModel\(session, forProject\)\)/);
   assert.match(renderer, /reasoningAdoptDraft\(S\.agentSession\)/);
 });

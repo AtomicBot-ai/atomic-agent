@@ -1,4 +1,5 @@
 import type { ImportReport } from "../../import/index.js";
+import type { DetectedLocalServer } from "../../llm/provider/presets/detect-local-servers.js";
 import type { OnboardingImportAgentRow } from "./import-step.js";
 import type {
   OnboardingHuggingFaceRepo,
@@ -55,6 +56,8 @@ export type OnboardingAction =
   | { type: "onboarding_import_report"; report: ImportReport }
   /** A run failed outright (option resolution, source access, …). */
   | { type: "onboarding_import_failed"; error: string }
+  /** ATO-2013: local servers found running here; Custom leads with them. */
+  | { type: "onboarding_local_servers_detected"; servers: readonly DetectedLocalServer[] }
   /** Offer the other backend once the first one works. */
   | { type: "onboarding_second_backend_offered"; offer: "local" | "cloud" }
   /** The flow reached its end; the host persists and closes it. */

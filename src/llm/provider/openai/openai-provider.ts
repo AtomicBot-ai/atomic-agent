@@ -61,11 +61,13 @@ import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 import { openAiChatPathPrefix } from "./openai-chat-path.js";
 import type { ApiKeySource } from "./api-key-command.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
+import { isOllamaCloudHost } from "./think-tag-safe.js";
 import { describeAudioViaOpenAi } from "./openai-describe-audio.js";
 import { isAnthropicHost, isAnthropicModel } from "./prompt-cache-control.js";
 import { isLocalServerUrl } from "./local-server-url.js";
 import {
   createChunkUnmasker,
+  learnNamesForRequest,
   maskOpenAiBody,
   shieldVaultFor,
   unmaskCompletion,
@@ -326,6 +328,8 @@ export class OpenAiProvider implements LlmProvider {
         : {}),
       ...(isDeepSeekHost(options.baseUrl) ? { reasoningRequired: true } : {}),
       ...(isGeminiOpenAiCompatUrl(options.baseUrl) ? { thoughtSignatures: true } : {}),
+      // Ollama Cloud mangles literal thinking tags in content (issue #283).
+      ...(isOllamaCloudHost(options.baseUrl) ? { thinkTagSafe: true } : {}),
     };
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
@@ -438,6 +442,14 @@ export class OpenAiProvider implements LlmProvider {
     let sentBody: Record<string, unknown> | undefined;
     // Privacy Shield (ATO-1081): one vault for the body and the reply.
     const vault = shieldVaultFor(request.sessionId, this.localServer);
+    // ATO-2394: names and addresses from the local model, before any body is masked.
+    if (vault) {
+      await learnNamesForRequest(
+        vault,
+        () => this.buildBody(request, false, this.shapeFor(request)).messages,
+        request.signal,
+      );
+    }
     const post = (body: Record<string, unknown>) =>
       openAiPostJson(
         this.http,
@@ -848,6 +860,14 @@ export class OpenAiProvider implements LlmProvider {
     // Privacy Shield (ATO-1081): one vault for every attempt of this
     // completion, so a reopen masks the same way and the reply unmasks.
     const vault = shieldVaultFor(request.sessionId, this.localServer);
+    // ATO-2394: names and addresses from the local model, before any body is masked.
+    if (vault) {
+      await learnNamesForRequest(
+        vault,
+        () => this.buildBody(activeRequest, true, shape).messages,
+        request.signal,
+      );
+    }
     let body = this.buildBody(activeRequest, true, shape, vault);
     const path = `${this.chatPathPrefix}/chat/completions`;
     let accumulated = "";
@@ -1233,6 +1253,7 @@ export class OpenAiProvider implements LlmProvider {
           ...(this.bodyOptions.modelParams
             ? { modelParams: this.bodyOptions.modelParams }
             : {}),
+          ...(this.bodyOptions.thinkTagSafe ? { thinkTagSafe: true } : {}),
         },
       );
     } catch (error) {
@@ -1278,6 +1299,7 @@ export class OpenAiProvider implements LlmProvider {
         ...(this.bodyOptions.modelParams
           ? { modelParams: this.bodyOptions.modelParams }
           : {}),
+        ...(this.bodyOptions.thinkTagSafe ? { thinkTagSafe: true } : {}),
       },
     );
   }

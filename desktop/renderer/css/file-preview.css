@@ -89,6 +89,24 @@
 .fp-slide-t{font:600 var(--fs-ui)/20px var(--font-ui);color:var(--ink);margin-bottom:2px}
 .fp-slide-c p{margin:4px 0 0;font:400 var(--fs-label)/1.5 var(--font-ui);color:var(--ink-2);white-space:pre-wrap}
 .fp-slide-c p.fp-slide-e{color:var(--ink-3);font-style:italic}
+/* ATO-2410: "Drawing the slides" is a wait, not a warning; Quick Look's page brings its own grey ground. */
+.fp-note.fp-wait{background:var(--panel-2);color:var(--ink-3)}
+.fp-slides{background:#acb2bb}
 .fp-doc p{white-space:pre-wrap;overflow-wrap:anywhere}
 .fp-sheets{flex:none;margin:8px 14px 0;font:400 var(--fs-micro)/15px var(--font-ui);color:var(--ink-3);overflow-wrap:anywhere}
 .fp-prose .fp-tbl th.fp-rown{color:var(--ink-3);font-weight:400;text-align:right;font-variant-numeric:tabular-nums}
+
+/* ---------------- ATO-2347: editing a file, sorting a table (file-preview-edit.js, table-sort.js) ----------------
+   The editor is a plain text area filling the body; its bar above says Edited
+   or Saved, or asks Discard / Reload from disk / Overwrite. */
+.fp-editbar{flex:none}
+.fp-editbar:empty{display:none}
+.fp-editstat{padding:4px 14px;font:400 var(--fs-micro)/15px var(--font-ui);color:var(--ink-3)}
+.fp-editnote{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.fp-editnote span{flex:1;min-width:12em}
+.fp-editor{flex:1;min-height:0;width:100%;box-sizing:border-box;margin:0;padding:12px 14px;border:0;resize:none;outline:none;
+  background:var(--lift);color:var(--ink);font:400 var(--fs-label)/1.6 var(--font-mono);tab-size:4;white-space:pre;overflow:auto}
+.fp-btn:disabled{opacity:.5;cursor:default}
+.fp-prose .fp-tbl th.fp-sortable{cursor:pointer;user-select:none}
+.fp-prose .fp-tbl th.fp-sortable:hover{background:var(--hover)}
+.fp-sort-ic{margin-left:4px;font-size:.75em;color:var(--ink-3)}

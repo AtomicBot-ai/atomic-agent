@@ -1,4 +1,5 @@
 import { PROVIDER_PRESETS } from "../llm/provider/presets/provider-presets.js";
+import { completionFactsTags, type LlmCompletionFacts } from "./completion-facts-tags.js";
 
 /**
  * Turn-level context the runtime attaches to an `llm_failure` report: which
@@ -51,6 +52,13 @@ export interface LlmFailureContext {
    */
   portHeldByOther?: boolean;
   /**
+   * `localModels.managed.port` is not the shipped one (ATO-2418): the
+   * operator set it, or the TUI moved it off a port something else held.
+   * Read for a refusal or a taken port on a managed engine only. Sent as
+   * `managed_port: default | custom`.
+   */
+  managedPortCustom?: boolean;
+  /**
    * The managed engine's fault in its current run, read from its log by
    * fixed strings (ATO-1279): `out_of_memory` / `server_crashed` /
    * `decode_failed` / `none` / `unknown`. Sent as `local_fault`.
@@ -85,6 +93,35 @@ export interface LlmFailureContext {
    * server's units: what the window really held. Sent as `cut_*` tags.
    */
   truncationCounts?: LlmTruncationCounts;
+  /**
+   * The shape of the completion a `ModelError` was raised on
+   * (ATO-2421). Sent as `finish_reason`, `reasoning_present`,
+   * `served_prompt_tokens`, `served_reply_tokens`.
+   */
+  completionFacts?: LlmCompletionFacts;
+  /** `ollama` / `llama_server` / `other` for the failing link. Sent as `server_kind`. */
+  serverKind?: string;
+  /**
+   * A context-size refusal on the error chain (ATO-2420): the server's
+   * window and prompt count, and how far the overflow compaction got.
+   * Sent as `overflow_*` tags.
+   */
+  contextOverflow?: LlmContextOverflow;
+}
+
+/** {@link LlmFailureContext.contextOverflow}. */
+export interface LlmContextOverflow {
+  /** The window the refusal named (`n_ctx` or the sentence); `null` when none. */
+  serverWindow: number | null;
+  /** The server's count of the refused prompt (`n_prompt_tokens`); `null` when not sent. */
+  serverPromptTokens: number | null;
+  /**
+   * `not_attempted`: the turn failed on the refusal itself (no compaction
+   * wired, stopped, or out of time); `could_not_free_room`: the one
+   * overflow compaction ran and freed nothing; `compacted_still_too_large`:
+   * it freed room and the retry was refused again.
+   */
+  compaction: "not_attempted" | "could_not_free_room" | "compacted_still_too_large";
 }
 
 /** {@link LlmFailureContext.promptBudget}. Every field a token count. */
@@ -168,6 +205,11 @@ const ENGINE_LOCK_STATES: ReadonlySet<string> = new Set([
   "stale_no_owner",
   "stale_too_old",
   "probe_failed",
+]);
+const OVERFLOW_COMPACTION: ReadonlySet<string> = new Set([
+  "not_attempted",
+  "could_not_free_room",
+  "compacted_still_too_large",
 ]);
 const LOCAL_FAULTS: ReadonlySet<string> = new Set([
   "out_of_memory",
@@ -296,7 +338,9 @@ function reportedCount(value: number): string {
  * and, for the managed engine, `engine_liveness`, `engine_liveness_reason`
  * and `engine_lock`: why the wait judged the process as it did (ATO-1275).
  * A 401 on the managed port with our engine not running adds
- * `port_holder: other_process` (ATO-1277).
+ * `port_holder: other_process` (ATO-1277), and since ATO-2418 the same
+ * `engine_liveness*`, `engine_lock` and `engine_exit_reason` as a refusal.
+ * Both add `managed_port` (`default` / `custom`).
  * A managed engine's failure adds `local_fault`, a fixed word read from
  * its log (ATO-1279).
  * A turn whose outage wait read the local engine adds `engine_wait_verdict`,
@@ -308,7 +352,11 @@ function reportedCount(value: number): string {
  * `prompt_prefix_tokens`, `prompt_tools_tokens`, `prompt_history_tokens`,
  * `prompt_window` and `prompt_reply_reserve`; a truncated reply adds
  * `cut_prompt_tokens`, `cut_reply_tokens` and `cut_reply_cap` (ATO-1678).
+ * A context-size refusal adds `overflow_server_window`,
+ * `overflow_server_prompt_tokens` and `overflow_compaction` (ATO-2420).
  * Counts only, for every engine: no prompt text is read here.
+ * A model failure adds its completion's shape and the server kind
+ * (`completion-facts-tags.ts`, ATO-2421).
  */
 export function sanitizeLlmFailureTags(
   context: LlmFailureContext | undefined,
@@ -356,7 +404,14 @@ export function sanitizeLlmFailureTags(
         ? UNKNOWN
         : (ENGINE_ALIVE.get(context.engineLiveness) ?? UNKNOWN);
     tags.refused_wait_ms = bucketRefusedWait(context.outageWaitedMs ?? 0);
-    if (tags.local_engine !== "external" && context.engineLiveness !== undefined) {
+  }
+  // A taken port is read like a refusal (ATO-2418): why our engine is not
+  // the one answering on its port.
+  if ((context.connectionRefused === true || context.portHeldByOther === true) && tags.local_engine !== "external") {
+    if (context.managedPortCustom !== undefined) {
+      tags.managed_port = context.managedPortCustom ? "custom" : "default";
+    }
+    if (context.engineLiveness !== undefined) {
       tags.engine_liveness = fromVocabulary(context.engineLiveness, DAEMON_STATES);
       if (context.engineLivenessReason !== undefined) {
         tags.engine_liveness_reason = fromVocabulary(context.engineLivenessReason, ENGINE_LIVENESS_REASONS);
@@ -384,6 +439,14 @@ export function sanitizeLlmFailureTags(
     tags.cut_prompt_tokens = reportedCount(cut.promptTokens);
     tags.cut_reply_tokens = reportedCount(cut.completionTokens);
     tags.cut_reply_cap = cut.requestedMaxTokens === undefined ? "none" : safeCount(cut.requestedMaxTokens);
+  }
+  Object.assign(tags, completionFactsTags(context.completionFacts, context.serverKind));
+  const overflow = context.contextOverflow;
+  if (overflow !== undefined) {
+    tags.overflow_server_window = overflow.serverWindow === null ? "none" : safeCount(overflow.serverWindow);
+    tags.overflow_server_prompt_tokens =
+      overflow.serverPromptTokens === null ? "none" : safeCount(overflow.serverPromptTokens);
+    tags.overflow_compaction = fromVocabulary(overflow.compaction, OVERFLOW_COMPACTION);
   }
   return Object.keys(tags).length > 0 ? tags : undefined;
 }

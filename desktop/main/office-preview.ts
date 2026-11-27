@@ -44,7 +44,8 @@ export const OFFICE_LIMITS = {
 };
 
 export type OfficePreview =
-  | { type: "pptx"; slides: { n: number; title: string; paras: string[] }[]; total: number; truncated: boolean }
+  /** `renderable` (ATO-2410, set by main): this machine can draw the slides (slide-render.ts); the window then asks for the pictures. */
+  | { type: "pptx"; slides: { n: number; title: string; paras: string[] }[]; total: number; truncated: boolean; renderable?: boolean }
   | { type: "docx"; paras: { text: string; heading?: number }[]; truncated: boolean }
   | { type: "xlsx"; sheets: string[]; sheet: string; rows: string[][]; truncated: boolean };
 
@@ -60,7 +61,8 @@ export function looksZip(head: Uint8Array): boolean {
 }
 
 type Entry = { method: number; flags: number; comp: number; size: number; local: number };
-type Zip = { entries: Map<string, Entry>; read: (name: string) => string | null };
+/** `duplicates`: some name appeared twice in the central directory (only the first is kept in `entries`). */
+type Zip = { entries: Map<string, Entry>; duplicates: boolean; read: (name: string) => string | null };
 
 /** The archive's central directory, and a reader that inflates one part as UTF-8 within the caps. */
 export function openZip(buf: Buffer, limits = OFFICE_LIMITS): Zip | null {
@@ -77,6 +79,7 @@ export function openZip(buf: Buffer, limits = OFFICE_LIMITS): Zip | null {
   // 0xffff / 0xffffffff mean ZIP64: never what Office writes for a file this size.
   if (count === 0xffff || cdOff === 0xffffffff || cdOff + cdSize > buf.length) return null;
   const entries = new Map<string, Entry>();
+  let duplicates = false;
   let p = cdOff;
   for (let k = 0; k < Math.min(count, limits.entries); k++) {
     if (p + 46 > buf.length || buf.readUInt32LE(p) !== 0x02014b50) return null;
@@ -84,7 +87,8 @@ export function openZip(buf: Buffer, limits = OFFICE_LIMITS): Zip | null {
     const end = p + 46 + nameLen + buf.readUInt16LE(p + 30) + buf.readUInt16LE(p + 32);
     if (end > buf.length) return null;
     const name = buf.toString("utf8", p + 46, p + 46 + nameLen);
-    if (!entries.has(name)) {
+    if (entries.has(name)) duplicates = true;
+    else {
       entries.set(name, {
         flags: buf.readUInt16LE(p + 8),
         method: buf.readUInt16LE(p + 10),
@@ -114,7 +118,7 @@ export function openZip(buf: Buffer, limits = OFFICE_LIMITS): Zip | null {
     spent += out.length;
     return out.toString("utf8");
   };
-  return { entries, read };
+  return { entries, duplicates, read };
 }
 
 const ENTITY: Record<string, string> = { lt: "<", gt: ">", amp: "&", quot: "\"", apos: "'" };

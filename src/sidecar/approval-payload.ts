@@ -43,6 +43,9 @@ export function approvalRequestPayload(
     ...(request.riskNote !== undefined ? { riskNote: request.riskNote } : {}),
     ...(request.riskLevel !== undefined ? { riskLevel: request.riskLevel } : {}),
     ...(request.riskReason !== undefined ? { riskReason: request.riskReason } : {}),
+    ...(request.egress !== undefined && request.egress.length > 0
+      ? { egress: request.egress.map((d) => ({ ...d })) }
+      : {}),
     canSession,
     ...(grantHost !== null ? { grantHost } : {}),
     canShape: canGrantShape(request),

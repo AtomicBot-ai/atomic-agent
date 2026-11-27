@@ -6,6 +6,7 @@ import {
   audioRouteAvailable,
   providerOffersAudio,
   providerOffersVision,
+  resolveTurnVisionProvider,
   resolveVisionProvider,
   visionRouteAvailable,
   type VisionProviderLookup,
@@ -68,6 +69,40 @@ describe("resolveVisionProvider", () => {
   it("returns undefined for an unknown pin instead of the active provider", () => {
     const reg = registry([CLOUD_VISION], "openrouter");
     expect(resolveVisionProvider(reg, "gone")).toBeUndefined();
+  });
+});
+
+describe("resolveTurnVisionProvider (ATO-1588)", () => {
+  const VARIANT = provider("openrouter", { vision: true, visionSource: "modalities.vision" });
+  function variantRegistry(active: string) {
+    const asked: [string, string][] = [];
+    const reg = {
+      ...registry([CLOUD_VISION, LOCAL_UNPROBED], active),
+      modelVariant: async (id: string, model: string) => {
+        asked.push([id, model]);
+        return id === "openrouter" ? VARIANT : undefined;
+      },
+    };
+    return { reg, asked };
+  }
+
+  it("sends a turn with its own model through that model's copy of the pinned provider", async () => {
+    const { reg, asked } = variantRegistry("openrouter");
+    expect(await resolveTurnVisionProvider(reg, "openrouter", "x", isLocal)).toBe(VARIANT);
+    expect(asked).toEqual([["openrouter", "x"]]);
+  });
+
+  it("keeps the base provider without a model, and on a llama-server link", async () => {
+    const { reg, asked } = variantRegistry("openrouter");
+    expect(await resolveTurnVisionProvider(reg, "openrouter", undefined, isLocal)).toBe(CLOUD_VISION);
+    expect(await resolveTurnVisionProvider(reg, undefined, undefined, isLocal)).toBe(CLOUD_VISION);
+    expect(await resolveTurnVisionProvider(reg, "local-llama", "x", isLocal)).toBe(LOCAL_UNPROBED);
+    expect(asked).toEqual([]);
+  });
+
+  it("returns undefined when the variant cannot be built, never another provider", async () => {
+    const { reg } = variantRegistry("openrouter");
+    expect(await resolveTurnVisionProvider(reg, "gone", "x", isLocal)).toBeUndefined();
   });
 });
 

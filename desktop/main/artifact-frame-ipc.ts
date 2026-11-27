@@ -11,13 +11,17 @@
 import { ipcMain, protocol, session } from "electron";
 
 import { ARTIFACT_SCHEME, ArtifactStore } from "./artifact-frame.js";
+import { MY_APP_SCHEME } from "./my-apps-store.js";
 
 const store = new ArtifactStore();
 
-/** Before app ready. Standard so the token parses as a host; secure so a page's canvas and crypto work. Nothing else. */
+/** Before app ready. Standard so the token parses as a host; secure so a page's canvas and crypto work. Nothing else.
+ *  ATO-2383: a saved app's scheme (my-apps-ipc.ts) goes in the same call, since a later call would replace this one;
+ *  standard also gives each app an origin of its own, which its localStorage needs. */
 export function registerArtifactScheme(): void {
   protocol.registerSchemesAsPrivileged([
     { scheme: ARTIFACT_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: false, corsEnabled: false, stream: false } },
+    { scheme: MY_APP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: false, corsEnabled: false, stream: false } },
   ]);
 }
 

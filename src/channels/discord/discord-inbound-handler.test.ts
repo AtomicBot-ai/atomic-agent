@@ -468,6 +468,14 @@ describe("handleDiscordMessage — per-channel sessions", () => {
     expect(ctx.sent[0]).toContain("s-old");
   });
 
+  it("/fork says it is not available yet and leaves the session alone", async () => {
+    const pointer = fakePointer({ c1: { current: "s-old" } });
+    const ctx = makeCtx({ sessionPointer: pointer as never });
+    await handleDiscordMessage(msg({ content: "/fork" }), ctx);
+    expect(pointer.get("c1").current).toBe("s-old");
+    expect(ctx.sent[0]).toContain("Fork is not available on Discord yet");
+  });
+
   it("/status reports this channel's session", async () => {
     const pointer = fakePointer({
       c1: { current: "s-here" },
@@ -1039,5 +1047,54 @@ describe("handleDiscordMessage — sender identity", () => {
     const ctx = makeCtx();
     await handleDiscordMessage(msg({ content: "/status" }), ctx);
     expect(ctx.runTurn).not.toHaveBeenCalled();
+  });
+});
+
+describe("mention words (ATO-2248)", () => {
+  const inGuild = (content: string): DiscordMessageEvent =>
+    msg({
+      guild_id: "g1",
+      content: `<@${BOT}> ${content}`,
+      mentions: [{ id: BOT }],
+    });
+
+  it("'@bot stop' cancels the channel's turn instead of starting one", async () => {
+    const controller = new AbortController();
+    const ctx = makeCtx({ inflight: new Map([["c1", controller]]) });
+    await handleDiscordMessage(inGuild("Stop!"), ctx);
+    expect(controller.signal.aborted).toBe(true);
+    expect(ctx.runTurn).not.toHaveBeenCalled();
+  });
+
+  it("'@bot status' answers like /status", async () => {
+    const ctx = makeCtx({
+      sessionPointer: fakePointer({ c1: { current: "s-here" } }) as never,
+    });
+    await handleDiscordMessage(inGuild("status"), ctx);
+    expect(ctx.sent[0]).toContain("s-here");
+    expect(ctx.runTurn).not.toHaveBeenCalled();
+  });
+
+  it("a longer request that starts with stop is still a request", async () => {
+    const ctx = makeCtx();
+    await handleDiscordMessage(inGuild("stop the server"), ctx);
+    expect(ctx.runTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("a bare 'stop' in a DM without a mention is an ordinary message", async () => {
+    const ctx = makeCtx();
+    await handleDiscordMessage(msg({ content: "stop" }), ctx);
+    expect(ctx.runTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells the channel when a message passed the owner gate", async () => {
+    const onAccepted = vi.fn();
+    const ctx = makeCtx({ onAccepted });
+    await handleDiscordMessage(msg({ author: { id: "222" } }), ctx);
+    expect(onAccepted).not.toHaveBeenCalled();
+    await handleDiscordMessage(msg({ id: "42" }), ctx);
+    expect(onAccepted).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "42" }),
+    );
   });
 });

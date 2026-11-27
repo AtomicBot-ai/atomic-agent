@@ -11,6 +11,7 @@ import { shouldAdvance } from "../../llm/fallback/should-advance.js";
 import { contextCompactionRejection } from "../turn/compaction-recovery.js";
 import { OpenAiHttpError } from "../../llm/provider/openai/openai-http.js";
 import { parseProviderErrorBody } from "../../llm/provider/openai/parse-provider-error-body.js";
+import { ToolCallParseError } from "../../llm/grammar/tool-call-grammar.js";
 
 const URL = "http://127.0.0.1:9931/completion";
 const ctx = { signal: new AbortController().signal } as unknown as StepContext;
@@ -142,5 +143,32 @@ describe("toLlmFailure: Groq's 413 over the plan limit (ATO-1283)", () => {
       "Pick a model with a higher limit or a larger Groq plan.",
     );
     expect(failure.cause).toBe(raw);
+  });
+});
+
+describe("toLlmFailure: which path raised a GrammarError (ATO-2422)", () => {
+  it("marks a 400 that names the grammar as server_refused_grammar", () => {
+    const raw = llamaHttp(400, JSON.stringify({
+      error: { code: 400, message: "Failed to parse grammar", type: "invalid_request_error" },
+    }));
+    const failure = toLlmFailure(raw, ctx) as GrammarError;
+    expect(failure).toBeInstanceOf(GrammarError);
+    expect(failure.path).toBe("server_refused_grammar");
+    expect(failure.cause).toBe(raw);
+  });
+
+  it("marks any other 4xx it files as GrammarError as server_refused_request", () => {
+    for (const raw of [
+      new LlamaServerError("llama-server returned http 400: invalid 'n_probs'", 400, URL),
+      new LlamaServerError("llama-server returned http 422", 422, URL),
+    ]) {
+      expect((toLlmFailure(raw, ctx) as GrammarError).path).toBe("server_refused_request");
+    }
+  });
+
+  it("marks a raw parser error as parse_failed", () => {
+    const failure = toLlmFailure(new ToolCallParseError("tool-call body is empty"), ctx) as GrammarError;
+    expect(failure).toBeInstanceOf(GrammarError);
+    expect(failure.path).toBe("parse_failed");
   });
 });

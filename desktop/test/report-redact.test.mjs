@@ -196,3 +196,14 @@ test("lastLines keeps the last lines and ignores a trailing newline", () => {
   assert.equal(lastLines("", 3), "");
 });
 
+test("ATO-1741: a ChatGPT sign-in link loses its whole query, host and path stay", () => {
+  const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+  const state = "f3a9c2d1b8e7f6a5c4d3b2a1";
+  const link = `https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&code_challenge=${challenge}&code_challenge_method=S256&state=${state}`;
+  const out = scrubText(`Open this link in a browser on this computer to sign in:\n\n${link}\n\nWaiting...`);
+  noneLeft(out, [challenge, state, "localhost%3A1455", "app_EMoamEEZ73f0CkXaXp7hrann"]);
+  assert.match(out, /https:\/\/auth\.openai\.com\/oauth\/authorize\?<redacted \d+ chars>\n\nWaiting\.\.\./);
+  // Another page on the same host keeps its query as before.
+  assert.equal(scrubText("https://auth.openai.com/log-in?next=home"), "https://auth.openai.com/log-in?next=home");
+});
+

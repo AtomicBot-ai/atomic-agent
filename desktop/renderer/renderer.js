@@ -352,6 +352,7 @@ const CATEGORY_PLAIN = {
   http_write:'send data in a web request', browser_site_tool:'use a website\u2019s own tool',
   user_question:'ask you a question', session_cross:'read or write in another chat',
   browser_take_over:'hand you the browser for a step',
+  logbook_cloud:'send your logbook notes to a cloud model',
 };
 function cleanKeyInput(raw) { return String(raw == null ? '' : raw).replace(KEY_INVISIBLE, '').trim(); }
 /* The TUI's isAsciiOnly (src/llm/provider/openai/ascii-header-guard.ts). */
@@ -1234,6 +1235,7 @@ const SETTINGS_SECTIONS = [
   ['connections','Connections','plug',['mcp','telegram','discord','push','composio','monid']],   // ATO-516: discord-settings.js; ATO-1630: monid.js
   ['memory','Memory','memory',['memory']],
   ['myfiles','My files','folder',['myfiles']],   // ATO-1626: renderer/my-files.js
+  ['myapps','My apps','window',['myapps']],   // ATO-2383: renderer/my-apps.js
   // ATO-445: the agent's webhook routes sit beside Tasks, since each event becomes one (renderer/webhooks.js).
   ['tasks','Cron jobs','tasks',['tasks','webhooks']],   // W2: visible name only, the id stays
   ['skills','Skills','skills',['skills']],
@@ -1247,6 +1249,7 @@ const SETTINGS_SECTIONS = [
 const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['discord','Discord'],['push','Phone push'],['composio','Composio'],['monid','Monid'],['memory','Memory'],
                        ['tasks','Cron jobs'],['webhooks','Webhooks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
 SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'memory') + 1, 0, ['myfiles','My files']);   // ATO-1626
+SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'myfiles') + 1, 0, ['myapps','My apps']);   // ATO-2383
 /* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
    one shown, per viewer, like atag.theme; General the first time. */
 /* Calm (S5): which Settings disclosures are open, so a repaint keeps them. */
@@ -1388,6 +1391,8 @@ const SKP = {
 const SKE = {probeName:null, probe:null, seq:0, runningName:null, cancelling:false, outcomes:{}};
 /* ATO-67: learned skills waiting for review, the "Pending review" group (workspace-skills.js, main/skill-drafts-ipc.ts). */
 const SKD = createSkillDraftsController({api: () => BR, paint: () => { if (skillsVisible() && !skpTyping()) render(); }, changed: () => skpReloadRows()});
+/* ATO-2401: Show once, the Record card above Pending review (show-once.js, main/show-once-ipc.ts). */
+const SHOW_ONCE = createShowOnceController({api: () => BR, paint: () => { if (skillsVisible() && !skpTyping()) render(); }, changed: () => SKD.refresh(true)});
 const SKP_FILTERS = ['all','enabled','disabled']; // skills-filter.ts FILTER_ORDER
 const SKP_FILTER_LABELS = {all:'All', enabled:'Enabled', disabled:'Disabled'}; // Д43: the tabs, each with its count
 const SKP_MAX_ROWS = 14, SKP_HUB_ROWS = 12, SKP_DETAIL_LINES = 32; // skills-panel.tsx / skills-hub-list.tsx / skills-detail.tsx
@@ -1472,7 +1477,8 @@ const LLM_MODEL_WINDOW = 12; // llm-mode-rows.tsx MODEL_WINDOW
 const TG = {
   // `keysChain` serializes tgRefresh — see the note on that function.
   keysKnown:false, dotenvKeys:[], envKeys:[], keysBusy:false, keysChain:null,
-  mode:'list', token:{error:null, submitting:false},
+  mode:'list', token:{error:null, submitting:false, checking:false, shown:false, hasText:false},   // ATO-426: telegram-token.js tgTokenInitial()
+  bot:null, // ATO-426 U-77: '@name' Telegram confirmed at the last token save, this session only; never the token
   message:null, lastError:null, busy:false,
   channel:null, // ATO-758: the live channel as the agent reports it (BR.telegramChannel)
   confirm:null, // ATO-426: 'clearToken' / 'clearOwner' while its button waits for a second click
@@ -2135,10 +2141,12 @@ const PAL = [
     ['logo:claudecode','Continue from Claude Code / Codex…','','','handoff:open'],   // ATO-1156; ATO-1633: wears the Claude Code mark
     ['arrowR','Hand off to Claude Code / Codex…','','','houtopen'],   // ATO-1014 (handoff-out.js)
     ['chat','Agents: who is waiting for you','','','hub:open'],   // ATO-1157 (agent-hub.js)
+    ['tasks','Task board','','','board:open'],   // ATO-2257 (workboard.js)
     ['star','Recipes…','','','recipe:gallery'],   // ATO-1072 (chat-recipe.js)
     ['x','Clear transcript','','','clear'],
     ['gauge','Context window','','','context'],
-    ['copy','Show session id','','⌃ ⌘ C','session:id'],
+    // ATO-2001: no chord drawn; nothing binds ⌃⌘C (palette-shortcuts.test.mjs checks every hint).
+    ['copy','Show session id','','','session:id'],
   ]],
   ['Model', [
     ['cloud','Switch chat model…','','⇧ ⌘ M','selector:model'],
@@ -2160,7 +2168,9 @@ const PAL = [
     ['key','Analytics','','','settings:general'],
   ]],
   ['Help', [
-    ['doc','List built-in tools','','⌥ ⌘ T','tools'],
+    // ATO-2001: the row drew ⌥⌘T, which no menu item or key handler binds (menu.ts has
+    // Option chords for 0, F, E and K only); the hint is gone, the click still works.
+    ['doc','List built-in tools','','','tools'],
     ['download','Save report for support','','','dump'],
     ['flag','Report an issue…','','/bug','help.report'],
     // ATO-1465: the community server, the same act as Help › Join Discord and the sidebar button.
@@ -2351,7 +2361,7 @@ function toolDisabledLine(p) {
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
 const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'tool_update', 'delta', 'reply_polished', 'progress_note', 'reply_attachments', 'fusion_worker',
-  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered', 'provider_switched', 'tool_disabled', 'project_instructions',
+  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered', 'provider_switched', 'tool_disabled', 'project_instructions', 'loop_stopped',
   // ATO-259 / ATO-295: context maintenance inside the turn (context-compaction.js).
   'compaction_started', 'compaction_progress', 'compaction_completed', 'compaction_failed', 'history_trimmed']);
 /* ATO-259: the compaction row of the turn on screen (`rowId`, spinning until
@@ -2427,6 +2437,7 @@ function render() {
   if (LIVE_REPLAY) return;   // Item 38: the chat being opened renders once, after its kept frames
   imageViewerFollowsChat();   // ATO-408: the picture viewer closes when its chat is left
   const exaHeld = exaKeyHold();   // ATO-328: the Exa key field being typed in survives the rebuild
+  const qeHeld = typeof qeditHold === 'function' ? qeditHold() : null;   // ATO-2132: and the queued message's edit field
   ANX.paneTick(S.settings ? settingsPaneId(S.settingsPane) : null);   // analytics: settings_pane_viewed
   // 13/14: a whole render paints everything a waiting stream frame would have.
   dropStreamPaint();
@@ -2444,6 +2455,7 @@ function render() {
   // Backlog 28: so does a landed model's start, held by a turn in another chat.
   obFlushDeferredSoon();
   exaKeyRestore(exaHeld);
+  if (typeof qeditRestore === 'function') qeditRestore(qeHeld);
   // ATO-568: the caret goes into a worker's Steer field that was just opened.
   if (typeof fzpAfterRender === 'function') fzpAfterRender();
 }
@@ -2461,6 +2473,7 @@ function roomTitle() {
     return ses && ses.t ? ses.t : '';
   }
   if (S.room === 'tasks')  return 'Cron jobs';   // W2: the Tasks feature's visible name
+  if (S.room === 'board')  return 'Task board';   // ATO-2257 (workboard.js)
   if (S.room === 'skills') return 'Skills';
   return '';
 }
@@ -2580,7 +2593,7 @@ function renderSidebar() {
            : ch.rows.length || ch.filed || ch.archived.length ? '' : '<div class="sb-empty">No chats yet</div>')
         + (ch.hidden > 0 ? '<button class="loadmore" data-more="chats">Load more · ' + ch.hidden + ' more</button>' : '')
       + '</div>'
-      + archivedSidebarHTML(ch.archived)))
+      + archivedSidebarHTML(ch.archived) + chatTrashSidebarHTML()))   // ATO-2332: the folded Trash section (chat-trash.js)
       + (showTasks
         ? '<div class="sb-list" data-list="tasks">'
           + '<div class="sb-list-head micro"><span>Cron jobs</span>'
@@ -2977,7 +2990,7 @@ function queuesSnapshot() {
   for (const [key, q] of QUEUES) if (key && !key.startsWith('turn:') && q.queued.length) out[key] = q.queued.slice();
   const here = queueKey();
   if (here && !here.startsWith('turn:') && S.queued.length) out[here] = (out[here] || []).concat(S.queued);
-  return out;
+  return qeditSnapshot(out, here);   // ATO-2132: a message being edited is still queued
 }
 /** ATO-135: tells main what is queued, when it changed (every paint of the sidebar asks). */
 function queuesKeep() {
@@ -3032,6 +3045,7 @@ function renderContent() {
     afterChat(keep, hadFocus, caret); return;
   }
   if (S.room === 'tasks')  { c.innerHTML = tasksView(); return; }
+  if (S.room === 'board')  { c.innerHTML = workboardView(); return; }   // ATO-2257 (workboard.js)
   c.innerHTML = skillsView();
 }
 
@@ -3129,8 +3143,8 @@ function item(m) {
   if (m.k === 'assistant' && pausedKind(m)) return pausedRowHTML(m);
   if (m.k === 'assistant' && stoppedSentence(m)) return stoppedRowHTML(m);
   // 0.6.7 item 10: a reply nothing has reached yet has "Working…" over it.
-  if (m.k === 'assistant') return workingRowHTML(m) + '<div class="turn"><div></div>'
-    + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + replyFilesStrip(m) + changedFilesCardHTML(m.changed, {esc, ic}) + attachStrip(m) + replyDot(m) + msgActs(m)
+  if (m.k === 'assistant') return workingRowHTML(m) + stoppedNoteHTML(m, esc) + '<div class="turn"><div></div>'
+    + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(stoppedReplyBody(m)) + '</div>' + replyFilesStrip(m) + changedFilesCardHTML(m.changed, {esc, ic}) + attachStrip(m) + replyDot(m) + msgActs(m)
     /* Item 1 (plan hand-off): INSIDE the content column, before its two closing
        divs — appended after them the bar would leave `.turn` and lose the
        two-column grid alignment this branch exists to keep. It hangs off the
@@ -3408,7 +3422,8 @@ function msgActs(m) {
     const tps = last && m.speed && typeof replySpeedHTML === 'function' ? replySpeedHTML(m.speed) : '';
     const kvc = last && m.kvCache && typeof cacheShareHTML === 'function' ? cacheShareHTML(m.kvCache) : '';   // ATO-631 (kv-cache-share.js)
     // ATO-1046: Read aloud after copy, under a finished reply (tts.js).
-    return '<div class="' + cls + '">' + tps + kvc + again + copy + (typeof ttsButtonHTML === 'function' && !m.placeholder ? ttsButtonHTML(m) : '')
+    return '<div class="' + cls + '">' + (typeof answerVersionsHTML === 'function' ? answerVersionsHTML(m) : '')   // ATO-2114: ‹ 2/3 › (answer-versions.js)
+      + tps + kvc + again + copy + (typeof ttsButtonHTML === 'function' && !m.placeholder ? ttsButtonHTML(m) : '')
       + (typeof rewindActsHTML === 'function' ? rewindActsHTML(m) : '') + '</div>';   // ATO-1058: Fork (chat-rewind.js)
   }
   // Review fix: no `usr` modifier class here. The right-alignment the user
@@ -4292,6 +4307,7 @@ const APPR_FALLBACK = {
   http_write:'send data in a web request', browser_site_tool:'use a website\u2019s own tool',
   user_question:'ask you a question', session_cross:'read or write in another chat',
   browser_take_over:'hand you the browser to finish a step',
+  logbook_cloud:'send your logbook notes to a cloud model',
 };
 /** ATO-473: whether the card offers "Allow in this chat". The agent grants
     the request's command shape (the binary, `git`) for the rest of the chat;
@@ -4486,10 +4502,11 @@ function composer() {
        still kept (and logged) for diagnostics; only the strip is gone. The
        strips above stay: each carries a control (Jump, Stop) or a failure. */
     : '';
-  const q = S.queued.length ? '<div class="qtray">' + S.queued.map((t, i) =>
+  const q = (S.queued.length || qeditOn()) ? '<div class="qtray">' + qeditTray(S.queued.map((t, i) =>   // ATO-2132: the chip being edited (queue-edit.js)
       '<div class="qchip"><span class="qlb">' + (DRAIN_OWED ? 'Sent · waiting' : 'Queued') + '</span><span class="qtx">' + esc(attQueueLabel(t)) + '</span>'
       + (steerNowShown(t) ? steerNowButtonHTML(i, {esc}) : '')   // ATO-1183 (steer-now.js)
-      + '<button class="iconbtn sm qx" data-unqueue="' + i + '" aria-label="Remove">' + ic('x') + '</button></div>').join('') + '</div>' : '';
+      + qeditButtonHTML(i, {esc, ic})   // ATO-2132
+      + '<button class="iconbtn sm qx" data-unqueue="' + i + '" aria-label="Remove">' + ic('x') + '</button></div>'), {esc, ic}).join('') + '</div>' : '';
   const backend = selBackend();
   // ATO-486: the agent's live plan, above the queue (plan-bar.js).
   // ATO-1040: the chat's goal and the goal form, under the plan (goal-card.js).
@@ -5472,6 +5489,7 @@ function palRows() {
     PALMSG.hits.filter((h) => !listed.has('ses:' + h.sessionId)).slice(0, 8)
       .forEach((h) => hits.push({ic:'chat', t:h.title || 'Chat', cx:palMsgSnippet(h.snippet), sc:'', act:'ses:' + h.sessionId, badge:'message'}));
   }
+  { const bg = typeof bgChatPaletteRow === 'function' ? bgChatPaletteRow(S.q, hits.length) : null; if (bg) hits.push(bg); }   // ATO-2309 (background-chat.js)
   return hits;
 }
 
@@ -5544,11 +5562,12 @@ function paletteHTML() {
     list = '<div class="palempty"><div class="palempty-t">No results for &ldquo;' + esc(q) + '&rdquo;</div>'
       + '<div class="cap">No command, chat, task or skill matches.</div>'
       + '<button class="palrow" data-ask="1"><span class="ic">' + ic('arrowR') + '</span>'
-      + '<span class="ti">Ask the agent &ldquo;' + esc(q) + '&rdquo;</span><span class="cx"></span><span class="sc">' + keycaps('↩') + '</span></button></div>';
+      + '<span class="ti">Ask the agent &ldquo;' + esc(q) + '&rdquo;</span><span class="cx"></span><span class="sc">' + keycaps('↩') + '</span></button>'
+      + (typeof bgChatEmptyRowHTML === 'function' ? bgChatEmptyRowHTML(q) : '') + '</div>';   // ATO-2309
   } else {
     // Ranked commands first, then a header before the chats, tasks and skills that
     // match. Headers sit between rows only; data-palrow indexes stay the flat order.
-    const heads = {session:'Chats', task:'Cron jobs', skill:'Skills', message:'In chat messages'};
+    const heads = {session:'Chats', task:'Cron jobs', skill:'Skills', message:'In chat messages', bg:'Background'};
     let last = '';
     flat.forEach((r, i) => {
       if (r.badge && r.badge !== last) list += '<div class="palgroup">' + heads[r.badge] + '</div>';
@@ -6734,6 +6753,7 @@ function settingsPaneEntered(opened) {
   else if (pane === 'mcp') mcpTabEntered();
   else if (pane === 'plugins') pluginsTabEntered();
   else if (pane === 'myfiles') myFilesTabEntered();   // ATO-1626 (my-files.js)
+  else if (pane === 'myapps') myAppsTabEntered();   // ATO-2383 (my-apps.js)
   // Item 7 part C: the LLM / Telegram / Import tabs' first load on entry.
   else if (pane === 'llm') llmTabEntered();
   else if (pane === 'telegram') telegramTabEntered();
@@ -6763,6 +6783,7 @@ function settingsPane() {
   // ATO-954: Settings › Plugins (renderer/plugins-pane.js).
   if (p === 'plugins') return pluginsTab();
   if (p === 'myfiles') return myFilesTab();   // ATO-1626 (my-files.js)
+  if (p === 'myapps') return myAppsTab();   // ATO-2383 (my-apps.js)
   // Item 7 part C: the LLM, Telegram and Import tabs.
   if (p === 'llm') return llmTab();
   if (p === 'telegram') return telegramTab();
@@ -6982,7 +7003,7 @@ function diagEngineRow(backend) {
   }
   if (ENGF.f) {
     return Object.assign(row, {tone:'bad', value:ENGF.f.why, title:ENGF.f.detail || ENGF.f.why,
-      fix: ENGF.f.retryable === false ? null : {act:'engf:retry', label:'Download again'}});
+      fix: engfModelFix() || (ENGF.f.retryable === false ? null : {act:'engf:retry', label:'Download again'})});
   }
   if (DWATCH && DWATCH.kind === 'gave_up') {
     return Object.assign(row, {tone:'bad', value:'The local model server keeps stopping', fix:{act:'diag:startModel', label:'Start model'}});
@@ -7000,7 +7021,7 @@ function diagModelRow(backend) {
   const health = st ? String(st.health || '').trim().toLowerCase() : '';
   const reach = SET.health && typeof SET.health.llamaReachable === 'boolean' ? SET.health.llamaReachable : null;
   const name = (st && st.activeModel) || (backend === 'local' ? activeModel() : '');
-  const fix = external ? {act:'settings:llm', label:'Open Models settings'} : {act:'diag:startModel', label:'Start model'};
+  const fix = external ? {act:'settings:llm', label:'Open Models settings'} : engfModelFix() || {act:'diag:startModel', label:'Start model'};
   if (LLMP.daemonPhase === 'starting') return Object.assign(row, {tone:'wait', value:'Starting…'});
   // ATO-852 (agent with #721): the server answers but refuses the model's key; Settings › Models restarts it.
   if (st && st.daemonRunning && (st.keyRejected === true || /^key rejected\b/.test(health))) {
@@ -7600,6 +7621,7 @@ function act(a) {
   if (a === 'voice' || a.indexOf('voice:') === 0) { voiceAct(a); return; }
   // ATO-532: File › Attach App Window… opens the composer's window picker (window-snapshot.js).
   if (a === 'attach:window') { close(); render(); wsnapOpen(); return; }
+  if (k === 'meeting') { close(); render(); meetingAct(v || ''); return; }   // ATO-2333: File › Record a Meeting (meeting-panel.js)
   if (a === 'close') { close(); render(); if (menuWas) chatMenuFocusBack(menuWas); return; }
   if (k === 'toastx') { S.toasts = S.toasts.filter((x) => String(x.id) !== v); renderToasts(); return; }
   // ATO-568: one Fusion worker's Stop / Steer (fusion-panel.js).
@@ -7622,6 +7644,7 @@ function act(a) {
   if (k === 'handoff') { if (v === 'open') { close(); S.settings = null; } handoffAct(v || ''); render(); return; }
   if (k === 'houtopen' || k === 'hout') { if (k === 'houtopen') { close(); S.settings = null; } handoffOutAct(k, v || ''); render(); return; }   // ATO-1014 (handoff-out.js)
   if (k === 'hub') { if (v === 'open') { close(); S.settings = null; } hubAct(v || ''); render(); return; }   // ATO-1157 (agent-hub.js)
+  if (k === 'board') { if (v === 'open') close(); boardAct(v || ''); return; }   // ATO-2257 (workboard.js)
   // ATO-556: the atomicagent:// link card's Install (deeplink.js); Cancel is `close`.
   if (k === 'dlink') { deeplinkAct(v || ''); return; }
   // ATO-1492: an MCP server's question (mcp-elicitation.js); closing the sheet is `close`.
@@ -7641,9 +7664,13 @@ function act(a) {
   if (a === 'sel:addProvider') { closeSelector(); act('settings:llm'); act('llm:add'); return; }
   // ATO-1372: the picker's Get vision files chip.
   if (a.startsWith('sel:vision:')) { selVisionFetch(a.slice('sel:vision:'.length)); return; }
+  // ATO-2169: a model row's star (model-favorites.js); the picker stays open.
+  if (a.startsWith('sel:fav:')) { if (typeof modelFavToggle === 'function') modelFavToggle(a.slice('sel:fav:'.length)); render(); return; }
   if (a === 'wiz:subRecheck') { wizSubRecheck(WIZ.row); return; }
   if (a === 'wiz:subLogin') { wizSubLogin(WIZ.row); return; }
   if (a === 'wiz:subCopy') { wizSubCopy(WIZ.row); return; }
+  if (a === 'wiz:chatgptOauth') { wizChatgptOauthStart(WIZ.row); return; }   // ATO-1747
+  if (a === 'wiz:chatgptOauthCancel') { chatgptOauthCancel(BR, true); render(); return; }
   if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'pick_model' ? 'configure' : WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.forId = null; render(); return; }
   if (a === 'wiz:next') { wizNext(); return; }
   /* The second of the two buttons an unchecked key offers. It is the
@@ -7852,6 +7879,7 @@ function act(a) {
   // ATO-954: Settings › Plugins' verbs (renderer/plugins-pane.js).
   if (k === 'plugins') { close(); pluginsAct(a.slice(8)); return; }
   if (k === 'myfiles') { close(); myFilesAct(a.slice(8)); return; }   // ATO-1626
+  if (k === 'myapps') { close(); myAppsAct(a.slice(7)); return; }   // ATO-2383 (my-apps.js)
   // Item 7 part C: the LLM / Telegram / Import tabs' verbs.
   if (k === 'llm') { close(); llmAct(a.slice(4)); return; }
   if (k === 'telegram') { close(); telegramAct(a.slice(9)); return; }
@@ -7934,7 +7962,8 @@ function act(a) {
   }
   if (k === 'delask')    { const ss = SESSIONS.find((x) => x.id === v); if (!ss) return;
                            if (deleteRefused(v)) { render(); return; }   // Backlog 25: before the question, not after it
-                           S.alert = {title:'Delete “' + ss.t + '”?', msg:'The transcript, its tool calls and its work log are removed from this machine. This cannot be undone.', ok:'Delete', act:'del:' + v};
+                           // ATO-2332: Delete… moves the chat to Trash (chat-trash.js); Delete forever is Trash's.
+                           S.alert = {title:'Move “' + ss.t + '” to Trash?', msg:'You can restore it from Trash at the bottom of the sidebar for ' + TRASH_DAYS + ' days. After that it is deleted for good.', ok:'Move to Trash', act:'del:' + v};
                            render(); return; }
   // item 6: a real delete. The old branch only spliced the array, so the row
   // came back on the next load — DELETE /api/sessions/{id} removes it for good
@@ -7942,8 +7971,8 @@ function act(a) {
   if (k === 'del')       { if (!BR || !BR.deleteSession) return;
                            // Backlog 25: and here, for a turn that started while the question was up.
                            if (deleteRefused(v)) { close(); render(); return; }
-                           BR.deleteSession(v).then((res) => {
-                             if (!res || !res.ok) { close(); render(); toast('Could not delete the session', (res && res.error) || ''); return; }
+                           chatTrashPut(v).then((res) => {   // ATO-2332: to Trash, not the agent's DELETE
+                             if (!res || !res.ok) { close(); render(); toast('Could not move the chat to Trash', (res && res.error) || ''); return; }
                              const i = SESSIONS.findIndex((x) => x.id === v);
                              const gone = i >= 0 ? SESSIONS[i].t : v;
                              if (i >= 0) SESSIONS.splice(i, 1);
@@ -7964,7 +7993,7 @@ function act(a) {
                              const wasOpen = S.sessionId === v;
                              if (wasOpen) { S.sessionId = ''; S.agentSession = null; S.log = []; S.history = []; S.busy = false;
                                             forgetApprovalCard(); clearPlanOffer(); S.room = 'chat'; FOCUS.entry = true; }
-                             close(); render(); toast('Session deleted', gone);
+                             close(); render(); toast('Moved to Trash', gone);
                              if (wasOpen) { refreshContext(); refreshSkillList(); }
                            });
                            return; }
@@ -7986,6 +8015,7 @@ function act(a) {
   // ATO-576: a project's chat in its own branch, and Remove in Edit project's worktree list (chat-worktree.js).
   if (k === 'pwtnew' || k === 'pwtrm') { if (k === 'pwtnew') { close(); render(); } worktreeAct(k, v); return; }
   if (k === 'pworkers' || k === 'pwstart' || k === 'pwfill') { pworkersAct(k, v || ''); return; }   // ATO-1173 (project-workers.js)
+  if (k === 'bgchat') { if (typeof bgChatFromPalette === 'function') bgChatFromPalette(); return; }   // ATO-2309 (background-chat.js)
   if (k === 'fautosort') { FOLDERS.state.autoSort = !FOLDERS.state.autoSort; saveFolders(); foldersAfterSessions(); render(); return; }
   if (k === 'frename')   { close(); render(); renameStart(v, 'folder'); return; }
   if (k === 'fdel')      { close(); const f = folderById(FOLDERS.state, v);
@@ -8006,6 +8036,7 @@ function act(a) {
                            render(); nameVisibleSessions(); return; }
   // ATO-1150: archive / unarchive, the Archived section's toggle, the search field's clear (chat-search.js).
   if (chatArchiveAct(k, v, close)) return;
+  if (chatTrashAct(k, v, close)) return;   // ATO-2332: Trash's Restore, Delete forever, Empty Trash (chat-trash.js)
   // item 6: pin / unpin, and the two lists' pagination.
   if (k === 'pin')       { if (!PREFS.pinned.includes(v)) PREFS.pinned.unshift(v); savePrefs(); render(); nameVisibleSessions(); return; }
   if (k === 'unpin')     { PREFS.pinned = PREFS.pinned.filter((x) => x !== v); savePrefs(); render(); nameVisibleSessions(); return; }
@@ -8697,7 +8728,7 @@ document.addEventListener('click', (e) => {
     if (!text || !BR || typeof BR.terminalOpenWithCommand !== 'function') { fail(); return; }
     // ATO-1424 answers {ok:true, cwd, usedHome} or {ok:false, error, message}.
     Promise.resolve().then(() => BR.terminalOpenWithCommand({ command: text, cwd: workingDir() || null }))
-      .then((r) => { if (!r || r.ok !== true) fail(r && r.message); }, () => fail());
+      .then((r) => { if (!r || r.ok !== true) fail(r && r.message); else if (typeof r.hint === 'string') toast('Terminal opened', r.hint); }, () => fail());
     return;
   }
   // ATO-1251: a table's Copy (TSV, pastes into a spreadsheet) and Markdown, read off the drawn cells.
@@ -8853,6 +8884,7 @@ document.addEventListener('click', (e) => {
   const fmr = t.closest('[data-fm-row]'); if (fmr) { e.preventDefault(); fmAccept(+fmr.dataset.fmRow); return; }   // ATO-1596
   const sn = t.closest('[data-steernow]'); if (sn) { ANX.messageAction('steer'); steerQueuedNow(+sn.dataset.steernow); return; }
   const uq = t.closest('[data-unqueue]'); if (uq) { ANX.messageAction('unqueue'); unqueueMessage(+uq.dataset.unqueue); return; }
+  const qe = t.closest('[data-qedit]'); if (qe) { qeditClick(qe.dataset.qedit); return; }   // ATO-2132: Edit, Save, Cancel on a queued chip
   const rv = t.closest('[data-revoke]'); if (rv) { S.grants.splice(+rv.dataset.revoke, 1); render(); toast('Grant revoked'); return; }
   const ask = t.closest('[data-ask]'); if (ask) { const q = S.q; act('close'); S.draft = q; render(); submit(); return; }
   const selOpen = t.closest('[data-sel-open]');
@@ -8938,10 +8970,12 @@ document.addEventListener('compositionend', (e) => {
 document.addEventListener('input', (e) => {
   // ATO-455: the rename box's text is drawn from RENAME.draft, so a repaint mid-typing keeps it.
   if (e.target.id === 'chat-rename') { RENAME.draft = e.target.value; return; }
+  if (e.target.id === 'tg-token') { tgTokenTyped(e.target); return; }   // ATO-426 U-77: Save waits for text; the token stays in the field
   // ATO-445: the webhook form's fields are drawn from WHK's state, so a repaint keeps them.
   if (e.target.dataset && e.target.dataset.whkField) { WHK.type(e.target.dataset.whkField, e.target.value); return; }
   // ATO-568: a worker's Steer field keeps its text across repaints.
   if (typeof fzpInput === 'function' && fzpInput(e)) return;
+  if (typeof qeditInput === 'function' && qeditInput(e)) return;   // ATO-2132: the queued message being edited
   if (typeof deeplinkRecipeInput === 'function' && deeplinkRecipeInput(e)) return;   // ATO-1615: a recipe card's fields (deeplink.js)
   if (typeof mcpElicitInput === 'function' && mcpElicitInput(e)) return;   // ATO-1492
   if (typeof allSettingsInput === 'function' && allSettingsInput(e, esc)) return;   // ATO-41
@@ -9697,11 +9731,18 @@ function engfRouteLocal() {
 function engfShown() {
   return !!ENGF.f && ENGF.dismissed !== ENGF.f.at && engfRouteLocal();
 }
+/** ATO-1745: a damaged or missing model file (main's `reason`): the way out is this model's own download, not Start or the engine. */
+function engfModelFix() {
+  const r = ENGF.f && ENGF.f.reason;
+  return r === 'model_file_corrupt' || r === 'model_file_missing' ? {act:'engf:redownload', label:'Download model again'} : null;
+}
 /** The one way out: Download again runs the engine install. None when the failure is one it cannot change (main's `retryable: false`): `why` says what to do instead. */
 function engfActsHTML(size) {
-  if (ENGF.f && ENGF.f.retryable === false) return '';
+  const mf = engfModelFix();
+  if (!mf && ENGF.f && ENGF.f.retryable === false) return '';
   const busy = typeof LLMP !== 'undefined' && (LLMP.busy || !!LLMP.pulling);
   const dis = busy ? ' disabled' : '';
+  if (mf) return '<button class="btn btn-s ' + size + '" data-act="' + mf.act + '"' + dis + ' title="Download this model again from the catalogue">' + mf.label + '</button>';
   return '<button class="btn btn-s ' + size + '" data-act="engf:retry"' + dis + ' title="Download and install the local engine again">Download again</button>';
 }
 function engfNoticeHTML() {
@@ -9753,6 +9794,12 @@ function engfSetupRuntime() {
 }
 async function engfAct(verb) {
   if (verb === 'dismiss') { if (ENGF.f) ENGF.dismissed = ENGF.f.at; render(); return; }
+  if (verb === 'redownload') {
+    // ATO-1745: the model the failure named (main's `modelId`), through Settings › Models' own download (llmPull); main deletes a damaged file first.
+    const id = ENGF.f && ENGF.f.modelId;
+    if (id && engfModelFix()) llmPull('chat', id, true);
+    return;
+  }
   if (verb === 'retry' && ENGF.f && ENGF.f.retryable === false) return;
   const setup = engfSetupRuntime();
   // `fresh`: main forgets the active Core's install record first, so a broken copy is downloaded again rather than kept.
@@ -9937,6 +9984,7 @@ document.addEventListener('keydown', (e) => {
   if (e.isComposing || e.keyCode === 229) return;
   // ATO-568: Enter and Escape in a worker's Steer field are that field's.
   if (typeof fzpKeydown === 'function' && fzpKeydown(e)) return;
+  if (typeof qeditKeydown === 'function' && qeditKeydown(e)) return;   // ATO-2132: Enter saves, Escape cancels a queued message's edit
   const k = e.key;
   /* ATO-226: the key the chords and the ⌘ shortcuts below match on, by the
      physical key on a non-Latin layout (shortcutKey). `k` stays the typed
@@ -10057,8 +10105,13 @@ document.addEventListener('keydown', (e) => {
   if (mod && k === 'Enter' && e.target.id === 'mcp-json') { e.preventDefault(); mcpAddSubmit(e.target.value); return; }
   // ATO-510: Enter in the review block's name field adds too.
   if (k === 'Enter' && e.target.id === 'mcp-name' && MCP.addModal) { e.preventDefault(); mcpAddSubmit(MCP.addModal.json); return; }
+  // ATO-2309: ⌘↩ in the ⌘K palette starts its text in a new background chat (background-chat.js);
+  // APPR_CHORD_AT drops the menu's Send copy of the chord (Windows), which would send the composer once the palette closed.
+  if (mod && !e.shiftKey && !e.altKey && k === 'Enter' && S.overlay === 'palette' && !S.scope && typeof bgChatFromPalette === 'function') { e.preventDefault(); APPR_CHORD_AT = Date.now(); ANX.via('palette'); bgChatFromPalette(); return; }
   // ATO-328: Enter in an Exa key field saves it, in the chat card and in Settings alike, through act() as the Save click does (ui_action exakey:save:*).
   if (k === 'Enter' && !mod && e.target.dataset && e.target.dataset.exaKey) { e.preventDefault(); ANX.via('key'); act('exakey:save:' + e.target.dataset.exaKey); return; }
+  // ATO-2010: Enter in the small provider window's address or key field is its Next (first run has its own, obCloudKey).
+  if (k === 'Enter' && !mod && !e.shiftKey && !e.isComposing && (e.target.id === 'wiz-url' || e.target.id === 'wiz-key') && !OB.open && WIZ.phase === 'configure') { e.preventDefault(); if (!WIZ.stepping) act('wiz:next'); return; }
   /* ATO-226: by `sk`, so ⌘K, ⌘N, ⌘. and the rest work on a Russian layout
      too. ⌘N, ⌘\, ⌘1-4, ⌘, and ⌘/ are also menu accelerators, which macOS
      and Windows already match on a Russian layout; with the page taking
@@ -10392,6 +10445,7 @@ function applySessions(res, askedAt) {
       archived:x.archived === true, archivedKnown:typeof x.archived === 'boolean',
     });
   });
+  chatTrashHide(SESSIONS);   // ATO-2332: a chat in Trash is on no list (chat-trash.js)
   settlePendingChats();
   // Q60 review: a kept request of a turn not running here ends with its chat's turn (approvalOver).
   for (const sid of [...PENDING_APPROVALS.keys()]) {
@@ -10526,7 +10580,7 @@ function startLiveTurn(text) {
   // ATO-1146: a new chat New project opened says its project, so main files it there before the turn.
   // ATO-490: the chat's reasoning level rides along (absent for Auto); ATO-1148: so does its project's cloud model.
   const forProject = session ? undefined : projectForNewTurn();
-  BR.chat([{role:'user', content:text}], session, forProject, reasoningTurnLevel(session), projectTurnModel(session)).then((res) => {
+  BR.chat([{role:'user', content:text}], session, forProject, reasoningTurnLevel(session), projectTurnModel(session, forProject)).then((res) => {
     if (!res || !res.ok) {
       S.busy = false; clearInterval(ticker);
       S.log.push({id:nid(), k:'system', text:'could not start the turn: ' + esc((res && res.error) || 'unknown error')});
@@ -11328,10 +11382,11 @@ function turnKeyRejected(ev) {
   if (entry && savedKeyInvalid(entry)) return true;
   return /can't use its API key|rejected the API key|did not accept your API key|needs an API key and none is set/i.test(String((ev && ev.error) || ''));
 }
-/** ATO-1578: the agent's verdict for a cloud model that answered empty twice in a row. */
+/** ATO-1578: the agent's verdict for a cloud model that answered empty twice in a row.
+    ATO-1686: or kept calling tools that don't exist. Both: another model, its phrase as the line. */
 function turnEmptyTwice(ev) {
   const f = (ev && ev.payload && ev.payload.failure) || {};
-  return f.cause === 'empty_response_repeated';
+  return f.cause === 'empty_response_repeated' || f.cause === 'unknown_tools_repeated';
 }
 /** The failed turn's button: Check key on a refused key, else Switch provider when the provider failed. */
 function turnFailureAct(ev) {
@@ -11523,6 +11578,7 @@ function onChatEvent(ev) {
       if (sid) notePendingEnded(sid);  // item 27: its stand-in waits for the agent to store the turn
       if (sid && typeof goalTurnEnded === 'function') void goalTurnEnded(sid);  // ATO-1040: a pause / clear asked of its goal has landed
       if (sid && typeof workerTurnEnded === 'function') workerTurnEnded(sid, ev.kind);  // ATO-1173: a worker chat's badge
+      if (typeof bgChatTurnEnded === 'function') bgChatTurnEnded(ev.turnId, sid, ev.kind);  // ATO-2309: a background chat's toast
       if (ev.kind === 'error' && sid) ATTN.add(sid);
       nextStepTurnEnded(sid, ev.kind);   // ATO-1094: retire the old suggestion; a finished turn asks for a new one
       const endedSince = (LIVE_TURNS.get(ev.turnId) || {}).startedAt || 0;   // B01: closeChatApprovals, read before liveTurnEnded drops it
@@ -11695,6 +11751,8 @@ function onChatEvent(ev) {
     render();
     return;
   }
+  // ATO-2005: the loop guard stopped the turn; the reply it ends with gets the dim note (stopped-reply.js).
+  if (ev.kind === 'loop_stopped') { if (markLoopStopped(item, ev.payload)) render(); return; }
   // ATO-42: the agent cut the chat's project instructions to fit (project-instructions-line.js).
   if (ev.kind === 'project_instructions') { if (projectInstructionsDraw(ev.payload, S.log, item, nid, esc)) render(); return; }
   /* Run mode — Fusion. One leg of a fan-out started, ran a tool, ended or was
@@ -11805,6 +11863,9 @@ function onChatEvent(ev) {
     // ATO-1187: a write/edit's lines added/removed go on the turn's "Changed files" card (changed-files.js).
     // ATO-1702: a fusion.delegate's `diffstats` (its workers' files) go on the same card.
     if (item) for (const changedFile of changedFilesOfFrame(p)) item.changed = changedFilesAdd(item.changed, changedFile);
+    // ATO-2409: an Office writer (docx, xlsx, pptx) sends no diffstat; its ok call is a "created"/"updated" row from the call's path (chat-files.js cfOfficeWrite).
+    const officeWrite = item && card.ok === true && typeof cfOfficeWrite === 'function' ? cfOfficeWrite(card.name, toolArgsObj(card.args)) : null;
+    if (officeWrite) item.changed = changedFilesAdd(item.changed, changedFileOfOfficeWrite(officeWrite, cfAbsolute(officeWrite.path, workingDir(), homeDir())));
     render();
     return;
   }
@@ -12040,6 +12101,7 @@ function onChatEvent(ev) {
 /** The next queued message, as the next turn of the chat on screen, whose
     queue S.queued is (Backlog 26). */
 function drainQueued() {
+  if (qeditHoldsDrain()) { DRAIN_OWED = true; render(); return; }   // ATO-2132: the head of the queue is being edited; Save or cancel runs it
   if (!S.queued.length) { DRAIN_OWED = false; return; }
   if (swxWaitsForRoute() || S.live.state !== 'connected' || openHoldsComposer()) { DRAIN_OWED = true; return; }
   if (SWX.sendError) { DRAIN_OWED = true; return; }
@@ -12053,7 +12115,7 @@ function drainQueued() {
     render(); return;
   }
   DRAIN_OWED = false;
-  const q = S.queued.shift();
+  const q = S.queued.shift(); qeditShift(0);   // ATO-2132
   if (gate.kind === 'notice') S.log.push({id:nid(), k:'system', text: esc(gate.text)});
   S.log.push({id:nid(), k:'user', text:q}); startLiveTurn(q);
 }
@@ -12131,6 +12193,7 @@ function mergeQueue(key, q) {
 /** The chat being left (another chat opened, or a new one) takes the queue
     on screen with it. Read before the view changes: queueKey() reads it. */
 function stashQueue() {
+  qeditLeave();   // ATO-2132: a message being edited goes back first, as typed
   const q = {queued:S.queued.splice(0), ahead:STEER.ahead, owed:DRAIN_OWED};
   STEER.ahead = 0; DRAIN_OWED = false;
   if (!q.queued.length) return;
@@ -12199,7 +12262,7 @@ function steerNowShown(text) {
 function steerQueuedNow(at) {
   const text = S.queued[at];
   if (typeof text !== 'string' || !steerNowShown(text)) return;
-  STEER.ahead = steerNowTake(S.queued, at, STEER.ahead);
+  STEER.ahead = steerNowTake(S.queued, at, STEER.ahead);   qeditShift(at);   // ATO-2132
   if (!S.queued.length) DRAIN_OWED = false;
   render();
   return steerOrQueue(text, {sid:S.agentSession, key:queueKey(), card: approvalOpen(S.pending)});
@@ -12207,6 +12270,7 @@ function steerQueuedNow(at) {
 /** Cancel a locally accepted message, including an unsaved chat's last one. */
 function unqueueMessage(at) {
   const gone = S.queued.splice(at, 1)[0]; if (at < STEER.ahead) STEER.ahead -= 1;
+  qeditShift(at);   // ATO-2132: a message being edited behind it keeps its place
   attForgetMessage(gone);   // ATO-405: files only this queued message named
   if (!S.queued.length) {
     DRAIN_OWED = false;
@@ -12220,6 +12284,7 @@ function unqueueMessage(at) {
 }
 /** A deleted chat's queue goes with it, sent nowhere. */
 function forgetQueue(sid) {
+  qeditDrop(sid);   // ATO-2132
   QUEUES.delete(sid);
   if (sid && sid === queueKey()) { S.queued.length = 0; STEER.ahead = 0; DRAIN_OWED = false; }
 }
@@ -12686,6 +12751,7 @@ const CATEGORY_LABEL = {
   http_write:'HTTP request · sends data', browser_site_tool:'browser · the site\'s own tool',
   user_question:'question for you', session_cross:'another chat · read / send',
   browser_take_over:'browser · your turn',
+  logbook_cloud:'logbook · notes to a cloud model',
 };
 
 /* Calm (S7): why an answer to an approval did not land, in words. The
@@ -12868,6 +12934,7 @@ if (BR) {
   loadPrefs();
   loadFolders();   // ATO-1034 (chat-folders.js)
   loadProjects();   // ATO-1146 (chat-projects.js)
+  chatTrashLoad();   // ATO-2332 (chat-trash.js)
   BR.onStatus(applyStatus);
   if (BR.onAutoRestart) BR.onAutoRestart(autoRestartApply);
   BR.onChat(onChatEvent);
@@ -15814,6 +15881,8 @@ function obUrlHTML(kind) {
       + esc(chat ? OB.chatUrl : OB.embeddingUrl) + '"' + (OB.busy ? ' disabled' : '') + '>'
       + (OB.busy ? '<span class="tk-spin" aria-hidden="true"></span>' : '') + '</div>'
     + obInlineErrHTML()
+    // ATO-2012: a server with no model is accepted, with this note first (llama-model-warning.js).
+    + (OB.urlWarned && OB.urlWarned.step === OB.step && !OB.error && !OB.busy ? '<div class="ob-warn ob-note is-amber">' + ic('alert') + '<span>' + esc(OB.urlWarned.text + ' ' + LLAMA_WARN_CONTINUE) + '</span></div>' : '')
     + '<div class="ob-explain ob-help">' + esc(chat ? OB_COPY.urlChatPortNote : OB_COPY.urlEmbeddingNote) + '</div>'
     + (OB.busy ? '<div class="ob-explain ob-help">' + esc(OB_COPY.urlProbing) + '</div>' : '');
 }
@@ -16271,6 +16340,7 @@ function obWizardHTML() {
       + '<div class="ob-kicker">Subscription</div>'
       + '<div class="ob-h">' + wizKindMark(k) + esc(wizService(k)) + '</div>'
       + wizSubscriptionLines(k).map((l) => wizSubLineHTML(l, 'div', 'is-warn')).join('')
+      + wizChatgptOauthHTML(k, false)
       + (WIZ.error ? '<div class="ob-err">' + ic('alert') + '<span>' + esc(WIZ.error) + '</span></div>'
           + (wizErrDetail() ? '<details class="ob-errmore"><summary>Details</summary><span>' + esc(wizErrDetail()) + '</span></details>' : '') : '')
       + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>'
@@ -17604,10 +17674,15 @@ async function obUrlSubmit() {
   const probe = res && res.probe;
   if (!res || !res.ok || !probe || !probe.reachable) {
     // describeLlamaHealthFailure's own sentence, from main.
+    OB.urlWarned = null;
     obDispatch({type:'onboarding_error_set',
       error: (probe && probe.message) || (res && res.error) || 'that URL did not answer GET /health'});
     return;
   }
+  // ATO-2012: no model in the server: say so on this Enter, go on with the next one on the same address.
+  const warn = llamaModelWarning(probe, res.url || value);
+  if (warn && !llamaWarnAcknowledged(OB.urlWarned, from, value)) { OB.urlWarned = {step: from, url: value, text: warn}; render(); return; }
+  OB.urlWarned = null;
   if (chat) { obDispatch({type:'onboarding_step_set', step:'custom_embedding_url'}); return; }
   obWriteCustomEndpoint(OB.chatUrl, value);
 }
@@ -18058,7 +18133,7 @@ async function openOnboarding(at) {
   const first = at === 'choose' ? 'choose' : 'intro';
   Object.assign(OB, {
     open: true, step: first, offer: null, resumeAfterCloud: null, localModelId: null,
-    outcome: null, skipSecondOffer: false, handOver: false, cursor: 0, embeddingUrl: '', busy: false, error: null,
+    outcome: null, skipSecondOffer: false, handOver: false, cursor: 0, embeddingUrl: '', busy: false, error: null, urlWarned: null,
     hfReference: '', hfRepo: null, importAgents: [], importOptions: [], importReport: null,
     introTyped: false, settling: false, testClose: false, pendingMmproj: null, restarted: false, leftEarly: false,
     localStart: null,
@@ -18546,7 +18621,7 @@ if (BR) {
        nothing at all until they were listed. Same shape as the defect the
        operator once reported as "when I click on next, nothing happens". */
     if (OB.open && OB.step === 'cloud'
-        && (a === 'wiz:model' || a === 'wiz:useDefault' || a === 'wiz:saveUnchecked' || a === 'wiz:subRecheck' || a === 'wiz:subLogin' || a === 'wiz:subCopy')) {
+        && (a === 'wiz:model' || a === 'wiz:useDefault' || a === 'wiz:saveUnchecked' || a === 'wiz:subRecheck' || a === 'wiz:subLogin' || a === 'wiz:subCopy' || a === 'wiz:chatgptOauth' || a === 'wiz:chatgptOauthCancel')) {
       return prevAct(a);
     }
     if (OB.open && OB.step === 'cloud' && (a === 'wiz:cancel' || a === 'wiz:back')) {
@@ -19407,9 +19482,11 @@ function selActiveProviderId() {
 /* ATO-1148: the project cloud model a turn of this chat runs on, or null
    for the agent's own (renderer/project-model.js). The chat's folder is its
    own when the window knows it, else the window's (a new chat opens there). */
-function projectTurnModel(sessionId) {
+function projectTurnModel(sessionId, projectId) {
   if (typeof ProjectModels === 'undefined' || !BR) return null;
-  return ProjectModels.turnModel(ProjectModels.folderOf(sessionId || null, workingDir()), llmProviders(), liveBackend());
+  // ATO-2411: the empty chat New project (or the plus) opened in a project runs on that project's folder's model, not the window's.
+  const pending = !sessionId && typeof projectPendingFolder === 'function' ? projectPendingFolder(projectId) : '';
+  return ProjectModels.turnModel(ProjectModels.folderOf(sessionId || null, pending || workingDir()), llmProviders(), liveBackend());
 }
 /* ATO-1148: a cloud model picked in the switcher is remembered for the
    chat's folder, and no global switch runs: other chats keep their model and
@@ -19418,7 +19495,9 @@ function projectTurnModel(sessionId) {
 async function pickProjectModel(providerId, model) {
   if (typeof ProjectModels === 'undefined' || !BR || !BR.setProjectModel || !ProjectModels.state.loaded || ProjectModels.state.remote) return false;
   if (liveBackend() !== 'cloud' || !projectCloudEntry(llmProvider(providerId))) return false;
-  const folder = ProjectModels.folderOf(S.agentSession || null, workingDir());
+  // ATO-2411: picked in the empty chat of a project, the model is the project folder's, the one the turn reads.
+  const pending = !S.agentSession && typeof projectPendingFolder === 'function' ? projectPendingFolder() : '';
+  const folder = ProjectModels.folderOf(S.agentSession || null, pending || workingDir());
   if (!folder) return false;
   closeSelector();
   const res = await ProjectModels.set(BR, folder, {providerId, model});
@@ -19740,10 +19819,11 @@ function selGroupedRows(current, currentRows) {
       : selCloudRows(g.id, (SEL_GROUPS.get(g.id) || {}).models, null);
     for (const r of rows) { r.group = g.id; out.push(r); }
   }
-  SEL.groups = groups;
+  const pin = typeof modelFavPin === 'function' ? modelFavPin(groups, out) : {groups, rows: out};   // ATO-2169: Favorites first
+  SEL.groups = pin.groups;
   // A provider whose key turned good after the list opened has not been asked yet.
   if (groups.some((g) => g.id !== current && g.id !== LOCAL_GROUP && !SEL_GROUPS.has(g.id))) queueMicrotask(selLoadGroups);
-  return out;
+  return pin.rows;
 }
 /* Every other group's catalogue, each on its own. A list already in hand is
    kept for the session (a live one from selLoadModels first); a group that
@@ -20065,7 +20145,8 @@ function selectorHTML() {
               + ' title="Download the vision projector so this model reads images">' + ic('download') + esc(r.visionLabel) + '</span>' : '')
           /* An unlit cell, not a lit one: this is a state we could not
              confirm, not a fault we found. It goes out when a turn succeeds. */
-          + (r.unverified ? '<span class="ann caution">Unverified</span>' : '');
+          + (r.unverified ? '<span class="ann caution">Unverified</span>' : '')
+          + (groups && typeof modelFavStarHTML === 'function' ? modelFavStarHTML(r, {esc, ic}) : '');   // ATO-2169
         const name = selRowName(r);
         return (r.type === 'action' && i > 0 ? '<div class="tk-sep selsep"></div>' : '')
           + '<button class="modelrow' + (r.active ? ' on' : '') + (r.type === 'localBusy' || r.disabled ? ' off" aria-disabled="true' : '') + '" data-sel-row="' + i + '" data-id="' + esc(r.id) + '">'
@@ -20084,7 +20165,9 @@ function selectorHTML() {
      or error line; ungrouped, the one list keeps its lines on top. */
   /* The current route's group (first) keeps the list's own lines, the ones
      the drivers read; the other groups' lines are their own. */
-  const groupsHTML = groups ? groups.map((g, gi) => {
+  const favLead = groups && groups[0] && groups[0].fav ? 1 : 0;   // ATO-2169: Favorites is not the route's own group
+  const groupsHTML = groups ? groups.map((g, gAt) => {
+    const gi = gAt - favLead;
     const own = [];
     rows.forEach((r, i) => { if (r.group === g.id) own.push(rowHTML(r, i)); });
     const bare = gi > 0 && !own.length && !g.busy && !g.err;
@@ -20999,29 +21082,7 @@ function pausedSentence(m) {
   const head = (/^\(paused: ([^)]*)\)/.exec(t) || [, 'the task stopped before it finished'])[1].replace(/\.$/, '');
   return 'Paused: ' + head + '.';
 }
-/* The same for the loop guard's stop (src/agent/loop-detector.ts
-   formatForcedLoopReply): "(stopped: stuck in a no-progress loop on
-   `os.fs.list` after 5 blocked attempts). I could not make further progress
-   \u2026". Nothing is paused, so there is nothing to continue; sending again
-   starts over. '' when the reply is not one of those. */
-function stoppedSentence(m) {
-  if (!m || m.k !== 'assistant' || m.placeholder) return '';
-  const t = String(m.text || '').trim();
-  let mt;
-  if ((mt = /^\(stopped: stuck in a no-progress loop on `([^`]+)` after (\d+) blocked attempts\)/.exec(t))) {
-    return 'Stopped: the agent kept repeating the same step without getting anywhere (' + mt[2] + ' tries). The task may be incomplete.';
-  }
-  // v0.6.6 wording: "(stopped: `tool` kept returning the same no-progress
-  // outcome, and the same call was refused N times in a row …)" or "… and
-  // this call was not run)".
-  if ((mt = /^\(stopped: `([^`]+)` kept returning the same no-progress outcome(?:, and the same call was refused (\d+) times? in a row)?/.exec(t))) {
-    return 'Stopped: the agent kept repeating the same step without getting anywhere' + (mt[2] ? ' (' + mt[2] + ' tries)' : '') + '. The task may be incomplete.';
-  }
-  if ((mt = /^\(stopped: `([^`]+)` hit the limit on different arguments/.exec(t))) {
-    return 'Stopped: the agent kept trying variations of the same step. The task may be incomplete.';
-  }
-  return '';
-}
+/* The loop guard's stop: stoppedSentence and friends live in stopped-reply.js (ATO-2005). */
 function stoppedRowHTML(m) {
   return '<div class="sysrow warn"><span class="sys-ic warn">' + ic('alert') + '</span>'
     + '<span class="sys-tx" title="' + esc(String(m.text || '')) + '">' + esc(stoppedSentence(m)) + '</span></div>';
@@ -21936,7 +21997,7 @@ function sessionTurnsToLog(turns) {
     if (t.kind === 'assistant_reply' && t.stopped) { log.push({id:nid(), k:'assistant', text:'(stopped)', placeholder:true}); return; }
     // B1: a progress note (`progressNote`) is an interim row, never a reply.
     if (t.kind === 'assistant_reply') {
-      const entry = {id:nid(), k: t.progressNote ? 'interim' : 'assistant', text:t.text || ''};
+      const entry = {id:nid(), k: t.progressNote ? 'interim' : 'assistant', text:t.text || '', storedAt: t.at};   // ATO-2114: orders answer versions
       // ATO-408: the files the reply delivered (`reply.attachments`), drawn under it.
       const files = t.progressNote ? [] : replyFilesOf(t.attachments);
       if (files.length) { entry.replyFiles = files; named.push(...files); }
@@ -22233,6 +22294,7 @@ async function recoverParkedSteers(id, probe) {
   }
   if (list.length) {
     S.queued.unshift.apply(S.queued, list.map((u) => String((u && u.text) || '')));
+    qeditShiftInsert(0, list.length);   // ATO-2132: a message being edited moves down with the rest
     STEER.ahead += list.length;
     S.log.push({id:nid(), k:'system', note:true, text: list.length + ' message' + (list.length === 1 ? '' : 's')
       + ' arrived too late for the last turn here — sending ' + (list.length === 1 ? 'it' : 'them') + ' next'});
@@ -22533,6 +22595,7 @@ function wizardHTML() {
   if (k.subscriptionCli) {
     return selShell(wizService(k),
       '<div class="selbody selwiz">' + wizSubscriptionLines(k).map((l) => wizSubLineHTML(l, 'p', 'tk-help--warn')).join('')
+      + wizChatgptOauthHTML(k, true)
       + (WIZ.error ? '<div class="ob-err"' + (wizErrDetail() ? ' title="' + esc(wizErrDetail()) + '"' : '') + '>' + esc(WIZ.error) + '</div>' : '')
       + '</div>',
       '<button class="btn btn-g xs" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button><span class="grow"></span>'
@@ -22656,14 +22719,15 @@ const WIZ_SUB = new Map();
 function wizSubStatus(k) {
   const cli = k && k.subscriptionCli;
   if (!cli || !BR || !BR.subscriptionStatus) return null;
-  if (WIZ_SUB.has(cli)) { const v = WIZ_SUB.get(cli); return v === 'asking' ? null : v; }
+  /* ATO-1684: laid over by the CLI's own answer, asked once (subscription-live-check.js). */
+  if (WIZ_SUB.has(cli)) { const v = WIZ_SUB.get(cli); return v === 'asking' ? null : (typeof subLiveStatus === 'function' ? subLiveStatus(cli, v) : v); }
   WIZ_SUB.set(cli, 'asking');
   Promise.resolve(BR.subscriptionStatus(cli))
     .then((r) => { WIZ_SUB.set(cli, r && r.ok && r.status ? r.status : {installed: null, signedIn: null}); if (WIZ.row && WIZ.row.subscriptionCli === cli) render(); })
     .catch(() => WIZ_SUB.set(cli, {installed: null, signedIn: null}));
   return null;
 }
-function wizSubRecheck(k) { if (k && k.subscriptionCli) WIZ_SUB.delete(k.subscriptionCli); WIZ.error = null; render(); }
+function wizSubRecheck(k) { if (k && k.subscriptionCli) { WIZ_SUB.delete(k.subscriptionCli); if (typeof subLiveForget === 'function') subLiveForget(k.subscriptionCli); } WIZ.error = null; render(); }
 /** Install steps per CLI and platform; the person runs them, the app never does. */
 function wizSubInstallCmd(cli) {
   const win = /win/i.test(navigator.platform || '');
@@ -22706,6 +22770,8 @@ function wizSubscriptionLines(k) {
   } else {
     lines.push({text: 'Found ' + wizService(k) + '. If the first answer says you are signed out, run ' + cli + (cli === 'codex' ? ' login' : '') + ' in ' + terminal + ' and sign in with your ' + k.plan + ' account.'});
   }
+  const live = typeof subLiveLine === 'function' ? subLiveLine(st, wizService(k), cli) : null;
+  if (live) lines.push(live);
   if (wizBillingSet(k.billingEnv)) {
     lines.push({warn: true, text: k.billingEnv + ' is set on ' + THIS_MACHINE + ', so the ' + k.subscriptionCli
       + ' CLI may bill your API account per token instead of your plan. Unset it to use only your subscription.'});
@@ -22752,7 +22818,8 @@ function wizSubPollTick() {
     if (!st) return;
     const before = WIZ_SUB.get(cli);
     WIZ_SUB.set(cli, st);
-    if (st.installed && st.signedIn === true) {
+    /* ATO-1684: an expired login keeps its file; wait for the CLI itself to say yes. */
+    if (st.installed && st.signedIn === true && !(typeof subLiveHoldsSignedOut === 'function' && subLiveHoldsSignedOut(cli))) {
       wizSubPollStop();
       ANX.subscriptionLoginSucceeded(cli, OB.open, Math.round((Date.now() - WIZ_SUB_POLL.startedAt) / 1000));
       /* Through act, so first run's router (obKey) takes it exactly as it takes the button. */
@@ -22793,6 +22860,22 @@ async function wizSubLogin(k) {
   wizSubPollStop();
   WIZ_SUB_POLL.timer = setInterval(wizSubPollTick, WIZ_SUB_POLL_MS);
   render();
+}
+/* ATO-1747: the Codex row's second way in, the bundled agent's own ChatGPT
+   sign-in (chatgpt-oauth-step.js). The agent writes the entry; this only activates it. */
+function wizChatgptOauthHTML(k, compact) {
+  if (!k || k.subscriptionCli !== 'codex' || typeof chatgptOauthBlockHTML !== 'function') return '';
+  chatgptOauthAskSupported(BR, render);
+  return chatgptOauthBlockHTML(CHATGPT_OAUTH, esc, compact);
+}
+function wizChatgptOauthStart(k) {
+  if (!k || typeof chatgptOauthStart !== 'function') return;
+  chatgptOauthStart({br: BR, render, anx: ANX, inOnboarding: OB.open,
+    onStep: () => WIZ.row === k && WIZ.phase === 'configure',
+    activate: (id) => {
+      WIZ.phase = 'verifying'; WIZ.error = null; render();
+      wizActivate({id, kind: 'subscription-oauth', word: 'ChatGPT', label: 'ChatGPT subscription (experimental)'}, id, '', null);
+    }});
 }
 async function wizSubscriptionStep(k) {
   const id = k.id;
@@ -23025,6 +23108,7 @@ async function wizNextStep() {
     const refused = status === 401 || status === 403;
     const unreachable = !!(listed && listed.unreachable);
     const cert = listed && listed.certificate ? String(listed.certificate) : '';
+    const loadingModel = status === 503 && (!!k.local || !!k.custom) && /\bloading model\b/i.test(said);   // ATO-2011
     /* B04: a server on this machine (Ollama, LM Studio, Atomic Chat, a custom
        loopback URL) has no key, so nothing here may blame one: an empty
        field there was never a key to check. Ollama not running read "Could
@@ -23060,10 +23144,14 @@ async function wizNextStep() {
       // ATO-202: the provider answered, with its own trouble: nothing to say about the key.
       : status === 429
       ? wizService(k) + ' is limiting requests right now (429). Wait a moment, then try again.'
+      // ATO-2011: llama.cpp answers 503 "Loading model" while its model loads; that is not the server failing.
+      : loadingModel
+      ? Name + ' at ' + where + ' is still loading its model. Wait a moment, then try again.'
       : status >= 500
       ? wizService(k) + ' had a problem answering (HTTP ' + status + '). Try again in a moment.'
-      : local && wizSaidNoModels(said)
-      ? Name + ' at ' + where + ' has no models yet. ' + (k.custom ? 'Load a model into it' : 'Add one in ' + name) + ', then try again.'
+      // ATO-2011: an address of your own with no model is that, wherever it is (Tailscale, a domain), not a key to check.
+      : (local || k.custom) && wizSaidNoModels(said)
+      ? Name + ' at ' + where + (k.custom ? ' has no models loaded. Load a model into the server' : ' has no models yet. Add one in ' + name) + ', then try again.'
       : local
       ? Name + ' at ' + where + ' didn\u2019t list its models.'
       : said
@@ -23073,7 +23161,8 @@ async function wizNextStep() {
     if (k.lan) WIZ.error = lanWizardError(where, unreachable, refused, !!WIZ.apiKey) || WIZ.error;
     WIZ.errorDetail = listed && listed.error ? {for: WIZ.error, text: listed.error} : null;
     // ATO-202: and for every line that is not about the key, the key field stays unlit (wizErrUnreachable).
-    const notTheKey = unreachable || cert || (listed && listed.timedOut) || status === 403 || status === 429 || status >= 500;
+    const notTheKey = unreachable || cert || (listed && listed.timedOut) || status === 403 || status === 429 || status >= 500
+      || (k.custom && !refused && wizSaidNoModels(said));   // ATO-2011: an empty server is not the key's fault
     WIZ.errorKind = notTheKey && !(refused && local && !WIZ.apiKey) ? {for: WIZ.error, kind: 'unreachable'} : null;
     render();
     return;
@@ -23849,7 +23938,9 @@ function renderProseFresh(text) {
     const h = md.held[+i];
     const code = /^<code class="mdcode">([\s\S]*)<\/code>$/.exec(h);
     const raw = code ? code[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim() : '';
-    return raw && codeSpanIsPath(raw) ? chip(raw, h) : h.startsWith('<pre class="mdpre"') ? codeBlockFrame(h) : h;
+    // ATO-2409: a bare name the chat wrote (`sales.docx`) is that file's chip (chat-files.js chatFilesByName; main confirms the path as ever).
+    const known = raw && !codeSpanIsPath(raw) && typeof chatFilesByName === 'function' ? chatFilesByName(raw) : '';
+    return raw && codeSpanIsPath(raw) ? chip(raw, h) : known ? chip(known, h) : h.startsWith('<pre class="mdpre"') ? codeBlockFrame(h) : h;
   });
   // ATO-664: the finished markup through DOMPurify too (md-render.js), behind the escaping.
   return mdSanitize(html.replace(/\u0001(\d+)\u0001/g, (m, i) => chips[+i]));
@@ -23875,10 +23966,10 @@ function codeBlockFrame(pre) {
     + lit + (prev ? chatArtifactCodeSlot(pre) : '') + '</div>';
 }
 /** ATO-1426: whether a code block in `lang` gets "Open in Terminal". The
-    platforms are one list, macOS only until ATO-1422 says otherwise; an older
+    platforms are one list (ATO-1430: Windows and Linux too); an older
     preload without the bridge shows no button. */
 function codeBlockTerminalOk(lang) {
-  const platforms = ['darwin'];
+  const platforms = ['darwin', 'win32', 'linux'];
   return platforms.includes(PLATFORM) && /^(?:bash|sh|zsh|shell|console)$/i.test(lang)
     && !!(BR && typeof BR.terminalOpenWithCommand === 'function');
 }
@@ -24041,6 +24132,9 @@ function resolveAgentPath(p, cwd) {
 /** Files a tool card wrote — the agent's own result line first, its args
     second. Only ok cards, only the four write tools. */
 function cardWrittenPaths(m, cwd) {
+  // ATO-2409: an Office writer's ok call (docx, xlsx, pptx) saved the `path` it was given (chat-files.js cfOfficeWrite).
+  const office = m.k === 'tool' && m.ok === true && !m.forced && typeof cfOfficeWrite === 'function' ? cfOfficeWrite(m.name, cardArgs(m) || {}) : null;
+  if (office) return [resolveAgentPath(office.path, cwd)];
   if (m.k !== 'tool' || m.ok !== true || m.forced || !WRITE_TOOLS.has(m.name)) return [];
   const a = cardArgs(m) || {};
   const out = String(m.out || '');
@@ -25883,7 +25977,7 @@ function skillsTab() {
       + (SKP.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SKP.lastError) + '</span></div>' : '')
       + (SK.err && !tools ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SK.err) + '</span></div>' : '')
       + skpMessages()
-      + (tools ? skpToolsHTML(groups) : SKP.mode === 'detail' ? skpDetailHTML() : SKD.state.open ? SKD.detailHTML(esc) : tpSkillsOmittedHTML() + SKD.listHTML(esc) + skpListHTML(visible));
+      + (tools ? skpToolsHTML(groups) : SKP.mode === 'detail' ? skpDetailHTML() : SKD.state.open ? SKD.detailHTML(esc) : tpSkillsOmittedHTML() + SHOW_ONCE.cardHTML(esc) + SKD.listHTML(esc) + skpListHTML(visible));
   }
   return '<div class="set-pane set-skills">' + view + overlay + '</div>';
 }
@@ -26476,6 +26570,7 @@ function skillsAct(what) {
   if (verb === 'test') { const name = sel(); if (name) skeRun(name); return; } // ATO-1102
   if (verb === 'testCancel') { skeCancel(); return; }
   if (verb === 'draft') { SKD.act(arg); return; } // ATO-67: Pending review
+  if (verb === 'showOnce') { SHOW_ONCE.act(arg); return; } // ATO-2401: Show once
   if (verb === 'refresh') {
     if (SKP.mode === 'list' && SKP.view === 'tools') { skpToolsRefresh(); render(); return; } // Item 09: the list on screen is the agent's tools
     if (SKP.mode === 'detail' && SKP.detailName) { refreshSkillList(); skpOpenDetail(SKP.detailName); return; }
@@ -27923,7 +28018,7 @@ async function llmEnsureModels() {
   if (!p || !BR) return;
   if (LLMP.modelsFor === p.id && (LLMP.modelsBusy || LLMP.models.length || LLMP.modelsErr)) return;
   if (LLMP.modelsRetry) { clearTimeout(LLMP.modelsRetry); LLMP.modelsRetry = null; }
-  LLMP.modelsFor = p.id; LLMP.models = []; LLMP.modelsBusy = true; LLMP.modelsErr = null; LLMP.modelsStale = false;
+  LLMP.modelsFor = p.id; LLMP.models = llmListCacheGet(p.id) || []; LLMP.modelsBusy = true; LLMP.modelsErr = null; LLMP.modelsStale = false;   // ATO-2413: the last good list shows while it is asked again
   llmRepaint();
   await llmFetchModels(p);
 }
@@ -27934,22 +28029,32 @@ async function llmEnsureModels() {
    the list is that snapshot: the pane says so, asks once more by itself, and
    carries a Retry. A list already on screen stays while it is asked again. */
 async function llmFetchModels(p) {
-  const res = await BR.providerModels(p.id, p.kind || '', true);
-  if (LLMP.modelsFor !== p.id) return;
+  // ATO-2413: a deadline, a throw read as an error, and only the newest ask for this provider lands.
+  const ask = LLMP.modelsAsk = (LLMP.modelsAsk || 0) + 1;
+  // A rejected ask still lands below as an error, so modelsBusy always clears.
+  const res = await llmListAsk(() => BR.providerModels(p.id, p.kind || '', true), providerWord(p.id))
+    .catch((err) => ({ok:false, error:'could not ask for the list: ' + ((err && err.message) || String(err))}));
+  if (LLMP.modelsFor !== p.id || LLMP.modelsAsk !== ask) return;
   LLMP.modelsBusy = false;
-  if (!res || !res.ok) {
-    if (!LLMP.models.length) LLMP.modelsErr = modelListFailLine(res, providerWord(p.id)) || (res && res.error) || 'could not list models';   // ATO-202
-  } else {
-    LLMP.models = res.models || []; LLMP.modelsErr = null; LLMP.modelsStale = res.stale === true;
-    if (LLMP.modelsStale && !LLMP.modelsRetry) {
-      LLMP.modelsRetry = setTimeout(() => {
-        const q = llmCloudSectionProvider(llmProvTabNow());
-        if (llmVisible() && q && q.id === p.id && LLMP.modelsFor === p.id && LLMP.modelsStale && !LLMP.modelsBusy) llmRetryModels();
-      }, 15000);
-    }
-  }
+  if (res.deadline && res.late) res.late.then((late) => {
+    if (!late || !late.ok || LLMP.modelsFor !== p.id || LLMP.modelsAsk !== ask || LLMP.modelsBusy) return;
+    llmTakeModels(p, late); llmClampCursors(); llmRepaint();
+  });
+  if (!res.ok) {
+    if (!LLMP.models.length) LLMP.modelsErr = modelListFailLine(res, providerWord(p.id)) || res.error || 'could not list models';   // ATO-202
+  } else llmTakeModels(p, res);
   llmClampCursors();
   llmRepaint();
+}
+function llmTakeModels(p, res) {
+  LLMP.models = res.models || []; LLMP.modelsErr = null; LLMP.modelsStale = res.stale === true;
+  if (!LLMP.modelsStale) llmListCachePut(p.id, LLMP.models);
+  if (LLMP.modelsStale && !LLMP.modelsRetry) {
+    LLMP.modelsRetry = setTimeout(() => {
+      const q = llmCloudSectionProvider(llmProvTabNow());
+      if (llmVisible() && q && q.id === p.id && LLMP.modelsFor === p.id && LLMP.modelsStale && !LLMP.modelsBusy) llmRetryModels();
+    }, 15000);
+  }
 }
 /* Ask for the live list again (the Retry under a built-in list, or the one timed retry). */
 function llmRetryModels() {
@@ -28075,6 +28180,8 @@ function llmCloudSection(tab) {
   const chat = (LLMP.modelsFor === p.id ? LLMP.models : []).filter((m) => m && m.kind !== 'embedding');
   chat.forEach((m) => add(m.id));
   const status = LLMP.modelsFor === p.id ? (LLMP.modelsBusy ? 'loading' : LLMP.modelsErr ? 'error' : 'ready') : 'loading';
+  // ATO-2413: "loading" with nothing asking (the config moved the section to another provider) starts the ask.
+  if (LLMP.modelsFor !== p.id && BR && t === llmProvTabNow()) llmListScheduleAsk(llmEnsureModels);
   const f = LLMP.filter.trim().toLowerCase();
   const filtered = f ? out.filter((id) => modelMatches(id, '', f)) : out;
   return {provider:p, status, error:LLMP.modelsErr, models:out, filtered, sectionStart:llmTabProviders(t).length};
@@ -28898,6 +29005,7 @@ function llmLocalHTML() {
       actions: '<button class="btn btn-s sm" data-act="llm:hf">' + logoHTML('huggingface', 'xs') + 'Add from Hugging Face</button>'})
     // ATO-1091: "Find the best model for my tasks" (fit-test.js), '' while the agent has no fit-test.
     + (typeof fitModelsPaneHTML === 'function' ? fitModelsPaneHTML() : '')
+    + (typeof modelsFolderHTML === 'function' ? modelsFolderHTML() : '')   // ATO-2106 (models-folder.js)
     + lcsContextHTML() // ATO-336: local-context-slots.js
     + llmSectionHTML('Embedding models', emb, text.length, cursor, null, false, {scope: 'local',
       note: '<p class="llm-note">Used to search the agent’s memory by meaning. Without one, it searches by keyword.</p>'})
@@ -29083,7 +29191,8 @@ function llmCloudModelListHTML(tab) {
     // ATO-318: the snapshot built into the app is not the provider's list; say so, with the way to ask again.
     + (section.status === 'ready' && LLMP.modelsStale ? '<div class="llm-counter llm-stale">The live list from ' + who + ' did not load, so this is the list built into the app. '
       + '<button class="llm-link" data-act="llm:modelsRetry">Try again</button></div>' : '')
-    + (section.status === 'error' ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">Couldn’t fetch the model list (' + esc(section.error || 'unknown error') + '). Showing the current model only.</span></div>' : '')
+    + (section.status === 'error' ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">Couldn’t fetch the model list (' + esc(section.error || 'unknown error') + '). Showing the current model only.</span>'
+      + '<button class="llm-link" data-act="llm:modelsRetry">Try again</button></div>' : '')   // ATO-2413
     + (visible.length ? '<div class="tk-list llm-list">' + visible.map((r, i) => llmRowHTML(r, section.sectionStart + start + i, cursor)).join('') + '</div>' : '')
     + (counter ? '<div class="llm-counter">' + esc(counter) + '</div>' : '');
 }
@@ -30094,11 +30203,12 @@ function llmVisionFetch(m) {
   llmPull('chat', m.id);
   return true;
 }
-function llmPull(kind, id) {
+function llmPull(kind, id, again) {
   if (!BR) return;
   if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes', 'info'); return; }
   LLMP.pulling = {kind, id}; LLMP.pullLog = ['starting ' + id + '…']; LLMP.pullFrame = null; llmRepaint();
-  const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : BR.modelsPull(id, {trigger: 'settings'});
+  // `again` (ATO-1745): the engine card's Download model again; main deletes a damaged file before the same pull.
+  const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : again ? BR.modelsRedownload(id) : BR.modelsPull(id, {trigger: 'settings'});
   p.then((res) => { if (res && res.ok === false) { LLMP.pulling = null; LLMP.statusErr = res.error || 'could not start the download'; llmRepaint(); } });
 }
 /* ATO-900: the memory model's card while its click runs. A step returns
@@ -30259,6 +30369,8 @@ async function llmExternalSave() {
   // llm.providers[local-llama].url together. The two leaf `config set` calls
   // this replaces never re-synced the provider url, so the runtime (which
   // takes the file's llm block verbatim) kept calling the old address.
+  // ATO-2012 / ATO-1760: a server with no model is saved, and the status line says why chats will wait.
+  const noModel = llamaModelWarning(p, res.url);
   const w = await BR.setExternalLlamaUrl(res.url);
   if (!w || w.ok === false) { llmReport(llmFail('local-llm URL write failed', w), 'external'); llmRepaint(); return; }
   await refreshLiveConfig();
@@ -30266,12 +30378,12 @@ async function llmExternalSave() {
   if (llmActiveTextId() !== 'local-llama') {
     if (!(await llmSwitchProvider('local-llama'))) return;
     // ATO-711: plain words in the pane, no `local-llm` / `local-llama` ids.
-    llmReport('Server address saved (' + p.latencyMs + ' ms)', 'external');
+    llmReport('Server address saved (' + p.latencyMs + ' ms)' + (noModel ? '. ' + noModel : ''), 'external');
     LLMP.msg = {text:'Server address saved: ' + res.url + '. Chats now run on your server; the agent was restarted.'};
     llmRefreshStatus();
     return;
   }
-  llmReport('Server address saved (' + p.latencyMs + ' ms)', 'external');
+  llmReport('Server address saved (' + p.latencyMs + ' ms)' + (noModel ? '. ' + noModel : ''), 'external');
   // The TUI rebuilds the registered provider in-process (runtime.reloadLlmProvider); the serve process needs the restart.
   llmRestartMsg('Server address saved: ' + res.url);
   llmRefreshStatus();
@@ -30821,12 +30933,8 @@ function telegramTab() {
   if (TG.mode === 'tokenPrompt') body += tgTokenPromptHTML();
   else if (hasToken === null) body += '<div class="tk-empty"><span class="tk-spin"></span><p>Loading…</p></div>';
   else if (!hasToken) {
-    // setup-state.ts not_connected (no token). ST-28: one card, one action.
-    body += '<div class="tk-card pad sd-tgcard sd-center">'
-      + (logoHTML('telegram', 'lg', 'send') || '<span class="tk-ico tk-ico--lg tk-ico--blue">' + ic('send') + '</span>')   // ATO-1634
-      + '<h3 class="sd-title">Connect Telegram</h3>'
-      + '<p>Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.</p>'
-      + '<button class="btn btn-p" data-act="telegram:token" title="Enter">Paste a bot token</button></div>';
+    // setup-state.ts not_connected (no token). ATO-426 U-76: why, three steps, @BotFather opens (telegram-token.js).
+    body += tgConnectCardHTML({esc, ic, logo: logoHTML});
   } else {
     body += tgStatusHTML(enabled, owner);
     // setup-state.ts needs_pairing. ATO-859: the card pairs here, through the agent's pairing route.
@@ -30876,7 +30984,7 @@ function tgRowsHTML(enabled, owner) {
   return '<div class="tk-card sd-rows">'
     + row('Answer in Telegram', 'When this is off, the bot ignores every message.',
       '<button class="tk-switch" role="switch" aria-checked="' + (enabled === true) + '" aria-label="Answer in Telegram" data-act="telegram:enable"' + (busy || enabled === null ? ' disabled' : '') + '></button>')
-    + row('Bot token', 'Saved on this computer.',
+    + row('Bot token', 'Saved on this computer.' + (TG.bot ? ' Telegram knows it as ' + esc(TG.bot) + '.' : ''),   // ATO-426 U-77: the bot the last check confirmed
       '<button class="btn btn-s sm" data-act="telegram:token">Change token</button>'
       + '<button class="btn btn-danger sm" data-act="telegram:clearToken"' + (busy ? ' disabled' : '') + '>' + (TG.confirm === 'clearToken' ? 'Click again to remove' : 'Remove token') + '</button>')
     + (owner !== null ? row('Owner', 'Only this Telegram account can talk to the bot.',
@@ -30917,18 +31025,24 @@ function tgOtherPollerHTML(ch) {
     : 'This bot is already answering from somewhere else (another computer or app using the same token), so this agent cannot. Stop it there, or give this agent its own bot, then press Restart agent.';
   return '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(text) + '</span></div>';
 }
-/* telegram-token-prompt.tsx: a password input masks the token; the value never reaches state or the DOM as text. ST-29. */
-function tgTokenPromptHTML() {
-  const t = TG.token;
-  return '<div class="tk-card pad sd-tgcard">'
-    + '<h3 class="sd-title">Bot token</h3>'
-    + '<p>Paste the token @BotFather gave you. It is saved on this computer, in a file only your user account can read.</p>'
-    + '<label class="tk-inpwrap sd-tokwrap' + (t.error ? ' is-error' : '') + '">' + ic('key')
-    + '<input id="tg-token" type="password" autocomplete="off" spellcheck="false" aria-label="Bot token"' + (t.submitting ? ' disabled' : '') + '></label>'
-    + (t.error ? '<p class="tk-help tk-help--err">' + esc(t.error) + '</p>' : '')
-    + '<div class="sd-acts">' + (t.submitting ? '<span class="sd-cap">saving…</span>' : '') + '<span class="sd-grow"></span>'
-    + '<button class="btn btn-g sm" data-act="telegram:tokenCancel">Cancel</button>'
-    + '<button class="btn btn-p sm" data-act="telegram:tokenSave"' + (t.submitting ? ' disabled' : '') + '>Save</button></div></div>';
+/* telegram-token-prompt.tsx: a password input masks the token; the value never reaches state or the DOM as text. ST-29.
+   ATO-426 U-77: the markup is telegram-token.js (placeholder, Show / Hide, Save waits for text). */
+function tgTokenPromptHTML() { return tgTokenPromptCardHTML(TG.token, {esc, ic}); }
+/* The token field's own typing (the `input` delegate): Save follows whether there is text; the value stays in the field. */
+function tgTokenTyped(input) {
+  TG.token.hasText = tgTokenSaveEnabled(input.value);
+  const save = document.querySelector('[data-tg-token-prompt] [data-act="telegram:tokenSave"]');
+  if (save) save.disabled = !TG.token.hasText || !!(TG.token.submitting || TG.token.checking);
+}
+/* Show / Hide: the field's type flips in place, so what is typed stays and the caret keeps its spot. */
+function tgTokenReveal() {
+  TG.token.shown = !TG.token.shown;
+  const input = document.getElementById('tg-token');
+  if (!input) { tgRepaint(); return; }
+  input.type = TG.token.shown ? 'text' : 'password';
+  const btn = document.querySelector('[data-act="telegram:tokenReveal"]');
+  if (btn) { btn.innerHTML = ic(TG.token.shown ? 'eyeOff' : 'eye'); btn.setAttribute('aria-pressed', String(TG.token.shown)); btn.title = btn.ariaLabel = TG.token.shown ? 'Hide the token' : 'Show the token'; }
+  input.focus();
 }
 /* `kind`: 'owed' — a change the agent loads at start, so a restart is owed from now; 'restarting'; 'info'. */
 function tgSetMessage(text, kind) {
@@ -30941,24 +31055,37 @@ function tgSetMessage(text, kind) {
    port), "token saved", then the connect chain's next step — with a
    channel the desktop cannot see, that is `set_enabled` when telegram is
    off (setup-flow.ts decideConnectAction). */
-async function tgTokenSave(value) {
+async function tgTokenSave(value, opts) {
   const input = document.getElementById('tg-token');
   const raw = value !== undefined ? value : (input ? input.value : '');
-  const trimmed = String(raw || '').trim();
-  if (!trimmed) { TG.token.error = 'Paste the token first.'; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return {ok:false, error:TG.token.error}; }
+  /* ATO-426 U-77: the shape is checked before anything is written, then the token is checked with Telegram
+     (telegram-token.js, main/telegram-token-check.ts): a token Telegram refuses is never saved. `opts.raw` is
+     the smoke's writer round trip (an unshaped value that proves the .env quoting), never a person's path. */
+  const clean = opts && opts.raw ? {ok:true, value:String(raw || '').trim()} : tgTokenClean(raw);
+  if (!clean.ok || !clean.value) { TG.token.error = clean.error || TG_TOKEN_EMPTY; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return {ok:false, error:TG.token.error}; }
+  const trimmed = clean.value;
   const stateDir = memStateDir();
   if (!BR || !stateDir) { TG.token.error = 'The app is still starting. Try again in a moment.'; tgRepaint(); return {ok:false, error:TG.token.error}; }
+  let outcome = {save:true, message:'Token saved.', error:null, bot:null};
+  if (!(opts && opts.raw) && BR.telegramCheckToken) {
+    TG.token.checking = true; TG.busy = true; tgRepaint();
+    let chk;
+    try { chk = await BR.telegramCheckToken(trimmed); } catch (e) { chk = {ok:false, rejected:false, error:String((e && e.message) || e)}; }
+    TG.token.checking = false;
+    outcome = tgTokenCheckOutcome(chk);
+    if (!outcome.save) { TG.busy = false; TG.token.error = outcome.error; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return {ok:false, error:TG.token.error, rejected:true}; }
+  }
   TG.token.submitting = true; TG.busy = true; tgRepaint();
   const res = await BR.dotenvSet(stateDir, 'TELEGRAM_BOT_TOKEN', trimmed);
   // The prompt says it under the field; the tab's error line said it a second time.
   if (!res || res.ok === false) { TG.token.submitting = false; TG.busy = false; TG.token.error = 'Could not save the token: ' + ((res && res.error) || 'unknown error'); tgRepaint(); return {ok:false, error:TG.token.error}; }
-  TG.mode = 'list'; TG.token = {error:null, submitting:false};
-  tgSetMessage('Token saved.', 'owed');
+  TG.mode = 'list'; TG.token = tgTokenInitial(); TG.bot = outcome.bot;
+  tgSetMessage(outcome.message, 'owed');
   await tgRefresh();
   if (tgEnabled() === false) {
     const w = await BR.configSet('telegram.enabled', 'true');
     if (!w || w.ok === false) TG.lastError = 'Could not turn Telegram on: ' + ((w && w.error) || 'unknown error');
-    else tgSetMessage('Token saved and Telegram turned on.', 'owed');
+    else tgSetMessage(outcome.message.replace(/^Token saved\./, 'Token saved and Telegram turned on.'), 'owed');
     await tgRefresh();
   }
   TG.busy = false; tgRepaint();
@@ -31002,9 +31129,12 @@ function telegramAct(what) {
   if (confirmVerb && armed === verb && Date.now() - TG.confirmAt < TG_CONFIRM_MIN_MS) return;
   TG.confirm = null;
   if (confirmVerb && armed !== verb) { TG.confirm = verb; TG.confirmAt = Date.now(); tgRepaint(); return; }
-  if (verb === 'token') { TG.mode = 'tokenPrompt'; TG.token = {error:null, submitting:false}; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return; }
+  if (verb === 'token') { TG.mode = 'tokenPrompt'; TG.token = tgTokenInitial(); tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return; }
   if (verb === 'tokenSave') { tgTokenSave(arg || undefined); return; }
-  if (verb === 'tokenCancel') { TG.mode = 'list'; TG.token = {error:null, submitting:false}; tgRepaint(); return; }
+  // ATO-426 U-76/U-77: @BotFather opens in Telegram (the Discord pane's `portal`); the eye shows or hides what is typed.
+  if (verb === 'botfather') { if (BR && BR.openExternal) BR.openExternal(TG_BOTFATHER_URL); return; }
+  if (verb === 'tokenReveal') { tgTokenReveal(); return; }
+  if (verb === 'tokenCancel') { TG.mode = 'list'; TG.token = tgTokenInitial(); tgRepaint(); return; }
   if (verb === 'clearToken') { tgClearToken(); return; }
   if (verb === 'enable') { const e = tgEnabled(); if (e !== null) tgSetEnabled(!e); return; }
   if (verb === 'clearOwner') { tgClearOwner(); return; }
@@ -31743,7 +31873,8 @@ if (typeof window !== 'undefined') {
     // ATO-859: where pairing stands, never the code itself.
     pair: {phase: TG.pair.phase, supported: TG.pair.supported, hasCode: !!TG.pair.code, pairedLine: TG.pair.pairedLine, error: TG.pair.error}});
   window.__telegramAct = (what) => { telegramAct(what); return window.__telegram(); };
-  window.__telegramTokenSave = async (value) => { TG.mode = 'tokenPrompt'; TG.token = {error:null, submitting:false}; const r = await tgTokenSave(value); return Object.assign({}, r, {state: window.__telegram()}); };
+  // The smoke's value is unshaped on purpose (whitespace and `#`, to prove the writer quotes it), so it skips the shape and Telegram checks (ATO-426).
+  window.__telegramTokenSave = async (value) => { TG.mode = 'tokenPrompt'; TG.token = tgTokenInitial(); const r = await tgTokenSave(value, {raw:true}); return Object.assign({}, r, {state: window.__telegram()}); };
   window.__telegramClearToken = async () => { await tgClearToken(); return window.__telegram(); };
   window.__telegramRefresh = async () => { await tgRefresh(); return window.__telegram(); };
   // Composio: the pane's state, never the key (the drafts and saves go through the field, as a person types).

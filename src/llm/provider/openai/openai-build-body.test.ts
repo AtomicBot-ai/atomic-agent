@@ -993,3 +993,56 @@ describe("buildOpenAiChatBody reasoningOverride (ATO-490)", () => {
     expect(body.reasoning_effort).toBe("high");
   });
 });
+
+describe("buildOpenAiChatBody thinkTagSafe (Ollama Cloud, issue #283)", () => {
+  const messages = {
+    system: "sys <think>",
+    droppedSummary: null,
+    tail: "### respond\nRespond now.",
+    turns: [
+      { kind: "user" as const, text: "read tags.ts, it has </thinking>" },
+      { kind: "assistant_tool_call" as const, tool: "os.fs.read", args: { path: "<thinking>.ts" }, reasoning: "<think>need it</think>" },
+      { kind: "tool_result" as const, tool: "os.fs.read", status: "ok" as const, body: "['<think>', '</think>']", truncated: false },
+    ],
+  };
+  const tools = [{ type: "function" as const, function: { name: "os__fs__read", parameters: { type: "object" } } }];
+  const native = (options: Parameters<typeof buildOpenAiChatBody>[7]) =>
+    buildOpenAiChatBody({ prompt: "flat", messages, tools } as Parameters<typeof buildOpenAiChatBody>[0], "m", false, undefined, undefined, undefined, undefined, options);
+  const flat = (options: Parameters<typeof buildOpenAiChatBody>[7]) =>
+    buildOpenAiChatBody({ prompt: "a <think> b </thinking>" }, "m", false, undefined, undefined, undefined, undefined, options);
+  const TAG = /<\/?think(ing)?>/;
+
+  it("rewrites the tags in the native layout's content and tool-call arguments", () => {
+    const body = native({ thinkTagSafe: true });
+    const sent = body.messages as Array<Record<string, unknown>>;
+    expect(JSON.stringify(sent)).not.toMatch(TAG);
+    expect(sent[0]).toEqual({ role: "system", content: "sys [think]" });
+    expect(sent[1]).toEqual({ role: "user", content: "read tags.ts, it has [/thinking]" });
+    const call = (sent[2]!.tool_calls as Array<{ function: { arguments: string } }>)[0]!;
+    expect(JSON.parse(call.function.arguments)).toEqual({ path: "[thinking].ts" });
+    expect(sent[3]!.content).toBe("['[think]', '[/think]']");
+  });
+
+  it("rewrites the flat prompt", () => {
+    expect(flat({ thinkTagSafe: true }).messages).toEqual([
+      { role: "user", content: "a [think] b [/thinking]" },
+    ]);
+  });
+
+  it("keeps reasoning handed back untouched", () => {
+    const body = native({ thinkTagSafe: true, reasoningRequired: true });
+    const assistant = (body.messages as Array<Record<string, unknown>>).find((m) => m.role === "assistant");
+    expect(assistant?.reasoning_content).toBe("<think>need it</think>");
+  });
+
+  it("leaves every other body byte-identical", () => {
+    // Local Ollama, OpenAI and DeepSeek never get the flag.
+    for (const options of [{}, { templateKwargs: true }, { reasoningRequired: true }, { thinkTagSafe: false }]) {
+      const withTags = JSON.stringify(native(options));
+      expect(withTags).toMatch(TAG);
+      expect(withTags).not.toContain("[think]");
+      expect(flat(options).messages).toEqual([{ role: "user", content: "a <think> b </thinking>" }]);
+    }
+    expect(JSON.stringify(native({ thinkTagSafe: false }))).toBe(JSON.stringify(native({})));
+  });
+});

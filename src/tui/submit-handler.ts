@@ -5,6 +5,7 @@ import {
 } from "./commands/slash-command-handler.js";
 import { runRunModeVerb } from "./commands/run-mode-verb.js";
 import { runModelModeCommand } from "./commands/model-mode-command.js";
+import { runModelRingCommand } from "./model-ring/model-ring-actions.js";
 import { runPersonaCommand } from "./commands/persona-command.js";
 import { describeThinkLevel } from "./commands/think-command.js";
 import {
@@ -278,6 +279,7 @@ function runEnhanceCurrentDraft(
  * exactly as if the user had typed it.
  */
 function prepareInvocationText(result: SlashDispatchResult, callbacks: TuiAppCallbacks): string {
+  if (result.messageText !== undefined) return result.messageText;
   if (result.skillInvocation) {
     if (!callbacks.prepareSkillInvocation) throw new Error("Skill invocation is unavailable");
     const { name, input } = result.skillInvocation;
@@ -324,7 +326,7 @@ export function runSlashCommand(
 ): void {
   reportBuiltInSlashCommand(raw, via, callbacks);
   const result: SlashDispatchResult = dispatchSlashCommand(raw, skillSlashCommands(state.skillsPanel));
-  if (result.skillInvocation || result.pluginCommandInvocation) {
+  if (result.skillInvocation || result.pluginCommandInvocation || result.messageText !== undefined) {
     if (!canTypeMessage(state)) return;
     try {
       const text = prepareInvocationText(result, callbacks);
@@ -421,6 +423,7 @@ export function runSlashCommand(
     runModelModeCommand(result.modelModeCommand, dispatch);
     callbacks.onSkillsRefreshRequested?.();
   }
+  if (result.modelRingCommand) runModelRingCommand(result.modelRingCommand, state, dispatch);
   if (result.personaCommand) runPersonaCommand(result.personaCommand, dispatch);
   // ATO-490: `/think`. The level reaches the orchestrator, which sends it on the next turns.
   if (result.reasoningLevel !== undefined) callbacks.onReasoningLevelChanged?.(result.reasoningLevel);

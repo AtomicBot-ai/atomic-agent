@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { builtinAgentProfileSet, type AgentProfileSet } from "../../agent-profiles/index.js";
 import type { AgentProfile } from "../../agent-profiles/index.js";
 import type { DelegateTask } from "./delegate-args.js";
-import { applyTaskProfiles } from "./task-profiles.js";
+import { applyTaskProfiles, loadAndApplyTaskProfiles } from "./task-profiles.js";
 import { isWorkerVisibleTool, workerToolFilterFor } from "./worker-tool-policy.js";
 import { renderWorkerBrief } from "./worker-prompt.js";
 
@@ -118,5 +118,94 @@ describe("renderWorkerBrief with a profile (ATO-566)", () => {
 
   it("is unchanged for a task without a profile", () => {
     expect(renderWorkerBrief(task(), { workingDir: "/w" })).not.toContain("PROFILE");
+  });
+});
+
+describe("loadAndApplyTaskProfiles (ATO-1743)", () => {
+  function warnings() {
+    const lines: Array<{ message: string; fields: unknown }> = [];
+    return {
+      lines,
+      logger: {
+        warn: (message: string, fields?: unknown) => {
+          lines.push({ message, fields });
+        },
+      },
+    };
+  }
+
+  it("loads nothing when no task names a profile and hands the same tasks back", () => {
+    const tasks = [task()];
+    const resolveAgentProfiles = vi.fn(() => builtinAgentProfileSet());
+    const out = loadAndApplyTaskProfiles({
+      tasks,
+      workingDir: "/w",
+      resolveAgentProfiles,
+      allowedModels: ALLOWED,
+      logPrefix: "fusion",
+    });
+    expect(resolveAgentProfiles).not.toHaveBeenCalled();
+    expect(out).toEqual({ ok: true, tasks, applied: [] });
+    if (out.ok) expect(out.tasks).toBe(tasks);
+  });
+
+  it("falls back to the built-ins and logs a warning when the loader throws", () => {
+    const log = warnings();
+    const out = loadAndApplyTaskProfiles({
+      tasks: [task({ profile: "review" })],
+      workingDir: "/w",
+      resolveAgentProfiles: () => {
+        throw new Error("disk gone");
+      },
+      allowedModels: ALLOWED,
+      logger: log.logger,
+      logPrefix: "subagent",
+    });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.applied[0]).toMatchObject({ task: "t1", profile: "review", source: "builtin" });
+    expect(out.tasks[0]?.agentProfile?.name).toBe("review");
+    expect(log.lines).toEqual([
+      { message: "subagent: loading agent profiles failed", fields: { error: "disk gone" } },
+    ]);
+  });
+
+  it("logs the loader's diagnostics under the caller's prefix", () => {
+    const log = warnings();
+    const base = builtinAgentProfileSet();
+    loadAndApplyTaskProfiles({
+      tasks: [task({ profile: "explore" })],
+      workingDir: "/w",
+      resolveAgentProfiles: () => ({ ...base, diagnostics: ["broken.md: no name"] }),
+      allowedModels: ALLOWED,
+      logger: log.logger,
+      logPrefix: "fusion",
+    });
+    expect(log.lines).toEqual([
+      { message: "fusion: agent profile problems", fields: { diagnostics: ["broken.md: no name"] } },
+    ]);
+  });
+
+  it("uses the built-ins when no loader is given", () => {
+    const out = loadAndApplyTaskProfiles({
+      tasks: [task({ profile: "explore" })],
+      workingDir: "/w",
+      allowedModels: ALLOWED,
+      logPrefix: "fusion",
+    });
+    expect(out.ok).toBe(true);
+  });
+
+  it("refuses an unknown profile", () => {
+    const out = loadAndApplyTaskProfiles({
+      tasks: [task({ profile: "nope" })],
+      workingDir: "/w",
+      resolveAgentProfiles: () => builtinAgentProfileSet(),
+      allowedModels: ALLOWED,
+      logPrefix: "fusion",
+    });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error).toContain('task "t1" names profile "nope"');
   });
 });

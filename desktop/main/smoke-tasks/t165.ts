@@ -66,9 +66,20 @@ function rendererCss(): string {
   return sheets.map((href) => { try { return readFileSync(join(dir, href), "utf8"); } catch { return ""; } }).join("\n");
 }
 
-/** The row menu's optional rows between Rename and Delete…, in their one order (T165a). */
-const MENU_MIDDLE: ReadonlyArray<readonly [string, string]> = [["fpick", "Move to project…"], ["archive", "Archive"], ["export", "Export…"]];
-function middleRowsInOrder(verbs: string[], labels: string[]): boolean {
+/** The row menu's optional rows between Rename and Delete…, in their one order (T165a).
+ *  Mirrors chatMenuItems in renderer/chat-list.js for a stored chat; smoke-t165-menu.test.mjs
+ *  holds the two together. ATO-1726: the rows added since the list was first written. */
+export const MENU_MIDDLE: ReadonlyArray<readonly [string, string]> = [
+  ["fpick", "Move to project…"],                    // ATO-1034
+  ["archive", "Archive"],                           // ATO-1150 (#1384)
+  ["pworkers", "Split into worker chats…"],         // ATO-1173
+  ["export", "Export…"],                            // ATO-1054 (#1502)
+  ["popout", "Open in new window"],                 // ATO-561
+  ["houtopen", "Hand off to Claude / Codex…"],      // ATO-1014
+  ["share", "Share chat…"],                         // ATO-581
+  ["recipe:save", "Save as recipe…"],               // ATO-1072
+];
+export function middleRowsInOrder(verbs: string[], labels: string[]): boolean {
   let at = 0;
   return verbs.every((v, i) => {
     while (at < MENU_MIDDLE.length && MENU_MIDDLE[at]![0] !== v) at++;
@@ -121,8 +132,9 @@ export async function checks165(js: Js, check: Check): Promise<void> {
       check(
         "T165a: the \"…\" opens the row menu — Pin/Unpin, Mark as read/unread, Rename (ATO-455), then Delete… under a rule — without opening the chat",
         /* ATO-1034 (folders): a stored chat also has "Move to project…" (fpick, W2 QA) before Delete…;
-           ATO-1150 (#1384): then "Archive" (archive); ATO-1054 (#1502): then "Export…" (export).
-           Each of the three may be absent, but those drawn keep that order. */
+           ATO-1150 (#1384): then "Archive"; ATO-1173: "Split into worker chats…"; ATO-1054 (#1502): "Export…";
+           ATO-561: "Open in new window"; ATO-1014: "Hand off to Claude / Codex…"; ATO-581: "Share chat…";
+           ATO-1072: "Save as recipe…" (MENU_MIDDLE). Each may be absent, but those drawn keep that order. */
         !!m && m.role === "menu" && m.overlay === "sesmenu" && m.id === a.id
           && m.verbs.length >= 4 && middleRowsInOrder(m.verbs.slice(3, -1), m.labels.slice(3, -1))
           && ["pin", "unpin"].includes(m.verbs[0]) && ["read", "unread"].includes(m.verbs[1])
@@ -312,6 +324,9 @@ export async function checks165(js: Js, check: Check): Promise<void> {
       if (S.overlay === 'sesmenu' || S.alert) act('close');
       const i = SESSIONS.findIndex((s) => String(s.id).indexOf('smoke-ato165-') === 0);
       if (i >= 0) SESSIONS.splice(i, 1);
+      // ATO-2332: the probe went to Trash, not the agent; it leaves Trash too (no agent call).
+      TRASH.entries.filter((e) => e.id.indexOf('smoke-ato165-') === 0).forEach((e) => { if (BR.chatTrashRestore) BR.chatTrashRestore(e.id); });
+      TRASH.entries = TRASH.entries.filter((e) => e.id.indexOf('smoke-ato165-') !== 0);
       PREFS.pinned = ${show(keep.pinned)}; PREFS.seen = ${show(keep.seen)}; savePrefs(); render();
     })()`);
     if (keep.open) { await js<unknown>(`window.__openSession(${show(keep.open)})`); await wait(800); }

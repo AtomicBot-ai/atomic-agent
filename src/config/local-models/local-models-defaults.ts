@@ -27,6 +27,7 @@ export function createLocalModelsDefaults(): UserLocalModelsConfig {
     thinking: "auto",
     reasoningBudgetTokens: 0,
     drySampler: false,
+    modelSampling: false,
     strictToolArgs: false,
     managed: {
       engine: "atomic-core",
@@ -37,6 +38,7 @@ export function createLocalModelsDefaults(): UserLocalModelsConfig {
       stopOnExit: true,
       autoRestart: true,
       promptDiskCache: false,
+      share: false,
       device: "auto",
       backendVariant: "auto",
       coreBackendVariant: "auto",
@@ -44,6 +46,8 @@ export function createLocalModelsDefaults(): UserLocalModelsConfig {
       tensorSplit: [],
       parallel: "auto",
       swaFull: "auto",
+      cpuMoe: "auto",
+      rpcServers: [],
     },
     embeddings: {
       enabled: false,

@@ -11,6 +11,10 @@ import { describeFailedAttempts } from "../../llm/fallback/index.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { SessionState } from "../../session/index.js";
+import {
+  channelGuestMetadata,
+  isChannelGuestSession,
+} from "../../session/channel-guest-session.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import {
@@ -21,13 +25,23 @@ import {
 } from "../attachments/inbox.js";
 import { runModelCommand } from "../model-command.js";
 import { runCronCommand } from "./cron-command.js";
+import { runTelegramFork } from "./telegram-fork-command.js";
 import { cronTaskServiceFromRuntime } from "./cron-task-service.js";
 import { formatTaskLiveStatus } from "./task-status-message.js";
 import {
   shouldAnnounceSender,
   withSenderIdentity,
   type SenderIdentity,
+  type SenderRole,
 } from "../sender-identity.js";
+import type { TelegramAllowedUser } from "../../config/telegram-allowed-users.js";
+import {
+  guestCommandRefusal,
+  guestTurnOptions,
+  hasGuests,
+  isGuestCommandAllowed,
+  resolveSenderRole,
+} from "./guest-access.js";
 import {
   formatAttachmentFailure,
   sendAttachments,
@@ -49,6 +63,7 @@ import {
 } from "./telegram-progress-indicator.js";
 import {
   telegramChatKey,
+  telegramGuestChatKey,
   type TelegramSessionPointer,
 } from "./telegram-session-pointer.js";
 import { TelegramLiveReply } from "./telegram-live-reply.js";
@@ -88,7 +103,7 @@ export interface InboundTextUpdate {
     last_name?: string;
     username?: string;
   };
-  chat: { id: number; type: string; title?: string };
+  chat: { id: number; type: string; title?: string; is_forum?: boolean };
   text: string;
   message_id: number;
   /** Set on every message inside a forum topic (and on replies). */
@@ -188,7 +203,17 @@ export interface InboundContext {
    * exercise the text path. Idempotent — the channel no-ops when the
    * binding is already current.
    */
-  ensureApprovalSession?: (sessionId: string, target: TelegramTarget) => void;
+  ensureApprovalSession?: (
+    sessionId: string,
+    target: TelegramTarget,
+    opts?: { shared?: boolean },
+  ) => void;
+  /**
+   * Guests besides the owner (`telegram.allowedUsers`, ATO-2221). Heard
+   * in groups only, with read-only tools; see `guest-access.ts`. Absent
+   * or empty: owner only, exactly as before.
+   */
+  allowedUsers?: readonly TelegramAllowedUser[];
   /**
    * Drop the approval binding for a session this chat no longer talks
    * to (`/new`, `/switch`). Optional for the same reason as above.
@@ -298,6 +323,7 @@ function helpText(ctx: InboundContext): string {
     "  /sessions — every chat this bot has a session for\n" +
     "  /switch <session-id> — point this chat at an existing session\n" +
     "  /new — rotate this chat to a fresh session (current one is archived)\n" +
+    "  /fork: copy this chat's session into a new topic (in a forum) or continue the copy here\n" +
     "  /model — show the provider and model in use; /model <provider> [model-id] switches\n" +
     "  /cron — list scheduled tasks; /cron add <cron> <task>, /cron pause|resume|delete <id> (/cron help)\n" +
     "  /cancel — abort this chat's current turn if one is running"
@@ -314,6 +340,8 @@ interface ChatRef {
   /** Human label for `/sessions` and session metadata. */
   label: string;
   chatType: string;
+  /** A supergroup with topics (`chat.is_forum`); `/fork` opens a topic there. */
+  isForum?: boolean;
 }
 
 /**
@@ -352,7 +380,14 @@ export async function handleInboundText(
   // echoed back through the agent. Only private chats can pair. The
   // channel logs the outcome, never the code.
   if (isPrivate && ctx.tryClaimForPairing?.(update)) return;
-  if (ctx.ownerUserId === null || fromId !== ctx.ownerUserId) {
+  // The owner, a configured guest (groups only, ATO-2221), or nobody.
+  const role = resolveSenderRole({
+    fromId,
+    isPrivate,
+    ownerUserId: ctx.ownerUserId,
+    allowedUsers: ctx.allowedUsers,
+  });
+  if (role === null) {
     ctx.logger.warn("telegram: dropping non-owner message", {
       fromId,
       chatId: update.chat.id,
@@ -372,14 +407,28 @@ export async function handleInboundText(
   // then silently fill from `legacy`.
   adoptLegacyForDm(ref, ctx);
   if (text.startsWith("/")) {
+    // A guest gets the help text and nothing else (`guest-access.ts`).
+    const verb = text.split(/\s+/)[0] ?? text;
+    if (role === "guest" && !isGuestCommandAllowed(verb)) {
+      await sendText(ctx, ref.target, guestCommandRefusal(verb));
+      return;
+    }
     await handleSlashCommand(text, ref, ctx, fromId);
     return;
   }
   // Who is speaking, and in which group/topic. Skipped in a DM: a
   // private chat only ever reaches this line for the single configured
   // `ownerUserId`, so the block would restate a constant on every turn
-  // forever. See `shouldAnnounceSender`.
-  await dispatchToRuntime(text, ref, ctx, senderOf(update, ref));
+  // forever. See `shouldAnnounceSender`. With guests configured the line
+  // also says `role=owner|guest`; without, it is byte-identical to before.
+  const announcedRole = hasGuests(ctx.allowedUsers) ? role : undefined;
+  await dispatchToRuntime(
+    text,
+    ref,
+    ctx,
+    senderOf(update, ref, announcedRole),
+    role,
+  );
 }
 
 /**
@@ -393,6 +442,7 @@ export async function handleInboundText(
 function senderOf(
   update: InboundTextUpdate,
   ref: ChatRef,
+  role?: SenderRole,
 ): SenderIdentity | null {
   if (!shouldAnnounceSender("telegram", ref.chatType)) return null;
   const from = update.from;
@@ -410,6 +460,7 @@ function senderOf(
     ...(ref.target.threadId === undefined
       ? {}
       : { threadId: String(ref.target.threadId) }),
+    ...(role === undefined ? {} : { role }),
   };
 }
 
@@ -508,6 +559,7 @@ function chatRefOf(update: InboundTextUpdate, isPrivate: boolean): ChatRef {
     isPrivate,
     label: threadId === undefined ? base : `${base} › topic ${threadId}`,
     chatType: update.chat.type,
+    ...(update.chat.is_forum === true ? { isForum: true } : {}),
   };
 }
 
@@ -785,8 +837,15 @@ async function handleSlashCommand(
       );
       return;
     }
+    case "/fork":
+      for (const m of await runTelegramFork(ref, ctx)) await sendText(ctx, m.target, m.text);
+      return;
     case "/cancel": {
-      const controller = ctx.inflight.get(ref.key);
+      // The owner's turn here, else the guests' one (ATO-2221): guests
+      // talk to their own session, so their turn has its own key.
+      const controller =
+        ctx.inflight.get(ref.key) ??
+        (ref.isPrivate ? undefined : ctx.inflight.get(telegramGuestChatKey(ref.key)));
       if (!controller) {
         await sendText(ctx, ref.target, "No turn in progress in this chat.");
         return;
@@ -878,9 +937,18 @@ async function dispatchToRuntime(
   ref: ChatRef,
   ctx: InboundContext,
   sender: SenderIdentity | null = null,
+  role: SenderRole = "owner",
 ): Promise<void> {
   const prompt = withSenderIdentity(text, sender);
-  const session = acquireOrCreateSession(ref, ctx);
+  // A guest talks to the group's guest session (ATO-2221), never the
+  // owner's: a separate id has its own history and none of the owner's
+  // approval or read-scope grants. Same chat target, so replies still
+  // land in the group; its own key for the session map, `inflight` and
+  // the live status. `/cancel` from the owner reaches it too.
+  if (role === "guest") {
+    ref = { ...ref, key: telegramGuestChatKey(ref.key), label: `${ref.label} (guests)` };
+  }
+  const session = acquireOrCreateSession(ref, ctx, role === "guest");
   // Count agent-visible inbound messages (post owner-check, post
   // slash-command-shortcut). Slash commands and dropped non-owner
   // DMs are intentionally excluded — they never reach `runTurn`.
@@ -891,7 +959,22 @@ async function dispatchToRuntime(
   // turn step can request approval — `ApprovalRouter.setForSession`
   // is the only path that turns a generic `ApprovalRequest` into a
   // 2-button keyboard in this chat. Idempotent on the channel side.
-  ctx.ensureApprovalSession?.(session.id, ref.target);
+  //
+  // With guests configured (ATO-2221) a group session's approvals go to
+  // the owner's DM instead of the group, for the owner's turns and the
+  // guests' session alike: a prompt (and its command preview) posted in
+  // the group would show the owner's work to the guests.
+  // Only the owner can press the buttons either way (`approval-bridge`);
+  // a DM that cannot be delivered denies the request.
+  if (!ref.isPrivate && hasGuests(ctx.allowedUsers) && ctx.ownerUserId !== null) {
+    ctx.ensureApprovalSession?.(
+      session.id,
+      { chatId: ctx.ownerUserId },
+      { shared: true },
+    );
+  } else {
+    ctx.ensureApprovalSession?.(session.id, ref.target);
+  }
   const controller = new AbortController();
   ctx.inflight.set(ref.key, controller);
 
@@ -996,6 +1079,8 @@ async function dispatchToRuntime(
       origin: "telegram",
       signal: controller.signal,
       eventHook,
+      // A guest's turn: read-only tools, no memory writes.
+      ...(role === "guest" ? guestTurnOptions(ctx.runtime.toolRegistry) : {}),
     });
     // A steer accepted for this turn but never delivered: the chat is
     // the host here, so tell it rather than dropping the text silently.
@@ -1095,20 +1180,26 @@ async function dispatchToRuntime(
 function acquireOrCreateSession(
   ref: ChatRef,
   ctx: InboundContext,
+  guest = false,
 ): SessionState {
   const current = ctx.sessionPointer.get(ref.key).current;
   if (current) {
     const existing = ctx.runtime.sessionStore.load(current);
-    if (existing) return existing;
+    // A guest key only ever runs a guest session: an entry pointing
+    // anywhere else (a hand-edited map) is replaced, never reused.
+    if (existing && (!guest || isChannelGuestSession(existing))) return existing;
     ctx.logger.warn(
-      "telegram: pointer references missing session, recreating",
+      existing
+        ? "telegram: guest pointer references a non-guest session, recreating"
+        : "telegram: pointer references missing session, recreating",
       {
         chatKey: ref.key,
         sessionId: current,
       },
     );
-    // Nothing can ever request approval for a session that is gone.
-    ctx.releaseApprovalSession?.(current);
+    // Nothing can ever request approval for a session that is gone. A
+    // live non-guest session keeps its binding: it is someone's chat.
+    if (!existing) ctx.releaseApprovalSession?.(current);
   }
   const chat: Record<string, unknown> = {
     id: ref.target.chatId,
@@ -1117,7 +1208,11 @@ function acquireOrCreateSession(
   };
   if (ref.target.threadId !== undefined) chat.threadId = ref.target.threadId;
   const fresh = ctx.runtime.createSession({
-    metadata: { telegramChannel: true, telegramChat: chat },
+    metadata: {
+      telegramChannel: true,
+      telegramChat: chat,
+      ...(guest ? channelGuestMetadata() : {}),
+    },
   });
   ctx.sessionPointer.setCurrent(ref.key, fresh.id, ref.label);
   return fresh;

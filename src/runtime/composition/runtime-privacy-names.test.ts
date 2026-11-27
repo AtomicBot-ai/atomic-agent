@@ -1,0 +1,99 @@
+import { describe, expect, it, vi } from "vitest";
+
+import type { CompletionRequest, LlmProvider, LlmProviderConfigEntry, ResolvedLlmConfig } from "../../llm/provider/index.js";
+import { isLocalProviderEntry, localNameModelFor, pickLocalNameEntry } from "./runtime-privacy-names.js";
+
+const LOCAL_URL = "http://127.0.0.1:9931";
+
+function llm(providers: LlmProviderConfigEntry[], active: string): ResolvedLlmConfig {
+  return {
+    activeTextProvider: active,
+    activeEmbeddingProvider: "local-llama-embed",
+    providers,
+    toolTransport: "auto",
+  };
+}
+
+describe("isLocalProviderEntry (ATO-2394)", () => {
+  it("takes llama-server and servers on this machine", () => {
+    expect(isLocalProviderEntry({ id: "a", kind: "llama-server" }, LOCAL_URL)).toBe(true);
+    expect(isLocalProviderEntry({ id: "b", kind: "openai-compatible", baseUrl: "http://localhost:1234/v1" }, LOCAL_URL)).toBe(true);
+    expect(isLocalProviderEntry({ id: "c", kind: "openai-compatible", baseUrl: "http://[::1]:8080/v1" }, LOCAL_URL)).toBe(true);
+    expect(isLocalProviderEntry({ id: "d", kind: "qwen-openai-compatible", baseUrl: "http://127.0.0.2:11434" }, LOCAL_URL)).toBe(true);
+  });
+
+  it("judges a llama-server entry by localModels.url, where its completions go", () => {
+    // The entry names loopback, but the shared client posts to a LAN box.
+    expect(isLocalProviderEntry({ id: "a", kind: "llama-server", url: "http://127.0.0.1:9931" }, "http://192.168.1.20:9931")).toBe(false);
+    expect(isLocalProviderEntry({ id: "b", kind: "llama-server", baseUrl: "http://127.0.0.1:9931" }, "http://gpu-box:9931")).toBe(false);
+    expect(isLocalProviderEntry({ id: "c", kind: "llama-server" }, undefined)).toBe(false);
+  });
+
+  it("refuses every kind that does not send to its baseUrl, even with a loopback baseUrl", () => {
+    for (const kind of ["subscription-oauth", "subscription-cli", "openrouter", "aimlapi", "gemini", "some-future-kind"]) {
+      expect(isLocalProviderEntry({ id: kind, kind, baseUrl: "http://localhost:1" }, LOCAL_URL)).toBe(false);
+    }
+    // `url` is not where an openai-compatible entry sends.
+    expect(isLocalProviderEntry({ id: "u", kind: "openai-compatible", url: "http://localhost:1" }, LOCAL_URL)).toBe(false);
+  });
+
+  it("refuses a server on the local network: the text must not leave this machine", () => {
+    for (const baseUrl of [
+      "http://192.168.1.20:11434/v1",
+      "http://10.0.0.5:8080",
+      "http://gpu-box:8080",
+      "http://studio.local:1234",
+      "http://[fd12::1]:8080",
+    ]) {
+      expect(isLocalProviderEntry({ id: "lan", kind: "openai-compatible", baseUrl }, LOCAL_URL)).toBe(false);
+    }
+    expect(isLocalProviderEntry({ id: "lan-llama", kind: "llama-server", url: "http://192.168.1.20:9931" }, LOCAL_URL)).toBe(false);
+  });
+
+  it("refuses every cloud provider, and a llama-server on a public host", () => {
+    expect(isLocalProviderEntry({ id: "o", kind: "openai-compatible", baseUrl: "https://api.openai.com/v1" }, LOCAL_URL)).toBe(false);
+    expect(isLocalProviderEntry({ id: "r", kind: "openrouter", baseUrl: "https://openrouter.ai/api/v1" }, LOCAL_URL)).toBe(false);
+    expect(isLocalProviderEntry({ id: "s", kind: "subscription-cli" }, LOCAL_URL)).toBe(false);
+    expect(isLocalProviderEntry({ id: "l", kind: "llama-server", url: "https://llama.example.com" }, LOCAL_URL)).toBe(false);
+    expect(isLocalProviderEntry({ id: "m", kind: "llama-server" }, "https://llama.example.com")).toBe(false);
+  });
+});
+
+describe("pickLocalNameEntry (ATO-2394)", () => {
+  const cloud: LlmProviderConfigEntry = { id: "cloud", kind: "openai-compatible", baseUrl: "https://api.openai.com/v1" };
+  const local: LlmProviderConfigEntry = { id: "local-llama", kind: "llama-server" };
+  const studio: LlmProviderConfigEntry = { id: "studio", kind: "openai-compatible", baseUrl: "http://localhost:1234/v1" };
+
+  it("prefers the active provider when it is local, else the first local one", () => {
+    expect(pickLocalNameEntry(llm([cloud, local, studio], "studio"), LOCAL_URL)?.id).toBe("studio");
+    expect(pickLocalNameEntry(llm([cloud, local, studio], "cloud"), LOCAL_URL)?.id).toBe("local-llama");
+  });
+
+  it("finds nothing when every provider is in the cloud", () => {
+    expect(pickLocalNameEntry(llm([cloud], "cloud"), LOCAL_URL)).toBeUndefined();
+  });
+
+  it("skips the embedding provider", () => {
+    const embed: LlmProviderConfigEntry = { id: "local-llama-embed", kind: "llama-server" };
+    expect(pickLocalNameEntry(llm([cloud, embed], "cloud"), LOCAL_URL)).toBeUndefined();
+  });
+});
+
+describe("localNameModelFor (ATO-2394)", () => {
+  it("sends one bounded, constrained request and returns the reply text", async () => {
+    const complete = vi.fn(async (_req: CompletionRequest) => ({ content: '{"spans":[]}' }));
+    const provider = { id: "local-llama", complete } as unknown as LlmProvider;
+    const model = localNameModelFor(provider, { id: "local-llama", kind: "llama-server" }, () => 3);
+    const signal = new AbortController().signal;
+    const reply = await model.complete({ system: "sys", user: "usr", grammar: "root ::= x", schema: { type: "object" }, signal });
+    expect(reply).toBe('{"spans":[]}');
+    expect(model.local).toBe(true);
+    const req = complete.mock.calls[0]![0];
+    expect(req.grammar).toBe("root ::= x");
+    expect(req.responseFormat?.schema).toEqual({ type: "object" });
+    expect(req.chat).toMatchObject({ system: "sys", user: "usr" });
+    expect(req.slotId).toBe(3);
+    expect(req.signal).toBe(signal);
+    expect(req.maxTokens).toBeGreaterThan(0);
+  });
+});

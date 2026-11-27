@@ -5,6 +5,7 @@
  *
  *   agent:rewindPreview   what rolling back to a question would change
  *   agent:rewind          roll back: the agent puts the files back, then cuts the chat
+ *                         (`files: false` the chat only, `conversation: false` the files only)
  *   agent:forkSession     a new chat with the history through that question's answer
  *
  * The window names the chat and the question; nothing else reaches the agent.
@@ -24,10 +25,12 @@ const CHANNELS: ReadonlyArray<[string, RewindRoute]> = [
 export function wireChatRewindIpc(client: Pick<AgentClient, "sessionRoute">): void {
   for (const [channel, route] of CHANNELS) {
     ipcMain.handle(channel, async (_event, payload: unknown): Promise<RewindAnswer> => {
-      const { sessionId, priorQuestions, expectText, files } = (payload ?? {}) as { sessionId?: unknown; priorQuestions?: unknown; expectText?: unknown; files?: unknown };
+      const { sessionId, priorQuestions, expectText, files, conversation } = (payload ?? {}) as { sessionId?: unknown; priorQuestions?: unknown; expectText?: unknown; files?: unknown; conversation?: unknown };
       if (typeof sessionId !== "string" || !sessionId) return { ok: false, supported: true, code: "session_not_found", error: "This chat is not saved yet" };
-      // Only a rollback takes `files` (ATO-1056: Edit, files and conversation or the conversation only).
-      const body = rewindRequestBody(priorQuestions, expectText, route === "rewind" ? files : undefined);
+      // Only a rollback takes `files` (ATO-1056: Edit, files and conversation or the conversation only)
+      // and `conversation` (ATO-2112: Roll back, files only).
+      const rollback = route === "rewind";
+      const body = rewindRequestBody(priorQuestions, expectText, rollback ? files : undefined, rollback ? conversation : undefined);
       if (body === null) return { ok: false, supported: true, error: "No message to go back to" };
       try {
         const res = await client.sessionRoute(sessionId, route, "POST", body);

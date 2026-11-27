@@ -19,6 +19,8 @@ export interface MenuToggles {
   startAtLogin: boolean;
   /** ATO-592: Keep Computer Awake; absent reads as off. */
   keepAwake?: KeepAwakeMode;
+  /** ATO-2391: the desktop pet (pet.json); absent reads as off. */
+  pet?: { enabled: boolean; dnd: boolean };
 }
 const NO_TOGGLES: MenuToggles = { keepRunning: false, startAtLogin: false };
 
@@ -77,6 +79,8 @@ export function menuTemplate(
         sep,
         // ATO-532: the composer's window picker (renderer/window-snapshot.js); no chord.
         item("Attach App Window…", "attach:window"),
+        // ATO-2333: the live meeting recorder (renderer/meeting-panel.js); no chord.
+        item("Record a Meeting…", "meeting:open"),
         sep,
         item("Open Workspace…", "workspace:choose", "Shift+CommandOrControl+O"),
         sep,
@@ -132,6 +136,12 @@ export function menuTemplate(
         item("Reading Voice and Speed…", "tts:settings"),
         // ATO-1047: listen, send, read the reply, listen again (renderer converse.js; macOS only for now).
         item("Conversation Mode", "conv:toggle", "Shift+CommandOrControl+J"),
+        sep,
+        /* ATO-2391: main's own (`pet:*`, pet-ipc.ts); off by default. */
+        { label: "Desktop Pet", submenu: [
+          { label: "Show Pet", type: "checkbox", checked: toggles.pet?.enabled === true, click: () => send("pet:toggle") },
+          { label: "Do Not Disturb", type: "checkbox", checked: toggles.pet?.dnd === true, click: () => send("pet:dnd") },
+        ] },
         sep,
         { label: "Appearance", submenu: [
           item("System", "theme:system"),

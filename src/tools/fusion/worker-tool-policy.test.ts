@@ -24,11 +24,17 @@ describe("worker tool policy", () => {
     expect(isWorkerVisibleTool("subagent.run")).toBe(false);
   });
 
+  it("a worker never reads the logbook: its result goes to the orchestrator unasked (ATO-2363)", () => {
+    expect(isWorkerVisibleTool("logbook.query")).toBe(false);
+  });
+
   it("hides exactly the delegation, subagent, session-ending, scheduling, memory-writing and screen tools", () => {
     expect([...WORKER_EXCLUDED_TOOLS].sort()).toEqual(
       [
         "canvas.render",
         "ask_user",
+        // ATO-2363: screen notes never reach a cloud orchestrator unasked.
+        "logbook.query",
         "finish",
         "fusion.delegate",
         // ATO-1670: a worker or subagent never starts subagents.
@@ -45,6 +51,8 @@ describe("worker tool policy", () => {
         "os.screen.press",
         "os.screen.type",
         "plan.update",
+        // ATO-2133: a research fan-out and a report nobody is shown.
+        "research.deep",
         "tasks.cancel",
         "tasks.cron",
         "tasks.schedule",

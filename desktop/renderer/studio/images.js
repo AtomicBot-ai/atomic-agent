@@ -113,7 +113,11 @@
       if (field && pop) {
         const r = field.getBoundingClientRect(), base = IM.root.querySelector('.st-cols').getBoundingClientRect();
         pop.style.left = Math.round(r.right - base.left + 8) + 'px';
-        pop.style.bottom = Math.max(8, Math.round(base.bottom - r.bottom)) + 'px';
+        /* ATO-2415: the list stays inside the column: upwards from the field while it fits
+           there, else downwards, else the taller side, and never taller than that room.
+           The popwrap is the box the offsets count from; the column is what is visible
+           (they differ only in the narrow layout, where the column scrolls). */
+        studioPopApply(pop.style, studioPopPlace(r, el.getBoundingClientRect(), pop.scrollHeight, STUDIO_POP_PAD, base));
       }
       const inp = el.querySelector('#sti-mq');
       if (inp && (q || !IM.modelQ)) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }

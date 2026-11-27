@@ -24,6 +24,7 @@ import {
   type SupervisorState,
 } from "./daemon-supervisor.js";
 import { isLoopbackOnPort, managedDataDir } from "./local-llama-key.js";
+import { modelsDirOf } from "./disk-space.js";
 import { resolveRunMode, type RunModeConfig, type RunModeProvider } from "./run-mode.js";
 import { describeFaultIn } from "./server-fault-line.js";
 import { DESKTOP_STATE_DIR } from "./state-dir.js";
@@ -134,8 +135,8 @@ function pidAlive(pid: number): boolean {
   }
 }
 
-/** One line from the end of the server's log that says what failed, or null. */
-function describeFault(): string | null {
+/** One line from the end of the server's log that says what failed, or null. Also read by main's engine card (ATO-1745). */
+export function describeFault(): string | null {
   try {
     const cfg = readConfig();
     const dir = managedDataDir(cfg?.localModels?.managed?.dataDirOverride ?? null);
@@ -478,7 +479,7 @@ function chatModelFileBytes(cfg: WatchConfig | null): number | null {
       }
     }
   };
-  walk(join(managedDataDir(cfg?.localModels?.managed?.dataDirOverride ?? null), "models", id), 0);
+  walk(join(modelsDirOf(managedDataDir(cfg?.localModels?.managed?.dataDirOverride ?? null)), id), 0);
   return total > 0 ? total : null;
 }
 

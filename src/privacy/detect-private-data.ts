@@ -1,8 +1,10 @@
 /**
  * Finds personal data and secrets in text that is about to leave the
  * machine (Privacy Shield, ATO-599). Regex first, on purpose: it runs on
- * every cloud request, so it has to be cheap, linear and predictable. A
- * local-model pass for names and addresses is a later step.
+ * every cloud request, so it has to be cheap, linear and predictable.
+ * Names, street addresses and organisations come from the opt-in local
+ * model pass (`local-name-detector.ts`, ATO-2394), which can only add to
+ * what this finds.
  *
  * Kinds, in the order they win an overlap:
  *
@@ -34,6 +36,37 @@ export type PrivateKind = "SECRET" | "IBAN" | "CARD" | "EMAIL" | "PHONE";
 
 /** Overlap priority: an earlier kind wins a span a later one also matched. */
 export const PRIVATE_KINDS: readonly PrivateKind[] = ["SECRET", "IBAN", "CARD", "EMAIL", "PHONE"];
+
+/** Kinds only the local model finds (ATO-2394): a person, a street address, an organisation. */
+export type ModelPrivateKind = "NAME" | "ADDRESS" | "ORG";
+
+export const MODEL_PRIVATE_KINDS: readonly ModelPrivateKind[] = ["NAME", "ADDRESS", "ORG"];
+
+/** Every kind a placeholder can carry: the regex kinds, then the model's. */
+export type ShieldKind = PrivateKind | ModelPrivateKind;
+
+export const SHIELD_KINDS: readonly ShieldKind[] = [...PRIVATE_KINDS, ...MODEL_PRIVATE_KINDS];
+
+/** One value the local model found, already checked to be in the text it read. */
+export interface ModelFoundValue {
+  value: string;
+  kind: ModelPrivateKind;
+}
+
+/** Longest value the local model may report; longer ones are dropped. */
+export const MODEL_VALUE_MAX_LENGTH = 200;
+
+/**
+ * Whether a value from the model has a shape the vault can mask safely:
+ * trimmed, 2 to 200 characters, one line, at least one letter, and no
+ * `[`, `]` or `_`, so it can never match inside a placeholder.
+ */
+export function acceptableModelValue(value: string): boolean {
+  if (value.length < 2 || value.length > MODEL_VALUE_MAX_LENGTH) return false;
+  if (value.trim() !== value) return false;
+  if (/[\[\]_\r\n]/.test(value)) return false;
+  return /\p{L}/u.test(value);
+}
 
 export interface PrivateSpan {
   /** Offset of the first character in the scanned text. */

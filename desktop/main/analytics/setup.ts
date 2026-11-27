@@ -4,6 +4,7 @@
  * `local_backend_started`, `local_backend_supervised`, `local_backend_crashed`.
  */
 
+import { serverEarlyExitIn } from "../engine-exit-words.js";
 import { curatedMeta } from "../model-catalog.js";
 import { backendFailReason, daemonEffect, keyCheckResult, presetOf, supervisedProps, switchOutcome } from "./classify.js";
 import { LOCAL_APP_PRESETS } from "./catalog-values.js";
@@ -36,7 +37,8 @@ export function startFailReason(effect: string, failure: unknown, readFault: () 
   const f = (failure && typeof failure === "object" ? failure : {}) as { error?: unknown; daemonError?: unknown };
   let line: string | null = null;
   try { line = readFault(); } catch { /* no log line */ }
-  return backendFailReason(f.error, f.daemonError, line);
+  // ATO-1739: the server's own exit code, when the agent's message says it exited before it answered.
+  return backendFailReason(f.error, f.daemonError, line, serverEarlyExitIn(f.error) ?? serverEarlyExitIn(f.daemonError));
 }
 
 /** Around `verifyProviderKey`: the result enum and the HTTP status only. */

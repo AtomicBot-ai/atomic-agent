@@ -1,12 +1,14 @@
 import { join } from "node:path";
 import { readCoreBackend, type ManagedEngine } from "./core/core-state.js";
+import { getModelsDirOverride } from "./models-dir-override.js";
 
 export function resolveBackendDir(dataDir: string): string {
   return join(dataDir, "backend");
 }
 
+/** `<dataDir>/models`, or the folder `localModels.managed.modelsDirOverride` names (ATO-2106). */
 export function resolveModelsDir(dataDir: string): string {
-  return join(dataDir, "models");
+  return getModelsDirOverride() ?? join(dataDir, "models");
 }
 
 export function resolveServerBinPath(

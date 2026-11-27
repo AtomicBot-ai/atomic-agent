@@ -1,0 +1,7 @@
+/* ATO-2114: "‹ 2/3 ›" under the last reply (renderer/answer-versions.js), first in its
+   action row, as ChatGPT and Claude.ai put it. The arrows are the row's own .msgact
+   buttons; at either end one is disabled in place, so the count never moves. */
+.ansver{display:inline-flex;align-items:center;gap:0;margin-right:4px;flex:none}
+.ansver-n{min-width:28px;text-align:center;font:400 var(--fs-label)/16px var(--font-ui);color:var(--ink-2);font-variant-numeric:tabular-nums}
+.ansver .msgact:disabled,.ansver .msgact:disabled:hover{color:var(--ink-3);background:none;cursor:default}
+.ansver .msgact:disabled svg{opacity:.55}

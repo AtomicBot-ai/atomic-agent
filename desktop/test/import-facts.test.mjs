@@ -79,6 +79,19 @@ test("start sends the cloud model only with this run's tick", () => {
   assert.deepEqual(I.ifactStartInput(st({ cloudOn: true, cloudProvider: "" })), { source: "claude", path: "/Users/me/export.zip" });
 });
 
+test("Try again after a failed cloud run unticks the cloud box (ATO-1655)", () => {
+  const failed = st({ stage: "error", error: "Reading stopped: provider timed out", cloudOn: true, job: { id: "j", state: "failed", local: false, providerId: "openrouter" } });
+  const next = Object.assign({}, failed, I.ifactRetryState(failed));
+  assert.equal(next.stage, "choose", "the file is still known, so back to the model choice");
+  assert.equal(next.cloudOn, false, "the tick was consent for the failed run only");
+  assert.equal(next.job, null);
+  assert.equal(next.error, null);
+  assert.equal(next.cloudProvider, "openrouter", "the provider choice is kept, only the consent is dropped");
+  assert.deepEqual(I.ifactStartInput(next), { source: "claude", path: "/Users/me/export.zip" }, "the next run is local unless ticked again");
+  assert.doesNotMatch(I.ifactBodyHTML(next, h), /data-ifact-field="cloud" checked/, "the box is drawn unticked");
+  assert.equal(I.ifactRetryState(st({ path: "", source: "chatgpt", cloudOn: true })).stage, "pick", "no file yet: back to the pick");
+});
+
 test("the model screen: local by default, the cloud box carries the warning and names the provider", () => {
   const html = I.ifactBodyHTML(st(), h);
   assert.match(html, /local model reads your chats/);

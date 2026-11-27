@@ -353,12 +353,15 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     listsModelsWithoutKey: true,
     // Known upstream quirk (issue #283): Ollama's serving layer corrupts
     // literal thinking-tag strings (`<think>`/`</think>` and variants)
-    // that appear inside message content — silently dropping or mangling
-    // them (ollama/ollama#17248, #17617). atomic-agent no longer injects
-    // a reasoning prefill into chat-transport prompts, so its own
-    // requests are clean, but user text or tool output that happens to
-    // contain those literal strings can still be altered server-side
-    // until Ollama fixes it. Direct vendor APIs are unaffected.
+    // that appear inside message content, silently dropping or mangling
+    // them (ollama/ollama#17248, #17617). atomic-agent injects no
+    // reasoning prefill into chat-transport prompts, and for this host
+    // (`ollama.com`) it rewrites `<think>`, `</think>`, `<thinking>` and
+    // `</thinking>` in outgoing message content and tool-call arguments
+    // to visible `[think]`, `[/think]`, `[thinking]`, `[/thinking]`
+    // (`openai/think-tag-safe.ts`; reasoning fields untouched). Local
+    // Ollama and every other provider are sent byte-identical. Drop the
+    // rewrite once the upstream bugs are fixed.
     note: "hosted Ollama, models listed without a key",
   },
   {
