@@ -16,8 +16,11 @@ import {
  * 0.8. At or above `agent.security.argScanThreshold` the request asks at
  * every approval level, bypass included; below it, it asks as a POST.
  *
- * Headers are left out: an `Authorization` header is how an API is
- * normally called.
+ * Headers are mostly left out: an `Authorization` header is how an API
+ * is normally called. One of the agent's own secrets word for word in a
+ * header value is a finding when the host is not on the operator's
+ * `http.hostAllowlist` (review round 2: `X-Api-Key: <own .env secret>`
+ * to an unknown host asked nobody).
  */
 
 export const HTTP_SECRET_RULE = "dangerous.http_secret";
@@ -69,11 +72,30 @@ function maskedLabels(masked: string): string[] {
   return [...new Set([...masked.matchAll(/\[redacted:([a-z0-9_.-]+)\]/gi)].map((m) => m[1]!))];
 }
 
+export interface HttpHeaderScan {
+  headers?: Readonly<Record<string, string>>;
+  /** The host is on `http.hostAllowlist`: its headers are not read. */
+  hostKnown?: boolean;
+}
+
 export function httpSecretFinding(
   url: URL,
   body: string | undefined,
   known: readonly KnownSecret[] = knownSecretsFromEnv(),
+  scan: HttpHeaderScan = {},
 ): SecurityFinding | null {
+  const headerValues =
+    scan.hostKnown === true ? [] : Object.values(scan.headers ?? {}).map((value) => percentDecode(value));
+  const inHeader = known.filter(
+    (secret) => secret.value.length > 0 && headerValues.some((value) => value.includes(secret.value)),
+  );
+  if (inHeader.length > 0) {
+    return {
+      rule: HTTP_SECRET_RULE,
+      reason: `sends the agent's own secret ${inHeader.map((s) => s.label).slice(0, 3).join(", ")} in a header to ${url.host}, a host not on http.hostAllowlist`,
+      confidence: KNOWN_CONFIDENCE,
+    };
+  }
   const text = sentParts(url, body).join("\n");
   if (text.length === 0) return null;
   // Host names arrive lowercased from `URL`, so the agent's own secret is

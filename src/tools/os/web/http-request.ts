@@ -141,7 +141,10 @@ export function buildOsHttpRequestTool(
           : null;
       // ATO-2505: a secret in the body or query asks whatever the mode;
       // a sure one asks at every level, bypass included.
-      const secret = httpSecretFinding(args.urlObj, args.body);
+      const secret = httpSecretFinding(args.urlObj, args.body, undefined, {
+        headers: args.headers,
+        hostKnown: httpCfg.hostAllowlist !== null,
+      });
       const secretAsksEveryLevel =
         secret !== null && secret.confidence >= readArgScanThreshold(options.argScanThreshold);
       if (
