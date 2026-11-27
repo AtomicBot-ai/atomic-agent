@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { resetConfigCache } from "../config/index.js";
 import { effectiveReplyReserve } from "../prompt/token-budget.js";
@@ -36,6 +36,7 @@ describe("POST /api/context-preview", () => {
   let harness: Harness | null = null;
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     if (harness) await harness.cleanup();
     harness = null;
   });
@@ -104,6 +105,69 @@ describe("POST /api/context-preview", () => {
       else process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = before;
       resetConfigCache();
     }
+  });
+
+  /**
+   * ATO-2495 review: the route reports the budget's own reserve, not a
+   * recomputation from the cap. A bounded think block (ATO-1295,
+   * `localModels.reasoningBudgetTokens: 4000`) raises the reserve on a
+   * 16k window from 4096 to 5024; the prompt carries 5024, so the route
+   * must too. Recomputing from the cap alone gives 4096.
+   */
+  it("reports the reserve the prompt budget held back, raised for a bounded think block", async () => {
+    harness = await startTestHarness({
+      llamaProps: {
+        model_alias: "small-16k",
+        default_generation_settings: { n_ctx: 16_384 },
+      },
+    });
+    const runtime = harness.runtime;
+    const real = runtime.previewPrompt.bind(runtime);
+    vi.spyOn(runtime, "previewPrompt").mockImplementation((input) => {
+      const built = real(input);
+      return {
+        ...built,
+        contextWindow: 16_384,
+        replyReserve: effectiveReplyReserve(
+          runtime.config.localModels.completionMaxTokens,
+          16_384,
+          4000,
+        ),
+      };
+    });
+    const { status, json } = await preview(harness.baseUrl, {});
+    expect(status).toBe(200);
+    expect(json.contextWindow).toBe(16_384);
+    expect(json.replyCap).toBe(16_384);
+    // The recomputation the route used to do: not the budget's figure.
+    expect(effectiveReplyReserve(json.replyCap, json.contextWindow)).toBe(4096);
+    expect(json.reservedForReply).toBe(5024);
+    expect(json.usage.replyReserve).toBe(5024);
+  });
+
+  /**
+   * ATO-2495 review: a cloud prompt carries no top-level `replyReserve`,
+   * only `contextBudget.replyReserve`, the raw cap its budget subtracts.
+   * The reply used to send that cap on `usage.replyReserve` and a
+   * small-window recomputation on `reservedForReply`; it sends one figure.
+   */
+  it("sends one reserve on a cloud prompt: the cap the cloud budget subtracts", async () => {
+    harness = await startTestHarness();
+    const runtime = harness.runtime;
+    const real = runtime.previewPrompt.bind(runtime);
+    vi.spyOn(runtime, "previewPrompt").mockImplementation((input) => {
+      const built = { ...real(input) };
+      delete built.replyReserve;
+      return {
+        ...built,
+        contextWindow: 32_768,
+        contextBudget: { window: 32_768, replyReserve: 96_000 },
+      };
+    });
+    const { status, json } = await preview(harness.baseUrl, {});
+    expect(status).toBe(200);
+    expect(json.usage.replyReserve).toBe(96_000);
+    expect(json.reservedForReply).toBe(json.usage.replyReserve);
   });
 
   it("counts the draft as the user message", async () => {
