@@ -212,6 +212,29 @@ describe("raw model share routes", () => {
     expect((await chat(base, SHARE_KEY)).status).toBe(200);
   });
 
+  it("refuses a remote image or audio URL with 400 and never forwards it; a data: URL goes through", async () => {
+    const base = await start();
+    const send = (part: unknown) =>
+      fetch(`${base}/raw/v1/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...bearer(SHARE_KEY) },
+        body: JSON.stringify({ model: "any", messages: [{ role: "user", content: [{ type: "text", text: "look" }, part] }] }),
+      });
+    for (const part of [
+      { type: "image_url", image_url: { url: "http://192.168.1.1/admin.png" } },
+      { type: "image_url", image_url: "https://example.com/x.png" },
+      { type: "input_audio", input_audio: { url: "http://10.0.0.5/a.wav", format: "wav" } },
+    ]) {
+      const res = await send(part);
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe("remote_media_refused");
+    }
+    expect(model?.seen).toEqual([]);
+    const inline = await send({ type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } });
+    expect(inline.status).toBe(200);
+    expect(model?.seen.map((r) => r.url)).toEqual(["/v1/chat/completions"]);
+  });
+
   it("answers 502 when the local model is not running", async () => {
     const port = await closedPort();
     const base = await start({ upstream: () => ({ baseUrl: `http://127.0.0.1:${port}`, apiKey: null }) });

@@ -17,6 +17,7 @@ import {
   type HttpHandler,
 } from "./request-context.js";
 import { secretEquals } from "./secret-equal.js";
+import { remoteMediaProblem } from "./raw-model-body-guard.js";
 
 /**
  * ATO-2336: the local model itself, for other apps and devices.
@@ -117,6 +118,11 @@ export function createRawModelHandlers(deps: RawModelShareDeps = defaultRawModel
     }
     try {
       const body = method === "POST" ? await readRawBody(req) : undefined;
+      const mediaProblem = remoteMediaProblem(body);
+      if (mediaProblem) {
+        sendError(res, 400, openaiError(mediaProblem, "invalid_request_error", null, "remote_media_refused"));
+        return;
+      }
       const target = deps.upstream();
       await forward(req, res, { method, url: upstreamV1Url(target.baseUrl, path), upstreamKey: target.apiKey, body, doFetch });
     } finally {
