@@ -1,4 +1,5 @@
 import { resolveBootApprovalLevel } from "../approval/approval-level.js";
+import { refuseApproval } from "./serve-refuse-approvals.js";
 import { getConfig } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import { McpElicitationBroker } from "../mcp/mcp-elicitation-broker.js";
@@ -133,6 +134,11 @@ export async function serveCommand(args: string[]): Promise<number> {
         logSinks: [createStderrSink()],
         metricSinks: [metricsRegistry.sink],
         onApprovalRequest: (request) => {
+          // ATO-2172: a serve for a launched coding CLI has nobody to ask.
+          if (parsed.refuseApprovals && runtime) {
+            refuseApproval(runtime.approvals, request);
+            return;
+          }
           // ATO-1111: drop mirrored prompts whose turn was aborted, so a
           // window that never reconnects /api/events does not keep them.
           const live = runtime;

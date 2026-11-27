@@ -52,9 +52,23 @@ export const LAUNCH_HELP = [
   "",
   "Answers come from the Atomic Agent turn path (/v1/messages, /v1/responses, /v1/chat/completions):",
   "the agent runs its own tools; the launched CLI's own tool calls are not offered to the model.",
+  "",
+  "Approvals: a serve started here refuses every approval prompt at once (the CLI cannot show one),",
+  "so the turn answers in text; a reused serve asks in http://127.0.0.1:<port>/panel.",
 ].join("\n");
 
 export const MASKED = "<hidden: atag serve --print-api-key>";
+
+/**
+ * Where approvals go (ATO-2172 review): the launched CLI never shows
+ * one. A serve started here refuses them at once; a reused one asks in
+ * its /panel page.
+ */
+export function launchApprovalNote(serve: { baseUrl: string; started: boolean }): string {
+  return serve.started
+    ? `launch: approvals are refused on this serve (the CLI cannot show them); what needs one comes back as text. To approve instead, run \`atag serve\` yourself and open http://127.0.0.1:<port>/panel\n`
+    : `launch: approval prompts from this serve wait in ${serve.baseUrl}/panel (or the desktop app)\n`;
+}
 
 export interface LaunchArgs {
   readonly integration: LaunchIntegration;
@@ -180,6 +194,7 @@ export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}
 
   const plan = buildPlan(parsed, serve.baseUrl, key.key);
   writeErr(`launch: ${integration.displayName} on Atomic Agent at ${serve.baseUrl}\n`);
+  writeErr(launchApprovalNote(serve));
   return runChild(binaryPath as string, plan, env, deps.spawn ?? nodeSpawn, writeErr);
 }
 

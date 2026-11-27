@@ -127,7 +127,18 @@ export async function startLaunchServe(
   try {
     child = (deps.spawn ?? nodeSpawn)(
       self.cmd,
-      [...self.args, "serve", "--host", "127.0.0.1", "--port", String(port), "--cwd", resolve(cwd)],
+      [
+        ...self.args,
+        "serve",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        String(port),
+        "--cwd",
+        resolve(cwd),
+        // Claude Code, Codex and OpenCode never see an approval prompt.
+        "--refuse-approvals",
+      ],
       {
         cwd: resolve(cwd),
         stdio: ["ignore", logFd, logFd],
