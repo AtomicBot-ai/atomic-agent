@@ -74,6 +74,64 @@ export function hideValue(text: string, value: string): string {
   return value.length === 0 ? text : text.split(value).join(HIDDEN);
 }
 
+/**
+ * Values the person typed into this session's jobs. The global masking
+ * (`resolved-secret-values.ts`) skips short or plain values (`letmein`),
+ * so every job result of the session is also passed through
+ * {@link hideTypedSecrets}: a job that echoed the value and exited, or a
+ * later `{"wait": id}`, never shows it. Process memory only.
+ */
+const typedBySession = new Map<string, Set<string>>();
+
+export function rememberTypedSecret(sessionId: string, value: string): void {
+  if (value.length === 0) return;
+  let values = typedBySession.get(sessionId);
+  if (!values) {
+    values = new Set();
+    typedBySession.set(sessionId, values);
+  }
+  values.add(value);
+}
+
+/** Test seam: forget every typed value. */
+export function resetTypedSecrets(): void {
+  typedBySession.clear();
+}
+
+function hideAll(text: string, values: readonly string[]): string {
+  let out = text;
+  for (const value of values) out = hideValue(out, value);
+  return out;
+}
+
+/**
+ * `result` with every value typed into this session's jobs replaced in
+ * its summary, full output and details; `result` itself when there was
+ * nothing to hide.
+ */
+export function hideTypedSecrets(sessionId: string, result: CompressedToolResult): CompressedToolResult {
+  const known = typedBySession.get(sessionId);
+  if (!known || known.size === 0) return result;
+  // Longest first, so a value containing another is replaced whole.
+  const values = [...known].sort((a, b) => b.length - a.length);
+  const summary = hideAll(result.summary, values);
+  const full = result.fullOutput === undefined ? undefined : hideAll(result.fullOutput, values);
+  const detailsJson = JSON.stringify(result.details);
+  const hiddenJson = hideAll(detailsJson, values.map((v) => JSON.stringify(v).slice(1, -1)));
+  if (summary === result.summary && full === result.fullOutput && hiddenJson === detailsJson) return result;
+  const hidden: CompressedToolResult = {
+    ...result,
+    summary,
+    details: hiddenJson === detailsJson ? result.details : (JSON.parse(hiddenJson) as Record<string, unknown>),
+  };
+  // Non-enumerable, like `compressToolResult` sets them; the spread drops them.
+  if (full !== undefined) {
+    Object.defineProperty(hidden, "fullOutput", { value: full, enumerable: false });
+    Object.defineProperty(hidden, "fullOutputTruncated", { value: result.fullOutputTruncated, enumerable: false });
+  }
+  return hidden;
+}
+
 export async function runShellSecretWrite(
   ctx: ShellJobCallContext,
   options: ShellWriteOptions,
@@ -123,8 +181,11 @@ export async function runShellSecretWrite(
     return secretError(id, `job ${id} ended before the secret could be typed; {"wait": ${id}} collects its output`);
   }
   const value = checked.value;
-  // Masked from here on in every tool result and trace of this process.
+  // Masked from here on in every tool result and trace of this process
+  // (strong-looking values), and in every job result of this session
+  // (any value, `hideTypedSecrets`).
   rememberResolvedSecret(`job ${id} ${label}`, value);
+  rememberTypedSecret(ctx.sessionId, value);
   const reply = readReply(record, writeWaitMs(rawArgs.timeoutMs), ctx.signal);
   if (!record.job.write(`${value}\n`)) {
     return secretError(id, `job ${id} takes no input: start it with {"cmd": …, "tty": true}`);
@@ -133,7 +194,11 @@ export async function runShellSecretWrite(
   // the value anyway still does not show it here.
   const printed = hideValue(stripTerminalCodes(await reply), value);
   const notice = `the user typed ${label} into job ${id} (hidden from you); its reply is below. {"write": ${id}, "text": …} types more, {"kill": ${id}} stops it.`;
-  if (record.job.exited() !== null) return collect(ctx.jobs, record, [notice]);
+  // A job that echoed the value and exited: its whole output is rendered
+  // here, so it is hidden like the reply.
+  if (record.job.exited() !== null) {
+    return hideTypedSecrets(ctx.sessionId, await collect(ctx.jobs, record, [notice]));
+  }
   return renderShellResult({
     facts: record.facts,
     status: "ok",

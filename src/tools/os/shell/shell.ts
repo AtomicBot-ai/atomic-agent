@@ -68,6 +68,7 @@ import {
 } from "./shell-job-until.js";
 import { compileWatchPattern } from "./shell-job-watch.js";
 import { runShellWrite } from "./shell-job-write.js";
+import { hideTypedSecrets } from "./shell-job-secret.js";
 import { ttyEnv } from "./tty-wrap.js";
 import { startInteractiveJob, type TtyBackend } from "./tty-spawn.js";
 import type { NodePtyModule } from "../../../native/load-node-pty.js";
@@ -795,21 +796,26 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           details: { invalidCall: true },
         });
       }
-      if (form.kind === "jobs") return listShellJobs(jobCtx);
+      // A value the person typed into a job (ATO-2486) is hidden in every
+      // later result of the session's jobs, however weak it looks.
+      const hideTyped = (result: CompressedToolResult) => hideTypedSecrets(ctx.sessionId, result);
+      if (form.kind === "jobs") return hideTyped(await listShellJobs(jobCtx));
       if (form.kind === "wait") {
         if (hasUntil(rawArgs.until)) {
-          return runShellWaitUntilById(
-            jobCtx,
-            form.id,
-            rawArgs.until,
-            rawArgs.timeoutMs,
-            rawArgs.keep === true,
+          return hideTyped(
+            await runShellWaitUntilById(
+              jobCtx,
+              form.id,
+              rawArgs.until,
+              rawArgs.timeoutMs,
+              rawArgs.keep === true,
+            ),
           );
         }
-        return runShellWait(jobCtx, form.id, rawArgs.timeoutMs, rawArgs.keep === true);
+        return hideTyped(await runShellWait(jobCtx, form.id, rawArgs.timeoutMs, rawArgs.keep === true));
       }
-      if (form.kind === "kill") return runShellKill(jobCtx, form.id);
-      if (form.kind === "write") return runShellWrite(jobCtx, options, form.id, rawArgs);
+      if (form.kind === "kill") return hideTyped(await runShellKill(jobCtx, form.id));
+      if (form.kind === "write") return hideTyped(await runShellWrite(jobCtx, options, form.id, rawArgs));
 
       // `{"cmd": ["git", "status"]}`: an argv in `cmd` is the program and
       // its arguments (ATO-1259), when `args` does not also say them.
