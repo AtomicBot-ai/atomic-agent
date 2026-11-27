@@ -211,11 +211,6 @@ function error(
  */
 export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
   const ledger = deps.turnLedger ?? new SubagentTurnLedger();
-  // The turn each session's standing write answer was given in. The
-  // gate's turn grant is keyed by session only and is cleared at turn
-  // start only for a Fusion turn, so outside Fusion this tool drops a
-  // grant from any other turn itself before reading it.
-  const grantTurns = new Map<string, string>();
   return {
     name: SUBAGENT_RUN_TOOL,
     description:
@@ -357,11 +352,19 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
             { reason: "agent-state-dir", scope: intoState },
           );
         }
-        const grantTurn = grantTurns.get(ctx.sessionId);
-        if (ctx.turnId === undefined || grantTurn !== ctx.turnId) {
-          deps.approvals.fanoutScopes?.clearTurnGrant(ctx.sessionId);
-          grantTurns.delete(ctx.sessionId);
+        // The gate's turn state is keyed by session and cleared at turn
+        // start only for a Fusion turn, so a standing answer is read only
+        // when it is tied to this very turn (ATO-1759): given here, or by
+        // a `fusion.delegate` of the same turn, whose answer and refused
+        // command note then stand instead of being dropped.
+        const scopes = deps.approvals.fanoutScopes;
+        if (
+          ctx.turnId === undefined ||
+          !(scopes?.turnStateIsFrom(ctx.sessionId, ctx.turnId) ?? false)
+        ) {
+          scopes?.clearTurnGrant(ctx.sessionId);
         }
+        if (ctx.turnId !== undefined) scopes?.enterTurn(ctx.sessionId, ctx.turnId);
         const declinedInScope =
           deps.approvals.hasDeclinedUnder?.(ctx.sessionId, writeScope) ?? false;
         const alreadyApproved =
@@ -387,17 +390,7 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
               ctx.signal,
             );
           }
-          deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
-          if (ctx.turnId !== undefined) {
-            grantTurns.delete(ctx.sessionId);
-            grantTurns.set(ctx.sessionId, ctx.turnId);
-            const oldest = grantTurns.keys().next().value;
-            if (grantTurns.size > 256 && oldest !== undefined) {
-              grantTurns.delete(oldest);
-              // Forgetting the turn must not leave its grant readable.
-              deps.approvals.fanoutScopes?.clearTurnGrant(oldest);
-            }
-          }
+          scopes?.grantForTurn(ctx.sessionId, writeScope);
         } catch (err) {
           if (err instanceof ApprovalDeniedError && (err.byUser || err.declinedEarlier)) {
             return error(err.message, { reason: "writes-denied", deniedByUser: true });
