@@ -153,6 +153,36 @@ describe("GET /health", () => {
     expect(typeof local.llama.url).toBe("string");
   });
 
+  // Review round 2: hiding workingDir from remote /health left the desktop's
+  // Run overnight against a remote agent with no folder. The signed-in source
+  // is /api/capabilities: a remote caller with the key gets the folder there,
+  // one without the key gets 401, and /health stays quiet even with the key.
+  it("gives a remote caller the folder only through the signed-in /api/capabilities", async () => {
+    const key = "h".repeat(32);
+    harness = await startTestHarness({
+      apiKey: key,
+      localModelsUrl: `http://127.0.0.1:${await closedPort()}`,
+    });
+    const remote = { "cf-connecting-ip": "203.0.113.51" };
+    const signedIn = { ...remote, authorization: `Bearer ${key}` };
+
+    const health = (await (await fetch(`${harness.baseUrl}/health?llama=0`, { headers: signedIn })).json()) as Record<string, unknown>;
+    expect(health).not.toHaveProperty("workingDir");
+
+    const caps = await fetch(`${harness.baseUrl}/api/capabilities`, { headers: signedIn });
+    expect(caps.status).toBe(200);
+    const dir = ((await caps.json()) as { capabilities?: { workingDir?: unknown } }).capabilities?.workingDir;
+    expect(typeof dir).toBe("string");
+    expect(String(dir).length).toBeGreaterThan(0);
+
+    const anonymous = await fetch(`${harness.baseUrl}/api/capabilities`, { headers: remote });
+    expect(anonymous.status).toBe(401);
+    expect(await anonymous.text()).not.toContain(String(dir));
+
+    const local = (await (await fetch(`${harness.baseUrl}/health?llama=0`)).json()) as { workingDir?: unknown };
+    expect(local.workingDir).toBe(dir);
+  });
+
   it("leaves the llama probe out for ?llama=0 and still counts the turns", async () => {
     harness = await startTestHarness({
       localModelsUrl: `http://127.0.0.1:${await closedPort()}`,

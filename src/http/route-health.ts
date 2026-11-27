@@ -52,7 +52,10 @@ export function isLoopback(remoteAddress: string | undefined): boolean {
  * kind of disclosure for a route that is public by design. The sweep
  * only ever probes 127.0.0.1, so it loses nothing. A loopback request
  * that carries `cf-connecting-ip` came in through a cloudflared tunnel
- * (`atag pair --remote`, ATO-2308) and is treated as remote.
+ * (`atag pair --remote`, ATO-2308) and is treated as remote. A remote
+ * client that needs the folder (the desktop's Run overnight against an
+ * agent on another computer) reads `capabilities.workingDir` from
+ * `GET /api/capabilities`, which sits behind the serve key and its throttle.
  */
 export function createHealthHandler(): HttpHandler {
   return async (req, res, ctx) => {

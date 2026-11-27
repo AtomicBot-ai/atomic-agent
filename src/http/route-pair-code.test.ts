@@ -164,6 +164,10 @@ describe("GET and POST /panel/pair", () => {
     }
     expect((await postCode(port, code, from("203.0.113.5"))).status).toBe(429);
     expect((await postCode(port, code, from("203.0.113.6"))).status).toBe(303);
+    // A new code gives the locked-out address its budget back (failuresByAddress.clear()).
+    clock = new Date(clock.getTime() + 1_000);
+    const fresh = newPairing();
+    expect((await postCode(port, fresh.code, from("203.0.113.5"))).status).toBe(303);
   });
 
   it("posts from another web page are refused and spend none of the budget", async () => {
