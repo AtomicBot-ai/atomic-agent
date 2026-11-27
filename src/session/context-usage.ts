@@ -82,6 +82,14 @@ export interface ContextUsageState {
   parts?: readonly ContextUsagePart[];
   /** `tool.search` was in the catalog, so tools already load on demand. */
   toolSearchActive?: boolean;
+  /**
+   * The reply reserve the prompt budget held back on this window
+   * (`BuiltPrompt.replyReserve`, `effectiveReplyReserve` with its
+   * small-window rule; the cloud prompt's `contextBudget.replyReserve`),
+   * so a client draws the agent's figure instead of recomputing it
+   * (ATO-2495). Absent on snapshots saved before the field existed.
+   */
+  replyReserve?: number;
 }
 
 export interface ContextUsageSection {
@@ -176,6 +184,7 @@ export function contextUsageFromPrompt(prompt: BuiltPrompt): ContextUsageState {
       parent: LOADED_TOOLS_SECTION_LABEL,
     })),
   ];
+  const replyReserve = prompt.replyReserve ?? prompt.contextBudget?.replyReserve;
   return {
     tokens: prompt.tokens.total,
     contextWindow: prompt.contextWindow,
@@ -192,5 +201,6 @@ export function contextUsageFromPrompt(prompt: BuiltPrompt): ContextUsageState {
     sections,
     parts,
     toolSearchActive: prefixOffersToolSearch(prompt.stablePrefix),
+    ...(replyReserve !== undefined ? { replyReserve } : {}),
   };
 }

@@ -25,8 +25,9 @@ import { readJsonBody, sendError, sendJson, type HttpHandler } from "./request-c
  * (those rows appear only after a real turn). `replyCap` is
  * `config.localModels.completionMaxTokens`, what the TUI panel is handed
  * as `reservedForReply`; `reservedForReply` is the part of it the prompt
- * budget really holds back on this window (`effectiveReplyReserve`, the
- * figure `computeEffectiveConversationCap` subtracts) — a 96k cap on a
+ * budget really holds back on this window (`BuiltPrompt.replyReserve`,
+ * `effectiveReplyReserve`: the figure `computeEffectiveConversationCap`
+ * subtracts, also on `usage.replyReserve`) — a 96k cap on a
  * 32k window is not a 96k reservation. A panel drawing it still clamps it
  * to what the prompt left of the window (the TUI's `replyReserveShown`,
  * the desktop's `ctxReplyReserve`), so it can show less than this.
@@ -68,10 +69,14 @@ export function createContextPreviewHandler(): HttpHandler {
       basis: "built",
       usage: contextUsageFromPrompt(prompt),
       contextWindow: prompt.contextWindow,
-      reservedForReply: effectiveReplyReserve(
-        getConfig().localModels.completionMaxTokens,
-        prompt.contextWindow,
-      ),
+      // The budget's own figure (it also raises the reserve for a bounded
+      // think block); recomputed only for a prompt that does not carry it.
+      reservedForReply:
+        prompt.replyReserve ??
+        effectiveReplyReserve(
+          getConfig().localModels.completionMaxTokens,
+          prompt.contextWindow,
+        ),
       replyCap: getConfig().localModels.completionMaxTokens,
       pairsCap: prompt.conversationPairsCap,
     });
