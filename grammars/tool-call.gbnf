@@ -120,7 +120,7 @@ browser-tool ::= "\"browser." ( "navigate" | "click" | "type" | "read_aria" | "s
 os-tool ::= "\"os." ( "fs.read_document" | "fs.docx" | "fs.xlsx" | "fs.trash" | "fs.locate_project" | "fs.code_map" | "code.search" | "code.rewrite" | "code.lsp" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.restore" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "fs.write_pptx" | "web.crawl" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" | "screen.point" | "screen.capture" | "screen.click" | "screen.type" | "screen.key" | "screen.elements" | "screen.press" ) "\""
 discovery-tool ::= "\"skill.run_script\""
 memory-tool ::= "\"memory." ( "profile.set" | "profile.remove" | "profile.list" | "profile.history" | "notes.forget" | "lessons.recall" | "procedures.recall" | "sessions.search" ) "\""
-tasks-tool ::= "\"tasks." ( "schedule" | "cron" | "list" | "cancel" | "show" ) "\""
+tasks-tool ::= "\"tasks." ( "schedule" | "cron" | "list" | "cancel" | "show" | "request_review" | "block" | "comment" ) "\""
 # Cross-chat tools (ATO-570); unconditional like `tasks.*`.
 sessions-tool ::= "\"sessions." ( "list" | "read" | "send" | "check" ) "\""
 vision-tool ::= "\"vision.describe\"" | "\"audio.listen\""

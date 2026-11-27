@@ -59,7 +59,7 @@ const ACTIONS: Record<string, CardAction> = {
   [TASKS_BLOCK_TOOL]: {
     tool: TASKS_BLOCK_TOOL,
     description:
-      "Mark the task you are running as blocked on the task board, with the reason. It is not run again until a person moves it on. Args: { reason }.",
+      "Mark the task you are running as blocked on the task board, with the reason. It is not run again until a person runs or resumes it. Args: { reason }.",
     textArg: "reason",
     textRequired: true,
     lane: "blocked",
