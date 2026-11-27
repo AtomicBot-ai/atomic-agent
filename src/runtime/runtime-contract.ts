@@ -51,7 +51,7 @@ import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { TraceSink } from "../tracing/trace/index.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { AnalyticsDisabledVia, AnalyticsSurface, UiActionVia, UpdateCheckedContext } from "../analytics/index.js";
-import type { BrokenPipePolicy } from "../error-reporting/index.js";
+import type { BrokenPipePolicy, LoopbackResetPolicy } from "../error-reporting/index.js";
 
 
 export interface RuntimeEventHandlers {
@@ -146,6 +146,13 @@ export interface CreateAgentRuntimeOptions {
    * Process-wide and first-come: the handlers are installed once.
    */
   brokenPipe?: BrokenPipePolicy;
+  /**
+   * What an uncaught reset of a socket to this machine does (see
+   * `LoopbackResetPolicy`). Default `exit`; `serve` passes `survive`, so
+   * a local model server restarting does not end the desktop's agent
+   * (ATO-2767). Process-wide and first-come, as `brokenPipe`.
+   */
+  loopbackReset?: LoopbackResetPolicy;
   /**
    * Analytics `surface` of the entry point (the TUI passes `tui`).
    * Headless entry points leave it unset so `ATOMIC_AGENT_SURFACE` from

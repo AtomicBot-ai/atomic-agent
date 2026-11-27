@@ -145,6 +145,9 @@ export async function serveCommand(args: string[]): Promise<number> {
       // store's turn ends, the serve record. Muted, serve goes on until
       // the orphan watch ends it through that teardown.
       brokenPipe: "mute",
+      // ATO-2767: a local model server restarting under a request is
+      // not a reason to drop every open session; one stderr line instead.
+      loopbackReset: "survive",
       handlers: {
         // The structured log goes to stderr, which a host running serve
         // relays into its own log (the desktop app's agent.log and its

@@ -116,6 +116,13 @@ describe("what serve hands the runtime", () => {
     const options = await serveBootOptions();
     expect(options.brokenPipe).toBe("mute");
   });
+
+  // ATO-2767: a local llama-server restarting reset a socket under a
+  // request, and the uncaught error ended the desktop's agent (exit 1).
+  it("an uncaught loopback reset is survived, not a reason to exit", async () => {
+    const options = await serveBootOptions();
+    expect(options.loopbackReset).toBe("survive");
+  });
 });
 
 // ATO-760: an open network port with no key hands the agent, its shell
