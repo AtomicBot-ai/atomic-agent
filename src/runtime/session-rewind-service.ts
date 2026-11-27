@@ -1,4 +1,5 @@
 import type { ConversationTurn } from "../session/conversation-turn.js";
+import { keepBranch } from "../session/session-message-branches.js";
 import { planRewind, type RewindRefusal } from "../session/session-rewind.js";
 import type { SessionState } from "../session/session-state.js";
 import {
@@ -109,7 +110,9 @@ export async function previewSessionRewind(
  * copies as they are (a later rewind still finds them). `conversation`
  * cuts the chat only. `all` puts the files back first, then cuts the
  * chat. Each file is tried on its own: one that cannot be written lands
- * in `failed` and the rest still go back.
+ * in `failed` and the rest still go back. `keepBranch` (an Edit,
+ * ATO-2470) keeps the cut rows as a version of the message; it means
+ * nothing for `files`, which cuts no rows.
  */
 export async function applySessionRewind(
   deps: SessionRewindDeps,
@@ -117,6 +120,7 @@ export async function applySessionRewind(
   turnIndex: number,
   scope: RewindScope,
   expectText?: string,
+  options: { keepBranch?: boolean } = {},
 ): Promise<RewindResult<RewindOutcome>> {
   const plan = planRewind(session, turnIndex, expectText);
   if (!plan.ok) return plan;
@@ -135,7 +139,8 @@ export async function applySessionRewind(
   const done = restoreFiles
     ? await applyFileRestore(deps.checkpoints, session.id, files)
     : { restored: [], deleted: [], failed: [] };
-  deps.sessionStore.save(plan.state);
+  const saved = options.keepBranch === true ? keepBranch(session, turnIndex, plan.state) : plan.state;
+  deps.sessionStore.save(saved);
   deps.sessionStore.clearTurnProgress(session.id);
   // The turns those copies belong to are gone.
   await deps.checkpoints.dropSince(session.id, at);
@@ -143,7 +148,7 @@ export async function applySessionRewind(
     ok: true,
     value: {
       text: plan.text,
-      state: plan.state,
+      state: saved,
       ...done,
       notRestorable: restoreFiles ? files.notRestorable : [],
       incomplete: restoreFiles && files.incomplete,

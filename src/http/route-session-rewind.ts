@@ -48,7 +48,7 @@ interface Point {
   priorQuestions: number;
   text: string;
   at: number;
-  body: { files?: unknown; conversation?: unknown };
+  body: { files?: unknown; conversation?: unknown; keepBranch?: unknown };
 }
 
 export function createListRewindPointsHandler(): HttpHandler {
@@ -97,7 +97,10 @@ export function createRewindHandler(preview: boolean): HttpHandler {
       return;
     }
     const scope = filesOnly ? "files" : restoreFiles ? "all" : "conversation";
-    const done = await applySessionRewind(deps, session, turnIndex, scope);
+    // ATO-2470: an edit (`keepBranch: true`) keeps the rows it cuts as a version of the message.
+    const done = await applySessionRewind(deps, session, turnIndex, scope, undefined, {
+      keepBranch: point.body.keepBranch === true,
+    });
     if (!done.ok) return refuse(res, done.code);
     const { text, restored, deleted, failed, notRestorable, incomplete } = done.value;
     sendJson(res, 200, { id: session.id, text, restored, deleted, failed, notRestorable, incomplete });
@@ -129,7 +132,7 @@ async function readPoint(
   ctx: HandlerContext,
 ): Promise<Point | null> {
   const id = ctx.params.id ?? "";
-  let body: { priorQuestions?: unknown; expectText?: unknown; files?: unknown; conversation?: unknown } | null;
+  let body: { priorQuestions?: unknown; expectText?: unknown; files?: unknown; conversation?: unknown; keepBranch?: unknown } | null;
   try {
     body = (await readJsonBody<unknown>(req)) as typeof body;
   } catch (err) {

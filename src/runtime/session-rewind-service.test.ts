@@ -131,6 +131,16 @@ describe("session rewind service (ATO-2467)", () => {
     expect(save).toHaveBeenCalledTimes(1);
   });
 
+  it("keepBranch (an Edit, ATO-2470) saves the cut rows as a version; without it nothing is kept", async () => {
+    const kept = await applySessionRewind(deps, session(), 4, "conversation", undefined, { keepBranch: true });
+    if (!kept.ok) throw new Error(kept.code);
+    expect(save).toHaveBeenCalledWith(kept.value.state);
+    expect(kept.value.state?.messageBranches?.length).toBe(1);
+    const plain = await applySessionRewind(deps, session(), 4, "conversation");
+    if (!plain.ok) throw new Error(plain.code);
+    expect(plain.value.state?.messageBranches ?? []).toHaveLength(0);
+  });
+
   it("files: puts the files back and leaves the chat and its copies alone", async () => {
     await replayFiles();
     const done = await applySessionRewind(deps, session(), 4, "files");
