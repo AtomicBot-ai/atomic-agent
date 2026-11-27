@@ -173,7 +173,9 @@ function fpEditBarHtml(ed) {
   const btn = (act, label, primary) => '<button class="fp-btn' + (primary ? ' fp-primary' : '') + '" data-fp="' + act + '">' + label + '</button>';
   if (ed.ask) return '<div class="fp-note fp-editnote"><span>Discard your unsaved changes?</span>' + btn('edit-discard', 'Discard', true) + btn('edit-keep', 'Keep editing') + '</div>';
   if (ed.conflict) return '<div class="fp-note fp-editnote"><span>This file changed on disk since you opened it.</span>'
-    + btn('edit-reload', 'Reload from disk') + btn('edit-overwrite', 'Overwrite', true) + '</div>';
+    + (typeof fpCompareToggle === 'function' ? btn('edit-compare', fpCompareLabel(ed)) : '')   // ATO-2445: file-preview-compare.js
+    + btn('edit-reload', 'Reload from disk') + btn('edit-overwrite', 'Overwrite', true) + '</div>'
+    + (typeof fpCompareHtml === 'function' ? fpCompareHtml(ed) : '');
   if (ed.error) return '<div class="fp-note fp-editnote"><span>' + fpEsc(ed.error) + '</span></div>';
   if (ed.saving) return '<div class="fp-editstat">Saving…</div>';
   return '<div class="fp-editstat">' + (fpEditDirty(ed) ? 'Edited' : 'Saved') + '</div>';
@@ -193,6 +195,7 @@ function fpEditClick(what) {
   else if (what === 'edit-save') fpEditSave(false);
   else if (what === 'edit-overwrite') fpEditSave(true);
   else if (what === 'edit-reload') fpEditReload();
+  else if (what === 'edit-compare' && typeof fpCompareToggle === 'function') fpCompareToggle();   // ATO-2445
   else if (what === 'edit-done') fpEditLeave();
   else if (what === 'edit-keep') { ed.ask = null; fpEditPaintBar(); }
   else if (what === 'edit-discard') { const then = ed.ask; fpEditStop(); if (then) then(); }
@@ -205,6 +208,7 @@ if (typeof document !== 'undefined') {
     const was = fpEditDirty(FP.edit);
     FP.edit.draft = String(ta.value).replace(/\r\n?/g, '\n');
     if (was !== fpEditDirty(FP.edit) && !FP.edit.ask && !FP.edit.conflict && !FP.edit.error) fpEditPaintBar();
+    else if (FP.edit.compare && FP.edit.conflict && !FP.edit.ask) fpEditPaintBar();   // ATO-2445: Compare follows the typing
   });
   document.addEventListener('keydown', (e) => {
     if (!FP.edit || !(e.metaKey || e.ctrlKey) || e.altKey || String(e.key).toLowerCase() !== 's') return;

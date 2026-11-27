@@ -1,0 +1,23 @@
+/* ---------------- ATO-2445: the preview's line band, Open in editor, Compare ----------------
+   file-preview-line.js marks the line a `path:line` link opened on; the
+   reply's chip for such a link (reply-line-links.js) reads as code;
+   file-preview-editor.js draws the editor menu; file-preview-compare.js the
+   diff under the conflict bar. Tokens only, for both themes. */
+pre.fp-haslineband{position:relative}
+.fp-lineband{position:absolute;left:0;right:0;background:var(--brand-wash);pointer-events:none;
+  animation:fp-lineband-fade 2.4s var(--ease) 1.2s forwards}
+@keyframes fp-lineband-fade{to{opacity:0}}
+@media (prefers-reduced-motion:reduce){.fp-lineband{animation:none;opacity:.6}}
+
+.filechip.lnchip span{font-family:var(--font-mono)}
+.filechip.lnchip span code{background:none;padding:0}
+
+.fp-edwrap{position:relative;flex:none;display:inline-flex}
+.fp-edmenu{position:absolute;right:0;top:calc(100% + 4px);z-index:5;display:flex;flex-direction:column;min-width:140px;padding:4px;
+  background:var(--lift);border-radius:var(--r-well);box-shadow:var(--sh-card)}
+.fp-edmenu-i{display:block;width:100%;padding:6px 10px;border:0;border-radius:6px;background:none;text-align:left;
+  color:var(--ink);font:500 var(--fs-label)/18px var(--font-ui);cursor:pointer}
+.fp-edmenu-i:hover,.fp-edmenu-i:focus-visible{background:var(--hover);outline:none}
+
+.fp-compare{flex:none;max-height:45vh;overflow:auto;border-bottom:1px solid var(--divider);background:var(--well)}
+.fp-compare-diff{padding:4px 14px 10px}

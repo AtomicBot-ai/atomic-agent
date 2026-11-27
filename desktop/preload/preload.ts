@@ -281,6 +281,11 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("app:filePreviewSave", path, text, stamp, force === true),
   // ATO-2410: a deck's slides as pictures; {ok:true, kind:'pdf', base64} | {ok:true, kind:'html', html, width} | {ok:false, reason}.
   filePreviewSlides: (path: string) => ipcRenderer.invoke("app:filePreviewSlides", path),
+  // ATO-2445: where a reply's `path:line` chip points; {ok:true, path} | {ok:false, reason:'missing'|'remote'|'bad-path'}.
+  resolveLinePath: (sessionId: string | null, path: string) => ipcRenderer.invoke("app:resolveLinePath", { sessionId, path }),
+  // ATO-2445: the editors found ([{id, name}]) and opening a previewed file in one at a line; {ok:true} | {ok:false, reason}.
+  editors: () => ipcRenderer.invoke("app:editors"),
+  openInEditor: (path: string, id: string, line?: number, col?: number) => ipcRenderer.invoke("app:openInEditor", path, id, line, col),
   // ATO-1136: an HTML artifact kept in main and served sandboxed; answers {ok:true, url:'atomic-art://…/'} | {ok:false, reason}.
   artifactPut: (html: string) => ipcRenderer.invoke("app:artifactPut", html),
   artifactDrop: (url: string) => ipcRenderer.invoke("app:artifactDrop", url),
