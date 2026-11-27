@@ -89,10 +89,10 @@ const LOOKS: Readonly<Record<CodingMode, CodingModeLook>> = {
   },
   bypass: {
     label: "bypass permissions",
-    detail: "never asks at all",
+    detail: "almost never asks",
     tone: "error",
     summary:
-      "bypass permissions — nothing asks, for the rest of this session. Hardline shell-guard rules still block.",
+      "bypass permissions: nothing asks for the rest of this session, except a command that reads credentials or runs an encoded script. Hardline shell-guard rules still block.",
   },
 };
 

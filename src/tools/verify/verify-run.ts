@@ -138,6 +138,9 @@ export function buildVerifyRunTool(options: VerifyRunToolOptions): ToolDefinitio
             affectedResources: [ctx.workingDir],
             commandSegments,
             ...(commandUnreadable ? { commandUnreadable } : {}),
+            ...(guard.dangerous.some((c) => c.verdict.askEveryLevel === true)
+              ? { askEveryLevel: true as const }
+              : {}),
           },
           ctx.signal,
         );
