@@ -49,6 +49,15 @@ describe("a -c script built at run time (ATO-2528)", () => {
     "ssh host $X",
     "busybox $X",
     "watch -n1 $X",
+    // Review round 2: wrappers and inline code the helper did not model.
+    'trap "$X" EXIT',
+    "coproc $X",
+    "chronic $X",
+    "gdb --args $X",
+    "python3 -c \"import os; os.system('$X')\"",
+    "python3 -c\"import os; os.system('$X')\"",
+    "node -e \"require('child_process').execSync('$X')\"",
+    "perl -e \"system('$X')\"",
   ])("is built at run time: %s", (script) => {
     expect(nestedScriptBuiltAtRunTime(script)).toBe(true);
   });
@@ -61,6 +70,7 @@ describe("a -c script built at run time (ATO-2528)", () => {
     "git -C $REPO status",
     "echo hi",
     "find $DIR -name '*.log'",
+    "python3 build.py $OUT",
   ])("keeps its programs readable: %s", (script) => {
     expect(nestedScriptBuiltAtRunTime(script)).toBe(false);
   });

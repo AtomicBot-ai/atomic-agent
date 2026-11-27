@@ -43,9 +43,14 @@ export function createAgentSecurityDefaults(): AgentSecurityConfig {
   return { argScanThreshold: DEFAULT_ARG_SCAN_THRESHOLD, knownHosts: [], guardOnFailure: "ask" };
 }
 
-/** `GitHub.com.` → `github.com`; `null` for anything that is not a host or `*.domain`. */
+/**
+ * `GitHub.com.` → `github.com`; `null` for anything that is not a host or
+ * `*.domain`. A wildcard needs two labels after `*.` (review round 2):
+ * `*.com` would make every `.com` host known.
+ */
 export function normaliseKnownHostEntry(raw: string): string | null {
   const entry = raw.trim().toLowerCase().replace(/\.+$/, "");
+  if (entry.startsWith("*.") && !entry.slice(2).includes(".")) return null;
   return entry.length > 0 && entry.length <= 253 && HOST_ENTRY_RE.test(entry) ? entry : null;
 }
 

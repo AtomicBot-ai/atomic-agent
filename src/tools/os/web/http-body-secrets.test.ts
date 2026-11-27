@@ -80,4 +80,21 @@ describe("httpSecretFinding (ATO-2505)", () => {
   it("still finds nothing in an ordinary path and host", () => {
     expect(httpSecretFinding(new URL("https://api.example.com/v1/users/42/repos?page=2"), undefined, [OWN])).toBeNull();
   });
+
+  // Review round 2: a header carrying the agent's own secret to an
+  // unknown host asked nobody.
+  it("finds the agent's own secret in a header value when the host is not on the allowlist", () => {
+    const finding = httpSecretFinding(url, undefined, [OWN], { headers: { "X-Api-Key": OWN.value } });
+    expect(finding).toMatchObject({ rule: "dangerous.http_secret", confidence: 1 });
+    expect(finding!.reason).toContain("header");
+    expect(finding!.reason).not.toContain(OWN.value);
+    expect(
+      httpSecretFinding(url, undefined, [OWN], { headers: { Authorization: `Bearer ${OWN.value}` }, hostKnown: false }),
+    ).toMatchObject({ confidence: 1 });
+  });
+
+  it("leaves headers to an allowlisted host, and ordinary headers, alone", () => {
+    expect(httpSecretFinding(url, undefined, [OWN], { headers: { "X-Api-Key": OWN.value }, hostKnown: true })).toBeNull();
+    expect(httpSecretFinding(url, undefined, [OWN], { headers: { Authorization: "Bearer abc", Accept: "*/*" } })).toBeNull();
+  });
 });

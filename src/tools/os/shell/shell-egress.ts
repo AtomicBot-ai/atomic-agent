@@ -6,6 +6,7 @@ import {
 } from "../../../approval/egress-scan.js";
 import { gitRemoteUrls } from "../../../approval/git-remote-url.js";
 import { publishRegistryUrl } from "../../../approval/publish-registry.js";
+import { registryVariableSet } from "../../../approval/registry-variables.js";
 
 export interface ShellEgressFacts {
   /**
@@ -16,6 +17,8 @@ export interface ShellEgressFacts {
   commandUnreadable?: boolean;
   /** The files the call writes (`shellWriteTargets`), absolute. */
   targetPaths?: readonly string[];
+  /** The environment the command inherits; a test seam. */
+  env?: NodeJS.ProcessEnv;
 }
 
 /** A write into a `.git` folder or a git config file can change where a push goes. */
@@ -46,8 +49,10 @@ export function shellEgress(
     gitRemote: (remote, chdir) =>
       gitRemoteUrls(chdir === undefined ? cwd : resolve(cwd, chdir), remote),
     gitStateWritten: writesGitState(facts.targetPaths ?? []),
-    // The registry a publish goes to, from `.npmrc` / cargo config (ATO-2528).
-    publishRegistry: (program, name) => publishRegistryUrl(cwd, program, name),
+    // The registry a publish goes to, from `.npmrc` / cargo config (ATO-2528),
+    // unless the agent's own environment sets it (review round 2).
+    publishRegistry: (program, name) =>
+      registryVariableSet(facts.env ?? process.env) ? null : publishRegistryUrl(cwd, program, name),
     httpConfigWritten: (facts.targetPaths ?? []).some((path) =>
       [".curlrc", "_curlrc", ".wgetrc"].includes(basename(path).toLowerCase()),
     ),

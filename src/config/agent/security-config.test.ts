@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseUserConfigFile, USER_CONFIG_DEFAULTS } from "../config-schema.js";
-import { parseAgentSecurityConfig } from "./security-config.js";
+import { normaliseKnownHostEntry, parseAgentSecurityConfig } from "./security-config.js";
 
 describe("agent.security (ATO-2505)", () => {
   it("defaults to argScanThreshold 0.7, also for a file without the block", () => {
@@ -45,5 +45,16 @@ describe("agent.security (ATO-2505)", () => {
   it("reads guardOnFailure and refuses anything else (ATO-2529)", () => {
     expect(parseAgentSecurityConfig({ guardOnFailure: "block" }).guardOnFailure).toBe("block");
     expect(() => parseAgentSecurityConfig({ guardOnFailure: "allow" })).toThrow(/guardOnFailure/);
+  });
+
+  // Review round 2: `*.com` made every .com host known.
+  it.each([["*.com"], ["*.io."], ["*.co"]])("refuses a wildcard over a single label %j", (value) => {
+    expect(() => parseAgentSecurityConfig({ knownHosts: value })).toThrow(/knownHosts/);
+    expect(normaliseKnownHostEntry(value[0]!)).toBeNull();
+  });
+
+  it("keeps a wildcard over two labels", () => {
+    expect(normaliseKnownHostEntry("*.co.uk")).toBe("*.co.uk");
+    expect(normaliseKnownHostEntry("*.example.com")).toBe("*.example.com");
   });
 });

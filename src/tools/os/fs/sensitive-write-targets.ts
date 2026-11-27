@@ -30,6 +30,12 @@ const SENSITIVE_HOME_ENTRIES: readonly string[] = [
   "library/launchagents/",
   ".gitconfig", ".config/git/config",
   ".curlrc", ".wgetrc", ".npmrc",
+  // Review round 2: editor and multiplexer startup files, oh-my-zsh
+  // plugins, pip's config (an index URL reroutes installs), the agent's
+  // own config.
+  ".vimrc", ".gvimrc", ".exrc", ".tmux.conf", ".config/tmux/tmux.conf", ".oh-my-zsh/custom/",
+  ".pip/pip.conf", ".config/pip/pip.conf", "library/application support/pip/pip.conf",
+  "appdata/roaming/pip/pip.ini", ".atomic-agent/config.json",
   "documents/windowspowershell/", "documents/powershell/",
   "appdata/roaming/microsoft/windows/start menu/programs/startup/",
   ...SECRET_HOME_PATHS.map((entry) => entry.toLowerCase()),
@@ -69,6 +75,125 @@ function isSensitive(home: string, absolute: string): boolean {
   const rel = below(home, absolute.toLowerCase());
   if (rel === null) return false;
   return rel === "" || SENSITIVE_HOME_ENTRIES.some((entry) => matchesEntry(rel, entry));
+}
+
+/**
+ * The folders of `trees` an archive unpacking there could plant a
+ * sensitive entry in (review round 2): home itself, a folder above an
+ * entry (`~/.config` holds `autostart/`, `~/Library` holds
+ * `LaunchAgents/`), or one inside an entry.
+ */
+export function sensitiveTreeTargets(trees: readonly string[], homeDir: string = homedir()): string[] {
+  const home = resolve(homeDir).toLowerCase();
+  return trees.filter((tree) => {
+    const rel = below(home, resolve(tree).toLowerCase());
+    if (rel === null) return false;
+    return isSensitive(home, resolve(tree)) || SENSITIVE_HOME_ENTRIES.some((entry) => entry.startsWith(`${rel}/`));
+  });
+}
+
+/** Variables that hold the home folder or a part of its path. */
+const HOME_VARIABLE =
+  /^(?:\$\{?(?:home|user|logname|username|zdotdir|xdg_[a-z_]+|env:(?:userprofile|home|homepath|homedrive|appdata|localappdata|username))(?![a-z0-9_])|%(?:userprofile|homepath|homedrive|homeshare|appdata|localappdata|username|onedrive)%)/;
+
+const slashed = (path: string): string => path.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+
+/** `a/b/../c/.` as `a/c/`: `..` and `.` folded, a trailing partial name kept. */
+function fold(path: string): string {
+  const out: string[] = [];
+  const parts = path.split("/");
+  parts.forEach((part, at) => {
+    if (part === "..") {
+      if (out.length > 1) out.pop();
+    } else if (part !== ".") {
+      out.push(part);
+    }
+    if ((part === ".." || part === ".") && at === parts.length - 1) out.push("");
+  });
+  return out.join("/");
+}
+
+/** One path part of a glob as an anchored regex: `*`, `?`, `[…]`, `{a,b}`. */
+function globPartRegex(part: string): RegExp {
+  let out = "";
+  for (let i = 0; i < part.length; i += 1) {
+    const char = part[i]!;
+    const close = char === "[" ? part.indexOf("]", i + 2) : char === "{" ? part.indexOf("}", i) : -1;
+    if (char === "*") out += ".*";
+    else if (char === "?") out += ".";
+    else if (char === "[" && close !== -1) {
+      out += `[${part.slice(i + 1, close).replace(/^[!^]/, "^").replace(/\\/g, "\\\\")}]`;
+      i = close;
+    } else if (char === "{" && close !== -1) {
+      out += `(?:${part.slice(i + 1, close).split(",").map(escapeRegExp).join("|")})`;
+      i = close;
+    } else out += escapeRegExp(char);
+  }
+  try {
+    return new RegExp(`^${out}$`);
+  } catch {
+    return /^/;
+  }
+}
+
+/** A glob part against a name; `*` and `?` skip a leading dot, as in the shell. */
+function globPartMatches(part: string, name: string): boolean {
+  if (part.includes("**")) return true;
+  if (name.startsWith(".") && !/^[.[{]/.test(part)) return false;
+  return globPartRegex(part).test(name);
+}
+
+/**
+ * Whether a glob path (absolute, folded, lowercased) can expand to a
+ * sensitive entry or into one, or to home itself.
+ */
+function globMayHit(path: string, home: string): boolean {
+  const parts = path.split("/").filter((part) => part.length > 0);
+  const homeParts = home.split("/").filter((part) => part.length > 0);
+  const hits = (target: readonly string[], exact: boolean): boolean =>
+    (exact ? parts.length === target.length : parts.length >= target.length) &&
+    target.every((name, at) => globPartMatches(parts[at]!, name));
+  if (parts.some((part) => part.includes("**"))) return true;
+  return (
+    hits(homeParts, true) ||
+    SENSITIVE_HOME_ENTRIES.some((entry) => hits([...homeParts, ...entry.split("/").filter((p) => p.length > 0)], false))
+  );
+}
+
+/**
+ * Whether a written word the shell only spells out when it runs
+ * (review round 2, fail closed) could name a sensitive home entry: it
+ * names one outright (`~/.bashrc.$N`); as a glob it can expand to one
+ * (`~/.zsh?c`, `~/.{zsh,bash}rc`, `~/.s?h/x`, `/Users/*\/.bashrc`; `*`
+ * skips dot names, so `~/*.png` cannot); with a variable in it, the part
+ * before the variable is the start of a sensitive path
+ * (`/Users/$USER/…`, `~/$X`) or lies inside one; or it opens with a home
+ * variable (`%USERPROFILE%`, `$ZDOTDIR`), or with any variable on a line
+ * that names a sensitive entry (`F=~/.bashrc; echo x >> $F`). A relative
+ * word whose folder is not known is taken to be in home.
+ */
+export function mayNameSensitiveHomeEntry(
+  word: string,
+  dir: string | undefined,
+  lineNamesOne: boolean,
+  homeDir: string = homedir(),
+): boolean {
+  const text = word.replace(/\\/g, "/").toLowerCase();
+  if (mentionsSensitiveHomeEntry(text)) return true;
+  const at = text.search(/[*?[{$%]/);
+  if (at === 0 && /^[$%]/.test(text)) return HOME_VARIABLE.test(text) || lineNamesOne;
+  const home = slashed(resolve(homeDir));
+  const absolute = (path: string): string => {
+    if (path === "~" || path.startsWith("~/")) return fold(home + path.slice(1));
+    if (/^(?:[a-z]:)?\//.test(path)) return fold(path);
+    return fold(`${slashed(dir ?? homeDir)}/${path}`);
+  };
+  if (!/[$%]/.test(text)) return globMayHit(absolute(text), home);
+  const base = absolute(at === -1 ? text : text.slice(0, at));
+  return SENSITIVE_HOME_ENTRIES.some((entry) => {
+    const full = `${home}/${entry}`;
+    return full.startsWith(base) || base.startsWith(full.endsWith("/") ? full : `${full}/`) || base === full;
+  });
 }
 
 /** `path` with symlinks resolved, through its nearest existing parent. */
@@ -141,5 +266,5 @@ export function mentionsSensitiveHomeEntry(line: string): boolean {
 export function sensitiveWriteReason(targets: readonly string[]): string {
   const shown = targets.slice(0, 3).join(", ");
   const more = targets.length > 3 ? ` and ${targets.length - 3} more` : "";
-  return `changes a startup, SSH or credential file in your home folder (${shown}${more}); asks in every mode`;
+  return `changes a startup, SSH or credential file in your home folder, or a git, cron or login setting (${shown}${more}); asks in every mode`;
 }

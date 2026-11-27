@@ -151,7 +151,8 @@ export interface PushInvocation {
 }
 
 /**
- * The exact git invocation a push runs, as data. The token is attached
+ * The exact git invocation a push runs, as data. Submodules are never
+ * pushed along. The token is attached
  * only for an `https://github.com/` remote, and only through the env
  * (`GIT_CONFIG_*`), never through argv — pinned by the tests.
  */
@@ -164,6 +165,10 @@ export function buildPushInvocation(input: {
 }): PushInvocation {
   const args = [
     "push",
+    // `push.recurseSubmodules=on-demand` (or `submodule.recurse`) would
+    // also push each submodule to its own remote, which the card does not
+    // show (review round 2 of ATO-2528). The flag beats the config.
+    "--recurse-submodules=no",
     ...(input.setUpstream ? ["-u"] : []),
     input.remote,
     `${input.branch}:${input.branch}`,

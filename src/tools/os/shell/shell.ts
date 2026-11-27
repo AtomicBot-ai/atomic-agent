@@ -380,6 +380,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       cwd,
       useShell ? subshellCommandLine : execShellScript(cmd, execArgs),
       useShell && process.platform === "win32" ? "cmd" : "posix",
+      useShell ? undefined : { cmd, args: execArgs },
     );
     const dangerous = isDangerousGuardRule(guardVerdict.rule) || security.forcesGate;
     const commandSegments = shellRuleSegments(cmd, execArgs, useShell);
