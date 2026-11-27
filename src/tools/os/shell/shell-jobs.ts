@@ -30,6 +30,8 @@ export type ShellJobState = "running" | "exited" | "killed";
 
 export type ShellJobStopReason =
   | "kill"
+  /** The person stopped it from a host's terminal tab (ATO-2485). */
+  | "person"
   | "turn_end"
   | "session_end"
   | "evicted"

@@ -153,6 +153,14 @@ export type {
   ShellJobState,
   ShellJobStopReason,
 } from "./shell/shell-jobs.js";
+export { createShellJobHostControls, SHELL_JOB_INPUT_MAX_CHARS } from "./shell/shell-job-host.js";
+export type {
+  ShellJobHostControls,
+  ShellJobResizeOutcome,
+  ShellJobStopOutcome,
+  ShellJobView,
+  ShellJobWriteOutcome,
+} from "./shell/shell-job-host.js";
 
 export interface RegisterOsToolsOptions extends DangerousToolOptions {
   config: Pick<AtomicAgentConfig, "http" | "web" | "projects" | "tools">;
