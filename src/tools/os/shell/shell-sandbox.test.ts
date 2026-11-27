@@ -100,6 +100,32 @@ describe.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-e
       expect(existsSync(join(outside, "escaped.txt"))).toBe(false);
     });
 
+    // ATO-1651: a session started in the home folder must not make the
+    // whole home (rc files, tool `bin` folders) writable.
+    it("a working folder of ~ is not writable", async () => {
+      const target = join(outside, "escaped.txt");
+      const result = await tool(on).run(
+        { cmd: 'echo out > "$ATO469_OUTSIDE/escaped.txt"; echo end' },
+        { ...ctx(), workingDir: homedir() },
+      );
+      expect(existsSync(target)).toBe(false);
+      expect(result.summary).toContain("home folder or above it");
+    });
+
+    // ATO-1651: package caches go to a private folder under temp, which
+    // stays writable, so `npm install` and `npx` keep working.
+    it("points package caches at a writable sandbox cache", async () => {
+      const result = await tool(on).run(
+        {
+          cmd: 'mkdir -p "$npm_config_cache/_npx" && echo cache-ok > "$npm_config_cache/_npx/p" && cat "$npm_config_cache/_npx/p"; echo "cache=$npm_config_cache gomod=$GOMODCACHE"',
+        },
+        ctx(),
+      );
+      expect(result.summary).toContain("cache-ok");
+      expect(result.summary).toContain("atomic-agent-sandbox-cache");
+      expect(result.summary).not.toContain(`cache=${join(homedir(), ".npm")}`);
+    });
+
     it("runs as before when Safe Mode is off", async () => {
       await mkdir(join(outside, "d"), { recursive: true });
       const target = join(outside, "d", "free.txt");

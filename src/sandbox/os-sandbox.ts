@@ -7,9 +7,12 @@
  * every right the user has. This wraps the spawn itself, so the kernel
  * enforces the limits whatever the command line says:
  *
- * - writes only under the session's working directory, the temp
- *   folders and a short list of pure download caches; a model-supplied
- *   `cwd` never widens this;
+ * - writes only under the session's working directory and the temp
+ *   folders; a model-supplied `cwd` never widens this, and a working
+ *   directory that is the home folder or above it is not writable at all
+ *   (ATO-1651). Shared package caches in the home folder stay read-only:
+ *   the tools are pointed at a private cache under temp instead
+ *   (`sandbox-cache-env.ts`);
  * - no reads of credential folders and files (`~/.ssh`, `~/.aws`,
  *   `~/.netrc`, ...) or of the agent's own state directory (its `.env`,
  *   config, tokens); a working folder inside one is opened by itself;
@@ -78,6 +81,13 @@ export interface OsSandboxReopen {
 export interface OsSandboxPolicy {
   /** Folders the command may write under (working folders first). */
   writableRoots: readonly string[];
+  /**
+   * Working folders left out of `writableRoots` because they are the
+   * home folder or one of its parents (`/`, `/Users`): granting them
+   * would make every dotfile, rc file and tool `bin` writable (ATO-1651).
+   * Set only when one was left out, so the caller can say so.
+   */
+  narrowedRoots?: readonly string[];
   /**
    * Folders and files the command may not read (credential stores,
    * agent state). Each one is listed both as named and, when it is a
@@ -212,38 +222,6 @@ export function dockerHostSocket(dockerHost: string | undefined): string | null 
   return isAbsolute(path) ? path : null;
 }
 
-/**
- * Pure download caches a build writes to outside the project. Without
- * them `npm install`, `pip install` or `cargo build` fails inside the
- * sandbox. Only cache folders: never a tool's `bin`, `init.d` or
- * settings file, because a file planted there would run later outside
- * the sandbox with every right the user has. Relative to the home folder.
- */
-export const CACHE_HOME_PATHS: readonly string[] = [
-  ".npm/_cacache",
-  ".npm/_logs",
-  ".npm/_npx",
-  ".cache/pip",
-  ".cache/yarn",
-  ".cache/go-build",
-  ".cache/node-gyp",
-  ".yarn/berry/cache",
-  ".pnpm-store",
-  ".bun/install/cache",
-  ".cargo/registry",
-  ".cargo/git",
-  ".rustup/tmp",
-  "go/pkg/mod",
-  ".gradle/caches",
-  ".m2/repository",
-  "Library/Caches/pip",
-  "Library/Caches/Yarn",
-  "Library/Caches/pnpm",
-  "Library/Caches/go-build",
-  "Library/Caches/node-gyp",
-  "Library/Developer/Xcode/DerivedData",
-];
-
 /** The real path when it exists (Seatbelt matches resolved paths). */
 function real(path: string): string {
   try {
@@ -268,19 +246,36 @@ function unique(paths: readonly string[]): string[] {
   return [...new Set(paths)];
 }
 
+/**
+ * A working folder too broad to be writable: the home folder itself or
+ * a folder above it (`/`, `/home`, `/Users`), by either spelling.
+ */
+export function isTooBroadWorkspaceRoot(root: string, home: string): boolean {
+  const homes = bothSpellings(resolve(home));
+  const roots = bothSpellings(resolve(root));
+  return roots.some((r) => homes.some((h) => isInside(h, r)));
+}
+
 /** The policy for one command run from the trusted working folders. */
 export function buildOsSandboxPolicy(
   input: OsSandboxPolicyInput,
 ): OsSandboxPolicy {
   const home = input.home ?? homedir();
   const tmp = input.tmp ?? tmpdir();
-  const work = unique(input.workspaceRoots.map((p) => real(resolve(p))));
+  const named = unique(input.workspaceRoots.map((p) => real(resolve(p))));
+  // A working directory of `~` (or `/`) is not a project: writable, it
+  // would hand the command every dotfile and tool folder of the user.
+  // Left out; the command still writes temp (ATO-1651).
+  const narrowedRoots = named.filter((p) => isTooBroadWorkspaceRoot(p, home));
+  const work = named.filter((p) => !narrowedRoots.includes(p));
+  // No shared package cache in the home folder is writable: a package
+  // planted there runs later outside the sandbox. The tools get a
+  // private cache under temp instead (`sandbox-cache-env.ts`, ATO-1651).
   const writableRoots = unique([
     ...work,
     real(tmp),
     // `/tmp` is a link to `/private/tmp` on macOS; both spellings.
     ...(process.platform === "win32" ? [] : ["/tmp", real("/tmp")]),
-    ...CACHE_HOME_PATHS.flatMap((p) => bothSpellings(join(home, p))),
   ]);
   const secret = [...SECRET_HOME_PATHS, ...(input.extraDenyRead ?? [])].flatMap((p) =>
     bothSpellings(join(home, p)),
@@ -318,6 +313,7 @@ export function buildOsSandboxPolicy(
   const denySockets = unique(sockets);
   return {
     writableRoots,
+    ...(narrowedRoots.length > 0 ? { narrowedRoots } : {}),
     denyRead,
     reopen,
     network: input.network,

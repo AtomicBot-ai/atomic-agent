@@ -57,6 +57,10 @@ import {
   wrapWithOsSandbox,
   type OsSandboxSettings,
 } from "../sandbox/os-sandbox.js";
+import {
+  ensureSandboxCacheRoot,
+  withSandboxCacheEnv,
+} from "../sandbox/sandbox-cache-env.js";
 import { offlineRefusal } from "../llm/offline-network.js";
 import {
   MCP_TOOL_NAME_RE,
@@ -619,7 +623,7 @@ export class McpClient {
       // agent's environment, plus the server's own configured `env`.
       // Provider keys loaded from `<stateDir>/.env` stay with the agent.
       // See `buildMcpStdioEnv` and docs/client.md.
-      const env = buildMcpStdioEnv(this.config.env);
+      let env = buildMcpStdioEnv(this.config.env);
       // On Windows a bare shim name like `npx` / `npm` is `npx.cmd`, which a
       // no-shell `spawn` cannot resolve (ENOENT). Route bare commands through
       // `cmd.exe /c` so PATHEXT resolution kicks in; absolute paths and
@@ -637,6 +641,12 @@ export class McpClient {
           if (upper === "SSH_AUTH_SOCK") delete env[name];
           else if (!spawn.allowDocker && upper.startsWith("DOCKER_")) delete env[name];
         }
+        // `npx -y some-server` keeps working, but its packages land in a
+        // private cache under temp: the shared `~/.npm/_npx` (and the
+        // other home caches) stay read-only, so nothing planted there
+        // runs later outside the sandbox (ATO-1651).
+        const cacheRoot = ensureSandboxCacheRoot();
+        if (cacheRoot !== null) env = withSandboxCacheEnv(env, cacheRoot);
       }
       return new StdioClientTransport({
         command: spawn.command,

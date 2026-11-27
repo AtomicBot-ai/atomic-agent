@@ -15,6 +15,7 @@ import {
   buildSeatbeltProfile,
   dockerHostSocket,
   formatSandboxUnavailable,
+  isTooBroadWorkspaceRoot,
   MCP_SECRET_HOME_PATHS,
   readOsSandboxSettings,
   SANDBOX_EXEC,
@@ -55,21 +56,69 @@ describe("readOsSandboxSettings (ATO-469)", () => {
 });
 
 describe("buildOsSandboxPolicy", () => {
-  it("writes go to the project, temp and tool caches only", () => {
+  it("writes go to the project and temp only", () => {
     const p = policy();
     expect(p.writableRoots[0]).toBe("/home/op/project");
     expect(p.writableRoots).toContain(TMP);
-    expect(p.writableRoots).toContain("/home/op/.npm/_cacache");
     expect(p.writableRoots).not.toContain(HOME);
+    expect(p.narrowedRoots).toBeUndefined();
   });
 
-  it("never makes a tool's bin, init or settings folder writable", () => {
+  // ATO-1651: a package planted in a shared cache runs later outside the
+  // sandbox (`npx`, `mvn`, `gradle`, `cargo`), so none is writable.
+  it("never makes a shared package cache in the home folder writable", () => {
     const p = policy();
-    for (const dir of [".bun", ".bun/bin", ".gradle", ".gradle/init.d", ".m2", ".npm", ".cache"]) {
+    expect(p.writableRoots.filter((dir) => dir.startsWith(`${HOME}/`))).toEqual(["/home/op/project"]);
+    for (const dir of [
+      ".npm/_cacache",
+      ".npm/_npx",
+      ".m2/repository",
+      ".gradle/caches",
+      ".cargo/registry",
+      "go/pkg/mod",
+      ".cache/pip",
+      "Library/Developer/Xcode/DerivedData",
+    ]) {
       expect(p.writableRoots).not.toContain(`/home/op/${dir}`);
     }
-    expect(p.writableRoots).toContain("/home/op/.gradle/caches");
-    expect(p.writableRoots).toContain("/home/op/.m2/repository");
+  });
+
+  // ATO-1651: a session in ~ (or /) would make every dotfile writable.
+  it("leaves out a working folder that is the home folder or above it", () => {
+    for (const root of [HOME, "/home", "/"]) {
+      const p = buildOsSandboxPolicy({ workspaceRoots: [root], network: false, home: HOME, tmp: TMP });
+      expect(p.writableRoots).not.toContain(root);
+      expect(p.writableRoots).toContain(TMP);
+      expect(p.narrowedRoots).toEqual([root]);
+      expect(p.reopen).toEqual([]);
+    }
+    expect(isTooBroadWorkspaceRoot("/home/op/project", HOME)).toBe(false);
+    expect(isTooBroadWorkspaceRoot("/home/opera", HOME)).toBe(false);
+    expect(isTooBroadWorkspaceRoot("/home/op/", HOME)).toBe(true);
+  });
+
+  it.skipIf(process.platform === "win32")("leaves out a link to the home folder too", () => {
+    const base = mkdtempSync(join(tmpdir(), "atomic-sbx-homelink-"));
+    try {
+      const home = join(base, "home");
+      mkdirSync(home);
+      symlinkSync(home, join(base, "link"));
+      const p = buildOsSandboxPolicy({ workspaceRoots: [join(base, "link")], network: false, home, tmp: TMP });
+      expect(p.writableRoots).not.toContain(realpathSync(home));
+      expect(p.narrowedRoots).toHaveLength(1);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("the Seatbelt and bwrap wraps grant no write to a narrowed home", () => {
+    const p = buildOsSandboxPolicy({ workspaceRoots: [HOME], network: false, home: HOME, tmp: TMP });
+    const mac = wrapWithOsSandbox("ls", [], p, { platform: "darwin", seatbeltAvailable: true });
+    if (!mac.ok) throw new Error(mac.reason);
+    expect(mac.args.some((a) => /^W\d+=\/home\/op$/.test(a))).toBe(false);
+    const linux = wrapWithOsSandbox("ls", [], p, { platform: "linux", bwrap: "/usr/bin/bwrap" });
+    if (!linux.ok) throw new Error(linux.reason);
+    expect(linux.args.some((a, i) => a === "--bind" && linux.args[i + 1] === HOME)).toBe(false);
   });
 
   it("hides credential folders and the agent's state", () => {
