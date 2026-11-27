@@ -78,7 +78,7 @@ describe("POST /api/context-preview", () => {
    * report the raw cap as reserved, which the popover drew as eating the
    * whole window; it reports the budget's reservation and the cap apart.
    */
-  it("reports a cap past half the window as half the window, and the cap itself as replyCap", async () => {
+  it("reports a cap past the window's reserve as that reserve, and the cap itself as replyCap", async () => {
     const before = process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS;
     process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = "96000";
     resetConfigCache();
@@ -93,7 +93,8 @@ describe("POST /api/context-preview", () => {
       expect(status).toBe(200);
       expect(json.contextWindow).toBe(32_768);
       expect(json.replyCap).toBe(96_000);
-      expect(json.reservedForReply).toBe(16_384);
+      // A quarter of a 32k window since ATO-1581 (half before).
+      expect(json.reservedForReply).toBe(8192);
     } finally {
       if (before === undefined) delete process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS;
       else process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = before;

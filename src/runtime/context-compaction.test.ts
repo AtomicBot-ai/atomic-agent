@@ -317,8 +317,10 @@ describe("compaction on small context windows (ATO-257)", () => {
     for (const window of [32_768, 131_072]) {
       const prompt = buildPrompt(windowed(window)(state));
       const cap = prompt.compactionBudget!.cap;
-      // The full configured 16384 is still reserved for the reply there.
-      const room = window - prompt.tokens.stablePrefix - 16_384 - 512;
+      // 128k reserves the full configured 16384 for the reply; 32k a
+      // quarter of itself (8192) since ATO-1581.
+      const reserve = window === 32_768 ? 8192 : 16_384;
+      const room = window - prompt.tokens.stablePrefix - reserve - 512;
       expect(cap).toBeLessThanOrEqual(room);
       expect(cap).toBeGreaterThan(room - 2000);
       const plan = decideCompaction(state, prompt, createCompactionDefaults(), "manual").plan!;

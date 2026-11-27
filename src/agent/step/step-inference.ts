@@ -16,6 +16,7 @@ import type { CompletionResult, StreamChunk } from "../../llm/llama-server-clien
 import { estimateReasoningTokens } from "../../llm/reasoning-budget.js";
 import { LOCAL_REASONING_BUDGET_TOKENS, withReasoningBudget } from "../../llm/reasoning-levels.js";
 import { localReplyCapEnvSet, thinkingReplyCap } from "./thinking-reply-cap.js";
+import { windowReplyCap } from "./window-reply-cap.js";
 import { parseDepsFor } from "./step-parsing.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { refusedToolNames } from "../policies/fusion-orchestrator-mode.js";
@@ -321,6 +322,9 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
   // (ATO-1031, `thinkingReplyCap`). It rides as `localReplyCap`, which
   // only a grammar link reads, so a cloud fallback never sees it.
   const configuredReplyCap = getConfig().localModels.completionMaxTokens;
+  // Otherwise a cap that would outrun the window is held to the room the
+  // prompt leaves (ATO-1581: a 32K window reserves 8,192, the cap is
+  // 16,384), so a long reply stops at the cap, not the window wall.
   const localReplyCap = thinkingReplyCap({
     profile: deps.profile,
     thinkingDisabled:
@@ -331,6 +335,14 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
     stepCapSet:
       ctx.maxTokens !== undefined || ctx.maxOutputTokens !== undefined,
     envCapSet: localReplyCapEnvSet(),
+    contextWindow: deps.contextWindow ?? null,
+    promptTokens: prompt.tokens.total,
+  }) ?? windowReplyCap({
+    modelMode: deps.modelMode?.mode ?? "local",
+    toolTransport: deps.toolTransport ?? "grammar",
+    configuredCap: configuredReplyCap,
+    stepCapSet:
+      ctx.maxTokens !== undefined || ctx.maxOutputTokens !== undefined,
     contextWindow: deps.contextWindow ?? null,
     promptTokens: prompt.tokens.total,
   });

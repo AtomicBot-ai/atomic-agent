@@ -43,13 +43,15 @@ function record(over: Partial<LaunchRecord> = {}): LaunchRecord {
 
 describe("planLocalContextGrowth", () => {
   it("asks for one doubling once the last prompt passes three quarters of the prompt's room", () => {
-    // 32,768 less the 16,384 reply reserve leaves 16,384; the trigger is past 12,288.
-    expect(planLocalContextGrowth(cfg(), 12_000, () => record())).toBeNull();
-    expect(planLocalContextGrowth(cfg(), 13_000, () => record())).toEqual({
+    // 32,768 less the 8,192 reply reserve (a quarter since ATO-1581)
+    // leaves 24,576; the trigger is past 18,432.
+    expect(planLocalContextGrowth(cfg(), 13_000, () => record())).toBeNull();
+    expect(planLocalContextGrowth(cfg(), 18_000, () => record())).toBeNull();
+    expect(planLocalContextGrowth(cfg(), 19_000, () => record())).toEqual({
       modelId: "qwen-3.8-27b",
       from: 32_768,
       to: 65_536,
-      promptTokens: 13_000,
+      promptTokens: 19_000,
     });
   });
 

@@ -116,13 +116,13 @@ describe("ContextPanel", () => {
    */
   it("never reserves more than the prompt left of the window", () => {
     const body = lines(
-      usage({ tokens: 20_000, contextWindow: 32_768, percent: 61 }),
+      usage({ tokens: 26_000, contextWindow: 32_768, percent: 79 }),
       100,
       24,
       96_000,
     ).join("\n");
-    // 32768 − 20000 = 12768, under the 16384 the budget would hold.
-    expect(body).toContain("reserved for reply    12.8k");
+    // 32768 − 26000 = 6768, under the 8192 the budget would hold.
+    expect(body).toContain("reserved for reply     6.8k");
     expect(body).toContain("free                      0   0%");
   });
 
@@ -133,9 +133,10 @@ describe("ContextPanel", () => {
       24,
       96_000,
     ).join("\n");
-    expect(body).toContain("reserved for reply    16.4k");
-    // 32768 − 9000 − 16384 = 7384
-    expect(body).toContain("free                   7.4k");
+    // A quarter of a 32k window since ATO-1581 (half before).
+    expect(body).toContain("reserved for reply     8.2k");
+    // 32768 − 9000 − 8192 = 15576
+    expect(body).toContain("free                  15.6k");
   });
 
   /**
