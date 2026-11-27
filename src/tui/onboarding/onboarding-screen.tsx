@@ -6,6 +6,7 @@ import { ROOT_PADDING_LEFT } from "../layout.js";
 import { useOnboardingInputs } from "./use-onboarding-inputs.js";
 import { useOnboardingLifecycle } from "./use-onboarding-lifecycle.js";
 import { useOnboardingUrlActions } from "./use-onboarding-url-actions.js";
+import { useOnboardingLocalDetection } from "./use-onboarding-local-detection.js";
 import {
   buildLocalModelPicks,
   buildLocalPickRows,
@@ -56,6 +57,10 @@ export interface OnboardingScreenCallbacks {
   onOnboardingImportRequested?(
     plan: import("./import-step.js").OnboardingImportPlan,
   ): void;
+  /** ATO-2013: look for Ollama / LM Studio / the Llama app running here. */
+  onDetectLocalServers?(): Promise<
+    readonly import("../../llm/provider/presets/detect-local-servers.js").DetectedLocalServer[]
+  >;
 }
 
 /** Named once — the offer screens quote it back at the operator. */
@@ -146,6 +151,13 @@ export function OnboardingScreen(props: {
   const wizardState = props.state.providersPanel.wizard;
 
   useOnboardingInputs({ state: props.state, dispatch, callbacks });
+  useOnboardingLocalDetection({
+    onboarding,
+    dispatch,
+    ...(callbacks.onDetectLocalServers === undefined
+      ? {}
+      : { detect: () => callbacks.onDetectLocalServers!() }),
+  });
   const { probeAndAdvance, saveEmbeddingUrl } = useOnboardingUrlActions({
     onboarding,
     dispatch,
@@ -195,6 +207,7 @@ export function OnboardingScreen(props: {
     hfError: onboarding.step === "local_hf_ref" ? onboarding.error : null,
     importAgents: onboarding.importAgents,
     importReport: onboarding.importReport,
+    ...(onboarding.detectedLocal ? { detectedLocal: onboarding.detectedLocal } : {}),
   });
 
   return (

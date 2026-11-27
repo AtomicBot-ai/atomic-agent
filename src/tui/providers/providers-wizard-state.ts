@@ -1,5 +1,6 @@
 import type { SubscriptionCliName } from "../../config/llm-config.js";
 import type { ModelPricingFilter } from "../../llm/provider/model-pricing-filter.js";
+import type { DetectedLocalServer } from "../../llm/provider/presets/detect-local-servers.js";
 import { presetForEntryId } from "./provider-presets.js";
 
 export type ProvidersWizardKind =
@@ -92,6 +93,13 @@ export interface ProvidersWizardState {
   selectedEmbeddingChoiceId: string | null;
   error: string | null;
   submitting: boolean;
+  /**
+   * Local servers found running when the provider list opened (ATO-2013).
+   * Absent until the check answers with at least one; their rows then
+   * lead the `pick_kind` list. Optional so every existing state literal
+   * keeps its shape.
+   */
+  detectedLocal?: readonly DetectedLocalServer[];
 }
 
 export function createProvidersWizardState(

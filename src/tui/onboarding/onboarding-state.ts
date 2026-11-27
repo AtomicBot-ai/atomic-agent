@@ -3,6 +3,7 @@ import type {
   HuggingFaceGgufChoice,
 } from "../../local-llm/index.js";
 import type { ImportReport } from "../../import/index.js";
+import type { DetectedLocalServer } from "../../llm/provider/presets/detect-local-servers.js";
 import { t } from "../../i18n/index.js";
 import type { OnboardingImportAgentRow } from "./import-step.js";
 
@@ -95,6 +96,12 @@ export interface OnboardingUiState {
   importAgents: OnboardingImportAgentRow[];
   /** What the run imported, rendered by the report screen. */
   importReport: ImportReport | null;
+  /**
+   * Local servers found running here (ATO-2013), once the check found
+   * any; absent before that. Optional so existing state literals keep
+   * their shape. See `onboarding-local-servers.ts`.
+   */
+  detectedLocal?: readonly DetectedLocalServer[];
 }
 
 /**
