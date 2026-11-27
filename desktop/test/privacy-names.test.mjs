@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const {NAMES_OLD_AGENT, readNamesStatus, namesHint, privacyNamesHTML} = require('../renderer/privacy-names.js');
+const {NAMES_OLD_AGENT, readNamesStatus, namesHint, namesToast, privacyNamesHTML} = require('../renderer/privacy-names.js');
 const {createPrivacyShield} = require('../renderer/privacy-shield.js');
 const { AgentClient } = require('../out/main/agent-client.js');
 
@@ -78,6 +78,39 @@ test('the switch asks the agent, shows its answer, and a failure keeps the old s
   assert.equal(shield.state.error, null);
   assert.equal(shield.state.namesError, 'Couldn’t switch hiding names: config is read-only');
   assert.match(privacyNamesHTML(shield.state, {esc}), /set-names-err[\s\S]*data-act="shield:reload"/);
+});
+
+test('the toast after the switch claims hiding only when it will happen (F2021.1)', async () => {
+  const cases = [
+    // [shield on, the agent's answer, the detail must match]
+    [false, {enabled: true, state: 'no-local-model', model: null}, /Works when Privacy Shield is on/],
+    [true, {enabled: true, state: 'no-local-model', model: null}, /Needs a model on this computer/],
+    [false, READY, /Works when Privacy Shield is on/],
+    [true, {...READY, state: 'provider-not-shielded'}, /isn’t covered by Privacy Shield/],
+    [true, READY, /A model on this computer hides names/],
+  ];
+  for (const [shieldOn, names, detail] of cases) {
+    const off = {...names, enabled: false, state: 'off'};
+    const api = fakeApi([ok(shieldOn, off)], [ok(shieldOn, names)]);
+    const toasts = [];
+    const shield = createPrivacyShield(api, {render: () => {}, toast: (t, d) => toasts.push([t, d]), shown: () => false});
+    await shield.load();
+    await shield.act('names');
+    assert.equal(toasts.length, 1);
+    assert.equal(toasts[0][0], 'Hiding names on');
+    assert.match(toasts[0][1], detail);
+    if (!(shieldOn && names.state === 'ready')) assert.doesNotMatch(toasts[0][1], /hides/);
+  }
+  assert.deepEqual(namesToast({...READY, enabled: false, state: 'off'}, true), ['Hiding names off', 'Names go to cloud models as written']);
+});
+
+test('a chat model the shield does not cover is said, not promised', () => {
+  const names = readNamesStatus({...READY, state: 'provider-not-shielded'});
+  assert.equal(names.state, 'provider-not-shielded');
+  assert.match(namesHint(names, true), /isn’t covered by Privacy Shield, so nothing is hidden/);
+  const shield = createPrivacyShield(fakeApi([]));
+  Object.assign(shield.state, {supported: true, enabled: true, names});
+  assert.match(privacyNamesHTML(shield.state, {esc}), /tk-help--warn/);
 });
 
 test('client: posts localNames alone and passes the status through', async () => {

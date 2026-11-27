@@ -290,7 +290,7 @@ export interface PrivacyShieldStatus {
   masked: number | null;
   /**
    * ATO-2527: names, addresses and organisations found by a local model:
-   * `{ enabled, state: "off" | "ready" | "no-local-model", model }` as the
+   * `{ enabled, state: "off" | "ready" | "no-local-model" | "provider-not-shielded", model }` as the
    * agent sent it (renderer/privacy-names.js checks the shape), or null
    * from an agent without the names switch.
    */

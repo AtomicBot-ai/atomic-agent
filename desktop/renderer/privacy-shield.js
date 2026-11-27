@@ -121,8 +121,9 @@ function createPrivacyShield(api, hooks) {
         const res = await pendingNames;
         if (h.render) h.render();
         if (res && res.ok && h.toast) {
-          h.toast(res.enabled ? 'Hiding names on' : 'Hiding names off',
-            res.enabled ? 'A model on this computer hides names, addresses and organisations' : 'Names go to cloud models as written');
+          // F2021.1: the words follow the shield and the names state, as the row hint does.
+          const toastOf = typeof namesToast === 'function' ? namesToast : require('./privacy-names.js').namesToast;
+          h.toast(...toastOf(st.names, st.enabled === true));
         }
         return;
       }
