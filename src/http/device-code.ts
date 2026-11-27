@@ -11,7 +11,8 @@ import { randomInt } from "node:crypto";
  * code a TV shows for YouTube or Netflix): 8 letters from 20 consonants
  * (no vowels, so no words; no 0/O or 1/I), shown as `BCDF-GHJK`. That is
  * about 34 bits. It lives as long as the QR link (5 minutes), only its
- * hash is stored, and `DeviceSessions` stops taking codes after
+ * hash is stored (unsalted, so the owner-only file is what protects it
+ * during those 5 minutes, not the hash), and `DeviceSessions` stops taking codes after
  * `MAX_CODE_FAILURES` wrong ones until a new code is made.
  */
 export const CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
@@ -19,6 +20,9 @@ export const CODE_LENGTH = 8;
 
 /** Wrong codes, from every address together, before codes stop working until a new one is made. */
 export const MAX_CODE_FAILURES = 20;
+
+/** Of those, how many one caller address may spend, so one neighbour cannot lock everyone out. */
+export const MAX_CODE_FAILURES_PER_ADDRESS = 5;
 
 /** A new code, without the dash: `BCDFGHJK`. */
 export function newPairingCode(): string {

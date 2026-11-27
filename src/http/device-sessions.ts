@@ -1,6 +1,6 @@
 import { statSync } from "node:fs";
 
-import { MAX_CODE_FAILURES, normalizePairingCode } from "./device-code.js";
+import { MAX_CODE_FAILURES, MAX_CODE_FAILURES_PER_ADDRESS, normalizePairingCode } from "./device-code.js";
 import {
   createPairing,
   hashDeviceSecret,
@@ -35,8 +35,11 @@ export interface DeviceSessions {
    * ATO-2494: redeem by the short code typed on `/panel/pair`. After
    * MAX_CODE_FAILURES wrong codes (all callers together) every code is
    * refused (`reason: "locked"`) until `createPairing` makes a new one.
+   * One `address` (throttleAddress) may spend only
+   * MAX_CODE_FAILURES_PER_ADDRESS of them, so a single neighbour cannot
+   * use up the whole budget. Input that cannot be a code is not counted.
    */
-  redeemCode(typed: string, deviceName: string): RedeemCodeResult;
+  redeemCode(typed: string, deviceName: string, address?: string): RedeemCodeResult;
   createPairing(): CreatePairingResult;
   list(): PairedDevice[];
   revoke(id: string): RevokeDeviceResult;
@@ -59,6 +62,8 @@ export function createDeviceSessions(stateDir: string, options: DeviceSessionsOp
   const lastTouch = new Map<string, number>();
   // Wrong codes since the newest pairing was made; `atag pair` in another process makes them too.
   let codeFailures = 0;
+  // Per caller address, same epoch; at most MAX_CODE_FAILURES entries, since only failures add one.
+  const failuresByAddress = new Map<string, number>();
   let codeEpoch = "";
   const newestPairing = (): string => {
     const read = readDevices(stateDir);
@@ -114,20 +119,26 @@ export function createDeviceSessions(stateDir: string, options: DeviceSessionsOp
       return found;
     },
     redeem: (token, deviceName) => redeemPairing(stateDir, token, deviceName, now()),
-    redeemCode(typed, deviceName) {
+    redeemCode(typed, deviceName, address) {
       const epoch = newestPairing();
       if (epoch !== codeEpoch) {
         codeEpoch = epoch;
         codeFailures = 0;
+        failuresByAddress.clear();
       }
-      if (codeFailures >= MAX_CODE_FAILURES) {
+      const caller = address ?? "";
+      const byCaller = failuresByAddress.get(caller) ?? 0;
+      if (codeFailures >= MAX_CODE_FAILURES || byCaller >= MAX_CODE_FAILURES_PER_ADDRESS) {
         return { ok: false, error: "Too many wrong codes. Make a new code on the computer.", reason: "locked" };
       }
       const code = normalizePairingCode(typed);
-      const result: RedeemPairingResult = code === null
-        ? { ok: false, error: "This code is not valid or was already used.", reason: "unknown" }
-        : redeemPairingCode(stateDir, code, deviceName, now());
-      if (!result.ok && result.reason !== "store") codeFailures++;
+      // Not a code at all: no guess was made, so it spends nothing.
+      if (code === null) return { ok: false, error: "This code is not valid or was already used.", reason: "unknown" };
+      const result = redeemPairingCode(stateDir, code, deviceName, now());
+      if (!result.ok && result.reason !== "store") {
+        codeFailures++;
+        failuresByAddress.set(caller, byCaller + 1);
+      }
       return result;
     },
     createPairing: () => createPairing(stateDir, now()),

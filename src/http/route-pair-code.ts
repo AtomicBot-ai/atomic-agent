@@ -1,7 +1,8 @@
 import type { IncomingMessage } from "node:http";
 
+import { throttleAddress } from "./auth-throttle.js";
 import { CODE_LENGTH } from "./device-code.js";
-import { deviceCookieHeader } from "./device-auth.js";
+import { deviceCookieHeader, sameOrigin } from "./device-auth.js";
 import type { DeviceSessions } from "./device-sessions.js";
 import { deviceNameFromUserAgent, page, PAIR_PAGE_HEADERS, sendPage } from "./route-device-pairing.js";
 import { getHeader, readRawBody, type HttpHandler } from "./request-context.js";
@@ -35,6 +36,21 @@ function codeForm(note: string): string {
 
 const OFF_PAGE = page("Pairing is off", "<p>This server does not pair phones.</p>");
 
+/**
+ * A post another web page made: its `Origin` names a different host, or
+ * the browser marks it cross-site or same-site (another port or subdomain).
+ * The form here posts to itself, so a real one is same-origin. Refused
+ * before any code is looked at, so such posts spend none of the wrong-code
+ * budget (a page open in the computer's browser could otherwise lock
+ * pairing out). No `Origin` at all (curl, an old client) is let through
+ * and counted against its address.
+ */
+function foreignPost(req: IncomingMessage): boolean {
+  const site = getHeader(req, "sec-fetch-site");
+  if (site && site !== "same-origin" && site !== "none") return true;
+  return getHeader(req, "origin") !== null && !sameOrigin(req);
+}
+
 /** The `code` field of a urlencoded form body, or "" (a bad body is just a wrong code). */
 async function typedCode(req: IncomingMessage): Promise<string> {
   try {
@@ -58,8 +74,12 @@ export function createPairCodeRedeemHandler(devices: DeviceSessions | null): Htt
       req.resume();
       return sendPage(res, 404, OFF_PAGE);
     }
+    if (foreignPost(req)) {
+      req.resume();
+      return sendPage(res, 403, codeForm("Open this page on the phone and type the code here."));
+    }
     const code = await typedCode(req);
-    const result = devices.redeemCode(code, deviceNameFromUserAgent(getHeader(req, "user-agent")));
+    const result = devices.redeemCode(code, deviceNameFromUserAgent(getHeader(req, "user-agent")), throttleAddress(req));
     if (!result.ok) {
       if (result.reason === "store") {
         return sendPage(res, 500, page("Pairing failed", "<p>The agent could not save this phone. Try again.</p>"));

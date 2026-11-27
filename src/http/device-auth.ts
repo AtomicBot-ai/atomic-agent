@@ -73,8 +73,9 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  * something must also prove it came from the panel's own page: its
  * `Origin` names the host it was sent to. SameSite=Strict already stops
  * other sites; this is the second lock (OWASP "verify origin").
+ * Also used by `POST /panel/pair` (route-pair-code.ts).
  */
-function sameOrigin(req: IncomingMessage): boolean {
+export function sameOrigin(req: IncomingMessage): boolean {
   const origin = getHeader(req, "origin");
   if (!origin) return false;
   let host: string;
