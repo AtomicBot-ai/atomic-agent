@@ -82,6 +82,11 @@ describe("/api/logbook", () => {
     expect(res.status).toBe(200);
     expect(readLogbookSettings(harness.stateDir)).toMatchObject({ enabled: false, titleOnlyApps: ["Mail"], excludeApps: ["Slack"], standupAt: "09:00", intervalMinutes: 10 });
     expect((await patch({ standupAt: "9am" })).status).toBe(400);
+    const many = Array.from({ length: 51 }, (_, i) => `App ${i + 1}`);
+    const tooMany = await patch({ excludeApps: many });
+    expect(tooMany.status).toBe(400);
+    expect(((await tooMany.json()) as { error: { message: string } }).error.message).toMatch(/at most 50/);
+    expect(readLogbookSettings(harness.stateDir).excludeApps).toEqual(["Slack"]);
   });
 
   it("lists a day's notes and deletes one, or the whole day (ATO-2526)", async () => {

@@ -1,4 +1,4 @@
-import { isStandupClock, parseLogbookSettings, type LogbookSettings } from "./logbook-settings.js";
+import { isStandupClock, MAX_EXCLUDED_APPS, parseLogbookSettings, type LogbookSettings } from "./logbook-settings.js";
 
 /**
  * The logbook's choices a frontend edits (ATO-2526, the desktop's
@@ -36,6 +36,11 @@ export function parseLogbookPreferences(body: Record<string, unknown>): ParsedPr
     if (body[key] === undefined) continue;
     const list = stringList(body[key]);
     if (!list) return { ok: false, field: key, message: `${key} must be a list of app names` };
+    // settings.json keeps the first MAX_EXCLUDED_APPS names only: refuse more
+    // rather than drop the rest, which would quietly capture those apps again.
+    if (list.filter((v) => v.trim().length > 0).length > MAX_EXCLUDED_APPS) {
+      return { ok: false, field: key, message: `${key} can hold at most ${MAX_EXCLUDED_APPS} apps` };
+    }
     out[key] = list;
   }
   if (body.standupAt !== undefined) {

@@ -25,6 +25,13 @@ describe("logbook preferences", () => {
     expect(parseLogbookPreferences({ retentionDays: "7" })).toMatchObject({ ok: false, field: "retentionDays" });
   });
 
+  it("refuses more apps than settings.json keeps instead of dropping the rest", () => {
+    const names = (n: number) => Array.from({ length: n }, (_, i) => `App ${i + 1}`);
+    expect(parseLogbookPreferences({ excludeApps: names(51) })).toMatchObject({ ok: false, field: "excludeApps" });
+    expect(parseLogbookPreferences({ titleOnlyApps: names(51) })).toMatchObject({ ok: false, field: "titleOnlyApps" });
+    expect(parseLogbookPreferences({ excludeApps: names(50) }).ok).toBe(true);
+  });
+
   it("tells a preference body from an action body", () => {
     expect(hasPreferences({ action: "stop" })).toBe(false);
     expect(hasPreferences({ standupAt: null })).toBe(true);
