@@ -15,11 +15,15 @@
  *  - `core.fsmonitor=false`, `core.untrackedCache=false`;
  *  - `core.hooksPath=<null>`: `/dev/null`, or `NUL` on Windows, so no hook
  *    is found;
- *  - `log.showSignature=false`: `git log` never runs `gpg.program`;
+ *  - `log.showSignature=false`, together with the explicit `--pretty=medium`
+ *    in logArgs (a repo's `format.pretty` with `%G?` would verify a signed
+ *    commit): `git log` never runs `gpg.program`;
  *  - `protocol.ext.allow=never`: no `ext::` remote helper command.
  * `--no-ext-diff --no-textconv` stop the configured external diff and
- * textconv programs. The environment is the command environment of the
- * shell tool (no provider keys) without an inherited GIT_DIR.
+ * textconv programs; `--submodule=short` keeps git from diffing inside a
+ * submodule, whose own config those flags do not reach. The environment
+ * is the command environment of the shell tool (no provider keys)
+ * without an inherited GIT_DIR.
  */
 
 import { execFile } from "node:child_process";
@@ -60,7 +64,10 @@ export interface GitOutput {
 /** Runs git with `args` (the subcommand on); GIT_SAFE_PREFIX is put in front. */
 export type RunGit = (cwd: string, args: readonly string[]) => Promise<GitOutput>;
 
-const DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-textconv", "--relative"];
+// `--submodule=short`: with a repo's `diff.submodule=diff` git runs a child
+// diff inside each changed submodule, which reads that submodule's own
+// `diff.external` (the -c prefix reaches it, --no-ext-diff does not).
+const DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-textconv", "--submodule=short", "--relative"];
 
 /** `git diff HEAD`: staged and unstaged changes to tracked files under the folder. */
 export function diffArgs(): string[] {
@@ -75,7 +82,8 @@ export function changedFilesArgs(): string[] {
 /** `git log -n<count> --stat -p` for the commits that touch the folder. */
 export function logArgs(count: number): string[] {
   const n = Math.max(1, Math.floor(count));
-  return ["log", `-n${n}`, "--date=iso", "--stat", "-p", ...DIFF_FLAGS, "--", "."];
+  // `medium` is git's default; naming it keeps a repo's `format.pretty` (and its %G?) out.
+  return ["log", `-n${n}`, "--date=iso", "--pretty=medium", "--stat", "-p", ...DIFF_FLAGS, "--", "."];
 }
 
 /** `git ls-files`: tracked plus untracked files under the folder, minus .gitignore. */
