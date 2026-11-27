@@ -558,6 +558,19 @@ export const MENU: readonly MenuNode[] = [
       rank: 27,
     },
   },
+  // ATO-2490: Ollama / LM Studio / the Llama app running here, and their actions.
+  {
+    kind: "action",
+    id: "model.servers",
+    label: "Model servers running here",
+    group: "model",
+    slash: {
+      name: "servers",
+      description:
+        "Ollama, LM Studio and the Llama app running here · start | load | unload | pull | rm | adopt <ollama|lmstudio> [model]",
+      rank: 27.2,
+    },
+  },
   {
     kind: "action", id: "model.think", label: "Reasoning depth…", group: "model",
     slash: {
