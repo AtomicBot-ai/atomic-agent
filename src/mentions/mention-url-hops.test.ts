@@ -43,7 +43,11 @@ beforeEach(async () => {
     insideHits += 1;
     res.writeHead(200, { "content-type": "text/plain" }).end("router admin page");
   });
-  first = createServer((_req, res) => {
+  first = createServer((req, res) => {
+    if (req.url === "/next") {
+      res.writeHead(200, { "content-type": "text/plain" }).end("wiki main page");
+      return;
+    }
     res.writeHead(302, { location: redirectTo }).end();
   });
   insidePort = await listen(inside);
@@ -133,6 +137,26 @@ describe("@url redirects are checked before they connect (ATO-2797)", () => {
     redirectTo = `http://printer.local:${insidePort}/admin`;
     const lenient: VetHost = async () => ["127.0.0.1"];
     await expect(createFetchUrl(network, { vetHost: lenient })(`http://public.test:${firstPort}/go`)).rejects.toThrow("redirected to a local address");
+    expect(insideHits).toBe(0);
+  });
+
+  /** An intranet name: the real guard over an answer of 10.0.0.5 refuses it, so the start is named-local. */
+  const intranet: VetHost = async (url) => url.hostname.endsWith(".corp.test")
+    ? assertHostAllowed(url, { lookup: async () => [{ address: "10.0.0.5", family: 4 }] })
+    : vetHost(url);
+
+  it("reads a typed intranet name that redirects to itself (review round 2)", async () => {
+    redirectTo = "/next";
+    const got = await createFetchUrl(network, { vetHost: intranet })(`http://wiki.corp.test:${firstPort}/`);
+    expect(got.text).toBe("wiki main page");
+    expect(insideHits).toBe(0);
+  });
+
+  it("still refuses a typed intranet name that redirects to another local host or port (review round 2)", async () => {
+    redirectTo = `http://admin.corp.test:${insidePort}/admin`;
+    await expect(createFetchUrl(network, { vetHost: intranet })(`http://wiki.corp.test:${firstPort}/`)).rejects.toThrow("redirected to a local address");
+    redirectTo = `http://wiki.corp.test:${insidePort}/admin`;
+    await expect(createFetchUrl(network, { vetHost: intranet })(`http://wiki.corp.test:${firstPort}/`)).rejects.toThrow("redirected to a local address");
     expect(insideHits).toBe(0);
   });
 
