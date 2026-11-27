@@ -115,6 +115,12 @@ export interface ToolGateConfig {
    * `os.screen.capture` under `enabled`; omitted means `true`.
    */
   screen: { enabled: boolean; point?: boolean; control?: boolean };
+  /**
+   * Logbook gate (ATO-2363): `logbook.query` is offered while the
+   * logbook is on or still keeps notes (`logbookToolOffered`). Absent
+   * or `false` drops it; the tool stays registered.
+   */
+  logbook?: { enabled: boolean };
 }
 
 /**
@@ -198,6 +204,7 @@ const GATED_TOOLS = {
     "os.screen.press",
     "os.screen.point",
   ],
+  logbook: ["logbook.query"],
 } as const;
 
 /**
@@ -273,6 +280,9 @@ export function filterToolDescriptorsByConfig(
   }
   if (!gates.video.available) {
     for (const name of GATED_TOOLS.video) disabled.add(name);
+  }
+  if (gates.logbook?.enabled !== true) {
+    for (const name of GATED_TOOLS.logbook) disabled.add(name);
   }
   const screenControl = gates.screen.control !== false;
   const screenPoint = gates.screen.point === true && screenControl;

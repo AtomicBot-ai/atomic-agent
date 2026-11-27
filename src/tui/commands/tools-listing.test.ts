@@ -1,5 +1,10 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
+import { DEFAULT_LOGBOOK_SETTINGS, writeLogbookSettings } from "../../logbook/logbook-settings.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
 import {
   effectiveToolDescriptors,
@@ -9,6 +14,10 @@ import {
   searchTools,
   type ToolGateSourceConfig,
 } from "./tools-listing.js";
+
+/** A throwaway state dir whose logbook is on (ATO-2363), so its gate is open too. */
+const LOGBOOK_ON_DIR = mkdtempSync(join(tmpdir(), "atomic-tools-listing-"));
+writeLogbookSettings(LOGBOOK_ON_DIR, { ...DEFAULT_LOGBOOK_SETTINGS, excludeApps: [], enabled: true });
 
 /**
  * Every gate open. Tests pass explicit descriptors / configs so results
@@ -29,6 +38,7 @@ const ALL_ENABLED: ToolGateSourceConfig = {
   mcp: { servers: [{}] },
   llm: { runMode: { mode: "fusion" } },
   tools: { screen: { enabled: true, point: true } },
+  paths: { stateDir: LOGBOOK_ON_DIR },
 };
 
 /** The env the GitHub gate reads; a token means `github.*` is listed. */
@@ -94,6 +104,15 @@ describe("effectiveToolDescriptors", () => {
     expect(names).not.toContain("image.generate");
     expect(names).not.toContain("video.generate");
     expect(names).toContain("vision.describe");
+  });
+
+  it("lists logbook.query only while the logbook is on or keeps notes (ATO-2363)", () => {
+    expect(effectiveToolDescriptors(ALL_ENABLED, WITH_GITHUB).map((d) => d.name)).toContain("logbook.query");
+    const off = mkdtempSync(join(tmpdir(), "atomic-tools-listing-off-"));
+    const offNames = effectiveToolDescriptors({ ...ALL_ENABLED, paths: { stateDir: off } }, WITH_GITHUB).map((d) => d.name);
+    expect(offNames).not.toContain("logbook.query");
+    const noPaths: ToolGateSourceConfig = { ...ALL_ENABLED, paths: undefined };
+    expect(effectiveToolDescriptors(noPaths, WITH_GITHUB).map((d) => d.name)).not.toContain("logbook.query");
   });
 
   it("drops github.* when the hub holds no token", () => {

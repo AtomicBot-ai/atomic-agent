@@ -27,6 +27,7 @@ import { importCommand } from "./import-command.js";
 import { handoffCommand } from "./handoff-command.js";
 import { shareCommand } from "./share-command.js";
 import { recipeCommand } from "./recipe-command.js";
+import { logbookCommand } from "./logbook-command.js";
 import { uninstallCommand } from "./uninstall-command.js";
 import { updateCommand } from "./update-command.js";
 import { doctorCommand } from "./doctor-command.js";
@@ -195,6 +196,11 @@ const COMMANDS: CommandDescriptor[] = [
     summary:
       "Check a shared recipe before you use it, or turn a recipe file into its link (check|link)",
     run: (args) => recipeCommand(args),
+  },
+  {
+    name: "logbook",
+    summary: "Day journal from screenshots, described by a local model only (start|stop|pause|status|today|clear|standup)",
+    run: (args) => logbookCommand(args),
   },
   {
     name: "doctor",

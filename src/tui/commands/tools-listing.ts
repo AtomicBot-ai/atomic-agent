@@ -4,6 +4,7 @@ import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { resolveGithubToken } from "../../github/index.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
 import { filterToolDescriptorsByConfig } from "../../runtime/filter-disabled-tools.js";
+import { logbookToolOffered } from "../../logbook/logbook-store.js";
 import { openRouterImageKey } from "../../tools/image/openrouter-key.js";
 
 /**
@@ -78,6 +79,8 @@ export interface ToolGateSourceConfig {
     readonly runMode?: { readonly mode?: string };
     readonly providers?: readonly { readonly kind: string; readonly apiKey?: string; readonly baseUrl?: string }[];
   };
+  /** Where the logbook lives (ATO-2363); without it `logbook.query` is not listed. */
+  readonly paths?: { readonly stateDir: string };
 }
 
 /**
@@ -144,6 +147,7 @@ export function effectiveToolDescriptors(
       point: config.tools?.screen?.point === true && platform === "darwin",
       control: platform === "darwin",
     },
+    logbook: { enabled: config.paths !== undefined && logbookToolOffered(config.paths.stateDir) },
   });
 }
 

@@ -682,6 +682,17 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     "files.search",
     obj({ query: stringSchema, folder: stringSchema, topK: numberSchema }, ["query"]),
   ],
+  [
+    "logbook.query",
+    obj({
+      day: stringSchema,
+      part: { type: "string", enum: ["morning", "afternoon", "evening"] },
+      from: stringSchema,
+      to: stringSchema,
+      contains: stringSchema,
+      limit: numberSchema,
+    }),
+  ],
 
   // ── tasks ────────────────────────────────────────────────────────────────
   [

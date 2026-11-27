@@ -183,6 +183,16 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    // ATO-2363: offered only while the logbook is on or keeps notes (`GATED_TOOLS.logbook`).
+    name: "logbook.query",
+    summary:
+      "Read the person's logbook: short notes a local model wrote about their screen every few minutes, kept on this computer. Use for what they did on a day and for standups.",
+    argsSchema:
+      "{ day?: string /* today (default), yesterday or YYYY-MM-DD */, part?: 'morning' | 'afternoon' | 'evening', from?: string /* HH:MM */, to?: string /* HH:MM */, contains?: string, limit?: number /* 1..400 */ }",
+    examples: ['{"day":"yesterday","part":"afternoon"}'],
+    tier: "rare",
+  },
+  {
     name: "tasks.schedule",
     summary: "Schedule a one-shot task; current session or newSession.",
     argsSchema:

@@ -225,6 +225,7 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Search My files folders; paste each hit's `cite` as is.",
     tier: RARE,
   },
+  "logbook.query": { summary: "Read the local notes about the person's screen for a day.", tier: RARE },
   "tasks.schedule": { summary: "Schedule a one-shot task.", tier: RARE },
   "tasks.cron": { summary: "Schedule a recurring task.", tier: RARE },
   "tasks.list": { summary: "List tasks.", tier: RARE },

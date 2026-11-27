@@ -219,6 +219,8 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "memory.sessions.search": "pure_read",
   // ATO-1621: reads the My files index (its own SQLite file), nothing else.
   "files.search": "pure_read",
+  // ATO-2363: reads the logbook's day files under the state dir, nothing else.
+  "logbook.query": "pure_read",
   "memory.profile.set": "memory_write",
   "memory.profile.remove": "memory_write",
   "memory.notes.store": "memory_write",
