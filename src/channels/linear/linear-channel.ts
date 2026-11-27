@@ -71,6 +71,8 @@ export interface LinearChannelDeps {
   /** Explicit secrets win over the env: the test seam. */
   apiKey?: string | null;
   webhookSecret?: string | null;
+  /** App installs: renews an expired token (`linearTokenRefresher`). */
+  refreshToken?: (() => Promise<string | null>) | null;
   onStatus?: (status: ChannelStatus) => void;
   fetchImpl?: typeof fetch;
   /** Test seam: replaces the real `node:http` endpoint. */
@@ -136,7 +138,11 @@ export class LinearChannel implements Channel {
       this.fail(scrubLinearError(err, this.secrets));
       return;
     }
-    const api = new LinearApi({ apiKey, ...(this.deps.fetchImpl === undefined ? {} : { fetchImpl: this.deps.fetchImpl }) });
+    const api = new LinearApi({
+      apiKey,
+      ...(this.deps.fetchImpl === undefined ? {} : { fetchImpl: this.deps.fetchImpl }),
+      ...(this.deps.refreshToken ? { refresh: this.deps.refreshToken } : {}),
+    });
     try {
       this.viewerId = (await api.viewer()).id;
     } catch (err) {
@@ -225,9 +231,9 @@ export class LinearChannel implements Channel {
         if (oldest !== undefined) this.deliveries.delete(oldest);
       }
     }
-    if (this.api === null) return;
-    const apiKey = this.secrets[0];
+    const api = this.api;
     const inbox = this.inbox;
+    if (api === null) return;
     void handleLinearEvent(payload, {
       runtime: this.deps.runtime,
       post: (target, body, kind) => this.post(target, body, kind),
@@ -240,13 +246,8 @@ export class LinearChannel implements Channel {
       own: this.own,
       bridge: this.bridge,
       turns: this.turns,
-      ...(inbox !== null && apiKey !== undefined
-        ? {
-            attachments: {
-              inbox,
-              download: (url: string) => downloadLinearUpload(url, apiKey, this.deps.fetchImpl),
-            },
-          }
+      ...(inbox !== null
+        ? { attachments: { inbox, download: (url: string) => downloadLinearUpload(url, api.currentKey(), this.deps.fetchImpl) } }
         : {}),
       seen: this.seen,
       ensureApprovalSession: (sessionId, target) => this.approvalBindings.bind(sessionId, target),

@@ -34,6 +34,11 @@ export interface LinearViewer {
 
 export interface LinearApiDeps {
   apiKey: string;
+  /**
+   * App installs (ATO-2464): renew an expired token and return the new
+   * one (`null`: cannot). Tried once when Linear refuses the key.
+   */
+  refresh?: () => Promise<string | null>;
   fetchImpl?: typeof fetch;
   url?: string;
 }
@@ -58,10 +63,18 @@ export function fitCommentBody(text: string, limit = LINEAR_COMMENT_LIMIT): stri
 export class LinearApi {
   private readonly fetchImpl: typeof fetch;
   private readonly url: string;
+  private apiKey: string;
+  private refreshing: Promise<string | null> | null = null;
 
   constructor(private readonly deps: LinearApiDeps) {
     this.fetchImpl = deps.fetchImpl ?? fetch;
     this.url = deps.url ?? LINEAR_GRAPHQL_URL;
+    this.apiKey = deps.apiKey;
+  }
+
+  /** The key or token in use now (a refresh replaces it). */
+  currentKey(): string {
+    return this.apiKey;
   }
 
   /** The user (or app) the API key acts as. Rejects when the key is refused. */
@@ -106,11 +119,28 @@ export class LinearApi {
 
   /** One GraphQL call; resolves `data`, throws `LinearApiError` (`auth` when the key is refused). */
   async query(query: string, variables: Record<string, unknown>): Promise<unknown> {
+    try {
+      return await this.send(query, variables);
+    } catch (err) {
+      if (!(err instanceof LinearApiError) || err.code !== "auth" || !this.deps.refresh) throw err;
+      const used = this.apiKey;
+      // One renewal for every call that hit the expiry at the same time.
+      this.refreshing ??= this.deps.refresh().catch(() => null).finally(() => {
+        this.refreshing = null;
+      });
+      const fresh = await this.refreshing;
+      if (fresh === null || fresh === used) throw err;
+      this.apiKey = fresh;
+      return this.send(query, variables);
+    }
+  }
+
+  private async send(query: string, variables: Record<string, unknown>): Promise<unknown> {
     const res = await this.fetchImpl(this.url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: linearAuthHeader(this.deps.apiKey),
+        Authorization: linearAuthHeader(this.apiKey),
       },
       body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(20_000),
