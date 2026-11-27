@@ -24,6 +24,7 @@ function makeBridge(owners: readonly string[] = [OWNER]) {
   const api = {
     sendMessage: vi.fn(async () => "msg-1"),
     updateInteraction: vi.fn(async () => undefined),
+    acknowledgeInteraction: vi.fn(async () => undefined),
     editMessage: vi.fn(async () => undefined),
   };
   const approvals = { resolve: vi.fn(() => true) };
@@ -116,6 +117,7 @@ describe("Allow always from Discord (ATO-1142)", () => {
     const api = {
       sendMessage: vi.fn(async () => "msg-1"),
       updateInteraction: vi.fn(async () => undefined),
+      acknowledgeInteraction: vi.fn(async () => undefined),
       editMessage: vi.fn(async () => undefined),
     };
     const approvals = { resolve: vi.fn(() => true), canGrantAlways: () => canGrantAlways };
@@ -166,8 +168,7 @@ describe("Allow always from Discord (ATO-1142)", () => {
     await new Promise((r) => setImmediate(r));
     await bridge.handleInteraction(click("always", OWNER));
     expect(approvals.resolve).not.toHaveBeenCalled();
-  });
-});
+  });});
 
 describe("DiscordApprovalBridge", () => {
   it("posts the prompt with buttons into the originating channel", async () => {
@@ -207,11 +208,9 @@ describe("DiscordApprovalBridge", () => {
     const { bridge, approvals, api } = makeBridge();
     await bridge.handleInteraction(click("yes", "stranger"));
     expect(approvals.resolve).not.toHaveBeenCalled();
-    expect(api.updateInteraction).toHaveBeenCalledWith(
-      "i1",
-      "itok",
-      expect.stringContaining("Only a paired operator"),
-    );
+    // The prompt stays for the owner: acknowledged, message untouched (ATO-2778).
+    expect(api.acknowledgeInteraction).toHaveBeenCalledWith("i1", "itok");
+    expect(api.updateInteraction).not.toHaveBeenCalled();
   });
 
   it("ignores every click while unpaired", async () => {

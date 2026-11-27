@@ -22,25 +22,19 @@ import { formatRiskLine } from "../../approval/risk-review.js";
 import { formatEgressLine } from "../../approval/egress-scan.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import {
-  sessionGrantLabels,
   sessionGrantOffer,
   sessionGrantScope,
   sessionGrantSummary,
   type SessionGrantOffer,
 } from "../approval-session-grants.js";
-import type { DiscordApi, DiscordComponentRow } from "./discord-api.js";
+import type { DiscordApi } from "./discord-api.js";
+import { buttonsFor, CUSTOM_ID_PREFIX } from "./discord-approval-buttons.js";
 import { scrubDiscordError } from "./discord-channel-types.js";
 
-/** Discord button styles. */
-const STYLE_DANGER = 4;
-const STYLE_SECONDARY = 2;
-const STYLE_PRIMARY = 1;
+export { buttonsFor } from "./discord-approval-buttons.js";
 
-/** Discord caps a button label at 80 characters. */
-const BUTTON_LABEL_MAX_CHARS = 80;
-
-/** Prefix on every custom_id this bridge owns. */
-const CUSTOM_ID_PREFIX = "atomic:approve:";
+/** Said when a click names a request that is no longer waiting. */
+const GONE = "This request already expired or was answered elsewhere.";
 
 export interface DiscordInteractionEvent {
   id: string;
@@ -139,25 +133,29 @@ export class DiscordApprovalBridge {
       this.deps.logger.warn("discord: ignoring approval click from non-owner", {
         actorId,
       });
-      await this.ack(event, "Only a paired operator can answer this.");
+      // The prompt stays for the owner: acknowledge, change nothing (ATO-2778).
+      await this.leaveAsIs(event);
       return true;
     }
 
     const [, , verb, approvalId] = customId.split(":");
     const posted = this.pending.get(approvalId ?? "");
-    // "Allow always" counts only where this bridge posted that button: a
-    // crafted custom_id cannot save a rule the prompt never offered.
+    // "Allow always" and a session grant count only where this bridge
+    // posted that button: a crafted custom_id cannot save a rule or a
+    // grant the prompt never offered.
     const always = verb === "always" && posted?.alwaysLabel !== undefined;
-    if (verb === "always" && !always) {
-      await this.ack(event, "This request already expired or was answered elsewhere.");
-      return true;
-    }
-    // A session grant likewise counts only where its button was posted.
     const grantKind = verb === "session" ? "s" : verb === "shape" ? "a" : null;
     const sessionGrant =
       grantKind === null ? null : sessionGrantScope(grantKind, posted?.sessionGrants);
-    if (grantKind !== null && sessionGrant === null) {
-      await this.ack(event, "This request already expired or was answered elsewhere.");
+    if ((verb === "always" && !always) || (grantKind !== null && sessionGrant === null)) {
+      if (posted === undefined) {
+        await this.ack(event, GONE);
+        return true;
+      }
+      // Still waiting (ATO-2778): leave the prompt and its buttons as
+      // they are, so Approve / Deny still work.
+      this.deps.logger.warn("discord: ignoring an approval choice the prompt did not offer", { verb });
+      await this.leaveAsIs(event);
       return true;
     }
     const approved = verb === "yes" || always || sessionGrant !== null;
@@ -183,7 +181,7 @@ export class DiscordApprovalBridge {
         : // The gate already settled -- timeout, cancel, or a decision
           // taken on another surface. Say so rather than implying the
           // click did something.
-          "This request already expired or was answered elsewhere.",
+          GONE,
     );
     return true;
   }
@@ -205,60 +203,17 @@ export class DiscordApprovalBridge {
       });
     }
   }
-}
 
-/**
- * Two buttons, plus "Allow always" when `alwaysLabel` is given; ids
- * namespaced so foreign components never match. Offered session grants
- * get a second row, with Telegram's labels: `session` for the kind,
- * `shape` for the command shape (ATO-2509).
- */
-export function buttonsFor(
-  approvalId: string,
-  alwaysLabel?: string,
-  sessionGrants: SessionGrantOffer | null = null,
-): DiscordComponentRow[] {
-  const components: Array<DiscordComponentRow["components"][number]> = [
-    {
-      type: 2,
-      style: STYLE_DANGER,
-      label: "Approve",
-      custom_id: `${CUSTOM_ID_PREFIX}yes:${approvalId}`,
-    },
-    {
-      type: 2,
-      style: STYLE_SECONDARY,
-      label: "Deny",
-      custom_id: `${CUSTOM_ID_PREFIX}no:${approvalId}`,
-    },
-  ];
-  if (alwaysLabel !== undefined) {
-    components.push({
-      type: 2,
-      style: STYLE_PRIMARY,
-      label:
-        alwaysLabel.length <= BUTTON_LABEL_MAX_CHARS
-          ? alwaysLabel
-          : `${alwaysLabel.slice(0, BUTTON_LABEL_MAX_CHARS - 1)}…`,
-      custom_id: `${CUSTOM_ID_PREFIX}always:${approvalId}`,
-    });
+  /** Acknowledge a click without touching its message (callback type 6). */
+  private async leaveAsIs(event: DiscordInteractionEvent): Promise<void> {
+    try {
+      await this.deps.api.acknowledgeInteraction(event.id, event.token);
+    } catch (err) {
+      this.deps.logger.warn("discord: failed to acknowledge interaction", {
+        error: scrubDiscordError(err),
+      });
+    }
   }
-  const rows: DiscordComponentRow[] = [{ type: 1, components }];
-  const labels = sessionGrantLabels(sessionGrants);
-  const offered: Array<[string, string | undefined]> = [
-    ["session", labels.category],
-    ["shape", labels.shape],
-  ];
-  const grants = offered
-    .filter((entry): entry is [string, string] => entry[1] !== undefined)
-    .map(([verb, label]) => ({
-      type: 2 as const,
-      style: STYLE_PRIMARY,
-      label,
-      custom_id: `${CUSTOM_ID_PREFIX}${verb}:${approvalId}`,
-    }));
-  if (grants.length > 0) rows.push({ type: 1, components: grants });
-  return rows;
 }
 
 export function formatPrompt(request: ApprovalRequest): string {

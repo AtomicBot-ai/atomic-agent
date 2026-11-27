@@ -31,6 +31,7 @@ function harness(approvals?: ApprovalGate) {
   const api = {
     sendMessage: vi.fn(async () => "msg-1"),
     updateInteraction: vi.fn(async () => undefined),
+    acknowledgeInteraction: vi.fn(async () => undefined),
   };
   const resolve = vi.fn(() => true);
   const bridge = new DiscordApprovalBridge({
@@ -96,7 +97,9 @@ describe("Discord session grant buttons (ATO-2509)", () => {
     expect(h.rows()[1]!.components.map((c) => c.custom_id)).toEqual(["atomic:approve:session:op"]);
     await h.bridge.handleInteraction(click("shape", "op"));
     expect(h.resolve).not.toHaveBeenCalled();
-    expect(h.api.updateInteraction).toHaveBeenCalledWith("i1", "itok", expect.stringContaining("already expired"));
+    // The prompt is still open: acknowledged, message untouched (ATO-2778).
+    expect(h.api.acknowledgeInteraction).toHaveBeenCalledWith("i1", "itok");
+    expect(h.api.updateInteraction).not.toHaveBeenCalled();
   });
 
   it("resolves the kind click as an approval with a category grant", async () => {
@@ -135,6 +138,32 @@ describe("Discord session grant buttons (ATO-2509)", () => {
     await flush();
     await h.bridge.handleInteraction(click("no", "ap-2"));
     expect(h.resolve).toHaveBeenLastCalledWith({ approvalId: "ap-2", approved: false });
+  });
+});
+
+describe("Discord unoffered choices on an open prompt (ATO-2778)", () => {
+  it("leaves the prompt and its buttons, and Approve still works", async () => {
+    const h = harness();
+    // A dangerous command: no Allow always and no session grant.
+    h.bridge.handlerFor("c1")({ ...shellReq("ap-1"), category: "shell_dangerous" });
+    await flush();
+    await h.bridge.handleInteraction(click("always"));
+    await h.bridge.handleInteraction(click("session"));
+    await h.bridge.handleInteraction(click("shape"));
+    expect(h.resolve).not.toHaveBeenCalled();
+    expect(h.api.acknowledgeInteraction).toHaveBeenCalledTimes(3);
+    expect(h.api.updateInteraction).not.toHaveBeenCalled();
+
+    await h.bridge.handleInteraction(click("yes"));
+    expect(h.resolve).toHaveBeenCalledWith({ approvalId: "ap-1", approved: true, reason: "approved from Discord" });
+    expect(h.api.updateInteraction).toHaveBeenCalledWith("i1", "itok", "✅ Approved.");
+  });
+
+  it("still says the request is gone for a choice on a prompt it has no record of", async () => {
+    const h = harness();
+    await h.bridge.handleInteraction(click("always", "ap-unknown"));
+    expect(h.resolve).not.toHaveBeenCalled();
+    expect(h.api.updateInteraction).toHaveBeenCalledWith("i1", "itok", expect.stringContaining("already expired"));
   });
 });
 
