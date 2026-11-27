@@ -67,6 +67,7 @@ import {
   SessionSearchIndex,
   forgetSessionSearchRows,
   searchableSessionSource,
+  type SessionSearchHit,
   type SessionSearchOptions,
   type SessionSearchResult,
 } from "./session-search.js";
@@ -1121,10 +1122,34 @@ export class SessionStore {
    * `SessionSearchUnavailableError` when the index cannot be created.
    */
   searchTranscripts(options: SessionSearchOptions): SessionSearchResult {
+    return this.transcriptIndex().search(options);
+  }
+
+  /**
+   * Bring the search index up to date by at most `budget` changed
+   * sessions and say how many are left (ATO-1659). With
+   * {@link matchTranscripts} it lets a caller spread the sync over
+   * several ticks instead of paying it inside one search. Throws
+   * `SessionSearchUnavailableError` when the index cannot be created.
+   */
+  syncTranscriptIndex(budget: number): number {
+    return this.transcriptIndex().sync(budget);
+  }
+
+  /**
+   * {@link searchTranscripts} without the sync first: hits from what is
+   * indexed now. Throws `SessionSearchUnavailableError` when the index
+   * cannot be created.
+   */
+  matchTranscripts(options: SessionSearchOptions): SessionSearchHit[] {
+    return this.transcriptIndex().match(options);
+  }
+
+  private transcriptIndex(): SessionSearchIndex {
     this.searchIndex ??= new SessionSearchIndex(this.db, (id) =>
       this.listChatLines(id),
     );
-    return this.searchIndex.search(options);
+    return this.searchIndex;
   }
 
   /**

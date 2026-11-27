@@ -55,6 +55,7 @@ import {
   useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactElement,
 } from "react";
 import { reduceTuiState } from "./agent-event-reducer.js";
@@ -124,6 +125,7 @@ import {
   visiblePickerSessions,
   type SessionPickerSearch,
 } from "./session-rail/session-search.js";
+import type { SessionSearchStatus } from "./session-rail/session-search-index.js";
 import {
   countRunningTasks,
   selectSidebarTasks,
@@ -356,6 +358,12 @@ export interface TuiAppCallbacks {
    * or message text holds the typed query. Without it only titles match.
    */
   searchSessions?: SessionPickerSearch;
+  /**
+   * ATO-1659: whether `searchSessions` is still building its index for
+   * the open list, and a signal when it is done, so the picker shows its
+   * loading line and then the matches.
+   */
+  sessionSearchStatus?: SessionSearchStatus;
   /**
    * Put a rail session on another slot (Shift+↑/↓ or a row drag).
    * `toIndex` indexes the list as displayed; the host persists the
@@ -1033,6 +1041,10 @@ const PROMPT_PLACEHOLDERS: readonly string[] = [
   "What are you working on today?",
   "Inspect a file, run a search, draft a fix…",
 ];
+
+/** A host with no background search index: nothing to wait for (ATO-1659). */
+const noSearchStatusSubscribe = (): (() => void) => () => {};
+const noSearchStatusVersion = (): number => 0;
 
 export function TuiApp({
   session,
@@ -1926,8 +1938,17 @@ export function TuiApp({
   // ATO-1153: with the picker open the composer's text searches it. The
   // picker, ↓ and Enter (`handleSessionPickerSubmit`) all read these rows,
   // so the cursor indexes the same list everywhere.
+  const searchStatus = callbacks.sessionSearchStatus;
+  // ATO-1659: re-render when a background index build finishes.
+  useSyncExternalStore(
+    searchStatus?.subscribe ?? noSearchStatusSubscribe,
+    searchStatus?.version ?? noSearchStatusVersion,
+  );
   const pickerSessions = visiblePickerSessions(state, callbacks.searchSessions);
   const pickerSearchQuery = pickerQuery(state);
+  const pickerSearching =
+    state.sessionPickerOpen &&
+    (searchStatus?.building(state.sessionPickerList, pickerSearchQuery) ?? false);
   const pickerQueryRef = useRef(pickerSearchQuery);
   useEffect(() => {
     if (pickerQueryRef.current === pickerSearchQuery) return;
@@ -2815,6 +2836,7 @@ export function TuiApp({
                       cursor={state.sessionPickerCursor}
                       currentSessionId={state.session.sessionId}
                       morePages={state.recentSessionsMorePages}
+                      searching={pickerSearching}
                     />
                   </Box>
                 ) : null}

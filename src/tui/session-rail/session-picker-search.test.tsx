@@ -55,4 +55,22 @@ describe("SessionPicker search", () => {
     expect(frame).toContain('no loaded session matches "zzz"');
     expect(frame).not.toContain("no persisted sessions yet");
   });
+
+  // ATO-1659: the index for the list is built in the background.
+  it("shows the loading line while the search index is being built", () => {
+    const { lastFrame } = render(
+      <SessionPicker sessions={[]} cursor={0} currentSessionId={null} query="zzz" searching />,
+    );
+    const frame = strip(lastFrame() ?? "");
+    expect(frame).toContain('searching sessions for "zzz"');
+    expect(frame).toContain("Esc to dismiss");
+    expect(frame).not.toContain("no loaded session matches");
+  });
+
+  it("ignores the loading flag without a query", () => {
+    const { lastFrame } = render(
+      <SessionPicker sessions={[entry(1)]} cursor={0} currentSessionId={null} searching />,
+    );
+    expect(strip(lastFrame() ?? "")).toContain("type to search");
+  });
 });
