@@ -9,6 +9,13 @@ import {
 import { formatRiskLine } from "../../approval/risk-review.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
+import {
+  sessionGrantFinalText,
+  sessionGrantOffer,
+  sessionGrantRows,
+  sessionGrantScope,
+  type SessionGrantOffer,
+} from "./approval-grant-buttons.js";
 import { withThread, type TelegramApi } from "./outbound-sender.js";
 
 /**
@@ -74,6 +81,8 @@ interface PendingState {
   cancelTimer: () => void;
   /** The "Allow always" label, when that button was sent; else absent. */
   alwaysLabel?: string;
+  /** The session grant buttons sent (GitHub #230); absent when none were. */
+  sessionGrants?: SessionGrantOffer;
   /** Read by `/status` and status snapshots (ATO-965). */
   sessionId: string;
   tool: string;
@@ -82,13 +91,14 @@ interface PendingState {
 }
 
 /**
- * Per-channel bridge that turns an `ApprovalRequest` into a 2-button
+ * Per-channel bridge that turns an `ApprovalRequest` into an
  * inline-keyboard message and routes the operator's reply back to
  * `ApprovalGate.resolve`. The bridge owns:
  *
  *  - one outbound message per pending approval (sent via `dispatch`);
  *  - one auto-deny timer per pending approval (default 8 min);
- *  - the `callback_query` parser that decodes `appr:<id>:y|n`.
+ *  - the `callback_query` parser that decodes `appr:<id>:y|n|s|a|w`
+ *    (and `o<n>` for a question).
  *
  * Locked invariants — pinned by the colocated test file:
  *
@@ -123,6 +133,12 @@ interface PendingState {
  *    the same control and bidi escaping as the prompt, and the prompt
  *    says so. If that upload fails the prompt says the full
  *    command could not be attached instead of dropping it silently.
+ * 7. **Session grants only where offered (GitHub #230).** `s` (this
+ *    kind for the session) and `a` (this command shape) get a button
+ *    exactly when the TUI would offer them (`canGrantCategory`,
+ *    `canGrantShape`). A callback for a grant whose button was not sent
+ *    is dropped and the prompt stays pending, like a forged `w`; the
+ *    gate's `recordGrant` re-checks the request on top of that.
  *
  * Known UX gap (non-functional, deferred to slice 3):
  *
@@ -204,6 +220,7 @@ export class ApprovalBridge {
       this.deps.approvals.canGrantAlways?.(request) === true
         ? describeAlwaysRule(request)
         : undefined;
+    const sessionGrants = request.question ? null : sessionGrantOffer(request);
     let messageId: number | null = null;
     try {
       const sent = await this.deps.api.sendMessage(
@@ -220,7 +237,7 @@ export class ApprovalBridge {
           {
             reply_markup: request.question
               ? buildQuestionKeyboard(request.approvalId, request.question)
-              : buildKeyboard(request.approvalId, alwaysLabel),
+              : buildKeyboard(request.approvalId, alwaysLabel, sessionGrants),
           },
           threadId,
         ),
@@ -263,6 +280,7 @@ export class ApprovalBridge {
       messageId,
       cancelTimer,
       ...(alwaysLabel !== undefined ? { alwaysLabel } : {}),
+      ...(sessionGrants !== null ? { sessionGrants } : {}),
       sessionId: request.sessionId,
       tool: request.tool,
       ...(request.question ? { question: request.question } : {}),
@@ -290,7 +308,8 @@ export class ApprovalBridge {
     if (parts.length !== 2) return;
     const [approvalId, kind] = parts;
     const option = kind !== undefined && /^o\d{1,2}$/.test(kind) ? Number(kind.slice(1)) : null;
-    if (!approvalId || (kind !== "y" && kind !== "n" && kind !== "w" && option === null)) return;
+    const grantKind = kind === "s" || kind === "a" ? kind : null;
+    if (!approvalId || (kind !== "y" && kind !== "n" && kind !== "w" && grantKind === null && option === null)) return;
     const approved = kind !== "n";
 
     const pending = this.pending.get(approvalId);
@@ -316,7 +335,7 @@ export class ApprovalBridge {
     // A question is answered by an option or skipped; an option button
     // answers nothing else. A forged callback cannot do either across.
     if (pending.question !== undefined || option !== null) {
-      if (kind === "y" || kind === "w") return;
+      if (option === null && kind !== "n") return;
       await this.handleQuestionCallback(update.id, approvalId, pending, option);
       return;
     }
@@ -325,6 +344,10 @@ export class ApprovalBridge {
     // cannot save a rule the prompt never offered.
     if (kind === "w" && pending.alwaysLabel === undefined) return;
     const always = kind === "w";
+    // `s` / `a` likewise: only a grant whose button was sent (invariant 7).
+    const sessionGrant =
+      grantKind === null ? null : sessionGrantScope(grantKind, pending.sessionGrants);
+    if (grantKind !== null && sessionGrant === null) return;
 
     pending.cancelTimer();
     this.pending.delete(approvalId);
@@ -335,11 +358,18 @@ export class ApprovalBridge {
       // A button carries no words of the user's, so a deny has no reason.
       ...(approved ? { reason: "telegram" } : {}),
       ...(always ? { grant: "always" as const } : {}),
+      ...(sessionGrant !== null ? { grant: sessionGrant } : {}),
     });
 
     await this.acknowledge(
       update.id,
-      always ? "Approved, rule saved" : approved ? "Approved" : "Denied",
+      always
+        ? "Approved, rule saved"
+        : sessionGrant !== null
+          ? "Approved for this session"
+          : approved
+            ? "Approved"
+            : "Denied",
     );
     if (resolved) {
       await this.editFinal(
@@ -347,9 +377,11 @@ export class ApprovalBridge {
         pending.messageId,
         always
           ? `✅ approved · saved: ${pending.alwaysLabel}`
-          : approved
-            ? "✅ approved"
-            : "❌ denied",
+          : sessionGrant !== null && pending.sessionGrants
+            ? sessionGrantFinalText(sessionGrant, pending.sessionGrants)
+            : approved
+              ? "✅ approved"
+              : "❌ denied",
       );
     }
   }
@@ -562,6 +594,7 @@ const ALWAYS_BUTTON_MAX_CHARS = 60;
 function buildKeyboard(
   approvalId: string,
   alwaysLabel?: string,
+  sessionGrants: SessionGrantOffer | null = null,
 ): {
   inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
 } {
@@ -576,6 +609,8 @@ function buildKeyboard(
         callback_data: `${CALLBACK_PREFIX}${approvalId}:n`,
       },
     ],
+    // The session grants the TUI offers too (GitHub #230).
+    ...sessionGrantRows(CALLBACK_PREFIX, approvalId, sessionGrants),
   ];
   if (alwaysLabel !== undefined) {
     // Its own row: the saved answer is never next to the one-off pair.
