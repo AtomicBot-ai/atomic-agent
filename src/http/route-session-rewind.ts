@@ -1,15 +1,13 @@
 import type { ServerResponse } from "node:http";
 
-import type { ConversationTurn } from "../session/conversation-turn.js";
+import {
+  applySessionRewind,
+  previewSessionRewind,
+  sessionRewindDeps,
+} from "../runtime/session-rewind-service.js";
 import { planFork, questionRowIndex, type ForkRefusal } from "../session/session-fork.js";
 import { listRewindPoints, planRewind, type RewindRefusal } from "../session/session-rewind.js";
 import type { SessionState } from "../session/session-state.js";
-import {
-  applyFileRestore,
-  planFileRestore,
-  uncoveredToolCalls,
-} from "../tools/os/fs/fs-checkpoint-restore.js";
-import { FileCheckpointStore, fileCheckpointsRoot } from "../tools/os/fs/fs-checkpoint-store.js";
 import { openaiError } from "./openai-errors.js";
 import { readJsonBody, sendError, sendJson, type HandlerContext, type HttpHandler } from "./request-context.js";
 
@@ -31,7 +29,9 @@ import { readJsonBody, sendError, sendJson, type HandlerContext, type HttpHandle
  *
  * Only changes made by the agent's own file tools are put back
  * (`fs-checkpoint-store.ts`); the preview lists the shell commands, git
- * commands, archive extractions and Fusion runs whose changes stay.
+ * commands, archive extractions and Fusion runs whose changes stay. The
+ * rewind itself is `runtime/session-rewind-service.ts`, shared with the
+ * terminal's `/rewind` (ATO-2467); this file only reads and answers HTTP.
  */
 
 const REFUSAL_MESSAGES: Record<RewindRefusal | ForkRefusal, string> = {
@@ -73,23 +73,14 @@ export function createRewindHandler(preview: boolean): HttpHandler {
   return async (req, res, ctx) => {
     const point = await readPoint(req, res, ctx);
     if (point === null) return;
-    const { session, turnIndex, text, at } = point;
-    const plan = planRewind(session, turnIndex);
-    if (!plan.ok) return refuse(res, plan.code);
-    const store = checkpointStore(ctx);
-    const files = await planFileRestore(store, session.id, at);
-    const removed = session.turns.slice(turnIndex);
-    const notRestorable = files.notRestorable;
+    const { session, turnIndex } = point;
+    const deps = sessionRewindDeps(ctx.runtime);
     if (preview) {
+      const planned = await previewSessionRewind(deps, session, turnIndex);
+      if (!planned.ok) return refuse(res, planned.code);
       sendJson(res, 200, {
         id: session.id,
-        turnIndex,
-        text,
-        removed: removedCounts(removed),
-        files: files.items.map((item) => ({ path: item.path, action: item.action })),
-        notRestorable,
-        incomplete: files.incomplete,
-        uncovered: uncoveredToolCalls(removed),
+        ...planned.value,
         // This agent takes `conversation: false` (ATO-2112); an older one would cut the chat.
         filesOnly: true,
       });
@@ -97,32 +88,19 @@ export function createRewindHandler(preview: boolean): HttpHandler {
     }
     // `files: false` takes back only the conversation; `conversation: false` only the files.
     const restoreFiles = point.body.files !== false;
-    if (point.body.conversation === false) {
-      if (!restoreFiles) {
-        sendError(res, 400, openaiError("files and conversation cannot both be false", "invalid_request_error", "conversation"));
-        return;
-      }
-      // The chat stays as it is, and so do the copies: a later rollback still finds them.
-      const done = await applyFileRestore(store, session.id, files);
-      sendJson(res, 200, { id: session.id, text, ...done, notRestorable, incomplete: files.incomplete });
+    const filesOnly = point.body.conversation === false;
+    if (filesOnly && !restoreFiles) {
+      // A refused point still answers its refusal first, as before.
+      const plan = planRewind(session, turnIndex);
+      if (!plan.ok) return refuse(res, plan.code);
+      sendError(res, 400, openaiError("files and conversation cannot both be false", "invalid_request_error", "conversation"));
       return;
     }
-    // A compaction started on this chat would summarise the rows removed.
-    ctx.runtime.cancelSessionCompaction(session.id);
-    const done = restoreFiles
-      ? await applyFileRestore(store, session.id, files)
-      : { restored: [], deleted: [], failed: [] };
-    ctx.runtime.sessionStore.save(plan.state);
-    ctx.runtime.sessionStore.clearTurnProgress(session.id);
-    // The turns those copies belong to are gone.
-    await store.dropSince(session.id, at);
-    sendJson(res, 200, {
-      id: session.id,
-      text,
-      ...done,
-      notRestorable: restoreFiles ? notRestorable : [],
-      incomplete: restoreFiles && files.incomplete,
-    });
+    const scope = filesOnly ? "files" : restoreFiles ? "all" : "conversation";
+    const done = await applySessionRewind(deps, session, turnIndex, scope);
+    if (!done.ok) return refuse(res, done.code);
+    const { text, restored, deleted, failed, notRestorable, incomplete } = done.value;
+    sendJson(res, 200, { id: session.id, text, restored, deleted, failed, notRestorable, incomplete });
   };
 }
 
@@ -184,20 +162,6 @@ async function readPoint(
     return null;
   }
   return { session, turnIndex, priorQuestions: prior, text: row.text, at: row.at, body: body ?? {} };
-}
-
-function removedCounts(rows: readonly ConversationTurn[]): { questions: number; replies: number } {
-  let questions = 0;
-  let replies = 0;
-  for (const row of rows) {
-    if (row.kind === "user" && row.steered !== true) questions += 1;
-    if (row.kind === "assistant_reply" && row.progressNote !== true && row.stopped !== true) replies += 1;
-  }
-  return { questions, replies };
-}
-
-function checkpointStore(ctx: HandlerContext): FileCheckpointStore {
-  return new FileCheckpointStore(fileCheckpointsRoot(ctx.runtime.config.paths.stateDir));
 }
 
 function refuse(res: ServerResponse, code: RewindRefusal | ForkRefusal): void {
