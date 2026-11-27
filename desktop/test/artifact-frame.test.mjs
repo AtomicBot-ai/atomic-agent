@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
 const F = require("../out/main/artifact-frame.js");
@@ -108,4 +109,85 @@ test("the window may frame the scheme, and the bridge exposes only put and drop"
   const ipc = readFileSync(new URL("../main/artifact-frame-ipc.ts", import.meta.url), "utf8");
   assert.match(ipc, /standard: true, secure: true/);
   assert.doesNotMatch(ipc, /bypassCSP|allowServiceWorkers|corsEnabled: true|supportFetchAPI: true/);
+});
+
+// ATO-2375: the widget bridge every page gets before its own markup.
+
+/** Objects made in the vm context, as plain objects of this one (deepEqual checks prototypes). */
+const plain = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+
+/** Run the bridge script in a bare context with a fake parent: what it posted, its window, a way to fire events. */
+function runBridge() {
+  const posted = [], listeners = {}, events = [];
+  const parent = { postMessage: (m, o) => posted.push({ m: plain(m), o }) };
+  const ctx = {
+    parent, JSON, String, Number, Promise, setTimeout,
+    addEventListener: (t, f) => { (listeners[t] ||= []).push(f); },
+    dispatchEvent: (e) => { events.push(e); return true; },
+    CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init && init.detail; } },
+  };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  const src = F.ARTIFACT_BRIDGE_SCRIPT.replace(/^<script>/, "").replace(/<\/script>$/, "");
+  vm.runInContext(src, ctx);
+  const fire = (t, e) => (listeners[t] || []).forEach((f) => f(e));
+  return { ctx, posted, events, fire, parent };
+}
+
+test("the widget bridge runs before the page's markup and reaches nothing but its parent", () => {
+  const s = new F.ArtifactStore();
+  const page = "<script>sendPrompt('hi')</script>";
+  const r = s.response(s.put(page).url);
+  const at = r.body.indexOf(F.ARTIFACT_BRIDGE_SCRIPT);
+  assert.ok(at > 0 && at < r.body.indexOf(page), "the bridge comes before the page");
+  assert.ok(r.body.endsWith(F.ARTIFACT_SIZE_SCRIPT));
+  assert.doesNotMatch(F.ARTIFACT_BRIDGE_SCRIPT, /fetch|XMLHttpRequest|WebSocket|location|cookie|localStorage|window\.atomic=/);
+  assert.match(F.ARTIFACT_BRIDGE_SCRIPT, /window\.atomicWidget=/);
+  assert.match(F.ARTIFACT_BRIDGE_SCRIPT, /window\.sendPrompt=/);
+  // The page is as sandboxed as before.
+  assert.match(F.ARTIFACT_CSP, /connect-src 'none'/);
+  assert.match(F.ARTIFACT_CSP, /sandbox allow-scripts$/);
+});
+
+test("the bridge says ready on start; sendPrompt posts the text, capped", () => {
+  const { ctx, posted } = runBridge();
+  assert.deepEqual(posted[0], { m: { atomicArtifact: "ready" }, o: "*" });
+  assert.equal(ctx.sendPrompt("Pick laptop B"), true);
+  assert.deepEqual(posted[1].m, { atomicArtifact: "prompt", text: "Pick laptop B" });
+  assert.equal(ctx.atomicWidget.sendPrompt, ctx.sendPrompt);
+  assert.equal(ctx.sendPrompt("   "), false);
+  assert.equal(ctx.sendPrompt(42), false);
+  assert.equal(posted.length, 2);
+  ctx.sendPrompt("x".repeat(F.ARTIFACT_PROMPT_MAX + 50));
+  assert.equal(posted.at(-1).m.text.length, F.ARTIFACT_PROMPT_MAX);
+});
+
+test("state: get answers what the parent sent back, set posts JSON of at most 64 KB", async () => {
+  const { ctx, posted, events, fire, parent } = runBridge();
+  // A message from anyone but the parent is ignored.
+  fire("message", { source: {}, data: { atomicWidget: "state", state: { evil: 1 } } });
+  fire("message", { source: parent, data: { atomicWidget: "state", state: { n: 3 } } });
+  assert.deepEqual(plain(await ctx.atomicWidget.state.get()), { n: 3 });
+  assert.equal(events.at(-1).type, "atomicwidgetstate");
+  assert.equal(ctx.atomicWidget.state.set({ n: 4 }), true);
+  assert.deepEqual(posted.at(-1).m, { atomicArtifact: "state", json: "{\"n\":4}" });
+  assert.deepEqual(plain(await ctx.atomicWidget.state.get()), { n: 4 });
+  const before = posted.length;
+  assert.equal(ctx.atomicWidget.state.set("x".repeat(F.ARTIFACT_STATE_MAX)), false, "over 64 KB once quoted");
+  const loop = {}; loop.self = loop;
+  assert.equal(ctx.atomicWidget.state.set(loop), false);
+  assert.equal(posted.length, before);
+});
+
+test("script errors and rejections are reported, three per load at most", () => {
+  const { posted, fire } = runBridge();
+  fire("error", { message: "Uncaught TypeError: x is not a function", lineno: 12 });
+  fire("unhandledrejection", { reason: { message: "boom" } });
+  fire("error", { message: "y".repeat(1000), lineno: 3 });
+  fire("error", { message: "fourth", lineno: 4 });
+  const errs = posted.filter((p) => p.m.atomicArtifact === "error").map((p) => p.m);
+  assert.equal(errs.length, F.ARTIFACT_ERRORS_PER_LOAD);
+  assert.deepEqual(errs[0], { atomicArtifact: "error", message: "Uncaught TypeError: x is not a function", line: 12 });
+  assert.match(errs[1].message, /^Unhandled promise rejection: boom$/);
+  assert.equal(errs[2].message.length, F.ARTIFACT_ERROR_MAX);
 });

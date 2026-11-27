@@ -1,0 +1,3 @@
+/* ATO-2375: a widget's script errors, under its frame in the reply (artifact-bridge.js) */
+.chat-art-err{line-height:1.4;padding:6px 10px;border-top:1px solid var(--line-soft);
+  color:var(--danger);font-size:var(--fs-label);white-space:pre-wrap;word-break:break-word}
