@@ -6,6 +6,7 @@ import { localFirstTurnHead } from "../../llm/fallback/index.js";
 import { extractRouteFeatures, routeTurn, type RouteDecision } from "../../llm/router/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import { isLocalLinkWithoutModel } from "../local-link-availability.js";
+import { fitsLocalWindow, type LocalFirstSessionSize } from "./local-first-fit.js";
 
 export interface RouteTurnProviderParams {
   config: AtomicAgentConfig;
@@ -21,6 +22,22 @@ export interface RouteTurnProviderParams {
    * link with no model on disk (`isLocalLinkWithoutModel`).
    */
   linkUnavailable?: (llm: ResolvedLlmConfig, providerId: string) => boolean;
+  /**
+   * This session's size from its last prompt plus the new message
+   * (ATO-2537, `localFirstSessionSize`). Absent or null: no prompt built
+   * yet, local-first does not check size.
+   */
+  sessionSize?: LocalFirstSessionSize | null;
+  /**
+   * The window a local link builds its prompt against; null when not
+   * known yet. Absent (tests, embedders): local-first does not check size.
+   */
+  localContextWindow?: (providerId: string) => number | null;
+  /**
+   * Whether a link failed as this session's turn head recently and still
+   * rests (ATO-2435). Absent: never.
+   */
+  isCoolingDown?: (providerId: string) => boolean;
 }
 
 /**
@@ -76,6 +93,11 @@ function localFirstProvider(params: RouteTurnProviderParams): string | undefined
   const unavailable =
     params.linkUnavailable ??
     ((llm: ResolvedLlmConfig, id: string) => isLocalLinkWithoutModel(llm, id, params.config));
+  const size = params.sessionSize ?? null;
+  const windowOf = params.localContextWindow;
+  const tooLongFor = size !== null && windowOf !== undefined
+    ? (id: string) => !fitsLocalWindow(size, windowOf(id), params.config)
+    : undefined;
   const decision = localFirstTurnHead({
     localFirst: true,
     effectiveRunMode: params.runMode.effective,
@@ -87,8 +109,25 @@ function localFirstProvider(params: RouteTurnProviderParams): string | undefined
     hasImage: extractRouteFeatures(params.userMessage).hasImage,
     isRegistered: params.isRegistered,
     isUnavailable: (id) => unavailable(resolved, id),
+    ...(params.isCoolingDown !== undefined ? { isCoolingDown: params.isCoolingDown } : {}),
+    ...(tooLongFor !== undefined ? { tooLongFor } : {}),
   });
-  if (decision.head === null) return undefined;
+  if (decision.head === null) {
+    if (decision.reason === "too-long") {
+      // Sizes only: never the message.
+      params.logger.info("local-first cascade: session too long for the local window, turn stays in the cloud", {
+        sessionId: params.sessionId,
+        historyTokens: size?.historyTokens ?? null,
+        fixedTokens: size?.fixedTokens ?? null,
+      });
+    }
+    if (decision.reason === "cooling-down") {
+      params.logger.info("local-first cascade: local model failed recently and rests, turn stays in the cloud", {
+        sessionId: params.sessionId,
+      });
+    }
+    return undefined;
+  }
   // The provider only: never the message.
   params.logger.info("local-first cascade: turn starts on the local model", {
     sessionId: params.sessionId,
