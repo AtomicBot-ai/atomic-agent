@@ -213,6 +213,15 @@ test("renderer: groups in order, dots, resume commands, escaping", () => {
   assert.ok(!R.hubListHTML(rows, { terminalOk: false }).includes("hub:term:"), "no Terminal button where it is unsupported");
   assert.match(R.hubListHTML([], {}), /No Claude Code or Codex sessions/);
   assert.ok(R.hubRowHTML({ agent: "codex", id: 'a"b', state: "idle" }, {}).includes("a&quot;b"));
+
+  // ATO-2172: each row can open its CLI on the local model, typed into Terminal in the row's folder.
+  assert.equal(R.hubLaunchCommand(rows[1]), "atag launch claude");
+  assert.equal(R.hubLaunchCommand(rows[0]), "atag launch codex");
+  assert.equal(R.hubLaunchCommand({ agent: "other" }), "");
+  assert.ok(html.includes('data-act="hub:local:claude-code:c1"'));
+  assert.ok(html.includes('data-act="hub:local:codex:r1"'));
+  assert.ok(html.includes("Open on local model"));
+  assert.ok(!R.hubListHTML(rows, { terminalOk: false }).includes("hub:local:"), "no local-model button where Terminal is unsupported");
 });
 
 test("hooks: renderer.js palette, overlay and act; index.html; main.ts and preload", () => {

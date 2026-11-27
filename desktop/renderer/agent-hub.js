@@ -9,7 +9,9 @@
    the ones running, and the rest. Each row can be continued here (the
    existing "Continue from Claude Code / Codex" path, handoff.js) or opened
    in Terminal with the agent's own resume command typed, not run
-   (terminal-open, macOS only).
+   (terminal-open, macOS only), or opened in Terminal with
+   `atag launch claude|codex` typed, which runs that CLI on Atomic Agent
+   through `atag serve` (ATO-2172).
 
    Opened from the palette ("Agents: who is waiting for you") and from the
    handoff sheet's footer. */
@@ -62,6 +64,13 @@ function hubResumeCommand(row) {
   return '';
 }
 
+/** ATO-2172: `atag launch` for a row's agent, typed into Terminal in the row's folder, or ''. */
+function hubLaunchCommand(row) {
+  if (row && row.agent === 'claude-code') return 'atag launch claude';
+  if (row && row.agent === 'codex') return 'atag launch codex';
+  return '';
+}
+
 function hubRowMeta(row, rel) {
   const bits = [HUB_AGENT_LABELS[row.agent] || 'Agent'];
   if (row.reason) bits.push(row.reason);
@@ -79,10 +88,13 @@ function hubRowHTML(row, o) {
   const term = opts.terminalOk && hubResumeCommand(row)
     ? '<button class="btn btn-g sm" data-act="hub:term:' + hubEsc(key) + '" title="' + hubEsc(hubResumeCommand(row)) + '">Open in Terminal</button>'
     : '';
+  const local = opts.terminalOk && hubLaunchCommand(row)
+    ? '<button class="btn btn-g sm" data-act="hub:local:' + hubEsc(key) + '" title="' + hubEsc(hubLaunchCommand(row)) + '">Open on local model</button>'
+    : '';
   return '<div class="row hubrow"><i class="' + hubDotClass(row) + '"></i>'
     + '<span class="main"><span class="t">' + hubEsc(row.title || '(untitled)') + '</span>'
     + '<span class="s">' + hubEsc(hubRowMeta(row, opts.rel)) + '</span></span>'
-    + term
+    + term + local
     + '<button class="btn btn-p sm" data-act="hub:go:' + hubEsc(key) + '"' + (opts.starting ? ' disabled' : '') + '>'
     + (busy ? '<span class="tk-spin"></span>' : '') + 'Continue here</button></div>';
 }
@@ -148,20 +160,20 @@ async function hubContinue(row) {
   render();
 }
 
-function hubOpenTerminal(row) {
-  const command = hubResumeCommand(row);
+function hubOpenTerminal(row, command) {
   const fail = (why) => toast("Couldn't open Terminal", typeof why === 'string' ? why : '', 'bad');
   if (!command || !hubTerminalOk()) { fail(); return; }
   Promise.resolve().then(() => BR.terminalOpenWithCommand({command, cwd: row.cwd || null}))
     .then((r) => { if (!r || r.ok !== true) fail(r && r.message); }, () => fail());
 }
 
-/** `hub:<verb>` from act(): open · refresh · go:<agent>:<id> · term:<agent>:<id>. */
+/** `hub:<verb>` from act(): open · refresh · go:<agent>:<id> · term:<agent>:<id> · local:<agent>:<id>. */
 function hubAct(v) {
   if (v === 'open') { S.overlay = 'hub'; AG_HUB.error = null; hubLoad(); return; }
   if (v === 'refresh') { hubLoad(); return; }
   if (v.indexOf('go:') === 0) { const row = hubFind(v.slice(3)); if (row) hubContinue(row); return; }
-  if (v.indexOf('term:') === 0) { const row = hubFind(v.slice(5)); if (row) hubOpenTerminal(row); return; }
+  if (v.indexOf('term:') === 0) { const row = hubFind(v.slice(5)); if (row) hubOpenTerminal(row, hubResumeCommand(row)); return; }
+  if (v.indexOf('local:') === 0) { const row = hubFind(v.slice(6)); if (row) hubOpenTerminal(row, hubLaunchCommand(row)); return; }
 }
 
-if (typeof module !== 'undefined') module.exports = {hubEsc, hubFolder, hubGroupRows, hubDotClass, hubResumeCommand, hubRowMeta, hubRowHTML, hubListHTML, HUB_GROUPS};
+if (typeof module !== 'undefined') module.exports = {hubEsc, hubFolder, hubGroupRows, hubDotClass, hubResumeCommand, hubLaunchCommand, hubRowMeta, hubRowHTML, hubListHTML, HUB_GROUPS};
