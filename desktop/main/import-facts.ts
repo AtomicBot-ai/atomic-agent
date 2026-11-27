@@ -24,11 +24,10 @@
  * analytics hook gets counts only.
  */
 
-import { isAbsolute } from "node:path";
-
+import { checkFactsStartInput, type FactsSource, type FactsStat } from "./import-facts-input.js";
 import { isLocalServerUrl } from "./local-server-url.js";
 
-export type FactsSource = "claude" | "chatgpt";
+export type { FactsSource };
 export type FactsJobState = "reading" | "extracting" | "done" | "stopped" | "failed";
 
 export interface FactCandidateView {
@@ -82,22 +81,19 @@ export function importFactsSupported(caps: unknown): boolean {
   return !!agent && typeof agent === "object" && (agent as { importFacts?: unknown }).importFacts === true;
 }
 
-/** What the window asks to start, checked; `body` is the agent's start body. */
-export function factsStartBody(input: unknown): { ok: true; body: Record<string, unknown>; local: boolean } | { ok: false; error: string } {
-  const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
-  if (i["source"] !== "claude" && i["source"] !== "chatgpt") return { ok: false, error: "Choose Claude or ChatGPT first." };
-  const path = typeof i["path"] === "string" ? i["path"].trim() : "";
-  if (!path || !isAbsolute(path)) return { ok: false, error: "Choose the export .zip first." };
-  const cloud = i["cloud"];
-  if (cloud === undefined || cloud === null || cloud === false) {
-    return { ok: true, local: true, body: { source: i["source"], path, engine: { kind: "local" } } };
-  }
-  const c = (typeof cloud === "object" ? cloud : {}) as Record<string, unknown>;
-  const provider = typeof c["provider"] === "string" ? c["provider"] : "";
-  if (!provider) return { ok: false, error: "Choose the cloud model to use." };
-  // Only the person's tick on this run is consent; anything else is refused here, before the agent.
-  if (c["consent"] !== true) return { ok: false, error: "Tick the box to send your chats to the cloud model, or use the local one." };
-  return { ok: true, local: false, body: { source: i["source"], path, engine: { kind: "cloud", provider, cloudConsent: true } } };
+/**
+ * What the window asks to start, checked in full (import-facts-input.ts,
+ * ATO-1656: shape, source, a real .zip under the cap or the export folder,
+ * the cloud tick as a literal true); `body` is the agent's start body.
+ * Only the person's tick on this run is consent; anything else is refused
+ * here, before the agent.
+ */
+export function factsStartBody(input: unknown, stat?: FactsStat): { ok: true; body: Record<string, unknown>; local: boolean } | { ok: false; error: string } {
+  const checked = checkFactsStartInput(input, stat);
+  if (!checked.ok) return checked;
+  const { source, path, cloud } = checked.input;
+  if (!cloud) return { ok: true, local: true, body: { source, path, engine: { kind: "local" } } };
+  return { ok: true, local: false, body: { source, path, engine: { kind: "cloud", provider: cloud.provider, cloudConsent: true } } };
 }
 
 const count = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0);
@@ -234,6 +230,8 @@ export interface ImportFactsDeps {
     config: () => Promise<unknown>;
     importFactsRoute: Route;
   };
+  /** How the export path is looked up on disk; node:fs statSync unless a test passes its own. */
+  stat?: FactsStat;
   /** Counts only (import_facts). */
   onFound?: (info: { source: FactsSource; local: boolean; state: FactsJobState; found: number }) => void;
   onSaved?: (info: { source: FactsSource; local: boolean; state: FactsJobState; found: number; saved: number; skipped: number }) => void;
@@ -280,7 +278,7 @@ export function createImportFactsHandlers(deps: ImportFactsDeps) {
     async start(input: unknown): Promise<{ ok: true; job: FactsJobView } | Fail> {
       const notReady = ready();
       if (notReady) return notReady;
-      const checked = factsStartBody(input);
+      const checked = factsStartBody(input, deps.stat);
       if (!checked.ok) return checked;
       const res = await call("POST", "start", checked.body);
       if (!res.ok) return res;
