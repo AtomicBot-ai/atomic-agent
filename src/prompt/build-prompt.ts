@@ -666,6 +666,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       recalled: recalledTokens,
       memoryIndex: memoryIndexTokens,
       taskPolicy: taskPolicyTokens,
+      ...(projectTokens > 0 ? { project: projectTokens } : {}),
       ...(compactionTokens ? { compaction: compactionTokens } : {}),
       ...(toolSchemaTokens > 0 ? { toolSchema: toolSchemaTokens } : {}),
       total:
@@ -674,6 +675,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
         profileTokens +
         recalledTokens +
         memoryIndexTokens +
+        projectTokens +
         taskPolicyTokens + compactionTokens + toolSchemaTokens,
     },
     replyReserve: effectiveReplyReserve(

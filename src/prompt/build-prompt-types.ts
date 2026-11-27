@@ -288,6 +288,12 @@ export interface BuiltPrompt {
     memoryIndex: number;
     taskPolicy: number;
     /**
+     * The `### project` block (ATO-42) as sent, after its
+     * `PROJECT_SECTION_MAX_TOKENS` cut; included in `total` (ATO-2452).
+     * Absent when the chat is in no project.
+     */
+    project?: number;
+    /**
      * The native `tools` array sent beside the text (`toolSchemaTokens`);
      * included in `total`. Absent when the request carries none.
      */
