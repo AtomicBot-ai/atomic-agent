@@ -166,6 +166,8 @@ export interface AppKeyContext {
   onStepPairs?: (delta: number) => void;
   /** Run the row picked in one of the composer's route switches. */
   activateComposerSwitch: (row: ComposerSwitchRow) => void;
+  /** Ctrl+P: switch to the next favorite model (ATO-2169). Optional, like the hand-off chords. */
+  onModelRingCycle?: () => void;
   /**
    * Carry out the plan on offer under `mode`, for the plan hand-off
    * chords. Optional: a surface that draws no hand-off binds no keys.
@@ -598,6 +600,22 @@ export function handleAppKey(
     const next = state.whileBusyMode === "steer" ? "queue" : "steer";
     dispatch({ type: "while_busy_mode_changed", mode: next });
     callbacks.onWhileBusyModePersistRequested?.(next);
+    return true;
+  }
+  // Ctrl+P switches to the next favorite model (ATO-2169, pi's
+  // app.model.cycleForward). Free since the menu moved to Esc; the
+  // editor never claims it. Same guards as Ctrl+T.
+  if (
+    key.ctrl &&
+    !key.shift &&
+    !key.meta &&
+    input === "p" &&
+    !state.pendingApproval &&
+    !state.slashPaletteOpen &&
+    !isPanelModalOpen(state) &&
+    ctx.onModelRingCycle
+  ) {
+    ctx.onModelRingCycle();
     return true;
   }
   // Esc aborts a turn in flight — the binding the hint strip advertises

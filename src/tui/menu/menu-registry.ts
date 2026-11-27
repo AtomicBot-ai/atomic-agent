@@ -553,7 +553,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "model",
       description:
-        "open chat model picker · subcommands: pull <id> | use <id> | status | <base-url>",
+        "open chat model picker · subcommands: pull <id> | use <id> | favorite [add|remove] | status | <base-url>",
       aliases: ["models", "local"],
       rank: 27,
     },

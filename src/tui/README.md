@@ -33,6 +33,7 @@ This area owns terminal interface. Read [AGENTS.md](AGENTS.md) before changing i
 - [Session selection and rail layout](session-rail/README.md)
 - [File mentions in the composer](file-mentions/README.md)
 - [Theme chooser](theme-picker/README.md)
+- [Favorite models](model-ring/README.md)
 - [Rewind picker](rewind/README.md)
 - [Observation views](observe/README.md)
 - [Privacy settings](privacy/README.md)
