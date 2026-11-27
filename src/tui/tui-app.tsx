@@ -2831,6 +2831,10 @@ export function TuiApp({
                       onPreviewPage={() =>
                         dispatch({ type: "approval_preview_paged" })
                       }
+                      alwaysArmed={
+                        state.approvalAlwaysArmed ===
+                        state.pendingApproval.approvalId
+                      }
                     />
                   </Box>
                 ) : null}

@@ -594,6 +594,7 @@ export function reduceUiAction(
         pendingApproval: null,
         approvalPathDraft: null,
         approvalPreviewPage: null,
+        approvalAlwaysArmed: null,
         lastRunStatus: null,
         runHistory: [],
         sessionPickerOpen: false,

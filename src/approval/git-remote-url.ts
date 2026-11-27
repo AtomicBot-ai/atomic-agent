@@ -1,7 +1,7 @@
 /**
  * The URL `git push` would send to, read from the repository's own config
  * files without running git (ATO-2116), so the approval card can say
- * `sends data to -> github.com` rather than `git remote "origin"`.
+ * `sends data to → github.com` rather than `git remote "origin"`.
  *
  * Read only where the answer is plain: any `insteadOf` / `pushInsteadOf`
  * rewrite (in the repository or the user's global config) or any

@@ -1076,11 +1076,15 @@ export type ApprovalHotkey =
  *
  * That leaves `ctrl+y`, `ctrl+d`, `ctrl+f` and `ctrl+b`.
  *
- * **`ctrl+n` saves an "Allow always" rule (ATO-1142).** Global, but the
- * new-window chord stands down while an approval is pending (see
- * `handleAppKey`), so a press there did nothing before; it is offered
- * only where `canGrantAlways` holds and the button names the rule it
- * saves.
+ * **`ctrl+n` saves an "Allow always" rule (ATO-1142), on the second
+ * press (ATO-2759).** Global, but the new-window chord stands down while
+ * an approval is pending (see `handleAppKey`), so a press there did
+ * nothing before; it is offered only where `canGrantAlways` holds and
+ * the button names the rule it saves. The rule is the one verb that
+ * outlives the app, and `n` reads as "no" in this program's y/n dialogs,
+ * so the first press only arms it and relabels the button; the second
+ * saves. Same shape as the "press Ctrl+C again to exit" chord in Claude
+ * Code and Codex. A click on the button is deliberate and saves at once.
  *
  * **`ctrl+z` pages the full command (ATO-876).** It is not a verdict,
  * so it may be the odd one out: it is offered only while the preview
@@ -1276,6 +1280,13 @@ function handleApprovalKey(
       decideApproval(request, true, ctx, "shape");
       return true;
     case "grant_always":
+      // The rule is saved for the project and outlives the app, and
+      // ctrl+n means "new window" everywhere else, so the first press
+      // only arms it; the second one saves (ATO-2759).
+      if (ctx.state.approvalAlwaysArmed !== request.approvalId) {
+        ctx.dispatch({ type: "approval_always_armed", approvalId: request.approvalId });
+        return true;
+      }
       decideApproval(request, true, ctx, "always");
       return true;
     case "edit_path":

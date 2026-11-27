@@ -639,12 +639,61 @@ describe("handleAppKey", () => {
     });
   });
 
-  it("ctrl+n saves an Allow always rule where one is offered, and says so (ATO-1142)", () => {
+  it("a first ctrl+n only arms Allow always; nothing is saved yet (ATO-2759)", () => {
     const state = createInitialTuiState(stubSession());
     state.pendingApproval = pendingRequest({
       commandArgv: ["git", "status"],
       workdir: "/work/app",
     });
+    const onApprovalDecision = vi.fn();
+    const dispatch = vi.fn();
+    const handled = handleAppKey("n", emptyKey({ ctrl: true }), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+      menuLeaderArmed: false,
+      setMenuLeaderArmed: vi.fn(),
+      activateMenuNode: vi.fn(),
+      activateComposerSwitch: vi.fn(),
+    });
+    expect(handled).toBe(true);
+    expect(onApprovalDecision).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({ type: "approval_always_armed", approvalId: "ap-1" });
+  });
+
+  it("an arm left on another prompt does not save on this one (ATO-2759)", () => {
+    const state = createInitialTuiState(stubSession());
+    state.pendingApproval = pendingRequest({
+      commandArgv: ["git", "status"],
+      workdir: "/work/app",
+    });
+    state.approvalAlwaysArmed = "some-earlier-prompt";
+    const onApprovalDecision = vi.fn();
+    handleAppKey("n", emptyKey({ ctrl: true }), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+      menuLeaderArmed: false,
+      setMenuLeaderArmed: vi.fn(),
+      activateMenuNode: vi.fn(),
+      activateComposerSwitch: vi.fn(),
+    });
+    expect(onApprovalDecision).not.toHaveBeenCalled();
+  });
+
+  it("the second ctrl+n saves an Allow always rule where one is offered, and says so (ATO-1142, ATO-2759)", () => {
+    const state = createInitialTuiState(stubSession());
+    state.pendingApproval = pendingRequest({
+      commandArgv: ["git", "status"],
+      workdir: "/work/app",
+    });
+    state.approvalAlwaysArmed = "ap-1";
     const onApprovalDecision = vi.fn();
     const dispatch = vi.fn();
     const handled = handleAppKey("n", emptyKey({ ctrl: true }), {
@@ -671,6 +720,7 @@ describe("handleAppKey", () => {
     const state = createInitialTuiState(stubSession());
     // No argv: a compound or opaque shell line has nothing a rule can name.
     state.pendingApproval = pendingRequest({ workdir: "/work/app" });
+    state.approvalAlwaysArmed = "ap-1";
     const onApprovalDecision = vi.fn();
     handleAppKey("n", emptyKey({ ctrl: true }), {
       state,

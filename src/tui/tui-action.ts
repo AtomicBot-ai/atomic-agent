@@ -87,6 +87,11 @@ export type TuiAction =
    * next page of the full command, back to the excerpt after the last.
    */
   | { type: "approval_preview_paged" }
+  /**
+   * First press of the "allow always" chord: the button now asks for a
+   * second press before the rule is saved (ATO-2759).
+   */
+  | { type: "approval_always_armed"; approvalId: string }
   /** The composer gained or lost a text selection (drives Ctrl+C's meaning). */
   | { type: "composer_selection_changed"; hasSelection: boolean }
   /** Right-click on a text surface: open the cut/copy/paste menu there. */

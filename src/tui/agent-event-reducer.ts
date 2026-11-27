@@ -313,6 +313,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         // prompt's draft must not leak into it.
         approvalPathDraft: null,
         approvalPreviewPage: null,
+        approvalAlwaysArmed: null,
       };
     case "approval_resolved":
       if (state.pendingApproval?.approvalId !== action.approvalId) return state;
@@ -321,6 +322,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         pendingApproval: null,
         approvalPathDraft: null,
         approvalPreviewPage: null,
+        approvalAlwaysArmed: null,
         // Resolving the visible turn's request resumes that turn:
         // `running`. Resolving a background turn's request resumes a
         // turn this transcript is not showing — the visible status
@@ -338,6 +340,10 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return { ...state, approvalPathDraft: action.value };
     case "approval_path_edit_closed":
       return { ...state, approvalPathDraft: null };
+    case "approval_always_armed":
+      // Only the prompt on screen can be armed (ATO-2759).
+      if (state.pendingApproval?.approvalId !== action.approvalId) return state;
+      return { ...state, approvalAlwaysArmed: action.approvalId };
     case "approval_preview_paged": {
       const request = state.pendingApproval;
       if (!request) return state;
