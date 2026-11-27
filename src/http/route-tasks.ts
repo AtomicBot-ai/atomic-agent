@@ -5,7 +5,7 @@ import {
   sendJson,
   type HttpHandler,
 } from "./request-context.js";
-import { checkWorkingDir } from "./session-working-dir.js";
+import { checkWorkingDir, refuseDeviceFolder } from "./session-working-dir.js";
 import {
   TaskStateError,
   TaskValidationError,
@@ -79,6 +79,7 @@ export function createCreateTaskHandler(): HttpHandler {
       );
       return;
     }
+    if (hasWorkingDir && refuseDeviceFolder(res, ctx, "workingDir")) return;
     if (typeof sessionId === "string" && hasWorkingDir) {
       sendError(
         res,
