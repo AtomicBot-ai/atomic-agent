@@ -145,6 +145,11 @@ contextBridge.exposeInMainWorld("atomic", {
 
   /** Approvals raised by gated tools. */
   onApproval: (cb: (payload: unknown) => void) => on("agent:approval", cb),
+  /* ATO-2755: a card drawn or kept for its chat, told to main for the "needs your OK"
+     notification (main/approval-notify-ipc.ts); a click on it opens that chat here. */
+  approvalNotify: (payload: unknown) => ipcRenderer.send("approvalNotify:describe", payload),
+  approvalNotifyTake: () => ipcRenderer.invoke("approvalNotify:take"),
+  onApprovalNotifyOpen: (cb: (payload: unknown) => void) => on("approvalNotify:open", cb),
   approve: (approvalId: string, decision: "allow-once" | "allow-in-chat" | "allow-always" | "deny", reason?: string) =>
     ipcRenderer.invoke("agent:approve", { approvalId, decision, reason }),
   /** ATO-1502: answer an ask_user question (POST /api/question/answer). */
