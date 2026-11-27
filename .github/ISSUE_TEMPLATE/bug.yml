@@ -1,0 +1,74 @@
+name: Bug report
+description: Something in Atomic Agent does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please do not paste API keys, tokens or private chats.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw. A screenshot or a short video helps a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: In the terminal run `atag --version`. In the desktop app, the Report an Issue button adds it for you.
+      placeholder: "Desktop 0.0.11 or v0.10.0"
+    validations:
+      required: true
+  - type: input
+    id: last-working-version
+    attributes:
+      label: Last version where it worked
+      description: Optional. If this used to work, which version was the last good one?
+      placeholder: "v0.9.0"
+    validations:
+      required: false
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options:
+        - Desktop app
+        - Terminal (atag)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Optional. Paste the log here. It is shown as code, no need for backticks.
+      render: text
+    validations:
+      required: false
