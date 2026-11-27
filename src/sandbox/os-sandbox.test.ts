@@ -111,6 +111,22 @@ describe("buildOsSandboxPolicy", () => {
     }
   });
 
+  it.skipIf(process.platform === "win32")("checks the name as given before its real path, like /home on macOS", () => {
+    // `top` is a link to `realtop`; the home is named through the link and does not exist.
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "atomic-sbx-toplink-")));
+    try {
+      mkdirSync(join(base, "realtop"));
+      symlinkSync(join(base, "realtop"), join(base, "top"));
+      const home = join(base, "top", "op");
+      const p = buildOsSandboxPolicy({ workspaceRoots: [join(base, "top")], network: false, home, tmp: TMP });
+      expect(p.narrowedRoots).toEqual([join(base, "top")]);
+      expect(p.writableRoots).not.toContain(join(base, "top"));
+      expect(p.writableRoots).not.toContain(join(base, "realtop"));
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
   it("the Seatbelt and bwrap wraps grant no write to a narrowed home", () => {
     const p = buildOsSandboxPolicy({ workspaceRoots: [HOME], network: false, home: HOME, tmp: TMP });
     const mac = wrapWithOsSandbox("ls", [], p, { platform: "darwin", seatbeltAvailable: true });
