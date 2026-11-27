@@ -18,6 +18,7 @@ export type LaunchMode = "local" | "agent";
 
 export const LAUNCH_HELP = [
   "Usage: atomic-agent launch [<agent>] [--agent] [--model <id>] [--print-env] [-- <agent args>]",
+  "       atomic-agent launch <agent> --config [--agent] [--model <id>]   |   launch <agent> --revert",
   "",
   "Start another coding CLI on this machine's local model, through `atag serve`",
   "(a running one is reused, else one is started for this run and stopped after).",
@@ -30,6 +31,10 @@ export const LAUNCH_HELP = [
   "                 own tools and memory, and the CLI's own tool calls are not offered to the model.",
   "  --model <id>   Model name the CLI sends (default: the loaded local model; atomic-agent with --agent)",
   "  --print-env    Print the environment and command instead of running it (keys masked)",
+  "  --config       Write a lasting setting into the CLI's own config file instead of running it,",
+  "                 so plain `claude` / `codex` / `opencode` use atag serve on port 8787 afterwards",
+  "                 (a backup of the file is kept; the key itself is not written there)",
+  "  --revert       Take that setting out again",
   "  -- <args>      Passed to the agent unchanged, e.g. atag launch codex -- exec \"fix the tests\"",
   "",
   "By default the CLI gets the local model itself (/local/v1 on serve), sends its own tools and",
@@ -48,6 +53,12 @@ export interface LaunchArgs {
   readonly model: string | null;
   readonly printEnv: boolean;
   readonly extraArgs: readonly string[];
+  /** ATO-2448: write the lasting setting instead of running the CLI. */
+  readonly config: boolean;
+  /** ATO-2448: take that setting out. */
+  readonly revert: boolean;
+  /** ATO-2448: print the key for Claude Code's `apiKeyHelper` (not in the help). */
+  readonly printKey: boolean;
 }
 
 export function parseLaunchArgs(args: readonly string[]): LaunchArgs | { error: string } | "help" {
@@ -58,11 +69,17 @@ export function parseLaunchArgs(args: readonly string[]): LaunchArgs | { error: 
   let model: string | null = null;
   let printEnv = false;
   let mode: LaunchMode = "local";
+  let config = false;
+  let revert = false;
+  let printKey = false;
   for (let i = 0; i < own.length; i++) {
     const arg = own[i] as string;
     if (arg === "-h" || arg === "--help") return "help";
     if (arg === "--print-env") printEnv = true;
     else if (arg === "--agent") mode = "agent";
+    else if (arg === "--config") config = true;
+    else if (arg === "--revert") revert = true;
+    else if (arg === "--print-key") printKey = true;
     else if (arg === "--model") {
       const value = own[i + 1];
       if (!value || value.startsWith("-")) return { error: "--model expects a model id" };
@@ -75,10 +92,13 @@ export function parseLaunchArgs(args: readonly string[]): LaunchArgs | { error: 
     else if (name === undefined) name = arg;
     else return { error: `unexpected argument ${arg} (put the agent's own arguments after --)` };
   }
-  if (!name) return { integration: null, mode, model, printEnv, extraArgs };
+  if ([config, revert, printEnv].filter(Boolean).length > 1) return { error: "use only one of --config, --revert and --print-env" };
+  if ((config || revert) && extraArgs.length > 0) return { error: "--config and --revert run nothing, so they take no arguments after --" };
+  const rest = { mode, model, printEnv, extraArgs, config, revert, printKey };
+  if (!name) return { integration: null, ...rest };
   const integration = findLaunchIntegration(name);
   if (!integration) {
     return { error: `unknown agent ${name} (one of: ${LAUNCH_INTEGRATIONS.map((i) => i.id).join(", ")})` };
   }
-  return { integration, mode, model, printEnv, extraArgs };
+  return { integration, ...rest };
 }

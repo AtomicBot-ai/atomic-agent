@@ -212,4 +212,37 @@ describe("atag launch (ATO-2172)", () => {
     expect(old.err).toContain("--agent");
     expect(calls).toHaveLength(0);
   });
+
+  it("--print-key prints only the key, for Claude Code's apiKeyHelper (ATO-2448)", async () => {
+    const r = await run(["--print-key"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toBe("the-serve-key\n");
+  });
+
+  it("--config writes the CLI's setting for port 8787 and runs nothing; --revert takes it out (ATO-2448)", async () => {
+    const files = new Map<string, string>();
+    const configFs = {
+      read: (p: string) => files.get(p) ?? null,
+      write: (p: string, t: string) => void files.set(p, t),
+      exists: (p: string) => files.has(p),
+      copy: (a: string, b: string) => void files.set(b, files.get(a) ?? ""),
+      remove: (p: string) => void files.delete(p),
+    };
+    const { spawn, calls } = fakeSpawn(0);
+    const over = { spawn, configFs, home: "/home/u", keyCommand: "atag launch --print-key", findServe: async () => SERVE };
+    const r = await run(["claude", "--config"], over);
+    expect(r.code).toBe(0);
+    expect(calls).toHaveLength(0);
+    const settings = [...files.entries()].find(([p]) => p.endsWith("settings.json"))?.[1] ?? "";
+    expect(JSON.parse(settings).env).toMatchObject({ ANTHROPIC_BASE_URL: "http://127.0.0.1:8787/local", ANTHROPIC_MODEL: "qwen-local" });
+    expect(settings).not.toContain("the-serve-key");
+    expect(r.out).toContain("atag launch claude --revert");
+    const back = await run(["claude", "--revert"], over);
+    expect(back.code).toBe(0);
+    expect([...files.keys()].some((p) => p.endsWith("settings.json"))).toBe(false);
+  });
+
+  it("--config and --print-env together are a usage error (ATO-2448)", async () => {
+    expect((await run(["claude", "--config", "--print-env"])).code).toBe(2);
+  });
 });

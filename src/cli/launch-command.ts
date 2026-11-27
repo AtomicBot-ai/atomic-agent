@@ -23,6 +23,8 @@ import { resolveStateDir } from "../config/index.js";
 import { findOnPath } from "./cloudflared.js";
 import { LAUNCH_HELP, parseLaunchArgs, type LaunchArgs } from "./launch-args.js";
 import { runChild } from "./launch-child.js";
+import type { LaunchConfigFs } from "./launch-config.js";
+import { runLaunchConfig } from "./launch-config-command.js";
 import { DEFAULT_LAUNCH_MODEL, type LaunchIntegration, type LaunchPlan } from "./launch-integrations.js";
 import { localModelProbeMessage, probeLocalModel, type LocalModelProbe } from "./launch-local-model.js";
 import { launchChoices, pickLaunchIntegration } from "./launch-picker.js";
@@ -87,6 +89,15 @@ export interface LaunchCommandDeps {
   /** ATO-2737: the picker of bare `atag launch`; defaults to stdin and stdout being a TTY. */
   readonly isTTY?: () => boolean;
   readonly ask?: (prompt: string) => Promise<string>;
+  /** ATO-2448: `--config` / `--revert` file access and paths; tests pass their own. */
+  readonly configFs?: LaunchConfigFs;
+  readonly home?: string;
+  readonly keyCommand?: string;
+}
+
+/** The operator's own key from the environment, as serve takes it. */
+function givenKey(env: NodeJS.ProcessEnv): string | null {
+  return env.ATOMIC_AGENT_API_KEY?.trim() ? env.ATOMIC_AGENT_API_KEY.trim() : null;
 }
 
 export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}): Promise<number> {
@@ -102,6 +113,16 @@ export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}
     return 2;
   }
   const env = deps.env ?? process.env;
+  if (parsed.printKey) {
+    // Claude Code's apiKeyHelper (ATO-2448): the key alone on stdout.
+    const found = (deps.resolveKey ?? resolveServeApiKey)(givenKey(env), (deps.stateDir ?? resolveStateDir)());
+    if ("error" in found) {
+      writeErr(`launch: ${found.error}\n`);
+      return 1;
+    }
+    write(`${found.key}\n`);
+    return 0;
+  }
   const findBinary = deps.findBinary ?? ((b: string) => findOnPath(b, env));
   let integration = parsed.integration;
   if (integration === null) {
@@ -110,7 +131,7 @@ export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}
     integration = picked.integration;
   }
   const binaryPath = findBinary(integration.binary);
-  if (!binaryPath && !parsed.printEnv) {
+  if (!binaryPath && !parsed.printEnv && !parsed.config && !parsed.revert) {
     writeErr(
       `launch: ${integration.displayName} is not installed (no \`${integration.binary}\` on PATH).\n` +
         `Install it with: ${integration.installHint}\n`,
@@ -120,7 +141,7 @@ export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}
 
   const stateDir = (deps.stateDir ?? resolveStateDir)();
   const cwd = (deps.cwd ?? (() => process.cwd()))();
-  const given = env.ATOMIC_AGENT_API_KEY?.trim() ? env.ATOMIC_AGENT_API_KEY.trim() : null;
+  const given = givenKey(env);
   const key = (deps.resolveKey ?? resolveServeApiKey)(given, stateDir);
   if ("error" in key) {
     writeErr(`launch: ${key.error}\n`);
@@ -130,6 +151,22 @@ export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}
   const local = parsed.mode === "local";
   const probe = deps.probeLocal ?? ((b: string, t: string) => probeLocalModel(b, t));
   const findServe = deps.findServe ?? ((s: string, c: string | null) => findReusableServe(s, c, deps.serveDeps));
+  if (parsed.config || parsed.revert) {
+    return runLaunchConfig(integration, parsed, {
+      stateDir,
+      env,
+      home: deps.home,
+      fs: deps.configFs,
+      keyCommand: deps.keyCommand,
+      findServe,
+      probeLocal: probe,
+      cwd,
+      key: key.key,
+      keyFromEnv: given !== null,
+      write,
+      writeErr,
+    });
+  }
   // The agent behind /v1 runs its tools in the serve's folder; the bare model has none.
   let serve = await findServe(stateDir, local ? null : cwd);
   if (parsed.printEnv) {
