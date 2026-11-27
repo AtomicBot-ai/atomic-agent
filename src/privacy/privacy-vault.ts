@@ -18,13 +18,28 @@
  * Once a value has been masked it is masked everywhere it appears later,
  * even in a context the detector would not recognise on its own (a key
  * first seen as `API_KEY=…`, later pasted bare).
+ *
+ * Names, street addresses and organisations the local model found
+ * (ATO-2394) come in through `learn` and get placeholders of their own
+ * (`[NAME_1]`, `[ADDRESS_1]`, `[ORG_1]`). Regex stays the floor: `mask`
+ * replaces the regex spans first, so a model value can only cover text
+ * no regex claimed, and `learn` refuses a value that itself holds
+ * regex-detectable data or that the vault already knows under another
+ * kind. Model values match as whole words only (`Ivan` is not masked
+ * inside `Ivanovo`), Cyrillic included.
  */
 
 import type { KnownSecret } from "../error-reporting/secret-detector.js";
-import { findPrivateSpans, PRIVATE_KINDS, type PrivateKind } from "./detect-private-data.js";
+import {
+  acceptableModelValue,
+  findPrivateSpans,
+  SHIELD_KINDS,
+  type ModelFoundValue,
+  type ShieldKind,
+} from "./detect-private-data.js";
 
 /** `[EMAIL_1]` and friends; anything else in square brackets is left alone. */
-export const PLACEHOLDER = /\[(SECRET|IBAN|CARD|EMAIL|PHONE)_(\d{1,6})\]/g;
+export const PLACEHOLDER = /\[(SECRET|IBAN|CARD|EMAIL|PHONE|NAME|ADDRESS|ORG)_(\d{1,6})\]/g;
 
 /** Shortest value the exact-match pass reapplies; shorter ones would shred ordinary words. */
 const MIN_REAPPLY_LENGTH = 6;
@@ -36,7 +51,7 @@ export interface PrivacyVaultStats {
   /** Distinct values this vault has masked so far. */
   distinct: number;
   /** The same, by kind. */
-  byKind: Record<PrivateKind, number>;
+  byKind: Record<ShieldKind, number>;
   /** Distinct values in the most recent `beginRequest` … mask calls. */
   lastRequest: number;
   /** Requests that had at least one value masked. */
@@ -55,15 +70,22 @@ export interface UnmaskOptions {
 export class PrivacyVault {
   private readonly byValue = new Map<string, string>();
   private readonly byPlaceholder = new Map<string, string>();
-  private readonly counters: Record<PrivateKind, number> = {
+  private readonly counters: Record<ShieldKind, number> = {
     SECRET: 0,
     IBAN: 0,
     CARD: 0,
     EMAIL: 0,
     PHONE: 0,
+    NAME: 0,
+    ADDRESS: 0,
+    ORG: 0,
   };
   /** Values reapplied by exact match, longest first; rebuilt lazily. */
   private reapply: string[] | null = null;
+  /** Values the local model found, each with its whole-word matcher. */
+  private readonly modelValues = new Map<string, RegExp>();
+  /** `modelValues` keys, longest first; rebuilt lazily. */
+  private modelOrder: string[] | null = null;
   private requestSeen: Set<string> | null = null;
   private lastRequest = 0;
   private maskedRequests = 0;
@@ -72,7 +94,7 @@ export class PrivacyVault {
   constructor(private readonly known: () => readonly KnownSecret[] = () => []) {}
 
   /** The placeholder for `value`, minted on first sight. */
-  private placeholderFor(value: string, kind: PrivateKind): string {
+  private placeholderFor(value: string, kind: ShieldKind): string {
     const existing = this.byValue.get(value);
     if (existing !== undefined) return existing;
     this.counters[kind] += 1;
@@ -104,6 +126,27 @@ export class PrivacyVault {
   }
 
   /**
+   * Take values the local model found (ATO-2394). Each gets a stable
+   * placeholder now and is masked by every later `mask`, as a whole word.
+   * Refused: a value with a shape that could break a placeholder, one the
+   * vault already holds (it keeps its first placeholder, so a regex kind
+   * is never relabelled), and one in which the regex detector finds data
+   * of its own. Returns how many were taken.
+   */
+  learn(found: readonly ModelFoundValue[], known: readonly KnownSecret[] = this.known()): number {
+    let added = 0;
+    for (const { value, kind } of found) {
+      if (!acceptableModelValue(value) || this.byValue.has(value)) continue;
+      if (findPrivateSpans(value, known).length > 0) continue;
+      this.placeholderFor(value, kind);
+      this.modelValues.set(value, wholeWord(value));
+      this.modelOrder = null;
+      added += 1;
+    }
+    return added;
+  }
+
+  /**
    * `text` with every private value replaced by its placeholder. `known`
    * defaults to the vault's own source; {@link maskDeep} reads it once
    * for a whole request.
@@ -127,13 +170,34 @@ export class PrivacyVault {
     }
     if (this.byValue.size === 0) return out;
     this.reapply ??= [...this.byValue.keys()]
-      .filter((v) => v.length >= MIN_REAPPLY_LENGTH)
+      .filter((v) => v.length >= MIN_REAPPLY_LENGTH && !this.modelValues.has(v))
       .sort((a, b) => b.length - a.length);
     for (const value of this.reapply) {
       if (!out.includes(value)) continue;
       const placeholder = this.byValue.get(value)!;
       this.note(placeholder);
       out = out.split(value).join(placeholder);
+    }
+    return this.maskModelValues(out);
+  }
+
+  /**
+   * The model's values, last: regex spans and their reapplied values are
+   * placeholders by now, so a model value only ever covers text no regex
+   * claimed. Longest first, so `Ivan Petrov` wins over `Ivan`.
+   */
+  private maskModelValues(text: string): string {
+    if (this.modelValues.size === 0) return text;
+    this.modelOrder ??= [...this.modelValues.keys()].sort((a, b) => b.length - a.length);
+    let out = text;
+    for (const value of this.modelOrder) {
+      if (!out.includes(value)) continue;
+      const matcher = this.modelValues.get(value)!;
+      matcher.lastIndex = 0;
+      const next = out.replace(matcher, this.byValue.get(value)!);
+      if (next === out) continue;
+      this.note(this.byValue.get(value)!);
+      out = next;
     }
     return out;
   }
@@ -167,8 +231,8 @@ export class PrivacyVault {
   }
 
   stats(): PrivacyVaultStats {
-    const byKind = Object.fromEntries(PRIVATE_KINDS.map((k) => [k, this.counters[k]])) as Record<
-      PrivateKind,
+    const byKind = Object.fromEntries(SHIELD_KINDS.map((k) => [k, this.counters[k]])) as Record<
+      ShieldKind,
       number
     >;
     return {
@@ -178,6 +242,17 @@ export class PrivacyVault {
       maskedRequests: this.maskedRequests,
     };
   }
+}
+
+/**
+ * A matcher for `value` as a whole word: no letter, digit or `_` right
+ * before or after it, in any script (`\p{L}`), so `Иван` is not found
+ * inside `Иванов`. Only regex syntax characters are escaped: the `u`
+ * flag refuses an escape of anything else.
+ */
+function wholeWord(value: string): RegExp {
+  const escaped = value.replace(/[\\^$.*+?()[\]{}|/]/g, "\\$&");
+  return new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, "gu");
 }
 
 /**

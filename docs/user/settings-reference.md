@@ -214,6 +214,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `privacy.shield.enabled` | `boolean` | `false` | Privacy Shield (ATO-599): when `true`, emails, phone numbers, card numbers, IBANs and keys in a request to a cloud model are replaced with placeholders such as `[EMAIL_1]` and put back in the reply on this machine. Off by default. Local models always get the real text. |
+| `privacy.shield.localNames` | `boolean` | `false` | Names, addresses and organisations (ATO-2394): when `true` and the shield is on, a model on this machine finds people's names, street addresses and organisations in a cloud request and they are masked too (`[NAME_1]`). Needs a local model; without one only the regex masks apply. Off by default. |
 
 ## memory
 

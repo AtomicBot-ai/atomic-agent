@@ -21,6 +21,7 @@ import { createRuntimeImapTrigger } from "./composition/runtime-imap-trigger.js"
 import { createRuntimeMailTrigger } from "./composition/runtime-mail-trigger.js";
 import { createOfflineModeControl } from "./composition/runtime-offline-mode.js";
 import { createPrivacyShieldControl } from "./composition/runtime-privacy-shield.js";
+import { installPrivacyNameDetector } from "./composition/runtime-privacy-names.js";
 import { holdWhileRunning } from "../scheduler/index.js";
 import type { AgentRuntime, CreateAgentRuntimeOptions } from "./runtime-contract.js";
 export type { AgentRuntime, CreateAgentRuntimeOptions, MemoryEmbeddingReconnect, RuntimeEventHandlers } from "./runtime-contract.js";
@@ -444,6 +445,8 @@ export async function createAgentRuntime(
   const providers = await connectRuntimeProviders(config, logger, localProfile, connectedLocal);
   const { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveActiveModelName, resolveRouteVision } = providers;
   builtProviderIds = () => providerRegistry.listIds();
+  // ATO-2394: Privacy Shield's opt-in local name pass (`privacy.shield.localNames`).
+  installPrivacyNameDetector({ providerRegistry, sideCallSlotId: () => slotManager.sideCallSlotId(), logger });
 
   const bootstrapLlmSlice = resolveActiveLlmSlice();
   const textProvider = bootstrapLlmSlice.provider;

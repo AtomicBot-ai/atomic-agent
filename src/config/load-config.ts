@@ -644,7 +644,7 @@ export function loadConfig(): AtomicAgentConfig {
     },
     // ATO-599: Privacy Shield, read by the cloud provider adapters.
     privacy: {
-      shield: { enabled: user.privacy.shield.enabled },
+      shield: { enabled: user.privacy.shield.enabled, localNames: user.privacy.shield.localNames },
     },
     memory: {
       profile: {
