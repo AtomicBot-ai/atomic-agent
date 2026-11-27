@@ -199,6 +199,9 @@ function pexTrustText(folder) {
   return sum && sum.state !== 'none' ? sum.text : '';
 }
 
+/* ATO-2745: one name for "forget the folder just picked" in both rows (they said "Keep none" and "Keep the old one"). */
+const PEX_FOLDER_UNDO = 'Undo change';
+
 /** The folder row (hook in projectEditHTML): the folder, Change folder…, and a folder picked but not saved yet.
     ATO-2411: a project with no disk folder shows "None" and Choose folder…. */
 function projectEditFolderHTML(e, p) {
@@ -211,22 +214,22 @@ function projectEditFolderHTML(e, p) {
       + '<div class="sd-pnew-folder">'
         + (shown
           ? '<span class="mono grow" title="' + pexEsc(shown) + '">' + pexEsc(shown) + '</span>'
-            + '<button class="btn btn-s sm" data-pex="folderundo"' + off + '>Keep none</button>'
+            + '<button class="btn btn-s sm" data-pex="folderundo"' + off + '>' + PEX_FOLDER_UNDO + '</button>'
             + '<button class="btn btn-s sm" data-pex="folder"' + off + '>Change folder…</button>'
           : '<span class="grow sd-cap">None. Chats work in the folder the window shows.</span>'
             + '<button class="btn btn-s sm" data-pex="folder"' + off + '>Choose folder…</button>')
       + '</div>'
-      + (shown ? '<p class="sd-cap">Saved, new chats open there and the project gets its own model. Its chats stay in it.</p>'
+      + (shown ? '<p class="sd-cap">After you save, new chats open there and the project gets its own model. Its chats stay in it.</p>'
         : '<p class="sd-cap">Choose a folder to give this project its own model and a place for its new chats.</p>')
       + err;
   }
   return '<label class="sd-cap">Folder</label>'
     + '<div class="sd-pnew-folder">'
       + '<span class="mono grow" title="' + pexEsc(shown) + '">' + pexEsc(shown) + '</span>'
-      + (x.folder ? '<button class="btn btn-s sm" data-pex="folderundo"' + off + '>Keep the old one</button>' : '')
+      + (x.folder ? '<button class="btn btn-s sm" data-pex="folderundo"' + off + '>' + PEX_FOLDER_UNDO + '</button>' : '')
       + '<button class="btn btn-s sm" data-pex="folder"' + off + '>Change folder…</button>'
     + '</div>'
-    + (x.folder ? '<p class="sd-cap">New chats open there; chats you already have keep their folder.</p>' : '')
+    + (x.folder ? '<p class="sd-cap">After you save, new chats open there. Chats you already have keep their folder.</p>' : '')
     + err;
 }
 

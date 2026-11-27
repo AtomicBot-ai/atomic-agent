@@ -507,3 +507,9 @@ button.set-search:hover{border-color:var(--bd)}
 .mailtask-subject{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mailtask-meta{font-size:var(--fs-label);color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mailtask-acts{display:flex;gap:6px;flex:none}
+
+/* ATO-2745: the raw answer behind a plain error line, folded (Settings keys, Discord, skills drafts). */
+.set-errmore{margin:4px 0 0;font-size:var(--fs-label);line-height:1.45;color:var(--ink-2)}
+.set-errmore > summary{width:max-content;cursor:pointer;color:var(--ink-2)}
+.set-errmore > summary:hover{color:var(--ink)}
+.set-errmore > span{display:block;margin-top:4px;white-space:pre-wrap;word-break:break-word;font-family:var(--font-mono);font-size:var(--fs-label)}

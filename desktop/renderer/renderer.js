@@ -1519,6 +1519,7 @@ const CMPA = createComposioAccounts({bridge: () => BR, stateDir: () => cmpStateD
 const EXA = {
   has:null, checking:false, saving:false, savedGen:null, savedFor:null,
   draft:{chat:'', settings:''}, error:{chat:null, settings:null}, note:{chat:null, settings:null},
+  shown:{chat:false, settings:false}, detail:{chat:null, settings:null},   // ATO-2745: the eye, a failed save's raw answer
 };
 /* Import panel — the TUI's ImportPanelState; the form is
    createInitialImportFormState (hermes, ~/.hermes, sessions+cron on). */
@@ -5438,7 +5439,7 @@ function renderConsole() {
   el.innerHTML = '<div class="conhead">'
     + segControl([['agent','Agent log'],['llm','LLM log']], S.consoleTab, 'console:')
     + '<span class="grow"></span>'
-    + '<button class="btn btn-s sm" data-act="dump">' + ic('download') + 'Save report for support</button>'
+    + '<button class="btn btn-s sm" data-act="dump"' + supportReportBusyAttr() + '>' + ic('download') + 'Save report for support</button>'
     + '<button class="iconbtn" data-act="toggle:console" title="Close console" aria-label="Close console">' + ic('x') + '</button></div>'
     + '<div class="conbody">' + (rows.length ? rows.map(([t, l, m]) =>
         '<div class="logrow"><span class="ter">' + t + '</span><span class="lvl ' + l + '">' + l + '</span>'
@@ -6945,7 +6946,7 @@ function diagnosticsPane() {
           : '<span class="set-copybtn" aria-hidden="true"></span>') + '</div>').join('')
     + '</div>'
     + '<div class="set-diagacts">'
-      + '<button class="btn btn-p sm" data-act="dump">' + ic('download') + 'Save report for support</button>'
+      + '<button class="btn btn-p sm" data-act="dump"' + supportReportBusyAttr() + '>' + ic('download') + 'Save report for support</button>'
       + '<button class="btn btn-s sm" data-act="diag:copyall">' + ic('copy') + 'Copy details</button>'
       + '<button class="btn btn-s sm" data-act="diag:agentlog"' + (DIAG.agentLog && BR && BR.openPath ? '' : ' disabled') + ' title="' + esc(DIAG.agentLog || 'The state folder is not known yet') + '">' + ic('log') + 'Open agent log</button>'
     + '</div>'
@@ -7586,11 +7587,7 @@ function helpReport() {
   const url = 'https://github.com/AtomicBot-ai/atomic-agent/issues/new'
     + '?title=' + encodeURIComponent('[desktop] ')
     + '&body=' + encodeURIComponent(body);
-  if (BR && BR.debugBundle) {
-    BR.debugBundle('report').then((res) => {
-      if (res && res.ok) toast('Report saved', res.path + ' — attach it if you want to');
-    }).catch(() => {});
-  }
+  saveSupportReport('report');   // ATO-2745: the same save as Diagnostics (support-report.js)
   if (BR && BR.openExternal) BR.openExternal(url);
 }
 
@@ -7801,11 +7798,7 @@ function act(a) {
      the agent log, the config with every secret removed, and the build. */
   if (a === 'dump') {
     close(); render();
-    if (!BR || !BR.debugBundle) { toast('Save report for support', 'not available in this build', 'bad'); return; }
-    BR.debugBundle('dump').then((res) => {
-      if (res && res.ok) { toast('Report saved', res.path); if (BR.openPath) BR.openPath(res.path); }
-      else toast('Could not save the report', (res && res.error) || '', 'bad');
-    });
+    saveSupportReport('dump');   // ATO-2745: support-report.js (one at a time, busy state, shown in the folder)
     return;
   }
   /* Item 09: `/tools`, the palette's List built-in tools and Help › List built-in
@@ -18811,6 +18804,7 @@ async function mpSaveProvider() {
   if (res && res.ok === false) { MP.err = res.error || 'could not save the provider'; render(); return; }
   MP.addOpen = false;
   toast('Provider added', preset.label + ' · pick a model with Models…');
+  keyFallbackToast(res, toast);   // ATO-2745: the keychain is on, but the key stayed in the settings file
   refreshLiveConfig();
 }
 
@@ -23065,6 +23059,7 @@ async function wizNextStep() {
   if (WIZ.unfinishedId && WIZ.unfinishedId !== id) { const prev = WIZ.unfinishedId; WIZ.unfinishedId = null; wizRemoveIfIncomplete(prev); }
   if (!existedBefore && WIZ_NEEDS_MODEL.has(k.kind)) WIZ.unfinishedId = id;
   if (wizStepLeft(k)) return;
+  keyFallbackToast(res, toast);   // ATO-2745: the keychain is on, but the key stayed in the settings file
 
   // The catalogue, to pick a model with. This is a LOOKUP, not a check:
   // openrouter and aimlapi answer it from a list bundled in the binary,
@@ -23519,7 +23514,7 @@ function exaKeyState(place) {
     ? (restartOwed ? 'Key saved. Web search uses it after the agent restarts.' : 'Key saved. Web search uses it.') : null;
   return {
     has: EXA.has, saving: EXA.saving, error: EXA.error[place], note: EXA.note[place] || saved,
-    restartOwed, busy: exaKeyBusy(),
+    restartOwed, busy: exaKeyBusy(), shown: !!(EXA.shown && EXA.shown[place]), errorDetail: EXA.detail ? EXA.detail[place] : null,
   };
 }
 /* The card's row, in the column the tool cards use. */
@@ -23574,7 +23569,7 @@ async function exaKeySave(place) {
   if (EXA.saving) return;
   const field = document.querySelector('input[data-exa-key="' + place + '"]');
   const value = exaKeyClean(field ? field.value : EXA.draft[place]);
-  EXA.error[place] = null; EXA.note[place] = null;
+  EXA.error[place] = null; EXA.note[place] = null; if (EXA.detail) EXA.detail[place] = null;
   if (value === '') {
     // ATO-132's rule for key fields: an empty field keeps the saved key.
     if (EXA.has) EXA.note[place] = 'Nothing pasted, so the saved key stays.';
@@ -23589,9 +23584,9 @@ async function exaKeySave(place) {
   try { res = await BR.dotenvSet(stateDir, EXA_KEY_ENV, value); }
   catch (e) { res = {ok:false, error: e && e.message ? e.message : String(e)}; }
   EXA.saving = false;
-  if (!res || res.ok === false) { EXA.error[place] = 'Could not save the key: ' + ((res && res.error) || 'unknown error'); render(); return; }
+  if (!res || res.ok === false) { EXA.error[place] = 'Could not save the key.'; EXA.detail = Object.assign({}, EXA.detail, {[place]: [res && res.error, res && res.detail].filter(Boolean).join('\n') || null}); render(); return; }
   EXA.draft = {chat:'', settings:''};
-  EXA.error = {chat:null, settings:null};
+  EXA.error = {chat:null, settings:null}; EXA.shown = {chat:false, settings:false};
   EXA.has = true;
   EXA.savedGen = AGENT_GEN;
   EXA.savedFor = exaKeyHost(S.log);
@@ -23601,6 +23596,7 @@ async function exaKeySave(place) {
 function exaKeyAct(what) {
   const [verb, place] = String(what || '').split(':');
   if (verb === 'save') exaKeySave(place);
+  if (verb === 'reveal' && (place === 'chat' || place === 'settings')) { EXA.shown = Object.assign({}, EXA.shown, {[place]: !(EXA.shown && EXA.shown[place])}); render(); }   // ATO-2745
 }
 
 /** One row for a run of identical system lines, with the repeat count.
@@ -30914,7 +30910,7 @@ async function tgRefreshOnce() {
   if (cfg && cfg.ok && cfg.config) { LIVE_CONFIG = cfg.config; dropGateNoticesIfCleared(); }   // ATO-204: B02's refusal
   TG.envKeys = Array.isArray(env) ? env : [];
   TG.dotenvKeys = dotenv && dotenv.ok ? dotenv.keys : [];
-  if (dotenv && dotenv.ok === false) TG.lastError = 'Could not read the saved token: ' + (dotenv.error || 'unknown error');
+  if (dotenv && dotenv.ok === false) tgFail(TG, 'Could not read the saved token', dotenv);   // ATO-2745
   if (eff && eff.ok && eff.value && typeof eff.value === 'object') TG.cfg = eff.value;
   TG.keysKnown = true;
   tgRepaint();
@@ -31010,7 +31006,7 @@ function tgNoticesHTML() {
   const msg = TG.message && !stale ? TG.message : null;
   const restartBtn = tgRestartButtonHTML(TG.restart, {esc, ic});
   const note = (text, tail) => '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + text + '</span>' + (tail || '') + '</div>';
-  return (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + '</span></div>' : '')
+  return (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + tgErrorDetailHTML(TG, {esc}) + '</span></div>' : '')
     + tgOtherPollerHTML(TG.channel)
     + (msg && TG.msgKind === 'owed' && owed ? note(esc(msg) + ' <span class="sec">' + esc(TG_RESTART_APPLY) + '</span>', restartBtn)
       : (msg && !(TG.msgKind === 'owed' && tgRestartSpeaks(TG.restart)) ? note(esc(msg)) : '') + (owed ? note(esc(TG_RESTART_APPLY), restartBtn) : ''))
@@ -31064,6 +31060,7 @@ async function tgTokenSave(value, opts) {
   const clean = opts && opts.raw ? {ok:true, value:String(raw || '').trim()} : tgTokenClean(raw);
   if (!clean.ok || !clean.value) { TG.token.error = clean.error || TG_TOKEN_EMPTY; tgRepaint(); const n = $('#tg-token'); if (n) n.focus(); return {ok:false, error:TG.token.error}; }
   const trimmed = clean.value;
+  TG.token.errorDetail = null;
   const stateDir = memStateDir();
   if (!BR || !stateDir) { TG.token.error = 'The app is still starting. Try again in a moment.'; tgRepaint(); return {ok:false, error:TG.token.error}; }
   let outcome = {save:true, message:'Token saved.', error:null, bot:null};
@@ -31078,14 +31075,15 @@ async function tgTokenSave(value, opts) {
   TG.token.submitting = true; TG.busy = true; tgRepaint();
   const res = await BR.dotenvSet(stateDir, 'TELEGRAM_BOT_TOKEN', trimmed);
   // The prompt says it under the field; the tab's error line said it a second time.
-  if (!res || res.ok === false) { TG.token.submitting = false; TG.busy = false; TG.token.error = 'Could not save the token: ' + ((res && res.error) || 'unknown error'); tgRepaint(); return {ok:false, error:TG.token.error}; }
+  if (!res || res.ok === false) { TG.token.submitting = false; TG.busy = false; TG.token.error = 'Could not save the token.'; TG.token.errorDetail = [res && res.error, res && res.detail].filter(Boolean).join('\n') || null; tgRepaint(); return {ok:false, error:TG.token.error}; }
   TG.mode = 'list'; TG.token = tgTokenInitial(); TG.bot = outcome.bot;
-  tgSetMessage(outcome.message, 'owed');
+  const savedLine = keySavedLine(outcome.message, res);   // ATO-2745: where the token really went
+  tgSetMessage(savedLine, 'owed');
   await tgRefresh();
   if (tgEnabled() === false) {
     const w = await BR.configSet('telegram.enabled', 'true');
-    if (!w || w.ok === false) TG.lastError = 'Could not turn Telegram on: ' + ((w && w.error) || 'unknown error');
-    else tgSetMessage(outcome.message.replace(/^Token saved\./, 'Token saved and Telegram turned on.'), 'owed');
+    if (!w || w.ok === false) tgFail(TG, 'Could not turn Telegram on', w);
+    else tgSetMessage(savedLine.replace(/^Token saved([^.]*)\./, 'Token saved$1 and Telegram turned on.'), 'owed');
     await tgRefresh();
   }
   TG.busy = false; tgRepaint();
@@ -31097,7 +31095,7 @@ async function tgClearToken() {
   TG.busy = true; tgRepaint();
   const res = await BR.dotenvSet(stateDir, 'TELEGRAM_BOT_TOKEN', null);
   TG.busy = false;
-  if (!res || res.ok === false) TG.lastError = 'Could not remove the token: ' + ((res && res.error) || 'unknown error');
+  if (!res || res.ok === false) tgFail(TG, 'Could not remove the token', res);
   else tgSetMessage('Token removed.', 'owed');
   await tgRefresh();
 }
@@ -31106,7 +31104,7 @@ async function tgSetEnabled(enabled) {
   TG.busy = true; tgRepaint();
   const res = await BR.configSet('telegram.enabled', String(!!enabled));
   TG.busy = false;
-  if (!res || res.ok === false) TG.lastError = 'Could not turn Telegram ' + (enabled ? 'on' : 'off') + ': ' + ((res && res.error) || 'unknown error');
+  if (!res || res.ok === false) tgFail(TG, 'Could not turn Telegram ' + (enabled ? 'on' : 'off'), res);
   else tgSetMessage(enabled ? 'Telegram turned on.' : 'Telegram turned off.', 'owed');
   await tgRefresh();
 }
@@ -31115,7 +31113,7 @@ async function tgClearOwner() {
   TG.busy = true; tgRepaint();
   const res = await BR.configUnset('telegram.ownerUserId');
   TG.busy = false;
-  if (!res || res.ok === false) TG.lastError = 'Could not clear the owner: ' + ((res && res.error) || 'unknown error');
+  if (!res || res.ok === false) tgFail(TG, 'Could not clear the owner', res);
   else tgSetMessage('Owner cleared. The bot ignores every message until you pair again.', 'owed');
   await tgRefresh();
 }

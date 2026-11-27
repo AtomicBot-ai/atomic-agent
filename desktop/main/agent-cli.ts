@@ -34,6 +34,7 @@ import {
   keychainHeldNames,
   keychainProviderEnvVar,
   keychainStoreOn,
+  KEY_ONE_LINE,
   readKeychainValue,
   saveSecretThroughAgent,
   type KeychainDeps,
@@ -65,6 +66,8 @@ export interface CliResult {
   error?: string;
   /** The process's exit code when it exited non-zero (ATO-416: 3 is "config changed since it was read"). */
   exitCode?: number;
+  /** ATO-2745 (upsertProvider): the OS keychain store is on, but the key was kept in config.json. */
+  keychainFallback?: boolean;
 }
 
 /**
@@ -1003,14 +1006,22 @@ async function upsertProviderNow(entry: ProviderEntry): Promise<CliResult> {
      the agent is older than these commands, the key stays in the entry as
      before. Never for an agent on another computer: its config is not here. */
   let keychainName: string | null = null;
+  // ATO-2745: the keychain is on but the key stays in config.json; the window says so (keychainFallback).
+  let keychainFallback = false;
   if (typeof entry.apiKey === "string" && entry.apiKey.length > 0 && !remoteModelsActive() && keychainStoreOn(stateDirPath())) {
     const hinted = (configFileHint()?.llm?.providers ?? []).find((p) => p?.id === entry.id) as ProviderEntry | undefined;
     const name = keychainProviderEnvVar({ id: entry.id, apiKeyEnvVar: hinted?.apiKeyEnvVar ?? entry.apiKeyEnvVar });
     const saved = await saveSecretThroughAgent(keychainDeps(), name, entry.apiKey);
     if (saved.ok && saved.store === "keychain") keychainName = name;
     else if (saved.ok) await saveSecretThroughAgent(keychainDeps(), name, null); // landed in .env: take it back out
-    else if (!saved.unsupported) console.error(`[desktop] the agent could not save the key in the OS keychain (${saved.error}); it stays in config.json`);
+    else if (!saved.unsupported) console.error(`[desktop] the agent could not save the key in the OS keychain (${saved.detail ?? saved.error}); it stays in config.json`);
+    keychainFallback = keychainName === null;
   }
+  const res = await upsertProviderWrite(entry, keychainName);
+  return res.ok && keychainFallback ? { ...res, keychainFallback: true } : res;
+}
+
+async function upsertProviderWrite(entry: ProviderEntry, keychainName: string | null): Promise<CliResult> {
   const current = await configGet();
   if (!current.ok || !current.config) {
     return { ok: false, stdout: "", stderr: "", error: current.error ?? "could not read the config" };
@@ -4400,16 +4411,39 @@ export async function desktopSecretSet(
   stateDir: string,
   key: string,
   value: string | null,
-): Promise<{ ok: boolean; path: string; preexisting: boolean; changed: boolean; error?: string }> {
+): Promise<DesktopSecretResult> {
   const path = join(stateDir, ".env");
+  const keychainOn = keychainStoreOn(stateDir);
   const viaAgent = stateDir === stateDirPath() && !remoteModelsActive() && isKeychainSecretName(key)
-    && (keychainStoreOn(stateDir) || keychainHeldNames(stateDir).includes(key));
+    && (keychainOn || keychainHeldNames(stateDir).includes(key));
   if (viaAgent) {
     const saved = await saveSecretThroughAgent(keychainDeps(), key, value);
-    if (saved.ok) return { ok: true, path, preexisting: existsSync(path), changed: true };
-    if (!saved.unsupported) return { ok: false, path, preexisting: false, changed: false, error: saved.error };
+    if (saved.ok) {
+      return { ok: true, path, preexisting: existsSync(path), changed: true, ...storedWhere(value, saved.store === "keychain", keychainOn) };
+    }
+    if (!saved.unsupported) {
+      return { ok: false, path, preexisting: false, changed: false, error: saved.error, ...(saved.detail ? { detail: saved.detail } : {}) };
+    }
   }
-  return dotenvSet(stateDir, key, value);
+  const res = dotenvSet(stateDir, key, value);
+  if (!res.ok) return { ...res, error: SECRET_FILE_FAILED, ...(res.error ? { detail: res.error } : {}) };
+  return { ...res, ...storedWhere(value, false, keychainOn && viaAgent) };
+}
+
+/* ATO-2745: where a saved key really went, so the window says it (Settings ›
+   Telegram said "a file only your user account can read" with the keychain
+   on). `keychainFallback`: the keychain store is on, yet the key is in the
+   private .env file (the agent fell back, or is older than the keychain
+   commands). Nothing for a removal. The storage itself is unchanged. */
+export type DesktopSecretResult = {
+  ok: boolean; path: string; preexisting: boolean; changed: boolean;
+  error?: string; detail?: string;
+  storedIn?: "keychain" | "file"; keychainFallback?: boolean;
+};
+export const SECRET_FILE_FAILED = "The key could not be written to the app's private settings file.";
+function storedWhere(value: string | null, inKeychain: boolean, keychainWanted: boolean): Pick<DesktopSecretResult, "storedIn" | "keychainFallback"> {
+  if (value === null) return {};
+  return inKeychain ? { storedIn: "keychain" } : { storedIn: "file", ...(keychainWanted ? { keychainFallback: true } : {}) };
 }
 
 /* The .env keys the window may write through `app:dotenvSet`, and nothing
@@ -4440,7 +4474,7 @@ export function desktopDotenvError(key: unknown, value: unknown): string | null 
     return `only ${DESKTOP_DOTENV_KEYS.join(", ")} may be written from the desktop`;
   }
   if (value !== null && typeof value !== "string") return "value must be a string or null";
-  if (value !== null && /[\r\n\0]/.test(value)) return "value must be one line";
+  if (value !== null && /[\r\n\0]/.test(value)) return KEY_ONE_LINE;
   if (key === "EXA_API_KEY" && value !== null) return exaKeyValueError(value);
   if (key === "DISCORD_BOT_TOKEN" && value !== null) return discordTokenValueError(value);
   return null;

@@ -319,3 +319,20 @@ test("main.ts uses the paused-aware busy checks for the updater and every refusa
   assert.ok(!main.includes("error: DOWNLOAD_BUSY,"), "no refusal keeps the old fixed text");
   assert.ok(main.includes("error: downloadBusyError(),"));
 });
+
+// ATO-2745: a refused Pause or Resume says so, not just re-enables the button.
+test("a refused Pause or Resume says so in a short toast", async () => {
+  R.dlPauseApply({ id: "m", pausable: true });
+  const said = [];
+  const notify = (...a) => said.push(a);
+  R.dlPauseAct("pause", { pausePull: () => Promise.resolve({ ok: false, error: "no download" }) }, null, notify);
+  await tick(); await tick();
+  assert.deepEqual(said, [["Could not pause the download", "Try again in a moment.", "bad"]]);
+  R.dlPauseAct("resume", { resumePull: () => Promise.reject(new Error("gone")) }, null, notify);
+  await tick(); await tick(); await tick();
+  assert.deepEqual(said[1], ["Could not resume the download", "Try again in a moment.", "bad"]);
+  R.dlPauseAct("pause", { pausePull: () => Promise.resolve({ ok: true }) }, null, notify);
+  await tick(); await tick();
+  assert.equal(said.length, 2, "a pause that took says nothing here (main's frame repaints the row)");
+  R.dlPauseApply({ id: null });
+});

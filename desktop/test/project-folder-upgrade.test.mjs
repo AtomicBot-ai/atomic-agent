@@ -94,15 +94,17 @@ test("Edit project on a project with no disk folder shows the Folder row with Ch
   assert.equal(JSON.stringify(vm.runInContext("projectEditExtrasFields(PROJECTS.edit)", c)), "{}");
 });
 
-test("a folder picked shows it, the model row and the pending AGENTS.md line; Keep none takes it back", async () => {
+test("a folder picked shows it, the model row and the pending AGENTS.md line; Undo change takes it back", async () => {
   const c = load();
   vm.runInContext("projectAct('pedit', 'f1')", c);
   await vm.runInContext("pexPickFolder(PROJECTS.edit)", c);
   const html = vm.runInContext("projectEditHTML()", c);
   assert.match(html, /<span class="mono grow" title="\/src\/new">\/src\/new<\/span>/);
-  assert.match(html, /data-pex="folderundo">Keep none<\/button>/);
+  assert.match(html, /data-pex="folderundo">Undo change<\/button>/);
   assert.match(html, /data-pex="folder">Change folder…<\/button>/);
-  assert.match(html, /new chats open there and the project gets its own model/);
+  // ATO-2745: it is not saved yet, so the line does not start with "Saved".
+  assert.match(html, /After you save, new chats open there and the project gets its own model/);
+  assert.doesNotMatch(html, /Saved, new chats/);
   assert.match(html, /<label class="sd-cap" for="pedit-model">Model for this project<\/label>/);
   assert.match(html, /<option value="" selected>Same as the app<\/option>/);
   assert.match(html, /<optgroup label="OpenRouter">/);
@@ -162,7 +164,8 @@ test("when the store refuses, the chat folder and its chats stay and the sheet s
   await vm.runInContext("projectEditSave()", c);
   await tick();
   assert.equal(c.saved.length, 1);
-  assert.equal(vm.runInContext("PROJECTS.edit.error", c), "disk is read-only");
+  // ATO-2745: a sentence with a period, not the store's raw words.
+  assert.equal(vm.runInContext("PROJECTS.edit.error", c), "The project was not saved. Try again in a moment.");
   assert.equal(vm.runInContext("PROJECTS.edit.saving", c), false);
   assert.equal(vm.runInContext("FOLDERS.state.folders.length", c), 1);
   assert.equal(vm.runInContext("FOLDERS.state.chats['s-a']", c), "f1");
@@ -202,4 +205,19 @@ test("the wiring: the script after the extras, the hook in Save, and the turn's 
   assert.match(r, /const pending = !sessionId && typeof projectPendingFolder === 'function' \? projectPendingFolder\(projectId\) : '';/);
   assert.match(r, /ProjectModels\.folderOf\(sessionId \|\| null, pending \|\| workingDir\(\)\)/);
   assert.match(r, /const folder = ProjectModels\.folderOf\(S\.agentSession \|\| null, pending \|\| workingDir\(\)\);/, "a switcher pick in that empty chat is saved for the same folder");
+});
+
+// ATO-2745: the store's refusals in words, each with its reason and a period.
+test("folderUpgradeError says why, ends with a period, and never quotes the store", () => {
+  const { folderUpgradeError } = require("../renderer/project-folder-upgrade.js");
+  assert.match(folderUpgradeError("at most 200 projects"), /as many projects as the app keeps\. Remove one first\.$/);
+  assert.match(folderUpgradeError("project instructions are longer than 20000 characters"), /instructions are too long/);
+  assert.match(folderUpgradeError("project folder must be an absolute path"), /that folder cannot be used\. Choose it again\.$/);
+  assert.equal(folderUpgradeError("EIO: something"), "The project was not saved. Try again in a moment.");
+  assert.equal(folderUpgradeError(undefined), "The project was not saved. Try again in a moment.");
+  for (const raw of ["at most 200 projects", "project folder required", "project name required", "x"]) {
+    const line = folderUpgradeError(raw);
+    assert.ok(line.endsWith("."), line);
+    assert.ok(!line.includes(raw) || raw === "x", line);
+  }
 });
