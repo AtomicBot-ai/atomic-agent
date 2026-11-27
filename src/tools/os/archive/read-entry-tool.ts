@@ -1,4 +1,5 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
+import { isGuestSecretRelPath } from "../../read-scope/guest-secret-files.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import {
   parseFormatOverride,
@@ -56,6 +57,17 @@ export function buildOsFsArchiveReadEntryTool(
         throw new Error(
           "os.fs.archive.read_entry: `entry` must be a non-empty string",
         );
+      }
+      // The guest check at dispatch judges the archive's `path` only; the
+      // entry name is judged here, by the same rule a guest's walk uses
+      // (ATO-2805, `guest-secret-files.ts`).
+      if (ctx.guest === true && isGuestSecretRelPath(entry)) {
+        return compressToolResult({
+          tool: "os.fs.archive.read_entry",
+          status: "error",
+          output: `os.fs.archive.read_entry: ${entry} is a secrets file or folder; a guest cannot read it`,
+          details: { reason: "guest-secret-entry", entry },
+        });
       }
       const as = parseAs(rawArgs.as);
       const maxBytes = parseMaxBytes(rawArgs.maxBytes);
