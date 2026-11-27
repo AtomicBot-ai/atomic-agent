@@ -14,9 +14,13 @@
  *   The latest value per provider is offered to the secret scrubber
  *   through {@link commandIssuedSecrets}, so a token echoed back into
  *   tool output or a trace is masked like a stored key.
+ * - It runs without the agent's other keys in its environment
+ *   (`buildApiKeyCommandEnv`, ATO-1716), built per run from the live env.
  */
 
 import { execFile } from "node:child_process";
+
+import { buildApiKeyCommandEnv } from "./api-key-command-env.js";
 
 /** How long one command output is reused before the command runs again. */
 export const API_KEY_COMMAND_TTL_MS = 5 * 60 * 1000;
@@ -33,10 +37,11 @@ export interface ApiKeySource {
   invalidate(): void;
 }
 
-/** Runs `argv` and resolves its stdout. Injected by tests. */
+/** Runs `argv` with `env` and resolves its stdout. Injected by tests. */
 export type RunKeyCommand = (
   argv: readonly string[],
   timeoutMs: number,
+  env: NodeJS.ProcessEnv,
 ) => Promise<string>;
 
 export interface ApiKeyCommandOptions {
@@ -46,6 +51,8 @@ export interface ApiKeyCommandOptions {
   readonly timeoutMs?: number;
   readonly now?: () => number;
   readonly run?: RunKeyCommand;
+  /** The environment the command's own one is filtered from; defaults to `process.env`. */
+  readonly baseEnv?: () => NodeJS.ProcessEnv;
 }
 
 /** The latest output of each provider's key command, for the scrubber. */
@@ -98,6 +105,7 @@ export function createApiKeyCommandSource(
   const timeoutMs = options.timeoutMs ?? API_KEY_COMMAND_TIMEOUT_MS;
   const now = options.now ?? Date.now;
   const run = options.run ?? runKeyCommand;
+  const baseEnv = options.baseEnv ?? (() => process.env);
   const secretLabel = `${options.label}-key-command`;
   let cached: { value: string; at: number } | null = null;
   // Concurrent turns share one run instead of starting the command twice.
@@ -106,7 +114,7 @@ export function createApiKeyCommandSource(
   const refresh = async (): Promise<string> => {
     let stdout: string;
     try {
-      stdout = await run(argv, timeoutMs);
+      stdout = await run(argv, timeoutMs, buildApiKeyCommandEnv(baseEnv()));
     } catch (err) {
       throw new Error(
         `apiKeyCommand for "${options.label}" failed (${argv[0]}): ${describeRunFailure(err)}`,
@@ -152,13 +160,14 @@ function describeRunFailure(err: unknown): string {
   return "could not run";
 }
 
-const runKeyCommand: RunKeyCommand = (argv, timeoutMs) =>
+const runKeyCommand: RunKeyCommand = (argv, timeoutMs, env) =>
   new Promise((resolve, reject) => {
     execFile(
       argv[0]!,
       argv.slice(1),
       {
         timeout: timeoutMs,
+        env,
         maxBuffer: API_KEY_COMMAND_MAX_BUFFER,
         windowsHide: true,
         encoding: "utf8",
