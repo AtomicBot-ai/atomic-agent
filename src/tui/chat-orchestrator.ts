@@ -29,11 +29,19 @@ import {
   planLastTurnRollback,
   type LastTurnRollbackOptions,
 } from "../session/session-truncate.js";
+import { listRewindPoints, type RewindRefusal } from "../session/session-rewind.js";
 import {
-  listRewindPoints,
-  planRewind,
-  type RewindRefusal,
-} from "../session/session-rewind.js";
+  applySessionRewind,
+  previewSessionRewind,
+  sessionRewindDeps,
+  type RewindScope,
+} from "../runtime/session-rewind-service.js";
+import {
+  REWIND_CHECK_FAILED_TEXT,
+  REWIND_FAILED_TEXT,
+  rewindChoiceFacts,
+  rewindDoneText,
+} from "./rewind/rewind-messages.js";
 import { getConfig } from "../config/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/index.js";
 import {
@@ -1512,11 +1520,21 @@ export class ChatOrchestrator {
     return true;
   }
 
+  /** ATO-2467: a message sent while `/rewind` runs waits in the composer, not on the old chat. */
+  private holdDuringRewind(text: string): boolean {
+    if (!this.rewindApplying) return false;
+    this.emitQueue();
+    this.bus.emit({ type: "input_changed", value: text });
+    this.bus.emit({ type: "composer_notice", text: "Rewinding. Your message is kept here; send it when the rewind finishes." });
+    return true;
+  }
+
   sendMessage(text: string): void {
     // Sending is the person's answer to the draft; a rewrite landing in
     // the composer after it would be noise.
     this.cancelPromptEnhance();
     if (this.holdComposerSubmission(text)) return;
+    if (this.holdDuringRewind(text)) return;
     if (this.quitting) return;
     this.ensureSession();
     if (this.currentController) {
@@ -1745,48 +1763,81 @@ export class ChatOrchestrator {
   }
 
   /**
-   * Take the chat back to just before the question at `turnIndex`
-   * (ATO-1057): that question and everything after it leave the session
-   * this orchestrator holds and the store, the transcript is rebuilt
-   * from what is left, and the question goes back in the composer to be
-   * edited and sent again. Only the conversation moves: files the agent
-   * changed stay as they are, and the note says so.
+   * A question was picked in the `/rewind` list (ATO-2467): work out
+   * which files a rewind there would put back, then let the box offer
+   * "Chat and files / Chat only / Files only". A refusal closes the box
+   * and says why in the chat.
    */
-  rewindTo(turnIndex: number, expectText: string): void {
+  async openRewindChoice(turnIndex: number, expectText: string): Promise<void> {
+    const session = this.session;
+    if (this.quitting || !session) return;
+    const refuse = (text: string): void => {
+      this.bus.emit({ type: "rewind_picker_closed" });
+      this.bus.emit({ type: "system_message", text });
+    };
+    if (this.rewindBusy()) return refuse(rewindRefusalText("turn_in_progress"));
+    let preview: Awaited<ReturnType<typeof previewSessionRewind>>;
+    try {
+      preview = await previewSessionRewind(sessionRewindDeps(this.runtime), session, turnIndex, expectText);
+    } catch {
+      return refuse(REWIND_CHECK_FAILED_TEXT);
+    }
+    if (this.session?.id !== session.id) return;
+    if (!preview.ok) return refuse(rewindRefusalText(preview.code));
+    this.bus.emit({ type: "rewind_choice_ready", turnIndex, facts: rewindChoiceFacts(preview.value) });
+  }
+
+  /**
+   * Take the chat back to just before the question at `turnIndex`
+   * (ATO-1057, ATO-2467), with what the person chose: `all` puts the
+   * files the agent changed back first, then cuts the chat;
+   * `conversation` cuts the chat only; `files` puts the files back and
+   * leaves the chat as it is. A cut removes that question and everything
+   * after it from the session this orchestrator holds and the store,
+   * rebuilds the transcript and puts the question back in the composer.
+   * The shared rewind is `runtime/session-rewind-service.ts`, the one
+   * the HTTP routes use.
+   */
+  async rewindTo(turnIndex: number, expectText: string, scope: RewindScope): Promise<void> {
     const session = this.session;
     if (this.quitting || !session) return;
     if (this.rewindBusy()) {
       this.bus.emit({ type: "system_message", text: rewindRefusalText("turn_in_progress") });
       return;
     }
-    const plan = planRewind(session, turnIndex, expectText);
-    if (!plan.ok) {
-      this.bus.emit({ type: "system_message", text: rewindRefusalText(plan.code) });
+    this.rewindApplying = true;
+    let done: Awaited<ReturnType<typeof applySessionRewind>>;
+    try {
+      done = await applySessionRewind(sessionRewindDeps(this.runtime), session, turnIndex, scope, expectText);
+    } catch {
+      this.bus.emit({ type: "system_message", text: REWIND_FAILED_TEXT });
+      return;
+    } finally {
+      this.rewindApplying = false;
+    }
+    if (!done.ok) {
+      this.bus.emit({ type: "system_message", text: rewindRefusalText(done.code) });
       return;
     }
-    // A compaction started on this chat would summarise the rows removed.
-    this.runtime.cancelSessionCompaction?.(session.id);
-    this.session = plan.state;
-    // Saved, not only held: `/resume` and the rail read the store, and a
-    // restart must not bring the removed turns back.
-    this.runtime.sessionStore.save(plan.state);
-    this.runtime.sessionStore.clearTurnProgress(session.id);
-    // Same re-emit a re-attach uses: the reducer rebuilds the transcript
-    // from the turns that are left.
-    this.bus.emit({
-      type: "session_switched",
-      sessionId: plan.state.id,
-      workingDir: plan.state.workingDir,
-      messages: turnsToMessages(plan.state.turns),
-      ...(plan.state.plan ? { plan: plan.state.plan } : {}),
-      ...(plan.state.sessionUsage ? { sessionUsage: plan.state.sessionUsage } : {}),
-    });
-    this.bus.emit({ type: "input_changed", value: plan.text });
-    this.bus.emit({
-      type: "system_message",
-      text: "Rewound: that message and everything after it were removed from this chat. It is back in the composer to edit and send. Files the agent changed were not restored.",
-    });
-    this.refreshRecentSessions();
+    // Switched to another chat meanwhile: the rewind landed in the store.
+    if (this.session?.id !== session.id) return;
+    const cut = done.value.state;
+    if (cut !== null) {
+      this.session = cut;
+      // Same re-emit a re-attach uses: the reducer rebuilds the transcript
+      // from the turns that are left.
+      this.bus.emit({
+        type: "session_switched",
+        sessionId: cut.id,
+        workingDir: cut.workingDir,
+        messages: turnsToMessages(cut.turns),
+        ...(cut.plan ? { plan: cut.plan } : {}),
+        ...(cut.sessionUsage ? { sessionUsage: cut.sessionUsage } : {}),
+      });
+      this.bus.emit({ type: "input_changed", value: done.value.text });
+    }
+    this.bus.emit({ type: "system_message", text: rewindDoneText(scope, done.value) });
+    if (cut !== null) this.refreshRecentSessions();
   }
 
   /** Anything that could still write this chat's session or its tail. */
@@ -1799,9 +1850,13 @@ export class ChatOrchestrator {
       this.composerRoutePending ||
       this.pendingCompactions.has(session.id) ||
       this.waitingModelMessages.has(session.id) ||
+      this.rewindApplying ||
       this.runtime.turnController.isBusy(session.id)
     );
   }
+
+  /** ATO-2467: a `/rewind` is putting files back or cutting the chat. */
+  private rewindApplying = false;
 
   /**
    * Re-publish the pending-message queue to the TUI. The orchestrator is
