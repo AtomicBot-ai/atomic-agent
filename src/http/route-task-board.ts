@@ -7,6 +7,7 @@ import {
   groupCardsByLane,
   validateBoardPatch,
   type BoardCard,
+  type TaskStore,
 } from "../tasks/index.js";
 
 /**
@@ -26,7 +27,8 @@ const BOARD_LIMIT_MAX = 500;
 /**
  * `GET /api/task-board?limit=N`: `{ lanes: ["todo", ...], cards: [card],
  * counts: { todo: n, ... }, available }`, newest task first. A card is
- * `{ task, lane, laneSource, note, assignee, boardUpdatedAt }`, `task`
+ * `{ task, lane, laneSource, note, assignee, boardUpdatedAt, commentCount,
+ * dependsOn, waitingOn }`, `task`
  * being the same record `GET /api/tasks/:id` answers. `available: false`
  * when this agent could not keep a board on its tasks file: cards are
  * then in their status lanes and moves are refused. Default limit 200.
@@ -52,9 +54,17 @@ export function createTaskBoardHandler(): HttpHandler {
     const cards = store.boardCards({ limit });
     const grouped = groupCardsByLane(cards);
     const counts = Object.fromEntries(BOARD_LANES.map((lane) => [lane, grouped[lane].length]));
+    const commentCounts = store.boardCommentCounts();
+    const deps = store.boardDependencyMap();
     sendJson(res, 200, {
       lanes: [...BOARD_LANES],
-      cards: cards.map(cardToJson),
+      cards: cards.map((card) =>
+        cardToJson(card, {
+          commentCount: commentCounts.get(card.task.id) ?? 0,
+          dependsOn: deps.get(card.task.id) ?? [],
+          waitingOn: deps.has(card.task.id) ? store.boardWaitingOn(card.task.id) : [],
+        }),
+      ),
       counts,
       available: store.boardUnavailable === null,
     });
@@ -62,8 +72,9 @@ export function createTaskBoardHandler(): HttpHandler {
 }
 
 /**
- * `POST /api/tasks/:id/board` with `{ lane?, note?, assignee? }`: move
- * the card and/or change its note or assignee (an agent profile name).
+ * `POST /api/tasks/:id/board` with `{ lane?, note?, assignee?, dependsOn? }`:
+ * move the card and/or change its note, its assignee (an agent profile
+ * name, which then runs it, ATO-2498) or the cards it waits on.
  * A field left out keeps its value; `null` clears it (a cleared lane
  * goes back to the one the status gives). 200 with the card, 400 for a
  * bad field, 404 unknown task, 503 when the board is off for this file.
@@ -97,12 +108,24 @@ export function createUpdateTaskBoardCardHandler(): HttpHandler {
     }
     try {
       const patch = validateBoardPatch({ lane: body.lane, note: body.note, assignee: body.assignee });
+      if (!store.get(id)) {
+        sendError(res, 404, openaiError(`task not found: ${id}`));
+        return;
+      }
+      // Dependencies first (ATO-2498): a bad list changes nothing.
+      if (body.dependsOn !== undefined) {
+        const set = store.setBoardDependencies(id, body.dependsOn ?? []);
+        if (set !== null && "error" in set) {
+          sendError(res, 400, openaiError(set.error, "invalid_request_error", "dependsOn"));
+          return;
+        }
+      }
       const card = store.updateBoardCard(id, patch);
       if (!card) {
         sendError(res, 404, openaiError(`task not found: ${id}`));
         return;
       }
-      sendJson(res, 200, cardToJson(card));
+      sendJson(res, 200, cardToJson(card, cardExtras(store, id)));
     } catch (err) {
       if (err instanceof BoardValidationError) {
         sendError(res, 400, openaiError(err.message, "invalid_request_error", err.field));
@@ -113,7 +136,24 @@ export function createUpdateTaskBoardCardHandler(): HttpHandler {
   };
 }
 
-export function cardToJson(card: BoardCard): Record<string, unknown> {
+/** What a card answer carries beside the card itself (ATO-2498). */
+export interface CardExtras {
+  commentCount: number;
+  /** The cards it waits on. */
+  dependsOn: string[];
+  /** Those of them not yet in Done; the scheduler leaves it until empty. */
+  waitingOn: string[];
+}
+
+export function cardExtras(store: TaskStore, id: string): CardExtras {
+  return {
+    commentCount: store.boardCommentCounts().get(id) ?? 0,
+    dependsOn: store.boardDependencies(id),
+    waitingOn: store.boardWaitingOn(id),
+  };
+}
+
+export function cardToJson(card: BoardCard, extras?: CardExtras): Record<string, unknown> {
   return {
     task: recordToJson(card.task),
     lane: card.lane,
@@ -121,5 +161,8 @@ export function cardToJson(card: BoardCard): Record<string, unknown> {
     note: card.note,
     assignee: card.assignee,
     boardUpdatedAt: card.boardUpdatedAt,
+    commentCount: extras?.commentCount ?? 0,
+    dependsOn: extras?.dependsOn ?? [],
+    waitingOn: extras?.waitingOn ?? [],
   };
 }

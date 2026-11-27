@@ -46,6 +46,13 @@ import {
 } from "./task-types.js";
 import type { TaskCreateInput, TaskStore } from "./task-store.js";
 import { TASK_OWNER_GONE_ERROR } from "./task-store.js";
+import { holdBlockedCard, tripBoardFuse } from "./task-board-fuse.js";
+import {
+  assigneeMessage,
+  assigneeNotice,
+  type AssigneeResolver,
+  type AssigneeRun,
+} from "./task-board-assignee.js";
 
 /**
  * Subset of `AgentRuntime` consumed by the task runner. Declared
@@ -68,6 +75,10 @@ export interface TaskRunnerRuntime {
       taskMaxDurationMs?: number;
       /** What the task may still spend, USD (`TaskRecord.maxCostUsd`). */
       taskMaxCostUsd?: number;
+      /** The assignee profile's tool list (ATO-2498). */
+      toolFilter?: (name: string) => boolean;
+      /** The assignee profile's provider (ATO-2498). */
+      providerId?: string;
     },
   ): Promise<RunTurnResult>;
 }
@@ -101,6 +112,12 @@ export interface TaskRunnerOptions {
   store: TaskStore;
   runtime: TaskRunnerRuntime;
   sessionLoader: TaskRunnerSessionLoader;
+  /**
+   * The agent profile a card is assigned to (ATO-2498): runs it with the
+   * profile's instructions, tools and model. Absent: the assignee is a
+   * label only, as before.
+   */
+  assignee?: AssigneeResolver;
   /**
    * Session factory used for lazy session creation on one-shot tasks
    * and auto-recreation on recurring tasks. Optional for backwards
@@ -634,14 +651,19 @@ export class TaskRunner {
         if (run.signal.aborted) throw new Error("stopped before resuming");
         turnStarted = true;
         runStartedAt = Date.now();
-        result = await this.options.runtime.runTurn(
-          session,
+        const assignee = this.assigneeRunFor(claimed, session.workingDir);
+        const message =
           plan.kind === "resume"
             ? plan.message
             : heartbeat.kind === "run"
               ? heartbeat.message
-              : claimed.userMessage,
+              : claimed.userMessage;
+        result = await this.options.runtime.runTurn(
+          session,
+          assignee ? assigneeMessage(assignee, message) : message,
           {
+            ...(assignee?.toolFilter ? { toolFilter: assignee.toolFilter } : {}),
+            ...(assignee?.providerId !== undefined ? { providerId: assignee.providerId } : {}),
             maxSteps,
             origin: "scheduler",
             signal: run.signal,
@@ -748,7 +770,12 @@ export class TaskRunner {
       } else {
         this.maybeReport(completed, replyText, facts);
       }
-      return this.maybeRequeueRecurring(completed);
+      // A card the agent blocked in this run waits for a person (ATO-2497).
+      return holdBlockedCard(
+        this.options.store,
+        this.maybeRequeueRecurring(completed),
+        claimed.startedAt,
+      );
     } finally {
       snapshots?.stop();
       this.live.delete(claimed.id);
@@ -836,6 +863,49 @@ export class TaskRunner {
       resumes: plan.resumes,
     });
     return failed;
+  }
+
+  /**
+   * The assignee profile of `task`'s card for this run (ATO-2498), or
+   * `null` when the card names none, no resolver is wired, or the profile
+   * is not found. What could not be applied is said in a card comment;
+   * a missing profile never stops the run.
+   */
+  private assigneeRunFor(task: TaskRecord, workingDir: string): AssigneeRun | null {
+    const resolve = this.options.assignee;
+    const profile = this.options.store.boardEntry(task.id)?.assignee ?? null;
+    if (!resolve || profile === null) return null;
+    let run: AssigneeRun | null = null;
+    try {
+      run = resolve(profile, { task, workingDir });
+    } catch (err) {
+      this.options.logger?.warn("could not read the card's agent profile", {
+        taskId: task.id,
+        profile,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    const notice = assigneeNotice(profile, run);
+    if (notice !== null) {
+      this.options.store.addBoardComment(task.id, { author: "system", kind: "comment", text: notice });
+    }
+    return run;
+  }
+
+  /**
+   * The task this runner is running in `sessionId` right now, or `null`
+   * (ATO-2497): the card the board tools (`tasks.request_review`,
+   * `tasks.block`, `tasks.comment`) act on. Only runs of this process
+   * count; a session runs one task at a time (per-session FIFO).
+   */
+  runningTaskInSession(sessionId: string): TaskRecord | null {
+    for (const taskId of this.runs.keys()) {
+      const record = this.options.store.get(taskId);
+      if (record && record.status === "running" && record.sessionId === sessionId) {
+        return record;
+      }
+    }
+    return null;
   }
 
   /**
@@ -1014,8 +1084,11 @@ export class TaskRunner {
     signal?: AbortSignal,
   ): Promise<DrainOutcome> {
     const outcome = emptyOutcome();
-    if (tasks.length === 0) return outcome;
-    const grouped = groupBySession(tasks);
+    // A card waiting on cards not yet done is left for a later drain
+    // (ATO-2498); an explicit runOne ("Run now") still runs it.
+    const ready = tasks.filter((t) => this.options.store.boardWaitingOn(t.id).length === 0);
+    if (ready.length === 0) return outcome;
+    const grouped = groupBySession(ready);
     const release = this.options.keepAwake?.hold();
     try {
       await Promise.all(
@@ -1115,7 +1188,12 @@ export class TaskRunner {
       attempt: retried.attempts,
       maxAttempts: retried.maxAttempts,
     });
-    return retried;
+    // The board (ATO-2497): a card the agent blocked, or one that keeps
+    // failing, is paused in Blocked rather than tried again unattended.
+    return tripBoardFuse(
+      this.options.store,
+      holdBlockedCard(this.options.store, retried, task.startedAt),
+    );
   }
 
   /**
