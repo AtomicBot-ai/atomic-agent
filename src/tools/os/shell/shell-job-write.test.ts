@@ -18,6 +18,37 @@ import { buildOsShellTool } from "./shell.js";
 
 const SESSION = "write-session";
 
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForExit(pid: number): Promise<void> {
+  for (let i = 0; i < 200; i += 1) {
+    if (!isAlive(pid)) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`process ${pid} is still alive`);
+}
+
+async function readPid(file: string): Promise<number> {
+  const { readFile } = await import("node:fs/promises");
+  for (let i = 0; i < 200; i += 1) {
+    try {
+      const pid = Number((await readFile(file, "utf8")).trim());
+      if (pid > 0) return pid;
+    } catch {
+      // not written yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`${file} was never written`);
+}
+
 describe("guardTypedText", () => {
   it("takes the strictest verdict over the lines; blank text has none", () => {
     expect(guardTypedText("\n  \n", "/tmp")).toBeNull();
@@ -25,6 +56,17 @@ describe("guardTypedText", () => {
     expect(guardTypedText("2**100\n", "/tmp")?.action).toBe("approval_required");
     const dangerous = guardTypedText("ls\ngit reset --hard\n", "/tmp");
     expect(dangerous?.rule.startsWith("dangerous.")).toBe(true);
+  });
+
+  // Review round 1: bash/zsh expand history before running a typed line,
+  // so `echo !cd:2-5` can run `rm -rf out`. Never taken as safe.
+  it("never allows a line that history expansion could rewrite", () => {
+    expect(guardTypedText("echo hi\n", "/tmp")?.action).toBe("allow");
+    for (const line of ["echo !cd:2-5\n", "echo !!\n", "^ls^rm -rf out\n"]) {
+      const verdict = guardTypedText(line, "/tmp");
+      expect(verdict?.action, line).toBe("approval_required");
+      expect(verdict?.rule, line).toBe("typed.history_expansion");
+    }
   });
 });
 
@@ -107,6 +149,36 @@ describe.skipIf(process.platform === "win32")("os.shell.run tty + write (ATO-227
     expect(refused.summary).toContain('start it with {"cmd": …, "tty": true}');
     const unknown = await shell.run({ write: 9, text: "y\n" }, ctx());
     expect(unknown.summary).toContain("unknown job 9");
+  });
+
+  // Review round 1: Safe Mode's sandbox stays as it is; tty is refused.
+  it("refuses tty: true in Safe Mode before anything runs", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+    });
+    const safe = buildOsShellTool({
+      approvals: gate,
+      approvalRequired: true,
+      jobs,
+      sandbox: () => ({ mode: "workspace", network: false }),
+    });
+    const result = await safe.run({ cmd: "python3", tty: true }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("terminal mode (`tty: true`) is off in Safe Mode");
+    expect(jobs.list(SESSION)).toEqual([]);
+  });
+
+  // Review round 1: under script(1) the program has its own session, so
+  // the job's group signal alone left `nohup x &` running.
+  it("kill also stops what the interactive program started in the background", async () => {
+    const shell = tool();
+    await shell.run({ cmd: "sh", tty: true }, ctx());
+    const pidFile = join(dir, "nohup.pid");
+    await shell.run({ write: 1, text: `nohup sleep 300 >/dev/null 2>&1 & echo $! > "${pidFile}"\n` }, ctx());
+    const pid = await readPid(pidFile);
+    expect(isAlive(pid)).toBe(true);
+    await shell.run({ kill: 1 }, ctx());
+    await waitForExit(pid);
   });
 
   it("eof closes the input: cat ends", async () => {

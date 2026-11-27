@@ -61,9 +61,19 @@ export function guardTypedText(
     const line = raw.trim();
     if (line.length === 0) continue;
     const tokens = line.split(/\s+/);
-    const verdict =
+    let verdict =
       checkBrowserBypassLine(line, cwd) ??
       checkShellCommandGuard({ cmd: tokens[0]!, rawArgs: tokens.slice(1), cwd }, policy);
+    // An interactive bash or zsh expands history before it runs a line:
+    // `echo !cd:2-5` can become `echo && rm -rf out`. The guard reads the
+    // line as typed, so such a line is never taken as safe.
+    if (verdict.action === "allow" && (line.includes("!") || line.startsWith("^"))) {
+      verdict = {
+        action: "approval_required",
+        rule: "typed.history_expansion",
+        reason: "a typed line with ! or ^ can expand to an earlier command from the shell's history",
+      };
+    }
     if (worst === null || severity(verdict) > severity(worst)) worst = verdict;
   }
   return worst;

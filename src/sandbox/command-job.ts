@@ -3,6 +3,7 @@ import { StringDecoder } from "node:string_decoder";
 
 import { CappedOutput } from "./capped-output.js";
 import { buildCommandEnv } from "./command-env.js";
+import { descendantPids, signalPids } from "./process-descendants.js";
 import { signalGroup } from "./signal-process-group.js";
 
 const IS_WINDOWS = process.platform === "win32";
@@ -37,6 +38,8 @@ export interface CommandJobOptions {
    * job). Omitted, stdin is closed at once and the command sees EOF.
    */
   keepStdinOpen?: boolean;
+  /** POSIX: a stop also signals each descendant (a pty job's own session, ATO-2277). */
+  stopDescendants?: boolean;
 }
 
 export interface CommandJobExit {
@@ -184,6 +187,10 @@ export function startCommandJob(
   // awaiting `exit` itself when a spawn fails.
   exitPromise.catch(() => undefined);
 
+  const treeOf = (): number[] =>
+    options.stopDescendants === true && !IS_WINDOWS && typeof child.pid === "number"
+      ? descendantPids(child.pid)
+      : [];
   const listeners = new Set<CommandJobOutputListener>();
   const decoders = {
     stdout: new StringDecoder("utf8"),
@@ -270,14 +277,21 @@ export function startCommandJob(
     },
     stop() {
       if (exit || spawnError || stopTimer) return;
+      const tree = treeOf();
       // A polite stop first, so a build tool can flush; the escalation
       // is armed regardless, because a polite stop is free to be ignored.
+      signalPids(tree, "SIGTERM");
       signalGroup(child, "SIGTERM");
       stopTimer = setTimeout(() => signalGroup(child, "SIGKILL"), JOB_STOP_GRACE_MS);
+      // Outlives the job's close: descendants may survive the root.
+      if (tree.length > 0) {
+        setTimeout(() => signalPids(tree, "SIGKILL"), JOB_STOP_GRACE_MS).unref();
+      }
     },
     kill() {
       if (exit || spawnError) return;
       clearStop();
+      signalPids(treeOf(), "SIGKILL");
       signalGroup(child, "SIGKILL");
     },
   };

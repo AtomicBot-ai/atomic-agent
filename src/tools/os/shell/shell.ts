@@ -224,6 +224,20 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // `tty: true` (ATO-2277): an interactive kept job on a pty that
     // `{"write": id, "text": …}` types into.
     const interactive = rawArgs.tty === true;
+    // Safe Mode keeps its sandbox as it is: on macOS it does not allow
+    // the pty device, and widening it for this is not worth the risk.
+    if (
+      interactive &&
+      (options.sandbox ?? (() => readOsSandboxSettings()))().mode === "workspace"
+    ) {
+      return compressToolResult({
+        tool: "os.shell.run",
+        status: "error",
+        output:
+          "os.shell.run: terminal mode (`tty: true`) is off in Safe Mode; run the command without `tty`, or hand the interactive step to the user.",
+        details: { cmd, tty: true, safeMode: true },
+      });
+    }
     const background =
       rawArgs.background === true || until !== undefined || interactive;
 
@@ -459,7 +473,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       env: (interactive ? ttyEnv : (env: NodeJS.ProcessEnv) => env)(
         withToolchainEnv(buildCommandEnv(process.env, options.envPassthrough ?? [])),
       ),
-      ...(interactive ? { keepStdinOpen: true } : {}),
+      ...(interactive ? { keepStdinOpen: true, stopDescendants: true } : {}),
       ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
       ...(spawnSpec.windowsVerbatimArguments
         ? { windowsVerbatimArguments: true }
