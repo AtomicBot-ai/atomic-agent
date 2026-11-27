@@ -20,7 +20,8 @@ import {
   type MachineForModels,
   type ModelUpgradeDecision,
 } from "../local-llm/catalog/model-upgrade.js";
-import type { LocalModelDef } from "../local-llm/index.js";
+import { listLocalModels, type LocalModelDef } from "../local-llm/index.js";
+import { hasDedicatedGpuMemory } from "../local-llm/catalog/moe-split-fit.js";
 import {
   readRecommendSnapshot,
   startModelUpgrade,
@@ -73,7 +74,26 @@ export function expertsInRamNote(def: LocalModelDef, machine: MachineForModels):
   return `  (experts partly in RAM${compat.speed ? `, ${compat.speed.label}` : ""})`;
 }
 
-export function recommendJson(snap: RecommendSnapshot): Record<string, unknown> {
+/**
+ * ATO-2455: every listed model that fits this machine only with experts
+ * in RAM, so a client that cannot see the GPU (the desktop) can say so
+ * on its own rows. Empty on a Mac, a CPU-only machine or with cpuMoe off.
+ */
+export function expertsInRamModels(
+  machine: MachineForModels,
+  catalog: readonly LocalModelDef[] = listLocalModels(),
+): { id: string; fitLabel: string; tier: string; speed: string | null }[] {
+  return catalog.flatMap((def) => {
+    const compat = catalogCompatibility(def, machine);
+    if (compat.fit.placement !== "split") return [];
+    return [{ id: def.id, fitLabel: compat.fit.label, tier: compat.fit.tier, speed: compat.speed?.label ?? null }];
+  });
+}
+
+export function recommendJson(
+  snap: RecommendSnapshot,
+  catalog?: readonly LocalModelDef[],
+): Record<string, unknown> {
   const d = snap.decision;
   return {
     version: RECOMMEND_JSON_VERSION,
@@ -82,7 +102,11 @@ export function recommendJson(snap: RecommendSnapshot): Record<string, unknown> 
       gpuBudgetGb: round1(snap.machine.gpuBudgetGb),
       freeDiskGb: round1(snap.machine.freeDiskGb),
       cpuOnly: snap.machine.cpuOnly,
+      // ATO-2455: the GPU has memory of its own (experts can go to RAM).
+      dedicatedGpu: !snap.machine.cpuOnly && hasDedicatedGpuMemory(snap.machine.bandwidth),
+      cpuMoe: snap.machine.cpuMoe ?? "auto",
     },
+    expertsInRam: expertsInRamModels(snap.machine, catalog),
     tiers: {
       fast: modelJson(snap.tiers.fast, snap.machine),
       balanced: modelJson(snap.tiers.balanced, snap.machine),
