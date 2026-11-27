@@ -180,6 +180,13 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /api/ideas/refresh": "chat",
   "POST /api/ideas/{id}/accept": "chat",
   "POST /api/ideas/{id}/dismiss": "chat",
+  // ATO-2534: the logbook; reading the state is harmless, changing it or claiming the mark is not.
+  "GET /api/logbook": "read",
+  "PATCH /api/logbook/settings": "admin",
+  "POST /api/logbook/indicator": "admin",
+  // ATO-2526: the notes themselves describe the screen, so reading them is admin too.
+  "GET /api/logbook/day": "admin",
+  "DELETE /api/logbook/entries": "admin",
   // Webhooks: the list shows bindings and their settings.
   "GET /api/webhooks": "admin",
   "POST /api/webhooks/{name}": "chat",

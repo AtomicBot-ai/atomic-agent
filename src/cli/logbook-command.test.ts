@@ -41,10 +41,13 @@ describe("atomic-agent logbook", () => {
     expect(readLogbookSettings(h.stateDir).enabled).toBe(false);
   });
 
-  it("refuses to start off macOS", async () => {
-    const h = harness("linux");
-    expect(await h.run("start")).toBe(1);
-    expect(readLogbookSettings(h.stateDir).enabled).toBe(false);
+  it("starts on Windows too, and refuses a system it cannot watch (ATO-2526)", async () => {
+    const win = harness("win32");
+    expect(await win.run("start")).toBe(0);
+    expect(readLogbookSettings(win.stateDir).enabled).toBe(true);
+    const other = harness("freebsd");
+    expect(await other.run("start")).toBe(1);
+    expect(readLogbookSettings(other.stateDir).enabled).toBe(false);
   });
 
   it("pauses and resumes", async () => {
@@ -95,5 +98,41 @@ describe("atomic-agent logbook", () => {
     const h = harness();
     expect(await h.run("explode")).toBe(2);
     expect(h.err()).toMatch(/unknown subcommand/);
+  });
+
+  it("notes chosen apps by title only, and lists them (ATO-2526)", async () => {
+    const h = harness();
+    expect(await h.run("title-only", "add", "Mail")).toBe(0);
+    expect(readLogbookSettings(h.stateDir).titleOnlyApps).toEqual(["Mail"]);
+    h.reset();
+    await h.run("title-only", "list");
+    expect(h.out()).toBe("Mail\n");
+    expect(await h.run("title-only", "remove", "mail")).toBe(0);
+    expect(readLogbookSettings(h.stateDir).titleOnlyApps).toEqual([]);
+    expect(await h.run("title-only", "rename", "x")).toBe(2);
+  });
+
+  it("refuses a 51st title-only app instead of dropping it while saying it was added", async () => {
+    const h = harness();
+    for (let i = 1; i <= 50; i += 1) expect(await h.run("title-only", "add", `App ${i}`)).toBe(0);
+    h.reset();
+    expect(await h.run("title-only", "add", "Foo")).toBe(2);
+    expect(h.err()).toMatch(/at most 50/);
+    expect(h.out()).not.toMatch(/Foo will be noted/);
+    const apps = readLogbookSettings(h.stateDir).titleOnlyApps;
+    expect(apps).toHaveLength(50);
+    expect(apps).not.toContain("Foo");
+    // Adding one already on the full list again is not a 51st.
+    expect(await h.run("title-only", "add", "app 7")).toBe(0);
+  });
+
+  it("schedules the morning standup and turns it off (ATO-2526)", async () => {
+    const h = harness();
+    expect(await h.run("standup", "--every-morning", "09:15")).toBe(0);
+    expect(readLogbookSettings(h.stateDir).standupAt).toBe("09:15");
+    expect(h.out()).toMatch(/logbook start/);
+    expect(await h.run("standup", "--every-morning", "9")).toBe(2);
+    expect(await h.run("standup", "--off")).toBe(0);
+    expect(readLogbookSettings(h.stateDir).standupAt).toBeNull();
   });
 });

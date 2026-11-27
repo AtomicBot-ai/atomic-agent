@@ -4,6 +4,13 @@ import { createListPreviousRepliesHandler, createRestorePreviousReplyHandler } f
 import { createForkSessionHandler, createListRewindPointsHandler, createRewindHandler } from "./route-session-rewind.js";
 import { createResumeInterruptedTurnHandler } from "./route-resume-interrupted-turn.js";
 import type { RouteDefinition } from "./http-server.js";
+import {
+  createDeleteLogbookEntriesHandler,
+  createLogbookDayHandler,
+  createLogbookIndicatorHandler,
+  createLogbookSettingsHandler,
+  createLogbookStatusHandler,
+} from "./route-logbook.js";
 
 import { createChatCompletionsHandler } from "./openai-chat-completions.js";
 import {
@@ -478,6 +485,13 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
       path: "/api/tasks/drain",
       handler: createDrainTasksHandler(),
     },
+    // ATO-2534: the logbook's state, switch and visible-mark report, for the desktop's chip (route-logbook.ts).
+    { method: "GET", path: "/api/logbook", handler: createLogbookStatusHandler() },
+    { method: "PATCH", path: "/api/logbook/settings", handler: createLogbookSettingsHandler() },
+    { method: "POST", path: "/api/logbook/indicator", handler: createLogbookIndicatorHandler() },
+    // ATO-2526: the desktop's day timeline, and deleting notes from it.
+    { method: "GET", path: "/api/logbook/day", handler: createLogbookDayHandler() },
+    { method: "DELETE", path: "/api/logbook/entries", handler: createDeleteLogbookEntriesHandler() },
     // ATO-458: suggestions built from local tasks and goals; accept files a task.
     { method: "GET", path: "/api/ideas", handler: createListIdeasHandler() },
     { method: "POST", path: "/api/ideas/refresh", handler: createRefreshIdeasHandler() },

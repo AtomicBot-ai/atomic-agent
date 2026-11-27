@@ -127,7 +127,24 @@ export function clearLogbookRange(stateDir: string, day: string, fromMinute: num
     const minute = minuteOfDay(new Date(entry.at));
     return minute < fromMinute || minute >= toMinute;
   });
-  const removed = entries.length - kept.length;
+  return rewriteDay(file, entries.length, kept);
+}
+
+/**
+ * Delete the entries of one day whose `at` is in `ats` (ATO-2526, the
+ * desktop timeline's delete). Returns how many were removed; the file
+ * is rewritten through a rename, and removed when nothing is left.
+ */
+export function deleteLogbookEntries(stateDir: string, day: string, ats: readonly string[]): number {
+  const file = dayFile(stateDir, day);
+  const drop = new Set(ats);
+  const entries = readLogbookDay(stateDir, day);
+  const kept = entries.filter((entry) => !drop.has(entry.at));
+  return rewriteDay(file, entries.length, kept);
+}
+
+function rewriteDay(file: string, before: number, kept: readonly LogbookEntry[]): number {
+  const removed = before - kept.length;
   if (removed === 0) return 0;
   if (kept.length === 0) {
     rmSync(file, { force: true });
