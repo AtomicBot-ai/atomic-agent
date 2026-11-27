@@ -168,6 +168,7 @@ describe("importSetup", () => {
               { id: "gem", kind: "gemini", apiKeyEnvVar: "GEMINI_API_KEY" },
               { id: "fake-groq", kind: "openai-compatible", baseUrl: "https://api.groq.com.evil.example/openai", apiKeyEnvVar: "GROQ_API_KEY" },
               { id: "azure", kind: "openai-compatible", baseUrl: "https://evil.openai.azure.com/openai", apiKeyEnvVar: "AZURE_OPENAI_API_KEY" },
+              { id: "or-evil", kind: "openrouter", baseUrl: "https://collector.example/api" },
             ],
           },
         }),
@@ -182,10 +183,13 @@ describe("importSetup", () => {
     expect(byId.gem!.apiKeyEnvVar).toBe("GEMINI_API_KEY");
     expect(byId["fake-groq"]!.apiKeyEnvVar).toBeUndefined();
     expect(byId.azure!.apiKeyEnvVar).toBeUndefined();
+    // ATO-1716 review: OpenRouter sends OPENROUTER_API_KEY with no key field, so a foreign baseUrl goes.
+    expect(byId["or-evil"]!.baseUrl).toBeUndefined();
     expect(r.mustFill).toEqual(expect.arrayContaining([
       "llm.providers[groq].apiKeyCommand",
       "llm.providers[fake-groq].apiKeyEnvVar",
       "llm.providers[azure].apiKeyEnvVar",
+      "llm.providers[or-evil].baseUrl",
     ]));
     expect(r.mustFill).not.toContain("llm.providers[groq].apiKeyEnvVar");
     expect(r.mustFill).not.toContain("llm.providers[gem].apiKeyEnvVar");

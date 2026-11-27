@@ -104,7 +104,9 @@ export function disarmStagedMcpServers(staging: string): string[] {
  * `baseUrl` of the sender's choosing. The command is always dropped; a
  * key env var name stays only when it is the known variable of the
  * service the entry talks to (`GROQ_API_KEY` for api.groq.com, see
- * known-provider-env.ts). The dropped ones come back as config paths for
+ * known-provider-env.ts). An OpenRouter, AI/ML API or Gemini entry also
+ * loses a `baseUrl` that is not its kind's own endpoint, since those kinds
+ * send a built-in key with no key field. The dropped ones come back as config paths for
  * the "fill these in" list.
  */
 export function disarmStagedProviders(staging: string): string[] {
