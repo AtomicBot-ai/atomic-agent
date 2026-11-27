@@ -168,3 +168,117 @@ describe("UsageHistoryStore", () => {
     }
   });
 });
+
+/**
+ * ATO-2442: the project, tool and session sections, added without
+ * breaking a file from before them.
+ */
+describe("UsageHistoryStore, per project, tool and session", () => {
+  it("files a session's calls under its folder's name, one row per folder and billing", () => {
+    const store = new UsageHistoryStore({
+      path: tempPath(),
+      now: () => NOON,
+      workingDirOf: (id) => (id === "s1" || id === "s2" ? "/work/app" : id === "s3" ? "/other/app" : null),
+    });
+    store.record(cloudCall({ sessionId: "s1" }));
+    store.record(cloudCall({ sessionId: "s2" }));
+    store.record(cloudCall({ sessionId: "s3" }));
+    store.record(cloudCall());
+    const projects = store.read().projects?.["2026-11-12"] ?? [];
+    expect(projects.map((p) => [p.label, p.calls])).toEqual([
+      ["app", 2],
+      ["app", 1],
+      ["(no project)", 1],
+    ]);
+    // Two folders called `app` stay apart; no path is stored.
+    expect(projects[0]?.project).not.toBe(projects[1]?.project);
+    expect(JSON.stringify(store.read())).not.toContain("/work");
+  });
+
+  it("counts the distinct sessions of a day as hashes, never the ids", () => {
+    const store = new UsageHistoryStore({ path: tempPath(), now: () => NOON });
+    store.record(cloudCall({ sessionId: "chat-a" }));
+    store.record(cloudCall({ sessionId: "chat-a" }));
+    store.record(cloudCall({ sessionId: "chat-b" }));
+    store.record(cloudCall());
+    const seen = store.read().sessions?.["2026-11-12"] ?? [];
+    expect(seen).toHaveLength(2);
+    expect(seen.join(",")).not.toContain("chat-");
+  });
+
+  it("asks for a session's folder again until it is known, and survives a throwing lookup", () => {
+    let known = false;
+    const store = new UsageHistoryStore({
+      path: tempPath(),
+      now: () => NOON,
+      workingDirOf: (id) => {
+        if (id === "boom") throw new Error("db closed");
+        return known ? "/work/app" : undefined;
+      },
+    });
+    store.record(cloudCall({ sessionId: "s1" }));
+    known = true;
+    store.record(cloudCall({ sessionId: "s1" }));
+    store.record(cloudCall({ sessionId: "boom" }));
+    const rows = store.read().projects?.["2026-11-12"] ?? [];
+    expect(rows.map((p) => [p.label, p.calls])).toEqual([
+      ["(no project)", 2],
+      ["app", 1],
+    ]);
+  });
+
+  it("counts tool calls and their errors per day, but not the turn's reply or finish", () => {
+    const store = new UsageHistoryStore({ path: tempPath(), now: () => NOON });
+    store.recordTool("fs.read", false);
+    store.recordTool("fs.read", true);
+    store.recordTool("shell.run", false);
+    store.recordTool("reply", false);
+    store.recordTool("finish", false);
+    expect(store.read().tools?.["2026-11-12"]).toEqual({
+      "fs.read": { calls: 2, errors: 1 },
+      "shell.run": { calls: 1, errors: 0 },
+    });
+  });
+
+  it("loads a file from before the new sections and keeps its days when adding to it", () => {
+    const path = tempPath();
+    const old = {
+      version: 1,
+      days: {
+        "2026-11-11": [
+          { billing: "local", providerId: "local", model: "qwen3-8b", calls: 4, inputTokens: 40, outputTokens: 4, cachedTokens: 0, usd: 0, pricedCalls: 0, unpricedCalls: 0 },
+        ],
+      },
+    };
+    writeFileSync(path, JSON.stringify(old));
+    const before = readUsageHistory(path);
+    expect(before.days["2026-11-11"]?.[0]?.calls).toBe(4);
+    expect(before.projects).toBeUndefined();
+    expect(before.tools).toBeUndefined();
+    const store = new UsageHistoryStore({ path, now: () => NOON });
+    store.record(cloudCall({ sessionId: "s1" }));
+    store.recordTool("fs.read", false);
+    const after = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    expect(after.version).toBe(1);
+    expect(readUsageHistory(path).days["2026-11-11"]?.[0]?.calls).toBe(4);
+    expect(Object.keys(after).sort()).toEqual(["days", "projects", "sessions", "tools", "version"]);
+  });
+
+  it("drops a damaged project row, tool entry or session list and keeps the rest", () => {
+    const path = tempPath();
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 1,
+        days: {},
+        projects: { "2026-11-12": [{ billing: "cloud", project: "", label: "x" }, { billing: "local", project: "abc", label: "app", calls: 1 }] },
+        tools: { "2026-11-12": { "fs.read": { calls: 2, errors: 9 }, bad: "x", zero: { calls: 0 } }, nope: {} },
+        sessions: { "2026-11-12": ["a", "a", 3, ""] },
+      }),
+    );
+    const file = readUsageHistory(path);
+    expect(file.projects?.["2026-11-12"]?.map((p) => p.project)).toEqual(["abc"]);
+    expect(file.tools?.["2026-11-12"]).toEqual({ "fs.read": { calls: 2, errors: 2 } });
+    expect(file.sessions?.["2026-11-12"]).toEqual(["a"]);
+  });
+});

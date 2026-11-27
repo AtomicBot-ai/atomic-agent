@@ -423,7 +423,11 @@ describe("runtime provider/context/fallback/reload phases", () => {
   describe("per-day token history (ATO-2352)", () => {
     function withHistory() {
       const dir = mkdtempSync(join(tmpdir(), "usage-history-"));
-      const usageHistory = new UsageHistoryStore({ path: join(dir, "usage-history.json"), now: () => Date.UTC(2026, 10, 12, 12) });
+      const usageHistory = new UsageHistoryStore({
+        path: join(dir, "usage-history.json"),
+        now: () => Date.UTC(2026, 10, 12, 12),
+        workingDirOf: (id) => (id === "turn" ? join(dir, "my-project") : null),
+      });
       const fixture = fallback();
       return { usageHistory, deps: { ...fixture.deps, usageHistory } };
     }
@@ -458,6 +462,20 @@ describe("runtime provider/context/fallback/reload phases", () => {
       expect(fixture.usageHistory.read().days["2026-11-12"]?.[0]).toMatchObject({
         billing: "local", model: "local-id", inputTokens: 300, outputTokens: 20, cachedTokens: 100, usd: 0, unpricedCalls: 0,
       });
+    });
+
+    it("files the call under the session's project and counts the session (ATO-2442)", async () => {
+      const fixture = withHistory();
+      const localLink = providers.providerRegistry.getProvider("local");
+      if (!localLink) throw new Error("local fixture missing");
+      const local: CompletionResult = { ...completion("local-id"), timing: { promptMs: 1, predictedMs: 2, promptTokens: 300, predictedTokens: 20 } };
+      delete local.usage;
+      vi.spyOn(localLink, "complete").mockResolvedValue(local);
+      const wired = connectRuntimeFallback({}, fixture.deps);
+      await wired.llmComplete({ ...params, providerId: "local" });
+      const file = fixture.usageHistory.read();
+      expect(file.projects?.["2026-11-12"]?.map((p) => [p.label, p.billing, p.inputTokens])).toEqual([["my-project", "local", 300]]);
+      expect(file.sessions?.["2026-11-12"]).toHaveLength(1);
     });
   });
 

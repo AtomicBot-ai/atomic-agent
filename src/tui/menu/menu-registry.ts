@@ -528,7 +528,7 @@ export const MENU: readonly MenuNode[] = [
     group: "session",
     slash: {
       name: "usage",
-      description: "show this session's cost and the account's rate limits",
+      description: "show this session's cost and limits, and tokens per day over every chat",
       aliases: ["cost"],
       rank: 38.5,
     },
