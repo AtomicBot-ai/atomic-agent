@@ -161,6 +161,8 @@ export function createRuntimeToolRegistry(
   outputSpill?: ToolOutputSpill,
   /** The model `browser.extract` calls; bootstrap fills it in once the completer exists. */
   browserExtract: BrowserExtractModelRef = {},
+  /** "My files" (ATO-2507): `research.deep` reads the text of its `files.search` hits here. */
+  fileIndex?: FileIndexApi,
 ) {
 
 
@@ -200,11 +202,22 @@ export function createRuntimeToolRegistry(
   // os.web.fetch (registered later; looked up per call), on the same
   // side-call model as browser.extract. The report goes through the fs
   // write funnel like canvas.render.
+  // ATO-2507: or over My files through files.search (registered later),
+  // reading each hit's indexed text; web search is read live per call.
+  const myFiles = fileIndex;
+  const researchDocuments = myFiles !== undefined && myFiles.passageText !== undefined
+    ? {
+        passageText: (path: string, page?: number) => myFiles.passageText?.(path, page) ?? null,
+        listFolders: () => myFiles.listFolders(),
+      }
+    : undefined;
   toolRegistry.register(buildResearchDeepTool({
     ...dangerous,
     trustConfigPaths: getTrustConfigPaths(config.paths),
     tools: toolRegistry,
     model: browserExtract,
+    ...(researchDocuments !== undefined ? { documents: researchDocuments } : {}),
+    webSearchEnabled: () => getConfig().web.search.enabled,
   }));
   return toolRegistry;
 }
@@ -787,6 +800,8 @@ export async function connectRuntimeMcpCatalog(input: {
     const base = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
       browser: { enabled: config.browser.enabled },
       web: { search: { enabled: config.web.search.enabled } },
+      // ATO-2507: research.deep also works over My files with web search off.
+      research: { documents: toolRegistry.has("files.search") },
       // Live, like the fusion gate: offered while some leg of the
       // current route can see (see `visionRouteAvailable`).
       vision: {

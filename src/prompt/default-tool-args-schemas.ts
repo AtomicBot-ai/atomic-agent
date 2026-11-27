@@ -710,7 +710,17 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   ],
   [
     "research.deep",
-    obj({ question: stringSchema, maxSubQuestions: numberSchema, pagesPerQuestion: numberSchema }, ["question"]),
+    obj(
+      {
+        question: stringSchema,
+        sources: { type: "string", enum: ["web", "documents", "both"] },
+        folder: stringSchema,
+        maxSubQuestions: numberSchema,
+        pagesPerQuestion: numberSchema,
+        maxMinutes: numberSchema,
+      },
+      ["question"],
+    ),
   ],
   [
     "logbook.query",

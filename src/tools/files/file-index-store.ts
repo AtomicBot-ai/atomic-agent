@@ -236,6 +236,29 @@ export class FileIndexStore {
       .all(...ids) as ChunkRow[];
   }
 
+  /**
+   * The indexed text of one file in chunk order, or of one PDF page of
+   * it, cut at `maxChars` (ATO-2507: what `research.deep` checks a
+   * quote against). `null` when the file has no chunks (not indexed,
+   * failed, removed) or the page has none.
+   */
+  fileText(path: string, page: number | null, maxChars: number): string | null {
+    const rows = this.db
+      .prepare(
+        `SELECT c.text AS text FROM chunks AS c JOIN files AS f ON f.id = c.file_id
+          WHERE f.path = @path AND (@page IS NULL OR c.page = @page)
+          ORDER BY c.ord ASC`,
+      )
+      .all({ path, page }) as Array<{ text: string }>;
+    if (rows.length === 0) return null;
+    let out = "";
+    for (const row of rows) {
+      out = out.length === 0 ? row.text : `${out}\n${row.text}`;
+      if (out.length >= maxChars) return out.slice(0, maxChars);
+    }
+    return out;
+  }
+
   private deleteChunksOf(fileId: number): void {
     this.db.prepare(`DELETE FROM chunk_vectors WHERE chunk_id IN (SELECT id FROM chunks WHERE file_id = ?)`).run(fileId);
     this.db.prepare(`DELETE FROM chunks WHERE file_id = ?`).run(fileId);

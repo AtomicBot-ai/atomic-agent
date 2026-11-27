@@ -97,4 +97,10 @@ export interface FileIndexApi {
    * (scans, photos, audio; ATO-2501) and start a pass. Returns how many.
    */
   retrySkipped(): number;
+  /**
+   * The indexed text of a file, or of one PDF page of it (ATO-2507,
+   * `research.deep` over My files); `null` when it is not indexed now.
+   * Optional: a host without it gets no document research.
+   */
+  passageText?(path: string, page?: number): string | null;
 }

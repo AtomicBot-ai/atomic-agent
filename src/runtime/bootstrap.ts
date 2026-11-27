@@ -424,7 +424,7 @@ export async function createAgentRuntime(
   // `browser.extract` calls the model (ATO-699); the completer is built
   // further down, so the tool reads it through this ref per call.
   const browserExtract: BrowserExtractModelRef = {};
-  const toolRegistry = createRuntimeToolRegistry(config, browserBackend, dangerous, toolOutputSpill, browserExtract);
+  const toolRegistry = createRuntimeToolRegistry(config, browserBackend, dangerous, toolOutputSpill, browserExtract, fileIndex);
 
   // What the operator asked for, per session, for the turn now running
   // on it — quoted into every fusion worker's brief (`worker-prompt.ts`)

@@ -58,6 +58,7 @@ import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
 import { claimScreenOverlay } from "../tools/os/screen/screen-overlay-hosts.js";
 import { buildSlowFirstTokenHint } from "./slow-first-token-hint.js";
 import { officeFileFrame } from "./office-file-frame.js";
+import { researchFrame } from "./research-frame.js";
 import type { UndeliveredSteer } from "./undelivered-steers.js";
 import {
   buildFinalAssistantPayload,
@@ -725,6 +726,8 @@ export function buildStreamEventHook(
           ...officeFileFrame(inner.result),
           // ATO-1135: an MCP App's page for this call, for the chat to render.
           ...mcpAppFrame(inner.result),
+          // ATO-2507: an ok research.deep call's counts and report, for the report card.
+          ...researchFrame(inner.result),
           // ATO-1145: the call's approval records, as the transcript keeps
           // them (`tool_result.approvals`), so a live turn summary can list
           // what was auto-approved (`verdict: "auto-approved"`, `via`,
