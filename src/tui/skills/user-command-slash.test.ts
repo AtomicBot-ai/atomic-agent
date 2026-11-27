@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pluginSlashCommands, resolveSlashCommand } from "../commands/slash-commands.js";
 import { dispatchSlashCommand } from "../commands/slash-command-handler.js";
-import { MENTION_BLOCK_OPEN } from "../file-mentions/mention-block.js";
+import { MENTION_BLOCK_OPEN } from "../../mentions/mention-block.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import { SkillsOrchestrator } from "./skills-orchestrator.js";
 import type { PluginCommandRow } from "./skills-panel-state.js";

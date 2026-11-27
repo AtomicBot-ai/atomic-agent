@@ -297,12 +297,22 @@ export interface TuiAppCallbacks {
   onQuit(): void;
   onMessageSubmitted(message: string): void;
   /**
+   * An idle submit whose `@` mentions are still being read (ATO-2472):
+   * the host sends it once they are, in typing order. Absent: the
+   * expansion is awaited and handed to `onMessageSubmitted`.
+   */
+  onMessageSubmittedLater?(message: Promise<string>): void;
+  /**
    * The working directory's files for the composer's `@` palette
    * (file-mentions/). Absent: no palette.
    */
   listMentionFiles?(): Promise<readonly string[]>;
-  /** Inline the files a message `@`-mentions before it is sent. */
-  expandFileMentions?(message: string): string;
+  /**
+   * Inline what a message `@`-mentions before it is sent: a string at
+   * once for plain files, a promise for `@diff`, `@git:N`, links and
+   * `@problems` (ATO-2472).
+   */
+  expandFileMentions?(message: string): string | Promise<string>;
   /**
    * `[try again]` on the chat's last question (ATO-1302): take that
    * question and its answer back out of the session so the resend is a

@@ -178,10 +178,14 @@ export function handleEditorSubmit(
   }
   dispatch({ type: "message_submitted" });
   // `@path` mentions of files in the working directory are inlined here
-  // (file-mentions/). Only on this idle path: a steer or a queued
+  // (src/mentions/; a promise while `@diff`, `@git:N`, a link or
+  // `@problems` are read, sent in order by the host). Only on this idle path: a steer or a queued
   // message is matched back to its pending strip entry by its text, so
   // those keep their `@path` as words the model can read itself.
-  callbacks.onMessageSubmitted(callbacks.expandFileMentions?.(trimmed) ?? trimmed);
+  const expanded = callbacks.expandFileMentions?.(trimmed) ?? trimmed;
+  if (typeof expanded === "string") callbacks.onMessageSubmitted(expanded);
+  else if (callbacks.onMessageSubmittedLater) callbacks.onMessageSubmittedLater(expanded);
+  else void expanded.then((text) => callbacks.onMessageSubmitted(text), () => callbacks.onMessageSubmitted(trimmed));
 }
 
 /**

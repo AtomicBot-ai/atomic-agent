@@ -44,7 +44,7 @@ import { buildOsFsPatchTool } from "./fs/fs-patch.js";
 import { buildOsFsRestoreTool } from "./fs/fs-restore.js";
 import { buildOsFsMoveTool } from "./fs/fs-move.js";
 import { FileRestoreStore } from "./fs/fs-restore-store.js";
-import { createLspDiagnostics, createLspServerPool } from "./fs/lsp/index.js";
+import { createLspDiagnostics, createLspServerPool, type LspServerPool } from "./fs/lsp/index.js";
 import { askToStartLspThroughApprovals } from "./fs/lsp/lsp-start-question.js";
 import type { DeclaredInputsRegistry } from "./fs/fs-declared-inputs.js";
 import { osFsWatchTool } from "./fs/fs-watch.js";
@@ -233,6 +233,16 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    * first start asks once. Omitted: no folder is trusted.
    */
   isTrustedProject?: (dir: string) => boolean;
+  /**
+   * Filled with the language-server pool when `tools.lsp.enabled` built
+   * one, so `@problems` (ATO-2472) reads the same servers as the tools.
+   */
+  lspPoolRef?: LspPoolRef;
+}
+
+/** Where registerOsTools leaves its language-server pool (ATO-2472). */
+export interface LspPoolRef {
+  pool?: LspServerPool;
 }
 
 export function registerOsTools(
@@ -275,6 +285,7 @@ export function registerOsTools(
             : { isTrustedProject: options.isTrustedProject }),
         })
       : null;
+  if (lspPool !== null && options.lspPoolRef !== undefined) options.lspPoolRef.pool = lspPool;
   // One option bag for every tool that replaces file content, so the
   // write, the edit, the patch and the restore share the store that
   // remembers what each session created and what was replaced in each

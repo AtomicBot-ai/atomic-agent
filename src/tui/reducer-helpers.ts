@@ -1,6 +1,6 @@
 import type { MetricSample } from "../tracing/metrics-collector.js";
 import type { LogRecord } from "../tracing/structured-logger.js";
-import { typedTextOf } from "./file-mentions/mention-block.js";
+import { typedTextOf } from "../mentions/mention-block.js";
 import type {
   ChatMessage,
   FeedEntry,

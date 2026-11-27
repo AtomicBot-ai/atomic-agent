@@ -31,7 +31,7 @@ import { listPluginCommands, renderPluginCommand } from "../../plugins/plugin-co
 import { listUserCommands, renderUserCommand, type UserCommandOptions } from "../../plugins/user-commands.js";
 import { userCommandWarnings, type UserCommandWarning } from "./user-command-warnings.js";
 import { isProjectFolderTrusted } from "../../skills/project-trust.js";
-import { expandFileMentions } from "../file-mentions/expand-mentions.js";
+import { expandFileMentions } from "../../mentions/expand-file-mentions.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TuiEventBus } from "../tui-app.js";
 import type { HubSkillRow } from "./skills-panel-state.js";

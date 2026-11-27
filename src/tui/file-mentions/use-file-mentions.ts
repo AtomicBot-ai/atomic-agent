@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { activeMention, completeMention } from "./mention-query.js";
-import { rankMentionFiles } from "./rank-mention-files.js";
+import { foldersOf } from "../../mentions/mention-kinds.js";
+import { mentionRows } from "./mention-rows.js";
 
 export interface FileMentionsOptions {
   /** The composer buffer. */
@@ -56,9 +57,10 @@ export function useFileMentions(options: FileMentionsOptions): FileMentions {
     if (dismissedAt !== null && dismissedAt !== buffer) setDismissedAt(null);
   }, [buffer, dismissedAt]);
 
+  const folders = useMemo(() => (files === null ? [] : foldersOf(files)), [files]);
   const results = useMemo(
-    () => (files === null ? null : rankMentionFiles(query, files)),
-    [files, query],
+    () => (files === null ? null : mentionRows(query, files, folders)),
+    [files, folders, query],
   );
   const open = active && dismissedAt !== buffer;
   const count = results?.length ?? 0;
@@ -78,7 +80,10 @@ export function useFileMentions(options: FileMentionsOptions): FileMentions {
   const accept = useCallback((): string | null => {
     const chosen = results?.[safeCursor];
     if (!mention || chosen === undefined) return null;
-    return completeMention(buffer, mention, chosen);
+    // A folder already typed in full completes to itself: no change, so
+    // Enter falls through and sends instead of being swallowed.
+    const next = completeMention(buffer, mention, chosen);
+    return next === buffer ? null : next;
   }, [results, safeCursor, mention, buffer]);
   const dismiss = useCallback(() => setDismissedAt(buffer), [buffer]);
 

@@ -1150,6 +1150,32 @@ describe("@ file mentions on submit (ATO-665)", () => {
     expect(onMessageSubmitted).toHaveBeenCalledWith("explain @src/app.ts");
   });
 
+  it("hands a pending expansion to onMessageSubmittedLater (ATO-2472)", async () => {
+    const onMessageSubmitted = vi.fn();
+    const onMessageSubmittedLater = vi.fn();
+    const pending = Promise.resolve("see @diff\n\n[diff]");
+    handleEditorSubmit(
+      "see @diff",
+      createInitialTuiState(fakeSession()),
+      () => {},
+      stubCallbacks({ onMessageSubmitted, onMessageSubmittedLater, expandFileMentions: () => pending }),
+    );
+    expect(onMessageSubmittedLater).toHaveBeenCalledWith(pending);
+    expect(onMessageSubmitted).not.toHaveBeenCalled();
+  });
+
+  it("awaits a pending expansion itself when the host takes strings only (ATO-2472)", async () => {
+    const onMessageSubmitted = vi.fn();
+    handleEditorSubmit(
+      "see @diff",
+      createInitialTuiState(fakeSession()),
+      () => {},
+      stubCallbacks({ onMessageSubmitted, expandFileMentions: () => Promise.resolve("see @diff [x]") }),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(onMessageSubmitted).toHaveBeenCalledWith("see @diff [x]");
+  });
+
   it("does not expand a slash command", () => {
     const expandFileMentions = vi.fn((text: string) => text);
     handleEditorSubmit("/help", createInitialTuiState(fakeSession()), () => {}, stubCallbacks({ expandFileMentions }));
