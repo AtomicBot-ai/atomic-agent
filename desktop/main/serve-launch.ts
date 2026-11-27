@@ -15,9 +15,13 @@
 /** The variable `atag serve` reads its key from when no `--api-key` is given. */
 export const SERVE_API_KEY_ENV = "ATOMIC_AGENT_API_KEY";
 
-/** `atag serve`'s arguments: loopback, `port`, then the platform's watch arguments. No key. */
-export function serveSpawnArgs(port: number, watchArgs: readonly string[]): string[] {
-  return ["serve", "--host", "127.0.0.1", "--port", String(port), ...watchArgs];
+/**
+ * `atag serve`'s arguments: `host` (loopback unless Settings › Connections ›
+ * Connect phone lets phones on this Wi-Fi in, ATO-2493 phone-access.ts),
+ * `port`, then the platform's watch arguments. No key.
+ */
+export function serveSpawnArgs(port: number, watchArgs: readonly string[], host = "127.0.0.1"): string[] {
+  return ["serve", "--host", host, "--port", String(port), ...watchArgs];
 }
 
 /** `base` (the agent environment) with the per-launch key added. `base` is not changed. */

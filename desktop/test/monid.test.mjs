@@ -95,7 +95,7 @@ test('markup: no key field; Sign in and Disconnect where they apply; the Monid m
 });
 
 test('Monid sits next to Composio in Connections, in the tab list and the palette', () => {
-  assert.match(source, /\['connections','Connections','plug',\['mcp','telegram','discord','push','composio','monid'\]\]/);
+  assert.match(source, /\['connections','Connections','plug',\['mcp','telegram','discord','push','phone','composio','monid'\]\]/);
   assert.match(source, /\['composio','Composio'\],\['monid','Monid'\]/);
   assert.match(source, /\['link','Monid','Settings · Connections','','settings:monid'\]/);
   for (const hook of ["pane === 'monid') monidTabEntered()", "p === 'monid') return monidTab()",

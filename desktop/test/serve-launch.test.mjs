@@ -19,6 +19,11 @@ test("the platform's watch arguments come last", () => {
   ]);
 });
 
+test("ATO-2493: the host is loopback unless one is given (phones on this Wi-Fi)", () => {
+  assert.deepEqual(L.serveSpawnArgs(19193, [], "0.0.0.0"), ["serve", "--host", "0.0.0.0", "--port", "19193"]);
+  assert.equal(L.serveSpawnArgs(5000, [])[2], "127.0.0.1");
+});
+
 test("the key is in the child environment under ATOMIC_AGENT_API_KEY", () => {
   const base = { PATH: "/usr/bin", ATOMIC_AGENT_STATE_DIR: "/state" };
   const env = L.serveSpawnEnv(base, "0f1e2d3c4b5a69788796a5b4c3d2e1f0");

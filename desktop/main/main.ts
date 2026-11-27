@@ -51,6 +51,7 @@ import { wireSkillEvalIpc } from "./skill-eval-ipc.js";
 import { wireSkillDraftsIpc } from "./skill-drafts-ipc.js";
 import { wireShowOnceIpc } from "./show-once-ipc.js";
 import { pushTurnNote, wirePushIpc } from "./push-ipc.js";
+import { wirePhoneIpc } from "./phone-ipc.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { wireFileMentionsIpc } from "./file-mentions-ipc.js";
 import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
@@ -3391,6 +3392,7 @@ function wireIpc(client: AgentClient): void {
   wireShowOnceIpc({ stateDir: DESKTOP_STATE_DIR, isRemote: () => client.isRemote, log: (line) => console.log(line) });
   // ATO-1129: Settings › Connections › Phone push, through `atag push` (push-ipc.ts).
   wirePushIpc();
+  wirePhoneIpc(client);   // ATO-2493: Settings › Connections › Connect phone (phone-ipc.ts)
   // ATO-404/405: the composer's attachments, saved into <stateDir>/inbox/desktop.
   wireAttachmentIpc({ window: () => win, stateDir: DESKTOP_STATE_DIR });
   // ATO-1593/1595: the composer's @file palette and the mentions inlined on send (file-mentions-ipc.ts).
