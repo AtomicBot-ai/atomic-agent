@@ -30,6 +30,7 @@ import type { ProfileClippedEvent } from "./profile-clip-warning.js";
 import type { PrefixDriftEvent, PrefixInvalidationLedger } from "./prefix-drift-warning.js";
 import type { HistoryTrimmedEvent } from "./history-trim-warning.js";
 import type { ToolDisabledEvent } from "./tool-disabled-notice.js";
+import type { CliOutdatedEvent } from "./cli-outdated-notice.js";
 import type { ReviewStallSignal } from "./review-stall.js";
 
 /**
@@ -1118,6 +1119,11 @@ export type AgentLoopEvent =
    * JSON schema (ATO-1417). Once per tool per turn.
    */
   | ToolDisabledEvent
+  /**
+   * The subscription CLI that answered is older than Atomic Agent
+   * supports (ATO-2523). Once per session and CLI.
+   */
+  | CliOutdatedEvent
   | { type: "step_started"; stepIndex: number }
   | {
       type: "step_finished";
