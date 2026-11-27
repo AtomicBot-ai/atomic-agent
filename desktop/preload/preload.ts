@@ -264,7 +264,7 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-1424 (macOS): a new Terminal window in `cwd` (home if missing) with `command` typed, not run.
   // → {ok:true, cwd, usedHome} | {ok:false, error:"unsupported"|"invalid-request"|"empty-command"|
   //   "command-too-long"|"control-characters"|"open-failed", message}
-  terminalOpenWithCommand: (req: { command: string; cwd?: string | null }) => ipcRenderer.invoke("terminal:openWithCommand", req),
+  terminalOpenWithCommand: (req: { command: string; cwd?: string | null; shell?: "powershell" }) => ipcRenderer.invoke("terminal:openWithCommand", req),
   // Chat review Д23: `fromReply` for a chip from a reply's text, which main checks again.
   fileMenu: (path: string, fromReply?: boolean) => ipcRenderer.invoke("app:fileMenu", path, fromReply === true),
   // item 5: existence check for the files a turn wrote (fs.stat only)
@@ -649,6 +649,8 @@ contextBridge.exposeInMainWorld("atomic", {
   handoffReveal: (path: string) => ipcRenderer.invoke("cli:handoffReveal", path),
   // ATO-1157: the Agents sheet's list of Claude Code / Codex sessions (main/agent-hub-ipc.ts).
   hubScan: () => ipcRenderer.invoke("hub:scan"),
+  // ATO-2737: the line "Open on local model" types, naming the app's own agent by full path.
+  hubLaunchCommand: (agent: string) => ipcRenderer.invoke("hub:launchCommand", agent),
   // ATO-556: atomicagent:// links — main keeps what came in until the window takes it; `deeplink:new` says there is more.
   deeplinkTake: () => ipcRenderer.invoke("app:deeplinkTake"),
   onDeeplink: (cb: () => void) => on("deeplink:new", () => cb()),
