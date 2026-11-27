@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ApprovalGate } from "../../approval/approval-gate.js";
 import { ApprovalDeniedError } from "../../approval/dangerous-tool.js";
+import { capBatchSummaries } from "../../agent/batch-summary-cap.js";
 import { ToolRegistry } from "../tool-registry.js";
 import { appsRoot } from "./app-names.js";
 import { APP_INSTALL_RECORD, appShortcutFolder, type ShortcutPlace } from "./app-shortcut-paths.js";
@@ -32,9 +33,14 @@ function gate(approved: boolean) {
   } as unknown as ApprovalGate;
 }
 
+// The state dir sits under a fake home, outside the chat's working dir
+// (/work does not exist), so an ask is categorised exactly as on a real
+// install: fs_write_home for a write, fs_trash for a delete.
 function options(extra: Partial<AppToolOptions> = {}): AppToolOptions {
-  const stateDir = mkdtempSync(join(tmpdir(), "atomic-app-tools-"));
-  return { stateDir, approvals: gate(true), approvalRequired: true, now: () => Date.UTC(2026, 10, 27), ...extra };
+  const homeDir = mkdtempSync(join(tmpdir(), "atomic-app-tools-home-"));
+  const stateDir = join(homeDir, ".atomic-agent");
+  mkdirSync(stateDir);
+  return { stateDir, homeDir, approvals: gate(true), approvalRequired: true, now: () => Date.UTC(2026, 10, 27), ...extra };
 }
 
 const requests = (o: AppToolOptions) => (o.approvals.request as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
@@ -52,7 +58,7 @@ describe("app.save (ATO-2459)", () => {
     expect(got?.app.sourceChatId).toBe("chat-1");
     const [ask] = requests(o);
     expect(ask).toMatchObject({ tool: APP_SAVE_TOOL, sessionId: "chat-1", affectedResources: ["app Currency converter"] });
-    expect(["fs_write_workspace", "fs_write_home", "other"]).toContain(ask.category);
+    expect(ask.category).toBe("fs_write_home");
   });
 
   it("writes nothing when the person says no", async () => {
@@ -78,7 +84,7 @@ describe("app.update", () => {
     const r = await tool.run({ id: saved.app.id, html: "<p>v2</p>" }, ctx);
     expect(r).toMatchObject({ status: "ok", details: { pageChanged: true, keptVersion: 1 } });
     expect(readApp(appsRoot(o.stateDir), saved.app.id)?.html).toBe("<p>v2</p>");
-    expect(requests(o)[0]).toMatchObject({ tool: APP_UPDATE_TOOL });
+    expect(requests(o)[0]).toMatchObject({ tool: APP_UPDATE_TOOL, category: "fs_write_home" });
     const back = await tool.run({ id: saved.app.id, restoreVersion: 1, name: "Fx 2" }, ctx);
     expect(back).toMatchObject({ status: "ok", details: { restoredVersion: 1, keptVersion: 2, name: "Fx 2" } });
     expect(readApp(appsRoot(o.stateDir), saved.app.id)?.html).toBe("<p>v1</p>");
@@ -94,6 +100,8 @@ describe("app.update", () => {
     expect((await tool.run({ id: saved.app.id }, ctx)).status).toBe("error");
     expect((await tool.run({ id: saved.app.id, html: "<p>x</p>", restoreVersion: 1 }, ctx)).details.field).toBe("restoreVersion");
     expect((await tool.run({ id: saved.app.id, restoreVersion: 9 }, ctx)).details.reason).toBe("no-version");
+    // Every refusal above came before the ask: nobody was asked for nothing.
+    expect(requests(o)).toHaveLength(0);
   });
 });
 
@@ -114,7 +122,7 @@ describe("app.delete", () => {
     expect(existsSync(launcher)).toBe(false);
     expect(readApp(appsRoot(o.stateDir), saved.app.id)).toBeNull();
     expect(requests(o)[0]).toMatchObject({ tool: APP_DELETE_TOOL });
-    expect(["fs_trash", "other"]).toContain(requests(o)[0].category);
+    expect(requests(o)[0].category).toBe("fs_trash");
     const again = await buildAppDeleteTool(o).run({ id: saved.app.id }, ctx);
     expect(again).toMatchObject({ status: "ok", details: { removed: false } });
   });
@@ -140,6 +148,34 @@ describe("app.list", () => {
   });
 });
 
+describe("app.list page budget on a local model", () => {
+  const lastLine = "<p>the last line of the page</p>";
+  const bigPage = `${"<p>row</p>\n".repeat(3_600)}${lastLine}`; // ~40,000 chars
+
+  it("keeps the page under the step budget and says it is cut, so nothing is clipped silently", async () => {
+    const o = options({ localStepChars: () => 32_000 });
+    const saved = saveApp(appsRoot(o.stateDir), { name: "Big", html: bigPage });
+    if (!saved.ok) throw new Error("save");
+    const registry = new ToolRegistry();
+    registry.register(buildAppListTool(o));
+    const r = await registry.invoke(APP_LIST_TOOL, { id: saved.app.id }, { ...ctx, modelMode: "local" as const });
+    expect(bigPage.length).toBeGreaterThan(32_000);
+    expect(r.details).toMatchObject({ pageTruncated: true, pageChars: bigPage.length });
+    expect(r.summary).toContain(`characters of ${bigPage.length}; app.update needs the whole page`);
+    // What step-commit hands a local model is the summary as is.
+    expect(capBatchSummaries([r], [{ args: { id: saved.app.id } }], 32_000)[0]).toBe(r.summary);
+  });
+
+  it("gives a cloud model the whole page", async () => {
+    const o = options({ localStepChars: () => 32_000 });
+    const saved = saveApp(appsRoot(o.stateDir), { name: "Big", html: bigPage });
+    if (!saved.ok) throw new Error("save");
+    const r = await buildAppListTool(o).run({ id: saved.app.id }, { ...ctx, modelMode: "cloud" as const });
+    expect(r.details).toMatchObject({ pageTruncated: false });
+    expect(r.summary).toContain(lastLine);
+  });
+});
+
 describe("registerAppTools", () => {
   it("registers the four tools; the writes refuse in an incognito chat", async () => {
     const registry = new ToolRegistry();
@@ -153,5 +189,20 @@ describe("registerAppTools", () => {
     expect(r.summary).toContain(INCOGNITO_APP_REFUSAL.slice(0, 30));
     expect(existsSync(appsRoot(o.stateDir))).toBe(false);
     expect((await registry.get(APP_LIST_TOOL).run({}, ctx)).status).toBe("ok");
+  });
+
+  it("app.update and app.delete refuse in an incognito chat and change nothing", async () => {
+    const o = options();
+    const saved = saveApp(appsRoot(o.stateDir), { name: "Fx", html: "<p>v1</p>" });
+    if (!saved.ok) throw new Error("save");
+    const registry = new ToolRegistry();
+    registerAppTools(registry, { ...o, isIncognitoSession: () => true });
+    const upd = await registry.get(APP_UPDATE_TOOL).run({ id: saved.app.id, html: "<p>v2</p>" }, ctx);
+    expect(upd).toMatchObject({ status: "error", details: { reason: "incognito_session" } });
+    const del = await registry.get(APP_DELETE_TOOL).run({ id: saved.app.id }, ctx);
+    expect(del).toMatchObject({ status: "error", details: { reason: "incognito_session" } });
+    expect(readApp(appsRoot(o.stateDir), saved.app.id)?.html).toBe("<p>v1</p>");
+    expect(existsSync(join(appsRoot(o.stateDir), ".trash"))).toBe(false);
+    expect(requests(o)).toHaveLength(0);
   });
 });

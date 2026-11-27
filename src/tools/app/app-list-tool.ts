@@ -8,6 +8,25 @@ import { APP_LIST_TOOL, appDetails, appRefusal, appsRootOf, type AppToolOptions 
 /** The page text one call may carry back; a longer page is cut and says so. */
 export const APP_LIST_PAGE_MAX_CHARS = 60_000;
 
+/**
+ * Room kept under a local model's step budget for what wraps the page:
+ * the compressor's signature line and the untrusted-content fence.
+ */
+export const APP_LIST_FRAME_CHARS = 1_500;
+
+/**
+ * How much of the page one call may carry back. A local (or unknown)
+ * model sees each step's results clipped to `localStepChars`
+ * (`agent.batchToolResultCharCap`, step-commit.ts), so a page longer
+ * than what is left under that budget would reach it with its tail cut
+ * and no word that it is incomplete; an edit from it would drop the
+ * tail. Under the budget, the cut is ours and is said out loud.
+ */
+export function appListPageBudget(modelMode: "local" | "cloud" | undefined, localStepChars: number | undefined, headChars: number): number {
+  if (modelMode === "cloud" || localStepChars === undefined) return APP_LIST_PAGE_MAX_CHARS;
+  return Math.max(0, Math.min(APP_LIST_PAGE_MAX_CHARS, localStepChars - headChars - APP_LIST_FRAME_CHARS));
+}
+
 function kb(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
@@ -32,7 +51,7 @@ export function buildAppListTool(options: AppToolOptions): ToolDefinition {
       "List the apps in My apps, or with an id show one app's versions and its current page (to edit it with app.update).",
     readonly: true,
     untrustedOutput: "a page saved in My apps",
-    async run(rawArgs, _ctx) {
+    async run(rawArgs, ctx) {
       const root = appsRootOf(options);
       const id = rawArgs.id;
       if (id === undefined || id === null) {
@@ -52,13 +71,18 @@ export function buildAppListTool(options: AppToolOptions): ToolDefinition {
       const got = readApp(root, id);
       if (!got) return appRefusal(APP_LIST_TOOL, "not-found", "id");
       const versions = listAppVersions(appDir(root, id) ?? "");
-      const cut = got.html.length > APP_LIST_PAGE_MAX_CHARS;
-      const page = cut ? got.html.slice(0, APP_LIST_PAGE_MAX_CHARS) : got.html;
-      const head = [
+      const listing = [
         line(got.app, versions.length),
         ...versions.map((v) => `version ${v.version} · saved ${v.savedAt.slice(0, 16).replace("T", " ")} · ${kb(v.bytes)}`),
+      ];
+      // 120: the longest "current page (first N ...)" line below.
+      const budget = appListPageBudget(ctx.modelMode, options.localStepChars?.(), listing.join("\n").length + 120);
+      const cut = got.html.length > budget;
+      const page = cut ? got.html.slice(0, budget) : got.html;
+      const head = [
+        ...listing,
         cut
-          ? `current page (first ${APP_LIST_PAGE_MAX_CHARS} characters of ${got.html.length}; app.update needs the whole page):`
+          ? `current page (first ${budget} characters of ${got.html.length}; app.update needs the whole page):`
           : "current page:",
       ];
       return compressToolResult(

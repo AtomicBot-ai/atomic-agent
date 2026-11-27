@@ -4,6 +4,7 @@ import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { appDir, cleanAppName, isAppId, pageRefusal } from "./app-names.js";
 import { readAppManifest, restoreAppVersion, updateApp, type AppUpdateResult } from "./app-store.js";
+import { listAppVersions } from "./app-versions.js";
 import {
   APP_UPDATE_TOOL,
   appDetails,
@@ -53,6 +54,10 @@ export function buildAppUpdateTool(options: AppToolOptions): ToolDefinition {
       const current = readAppManifest(root, id);
       const dir = appDir(root, id);
       if (!current || !dir) return appRefusal(APP_UPDATE_TOOL, "not-found", "id");
+      // A version that is not there is refused before the person is asked.
+      if (restore !== undefined && !listAppVersions(dir).some((v) => v.version === restore)) {
+        return appRefusal(APP_UPDATE_TOOL, "no-version", "restoreVersion");
+      }
       const what =
         restore !== undefined ? `put version ${restore} back` : html !== undefined ? "replace the page" : "rename it";
       await askForApp(options, ctx, {

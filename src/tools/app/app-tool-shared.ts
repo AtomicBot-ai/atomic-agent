@@ -6,8 +6,11 @@
  * dir (`categorizeFsMutation`: `fs_write_home` inside home, `fs_trash`
  * for a delete, `trust_config` never, since `apps/` is not a trust
  * path), so the approval ladder treats "save an app" as it treats "save
- * a file there": asked at levels 1-2, silent from 3, enforced here at
- * dispatch whatever the prompt says.
+ * a file there": as `fs_write_home` (asked at levels 1-2, silent from 3)
+ * when the state dir is under home but outside the working dir; when the
+ * working dir holds the state dir (a chat opened in home), it is
+ * `fs_write_workspace` (silent from 2), the same as os.fs.write there.
+ * Enforced here at dispatch whatever the prompt says.
  */
 
 import { homedir } from "node:os";
@@ -24,6 +27,14 @@ export interface AppToolOptions extends DangerousToolOptions {
   stateDir: string;
   /** The agent's trust files, as the fs tools get them (`getTrustConfigPaths`). */
   trustConfigPaths?: readonly string[];
+  /**
+   * The char budget one step's results get on a local model
+   * (`agent.batchToolResultCharCap`); app.list keeps a page under it.
+   * Absent: the page limit alone applies.
+   */
+  localStepChars?: () => number;
+  /** Test seam: the home dir the ask is categorised against. */
+  homeDir?: string;
   /** Test seam: the clock. */
   now?: () => number;
   /** Test seam: where an installed app's launcher lives (app-shortcut-paths.ts). */
@@ -55,6 +66,7 @@ export async function askForApp(
 ): Promise<void> {
   const category = await categorizeFsMutation(ask.kind, [ask.path], {
     workingDir: ctx.workingDir,
+    ...(options.homeDir !== undefined ? { homeDir: options.homeDir } : {}),
     ...(options.trustConfigPaths !== undefined ? { trustConfigPaths: options.trustConfigPaths } : {}),
   });
   await requireApproval(
