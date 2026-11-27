@@ -12,6 +12,7 @@ interface PreviewJson {
     conversationPairs: number;
     conversationPairsCap: number;
     sections: Array<{ label: string; tokens: number }>;
+    replyReserve?: number;
   };
   contextWindow: number | null;
   reservedForReply: number;
@@ -68,6 +69,9 @@ describe("POST /api/context-preview", () => {
     expect(json.reservedForReply).toBe(
       effectiveReplyReserve(json.replyCap, json.contextWindow),
     );
+    // ATO-2495: the readout carries the same figure, so a client draws
+    // the agent's reserve instead of recomputing it.
+    expect(json.usage.replyReserve).toBe(json.reservedForReply);
     expect(json.contextWindow === null || json.contextWindow > 0).toBe(true);
     // A preview is not a session.
     expect(harness.runtime.sessionStore.listRecent(100).length).toBe(before);
@@ -94,6 +98,7 @@ describe("POST /api/context-preview", () => {
       expect(json.contextWindow).toBe(32_768);
       expect(json.replyCap).toBe(96_000);
       expect(json.reservedForReply).toBe(16_384);
+      expect(json.usage.replyReserve).toBe(16_384);
     } finally {
       if (before === undefined) delete process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS;
       else process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = before;
