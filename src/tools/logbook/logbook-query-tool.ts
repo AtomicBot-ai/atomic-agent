@@ -1,3 +1,4 @@
+import { requireApproval, type DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import {
   buildLogbookQuery,
@@ -19,12 +20,21 @@ export const LOGBOOK_QUERY_TOOL = "logbook.query";
  * screen, for "what did I do yesterday afternoon" and the standup
  * recipe. Read-only; it never takes a screenshot. The notes were written
  * by a model looking at whatever was on screen (web pages, mail), so the
- * result is framed as outside data, not instructions.
+ * result is framed as outside data, not instructions. The notes were made
+ * on this computer, but the answer goes to the model serving the chat:
+ * when that model (or a fallback) is not on this computer, the call asks
+ * first (`logbook_cloud`, silent only at full trust).
  */
 const RESULT_OPTIONS = { maxSummaryLength: 8_000, maxTailLines: Number.MAX_SAFE_INTEGER } as const;
 
-export interface LogbookQueryToolOptions {
+export interface LogbookQueryToolOptions extends DangerousToolOptions {
   stateDir: string;
+  /**
+   * Whether the model serving this step runs on this computer
+   * (`ToolContext.providerId`, else the active text provider), read per
+   * call. `false` makes the call ask before any note is read.
+   */
+  notesStayLocal: (providerId: string | undefined) => boolean;
   now?: () => Date;
 }
 
@@ -33,15 +43,25 @@ export function buildLogbookQueryTool(options: LogbookQueryToolOptions): ToolDef
   return {
     name: LOGBOOK_QUERY_TOOL,
     description:
-      "Read the person's logbook: short notes a local model wrote about their screen every few minutes, kept on this computer. Pick a day (today, yesterday or YYYY-MM-DD), optionally a part (morning, afternoon, evening) or from/to times like 14:00, and words to match. Use it for what they did and for standups.",
+      "Read the person's logbook: short notes a local model wrote about their screen every few minutes, kept on this computer; the notes you read go to the model serving this chat. Pick a day (today, yesterday or YYYY-MM-DD), optionally a part (morning, afternoon, evening) or from/to times like 14:00, and words to match. Use it for what they did and for standups.",
     readonly: true,
     untrustedOutput: "logbook screen notes",
-    async run(args) {
+    async run(args, ctx) {
       let query: LogbookQuery;
       try {
         query = buildLogbookQuery(args, now());
       } catch (err) {
         return result("error", (err as Error).message);
+      }
+      if (!options.notesStayLocal(ctx.providerId)) {
+        // A denial throws ApprovalDeniedError; the dispatcher reports it.
+        await requireApproval(options, {
+          sessionId: ctx.sessionId,
+          tool: LOGBOOK_QUERY_TOOL,
+          category: "logbook_cloud",
+          reason: `read your logbook notes for ${describeWindow(query)} into this chat; the model serving it is not on this computer, so the notes leave it`,
+          affectedResources: [`logbook ${query.day}`],
+        }, ctx.signal);
       }
       let entries: LogbookEntry[];
       try {

@@ -84,6 +84,13 @@ describe("gated-call approval categories", () => {
     }
   });
 
+  it("keeps logbook.query solo: it asks as logbook_cloud until full trust (ATO-2363)", () => {
+    expect(resourceClassFor("logbook.query")).toBe("approval_gated");
+    expect(approvalCategoriesFor("logbook.query")).toEqual(["logbook_cloud"]);
+    expect(gatedCallRunsUnattended("logbook.query", { level: 4 })).toBe(false);
+    expect(gatedCallRunsUnattended("logbook.query", { level: 5 })).toBe(true);
+  });
+
   it("honours a session category grant, but never for a non-grantable category", () => {
     expect(
       gatedCallRunsUnattended("os.screen.click", {

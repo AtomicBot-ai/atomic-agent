@@ -204,6 +204,8 @@ describe("isRiskReviewEligible", () => {
     expect(isRiskReviewEligible("fs_read_outside")).toBe(false);
     // Another chat's private context: grantable, but never a model's call.
     expect(isRiskReviewEligible("session_cross")).toBe(false);
+    // Notes about the person's screen going to a cloud model (ATO-2363).
+    expect(isRiskReviewEligible("logbook_cloud")).toBe(false);
   });
 });
 

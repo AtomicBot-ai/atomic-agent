@@ -219,8 +219,9 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "memory.sessions.search": "pure_read",
   // ATO-1621: reads the My files index (its own SQLite file), nothing else.
   "files.search": "pure_read",
-  // ATO-2363: reads the logbook's day files under the state dir, nothing else.
-  "logbook.query": "pure_read",
+  // ATO-2363: reads the logbook's day files under the state dir; asks first
+  // (`logbook_cloud`) when the serving model is not on this computer.
+  "logbook.query": "approval_gated",
   "memory.profile.set": "memory_write",
   "memory.profile.remove": "memory_write",
   "memory.notes.store": "memory_write",
@@ -476,6 +477,8 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     // Another chat's messages, read or written (ATO-570).
     "sessions.read": ["session_cross"],
     "sessions.send": ["session_cross"],
+    // Screen notes into a cloud model's context; a loopback model never asks.
+    "logbook.query": ["logbook_cloud"],
     // Asks like a file write onto its output (`categorizeFsMutation`).
     "video.render_html": FS_WRITE_CATEGORIES,
   };

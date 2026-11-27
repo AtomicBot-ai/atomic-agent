@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { LlmProviderConfigEntry } from "../llm/provider/registry/provider-types.js";
 import {
   entryRunsOnThisMachine,
+  logbookNotesStayLocal,
   NO_LOCAL_VISION_REASON,
   pickLocalVisionProvider,
   type LogbookVisionProvider,
@@ -64,5 +65,28 @@ describe("pickLocalVisionProvider", () => {
     const providers: Record<string, LogbookVisionProvider> = { "local-llama": provider("local-llama", false), lmstudio: provider("lmstudio", true) };
     const pick = pickLocalVisionProvider({ entries, activeId: "local-llama", getProvider: (id) => providers[id], localModelsUrl: LOCAL_URL });
     expect(pick.ok && pick.provider.id).toBe("lmstudio");
+  });
+});
+
+describe("logbookNotesStayLocal", () => {
+  const entries: LlmProviderConfigEntry[] = [
+    { id: "local-llama", kind: "llama-server" },
+    { id: "ollama", kind: "openai-compatible", baseUrl: "http://127.0.0.1:11434/v1" },
+    { id: "cloud", kind: "openrouter", baseUrl: "https://openrouter.ai/api/v1" },
+  ];
+
+  it("is true when the serving model and every fallback are on this computer", () => {
+    expect(logbookNotesStayLocal({ entries, providerId: "local-llama", localModelsUrl: LOCAL_URL })).toBe(true);
+    expect(
+      logbookNotesStayLocal({ entries, providerId: "local-llama", fallbackChain: ["local-llama", "ollama"], localModelsUrl: LOCAL_URL }),
+    ).toBe(true);
+  });
+
+  it("is false for a cloud model, a cloud fallback or an unknown id", () => {
+    expect(logbookNotesStayLocal({ entries, providerId: "cloud", localModelsUrl: LOCAL_URL })).toBe(false);
+    expect(
+      logbookNotesStayLocal({ entries, providerId: "local-llama", fallbackChain: ["local-llama", "cloud"], localModelsUrl: LOCAL_URL }),
+    ).toBe(false);
+    expect(logbookNotesStayLocal({ entries, providerId: "gone", localModelsUrl: LOCAL_URL })).toBe(false);
   });
 });

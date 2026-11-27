@@ -51,3 +51,26 @@ export function pickLocalVisionProvider(args: PickLocalVisionArgs): PickLocalVis
   }
   return { ok: false, reason: NO_LOCAL_VISION_REASON };
 }
+
+export interface LogbookNotesRouteArgs {
+  entries: readonly LlmProviderConfigEntry[];
+  /** The provider serving the step (`ToolContext.providerId`), else the active one. */
+  providerId: string;
+  /** `llm.fallback.chain`: a failing model may hand the turn to any of them. */
+  fallbackChain?: readonly string[] | undefined;
+  localModelsUrl: string | undefined;
+}
+
+/**
+ * Whether notes read by `logbook.query` stay on this computer: the model
+ * serving the step and every model the fallback chain may hand the turn
+ * to are loopback by the same test as the vision provider above. An id
+ * with no config entry counts as not local, so `logbook.query` asks.
+ */
+export function logbookNotesStayLocal(args: LogbookNotesRouteArgs): boolean {
+  const ids = [args.providerId, ...(args.fallbackChain ?? [])];
+  return ids.every((id) => {
+    const entry = args.entries.find((e) => e.id === id);
+    return entry !== undefined && entryRunsOnThisMachine(entry, args.localModelsUrl);
+  });
+}

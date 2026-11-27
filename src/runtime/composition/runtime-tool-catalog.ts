@@ -44,7 +44,7 @@ import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActi
 import { buildSessionsSearchTool, registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
 import { buildFilesSearchTool, type FileIndexApi } from "../../tools/files/index.js";
 import { registerLogbookTools } from "../../tools/logbook/index.js";
-import { logbookToolOffered } from "../../logbook/index.js";
+import { logbookNotesStayLocal, logbookToolOffered } from "../../logbook/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
 import { IMAGE_GENERATE_TOOL, openRouterImageKey, registerImageTools } from "../../tools/image/index.js";
@@ -383,7 +383,21 @@ export function registerRuntimeCoreTools(input: {
   // ATO-1621: passages from the folders in My files, with ready citations.
   if (fileIndex) toolRegistry.register(buildFilesSearchTool({ index: fileIndex }));
   // ATO-2363: reads the local logbook; its descriptor is gated live below.
-  registerLogbookTools(toolRegistry, { stateDir: config.paths.stateDir });
+  // It asks first when the model serving the step is not on this computer.
+  registerLogbookTools(toolRegistry, {
+    ...dangerous,
+    stateDir: config.paths.stateDir,
+    notesStayLocal: (providerId) => {
+      const live = getConfig();
+      const llm = resolveLlmConfig(live);
+      return logbookNotesStayLocal({
+        entries: llm.providers,
+        providerId: providerId ?? llm.activeTextProvider,
+        fallbackChain: llm.fallback?.chain,
+        localModelsUrl: live.localModels.url,
+      });
+    },
+  });
 }
 
 export function registerRuntimeVisionTools(input: {

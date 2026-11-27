@@ -39,8 +39,18 @@ export type { LogbookOutcome, LogbookStatus } from "./logbook-status.js";
 export { logbookSkipReason } from "./logbook-skip.js";
 export type { FrontApp } from "./logbook-skip.js";
 
-export { entryRunsOnThisMachine, NO_LOCAL_VISION_REASON, pickLocalVisionProvider } from "./logbook-local-vision.js";
-export type { LogbookVisionProvider, PickLocalVisionArgs, PickLocalVisionResult } from "./logbook-local-vision.js";
+export {
+  entryRunsOnThisMachine,
+  logbookNotesStayLocal,
+  NO_LOCAL_VISION_REASON,
+  pickLocalVisionProvider,
+} from "./logbook-local-vision.js";
+export type {
+  LogbookNotesRouteArgs,
+  LogbookVisionProvider,
+  PickLocalVisionArgs,
+  PickLocalVisionResult,
+} from "./logbook-local-vision.js";
 
 export {
   buildLogbookQuery,

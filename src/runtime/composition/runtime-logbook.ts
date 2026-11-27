@@ -20,13 +20,20 @@ import type { StructuredLogger } from "../../tracing/structured-logger.js";
  * tick (off by default), and the provider is looked up per frame from
  * the live config, local entries only. `null` elsewhere: there is no
  * front-app check to skip protected windows on Windows and Linux yet.
+ * `null` too when the frontend shows no recording mark
+ * (`indicatorVisible` false: `serve`, the desktop's sidecar, one-shot
+ * CLI runs); only the TUI top bar shows `● logbook` today, so only a TUI
+ * process captures, whatever the settings say.
  */
 export function createRuntimeLogbook(args: {
   config: Pick<AtomicAgentConfig, "paths">;
   providerRegistry: Pick<ProviderRegistry, "activeTextProviderId" | "getProvider">;
   logger: StructuredLogger;
+  /** Whether this process's frontend shows the recording mark (the TUI chip). */
+  indicatorVisible: boolean;
   platform?: NodeJS.Platform;
 }): SchedulerSidecar | null {
+  if (!args.indicatorVisible) return null;
   if ((args.platform ?? process.platform) !== "darwin") return null;
   const stateDir = args.config.paths.stateDir;
   const framesDir = join(logbookDir(stateDir), "frames");

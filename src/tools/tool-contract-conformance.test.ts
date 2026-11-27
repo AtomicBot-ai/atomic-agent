@@ -317,7 +317,7 @@ beforeAll(() => {
   registerTaskTools(registry, taskOptions(true));
   registerSessionTools(registry, sessionOptions(true));
   registerVisionTools(registry, { enabled: true, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
-  registerLogbookTools(registry, { stateDir: directory });
+  registerLogbookTools(registry, { ...dangerous, stateDir: directory, notesStayLocal: () => true });
   registerAudioListenTools(registry, { enabled: true, provider: () => undefined, maxAudioBytes: 1024 });
   registerImageTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });
   registerVideoTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });

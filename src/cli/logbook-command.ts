@@ -32,7 +32,8 @@ import { recipeToLink, renderRecipePrompt, STANDUP_RECIPE } from "../recipes/ind
 const HELP = [
   "atomic-agent logbook: a day journal from screenshots, described by a local model",
   "",
-  "While it is on and Atomic Agent is open, it takes a screenshot every few minutes,",
+  "While it is on and the Atomic Agent terminal app is open (its top bar shows it),",
+  "it takes a screenshot every few minutes,",
   "has a vision model on THIS computer write one or two sentences about it, and",
   "deletes the picture right away. Only the sentences are kept, in",
   "<stateDir>/logbook/<day>.jsonl. Password managers, login prompts, system settings",
@@ -153,7 +154,7 @@ function start(env: Env, args: readonly string[]): number {
   writeLogbookSettings(env.stateDir, next);
   env.write(
     [
-      `Logbook on: a screenshot every ${next.intervalMinutes} min while Atomic Agent is open.`,
+      `Logbook on: a screenshot every ${next.intervalMinutes} min while the Atomic Agent terminal app is open (its top bar shows ● logbook).`,
       "Each one is described by a local vision model and deleted right after; screenshots never go to a cloud model.",
       `Notes are kept ${next.retentionDays} days in ${logbookDir(env.stateDir)}.`,
       "It needs a local model that can see images; `atomic-agent logbook status` says if one was found.",
@@ -183,7 +184,7 @@ function status(env: Env, json: boolean): number {
     const when = new Date(last.lastAttemptAt).toLocaleString();
     lines.push(`Last try: ${when}, ${last.lastOutcome ?? "unknown"}${last.lastReason ? `: ${last.lastReason}` : ""}${last.provider ? ` (model on ${last.provider})` : ""}`);
   } else if (settings.enabled) {
-    lines.push("No capture yet: it runs while Atomic Agent (the terminal app or the desktop app) is open.");
+    lines.push("No capture yet: it runs only while the Atomic Agent terminal app is open, where the top bar shows it. The desktop app and `serve` do not capture.");
   }
   if (settings.excludeApps.length > 0) lines.push(`Never captured, by you: ${settings.excludeApps.join(", ")}`);
   env.write(`${lines.join("\n")}\n`);

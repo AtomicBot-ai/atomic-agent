@@ -108,10 +108,12 @@ export const RISK_REVIEW_SESSION_PREFIX = "risk:";
  * (`ReadScopeGrants.widen`), so a model's `low` would quietly move the read
  * scope the person set. `session_cross`: whether another chat's private
  * context may be read or written is the person's call, not a model's.
+ * `logbook_cloud`: the same for notes about the person's own screen.
  */
 const NEVER_REVIEWED: ReadonlySet<ApprovalCategory> = new Set<ApprovalCategory>([
   "fs_read_outside",
   "session_cross",
+  "logbook_cloud",
 ]);
 
 /**
