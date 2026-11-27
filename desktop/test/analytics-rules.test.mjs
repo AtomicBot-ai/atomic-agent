@@ -91,6 +91,18 @@ test("model_configured takes the runtime's llama.cpp; dead values are gone", () 
   assert.equal("step" in V.validateEvent("telegram_setup", { step: "pair", result: "ok" }, "main").props, false);
 });
 
+test("telegram_setup token_checked carries ok / rejected / unchecked and never the token (ATO-2520)", () => {
+  for (const result of ["ok", "rejected", "unchecked"]) {
+    const { props } = V.validateEvent("telegram_setup", { step: "token_checked", result, token: "123:abc" }, "main");
+    assert.equal(props.step, "token_checked");
+    assert.equal(props.result, result);
+    assert.equal("token" in props, false);
+  }
+  const main = readFileSync(join(HERE, "../main/main.ts"), "utf8");
+  const handler = main.slice(main.indexOf('ipcMain.handle("telegram:checkToken"'));
+  assert.match(handler.slice(0, 600), /A\.telegramTokenChecked\(res\)/);
+});
+
 /* ---- the renderer's half, run in a vm ---- */
 
 function loadRenderer() {

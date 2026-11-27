@@ -63,6 +63,23 @@ function tgTokenCheckOutcome(res) {
   return {save:true, message:'Token saved. ' + TG_TOKEN_UNCHECKED, error:null, bot:null};
 }
 
+/* ATO-2520: the bot's @name for the tab after a restart too. The running agent's channel says who
+   the bot is (GET /api/telegram/channel `bot`, from its own getMe), unless a restart is owed: that
+   agent still runs the old token, so the name the last check confirmed is the one to show. null when
+   neither knows (an older agent without `bot`, a channel that has not reached Telegram yet). */
+function tgBotName(checked, channel, owed) {
+  const u = !owed && channel && channel.available === true && channel.bot && typeof channel.bot.username === 'string' ? channel.bot.username : '';
+  return u ? '@' + u : checked || null;
+}
+/* The status line once everything is set up; `name` only when the live channel is up (Discord's dcStatus). */
+const TG_TALK_LINE = 'Message your bot in Telegram to talk to Atomic Agent. Send /help there for its commands.';
+function tgConnectedLine(channel) {
+  const name = channel && channel.state === 'up' ? tgBotName(null, channel, false) : null;
+  return name ? 'Connected as ' + name + '. ' + TG_TALK_LINE : TG_TALK_LINE;
+}
+/* While the agent's channel is still starting (right after a restart), the open tab reads it again this often. */
+const TG_STARTING_RECHECK_MS = 2000;
+
 /* The Connect card (no token yet): why, the steps, the two actions. `h`: {esc, ic, logo?}. */
 function tgConnectCardHTML(h) {
   const mark = (typeof h.logo === 'function' && h.logo('telegram', 'lg', 'send')) || '<span class="tk-ico tk-ico--lg tk-ico--blue">' + h.ic('send') + '</span>';
@@ -97,5 +114,6 @@ function tgTokenPromptCardHTML(t, h) {
 
 if (typeof module !== 'undefined') {
   module.exports = {TG_BOTFATHER_URL, TG_TOKEN_RE, TG_TOKEN_PLACEHOLDER, TG_TOKEN_EMPTY, TG_TOKEN_SHAPE, TG_TOKEN_REJECTED, TG_TOKEN_UNCHECKED, TG_SETUP_STEPS,
-    tgTokenClean, tgTokenInitial, tgTokenSaveEnabled, tgTokenCheckOutcome, tgConnectCardHTML, tgTokenPromptCardHTML};
+    tgTokenClean, tgTokenInitial, tgTokenSaveEnabled, tgTokenCheckOutcome, tgConnectCardHTML, tgTokenPromptCardHTML,
+    tgBotName, tgConnectedLine, TG_TALK_LINE, TG_STARTING_RECHECK_MS};
 }
