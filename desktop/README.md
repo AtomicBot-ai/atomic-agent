@@ -182,7 +182,8 @@ and only when no page holds the card does main answer through
 `agent:approve`'s own function ([pet-ipc.ts](main/pet-ipc.ts)). Never
 Always allow, and never Allow for a question, a high risk verdict, a request
 held after outside content (its note shows in the risk line), one with no
-preview, or the categories kept for the full card (`PET_WINDOW_ONLY_CATEGORIES`): those offer
+preview or a preview the bubble cannot show whole (more than one line, or clipped),
+or the categories kept for the full card (`PET_WINDOW_ONLY_CATEGORIES`): those offer
 Review. Do Not Disturb hides the bubble and the done / failed flashes.
 
 **Why not the NDJSON sidecar.** `dist/sidecar/main.js` exists only in a source

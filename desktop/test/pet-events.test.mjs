@@ -120,7 +120,8 @@ test("the bubble shows the command, with the gate's reason under it", () => {
   const a = petApprovalFrom(ask({ reason: GENERIC, preview: "rm -rf build\necho done" }), 0);
   assert.equal(a.text, "rm -rf build", "the preview's first line, not the generic reason");
   assert.equal(a.detail, GENERIC);
-  assert.equal(a.canAllow, true);
+  assert.equal(a.canAllow, false, "a second line is hidden behind the first: full card");
+  assert.equal(petApprovalFrom(ask({ reason: GENERIC, preview: "rm -rf build" }), 0).canAllow, true);
   assert.equal(petApprovalFrom(ask({ reason: "ls -la", preview: "ls -la" }), 0).detail, "", "no second line that repeats the first");
 });
 
@@ -143,4 +144,16 @@ test("a request held after outside content: no Allow, and the note is in the ris
   assert.match(a.risk, /evil\.example/);
   assert.ok("error" in petDecision({ approvalId: "ap-9", decision: "allow" }, a));
   assert.equal(petCanAllow({ ...held, riskNote: "   " }), true, "a blank note holds nothing");
+});
+
+test("a preview the bubble cannot show whole: no Allow, the full card decides", () => {
+  assert.equal(petCanAllow({ category: "shell", preview: "ls\nnpm i evil-pkg" }), false, "a second command hides behind the first line");
+  assert.equal(petCanAllow({ category: "shell", preview: "ls\r\nnpm i evil-pkg" }), false, "CRLF counts as a new line");
+  assert.equal(petCanAllow({ category: "shell", preview: "ls\n\n" }), true, "trailing blank lines hide nothing");
+  const long = "echo " + "a".repeat(140) + "; rm -rf ~";
+  assert.equal(petCanAllow({ category: "shell", preview: long }), false, "a clipped line hides its tail");
+  assert.equal(petCanAllow({ category: "shell", preview: "a".repeat(140) }), true, "a line that fits is shown whole");
+  const a = petApprovalFrom(ask({ preview: "ls\nnpm i evil-pkg" }), 0);
+  assert.equal(a.canAllow, false);
+  assert.ok("error" in petDecision({ approvalId: "ap-1", decision: "allow" }, a));
 });

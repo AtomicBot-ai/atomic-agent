@@ -82,6 +82,18 @@ function previewFirstLine(p: Record<string, unknown>): string {
   return typeof p.preview === "string" ? petClean(p.preview.replace(/\r\n?/g, "\n").split("\n")[0]) : "";
 }
 
+/**
+ * The bubble shows the whole command: one non-blank line, not clipped. A
+ * shell preview keeps its newlines (`ls\nnpm i evil-pkg`) and a long line is
+ * cut at TEXT_MAX, so either would hide what runs behind the first words.
+ */
+function previewFitsBubble(p: Record<string, unknown>): boolean {
+  if (typeof p.preview !== "string") return false;
+  const lines = p.preview.replace(/\r\n?/g, "\n").split("\n").filter((l) => l.trim() !== "");
+  if (lines.length !== 1) return false;
+  return petClean(lines[0], Number.MAX_SAFE_INTEGER) === petClean(lines[0]);
+}
+
 /** The gate held it after outside content (approval-gate.ts formatTaintNote). */
 function hasRiskNote(p: Record<string, unknown>): boolean {
   return typeof p.riskNote === "string" && p.riskNote.trim() !== "";
@@ -107,6 +119,8 @@ export function petCanAllow(p: Record<string, unknown>): boolean {
   if (hasRiskNote(p)) return false;
   // Nothing shows what would run: never allow it unseen.
   if (!previewFirstLine(p)) return false;
+  // More than one line, or clipped: the person opens the full card.
+  if (!previewFitsBubble(p)) return false;
   return !(typeof p.category === "string" && PET_WINDOW_ONLY_CATEGORIES.includes(p.category));
 }
 
