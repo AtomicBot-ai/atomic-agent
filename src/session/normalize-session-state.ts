@@ -1,6 +1,7 @@
 import { validRollingSummary, validSessionCompaction } from "./session-compaction.js";
 import type { SessionState } from "./session-state.js";
 import { readPreviousReplies } from "./session-previous-replies.js";
+import { readMessageBranches } from "./session-message-branches.js";
 import { readPlanSnapshot } from "../agent/plan/plan-snapshot.js";
 
 /**
@@ -51,6 +52,12 @@ export function normalizeSessionState(raw: unknown): SessionState {
     const previous = readPreviousReplies(normalized.previousReplies);
     if (previous === undefined) delete normalized.previousReplies;
     else normalized.previousReplies = previous;
+  }
+  // Versions of edited messages (ATO-2470): unreadable entries are dropped.
+  if (normalized.messageBranches !== undefined) {
+    const branches = readMessageBranches(normalized.messageBranches);
+    if (branches === undefined) delete normalized.messageBranches;
+    else normalized.messageBranches = branches;
   }
   return normalized;
 }

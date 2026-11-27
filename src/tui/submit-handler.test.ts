@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { handleEditorSubmit, runSlashCommand } from "./submit-handler.js";
 import {
   createInitialTuiState,
+  type RewindChoiceFacts,
   type TuiSessionInfo,
   type TuiState,
 } from "./tui-state.js";
@@ -805,7 +806,7 @@ describe("Enter in the rewind picker (ATO-1057)", () => {
     };
   }
 
-  it("closes the picker and asks to rewind to the highlighted question", () => {
+  it("picks the highlighted question and asks what to take back (ATO-2467)", () => {
     const onRewindRequested = vi.fn();
     const dispatched: Array<{ type: string }> = [];
     handleEditorSubmit(
@@ -815,7 +816,45 @@ describe("Enter in the rewind picker (ATO-1057)", () => {
       stubCallbacks({ onRewindRequested, onMessageSubmitted: vi.fn() }),
     );
     expect(onRewindRequested).toHaveBeenCalledWith(0, "first");
+    expect(dispatched).toEqual([
+      { type: "rewind_choice_requested", point: { turnIndex: 0, text: "first", at: 1, ordinal: 1 } },
+    ]);
+  });
+
+  function choiceState(facts: RewindChoiceFacts | null, cursor = 0): TuiState {
+    const base = pickerState();
+    const point = base.rewindPicker!.points[1]!;
+    return {
+      ...base,
+      rewindPicker: {
+        ...base.rewindPicker!,
+        choice: {
+          point,
+          facts,
+          options: facts === null ? [] : facts.fileCount > 0 ? ["all", "conversation", "files"] : ["conversation"],
+          cursor,
+        },
+      },
+    };
+  }
+  const facts = { fileCount: 2, notRestorableCount: 0, incomplete: false, uncoveredCount: 0 };
+
+  it("closes the box and hands over the highlighted choice", () => {
+    const onRewindScopeChosen = vi.fn();
+    const dispatched: Array<{ type: string }> = [];
+    handleEditorSubmit("", choiceState(facts, 2), (a) => dispatched.push(a), stubCallbacks({ onRewindScopeChosen }));
+    expect(onRewindScopeChosen).toHaveBeenCalledWith(0, "first", "files");
     expect(dispatched.map((a) => a.type)).toEqual(["rewind_picker_closed"]);
+  });
+
+  it("does nothing while the files are still being checked", () => {
+    const onRewindScopeChosen = vi.fn();
+    const onRewindRequested = vi.fn();
+    const dispatched: Array<{ type: string }> = [];
+    handleEditorSubmit("", choiceState(null), (a) => dispatched.push(a), stubCallbacks({ onRewindScopeChosen, onRewindRequested }));
+    expect(onRewindScopeChosen).not.toHaveBeenCalled();
+    expect(onRewindRequested).not.toHaveBeenCalled();
+    expect(dispatched).toEqual([]);
   });
 
   it("never sends the buffer as a message while the picker is open", () => {

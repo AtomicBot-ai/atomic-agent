@@ -345,13 +345,23 @@ export interface TuiAppCallbacks {
   /** `/export [format] [path]` (ATO-1054): write the open chat to a file and say where. */
   onChatExportRequested?(request: import("./commands/export-command.js").ChatExportRequest): void;
   /**
-   * Take the chat back to just before the question at `turnIndex` of
-   * the session's turns: the session (held and saved) keeps only what
-   * came before it, the transcript is rebuilt and the question goes back
-   * in the composer. `expectText` is the question the picker showed; a
-   * different row there is refused.
+   * A question was picked in the `/rewind` list: check what a rewind to
+   * the question at `turnIndex` of the session's turns would touch and
+   * offer the choices (ATO-2467), or say in the chat why it cannot.
+   * `expectText` is the question the picker showed; a different row
+   * there is refused.
    */
   onRewindRequested?(turnIndex: number, expectText: string): void;
+  /**
+   * ATO-2467: the person chose what to take back for that question:
+   * `all` puts the files back and cuts the chat, `conversation` cuts
+   * the chat only, `files` puts the files back only.
+   */
+  onRewindScopeChosen?(
+    turnIndex: number,
+    expectText: string,
+    scope: import("../runtime/session-rewind-service.js").RewindScope,
+  ): void;
   /** Ask the orchestrator to swap to an existing persisted session. */
   onSessionSwitchRequested?(sessionId: string): void;
   /**
@@ -2851,6 +2861,7 @@ export function TuiApp({
                     <RewindPicker
                       points={state.rewindPicker.points}
                       cursor={state.rewindPicker.cursor}
+                      choice={state.rewindPicker.choice ?? null}
                     />
                   </Box>
                 ) : null}

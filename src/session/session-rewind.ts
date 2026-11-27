@@ -10,9 +10,9 @@ import { truncateSessionAt } from "./session-truncate.js";
  * rows are points a person can go back to, and refuses the cuts that
  * would leave the session lying about what it remembers. Unlike
  * `planLastTurnRollback` it does not refuse turns that ran tools: the
- * person picked an earlier point on purpose, and the caller says that
- * files the agent changed stay as they are (there are no file
- * checkpoints in the terminal yet).
+ * person picked an earlier point on purpose, and the files those tools
+ * changed are the caller's choice to put back or leave
+ * (`runtime/session-rewind-service.ts`, ATO-2467).
  */
 
 /** One question the chat can be taken back to. */
