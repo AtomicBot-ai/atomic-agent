@@ -232,12 +232,16 @@ export function rateQuant(
 
 /**
  * Index of the quant to offer first, or `null` when none qualifies:
- *  1. among the 4-bit-or-more quants that fit the GPU (or the RAM of a
- *     machine without one) and answer at a pleasant speed, the most
- *     precise one (the larger file breaks a tie);
- *  2. else the fastest of the ones that fit;
- *  3. else the smallest 4-bit-or-more quant that is a tight fit;
- *  4. else nothing — never a 2- or 3-bit file, never one that only runs
+ *  1. among the 4-bit-or-more quants that fit fully, on the GPU (or in
+ *     the RAM of a machine without one), and answer at a pleasant speed,
+ *     the most precise one (the larger file breaks a tie);
+ *  2. else the fastest of the ones that fit fully;
+ *  3. only when no quant fits fully: the same two steps over the quants
+ *     that fit with their experts in RAM (`placement: "split"`), where an
+ *     unknown speed does not count as pleasant, so a split never raises
+ *     the precision of the pick on its own;
+ *  4. else the smallest 4-bit-or-more quant that is a tight fit;
+ *  5. else nothing: never a 2- or 3-bit file, never one that only runs
  *     from disk.
  * A quant whose bit level the name does not give is not picked: it may
  * be below 4-bit.
@@ -245,30 +249,38 @@ export function rateQuant(
 export function pickBestQuant(
   rated: readonly (QuantRating & { sizeBytes: number })[],
 ): number | null {
-  const eligible = rated
+  type Entry = { r: QuantRating & { sizeBytes: number }; index: number };
+  const eligible: Entry[] = rated
     .map((r, index) => ({ r, index }))
     .filter(({ r }) => r.bits !== null && r.bits >= MIN_AUTO_PICK_BITS);
-
-  const fits = eligible.filter(({ r }) => r.fit.tier === "fits");
-  const pleasant = fits.filter(
-    ({ r }) => r.speed === null || r.speed.tokPerSec >= PLEASANT_TOK_PER_SEC,
-  );
-  if (pleasant.length > 0) {
-    return pleasant.reduce((best, cur) =>
+  const smallest = (list: Entry[]) =>
+    list.reduce((best, cur) => (cur.r.sizeBytes < best.r.sizeBytes ? cur : best)).index;
+  const mostPrecise = (list: Entry[]) =>
+    list.reduce((best, cur) =>
       cur.r.bits! > best.r.bits! ||
       (cur.r.bits === best.r.bits && cur.r.sizeBytes > best.r.sizeBytes)
         ? cur
         : best,
     ).index;
-  }
-  if (fits.length > 0) {
-    return fits.reduce((best, cur) => (cur.r.sizeBytes < best.r.sizeBytes ? cur : best))
-      .index;
-  }
+  const pickAmong = (list: Entry[], unknownIsPleasant: boolean): number | null => {
+    if (list.length === 0) return null;
+    const pleasant = list.filter(({ r }) =>
+      r.speed === null ? unknownIsPleasant : r.speed.tokPerSec >= PLEASANT_TOK_PER_SEC,
+    );
+    return pleasant.length > 0 ? mostPrecise(pleasant) : smallest(list);
+  };
+
+  const fits = eligible.filter(({ r }) => r.fit.tier === "fits");
+  const full = pickAmong(
+    fits.filter(({ r }) => r.fit.placement !== "split"),
+    true,
+  );
+  if (full !== null) return full;
+  const split = pickAmong(
+    fits.filter(({ r }) => r.fit.placement === "split"),
+    false,
+  );
+  if (split !== null) return split;
   const tight = eligible.filter(({ r }) => r.fit.tier === "tight");
-  if (tight.length > 0) {
-    return tight.reduce((best, cur) => (cur.r.sizeBytes < best.r.sizeBytes ? cur : best))
-      .index;
-  }
-  return null;
+  return tight.length > 0 ? smallest(tight) : null;
 }
