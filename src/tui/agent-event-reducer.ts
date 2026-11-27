@@ -835,7 +835,12 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       const spendLimit = findDailySpendLimitError(event.error);
       // ATO-334: the out-of-memory sentence is already plain and says
       // what to do; the transport wording around it would not.
-      const chatError = spendLimit !== null
+      // ATO-1686: the model kept calling tools that don't exist; the
+      // catalog's sentence and where to pick another model, not "a tool
+      // call failed".
+      const chatError = event.failure?.cause === "unknown_tools_repeated"
+        ? `${event.failure.phrase} Pick one with /model.\nDetails: ${event.error.message}`
+        : spendLimit !== null
         ? spendLimit.message
         : isLocalOutOfMemory(event.error)
         ? event.error.message
