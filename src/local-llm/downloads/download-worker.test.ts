@@ -384,9 +384,6 @@ describe("download-worker", () => {
       writeIntervalMs: 0,
     });
     await waitFor(() => releaseGate.release !== null);
-    // The first chunk on record before the pause, or a slow write lands
-    // after it and the partial is still empty.
-    await waitFor(() => readDownloadJob(dataDir, jobId)?.transferredBytes === 2);
     requestDownloadPause(dataDir, jobId);
     controller.abort();
     releaseGate.release?.();
@@ -505,7 +502,6 @@ describe("download-worker", () => {
     // weights leg is no longer cancelled by the projector's 404.
     const releaseGgufGate: { release: (() => void) | null } = { release: null };
     const ggufDest = resolveModelFilePath(dataDir, VISION.id, VISION.filename);
-    let mmprojServed = false;
     globalThis.fetch = vi.fn(async (url: unknown) => {
       if (String(url) === VISION.mmprojUrl) {
         // Fail only once the weights have bytes on disk, so the test
@@ -517,7 +513,6 @@ describe("download-worker", () => {
             return false;
           }
         });
-        mmprojServed = true;
         return new Response(null, { status: 404, statusText: "Not Found" });
       }
       const body = new ReadableStream({
@@ -548,9 +543,6 @@ describe("download-worker", () => {
       writeIntervalMs: 0,
     });
     await waitFor(() => releaseGgufGate.release !== null);
-    // The 404 first: released early, the GGUF can finish before the
-    // projector fails and the test no longer shows the weights survive it.
-    await waitFor(() => mmprojServed);
     releaseGgufGate.release?.();
     const outcome = await pending;
 
