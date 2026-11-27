@@ -36,7 +36,8 @@
  *   `--unshare-net` drops the network; without network the known local
  *   socket places are covered too (`os-sandbox-sockets.ts`), because a
  *   socket bound to a file path outlives the network namespace, and a
- *   seccomp filter refuses `socket(AF_UNIX)` (`seccomp-unix-block.ts`).
+ *   seccomp filter refuses `socket(AF_UNIX)` and a datagram
+ *   `socketpair(AF_UNIX)` (`seccomp-unix-block.ts`).
  * - Windows, or Linux without `bwrap`: no sandbox is available. The
  *   caller refuses the command (Jan's rule: no sandbox, no shell) and
  *   says how to turn the mode off.
@@ -580,8 +581,8 @@ function bwrapArgs(
     ]),
   );
   if (!policy.network) out.push("--unshare-net");
-  // No `AF_UNIX` socket can be created at all (ATO-2469): closes the
-  // socket files the path masks above do not know about.
+  // No `AF_UNIX` socket that could reach a socket file can be created
+  // (ATO-2469): closes the ones the path masks above do not know about.
   if (seccomp) out.push("--seccomp", String(SECCOMP_PROGRAM_FD));
   out.push("--die-with-parent", "--new-session", "--", command, ...args);
   return out;

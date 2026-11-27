@@ -16,11 +16,12 @@ import {
 const ALLOW = 0x7fff0000;
 const EPERM = 0x00050001;
 
-function run(program: Buffer, nr: number, arch: number, arg0: bigint = 0n): number {
+function run(program: Buffer, nr: number, arch: number, arg0: bigint = 0n, arg1: bigint = 0n): number {
   const data = Buffer.alloc(64);
   data.writeUInt32LE(nr >>> 0, 0);
   data.writeUInt32LE(arch >>> 0, 4);
   data.writeBigUInt64LE(arg0, 16);
+  data.writeBigUInt64LE(arg1, 24);
   let acc = 0;
   for (let pc = 0; pc * 8 < program.length; pc += 1) {
     const code = program.readUInt16LE(pc * 8);
@@ -28,6 +29,7 @@ function run(program: Buffer, nr: number, arch: number, arg0: bigint = 0n): numb
     const jf = program.readUInt8(pc * 8 + 3);
     const k = program.readUInt32LE(pc * 8 + 4);
     if (code === 0x20) acc = data.readUInt32LE(k);
+    else if (code === 0x54) acc = (acc & k) >>> 0;
     else if (code === 0x15) pc += acc === k ? jt : jf;
     else if (code === 0x06) return k;
     else throw new Error(`unexpected opcode ${code}`);
@@ -37,6 +39,11 @@ function run(program: Buffer, nr: number, arch: number, arg0: bigint = 0n): numb
 
 const AF_UNIX = 1n;
 const AF_INET = 2n;
+const SOCK_STREAM = 1n;
+const SOCK_DGRAM = 2n;
+const SOCK_RAW = 3n;
+const SOCK_SEQPACKET = 5n;
+const SOCK_FLAGS = 0x80000n | 0x800n; // SOCK_CLOEXEC | SOCK_NONBLOCK
 const program = assembleSeccompProgram();
 
 describe("seccomp program that refuses AF_UNIX sockets (ATO-2469)", () => {
@@ -70,9 +77,30 @@ describe("seccomp program that refuses AF_UNIX sockets (ATO-2469)", () => {
     expect(run(program, SYSCALLS.i386.socketcall, AUDIT_ARCH.i386, 3n)).toBe(ALLOW);
   });
 
-  it("allows everything else, socketpair included", () => {
-    const socketpairX64 = 53;
-    expect(run(program, socketpairX64, AUDIT_ARCH.x86_64, AF_UNIX)).toBe(ALLOW);
+  it("refuses a datagram socketpair(AF_UNIX), which can sendto a named socket (review F1933.1)", () => {
+    const tables: [number, number][] = [
+      [SYSCALLS.x86_64.socketpair, AUDIT_ARCH.x86_64],
+      [0x40000000 | SYSCALLS.x86_64.socketpair, AUDIT_ARCH.x86_64],
+      [SYSCALLS.aarch64.socketpair, AUDIT_ARCH.aarch64],
+      [SYSCALLS.i386.socketpair, AUDIT_ARCH.i386],
+      [SYSCALLS.arm.socketpair, AUDIT_ARCH.arm],
+    ];
+    for (const [nr, arch] of tables) {
+      expect(run(program, nr, arch, AF_UNIX, SOCK_DGRAM), `${nr}`).toBe(EPERM);
+      expect(run(program, nr, arch, AF_UNIX, SOCK_DGRAM | SOCK_FLAGS), `${nr}`).toBe(EPERM);
+      // Unix sockets turn SOCK_RAW into SOCK_DGRAM.
+      expect(run(program, nr, arch, AF_UNIX, SOCK_RAW), `${nr}`).toBe(EPERM);
+      // Stream and seqpacket pairs are connected for good: allowed.
+      expect(run(program, nr, arch, AF_UNIX, SOCK_STREAM), `${nr}`).toBe(ALLOW);
+      expect(run(program, nr, arch, AF_UNIX, SOCK_STREAM | SOCK_FLAGS), `${nr}`).toBe(ALLOW);
+      expect(run(program, nr, arch, AF_UNIX, SOCK_SEQPACKET), `${nr}`).toBe(ALLOW);
+      expect(run(program, nr, arch, AF_INET, SOCK_DGRAM), `${nr}`).toBe(ALLOW);
+    }
+    // The i386 multiplexer's SYS_SOCKETPAIR (8): its arguments are behind a pointer.
+    expect(run(program, SYSCALLS.i386.socketcall, AUDIT_ARCH.i386, 8n)).toBe(EPERM);
+  });
+
+  it("allows everything else", () => {
     expect(run(program, 0, AUDIT_ARCH.x86_64)).toBe(ALLOW);
     // The numbers are per table: 198 on x86_64 is `lremovexattr`, not `socket`.
     expect(run(program, SYSCALLS.aarch64.socket, AUDIT_ARCH.x86_64, AF_UNIX)).toBe(ALLOW);

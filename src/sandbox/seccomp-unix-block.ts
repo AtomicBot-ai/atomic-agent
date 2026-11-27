@@ -5,8 +5,9 @@
  * file path (docker.sock, a user's own agent socket in some folder) stays
  * reachable. `os-sandbox-sockets.ts` covers the known places by path,
  * which can never be a complete list. This filter closes the class: a
- * sandboxed process cannot create an `AF_UNIX` socket at all, so there
- * is nothing to connect with, wherever the socket file lives. Same
+ * sandboxed process cannot create an `AF_UNIX` socket that could reach a
+ * socket file (`socket(AF_UNIX)` and a datagram `socketpair` are both
+ * refused), wherever that file lives. Same
  * approach as Claude Code's sandbox-runtime on Linux (a BPF program that
  * refuses `socket(AF_UNIX, ...)`, applied by bubblewrap).
  *
@@ -20,17 +21,24 @@
  * - `socket(AF_UNIX, ...)` on x86_64, its x32 ABI, i386 and aarch64, and
  *   32-bit ARM (a 32-bit binary runs on a 64-bit host with its own
  *   syscall numbers, so each table is checked);
- * - the i386 `socketcall(SYS_SOCKET, ...)` multiplexer: its domain sits
- *   behind a pointer the filter cannot read, so every socket it would
- *   create is refused (old 32-bit binaries only; current glibc calls
- *   `socket` directly);
+ * - `socketpair(AF_UNIX, ...)` of any type but `SOCK_STREAM` and
+ *   `SOCK_SEQPACKET`: a datagram pair (`SOCK_DGRAM`, or `SOCK_RAW`,
+ *   which unix sockets turn into one) can still `connect` or `sendto` a
+ *   named datagram socket (journald's `/dev/log`, `NOTIFY_SOCKET`, one in
+ *   the working folder; review F1933.1). A stream or seqpacket pair is
+ *   connected for good (`EISCONN`), so it stays allowed: libuv, Python
+ *   and most programs make their pairs that way;
+ * - the i386 `socketcall(SYS_SOCKET, ...)` and `socketcall(SYS_SOCKETPAIR,
+ *   ...)` multiplexer calls: their arguments sit behind a pointer the
+ *   filter cannot read, so every socket and pair they would create is
+ *   refused (old 32-bit binaries only; current glibc calls `socket` and
+ *   `socketpair` directly);
  * - `io_uring_setup`: `IORING_OP_SOCKET` creates sockets without the
  *   `socket` syscall, past any seccomp filter (Docker's default profile
  *   blocks io_uring for the same reason). Programs fall back to epoll.
  *
- * `socketpair(AF_UNIX)` stays allowed: it makes a connected pair inside
- * the process and reaches no socket file. Everything else is allowed.
- * Hosts other than x64 and arm64 get no filter (the path masks remain).
+ * Everything else is allowed. Hosts other than x64 and arm64 get no
+ * filter (the path masks remain).
  */
 import { endianness } from "node:os";
 
@@ -40,6 +48,7 @@ export const SECCOMP_PROGRAM_FD = 3;
 // BPF opcodes (linux/filter.h).
 const LD_W_ABS = 0x20; // BPF_LD | BPF_W | BPF_ABS
 const JEQ_K = 0x15; // BPF_JMP | BPF_JEQ | BPF_K
+const AND_K = 0x54; // BPF_ALU | BPF_AND | BPF_K
 const RET_K = 0x06; // BPF_RET | BPF_K
 
 // linux/seccomp.h
@@ -48,10 +57,12 @@ const RET_ERRNO = 0x00050000;
 const EPERM = 1;
 
 // Offsets in `struct seccomp_data`: nr, arch, ip (u64), args[6] (u64).
-// The low word of args[0] (little-endian) is the socket domain.
+// The low word of args[0] (little-endian) is the socket domain, that of
+// args[1] the type (with SOCK_NONBLOCK and SOCK_CLOEXEC above bit 3).
 const OFF_NR = 0;
 const OFF_ARCH = 4;
 const OFF_ARG0_LOW = 16;
+const OFF_ARG1_LOW = 24;
 
 /** linux/audit.h: EM_* with the 64-bit and little-endian flags. */
 export const AUDIT_ARCH = {
@@ -62,21 +73,26 @@ export const AUDIT_ARCH = {
 } as const;
 
 const AF_UNIX = 1;
-const SYS_SOCKET = 1; // socketcall's call number for socket()
+const SOCK_STREAM = 1;
+const SOCK_SEQPACKET = 5;
+const SOCK_TYPE_MASK = 0xf;
+const SYS_SOCKET = 1; // socketcall's call numbers for socket()
+const SYS_SOCKETPAIR = 8; // and socketpair()
 const X32_BIT = 0x40000000;
 
 /** Syscall numbers per table. */
 export const SYSCALLS = {
-  x86_64: { socket: 41, ioUringSetup: 425 },
-  aarch64: { socket: 198, ioUringSetup: 425 },
-  i386: { socket: 359, socketcall: 102, ioUringSetup: 425 },
-  arm: { socket: 281, ioUringSetup: 425 },
+  x86_64: { socket: 41, socketpair: 53, ioUringSetup: 425 },
+  aarch64: { socket: 198, socketpair: 199, ioUringSetup: 425 },
+  i386: { socket: 359, socketpair: 360, socketcall: 102, ioUringSetup: 425 },
+  arm: { socket: 281, socketpair: 288, ioUringSetup: 425 },
 } as const;
 
 type Insn =
   | { label: string }
   | { op: "ld"; offset: number }
   | { op: "jeq"; k: number; to: string }
+  | { op: "and"; k: number }
   | { op: "ret"; k: number };
 
 const allow: Insn = { op: "ret", k: RET_ALLOW };
@@ -101,29 +117,48 @@ const PROGRAM: readonly Insn[] = [
   ...table("x86_64", [
     [SYSCALLS.x86_64.socket, "domain"],
     [X32_BIT | SYSCALLS.x86_64.socket, "domain"],
+    [SYSCALLS.x86_64.socketpair, "pair"],
+    [X32_BIT | SYSCALLS.x86_64.socketpair, "pair"],
     [SYSCALLS.x86_64.ioUringSetup, "deny"],
     [X32_BIT | SYSCALLS.x86_64.ioUringSetup, "deny"],
   ]),
   ...table("aarch64", [
     [SYSCALLS.aarch64.socket, "domain"],
+    [SYSCALLS.aarch64.socketpair, "pair"],
     [SYSCALLS.aarch64.ioUringSetup, "deny"],
   ]),
   ...table("i386", [
     [SYSCALLS.i386.socket, "domain"],
+    [SYSCALLS.i386.socketpair, "pair"],
     [SYSCALLS.i386.socketcall, "socketcall"],
     [SYSCALLS.i386.ioUringSetup, "deny"],
   ]),
   ...table("arm", [
     [SYSCALLS.arm.socket, "domain"],
+    [SYSCALLS.arm.socketpair, "pair"],
     [SYSCALLS.arm.ioUringSetup, "deny"],
   ]),
   { label: "socketcall" },
   { op: "ld", offset: OFF_ARG0_LOW },
   { op: "jeq", k: SYS_SOCKET, to: "deny" },
+  { op: "jeq", k: SYS_SOCKETPAIR, to: "deny" },
   allow,
   { label: "domain" },
   { op: "ld", offset: OFF_ARG0_LOW },
   { op: "jeq", k: AF_UNIX, to: "deny" },
+  allow,
+  // socketpair: AF_UNIX pairs only as stream or seqpacket.
+  { label: "pair" },
+  { op: "ld", offset: OFF_ARG0_LOW },
+  { op: "jeq", k: AF_UNIX, to: "pairType" },
+  allow,
+  { label: "pairType" },
+  { op: "ld", offset: OFF_ARG1_LOW },
+  { op: "and", k: SOCK_TYPE_MASK },
+  { op: "jeq", k: SOCK_STREAM, to: "pairOk" },
+  { op: "jeq", k: SOCK_SEQPACKET, to: "pairOk" },
+  { op: "ret", k: RET_ERRNO | EPERM },
+  { label: "pairOk" },
   allow,
   { label: "deny" },
   { op: "ret", k: RET_ERRNO | EPERM },
@@ -147,6 +182,9 @@ export function assembleSeccompProgram(program: readonly Insn[] = PROGRAM): Buff
       k = insn.offset;
     } else if (insn.op === "ret") {
       code = RET_K;
+      k = insn.k;
+    } else if (insn.op === "and") {
+      code = AND_K;
       k = insn.k;
     } else {
       code = JEQ_K;

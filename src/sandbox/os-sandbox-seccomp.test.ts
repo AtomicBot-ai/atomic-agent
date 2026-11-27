@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -129,6 +129,35 @@ describe.skipIf(realBwrap === null || unixSocketBlockProgram() === null)(
       const out = job.output().stdout;
       expect(out).not.toContain("connected");
       expect(out).toContain("blocked EPERM");
+    });
+
+    // Review F1933.1: a datagram pair could `sendto` a named datagram
+    // socket (journald's `/dev/log`, one in the working folder).
+    it.skipIf(!existsSync("/usr/bin/python3"))("refuses a datagram socketpair, keeps a stream one", async () => {
+      dir = mkdtempSync(join(tmpdir(), "atomic-sbx-2469-"));
+      const script = [
+        "import errno, socket",
+        "try:",
+        "    socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)",
+        "    print('dgram pair made')",
+        "except OSError as e:",
+        "    print('dgram blocked', errno.errorcode[e.errno])",
+        "socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)",
+        "print('stream pair ok')",
+      ].join("\n");
+      const w = wrapWithOsSandbox("/usr/bin/python3", ["-c", script], policy(false, dir), {
+        bwrap: realBwrap,
+      });
+      if (!w.ok) throw new Error(w.reason);
+      const job = startCommandJob(w.command, w.args, {
+        cwd: dir,
+        ...(w.fd3Input === undefined ? {} : { fd3Input: w.fd3Input }),
+      });
+      expect(await job.waitFor(20_000)).toBe("exited");
+      const out = job.output().stdout;
+      expect(out).not.toContain("dgram pair made");
+      expect(out).toContain("dgram blocked EPERM");
+      expect(out).toContain("stream pair ok");
     });
   },
 );

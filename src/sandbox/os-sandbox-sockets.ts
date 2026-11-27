@@ -19,8 +19,9 @@
  * This is a list, not a rule: a socket in a place not listed here stays
  * reachable by path. On x64 and arm64 hosts the seccomp filter of
  * `seccomp-unix-block.ts` closes the rest (ATO-2469): no `AF_UNIX`
- * socket can be created at all. These masks stay as a second layer and
- * as the only one on other hosts.
+ * socket that could reach a socket file can be created (only a stream or
+ * seqpacket `socketpair`). These masks stay as a second layer and as the
+ * only one on other hosts.
  *
  * macOS needs none of this: Seatbelt denies `(remote unix-socket)`.
  */
