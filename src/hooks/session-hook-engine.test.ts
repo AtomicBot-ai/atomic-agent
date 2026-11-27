@@ -1,3 +1,4 @@
+import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { parseHooksObject } from "./hook-config.js";
 import type { HookRunResult } from "./hook-runner.js";
@@ -91,5 +92,68 @@ describe("session hook engine", () => {
     const engine = new SessionHookEngine({ stateDir: "/s", load: loaded({ hooks: {} }), run });
     expect(await engine.beforeTurn(turn)).toEqual({ kind: "proceed" });
     expect(run).not.toHaveBeenCalled();
+  });
+  it("SessionEnd fires once for a session this process started, with Claude's reason and ours (ATO-2462)", async () => {
+    const { run, inputs } = runner({});
+    const engine = new SessionHookEngine({ stateDir: "/s", load: loaded({ hooks: { SessionEnd: [...entry("end"), ...entry("only-clear", "clear")] } }), run });
+    // Never started here: nothing to end.
+    await engine.endSession("s1", "deleted");
+    expect(run).not.toHaveBeenCalled();
+    await engine.beforeTurn(turn);
+    await engine.endSession("s1", "finished");
+    expect(inputs.end).toMatchObject({ hook_event_name: "SessionEnd", session_id: "s1", cwd: "/work", reason: "other", atomic_reason: "finished" });
+    expect(inputs["only-clear"]).toBeUndefined();
+    await engine.endSession("s1", "deleted");
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("endAll ends every open session as a shutdown", async () => {
+    const { run, inputs } = runner({});
+    const engine = new SessionHookEngine({ stateDir: "/s", load: loaded({ hooks: { SessionEnd: entry("end") } }), run });
+    await engine.beforeTurn(turn);
+    await engine.endAll();
+    expect(inputs.end).toMatchObject({ reason: "prompt_input_exit", atomic_reason: "shutdown" });
+  });
+
+  it("SubagentStop gets the parent's session id and the worker's, and its block keeps the worker going", async () => {
+    const { run, inputs } = runner({ sub: { exitCode: 2, stderr: "no summary yet" } });
+    const engine = new SessionHookEngine({ stateDir: "/s", load: loaded({ hooks: { SubagentStop: entry("sub", "subagent") } }), run });
+    const reason = await engine.afterSubagentTurn({ sessionId: "parent", agentId: "w1", agentType: "subagent", cwd: "/work", lastReply: "done", stopHookActive: false });
+    expect(reason).toBe("no summary yet");
+    expect(inputs.sub).toMatchObject({ hook_event_name: "SubagentStop", session_id: "parent", agent_id: "w1", agent_type: "subagent", last_assistant_message: "done", stop_hook_active: false });
+    // The matcher is the agent type: a Fusion worker does not match "subagent".
+    expect(await engine.afterSubagentTurn({ sessionId: "parent", agentId: "w2", agentType: "fusion-worker", cwd: "/work", stopHookActive: false })).toBeUndefined();
+  });
+
+  it("FileChanged: a configured hook watches the session folder and fires for a matching file name", async () => {
+    const emitters: ((event: "add" | "change" | "unlink", path: string) => void)[] = [];
+    const roots: string[] = [];
+    let fire: (() => void) | undefined;
+    const { run, inputs } = runner({});
+    const engine = new SessionHookEngine({
+      stateDir: "/s",
+      load: loaded({ hooks: { FileChanged: entry("env", ".env|.envrc") } }),
+      run,
+      watchFactory: (root, _options, listeners) => {
+        roots.push(root);
+        emitters.push(listeners.onEvent);
+        return { close: () => undefined };
+      },
+      watchClock: { setTimeout: (fn) => { fire = fn; return 1; }, clearTimeout: () => undefined },
+    });
+    await engine.beforeTurn(turn);
+    expect(roots).toEqual([resolve("/work")]);
+    const file = join(resolve("/work"), ".env");
+    emitters[0]!("change", file);
+    fire!();
+    await new Promise((r) => setImmediate(r));
+    expect(inputs.env).toMatchObject({ hook_event_name: "FileChanged", session_id: "s1", file_path: file, event: "change", atomic_relative_path: ".env" });
+  });
+
+  it("FileChanged: no hook configured, no watcher", async () => {
+    const watchFactory = vi.fn();
+    const engine = new SessionHookEngine({ stateDir: "/s", load: loaded({ hooks: {} }), run: vi.fn(), watchFactory });
+    await engine.beforeTurn(turn);
+    expect(watchFactory).not.toHaveBeenCalled();
   });
 });
