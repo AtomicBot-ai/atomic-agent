@@ -114,6 +114,12 @@ describe("the desktop app's launch line", () => {
     expect(parsed.port).toBe(51234);
     expect(parsed.apiKey).toBe("a".repeat(48));
   });
+
+  it("parses the stdin form the desktop uses since ATO-2538: no key in the arguments", () => {
+    const parsed = parsedOk(["--host", "127.0.0.1", "--port", "51234", "--api-key-stdin"]);
+    expect(parsed.apiKeyStdin).toBe(true);
+    expect(parsed.apiKey).toBeNull();
+  });
 });
 
 describe("an API key of only whitespace", () => {

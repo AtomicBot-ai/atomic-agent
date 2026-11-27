@@ -1,9 +1,17 @@
 import { createSessionCompactionHandler } from "./route-compaction.js";
 import { createRollbackLastTurnHandler } from "./route-rollback-last-turn.js";
 import { createListPreviousRepliesHandler, createRestorePreviousReplyHandler } from "./route-previous-replies.js";
+import { createListMessageVersionsHandler, createSwitchVersionHandler } from "./route-message-versions.js";
 import { createForkSessionHandler, createListRewindPointsHandler, createRewindHandler } from "./route-session-rewind.js";
 import { createResumeInterruptedTurnHandler } from "./route-resume-interrupted-turn.js";
 import type { RouteDefinition } from "./http-server.js";
+import {
+  createDeleteLogbookEntriesHandler,
+  createLogbookDayHandler,
+  createLogbookIndicatorHandler,
+  createLogbookSettingsHandler,
+  createLogbookStatusHandler,
+} from "./route-logbook.js";
 
 import { createChatCompletionsHandler } from "./openai-chat-completions.js";
 import {
@@ -16,6 +24,7 @@ import { createCancelCompletionHandler } from "./openai-completions-cancel.js";
 import { createHealthHandler } from "./route-health.js";
 import { createLocalModelRecheckHandler } from "./route-local-model-recheck.js";
 import { createModelTiersHandler } from "./route-model-tiers.js";
+import { createUsageHandler } from "./route-usage.js";
 import { createModelsHandler } from "./route-models.js";
 import { createCapabilitiesHandler } from "./route-capabilities.js";
 import {
@@ -38,6 +47,7 @@ import {
   createProjectTrustAnswerHandler,
   createProjectTrustStatusHandler,
 } from "./route-project-trust.js";
+import { createListCommandsHandler, createRenderCommandHandler } from "./route-commands.js";
 import {
   createFallbackLocalQuestionAnswerHandler,
   createFallbackLocalQuestionStatusHandler,
@@ -56,6 +66,13 @@ import { createRenameSessionHandler } from "./route-session-title.js";
 import { createGetSessionGoalHandler, createSessionGoalActionHandler } from "./route-session-goal.js";
 import { createExportSessionHandler } from "./route-session-export.js";
 import { createSetSessionArchivedHandler } from "./route-session-archived.js";
+import {
+  createListShellJobsHandler,
+  createShellJobInputHandler,
+  createShellJobOutputHandler,
+  createShellJobResizeHandler,
+  createStopShellJobHandler,
+} from "./route-shell-jobs.js";
 import { createSetSessionTrashedHandler } from "./route-session-trashed.js";
 import {
   createEscalateFusionWorkerHandler,
@@ -68,6 +85,7 @@ import {
   createResolveApprovalHandler,
 } from "./route-approval.js";
 import { createAnswerQuestionHandler } from "./route-question.js";
+import { createShellSecretHandler } from "./route-shell-secret.js";
 import {
   createAddApprovalRuleHandler,
   createDeleteApprovalRuleHandler,
@@ -92,6 +110,11 @@ import {
   createUpdateTaskBoardCardHandler,
 } from "./route-task-board.js";
 import {
+  createAddBoardCommentHandler,
+  createBoardProfilesHandler,
+  createListBoardCommentsHandler,
+} from "./route-task-board-comments.js";
+import {
   createAcceptIdeaHandler,
   createDismissIdeaHandler,
   createListIdeasHandler,
@@ -109,6 +132,7 @@ import { createGetPrivacyShieldHandler, createSetPrivacyShieldHandler } from "./
 import { createContextPreviewHandler } from "./route-context-preview.js";
 import { createPlainCompleteHandler } from "./route-complete.js";
 import { createSideQuestionHandler } from "./route-side-question.js";
+import { createCouncilHandler } from "./route-council.js";
 import {
   createMcpOAuthHandlers,
   createRestartMcpServerHandler,
@@ -126,12 +150,14 @@ import {
 } from "./route-panel.js";
 import { createSetSessionWorkingDirHandler } from "./session-working-dir.js";
 import { createPairPageHandler, createPairRedeemHandler } from "./route-device-pairing.js";
+import { createPairCodePageHandler, createPairCodeRedeemHandler } from "./route-pair-code.js";
 import { createDevicePairingHandler, createListDevicesHandler, createRevokeDeviceHandler } from "./route-devices.js";
 import type { DeviceSessions } from "./device-sessions.js";
 import { createRestoreFileHandler } from "./route-fs-restore.js";
 import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
 import * as importFacts from "./route-import-facts.js";
-import { createAddFileFolderHandler, createFileIndexStatusHandler, createListFileFoldersHandler, createRemoveFileFolderHandler } from "./route-files.js";
+import { createAddFileFolderHandler, createFileIndexStatusHandler, createListFileFoldersHandler, createRemoveFileFolderHandler, createRetrySkippedFilesHandler } from "./route-files.js";
+import { createExpandMentionsHandler, createProblemsHandler } from "./route-mentions.js";
 import {
   createDeleteMemoryNoteHandler,
   createDeleteProfileFactHandler,
@@ -152,7 +178,10 @@ import { createMetricsHandler } from "./route-metrics.js";
 import { a2aRoutes, type A2aOptions } from "./route-a2a.js";
 import { createMcpEndpointHandlers, MCP_ENDPOINT_PATH } from "./route-mcp-endpoint.js";
 import type { PrometheusRegistry } from "../tracing/prometheus-registry.js";
-import { createRawModelHandlers, RAW_MODEL_PREFIX, type RawModelShareDeps } from "./route-raw-model.js";
+import { createRawModelHandlers, RAW_MODEL_PREFIX, type RawModelHandlers, type RawModelShareDeps } from "./route-raw-model.js";
+import { createModelShareHandlers } from "./route-model-share.js";
+import type { ModelShareListener } from "./model-share-listener.js";
+import { createLocalModelHandlers, LOCAL_MODEL_PREFIX, type LocalModelDeps } from "./route-local-model.js";
 
 export interface RouteTableOptions {
   /**
@@ -169,8 +198,17 @@ export interface RouteTableOptions {
   a2a?: A2aOptions | null;
   /** ATO-2336: what the raw model routes read; tests inject their own (route-raw-model.ts). */
   rawModel?: RawModelShareDeps;
+  /**
+   * ATO-2483: serve's raw handlers, shared with the share listener so both
+   * keep one in-flight cap and one auth throttle. Omitted, they are made here.
+   */
+  rawModelHandlers?: RawModelHandlers;
+  /** ATO-2483: the share listener `POST /api/model-share` opens and closes; omitted, only the setting is written. */
+  modelShare?: ModelShareListener | null;
   /** ATO-2308: phones paired by QR. Omitted, the pairing routes answer 404. */
   devices?: DeviceSessions | null;
+  /** ATO-2447: where the `/local/v1` routes send requests; tests inject their own (route-local-model.ts). */
+  localModel?: LocalModelDeps;
 }
 
 /**
@@ -194,7 +232,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
   // ATO-549: the MCP sessions open on `/mcp` belong to this server too.
   const mcpEndpoint = createMcpEndpointHandlers();
   // ATO-2336: one in-flight cap shared by both raw routes.
-  const rawModel = createRawModelHandlers(options.rawModel);
+  const rawModel = options.rawModelHandlers ?? createRawModelHandlers(options.rawModel);
+  const modelShare = createModelShareHandlers({ listener: options.modelShare ?? null });
+  const localModel = createLocalModelHandlers(options.localModel);
   return [
     {
       method: "GET",
@@ -212,6 +252,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     // behind the serve key: the handler takes the share key and only it.
     { method: "GET", path: `${RAW_MODEL_PREFIX}/models`, handler: rawModel.models, requiresAuth: false },
     { method: "POST", path: `${RAW_MODEL_PREFIX}/chat/completions`, handler: rawModel.chatCompletions, requiresAuth: false },
+    // ATO-2483: Settings › Models "Share this model": the mode, the key and the addresses (admin).
+    { method: "GET", path: "/api/model-share", handler: modelShare.get },
+    { method: "POST", path: "/api/model-share", handler: modelShare.set },
     // ATO-1128: the phone panel's page; it holds no data and asks for the key (route-panel.ts).
     { method: "GET", path: "/panel", handler: createPanelPageHandler(), requiresAuth: false },
     { method: "GET", path: "/panel/app.js", handler: createPanelScriptHandler(), requiresAuth: false },
@@ -221,6 +264,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     // ATO-2308: the QR link of `atag pair`; the one-time token in the path is the credential.
     { method: "GET", path: "/pair/{token}", handler: createPairPageHandler(options.devices ?? null), requiresAuth: false },
     { method: "POST", path: "/pair/{token}", handler: createPairRedeemHandler(options.devices ?? null), requiresAuth: false },
+    // ATO-2494: the same pairing by its short code, for the iPhone home-screen app.
+    { method: "GET", path: "/panel/pair", handler: createPairCodePageHandler(options.devices ?? null), requiresAuth: false },
+    { method: "POST", path: "/panel/pair", handler: createPairCodeRedeemHandler(options.devices ?? null), requiresAuth: false },
     { method: "POST", path: "/api/devices/pairing", handler: createDevicePairingHandler(options.devices ?? null) },
     { method: "GET", path: "/api/devices", handler: createListDevicesHandler(options.devices ?? null) },
     { method: "DELETE", path: "/api/devices/{id}", handler: createRevokeDeviceHandler(options.devices ?? null) },
@@ -245,6 +291,12 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "POST", path: "/v1/messages", handler: createAnthropicMessagesHandler() },
     { method: "POST", path: "/v1/messages/count_tokens", handler: createAnthropicCountTokensHandler() },
     { method: "POST", path: "/v1/responses", handler: createResponsesHandler() },
+    // ATO-2447: the bare local model for `atag launch`, behind the serve key (route-local-model.ts).
+    { method: "GET", path: `${LOCAL_MODEL_PREFIX}/models`, handler: localModel.models },
+    { method: "POST", path: `${LOCAL_MODEL_PREFIX}/chat/completions`, handler: localModel.chatCompletions },
+    { method: "POST", path: `${LOCAL_MODEL_PREFIX}/responses`, handler: localModel.responses },
+    { method: "POST", path: `${LOCAL_MODEL_PREFIX}/messages`, handler: localModel.messages },
+    { method: "POST", path: `${LOCAL_MODEL_PREFIX}/messages/count_tokens`, handler: localModel.countTokens },
     // ATO-694: the same turn as AG-UI events, for AG-UI web frontends (route-ag-ui.ts).
     { method: "POST", path: "/api/ag-ui", handler: createAgUiRunHandler() },
     {
@@ -254,6 +306,8 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     },
     // ATO-32: the Cheap / Balanced / Best picks (presets/model-tiers.ts).
     { method: "GET", path: "/api/model-tiers", handler: createModelTiersHandler() },
+    // ATO-2442: tokens and cost per day, tools, projects, saved by local (route-usage.ts).
+    { method: "GET", path: "/api/usage", handler: createUsageHandler() },
     { method: "POST", path: "/api/sessions/{id}/compact", handler: createSessionCompactionHandler(true) },
     { method: "GET", path: "/api/sessions/{id}/compaction", handler: createSessionCompactionHandler(false) },
     { method: "GET", path: "/api/config", handler: createGetConfigHandler() },
@@ -283,6 +337,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
       path: "/api/skills/uninstall",
       handler: createUninstallSkillHandler(),
     },
+    // ATO-2441: slash commands for the desktop `/` menu (route-commands.ts).
+    { method: "GET", path: "/api/commands", handler: createListCommandsHandler() },
+    { method: "POST", path: "/api/commands/render", handler: createRenderCommandHandler() },
     { method: "GET", path: "/api/project-trust", handler: createProjectTrustStatusHandler() },
     { method: "POST", path: "/api/project-trust", handler: createProjectTrustAnswerHandler() },
     // ATO-1461: the one-time "Keep the local model as the last-resort fallback?" question.
@@ -348,6 +405,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     // ATO-864: the earlier answers a regenerate kept, and putting one back.
     { method: "GET", path: "/api/sessions/{id}/previous-replies", handler: createListPreviousRepliesHandler() },
     { method: "POST", path: "/api/sessions/{id}/restore-previous-reply", handler: createRestorePreviousReplyHandler() },
+    // ATO-2470: every version of every question (edits and regenerates), and switching to one.
+    { method: "GET", path: "/api/sessions/{id}/message-versions", handler: createListMessageVersionsHandler() },
+    { method: "POST", path: "/api/sessions/{id}/switch-version", handler: createSwitchVersionHandler() },
     // ATO-1056 / ATO-1058: roll a chat back to a question with its files, or fork it there.
     { method: "GET", path: "/api/sessions/{id}/rewind-points", handler: createListRewindPointsHandler() },
     { method: "POST", path: "/api/sessions/{id}/rewind/preview", handler: createRewindHandler(true) },
@@ -378,6 +438,13 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "POST", path: "/api/sessions/{id}/fusion/workers/{taskId}/stop", handler: createStopFusionWorkerHandler() },
     { method: "POST", path: "/api/sessions/{id}/fusion/workers/{taskId}/steer", handler: createSteerFusionWorkerHandler() },
     { method: "POST", path: "/api/sessions/{id}/fusion/workers/{taskId}/escalate", handler: createEscalateFusionWorkerHandler() },
+    // ATO-2485: the agent's kept shell jobs in the desktop's terminal tab;
+    // the person's input goes to the job only (route-shell-jobs.ts).
+    { method: "GET", path: "/api/sessions/{id}/shell-jobs", handler: createListShellJobsHandler() },
+    { method: "GET", path: "/api/sessions/{id}/shell-jobs/{jobId}/output", handler: createShellJobOutputHandler() },
+    { method: "POST", path: "/api/sessions/{id}/shell-jobs/{jobId}/input", handler: createShellJobInputHandler() },
+    { method: "POST", path: "/api/sessions/{id}/shell-jobs/{jobId}/resize", handler: createShellJobResizeHandler() },
+    { method: "POST", path: "/api/sessions/{id}/shell-jobs/{jobId}/stop", handler: createStopShellJobHandler() },
     {
       method: "POST",
       path: "/api/approval/resolve",
@@ -390,6 +457,8 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     },
     // ATO-489: the answer to an `ask_user` question shown from /api/events.
     { method: "POST", path: "/api/question/answer", handler: createAnswerQuestionHandler() },
+    // ATO-2486: a password an interactive shell job asks for, typed by the person.
+    { method: "POST", path: "/api/shell/secret", handler: createShellSecretHandler() },
     // ATO-1492: an MCP server's question to the person, shown from
     // /api/events?elicitation=1. Never through the approval routes.
     { method: "GET", path: "/api/mcp/elicitation", handler: createListMcpElicitationsHandler() },
@@ -415,6 +484,8 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "POST", path: "/api/complete", handler: createPlainCompleteHandler() },
     // ATO-1152: the TUI's `/btw` side question, nothing saved (route-side-question.ts).
     { method: "POST", path: "/api/btw", handler: createSideQuestionHandler() },
+    // ATO-2432: the model council, the desktop's council view (route-council.ts).
+    { method: "POST", path: "/api/council", handler: createCouncilHandler() },
     // ATO-873: the desktop's Reconnect button after a local server answered 404/405.
     { method: "POST", path: "/api/local-model/recheck", handler: createLocalModelRecheckHandler() },
     // ATO-1021: the desktop's model pick, swapped live instead of restarting serve.
@@ -439,6 +510,10 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "POST", path: "/api/files/folders", handler: createAddFileFolderHandler() },
     { method: "DELETE", path: "/api/files/folders", handler: createRemoveFileFolderHandler() },
     { method: "GET", path: "/api/files/status", handler: createFileIndexStatusHandler() },
+    // ATO-2472: the composer's `@` mentions and `@problems`, shared with the terminal (route-mentions.ts).
+    { method: "POST", path: "/api/mentions/expand", handler: createExpandMentionsHandler() },
+    { method: "GET", path: "/api/problems", handler: createProblemsHandler() },
+    { method: "POST", path: "/api/files/retry", handler: createRetrySkippedFilesHandler() },
     // ATO-1124: the person's own list / edit / delete of notes and profile facts (route-memory.ts).
     { method: "GET", path: "/api/memory/notes", handler: createListMemoryNotesHandler() },
     { method: "PATCH", path: "/api/memory/notes/{id}", handler: createEditMemoryNoteHandler() },
@@ -479,11 +554,22 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     // ATO-2257: the task board (cards in lanes); moving a card leaves the status alone.
     { method: "GET", path: "/api/task-board", handler: createTaskBoardHandler() },
     { method: "POST", path: "/api/tasks/{id}/board", handler: createUpdateTaskBoardCardHandler() },
+    // ATO-2498: a card's comment thread and the profiles it can be assigned to.
+    { method: "GET", path: "/api/tasks/{id}/board/comments", handler: createListBoardCommentsHandler() },
+    { method: "POST", path: "/api/tasks/{id}/board/comments", handler: createAddBoardCommentHandler() },
+    { method: "GET", path: "/api/task-board/profiles", handler: createBoardProfilesHandler() },
     {
       method: "POST",
       path: "/api/tasks/drain",
       handler: createDrainTasksHandler(),
     },
+    // ATO-2534: the logbook's state, switch and visible-mark report, for the desktop's chip (route-logbook.ts).
+    { method: "GET", path: "/api/logbook", handler: createLogbookStatusHandler() },
+    { method: "PATCH", path: "/api/logbook/settings", handler: createLogbookSettingsHandler() },
+    { method: "POST", path: "/api/logbook/indicator", handler: createLogbookIndicatorHandler() },
+    // ATO-2526: the desktop's day timeline, and deleting notes from it.
+    { method: "GET", path: "/api/logbook/day", handler: createLogbookDayHandler() },
+    { method: "DELETE", path: "/api/logbook/entries", handler: createDeleteLogbookEntriesHandler() },
     // ATO-458: suggestions built from local tasks and goals; accept files a task.
     { method: "GET", path: "/api/ideas", handler: createListIdeasHandler() },
     { method: "POST", path: "/api/ideas/refresh", handler: createRefreshIdeasHandler() },

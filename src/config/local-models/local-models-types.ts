@@ -3,6 +3,7 @@ import type { BackendVariantPreference, CoreBackendVariant } from "../../local-l
 import type { SwaFullPreference } from "../../local-llm/server/swa-full.js";
 import type { CpuMoePreference } from "../../local-llm/server/cpu-moe.js";
 import type { LoraAdapter } from "../../local-llm/server/lora-adapter.js";
+import type { LocalModelSampling } from "../../local-llm/catalog/model-sampling-sets.js";
 
 export type LocalLlmMode = "external" | "managed";
 
@@ -161,6 +162,18 @@ export interface UserManagedLocalLlmConfig {
    */
   rpcServers?: string[];
   /**
+   * Draft-model speculative decoding (`--model-draft`, ATO-2424):
+   * `"off"` (default); `"auto"` uses the catalog's draft for the chat
+   * model; a model id or an absolute path to a `.gguf` names one. The
+   * draft is added only when it fits in what the fitted context window
+   * left, on a GPU, with the llama-server engine (Atomic Core does not run
+   * speculative decoding on TurboQuant yet), for a model whose cache can
+   * drop rejected tokens and a draft with the same tokenizer. A launch the
+   * draft breaks retries once without it. Additive and unversioned.
+   * Applied on the next daemon start.
+   */
+  draftModel?: string;
+  /**
    * Stop the managed chat daemon when the last CLI session exits.
    * `true` (default) — closing the terminal frees the RAM/VRAM the
    * model was holding; a second live session keeps the daemon up (see
@@ -213,6 +226,21 @@ export interface UserManagedLocalLlmConfig {
    * Share the local model with other apps and devices (ATO-2336): `true` makes `atomic-agent serve` answer `GET /raw/v1/models` and `POST /raw/v1/chat/completions`, the bare model with no agent, for callers that send the share key (`atomic-agent models share` turns this on and prints the key). Off when absent (the default): those routes answer 404. Additive and unversioned: a file without the key reads as `false`.
    */
   share: boolean;
+  /**
+   * ATO-2483: with `share` on, also listen for the shared model on the
+   * local network (`0.0.0.0`), not only on this computer (`127.0.0.1`).
+   * Absent or `false` (default): this computer only. Read only while
+   * `share` is on, and any off removes it, so the network is always an
+   * explicit choice. Only the
+   * `/raw/v1` routes are on that listener. Additive and unversioned.
+   */
+  shareNetwork?: boolean;
+  /**
+   * ATO-2483: the port of the shared model's own listener (default 8787,
+   * serve's own default port). A serve already listening on it answers the
+   * `/raw/v1` routes on its main listener instead. Additive and unversioned.
+   */
+  sharePort?: number;
 }
 
 /**
@@ -334,6 +362,8 @@ export interface RuntimeLocalModelsConfig {
    * hand-built runtime config that predates the field reads as off.
    */
   modelSampling?: boolean;
+  /** Mirrors `UserConfigFile.localModels.modelSamplingOverrides` (ATO-2482). */
+  modelSamplingOverrides?: Readonly<Record<string, LocalModelSampling>>;
   /**
    * Mirrors `UserConfigFile.localModels.strictToolArgs`. Optional so a
    * hand-built runtime config that predates the field reads as off.
@@ -439,10 +469,29 @@ export interface UserLocalModelsConfig {
    * top-k, min-p and the repeat penalty. A value the request sets itself
    * and the `ATOMIC_AGENT_LLAMA_*` overrides still win; a field the
    * model does not name keeps the built-in default (0.2 / 0.95 / 40).
-   * llama.cpp-family engines only. Default `false`, unversioned and
-   * additive: an older file has no field and reads as off.
+   * llama.cpp-family engines only. Default `true` since v80 (ATO-2480;
+   * it was `false` from ATO-2202): an older file's `false` migrates to
+   * `true`, and an explicit `false` in a v80+ file is honoured.
+   *
+   * ATO-2482: a curated model's catalog `sampling` (the model card's
+   * values, one set per thinking mode) sits over the header and is used
+   * under the same switch. The person's own sets
+   * (`modelSamplingOverrides`, `customModels[].sampling`) apply either way.
    */
   modelSampling: boolean;
+  /**
+   * The person's own sampling per model id (ATO-2482): `{ "qwen-3.5-4b":
+   * { "temperature": 0.6, "noThinking": { "temperature": 0.5 } } }`.
+   * Fields are `temperature`, `topP`, `topK`, `minP`, `presencePenalty`,
+   * `repeatPenalty`, `repeatLastN`; `thinking` / `noThinking` hold a set
+   * for one mode. Applied over the model's own values whether
+   * `modelSampling` is on or not; a request's own field and the
+   * `ATOMIC_AGENT_LLAMA_*` overrides still win. Written by `atomic-agent
+   * models sampling` and the desktop's Sampling row. Absent by default,
+   * unversioned and additive. An added model keeps its set on its own
+   * entry instead (`customModels[].sampling`).
+   */
+  modelSamplingOverrides?: Record<string, LocalModelSampling>;
   /**
    * Hold a local model's tool ARGUMENTS to each tool's JSON Schema on
    * the grammar path, not only its tool names (ATO-633): a key the

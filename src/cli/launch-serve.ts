@@ -22,7 +22,7 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 
 import { isSeaBuild, selfInvocation } from "../runtime/self-invocation.js";
-import { readServeRecords, type ServeRecord } from "./serve-reaper.js";
+import { LAUNCH_SERVE_ENV, readServeRecords, type ServeRecord } from "./serve-reaper.js";
 import { isAlive } from "./serve-orphan-guard.js";
 
 export interface LaunchServe {
@@ -49,6 +49,9 @@ export interface LaunchServeDeps {
   readonly readyTimeoutMs?: number;
 }
 
+/** The port `atag serve` listens on without `--port` (serve-args.ts). */
+export const DEFAULT_SERVE_PORT = 8787;
+
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "0.0.0.0"]);
 const PROBE_TIMEOUT_MS = 3_000;
 const READY_TIMEOUT_MS = 90_000;
@@ -73,21 +76,28 @@ export async function readServeHealth(
   }
 }
 
-/** A live serve on this machine working in `cwd`, or null. */
+/**
+ * A live serve on this machine working in `cwd`, or null. `cwd` null
+ * (ATO-2447, the bare local model) takes a serve in any folder: the
+ * `/local/v1` routes run no agent tools, so the folder does not matter.
+ */
 export async function findReusableServe(
   stateDir: string,
-  cwd: string,
+  cwd: string | null,
   deps: LaunchServeDeps = {},
 ): Promise<LaunchServe | null> {
   const alive = deps.isAlive ?? isAlive;
   const records = (deps.records ?? ((dir) => readServeRecords(dir).map((r) => r.record)))(stateDir);
-  const folder = resolve(cwd);
+  const folder = cwd === null ? null : resolve(cwd);
   for (const record of records) {
     if (!LOOPBACK_HOSTS.has(record.host) || !alive(record.pid)) continue;
+    // A serve another `atag launch` started stops when that run's CLI
+    // exits (its orphan guard), which would take this CLI down with it.
+    if (record.launched === true) continue;
     const baseUrl = loopbackBaseUrl(record.port);
     const health = await readServeHealth(baseUrl, deps.fetch);
     if (health?.runtime !== "atomic-agent" || health.pid !== record.pid) continue;
-    if (typeof health.workingDir !== "string" || resolve(health.workingDir) !== folder) continue;
+    if (folder !== null && (typeof health.workingDir !== "string" || resolve(health.workingDir) !== folder)) continue;
     return { baseUrl, port: record.port, started: false };
   }
   return null;
@@ -144,7 +154,7 @@ export async function startLaunchServe(
         stdio: ["ignore", logFd, logFd],
         detached: true,
         ...(process.platform === "win32" ? { windowsHide: true } : {}),
-        env: { ...process.env },
+        env: { ...process.env, [LAUNCH_SERVE_ENV]: "1" },
       },
     );
   } finally {

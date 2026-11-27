@@ -30,6 +30,13 @@ export interface LogbookSettings {
   pausedUntil: number | null;
   /** Extra apps never captured: bundle ids (prefix match) or app names. */
   excludeApps: string[];
+  /**
+   * Apps noted by window title only (ATO-2526, "describe less"): no
+   * screenshot and no model call, just the app and its window title.
+   */
+  titleOnlyApps: string[];
+  /** Local time `HH:MM` the standup is written every morning, or `null` (off, the default). */
+  standupAt: string | null;
 }
 
 export const DEFAULT_LOGBOOK_SETTINGS: Readonly<LogbookSettings> = Object.freeze({
@@ -38,7 +45,26 @@ export const DEFAULT_LOGBOOK_SETTINGS: Readonly<LogbookSettings> = Object.freeze
   retentionDays: DEFAULT_RETENTION_DAYS,
   pausedUntil: null,
   excludeApps: [],
+  titleOnlyApps: [],
+  standupAt: null,
 });
+
+const CLOCK_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** `HH:MM` on a 24-hour clock. */
+export function isStandupClock(value: unknown): value is string {
+  return typeof value === "string" && CLOCK_RE.test(value);
+}
+
+function appList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((v): v is string => typeof v === "string")
+        .map((v) => v.trim())
+        .filter((v) => v.length > 0 && v.length <= 200)
+        .slice(0, MAX_EXCLUDED_APPS)
+    : [];
+}
 
 export function logbookDir(stateDir: string): string {
   return join(stateDir, LOGBOOK_DIR);
@@ -60,26 +86,21 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
 /** Any JSON value into settings: unknown keys dropped, bad values defaulted. Never throws. */
 export function parseLogbookSettings(raw: unknown): LogbookSettings {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    return { ...DEFAULT_LOGBOOK_SETTINGS, excludeApps: [] };
+    return { ...DEFAULT_LOGBOOK_SETTINGS, excludeApps: [], titleOnlyApps: [] };
   }
   const o = raw as Record<string, unknown>;
   const paused =
     typeof o.pausedUntil === "number" && Number.isFinite(o.pausedUntil) && o.pausedUntil > 0
       ? o.pausedUntil
       : null;
-  const exclude = Array.isArray(o.excludeApps)
-    ? o.excludeApps
-        .filter((v): v is string => typeof v === "string")
-        .map((v) => v.trim())
-        .filter((v) => v.length > 0 && v.length <= 200)
-        .slice(0, MAX_EXCLUDED_APPS)
-    : [];
   return {
     enabled: o.enabled === true,
     intervalMinutes: clampInterval(o.intervalMinutes),
     retentionDays: clampRetention(o.retentionDays),
     pausedUntil: paused,
-    excludeApps: exclude,
+    excludeApps: appList(o.excludeApps),
+    titleOnlyApps: appList(o.titleOnlyApps),
+    standupAt: isStandupClock(o.standupAt) ? o.standupAt : null,
   };
 }
 

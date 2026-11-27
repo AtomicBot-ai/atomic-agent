@@ -86,7 +86,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     summary:
       "Run a script from a skill's requires_scripts (may require approval).",
     argsSchema:
-      "{ skill: string, script: string, args?: string[], timeoutMs?: number }",
+      "{ skill: string, script: string, args?: string[], env?: { name: string, value: string }[] /* only the skill's env_keys; value may be {{secret:NAME}} */, timeoutMs?: number }",
     tier: "rare",
   },
   {
@@ -195,13 +195,16 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
-    // ATO-2133. Rare tier: one line in the catalog, full args through tool.view.
+    // ATO-2133, ATO-2507. Rare tier: one line in the catalog, full args through tool.view.
     name: "research.deep",
     summary:
-      "Research a question on the web in one call: plans sub-questions, searches and reads a few pages for each, and keeps a finding only when its exact quote is on the page and its numbers are in the quote. Writes a Markdown report (Summary, Findings with link and quote, Contradictions, Unverified claims) to a new file in the working folder and returns it. Use it for questions that need several sources; answer from its verified findings. Call it on its own.",
+      "Research a question in one call, on the web or in the person's documents in My files: plans sub-questions, reads a few pages or passages for each, and keeps a finding only when its exact quote is on the page and its numbers are in the quote. Conflicting numbers between sources are flagged and judged. Writes a Markdown report (Summary, Findings with link and quote, Contradictions, Unverified claims) to a new file in the working folder and returns it. Use it for questions that need several sources; pass sources: \"documents\" when the person asks about their own files (nothing goes online then), \"both\" only when they also want the web. Answer from its verified findings. Call it on its own.",
     argsSchema:
-      "{ question: string, maxSubQuestions?: number /* 1..5, default 3 */, pagesPerQuestion?: number /* 1..3, default 2 */ }",
-    examples: ['{"question":"How did EU heat pump sales change in 2024 and why?"}'],
+      "{ question: string, sources?: 'web' | 'documents' | 'both' /* default web; documents when web search is off */, folder?: string /* documents: one My files folder */, maxSubQuestions?: number /* 1..5, default 3 */, pagesPerQuestion?: number /* 1..3, default 2 */, maxMinutes?: number /* 1..30, default 10: stops early and reports what it read */ }",
+    examples: [
+      '{"question":"How did EU heat pump sales change in 2024 and why?"}',
+      '{"question":"What notice periods do my contracts set?","sources":"documents"}',
+    ],
     tier: "rare",
   },
   {
@@ -212,6 +215,36 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     argsSchema:
       "{ day?: string /* today (default), yesterday or YYYY-MM-DD */, part?: 'morning' | 'afternoon' | 'evening', from?: string /* HH:MM */, to?: string /* HH:MM */, contains?: string, limit?: number /* 1..400 */ }",
     examples: ['{"day":"yesterday","part":"afternoon"}'],
+    tier: "rare",
+  },
+  // ATO-2459: My apps, the pages the desktop opens as apps of their own (<stateDir>/apps).
+  {
+    name: "app.save",
+    summary:
+      "Save a self-contained HTML page (inline CSS and JS, no network) as a new app in the person's My apps; it opens in its own window from Apps in the desktop app. Use when they ask to make or keep a small tool (a converter, a tracker, a game). Returns the id for app.update.",
+    argsSchema: "{ name: string /* short, shown in My apps */, html: string /* the whole page, max 4 MB */ }",
+    examples: ['{"name":"Currency converter","html":"<!doctype html><title>Converter</title>..."}'],
+    tier: "rare",
+  },
+  {
+    name: "app.update",
+    summary:
+      "Change an app in My apps: html replaces the whole page (read it first with app.list and its id), name renames it, restoreVersion puts an earlier page back. The replaced page is kept as a version.",
+    argsSchema: "{ id: string, html?: string /* the whole new page */, name?: string, restoreVersion?: number /* from app.list */ }",
+    examples: ['{"id":"currency-converter-a1b2c3","html":"<!doctype html>..."}', '{"id":"currency-converter-a1b2c3","restoreVersion":2}'],
+    tier: "rare",
+  },
+  {
+    name: "app.delete",
+    summary: "Remove an app from My apps (and its launcher). Only when the person asks.",
+    argsSchema: "{ id: string }",
+    tier: "rare",
+  },
+  {
+    name: "app.list",
+    summary: "List the apps in My apps; with an id, that app's versions and its current page.",
+    argsSchema: "{ id?: string }",
+    examples: ["{}", '{"id":"currency-converter-a1b2c3"}'],
     tier: "rare",
   },
   {
@@ -252,6 +285,27 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     summary: "One task by id. Read-only.",
     argsSchema: "{ id: string }",
     tier: "rare",
+  },
+  // ATO-2497: the card of the task this turn runs. Offered only on a
+  // task's run (`board-card-visibility.ts`), never on a chat turn.
+  {
+    name: "tasks.request_review",
+    summary:
+      "Your task is done and a person should check it: move its board card to Review, with an optional note on what to check.",
+    argsSchema: "{ note?: string /* max 2000 chars */ }",
+    examples: ['{"note":"Draft is in report.md; please check the numbers in section 2."}'],
+  },
+  {
+    name: "tasks.block",
+    summary:
+      "You cannot go on without a person (missing access, a decision, broken input): move your task's board card to Blocked with the reason. It is not run again until a person runs or resumes it.",
+    argsSchema: "{ reason: string /* max 2000 chars */ }",
+    examples: ['{"reason":"The API key in config is rejected; I need a new one."}'],
+  },
+  {
+    name: "tasks.comment",
+    summary: "Add a comment to your task's board card: progress, a finding, a question for later.",
+    argsSchema: "{ text: string /* max 2000 chars */ }",
   },
   {
     name: "sessions.list",
@@ -489,6 +543,19 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     examples: [
       '{"title":"Revenue by quarter","chart":"bar","labels":["Q1","Q2","Q3","Q4"],"series":[{"name":"2025","values":[120,135,150,170]},{"name":"2026","values":[140,160,155,190]}]}',
       '{"title":"Disk usage","chart":"pie","labels":["Photos","Code","Other"],"values":[52,31,17]}',
+    ],
+    tier: "rare",
+  },
+  {
+    // ATO-2457. Rare tier like canvas.render: the one-liner picks it, the
+    // full args load through tool.view.
+    name: "ui.render",
+    summary:
+      "Show the user a ready component in the chat: `decision` (2-8 buttons), `form` (fields and a submit button) or `cards` (each with an optional action button). It does not wait: a click or a sent form becomes the user's next message, so end the turn with a short reply. For a question that must block the work, use ask_user.",
+    argsSchema:
+      "{ kind: 'decision' | 'form' | 'cards', title: string, text?: string, options?: [{ label: string, description?: string, message?: string /* sent on click; default label */ }] /* decision, 2..8 */, fields?: [{ label: string, name?: string, type?: 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'date', options?: string[] /* select */, placeholder?: string, required?: boolean, value?: string }] /* form, 1..12 */, submit?: string /* form button */, cards?: [{ title: string, text?: string, meta?: string, action?: { label: string, message?: string } }] /* cards, 1..12 */ }",
+    examples: [
+      '{"kind":"decision","title":"Which layout?","options":[{"label":"Sidebar","description":"menu on the left"},{"label":"Top bar"}]}',
     ],
     tier: "rare",
   },

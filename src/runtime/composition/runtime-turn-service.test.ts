@@ -25,6 +25,16 @@ import { resolveLlmConfig } from "../../llm/provider/registry/provider-types.js"
 import type { TurnProgress } from "../../session/turn-progress.js";
 import { INTERRUPTED_TURN_ENDING } from "../../session/session-store.js";
 import { currentBrowserScope, onBrowserWorkerEnd, runInBrowserScope, type BrowserRunScope } from "../../tools/browser/browser-run-scope.js";
+import { EMPTY_CONTEXT_USAGE } from "../../session/context-usage.js";
+import { estimateTokens } from "../../prompt/token-budget.js";
+import { routeTurnProvider } from "./runtime-turn-router.js";
+import { resolveStepGrammar } from "../../agent/step/step-inference.js";
+
+// The real router, watched: the size facts it is handed (ATO-2537).
+vi.mock("./runtime-turn-router.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./runtime-turn-router.js")>();
+  return { ...actual, routeTurnProvider: vi.fn(actual.routeTurnProvider) };
+});
 
 function deferred<T>() {
   let resolve: (value: T) => void = () => { throw new Error("promise not initialized"); };
@@ -171,20 +181,79 @@ describe("runtime turn ownership recipes", () => {
       expect(filter!("ask_user"), id).toBe(false);
       expect(filter!("fs.read"), id).toBe(true);
     }
-    // Surfaces that draw the question card get no filter at all.
+    // Surfaces that draw the question card keep it (their filter only
+    // hides the board card tools a chat turn never gets, ATO-2497).
     for (const [id, extra] of [
       ["tui", { origin: "tui" as const }],
       ["telegram", { origin: "telegram" as const }],
       ["cli", {}],
       ["declared", { origin: "http" as const, answerChannel: "desktop" as const, questions: true }],
     ] as const) {
-      expect(await optionsFor(id, extra), id).not.toHaveProperty("toolFilter");
+      const filter = (await optionsFor(id, extra))?.toolFilter;
+      expect(filter, id).toBeDefined();
+      expect(filter!("ask_user"), id).toBe(true);
+      expect(filter!("fs.read"), id).toBe(true);
     }
     // A caller's own filter still applies on a desktop turn.
     const own = await optionsFor("own", { origin: "sidecar", toolFilter: (name) => name !== "fs.write" });
     expect(own?.toolFilter?.("fs.write")).toBe(false);
     expect(own?.toolFilter?.("ask_user")).toBe(false);
     expect(own?.toolFilter?.("fs.read")).toBe(true);
+  });
+
+  it("offers the board card tools only on a task's run (ATO-2497)", async () => {
+    const optionsFor = async (id: string, extra: Parameters<typeof fixture.service.executeTurn>[2]) => {
+      await fixture.service.executeTurn(session(id), "request", extra);
+      return fixture.loop.runTurn.mock.calls.at(-1)?.[1];
+    };
+    const board = ["tasks.request_review", "tasks.block", "tasks.comment"];
+    for (const [id, extra] of [
+      ["tui", { origin: "tui" as const }],
+      ["sidecar", { origin: "sidecar" as const }],
+      // The scheduler's origin alone is not a task run: the task id is.
+      ["scheduler-no-task", { origin: "scheduler" as const }],
+    ] as const) {
+      const filter = (await optionsFor(id, extra))?.toolFilter;
+      for (const name of board) expect(filter!(name), `${id} ${name}`).toBe(false);
+      expect(filter!("tasks.list"), id).toBe(true);
+    }
+    const task = await optionsFor("task-run", {
+      origin: "scheduler",
+      checkpoint: { taskId: "t-1", resumes: 0, request: "request" },
+    });
+    for (const name of board) expect(task?.toolFilter?.(name) ?? true, name).toBe(true);
+    // A caller's own filter still applies on a task's run.
+    const own = await optionsFor("task-own", {
+      origin: "scheduler",
+      checkpoint: { taskId: "t-2" },
+      toolFilter: (name) => name !== "tasks.comment",
+    });
+    expect(own?.toolFilter?.("tasks.comment")).toBe(false);
+    expect(own?.toolFilter?.("tasks.block")).toBe(true);
+  });
+
+  it("keeps a chat turn's grammar byte-identical while hiding the board card tools (ATO-2497)", async () => {
+    const optionsFor = async (id: string, extra: Parameters<typeof fixture.service.executeTurn>[2]) => {
+      await fixture.service.executeTurn(session(id), "request", extra);
+      return fixture.loop.runTurn.mock.calls.at(-1)?.[1];
+    };
+    const grammar = "tool-name ::= old\n";
+    const descriptors = ["reply", "finish", "tasks.list", "tasks.comment", "tasks.block", "tasks.request_review"]
+      .map((name) => ({ name, summary: name, argsSchema: "{}" }));
+    const grammarFor = (toolFilter: ((name: string) => boolean) | undefined) => resolveStepGrammar(
+      toolFilter !== undefined ? { toolFilter } : {},
+      { grammar, registry: {} as never },
+      descriptors,
+      false,
+      false,
+    );
+    // A TUI turn had no filter: the base grammar goes out untouched.
+    const tui = (await optionsFor("tui-grammar", { origin: "tui" }))?.toolFilter;
+    expect(tui?.("tasks.comment")).toBe(false);
+    expect(grammarFor(tui)).toBe(grammar);
+    // A desktop turn already narrowed for ask_user still narrows.
+    const desktop = (await optionsFor("desktop-grammar", { origin: "sidecar" }))?.toolFilter;
+    expect(grammarFor(desktop)).not.toBe(grammar);
   });
 
   it("records a desktop turn as unable to ask for the length of the turn only (ATO-489)", async () => {
@@ -247,6 +316,78 @@ describe("runtime turn ownership recipes", () => {
     await fixture.service.executeTurn(session("other"), "request");
     expect(setTurnPrimary).toHaveBeenCalledWith("other", null);
     expect(fixture.loop.runTurn.mock.calls[1]?.[1]).not.toHaveProperty("providerId");
+  });
+
+  it("hands the router the session's size and the local window (ATO-2537)", async () => {
+    const route = vi.mocked(routeTurnProvider);
+    route.mockClear();
+    const localWindow = vi.fn(() => 16_384);
+    fixture.deps.inference.resolveLocalContextWindow = localWindow;
+    const service = createRuntimeTurnService(fixture.config, fixture.deps);
+    const long: SessionState = {
+      ...session("long"),
+      contextUsage: {
+        ...EMPTY_CONTEXT_USAGE,
+        tokens: 100_000,
+        conversationTokens: 80_000,
+        sections: [
+          { label: "prompt scaffold", tokens: 15_000 },
+          { label: "conversation", tokens: 80_000 },
+          { label: "context summary", tokens: 2_000 },
+          { label: "loaded tools", tokens: 3_000 },
+        ],
+      },
+    };
+    await service.executeTurn(long, "request");
+    const params = route.mock.calls.at(-1)?.[0];
+    expect(params?.sessionSize).toEqual({
+      historyTokens: 82_000 + estimateTokens("request"),
+      fixedTokens: 18_000,
+    });
+    expect(params?.localContextWindow).toBe(localWindow);
+    // A session that never built a prompt: size unknown.
+    await service.executeTurn(session("fresh"), "request");
+    expect(route.mock.calls.at(-1)?.[0].sessionSize).toBeNull();
+  });
+
+  it("asks the session's chain whether a turn head rests (ATO-2435)", async () => {
+    const route = vi.mocked(routeTurnProvider);
+    route.mockClear();
+    const turnHeadCoolingDown = vi.fn((sessionId: string, id: string) => sessionId === "s-cool" && id === "local");
+    fixture.deps.inference.fallbackChain = { ...fixture.deps.inference.fallbackChain, turnHeadCoolingDown };
+    const service = createRuntimeTurnService(fixture.config, fixture.deps);
+    await service.executeTurn(session("s-cool"), "request");
+    const isCoolingDown = route.mock.calls.at(-1)?.[0].isCoolingDown;
+    expect(isCoolingDown?.("local")).toBe(true);
+    expect(isCoolingDown?.("other")).toBe(false);
+    expect(turnHeadCoolingDown).toHaveBeenCalledWith("s-cool", "local");
+  });
+
+  it("a local-first turn gets its cloud ceiling and a weak-answer watch (ATO-2434)", async () => {
+    const route = vi.mocked(routeTurnProvider);
+    route.mockImplementationOnce((params) => {
+      params.onLocalFirstHead?.("local");
+      return undefined;
+    });
+    fixture.config.llm = {
+      ...resolveLlmConfig(fixture.config),
+      fallback: { localFirst: true, localFirstMaxTurnUsd: 0.5 },
+    } as never;
+    const escalation = { begin: vi.fn(), end: vi.fn() };
+    fixture.deps.inference.localFirst = { escalation, todaySpendUsd: () => 0 };
+    const service = createRuntimeTurnService(fixture.config, fixture.deps);
+    await service.executeTurn(session("lf"), "request");
+    expect(fixture.loop.runTurn.mock.calls.at(-1)?.[1]).toMatchObject({ taskMaxCostUsd: 0.5 });
+    expect(escalation.begin).toHaveBeenCalledWith("lf", "local");
+    // Dropped before routing and again when the turn is over.
+    expect(escalation.end).toHaveBeenCalledTimes(2);
+
+    // An ordinary turn: no ceiling of its own, no watch.
+    fixture.config.llm = { ...resolveLlmConfig(fixture.config), fallback: { localFirstMaxTurnUsd: 0.5 } } as never;
+    escalation.begin.mockClear();
+    await service.executeTurn(session("plain"), "request");
+    expect(fixture.loop.runTurn.mock.calls.at(-1)?.[1]).not.toHaveProperty("taskMaxCostUsd");
+    expect(escalation.begin).not.toHaveBeenCalled();
   });
 
   it("unknown pins reject before enqueue and before recorder/all other turn work", async () => {

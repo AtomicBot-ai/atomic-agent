@@ -4,6 +4,7 @@ import type { AgentLoop } from "../../agent/agent-loop.js";
 import type { AgentLoopEvent, RunTurnResult } from "../../agent/agent-contract.js";
 import type { LlmStreamParams } from "../../agent/step/step-contract.js";
 import { memoryReadOnlyToolFilter } from "../../agent/tool-resource-class.js";
+import { promptOnlyToolFilter } from "../../agent/step/prompt-only-tool-filter.js";
 import type { CompletionResult } from "../../llm/llama-server-client.js";
 import type { ReasoningEffort } from "../../llm/provider/completion-types.js";
 import type { SlotManager } from "../../llm/slot-manager.js";
@@ -25,7 +26,7 @@ import { providerIdIsLlamaServer } from "../../llm/provider/registry/active-text
 import { perTurnModelRefusal } from "../per-turn-model.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { AgentMetrics } from "../../tracing/agent-metrics.js";
-import type { TurnController, TurnEventHook, TurnOrigin } from "../turn-controller.js";
+import { wakeReasonSource, type TurnController, type TurnEventHook, type TurnOrigin } from "../turn-controller.js";
 import type { SteeringInbox } from "../steering-inbox.js";
 import { TurnsInFlight } from "../turns-in-flight.js";
 import { checkpointState, turnProgressFor, type TurnCheckpointOptions } from "../turn-checkpoints.js";
@@ -39,10 +40,14 @@ import { createRuntimeGoalRunner } from "./runtime-goal.js";
 import { createNextStepSuggester } from "./runtime-next-step.js";
 import type { createExperienceReviewer } from "./runtime-experience-review.js";
 import { routeTurnProvider } from "./runtime-turn-router.js";
-import { continueOnStopHooks, startTurnHooks } from "./runtime-session-hooks.js";
+import { localFirstSessionSize } from "./local-first-fit.js";
+import { localFirstTurnPolicy, type LocalFirstEscalation, type LocalFirstTurnPolicy } from "./local-first-escalation.js";
+import { continueOnStopHooks, startTurnHooks, subagentStopHooks } from "./runtime-session-hooks.js";
 import type { SessionHookEngine } from "../../hooks/session-hook-engine.js";
+import type { PluginMonitorStarter } from "./runtime-plugin-monitors.js";
 import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
 import { surfaceShowsQuestions, withAskUserVisibility } from "../../tools/conversation/ask-user-surface.js";
+import { withBoardCardVisibility } from "../../tools/tasks/board-card-visibility.js";
 
 export function prepareRuntimeTurnState() {
   /**
@@ -106,7 +111,23 @@ export interface RuntimeTurnDependencies {
     resolveCurrentRunMode: RuntimeProviders["resolveCurrentRunMode"];
     resolveRouteVision: RuntimeProviders["resolveRouteVision"];
     resolveActiveModelName: RuntimeProviders["resolveActiveModelName"];
-    fallbackChain: Pick<ProviderFallbackChain, "standingOverrideFor" | "setTurnPrimary">;
+    fallbackChain: Pick<ProviderFallbackChain, "standingOverrideFor" | "setTurnPrimary">
+      & Partial<Pick<ProviderFallbackChain, "turnHeadCoolingDown">>;
+    /**
+     * The window a local link builds its prompt against, for the
+     * local-first size check (ATO-2537); null when not known yet.
+     * Omitted (tests, embedders): the check is skipped.
+     */
+    resolveLocalContextWindow?: (providerId: string) => number | null;
+    /**
+     * The cloud part of a local-first turn (ATO-2434): weak-answer
+     * escalation and its spend ceilings. Omitted (tests, embedders): none.
+     */
+    localFirst?: {
+      escalation: Pick<LocalFirstEscalation, "begin" | "end">;
+      /** Today's spend so far, USD (`DailySpendStore.peek`). */
+      todaySpendUsd: () => number;
+    };
   };
   traces: Pick<RuntimeTraces, "ensureRecorder" | "pinSession" | "readContextUsage" | "clearContextUsage" | "releaseSession">;
   telemetry: {
@@ -130,8 +151,10 @@ export interface RuntimeTurnDependencies {
    * `runtime-experience-review.ts`). Omitted (tests, embedders): no review.
    */
   experienceReview?: Pick<ReturnType<typeof createExperienceReviewer>, "maybeReview">;
-  /** SessionStart / UserPromptSubmit / Stop hooks (ATO-2198). Absent: none run. */
-  sessionHooks?: Pick<SessionHookEngine, "beforeTurn" | "afterTurn">;
+  /** SessionStart / UserPromptSubmit / Stop hooks (ATO-2198), SubagentStop / SessionEnd (ATO-2462). Absent: none run. */
+  sessionHooks?: Pick<SessionHookEngine, "beforeTurn" | "afterTurn"> & Partial<Pick<SessionHookEngine, "afterSubagentTurn" | "endSession">>;
+  /** Plugin monitors start with a session's turn (ATO-2438). Absent: none start. */
+  pluginMonitors?: PluginMonitorStarter;
   /**
    * `isStopping` (ATO-1688): the host has begun to stop. Omitted, the
    * shutdown itself is the only sign (`isShutdown`).
@@ -519,12 +542,19 @@ export function createRuntimeTurnService(
             attended: currentBrowserScope()?.attended ?? false,
             workerOf: worker.parentSessionId,
           };
-          return await runInBrowserScope(browserScope, () => loop.runTurn(session, {
-            userMessage,
+          const runWorker = (state: SessionState, message: string) => runInBrowserScope(browserScope, () => loop.runTurn(state, {
+            userMessage: message,
             modelModePolicy,
             ephemeral: true,
             ...buildLoopTurnBudget(runOptions),
           }));
+          // A SubagentStop hook may keep the worker going (ATO-2462).
+          return await continueOnStopHooks(
+            subagentStopHooks(deps.sessionHooks, worker.parentSessionId, runOptions.origin),
+            await runWorker(session, userMessage),
+            runOptions.signal,
+            runWorker,
+          );
         } finally {
           turnRequests.delete(session.id);
           turnPreviousReplies?.delete(session.id);
@@ -548,6 +578,8 @@ export function createRuntimeTurnService(
       ? null
       : deps.sessionHooks ?? null;
     const hookContext = await startTurnHooks(sessionHooks, session, userMessage, runOptions.signal);
+    // ATO-2438: same rule as the hooks, so a refused prompt starts nothing and workers start none.
+    if (runOptions.origin !== "subagent" && runOptions.origin !== "fusion") deps.pluginMonitors?.startFor(session);
     // The model router (ATO-483), once per turn and before anything reads
     // the route: a rule's provider goes first in this session's fallback
     // chain for the turn, so every step starts on it and a failure falls
@@ -555,6 +587,11 @@ export function createRuntimeTurnService(
     // the local run mode, Fusion or a turn that is already pinned. Set
     // every turn (null when nothing routed), so a turn that threw before
     // its `finally` cannot leave its head on the next one.
+    // ATO-2434: a local-first head gets the cloud allowance below and a
+    // weak-answer watch; a stale watch from a turn that threw is dropped.
+    const localFirst = deps.inference.localFirst;
+    localFirst?.escalation.end(session.id);
+    let localFirstPolicy: LocalFirstTurnPolicy | null = null;
     const routedProviderId = routeTurnProvider({
       config: getConfig(),
       userMessage,
@@ -564,6 +601,22 @@ export function createRuntimeTurnService(
       isRegistered: (id) => providerRegistry.getProvider(id) !== undefined,
       logger,
       sessionId: session.id,
+      sessionSize: localFirstSessionSize(
+        traces.readContextUsage(session.id) ?? session.contextUsage,
+        userMessage,
+      ),
+      ...(deps.inference.resolveLocalContextWindow !== undefined
+        ? { localContextWindow: deps.inference.resolveLocalContextWindow }
+        : {}),
+      isCoolingDown: (id) => fallbackChain.turnHeadCoolingDown?.(session.id, id) ?? false,
+      onLocalFirstHead: (headId) => {
+        localFirstPolicy = localFirstTurnPolicy({
+          fallback: getConfig().llm?.fallback,
+          todayUsd: localFirst?.todaySpendUsd(),
+          taskMaxCostUsd: runOptions.taskMaxCostUsd ?? getConfig().agent.task.maxCostUsd,
+        });
+        if (localFirstPolicy.escalate) localFirst?.escalation.begin(session.id, headId);
+      },
     });
     if (runOptions.providerId === undefined) {
       fallbackChain.setTurnPrimary(session.id, routedProviderId ?? null);
@@ -666,7 +719,14 @@ export function createRuntimeTurnService(
           ...(answerChannel !== undefined ? { answerChannel } : {}),
           ...(runOptions.questions !== undefined ? { questions: runOptions.questions } : {}),
         });
-        const toolFilter = withAskUserVisibility(runOptions.toolFilter, showsQuestions);
+        // The board card tools only on a task's run (ATO-2497). A turn
+        // that had no filter keeps its grammar bytes: the hide is
+        // prompt-only there, and dispatch refuses the tools.
+        const askFilter = withAskUserVisibility(runOptions.toolFilter, showsQuestions);
+        const boardFilter = withBoardCardVisibility(askFilter, runOptions.checkpoint?.taskId !== undefined);
+        const toolFilter = askFilter === undefined && boardFilter !== undefined
+          ? promptOnlyToolFilter(boardFilter)
+          : boardFilter;
         // A model that calls the hidden tool anyway gets an answer at
         // once rather than a question nobody can see (ask-user.ts).
         if (!showsQuestions) turnsWithoutQuestions?.add(session.id);
@@ -704,6 +764,7 @@ export function createRuntimeTurnService(
           ...buildLoopTurnBudget({
             ...runOptions,
             ...(toolFilter !== undefined ? { toolFilter } : {}),
+            ...localFirstCostCeiling(localFirstPolicy),
           }),
           onStepCheckpoint: (stepState, step) =>
             checkpointStep(stepState, progress.atStep(step)),
@@ -768,7 +829,11 @@ export function createRuntimeTurnService(
           ...(runOptions.memoryReadOnly === true ? { memoryReadOnly: true } : {}),
         });
         // `finish` ended the whole session: its kept jobs go with it.
-        if (finished.status === "completed") shellJobs.endSession(session.id);
+        if (finished.status === "completed") {
+          shellJobs.endSession(session.id);
+          // SessionEnd hooks (ATO-2462), fire-and-forget like naming.
+          void sessionHooks?.endSession?.(session.id, "finished").catch(() => undefined);
+        }
         return { ...result, session: finished };
       } catch (err) {
         // The loop hands back a state for every ending it can classify —
@@ -790,6 +855,7 @@ export function createRuntimeTurnService(
         turnPreviousReplies?.delete(session.id);
         turnsWithoutQuestions?.delete(session.id);
         traces.releaseSession(session.id);
+        localFirst?.escalation.end(session.id);
         if (routedProviderId !== undefined) {
           fallbackChain.setTurnPrimary(session.id, null);
         }
@@ -908,9 +974,12 @@ export function createRuntimeTurnService(
     // waiting behind whatever is running on the session.
     assertKnownProvider(runOptions.providerId, runOptions.model, runOptions.origin);
     const origin = runOptions.origin ?? "cli";
+    // ATO-2519: why a scheduled turn woke, for /health's busyTurnOrigins.
+    const wakeReason = origin === "scheduler" ? wakeReasonSource(session.metadata) : undefined;
     const submission = {
       sessionId: session.id,
       origin,
+      ...(wakeReason ? { wakeReason } : {}),
       // Re-read the freshest stored session when the queue hands over
       // the lock, not when the caller enqueued: between those moments a
       // turn from another origin (scheduler, HTTP, a TUI thread the
@@ -1030,4 +1099,9 @@ export function resolveTurnLocalEngine(config: AtomicAgentConfig, providerId: st
   if (!providerIdIsLlamaServer(resolveLlmConfig(config), providerId)) return undefined;
   if (providerId !== "local-llama" || config.localModels.mode !== "managed") return "external";
   return config.localModels.managed.engine === "llama-server" ? "llama-server" : "atomic-core";
+}
+
+/** A local-first turn's cloud ceiling as a loop budget field (ATO-2434). */
+function localFirstCostCeiling(policy: LocalFirstTurnPolicy | null): { taskMaxCostUsd?: number } {
+  return policy?.maxCostUsd !== undefined ? { taskMaxCostUsd: policy.maxCostUsd } : {};
 }

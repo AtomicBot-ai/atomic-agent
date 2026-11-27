@@ -2,6 +2,7 @@ import type { ToolRegistry } from "../tool-registry.js";
 import type { SkillRegistry } from "../../skills/skill-registry.js";
 import type { SkillRecord } from "../../skills/skill-loader.js";
 import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
+import type { ToolSecretSource } from "../../config/tool-secrets.js";
 import { buildSkillViewTool } from "./skill-view.js";
 import { buildSkillRunScriptTool } from "./skill-run-script.js";
 
@@ -27,6 +28,8 @@ export function registerSkillTools(
   pluginsStateDir?: string,
   /** Usage ledger hook for both tools (ATO-580); absent counts nothing. */
   onSkillUsed?: (record: SkillRecord) => void,
+  /** Tool secrets for `{{secret:NAME}}` in a script's args and env (ATO-2530). */
+  secrets?: ToolSecretSource,
 ): void {
   registry.register(buildSkillViewTool(skillRegistry, onSkillUsed));
   registry.register(
@@ -35,6 +38,7 @@ export function registerSkillTools(
       ...(envPassthrough !== undefined ? { envPassthrough } : {}),
       ...(pluginsStateDir !== undefined ? { pluginsStateDir } : {}),
       ...(onSkillUsed !== undefined ? { onSkillUsed } : {}),
+      ...(secrets !== undefined ? { secrets } : {}),
     }),
   );
 }

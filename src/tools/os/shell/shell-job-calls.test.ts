@@ -50,7 +50,7 @@ describe("classifyShellCall", () => {
     const both = classifyShellCall({ cmd: "ls", wait: 3 });
     expect(both).toEqual({
       kind: "invalid",
-      message: "os.shell.run: pass one of cmd, wait, kill, jobs, write (got cmd, wait)",
+      message: "os.shell.run: pass one of cmd, wait, kill, jobs, write, monitor (got cmd, wait)",
     });
     const three = classifyShellCall({ cmd: "ls", wait: 3, kill: 2, jobs: true });
     expect(three.kind).toBe("invalid");
@@ -91,5 +91,21 @@ describe("hasUntil", () => {
     expect(hasUntil("")).toBe(false);
     expect(hasUntil(false)).toBe(false);
     expect(hasUntil("ready")).toBe(true);
+  });
+});
+
+describe("classifyShellCall monitor (ATO-2436)", () => {
+  it("reads {monitor: id} as its own form, with ids as numbers or numeric strings", () => {
+    expect(classifyShellCall({ monitor: 3, until: "ready" })).toEqual({ kind: "monitor", id: 3 });
+    expect(classifyShellCall({ monitor: "4" })).toEqual({ kind: "monitor", id: 4 });
+  });
+
+  it("treats a zero monitor next to cmd as absent, and refuses one beside another form", () => {
+    expect(classifyShellCall({ cmd: "ls", monitor: 0 })).toEqual({ kind: "cmd" });
+    expect(classifyShellCall({ wait: 2, monitor: 2 })).toMatchObject({ kind: "invalid" });
+    expect(classifyShellCall({ monitor: "x" })).toMatchObject({
+      kind: "invalid",
+      message: expect.stringContaining(`{"monitor": 3, "until": "ready|error"}`),
+    });
   });
 });

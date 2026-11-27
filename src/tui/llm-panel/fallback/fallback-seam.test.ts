@@ -118,6 +118,7 @@ function mountSeam(): Harness {
     onFallbackRemoveRequested: (providerId) => orchestrator.remove(providerId),
     onFallbackAppendLocalToggleRequested: () =>
       orchestrator.toggleAppendLocal(),
+    onFallbackLocalFirstToggleRequested: () => orchestrator.toggleLocalFirst(),
   };
   // Mirror config into the pane (what LLM-tab entry does), then focus it.
   orchestrator.refresh();
@@ -164,6 +165,23 @@ describe("fallback pane UI→orchestrator seam", () => {
     const links = app.state().fallbackPanel.links.map((l) => l.providerId);
     expect(links[0]).toBe("cloud-a");
     expect(app.emitted.some((a) => a.type === "fallback_refresh")).toBe(true);
+  });
+
+  it("an o keypress persists localFirst and the pane shows it (ATO-2434)", () => {
+    const app = mountSeam();
+    expect(app.state().fallbackPanel.localFirst).toBe(false);
+    expect(app.press("o")).toBe(true);
+    const onDisk = JSON.parse(
+      readFileSync(join(stateDir, "config.json"), "utf8"),
+    );
+    expect(onDisk.llm.fallback).toEqual({
+      chain: ["cloud-a", "cloud-b"],
+      appendLocal: false,
+      localFirst: true,
+    });
+    expect(app.state().fallbackPanel.localFirst).toBe(true);
+    app.press("o");
+    expect(app.state().fallbackPanel.localFirst).toBe(false);
   });
 
   it("Enter in the add picker persists the new link", () => {

@@ -80,4 +80,31 @@ describe("launch integrations (ATO-2172)", () => {
   it("quotes TOML strings", () => {
     expect(tomlString('a "b" \\c')).toBe('"a \\"b\\" \\\\c"');
   });
+
+  it("qwen: OPENAI_* env with the key, --model and --auth-type openai unless given (ATO-2449)", () => {
+    const plan = integration("qwen-code").build(target({ model: "qwen-local" }));
+    expect(plan.env).toEqual({
+      OPENAI_BASE_URL: "http://127.0.0.1:41234/v1",
+      OPENAI_API_KEY: "secret-key",
+      OPENAI_MODEL: "qwen-local",
+    });
+    expect(plan.args).toEqual(["--model", "qwen-local", "--auth-type", "openai"]);
+    expect(plan.secretEnv).toEqual(["OPENAI_API_KEY"]);
+    const own = integration("qwen").build(target({ extraArgs: ["-m", "x", "--auth-type=qwen-oauth", "-p", "hi"] }));
+    expect(own.args).toEqual(["-m", "x", "--auth-type=qwen-oauth", "-p", "hi"]);
+  });
+
+  it("cline: saves the openai provider with `cline auth` first, then runs it; the key is only in that step (ATO-2449)", () => {
+    const plan = integration("cline").build(target({ model: "qwen-local", extraArgs: ["fix the tests"] }));
+    expect(plan.setup).toEqual([
+      ["auth", "-p", "openai", "-k", "secret-key", "-b", "http://127.0.0.1:41234/v1", "-m", "qwen-local"],
+    ]);
+    expect(plan.secretArgs).toEqual(["secret-key"]);
+    expect(plan.args).toEqual(["-P", "openai", "-m", "qwen-local", "fix the tests"]);
+    expect(plan.args.join(" ")).not.toContain("secret-key");
+  });
+
+  it("gemini is not offered: Gemini CLI speaks only the Gemini API (ATO-2449)", () => {
+    expect(findLaunchIntegration("gemini")).toBeNull();
+  });
 });

@@ -33,6 +33,7 @@ import { CLI_RELEASE_TARGETS, type BundleTarget } from "./bundle-targets.js";
 import {
   LAUNCHER_PACKAGE,
   archiveName,
+  bundledPackageNames,
   launcherManifest,
   platformManifest,
   publishOrder,
@@ -99,12 +100,14 @@ function unpack(archive: string, target: BundleTarget, dest: string): void {
 function prepareBundled(pkgDir: string): Record<string, string> {
   const modules = join(pkgDir, "node_modules");
   if (!existsSync(modules)) return {};
-  const names = readdirSync(modules).filter(
-    (name) => !name.startsWith(".") && existsSync(join(modules, name, "package.json")),
+  // Scoped packages (`@napi-rs/keyring`, `@lydell/node-pty`, ATO-2484)
+  // sit one level down; without them in `bundleDependencies` npm leaves
+  // them out of the tarball and the keychain and the pty binding are
+  // missing from an npm install.
+  const names = bundledPackageNames(
+    (dir) => readdirSync(join(modules, dir)),
+    (name) => existsSync(join(modules, name, "package.json")),
   );
-  if (names.some((name) => name.startsWith("@"))) {
-    throw new Error(`${modules}: scoped packages are not expected in the bundle`);
-  }
   const bundled = new Set(names);
   const versions: Record<string, string> = {};
   for (const name of names) {

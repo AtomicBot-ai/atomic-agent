@@ -1,6 +1,7 @@
 import type { FailedAttempt } from "./failed-attempts.js";
 import type { FallbackTiming } from "./fallback-config.js";
 import { isOutageFailure } from "./link-failure-kind.js";
+import type { TurnHeadCooldown } from "./turn-head-cooldown.js";
 
 /**
  * A single provider's circuit-breaker state. All timestamps are epoch
@@ -74,6 +75,18 @@ export interface PartitionState {
    * the turn (ATO-483). Null = the configured chain as it is.
    */
   turnPrimaryId: string | null;
+  /**
+   * Turn heads that failed and rest before they head a turn again
+   * (`turn-head-cooldown.ts`, ATO-2435). Survives `clearOverride`.
+   */
+  readonly headCooldowns: Map<string, TurnHeadCooldown>;
+  /**
+   * The turn left its head because the head's answer was weak
+   * (`escalateTurnHead`, ATO-2434), not because it failed: the head is
+   * not probed back while the override stands. Cleared with the override
+   * (`clearOverride`), so the next turn starts on its head again.
+   */
+  headEscalated: boolean;
 }
 
 export function freshPartition(): PartitionState {
@@ -86,6 +99,8 @@ export function freshPartition(): PartitionState {
     fallbackServed: false,
     servingId: null,
     turnPrimaryId: null,
+    headCooldowns: new Map(),
+    headEscalated: false,
   };
 }
 
@@ -145,4 +160,5 @@ export function clearOverride(p: PartitionState): void {
   p.overrideServed = false;
   p.fallbackServed = false;
   p.servingId = null;
+  p.headEscalated = false;
 }

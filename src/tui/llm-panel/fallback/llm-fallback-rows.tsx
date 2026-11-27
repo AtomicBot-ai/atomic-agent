@@ -66,10 +66,35 @@ export function FallbackRows({ state }: { state: TuiState }): ReactElement {
           </Text>
           <Text color={theme.colors.muted}> · l to toggle</Text>
         </Text>
+        <LocalFirstLine on={panel.localFirst} />
         <Text color={theme.colors.muted}>
-          {"< >"} move priority · a add link · d remove · l toggle local
+          {"< >"} move priority · a add link · d remove · l toggle local · o
+          start on local
         </Text>
       </Box>
+    </Box>
+  );
+}
+
+/**
+ * The local-first cascade switch (`llm.fallback.localFirst`, ATO-2434).
+ * The second line says what "on" means, because the cascade runs the
+ * other way round from the chain above: local first, cloud on failure.
+ */
+function LocalFirstLine({ on }: { on: boolean }): ReactElement {
+  return (
+    <Box flexDirection="column">
+      <Text color={theme.colors.muted}>
+        Start on the local model:{" "}
+        <Text bold color={on ? theme.colors.success : theme.colors.muted}>
+          {on ? "on" : "off"}
+        </Text>
+        <Text color={theme.colors.muted}> · o to toggle</Text>
+      </Text>
+      <Text color={theme.colors.muted} wrap="truncate-end">
+        {"  "}Each turn tries the local model first and goes to the cloud
+        when the local answer fails.
+      </Text>
     </Box>
   );
 }

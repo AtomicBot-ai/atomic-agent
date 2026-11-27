@@ -5,10 +5,20 @@ import {
   fetchJobLogTail,
   fetchPullRequestHead,
   formatRepoSlug,
+  hasMergeConflict,
   type CheckItem,
   type GithubApi,
 } from "../../github/index.js";
 import { requireNumber, resolveRepo } from "./github-tool-args.js";
+import {
+  PR_CHECKS_FEEDBACK_BUDGET_CHARS,
+  feedbackDetails,
+  feedbackLines,
+  hasFeedbackItems,
+  mergeLine,
+  parseSince,
+  readFeedback,
+} from "./pr-checks-feedback.js";
 
 const TOOL = "github.pr.checks";
 /** Failing Actions jobs whose log tail is fetched per call. */
@@ -28,22 +38,26 @@ function line(item: CheckItem): string {
 }
 
 /**
- * `github.pr.checks` (ATO-2331): the CI verdict on a PR's head commit,
- * every red and running check, and the log tail of up to two failing
- * GitHub Actions jobs. Read-only. Log text is written by whoever
- * controls the PR's code, so the result is framed as untrusted.
+ * `github.pr.checks` (ATO-2331, ATO-2516): the CI verdict on a PR's
+ * head commit, every red and running check, the log tail of up to two
+ * failing GitHub Actions jobs, whether the PR has a merge conflict, and
+ * the review feedback from the repo's team. Read-only. Logs and
+ * comments are written by other people, so the result is framed as
+ * untrusted.
  */
 export function buildPrChecksTool(client: () => GithubApi): ToolDefinition {
   return {
     name: TOOL,
     description:
-      "CI status of a pull request's head commit: overall verdict, failing and pending checks, and the log tail of failing GitHub Actions jobs. Args: `number` (required), `repo` (owner/name; default origin), `logs` (default true). Read-only.",
+      "Status of a pull request for fixing it: CI verdict, failing and pending checks, the log tail of failing GitHub Actions jobs, merge conflict with the base, and review feedback from the repo's team. Args: `number` (required), `repo` (owner/name; default origin), `logs` (default true), `reviews` (default true), `since` (ISO time; only feedback after it). Read-only.",
     readonly: true,
-    untrustedOutput: "GitHub CI logs",
+    untrustedOutput: "GitHub CI logs and review comments",
     async run(rawArgs, ctx) {
       const ref = await resolveRepo(rawArgs.repo, ctx, TOOL);
       const number = requireNumber(rawArgs.number, TOOL, "number");
       const wantLogs = rawArgs.logs !== false;
+      const wantReviews = rawArgs.reviews !== false;
+      const since = parseSince(rawArgs.since);
       const api = client();
       const pr = await fetchPullRequestHead(api, ref, number);
       const summary = await fetchChecks(api, ref, pr.headSha);
@@ -51,16 +65,21 @@ export function buildPrChecksTool(client: () => GithubApi): ToolDefinition {
 
       const out: string[] = [
         `${slug}#${pr.number} ${pr.headRef} @${pr.headSha.slice(0, 7)}: ${summary.state} (${summary.failing.length} failing, ${summary.pending.length} pending, ${summary.passing.length} passing)`,
+        mergeLine(pr),
         ...summary.failing.map(line),
         ...summary.pending.map(line),
       ];
+      const feedback = wantReviews ? await readFeedback(api, ref, pr.number, since) : null;
+      if (feedback) out.push(...feedbackLines(feedback, since));
       const logs: Array<Record<string, unknown>> = [];
       if (wantLogs) {
         const withLogs = summary.failing.filter((i) => i.actionsJobId !== null);
         const shown = withLogs.slice(0, PR_CHECKS_MAX_LOGS);
         // Split one log budget between the jobs shown, so the second
         // tail is not the part the summary cap cuts off.
-        const perLogChars = Math.floor(PR_CHECKS_LOG_BUDGET_CHARS / Math.max(1, shown.length));
+        // Review feedback shown above takes its share of the same cap.
+        const budget = PR_CHECKS_LOG_BUDGET_CHARS - (hasFeedbackItems(feedback) ? PR_CHECKS_FEEDBACK_BUDGET_CHARS : 0);
+        const perLogChars = Math.floor(budget / Math.max(1, shown.length));
         for (const item of shown) {
           const res = await fetchJobLogTail(api, ref, item.actionsJobId!, perLogChars);
           if (!res.ok) {
@@ -99,6 +118,9 @@ export function buildPrChecksTool(client: () => GithubApi): ToolDefinition {
             headRef: pr.headRef,
             headSha: pr.headSha,
             state: summary.state,
+            mergeConflict: hasMergeConflict(pr),
+            mergeable: pr.mergeable,
+            ...(feedback ? { feedback: feedbackDetails(feedback) } : {}),
             failing: summary.failing.map((i) => i.name),
             pending: summary.pending.map((i) => i.name),
             passing: summary.passing.length,

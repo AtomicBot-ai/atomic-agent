@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -30,9 +31,17 @@ import { snapshotSqlite } from "../import/atomic-desktop/sqlite-snapshot.js";
  * never as the live file. Left out: GGUF models (`models/`, re-downloadable
  * and tens of GB; `--with-models` keeps them), the browser profile (site
  * cookies), WAL/SHM side files, locks and runtime records.
+ *
+ * ATO-2503: models moved out of the state dir (`models dir <folder>`, an
+ * external disk say) live where `modelsDir` points. With `--with-models`
+ * they go in under `models/models/`, the default models folder, and the
+ * manifest names where they came from, so a restore points the config
+ * back at the default folder that now holds them.
  */
 export const ARCHIVE_ROOT = "atomic-agent";
 export const MANIFEST = "atomic-agent-backup.json";
+/** Where models from outside the state dir land in the archive (`<dataDir>/models` by default). */
+export const ARCHIVED_MODELS_DIR = "models/models";
 const ALWAYS_SKIP = new Set(["browser-profile", "serve", "restore"]);
 const SKIP_FILE = /(-wal|-shm|\.lock|\.pid)$/;
 
@@ -58,10 +67,16 @@ function walk(root: string, dir: string, skipTop: Set<string>, out: string[]): v
 export async function backupStateDir(
   stateDir: string,
   outFile: string,
-  opts: { withModels?: boolean; appVersion?: string; now?: Date } = {},
+  opts: { withModels?: boolean; appVersion?: string; now?: Date; modelsDir?: string | null } = {},
 ): Promise<BackupResult> {
   const skipTop = new Set(ALWAYS_SKIP);
   if (!opts.withModels) skipTop.add("models");
+  // Models moved outside the state dir: walked on their own, archived as the default folder.
+  const outside = opts.withModels && opts.modelsDir && existsSync(opts.modelsDir)
+    ? realpathSync(opts.modelsDir)
+    : null;
+  const extra: string[] = [];
+  if (outside && outside !== stateDir && !outside.startsWith(stateDir + sep)) walk(outside, outside, new Set(), extra);
   const out = resolve(outFile);
   if (out === stateDir || out.startsWith(stateDir + sep)) throw new Error("write the backup outside the data folder it backs up");
   const files: string[] = [];
@@ -79,6 +94,7 @@ export async function backupStateDir(
       createdAt: (opts.now ?? new Date()).toISOString(),
       appVersion: opts.appVersion ?? null,
       withModels: !!opts.withModels,
+      ...(extra.length > 0 ? { modelsFrom: outside } : {}),
       skipped: [...skipTop],
     }, null, 2));
     pack.entry({ name: `${ARCHIVE_ROOT}/${MANIFEST}`, mode: 0o600 }, manifest);
@@ -95,6 +111,16 @@ export async function backupStateDir(
       await pipeline(createReadStream(src), entry);
       rmSync(src, { force: true });
     }
+    // Model files are streamed from where they are: nothing appends to a
+    // finished GGUF, and a scratch copy would need their size twice.
+    for (const rel of extra) {
+      const abs = join(outside!, rel);
+      const st = statSync(abs);
+      bytes += st.size;
+      const name = `${ARCHIVE_ROOT}/${ARCHIVED_MODELS_DIR}/${rel.split(sep).join("/")}`;
+      const entry = pack.entry({ name, size: st.size, mode: st.mode & 0o777, mtime: st.mtime });
+      await pipeline(createReadStream(abs), entry);
+    }
     pack.finalize();
     await written;
     renameSync(partial, out);
@@ -107,7 +133,7 @@ export async function backupStateDir(
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
-  return { file: out, files: files.length, bytes, skipped: [...skipTop] };
+  return { file: out, files: files.length + extra.length, bytes, skipped: [...skipTop] };
 }
 
 /** A tar entry name as a path under `root`, or null when it would land outside it. */

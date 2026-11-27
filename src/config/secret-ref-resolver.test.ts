@@ -61,11 +61,13 @@ describe("resolveSecretRefSync / resolveSecretRef", () => {
     expect(childEnv.OPENROUTER_API_KEY).toBeUndefined();
     expect(childEnv.BW_CLIENTSECRET).toBeUndefined();
     expect(childEnv.PATH).toBe("/usr/bin");
-    expect(f.calls[0]!.options.timeoutMs).toBe(3_000);
+    // op may wait on Touch ID: 30 s unless the sources file sets a timeout (ATO-2530).
+    expect(f.calls[0]!.options.timeoutMs).toBe(30_000);
     expect(f.calls[0]!.options.maxBytes).toBe(SECRET_REF_MAX_OUTPUT_BYTES);
   });
 
-  it("runs bw get <field> <item> for bw://", async () => {
+  // On Windows bw goes through cmd.exe (secret-refs-platform.test.ts).
+  it.skipIf(process.platform === "win32")("runs bw get <field> <item> for bw://", async () => {
     const f = fake({ stdout: VALUE });
     await resolveSecretRef("NPM_TOKEN", "bw://npm publish/password", {
       sources: EMPTY_SECRET_SOURCES,
@@ -118,9 +120,28 @@ describe("resolveSecretRefSync / resolveSecretRef", () => {
       resolveSecretRefSync("A_KEY", "op://v/i/f", { sources: EMPTY_SECRET_SOURCES, env: ENV, spawn: fake(outcome).sync });
     expect(run({ failure: "timeout", exitCode: null })).toThrow("A_KEY: op timed out");
     expect(run({ failure: "too-large", exitCode: null, stdout: "x".repeat(10) })).toThrow(/printed more than 1048576 bytes/);
-    expect(run({ failure: "not-found", exitCode: null })).toThrow("A_KEY: op was not found");
+    expect(run({ failure: "not-found", exitCode: null })).toThrow("(op was not found)");
     expect(run({ stdout: "" })).toThrow(/printed nothing/);
     expect(run({ stdout: "one\ntwo" })).toThrow(/more than one line/);
+  });
+
+  // ATO-2756: a missing password-manager CLI says what to install first.
+  it("tells the user to install the 1Password or Bitwarden CLI when it is missing", () => {
+    const sync = (value: string, outcome: Partial<SecretSpawnOutcome>, sources = EMPTY_SECRET_SOURCES) => () =>
+      resolveSecretRefSync("A_KEY", value, { sources, env: ENV, spawn: fake(outcome).sync });
+    expect(sync("op://v/i/f", { failure: "not-found", exitCode: null })).toThrow(
+      "A_KEY: the 1Password CLI (op) is not installed or not on PATH. Install it and sign in: " +
+        "https://developer.1password.com/docs/cli/get-started/ (op was not found)",
+    );
+    expect(sync("op://v/i/f", { failure: "could-not-run", exitCode: null })).toThrow(
+      /^A_KEY: the 1Password CLI \(op\) could not start.*get-started\/ \(op could not run\)$/,
+    );
+    expect(sync("bw://item/password", { failure: "not-found", exitCode: null })).toThrow(
+      /the Bitwarden CLI \(bw\) is not installed.*https:\/\/bitwarden\.com\/help\/cli\//,
+    );
+    // The user's own cmd:// helper has no install page: the plain message stays.
+    const helper: SecretSources = { ...EMPTY_SECRET_SOURCES, command: ["my-helper"] };
+    expect(sync("cmd://x", { failure: "not-found", exitCode: null }, helper)).toThrow("A_KEY: my-helper was not found");
   });
 
   it("never puts stdout in an error, and cuts the value out of the stderr hint", () => {

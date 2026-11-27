@@ -82,3 +82,23 @@ describe("helpers", () => {
     expect(cut).toContain("Reply cut");
   });
 });
+
+describe("LinearApi.createAgentActivity (ATO-2464)", () => {
+  it("sends agentActivityCreate with the session id and typed content, as Bearer for an app token", async () => {
+    const f = fakeFetch(() => ok({ agentActivityCreate: { success: true, agentActivity: { id: "a1" } } }));
+    const api = new LinearApi({ apiKey: "oauth-app-token", fetchImpl: f as unknown as typeof fetch });
+    expect(await api.createAgentActivity("as-1", "thought", "Working on it.")).toBe("a1");
+    const init = f.mock.calls[0]![1];
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer oauth-app-token");
+    const sent = JSON.parse(String(init.body)) as { query: string; variables: unknown };
+    expect(sent.query).toContain("agentActivityCreate(input: $input)");
+    expect(sent.variables).toEqual({ input: { agentSessionId: "as-1", content: { type: "thought", body: "Working on it." } } });
+  });
+
+  it("rejects when Linear did not record it", async () => {
+    const f = fakeFetch(() => ok({ agentActivityCreate: { success: false } }));
+    await expect(
+      new LinearApi({ apiKey: "t", fetchImpl: f as unknown as typeof fetch }).createAgentActivity("as-1", "response", "x"),
+    ).rejects.toMatchObject({ code: "bad_response" });
+  });
+});

@@ -5,7 +5,7 @@ Scope: `src/channels/`. Inherit the root instructions; read [README.md](README.m
 ## Constraints
 
 - Keep sender identity/pairing, session mapping and approval routing isolated. Channels invoke runTurn and must handle steer returning false by their documented queue policy.
-- Preserve channel-specific polling/reconnect lifecycle and cleanup. Telegram polling is a scoped timer exception, not permission for general polling.
+- Preserve channel-specific polling/reconnect lifecycle and cleanup. Telegram polling and the Linear poller (ATO-2464) are scoped timer exceptions, not permission for general polling.
 - Preserve text formatting, length limits, retry boundaries and attachment delivery. Task reports must go to the configured owner, not an arbitrary chat.
 - Keep tokens out of logs and persisted session text; use settings/secret resolution paths.
 

@@ -3,6 +3,12 @@ import {
   secretPlaceholderNames,
   substituteSecretPlaceholders,
 } from "../../../sandbox/secret-placeholders.js";
+import {
+  checkToolSecretNames,
+  describeToolSecretUse,
+  resolveToolSecrets,
+  type ToolSecretCheck,
+} from "../../tool-secret-use.js";
 
 /**
  * `{{secret:NAME}}` in `os.shell.run` (ATO-476). Two steps around the
@@ -13,7 +19,7 @@ import {
  * transcript, the trace or the approval card shows).
  */
 
-export type ShellSecretCheck = { ok: true; names: string[] } | { ok: false; message: string };
+export type ShellSecretCheck = ToolSecretCheck;
 
 export function checkShellSecrets(
   cmd: string,
@@ -21,34 +27,18 @@ export function checkShellSecrets(
   useShell: boolean,
   source: ToolSecretSource | undefined,
 ): ShellSecretCheck {
-  let names: string[];
-  try {
-    names = secretPlaceholderNames([cmd, ...execArgs]);
-  } catch (err) {
-    return { ok: false, message: messageOf(err) };
-  }
-  if (names.length === 0) return { ok: true, names };
+  const check = checkToolSecretNames([cmd, ...execArgs], source);
+  if (!check.ok || check.names.length === 0) return check;
   // The program itself stays something the guard and the human saw.
   if (!useShell && secretPlaceholderNames([cmd]).length > 0) {
     return { ok: false, message: "a secret placeholder cannot be the program name; put it in args" };
   }
-  if (source === undefined) {
-    return {
-      ok: false,
-      message: `unknown secret ${names[0]}: no tool secrets are configured (toolSecrets in secret-sources.json)`,
-    };
-  }
-  const unknown = names.find((name) => !source.has(name));
-  if (unknown !== undefined) {
-    return { ok: false, message: `unknown secret ${unknown}: it is not listed in toolSecrets of secret-sources.json` };
-  }
-  return { ok: true, names };
+  return check;
 }
 
 /** The approval reason's tail: which secrets the human is letting the command use. */
 export function describeShellSecretUse(names: readonly string[]): string {
-  if (names.length === 0) return "";
-  return ` (uses secret${names.length === 1 ? "" : "s"} ${names.join(", ")}: filled in when it starts, masked in output (exact value))`;
+  return describeToolSecretUse(names);
 }
 
 export type ShellSecretFill =
@@ -69,9 +59,8 @@ export async function fillShellSecrets(
   source: ToolSecretSource,
   sameVerdict: (cmd: string, args: readonly string[]) => boolean,
 ): Promise<ShellSecretFill> {
-  const values = new Map<string, string>();
   try {
-    for (const name of names) values.set(name, await source.resolve(name));
+    const values = await resolveToolSecrets(names, source);
     const filledCmd = substituteSecretPlaceholders(cmd, values, { shell: useShell });
     const filledArgs = execArgs.map((arg) => substituteSecretPlaceholders(arg, values, { shell: useShell }));
     if (!sameVerdict(filledCmd, filledArgs)) {

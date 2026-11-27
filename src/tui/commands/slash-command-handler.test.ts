@@ -179,6 +179,18 @@ describe("dispatchSlashCommand", () => {
     expect(result.triggerSessionNew).toBe(false);
   });
 
+  it("asks for the Trash list or a restore for /sessions --deleted | --restore (ATO-2474)", () => {
+    const list = dispatchSlashCommand("/sessions --deleted");
+    expect(list.sessionsTrash).toEqual({ verb: "list" });
+    expect(list.triggerSessionPicker).toBe(false);
+    const restore = dispatchSlashCommand("/sessions --restore 3");
+    expect(restore.sessionsTrash).toEqual({ verb: "restore", target: "3" });
+    const odd = dispatchSlashCommand("/sessions --nope");
+    expect(odd.sessionsTrash).toBeUndefined();
+    expect(odd.triggerSessionPicker).toBe(false);
+    expect(odd.systemMessage).toContain("--deleted");
+  });
+
   it("signals triggerRewindPicker for /rewind (ATO-1057)", () => {
     const result = dispatchSlashCommand("/rewind");
     expect(result.triggerRewindPicker).toBe(true);
@@ -418,6 +430,38 @@ describe("dispatchSlashCommand", () => {
     ]);
   });
 
+  it("/llm fallback local-first on|off opens the pane and carries the value (ATO-2434)", () => {
+    const pane = [
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "llm" },
+      { type: "llm_mode_set", mode: "fallback" },
+      { type: "providers_refresh_requested" },
+    ];
+    const on = dispatchSlashCommand("/llm fallback local-first on");
+    expect(on.actions).toEqual(pane);
+    expect(on.fallbackLocalFirst).toBe(true);
+    const off = dispatchSlashCommand("/llm fallback LOCAL-FIRST Off");
+    expect(off.actions).toEqual(pane);
+    expect(off.fallbackLocalFirst).toBe(false);
+    // Bare `/llm fallback` still only opens the pane.
+    expect(dispatchSlashCommand("/llm fallback").fallbackLocalFirst).toBeUndefined();
+  });
+
+  it("/llm fallback local-first without on/off answers with its usage", () => {
+    for (const input of ["/llm fallback local-first", "/llm fallback local-first maybe"]) {
+      const result = dispatchSlashCommand(input);
+      expect(result.actions).toEqual([]);
+      expect(result.fallbackLocalFirst).toBeUndefined();
+      expect(result.systemMessage).toMatch(/^usage: \/llm fallback local-first on\|off/);
+    }
+  });
+
+  it("lists local-first in the /llm usage line", () => {
+    expect(dispatchSlashCommand("/llm nonsense").systemMessage).toContain(
+      "/llm fallback local-first on|off",
+    );
+  });
+
   it("asks for a contract probe of the active provider on /llm check", () => {
     const result = dispatchSlashCommand("/llm check");
     expect(result.actions).toEqual([
@@ -601,6 +645,16 @@ describe("dispatchSlashCommand", () => {
     ).toBeUndefined();
   });
 
+  it("/queue next and /queue move reorder the parked messages; other words are still parked (ATO-2476)", () => {
+    const next = dispatchSlashCommand("/queue next 3");
+    expect(next.queueMove).toEqual({ from: 2, to: 0 });
+    expect(next.submitWhileBusy).toBeUndefined();
+    expect(dispatchSlashCommand("/queue move 1 2").queueMove).toEqual({ from: 0, to: 1 });
+    const text = dispatchSlashCommand("/queue next steps for the doc");
+    expect(text.queueMove).toBeUndefined();
+    expect(text.submitWhileBusy).toEqual({ mode: "queue", text: "next steps for the doc" });
+  });
+
   it("/uninstall opens the ladder and asks for a plan — it removes nothing", () => {
     const result = dispatchSlashCommand("/uninstall");
     expect(result.actions).toEqual([{ type: "uninstall_opened" }]);
@@ -740,6 +794,15 @@ describe("/enhance", () => {
     expect(bad.showStepsVerb).toBeUndefined();
     expect(bad.systemMessage).toMatch(/usage: \/steps/);
     expect(dispatchSlashCommand("/steps").forwardAsMessage).toBe(false);
+  });
+
+  it("/pet toggles the terminal pet, on and off set it (ATO-2513)", () => {
+    expect(dispatchSlashCommand("/pet").petVerb).toBe("toggle");
+    expect(dispatchSlashCommand("/pet on").petVerb).toBe("on");
+    expect(dispatchSlashCommand("/pet OFF").petVerb).toBe("off");
+    const bad = dispatchSlashCommand("/pet cat");
+    expect(bad.petVerb).toBeUndefined();
+    expect(bad.systemMessage).toContain("usage: /pet [on|off]");
   });
 
   it("/verbose toggles the step notes, on and off set them (ATO-34)", () => {

@@ -11,6 +11,8 @@ export interface SlashCommandDef {
   readonly description: string;
   /** Optional aliases matched in parsing but not shown in palette. */
   readonly aliases?: readonly string[];
+  /** Search-only words: matched by the palette below names and aliases, never dispatched. */
+  readonly keywords?: readonly string[];
   /** Present only for workspace catalog commands; never a built-in alias. */
   readonly skillName?: string;
   /** Present only for plugin commands: the full `plugin:command` name. */
@@ -31,8 +33,12 @@ export interface SlashCommandDef {
  * `slash-command-handler.ts` still knows how to action each name.
  */
 export const SLASH_COMMANDS: readonly SlashCommandDef[] = toSlashCommands().map(
-  ({ name, description, aliases }) =>
-    aliases ? { name, description, aliases } : { name, description },
+  ({ name, description, aliases, keywords }) => ({
+    name,
+    description,
+    ...(aliases ? { aliases } : {}),
+    ...(keywords ? { keywords } : {}),
+  }),
 );
 
 /**
@@ -53,7 +59,7 @@ export function skillSlashCommands(panel: SkillsPanelState): readonly SlashComma
  * nothing else claims it. A built-in or a skill with the same name wins:
  * the plugin entry (or its alias) is dropped. The operator's own commands
  * (rows with a `source`) use their name as is and are tagged
- * `(project)` or `(profile)` in the palette.
+ * `(project)`, `(profile)` or `(~/.claude)` in the palette.
  */
 export function pluginSlashCommands(rows: readonly PluginCommandRow[], taken: readonly SlashCommandDef[] = []): readonly SlashCommandDef[] {
   if (rows.length === 0) return [];
@@ -73,7 +79,7 @@ export function pluginSlashCommands(rows: readonly PluginCommandRow[], taken: re
   return usable.map(row => {
     const alias = aliases.get(row.name);
     const described = row.argumentHint ? `${row.description} ${row.argumentHint}`.trim() : row.description;
-    const description = row.source ? `${described} (${row.source})` : described;
+    const description = row.source ? `${described} (${row.source === "claude" ? "~/.claude" : row.source})` : described;
     return alias
       ? { name: row.name, description, aliases: [alias], pluginCommand: row.name }
       : { name: row.name, description, pluginCommand: row.name };
@@ -84,23 +90,27 @@ export function pluginSlashCommands(rows: readonly PluginCommandRow[], taken: re
  * Filter the registry by a slash query (the characters typed after `/`).
  * Empty queries return the full list. Non-empty queries are scored via
  * fuzzysort against the name and aliases, preserving registry order on
- * ties.
+ * ties. A command found only through its search keywords comes after
+ * every name or alias match, so `/fusion` still lists `/fusion` first
+ * and Enter keeps running what was typed.
  */
 export function filterSlashCommands(query: string, skills: readonly SlashCommandDef[] = []): readonly SlashCommandDef[] {
   const commands = skills.length ? [...SLASH_COMMANDS, ...skills] : SLASH_COMMANDS;
   const q = query.trim().toLowerCase();
   if (q.length === 0) return commands;
-  const scored = commands.map((cmd, idx) => {
-    const candidates = [cmd.name, ...(cmd.aliases ?? [])];
-    const scores = candidates.map(
-      (candidate) => fuzzysort.single(q, candidate)?.score ?? -Infinity,
+  const best = (candidates: readonly string[]): number =>
+    Math.max(
+      -Infinity,
+      ...candidates.map((candidate) => fuzzysort.single(q, candidate)?.score ?? -Infinity),
     );
-    const bestScore = Math.max(...scores);
-    return { cmd, score: bestScore, idx };
+  const scored = commands.map((cmd, idx) => {
+    const named = best([cmd.name, ...(cmd.aliases ?? [])]);
+    if (named > -Infinity) return { cmd, tier: 0, score: named, idx };
+    return { cmd, tier: 1, score: best(cmd.keywords ?? []), idx };
   });
   return scored
     .filter(({ score }) => score > -Infinity)
-    .sort((a, b) => b.score - a.score || a.idx - b.idx)
+    .sort((a, b) => a.tier - b.tier || b.score - a.score || a.idx - b.idx)
     .map(({ cmd }) => cmd);
 }
 

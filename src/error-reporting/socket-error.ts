@@ -14,7 +14,9 @@
  * The peer is only ever *proven* from the error itself: undici's
  * `SocketError` carries `socket.remoteAddress`, and a Node connect error
  * carries `address`. A raw `ECONNRESET` from a socket read or write
- * carries neither, so it stays `unknown` and is still reported. The
+ * carries neither; it is proven only when the agent's own HTTP pool
+ * marked it on a socket it opened to a loopback address (ATO-2767).
+ * Without the mark it stays `unknown` and is still reported. The
  * address is classified here and never leaves the machine; nor does a
  * port.
  */
@@ -115,7 +117,20 @@ function firstSocketCode(links: readonly object[]): string | undefined {
   return undefined;
 }
 
+/**
+ * ATO-2767: the mark the agent's HTTP pool puts on an error from a socket
+ * it connected to a loopback address (`src/llm/loopback-socket-mark.ts`).
+ * Read by its registry key, so this module imports nothing from the LLM
+ * layer. It is the only proof a raw read reset can carry.
+ */
+const LOOPBACK_PEER_MARK = Symbol.for("atomic-agent.loopbackPeer");
+
+function hasLoopbackMark(link: object): boolean {
+  return (link as Record<symbol, unknown>)[LOOPBACK_PEER_MARK] === true;
+}
+
 function socketPeer(links: readonly object[]): SocketPeer {
+  if (links.some(hasLoopbackMark)) return "loopback";
   for (const link of links) {
     const address = peerAddress(link);
     if (address !== undefined) {

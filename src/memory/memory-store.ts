@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 
+import { CLEAR_CONSOLIDATION_BACKOFF_SQL } from "./consolidation-backoff-columns.js";
 import { applyMigrations } from "./memory-schema.js";
 import {
   MemoryChangeLog,
@@ -170,6 +171,17 @@ export interface MemoryListOptions {
    * `LIMIT`, like `excludeArchived`.
    */
   excludeTags?: readonly string[];
+  /**
+   * ATO-2506. Leave out notes the consolidator put off until after this
+   * time (epoch ms) because the model abstained from their cluster.
+   * Applied in SQL before `LIMIT`.
+   */
+  consolidationDueAt?: number;
+  /**
+   * ATO-2506. Keyset page: only rows that come after this one in the
+   * `updated_at DESC, id DESC` order. Applied in SQL before `LIMIT`.
+   */
+  after?: { updatedAt: number; id: number };
 }
 
 /**
@@ -406,7 +418,8 @@ export class MemoryStore {
       `UPDATE memories
           SET updated_at = @updated_at,
               tags = @tags,
-              recall_count = recall_count + 1
+              recall_count = recall_count + 1,
+              ${CLEAR_CONSOLIDATION_BACKOFF_SQL}
         WHERE id = @id`,
     );
     // Single SQL statement bumps `recall_count` and stamps
@@ -887,7 +900,7 @@ export class MemoryStore {
       const before = this.get(normalizedId);
       if (before === null) return false;
       this.db
-        .prepare(`UPDATE memories SET content = ?, updated_at = ? WHERE id = ?`)
+        .prepare(`UPDATE memories SET content = ?, updated_at = ?, ${CLEAR_CONSOLIDATION_BACKOFF_SQL} WHERE id = ?`)
         .run(text, now, normalizedId);
       // ATO-1059: the old text goes into the journal, for an undo.
       this.changeLog.record(
@@ -943,6 +956,15 @@ export class MemoryStore {
       }
       where.push(`updated_at <= ?`);
       params.push(opts.updatedBefore);
+    }
+    if (opts.consolidationDueAt !== undefined) {
+      where.push(`(consolidation_retry_at IS NULL OR consolidation_retry_at <= ?)`);
+      params.push(requireFinite(opts.consolidationDueAt, "consolidationDueAt"));
+    }
+    if (opts.after !== undefined) {
+      const updatedAt = requireFinite(opts.after.updatedAt, "after.updatedAt");
+      where.push(`(updated_at < ? OR (updated_at = ? AND id < ?))`);
+      params.push(updatedAt, updatedAt, validateId(opts.after.id));
     }
     const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
     const sql = `
@@ -1131,7 +1153,7 @@ export class MemoryStore {
     const normalizedId = validateId(id);
     const valid = validateTags([...tags]);
     const result = this.db
-      .prepare(`UPDATE memories SET tags = ? WHERE id = ?`)
+      .prepare(`UPDATE memories SET tags = ?, ${CLEAR_CONSOLIDATION_BACKOFF_SQL} WHERE id = ?`)
       .run(valid.length > 0 ? JSON.stringify(valid) : null, normalizedId) as { changes: number };
     return result.changes > 0;
   }
@@ -1234,7 +1256,8 @@ export class MemoryStore {
       .prepare(
         `UPDATE memories
             SET tags = ?,
-                updated_at = ?
+                updated_at = ?,
+                ${CLEAR_CONSOLIDATION_BACKOFF_SQL}
           WHERE id = ?`,
       )
       .run(nextTagsJson, now, normalizedId);
@@ -1671,6 +1694,13 @@ function validateId(raw: unknown): number {
     );
   }
   return raw;
+}
+
+function requireFinite(value: number, name: string): number {
+  if (!Number.isFinite(value)) {
+    throw new Error(`MemoryStore.list: ${name} must be a finite number, got ${value}`);
+  }
+  return value;
 }
 
 function clampPositiveInt(

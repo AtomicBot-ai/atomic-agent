@@ -448,6 +448,21 @@ export class FusionRunRecorder {
     this.flush();
   }
 
+  /**
+   * A judge-ordered retry closed (ATO-2488): the finished row's changed
+   * files become both attempts' list, as the live result has it. The
+   * retry's own row carried only its files, so a resume dropped the
+   * first attempt's. A row with no result (one the retry left
+   * unsettled) is not touched.
+   */
+  recordFiles(taskId: string, diffstats: readonly FileDiffStat[]): void {
+    if (this.ended || diffstats.length === 0) return;
+    const task = this.checkpoint.tasks.find((t) => t.id === taskId);
+    if (task?.result === undefined) return;
+    task.result = { ...task.result, diffstats: diffstats.map((f) => ({ ...f })) };
+    this.flush();
+  }
+
   /** Spend not on a finished row (an escalation, the judge, a split's parent). */
   addSpend(usd: number): void {
     if (this.ended || !Number.isFinite(usd) || usd <= 0) return;

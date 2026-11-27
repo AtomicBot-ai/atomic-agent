@@ -6,6 +6,7 @@ import type {
   TruncationDetail,
 } from "./failure-category.js";
 import { hasRepetitiveTail } from "./repetitive-tail.js";
+import { locateCut, type CutReading } from "./truncation-part.js";
 
 export interface DetectedModelFailure {
   reason: ModelFailureReason;
@@ -15,6 +16,11 @@ export interface DetectedModelFailure {
 }
 
 export interface DetectModelFailureOptions {
+  /**
+   * How the step reads reasoning in the raw text (prefill, profile tags),
+   * for placing a cut inside the think block (`locateCut`, ATO-1678).
+   */
+  cutReading?: CutReading;
   /**
    * The `max_tokens` / `n_predict` cap the request carried. Without it a
    * truncated reply cannot be told apart from a full context window, so
@@ -74,12 +80,19 @@ export function detectModelFailure(
   options: DetectModelFailureOptions = {},
 ): DetectedModelFailure | null {
   if (completion.truncated) {
-    const classified = classifyTruncation(
-      completion,
-      options.requestedMaxTokens,
-      options.contextWindow ?? null,
-      options.defaultReplyCap,
-    );
+    // Where the cut landed (ATO-1678): the retry tells a model cut mid
+    // thought, mid tool call and mid answer different things.
+    const where = locateCut(completion, options.cutReading);
+    const classified: TruncationDetail = {
+      ...classifyTruncation(
+        completion,
+        options.requestedMaxTokens,
+        options.contextWindow ?? null,
+        options.defaultReplyCap,
+      ),
+      ...(where !== null ? { part: where.part } : {}),
+      ...(where?.tool !== undefined ? { cutTool: where.tool } : {}),
+    };
     // The stream watcher already cut this reply for looping: it is a
     // repetitive truncation whatever the tail check below would say, and
     // no cap or window was hit, so the message names neither.

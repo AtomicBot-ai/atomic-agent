@@ -1,5 +1,7 @@
 import { posix, win32 } from "node:path";
 
+import { withToolchainEnv, type ToolchainEnvOptions } from "../../../sandbox/command-toolchain-env.js";
+
 /**
  * The environment a vendor CLI is spawned with: the agent's own, minus
  * the variables that would move the CLI off the user's subscription.
@@ -58,4 +60,46 @@ export function withBinaryDirOnPath(
   const dirs = current.split(sep);
   if (dirs.includes(dir)) return env;
   return { ...env, [key]: current ? `${current}${sep}${dir}` : dir };
+}
+
+/**
+ * Append the toolchain folders a desktop-launched agent misses to the
+ * child's PATH (ATO-1679), the same ones an agent shell command already
+ * gets (`withToolchainEnv`, ATO-1252): nvm's default Node, Volta, asdf
+ * and mise shims, `/etc/paths.d`, Homebrew and the rest.
+ *
+ * An app opened from the Dock starts with `/usr/bin:/bin:/usr/sbin:/sbin`
+ * plus a short list of installer folders. A Claude Code or Codex
+ * installed with npm is a `#!/usr/bin/env node` script, and when its
+ * `node` lives under nvm the CLI died with exit 127 ("env: node: No such
+ * file or directory", CLI-E4) although the person's terminal runs it.
+ * The same PATH is where spawn looks a bare `claude` up, so a CLI that
+ * only lives in one of these folders stops reading as "not installed".
+ *
+ * Only PATH is taken from the widened environment, and only appended:
+ * anything already on PATH keeps winning. Windows apps get the user's
+ * full PATH, so it is left alone there.
+ */
+export function withToolchainPath(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+  options: Omit<ToolchainEnvOptions, "platform"> = {},
+): NodeJS.ProcessEnv {
+  if (platform === "win32") return env;
+  const widened = withToolchainEnv(env, { ...options, platform }).PATH;
+  if (widened === undefined || widened === env.PATH) return env;
+  return { ...env, PATH: widened };
+}
+
+/**
+ * The whole environment a vendor CLI is spawned with: the agent's own
+ * minus the billing keys, the pathed CLI's own folder first, then the
+ * toolchain folders.
+ */
+export function cliSpawnEnv(
+  strip: readonly string[] | undefined,
+  binary: string,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  return withToolchainPath(withBinaryDirOnPath(cliChildEnv(strip), binary, platform), platform);
 }

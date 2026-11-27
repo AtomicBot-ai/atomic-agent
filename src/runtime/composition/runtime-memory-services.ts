@@ -52,7 +52,7 @@ export function createRuntimeMemoryServices(args: MemoryServiceDependencies & {
     ? new NeighborEvolver({
         memoryStore: notesStore,
         maxPerWrite: config.memory.evolution.maxPerWrite,
-        leaseMs: config.memory.evolution.leaseMs,
+        leaseMs: ConsolidatorJob.evolverLeaseMsFor(config.memory.evolution.leaseMs, config.memory.consolidation.distillTimeoutMs),
         logger,
         metrics,
       })
@@ -127,7 +127,7 @@ export function createRuntimeMemoryServices(args: MemoryServiceDependencies & {
         notesStore,
         reflectionSlotId: () => slotManager.sideCallSlotId(),
         timeoutMs: config.memory.reflection.timeoutMs,
-        leaseMs: config.memory.evolution.leaseMs,
+        leaseMs: ConsolidatorJob.evolverLeaseMsFor(config.memory.evolution.leaseMs, config.memory.consolidation.distillTimeoutMs),
         logger,
       }),
       notesStore,
@@ -496,7 +496,7 @@ export function createRuntimeMemoryConsolidator(args: Omit<MemoryServiceDependen
         minClusterSize: config.memory.consolidation.minClusterSize,
         maxClustersPerTick: config.memory.consolidation.maxClustersPerTick,
         requireSharedTag: config.memory.consolidation.requireSharedTag,
-        consolidationLeaseMs: 60_000,
+        consolidationLeaseMs: ConsolidatorJob.leaseMsFor(config.memory.consolidation.distillTimeoutMs),
         // Memory-v2 phase 6 — wire the age-based deprecation
         // threshold and the per-tick deprecation cap. Both come
         // from `memory.lessons.*` since they govern lesson rows.

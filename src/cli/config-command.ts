@@ -294,6 +294,10 @@ async function setOneKey(key: string, value: string): Promise<number> {
   process.stdout.write(
     `${key} = ${formatConfigValue(key, readConfigPath(next, key))}\n`,
   );
+  // ATO-2503: this only points at a folder, as Ollama's OLLAMA_MODELS does.
+  if (key === "localModels.managed.modelsDirOverride") {
+    process.stderr.write("note: no model was moved; atomic-agent models dir <folder> moves them and then sets this\n");
+  }
   return 0;
 }
 

@@ -247,3 +247,7 @@ export {
   withSessionTrashed,
   withStoredTrashed,
 } from "./session-trashed.js";
+export {
+  TRASHED_LIST_MAX,
+  type TrashedSessionSummary,
+} from "./session-trash-list.js";

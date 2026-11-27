@@ -1,4 +1,4 @@
-export { ToolHookEngine, runWithToolHooks, hookRefusal, hookInput, claudeShapedInput, installToolHooks, activeToolHooks } from "./hook-engine.js";
+export { ToolHookEngine, runWithToolHooks, hookRefusal, hookInput, claudeShapedInput, installToolHooks, activeToolHooks, currentToolHookCall } from "./hook-engine.js";
 export type { ToolHookCall, HookApprover, HookLogger, ToolHookEngineOptions, PreToolOutcome } from "./hook-engine.js";
 export { loadAllHooks, loadUserHooks, loadPluginHooks, parseHooksObject, mergeHookConfigs, userHooksPath, resetHooksCache } from "./hook-config.js";
 export { claudeToolName, matcherMatches, matchNamesFor } from "./hook-matcher.js";
@@ -7,7 +7,8 @@ export { runHookCommand } from "./hook-runner.js";
 export type { HookRunResult, RunHookOptions } from "./hook-runner.js";
 export { DEFAULT_HOOK_TIMEOUT_MS, FIRED_HOOK_EVENTS, KNOWN_HOOK_EVENTS, SESSION_HOOK_EVENTS, TOOL_HOOK_EVENTS } from "./hook-types.js";
 export type { HookCommand, HookConfig, HookDecision, HookEventName, HookMatcherGroup, HookSource, HookVerdict, LoadedHooks, SessionHookEvent, ToolHookEvent } from "./hook-types.js";
-export { SessionHookEngine, HookBlockedPromptError, stopHookMessage, MAX_STOP_HOOK_CONTINUATIONS } from "./session-hook-engine.js";
-export type { SessionHookEngineOptions, TurnStartFacts, TurnStartOutcome, TurnStopFacts, CompactFacts } from "./session-hook-engine.js";
+export { SessionHookEngine, HookBlockedPromptError, stopHookMessage, sessionHookBase, MAX_STOP_HOOK_CONTINUATIONS } from "./session-hook-engine.js";
+export type { SessionHookEngineOptions, TurnStartFacts, TurnStartOutcome, TurnStopFacts, CompactFacts, SessionEndCause, SubagentStopFacts } from "./session-hook-engine.js";
 export { interpretSessionHookRun, sessionVerdictFromJson, combineSessionVerdicts } from "./session-hook-output.js";
 export type { SessionHookVerdict } from "./session-hook-output.js";
+export { PermissionHooks } from "./permission-hooks.js";

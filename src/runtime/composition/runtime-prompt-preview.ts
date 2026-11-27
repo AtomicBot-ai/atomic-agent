@@ -5,6 +5,7 @@ import type { SessionStore } from "../../session/session-store.js";
 import { buildPrompt } from "../../prompt/build-prompt.js";
 import type { BuildPromptInput, BuiltPrompt } from "../../prompt/build-prompt-types.js";
 import { formatCurrentDate } from "../../prompt/current-date.js";
+import { toolSchemaPromptInput, type ToolSchemaMeasure } from "../../prompt/tool-schema-parts.js";
 import type { CapabilitiesSummary, SkillCatalogEntry, ToolDescriptor } from "../../prompt/stable-prefix.js";
 import type { ModelProfile } from "../../llm/model-profile.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
@@ -13,9 +14,12 @@ import { SessionNotFoundError } from "../session-not-found-error.js";
 import type { ResolvedModelMode } from "../../llm/model-mode.js";
 import { reconcileCloudSkills, type WorkspacePrepareOptions } from "../../session/workspace-context.js";
 import { isIncognitoSession } from "../../session/incognito.js";
+import { isChannelGuestSession } from "../../session/channel-guest-session.js";
 
 export interface RuntimePromptPreviewDependencies {
   prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal, options?: WorkspacePrepareOptions) => import("../../session/workspace-context.js").SessionWorkspace;
+  /** Path-scoped project rules for a local preview, as the local step reads them (ATO-2443). */
+  preparePathRules?: (session: SessionState, signal?: AbortSignal) => readonly import("../../session/workspace-context.js").PathRule[];
   workingDir: string;
   sessionStore: Pick<SessionStore, "load">;
   profileStore: Pick<ProfileStore, "listForPrompt">;
@@ -27,7 +31,8 @@ export interface RuntimePromptPreviewDependencies {
   resolveCatalogContextWindow(sessionId?: string): number | null;
   profileWindowApplies?(sessionId?: string): boolean;
   resolveModelMode?(sessionId?: string): ResolvedModelMode;
-  resolveToolSchemaTokens?(sessionId: string, descriptors: readonly ToolDescriptor[]): number;
+  /** The native `tools` array this session would send, priced and split by MCP server (ATO-2453). */
+  resolveToolSchema?(sessionId: string, descriptors: readonly ToolDescriptor[]): ToolSchemaMeasure;
 }
 
 /** Build the next prompt without running memory prefetch, inference or persistence. */
@@ -71,14 +76,16 @@ export function buildRuntimePromptInput(config: AtomicAgentConfig, deps: Runtime
     // The same window the step passes, so the preview budgets instructions as the real turn does (ATO-312).
     const workspace = modelMode?.mode === "cloud" ? deps.prepareWorkspace?.(session, true, undefined, { contextWindow }) : undefined;
     if (workspace) session = reconcileCloudSkills(session, workspace);
+    const pathRules = modelMode?.mode === "cloud" ? undefined : deps.preparePathRules?.(session);
     const descriptors = deps.effectiveToolDescriptors();
     return {
       ...(workspace ? { workspace } : {}),
+      ...(pathRules?.length ? { pathRules } : {}),
       session,
       ...(modelMode ? { modelMode } : {}),
       // Any model mode: a local native-tools link sends the schemas too (ATO-1678).
-      ...(transport === "native_tools" && deps.resolveToolSchemaTokens
-        ? { toolSchemaTokens: deps.resolveToolSchemaTokens(session.id, descriptors) } : {}),
+      ...(transport === "native_tools" && deps.resolveToolSchema
+        ? toolSchemaPromptInput(deps.resolveToolSchema(session.id, descriptors)) : {}),
       // Called, not read: main made the descriptors late-bound so a live MCP
       // add/remove is visible without a restart. The preview wants the same
       // catalogue the next real turn would get.
@@ -91,8 +98,9 @@ export function buildRuntimePromptInput(config: AtomicAgentConfig, deps: Runtime
       suppressReasoningPrefill: transport === "native_tools",
       contextWindow,
       ...(deps.profileWindowApplies ? { profileWindowApplies: deps.profileWindowApplies(session.id) } : {}),
-      // None in an incognito chat (ATO-586, decision 8), as on a real turn.
-      ...(config.memory.profile.enabled && !isIncognitoSession(session)
+      // None in an incognito chat (ATO-586, decision 8) or a channel
+      // guest's session (ATO-2729), as on a real turn.
+      ...(config.memory.profile.enabled && !isIncognitoSession(session) && !isChannelGuestSession(session)
         ? { profileFacts: deps.profileStore.listForPrompt() }
         : {}),
       ...(userMessage !== undefined

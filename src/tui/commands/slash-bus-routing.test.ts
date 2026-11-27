@@ -98,6 +98,8 @@ const SLASH_INPUTS: readonly string[] = [
   "/llm provider local-llama",
   "/llm provider aimlapi",
   "/llm fallback",
+  "/llm fallback local-first on",
+  "/llm fallback local-first off",
   "/llm check",
   "/llm restart",
   "/model pull qwen-3.5-4b",

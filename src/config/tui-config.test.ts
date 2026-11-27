@@ -49,7 +49,7 @@ describe("TUI configuration ownership", () => {
     const second = createTuiDefaults();
     expect(first).toEqual(USER_CONFIG_DEFAULTS.tui);
     expect(Object.keys(first)).toEqual([
-      "theme", "whileBusySubmit", "mouse", "showSteps", "nextStepSuggestions", "vimMode", "language", "verboseSteps", "notify", "sessionRail", "onboarding",
+      "theme", "whileBusySubmit", "mouse", "showSteps", "nextStepSuggestions", "vimMode", "language", "verboseSteps", "pet", "notify", "sessionRail", "onboarding",
     ]);
     expect(Object.keys(first.onboarding)).toEqual([
       "completedAt", "importOfferedAt", "introSeenAt", "localSetupSeenAt",
@@ -178,7 +178,7 @@ describe("TUI configuration ownership", () => {
     });
     expect(events).toEqual([
       "raw-theme", "defaults-initial", "raw-busy", "defaults-busy", "raw-mouse",
-      "defaults-busy", "defaults-busy", "defaults-busy", "defaults-busy", "defaults-busy", "raw-onboarding", "defaults-onboarding", "raw-rail", "raw-notify", "defaults-notify",
+      "defaults-busy", "defaults-busy", "defaults-busy", "defaults-busy", "defaults-busy", "defaults-busy", "raw-onboarding", "defaults-onboarding", "raw-rail", "raw-notify", "defaults-notify",
     ]);
     expect(parsed.theme).toBe("initial-theme");
     expect(parsed.whileBusySubmit).toBe("queue");
@@ -187,7 +187,7 @@ describe("TUI configuration ownership", () => {
     expect(parsed.sessionRail.order).toEqual(["a"]);
     expect(parsed.notify).toEqual({ enabled: false, minDurationMs: 0 });
     expect(Object.keys(parsed)).toEqual([
-      "theme", "whileBusySubmit", "mouse", "showSteps", "nextStepSuggestions", "vimMode", "language", "verboseSteps", "onboarding", "sessionRail", "notify",
+      "theme", "whileBusySubmit", "mouse", "showSteps", "nextStepSuggestions", "vimMode", "language", "verboseSteps", "pet", "onboarding", "sessionRail", "notify",
     ]);
   });
 
@@ -224,6 +224,17 @@ describe("TUI configuration ownership", () => {
       .toBeInstanceOf(ConfigValidationError);
     expect(parseUserConfigFile({ tui: { verboseSteps: true } }).tui.verboseSteps).toBe(true);
     expect(parseUserConfigFile({}).tui.verboseSteps).toBe(false);
+  });
+
+  it("reads tui.pet as off when absent and refuses a non-boolean (ATO-2513)", () => {
+    const defaults = createTuiDefaults();
+    expect(defaults.pet).toBe(false);
+    expect(parseTuiConfig({}, () => defaults).pet).toBe(false);
+    expect(parseTuiConfig({ pet: true }, () => defaults).pet).toBe(true);
+    expect(thrownError(() => parseTuiConfig({ pet: "yes" }, () => defaults)))
+      .toBeInstanceOf(ConfigValidationError);
+    expect(parseUserConfigFile({ tui: { pet: true } }).tui.pet).toBe(true);
+    expect(parseUserConfigFile({}).tui.pet).toBe(false);
   });
 
   it("reads tui.showSteps as off when absent and refuses a non-boolean", () => {

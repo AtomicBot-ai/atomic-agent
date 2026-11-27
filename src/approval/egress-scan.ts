@@ -3,7 +3,7 @@
  * commands a call would run (`commandSegments`, so `sudo`, `env`,
  * `bash -c`, `eval` and `find -exec` are already unwrapped) into
  * destinations `{kind, host, direction, label}`. The approval card shows
- * the outbound ones as `sends data to -> host`, the risk reviewer gets
+ * the outbound ones as `sends data to → host`, the risk reviewer gets
  * them as a fact, and the gate asks the person before data goes to a
  * host nobody has said yes to (`egress-hold.ts`).
  *
@@ -24,12 +24,14 @@
  */
 import { scanCurl, scanWget } from "./egress-scan-http.js";
 import { gitSubcommand, scanGit, type GitRemoteResolver } from "./egress-scan-git.js";
+import { REGISTRY_VARIABLE_RE } from "./registry-variables.js";
 import {
   scanBucket,
   scanContainer,
   scanCopy,
   scanInlineScript,
   scanPublish,
+  type PublishRegistryResolver,
   scanSocat,
   scanSocket,
   scanSsh,
@@ -80,6 +82,8 @@ export interface EgressScanOptions {
    * which can set a proxy: a send is then to an unknown address.
    */
   httpConfigWritten?: boolean;
+  /** Reads the registry a publish goes to from the project's config (`publish-registry.ts`). */
+  publishRegistry?: PublishRegistryResolver;
 }
 
 const ENV_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -120,6 +124,8 @@ interface CallState {
   gitUnsafe: boolean;
   /** A part sets a proxy variable or a curl / wget config location. */
   rerouted: boolean;
+  /** A part sets where a package publish goes (`NPM_CONFIG_REGISTRY=x`, review round 2). */
+  registryRerouted: boolean;
 }
 
 /**
@@ -130,7 +136,7 @@ interface CallState {
  * "earlier parts only": a loop can run a later part first.
  */
 function readCallState(segments: readonly (readonly string[])[]): CallState {
-  const state: CallState = { gitUnsafe: false, rerouted: false };
+  const state: CallState = { gitUnsafe: false, rerouted: false, registryRerouted: false };
   for (const words of segments) {
     let start = 0;
     const names: string[] = [];
@@ -153,6 +159,7 @@ function readCallState(segments: readonly (readonly string[])[]): CallState {
     }
     if (names.some((name) => GIT_VARIABLE_RE.test(name))) state.gitUnsafe = true;
     if (names.some((name) => PROXY_VARIABLE_RE.test(name))) state.rerouted = true;
+    if (names.some((name) => REGISTRY_VARIABLE_RE.test(name))) state.registryRerouted = true;
     if (setter) continue;
     if (DIR_CHANGERS.has(program)) state.gitUnsafe = true;
     // A sourced file can export a proxy.
@@ -173,10 +180,12 @@ function scanSegment(
   let start = 0;
   let gitIndirect = false;
   let rerouted = call.rerouted || options.httpConfigWritten === true;
+  let registryRerouted = call.registryRerouted;
   while (start < words.length && ENV_ASSIGNMENT_RE.test(words[start]!)) {
     const name = variableName(words[start]!);
     if (GIT_VARIABLE_RE.test(name)) gitIndirect = true;
     if (PROXY_VARIABLE_RE.test(name)) rerouted = true;
+    if (REGISTRY_VARIABLE_RE.test(name)) registryRerouted = true;
     start += 1;
   }
   const head = words[start];
@@ -197,7 +206,18 @@ function scanSegment(
   if (program === "aws" && args[0] === "s3") return scanBucket("s3", args.slice(2));
   if (program === "gsutil") return scanBucket("gs", args.slice(1));
   if (program === "gcloud" && args[0] === "storage") return scanBucket("gs", args.slice(2));
-  if (PUBLISH_PROGRAMS.has(program)) return scanPublish(program, args);
+  if (PUBLISH_PROGRAMS.has(program)) {
+    // After a `cd` (or another change of folder) the project config read
+    // from `cwd` is not the one the publish uses: unknown, not the public
+    // default (review round 1 of ATO-2528).
+    // A registry variable set for the call wins over every config file.
+    const registry = registryRerouted
+      ? () => null
+      : call.gitUnsafe && options.publishRegistry !== undefined
+        ? () => null
+        : options.publishRegistry;
+    return scanPublish(program, args, registry);
+  }
   if (SCRIPT_PROGRAMS.test(program)) return scanInlineScript(program, args);
   return [];
 }
@@ -281,8 +301,19 @@ function isUnknown(destination: EgressDestination): boolean {
 }
 
 /**
- * The card line for `egress`: `sends data to -> x.io, github.com`, or
- * `null` when nothing is sent out. Unknown destinations come first and
+ * A held destination whose host was read: a site nobody approved in this
+ * session yet. It is tagged `(new)` on the card so the person sees which
+ * of several sites made the call ask (ATO-2759). An unreadable one
+ * (`host: null`) already says so in its label.
+ */
+function egressLabel(destination: EgressDestination): string {
+  const label = cleanEgressLabel(destination.label);
+  return destination.unapproved === true && destination.host !== null ? `${label} (new)` : label;
+}
+
+/**
+ * The card line for `egress`: `sends data to → x.io (new), github.com`,
+ * or `null` when nothing is sent out. Unknown destinations come first and
  * are always all named; only known ones fold into `+N more`. Plain text
  * on one line; each surface escapes it. Shared by the TUI, Telegram and
  * Discord.
@@ -291,7 +322,7 @@ export function formatEgressLine(
   egress: readonly EgressDestination[] | undefined,
 ): string | null {
   const outbound = outboundDestinations(egress);
-  const unknown = [...new Set(outbound.filter(isUnknown).map((d) => cleanEgressLabel(d.label)))];
+  const unknown = [...new Set(outbound.filter(isUnknown).map(egressLabel))];
   const known = [
     ...new Set(outbound.filter((d) => !isUnknown(d)).map((d) => cleanEgressLabel(d.label))),
   ].filter((label) => !unknown.includes(label));
@@ -299,5 +330,22 @@ export function formatEgressLine(
   const room = Math.max(EGRESS_LINE_MAX - unknown.length, 0);
   const shown = [...unknown, ...known.slice(0, room)].join(", ");
   const more = known.length - room;
-  return `sends data to -> ${shown}${more > 0 ? ` (+${more} more)` : ""}`;
+  return `sends data to → ${shown}${more > 0 ? ` (+${more} more)` : ""}`;
+}
+
+/**
+ * Why the card asked, when the egress hold is what made it ask: a line
+ * under `formatEgressLine`, or `null` when no destination is held. The
+ * hold asks even in bypass mode, where nothing else would, so without
+ * this the person sees a prompt and no reason for it (ATO-2759).
+ */
+export function formatEgressHoldNote(
+  egress: readonly EgressDestination[] | undefined,
+): string | null {
+  const held = outboundDestinations(egress).filter((d) => d.unapproved === true);
+  if (held.length === 0) return null;
+  const unreadable = held.every((d) => d.host === null);
+  return unreadable
+    ? "asked because where it sends data cannot be read; this asks in every mode, bypass included"
+    : "asked because a site marked (new) is not known yet: not approved in this chat or saved as a known host; this asks in every mode, bypass included";
 }

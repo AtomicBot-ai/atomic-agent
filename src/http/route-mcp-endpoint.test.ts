@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
@@ -27,6 +27,7 @@ describe("POST/GET/DELETE /mcp (ATO-549)", () => {
   let client: Client | null = null;
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await client?.close().catch(() => undefined);
     client = null;
     await harness?.cleanup();
@@ -120,6 +121,25 @@ describe("POST/GET/DELETE /mcp (ATO-549)", () => {
     expect(local.status).toBe(200);
     expect(local.headers.get("mcp-session-id")).toBeTruthy();
     await local.body?.cancel();
+  });
+
+  it("accepts an origin ATOMIC_AGENT_ALLOWED_ORIGINS lists, never every origin through a lone * (ATO-2475)", async () => {
+    vi.stubEnv("ATOMIC_AGENT_ALLOWED_ORIGINS", "https://app.example, *");
+    harness = await startTestHarness({ apiKey: KEY });
+    const post = (origin: string) =>
+      fetch(`${harness!.baseUrl}/mcp`, {
+        method: "POST",
+        headers: { ...MCP_HEADERS, authorization: `Bearer ${KEY}`, origin },
+        body: JSON.stringify(INITIALIZE),
+      });
+
+    const evil = await post("https://evil.example");
+    expect(evil.status).toBe(403);
+
+    const listed = await post("https://app.example");
+    expect(listed.status).toBe(200);
+    expect(listed.headers.get("mcp-session-id")).toBeTruthy();
+    await listed.body?.cancel();
   });
 
   it("refuses a foreign Origin without a key too", async () => {

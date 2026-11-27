@@ -6,10 +6,19 @@
  * that does nothing. Same shape as `offline-mode.ts`.
  */
 
+import {
+  readPrivacyNamesControl,
+  snapshotPrivacyNames,
+  type NamesPanelState,
+  type PrivacyNamesControl,
+} from "./privacy-names.js";
+
 export interface PrivacyShieldControl {
   isEnabled(): boolean;
   setEnabled(enabled: boolean): Promise<void>;
   stats(sessionId?: string): { masked: number; sessions: number; session?: { masked: number } };
+  /** Names, addresses and organisations (ATO-2527); absent in older agents. */
+  readonly localNames?: PrivacyNamesControl;
 }
 
 export interface ShieldPanelState {
@@ -19,6 +28,8 @@ export interface ShieldPanelState {
   masked: number | null;
   /** The same for the active chat, when the tab knows which one it is. */
   sessionMasked: number | null;
+  /** The names switch (ATO-2527); absent when the agent has none. */
+  names?: NamesPanelState;
 }
 
 export function createInitialShieldPanelState(): ShieldPanelState {
@@ -66,7 +77,8 @@ export function snapshotPrivacyShield(
   } catch {
     masked = null;
   }
-  return { supported: true, enabled, masked, sessionMasked };
+  const names = snapshotPrivacyNames(readPrivacyNamesControl(control));
+  return { supported: true, enabled, masked, sessionMasked, ...(names ? { names } : {}) };
 }
 
 const values = (n: number): string => `${n} ${n === 1 ? "value" : "values"}`;

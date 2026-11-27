@@ -463,6 +463,17 @@ describe("reduceTuiState", () => {
       expect(state.approvalPreviewPage).toBeNull();
     });
 
+    it("arms Allow always for the prompt on screen and drops the arm on resolve (ATO-2759)", () => {
+      let state = raised();
+      expect(state.approvalAlwaysArmed).toBeNull();
+      state = reduceTuiState(state, { type: "approval_always_armed", approvalId: "other" });
+      expect(state.approvalAlwaysArmed).toBeNull();
+      state = reduceTuiState(state, { type: "approval_always_armed", approvalId: "a-1" });
+      expect(state.approvalAlwaysArmed).toBe("a-1");
+      state = reduceTuiState(state, { type: "approval_resolved", approvalId: "a-1", approved: false });
+      expect(state.approvalAlwaysArmed).toBeNull();
+    });
+
     it("has nothing to page when the preview fits", () => {
       const state = apply(createInitialTuiState(fakeSession()), [
         { type: "session_created", sessionId: "s-1" },
@@ -2003,6 +2014,26 @@ describe("tool disabled (ATO-1417)", () => {
     });
     expect(next.messages).toEqual(initial.messages);
   });
+
+  it("tells the chat that the subscription CLI is out of date and how to update it (ATO-2523)", () => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const next = reduceTuiState(initial, {
+      type: "agent_event",
+      sessionId: "s1",
+      event: {
+        type: "cli_outdated",
+        stepIndex: 0,
+        cli: "claude",
+        productName: "Claude Code",
+        version: "2.1.0",
+        minimum: "2.1.22",
+        updateCommands: ["claude update"],
+      },
+    });
+    const last = next.messages.at(-1);
+    expect(last?.role).toBe("system");
+    expect(last?.text).toBe("Claude Code 2.1.0 is out of date: run `claude update` (Atomic Agent needs 2.1.22 or newer).");
+  });
 });
 
 describe("empty-completion recovery", () => {
@@ -2998,6 +3029,30 @@ describe("a model that keeps calling tools that don't exist", () => {
   });
 });
 
+/* ATO-1678: a window too small for the instructions and tool schemas
+   shows the sentence that names the fix, not the generic wording. */
+describe("a context window too small for the turned-on tools", () => {
+  it("shows the error's own sentence", () => {
+    const sentence =
+      "This model's context window (16384 tokens) is too small for the agent's instructions and turned-on tools. Load the model with a bigger context, or turn off some tools or MCP servers, then try again.";
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error(sentence),
+          category: "grammar",
+          failure: failureVerdict("context_window_too_small"),
+        },
+      },
+    ]);
+    const msg = next.messages.find((m) => m.role === "system" && m.variant === "warn");
+    expect(msg?.text).toContain(sentence);
+    expect(msg?.text).not.toContain("this turn could not be completed");
+  });
+});
+
 /* ATO-1457: a turn that failed because the provider refused the API key
    offers `[check key]`, which opens that provider's key field. */
 describe("a refused API key offers the key field", () => {
@@ -3215,5 +3270,66 @@ describe("reduceTuiState per-step spend for /why (ATO-34)", () => {
       { type: "agent_event", event: { type: "turn_started", turnIndex: 1 } },
     ]);
     expect(second.stepSpend).toEqual({});
+  });
+});
+
+/* ATO-1673: a cloud provider that refused says which refusal on the first
+   line; its sentence goes under Details. An empty account or a rate
+   limit is not a bug to file. */
+describe("a cloud provider's refusal reads as the refusal it is", () => {
+  const onCloud = (): TuiState => {
+    const base = createInitialTuiState(fakeSession());
+    return {
+      ...base,
+      providersPanel: { ...base.providersPanel, rows: [providerRow({ isActiveText: true })] },
+    };
+  };
+  const failed = (state: TuiState, message: string, cause: Parameters<typeof failureVerdict>[0]): string =>
+    apply(state, [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new TransportError(message, 402, "https://openrouter.ai/api/v1/chat/completions"),
+          category: "transport",
+          failure: failureVerdict(cause),
+        },
+      },
+    ]).messages.find((m) => m.role === "system" && m.variant === "warn")?.text ?? "";
+
+  it("opens with the out-of-credit phrase, keeps the provider's sentence under Details, and offers no /report", () => {
+    const said = failed(onCloud(), '"openrouter" rejected the request (402). This request requires more credits.', "out_of_credit");
+    expect(said.split("\n").slice(0, 2)).toEqual([
+      "Turn failed: Your account with this provider is out of credit.",
+      'Details: "openrouter" rejected the request (402). This request requires more credits.',
+    ]);
+    expect(said).not.toContain("couldn't get a reply");
+    expect(said).not.toContain("/report");
+  });
+
+  it("names a rate limit and a refused key, the key keeping the /report line", () => {
+    expect(failed(onCloud(), '"gemini" is rate-limiting this key (429).', "rate_limited")).toMatch(
+      /^Turn failed: Too many requests right now\. Try again in a moment\.\nDetails: /,
+    );
+    const key = failed(onCloud(), '"openrouter" did not accept your API key.', "auth_rejected");
+    expect(key.startsWith("Turn failed: The provider did not accept your API key.\nDetails: ")).toBe(true);
+    expect(key).toContain("/report");
+  });
+
+  it("says a cloud model can't use tools, not that the provider lacks it", () => {
+    const said = failed(
+      onCloud(),
+      '"openrouter" says this model can\'t use tools (404), and the agent needs them to work. Pick a model that supports tool calling.',
+      "model_not_found",
+    );
+    const first = said.split("\n")[0] ?? "";
+    expect(first).not.toContain("doesn't have this model");
+    expect(first).toBe("Turn failed: This model can't use tools. Pick one that supports tool calling with /model.");
+  });
+
+  it("leaves a local route to its own hints", () => {
+    const said = failed(createInitialTuiState(fakeSession()), "llama-server returned http 404: not found", "model_not_found");
+    expect(said.startsWith("Turn failed: couldn't get a reply from the provider.")).toBe(true);
   });
 });

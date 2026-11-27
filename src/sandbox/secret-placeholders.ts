@@ -82,3 +82,17 @@ export function substituteSecretPlaceholders(
     return value;
   });
 }
+
+/**
+ * Whether `text` holds anything that starts like a placeholder, valid
+ * or not. For the fields of a tool where placeholders are not filled
+ * in: such a call is refused rather than sent with the text as written.
+ */
+export function looksLikeSecretPlaceholder(text: string): boolean {
+  return /\{\{\s*secret:/.test(text);
+}
+
+/** `text` with every valid placeholder removed: what is left is literal. */
+export function stripSecretPlaceholders(text: string): string {
+  return text.includes("secret:") ? text.replace(PLACEHOLDER, "") : text;
+}

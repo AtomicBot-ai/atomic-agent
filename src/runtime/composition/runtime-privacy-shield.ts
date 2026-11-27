@@ -11,11 +11,16 @@ import {
   privacyVaultFor,
   setPrivacyShieldEnabled,
 } from "../../privacy/index.js";
-import type { PrivacyShieldControl, PrivacyShieldStats } from "../runtime-contract.js";
+import type { PrivacyNamesStatus, PrivacyShieldControl, PrivacyShieldStats } from "../runtime-contract.js";
+import { persistPrivacyLocalNames, privacyNamesStatus } from "./runtime-privacy-names-status.js";
 
 export interface PrivacyShieldDeps {
   /** Write `privacy.shield.enabled` to the user config file. */
   persist?: (enabled: boolean) => void;
+  /** Write `privacy.shield.localNames` to the user config file (ATO-2527). */
+  persistNames?: (enabled: boolean) => void;
+  /** The names status as config says now (ATO-2527). */
+  namesStatus?: () => PrivacyNamesStatus;
 }
 
 /**
@@ -27,6 +32,8 @@ export interface PrivacyShieldDeps {
  */
 export function createPrivacyShieldControl(deps: PrivacyShieldDeps = {}): PrivacyShieldControl {
   const persist = deps.persist ?? persistPrivacyShield;
+  const persistNames = deps.persistNames ?? persistPrivacyLocalNames;
+  const namesStatus = deps.namesStatus ?? (() => privacyNamesStatus());
   return {
     isEnabled: () => isPrivacyShieldEnabled(),
     async setEnabled(enabled: boolean): Promise<void> {
@@ -38,6 +45,14 @@ export function createPrivacyShieldControl(deps: PrivacyShieldDeps = {}): Privac
       if (!sessionId) return totals;
       const vault = privacyVaultFor(sessionId).stats();
       return { ...totals, session: { masked: vault.distinct, lastRequest: vault.lastRequest } };
+    },
+    // The name pass reads the key from config per request, so persisting
+    // it is all a toggle needs (runtime-privacy-names.ts).
+    localNames: {
+      status: namesStatus,
+      async setEnabled(enabled: boolean): Promise<void> {
+        persistNames(enabled);
+      },
     },
   };
 }

@@ -14,15 +14,19 @@
  * are only ever added.
  */
 
+import { catalogCompatibility } from "../local-llm/catalog/external-catalog.js";
 import {
   modelDownloadGb,
+  type MachineForModels,
   type ModelUpgradeDecision,
 } from "../local-llm/catalog/model-upgrade.js";
 import {
+  listLocalModels,
   modelDisplayName,
   modelMemoryNeedWords,
   type LocalModelDef,
 } from "../local-llm/index.js";
+import { hasDedicatedGpuMemory } from "../local-llm/catalog/moe-split-fit.js";
 import {
   readRecommendSnapshot,
   startModelUpgrade,
@@ -46,10 +50,17 @@ interface ModelJson {
   /** ATO-1410: the catalogue's two memory figures, so a client need not keep its own copy. */
   minRamGb: number;
   recommendedRamGb: number;
+  /** ATO-2455: "Fits well", "Fits, experts in RAM", "Tight fit" or "Too big". */
+  fitLabel: string;
+  /** ATO-2455: runs with some experts in system RAM (`--n-cpu-moe`). */
+  expertsInRam: boolean;
+  /** `~25 tok/s, estimate`; `null` when nothing honest can be said. */
+  speed: string | null;
 }
 
-function modelJson(def: LocalModelDef | null): ModelJson | null {
+function modelJson(def: LocalModelDef | null, machine: MachineForModels): ModelJson | null {
   if (!def) return null;
+  const compat = catalogCompatibility(def, machine);
   return {
     id: def.id,
     name: def.name,
@@ -60,10 +71,42 @@ function modelJson(def: LocalModelDef | null): ModelJson | null {
     supportsVision: def.supportsVision === true,
     minRamGb: def.minRamGb,
     recommendedRamGb: def.recommendedRamGb,
+    fitLabel: compat.fit.label,
+    expertsInRam: compat.fit.placement === "split",
+    speed: compat.speed?.label ?? null,
   };
 }
 
-export function recommendJson(snap: RecommendSnapshot): Record<string, unknown> {
+/**
+ * ATO-2455: what a tier row adds when the model runs with experts in
+ * RAM, `  (experts partly in RAM, ~15 tok/s, estimate)`; empty otherwise.
+ */
+export function expertsInRamNote(def: LocalModelDef, machine: MachineForModels): string {
+  const compat = catalogCompatibility(def, machine);
+  if (compat.fit.placement !== "split") return "";
+  return `  (experts partly in RAM${compat.speed ? `, ${compat.speed.label}` : ""})`;
+}
+
+/**
+ * ATO-2455: every listed model that fits this machine only with experts
+ * in RAM, so a client that cannot see the GPU (the desktop) can say so
+ * on its own rows. Empty on a Mac, a CPU-only machine or with cpuMoe off.
+ */
+export function expertsInRamModels(
+  machine: MachineForModels,
+  catalog: readonly LocalModelDef[] = listLocalModels(),
+): { id: string; fitLabel: string; tier: string; speed: string | null }[] {
+  return catalog.flatMap((def) => {
+    const compat = catalogCompatibility(def, machine);
+    if (compat.fit.placement !== "split") return [];
+    return [{ id: def.id, fitLabel: compat.fit.label, tier: compat.fit.tier, speed: compat.speed?.label ?? null }];
+  });
+}
+
+export function recommendJson(
+  snap: RecommendSnapshot,
+  catalog?: readonly LocalModelDef[],
+): Record<string, unknown> {
   const d = snap.decision;
   return {
     version: RECOMMEND_JSON_VERSION,
@@ -72,17 +115,21 @@ export function recommendJson(snap: RecommendSnapshot): Record<string, unknown> 
       gpuBudgetGb: round1(snap.machine.gpuBudgetGb),
       freeDiskGb: round1(snap.machine.freeDiskGb),
       cpuOnly: snap.machine.cpuOnly,
+      // ATO-2455: the GPU has memory of its own (experts can go to RAM).
+      dedicatedGpu: !snap.machine.cpuOnly && hasDedicatedGpuMemory(snap.machine.bandwidth),
+      cpuMoe: snap.machine.cpuMoe ?? "auto",
     },
+    expertsInRam: expertsInRamModels(snap.machine, catalog),
     tiers: {
-      fast: modelJson(snap.tiers.fast),
-      balanced: modelJson(snap.tiers.balanced),
-      quality: modelJson(snap.tiers.quality),
+      fast: modelJson(snap.tiers.fast, snap.machine),
+      balanced: modelJson(snap.tiers.balanced, snap.machine),
+      quality: modelJson(snap.tiers.quality, snap.machine),
     },
     activeModelId: snap.activeModelId,
     upgrade:
       d.action === "none"
         ? { action: "none", why: d.why, model: null }
-        : { action: d.action, why: null, model: modelJson(d.model) },
+        : { action: d.action, why: null, model: modelJson(d.model, snap.machine) },
   };
 }
 
@@ -111,7 +158,7 @@ export function describeRecommendation(snap: RecommendSnapshot): string {
   const disk = m.freeDiskGb === null ? "free disk unknown" : `${m.freeDiskGb.toFixed(0)} GB free on disk`;
   const lines = [`this machine: ${m.ramGb} GB RAM, ${gpu}, ${disk}`, ""];
   const row = (label: string, def: LocalModelDef | null) =>
-    `  ${label.padEnd(9)} ${def ? `${modelDisplayName(def).padEnd(24)} ${def.sizeLabel.padEnd(8)} ${modelMemoryNeedWords(def).padEnd(13)} ${def.description} (${def.id})` : "none fits this machine"}`;
+    `  ${label.padEnd(9)} ${def ? `${modelDisplayName(def).padEnd(24)} ${def.sizeLabel.padEnd(8)} ${modelMemoryNeedWords(def).padEnd(13)} ${def.description} (${def.id})${expertsInRamNote(def, m)}` : "none fits this machine"}`;
   lines.push(
     row("fast", snap.tiers.fast),
     row("balanced", snap.tiers.balanced),

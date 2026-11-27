@@ -1,6 +1,7 @@
 import { parseCompactionConfig } from "./compaction-config.js";
 import { parsePromptConfig } from "./prompt-config.js";
 import { parsePersonasConfig } from "./persona-config.js";
+import { createAgentSecurityDefaults, parseAgentSecurityConfig } from "./security-config.js";
 import type { ApprovalLevel } from "../../approval/approval-level.js";
 import type { AgentToolsConfig, ReadScope, ToolSearchMode, UserAgentConfig } from "./agent-types.js";
 import { ConfigValidationError } from "../config-validation-error.js";
@@ -210,6 +211,10 @@ export function parseAgentConfig(
     taintReview: parseBool(
       agent.taintReview ?? readDefaults().taintReview,
       "agent.taintReview",
+    ),
+    security: parseAgentSecurityConfig(
+      agent.security,
+      readDefaults().security ?? createAgentSecurityDefaults(),
     ),
     prompt: parsePromptConfig(agent.prompt, readDefaults().prompt),
     tools: parseAgentToolsConfig(agent.tools, readDefaults().tools),

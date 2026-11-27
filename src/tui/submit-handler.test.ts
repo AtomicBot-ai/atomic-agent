@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { handleEditorSubmit, runSlashCommand } from "./submit-handler.js";
 import {
   createInitialTuiState,
+  type RewindChoiceFacts,
   type TuiSessionInfo,
   type TuiState,
 } from "./tui-state.js";
@@ -411,6 +412,26 @@ describe("/queue", () => {
     expect(dispatched).toContainEqual({ type: "queue_changed", queued: [] });
   });
 
+  it("/queue next asks the orchestrator to move that message to the front (ATO-2476)", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(fakeSession()),
+      status: "running",
+      queuedMessages: ["first", "second"],
+    };
+    const messages: string[] = [];
+    const onQueueMoveRequested = vi.fn(() => true);
+    handleEditorSubmit(
+      "/queue next 2",
+      state,
+      ((a: { type: string; text?: string }) => {
+        if (a.type === "system_message" && a.text) messages.push(a.text);
+      }) as never,
+      stubCallbacks({ onQueueMoveRequested }),
+    );
+    expect(onQueueMoveRequested).toHaveBeenCalledWith(1, 0);
+    expect(messages).toContain("queue: message 2 goes next");
+  });
+
   it("says so when there is nothing parked", () => {
     const messages: string[] = [];
     handleEditorSubmit(
@@ -646,6 +667,40 @@ describe("slash commands that only an orchestrator can carry out", () => {
     },
   );
 
+  it.each([
+    ["/llm fallback local-first on", true],
+    ["/llm fallback local-first off", false],
+  ] as const)(
+    "%s sets localFirst through the callback and opens the pane (ATO-2434)",
+    (input, on) => {
+      const onSet = vi.fn();
+      const onRefresh = vi.fn();
+      const { dispatched } = run(input, {
+        onFallbackLocalFirstSetRequested: onSet,
+        onProvidersTabRefresh: onRefresh,
+      });
+      expect(onSet).toHaveBeenCalledTimes(1);
+      expect(onSet).toHaveBeenCalledWith(on);
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+      expect(dispatched).toContainEqual({ type: "llm_mode_set", mode: "fallback" });
+    },
+  );
+
+  it("/llm fallback local-first with no verb writes nothing and shows the usage", () => {
+    const onSet = vi.fn();
+    const { dispatched } = run("/llm fallback local-first", {
+      onFallbackLocalFirstSetRequested: onSet,
+    });
+    expect(onSet).not.toHaveBeenCalled();
+    expect(
+      dispatched.some(
+        (a) =>
+          a.type === "system_message" &&
+          a.text?.startsWith("usage: /llm fallback local-first on|off"),
+      ),
+    ).toBe(true);
+  });
+
   it("/memory reloads the list through the callback", () => {
     const onMemoryRefresh = vi.fn();
     const { dispatched } = run("/memory", {
@@ -805,7 +860,7 @@ describe("Enter in the rewind picker (ATO-1057)", () => {
     };
   }
 
-  it("closes the picker and asks to rewind to the highlighted question", () => {
+  it("picks the highlighted question and asks what to take back (ATO-2467)", () => {
     const onRewindRequested = vi.fn();
     const dispatched: Array<{ type: string }> = [];
     handleEditorSubmit(
@@ -815,7 +870,45 @@ describe("Enter in the rewind picker (ATO-1057)", () => {
       stubCallbacks({ onRewindRequested, onMessageSubmitted: vi.fn() }),
     );
     expect(onRewindRequested).toHaveBeenCalledWith(0, "first");
+    expect(dispatched).toEqual([
+      { type: "rewind_choice_requested", point: { turnIndex: 0, text: "first", at: 1, ordinal: 1 } },
+    ]);
+  });
+
+  function choiceState(facts: RewindChoiceFacts | null, cursor = 0): TuiState {
+    const base = pickerState();
+    const point = base.rewindPicker!.points[1]!;
+    return {
+      ...base,
+      rewindPicker: {
+        ...base.rewindPicker!,
+        choice: {
+          point,
+          facts,
+          options: facts === null ? [] : facts.fileCount > 0 ? ["all", "conversation", "files"] : ["conversation"],
+          cursor,
+        },
+      },
+    };
+  }
+  const facts = { fileCount: 2, notRestorableCount: 0, incomplete: false, uncoveredCount: 0 };
+
+  it("closes the box and hands over the highlighted choice", () => {
+    const onRewindScopeChosen = vi.fn();
+    const dispatched: Array<{ type: string }> = [];
+    handleEditorSubmit("", choiceState(facts, 2), (a) => dispatched.push(a), stubCallbacks({ onRewindScopeChosen }));
+    expect(onRewindScopeChosen).toHaveBeenCalledWith(0, "first", "files");
     expect(dispatched.map((a) => a.type)).toEqual(["rewind_picker_closed"]);
+  });
+
+  it("does nothing while the files are still being checked", () => {
+    const onRewindScopeChosen = vi.fn();
+    const onRewindRequested = vi.fn();
+    const dispatched: Array<{ type: string }> = [];
+    handleEditorSubmit("", choiceState(null), (a) => dispatched.push(a), stubCallbacks({ onRewindScopeChosen, onRewindRequested }));
+    expect(onRewindScopeChosen).not.toHaveBeenCalled();
+    expect(onRewindRequested).not.toHaveBeenCalled();
+    expect(dispatched).toEqual([]);
   });
 
   it("never sends the buffer as a message while the picker is open", () => {
@@ -1071,6 +1164,40 @@ describe("/why and /verbose (ATO-34)", () => {
   });
 });
 
+describe("/pet (ATO-2513)", () => {
+  function run(input: string, state: TuiState): Array<{ type: string; text?: string; on?: boolean }> {
+    const dispatched: Array<{ type: string; text?: string; on?: boolean }> = [];
+    handleEditorSubmit(
+      input,
+      state,
+      ((a: { type: string; text?: string; on?: boolean }) => dispatched.push(a)) as never,
+      stubCallbacks(),
+    );
+    return dispatched;
+  }
+
+  it("flips the live value, says so, and on / off set it", () => {
+    const off = createInitialTuiState(fakeSession());
+    expect(off.pet).toBe(false);
+    const first = run("/pet", off);
+    expect(first.find((a) => a.type === "pet_set")?.on).toBe(true);
+    expect(first.find((a) => a.type === "system_message")?.text).toContain("pet on");
+    expect(run("/pet", { ...off, pet: true }).find((a) => a.type === "pet_set")?.on).toBe(false);
+    expect(run("/pet off", off).find((a) => a.type === "pet_set")?.on).toBe(false);
+    expect(run("/pet on", { ...off, pet: true }).find((a) => a.type === "pet_set")?.on).toBe(true);
+  });
+
+  it("asks to persist the choice in tui.pet", () => {
+    const onPetPersistRequested = vi.fn();
+    const push = () => {};
+    const off = createInitialTuiState(fakeSession());
+    runSlashCommand("/pet", off, push, stubCallbacks({ onPetPersistRequested }));
+    expect(onPetPersistRequested).toHaveBeenLastCalledWith(true);
+    runSlashCommand("/pet", { ...off, pet: true }, push, stubCallbacks({ onPetPersistRequested }));
+    expect(onPetPersistRequested).toHaveBeenLastCalledWith(false);
+  });
+});
+
 describe("@ file mentions on submit (ATO-665)", () => {
   it("sends the expanded message on an idle submit", () => {
     const onMessageSubmitted = vi.fn();
@@ -1089,6 +1216,32 @@ describe("@ file mentions on submit (ATO-665)", () => {
     const onMessageSubmitted = vi.fn();
     handleEditorSubmit("explain @src/app.ts", createInitialTuiState(fakeSession()), () => {}, stubCallbacks({ onMessageSubmitted }));
     expect(onMessageSubmitted).toHaveBeenCalledWith("explain @src/app.ts");
+  });
+
+  it("hands a pending expansion to onMessageSubmittedLater (ATO-2472)", async () => {
+    const onMessageSubmitted = vi.fn();
+    const onMessageSubmittedLater = vi.fn();
+    const pending = Promise.resolve("see @diff\n\n[diff]");
+    handleEditorSubmit(
+      "see @diff",
+      createInitialTuiState(fakeSession()),
+      () => {},
+      stubCallbacks({ onMessageSubmitted, onMessageSubmittedLater, expandFileMentions: () => pending }),
+    );
+    expect(onMessageSubmittedLater).toHaveBeenCalledWith(pending);
+    expect(onMessageSubmitted).not.toHaveBeenCalled();
+  });
+
+  it("awaits a pending expansion itself when the host takes strings only (ATO-2472)", async () => {
+    const onMessageSubmitted = vi.fn();
+    handleEditorSubmit(
+      "see @diff",
+      createInitialTuiState(fakeSession()),
+      () => {},
+      stubCallbacks({ onMessageSubmitted, expandFileMentions: () => Promise.resolve("see @diff [x]") }),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(onMessageSubmitted).toHaveBeenCalledWith("see @diff [x]");
   });
 
   it("does not expand a slash command", () => {

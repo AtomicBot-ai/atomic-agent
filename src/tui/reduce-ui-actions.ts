@@ -118,6 +118,8 @@ export function reduceUiAction(
       return { ...state, showSteps: action.on };
     case "verbose_steps_set":
       return { ...state, verboseSteps: action.on };
+    case "pet_set":
+      return { ...state, pet: action.on };
     case "vim_mode_set":
       return { ...state, vimMode: action.on };
     case "menu_opened":
@@ -150,9 +152,19 @@ export function reduceUiAction(
       // `conversationPairsCap` still reports whatever the last prompt
       // was built against until the next turn rebuilds it. The reducer
       // for `prompt_built` retires it once measurement agrees.
-      return { ...state, contextPanelOpen: !state.contextPanelOpen };
+      return {
+        ...state,
+        contextPanelOpen: !state.contextPanelOpen,
+        contextPanelDetail: false,
+      };
+    case "context_panel_detail_shown":
+      // `/context detail`: opens (or keeps open) rather than toggles.
+      return { ...state, contextPanelOpen: true, contextPanelDetail: true };
+    case "context_panel_detail_toggled":
+      if (!state.contextPanelOpen) return state;
+      return { ...state, contextPanelDetail: !state.contextPanelDetail };
     case "context_panel_closed":
-      return { ...state, contextPanelOpen: false };
+      return { ...state, contextPanelOpen: false, contextPanelDetail: false };
     case "context_pairs_selected": {
       if (!state.contextPanelOpen) return state;
       // The value, not a step. A delta action recomputes from whatever
@@ -267,6 +279,9 @@ export function reduceUiAction(
     case "reasoning_level_set":
       // Display only; the submit path hands the level to the orchestrator.
       return state.reasoningLevel === action.level ? state : { ...state, reasoningLevel: action.level };
+    case "model_ring_loaded":
+      // ATO-2500: display only (the bar's `fav 2/3`); the file stays the store.
+      return { ...state, modelRing: action.ring };
     case "plan_handoff_dismissed":
       // Mode untouched: dismissing a plan is declining this one, not
       // leaving the mode you are planning in.
@@ -384,6 +399,8 @@ export function reduceUiAction(
     case "rewind_picker_closed":
     case "rewind_picker_cursor_moved":
     case "rewind_picker_cursor_set":
+    case "rewind_choice_requested":
+    case "rewind_choice_ready":
       return {
         ...state,
         rewindPicker: reduceRewindPicker(state.rewindPicker ?? null, action),
@@ -594,6 +611,7 @@ export function reduceUiAction(
         pendingApproval: null,
         approvalPathDraft: null,
         approvalPreviewPage: null,
+        approvalAlwaysArmed: null,
         lastRunStatus: null,
         runHistory: [],
         sessionPickerOpen: false,

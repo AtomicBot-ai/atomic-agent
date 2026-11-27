@@ -7,6 +7,7 @@ import type { ToolContext, ToolDefinition } from "../../tool-registry.js";
 import { compileGlob, matchesAny } from "../fs/fs-glob-pattern.js";
 import { DEFAULT_IGNORE } from "../fs/fs-glob.js";
 import { orMissing } from "../fs/fs-missing-path.js";
+import { isGuestSecretHit } from "../../read-scope/guest-secret-files.js";
 import {
   createWalkBudget,
   describeWalkStop,
@@ -179,6 +180,9 @@ async function walkSources(root: string, limits: WalkBudgetLimits, ctx: ToolCont
       if (entry.name.startsWith(".")) continue;
       const abs = join(dir, entry.name);
       const rel = toPosix(relative(root, abs));
+      // A guest never gets the outline of a `secrets/` or credentials
+      // source file (ATO-2703, `guest-secret-files.ts`).
+      if (ctx.guest === true && isGuestSecretHit(ctx.workingDir, abs)) continue;
       if (entry.isDirectory()) {
         if (matchesAny(ignore, `${rel}/`) || matchesAny(ignore, `${rel}/x`)) continue;
         await walk(abs);

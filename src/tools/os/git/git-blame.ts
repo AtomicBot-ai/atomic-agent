@@ -1,5 +1,6 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../../tool-registry.js";
+import { refuseOptionLike } from "./git-arg-guard.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
 /**
@@ -30,6 +31,7 @@ export const osGitBlameTool: ToolDefinition = {
       typeof rawArgs.revision === "string" && rawArgs.revision.length > 0
         ? rawArgs.revision
         : "HEAD";
+    refuseOptionLike("os.git.blame", "revision", revision);
     const startLine = parseLine(rawArgs.startLine, "startLine");
     const endLine = parseLine(rawArgs.endLine, "endLine");
     if (

@@ -142,7 +142,7 @@ describe("/fork on Telegram", () => {
     const createForumTopic = vi.fn(async () => {
       throw new Error("Bad Request: not enough rights to create a topic");
     });
-    const { api } = makeApi(createForumTopic);
+    const { api, sent } = makeApi(createForumTopic);
     pointer.setCurrent(String(GROUP), source.id, "Team");
 
     await handleInboundText(forumUpdate("/fork"), ctxFor(runtime, api));
@@ -150,6 +150,11 @@ describe("/fork on Telegram", () => {
     expect(createForumTopic).toHaveBeenCalledTimes(1);
     expect(saved).toHaveLength(1);
     expect(pointer.get(String(GROUP)).current).toBe(saved[0]!.id);
+    // Not silent (ATO-2757): the reply says no topic was opened and how to fix it.
+    const reply = sent.at(-1)?.text ?? "";
+    expect(reply).toContain("could not open a new topic");
+    expect(reply).toContain('"Manage topics"');
+    expect(reply).toContain(`/switch ${source.id}`);
   });
 
   it("outside a forum, moves this chat to a copy and keeps the source in its history", async () => {
@@ -171,6 +176,35 @@ describe("/fork on Telegram", () => {
     expect(entry.history).toContain(source.id);
     expect(source).toEqual(before);
     expect(sent.at(-1)?.text).toContain(`forked from ${source.id}`);
+    // Outside a forum there are no topics to talk about.
+    expect(sent.at(-1)?.text).not.toContain("topic");
+  });
+
+  it("/fork 1 copies the chat up to the first question (ATO-2456)", async () => {
+    const source = sourceSession("s-src");
+    const { runtime, saved } = makeRuntime([source]);
+    const { api } = makeApi();
+    pointer.setCurrent(String(DM), source.id, "DM");
+
+    await handleInboundText(dmUpdate("/fork 1"), ctxFor(runtime, api));
+
+    expect(saved).toHaveLength(1);
+    expect(saved[0]!.turns).toEqual(source.turns.slice(0, 2));
+    expect(pointer.get(String(DM)).current).toBe(saved[0]!.id);
+  });
+
+  it("/fork with a bad number lists the questions and saves nothing", async () => {
+    const source = sourceSession("s-src");
+    const { runtime, saved } = makeRuntime([source]);
+    const { api, sent } = makeApi();
+    pointer.setCurrent(String(DM), source.id, "DM");
+
+    await handleInboundText(dmUpdate("/fork 3"), ctxFor(runtime, api));
+
+    expect(saved).toHaveLength(0);
+    expect(pointer.get(String(DM)).current).toBe(source.id);
+    expect(sent.at(-1)?.text).toContain("1. plan the trip");
+    expect(sent.at(-1)?.text).toContain("2. make it cheaper");
   });
 
   it("refuses while a turn runs on the session and saves nothing", async () => {

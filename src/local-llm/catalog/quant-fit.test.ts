@@ -171,3 +171,85 @@ describe("pickBestQuant", () => {
     expect(pickBestQuant(rate(MAC, files([["model.gguf", 3]])))).toBeNull();
   });
 });
+
+describe("experts in RAM (ATO-2455)", () => {
+  const QWEN_35B_A3B = 22.4;
+  const share = activeShareFromName("Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf");
+
+  it("fits a 35B-A3B on an 8 GB card with 32 GB of RAM, experts partly in RAM", () => {
+    expect(quantFitFor(QWEN_35B_A3B, PC, share)).toEqual({
+      tier: "fits",
+      label: "Fits, experts in RAM",
+      placement: "split",
+    });
+  });
+
+  it("keeps the dense verdict for the same size without an MoE name", () => {
+    expect(quantFitFor(QWEN_35B_A3B, PC)).toMatchObject({ tier: "tight", placement: "ram" });
+  });
+
+  it("says too big again when cpuMoe is off", () => {
+    expect(quantFitFor(QWEN_35B_A3B, { ...PC, cpuMoe: "off" }, share)).toMatchObject({
+      tier: "tight",
+      placement: "ram",
+    });
+    expect(quantFitFor(QWEN_35B_A3B, { ...PC, ramGb: 24, cpuMoe: "off" }, share)).toMatchObject({
+      tier: "too-big",
+    });
+  });
+
+  it("turns a too-big into a tight split when the RAM holds only the experts' part", () => {
+    // 24 GB: the whole 22.4 GB × 1.2 does not fit; the 15.6 GB in RAM × 1.2 does.
+    expect(quantFitFor(QWEN_35B_A3B, { ...PC, ramGb: 24 }, share)).toEqual({
+      tier: "tight",
+      label: "Tight fit",
+      placement: "split",
+    });
+  });
+
+  it("leaves a Mac alone: one memory, no experts on the CPU", () => {
+    expect(quantFitFor(QWEN_35B_A3B, { ...MAC, gpuBudgetGb: 16 }, share).placement).not.toBe("split");
+  });
+
+  describe("the default pick", () => {
+    const QWEN_30B_A3B = [
+      ["Qwen3-30B-A3B-Q4_K_M.gguf", 18.6],
+      ["Qwen3-30B-A3B-Q6_K.gguf", 25.1],
+      ["Qwen3-30B-A3B-Q8_0.gguf", 32.5],
+    ].map(([path, gb]) => ({ path: path as string, sizeBytes: (gb as number) * GB }));
+    const rate = (machine: MachineForModels) =>
+      QWEN_30B_A3B.map((f) => ({ ...rateQuant(f, machine), sizeBytes: f.sizeBytes }));
+
+    it("keeps the quant that fits the card over a more precise one with experts in RAM", () => {
+      // 24 GB card: Q4_K_M (18.6 GB) fits 24 x 0.85 = 20.4 fully; Q6_K and
+      // Q8_0 only fit with experts in RAM, at a much slower forecast.
+      const card24: MachineForModels = {
+        ramGb: 64,
+        gpuBudgetGb: 24,
+        freeDiskGb: 500,
+        cpuOnly: false,
+        bandwidth: { gpuGbPerSec: 1000, ramGbPerSec: 60, unified: false },
+      };
+      const rated = rate(card24);
+      expect(rated[1]!.fit.placement).toBe("split");
+      const picked = pickBestQuant(rated)!;
+      expect(rated[picked]!.fit.placement).toBe("gpu");
+      expect(QWEN_30B_A3B[picked]!.path).toBe("Qwen3-30B-A3B-Q4_K_M.gguf");
+    });
+
+    it("falls back to experts in RAM only when no quant fits fully", () => {
+      const card8: MachineForModels = { ...PC, ramGb: 64 };
+      const rated = rate(card8);
+      const picked = pickBestQuant(rated);
+      expect(picked).not.toBeNull();
+      expect(rated[picked!]!.fit.placement).toBe("split");
+    });
+  });
+
+  it("rates an MoE quant from its file name and forecasts a speed for it", () => {
+    const rated = rateQuant({ path: "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", sizeBytes: QWEN_35B_A3B * GB }, PC);
+    expect(rated.fit.placement).toBe("split");
+    expect(rated.speed?.label).toMatch(/tok\/s, estimate$/);
+    expect(rated.speed!.tokPerSec).toBeGreaterThan(5);
+  });
+});

@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import type { SessionState } from "../session/session-state.js";
 import {
+  addTurnTokens,
   createRunJsonCursor,
+  runUsage,
   runJsonEvent,
   runResultEvent,
   runStartEvent,
@@ -105,5 +107,31 @@ describe("run JSON events", () => {
       lastError: null,
       usage: null,
     });
+  });
+
+  it("adds the run's tokens and the schema outcome to the result (ATO-2440)", () => {
+    const tokens = addTurnTokens(addTurnTokens(null, { promptTokens: 10, completionTokens: 2 }), {
+      promptTokens: 5,
+      completionTokens: 1,
+    });
+    expect(addTurnTokens(tokens, undefined)).toEqual({ promptTokens: 15, completionTokens: 3 });
+    const withSpend = { ...session, sessionUsage: { costUsd: 0.5 } } as unknown as SessionState;
+    expect(
+      runResultEvent({
+        session: withSpend,
+        reply: "x",
+        durationMs: 1,
+        isError: true,
+        tokens,
+        schemaError: "the answer is not JSON",
+      }),
+    ).toMatchObject({
+      usage: { costUsd: 0.5, promptTokens: 15, completionTokens: 3 },
+      schemaError: "the answer is not JSON",
+    });
+    expect(runUsage(withSpend, null)).toEqual({ costUsd: 0.5, promptTokens: null, completionTokens: null });
+    expect(
+      runResultEvent({ session, reply: "{}", durationMs: 1, isError: false, structuredOutput: {} }),
+    ).toMatchObject({ structuredOutput: {} });
   });
 });

@@ -1,6 +1,7 @@
 import type { ApprovalGate, RuleCheck } from "./approval-gate.js";
 import type { ApprovalCategory } from "./approval-level.js";
 import type { EgressDestination } from "./egress-scan.js";
+import type { SecurityFinding } from "./approval-ledger.js";
 import { GUARD_ASK_PERSON } from "./guard-check.js";
 
 export interface DangerousToolOptions {
@@ -48,6 +49,8 @@ export interface ApprovalPrompt {
   targetPaths?: readonly string[];
   /** Asks at every level, bypass included; see `ApprovalRequest.askEveryLevel`. */
   askEveryLevel?: true;
+  /** The argument check behind the prompt; see `ApprovalRequest.securityFinding`. */
+  securityFinding?: SecurityFinding;
 }
 
 /**
@@ -262,6 +265,9 @@ export async function requireApproval(
         ? { targetPaths: [...prompt.targetPaths] }
         : {}),
       ...(prompt.askEveryLevel === true ? { askEveryLevel: true as const } : {}),
+      ...(prompt.securityFinding !== undefined
+        ? { securityFinding: { ...prompt.securityFinding } }
+        : {}),
     },
     { signal },
   );

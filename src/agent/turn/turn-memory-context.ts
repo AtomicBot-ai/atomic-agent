@@ -2,6 +2,7 @@ import type { AgentLoopDependencies, RunTurnOptions } from "../agent-contract.js
 import type { SessionState } from "../../session/session-state.js";
 import { isFinalReplyTurn, isStoppedTurnMarker } from "../../session/conversation-turn.js";
 import { isIncognitoSession } from "../../session/incognito.js";
+import { isChannelGuestSession } from "../../session/channel-guest-session.js";
 import type { ProfileFact } from "../../memory/profile-store.js";
 
 export type TurnMemoryDependencies = Pick<
@@ -36,6 +37,18 @@ export type TurnMemoryDependencies = Pick<
  */
 export const MAX_SURFACED_NOTE_ALLOWLIST = 32;
 
+/**
+ * True when a turn of `state` must not read the owner's saved memory:
+ * an incognito chat (ATO-586, decision 8), or a channel guest's session
+ * (ATO-2729). A guest is someone the owner let into a group chat, not
+ * the owner, so recalled notes and profile facts about the owner would
+ * let the guest ask "what do you know about the owner?" and get an
+ * answer. `memoryReadOnly` on a guest turn only stops writes.
+ */
+export function readsNoSavedMemory(state: SessionState): boolean {
+  return isIncognitoSession(state) || isChannelGuestSession(state);
+}
+
 export async function refreshMemoryContext(
   deps: TurnMemoryDependencies,
   state: SessionState,
@@ -44,7 +57,8 @@ export async function refreshMemoryContext(
   // ATO-586 (decision 8): an incognito chat does not read saved memory,
   // so no recalled notes, index, lessons or procedures reach its prompt.
   // The provider is not called at all: a recall also bumps counters.
-  if (isIncognitoSession(state)) return withoutRecalledMemory(state);
+  // A channel guest's session reads none either (ATO-2729).
+  if (readsNoSavedMemory(state)) return withoutRecalledMemory(state);
   if (!deps.memoryContextProvider) return state;
   // An ephemeral (fusion worker) turn neither reads nor primes memory:
   // its prompt is the orchestrator's instruction, not the operator's
@@ -119,14 +133,15 @@ function withoutRecalledMemory(state: SessionState): SessionState {
 
 /**
  * The profile facts a step renders into `### profile`: none in an
- * incognito chat (ATO-586, decision 8), else what the provider lists.
+ * incognito chat (ATO-586, decision 8) or a channel guest's session
+ * (ATO-2729), else what the provider lists.
  * The provider may throw; the caller handles that.
  */
 export function profileFactsForPrompt(
   provider: (() => readonly ProfileFact[]) | undefined,
   state: SessionState,
 ): readonly ProfileFact[] | undefined {
-  if (isIncognitoSession(state)) return undefined;
+  if (readsNoSavedMemory(state)) return undefined;
   return provider?.();
 }
 

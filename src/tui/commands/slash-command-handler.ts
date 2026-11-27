@@ -15,14 +15,19 @@ import { renderToolsOverview, renderToolsSearch } from "./tools-listing.js";
 import { renderSettingsOverview, renderSettingsSearch } from "./settings-listing.js";
 import { parseModelModeCommand, MODEL_MODE_USAGE, type ModelModeCommand } from "./model-mode-command.js";
 import { parseGoalCommand, type GoalCommand } from "./goal-command.js";
+import { parseQueueMoveCommand, type QueueMove } from "./queue-move-command.js";
 import { compactionInstructionsError, normalizeCompactionInstructions } from "../../runtime/compaction-instructions.js";
 import { parsePersonaCommand, type PersonaCommand } from "./persona-command.js";
 import { describeThinkLevel, parseThinkCommand } from "./think-command.js";
 import type { ReasoningLevel } from "../../llm/reasoning-levels.js";
 import { parseLearnCommand, type LearnCommand } from "../../skills/learning/learn-command.js";
 import { parseExportCommand, type ChatExportRequest } from "./export-command.js";
+import { parseSessionsArgs, type SessionsTrashRequest } from "../session-trash/session-trash-command.js";
 import { MODEL_RING_USAGE, parseModelRingCommand, type ModelRingCommand } from "../model-ring/model-ring-command.js";
 import { parseResearchCommand } from "./research-command.js";
+import { formatKeysHelp } from "./keys-help.js";
+import { parseCouncilCommand, type CouncilCommand } from "./council-command.js";
+import { parsePsCommand, parseStopCommand, type BackgroundJobsCommand } from "./ps-command.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -74,6 +79,8 @@ export interface SlashDispatchResult {
    * chat as context. The caller runs it; nothing lands in the session.
    */
   readonly sideQuestionText?: string;
+  /** `/council …` (ATO-2432): run, stop or explain the model council; the caller runs it. */
+  readonly councilCommand?: CouncilCommand;
   /**
    * Bare `/enhance` (typed, from the palette or from the menu): enhance
    * whatever draft the composer holds, if it holds one. Only the caller
@@ -94,10 +101,14 @@ export interface SlashDispatchResult {
   readonly triggerQuit: boolean;
   /** When true the caller should ask the orchestrator to open the session picker. */
   readonly triggerSessionPicker: boolean;
+  /** `/sessions --deleted | --restore <n|id>` (ATO-2474): list or restore chats in Trash. */
+  readonly sessionsTrash?: SessionsTrashRequest;
   /** `/rewind` (ATO-1057): ask the orchestrator to open the rewind picker. */
   readonly triggerRewindPicker?: boolean;
   /** `/export [format] [path]` (ATO-1054): the orchestrator writes the open chat. */
   readonly chatExport?: ChatExportRequest;
+  /** `/servers [action ...]` (ATO-2490): the words after `/servers`, run like `atomic-agent local-servers`. */
+  readonly localServersArgs?: readonly string[];
   /** When true the caller should ask the orchestrator to start a fresh session. */
   readonly triggerSessionNew: boolean;
   /** With `triggerSessionNew`: start the session in its own git worktree (`/new worktree`). */
@@ -176,6 +187,8 @@ export interface SlashDispatchResult {
    * orchestrator to drop its own copy of the queue.
    */
   readonly queueVerb?: "list" | "clear";
+  /** `/queue next <n>` / `/queue move <n> <place>` (ATO-2476): reorder the parked messages. */
+  readonly queueMove?: QueueMove;
   /**
    * `/steer <msg>` or `/queue <msg>`: land this one message in the given
    * mode without touching the persisted default. Ignored when no turn is
@@ -210,11 +223,23 @@ export interface SlashDispatchResult {
    */
   readonly verboseStepsVerb?: "on" | "off" | "toggle";
   /**
+   * `/pet [on|off]` (ATO-2513): the terminal pet in the top bar. Bare
+   * `/pet` is `toggle`; the caller sets `TuiState.pet` and writes `tui.pet`.
+   */
+  readonly petVerb?: "on" | "off" | "toggle";
+  /**
    * `/vim [on|off]` — vim keys in the composer (ATO-662). Bare `/vim` is
    * `toggle`. The caller sets `TuiState.vimMode` and writes
    * `tui.vimMode` through `onVimModePersistRequested`.
    */
   readonly vimVerb?: "on" | "off" | "toggle";
+  /**
+   * `/llm fallback local-first on|off` (ATO-2434): the caller writes
+   * `llm.fallback.localFirst` through `onFallbackLocalFirstSetRequested`.
+   * The `actions` open the Fallback pane, which shows the new value or
+   * the reason the write was refused.
+   */
+  readonly fallbackLocalFirst?: boolean;
   /**
    * `/uninstall`: measure the install and feed the result back as
    * `uninstall_plan_loaded`. Nothing is removed on this path — the
@@ -236,6 +261,9 @@ export interface SlashDispatchResult {
     import("../../config/index.js").RunModeName | "status" | "swap";
   /** `/runmode workers N`: persist the fusion worker count. */
   readonly runModeWorkers?: number;
+  /** `/runmode role ...` / `/runmode roles`: set or list the fusion roles. */
+  readonly runModeRole?: import("./dispatch-run-mode.js").RunModeCommand["role"];
+  readonly runModeListRoles?: boolean;
   /**
    * `/status` (ATO-965): print a status snapshot of the running turn. It
    * is built from `TuiState`, which this pure dispatcher cannot see, so
@@ -264,10 +292,21 @@ export interface SlashDispatchResult {
     runId?: string;
   };
   /**
+   * `/usage [options]` (ATO-2442): the per-day history over every chat,
+   * with the same options as `atomic-agent usage`. The file is read on
+   * the submit path (`usage-history-command.ts`), not here.
+   */
+  readonly usageHistoryArgs?: string;
+  /**
    * `/resume`: continue the current session's last turn when a restart
    * cut it off (ATO-448). Needs the runtime, so the caller runs it.
    */
   readonly resumeInterruptedTurn?: true;
+  /**
+   * `/ps`, `/stop [id]` (ATO-2437): list or stop the current session's
+   * background jobs. Needs the runtime, so the caller runs it.
+   */
+  readonly backgroundJobsCommand?: BackgroundJobsCommand;
 }
 
 export type FusionWorkerAction =
@@ -385,6 +424,13 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return pureActions([], { triggerStatusSnapshot: true });
     case "why":
       return pureActions([], { triggerWhySnapshot: true });
+    case "ps":
+    case "stop": {
+      const parsedJobs = resolved.name === "ps" ? parsePsCommand(parsed.args) : parseStopCommand(parsed.args);
+      return parsedJobs.ok
+        ? pureActions([], { backgroundJobsCommand: parsedJobs.command })
+        : pureActions([], { systemMessage: parsedJobs.usage });
+    }
     case "steer":
       return dispatchSteerSub(parsed.args);
     case "worker": {
@@ -461,6 +507,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
         ? pureActions([], { systemMessage: SIDE_QUESTION_USAGE })
         : pureActions([], { sideQuestionText: question });
     }
+    case "council":
+      return pureActions([], { councilCommand: parseCouncilCommand(parsed.args) });
     case "research": {
       const research = parseResearchCommand(parsed.args);
       return research.kind === "usage"
@@ -496,9 +544,20 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
         clearBuffer: false,
       });
     case "context":
-      return pureActions([{ type: "context_panel_toggled" }]);
+      // ATO-2453: `/context detail` opens it with each MCP server's
+      // tools listed, as Claude Code's `/context` lists MCP tools.
+      return pureActions([
+        /^details?$/i.test(parsed.args.trim())
+          ? { type: "context_panel_detail_shown" }
+          : { type: "context_panel_toggled" },
+      ]);
     case "usage":
-      return pureActions([{ type: "usage_report_requested", now: Date.now() }]);
+      // ATO-2442: bare `/usage` is this chat's cost and limits, then the
+      // last days over every chat; with options (`/usage --days 30
+      // --tools`) only the history. The submit path reads the file.
+      return parsed.args.trim() === ""
+        ? pureActions([{ type: "usage_report_requested", now: Date.now() }], { usageHistoryArgs: "" })
+        : pureActions([], { usageHistoryArgs: parsed.args });
     case "chat":
       return pureActions([{ type: "ui_mode_set", mode: "chat" }]);
     case "observe":
@@ -544,14 +603,21 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return dispatchStepsSub(parsed.args);
     case "verbose":
       return dispatchVerboseSub(parsed.args);
+    case "pet":
+      return dispatchPetSub(parsed.args);
     case "vim":
       return dispatchVimSub(parsed.args);
     case "session":
       return pureActions([], {
         systemMessage: "use /sessions to switch, /new to start fresh",
       });
-    case "sessions":
-      return pureActions([], { triggerSessionPicker: true });
+    case "sessions": {
+      // ATO-2474: `--deleted` lists the chats in Trash, `--restore` brings one back.
+      const wanted = parseSessionsArgs(parsed.args);
+      if ("picker" in wanted) return pureActions([], { triggerSessionPicker: true });
+      if ("usage" in wanted) return pureActions([], { systemMessage: wanted.usage });
+      return pureActions([], { sessionsTrash: wanted.trash });
+    }
     case "new":
       // `/new worktree`: the session gets a git worktree of its own (ATO-576).
       if (/^(--)?worktree$/i.test(parsed.args.trim())) {
@@ -562,6 +628,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return pureActions([], { triggerRewindPicker: true });
     case "export":
       return pureActions([], { chatExport: parseExportCommand(parsed.args) });
+    case "servers":
+      return pureActions([], { localServersArgs: parsed.args.split(/\s+/).filter(Boolean) });
     case "incognito":
       return pureActions([], { triggerIncognitoSession: true });
     case "window":
@@ -640,6 +708,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       }
       if (cmd.workers !== undefined)
         return pureActions([], { runModeWorkers: cmd.workers });
+      if (cmd.role !== undefined) return pureActions([], { runModeRole: cmd.role });
+      if (cmd.listRoles) return pureActions([], { runModeListRoles: true });
       if (cmd.swap) return pureActions([], { runModeVerb: "swap" });
       return pureActions([], { runModeVerb: cmd.status ? "status" : cmd.mode });
     }
@@ -659,7 +729,7 @@ function formatSlashCommandHelp(): string {
         : "";
     return `  /${cmd.name}${aliasPart} — ${cmd.description}`;
   });
-  return ["slash commands:", ...lines].join("\n");
+  return ["slash commands:", ...lines, "", formatKeysHelp()].join("\n");
 }
 
 /**
@@ -685,6 +755,8 @@ function dispatchQueueSub(args: string): SlashDispatchResult {
       systemMessage: "Enter now queues behind the running turn",
     });
   }
+  const move = parseQueueMoveCommand(raw);
+  if (move) return pureActions([], { queueMove: move });
   if (raw.length > 0) {
     return pureActions([], {
       submitWhileBusy: { mode: "queue", text: raw },
@@ -802,10 +874,13 @@ function pureActions(
     telegramVerb: undefined,
     analyticsVerb: undefined,
     queueVerb: undefined,
+    queueMove: undefined,
     submitWhileBusy: undefined,
     setWhileBusyMode: undefined,
     runModeVerb: undefined,
     runModeWorkers: undefined,
+    runModeRole: undefined,
+    runModeListRoles: undefined,
     ...overrides,
   };
 }
@@ -855,6 +930,16 @@ function dispatchStepsSub(rawArgs: string): SlashDispatchResult {
   if (verb === "off") return pureActions([], { showStepsVerb: "off" });
   return pureActions([], {
     systemMessage: `usage: /steps [on|off] (got "${rawArgs.trim()}")`,
+  });
+}
+
+/** `/pet` toggles the terminal pet (ATO-2513); `on` / `off` set it. */
+function dispatchPetSub(rawArgs: string): SlashDispatchResult {
+  const verb = rawArgs.trim().toLowerCase();
+  if (verb.length === 0) return pureActions([], { petVerb: "toggle" });
+  if (verb === "on" || verb === "off") return pureActions([], { petVerb: verb });
+  return pureActions([], {
+    systemMessage: `usage: /pet [on|off] (got "${rawArgs.trim()}")`,
   });
 }
 
@@ -1152,12 +1237,18 @@ function dispatchLlmSub(rawArgs: string): SlashDispatchResult {
   // mirror shows whatever the last refresh produced (stale if config
   // changed externally mid-session).
   if (/^fallback$/i.test(argPart)) {
-    return pureActions([
-      { type: "ui_mode_set", mode: "debug" },
-      { type: "tab_changed", tab: "llm" },
-      { type: "llm_mode_set", mode: "fallback" },
-      { type: "providers_refresh_requested" },
-    ]);
+    return pureActions(FALLBACK_PANE_ACTIONS);
+  }
+  // `/llm fallback local-first on|off` (ATO-2434): the same switch as `o`
+  // in the Fallback pane. It opens the pane too, so the result (or why
+  // the write was refused) is on screen rather than only in the feed.
+  const localFirstMatch = argPart.match(/^fallback\s+local-first(?:\s+(\S+))?\s*$/i);
+  if (localFirstMatch) {
+    const verb = localFirstMatch[1]?.toLowerCase();
+    if (verb === "on" || verb === "off") {
+      return pureActions(FALLBACK_PANE_ACTIONS, { fallbackLocalFirst: verb === "on" });
+    }
+    return pureActions([], { systemMessage: LOCAL_FIRST_USAGE });
   }
   // `/llm check` exercises the real turn contract against the active
   // provider — streaming, tools payload, a forced native tool call —
@@ -1186,9 +1277,20 @@ function dispatchLlmSub(rawArgs: string): SlashDispatchResult {
   }
   return pureActions([], {
     systemMessage:
-      "usage: /llm | /llm provider <id> | /llm model-mode [local|cloud|inherit] [provider-id] [model-id] | /llm check | /llm fallback | /llm restart",
+      "usage: /llm | /llm provider <id> | /llm model-mode [local|cloud|inherit] [provider-id] [model-id] | /llm check | /llm fallback | /llm fallback local-first on|off | /llm restart",
   });
 }
+
+/** What `/llm fallback` dispatches: open the Fallback pane on fresh data. */
+const FALLBACK_PANE_ACTIONS: readonly TuiAction[] = [
+  { type: "ui_mode_set", mode: "debug" },
+  { type: "tab_changed", tab: "llm" },
+  { type: "llm_mode_set", mode: "fallback" },
+  { type: "providers_refresh_requested" },
+];
+
+const LOCAL_FIRST_USAGE =
+  "usage: /llm fallback local-first on|off (start each turn on the local model, cloud when it fails)";
 
 /**
  * `/tools` answers "what can this agent actually do" without touching a

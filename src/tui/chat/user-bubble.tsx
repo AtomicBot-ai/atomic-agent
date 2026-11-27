@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { LinkifiedText } from "../render/linkify-text.js";
-import { collapseMentionedFiles } from "../file-mentions/mention-block.js";
+import { collapseMentionedFiles } from "../../mentions/mention-block.js";
 import { fusionInk } from "../theme/fusion-tint.js";
 import { theme } from "../theme/theme.js";
 

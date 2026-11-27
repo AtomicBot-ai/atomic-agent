@@ -22,7 +22,7 @@ import { fitToWidth } from "../components/fit-to-width.js";
 import { formatTokens } from "../components/format-tokens.js";
 import { renderProgressBar } from "../components/render-progress-bar.js";
 import { isKnownLimit } from "./context-chip.js";
-import { contextHint } from "./context-hint.js";
+import { fitBody, hasToolRows, type PanelRow } from "./context-panel-body.js";
 
 /** Panel width, clamped to the pane on narrow terminals. */
 const PREFERRED_WIDTH = 58;
@@ -62,6 +62,11 @@ export interface ContextPanelProps {
   pairsDraft?: number | null;
   /** Step the selector by `delta`, clamped to 1..100 by the reducer. */
   onStepPairs?: (delta: number) => void;
+  /**
+   * List each MCP server's tools under its row (ATO-2453): `d` in the
+   * panel, or `/context detail`. Off by default.
+   */
+  detail?: boolean;
   /** Rows available in the pane the panel floats over. */
   availableRows: number;
   /** Columns available in that pane. */
@@ -105,6 +110,7 @@ export function ContextPanel({
   reservedForReply,
   pairsDraft = null,
   onStepPairs,
+  detail = false,
 }: ContextPanelProps): ReactElement {
   const width = Math.max(32, Math.min(PREFERRED_WIDTH, availableColumns - 2));
   const inner = width - 2;
@@ -152,7 +158,7 @@ export function ContextPanel({
   // The breakdown costs its own rule as well as its rows, so it needs
   // two spare lines before the first one is worth drawing.
   const roomForRows = availableRows - CHROME_ROWS - 1;
-  const { visible, hint } = fitBody(rows, usage, roomForRows);
+  const { visible, hint } = fitBody(rows, usage, roomForRows, detail);
   const height =
     CHROME_ROWS + (visible.length > 0 ? visible.length + hint.length + 1 : 0);
   const offsetTop = Math.max(0, Math.floor((availableRows - height) / 2));
@@ -205,55 +211,10 @@ export function ContextPanel({
         {...(onStepPairs ? { onStep: onStepPairs } : {})}
       />
       <Text color={chromeTheme.colors.railMuted}>
-        {fitToWidth(` ${footer(usage)}`, inner)}
+        {fitToWidth(` ${footer(usage, detail)}`, inner)}
       </Text>
     </PanelFrame>
   );
-}
-
-interface PanelRow {
-  label: string;
-  tokens: number;
-  /** Accounting rather than content: reserved headroom and free space. */
-  dim?: boolean;
-  /** One part of the row above it (ATO-2355): indented, no gauge. */
-  part?: boolean;
-}
-
-/**
- * What fits, most useful first: every row with its parts and the tip;
- * then the rows and the tip without the parts; then as many rows as
- * the pane has, as before parts existed. Parts go first because the
- * section rows already carry the totals and the tip names the culprit.
- */
-function fitBody(
-  rows: readonly PanelRow[],
-  usage: ContextUsageView,
-  room: number,
-): { visible: readonly PanelRow[]; hint: readonly string[] } {
-  const hint = contextHint(usage) ?? [];
-  const detailed = withParts(rows, usage);
-  if (detailed.length + hint.length <= room) return { visible: detailed, hint };
-  if (rows.length + hint.length <= room) return { visible: rows, hint };
-  return { visible: rows.slice(0, Math.max(0, room)), hint: [] };
-}
-
-/** Each section row followed by its parts, in the order they were measured. */
-function withParts(
-  rows: readonly PanelRow[],
-  usage: ContextUsageView,
-): readonly PanelRow[] {
-  if (usage.parts.length === 0) return rows;
-  const out: PanelRow[] = [];
-  for (const row of rows) {
-    out.push(row);
-    if (row.dim) continue;
-    for (const part of usage.parts) {
-      if (part.parent !== row.label) continue;
-      out.push({ label: part.label, tokens: part.tokens, dim: true, part: true });
-    }
-  }
-  return out;
 }
 
 /**
@@ -276,6 +237,7 @@ function buildRows(
     reservedForReply,
     usage.contextWindow,
     usage.tokens,
+    usage.replyReserve,
   );
   if (reserved > 0) {
     rows.push({
@@ -297,17 +259,22 @@ function buildRows(
  * window), and never more than
  * the prompt left of the window. The desktop's context popover ports
  * this rule (`ctxReplyReserve` in desktop/renderer/renderer.js).
+ *
+ * `budgetReserve`: the figure the last prompt's budget really held back
+ * (`ContextUsageView.replyReserve`). On a window the instructions and
+ * tool schemas crowd it is smaller than `effectiveReplyReserve`
+ * (ATO-1678), so it wins when known.
  */
 export function replyReserveShown(
   replyCap: number | null,
   contextWindow: number,
   promptTokens: number,
+  budgetReserve?: number,
 ): number {
   if (replyCap === null || replyCap <= 0) return 0;
-  return Math.min(
-    effectiveReplyReserve(replyCap, contextWindow),
-    Math.max(0, contextWindow - promptTokens),
-  );
+  const full = effectiveReplyReserve(replyCap, contextWindow);
+  const planned = budgetReserve !== undefined ? Math.min(budgetReserve, full) : full;
+  return Math.min(planned, Math.max(0, contextWindow - promptTokens));
 }
 
 function renderRow(
@@ -316,9 +283,14 @@ function renderRow(
   largest: number,
 ): string {
   // A part's label is an MCP server's name and can be any length; cut
-  // it so the numbers stay in their column.
+  // it with an ellipsis so the numbers stay in their column and the cut
+  // shows (ATO-2772).
   const label = (
-    row.part ? `   · ${row.label}`.slice(0, LABEL_WIDTH - 1) : ` ${row.label}`
+    row.tool
+      ? fitToWidth(`       ${row.label}`, LABEL_WIDTH - 1)
+      : row.part
+        ? fitToWidth(`   · ${row.label}`, LABEL_WIDTH - 1)
+        : ` ${row.label}`
   ).padEnd(LABEL_WIDTH);
   const tokens = formatTokens(row.tokens).padStart(TOKENS_WIDTH);
   if (usage.contextWindow === null) return `${label}${tokens}`;
@@ -450,8 +422,14 @@ function StepButton({
  * signal. Without it "why did it change colour" has no answer anywhere
  * in the app.
  */
-function footer(usage: ContextUsageView): string {
-  const keys = "- / + to change · esc to close";
+function footer(usage: ContextUsageView, detail: boolean): string {
+  // `d` is offered only when there is a server to expand (ATO-2453).
+  const tools = hasToolRows(usage)
+    ? detail
+      ? "d hide tools · "
+      : "d tools · "
+    : "";
+  const keys = `${tools}- / + to change · esc to close`;
   if (usage.droppedPairs > 0) {
     return `${usage.droppedPairs} earlier task${
       usage.droppedPairs === 1 ? "" : "s"

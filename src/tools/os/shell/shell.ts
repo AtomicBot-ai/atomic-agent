@@ -68,7 +68,11 @@ import {
 } from "./shell-job-until.js";
 import { compileWatchPattern } from "./shell-job-watch.js";
 import { runShellWrite } from "./shell-job-write.js";
-import { ttyEnv, wrapForTty } from "./tty-wrap.js";
+import { runShellMonitor } from "./shell-job-monitor-call.js";
+import { hideTypedSecrets } from "./shell-job-secret.js";
+import { ttyEnv } from "./tty-wrap.js";
+import { startInteractiveJob, type TtyBackend } from "./tty-spawn.js";
+import type { NodePtyModule } from "../../../native/load-node-pty.js";
 import { ShellJobRegistry } from "./shell-jobs.js";
 import { shellEgress } from "./shell-egress.js";
 import {
@@ -101,6 +105,7 @@ import {
   fillShellSecrets,
 } from "./shell-secrets.js";
 import { ghReadOnlyRule } from "../shell-command-guard/rules-trusted/gh.js";
+import { execShellScript, shellSecurityCheck } from "./shell-security-check.js";
 import { gogReadOnlyRule } from "../shell-command-guard/rules-trusted/gog.js";
 import { icalBuddyReadOnlyRule } from "../shell-command-guard/rules-trusted/ical-buddy.js";
 
@@ -183,6 +188,8 @@ export interface OsShellToolOptions extends DangerousToolOptions {
    * filled in only after approval. Omitted ⇒ none: a placeholder fails.
    */
   secrets?: ToolSecretSource;
+  /** Test seam: the pty binding for `tty: true` jobs (ATO-2484). */
+  loadPty?: () => NodePtyModule | null;
 }
 
 /**
@@ -371,7 +378,17 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // reset --hard`, `sudo`): the operator approved a directory of work,
     // not those, so it goes to the gate too, where a worker's refuse
     // policy hands it back as a step for the operator (ATO-1223).
-    const dangerous = isDangerousGuardRule(guardVerdict.rule);
+    // A write into a startup, SSH or credential file in home asks at
+    // every level, like a credential read (ATO-2505).
+    const security = shellSecurityCheck(
+      guardVerdict,
+      targetPaths,
+      cwd,
+      useShell ? subshellCommandLine : execShellScript(cmd, execArgs),
+      useShell && process.platform === "win32" ? "cmd" : "posix",
+      useShell ? undefined : { cmd, args: execArgs },
+    );
+    const dangerous = isDangerousGuardRule(guardVerdict.rule) || security.forcesGate;
     const commandSegments = shellRuleSegments(cmd, execArgs, useShell);
     const commandUnreadable = shellRunsUnreadableScript(cmd, execArgs, useShell);
     // Where the command sends data (ATO-2116): shown on the card, and a
@@ -413,7 +430,8 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     if (
       (guardVerdict.action === "approval_required" && !scopedByFanout) ||
       deniedBySavedRule ||
-      secretNames.length > 0
+      secretNames.length > 0 ||
+      security.forcesGate
     ) {
       // Shape grant unit: the bare binary name (lowercased), so `[a]`
       // and "Allow in this chat" cover exactly the argv[0] that would
@@ -426,8 +444,9 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       // --hard`, `sudo`) asks as `shell_dangerous` with no shape: no
       // `shell` grant, no `[a]` on `git` and no level below full trust
       // runs it unasked, and no prompt offers to remember it (ATO-1220).
-      // A command that uses a tool secret (ATO-476) asks the same way:
-      // the human sees each one, and no earlier grant lets one through.
+      // A command that uses a tool secret (ATO-476) asks the same way,
+      // as `shell_secret` (ATO-2530): the human sees each one, and no
+      // earlier grant lets one through. Dangerous wins the label.
       const strict = dangerous || secretNames.length > 0;
       const commandShape = strict
         ? undefined
@@ -439,9 +458,9 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         {
           sessionId: ctx.sessionId,
           tool: "os.shell.run",
-          category: strict ? "shell_dangerous" : "shell",
+          category: dangerous ? "shell_dangerous" : secretNames.length > 0 ? "shell_secret" : "shell",
           reason:
-            `${guardVerdict.reason} in ${cwd}` +
+            `${security.forcesGate ? security.finding!.reason : guardVerdict.reason} in ${cwd}` +
             // The user approves the lifetime too: a background command
             // outlives the turn (ATO-1252).
             (background
@@ -465,16 +484,17 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           ...(egress.length > 0 ? { egress } : {}),
           workdir: ctx.workingDir,
           targetPaths,
-          ...(guardVerdict.askEveryLevel === true ? { askEveryLevel: true as const } : {}),
+          ...(security.askEveryLevel ? { askEveryLevel: true as const } : {}),
+          ...(security.finding !== undefined ? { securityFinding: security.finding } : {}),
         },
         ctx.signal,
       );
-    } else if (
-      (scopedByFanout && guardVerdict.action === "approval_required") ||
-      isTrustedReadOnlyVerdict(guardVerdict)
-    ) {
+    } else {
       // The fan-out's yes does not cover the person's security rules
-      // (ATO-2111), nor does the guard's trust in a read-only tool.
+      // (ATO-2111), nor does the guard's trust in a read-only tool, nor
+      // its "safe" verdict (`echo`, `cat`, `cp`: ATO-2529): every call
+      // that skips the gate still meets guard.md when one covers the
+      // shell. Without a guard file this is a no-op.
       await requireGuardOnShortcut(
         options,
         {
@@ -531,10 +551,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       runArgs = filled.args;
     }
     const plainSpawn = resolveShellSpawn(runCmd, runArgs, useShell);
-    const ttySpawn = interactive ? wrapForTty(plainSpawn.command, plainSpawn.args) : null;
-    const spawnSpec = ttySpawn
-      ? { ...plainSpawn, command: ttySpawn.command, args: ttySpawn.args }
-      : plainSpawn;
+    const spawnSpec = plainSpawn;
     const facts: ShellCommandFacts = {
       cmd,
       args: execArgs,
@@ -559,6 +576,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     let spawnArgs = spawnSpec.args;
     let sandboxNotice: string | null = null;
     let sandboxCacheRoot: string | null = null;
+    let sandboxFd3: Buffer | undefined;
     if (sandbox.mode === "workspace") {
       // Roots from the session's working directory only: `cwd` is a
       // model-supplied argument, so it may start the command anywhere
@@ -578,6 +596,8 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       }
       spawnCommand = wrapped.command;
       spawnArgs = wrapped.args;
+      // Linux without network: the seccomp program bwrap reads on fd 3 (ATO-2469).
+      sandboxFd3 = wrapped.fd3Input;
       // Package caches go to a private folder under temp, never the
       // shared ones in the home folder (ATO-1651).
       sandboxCacheRoot = ensureSandboxCacheRoot();
@@ -586,6 +606,12 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         : "Safe Mode sandbox: writes outside the working folder and temp, reads of credential folders, internet and local-socket connections, DNS and opening URLs are blocked; loopback (127.0.0.1) stays open. An `Operation not permitted` or name-resolution error comes from that, not from the command.";
       sandboxNotice +=
         " Package caches (npm, npx, pip, Go, cargo, Maven, Gradle and similar) use a private sandbox cache under temp, not the shared ones in the home folder.";
+      // ATO-2471: these run code later, outside the sandbox.
+      const gitPart =
+        process.platform === "linux"
+          ? "`.git` and any other git folder (git commands that write the repo fail here; use the os.git.* tools)"
+          : "`.git` and any other git folder apart from git's own data (no `git init`, `git clone`, `git config` or `git rebase` here; use the os.git.* tools)";
+      sandboxNotice += ` Even in the working folder these are read-only: ${gitPart}, hook folders (\`.husky\`, \`.githooks\`, the \`core.hooksPath\` folder), shell rc files, \`.envrc\`, git's and fish's config and editor settings (\`.vscode\`, \`.idea\`).`;
       if (policy.narrowedRoots !== undefined) {
         sandboxNotice +=
           " The working folder is the home folder or above it, so it is not writable inside the sandbox; only temp is. Start the session in a project folder to write files there.";
@@ -606,21 +632,44 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         ? commandEnv
         : withSandboxCacheEnv(commandEnv, sandboxCacheRoot);
     const dropSocketEnv = sandbox.mode === "workspace" && !sandbox.network;
-    const job = startCommandJob(spawnCommand, spawnArgs, {
-      cwd,
-      // Package caches go to the private sandbox cache (ATO-1651); without
-      // network the socket variables (`SSH_AUTH_SOCK`, `DOCKER_HOST`,
-      // D-Bus) are dropped too (ATO-1652); a tty job adds its terminal
-      // variables last (ATO-2277).
-      env: (interactive ? ttyEnv : (env: NodeJS.ProcessEnv) => env)(
-        dropSocketEnv ? withoutLocalSocketEnv(cachedEnv) : cachedEnv,
-      ),
-      ...(interactive ? { keepStdinOpen: true, stopDescendants: true } : {}),
-      ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
-      ...(spawnSpec.windowsVerbatimArguments
-        ? { windowsVerbatimArguments: true }
-        : {}),
-    });
+    // Package caches go to the private sandbox cache (ATO-1651); without
+    // network the socket variables (`SSH_AUTH_SOCK`, `DOCKER_HOST`,
+    // D-Bus) are dropped too (ATO-1652); a tty job adds its terminal
+    // variables last (ATO-2277).
+    const jobEnv = (interactive ? ttyEnv : (env: NodeJS.ProcessEnv) => env)(
+      dropSocketEnv ? withoutLocalSocketEnv(cachedEnv) : cachedEnv,
+    );
+    // A `tty: true` job runs on node-pty, else `script(1)`, else pipes
+    // (tty-spawn.ts, ATO-2484). Safe Mode refused it above, so its
+    // spawn is never the sandbox wrapper.
+    const interactiveJob = interactive
+      ? startInteractiveJob(
+          {
+            command: spawnCommand,
+            args: spawnArgs,
+            ...(spawnSpec.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+          },
+          {
+            cwd,
+            env: jobEnv,
+            ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
+          },
+          options.loadPty ? { loadPty: options.loadPty } : {},
+        )
+      : null;
+    const ttyBackend: TtyBackend | null = interactiveJob?.backend ?? null;
+    const job =
+      interactiveJob?.job ??
+      startCommandJob(spawnCommand, spawnArgs, {
+        cwd,
+        env: jobEnv,
+        // The Safe Mode wrapper's seccomp program (never on a tty job).
+        ...(sandboxFd3 === undefined ? {} : { fd3Input: sandboxFd3 }),
+        ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
+        ...(spawnSpec.windowsVerbatimArguments
+          ? { windowsVerbatimArguments: true }
+          : {}),
+      });
     // `node --check a b c` exits 0 having read only `a`. Said first,
     // because nothing in node's own output says it — and a reply built
     // on that exit code claims a check that never ran.
@@ -661,7 +710,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           maxJobs: jobs.maxJobs,
           notices,
           detachNotice: interactive
-            ? formatShellInteractiveNotice(record.id, ttySpawn?.tty === true)
+            ? formatShellInteractiveNotice(record.id, ttyBackend !== null && ttyBackend !== "pipes")
             : formatShellBackgroundNotice(record.id),
         });
       }
@@ -752,7 +801,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
   return {
     name: "os.shell.run",
     description:
-      "Run an OS command in the session working directory. Prefer the structured form `{cmd, args:[...]}` (argv globs `*`/`?` are expanded). Shell metacharacters (`|`, `&&`, `;`, `>`, `<`, `$`, backticks) are interpreted via the OS subshell (`sh -c` on macOS/Linux, `cmd.exe /c` on Windows) — a full command line passed as `cmd` (e.g. `\"ffprobe -v quiet … f.mp3\"` or `\"pip3 list | grep foo\"`) runs as written. Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Not for controlling web browsers (`osascript` scripts that read or set tabs and URLs, `open -a <browser> <url>`): those are refused; use the browser tools. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. Run the steps of a task yourself (installs such as `brew install`, `npm i -g`, `pip install`, `git clone`, builds, `make`, `docker run`) instead of printing them for the user to type: the approval prompt is how the user keeps control. The command has no terminal and no stdin unless started with `tty: true` (an interactive kept job on a terminal: a REPL, `npm init`, an installer's questions), which `{\"write\": id, \"text\": \"y\\n\"}` types into (end with \\n to press Enter; each input asks like a command; never type a password, hand that step to the user); otherwise a command that stops at a sign-in, a password, sudo or a terminal question comes back with \"this step needs the user: …\" — hand over only that step. Pass `background: true` for a command that keeps running (a dev server, a watcher): it is started, watched for 3 s, and returned as a kept job. Pass `until` (a case-insensitive regular expression, e.g. \"ready|error\") to come back as soon as the command or job prints a matching line instead of polling: `{cmd, until}` starts it as a kept background job, `{wait: id, until}` watches a job; each match is reported once, so the next `until` waits for the next one. " +
+      "Run an OS command in the session working directory. Prefer the structured form `{cmd, args:[...]}` (argv globs `*`/`?` are expanded). Shell metacharacters (`|`, `&&`, `;`, `>`, `<`, `$`, backticks) are interpreted via the OS subshell (`sh -c` on macOS/Linux, `cmd.exe /c` on Windows) — a full command line passed as `cmd` (e.g. `\"ffprobe -v quiet … f.mp3\"` or `\"pip3 list | grep foo\"`) runs as written. Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Not for controlling web browsers (`osascript` scripts that read or set tabs and URLs, `open -a <browser> <url>`): those are refused; use the browser tools. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. Run the steps of a task yourself (installs such as `brew install`, `npm i -g`, `pip install`, `git clone`, builds, `make`, `docker run`) instead of printing them for the user to type: the approval prompt is how the user keeps control. The command has no terminal and no stdin unless started with `tty: true` (an interactive kept job on a terminal: a REPL, `npm init`, an installer's questions), which `{\"write\": id, \"text\": \"y\\n\"}` types into (end with \\n to press Enter; each input asks like a command; never type a password: `{\"write\": id, \"secret\": \"sudo password\"}` asks the user to type it into the job, and you never see the value); otherwise a command that stops at a sign-in, a password, sudo or a terminal question comes back with \"this step needs the user: …\" — hand over only that step. Pass `background: true` for a command that keeps running (a dev server, a watcher): it is started, watched for 3 s, and returned as a kept job. Pass `until` (a case-insensitive regular expression, e.g. \"ready|error\") to come back as soon as the command or job prints a matching line instead of polling: `{cmd, until}` starts it as a kept background job, `{wait: id, until}` watches a job; each match is reported once, so the next `until` waits for the next one. `{\"monitor\": id, \"until\": \"ready|error\"}` returns at once and keeps listening: each later matching line arrives as a notice in this conversation, also after the turn ends, so do not poll; `{\"monitor\": id}` turns it off. " +
       describeShellTimeoutDefault(defaultTimeoutMs),
     readonly: false,
     async run(rawArgs, ctx) {
@@ -773,21 +822,27 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           details: { invalidCall: true },
         });
       }
-      if (form.kind === "jobs") return listShellJobs(jobCtx);
+      // A value the person typed into a job (ATO-2486) is hidden in every
+      // later result of the session's jobs, however weak it looks.
+      const hideTyped = (result: CompressedToolResult) => hideTypedSecrets(ctx.sessionId, result);
+      if (form.kind === "jobs") return hideTyped(await listShellJobs(jobCtx));
       if (form.kind === "wait") {
         if (hasUntil(rawArgs.until)) {
-          return runShellWaitUntilById(
-            jobCtx,
-            form.id,
-            rawArgs.until,
-            rawArgs.timeoutMs,
-            rawArgs.keep === true,
+          return hideTyped(
+            await runShellWaitUntilById(
+              jobCtx,
+              form.id,
+              rawArgs.until,
+              rawArgs.timeoutMs,
+              rawArgs.keep === true,
+            ),
           );
         }
-        return runShellWait(jobCtx, form.id, rawArgs.timeoutMs, rawArgs.keep === true);
+        return hideTyped(await runShellWait(jobCtx, form.id, rawArgs.timeoutMs, rawArgs.keep === true));
       }
-      if (form.kind === "kill") return runShellKill(jobCtx, form.id);
-      if (form.kind === "write") return runShellWrite(jobCtx, options, form.id, rawArgs);
+      if (form.kind === "kill") return hideTyped(await runShellKill(jobCtx, form.id));
+      if (form.kind === "write") return hideTyped(await runShellWrite(jobCtx, options, form.id, rawArgs));
+      if (form.kind === "monitor") return hideTyped(await runShellMonitor(jobCtx, form.id, rawArgs.until));
 
       // `{"cmd": ["git", "status"]}`: an argv in `cmd` is the program and
       // its arguments (ATO-1259), when `args` does not also say them.
@@ -806,13 +861,15 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       // recovered call goes through the same guard and approval.
       const platform = process.platform;
       const recovered = recoverMissingShellCmd(rawArgs, platform);
-      if (recovered === null) return runCommand(rawArgs, ctx, null);
+      // A started command can print a value typed into a job (ATO-2486):
+      // its tail, its `until` match or its whole output.
+      if (recovered === null) return hideTyped(await runCommand(rawArgs, ctx, null));
       const result = await runCommand(
         { ...rawArgs, cmd: recovered.cmd, args: recovered.args },
         ctx,
         recovered,
       );
-      return markRecoveredResult(result, recovered, platform);
+      return hideTyped(markRecoveredResult(result, recovered, platform));
     },
   };
 }

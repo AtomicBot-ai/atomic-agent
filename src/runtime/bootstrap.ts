@@ -5,21 +5,27 @@ import { createContextCompaction, logCompactionOutcome } from "./context-compact
 import { enhancePrompt, promptEnhancePartition } from "./prompt-enhancer.js";
 import { askSideQuestion, sideQuestionPartition } from "./side-question.js";
 import { completePlain, PLAIN_COMPLETE_PARTITION, type PlainCompleteInput } from "./plain-complete.js";
+import { shapeStructuredAnswer, type StructuredAnswerInput } from "./structured-answer.js";
 import { createBackgroundCompaction } from "./compaction-background.js";
 import { createCompactionTokenCounter } from "./compaction-token-counter.js";
-import { createWorkspaceLoader } from "./session-workspace.js";
+import { createPathRulesLoader, createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills, recurringTaskTexts, startRuntimeSkillCurator } from "./composition/runtime-skills.js";
 import { createExperienceReviewer } from "./composition/runtime-experience-review.js";
+import { createRuntimeMentions } from "./composition/runtime-mentions.js";
 import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, registerRuntimeImageTools, registerRuntimeVideoTools, registerRuntimeAudioTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
 import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeSessionFactories } from "./composition/runtime-session-services.js";
 import { createInterruptedTurns } from "./interrupted-turns.js";
 import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition/runtime-turn-service.js";
+import { createLocalFirstEscalation, withLocalFirstWatch } from "./composition/local-first-escalation.js";
 import { createIncognitoSessions } from "./incognito-sessions.js";
+import { installShellMonitorWake } from "./composition/runtime-shell-monitor-wake.js";
+import { createPluginMonitorStarter } from "./composition/runtime-plugin-monitors.js";
 import { createRuntimeKeepAwake, createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
 import { connectRuntimeChannels } from "./composition/runtime-channels.js";
 import { createRuntimeImapTrigger } from "./composition/runtime-imap-trigger.js";
 import { createRuntimeMailTrigger } from "./composition/runtime-mail-trigger.js";
 import { createRuntimeLogbook } from "./composition/runtime-logbook.js";
+import { createRuntimePrAutofixWatcher } from "./composition/runtime-pr-autofix-watcher.js";
 import { createOfflineModeControl } from "./composition/runtime-offline-mode.js";
 import { createPrivacyShieldControl } from "./composition/runtime-privacy-shield.js";
 import { installPrivacyNameDetector } from "./composition/runtime-privacy-names.js";
@@ -34,6 +40,7 @@ import { connectRuntimeProviders, createRuntimeModelContext, connectRuntimeFallb
 import { modelWantsStrictTools } from "../llm/provider/model-strict-tools.js";
 import { createRuntimeMemoryStores } from "./composition/runtime-memory-stores.js";
 import { createRuntimeFileIndex } from "./composition/runtime-file-index.js";
+import { createLocalVisionSlot } from "./composition/file-index-vision.js";
 import { createMemoryEmbeddingSwitch } from "./composition/runtime-memory-embedding-switch.js";
 import { createRuntimeMemoryServices, createRuntimeMemoryConsolidator } from "./composition/runtime-memory-services.js";
 import { sessionGroundingSource } from "../memory/name-grounding.js";
@@ -44,7 +51,7 @@ import { getConfig } from "../config/index.js";
 import { describeLocalModelsValueSources } from "../config/load-config.js";
 import type { SessionState } from "../session/session-state.js";
 import type { CompletionResult } from "../llm/provider/completion-types.js";
-import { estimateTokens } from "../prompt/token-budget.js";
+import { NO_TOOL_SCHEMA, measureToolSchema } from "../prompt/tool-schema-parts.js";
 
 import { TurnController } from "./turn-controller.js";
 import { SteeringInbox } from "./steering-inbox.js";
@@ -63,13 +70,14 @@ import { ApprovalRulesStore } from "../approval/approval-rules-store.js";
 import { ApprovalRouter } from "../approval/approval-router.js";
 import { installRiskReviewer } from "./composition/runtime-risk-review.js";
 import { installSecurityGuard } from "./composition/runtime-security-guard.js";
+import { installKnownHosts } from "./composition/runtime-known-hosts.js";
 
 import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import type { BrowserExtractModelRef } from "../tools/browser/extract-request.js";
-import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
+import { createBackgroundJobsControl, createShellJobHostControls, DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
 import { FileCheckpointStore, fileCheckpointsRoot } from "../tools/os/fs/fs-checkpoint-store.js";
 import { ToolOutputSpill } from "../tools/index.js";
 import { registerSessionTools } from "../tools/sessions/index.js";
@@ -98,6 +106,7 @@ import { isLocalLinkWithoutModel } from "./local-link-availability.js";
 import { explainLocalEngineState, readLocalEngineState } from "./local-engine-state.js";
 import { isCloudLink } from "./cloud-link.js";
 import { createLocalOutOfMemoryPort, type LocalModelRestarter } from "./local-out-of-memory.js";
+import { createLocalFirstWindowResolver } from "./local-first-window.js";
 import { createRuntimePromptPreview, buildRuntimePromptInput } from "./composition/runtime-prompt-preview.js";
 import { captureModelModePolicy, resolveModelMode } from "../llm/model-mode.js";
 export { SessionNotFoundError } from "./session-not-found-error.js";
@@ -107,7 +116,7 @@ import { createLessonLifecycleHook } from "../memory/lessons/lesson-lifecycle-ho
 
 import { createMemoryHealthAnnouncer } from "./announce-memory-health.js";
 
-import { readAtomicMailApiKey } from "../atomic-mail/index.js";
+import { agentEmailAddress } from "../atomic-mail/index.js";
 import { buildCapabilities } from "../prompt/capabilities.js";
 
 import type { SkillCatalogEntry, ToolDescriptor } from "../prompt/stable-prefix.js";
@@ -117,7 +126,7 @@ import { AgentLoop } from "../agent/agent-loop.js";
 import { TurnUsageMeter } from "../analytics/index.js";
 
 import { installGlobalErrorHandlers } from "../error-reporting/index.js";
-import { SessionHookEngine, ToolHookEngine, installToolHooks } from "../hooks/index.js";
+import { PermissionHooks, SessionHookEngine, ToolHookEngine, installToolHooks } from "../hooks/index.js";
 import { activePolicy, installPolicy, loadPolicy, policyRuleMatch } from "../policy/index.js";
 
 /**
@@ -153,6 +162,7 @@ export async function createAgentRuntime(
   // re-installing the process-global handlers.
   installGlobalErrorHandlers(observability.getErrorReporter, {
     brokenPipe: options.brokenPipe,
+    loopbackReset: options.loopbackReset,
   });
 
   const {
@@ -180,8 +190,16 @@ export async function createAgentRuntime(
     },
   });
 
+  // ATO-2352: tokens and spend per day and model, for `atomic-agent usage`;
+  // ATO-2442: also per project (the session's folder) and per tool.
+  const usageHistory = new UsageHistoryStore({
+    path: join(config.paths.stateDir, USAGE_HISTORY_FILE_NAME),
+    resetHourUtc: () => getConfig().llm?.costTracking?.dailyResetHourUtc ?? 0,
+    workingDirOf: (sessionId) => sessionStore.load(sessionId)?.workingDir,
+  });
   const { emitAgentLoopEventFor, emitAgentLoopEvent } = traces.createEventRouting(
     turnController, options, observability.getErrorReporter,
+    (tool, failed) => usageHistory.recordTool(tool, failed),
   );
 
   // Memory sub-calls run fire-and-forget and fail without a word. This
@@ -223,6 +241,8 @@ export async function createAgentRuntime(
     },
     logger,
   });
+  // ATO-2434: a weak local answer on a local-first turn goes on in the cloud.
+  const localFirstEscalation = createLocalFirstEscalation({ chain: fallbackChain, logger });
 
   // Approval requests flow through `ApprovalRouter`: per-session
   // handlers (Telegram channel, future Slack/etc.) win, otherwise the
@@ -273,6 +293,8 @@ export async function createAgentRuntime(
   installToolHooks(new ToolHookEngine({ stateDir: config.paths.stateDir, approvals, logger }));
   // Same files: SessionStart / UserPromptSubmit / Stop / PreCompact (ATO-2198).
   const sessionHooks = new SessionHookEngine({ stateDir: config.paths.stateDir, logger });
+  // PermissionRequest / Notification when a person is about to be asked (ATO-2462).
+  approvals.setPromptHooks(new PermissionHooks(sessionHooks, logger));
 
   // Issue #112. Every local text probe below hangs off this one answer,
   // and it is available here — hundreds of lines before
@@ -306,7 +328,7 @@ export async function createAgentRuntime(
     workingDir,
     browserChannel: config.browser.channel,
     // Only an inbox this machine holds the key for is the agent's to use.
-    emailAddress: readAtomicMailApiKey() ? config.atomicMail.address : null,
+    emailAddress: agentEmailAddress(config.atomicMail),
     // ATO-1721: RAM / CPU / GPU / OS once per runtime, for local models.
     machineProbe: {
       dataDir: config.paths.localModelsDataDir,
@@ -380,7 +402,9 @@ export async function createAgentRuntime(
   });
 
   // ATO-1621: "My files", its own SQLite file; embeds with memory's model.
-  const fileIndex = createRuntimeFileIndex({ config, notesStore, logger });
+  // ATO-2501: scans and photos only through a local vision model, attached below.
+  const fileIndexVision = createLocalVisionSlot();
+  const fileIndex = createRuntimeFileIndex({ config, notesStore, logger, readConfig: () => getConfig(), localVision: fileIndexVision.read });
 
   const sessionStore = prepareRuntimeSessionStore(config, logger);
   // The commands `os.shell.run` detached at the default timeout (F47).
@@ -399,12 +423,13 @@ export async function createAgentRuntime(
   installRuntimeSessionDelete(
     sessionStore, dropRecorder, shellJobs, toolOutputSpill,
     new FileCheckpointStore(fileCheckpointsRoot(config.paths.stateDir)),
+    (id) => void sessionHooks.endSession(id, "deleted").catch(() => undefined),
   );
 
   // `browser.extract` calls the model (ATO-699); the completer is built
   // further down, so the tool reads it through this ref per call.
   const browserExtract: BrowserExtractModelRef = {};
-  const toolRegistry = createRuntimeToolRegistry(config, browserBackend, dangerous, toolOutputSpill, browserExtract);
+  const toolRegistry = createRuntimeToolRegistry(config, browserBackend, dangerous, toolOutputSpill, browserExtract, fileIndex);
 
   // What the operator asked for, per session, for the turn now running
   // on it — quoted into every fusion worker's brief (`worker-prompt.ts`)
@@ -429,12 +454,15 @@ export async function createAgentRuntime(
   // session: the worker runner declares them, `os.fs.write` refuses to
   // replace them (`fs-declared-inputs.ts`).
   const declaredInputs = new DeclaredInputsRegistry();
+  // ATO-2472: `@` mentions for every surface, reading the tools' language servers.
+  const runtimeMentions = createRuntimeMentions(config);
   registerRuntimeCoreTools({
     config, toolRegistry, dangerous, sessionStore, logger, resolveOriginalRequest: (id) => turnRequests.get(id),
     resolvePreviousReply: (id) => turnPreviousReplies.get(id),
     canAskUser: (id) => !turnsWithoutQuestions.has(id),
     declaredInputs, shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, browserBackend,
-    ...(fileIndex ? { fileIndex } : {}),
+    ...(fileIndex ? { fileIndex } : {}), emitAgentLoopEventFor,
+    lspPoolRef: runtimeMentions.lspPoolRef,
     // Only the terminal UI has an `/integrations` screen that saves an Exa
     // key into this process; every other entry point keeps the desktop /
     // `.env` advice (ATO-345).
@@ -456,6 +484,7 @@ export async function createAgentRuntime(
   const providers = await connectRuntimeProviders(config, logger, localProfile, connectedLocal);
   const { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveActiveModelName, resolveRouteVision } = providers;
   builtProviderIds = () => providerRegistry.listIds();
+  fileIndexVision.attach({ registry: providerRegistry, readLlm: () => resolveLlmConfig(getConfig()), localModelsUrl: () => getConfig().localModels.url });
   // ATO-2394: Privacy Shield's opt-in local name pass (`privacy.shield.localNames`).
   installPrivacyNameDetector({ providerRegistry, sideCallSlotId: () => slotManager.sideCallSlotId(), logger });
 
@@ -497,11 +526,6 @@ export async function createAgentRuntime(
   // on the live event only when the operator asked for it.
   const dailySpend = new DailySpendStore({
     path: join(config.paths.stateDir, DAILY_SPEND_FILE_NAME),
-    resetHourUtc: () => getConfig().llm?.costTracking?.dailyResetHourUtc ?? 0,
-  });
-  // ATO-2352: tokens and spend per day and model, for `atomic-agent usage`.
-  const usageHistory = new UsageHistoryStore({
-    path: join(config.paths.stateDir, USAGE_HISTORY_FILE_NAME),
     resetHourUtc: () => getConfig().llm?.costTracking?.dailyResetHourUtc ?? 0,
   });
   const sessionUsage = new SessionUsageLedger({
@@ -572,6 +596,8 @@ export async function createAgentRuntime(
   approvals.setTaintReview(() => getConfig().agent.taintReview);
   // Egress hold (ATO-2116): a host on `http.hostAllowlist` may receive a command's data unasked.
   approvals.setEgressAllowlist(() => getConfig().http.hostAllowlist);
+  // Durable known hosts (ATO-2528): `agent.security.knownHosts`, grown by "allow always".
+  installKnownHosts(approvals);
   browserExtract.current = {
     complete: (params) => llmComplete(params),
     transport: (providerId) => resolveActiveLlmSlice(providerId).transport,
@@ -587,6 +613,7 @@ export async function createAgentRuntime(
 
   const promptPreviewDeps = {
     prepareWorkspace: createWorkspaceLoader(config, logger),
+    preparePathRules: createPathRulesLoader(config),
     workingDir, sessionStore, profileStore, capabilities, effectiveToolDescriptors,
     getSkillCatalog: skillCatalogState.getSkillCatalog,
     getLiveProfile: connectedLocal.getLiveProfile,
@@ -595,9 +622,9 @@ export async function createAgentRuntime(
       id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined,
     ),
     resolveToolTransport: (id?: string) => resolveActiveLlmSlice(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined).transport,
-    resolveToolSchemaTokens: (id: string, descriptors: readonly ToolDescriptor[]) => {
+    resolveToolSchema: (id: string, descriptors: readonly ToolDescriptor[]) => {
       const slice = resolveActiveLlmSlice(fallbackChain.standingOverrideFor(id) ?? undefined);
-      return estimateTokens(JSON.stringify(slice.adapter?.descriptorsToTools(descriptors, { strict: slice.strictTools }) ?? []));
+      return slice.adapter ? measureToolSchema(slice.adapter, descriptors, { strict: slice.strictTools }) : NO_TOOL_SCHEMA;
     },
     profileWindowApplies: (id?: string) => resolveActiveLlmSlice(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined).isLlamaServer,
     resolveCatalogContextWindow: (id?: string) => resolveCatalogContextWindow(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined),
@@ -679,6 +706,7 @@ export async function createAgentRuntime(
   // down the loop.
   const loopDeps = {
     prepareWorkspace: promptPreviewDeps.prepareWorkspace,
+    preparePathRules: promptPreviewDeps.preparePathRules,
     compaction: compaction.control,
     registry: toolRegistry,
     // A getter, so `runtime.setPlanMode` is observed by the next tool
@@ -832,7 +860,7 @@ export async function createAgentRuntime(
     // `emitAgentLoopEvent` resolves that from the per-turn ALS frame so
     // two concurrent sessions never cross-contaminate trace records or
     // per-submission hooks, and reports terminal LLM failures to Sentry.
-    onEvent: emitAgentLoopEvent,
+    onEvent: withLocalFirstWatch(localFirstEscalation, () => traces.turnContext.getStore()?.sessionId, emitAgentLoopEvent),
     metrics,
     logger,
   };
@@ -920,6 +948,7 @@ export async function createAgentRuntime(
     get analytics() { return observability.getAnalytics(); },
     get errorReporter() { return observability.getErrorReporter(); },
     traceExport: { shutdown: traces.shutdownTraceExport },
+    sessionHooks,
   });
   const { shutdown } = lifecycle;
   const refreshSkills = notePrefixInvalidation(
@@ -970,12 +999,18 @@ export async function createAgentRuntime(
   const turnService = createRuntimeTurnService(config, {
     sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies, turnsWithoutQuestions },
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
-    inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain },
+    inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain,
+      resolveLocalContextWindow: createLocalFirstWindowResolver({ liveWindow: () => connectedLocal.getLiveProfile().contextWindow,
+        catalogWindow: (id) => resolveCatalogContextWindow(id), readConfig: () => getConfig() }),
+      localFirst: { escalation: localFirstEscalation, todaySpendUsd: () => dailySpend.peek().usd } },
     traces, telemetry: { observability, analyticsStateStore, turnUsageMeter, sessionUsage, metrics },
     state: turnState, lifecycle, logger,
     emitEvent: emitAgentLoopEventFor,
     experienceReview,
     sessionHooks,
+    pluginMonitors: createPluginMonitorStarter({
+      shellJobs, stateDir: config.paths.stateDir, logger, envPassthrough: () => getConfig().tools.shell.envPassthrough,
+    }),
   });
   const { steer, controlGoal } = turnService;
   const runQueuedTurn = holdWhileRunning(keepAwake, turnService.runTurn);
@@ -994,6 +1029,8 @@ export async function createAgentRuntime(
     approvalLevel: () => approvals.getLevel(),
     keepAwake,
   });
+  // ATO-2436: a monitored job's matching line steers the running turn or files a task for the session.
+  installShellMonitorWake({ shellJobs, steer, taskRunner, sessionStore, tasksEnabled: config.tasks.enabled, logger });
   // Cross-chat tools (ATO-570), off unless `tasks.sessionToolsEnabled`: a send is a queued task.
   registerSessionTools(toolRegistry, {
     ...dangerous, sessionStore, taskStore, taskRunner, createSession,
@@ -1021,10 +1058,13 @@ export async function createAgentRuntime(
   const imapTrigger = createRuntimeImapTrigger({
     config, taskRunner, createSession, webhookSessionStore, logger,
   });
-  // ATO-2363: off unless `atomic-agent logbook start`; read per tick. Only
-  // the TUI shows the recording chip, so only it captures.
-  const logbook = createRuntimeLogbook({ config, providerRegistry, logger, indicatorVisible: options.analyticsSurface === "tui" });
-  const sidecars = [mailTrigger, imapTrigger, logbook].filter((s): s is NonNullable<typeof s> => s !== null);
+  // ATO-2363: off unless `atomic-agent logbook start`; read per tick. The TUI
+  // always shows the recording chip; any other process captures only while its
+  // frontend reports its own mark on screen (ATO-2534, POST /api/logbook/indicator).
+  const logbook = createRuntimeLogbook({ config, providerRegistry, logger, indicator: options.analyticsSurface === "tui" ? "tui" : "frontend", tasks: { runner: taskRunner, store: taskStore } });
+  // ATO-2516: polls GitHub for watched PRs; files a fix round only when one is needed.
+  const prAutofixWatcher = createRuntimePrAutofixWatcher({ config, taskRunner, taskStore, logger });
+  const sidecars = [mailTrigger, imapTrigger, logbook, prAutofixWatcher].filter((s): s is NonNullable<typeof s> => s !== null);
   const scheduler = createRuntimeScheduler({
     config, taskRunner, logger, metrics, resolveTelegram: () => telegramChannelForShutdown,
     ...(sidecars.length > 0 ? { sidecars } : {}),
@@ -1054,6 +1094,7 @@ export async function createAgentRuntime(
     turnController,
     steeringInbox,
     steer,
+    backgroundJobs: createBackgroundJobsControl(shellJobs),
     fusionWorkers: {
       running: (parentSessionId: string) => fusionLiveWorkers.running(parentSessionId),
       stop: (parentSessionId: string, taskId: string) =>
@@ -1063,6 +1104,8 @@ export async function createAgentRuntime(
       steer: (parentSessionId: string, taskId: string, text: string) =>
         fusionLiveWorkers.steer(parentSessionId, taskId, text),
     },
+    // ATO-2485: the person's view of the kept shell jobs (route-shell-jobs.ts).
+    shellJobs: createShellJobHostControls(shellJobs),
     fusionRuns: {
       listResumable: (sessionId?: string) =>
         fusionRuns.listResumable(sessionId).map((run) => ({
@@ -1195,6 +1238,10 @@ export async function createAgentRuntime(
           logger.debug("plain completion failed", { error: err instanceof Error ? err.message : String(err) }),
       });
     },
+    shapeStructuredAnswer: (input: StructuredAnswerInput) =>
+      lifecycle.isShutdown()
+        ? Promise.resolve({ ok: false as const, reason: "shutting down" })
+        : shapeStructuredAnswer(input, browserExtract.current),
     refreshSkills,
     refreshMcp,
     reloadLlmProviders,
@@ -1204,6 +1251,7 @@ export async function createAgentRuntime(
     },
     reconnectMemoryEmbeddings: () => memoryEmbeddings.reconnect(),
     ...(fileIndex ? { fileIndex } : {}),
+    mentions: runtimeMentions.mentions,
     setApprovalHandlerForSession: (sessionId, handler) =>
       approvalRouter.setForSession(sessionId, handler),
     setAnalyticsEnabled,

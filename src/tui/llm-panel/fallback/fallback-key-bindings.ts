@@ -38,6 +38,9 @@ interface FallbackKeyContext {
  *  - `d`: remove the selected link (refused for the active head and the
  *    appended local link).
  *  - `l`: toggle `appendLocal`.
+ *  - `o`: toggle `localFirst` (start each turn on the local model,
+ *    ATO-2434). A plain letter, so it is the same key on Windows, macOS
+ *    and Linux terminals.
  * While the add-link picker owns the keyboard: ↑/↓/j/k move, Enter adds,
  * Esc cancels.
  */
@@ -94,6 +97,11 @@ export function handleFallbackPaneKey(
 
   if (input === "l") {
     callbacks.onFallbackAppendLocalToggleRequested?.();
+    return true;
+  }
+
+  if (input === "o") {
+    callbacks.onFallbackLocalFirstToggleRequested?.();
     return true;
   }
 

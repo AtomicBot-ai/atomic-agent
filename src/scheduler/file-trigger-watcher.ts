@@ -68,7 +68,12 @@ export interface FileTriggerWatcherOptions {
   factory: FileWatcherFactory;
   fs: FileTriggerFs;
   clock: FileTriggerClock;
-  fire(task: FileTriggerFire): void;
+  /**
+   * `claimKey` names this hit the same way in every process watching the
+   * file (`trigger|path|mtime|size`), so two processes can agree that
+   * only one of them files it (ATO-2508, `file-trigger-claims.ts`).
+   */
+  fire(task: FileTriggerFire, claimKey: string): void;
   logger?: StructuredLogger;
   /** Called once when the watcher stops itself (cap hit, watcher error). */
   onSelfStop?(name: string, reason: string): void;
@@ -199,11 +204,11 @@ export class FileTriggerWatcher {
     if (!st || !st.isFile || this.stopped) return;
     const { config } = this.options;
     let lines: string[] = [];
+    const signature = `${path}|${st.mtimeMs}|${st.size}`;
     if (config.contains !== undefined) {
       lines = await this.tail.readNewMatches(path, st.size, config.contains);
       if (lines.length === 0) return;
     } else {
-      const signature = `${path}|${st.mtimeMs}|${st.size}`;
       if (this.seen.has(signature)) return;
       this.seen.add(signature);
       if (this.seen.size > SEEN_LIMIT) {
@@ -226,7 +231,7 @@ export class FileTriggerWatcher {
         lines: lines.join("\n"),
       }),
       ...(config.sessionId !== undefined ? { sessionId: config.sessionId } : {}),
-    });
+    }, `${this.options.name}|${signature}`);
   }
 
   private stopSelf(reason: string): void {

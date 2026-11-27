@@ -9,6 +9,7 @@ interface ShieldJson {
   masked: number;
   sessions: number;
   session?: { masked: number; lastRequest: number };
+  localNames?: { enabled: boolean; state: string; model: unknown };
 }
 
 async function get(baseUrl: string, query = ""): Promise<{ status: number; json: ShieldJson }> {
@@ -38,7 +39,8 @@ describe("GET/POST /api/privacy-shield (ATO-1082)", () => {
     harness = await startTestHarness();
     const first = await get(harness.baseUrl);
     expect(first.status).toBe(200);
-    expect(first.json).toEqual({ enabled: false, masked: 0, sessions: 0 });
+    expect(first.json).toMatchObject({ enabled: false, masked: 0, sessions: 0 });
+    expect(first.json.localNames).toMatchObject({ enabled: false, state: "off" });
   });
 
   it("turns on, persists the key and reports masked counts", async () => {
@@ -61,5 +63,28 @@ describe("GET/POST /api/privacy-shield (ATO-1082)", () => {
     harness = await startTestHarness();
     const bad = await post(harness.baseUrl, { enabled: "yes" });
     expect(bad.status).toBe(400);
+  });
+
+  it("switches the names pass on its own and persists it (ATO-2527)", async () => {
+    harness = await startTestHarness();
+    const posted = await post(harness.baseUrl, { localNames: true });
+    expect(posted.status).toBe(200);
+    expect(posted.json.enabled).toBe(false);
+    expect(posted.json.localNames?.enabled).toBe(true);
+    expect(posted.json.localNames?.state).not.toBe("off");
+    resetConfigCache();
+    expect(getConfig().privacy?.shield.localNames).toBe(true);
+    expect(getConfig().privacy?.shield.enabled).toBe(false);
+
+    const both = await post(harness.baseUrl, { enabled: true, localNames: false });
+    expect(both.json).toMatchObject({ enabled: true, localNames: { enabled: false, state: "off" } });
+  });
+
+  it("refuses a names value that is not a boolean", async () => {
+    harness = await startTestHarness();
+    const bad = await post(harness.baseUrl, { localNames: "on" });
+    expect(bad.status).toBe(400);
+    const empty = await post(harness.baseUrl, {});
+    expect(empty.status).toBe(400);
   });
 });

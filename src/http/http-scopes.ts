@@ -55,8 +55,16 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /v1/messages": "chat",
   "POST /v1/messages/count_tokens": "chat",
   "POST /v1/responses": "chat",
+  // ATO-2447: the bare local model for `atag launch` (route-local-model.ts).
+  "GET /local/v1/models": "chat",
+  "POST /local/v1/chat/completions": "chat",
+  "POST /local/v1/responses": "chat",
+  "POST /local/v1/messages": "chat",
+  "POST /local/v1/messages/count_tokens": "chat",
   // ATO-1152: the side question.
   "POST /api/btw": "chat",
+  // ATO-2432: the model council.
+  "POST /api/council": "chat",
   "POST /api/ag-ui": "chat",
   "POST /api/complete": "chat",
   "POST /api/context-preview": "chat",
@@ -66,6 +74,7 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "GET /api/local-models/list": "read",
   "GET /api/local-models/status": "read",
   "GET /api/local-models/list-embeddings": "read",
+  "GET /api/usage": "read",
   // Settings.
   "GET /api/config": "admin",
   "PATCH /api/config": "admin",
@@ -77,6 +86,9 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "GET /api/skills/{name}": "read",
   "POST /api/skills/install": "admin",
   "POST /api/skills/uninstall": "admin",
+  // ATO-2441: listing is a read; rendering may run shell lines (each one asks), like a turn.
+  "GET /api/commands": "read",
+  "POST /api/commands/render": "chat",
   "GET /api/project-trust": "read",
   "POST /api/project-trust": "admin",
   "POST /api/mcp/servers/{name}/restart": "admin",
@@ -92,6 +104,9 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "GET /api/privacy-shield": "read",
   "POST /api/privacy-shield": "admin",
   "POST /api/local-model/recheck": "admin",
+  // ATO-2483: the answer carries the share key.
+  "GET /api/model-share": "admin",
+  "POST /api/model-share": "admin",
   "POST /api/llm/active": "admin",
   // ATO-1461: the answer is written to llm.fallback.appendLocal.
   "GET /api/fallback/local-question": "read",
@@ -115,6 +130,8 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /api/sessions/{id}/rollback-last-turn": "chat",
   "GET /api/sessions/{id}/previous-replies": "read",
   "POST /api/sessions/{id}/restore-previous-reply": "chat",
+  "GET /api/sessions/{id}/message-versions": "read",
+  "POST /api/sessions/{id}/switch-version": "chat",
   "GET /api/sessions/{id}/rewind-points": "read",
   "POST /api/sessions/{id}/rewind/preview": "chat",
   "POST /api/sessions/{id}/rewind": "chat",
@@ -128,10 +145,19 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /api/sessions/{id}/fusion/workers/{taskId}/stop": "chat",
   "POST /api/sessions/{id}/fusion/workers/{taskId}/steer": "chat",
   "POST /api/sessions/{id}/fusion/workers/{taskId}/escalate": "chat",
+  // ATO-2485: the agent's shell jobs. Typing into one runs whatever the
+  // program does with it, past the command guard, so it needs admin.
+  "GET /api/sessions/{id}/shell-jobs": "read",
+  "GET /api/sessions/{id}/shell-jobs/{jobId}/output": "chat",
+  "POST /api/sessions/{id}/shell-jobs/{jobId}/input": "admin",
+  "POST /api/sessions/{id}/shell-jobs/{jobId}/resize": "chat",
+  "POST /api/sessions/{id}/shell-jobs/{jobId}/stop": "chat",
   // Approvals and questions: the person running a turn answers them.
   "POST /api/approval/resolve": "chat",
   "GET /api/events": "read",
   "POST /api/question/answer": "chat",
+  // ATO-2486: a job's password, typed by the person (never a paired device).
+  "POST /api/shell/secret": "chat",
   // ATO-1492: an MCP server's question, answered like ask_user.
   "GET /api/mcp/elicitation": "read",
   "POST /api/mcp/elicitation/answer": "chat",
@@ -178,12 +204,22 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "GET /api/tasks/{id}/runs": "read",
   "GET /api/task-board": "read",
   "POST /api/tasks/{id}/board": "chat",
+  "GET /api/tasks/{id}/board/comments": "read",
+  "POST /api/tasks/{id}/board/comments": "chat",
+  "GET /api/task-board/profiles": "read",
   "POST /api/tasks/drain": "chat",
   "POST /api/tasks/wake": "chat",
   "GET /api/ideas": "read",
   "POST /api/ideas/refresh": "chat",
   "POST /api/ideas/{id}/accept": "chat",
   "POST /api/ideas/{id}/dismiss": "chat",
+  // ATO-2534: the logbook; reading the state is harmless, changing it or claiming the mark is not.
+  "GET /api/logbook": "read",
+  "PATCH /api/logbook/settings": "admin",
+  "POST /api/logbook/indicator": "admin",
+  // ATO-2526: the notes themselves describe the screen, so reading them is admin too.
+  "GET /api/logbook/day": "admin",
+  "DELETE /api/logbook/entries": "admin",
   // Webhooks: the list shows bindings and their settings.
   "GET /api/webhooks": "admin",
   "POST /api/webhooks/{name}": "chat",
@@ -194,6 +230,10 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /api/files/folders": "admin",
   "DELETE /api/files/folders": "admin",
   "GET /api/files/status": "read",
+  // ATO-2472: `@` mentions read the folder's files, git and pages into a message.
+  "POST /api/mentions/expand": "chat",
+  "GET /api/problems": "chat",
+  "POST /api/files/retry": "admin",
   // MCP clients over HTTP (ATO-549): read-only tools only (memory recall,
   // profile and skills), so a read token is enough.
   "POST /mcp": "read",

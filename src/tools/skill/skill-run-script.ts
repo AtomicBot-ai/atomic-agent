@@ -11,6 +11,10 @@ import {
   type DangerousToolOptions,
 } from "../../approval/dangerous-tool.js";
 import { readPluginState } from "../../plugins/plugin-store.js";
+import type { ToolSecretSource } from "../../config/tool-secrets.js";
+import { describeToolSecretUse } from "../tool-secret-use.js";
+import { checkScriptSecrets, fillScriptSecrets, parseScriptEnv } from "./skill-script-secrets.js";
+import { tailScriptBody } from "./skill-script-tail.js";
 
 /**
  * Ingestion budget for every skill script, not just the auto-approved
@@ -64,82 +68,6 @@ const CAPTURE_LIMIT_NOTE =
   `${Math.round(DEFAULT_MAX_OUTPUT_BYTES / 1024)} KiB per-stream limit ` +
   `while the script was still writing: the end of the log is missing]`;
 
-interface TrimmedBody {
-  text: string;
-  /** Something was dropped, so the result must report itself truncated. */
-  trimmed: boolean;
-}
-
-/**
- * The script body, trimmed to what the budget leaves under the header.
- * We keep the END of it: script output is a log, so the last lines — the
- * failure, the summary, the final state — carry the signal, while the
- * start is setup noise. The trim happens here and not in the compressor
- * because the compressor works on the whole text: its line pass keeps
- * the last N lines, which would eat the `# skill/script` + `exit:`
- * header, and its length pass keeps the head, which would eat a
- * trailing footer instead. Trimming the body first leaves the header
- * intact under either pass, so the exit code always survives.
- */
-function tailScriptBody(body: string, maxChars: number): TrimmedBody {
-  const budget = Math.max(1, maxChars);
-  // Count and cut over the non-blank lines only. `extractTail` deletes
-  // blank lines from whatever we hand it, right after this banner is
-  // written, so counting them here would state a number the model
-  // cannot reconcile with what it received — and it also disposes of
-  // the empty element that output ending in a newline splits into.
-  const lines = body.split("\n").filter((line) => line.trim().length > 0);
-  const whole = lines.join("\n");
-  const keptLines =
-    lines.length > MAX_BODY_LINES ? lines.slice(-MAX_BODY_LINES) : lines;
-  const kept = keptLines.join("\n");
-  if (kept.length <= budget) {
-    if (keptLines.length === lines.length) {
-      return { text: body, trimmed: false };
-    }
-    const dropped = lines.length - keptLines.length;
-    return {
-      text: banner(dropped, whole.length - kept.length, kept),
-      trimmed: true,
-    };
-  }
-  // Cut on a line boundary: a body that starts mid-line reads as
-  // corrupt output, and a half line would also have to be counted.
-  const cut = kept.slice(kept.length - budget);
-  const firstBreak = cut.indexOf("\n");
-  if (firstBreak === -1) {
-    // A single line longer than the whole budget — there is no boundary
-    // to cut on, so the line-boundary promise above cannot be kept.
-    // Say that, rather than report a cut through the middle of a token
-    // as "0 earlier lines" of loss.
-    const earlier = lines.length - 1;
-    const lastLine = lines[lines.length - 1] ?? "";
-    const also = earlier > 0 ? `, along with ${earlier} earlier lines` : "";
-    return {
-      text:
-        `… [one line is longer than this result's budget: its first ` +
-        `${lastLine.length - cut.length} characters are omitted${also}]\n${cut}`,
-      trimmed: true,
-    };
-  }
-  const tail = cut.slice(firstBreak + 1);
-  // Count the lines actually gone, both passes together: the character
-  // pass drops whole lines of its own, so a banner counting only the
-  // line pass states a number that is not true.
-  return {
-    text: banner(
-      lines.length - tail.split("\n").length,
-      whole.length - tail.length,
-      tail,
-    ),
-    trimmed: true,
-  };
-}
-
-function banner(lines: number, chars: number, kept: string): string {
-  return `… [omitted ${lines} earlier lines, ${chars} characters]\n${kept}`;
-}
-
 export interface SkillRunScriptToolOptions extends DangerousToolOptions {
   /**
    * `tools.shell.envPassthrough`, so a skill script and a shell command
@@ -155,6 +83,8 @@ export interface SkillRunScriptToolOptions extends DangerousToolOptions {
   pluginsStateDir?: string;
   /** Called once the script is about to run, for the skill usage ledger (ATO-580). */
   onSkillUsed?: (record: SkillRecord) => void;
+  /** Tool secrets `args` and `env` may name as `{{secret:NAME}}` (ATO-2530). Omitted: none. */
+  secrets?: ToolSecretSource;
 }
 
 export function buildSkillRunScriptTool(
@@ -198,6 +128,11 @@ export function buildSkillRunScriptTool(
       // Names only: the user sees which keys the script will get, never
       // their values.
       const envKeys = skillEnvKeys(record);
+      // `{{secret:NAME}}` (ATO-2530): known names only, before any question.
+      const scriptEnv = parseScriptEnv(rawArgs.env, envKeys);
+      const secretUse = checkScriptSecrets(scriptArgs, scriptEnv, options.secrets);
+      if (!secretUse.ok) throw new Error(`skill.run_script: ${secretUse.message}`);
+      const secretNames = secretUse.names;
       const preview = [
         `skill: ${record.manifest.name} (v${record.manifest.version})`,
         // A project skill is repository content, possibly from a cloned stranger's repo (ATO-312).
@@ -206,6 +141,7 @@ export function buildSkillRunScriptTool(
         `cwd: ${record.rootDir}`,
         `args: ${scriptArgs.join(" ")}`,
         ...(envKeys.length > 0 ? [`env keys: ${envKeys.join(", ")}`] : []),
+        ...Object.entries(scriptEnv).map(([key, value]) => `env: ${key}=${value}`),
       ].join("\n");
 
       // Only the copy installed in the global skills directory is trusted
@@ -219,15 +155,17 @@ export function buildSkillRunScriptTool(
         record.shared !== true &&
         record.manifest.name === "gog-workspace" &&
         scriptName === "check-gog.sh" &&
-        scriptArgs.length === 0;
+        scriptArgs.length === 0 &&
+        Object.keys(scriptEnv).length === 0;
       if (!autoApprovedGogCheck) {
         await requireApproval(
           options,
           {
             sessionId: ctx.sessionId,
             tool: "skill.run_script",
-            category: "script",
-            reason: `run ${record.manifest.name}/${scriptName}`,
+            // A secret asks as `shell_secret`: never granted (ATO-2530).
+            category: secretNames.length > 0 ? "shell_secret" : "script",
+            reason: `run ${record.manifest.name}/${scriptName}${describeToolSecretUse(secretNames)}`,
             preview,
             affectedResources: [record.rootDir],
           },
@@ -235,11 +173,20 @@ export function buildSkillRunScriptTool(
         );
       }
 
+      // After approval, and only into what is spawned.
+      let runArgs = scriptArgs;
+      let runEnv = scriptEnv;
+      if (secretNames.length > 0 && options.secrets !== undefined) {
+        const filled = await fillScriptSecrets(scriptName, scriptArgs, scriptEnv, secretNames, options.secrets);
+        if (!filled.ok) throw new Error(`skill.run_script: ${filled.message}`);
+        ({ args: runArgs, env: runEnv } = filled);
+      }
       ctx.workspaceSkills?.assertAvailable(skillName);
       options.onSkillUsed?.(record);
       const outcome = await runSkillScript(record, {
         script: scriptName,
-        args: scriptArgs,
+        args: runArgs,
+        ...(Object.keys(runEnv).length > 0 ? { env: runEnv } : {}),
         timeoutMs,
         signal: ctx.signal,
         ...(options.envPassthrough !== undefined
@@ -263,6 +210,7 @@ export function buildSkillRunScriptTool(
           header.length -
           note.length -
           SIGNATURE_RESERVE_CHARS,
+        MAX_BODY_LINES,
       );
       const body = `${trimmed.text}${note}`;
       const compressed = compressToolResult(

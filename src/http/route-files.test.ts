@@ -69,6 +69,24 @@ describe("/api/files routes", () => {
     expect(status).toMatchObject({ running: false, found: 1, indexed: 1, failed: 0, skipped: 0 });
     expect(typeof status.updatedAt).toBe("string");
     expect(status.current).toBeUndefined();
+    // ATO-2501: the desktop shows these two.
+    expect(status.ocrPages).toBe(0);
+    expect(status.skippedReasons).toEqual([]);
+  });
+
+  it("retries skipped files on POST /api/files/retry (ATO-2501)", async () => {
+    writeFileSync(join(docs, "photo.png"), "not really a png");
+    await call("POST", "/api/files/folders", { path: docs });
+    await index.idle();
+    const before = (await (await call("GET", "/api/files/status")).json()) as { skipped: number; skippedReasons: { reason: string; count: number }[] };
+    expect(before.skipped).toBe(1);
+    expect(before.skippedReasons).toEqual([{ reason: "disabled", count: 1 }]);
+    const response = await call("POST", "/api/files/retry");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ requeued: 1 });
+    await index.idle();
+    // Media is still off in this index, so the photo is skipped again.
+    expect(((await (await call("GET", "/api/files/status")).json()) as { skipped: number }).skipped).toBe(1);
   });
 
   it("answers 400 with each folder error code", async () => {
@@ -98,6 +116,7 @@ describe("/api/files routes", () => {
     expect((await call("POST", "/api/files/folders", { path: docs })).status).toBe(501);
     expect((await call("DELETE", "/api/files/folders", { path: docs })).status).toBe(501);
     expect((await call("GET", "/api/files/status")).status).toBe(501);
+    expect((await call("POST", "/api/files/retry")).status).toBe(501);
     const caps = (await (await call("GET", "/api/capabilities")).json()) as { fileIndex: boolean };
     expect(caps.fileIndex).toBe(false);
   });

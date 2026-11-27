@@ -21,6 +21,7 @@ import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { refusedToolNames } from "../policies/fusion-orchestrator-mode.js";
 import { withoutReasoningPrelude, withUnboundedReasoningPrelude } from "../../llm/grammar/reasoning-prelude.js";
 import { buildGrammarForTools } from "../../llm/grammar/build-grammar.js";
+import { isPromptOnlyToolFilter } from "./prompt-only-tool-filter.js";
 import { applyStrictToolArgs } from "../../llm/grammar/strict-tool-args.js";
 import { getDefaultArgsJsonSchema } from "../../prompt/default-tool-args-schemas.js";
 import type { PromptMessages, ToolCallTransport } from "../../llm/provider/completion-types.js";
@@ -32,13 +33,16 @@ import { turnProgressWanted } from "./turn-progress-opt-in.js";
 import type { StreamParser, StreamParseEvent } from "../../llm/grammar/stream-parser.js";
 import { createStreamParser } from "../../llm/grammar/stream-parser.js";
 import { reasoningOpenEmittedByModel } from "../../llm/model-profile.js";
-import { estimateTokens } from "../../prompt/token-budget.js";
+import { assertPromptFitsWindow } from "./window-fit-guard.js";
+import { measureToolSchema, toolSchemaPromptInput, type ToolSchemaMeasure } from "../../prompt/tool-schema-parts.js";
 import { assertContextCapacity } from "../../llm/provider/context-capacity.js";
 import { reconcileCloudSkills } from "../../session/workspace-context.js";
 
 export function refreshStepWorkspace(ctx: StepContext, deps: StepDependencies): void {
   const cloud = deps.modelMode?.mode === "cloud";
   ctx.workspace = (cloud || ctx.session.inheritedWorkspace) ? deps.prepareWorkspace?.(ctx.session, cloud, ctx.signal, { contextWindow: deps.contextWindow ?? null }) : undefined;
+  // ATO-2443: a local step has no project instructions, but path rules still attach (after the conversation).
+  ctx.localPathRules = cloud ? undefined : deps.preparePathRules?.(ctx.session, ctx.signal);
   if (cloud && ctx.workspace) {
     const next = reconcileCloudSkills(ctx.session, ctx.workspace);
     if (next !== ctx.session) { ctx.session = next; deps.commitSession?.(next); }
@@ -95,6 +99,7 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
       : roleToolDescriptors;
   const basePromptInput: BuildPromptInput = {
     ...(ctx.workspace ? { workspace: ctx.workspace } : {}),
+    ...(ctx.localPathRules?.length ? { pathRules: ctx.localPathRules } : {}),
     session: ctx.session,
     toolDescriptors: stepToolDescriptors,
     capabilities: ctx.capabilities,
@@ -111,9 +116,9 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
     // The `tools` array a native-tools link sends beside the text takes
     // window room in every model mode (ATO-1678): a local link (Ollama,
     // LM Studio, a Fusion worker leg) was budgeted without it.
-    ...(deps.toolTransport === "native_tools" ? {
-      toolSchemaTokens: nativeToolSchemaTokens(stepDescriptors, deps),
-    } : {}),
+    ...(deps.toolTransport === "native_tools"
+      ? toolSchemaPromptInput(nativeToolSchema(stepDescriptors, deps))
+      : {}),
     // A chat's reasoning level bounds the grammar's think block with its
     // own budget (`resolveStepGrammar`, ATO-490); the reply reserve must
     // plan for that bound, not `localModels.reasoningBudgetTokens`
@@ -206,12 +211,14 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
  * `tools` array, so none is budgeted (ATO-1678). Exported for the tests.
  */
 export function grammarFallbackPromptInput(promptInput: BuildPromptInput): BuildPromptInput {
-  return {
+  const input: BuildPromptInput = {
     ...promptInput,
     toolTransport: "grammar",
     toolSchemaTokens: 0,
     suppressReasoningPrefill: false,
   };
+  delete input.toolSchemaParts;
+  return input;
 }
 
 /**
@@ -223,12 +230,16 @@ export function nativeToolSchemaTokens(
   descriptors: readonly ToolDescriptor[],
   deps: Pick<StepDependencies, "toolCallAdapter" | "strictTools">,
 ): number {
+  return nativeToolSchema(descriptors, deps).tokens;
+}
+
+/** The same array, also split by MCP server for `/context` (ATO-2453). */
+export function nativeToolSchema(
+  descriptors: readonly ToolDescriptor[],
+  deps: Pick<StepDependencies, "toolCallAdapter" | "strictTools">,
+): ToolSchemaMeasure {
   const adapter = deps.toolCallAdapter ?? openAiToolCallAdapter;
-  return estimateTokens(
-    JSON.stringify(
-      adapter.descriptorsToTools(descriptors, { strict: deps.strictTools === true }),
-    ),
-  );
+  return measureToolSchema(adapter, descriptors, { strict: deps.strictTools === true });
 }
 
 export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
@@ -293,6 +304,9 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
     }
   }
   deps.onEvent?.({ type: "prompt_built", prompt, slotId: slot.slotId });
+  // A window the instructions and tool schemas alone fill gets a plain
+  // error before the request, not a reply cut after a few tokens (ATO-1678).
+  assertPromptFitsWindow(prompt, deps.modelMode?.mode);
   deps.onEvent?.({
     type: "prompt_captured",
     stepIndex: ctx.stepIndex,
@@ -352,6 +366,7 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
   );
   const llmParams: LlmStreamParams = {
     ...(prompt.contextBudget ? { contextBudget: prompt.contextBudget } : {}),
+    promptWindow: prompt.contextWindow,
     ...buildLlmStreamParams({
       promptText: prompt.text,
       promptMessages: prompt.messages,
@@ -419,14 +434,19 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
       const linkPromptInput: BuildPromptInput = { ...(linked?.promptInput ?? promptInput) };
       delete linkPromptInput.compactPrompt;
       delete linkPromptInput.compactPromptWindow;
+      delete linkPromptInput.toolSchemaParts;
       const next = buildPrompt({ ...linkPromptInput, session: ctx.session, modelMode: link.modelMode,
         toolTransport: link.transport, contextWindow: link.contextWindow, profileWindowApplies: false,
-        toolSchemaTokens: link.transport === "native_tools" ? nativeToolSchemaTokens(linkDescriptors, linkDeps) : 0,
+        ...(link.transport === "native_tools"
+          ? toolSchemaPromptInput(nativeToolSchema(linkDescriptors, linkDeps))
+          : { toolSchemaTokens: 0 }),
         suppressReasoningPrefill: link.transport === "native_tools" || template.useServerTemplate,
         completionMaxTokens: link.maxTokens ?? ctx.maxOutputTokens ?? getConfig().localModels.completionMaxTokens,
       });
       if (next.cloudContext) ctx.session = { ...ctx.session, cloudContext: next.cloudContext };
       deps.onEvent?.({ type: "prompt_built", prompt: next, slotId: slot.slotId });
+      // A fallback link's own window may be too small for the tools (ATO-1678).
+      assertPromptFitsWindow(next, link.modelMode.mode);
       if (next.contextBudget) assertContextCapacity(next.text + JSON.stringify(wire?.tools ?? llmParams.tools ?? []), next.contextBudget);
       return { prompt: next.text, messages: next.messages, contextBudget: next.contextBudget,
         ...(wire ? { grammar: wire.grammar, tools: wire.tools, toolWireNames: wire.toolWireNames, toolChoice: wire.toolChoice, parallelToolCalls: wire.parallelToolCalls } : {}),
@@ -529,10 +549,10 @@ export const TERMINAL_TOOL_NAMES: readonly string[] = ["reply", "finish"];
  *    (`wouldRefuse`) — the model keeps the descriptors and loses the
  *    ability to spend a step on a call that ends in a refusal;
  *  - a turn with a `toolFilter` (a fusion worker) drops what the filter
- *    hides, `finish` included.
+ *    hides, `finish` included, unless the filter is prompt-only.
  * The candidate set is the step's own descriptor list (`reply` and
- * `finish` are descriptors too), so the grammar can never admit a name
- * the prompt does not describe. The base grammar stays in charge of any
+ * `finish` are descriptors too), so a narrowed grammar never admits a
+ * name the prompt does not describe. The base grammar stays in charge of any
  * unrestricted step: its grouped rules are what the static grammar tests
  * pin, and a step that narrows nothing has no reason to rewrite them.
  */
@@ -563,7 +583,10 @@ export function stepGrammarToolNames(
       restricted = true;
     }
   }
-  if (ctx.toolFilter) {
+  // A prompt-only filter (`promptOnlyToolFilter`) leaves the grammar
+  // alone: it hides a few names on a turn that had no filter, and
+  // dispatch refuses them.
+  if (ctx.toolFilter && !isPromptOnlyToolFilter(ctx.toolFilter)) {
     const filter = ctx.toolFilter;
     names = names.filter((name) => filter(name));
     restricted = true;

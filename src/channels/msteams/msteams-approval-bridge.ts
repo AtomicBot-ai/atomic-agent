@@ -1,13 +1,16 @@
 /**
  * Route approval requests raised by a Teams-originated turn back into
- * the conversation that asked, as an Adaptive Card with Approve / Deny
- * (and "Allow always" when offered).
+ * the conversation that asked, as an Adaptive Card with Approve / Deny,
+ * the offered "Allow ... this session" grants (ATO-2509) and "Allow
+ * always" when offered.
  *
  * A click arrives as a `message` activity whose `value` is the button's
  * `Action.Submit` data (`atomicApproval`, `verdict`). Typing
  * `yes <code>` / `no <code>` / `always <code>` works too, for clients
  * that do not render cards; a bare `yes` counts only when exactly one
- * prompt is open in that conversation.
+ * prompt is open in that conversation. The session grants are typed as
+ * `session <code>` (the kind) and `all <code>` (the command shape), and
+ * only with the code, so an ordinary "all" never grants anything.
  *
  * The bridge never decides anything on its own: only a configured
  * owner, in the conversation the card was posted to, settles the gate.
@@ -20,12 +23,21 @@ import { randomBytes } from "node:crypto";
 import type { ApprovalGate, ApprovalRequest } from "../../approval/approval-gate.js";
 import { describeAlwaysRule } from "../../approval/approval-rules.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
+import {
+  sessionGrantLabels,
+  sessionGrantOffer,
+  sessionGrantScope,
+  sessionGrantSummary,
+  type SessionGrantOffer,
+} from "../approval-session-grants.js";
 import type { TeamsApi } from "./msteams-api.js";
 import { scrubTeamsError, type TeamsTarget } from "./msteams-types.js";
 
 const PREVIEW_MAX_CHARS = 2500;
 const PENDING_TTL_MS = 6 * 60 * 60_000;
-const ANSWER_RE = /^\s*(yes|y|approve|no|n|deny|always)(?:\s+([0-9a-f]{6,12}))?\s*[.!]?\s*$/i;
+const ANSWER_RE = /^\s*(yes|y|approve|no|n|deny|always|session|all)(?:\s+([0-9a-f]{6,12}))?\s*[.!]?\s*$/i;
+/** Typed session grants, which count only with the prompt's code. */
+const TYPED_GRANTS: Readonly<Record<string, string>> = { session: "session", all: "shape" };
 
 export interface TeamsApprovalBridgeDeps {
   api: Pick<TeamsApi, "sendActivity" | "updateActivity">;
@@ -43,6 +55,8 @@ interface Pending {
   activityId: string | null;
   headline: string;
   alwaysLabel?: string;
+  /** The session grants the card offered (ATO-2509). */
+  sessionGrants?: SessionGrantOffer;
   postedAt: number;
 }
 
@@ -96,6 +110,8 @@ export class TeamsApprovalBridge {
     if (senderId === undefined || !this.deps.ownerIds().includes(senderId)) return null;
     const verb = (match[1] ?? "").toLowerCase();
     const code = match[2]?.toLowerCase();
+    const typedGrant: string | undefined = TYPED_GRANTS[verb];
+    if (typedGrant !== undefined && code === undefined) return null;
     const root = conversationRoot(conversationId);
     const here = [...this.pending.entries()].filter(([, p]) => conversationRoot(p.target.conversationId) === root);
     if (here.length === 0) return null;
@@ -110,7 +126,8 @@ export class TeamsApprovalBridge {
       entry = here[0];
     }
     if (!entry) return null;
-    const normalized = verb === "always" ? "always" : verb.startsWith("y") || verb === "approve" ? "yes" : "no";
+    const normalized =
+      typedGrant ?? (verb === "always" ? "always" : verb.startsWith("y") || verb === "approve" ? "yes" : "no");
     return this.settle(entry, normalized);
   }
 
@@ -131,21 +148,30 @@ export class TeamsApprovalBridge {
       // A forged submit cannot save a rule the card never offered.
       return "\"Allow always\" was not offered for this request; answer yes or no.";
     }
-    const approved = always || verdict === "yes";
+    // A session grant likewise counts only where the card offered it.
+    const grantKind = verdict === "session" ? "s" : verdict === "shape" ? "a" : null;
+    const sessionGrant = grantKind === null ? null : sessionGrantScope(grantKind, posted.sessionGrants);
+    if (grantKind !== null && sessionGrant === null) {
+      return "That session grant was not offered for this request; answer yes or no.";
+    }
+    const approved = always || verdict === "yes" || sessionGrant !== null;
     this.pending.delete(code);
     const settled = this.deps.approvals.resolve({
       approvalId: posted.approvalId,
       approved,
       ...(approved ? { reason: "approved from Microsoft Teams" } : {}),
       ...(always ? { grant: "always" as const } : {}),
+      ...(sessionGrant !== null ? { grant: sessionGrant } : {}),
     });
     const outcome = !settled
       ? "This request already expired or was answered elsewhere."
       : always
         ? `Approved. Saved: ${posted.alwaysLabel}.`
-        : approved
-          ? "Approved."
-          : "Denied.";
+        : sessionGrant !== null && posted.sessionGrants
+          ? `Approved for this session: ${sessionGrantSummary(sessionGrant, posted.sessionGrants)}.`
+          : approved
+            ? "Approved."
+            : "Denied.";
     if (posted.activityId !== null) {
       try {
         await this.deps.api.updateActivity(posted.target, posted.activityId, cardActivity(answeredCard(posted.headline, outcome)));
@@ -163,6 +189,8 @@ export class TeamsApprovalBridge {
     }
     const alwaysLabel =
       this.deps.approvals.canGrantAlways?.(request) === true ? describeAlwaysRule(request) : undefined;
+    // The same "this session" grants Telegram and the TUI offer (ATO-2509).
+    const sessionGrants = request.question ? null : sessionGrantOffer(request);
     const code = this.freshCode();
     const headline = `Approval needed: ${request.tool} (${request.category})`;
     const entry: Pending = {
@@ -172,12 +200,13 @@ export class TeamsApprovalBridge {
       headline,
       postedAt: now,
       ...(alwaysLabel !== undefined ? { alwaysLabel } : {}),
+      ...(sessionGrants !== null ? { sessionGrants } : {}),
     };
     this.pending.set(code, entry);
     try {
       entry.activityId = await this.deps.api.sendActivity(
         target,
-        cardActivity(approvalCard(request, headline, code, alwaysLabel)),
+        cardActivity(approvalCard(request, headline, code, alwaysLabel, sessionGrants)),
       );
     } catch (err) {
       // Nobody saw the code; do not leave an answerable prompt behind.
@@ -204,13 +233,19 @@ function submit(title: string, approvalId: string, verdict: string, style?: stri
   return { type: "Action.Submit", title, data: { atomicApproval: approvalId, verdict }, ...(style ? { style } : {}) };
 }
 
-/** The prompt card: headline, reason, preview, Approve / Deny (+ Allow always), typed fallback. */
+/**
+ * The prompt card: headline, reason, preview, Approve / Deny, the offered
+ * session grants with Telegram's labels (ATO-2509), Allow always, and the
+ * typed fallback for clients that show no buttons.
+ */
 export function approvalCard(
   request: ApprovalRequest,
   headline: string,
   code: string,
   alwaysLabel?: string,
+  sessionGrants: SessionGrantOffer | null = null,
 ): Record<string, unknown> {
+  const grants = sessionGrantLabels(sessionGrants);
   const body: Array<Record<string, unknown>> = [text(headline, { weight: "Bolder" }), text(request.reason)];
   if (request.preview) {
     body.push(text(request.preview.slice(0, PREVIEW_MAX_CHARS), { fontType: "Monospace" }));
@@ -218,11 +253,21 @@ export function approvalCard(
   if (request.affectedResources?.length) {
     body.push(text(`Affects: ${request.affectedResources.slice(0, 5).join(", ")}`, { isSubtle: true }));
   }
-  body.push(text(`Or reply "yes ${code}" / "no ${code}".`, { isSubtle: true, size: "Small" }));
+  body.push(text(typedFallback(code, grants), { isSubtle: true, size: "Small" }));
   const id = request.approvalId;
   const actions = [submit("Approve", id, "yes", "positive"), submit("Deny", id, "no", "destructive")];
+  if (grants.category !== undefined) actions.push(submit(grants.category, id, "session"));
+  if (grants.shape !== undefined) actions.push(submit(grants.shape, id, "shape"));
   if (alwaysLabel !== undefined) actions.push(submit(alwaysLabel.slice(0, 80), id, "always"));
   return { type: "AdaptiveCard", $schema: "http://adaptivecards.io/schemas/adaptive-card.json", version: "1.4", body, actions };
+}
+
+/** The typed answers, with each offered session grant spelled out. */
+function typedFallback(code: string, grants: { category?: string; shape?: string }): string {
+  const parts = [`Or reply "yes ${code}" / "no ${code}".`];
+  if (grants.category !== undefined) parts.push(`"session ${code}": ${grants.category}.`);
+  if (grants.shape !== undefined) parts.push(`"all ${code}": ${grants.shape}.`);
+  return parts.join(" ");
 }
 
 function answeredCard(headline: string, outcome: string): Record<string, unknown> {

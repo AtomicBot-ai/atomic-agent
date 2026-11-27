@@ -20,6 +20,8 @@ vi.mock("../local-llm/index.js", async () => {
     holdEmbeddingForLowMemory: vi.fn(async () => ({ ok: true })),
     stopDaemon: vi.fn(),
     stopChatAndEmbeddingDaemons: vi.fn(),
+    // Never probe or signal a real process on the configured port (ATO-2458).
+    reclaimManagedPort: vi.fn(async () => ({ kind: "free" })),
   };
 });
 

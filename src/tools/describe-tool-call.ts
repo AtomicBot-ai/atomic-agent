@@ -104,6 +104,7 @@ const V = {
   focused: ["Focused", "Focusing", "focus"],
   used: ["Used", "Using", "use"],
   transcribed: ["Transcribed", "Transcribing", "transcribe"],
+  removed: ["Removed", "Removing", "remove"],
 } as const satisfies Record<string, Verb>;
 
 // ---------------------------------------------------------------------------
@@ -240,6 +241,14 @@ const FIXED: Readonly<Record<string, Phrase>> = {
   "tasks.list": P(V.listed, "tasks"),
   "tasks.show": P(V.lookedAt, "a task"),
   "tasks.cancel": P(V.cancelled, "a task"),
+  "tasks.request_review": P(V.moved, "the task to review"),
+  "tasks.block": P(V.moved, "the task to blocked"),
+  "tasks.comment": P(V.commented, "on the task"),
+  // ATO-2459: My apps.
+  "app.save": P(V.created, "an app in My apps"),
+  "app.update": P(V.edited, "an app in My apps"),
+  "app.delete": P(V.removed, "an app from My apps"),
+  "app.list": P(V.lookedAt, "My apps"),
   "sessions.list": P(V.listed, "chats"),
   "sessions.read": P(V.read, "another chat"),
   "sessions.send": P(V.sent, "a request to another chat"),
@@ -248,6 +257,7 @@ const FIXED: Readonly<Record<string, Phrase>> = {
   "verify.syntax": P(V.checked, "the syntax"),
   "video.generate": P(V.generated, "a video"),
   "canvas.render": P(V.created, "a canvas"),
+  "ui.render": P(V.created, "a card"),
   "video.render_html": P(V.recorded, "a video from a page"),
   "github.whoami": P(V.checked, "the GitHub account"),
   "github.issue.list": P(V.listed, "GitHub issues"),
@@ -255,7 +265,7 @@ const FIXED: Readonly<Record<string, Phrase>> = {
   "github.issue.create": P(V.created, "a GitHub issue"),
   "github.issue.comment": P(V.commented, "on a GitHub issue"),
   "github.pr.create": P(V.created, "a pull request"),
-  "github.pr.checks": P(V.checked, "a pull request's CI"),
+  "github.pr.checks": P(V.checked, "a pull request's status"),
   "github.pr.autofix": P(V.ran, "PR autofix"),
   fusion_worker: P(V.ran, "a worker"),
 };

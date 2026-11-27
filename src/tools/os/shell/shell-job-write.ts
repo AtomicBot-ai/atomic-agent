@@ -14,7 +14,8 @@ import {
 } from "../shell-command-guard/index.js";
 import type { GuardVerdict } from "../shell-command-guard/guard-types.js";
 import { collect, headOfCommand, unknownJob, type ShellJobCallContext } from "./shell-job-calls.js";
-import type { ShellJobRecord } from "./shell-jobs.js";
+import { readReply, stripTerminalCodes, writeWaitMs } from "./shell-job-reply.js";
+import { runShellSecretWrite } from "./shell-job-secret.js";
 import { renderShellResult, tailShellOutput } from "./shell-result.js";
 import { formatShellElapsed } from "./shell-timeout.js";
 
@@ -32,12 +33,14 @@ import { formatShellElapsed } from "./shell-timeout.js";
 
 /** The longest text one write takes. */
 export const WRITE_MAX_CHARS = 4_000;
-/** How long a write waits for the reply by default, and at most. */
-export const WRITE_DEFAULT_WAIT_MS = 2_000;
-export const WRITE_MAX_WAIT_MS = 60_000;
-/** The reply is taken as complete after this much quiet. */
-export const WRITE_QUIET_MS = 500;
 const REPLY_TAIL_LINES = 60;
+
+export {
+  stripTerminalCodes,
+  WRITE_DEFAULT_WAIT_MS,
+  WRITE_MAX_WAIT_MS,
+  WRITE_QUIET_MS,
+} from "./shell-job-reply.js";
 
 export interface ShellWriteOptions extends DangerousToolOptions {
   shellPolicy?: ShellGuardPolicy;
@@ -84,44 +87,12 @@ export function guardTypedText(
   return worst;
 }
 
-/** Terminal colour and cursor codes and carriage returns, out of what the model reads. */
-export function stripTerminalCodes(text: string): string {
-  return text
-    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
-    .replace(/\u001b[@-Z\\-_]/g, "")
-    .replace(/\r\n?/g, "\n");
-}
-
 function writeError(id: number, message: string, extra: Record<string, unknown> = {}): CompressedToolResult {
   return compressToolResult({
     tool: "os.shell.run",
     status: "error",
     output: `os.shell.run: ${message}`,
     details: { jobId: id, write: true, ...extra },
-  });
-}
-
-/** Collect what the job prints for up to `ms`, until it goes quiet or exits. */
-function readReply(record: ShellJobRecord, ms: number, signal: AbortSignal): Promise<string> {
-  return new Promise((resolve) => {
-    let text = "";
-    let quiet: ReturnType<typeof setTimeout> | null = null;
-    const finish = () => {
-      clearTimeout(limit);
-      if (quiet) clearTimeout(quiet);
-      unsubscribe();
-      signal.removeEventListener("abort", finish);
-      resolve(text);
-    };
-    const limit = setTimeout(finish, ms);
-    const unsubscribe = record.job.onOutput((chunk) => {
-      text += chunk;
-      if (quiet) clearTimeout(quiet);
-      quiet = setTimeout(finish, WRITE_QUIET_MS);
-    });
-    signal.addEventListener("abort", finish, { once: true });
-    record.job.exit.then(finish, finish);
   });
 }
 
@@ -133,6 +104,13 @@ export async function runShellWrite(
 ): Promise<CompressedToolResult> {
   const record = ctx.jobs.get(ctx.sessionId, id);
   if (!record) return unknownJob(ctx, id);
+  // `secret` (ATO-2486): the person types the value, never the model.
+  if (rawArgs.secret !== undefined && rawArgs.secret !== null && rawArgs.secret !== false) {
+    if (record.state !== "running") {
+      return writeError(id, `job ${id} is no longer running; {"wait": ${id}} collects its output`);
+    }
+    return runShellSecretWrite(ctx, options, record, rawArgs);
+  }
   const eof = rawArgs.eof === true;
   const text = typeof rawArgs.text === "string" ? rawArgs.text : "";
   if (text.length === 0 && !eof) {
@@ -182,11 +160,7 @@ export async function runShellWrite(
       ctx.signal,
     );
   }
-  const waitMs = Math.min(
-    WRITE_MAX_WAIT_MS,
-    typeof rawArgs.timeoutMs === "number" && rawArgs.timeoutMs > 0 ? rawArgs.timeoutMs : WRITE_DEFAULT_WAIT_MS,
-  );
-  const reply = readReply(record, waitMs, ctx.signal);
+  const reply = readReply(record, writeWaitMs(rawArgs.timeoutMs), ctx.signal);
   if (text.length > 0 && !record.job.write(text)) {
     return writeError(id, `job ${id} takes no input: start it with {"cmd": …, "tty": true}`);
   }

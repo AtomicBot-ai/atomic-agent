@@ -31,6 +31,7 @@ Read docs/lifecycle.md for daemon edits and docs/downloads.md for download edits
 - [Server](server/README.md): process/port/session/key/health ownership, launch policy, slots/context/SWA and throughput.
 - [Backend](backend/README.md): installation/staging/version/update, platform assets and hardware selection/probes.
 - [Catalog](catalog/README.md): model IDs/metadata, GGUF and Hugging Face resolution/endpoint.
+- [External servers](external-servers/README.md): Ollama, LM Studio and the Llama app this engine does not own: start, load/unload, pull/delete, and adopting their files.
 
 Root [index](index.ts) remains the intentional compatible named-export API. [backend-paths.ts](backend-paths.ts) remains the sole shared disk layout; [chat-templates.ts](chat-templates.ts) remains at its existing source depth because import.meta.url determines dev/npm asset lookup. Its resolver and SEA lookup behavior are unchanged. Adjacent root tests stay with those contracts. No new barrels or forwarding modules were added.
 

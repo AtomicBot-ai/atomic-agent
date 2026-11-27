@@ -1,5 +1,5 @@
 import { formatUsd } from "./usage-meter.js";
-import type { UsageBilling, UsageHistoryFile, UsageHistoryRow } from "./usage-history.js";
+import type { UsageBilling, UsageCounts, UsageHistoryFile } from "./usage-history-types.js";
 
 /**
  * The per-day view of `usage-history.json` (ATO-2352), for
@@ -32,6 +32,8 @@ export interface UsageModelLine extends UsageTotals {
 export interface UsageDayLine extends UsageTotals {
   day: string;
   models: UsageModelLine[];
+  /** Sessions that made a model call that day; `null` for a day recorded before sessions were counted (ATO-2442). */
+  sessions: number | null;
 }
 
 export interface UsageHistorySummary {
@@ -40,6 +42,8 @@ export interface UsageHistorySummary {
   to: string;
   days: UsageDayLine[];
   total: UsageTotals;
+  /** Distinct sessions over the window; `null` when no day in it counted sessions. */
+  sessions: number | null;
 }
 
 /**
@@ -48,12 +52,10 @@ export interface UsageHistorySummary {
  */
 export function summarizeUsageHistory(
   file: UsageHistoryFile,
-  options: { days: number | "all"; today: string },
+  options: UsageWindow,
 ): UsageHistorySummary {
-  const from = options.days === "all" ? null : shiftDay(options.today, -(Math.max(1, options.days) - 1));
-  const keys = Object.keys(file.days)
-    .filter((d) => d <= options.today && (from === null || d >= from))
-    .sort();
+  const from = windowStart(options);
+  const keys = daysInWindow(Object.keys(file.days), options);
   const days = keys.map((day): UsageDayLine => {
     const rows = file.days[day] ?? [];
     const models = rows
@@ -64,29 +66,35 @@ export function summarizeUsageHistory(
         ...totalsOf([r]),
       }))
       .sort((a, b) => b.inputTokens + b.outputTokens - (a.inputTokens + a.outputTokens));
-    return { day, ...totalsOf(rows), models };
+    const seen = file.sessions?.[day];
+    return { day, ...totalsOf(rows), models, sessions: seen ? seen.length : null };
   });
-  return { from, to: options.today, days, total: addTotals(days) };
+  const counted = keys.filter((d) => file.sessions?.[d] !== undefined);
+  const sessions = counted.length === 0 ? null : new Set(counted.flatMap((d) => file.sessions?.[d] ?? [])).size;
+  return { from, to: options.today, days, total: addTotals(days), sessions };
 }
 
 /** The table `atomic-agent usage` prints. */
 export function formatUsageHistory(
   summary: UsageHistorySummary,
-  options: { models?: boolean } = {},
+  options: { models?: boolean; sessions?: boolean } = {},
 ): string {
   const range = summary.from === null ? `all days to ${summary.to}` : `${summary.from} to ${summary.to}`;
   if (summary.days.length === 0) {
     return `Token usage, ${range}\n  nothing recorded yet. Every model call is counted from now on.`;
   }
-  const header = ["Day", "Calls", "Input", "Output", "Cached", "Local", "Cloud cost"];
+  // ATO-2442: the session count is its own last column, only when asked.
+  const header = ["Day", "Calls", "Input", "Output", "Cached", "Local", "Cloud cost", ...(options.sessions ? ["Sessions"] : [])];
+  const withSessions = (r: string[], n: number | null | undefined): string[] =>
+    options.sessions ? [...r, n === undefined ? "" : n === null ? "-" : String(n)] : r;
   const rows: string[][] = [];
   for (const d of summary.days) {
-    rows.push(cells(d.day, d));
+    rows.push(withSessions(cells(d.day, d), d.sessions));
     if (options.models) {
-      for (const m of d.models) rows.push(cells(`  ${m.billing} ${m.model}`, m));
+      for (const m of d.models) rows.push(withSessions(cells(`  ${m.billing} ${m.model}`, m), undefined));
     }
   }
-  rows.push(cells("Total", summary.total));
+  rows.push(withSessions(cells("Total", summary.total), summary.sessions));
   const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
   const line = (r: readonly string[]): string =>
     r.map((c, i) => (i === 0 ? c.padEnd(widths[i] ?? 0) : c.padStart(widths[i] ?? 0))).join("  ").trimEnd();
@@ -125,7 +133,8 @@ export function formatTokenCount(n: number): string {
   return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
-function totalsOf(rows: readonly UsageHistoryRow[]): UsageTotals {
+/** Sums of rows that carry a billing kind: model rows and project rows alike. */
+export function totalsOf(rows: readonly (UsageCounts & { billing: UsageBilling })[]): UsageTotals {
   const t = emptyTotals();
   for (const r of rows) {
     const tokens = r.inputTokens + r.outputTokens;
@@ -143,7 +152,7 @@ function totalsOf(rows: readonly UsageHistoryRow[]): UsageTotals {
   return t;
 }
 
-function addTotals(lines: readonly UsageTotals[]): UsageTotals {
+export function addTotals(lines: readonly UsageTotals[]): UsageTotals {
   const t = emptyTotals();
   for (const l of lines) {
     for (const k of Object.keys(t) as (keyof UsageTotals)[]) t[k] += l[k];
@@ -164,6 +173,22 @@ function emptyTotals(): UsageTotals {
     pricedCalls: 0,
     unpricedCalls: 0,
   };
+}
+
+export interface UsageWindow {
+  days: number | "all";
+  today: string;
+}
+
+/** The first day of the window, `null` for every day. */
+export function windowStart(options: UsageWindow): string | null {
+  return options.days === "all" ? null : shiftDay(options.today, -(Math.max(1, options.days) - 1));
+}
+
+/** The day keys inside the window, oldest first. */
+export function daysInWindow(keys: readonly string[], options: UsageWindow): string[] {
+  const from = windowStart(options);
+  return keys.filter((d) => d <= options.today && (from === null || d >= from)).sort();
 }
 
 /** `YYYY-MM-DD` moved by `delta` calendar days. */

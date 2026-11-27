@@ -222,6 +222,12 @@ export interface TraceToolInvocation extends TraceEventBase {
    * batched steps. Optional for back-compat (see `batchIndex`).
    */
   batchSize?: number;
+  /**
+   * The approvals the call raised, as on the tool result (ATO-2529):
+   * prompts and their answers, auto-approvals, and security rules
+   * refusals (`guard`), so a trace shows why a call was refused.
+   */
+  approvals?: ReadonlyArray<Readonly<Record<string, unknown>>>;
 }
 
 export interface TraceParseRetry extends TraceEventBase {

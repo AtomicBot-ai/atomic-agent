@@ -112,6 +112,7 @@ describe("traceCommand", () => {
     rmSync(stateDir, { recursive: true, force: true });
     delete process.env.ATOMIC_AGENT_STATE_DIR;
     delete process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET;
+    delete process.env.ATOMIC_MAIL_API_KEY;
     resetConfigCache();
     vi.restoreAllMocks();
   });
@@ -302,6 +303,44 @@ describe("traceCommand", () => {
     writeUserConfigFileSync(getUserConfigPath(stateDir), USER_CONFIG_DEFAULTS);
     resetConfigCache();
     expect(await currentHashFromReplay()).toBe(disabledHash);
+  });
+
+  // ATO-2491: the runtime puts `email: <address>` in the capabilities
+  // block when an Atomic Mail inbox is registered, but replay rebuilt
+  // capabilities without it, so every step of such a session drifted.
+  it("replay rebuilds the Atomic Mail address line the runtime used", async () => {
+    const currentHashFromReplay = async (): Promise<string> => {
+      (process.stdout.write as ReturnType<typeof vi.fn>).mockClear();
+      // The fixture's recorded hash can never match a live prefix.
+      expect(await traceCommand(["replay", "s-fixture"])).toBe(2);
+      const output = (
+        process.stdout.write as ReturnType<typeof vi.fn>
+      ).mock.calls
+        .map((c) => c[0])
+        .join("");
+      const row = output.split("\n").find((line) => line.includes("DRIFT"));
+      expect(row).toBeDefined();
+      const columns = (row as string).trim().split(/\s+/);
+      return columns[columns.length - 1] as string;
+    };
+
+    const noInboxHash = await currentHashFromReplay();
+
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      atomicMail: {
+        ...USER_CONFIG_DEFAULTS.atomicMail,
+        address: "agent-test@atomicmail.ai",
+      },
+    });
+    resetConfigCache();
+    // An address without the key on this machine is not the agent's
+    // inbox: the runtime leaves the line out, and so must the replay.
+    expect(await currentHashFromReplay()).toBe(noInboxHash);
+
+    process.env.ATOMIC_MAIL_API_KEY = "test-atomic-mail-key";
+    resetConfigCache();
+    expect(await currentHashFromReplay()).not.toBe(noInboxHash);
   });
 
   it("fails gracefully for missing session", async () => {

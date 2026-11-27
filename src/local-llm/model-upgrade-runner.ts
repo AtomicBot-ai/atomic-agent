@@ -39,11 +39,12 @@ export function probeConfiguredMachine(
   probe: typeof probeMachineForModels = probeMachineForModels,
 ): Promise<MachineForModels> {
   const cfg = getConfig();
+  const cpuMoe = cfg.localModels.managed.cpuMoe;
   return probe({
     dataDir: cfg.paths.localModelsDataDir,
     engine: cfg.localModels.managed.engine,
     configuredDevice: cfg.localModels.managed.device,
-  });
+  }).then((machine) => (cpuMoe === undefined ? machine : { ...machine, cpuMoe }));
 }
 
 /** Everything both subcommands print, read once from config and the machine. */
@@ -61,7 +62,9 @@ export async function readRecommendSnapshot(
     .map((def) => def.id);
   return {
     machine,
-    tiers: recommendModelTiers(machine),
+    // ATO-2455: the tiers say what runs with experts in RAM; the upgrade
+    // below does not fetch one (`ModelTierOptions.expertsInRam`).
+    tiers: recommendModelTiers(machine, { expertsInRam: true }),
     decision: decideModelUpgrade({
       machine,
       activeModelId,

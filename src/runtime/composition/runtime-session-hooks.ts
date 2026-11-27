@@ -37,6 +37,31 @@ export async function startTurnHooks(
   };
 }
 
+/**
+ * SubagentStop for a subagent or Fusion worker turn (ATO-2462), shaped as
+ * the Stop seam `continueOnStopHooks` drives: a block sends the worker
+ * back to work with the reason, at most `MAX_STOP_HOOK_CONTINUATIONS`
+ * times, before its answer goes up. `session_id` is the parent's and
+ * `agent_id` the worker's own, as Claude Code passes them.
+ */
+export function subagentStopHooks(
+  engine: Partial<Pick<SessionHookEngine, "afterSubagentTurn">> | null | undefined,
+  parentSessionId: string,
+  origin: string | undefined,
+): Pick<SessionHookEngine, "afterTurn"> | null {
+  const after = engine?.afterSubagentTurn?.bind(engine);
+  if (!after) return null;
+  return {
+    afterTurn: (facts) =>
+      after({
+        ...facts,
+        sessionId: parentSessionId,
+        agentId: facts.sessionId,
+        agentType: origin === "subagent" ? "subagent" : "fusion-worker",
+      }),
+  };
+}
+
 /** The hook text a turn's prompt carries (`RunTurnOptions.sessionHookContext` / `hookContext`). */
 export interface TurnHookContext {
   session?: string;

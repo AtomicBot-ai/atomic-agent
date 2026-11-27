@@ -49,6 +49,8 @@ describe("TeamsApprovalBridge", () => {
     expect(activity.attachments[0]?.content.actions.map((a) => a.data)).toEqual([
       { atomicApproval: "appr-1", verdict: "yes" },
       { atomicApproval: "appr-1", verdict: "no" },
+      // A plain shell request is grantable for the session (ATO-2509).
+      { atomicApproval: "appr-1", verdict: "session" },
     ]);
   });
 

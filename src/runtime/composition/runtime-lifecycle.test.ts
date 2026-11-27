@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { createRuntimeLifecycle, type RuntimeLifecycleResources } from "./runtime-lifecycle.js";
+import { describe, expect, it, vi } from "vitest";
+import { createRuntimeLifecycle, SESSION_END_HOOKS_GRACE_MS, type RuntimeLifecycleResources } from "./runtime-lifecycle.js";
 
 function fixture(events: string[], schedulerStopped: Promise<void> = Promise.resolve()) {
   const naming = new AbortController();
@@ -198,6 +198,25 @@ describe("runtime lifecycle ownership", () => {
     await shutdown;
     expect(events.indexOf("backfill.settled")).toBeLessThan(events.indexOf("notes.close"));
     expect(events.filter((event) => !event.startsWith("backfill."))).toEqual(order);
+  });
+
+  it("fires SessionEnd hooks for open sessions before tasks stop, and a slow hook does not hold the quit (ATO-2462)", async () => {
+    vi.useFakeTimers();
+    try {
+      const events: string[] = [];
+      const { resources } = fixture(events);
+      const lifecycle = createRuntimeLifecycle({
+        ...resources,
+        sessionHooks: { endAll: () => { events.push("hooks.endAll"); return new Promise<void>(() => undefined); } },
+      });
+      const shutdown = lifecycle.shutdown();
+      await vi.advanceTimersByTimeAsync(SESSION_END_HOOKS_GRACE_MS);
+      await shutdown;
+      expect(events.indexOf("hooks.endAll")).toBe(events.indexOf("release.standin") + 1);
+      expect(events.filter((event) => event !== "hooks.endAll")).toEqual(order);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
 });

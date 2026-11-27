@@ -10,7 +10,7 @@ export type ModelRingCommand =
   | { kind: "add" | "remove"; entry: ModelRingEntry | null };
 
 export const MODEL_RING_USAGE =
-  "usage: /model favorite [add|remove [provider/model]] | /model favorite clear";
+  "usage: /model favorite [add|remove [provider/model]] | /model favorite clear (provider:model works too)";
 
 /** The words after `/model favorite`; null when they are not a command. */
 export function parseModelRingCommand(args: string): ModelRingCommand | null {

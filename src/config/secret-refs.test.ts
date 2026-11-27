@@ -62,6 +62,7 @@ describe("readSecretSources", () => {
       command: ["/opt/helper", "get"],
       envPassthrough: ["VAULT_TOKEN"],
       timeoutMs: 5_000,
+      timeoutSet: true,
       toolSecrets: { DEPLOY_TOKEN: "op://Private/Deploy/credential", NPM_TOKEN: "bw://npm/password" },
     });
   });

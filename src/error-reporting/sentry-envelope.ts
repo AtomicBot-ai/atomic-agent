@@ -73,6 +73,8 @@ export function buildEnvelope(
   if (ev.failureStage) tags.failure_stage = ev.failureStage;
   if (ev.answerFailure) tags.answer_failure = ev.answerFailure;
   if (ev.truncationCause) tags.truncation_cause = ev.truncationCause;
+  if (ev.cutPart) tags.cut_part = ev.cutPart;
+  if (ev.cutRepeated) tags.cut_repeated = ev.cutRepeated;
   if (ev.tool) tags.tool = ev.tool;
   if (ev.toolErrorKind) tags.tool_error_kind = ev.toolErrorKind;
   if (ev.toolNameClass) tags.tool_name_class = ev.toolNameClass;

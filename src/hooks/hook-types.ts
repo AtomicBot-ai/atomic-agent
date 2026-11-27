@@ -9,10 +9,24 @@
 /** Events fired around one tool call (`hook-engine.ts`). */
 export const TOOL_HOOK_EVENTS = ["PreToolUse", "PostToolUse"] as const;
 
-/** Events fired around a session's turns and compaction (`session-hook-engine.ts`). */
-export const SESSION_HOOK_EVENTS = ["SessionStart", "UserPromptSubmit", "Stop", "PreCompact"] as const;
+/**
+ * Events fired around a session (`session-hook-engine.ts`): its turns,
+ * compaction and end, a subagent's end, a file change in its folder, and
+ * a person being asked for an approval (`permission-hooks.ts`).
+ */
+export const SESSION_HOOK_EVENTS = [
+  "SessionStart",
+  "UserPromptSubmit",
+  "Stop",
+  "PreCompact",
+  "SessionEnd",
+  "SubagentStop",
+  "FileChanged",
+  "PermissionRequest",
+  "Notification",
+] as const;
 
-/** Events the agent fires today. Other Claude events parse but never run. */
+/** Events the agent fires: every event it accepts in config. */
 export const FIRED_HOOK_EVENTS = [...TOOL_HOOK_EVENTS, ...SESSION_HOOK_EVENTS] as const;
 
 /** Every event name Claude Code documents; accepted in config without a diagnostic. */
@@ -26,6 +40,8 @@ export const KNOWN_HOOK_EVENTS = [
   "PreCompact",
   "SessionStart",
   "SessionEnd",
+  "PermissionRequest",
+  "FileChanged",
 ] as const;
 
 export type HookEventName = (typeof KNOWN_HOOK_EVENTS)[number];

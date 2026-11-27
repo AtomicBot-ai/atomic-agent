@@ -2,14 +2,15 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { getConfig, readUserConfigFileSync } from "../config/index.js";
 import { apiKeyForUrl } from "../local-llm/server/managed-api-key.js";
-import { AuthThrottle } from "./auth-throttle.js";
+import { AuthThrottle, isLoopbackAddress } from "./auth-throttle.js";
 import { readModelShareKey } from "./model-share-key.js";
+import { readModelShareSettings } from "./model-share-settings.js";
 import { openaiError } from "./openai-errors.js";
 import { createInFlightLimit, type InFlightLimit } from "./raw-model-limit.js";
+import { forwardToModel, upstreamV1Url } from "./model-forward.js";
 import {
   getBearerToken,
   getHeader,
-  onClientGone,
   readRawBody,
   sendAuthThrottled,
   sendError,
@@ -41,6 +42,26 @@ import { remoteMediaProblem } from "./raw-model-body-guard.js";
 
 export const RAW_MODEL_PREFIX = "/raw/v1";
 
+/**
+ * ATO-2483: what a caller from another device reads, and serve logs once,
+ * when the mode is "this computer". Up to v0.10.0 a serve on 0.0.0.0
+ * answered the network; this says why it stopped and how to let it in.
+ */
+export const LOCAL_ONLY_HINT =
+  "Model sharing is set to this computer only, so other devices get 404 here; to let them in, run: atomic-agent models share --network";
+
+/**
+ * ATO-2483: the body cap of the raw route. Every other route keeps
+ * `MAX_JSON_BODY_BYTES` (1 MiB); a chat with a photo or two inline as
+ * base64 `data:` URLs (the only way remote-media guarding lets media in)
+ * is several MiB, so 1 MiB answered 413. 32 MiB holds a handful of phone
+ * photos; OpenAI's own image inputs stop at 20 MB per image. The body is
+ * read only after the share key was checked (`admit`), and one raw request
+ * runs at a time, so an unauthenticated caller cannot make serve hold more
+ * than nothing, and an authenticated one at most this much.
+ */
+export const RAW_MODEL_MAX_BODY_BYTES = 32 * 1024 * 1024;
+
 export interface RawModelUpstream {
   /** Base URL of the model server, e.g. `http://127.0.0.1:19091`. */
   baseUrl: string;
@@ -51,6 +72,12 @@ export interface RawModelUpstream {
 export interface RawModelShareDeps {
   /** Whether sharing is switched on now. */
   isEnabled: () => boolean;
+  /**
+   * ATO-2483: `true` while the mode is "This computer" (local): callers
+   * from another address get 404, also on a serve whose own listener is on
+   * the network. Omitted: no address check (tests of the other rules).
+   */
+  localOnly?: () => boolean;
   /** The share key, `null` when none was made. */
   readKey: () => string | null;
   /** Where the model is now. */
@@ -58,6 +85,8 @@ export interface RawModelShareDeps {
   fetch?: typeof fetch;
   limit?: InFlightLimit;
   throttle?: AuthThrottle;
+  /** Where the one-time "this computer only" line goes; default stderr. */
+  say?: (line: string) => void;
 }
 
 /**
@@ -77,6 +106,7 @@ export function isModelShareEnabled(): boolean {
 export function defaultRawModelShareDeps(): RawModelShareDeps {
   return {
     isEnabled: isModelShareEnabled,
+    localOnly: () => readModelShareSettings().mode === "local",
     readKey: () => readModelShareKey(getConfig().paths.stateDir),
     upstream: () => {
       const config = getConfig();
@@ -86,14 +116,8 @@ export function defaultRawModelShareDeps(): RawModelShareDeps {
   };
 }
 
-/** `http://h:p`, `http://h:p/`, `http://h:p/v1` all give `http://h:p/v1`. */
-export function upstreamV1Url(baseUrl: string, path: string): string {
-  const root = baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
-  return `${root}/v1${path}`;
-}
-
-/** Headers of the model's answer that the caller sees; nothing else is copied. */
-const PASSED_RESPONSE_HEADERS = ["content-type", "cache-control"];
+/** Kept here for the callers that import it from this module. */
+export { upstreamV1Url };
 
 export interface RawModelHandlers {
   models: HttpHandler;
@@ -104,9 +128,16 @@ export function createRawModelHandlers(deps: RawModelShareDeps = defaultRawModel
   const limit = deps.limit ?? createInFlightLimit();
   const throttle = deps.throttle ?? new AuthThrottle();
   const doFetch = deps.fetch ?? fetch;
+  const say = deps.say ?? ((line: string) => process.stderr.write(line));
+  let toldLocalOnly = false;
+  const onLocalOnly = (): void => {
+    if (toldLocalOnly) return;
+    toldLocalOnly = true;
+    say(`[atomic-agent] model share: refused a request from another device. ${LOCAL_ONLY_HINT}\n`);
+  };
 
   const handle = (method: "GET" | "POST", path: string): HttpHandler => async (req, res) => {
-    if (!admit(req, res, deps, throttle)) return;
+    if (!admit(req, res, deps, throttle, onLocalOnly)) return;
     const release = limit.tryAcquire();
     if (!release) {
       sendError(
@@ -117,14 +148,26 @@ export function createRawModelHandlers(deps: RawModelShareDeps = defaultRawModel
       return;
     }
     try {
-      const body = method === "POST" ? await readRawBody(req) : undefined;
+      const body = method === "POST" ? await readRawBody(req, RAW_MODEL_MAX_BODY_BYTES) : undefined;
       const mediaProblem = remoteMediaProblem(body);
       if (mediaProblem) {
         sendError(res, 400, openaiError(mediaProblem, "invalid_request_error", null, "remote_media_refused"));
         return;
       }
       const target = deps.upstream();
-      await forward(req, res, { method, url: upstreamV1Url(target.baseUrl, path), upstreamKey: target.apiKey, body, doFetch });
+      await forwardToModel(req, res, {
+        method,
+        url: upstreamV1Url(target.baseUrl, path),
+        upstreamKey: target.apiKey,
+        body,
+        doFetch,
+        unreachable: openaiError(
+          "The local model is not running; start it in Atomic Agent and try again",
+          "server_error",
+          null,
+          "model_unreachable",
+        ),
+      });
     } finally {
       release();
     }
@@ -137,7 +180,14 @@ export function createRawModelHandlers(deps: RawModelShareDeps = defaultRawModel
 }
 
 /** Switch, key, then the bearer check. `true` when the request may go on. */
-function admit(req: IncomingMessage, res: ServerResponse, deps: RawModelShareDeps, throttle: AuthThrottle): boolean {
+function admit(req: IncomingMessage, res: ServerResponse, deps: RawModelShareDeps, throttle: AuthThrottle, onLocalOnly: () => void): boolean {
+  // ATO-2483: in local mode a caller from another device gets 404 before
+  // any key is looked at, with a body that says why (serve logs it once).
+  if (deps.isEnabled() && deps.localOnly?.() === true && !isLoopbackAddress(req.socket?.remoteAddress ?? "")) {
+    onLocalOnly();
+    sendError(res, 404, openaiError(LOCAL_ONLY_HINT, "invalid_request_error", null, "model_share_local_only"));
+    return false;
+  }
   if (!deps.isEnabled()) {
     const method = (req.method ?? "GET").toUpperCase();
     const path = new URL(req.url ?? "/", "http://localhost").pathname;
@@ -159,74 +209,15 @@ function admit(req: IncomingMessage, res: ServerResponse, deps: RawModelShareDep
     sendAuthThrottled(res, wait);
     return false;
   }
-  if (!secretEquals(getBearerToken(req) ?? getHeader(req, "x-api-key"), key)) {
-    throttle.failed(address);
+  const sent = getBearerToken(req) ?? getHeader(req, "x-api-key");
+  if (!secretEquals(sent, key)) {
+    // ATO-2483: only a wrong key counts as a guess. A request with no key
+    // (the desktop's Find on my network probing for a shared model) guesses
+    // nothing, and counting it locked the real app out with 429.
+    if (sent) throttle.failed(address);
     sendInvalidApiKey(res);
     return false;
   }
   throttle.succeeded(address);
   return true;
-}
-
-interface ForwardInput {
-  method: "GET" | "POST";
-  url: string;
-  /** Sent to the model server only; never written to the caller. */
-  upstreamKey: string | null;
-  body: Buffer | undefined;
-  doFetch: typeof fetch;
-}
-
-async function forward(req: IncomingMessage, res: ServerResponse, input: ForwardInput): Promise<void> {
-  const abort = new AbortController();
-  onClientGone(res, () => abort.abort());
-  const headers: Record<string, string> = { accept: getHeader(req, "accept") ?? "application/json" };
-  if (input.body !== undefined) headers["content-type"] = "application/json";
-  if (input.upstreamKey) headers.authorization = `Bearer ${input.upstreamKey}`;
-
-  let upstream: Response;
-  try {
-    upstream = await input.doFetch(input.url, {
-      method: input.method,
-      headers,
-      ...(input.body !== undefined ? { body: new Uint8Array(input.body) } : {}),
-      signal: abort.signal,
-    });
-  } catch {
-    if (abort.signal.aborted) return;
-    sendError(
-      res,
-      502,
-      openaiError("The local model is not running; start it in Atomic Agent and try again", "server_error", null, "model_unreachable"),
-    );
-    return;
-  }
-
-  const outHeaders: Record<string, string> = {};
-  for (const name of PASSED_RESPONSE_HEADERS) {
-    const value = upstream.headers.get(name);
-    if (value) outHeaders[name] = value;
-  }
-  if ((outHeaders["content-type"] ?? "").startsWith("text/event-stream")) {
-    outHeaders["cache-control"] = "no-cache, no-transform";
-    outHeaders["x-accel-buffering"] = "no";
-  }
-  res.writeHead(upstream.status, outHeaders);
-  res.flushHeaders?.();
-  if (!upstream.body) {
-    res.end();
-    return;
-  }
-  try {
-    for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
-      if (res.destroyed) break;
-      res.write(chunk);
-    }
-  } catch {
-    // The model or the caller went away mid-answer; nothing more to send.
-  } finally {
-    // A caller that left stops the model's generation too.
-    if (res.destroyed && !abort.signal.aborted) abort.abort();
-    if (!res.writableEnded) res.end();
-  }
 }

@@ -154,7 +154,16 @@ export async function resolveSearchTarget(
   return { cwd, searchTarget: basename(path) };
 }
 
-export function buildRgArgs(args: GrepArgs, searchTarget: string): string[] {
+/**
+ * `excludes` are case-insensitive `--iglob` exclusions placed after the
+ * caller's `glob` entries, so they win over them (ripgrep: a later glob
+ * takes precedence). A guest's grep passes `GUEST_SECRET_RG_EXCLUDES`.
+ */
+export function buildRgArgs(
+  args: GrepArgs,
+  searchTarget: string,
+  excludes: readonly string[] = [],
+): string[] {
   const rg: string[] = ["--json"];
   if (args.caseInsensitive) rg.push("-i");
   if (args.literal) rg.push("-F");
@@ -166,6 +175,9 @@ export function buildRgArgs(args: GrepArgs, searchTarget: string): string[] {
   if (args.contextAfter > 0) rg.push("-A", String(args.contextAfter));
   for (const g of args.glob) {
     rg.push("--glob", g);
+  }
+  for (const g of excludes) {
+    rg.push("--iglob", g);
   }
   if (args.type) rg.push("--type", args.type);
   rg.push("--", args.pattern, searchTarget);

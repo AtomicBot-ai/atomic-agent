@@ -4,6 +4,7 @@ import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
 import { handleLocalModelsHfKey } from "./local-models-hf-keys.js";
 import { handleNotifyPromptKey } from "./local-models-notify-keys.js";
+import { handleModelsDirKey, openModelsDir } from "./models-dir-keys.js";
 import {
   resolveRowAt,
   showsCoreFailureNotice,
@@ -114,6 +115,8 @@ export function handleLocalModelsTabKey(
 
   const hfHandled = handleLocalModelsHfKey(input, key, ctx);
   if (hfHandled !== null) return hfHandled;
+  const dirHandled = handleModelsDirKey(input, key, ctx); // ATO-2504
+  if (dirHandled !== null) return dirHandled;
 
   if (key.escape) return false;
 
@@ -193,6 +196,11 @@ export function handleLocalModelsTabKey(
   // offers, and nothing about it depends on which row is highlighted.
   if (input === "a") {
     dispatch({ type: "local_models_hf_opened" });
+    return true;
+  }
+  // `F`: where the models are, and moving them (ATO-2504).
+  if (input === "F") {
+    openModelsDir(ctx);
     return true;
   }
   if (input === "B") {

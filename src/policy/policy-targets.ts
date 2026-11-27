@@ -31,7 +31,7 @@ export interface PolicyGateRequest {
   grantKey?: string;
 }
 
-const SHELL_CATEGORIES = new Set(["shell", "shell_dangerous"]);
+const SHELL_CATEGORIES = new Set(["shell", "shell_dangerous", "shell_secret"]);
 const EDIT_CATEGORIES = new Set(["fs_write_workspace", "fs_write_home", "fs_trash"]);
 const FETCH_CATEGORIES = new Set(["http", "http_write", "browser_offsite"]);
 const EDIT_TOOLS = new Set(["os.fs.write", "os.fs.edit", "os.fs.patch", "os.fs.trash", "os.fs.move", "os.fs.restore"]);

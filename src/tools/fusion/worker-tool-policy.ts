@@ -37,6 +37,10 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   "tasks.schedule",
   "tasks.cron",
   "tasks.cancel",
+  // A worker runs no board card of its own (ATO-2497).
+  "tasks.request_review",
+  "tasks.block",
+  "tasks.comment",
   "memory.profile.set",
   "memory.profile.remove",
   "memory.notes.store",
@@ -56,6 +60,8 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   // Same for a canvas (ATO-1137): only the orchestrator's stream reaches
   // the chat, so a worker's chart would be a file nobody is shown.
   "canvas.render",
+  // And a card (ATO-2457): a worker's click would come back to nobody.
+  "ui.render",
   // A fan-out inside a worker, and a report file nobody is shown (ATO-2133).
   "research.deep",
   // Nobody watches a worker's session, so its question would reach nobody
@@ -64,6 +70,11 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   // ATO-2363: a worker runs on the local leg, so logbook.query would read
   // the screen notes unasked and hand them to a cloud orchestrator.
   "logbook.query",
+  // ATO-2459: an app in My apps is the person's to keep; a worker's would
+  // be a change nobody saw being made.
+  "app.save",
+  "app.update",
+  "app.delete",
 ]);
 
 /** `RunTurnOptions.toolFilter` for a worker turn. */
@@ -176,6 +187,8 @@ export const FUSION_WORKER_OPERATOR_ONLY_REFUSED =
 /** Categories a fan-out's directory never covers (see above). */
 const OPERATOR_ONLY_CATEGORIES: ReadonlySet<ApprovalCategory> = new Set([
   "shell_dangerous",
+  // A command handed a secret (ATO-2530): each use is the operator's call.
+  "shell_secret",
   "trust_config",
   "state_secret",
   "email",

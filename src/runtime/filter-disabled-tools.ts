@@ -32,6 +32,12 @@ export interface ToolGateConfig {
    */
   browser: { enabled: boolean };
   web: { search: { enabled: boolean } };
+  /**
+   * Deep research (ATO-2507): `research.deep` reads the web or the
+   * folders in My files, so it is offered while web search is on or
+   * `files.search` is registered. Absent reads as no My files.
+   */
+  research?: { documents: boolean };
   vision: { enabled: boolean; providerAvailable: boolean };
   /**
    * Audio input gate (ATO-497, decision 62): the runtime passes the live
@@ -154,8 +160,10 @@ const GATED_TOOLS = {
     "browser.annotate",
     "browser.scenario",
   ],
-  // research.deep searches first: no search, nothing to research (ATO-2133).
-  webSearch: ["os.web.search", "research.deep"],
+  webSearch: ["os.web.search"],
+  // research.deep searches the web or My files: with neither, nothing to
+  // research (ATO-2133, ATO-2507).
+  research: ["research.deep"],
   vision: ["vision.describe"],
   audio: ["audio.listen"],
   memoryProfile: [
@@ -177,6 +185,10 @@ const GATED_TOOLS = {
     "tasks.list",
     "tasks.cancel",
     "tasks.show",
+    // ATO-2497; also hidden on every turn that does not run a task.
+    "tasks.request_review",
+    "tasks.block",
+    "tasks.comment",
   ],
   sessions: [
     "sessions.list",
@@ -246,6 +258,9 @@ export function filterToolDescriptorsByConfig(
   }
   if (!gates.web.search.enabled) {
     for (const name of GATED_TOOLS.webSearch) disabled.add(name);
+  }
+  if (!gates.web.search.enabled && gates.research?.documents !== true) {
+    for (const name of GATED_TOOLS.research) disabled.add(name);
   }
   if (!gates.vision.enabled || !gates.vision.providerAvailable) {
     for (const name of GATED_TOOLS.vision) disabled.add(name);

@@ -12,6 +12,7 @@ import { isPortOpen } from "./process-release.js";
 import { readCoreSession } from "../core/core-state.js";
 import { recoverOrphanedCoreSessions, stopCoreSession } from "../core/core-sessions.js";
 import { findPortHolder, isStateDirInUse, type PortHolder } from "./port-holder.js";
+import { judgeEnginePid, type EnginePidDeps } from "./engine-pid-identity.js";
 import { hasOtherLiveSessions } from "./session-registry.js";
 
 /**
@@ -37,6 +38,11 @@ import { hasOtherLiveSessions } from "./session-registry.js";
  *     Ollama, a server the operator runs by hand, a holder we cannot
  *     identify → never touched; **move** to the next free port.
  *
+ * `move: false` (`models start`, ATO-2458) keeps every rule above but the
+ * move: where it would move, the port is left as it is (`held`) and the
+ * launch meets the holder's `PortTakenError`. A move is saved to config,
+ * which a host that caches its config (the desktop's agent) would not see.
+ *
  * Parentless is not abandoned: a managed llama-server is spawned
  * detached on purpose, so a `ppid` of 1 is what a healthy daemon looks
  * like and is never read as evidence here.
@@ -46,7 +52,9 @@ export type ReclaimOutcome =
   | { kind: "free" }
   | { kind: "adopted"; pid: number }
   | { kind: "stopped"; pid: number; why: string }
-  | { kind: "moved"; port: number; why: string };
+  | { kind: "moved"; port: number; why: string }
+  /** `move: false` only: the holder stays, the port is not moved. */
+  | { kind: "held"; why: string };
 
 export interface ReclaimRequest {
   port: number;
@@ -62,6 +70,8 @@ export interface ReclaimRequest {
    * Omitted: the adapter is not compared, as for the embedding daemon.
    */
   loraAdapter?: string | null;
+  /** `false`: never move the port; a foreign holder keeps it (`held`). Default `true`. */
+  move?: boolean;
 }
 
 export interface ReclaimDeps {
@@ -190,7 +200,7 @@ async function judgeHolder(
   return {
     kind: "stop",
     pid: holder.pid,
-    why: `stopped a leftover llama-server ${who} — nothing of ${holder.atagDataDir} is running`,
+    why: `stopped a leftover llama-server ${who}: nothing of ${holder.atagDataDir} is running`,
   };
 }
 
@@ -231,6 +241,7 @@ async function move(
   deps: ReclaimDeps,
   why: string,
 ): Promise<ReclaimOutcome> {
+  if (req.move === false) return { kind: "held", why };
   for (let p = req.port + 1; p < req.port + 64 && p <= 65_535; p += 1) {
     if (req.avoidPorts.includes(p)) continue;
     if (!(await deps.portOpen(p))) return { kind: "moved", port: p, why };
@@ -241,8 +252,14 @@ async function move(
 // The port probe lives with the stop's release wait, which uses it too.
 export { isPortOpen };
 
-/** SIGTERM, up to 5 s grace, then SIGKILL (`taskkill /F` on Windows). */
-export async function stopProcess(pid: number): Promise<void> {
+/**
+ * SIGTERM, up to 5 s grace, then SIGKILL (`taskkill /F` on Windows).
+ * The pid is looked at once more first: the holder was named a moment
+ * ago, but a pid that is now this process, its parent or no llama-server
+ * is left alone, and the port check after it moves the port (ATO-2766).
+ */
+export async function stopProcess(pid: number, identity: EnginePidDeps = {}): Promise<void> {
+  if (!(await judgeEnginePid(pid, identity)).signal) return;
   if (process.platform === "win32") {
     try {
       execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
@@ -332,5 +349,7 @@ export function describeReclaim(
     case "moved":
       // Outcome first: the reason can be long, and a feed row is cut.
       return `local-llm: ${label} on port ${outcome.port} (saved to config) — ${outcome.why}`;
+    case "held":
+      return `local-llm: ${label} kept port ${port}: ${outcome.why}`;
   }
 }

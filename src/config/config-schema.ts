@@ -698,6 +698,12 @@ export interface AtomicAgentConfig {
       appendLocal?: boolean;
       /** Start each chat turn on the local model, cloud on failure (ATO-2208). Default false. */
       localFirst?: boolean;
+      /** Hand a weak local answer to the cloud mid-turn (ATO-2434). Default true. */
+      localFirstEscalate?: boolean;
+      /** Cloud spend ceiling of one local-first turn, USD (ATO-2434). */
+      localFirstMaxTurnUsd?: number;
+      /** Day's spend past which local-first keeps turns local, USD (ATO-2434). */
+      localFirstMaxDayUsd?: number;
       failureThreshold?: number;
       cooldownMs?: readonly number[];
       probeThrottleMs?: number;
@@ -1222,6 +1228,12 @@ export interface UserConfigFile {
 // carries the schema's value (first run writes the defaults, v25
 // rewrote `"writes"`), so it migrates to `"writes"`; `"always"` is kept.
 // From v79 an explicit `"never"` is honoured.
+// v80: `localModels.modelSampling` defaults to `true` (ATO-2480): a local
+// model runs with its authors' temperature / top-p / top-k instead of the
+// built-in 0.2 / 0.95 / 40. An older file's `false` was written by the
+// schema (first run writes the defaults, and only `config set` could
+// change it), so it migrates to `true`. From v80 an explicit `false` is
+// honoured.
 // Unversioned, additive: `tools.shell.envPassthrough` (default
 // `["GITHUB_TOKEN", "NOTION_API_KEY"]`, ATO-347). `os.shell.run` and
 // `os.git.*` no longer inherit the agent's provider keys, bot tokens or
@@ -1250,10 +1262,10 @@ export interface UserConfigFile {
 // ATO-332). `true` adds llama.cpp's DRY anti-repeat sampler fields to
 // every `/completion` request, window 256 tokens (`src/llm/dry-sampler.ts`); only llama.cpp
 // engines receive them. An older file has no field and reads as off.
-// Unversioned, additive: `localModels.modelSampling` (default `false`,
-// ATO-2202). `true` sends the loaded model's own recommended sampling
-// (`src/local-llm/catalog/gguf-sampling.ts`) where the request names
-// none. An older file has no field and reads as off.
+// `localModels.modelSampling` (ATO-2202). `true` sends the loaded model's
+// own recommended sampling (`src/local-llm/catalog/gguf-sampling.ts`)
+// where the request names none. Added unversioned with default `false`;
+// v80 makes it `true` (see below).
 // Unversioned, additive: `skills.selfLearning` (`enabled` true,
 // `minSteps` 10, ATO-67). An older file has no block and reads the
 // defaults, so self-learning is on after an upgrade, as in OpenClaw.
@@ -1299,6 +1311,9 @@ export interface UserConfigFile {
 // Unversioned, additive: `llm.runMode.fusion.roles` (`plan|build|review|
 // explore|utility` → provider id) and `mixLocalModels` (default false),
 // ATO-943. An older file has neither and runs every task on the worker leg.
+// Unversioned, additive: `llm.runMode.fusion.roleModels` (role → model
+// name on that role's provider). A separate key, so an older build that
+// reads it skips it and runs each role on its entry's model.
 // Unversioned, additive: `llm.runMode.fusion.outcomeJournal` (default
 // true), ATO-949. `false` keeps no outcome rows and states no past-run
 // summary; an older file has none and journals.
@@ -1316,7 +1331,7 @@ export interface UserConfigFile {
 // file). An older file has no field and reads the default, as before.
 // Unversioned, additive: top-level `channels` (chat channels beyond
 // Telegram and Discord keyed by id, ATO-1169). Missing reads as `{}`.
-export const USER_CONFIG_VERSION = 79;
+export const USER_CONFIG_VERSION = 80;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -1471,6 +1486,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   76,
   77,
   78,
+  79,
   USER_CONFIG_VERSION,
 ];
 

@@ -1,6 +1,7 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import { HISTORY_TRIMMED_NOTICE } from "../agent/history-trim-warning.js";
 import { toolDisabledNotice } from "../agent/tool-disabled-notice.js";
+import { cliOutdatedNotice } from "../agent/cli-outdated-notice.js";
 import { prefixDriftInfoLine, prefixDriftWarning } from "../agent/prefix-drift-warning.js";
 import { formatUsageReport } from "../session/usage-meter.js";
 import { describeFailedAttempts, falloverSentence } from "../llm/fallback/index.js";
@@ -34,13 +35,14 @@ import {
   formatProviderWaitNotice,
 } from "./format-provider-outage.js";
 import { reduceMemoryHealthWarning } from "./reduce-memory-health-warning.js";
-import { formatFeedLine } from "./format-event.js";
+import { formatFeedLine, formatPathRuleAttached } from "./format-event.js";
 import {
   formatFusionWorkerLine,
   fusionWorkerLineColor,
 } from "./format-fusion-worker-line.js";
 import { reduceFusionLiveWorkers } from "./fusion-live-workers.js";
 import { nextApprovalPreviewPage } from "./approval-preview-pages.js";
+import { approvalSessionOnScreen } from "./commands/command-shell-session.js";
 import {
   appendChatMessage,
   appendFeed,
@@ -89,6 +91,7 @@ import {
 } from "./issue-report/index.js";
 import { stepSpeedFromCompletion } from "../llm/step-speed.js";
 import { withReportHint } from "./chat/format-agent-error-for-chat.js";
+import { formatProviderRefusalForChat, isAccountStateFailure } from "./chat/format-provider-refusal-for-chat.js";
 import { rejectedKeyProviderId } from "./chat/rejected-key-provider.js";
 import { withoutMcpAppPage } from "../mcp/mcp-apps.js";
 import type { TuiAction } from "./tui-action.js";
@@ -297,8 +300,9 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       // visible turn in the same press. The request stays pending at
       // the gate; the transcript gets a pointer naming the owner, and
       // `switchSession` re-raises the prompt once that owner is
-      // visible.
-      if (action.request.sessionId !== state.session.sessionId) {
+      // visible. A slash command's shell line in a new chat (ATO-2441)
+      // asks before any session exists: it counts as the chat on screen.
+      if (action.request.sessionId !== approvalSessionOnScreen(state)) {
         return appendChatMessage(state, {
           role: "system",
           text: formatBackgroundApprovalNotice(action.request),
@@ -313,6 +317,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         // prompt's draft must not leak into it.
         approvalPathDraft: null,
         approvalPreviewPage: null,
+        approvalAlwaysArmed: null,
       };
     case "approval_resolved":
       if (state.pendingApproval?.approvalId !== action.approvalId) return state;
@@ -321,12 +326,13 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         pendingApproval: null,
         approvalPathDraft: null,
         approvalPreviewPage: null,
+        approvalAlwaysArmed: null,
         // Resolving the visible turn's request resumes that turn:
         // `running`. Resolving a background turn's request resumes a
         // turn this transcript is not showing — the visible status
         // (idle, or a run of its own) is left alone.
         status:
-          state.pendingApproval.sessionId === state.session.sessionId
+          state.pendingApproval.sessionId === approvalSessionOnScreen(state)
             ? "running"
             : state.status,
       };
@@ -338,6 +344,10 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return { ...state, approvalPathDraft: action.value };
     case "approval_path_edit_closed":
       return { ...state, approvalPathDraft: null };
+    case "approval_always_armed":
+      // Only the prompt on screen can be armed (ATO-2759).
+      if (state.pendingApproval?.approvalId !== action.approvalId) return state;
+      return { ...state, approvalAlwaysArmed: action.approvalId };
     case "approval_preview_paged": {
       const request = state.pendingApproval;
       if (!request) return state;
@@ -466,6 +476,16 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         withMessage,
         "blocked: local model not ready",
       );
+    }
+    case "command_not_sent": {
+      // ATO-2441: a command started from an idle chat put the app in
+      // `running` (`message_submitted`) while its shell lines ran; one was
+      // refused, so no turn follows. Hand the composer back, as for a
+      // gated submit, without a run-history entry.
+      const withNote = appendChatMessage(state, { role: "system", text: action.text, variant: "warn" });
+      return action.resetRun && withNote.status !== "idle" && withNote.status !== "quitting"
+        ? finishRunWithoutHistory(withNote, "command not sent")
+        : withNote;
     }
     case "quit_requested":
       return { ...state, status: "quitting", aborting: true };
@@ -833,6 +853,14 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // sentence says what happened and what to change; the transport
       // wording ("couldn't reach the provider") would not be true.
       const spendLimit = findDailySpendLimitError(event.error);
+      // ATO-1673: a cloud provider that refused (credit, key, rate limit,
+      // model) says which in plain words; its sentence goes under Details.
+      const providerRefusal = formatProviderRefusalForChat(
+        event.failure,
+        event.error.message,
+        !["cloud", "fusion"].includes(selectComposerBackend(state)),
+        describeFailedAttempts(event.error),
+      );
       // ATO-334: the out-of-memory sentence is already plain and says
       // what to do; the transport wording around it would not.
       // ATO-1686: the model kept calling tools that don't exist; the
@@ -840,6 +868,10 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // call failed".
       const chatError = event.failure?.cause === "unknown_tools_repeated"
         ? `${event.failure.phrase} Pick one with /model.\nDetails: ${event.error.message}`
+        // ATO-1678: the sentence already says what fills the window and
+        // what to change; the generic wording would only bury it.
+        : event.failure?.cause === "context_window_too_small"
+        ? event.error.message
         : spendLimit !== null
         ? spendLimit.message
         : isLocalOutOfMemory(event.error)
@@ -850,6 +882,8 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         ? formatAtomicChatNotRunningForChat()
         : badRequest !== null
           ? formatLocalServerErrorForChat(badRequest, event.error.message)
+          : providerRefusal !== null
+          ? providerRefusal
           : formatAgentErrorForChat(
         event.category,
         event.error.message,
@@ -902,7 +936,8 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           }),
           {
             role: "system",
-            text: withReportHint(failureText),
+            // ATO-1673: an empty account or a rate limit is not a bug to file.
+            text: isAccountStateFailure(event.failure) ? failureText : withReportHint(failureText),
             variant: "warn",
             retryText: failedPrompt.length > 0 ? failedPrompt : undefined,
             // ATO-1457: a refused key gets a `[check key]` button.
@@ -1161,6 +1196,10 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // resent the request without it, so the model cannot call it. The
       // loop says so once per tool per turn.
       return appendChatMessage(state, { role: "system", text: toolDisabledNotice(event.tool) });
+    case "cli_outdated":
+      // ATO-2523: the Claude Code / Codex CLI is older than we support.
+      // The loop says so once per session, before a missing flag breaks a turn.
+      return appendChatMessage(state, { role: "system", text: cliOutdatedNotice(event) });
     case "prefix_drift":
       // ATO-316: the cached prompt prefix moved between steps. A change
       // the runtime made on purpose (skills refreshed, a new model) is a
@@ -1369,6 +1408,9 @@ function reduceStepEvent(
         ...state,
         plan: event.plan.items.length > 0 ? event.plan : null,
       };
+    case "path_rule_attached":
+      // ATO-2443: one line in the chat, after the call that matched the rule.
+      return appendChatMessage(state, { role: "system", text: formatPathRuleAttached(event.path) });
     case "rare_tool_autoloaded":
       return appendFeed(state, {
         kind: "runtime_info",

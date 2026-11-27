@@ -27,6 +27,7 @@ describe("fallback panel reducer", () => {
       links: [link("cloud-a", { isActive: true }), link("cloud-b")],
       addableProviderIds: ["cloud-c"],
       appendLocal: false,
+      localFirst: false,
     });
     expect(next.fallbackPanel.links.map((l) => l.providerId)).toEqual([
       "cloud-a",
@@ -34,6 +35,27 @@ describe("fallback panel reducer", () => {
     ]);
     expect(next.fallbackPanel.addableProviderIds).toEqual(["cloud-c"]);
     expect(next.fallbackPanel.appendLocal).toBe(false);
+  });
+
+  it("mirrors localFirst on fallback_refresh (ATO-2434)", () => {
+    const base = createInitialTuiState(fakeSession());
+    expect(base.fallbackPanel.localFirst).toBe(false);
+    const on = reduceTuiState(base, {
+      type: "fallback_refresh",
+      links: [link("cloud-a", { isActive: true })],
+      addableProviderIds: [],
+      appendLocal: false,
+      localFirst: true,
+    });
+    expect(on.fallbackPanel.localFirst).toBe(true);
+    const off = reduceTuiState(on, {
+      type: "fallback_refresh",
+      links: [link("cloud-a", { isActive: true })],
+      addableProviderIds: [],
+      appendLocal: false,
+      localFirst: false,
+    });
+    expect(off.fallbackPanel.localFirst).toBe(false);
   });
 
   it("re-clamps the pane cursor when a refresh shrinks the row list", () => {
@@ -53,6 +75,7 @@ describe("fallback panel reducer", () => {
       links: [link("cloud-a", { isActive: true })],
       addableProviderIds: [],
       appendLocal: false,
+      localFirst: false,
     });
     expect(next.llmPanel.fallbackCursor).toBe(0);
   });
@@ -72,6 +95,7 @@ describe("fallback panel reducer", () => {
       links: [link("cloud-a", { isActive: true })],
       addableProviderIds: ["cloud-b"],
       appendLocal: false,
+      localFirst: false,
     });
     // 1 link + the add row = rows 0..1.
     expect(next.llmPanel.fallbackCursor).toBe(1);
@@ -84,6 +108,7 @@ describe("fallback panel reducer", () => {
       links: [link("cloud-a", { isActive: true })],
       addableProviderIds: ["cloud-b", "cloud-c"],
       appendLocal: true,
+      localFirst: false,
     });
     const opened = reduceTuiState(withAddable, {
       type: "fallback_add_picker_opened",
@@ -110,6 +135,7 @@ describe("fallback panel reducer", () => {
       links: [link("cloud-a", { isActive: true })],
       addableProviderIds: [],
       appendLocal: true,
+      localFirst: false,
     });
     const opened = reduceTuiState(noAddable, {
       type: "fallback_add_picker_opened",
@@ -125,6 +151,7 @@ describe("fallback panel reducer", () => {
         links: [link("cloud-a", { isActive: true })],
         addableProviderIds: ["cloud-b"],
         appendLocal: true,
+        localFirst: false,
       }),
       { type: "fallback_add_picker_opened" },
     );
@@ -134,6 +161,7 @@ describe("fallback panel reducer", () => {
       links: [link("cloud-a", { isActive: true }), link("cloud-b")],
       addableProviderIds: [],
       appendLocal: true,
+      localFirst: false,
     });
     expect(emptied.fallbackPanel.addPicker).toBeNull();
   });
