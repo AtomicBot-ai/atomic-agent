@@ -453,6 +453,13 @@ export function runSlashCommand(
   if (result.resumeInterruptedTurn) {
     runResumeInterruptedTurn(state, dispatch, callbacks);
   }
+  if (result.backgroundJobsCommand !== undefined) {
+    // ATO-2437: `/ps`, `/stop`; the runtime answers with the line to show.
+    const text =
+      callbacks.onBackgroundJobsCommand?.(state.session.sessionId, result.backgroundJobsCommand) ??
+      "no background jobs in this chat";
+    dispatch({ type: "system_message", text });
+  }
   if (result.runModeWorkers !== undefined) {
     callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
   }
