@@ -274,7 +274,7 @@ function buildPool(deadlines: {
   const own = currentAgentProxy();
   if (own !== null) {
     // `network.proxy` (ATO-87) wins over the environment's proxy. Loopback
-    // is in its no-proxy list, and goes on the direct pool while offline.
+    // always goes on the marked direct pool (ATO-2767, offline-network.ts).
     directPool = new Agent(withLoopbackMark(deadlines));
     return new EnvHttpProxyAgent({
       ...deadlines,
@@ -288,9 +288,10 @@ function buildPool(deadlines: {
     // ATO-2767: sockets to this machine mark their errors (loopback-socket-mark.ts).
     return new Agent(withLoopbackMark(deadlines)).compose(offlineNetworkInterceptor());
   }
-  // With a proxy in the environment, loopback requests made while
-  // offline go on a plain Agent: `EnvHttpProxyAgent` would hand them to
-  // the (remote) proxy unless `no_proxy` names them. See
+  // With a proxy in the environment, loopback requests go on a plain,
+  // marked Agent, online or offline: `EnvHttpProxyAgent` would hand them
+  // to the (remote) proxy unless `no_proxy` names them, and its own inner
+  // pool does not mark socket errors (ATO-2767). See
   // `offlineNetworkInterceptor`.
   directPool = new Agent(withLoopbackMark(deadlines));
   return new EnvHttpProxyAgent(deadlines).compose(

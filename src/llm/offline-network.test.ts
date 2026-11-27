@@ -119,6 +119,22 @@ describe("offlineNetworkInterceptor", () => {
     expect(egressSnapshot().bytesOut).toBe(0);
   });
 
+  // ATO-2767: with a proxy-aware pool, loopback must take the marked
+  // direct pool online too; the proxy agent's own inner pool is unmarked.
+  it("sends loopback to the direct pool while online, and remote hosts to the guarded pool", () => {
+    const inner = vi.fn<Dispatcher.Dispatch>(() => true);
+    const directDispatch = vi.fn<Dispatcher.Dispatch>(() => true);
+    const direct = { dispatch: directDispatch } as unknown as Dispatcher;
+    const dispatch = offlineNetworkInterceptor(direct)(inner as Dispatcher.Dispatch);
+    setOfflineNetwork(false);
+    dispatch({ origin: "http://127.0.0.1:9931", path: "/completion", method: "POST" }, {});
+    expect(directDispatch).toHaveBeenCalledTimes(1);
+    expect(inner).not.toHaveBeenCalled();
+    dispatch({ origin: "https://api.example.com", path: "/v1/x", method: "POST" }, {});
+    expect(inner).toHaveBeenCalledTimes(1);
+    expect(directDispatch).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses remote hosts through the handler while offline", () => {
     setOfflineNetwork(true);
     const { inner, onResponseError, result } = run("https://api.example.com");
