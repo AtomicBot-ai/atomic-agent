@@ -56,7 +56,7 @@ function stoppedReplyParts(text) {
         if (fm) { rest = rest.slice(fm[0].length).replace(/^\s+/, ''); changed = true; }
       }
     }
-    return {sentence: say(mt), body: rest.trim()};
+    return {sentence: say(mt), body: rest.trim(), tool: mt[1] || ''};
   }
   return null;
 }
@@ -88,24 +88,32 @@ function markLoopStopped(item, payload) {
   return true;
 }
 
+/** ATO-2754: the step the guard stopped, in the words the tool cards use
+    (renderer.js's toolVerb: `os.web.fetch` is "opened web pages"), or ''
+    when that table is not loaded. A raw tool name is never shown. */
+function stoppedToolWords(tool) {
+  if (!tool || typeof toolVerb !== 'function') return '';
+  const v = String(toolVerb(tool) || '');
+  return v ? v.charAt(0).toLowerCase() + v.slice(1) : '';
+}
+
 /** The dim line above a real answer written after the guard's stop, else ''.
     Shown when the turn's `loop_stopped` frame marked the reply, or when the
-    reply still opens with the guard's parenthesis (an older agent). The
-    canned text, or what the guard stopped, stays in its tooltip. */
+    reply still opens with the guard's parenthesis (an older agent).
+    ATO-2754: plain words on the line and in its tooltip, no "loop guard" and
+    no tool id; the agent's own canned text never reaches the person. */
 function stoppedNoteHTML(m, esc) {
   if (!m || m.k !== 'assistant' || m.placeholder) return '';
   const p = stoppedReplyParts(m.text);
   if (p && !p.body) return '';          // the bare canned stop: the warning row says it
-  let tip = '';
-  if (p) {
-    const t = String(m.text).trim();
-    tip = t.slice(0, t.length - p.body.length).trim();
-  } else if (m.loopStopped && String(m.text || '').trim()) {
-    tip = 'The loop guard stopped further tool calls' + (m.loopStoppedTool ? ' (' + m.loopStoppedTool + ')' : '') + ', and the agent summarized what it found.';
-  } else {
-    return '';
-  }
-  return '<div class="turn tk-stopnote"><div></div><div class="tk-stopnote-t" title="' + esc(tip) + '">Stopped by the loop guard</div></div>';
+  let tool = '';
+  if (p) tool = p.tool;
+  else if (m.loopStopped && String(m.text || '').trim()) tool = m.loopStoppedTool || '';
+  else return '';
+  const words = stoppedToolWords(tool);
+  const tip = 'The agent kept repeating one step' + (words ? ' (' + words + ')' : '')
+    + ' without getting further, so it was stopped and answered with what it had found. The answer may be incomplete.';
+  return '<div class="turn tk-stopnote"><div></div><div class="tk-stopnote-t" title="' + esc(tip) + '">Stopped early: it kept repeating a step</div></div>';
 }
 
 if (typeof module !== 'undefined') module.exports = {stoppedReplyParts, stoppedSentence, stoppedReplyBody, stoppedNoteHTML, markLoopStopped};

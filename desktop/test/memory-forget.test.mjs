@@ -21,8 +21,8 @@ test("dates: today in local time, real days only", () => {
 
 test("the confirm says how many, what goes, what stays, and that it cannot be undone", () => {
   assert.equal(F.memForgetConfirm({ notes: 0, lessons: 0 }, "2026-11-01"), null);
-  const ask = F.memForgetConfirm({ notes: 12, lessons: 1 }, "2026-11-01");
-  assert.equal(ask.title, "Clear memory from before 2026-11-01?");
+  const ask = F.memForgetConfirm({ notes: 12, lessons: 1 }, "2026-11-01", "en-US");
+  assert.equal(ask.title, "Clear memory from before November 1, 2026?");
   assert.match(ask.msg, /^12 notes and 1 lesson made before that day/);
   assert.match(ask.msg, /Profile\) stays/);
   assert.match(ask.msg, /cannot be undone/);
@@ -139,4 +139,15 @@ test("main: a bad date, a remote agent, an old agent, a failure", { skip: !M && 
   assert.match((await M.memoryForget(old, false, { before: "2026-11-01" })).error, /cannot clear memory by date yet/);
   const fail = async () => ({ ok: false, stdout: "", stderr: "memory forget failed: database is locked\n" });
   assert.equal((await M.memoryForget(fail, false, { before: "2026-11-01" })).error, "Could not clear memory: memory forget failed: database is locked");
+});
+
+// ATO-2754: the day in the person's own locale, never the machine's YYYY-MM-DD.
+test("the confirm and the empty line write the day as the locale does", () => {
+  assert.equal(F.memForgetDateText("2026-11-01", "en-US"), "November 1, 2026");
+  assert.equal(F.memForgetDateText("2026-11-01", "en-GB"), "1 November 2026");
+  assert.doesNotMatch(F.memForgetConfirm({ notes: 1, lessons: 0 }, "2026-11-27").title, /2026-11-27/);
+  assert.equal(F.memForgetDateText("not a day"), "not a day", "a broken value is shown as is");
+  const empty = F.memForgetHTML({ open: true, date: "2026-11-01", phase: "empty", counts: { notes: 0, lessons: 0 } }, h);
+  assert.doesNotMatch(empty, /made before 2026-11-01/);
+  assert.match(empty, /value="2026-11-01"/, "the date field keeps the machine form it needs");
 });
