@@ -149,6 +149,8 @@ export function buildOsFsWritePptxTool(options: OsFsWritePptxOptions): ToolDefin
           layouts: built.layouts.map((slide) => slide.layout),
           movedToNotes: moved,
           replaced: exists,
+          // ATO-2518: what is on disk now, read after the prompt, for the chat's "Changed files" row.
+          change: replacing === null ? "created" : "updated",
           ...(restoreNote === null ? {} : { restoreCopy: restoreNote.saved }),
         },
       });
