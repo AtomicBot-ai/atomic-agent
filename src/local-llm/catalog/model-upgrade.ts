@@ -26,6 +26,12 @@ import {
 } from "./models-catalog.js";
 import { recommendedModelFor } from "./recommended-model.js";
 import type { MemoryBandwidth } from "../backend/memory-bandwidth.js";
+import {
+  activeShareFromName,
+  moeSplitFor,
+  type CpuMoeSetting,
+  type MoeSplit,
+} from "./moe-split-fit.js";
 
 /** What the recommendation needs to know about the machine. */
 export interface MachineForModels {
@@ -51,6 +57,11 @@ export interface MachineForModels {
    * when the machine was not probed for it; nothing then forecasts.
    */
   bandwidth?: MemoryBandwidth;
+  /**
+   * ATO-2455: `localModels.managed.cpuMoe` (absent: `"auto"`). `"off"`
+   * keeps a mixture-of-experts model that overflows the GPU "too big".
+   */
+  cpuMoe?: CpuMoeSetting;
 }
 
 /**
@@ -93,6 +104,30 @@ export interface ModelTiers {
 
 export interface ModelTierOptions {
   catalog?: readonly LocalModelDef[];
+  /**
+   * ATO-2455: count a mixture-of-experts model that fits only with its
+   * experts partly in system RAM (`moeSplitOf`). On for `models
+   * recommend`; the background upgrade (`decideModelUpgrade`) leaves it
+   * off, so it never fetches a model that answers slower than the one
+   * fully on the GPU without a measurement saying otherwise.
+   */
+  expertsInRam?: boolean;
+}
+
+/**
+ * ATO-2455: how a catalog model would split between the GPU and RAM
+ * (`moe-split-fit.ts`), or `null` when it fits whole or not at all.
+ */
+export function moeSplitOf(def: LocalModelDef, machine: MachineForModels): MoeSplit | null {
+  return moeSplitFor({
+    weightsGb: def.fileSizeGb,
+    activeShare: activeShareFromName(`${def.name} ${def.filename}`),
+    ramGb: machine.ramGb,
+    gpuWeightsGb: machine.gpuBudgetGb === null ? null : machine.gpuBudgetGb * GPU_WEIGHTS_SHARE,
+    cpuOnly: machine.cpuOnly,
+    ...(machine.bandwidth ? { bandwidth: machine.bandwidth } : {}),
+    ...(machine.cpuMoe === undefined ? {} : { cpuMoe: machine.cpuMoe }),
+  });
 }
 
 /**
@@ -106,12 +141,17 @@ export function modelsThisMachineCarries(
   const catalog = options.catalog ?? LOCAL_MODELS_CATALOG;
   return catalog.filter((def) => {
     if (def.recommendRank === undefined || def.uncensored === true) return false;
-    if (def.recommendedRamGb > machine.ramGb) return false;
+    // Experts in RAM: the GPU holds the rest, so the RAM needs only the
+    // comfortable envelope of the experts' part, not the whole model's.
+    const split = options.expertsInRam === true ? moeSplitOf(def, machine) : null;
+    const splits = split !== null && split.comfortable && def.minRamGb <= machine.ramGb;
+    if (def.recommendedRamGb > machine.ramGb && !splits) return false;
     const weights = def.fileSizeGb;
     if (machine.cpuOnly && weights > CPU_ONLY_MAX_MODEL_GB) return false;
     if (
       machine.gpuBudgetGb !== null &&
-      weights > machine.gpuBudgetGb * GPU_WEIGHTS_SHARE
+      weights > machine.gpuBudgetGb * GPU_WEIGHTS_SHARE &&
+      !splits
     ) {
       return false;
     }
@@ -132,10 +172,11 @@ export function recommendModelTiers(
 ): ModelTiers {
   const carried = modelsThisMachineCarries(machine, options);
   if (carried.length === 0) return { fast: null, balanced: null, quality: null };
-  // recommendedModelFor checks RAM again; the list is already filtered.
-  const quality = recommendedModelFor(machine.ramGb, { catalog: carried });
+  // The list is already filtered for RAM (and for experts in RAM, which
+  // may pass below `recommendedRamGb`), so the rank alone picks.
+  const quality = recommendedModelFor(Number.POSITIVE_INFINITY, { catalog: carried });
   const balanced =
-    recommendedModelFor(machine.ramGb, {
+    recommendedModelFor(Number.POSITIVE_INFINITY, {
       catalog: carried,
       maxDownloadGb: BALANCED_MAX_DOWNLOAD_GB,
     }) ?? quality;

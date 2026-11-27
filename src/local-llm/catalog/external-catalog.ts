@@ -345,7 +345,8 @@ export function catalogCompatibility(
   def: LocalModelDef,
   machine: MachineForModels,
 ): CatalogCompatibility {
-  let fit = quantFitFor(def.fileSizeGb, machine);
+  const activeShare = activeShareFromName(`${def.name} ${def.filename}`);
+  let fit = quantFitFor(def.fileSizeGb, machine, activeShare);
   const vram = def.vramGb;
   if (
     fit.tier === "fits" &&
@@ -358,20 +359,29 @@ export function catalogCompatibility(
   }
   if (def.minRamGb > machine.ramGb) {
     fit = { tier: "too-big", label: "Too big", placement: "disk" };
-  } else if (fit.tier === "fits" && def.recommendedRamGb > machine.ramGb) {
+  } else if (
+    fit.tier === "fits" &&
+    fit.placement !== "split" &&
+    def.recommendedRamGb > machine.ramGb
+  ) {
+    // `recommendedRamGb` is the whole model's; with experts in RAM the
+    // GPU holds the rest, and the split rule already weighed the RAM.
     fit = { tier: "tight", label: "Tight fit", placement: "ram" };
   }
   const speed = forecastDecodeSpeed({
     weightsGb: def.fileSizeGb,
-    activeShare: activeShareFromName(`${def.name} ${def.filename}`),
+    activeShare,
     machine,
     fit,
   });
   const why =
-    fit.tier === "too-big"
-      ? `needs ${def.minRamGb} GB of memory, this machine has ${machine.ramGb}`
-      : fit.tier === "tight"
-        ? `wants ${def.recommendedRamGb} GB${vram !== undefined ? ` and ${vram} GB of GPU memory` : ""}; it will run slowly here`
-        : `wants ${def.recommendedRamGb} GB, this machine has ${machine.ramGb}`;
+    fit.placement === "split"
+      ? `runs on the GPU with some of its experts in system RAM` +
+        (fit.tier === "tight" ? `; ${machine.ramGb} GB of RAM barely holds them, it will run slowly here` : "")
+      : fit.tier === "too-big"
+        ? `needs ${def.minRamGb} GB of memory, this machine has ${machine.ramGb}`
+        : fit.tier === "tight"
+          ? `wants ${def.recommendedRamGb} GB${vram !== undefined ? ` and ${vram} GB of GPU memory` : ""}; it will run slowly here`
+          : `wants ${def.recommendedRamGb} GB, this machine has ${machine.ramGb}`;
   return { fit, speed, why };
 }
