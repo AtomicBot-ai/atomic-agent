@@ -126,6 +126,7 @@ export const CONVERSATION_SECTION_LABEL = "conversation";
 /** Rows the panel breaks down into `parts`. */
 export const PROMPT_SCAFFOLD_SECTION_LABEL = "prompt scaffold";
 export const LOADED_TOOLS_SECTION_LABEL = "loaded tools";
+export const PROJECT_INSTRUCTIONS_SECTION_LABEL = "project instructions";
 
 /**
  * Order the sections are shown in: the fixed cost first, then the
@@ -141,6 +142,8 @@ const SECTIONS: readonly {
   { key: "stablePrefix", label: PROMPT_SCAFFOLD_SECTION_LABEL },
   { key: "conversation", label: CONVERSATION_SECTION_LABEL },
   { key: "compaction", label: "context summary" },
+  // ATO-2452: the chat's project instructions (ATO-42), counted in `total`.
+  { key: "project", label: PROJECT_INSTRUCTIONS_SECTION_LABEL },
   { key: "recalled", label: "recalled memory" },
   { key: "memoryIndex", label: "memory index" },
   { key: "worldSnapshot", label: "world snapshot" },
