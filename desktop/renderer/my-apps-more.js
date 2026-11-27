@@ -65,7 +65,7 @@ function maxRowButtonsHTML(app, off) {
 function maxVersionsHTML(app) {
   if (MAV.open !== app.id) return '';
   let body;
-  if (MAV.loading) body = '<div class="ma-vrow ma-vnote"><span class="tk-spin" aria-hidden="true"></span><span>reading versions…</span></div>';
+  if (MAV.loading) body = '<div class="ma-vrow ma-vnote"><span class="tk-spin" aria-hidden="true"></span><span>Reading versions…</span></div>';
   else if (MAV.err) body = '<div class="ma-vrow ma-vnote tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(MAV.err) + '</span></div>';
   else if (!MAV.list || !MAV.list.length) body = '<div class="ma-vrow ma-vnote">No earlier versions. Each change to the page keeps the one before it here.</div>';
   else {

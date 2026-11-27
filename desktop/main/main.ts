@@ -4305,7 +4305,7 @@ function sidebarHeadersExpected(sb: { pinnedRows?: number; folders?: number; tas
 /** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js, studio/shell.js).
     W2: Studio's one row, then Cron jobs (the Tasks tab), Skills and Plugins; New project is on the Projects header.
     ATO-1072: Recipes last (the saved recipes sheet). */
-const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Studio", "Scheduled tasks", "Task board", "Skills", "Plugins", "Recipes"]);   // ATO-2257: Task board
+const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Studio", "Scheduled tasks", "Task board", "Skills", "Plugins", "Recipes", "Apps"]);   // ATO-2257: Task board; ATO-2459: Apps
 type Sb = {
   headers: string[];
   pinnedRows?: number;

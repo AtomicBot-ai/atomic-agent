@@ -19,6 +19,15 @@ test('the section rows are Scheduled tasks, Task board, Skills, Plugins, Recipes
   assert.deepEqual(sidebarNavItems(null, {projects: true}).map((n) => n.label), ['Scheduled tasks', 'Task board', 'Skills', 'Plugins', 'Recipes', 'Apps']);
 });
 
+// ATO-2459 review: the smokes' "renderer painted" check compares the painted rows
+// (Studio, then these) with main.ts SIDEBAR_NAV_EXPECTED exactly; a new row must land in both.
+test('main.ts SIDEBAR_NAV_EXPECTED is Studio followed by every section row', () => {
+  const main = readFileSync(new URL('../main/main.ts', import.meta.url), 'utf8');
+  const m = main.match(/const SIDEBAR_NAV_EXPECTED = JSON\.stringify\((\[[^\]]*\])\)/);
+  assert.ok(m, 'SIDEBAR_NAV_EXPECTED is a JSON.stringify of a literal list');
+  assert.deepEqual(JSON.parse(m[1]), ['Studio', ...sidebarNavItems(null).map((n) => n.label)]);
+});
+
 test('the row whose Settings tab is open is the lit one', () => {
   assert.deepEqual(sidebarNavItems('tasks').map((n) => n.on), [true, false, false, false, false, false]);
   assert.deepEqual(sidebarNavItems('skills').map((n) => n.on), [false, false, true, false, false, false]);
