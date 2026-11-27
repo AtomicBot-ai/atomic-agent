@@ -1058,18 +1058,29 @@ export function buildFusionDelegateTool(
       // One failure breaker per leg (ATO-1406): a run of identical
       // failures, or one blocker, stops new starts on that leg; workers
       // already running finish. Fed by every finished row, consulted
-      // with the turn's caps before each task starts.
+      // with the turn's caps before each task starts. A leg is the
+      // provider entry AND the model it runs (legKey): two roles on one
+      // shared entry with a model each are two legs, so one role's
+      // broken model does not stop the other role's tasks.
       const breakers = new Map<string, FanoutFailureBreaker>();
-      const breakerFor = (providerId: string): FanoutFailureBreaker => {
-        let breaker = breakers.get(providerId);
+      const breakerFor = (
+        providerId: string,
+        turnModel: string | undefined,
+      ): FanoutFailureBreaker => {
+        const key = legKey({
+          providerId,
+          ...(turnModel === undefined ? {} : { turnModel }),
+        });
+        let breaker = breakers.get(key);
         if (breaker === undefined) {
           breaker = new FanoutFailureBreaker(providerId);
-          breakers.set(providerId, breaker);
+          breakers.set(key, breaker);
         }
         return breaker;
       };
       const guardOptionsFor = (
         providerId: string,
+        turnModel: string | undefined,
         pricing: WorkerPricing | undefined,
         model: string,
         tasks: readonly DelegateTask[],
@@ -1086,7 +1097,7 @@ export function buildFusionDelegateTool(
           "shouldStart" | "onWorkerUsage"
         > = budgetOptionsFor(pricing);
         const checkpoint = checkpointOptionsFor(pricing);
-        const breaker = breakerFor(providerId);
+        const breaker = breakerFor(providerId, turnModel);
         // The outcome log (ATO-949): one row per finished task, counts
         // and labels only. A split's proposal is not an outcome.
         const briefs = new Map(tasks.map((t) => [t.id, t]));
@@ -1248,7 +1259,13 @@ export function buildFusionDelegateTool(
             writeScope,
             ...quietWorkerOptions,
             signal: runSignal,
-            ...guardOptionsFor(workerProviderId, workerPricing, workerModel, tasks),
+            ...guardOptionsFor(
+              workerProviderId,
+              mode.workerTurnModel,
+              workerPricing,
+              workerModel,
+              tasks,
+            ),
             ...escalationOptions,
             ...(briefSuffix === undefined ? {} : { briefSuffix }),
             ...(workerPricing === undefined ? {} : { workerPricing }),
@@ -1333,7 +1350,13 @@ export function buildFusionDelegateTool(
             writeScope,
             ...quietWorkerOptions,
             signal: runSignal,
-            ...guardOptionsFor(leg.providerId, pricing, leg.model, tasks),
+            ...guardOptionsFor(
+              leg.providerId,
+              leg.turnModel,
+              pricing,
+              leg.model,
+              tasks,
+            ),
             // Dropped only where the target is this leg's own model: a
             // second model on the same provider still escalates (ATO-1561).
             ...(escalationTarget?.providerId === leg.providerId &&

@@ -2010,6 +2010,55 @@ describe("fusion.delegate models by role (ATO-943)", () => {
     expect(rows[1]).toMatchObject({ model: "anthropic/claude-opus-5.5", modelRole: "plan" });
   });
 
+  it("keeps one failure breaker per model on a shared provider entry", async () => {
+    // Review's model breaks the tool-call protocol (a blocker). Keyed by
+    // provider alone, that breaker would also stop plan's tasks on the
+    // same entry, though plan runs a different, healthy model.
+    const shared: NonNullable<ResolvedRunMode["roles"]> = {
+      byRole: {
+        review: { providerId: "openrouter", model: "broken/model", turnModel: "broken/model", local: false },
+        plan: { providerId: "openrouter", model: "healthy/model", turnModel: "healthy/model", local: false },
+      },
+      mixLocalModels: false,
+      localLegProviderIds: ["local-llama"],
+    };
+    const ran: string[] = [];
+    const result = await buildFusionDelegateTool(
+      deps({
+        resolveRunMode: () => fusionMode({ roles: shared }),
+        workerSupportsSlotAffinity: affine,
+        runTurn: async (session, _msg, options) => {
+          const meta = session.metadata?.fusionWorker as { taskId: string };
+          ran.push(meta.taskId);
+          if (options.model === "broken/model") {
+            throw new Error("invalid tool-call JSON: oops");
+          }
+          return turnResult();
+        },
+      }),
+    ).run(
+      {
+        tasks: [
+          { id: "r1", instructions: "check one", role: "review" },
+          { id: "r2", instructions: "check two", role: "review" },
+          { id: "p1", instructions: "outline one", role: "plan" },
+          { id: "p2", instructions: "outline two", role: "plan" },
+        ],
+      },
+      ctx(),
+    );
+    const rows = result.details.tasks as WorkerTaskResult[];
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get("r1")?.status).toBe("failed");
+    // Plan's leg never tripped: both of its tasks started and finished.
+    expect(ran).toEqual(expect.arrayContaining(["p1", "p2"]));
+    expect(byId.get("p1")?.status).toBe("ok");
+    expect(byId.get("p2")?.status).toBe("ok");
+    for (const id of ["p1", "p2"]) {
+      expect(byId.get(id)?.error ?? "").not.toMatch(/^not started:/);
+    }
+  });
+
   it("refuses a model that is not on the allowed list before any worker starts", async () => {
     const runTurn = vi.fn(async () => turnResult());
     const result = await buildFusionDelegateTool(
