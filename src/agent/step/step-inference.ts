@@ -160,6 +160,7 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
       ? { originalRequest: ctx.originalRequest }
       : {}),
     ...(ctx.routeNote !== undefined ? { routeNote: ctx.routeNote } : {}),
+    ...(ctx.hookContext !== undefined ? { hookContext: ctx.hookContext } : {}),
     ...(ctx.answerChannel !== undefined
       ? { answerChannel: ctx.answerChannel }
       : {}),

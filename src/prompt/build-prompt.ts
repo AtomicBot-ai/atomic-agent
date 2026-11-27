@@ -527,6 +527,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   if (input.routeNote && input.routeNote.length > 0) {
     tailAfter.push(`### route`, input.routeNote, ``);
   }
+  if (input.hookContext && input.hookContext.length > 0) {
+    tailAfter.push(`### hook-context`, input.hookContext, ``);
+  }
   if (profile !== null) {
     tailAfter.push("### profile", profile, ``);
   }
@@ -697,7 +700,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       : null,
     compactionBudget: {
       cap: Math.max(0, conversationCapEffective - taskPolicyTokens - estimateTokens([
-        input.transientNotice, input.routeNote, input.currentDate, requestSection,
+        input.transientNotice, input.routeNote, input.hookContext, input.currentDate, requestSection,
       ].filter(Boolean).join("\n"))),
       activeTokens: compactionTokens + estimateTokens(renderPackedConversation({ visibleTurns: projection.turns, droppedSummary: null })),
       activePairs: pairTokenCosts(projection.turns, projection.macroTurnStarts).length,

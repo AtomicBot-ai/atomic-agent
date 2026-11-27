@@ -46,6 +46,7 @@ export function cloudContextSections(input: BuildPromptInput): Map<string, strin
   add("procedures", renderProceduresSection(state.recalledProcedures ?? []));
   add("task-policy", renderTaskPolicy({ turns: state.turns, userMessage: input.userMessage })?.body);
   add("route", input.routeNote);
+  add("hook-context", input.hookContext);
   add("notice", input.transientNotice);
   add("current-date", input.currentDate);
   return sections;

@@ -181,6 +181,12 @@ export interface BuildPromptInput {
    * stable prefix never moves.
    */
   routeNote?: string;
+  /**
+   * Text the user's SessionStart / UserPromptSubmit hooks printed for this
+   * turn (ATO-2198). Rendered as `### hook-context` right after `### route`,
+   * in the tail for the same reason.
+   */
+  hookContext?: string;
   profile?: ModelProfile;
   /**
    * Suppress the llama-server template artifacts around the generation

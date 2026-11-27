@@ -983,6 +983,20 @@ describe("buildPrompt", () => {
     expect(withNote.messages.system).toBe(withoutNote.messages.system);
   });
 
+  it("renders hookContext as ### hook-context after the conversation, outside the stable prefix (ATO-2198)", () => {
+    const context = "Branch: feat/x. Tests last run: green.";
+    const base = { session: mkSession(), toolDescriptors: TOOLS, capabilities: CAPS, skillCatalog: SKILLS };
+    const withContext = buildPrompt({ ...base, hookContext: context });
+    const without = buildPrompt(base);
+    expect(withContext.stablePrefix).toBe(without.stablePrefix);
+    expect(without.tail).not.toContain("### hook-context");
+    const conversationIdx = withContext.tail.indexOf("### conversation");
+    const hookIdx = withContext.tail.indexOf(`### hook-context\n${context}`);
+    expect(hookIdx).toBeGreaterThan(conversationIdx);
+    expect(withContext.messages.tail).toContain(context);
+    expect(withContext.messages.system).toBe(without.messages.system);
+  });
+
   it("does not include transientNotice in the stable prefix", () => {
     const withNotice = buildPrompt({
       session: mkSession(),

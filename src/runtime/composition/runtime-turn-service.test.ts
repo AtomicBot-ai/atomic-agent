@@ -682,6 +682,39 @@ describe("runtime turn ownership recipes", () => {
     await flushNaming();
     expect(naming).toHaveBeenCalledTimes(1);
   });
+
+  it("session hooks: hook context reaches the loop, a Stop block runs it again, a blocked prompt saves nothing (ATO-2198)", async () => {
+    const afterTurn = vi.fn(async () => undefined as string | undefined).mockResolvedValueOnce("tests are red");
+    const beforeTurn = vi.fn(async () => ({ kind: "proceed" as const, context: "on branch main" }));
+    const service = createRuntimeTurnService(fixture.config, { ...fixture.deps, sessionHooks: { beforeTurn, afterTurn } });
+    const output = await service.executeTurn(session("hooked"), "request");
+    expect(fixture.loop.runTurn).toHaveBeenCalledTimes(2);
+    expect(fixture.loop.runTurn.mock.calls[0]?.[1]).toMatchObject({ userMessage: "request", hookContext: "on branch main" });
+    expect(fixture.loop.runTurn.mock.calls[1]?.[1]?.userMessage).toContain("tests are red");
+    expect(fixture.loop.runTurn.mock.calls[1]?.[1]).not.toHaveProperty("hookContext");
+    expect(output.stepCount).toBe(2);
+    expect(fixture.rows.get("hooked")).toBe(output.session);
+
+    fixture.events.length = 0;
+    const blocking = createRuntimeTurnService(fixture.config, {
+      ...fixture.deps,
+      sessionHooks: { beforeTurn: async () => ({ kind: "blocked" as const, reason: "no secrets" }), afterTurn },
+    });
+    await expect(blocking.executeTurn(session("refused"), "my key")).rejects.toThrow("no secrets");
+    expect(fixture.events).toEqual([]);
+    expect(fixture.rows.has("refused")).toBe(false);
+    expect(fixture.loop.runTurn).toHaveBeenCalledTimes(2);
+  });
+
+  it("subagent turns run no session hooks (ATO-2198)", async () => {
+    const beforeTurn = vi.fn(async () => ({ kind: "proceed" as const }));
+    const afterTurn = vi.fn(async () => "more" as string | undefined);
+    const service = createRuntimeTurnService(fixture.config, { ...fixture.deps, sessionHooks: { beforeTurn, afterTurn } });
+    await service.executeTurn(session("sub"), "brief", { origin: "subagent" });
+    expect(beforeTurn).not.toHaveBeenCalled();
+    expect(afterTurn).not.toHaveBeenCalled();
+    expect(fixture.loop.runTurn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("stoppedForMoney (ATO-1350)", () => {

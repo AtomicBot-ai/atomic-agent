@@ -6,8 +6,14 @@
  *       { "type": "command", "command": "./check.sh", "timeout": 30 } ] } ] } }
  */
 
+/** Events fired around one tool call (`hook-engine.ts`). */
+export const TOOL_HOOK_EVENTS = ["PreToolUse", "PostToolUse"] as const;
+
+/** Events fired around a session's turns and compaction (`session-hook-engine.ts`). */
+export const SESSION_HOOK_EVENTS = ["SessionStart", "UserPromptSubmit", "Stop", "PreCompact"] as const;
+
 /** Events the agent fires today. Other Claude events parse but never run. */
-export const FIRED_HOOK_EVENTS = ["PreToolUse", "PostToolUse"] as const;
+export const FIRED_HOOK_EVENTS = [...TOOL_HOOK_EVENTS, ...SESSION_HOOK_EVENTS] as const;
 
 /** Every event name Claude Code documents; accepted in config without a diagnostic. */
 export const KNOWN_HOOK_EVENTS = [
@@ -23,7 +29,8 @@ export const KNOWN_HOOK_EVENTS = [
 ] as const;
 
 export type HookEventName = (typeof KNOWN_HOOK_EVENTS)[number];
-export type ToolHookEvent = (typeof FIRED_HOOK_EVENTS)[number];
+export type ToolHookEvent = (typeof TOOL_HOOK_EVENTS)[number];
+export type SessionHookEvent = (typeof SESSION_HOOK_EVENTS)[number];
 
 /** Claude's default per-command timeout. */
 export const DEFAULT_HOOK_TIMEOUT_MS = 60_000;

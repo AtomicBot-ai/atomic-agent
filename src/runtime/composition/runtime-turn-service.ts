@@ -39,6 +39,8 @@ import { createRuntimeGoalRunner } from "./runtime-goal.js";
 import { createNextStepSuggester } from "./runtime-next-step.js";
 import type { createExperienceReviewer } from "./runtime-experience-review.js";
 import { routeTurnProvider } from "./runtime-turn-router.js";
+import { continueOnStopHooks, startTurnHooks } from "./runtime-session-hooks.js";
+import type { SessionHookEngine } from "../../hooks/session-hook-engine.js";
 import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
 import { surfaceShowsQuestions, withAskUserVisibility } from "../../tools/conversation/ask-user-surface.js";
 
@@ -128,6 +130,8 @@ export interface RuntimeTurnDependencies {
    * `runtime-experience-review.ts`). Omitted (tests, embedders): no review.
    */
   experienceReview?: Pick<ReturnType<typeof createExperienceReviewer>, "maybeReview">;
+  /** SessionStart / UserPromptSubmit / Stop hooks (ATO-2198). Absent: none run. */
+  sessionHooks?: Pick<SessionHookEngine, "beforeTurn" | "afterTurn">;
   /**
    * `isStopping` (ATO-1688): the host has begun to stop. Omitted, the
    * shutdown itself is the only sign (`isShutdown`).
@@ -536,6 +540,14 @@ export function createRuntimeTurnService(
         }
       });
     }
+    // ATO-2198: SessionStart and UserPromptSubmit hooks, before the turn
+    // writes anything, so a refused prompt (it throws) leaves no trace.
+    // A subagent's turn is not a prompt the user submitted (Claude Code
+    // gives those SubagentStop, not Stop), so it runs none of them.
+    const sessionHooks = runOptions.origin === "subagent" || runOptions.origin === "fusion"
+      ? null
+      : deps.sessionHooks ?? null;
+    const hookContext = await startTurnHooks(sessionHooks, session, userMessage, runOptions.signal);
     // The model router (ATO-483), once per turn and before anything reads
     // the route: a rule's provider goes first in this session's fallback
     // chain for the turn, so every step starts on it and a failure falls
@@ -673,9 +685,10 @@ export function createRuntimeTurnService(
           sessionId: session.id,
           attended: isAttendedTurn(runOptions.origin, runOptions.interactive),
         };
-        const result = await runInBrowserScope(browserScope, () => loop.runTurn(session, {
-          userMessage,
+        const runLoop = (state: SessionState, message: string, context?: string) => runInBrowserScope(browserScope, () => loop.runTurn(state, {
+          userMessage: message,
           modelModePolicy,
+          ...(context !== undefined ? { hookContext: context } : {}),
           // The same record the workers' briefs quote, pinned into the
           // orchestrator's own prompt once the packer drops its carrier.
           ...(turnRequest !== undefined
@@ -690,9 +703,16 @@ export function createRuntimeTurnService(
             ...runOptions,
             ...(toolFilter !== undefined ? { toolFilter } : {}),
           }),
-          onStepCheckpoint: (state, step) =>
-            checkpointStep(state, progress.atStep(step)),
+          onStepCheckpoint: (stepState, step) =>
+            checkpointStep(stepState, progress.atStep(step)),
         }));
+        // A Stop hook may send the agent back to work (ATO-2198).
+        const result = await continueOnStopHooks(
+          sessionHooks,
+          await runLoop(session, userMessage, hookContext),
+          runOptions.signal,
+          (state, message) => runLoop(state, message),
+        );
         // Stamp the turn's window occupancy so the stored session can
         // restore the TUI's context gauge when it is reopened. A turn
         // that built no prompt (failed before step 1) leaves whatever

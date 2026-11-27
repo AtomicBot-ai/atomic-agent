@@ -31,6 +31,11 @@ export interface CompactionRunnerDependencies {
    * (ATO-676). Absent, or the flag off, no flush call is made.
    */
   memoryNotes?: MemoryFlushNotes;
+  /**
+   * PreCompact hooks (ATO-2198), awaited before the checkpoint is built.
+   * They only observe: whatever they do, the compaction goes on.
+   */
+  beforeCompact?(facts: { sessionId: string; cwd: string; trigger: "manual" | "auto"; instructions?: string; signal: AbortSignal }): Promise<void>;
 }
 
 export interface CompactionRunOptions extends CompactionStepOptions {
@@ -73,6 +78,8 @@ export async function runContextCompaction(
   let fellBack = false;
   emit({ type: "compaction_started", sessionId: state.id, reason: plan.reason, tokensBefore: plan.tokensBefore });
   try {
+    options.signal.throwIfAborted();
+    await runPreCompactHooks(deps, state, plan, options);
     options.signal.throwIfAborted();
     const route = deps.route(state.id, options.providerId);
     const prompt = buildPrompt(input);
@@ -187,4 +194,23 @@ export async function runContextCompaction(
     emit({ type: "compaction_failed", sessionId: state.id, result, usage: tally.usage, calls: tally.calls });
     return { state, result, ...(failure?.timedOut ? { timedOut: true } : {}) };
   }
+}
+
+/** A PreCompact hook that throws is logged by its engine; it never fails the compaction. */
+async function runPreCompactHooks(
+  deps: CompactionRunnerDependencies,
+  state: SessionState,
+  plan: CompactionPlan,
+  options: CompactionRunOptions,
+): Promise<void> {
+  if (!deps.beforeCompact) return;
+  try {
+    await deps.beforeCompact({
+      sessionId: state.id,
+      cwd: state.workingDir,
+      trigger: plan.reason === "manual" ? "manual" : "auto",
+      ...(options.instructions ? { instructions: options.instructions } : {}),
+      signal: options.signal,
+    });
+  } catch { /* Hooks only observe a compaction. */ }
 }

@@ -628,6 +628,13 @@ export interface RunTurnOptions {
    */
   routeNote?: string;
   /**
+   * What the user's SessionStart / UserPromptSubmit hooks printed for this
+   * turn (ATO-2198, `hooks/session-hook-engine.ts`). Reaches every step of
+   * this turn as `### hook-context`, after the conversation; the next turn
+   * carries only what its own hooks print.
+   */
+  hookContext?: string;
+  /**
    * The surface that shows this turn's reply (terminal, desktop,
    * Telegram, Discord), from the turn's origin. Reaches every step's
    * stable prefix as `### answer-style` (`prompt/answer-style.ts`).
