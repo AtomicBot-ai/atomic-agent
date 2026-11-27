@@ -24,10 +24,13 @@ export interface AutofixState {
   paused: boolean;
   /** The PR head branch autofix was enabled for. */
   headRef: string;
-  /** SHA autofix last pushed; a different remote head means a person pushed. */
+  /** SHA autofix last pushed; a third remote head means a person pushed. */
   lastPushedSha: string | null;
-  /** Local worktree the fixes are made in, once prepared. */
-  worktreeDir: string | null;
+  /**
+   * The PR head GitHub reported just before that push. GitHub can still
+   * report it for a while after the push lands; that is not a move.
+   */
+  prevHeadSha: string | null;
   updatedAt: string;
 }
 
@@ -43,7 +46,6 @@ export function enableAutofix(
   headRef: string,
   maxAttempts: unknown,
   now: Date,
-  prior?: AutofixState,
 ): AutofixState {
   return {
     enabled: true,
@@ -52,7 +54,7 @@ export function enableAutofix(
     paused: false,
     headRef,
     lastPushedSha: null,
-    worktreeDir: prior?.headRef === headRef ? prior.worktreeDir : null,
+    prevHeadSha: null,
     updatedAt: now.toISOString(),
   };
 }
@@ -63,9 +65,11 @@ export type AttemptDecision =
 
 /**
  * May one more autofix push happen now? `remoteHeadSha` is the PR's
- * head as GitHub reports it. If it is not the SHA autofix last pushed,
- * a person pushed in between: the counter restarts and a pause lifts,
- * because the cap is "attempts per PR head", not per PR lifetime.
+ * head as GitHub reports it. If it is neither the SHA autofix last
+ * pushed nor the head seen just before that push (GitHub lagging behind
+ * our own push), a person pushed in between: the counter restarts and a
+ * pause lifts, because the cap is "attempts per PR head", not per PR
+ * lifetime.
  */
 export function decideAttempt(
   state: AutofixState | undefined,
@@ -80,7 +84,7 @@ export function decideAttempt(
       paused: false,
       headRef: "",
       lastPushedSha: null,
-      worktreeDir: null,
+      prevHeadSha: null,
       updatedAt: now.toISOString(),
     };
     return {
@@ -91,9 +95,11 @@ export function decideAttempt(
     };
   }
   const humanMoved =
-    state.lastPushedSha !== null && state.lastPushedSha !== remoteHeadSha;
+    state.lastPushedSha !== null &&
+    remoteHeadSha !== state.lastPushedSha &&
+    remoteHeadSha !== state.prevHeadSha;
   const current: AutofixState = humanMoved
-    ? { ...state, attempts: 0, paused: false, lastPushedSha: null }
+    ? { ...state, attempts: 0, paused: false, lastPushedSha: null, prevHeadSha: null }
     : state;
   if (current.paused || current.attempts >= current.maxAttempts) {
     return {
@@ -105,10 +111,14 @@ export function decideAttempt(
   return { ok: true, state: current, resetByHumanPush: humanMoved };
 }
 
-/** Count a push that went through; pause when the cap is reached. */
+/**
+ * Count a push that went through; pause when the cap is reached.
+ * `prevHeadSha` is the PR head GitHub reported before this push.
+ */
 export function recordAutofixPush(
   state: AutofixState,
   pushedSha: string,
+  prevHeadSha: string,
   now: Date,
 ): AutofixState {
   const attempts = state.attempts + 1;
@@ -117,6 +127,7 @@ export function recordAutofixPush(
     attempts,
     paused: attempts >= state.maxAttempts,
     lastPushedSha: pushedSha,
+    prevHeadSha,
     updatedAt: now.toISOString(),
   };
 }

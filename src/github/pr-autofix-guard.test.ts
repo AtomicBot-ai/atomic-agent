@@ -93,8 +93,9 @@ describe("attempt cap", () => {
     for (let i = 1; i <= 3; i++) {
       const d = decideAttempt(state, remote, NOW);
       expect(d.ok, `attempt ${i}`).toBe(true);
+      const before = remote;
       remote = `fix${i}`;
-      state = recordAutofixPush(d.state, remote, NOW);
+      state = recordAutofixPush(d.state, remote, before, NOW);
       expect(state.attempts).toBe(i);
     }
     expect(state.paused).toBe(true);
@@ -105,7 +106,7 @@ describe("attempt cap", () => {
 
   it("restarts the count when a person pushes a new head", () => {
     let state = enableAutofix("feat/x", 1, NOW);
-    state = recordAutofixPush(state, "fix1", NOW);
+    state = recordAutofixPush(state, "fix1", "sha0", NOW);
     expect(decideAttempt(state, "fix1", NOW).ok).toBe(false);
     const after = decideAttempt(state, "human2", NOW);
     expect(after.ok).toBe(true);
@@ -113,12 +114,40 @@ describe("attempt cap", () => {
     expect(after.state.attempts).toBe(0);
   });
 
+  it("a lagging GitHub head (still the pre-push sha) is not a person's push: attempts and pause stay", () => {
+    let state = enableAutofix("feat/x", 2, NOW);
+    state = recordAutofixPush(state, "fix1", "sha0", NOW);
+    expect(state.prevHeadSha).toBe("sha0");
+    // GET /pulls/N has not caught up with our push yet and still says sha0.
+    const lagging = decideAttempt(state, "sha0", NOW);
+    expect(lagging.ok).toBe(true);
+    expect(lagging.ok && lagging.resetByHumanPush).toBe(false);
+    expect(lagging.state.attempts).toBe(1);
+    state = recordAutofixPush(lagging.state, "fix2", "sha0", NOW);
+    expect(state).toMatchObject({ attempts: 2, paused: true });
+    const stillLagging = decideAttempt(state, "sha0", NOW);
+    expect(stillLagging.ok).toBe(false);
+    expect(!stillLagging.ok && stillLagging.reason).toMatch(/paused after 2 of 2/);
+    expect(stillLagging.state).toMatchObject({ attempts: 2, paused: true });
+  });
+
+  it("a third sha (neither our push nor the head before it) resets the count and the pause", () => {
+    let state = enableAutofix("feat/x", 1, NOW);
+    state = recordAutofixPush(state, "fix1", "sha0", NOW);
+    expect(state.paused).toBe(true);
+    const moved = decideAttempt(state, "human2", NOW);
+    expect(moved.ok).toBe(true);
+    expect(moved.ok && moved.resetByHumanPush).toBe(true);
+    expect(moved.state).toMatchObject({ attempts: 0, paused: false, lastPushedSha: null, prevHeadSha: null });
+  });
+
   it("clamps maxAttempts to 1..ceiling and resets on re-enable", () => {
     expect(enableAutofix("b", 0, NOW).maxAttempts).toBe(1);
     expect(enableAutofix("b", 99, NOW).maxAttempts).toBe(AUTOFIX_MAX_ATTEMPTS_CEILING);
-    const paused = { ...recordAutofixPush(enableAutofix("b", 1, NOW), "s", NOW) };
-    const again = enableAutofix("b", 1, NOW, paused);
-    expect(again).toMatchObject({ attempts: 0, paused: false, enabled: true });
+    const paused = recordAutofixPush(enableAutofix("b", 1, NOW), "s", "s0", NOW);
+    expect(paused.paused).toBe(true);
+    const again = enableAutofix("b", 1, NOW);
+    expect(again).toMatchObject({ attempts: 0, paused: false, enabled: true, lastPushedSha: null, prevHeadSha: null });
   });
 });
 

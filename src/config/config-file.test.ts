@@ -12,6 +12,7 @@ import { dirname, join, sep } from "node:path";
 
 import { getApprovalRulesPath } from "../approval/approval-rules-store.js";
 import { resolveSessionPath } from "../atomic-mail/atomic-mail-store.js";
+import { autofixStatePath } from "../github/pr-autofix-store.js";
 import { resolveApiKeyFilePath } from "../local-llm/backend-paths.js";
 import { serveApiKeyPath } from "../cli/serve-api-key.js";
 import { coreSessionPath } from "../local-llm/core/core-state.js";
@@ -971,6 +972,7 @@ describe("the state's secret files (ATO-877)", () => {
       coreSessionPath(paths.localModelsDataDir, "chat"),
       coreSessionPath(paths.localModelsDataDir, "embedding"),
       resolveSessionPath(stateDir),
+      autofixStatePath(stateDir),
     ]);
     expect(getStateSecretPaths(paths)).toContain(getDotenvPath(stateDir));
     expect(getStateSecretPaths(paths)).toContain(paths.userConfigFile);

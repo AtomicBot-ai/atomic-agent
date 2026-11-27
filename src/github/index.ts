@@ -69,4 +69,4 @@ export {
   recordAutofixPush,
 } from "./pr-autofix-guard.js";
 export type { AttemptDecision, AutofixState } from "./pr-autofix-guard.js";
-export { AutofixStore, autofixKey, autofixWorktreeDir } from "./pr-autofix-store.js";
+export { AutofixStore, autofixKey, autofixStatePath, autofixWorktreeDir } from "./pr-autofix-store.js";

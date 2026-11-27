@@ -1,17 +1,33 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ApprovalGate } from "../../approval/approval-gate.js";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApprovalGate, type ApprovalRequest } from "../../approval/approval-gate.js";
 import {
   AutofixStore,
   GithubApi,
   autofixKey,
+  autofixStatePath,
+  autofixWorktreeDir,
   enableAutofix,
   recordAutofixPush,
 } from "../../github/index.js";
 import { makeCtx } from "../os/git/test-helpers.js";
 import { buildPrAutofixTool } from "./pr-autofix-tool.js";
+
+// The git layer is replaced so the tool's own push path (approval,
+// push, counter) runs without a GitHub checkout; pr-autofix-git.test.ts
+// covers the real git half against a local bare origin.
+const git = vi.hoisted(() => ({
+  requireCheckoutOf: vi.fn(),
+  prepareAutofixWorktree: vi.fn(),
+  inspectAutofixWorktree: vi.fn(),
+  pushAutofixWorktree: vi.fn(),
+}));
+vi.mock("./pr-autofix-git.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./pr-autofix-git.js")>()),
+  ...git,
+}));
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -45,16 +61,36 @@ function api(headRef: string, headSha = "sha1"): GithubApi {
 describe("github.pr.autofix", () => {
   let stateDir: string;
   let asked: string[];
+  let requests: ApprovalRequest[];
+  let denyGitRemote: boolean;
   let gate: ApprovalGate;
 
   beforeEach(async () => {
     stateDir = await mkdtemp(join(tmpdir(), "autofix-tool-"));
     asked = [];
+    requests = [];
+    denyGitRemote = false;
     gate = new ApprovalGate({
       emit: (req) => {
         asked.push(req.category);
-        gate.resolve({ approvalId: req.approvalId, approved: true });
+        requests.push(req);
+        const approved = !(denyGitRemote && req.category === "git_remote");
+        gate.resolve({ approvalId: req.approvalId, approved });
       },
+    });
+    for (const fn of Object.values(git)) fn.mockReset();
+    git.requireCheckoutOf.mockResolvedValue(undefined);
+    git.prepareAutofixWorktree.mockImplementation(async (_o: unknown, input: { dir: string }) => ({
+      dir: input.dir,
+      localBranch: "pr-autofix/42",
+      headSha: "sha1",
+      created: true,
+    }));
+    git.inspectAutofixWorktree.mockResolvedValue({ headSha: "fix1" });
+    git.pushAutofixWorktree.mockImplementation(async () => {
+      // The push must come after its approval, never before.
+      expect(asked).toContain("git_remote");
+      return "To github.com:acme/widgets.git";
     });
   });
   afterEach(async () => {
@@ -114,13 +150,84 @@ describe("github.pr.autofix", () => {
   it("stops after the cap: a paused PR is refused before any git or approval", async () => {
     const store = new AutofixStore(stateDir);
     let state = enableAutofix("feat/x", 3, new Date());
-    for (const sha of ["f1", "f2", "f3"]) state = recordAutofixPush(state, sha, new Date());
+    let before = "sha1";
+    for (const sha of ["f1", "f2", "f3"]) {
+      state = recordAutofixPush(state, sha, before, new Date());
+      before = sha;
+    }
     await store.set(autofixKey("acme/widgets", 42), state);
     // GitHub still reports our last push as the head: no person moved it.
     const res = await tool("feat/x", "f3").run(args("push"), ctx());
     expect(res.status).toBe("error");
     expect(res.summary).toMatch(/paused after 3 of 3 attempts/);
     expect(asked).toEqual([]);
+    expect(git.pushAutofixWorktree).not.toHaveBeenCalled();
+  });
+
+  const wantDir = () => autofixWorktreeDir(stateDir, "acme/widgets", 42);
+  const stored = () => new AutofixStore(stateDir).get(autofixKey("acme/widgets", 42));
+
+  it("push asks one git_remote approval naming refs/heads/<PR head>, then pushes and counts 1", async () => {
+    await tool().run(args("enable"), ctx());
+    const res = await tool().run(args("push"), ctx());
+    expect(res.status).toBe("ok");
+    const gitRemote = requests.filter((r) => r.category === "git_remote");
+    expect(gitRemote).toHaveLength(1);
+    expect(gitRemote[0]!.tool).toBe("github.pr.autofix");
+    expect(gitRemote[0]!.preview).toContain("git push origin HEAD:refs/heads/feat/x");
+    expect(gitRemote[0]!.preview).toContain("commit: fix1");
+    expect(gitRemote[0]!.reason).toContain("attempt 1 of 3");
+    expect(gitRemote[0]!.reason).toContain("branch feat/x");
+    expect(git.pushAutofixWorktree).toHaveBeenCalledTimes(1);
+    expect(git.pushAutofixWorktree.mock.calls[0]![1]).toEqual({ dir: wantDir(), target: "feat/x" });
+    expect(await stored()).toMatchObject({
+      attempts: 1,
+      paused: false,
+      lastPushedSha: "fix1",
+      prevHeadSha: "sha1",
+    });
+    expect(res.summary).toContain("autofix attempt 1 of 3 pushed to feat/x");
+  });
+
+  it("a denied push approval spawns no push and leaves attempts at 0", async () => {
+    await tool().run(args("enable"), ctx());
+    denyGitRemote = true;
+    await expect(tool().run(args("push"), ctx())).rejects.toThrow();
+    expect(requests.filter((r) => r.category === "git_remote")).toHaveLength(1);
+    expect(git.pushAutofixWorktree).not.toHaveBeenCalled();
+    expect(await stored()).toMatchObject({ attempts: 0, lastPushedSha: null });
+  });
+
+  it("push refuses a worktree with no commit on top of the PR head, without asking", async () => {
+    await tool().run(args("enable"), ctx());
+    git.inspectAutofixWorktree.mockResolvedValue({ headSha: "sha1" });
+    const res = await tool().run(args("push"), ctx());
+    expect(res.status).toBe("error");
+    expect(res.summary).toMatch(/no new commit/);
+    expect(asked).toEqual(["publish"]);
+    expect(git.pushAutofixWorktree).not.toHaveBeenCalled();
+  });
+
+  it("ignores a worktreeDir written into state.json: prepare and push use the derived folder", async () => {
+    await tool().run(args("enable"), ctx());
+    // A hand-edited (or model-written) state file names another folder.
+    const elsewhere = join(tmpdir(), "not-the-autofix-worktree");
+    const file = autofixStatePath(stateDir);
+    const key = autofixKey("acme/widgets", 42);
+    const state = await stored();
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, JSON.stringify({ [key]: { ...state, worktreeDir: elsewhere } }), "utf8");
+
+    const prepared = await tool().run(args("prepare"), ctx());
+    expect(prepared.status).toBe("ok");
+    expect(git.prepareAutofixWorktree.mock.calls[0]![1]).toMatchObject({ dir: wantDir() });
+
+    await tool().run(args("push"), ctx());
+    expect(git.inspectAutofixWorktree.mock.calls[0]![0]).toEqual({ number: 42, dir: wantDir() });
+    expect(git.pushAutofixWorktree.mock.calls[0]![1]).toEqual({ dir: wantDir(), target: "feat/x" });
+    const preview = requests.find((r) => r.category === "git_remote")!.preview!;
+    expect(preview).toContain(`from: ${wantDir()}`);
+    expect(preview).not.toContain(elsewhere);
   });
 
   it("disable turns it off again", async () => {

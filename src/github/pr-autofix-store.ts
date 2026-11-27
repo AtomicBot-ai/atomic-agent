@@ -20,6 +20,11 @@ export function autofixKey(slug: string, number: number): string {
   return `${slug.toLowerCase()}#${number}`;
 }
 
+/** The state file; also a protected `state_secret` path (config-file.ts). */
+export function autofixStatePath(stateDir: string): string {
+  return join(stateDir, AUTOFIX_DIR, "state.json");
+}
+
 /** Where autofix worktrees are made: one folder per PR, beside the state file. */
 export function autofixWorktreeDir(stateDir: string, slug: string, number: number): string {
   const safe = slug.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
@@ -30,7 +35,7 @@ export class AutofixStore {
   private readonly file: string;
 
   constructor(stateDir: string) {
-    this.file = join(stateDir, AUTOFIX_DIR, "state.json");
+    this.file = autofixStatePath(stateDir);
   }
 
   async get(key: string): Promise<AutofixState | undefined> {

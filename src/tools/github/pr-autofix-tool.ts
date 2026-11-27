@@ -40,10 +40,10 @@ function parseAction(raw: unknown): Action {
   throw new Error(`${TOOL}: \`action\` must be one of ${ACTIONS.join(", ")}`);
 }
 
-function describeState(state: AutofixState | undefined): string {
+function describeState(state: AutofixState | undefined, dir: string): string {
   if (!state) return "off (never enabled)";
   if (!state.enabled) return "off";
-  return `${state.paused ? "paused" : "on"}, ${state.attempts} of ${state.maxAttempts} attempts used, branch ${state.headRef}${state.worktreeDir ? `, worktree ${state.worktreeDir}` : ""}`;
+  return `${state.paused ? "paused" : "on"}, ${state.attempts} of ${state.maxAttempts} attempts used, branch ${state.headRef}, worktree ${dir}`;
 }
 
 function result(status: "ok" | "error", output: string, details: Record<string, unknown>): CompressedToolResult {
@@ -82,10 +82,13 @@ export function buildPrAutofixTool(
       const key = autofixKey(slug, number);
       const store = new AutofixStore(options.stateDir());
       const state = await store.get(key);
+      // Always derived, never read from state.json: the file is plain
+      // JSON on disk, and a path in it must not choose what gets pushed.
+      const dir = autofixWorktreeDir(options.stateDir(), slug, number);
       const base = { repo: slug, number, action };
 
       if (action === "status") {
-        return result("ok", `${slug}#${number} autofix: ${describeState(state)}`, { ...base, state: state ?? null });
+        return result("ok", `${slug}#${number} autofix: ${describeState(state, dir)}`, { ...base, state: state ?? null });
       }
       if (action === "disable") {
         if (state) await store.set(key, { ...state, enabled: false, updatedAt: now().toISOString() });
@@ -105,7 +108,7 @@ export function buildPrAutofixTool(
       }
 
       if (action === "enable") {
-        const next = enableAutofix(pr.headRef, rawArgs.maxAttempts, now(), state);
+        const next = enableAutofix(pr.headRef, rawArgs.maxAttempts, now());
         await requireApproval(
           options,
           {
@@ -119,7 +122,7 @@ export function buildPrAutofixTool(
           ctx.signal,
         );
         await store.set(key, next);
-        return result("ok", `${slug}#${number} autofix: ${describeState(next)}`, { ...base, state: next });
+        return result("ok", `${slug}#${number} autofix: ${describeState(next, dir)}`, { ...base, state: next });
       }
 
       const decision = decideAttempt(state, pr.headSha, now());
@@ -131,11 +134,10 @@ export function buildPrAutofixTool(
       const refused = refuseWhenRemoteSyncOff(TOOL, options, { repo: slug, number });
       if (refused) return refused;
       await requireCheckoutOf(ref, ctx);
-      const dir = decision.state.worktreeDir ?? autofixWorktreeDir(options.stateDir(), slug, number);
 
       if (action === "prepare") {
         const prepared = await prepareAutofixWorktree(options, { number, headRef: target.target, dir }, ctx);
-        const next = { ...decision.state, worktreeDir: prepared.dir, updatedAt: now().toISOString() };
+        const next = { ...decision.state, updatedAt: now().toISOString() };
         await store.set(key, next);
         return result(
           "ok",
@@ -162,7 +164,7 @@ export function buildPrAutofixTool(
         ctx.signal,
       );
       const output = await pushAutofixWorktree(options, { dir, target: target.target }, ctx);
-      const next = recordAutofixPush(decision.state, headSha, now());
+      const next = recordAutofixPush(decision.state, headSha, pr.headSha, now());
       await store.set(key, next);
       return result(
         "ok",
