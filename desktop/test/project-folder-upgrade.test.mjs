@@ -107,7 +107,7 @@ test("a folder picked shows it, the model row and the pending AGENTS.md line; Ke
   assert.match(html, /<option value="" selected>Same as the app<\/option>/);
   assert.match(html, /<optgroup label="OpenRouter">/);
   assert.match(html, /The new folder’s AGENTS\.md is read once you save\./);
-  assert.deepEqual(vm.runInContext("projectEditExtrasFields(PROJECTS.edit)", c), { folder: "/src/new" });
+  assert.deepEqual({ ...vm.runInContext("projectEditExtrasFields(PROJECTS.edit)", c) }, { folder: "/src/new" });   // copied out of the vm realm
   vm.runInContext("pexRepaint(PROJECTS.edit, () => { PROJECTS.edit.x.folder = ''; }, true)", c);
   assert.match(vm.runInContext("projectEditHTML()", c), /Choose folder…/);
   assert.doesNotMatch(vm.runInContext("projectEditHTML()", c), /pedit-model/);
