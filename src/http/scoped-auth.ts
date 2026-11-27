@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import type { AuthThrottle } from "./auth-throttle.js";
+import { throttleAddress, type AuthThrottle } from "./auth-throttle.js";
+import { authorizeDeviceCookie } from "./device-auth.js";
+import type { DeviceSessions } from "./device-sessions.js";
 import { roleHasScope, type HttpRole, type HttpScope } from "./http-scopes.js";
 import { hashHttpToken, type StoredHttpToken } from "./http-token-store.js";
 import { openaiError } from "./openai-errors.js";
@@ -21,6 +23,12 @@ export interface HttpCaller {
   role: HttpRole;
 }
 
+/** What a signed-in request carries on to its handler. */
+export interface RequestAuth {
+  /** ATO-2308: set when a paired phone's cookie signed the request in. */
+  pairedDevice?: { id: string; name: string };
+}
+
 export interface ScopedAuthInput {
   apiKey: string | null;
   namedTokens: readonly StoredHttpToken[];
@@ -28,6 +36,8 @@ export interface ScopedAuthInput {
   scope: HttpScope;
   /** `"POST /api/config"`, for the 403 message. */
   route: string;
+  /** ATO-2308: phones paired by QR, signed in by a cookie (device-auth.ts). */
+  devices?: DeviceSessions;
 }
 
 /**
@@ -51,8 +61,9 @@ export function identifyCaller(
 }
 
 /**
- * ATO-583: auth plus scope for one request. Returns `true` when the
- * handler may run; otherwise the response is already sent.
+ * ATO-583: auth plus scope for one request. Returns what the handler
+ * needs to know about the caller when it may run (truthy); otherwise
+ * `false`, with the response already sent.
  *
  * Without named tokens, or without a serve key, this is `enforceAuth`
  * unchanged: no key means an open loopback server, one key means that key
@@ -65,11 +76,14 @@ export function authorizeRequest(
   res: ServerResponse,
   input: ScopedAuthInput,
   throttle?: AuthThrottle,
-): boolean {
+): RequestAuth | false {
+  const byDevice = authorizeDeviceCookie(req, res, input, throttle);
+  if (byDevice === "refused") return false;
+  if (byDevice !== "absent") return { pairedDevice: byDevice.device };
   if (input.apiKey === null || input.namedTokens.length === 0) {
-    return enforceAuth(req, res, input.apiKey, throttle);
+    return enforceAuth(req, res, input.apiKey, throttle) ? {} : false;
   }
-  const address = req.socket?.remoteAddress;
+  const address = throttleAddress(req);
   const wait = throttle ? throttle.retryAfter(address) : 0;
   if (wait > 0) {
     sendAuthThrottled(res, wait);
@@ -83,7 +97,7 @@ export function authorizeRequest(
     return false;
   }
   throttle?.succeeded(address);
-  if (roleHasScope(caller.role, input.scope)) return true;
+  if (roleHasScope(caller.role, input.scope)) return {};
   sendJson(
     res,
     403,

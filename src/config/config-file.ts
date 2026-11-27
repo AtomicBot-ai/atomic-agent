@@ -99,6 +99,8 @@ export function getStateSecretPaths(paths: {
     join(paths.localModelsDataDir, "core", "chat.json"),
     join(paths.localModelsDataDir, "core", "embedding.json"),
     join(paths.stateDir, "atomic-mail", "session.json"),
+    // ATO-2308: paired phones and pending pairing links; a written entry would let a phone in.
+    join(paths.stateDir, "http-devices.json"),
   ];
 }
 

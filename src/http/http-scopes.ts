@@ -158,6 +158,10 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "DELETE /api/telegram/pairing": "admin",
   "GET /api/telegram/channel": "read",
   "GET /api/discord/channel": "read",
+  // ATO-2308: paired phones; a phone itself is a member and cannot list or revoke.
+  "POST /api/devices/pairing": "admin",
+  "GET /api/devices": "admin",
+  "DELETE /api/devices/{id}": "admin",
   // Tasks and ideas.
   "POST /api/tasks": "chat",
   "GET /api/tasks": "read",

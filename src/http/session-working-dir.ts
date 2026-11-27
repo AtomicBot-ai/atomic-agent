@@ -28,9 +28,20 @@ export function checkWorkingDir(raw: unknown): { ok: true; dir: string } | { ok:
  * `POST /api/sessions/{id}/working-dir` — `{ workingDir }`: move one chat to
  * another folder. `409 turn_in_progress` while that chat runs a turn (its
  * tools would change folder mid-turn); other chats' turns do not matter.
+ * `403 device_cannot_change_folder` for a paired phone (ATO-2308): the
+ * folder decides what the agent's tools reach, so only this computer moves it.
  */
 export function createSetSessionWorkingDirHandler(): HttpHandler {
   return async (req, res, ctx) => {
+    if (ctx.pairedDevice) {
+      sendJson(res, 403, openaiError(
+        "A paired device cannot change a chat's folder; change it on this computer",
+        "permission_error",
+        "workingDir",
+        "device_cannot_change_folder",
+      ));
+      return;
+    }
     const id = ctx.params.id ?? "";
     let body: unknown;
     try {

@@ -14,6 +14,7 @@ import { pluginCommand } from "./plugin-command.js";
 import { configCommand } from "./config-command.js";
 import { serveCommand } from "./serve-command.js";
 import { httpCommand } from "./http-command.js";
+import { pairCommand } from "./pair-command.js";
 import { mcpServerCommand } from "./mcp-server-command.js";
 import { acpCommand } from "./acp-command.js";
 import { traceCommand } from "./trace-command.js";
@@ -127,6 +128,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "http",
     summary: "Named API tokens for serve, each with a role: admin, member, viewer (tokens list|add|remove)",
     run: httpCommand,
+  },
+  {
+    name: "pair",
+    summary: "Connect a phone to the panel by a QR code, no API key typed (--remote, --list, --revoke)",
+    run: (args) => pairCommand(args),
   },
   {
     name: "mcp-server",

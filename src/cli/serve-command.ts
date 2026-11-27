@@ -8,7 +8,13 @@ import { registerProcessSecret } from "../error-reporting/process-secrets.js";
 import { PrometheusRegistry } from "../tracing/prometheus-registry.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 
-import { HELP, isLoopbackListenHost, lanUrls, parseArgs } from "./serve-args.js";
+import {
+  HELP,
+  isLoopbackListenHost,
+  lanUrls,
+  MIN_NETWORK_KEY_LENGTH,
+  parseArgs,
+} from "./serve-args.js";
 import { modelShareNotice } from "./serve-model-share-notice.js";
 import { resolveServeApiKey, serveApiKeyNotice } from "./serve-api-key.js";
 import { watchForOrphaning } from "./serve-orphan-guard.js";
@@ -32,6 +38,7 @@ import {
   createHttpTokenSource,
   isModelShareEnabled,
 } from "../http/index.js";
+import { createDeviceSessions } from "../http/device-sessions.js";
 import type { HttpServerHandle } from "../http/index.js";
 
 /**
@@ -164,6 +171,8 @@ export async function serveCommand(args: string[]): Promise<number> {
       },
     });
     const namedTokens = createHttpTokenSource(stateDir);
+    // ATO-2308: phones paired by `atag pair` sign in with a cookie as members.
+    const deviceSessions = createDeviceSessions(stateDir);
     handle = await createHttpServer({
       runtime,
       host: parsed.host,
@@ -173,12 +182,14 @@ export async function serveCommand(args: string[]): Promise<number> {
         metricsRegistry,
         // ATO-693: off unless --a2a; parseArgs already refused it without a key.
         a2a: parsed.a2a ? { publicUrl: a2aPublicUrl() } : null,
+        devices: deviceSessions,
       }),
       approvalBus,
       completionRegistry,
       elicitations,
       // ATO-583: `atag http tokens add` names tokens with a role; the key stays admin.
       namedTokens,
+      deviceSessions,
     });
     const baseUrl = `http://${handle.host}:${handle.port}`;
     // ATO-583 named tokens beside the always-on key (serve always has a key now).
@@ -227,6 +238,7 @@ export async function serveCommand(args: string[]): Promise<number> {
       port: handle.port,
       cwd: parsed.workingDir,
       startedAt: new Date().toISOString(),
+      strongKey: apiKey.key.length >= MIN_NETWORK_KEY_LENGTH,
     });
     // Each new server tidies up after the generation before it. Failures
     // here are never fatal — the sweep is housekeeping, not startup — and

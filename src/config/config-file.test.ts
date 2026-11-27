@@ -15,6 +15,7 @@ import { resolveSessionPath } from "../atomic-mail/atomic-mail-store.js";
 import { resolveApiKeyFilePath } from "../local-llm/backend-paths.js";
 import { serveApiKeyPath } from "../cli/serve-api-key.js";
 import { modelShareKeyPath } from "../http/model-share-key.js";
+import { httpDevicesPath } from "../http/device-store.js";
 import { coreSessionPath } from "../local-llm/core/core-state.js";
 import { userHooksPath } from "../hooks/hook-config.js";
 import { secretsStorePath } from "./secret-store.js";
@@ -973,6 +974,7 @@ describe("the state's secret files (ATO-877)", () => {
       coreSessionPath(paths.localModelsDataDir, "chat"),
       coreSessionPath(paths.localModelsDataDir, "embedding"),
       resolveSessionPath(stateDir),
+      httpDevicesPath(stateDir),
     ]);
     expect(getStateSecretPaths(paths)).toContain(getDotenvPath(stateDir));
     expect(getStateSecretPaths(paths)).toContain(paths.userConfigFile);
