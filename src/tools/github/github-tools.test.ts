@@ -145,7 +145,7 @@ describe("github.* tools", () => {
       "github.whoami",
     ]);
     expect(tools.get("github.pr.checks")?.readonly).toBe(true);
-    expect(tools.get("github.pr.checks")?.untrustedOutput).toBe("GitHub CI logs");
+    expect(tools.get("github.pr.checks")?.untrustedOutput).toBe("GitHub CI logs and review comments");
     expect(tools.get("github.pr.autofix")?.readonly).toBe(false);
     expect(tools.get("github.whoami")?.readonly).toBe(true);
     expect(tools.get("github.pr.list")?.readonly).toBe(true);
