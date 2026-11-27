@@ -92,6 +92,9 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "GET /api/privacy-shield": "read",
   "POST /api/privacy-shield": "admin",
   "POST /api/local-model/recheck": "admin",
+  // ATO-2483: the answer carries the share key.
+  "GET /api/model-share": "admin",
+  "POST /api/model-share": "admin",
   "POST /api/llm/active": "admin",
   // ATO-1461: the answer is written to llm.fallback.appendLocal.
   "GET /api/fallback/local-question": "read",

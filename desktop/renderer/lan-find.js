@@ -20,6 +20,9 @@ const LANF = {state: 'idle', servers: [], networks: [], error: '', checks: {}, s
 
 /* ---------- pure ---------- */
 
+/** ATO-2483: what a found shared model needs before it answers. */
+const LANF_SHARED_KEY_HINT = 'It needs the API key shown on that computer in Settings › Models › Share this model.';
+
 function lanfEsc(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 }
@@ -47,7 +50,9 @@ function lanfServerView(s) {
     title,
     sub: parts.join(' · '),
     usable: !agent,
-    note: agent ? 'This is an Atomic Agent, not a model server. Use Agent › Connect to Another Computer for it.' : '',
+    note: agent ? 'This is an Atomic Agent, not a model server. Use Agent › Connect to Another Computer for it.'
+      // ATO-2483: another computer's shared model; its key is on that computer's screen.
+      : s.kind === 'atomic-agent-model' ? LANF_SHARED_KEY_HINT : '',
   };
 }
 
@@ -56,6 +61,7 @@ function lanfCheckView(r) {
   if (!r || r.ok !== true) return {tone: 'bad', text: String((r && r.error) || 'The check failed. Try again, or check the address.')};
   const head = 'Answers in ' + r.latencyMs + ' ms: ' + r.kindWord;
   if (r.kind === 'atomic-agent') return {tone: 'warn', text: head + '. This is an agent, not a model server.'};
+  if (r.kind === 'atomic-agent-model' && r.needsKey) return {tone: 'warn', text: head + '. ' + LANF_SHARED_KEY_HINT};
   if (r.needsKey) return {tone: 'warn', text: head + ', and it asks for an API key.'};
   if (!r.models || !r.models.length) return {tone: 'warn', text: head + ', but it lists no models. Load one on that PC first.'};
   return {tone: 'ok', text: head + ' with ' + lanfModelsWord(r.models) + '.'};

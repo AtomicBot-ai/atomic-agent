@@ -23,12 +23,26 @@ describe("models share", () => {
   });
 
   it("parses --rotate, --off, --port and --json, and refuses --off with --rotate", () => {
-    expect(parseShareArgs([])).toEqual({ off: false, rotate: false, port: 8787, json: false });
+    expect(parseShareArgs([])).toEqual({ off: false, rotate: false, port: null, json: false });
     expect(parseShareArgs(["--rotate", "--port", "9000", "--json"])).toEqual({ off: false, rotate: true, port: 9000, json: true });
     expect(parseShareArgs(["--off"])).toMatchObject({ off: true });
     expect(parseShareArgs(["--off", "--rotate"])).toHaveProperty("error");
     expect(parseShareArgs(["--port", "0"])).toHaveProperty("error");
     expect(parseShareArgs(["--nope"])).toHaveProperty("error");
+  });
+
+  it("parses --local and --network, and refuses both together or with --off (ATO-2483)", () => {
+    expect(parseShareArgs(["--network"])).toMatchObject({ where: "network", off: false });
+    expect(parseShareArgs(["--local"])).toMatchObject({ where: "local" });
+    expect(parseShareArgs([])).not.toHaveProperty("where");
+    expect(parseShareArgs(["--local", "--network"])).toHaveProperty("error");
+    expect(parseShareArgs(["--off", "--network"])).toHaveProperty("error");
+  });
+
+  it("says how other devices reach it in network mode instead of asking for --host", () => {
+    const text = formatShareSummary({ key: "k".repeat(64), urls: { local: "http://127.0.0.1:8787/raw/v1", lan: [] }, rotated: false, network: true });
+    expect(text).not.toContain("--host 0.0.0.0");
+    expect(text).toContain("plain http");
   });
 
   it("gives /raw/v1 base URLs for this computer and each LAN address", () => {
@@ -48,7 +62,9 @@ describe("models share", () => {
     expect(text).toContain("http://192.168.1.5:8787/raw/v1");
     expect(text).toContain("k".repeat(64));
     expect(text).toContain("plain http");
-    expect(text).toContain("--host 0.0.0.0");
+    // ATO-2483: local mode refuses other devices even on a serve on 0.0.0.0, so --network is the one way.
+    expect(text).toContain("models share --network");
+    expect(text).not.toContain("--host 0.0.0.0");
   });
 
   it("writes localModels.managed.share on and off in the config file", () => {
