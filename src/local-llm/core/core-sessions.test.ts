@@ -267,7 +267,8 @@ describe("stopping a Core session on Windows (ATO-304)", () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     await expect(stopCoreSession(dir, "chat", { releaseWaitMs: 300 })).resolves.toBe(true);
     expect(readFileSync(join(dir, "llama-server.log"), "utf8")).toContain(`pid ${pid} was still running`);
-    expect(existsSync(coreSessionPath(dir, "chat"))).toBe(false);
+    // Kept, marked, for the next load on its port (ATO-1748, core-pending-exit.test.ts).
+    expect(JSON.parse(readFileSync(coreSessionPath(dir, "chat"), "utf8"))).toMatchObject({ pid, awaitingExit: true });
   });
 
   it("does not wait on macOS or Linux, where it never did", async () => {

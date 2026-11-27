@@ -7,6 +7,7 @@ import { activeCoreVersion, coreLoopbackPort, isSupportedCoreVersion, coreRoot, 
 import { connectCore, ensureCore, withCoreClient } from "./core-client.js";
 import { shutdownIdleCoreClient } from "./core-idle.js";
 import { noteReleaseTimeout, RELEASE_WAIT_MS, waitForProcessRelease } from "../server/process-release.js";
+import { settlePendingExit, settleUnloadedSession, waitForPendingExitOnPort } from "./core-pending-exit.js";
 
 /**
  * These host arguments are owned by the control contract, never duplicated in extra_args.
@@ -43,11 +44,16 @@ export async function loadCoreSession(dataDir: string, options: {
   args: readonly string[];
   mmprojPath?: string;
   signal?: AbortSignal;
+  /** Bound for an unloaded server still holding `port` (ATO-1748); `PENDING_EXIT_WAIT_MS` by default. */
+  pendingExitWaitMs?: number;
 }): Promise<CoreSession> {
   return withCoreOperation(dataDir, async () => {
   const backend = readCoreBackend(dataDir);
   if (!backend) throw new CoreUnavailableError({ stage: "start", reasonCode: "not_installed", detail: "its inference backend is not installed yet" });
   return withCoreClient(dataDir, backend.coreVersion, async client => {
+    // An earlier stop left a server that had not exited on this port: a new one
+    // beside it would leave our client meeting the old key's server (ATO-1748).
+    await waitForPendingExitOnPort(dataDir, options.port, options.pendingExitWaitMs);
     const path = `/models/${backend.provider}/${encodeURIComponent(options.modelId)}`;
     const before = (await client.snapshot()).sessions.find(s => s.provider === backend.provider && s.model_id === options.modelId);
     const cancel = () => { void client.call(`${path}/load/cancel`, {}).catch(() => {}); };
@@ -109,6 +115,13 @@ export async function stopCoreSession(dataDir: string, role: "chat" | "embedding
   const path = coreSessionPath(dataDir, role);
   const record = readCoreJson<CoreSessionRecord>(path);
   if (!record) return false;
+  // Unloaded by an earlier stop whose release wait ran out (ATO-1748): Core
+  // no longer has it, up or down. Wait for it again; the record stays while it
+  // holds on. Never the crashed-Core reap below: there is nothing to reap.
+  if (record.awaitingExit) {
+    await settlePendingExit(dataDir, role, record, opts.releaseWaitMs ?? RELEASE_WAIT_MS);
+    return true;
+  }
   const client = await connectCore(dataDir, record.coreVersion);
   if (!client) {
     let alive = true;
@@ -132,6 +145,10 @@ export async function stopCoreSession(dataDir: string, role: "chat" | "embedding
       if (process.platform === "win32") {
         const released = await waitForProcessRelease(record.pid, record.port, { timeoutMs: opts.releaseWaitMs ?? RELEASE_WAIT_MS });
         noteReleaseTimeout(join(dataDir, role === "embedding" ? "llama-embed.log" : "llama-server.log"), record.pid, record.port, released);
+        // A server that has not exited still answers on its port with the old
+        // key; keep its record (marked) so the next load there waits (ATO-1748).
+        settleUnloadedSession(dataDir, role, record, released);
+        return true;
       }
     }
   }

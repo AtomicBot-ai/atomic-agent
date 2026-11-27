@@ -1740,11 +1740,13 @@ async function savePromptCachesBeforeStop(dataDir: string, opts?: StopDaemonOpti
     const core = (() => {
       try {
         return JSON.parse(readFileSync(coreSessionPath(dataDir, "chat"), "utf-8")) as
-          { pid?: unknown; port?: unknown; api_key?: unknown };
+          { pid?: unknown; port?: unknown; api_key?: unknown; awaitingExit?: unknown };
       } catch {
         return null;
       }
     })();
+    // Core already unloaded that session; its server is only on its way out (ATO-1748).
+    if (core?.awaitingExit === true) return;
     if (core && typeof core.pid === "number" && typeof core.port === "number") {
       target = { pid: core.pid, port: core.port, apiKey: typeof core.api_key === "string" ? core.api_key : null };
     } else {
