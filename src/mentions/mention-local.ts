@@ -75,7 +75,7 @@ export function resolveMentionedDir(root: string, token: string): string | null 
   const candidate = resolve(root, t);
   if (!inside(root, candidate)) return null;
   try {
-    const real = realpathSync(candidate);
+    const real = realpathSync.native(candidate);
     if (!inside(root, real)) return null;
     return statSync(real).isDirectory() ? real : null;
   } catch {

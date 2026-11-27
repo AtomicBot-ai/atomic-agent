@@ -69,7 +69,7 @@ export function resolveMentionedFile(root: string, token: string): string | null
   const candidate = resolve(root, token);
   if (!inside(root, candidate)) return null;
   try {
-    const real = realpathSync(candidate);
+    const real = realpathSync.native(candidate);
     if (!inside(root, real)) return null;
     return statSync(real).isFile() ? real : null;
   } catch {
@@ -119,7 +119,7 @@ export function mentionedFiles(
   if (tokens.length === 0) return [];
   let root: string;
   try {
-    root = realpathSync(workingDir);
+    root = realpathSync.native(workingDir);
   } catch {
     return [];
   }
