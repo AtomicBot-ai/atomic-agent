@@ -24,6 +24,7 @@ import {
 } from "../approval/approval-preview.js";
 import { formatRiskLine } from "../approval/risk-review.js";
 import { formatEgressHoldNote, formatEgressLine } from "../approval/egress-scan.js";
+import { formatSecurityFindingLine } from "../approval/security-finding-line.js";
 import {
   APPROVAL_CHORDS,
   canEditPath,
@@ -137,6 +138,8 @@ export function ApprovalModal({
   // Theme colours rather than a fixed yellow, which washes out on a light
   // terminal (ATO-2759).
   const warn = theme.colors.warn;
+  // The argument check that raised the prompt (ATO-2505).
+  const findingLine = formatSecurityFindingLine(request);
   return (
     <Box
       flexDirection="column"
@@ -168,6 +171,7 @@ export function ApprovalModal({
         ) : null}
         {egressLine !== null ? <Text color={warn}>{egressLine}</Text> : null}
         {egressNote !== null ? <Text color={theme.colors.muted}>{egressNote}</Text> : null}
+        {findingLine !== null ? <Text color={theme.colors.error}>{findingLine}</Text> : null}
         {request.preview ? (
           <ApprovalPreview
             request={request}

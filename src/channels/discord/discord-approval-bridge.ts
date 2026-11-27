@@ -20,6 +20,7 @@ import type {
 import { describeAlwaysRule } from "../../approval/approval-rules.js";
 import { formatRiskLine } from "../../approval/risk-review.js";
 import { formatEgressLine } from "../../approval/egress-scan.js";
+import { formatSecurityFindingLine } from "../../approval/security-finding-line.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import {
   sessionGrantOffer,
@@ -229,6 +230,10 @@ export function formatPrompt(request: ApprovalRequest): string {
   // command, so they are escaped like the reviewer's words.
   const egressLine = formatEgressLine(request.egress);
   if (egressLine !== null) lines.push(escapeDiscordText(egressLine));
+  // The argument check that raised the prompt (ATO-2505); its reason
+  // quotes the command, so it is escaped too.
+  const findingLine = formatSecurityFindingLine(request);
+  if (findingLine !== null) lines.push(escapeDiscordText(findingLine));
   if (request.preview) {
     // Fence the preview: a shell command full of backticks or
     // underscores would otherwise be mangled by Discord's markdown.

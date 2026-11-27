@@ -7,6 +7,7 @@
 import type { ApprovalCategory } from "../approval/approval-level.js";
 import type { RiskLevel } from "../approval/risk-review.js";
 import type { EgressDestination } from "../approval/egress-scan.js";
+import type { SecurityFinding } from "../approval/approval-ledger.js";
 import type { UserQuestion } from "../approval/user-question.js";
 
 export type HostRequestType =
@@ -210,6 +211,14 @@ export interface ApprovalRequestPayload {
    * outbound ones as `sends data to → <label>` (`formatEgressLine`).
    */
   egress?: EgressDestination[];
+  /**
+   * The argument check that raised the prompt (ATO-2505): rule id, a
+   * short reason and a 0..1 confidence. A host draws it as
+   * `formatSecurityFindingLine` does.
+   */
+  securityFinding?: SecurityFinding;
+  /** Asks at every level, bypass included (a sure finding). */
+  askEveryLevel?: true;
   /**
    * Whether `grant: "session"` may be offered (the TUI's `[s]`). This
    * agent always sends the three `can*` flags; absent (an older agent)

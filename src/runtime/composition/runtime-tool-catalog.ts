@@ -280,6 +280,9 @@ export function registerRuntimeCoreTools(input: {
     // restart. The guard never reads config itself.
     shellPolicy: {
       isGitRemoteSyncEnabled: () => getConfig().git.remoteSync,
+      // ATO-2505: how sure an argument finding must be to ask in bypass.
+      // Unset reads as NaN, which the guard takes as its default 0.7.
+      argScanThreshold: () => getConfig().agent.security?.argScanThreshold ?? Number.NaN,
     },
     shellJobs,
     ...(webSearchKeyHelp === undefined ? {} : { webSearchKeyHelp }),
@@ -312,6 +315,9 @@ export function registerRuntimeCoreTools(input: {
     // verify.run obeys the remote-sync switch too (ATO-1266).
     shellPolicy: {
       isGitRemoteSyncEnabled: () => getConfig().git.remoteSync,
+      // ATO-2505: how sure an argument finding must be to ask in bypass.
+      // Unset reads as NaN, which the guard takes as its default 0.7.
+      argScanThreshold: () => getConfig().agent.security?.argScanThreshold ?? Number.NaN,
     },
   });
   // Always registered; each call resolves `GITHUB_TOKEN` afresh so a

@@ -5,6 +5,7 @@ import { resolve as resolvePath } from "node:path";
 import {
   currentApprovalLedger,
   recordAutoApproval,
+  type SecurityFinding,
   type ToolApprovalRecord,
 } from "./approval-ledger.js";
 import {
@@ -160,6 +161,13 @@ export interface ApprovalRequest {
    * refuse policy still refuse it.
    */
   askEveryLevel?: true;
+  /**
+   * The argument check behind a request (ATO-2505): the shell guard's
+   * `dangerous.*` finding with its confidence, a write to a startup or
+   * SSH file, a secret in an HTTP body. The card shows it, and the
+   * ledger keeps it with the answer for the turn summary.
+   */
+  securityFinding?: SecurityFinding;
   /**
    * Set by the gate, never by a caller: what the smart-approval risk
    * review (`risk-review.ts`) said about a request it did not let
@@ -1372,6 +1380,9 @@ export class ApprovalGate {
       verdict: decision.approved ? "approved" : "denied",
       category: entry.request.category,
       at: Date.now(),
+      ...(entry.request.securityFinding !== undefined
+        ? { finding: { ...entry.request.securityFinding } }
+        : {}),
     });
     if (decision.approved && decision.grant) {
       this.recordGrant(entry.request, decision.grant);

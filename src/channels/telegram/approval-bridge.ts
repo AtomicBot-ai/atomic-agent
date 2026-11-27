@@ -8,6 +8,7 @@ import {
 } from "../../approval/index.js";
 import { formatRiskLine } from "../../approval/risk-review.js";
 import { formatEgressLine } from "../../approval/egress-scan.js";
+import { formatSecurityFindingLine } from "../../approval/security-finding-line.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import {
@@ -718,6 +719,9 @@ function formatApprovalText(
   // Where the command sends data (ATO-2116); plain text like the rest.
   const egressLine = formatEgressLine(req.egress);
   if (egressLine !== null) head.push(egressLine);
+  // The argument check that raised the prompt (ATO-2505).
+  const findingLine = formatSecurityFindingLine(req);
+  if (findingLine !== null) head.push(findingLine);
   const tail: string[] = [];
   if (req.affectedResources && req.affectedResources.length > 0) {
     tail.push("resources:");
