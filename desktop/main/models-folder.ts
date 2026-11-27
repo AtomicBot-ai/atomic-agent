@@ -97,7 +97,16 @@ export function leftoversFromStdout(stdout: string): string[] {
  * The agent's refusal in words for the pane. Its line is `models dir: <why>`;
  * an agent without the subcommand says `unknown subcommand: dir`.
  */
+/** Said when the picked folder already holds something (the agent refuses it too). */
+export const NOT_EMPTY_WORDS = "That folder is not empty. Pick an empty folder, or make a new one with New Folder.";
+
+/** True when a folder listing counts as empty: nothing, or only `.DS_Store`. */
+export function folderListingIsEmpty(names: readonly string[]): boolean {
+  return names.every((n) => n === ".DS_Store");
+}
+
 export function moveErrorWords(stderr: string, code: number | null): string {
+  if (/is not empty/.test(stderr)) return NOT_EMPTY_WORDS;
   if (/unknown subcommand: dir\b/.test(stderr)) {
     return "This version of the agent cannot move models yet. Update the agent, then try again.";
   }

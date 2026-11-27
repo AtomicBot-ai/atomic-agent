@@ -81,3 +81,31 @@ test("a move in progress says which model and hides the buttons", () => {
   assert.equal(R.mdirProgressLine(null), "Moving your models…");
   assert.match(R.mdirDoneNote({ leftovers: ["/old/a"] }), /delete it by hand: \/old\/a/);
 });
+
+test("a folder with anything but .DS_Store in it is not empty, and the agent's refusal reads plainly", () => {
+  assert.equal(M.folderListingIsEmpty([]), true);
+  assert.equal(M.folderListingIsEmpty([".DS_Store"]), true);
+  assert.equal(M.folderListingIsEmpty([".DS_Store", "letter.txt"]), false);
+  assert.equal(
+    M.moveErrorWords("models dir: the new folder /Users/me/Documents is not empty; pick an empty folder or a new one\n", 1),
+    M.NOT_EMPTY_WORDS,
+  );
+});
+
+test("Change shows the dialog's 'folder must be empty' error and moves nothing", async () => {
+  let moved = false;
+  globalThis.BR = {
+    modelsFolderInfo: async () => ({ ok: true }),
+    modelsFolderChoose: async () => ({ ok: false, error: M.NOT_EMPTY_WORDS }),
+    modelsFolderMove: async () => { moved = true; return { ok: true }; },
+  };
+  try {
+    R.MDIR.phase = "idle";
+    R.MDIR.error = null;
+    await R.mdirChange();
+    assert.equal(R.MDIR.error, M.NOT_EMPTY_WORDS);
+    assert.equal(moved, false);
+  } finally {
+    delete globalThis.BR;
+  }
+});

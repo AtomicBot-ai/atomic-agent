@@ -99,6 +99,7 @@ async function mdirChange() {
   MDIR.phase = 'choosing'; MDIR.error = null; MDIR.note = null; mdirRepaint();
   const picked = await br.modelsFolderChoose().catch(() => null);
   MDIR.phase = 'idle';
+  if (picked && !picked.ok && picked.error) MDIR.error = picked.error;
   if (!picked || !picked.ok || !picked.path) { mdirRepaint(); return; }
   await mdirMove({path: picked.path});
 }

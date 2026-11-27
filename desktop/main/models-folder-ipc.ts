@@ -19,15 +19,18 @@
  */
 
 import { spawn } from "node:child_process";
+import { readdir } from "node:fs/promises";
 
 import { dialog, ipcMain, type BrowserWindow } from "electron";
 
 import { resolveBinary } from "./agent-client.js";
 import { atagRun, plainCliError, withConfigLock } from "./agent-cli.js";
 import {
+  folderListingIsEmpty,
   leftoversFromStdout,
   movedToFromStdout,
   moveErrorWords,
+  NOT_EMPTY_WORDS,
   parseModelsFolderInfo,
   parseModelsMoveLine,
 } from "./models-folder.js";
@@ -64,11 +67,17 @@ export function wireModelsFolderIpc(deps: ModelsFolderIpcDeps): void {
     const opts = {
       title: "Choose a folder for your models",
       buttonLabel: "Use this folder",
+      message: "Pick an empty folder, or make a new one. Only the models move there.",
       properties: ["openDirectory", "createDirectory"] as Array<"openDirectory" | "createDirectory">,
     };
     const picked = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
-    if (picked.canceled || !picked.filePaths[0]) return { ok: false, cancelled: true };
-    return { ok: true, path: picked.filePaths[0] };
+    const path = picked.filePaths[0];
+    if (picked.canceled || !path) return { ok: false, cancelled: true };
+    // The agent refuses a non-empty folder as well; saying so here keeps the
+    // person in the dialog flow instead of after a failed move.
+    const names = await readdir(path).catch(() => [] as string[]);
+    if (!folderListingIsEmpty(names)) return { ok: false, error: NOT_EMPTY_WORDS };
+    return { ok: true, path };
   });
 
   ipcMain.handle("modelsFolder:move", async (_event, input: unknown): Promise<ModelsFolderMoveAnswer> => {
