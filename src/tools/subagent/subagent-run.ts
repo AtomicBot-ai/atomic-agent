@@ -36,9 +36,9 @@ import {
   FUSION_WORKER_OPERATOR_ONLY_MARKER,
   workerRefusalFor,
 } from "../fusion/worker-tool-policy.js";
-import { runWorkerTasksCore } from "../fusion/worker-runner.js";
-import { LocalLegHealth } from "../fusion/local-leg-health.js";
+import { runWorkerTasks, type WorkerRunnerDeps } from "../fusion/worker-runner.js";
 import type { WorkerRunnerCoreDeps } from "../fusion/worker-runner-core.js";
+import { subagentLocalLegHealth, type SubagentLocalLegDeps } from "./subagent-local-leg.js";
 import {
   delegateOutcome,
   formatDelegateOutput,
@@ -115,7 +115,7 @@ export function subagentRefusalFor(request: {
     : SUBAGENT_OPERATOR_ONLY_REFUSED;
 }
 
-export interface SubagentRunDeps extends WorkerRunnerCoreDeps {
+export interface SubagentRunDeps extends WorkerRunnerCoreDeps, SubagentLocalLegDeps {
   /** Live read: in Fusion the tool refuses and points at `fusion.delegate`. */
   resolveRunMode: () => ResolvedRunMode;
   /**
@@ -212,10 +212,8 @@ function error(
  */
 export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
   const ledger = deps.turnLedger ?? new SubagentTurnLedger();
-  // One per tool, as `fusion.delegate` keeps its own (ATO-917): a local
-  // server left wedged by one call's cut-off subagent is still wedged for
-  // the next call, which is asked about it before it is sent (ATO-2430).
-  const localLegHealth = deps.localLegHealth ?? new LocalLegHealth();
+  // One per tool (ATO-2430, subagent-local-leg.ts).
+  const localLegHealth = subagentLocalLegHealth(deps);
   return {
     name: SUBAGENT_RUN_TOOL,
     description:
@@ -410,7 +408,7 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
       ledger.record(ctx.sessionId, turnAt, tasks.length);
       const childDepth = depth + 1;
       const originalRequest = deps.resolveOriginalRequest?.(ctx.sessionId);
-      const runnerDeps: WorkerRunnerCoreDeps = {
+      const runnerDeps: WorkerRunnerDeps = {
         ...deps,
         localLegHealth,
         workingDir: ctx.workingDir,
@@ -470,7 +468,7 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
                 mode.cloudWorkers ?? DEFAULT_FUSION_CLOUD_WORKERS,
               ),
             );
-        return runWorkerTasksCore(runnerDeps, {
+        return runWorkerTasks(runnerDeps, {
           parentSessionId: ctx.sessionId,
           tasks: group.tasks,
           maxWorkers,

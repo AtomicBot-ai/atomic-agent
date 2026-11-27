@@ -28,18 +28,26 @@ export function logbookChipLabel(state: LogbookChipState): string | null {
   return null;
 }
 
-function readState(stateDir: string): LogbookChipState {
+/**
+ * Read the chip's state. The config getter runs inside the try: the chip
+ * renders on every frame of the top bar, so a config with no paths (or a
+ * broken settings file) must show nothing, never take the TUI down.
+ */
+export function readLogbookChipState(
+  stateDir: string | undefined,
+  configStateDir: () => string = () => getConfig().paths.stateDir,
+): LogbookChipState {
   try {
-    return logbookChipState(readLogbookSettings(stateDir), Date.now());
+    return logbookChipState(readLogbookSettings(stateDir ?? configStateDir()), Date.now());
   } catch {
     return "off";
   }
 }
 
-export function useLogbookChipState(stateDir: string = getConfig().paths.stateDir): LogbookChipState {
-  const [state, setState] = useState<LogbookChipState>(() => readState(stateDir));
+export function useLogbookChipState(stateDir?: string): LogbookChipState {
+  const [state, setState] = useState<LogbookChipState>(() => readLogbookChipState(stateDir));
   useEffect(() => {
-    const timer = setInterval(() => setState(readState(stateDir)), LOGBOOK_CHIP_POLL_MS);
+    const timer = setInterval(() => setState(readLogbookChipState(stateDir)), LOGBOOK_CHIP_POLL_MS);
     timer.unref?.();
     return () => clearInterval(timer);
   }, [stateDir]);

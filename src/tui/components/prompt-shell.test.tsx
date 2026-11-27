@@ -94,8 +94,14 @@ describe("PromptShell", () => {
                 conversationCap: 32_000,
                 conversationPercent: 88,
                 capSource: "config",
+                pairs: 0,
+                pairsCap: 0,
+                droppedPairs: 0,
+                pairCosts: [],
                 droppedTurns: 0,
                 sections: [],
+                parts: [],
+                toolSearchActive: false,
               }}
             />
           }

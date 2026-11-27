@@ -145,6 +145,7 @@ export const INTERNAL_ENV_NAMES: ReadonlyMap<string, string> = new Map([
   ["ATOMIC_AGENT_API_KEY", "a secret name kept out of the shell tool's child environment"],
   ["ATOMIC_AGENT_OPENAI_API_KEY", "a secret name kept out of child process environments"],
   ["ATOMIC_AGENT_GIT_CREDENTIAL", "set only on the git child process to pass the GitHub token"],
+  ["ATOMIC_AGENT_SECRET_KEY", "set only on a cmd:// secret helper's child process to pass the key it resolves"],
   ["ATOMIC_AGENT_SURFACE", "set by the desktop app on the agent it starts"],
   ["ATOMIC_AGENT_DESKTOP_VERSION", "set by the desktop app on the agent it starts"],
   ["ATOMIC_AGENT_MCP_APPS_UI", "set by the desktop app on the agent it starts, which draws MCP Apps pages"],
@@ -156,6 +157,7 @@ export const INTERNAL_ENV_NAMES: ReadonlyMap<string, string> = new Map([
   ["ATOMIC_AGENT_INSTALL_SOURCE", "set by the install scripts for analytics"],
   ["ATOMIC_AGENT_KEYCHAIN_PROBE", "a throwaway keychain account name, not a variable"],
   ["ATOMIC_AGENT_INK_INCREMENTAL", "a one-off switch for the session-swap render measurement, not a user setting"],
+  ["ATOMIC_AGENT_TOKEN", "set by `atag launch` on the CLI it starts (Codex, OpenCode) to carry the serve key"],
 ]);
 
 /** The env variable that wins over `configKey`, or null. */

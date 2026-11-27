@@ -92,7 +92,7 @@ export class LinearApi {
     });
     let json: GraphqlBody | null = null;
     try {
-      json = (await res.json()) as typeof json;
+      json = (await res.json()) as GraphqlBody | null;
     } catch {
       json = null;
     }

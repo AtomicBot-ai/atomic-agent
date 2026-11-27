@@ -44,7 +44,7 @@ describe("continueOnStopHooks", () => {
     const again = vi.fn(async () => replied("Fixed the tests.", { stepCount: 3, undelivered: ["late"] }));
     const out = await continueOnStopHooks({ afterTurn }, replied("Done."), undefined, again);
     expect(again).toHaveBeenCalledTimes(1);
-    expect(again.mock.calls[0]![1]).toContain("tests are red");
+    expect((again.mock.calls[0] as unknown[])[1]).toContain("tests are red");
     expect(afterTurn.mock.calls[0]![0]).toMatchObject({ stopHookActive: false, lastReply: "Done." });
     expect(afterTurn.mock.calls[1]![0]).toMatchObject({ stopHookActive: true, lastReply: "Fixed the tests." });
     expect(out.stepCount).toBe(5);

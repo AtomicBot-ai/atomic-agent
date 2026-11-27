@@ -290,7 +290,11 @@ describe("buildEnvelope", () => {
     } as const;
     const fingerprintOf = (httpStatus: number, upstreamReason: string) =>
       parseEventPayload(
-        buildEnvelope(DSN, { ...base, httpStatus, upstreamReason }, META).body,
+        buildEnvelope(
+          DSN,
+          { ...base, frames: [...base.frames], httpStatus, upstreamReason },
+          META,
+        ).body,
       ).fingerprint;
     const credit = fingerprintOf(402, "out_of_credit");
     const model = fingerprintOf(404, "model_not_found");

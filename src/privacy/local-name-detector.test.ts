@@ -80,8 +80,9 @@ describe("local name detector (ATO-2394)", () => {
     expect(onError).toHaveBeenCalled();
     const vault = new PrivacyVault();
     vault.learn(found);
-    expect(vault.mask(RU)).toBe(regexOnly(RU));
-    expect(vault.mask(EN)).toBe(regexOnly(EN));
+    const plain = new PrivacyVault();
+    expect(vault.mask(RU)).toBe(plain.mask(RU));
+    expect(vault.mask(EN)).toBe(plain.mask(EN));
   });
 
   it("falls back to the regex result on a timeout, even when the model ignores the signal", async () => {

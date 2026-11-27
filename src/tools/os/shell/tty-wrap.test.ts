@@ -7,12 +7,14 @@ describe("wrapForTty", () => {
   const always = () => true;
   const never = () => false;
 
-  it("macOS: script -q /dev/null <program> <args>", () => {
-    expect(wrapForTty("/bin/sh", ["-c", "npm init"], "darwin", always)).toEqual({
-      command: "/usr/bin/script",
-      args: ["-q", "/dev/null", "/bin/sh", "-c", "npm init"],
-      tty: true,
-    });
+  it("macOS: script -q /dev/null <program> <args>, fed through a pipe relay (stdin is a socket)", () => {
+    const wrapped = wrapForTty("/bin/sh", ["-c", "npm init"], "darwin", always);
+    expect(wrapped.command).toBe("/bin/sh");
+    expect(wrapped.tty).toBe(true);
+    expect(wrapped.args[0]).toBe("-c");
+    expect(wrapped.args[1]).toContain('"$0" -q /dev/null "$@"');
+    expect(wrapped.args[1]).toContain("cat");
+    expect(wrapped.args.slice(2)).toEqual(["/usr/bin/script", "/bin/sh", "-c", "npm init"]);
   });
 
   it("Linux: one quoted line for script -c, exit code passed through", () => {

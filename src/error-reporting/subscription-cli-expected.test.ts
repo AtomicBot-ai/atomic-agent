@@ -84,6 +84,6 @@ describe("captureError and a subscription CLI's account state (ATO-2417)", () =>
     const { client, captured } = fakeClient();
     captureError(client, failure("Segmentation fault"), { source: "llm_failure", category: "tool" });
     expect(captured).toHaveLength(1);
-    expect(captured[0].errorType).toBe("SubscriptionCliInvocationError");
+    expect(captured[0]?.errorType).toBe("SubscriptionCliInvocationError");
   });
 });

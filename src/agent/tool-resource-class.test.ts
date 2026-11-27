@@ -36,6 +36,8 @@ describe("gated-call approval categories", () => {
 
   it("level 5 runs every categorised gated tool unattended", () => {
     for (const name of Object.keys(listApprovalCategoriesByTool())) {
+      // Solo by design (research.deep), asserted false in its own test below.
+      if (isSoloRegardlessOfApproval(name)) continue;
       expect(gatedCallRunsUnattended(name, { level: 5 }), name).toBe(true);
     }
   });

@@ -285,10 +285,12 @@ describe("rail session list — manual order", () => {
   });
 
   it("moveSession snapshots the displayed list with the row on its new slot, then re-emits", () => {
+    // Pinned dates: rows made in the same millisecond would fall back to
+    // the id tiebreak, and a loaded runner can split them across two.
     const stored = [
-      spokenTo("s-3", "third"),
-      spokenTo("s-2", "second"),
-      spokenTo("s-1", "first"),
+      { ...spokenTo("s-3", "third"), updatedAt: 3 },
+      { ...spokenTo("s-2", "second"), updatedAt: 2 },
+      { ...spokenTo("s-1", "first"), updatedAt: 1 },
     ];
     const { orchestrator, rail, written } = harness(stored);
     orchestrator.refreshRecentSessions();

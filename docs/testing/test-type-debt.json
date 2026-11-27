@@ -6657,14 +6657,6 @@
       "count": 1
     },
     {
-      "path": "src/tui/components/prompt-shell.test.tsx",
-      "code": 2739,
-      "message": "Type '{ tokens: number; contextWindow: number; percent: number; conversationTokens: number; conversationCap: number; conversationPercent: number; capSource: \"config\"; droppedTurns: number; sections: never[]; }' is missing the following properties from type 'ContextUsageView': pairs, pairsCap, droppedPairs, pairCosts",
-      "anchor": "usage",
-      "line": 89,
-      "count": 1
-    },
-    {
       "path": "src/tui/composer-switch/composer-meta-controls.test.tsx",
       "code": 2353,
       "message": "Object literal may only specify known properties, and 'label' does not exist in type 'ComposerBackendMeta'.",
