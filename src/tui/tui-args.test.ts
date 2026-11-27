@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isBareTuiLaunchFlag,
   nonInteractiveStdinError,
   parseTuiArgs,
   selfUpdateRelaunchArgs,
@@ -112,6 +113,43 @@ describe("parseTuiArgs --session / --send", () => {
     expect(parseTuiArgs(["--session", "--no-mouse"])).toHaveProperty("error");
     expect(parseTuiArgs(["--send"])).toHaveProperty("error");
     expect(parseTuiArgs(["--send", "  "])).toHaveProperty("error");
+  });
+});
+
+describe("parseTuiArgs --models (ATO-2500)", () => {
+  it("stays off by default", () => {
+    expect(parseTuiArgs([])).toMatchObject({ models: null });
+  });
+
+  it("reads this session's favorites in order", () => {
+    expect(parseTuiArgs(["--models", "openai/gpt-5,local-llama/qwen-3.5-4b"])).toMatchObject({
+      models: [
+        { provider: "openai", model: "gpt-5" },
+        { provider: "local-llama", model: "qwen-3.5-4b" },
+      ],
+    });
+  });
+
+  it("refuses a missing value and an entry that is not provider/model", () => {
+    expect(parseTuiArgs(["--models"])).toHaveProperty("error");
+    expect(parseTuiArgs(["--models", "--no-mouse"])).toHaveProperty("error");
+    expect(parseTuiArgs(["--models", "gpt-5"])).toEqual({ error: expect.stringContaining('"gpt-5"') });
+  });
+
+  it("may lead a bare launch; other flags may not", () => {
+    expect(isBareTuiLaunchFlag("--models")).toBe(true);
+    expect(isBareTuiLaunchFlag("--cwd")).toBe(false);
+    expect(isBareTuiLaunchFlag(undefined)).toBe(false);
+  });
+
+  it("is in the help and survives a self-update relaunch", () => {
+    expect(TUI_HELP).toContain("--models <list>");
+    expect(selfUpdateRelaunchArgs(["/n", "/c.js"], ["--models", "openai/gpt-5"], false)).toEqual([
+      "/c.js",
+      "tui",
+      "--models",
+      "openai/gpt-5",
+    ]);
   });
 });
 
