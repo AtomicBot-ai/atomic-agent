@@ -120,6 +120,9 @@ test("Windows and Linux apps: browsers, protected apps and Atomic Agent itself b
   // A UWP frame whose real app was not reached is never an open app (Settings, Windows Security).
   assert.equal(C.showOnceAppClass(app("applicationframehost.exe", "Application Frame Host"), 1), "unknown");
   assert.equal(C.showOnceAppClass(app("consent.exe", "Consent UI"), 1), "protected");
+  // Windows Security, once show-once-win.ts resolves it past ApplicationFrameHost, in either casing.
+  assert.equal(C.showOnceAppClass(app("sechealthui.exe", "Windows Security"), 1), "protected");
+  assert.equal(C.showOnceAppClass(app("SecHealthUI.exe", "Windows Security"), 1), "protected");
   assert.equal(C.showOnceAppClass(app("gnome-control-center"), 1), "protected");
   assert.equal(C.showOnceAppClass(app("atomic agent.exe", "Atomic Agent"), 1), "own");
   assert.equal(C.showOnceAppClass(app("code.exe", "Visual Studio Code", 1), 1), "own", "the app's own pid");

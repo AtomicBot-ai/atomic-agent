@@ -53,7 +53,7 @@ const BROWSER_BUNDLE_PREFIXES: readonly string[] = [
  */
 const DESKTOP_PROTECTED_EXES: ReadonlySet<string> = new Set([
   "atomic agent.exe", "atomic-agent-desktop",
-  "systemsettings.exe", "consent.exe", "logonui.exe", "lockapp.exe", "credentialuibroker.exe", "credwiz.exe",
+  "systemsettings.exe", "sechealthui.exe", "consent.exe", "logonui.exe", "lockapp.exe", "credentialuibroker.exe", "credwiz.exe",
   "keepass.exe", "keepassxc.exe", "1password.exe", "bitwarden.exe", "autohotkey.exe", "autohotkey64.exe", "autohotkeyu64.exe",
   "gnome-control-center", "systemsettings", "systemsettings5", "seahorse", "keepassxc", "kwalletmanager5", "kwalletmanager",
   "gcr-prompter", "gcr4-ssh-askpass", "pinentry", "pinentry-gnome3", "pinentry-qt", "polkit-gnome-authentication-agent-1",
