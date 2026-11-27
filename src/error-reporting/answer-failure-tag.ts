@@ -35,12 +35,22 @@ const KNOWN_TRUNCATION_CAUSES: ReadonlySet<string> = new Set([
   "unknown",
 ]);
 
+/** Mirror of `TruncationPart` (ATO-1678). */
+const KNOWN_CUT_PARTS: ReadonlySet<string> = new Set(["reasoning", "tool_call", "text"]);
+
 /** Depth cap on the `cause` walk — longer is a cycle. */
 const MAX_CAUSE_DEPTH = 5;
 
 export interface AnswerFailureTags {
   answerFailure?: AnswerFailure;
   truncationCause?: string;
+  /**
+   * `cut_part` (ATO-1678): where a cut reply was, `reasoning` /
+   * `tool_call` / `text`. Never the tool's name.
+   */
+  cutPart?: string;
+  /** `cut_repeated`: `cut` or `loop` when the step's truncation retry was spent. */
+  cutRepeated?: string;
 }
 
 /**
@@ -65,10 +75,14 @@ export function extractAnswerFailureTags(err: unknown): AnswerFailureTags {
         typeof cause === "string" && KNOWN_TRUNCATION_CAUSES.has(cause)
           ? cause
           : undefined;
+      const part = (current as { truncation?: { part?: unknown } }).truncation?.part;
+      const repeated = (current as { repeatedCut?: unknown }).repeatedCut;
       return {
         answerFailure:
           known === "context_window" ? "context_full" : "cut_at_limit",
         ...(known !== undefined ? { truncationCause: known } : {}),
+        ...(typeof part === "string" && KNOWN_CUT_PARTS.has(part) ? { cutPart: part } : {}),
+        ...(repeated === "loop" || repeated === "cut" ? { cutRepeated: repeated } : {}),
       };
     }
     const next = (current as { cause?: unknown }).cause;

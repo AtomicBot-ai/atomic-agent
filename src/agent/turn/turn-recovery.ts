@@ -15,6 +15,7 @@ import { classifyProviderWaitCause } from "../../llm/reliability/provider-wait-c
 import { composeSizeRejectionNotice, planSizeRejectionRepack } from "./size-rejection-recovery.js";
 import { MID_REPLY_TIMEOUT_STEP_BUDGET, composeMidReplyTimeoutNotice, planMidReplyTimeoutRetry } from "./mid-reply-timeout-recovery.js";
 import { composeTruncationNotice, planTruncationRetry, truncationRetryMaxTokens, type TruncationRetry, type TruncationRetryPlan } from "./truncation-recovery.js";
+import { repeatedTruncationError } from "./repeated-truncation.js";
 import { PARSE_RECOVERY_BUDGET, composeParseFailureNotice, isRecoverableParseFailure } from "./parse-failure-recovery.js";
 import { EMPTY_COMPLETION_RECOVERY_BUDGET, composeEmptyCompletionNotice, emptyCompletionRetryDelayMs, isRecoverableEmptyCompletion, repeatedEmptyCompletionError } from "./empty-completion-recovery.js";
 import { FINALIZATION_REQUEST_DEADLINE_MS, type RequestDeadline } from "../request-deadline.js";
@@ -850,6 +851,10 @@ export function recoverTurnStep(
   } else if (context.contextExhausted !== undefined && !cancelled) {
     // Category stays: dashboards keep counting the same failure class.
     runError = context.contextExhausted;
+  } else if (!cancelled) {
+    // Cut again after the step's truncation retry (ATO-1678): say the
+    // model keeps running into the limit, not "cut off, retry".
+    runError = repeatedTruncationError(runError, i, turn) ?? runError;
   }
   return reportTurnFailure(runError, { category, cancelled, creditRefused }, { state, stepIndex: i }, deps, turn);
 }

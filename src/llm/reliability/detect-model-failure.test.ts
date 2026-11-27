@@ -102,6 +102,8 @@ describe("detectModelFailure", () => {
       { requestedMaxTokens: 16_384 },
     );
     expect(thoughtLoop?.truncation?.repetitive).toBe(true);
+    // ATO-1678: and the cut is placed in the reasoning.
+    expect(thoughtLoop?.truncation?.part).toBe("reasoning");
     const plain = detectModelFailure(
       makeCompletion({ content: "short and varied", truncated: true, usage }),
       { requestedMaxTokens: 16_384 },
@@ -369,6 +371,9 @@ describe("detectModelFailure", () => {
       completionTokens: 16_384,
       promptTokens: 3_000,
       requestedMaxTokens: 16_384,
+      // ATO-1678: the cut landed inside this call's arguments.
+      part: "tool_call",
+      cutTool: "os.fs.write",
     });
     expect(result?.message).toContain("it spent the reply cap");
   });

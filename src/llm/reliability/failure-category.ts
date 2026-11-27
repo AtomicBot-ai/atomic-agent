@@ -82,7 +82,21 @@ export interface TruncationDetail {
    * the retry keeps the cap. Absent when the tail did not repeat.
    */
   repetitive?: true;
+  /**
+   * Where the reply was when it was cut (`truncation-part.ts`, ATO-1678):
+   * in its reasoning, in a tool call's arguments, or in an answer.
+   * Absent when nothing came back to read.
+   */
+  part?: TruncationPart;
+  /**
+   * For `part: "tool_call"`: the bounded name of the call that was cut.
+   * Only the retry's notice to the model reads it; never reported.
+   */
+  cutTool?: string;
 }
+
+/** Where a cut reply was: see `TruncationDetail.part`. */
+export type TruncationPart = "reasoning" | "tool_call" | "text";
 
 /**
  * Which attempt inside a single step raised the model-side defect. A

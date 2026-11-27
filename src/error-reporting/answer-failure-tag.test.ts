@@ -41,6 +41,29 @@ describe("answer_failure / truncation_cause (ATO-1031)", () => {
     ).toEqual({ answerFailure: "no_stop" });
   });
 
+  it("tags where a reply was cut and whether the retry was spent, never the tool name (ATO-1678)", () => {
+    const again = new ModelError("truncated", "cut again", {
+      truncation: {
+        cause: "reply_cap",
+        completionTokens: 16_384,
+        promptTokens: 28_000,
+        part: "tool_call",
+        cutTool: "os.fs.write",
+      },
+      repeatedCut: "cut",
+    });
+    expect(extractAnswerFailureTags(again)).toEqual({
+      answerFailure: "cut_at_limit",
+      truncationCause: "reply_cap",
+      cutPart: "tool_call",
+      cutRepeated: "cut",
+    });
+    const tags = tagsOf(again);
+    expect(tags.cut_part).toBe("tool_call");
+    expect(tags.cut_repeated).toBe("cut");
+    expect(JSON.stringify(tags)).not.toContain("os.fs.write");
+  });
+
   it("reads the model failure under a wrapper, and nothing off other errors", () => {
     const wrapped = new GrammarError("wrapped", "", { cause: cut("reply_cap") });
     expect(extractAnswerFailureTags(wrapped).answerFailure).toBe("cut_at_limit");
