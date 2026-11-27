@@ -67,8 +67,22 @@ export type VisionProviderSource =
   | LlmProvider
   | ((providerId: string | undefined) => LlmProvider | undefined);
 
+/**
+ * `vision.describe`'s lookup (ATO-1588): also told the turn's own model
+ * (`ToolContext.model`) so the image goes to that model, not the entry's
+ * default. It may resolve asynchronously: the provider copy for a model
+ * is built on first use (`ProviderRegistry.modelVariant`). A plain
+ * `VisionProviderSource` still fits.
+ */
+export type VisionDescribeProviderSource =
+  | LlmProvider
+  | ((
+      providerId: string | undefined,
+      model?: string,
+    ) => LlmProvider | undefined | Promise<LlmProvider | undefined>);
+
 export interface VisionDescribeToolOptions {
-  provider: VisionProviderSource;
+  provider: VisionDescribeProviderSource;
   /** Per-call image count cap mirrored from `config.vision.maxImagesPerCall`. */
   maxImagesPerCall: number;
   /** Per-image byte cap mirrored from `config.vision.maxImageBytes`. */
@@ -151,10 +165,16 @@ export function buildVisionDescribeTool(
       // Resolved per call, never captured: the provider serving THIS
       // step is the one whose capability counts and the one called.
       // No fallback to another provider — a refusal names the route.
-      const provider =
-        typeof options.provider === "function"
-          ? options.provider(ctx.providerId)
-          : options.provider;
+      // A turn on its own model (ATO-1588) asks for that model's copy.
+      let provider: LlmProvider | undefined;
+      try {
+        provider =
+          typeof options.provider === "function"
+            ? await options.provider(ctx.providerId, ctx.model)
+            : options.provider;
+      } catch (error) {
+        return errorResult(`vision is not available: ${(error as Error).message}`);
+      }
       if (provider === undefined) {
         return errorResult(
           `vision is not available: provider "${ctx.providerId ?? "(active)"}" is not configured`,
