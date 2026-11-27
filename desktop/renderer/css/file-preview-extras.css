@@ -2,7 +2,8 @@
    file-preview-line.js marks the line a `path:line` link opened on; the
    reply's chip for such a link (reply-line-links.js) reads as code;
    file-preview-editor.js draws the editor menu; file-preview-compare.js the
-   diff under the conflict bar. Tokens only, for both themes. */
+   diff under the conflict bar; project-tree.js the Files panel's This chat /
+   Project switch and the tree. Tokens only, for both themes. */
 pre.fp-haslineband{position:relative}
 .fp-lineband{position:absolute;left:0;right:0;background:var(--brand-wash);pointer-events:none;
   animation:fp-lineband-fade 2.4s var(--ease) 1.2s forwards}
@@ -21,3 +22,28 @@ pre.fp-haslineband{position:relative}
 
 .fp-compare{flex:none;max-height:45vh;overflow:auto;border-bottom:1px solid var(--divider);background:var(--well)}
 .fp-compare-diff{padding:4px 14px 10px}
+
+.pt-switch{display:flex;align-items:center;gap:4px;padding:8px 8px 2px}
+.pt-tab{height:26px;padding:0 10px;border:0;border-radius:7px;background:none;color:var(--ink-2);
+  font:500 var(--fs-label)/1 var(--font-ui);cursor:pointer;transition:background var(--t-state) var(--ease)}
+.pt-tab:hover{background:var(--hover);color:var(--ink)}
+.pt-tab.on{background:var(--brand-wash);color:var(--ink)}
+.pt-tab:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.pt-reload{margin-left:auto}
+.pt-tree{list-style:none;margin:0;padding:4px 6px 8px}
+.pt-row{display:flex;align-items:center;gap:6px;width:100%;min-width:0;height:26px;padding-right:8px;border:0;border-radius:var(--r-row);
+  background:none;text-align:left;color:var(--ink);font:400 var(--fs-cap)/18px var(--font-ui);cursor:pointer}
+.pt-row:hover{background:var(--hover)}
+.pt-row:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.pt-chev{flex:none;display:inline-flex;width:14px;color:var(--ink-3)}
+.pt-chev svg{width:12px;height:12px}
+.pt-ic{flex:none;display:inline-flex;color:var(--blue)}
+.pt-ic svg{width:15px;height:15px}
+.pt-n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pt-mark{flex:none;font:600 var(--fs-micro)/15px var(--font-mono);color:var(--ink-3)}
+.pt-m-M,.pt-m-R{color:var(--amber-text)}
+.pt-m-A,.pt-m-U{color:var(--success)}
+.pt-m-D,.pt-m-C{color:var(--critical)}
+.pt-has-U .pt-n,.pt-has-A .pt-n{color:var(--success)}
+.pt-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--ink-3)}
+.pt-msg{list-style:none;padding:5px 8px;font:400 var(--fs-micro)/16px var(--font-ui);color:var(--ink-3)}
