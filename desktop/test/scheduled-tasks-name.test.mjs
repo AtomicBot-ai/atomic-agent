@@ -44,7 +44,7 @@ test('the sidebar row, the View menu, the palette and Settings all spell the sam
 });
 
 test('no visible string in the desktop still says "Cron jobs" or "Scheduled jobs"', () => {
-  const files = ['../renderer/renderer.js', '../renderer/sidebar-nav.js', '../renderer/workboard.js', '../main/menu.ts'];
+  const files = ['../renderer/renderer.js', '../renderer/sidebar-nav.js', '../renderer/workboard.js', '../renderer/overnight.js', '../main/menu.ts'];
   for (const f of files) {
     const text = readFileSync(new URL(f, import.meta.url), 'utf8');
     const sf = ts.createSourceFile(f, text, ts.ScriptTarget.Latest, true, f.endsWith('.ts') ? ts.ScriptKind.TS : ts.ScriptKind.JS);
@@ -97,4 +97,17 @@ test('a row\'s search words rank after its title and context, and only by word s
   assert.equal(fuzzyRank('cron', 'scheduled tasks', {kw: 'cron jobs'}), 4);
   assert.equal(fuzzyRank('obs', 'scheduled tasks', {kw: 'cron jobs'}), fuzzyRank('obs', 'scheduled tasks', {}));
   assert.equal(fuzzyRank('sched', 'scheduled tasks', {kw: 'cron'}), 1, 'the title still wins');
+});
+
+test('the overnight run toast points to Scheduled tasks, not the old "Tasks" place', () => {
+  const text = readFileSync(new URL('../renderer/overnight.js', import.meta.url), 'utf8');
+  const sf = ts.createSourceFile('overnight.js', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const strings = [];
+  const walk = (n) => {
+    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) strings.push(n.text);
+    ts.forEachChild(n, walk);
+  };
+  walk(sf);
+  assert.deepEqual(strings.filter((s) => /\bin Tasks\b/.test(s)), []);
+  assert.ok(strings.some((s) => s.includes('in ' + SCHEDULED_TASKS_LABEL + '.')));
 });
