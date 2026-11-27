@@ -2,10 +2,11 @@ import { ConfigValidationError } from "../config-validation-error.js";
 import { coerceFloatLike } from "../config-primitives.js";
 
 /**
- * `agent.security` (ATO-2505, ATO-2528): how sure an argument check must
- * be before it asks at every approval level, and the hosts a command may
- * send data to without the egress hold asking. Additive and unversioned:
- * a file without it reads the defaults.
+ * `agent.security` (ATO-2505, ATO-2528, ATO-2529): how sure an argument
+ * check must be before it asks at every approval level, the hosts a
+ * command may send data to without the egress hold asking, and what the
+ * security rules do when their reviewer gives no answer. Additive and
+ * unversioned: a file without it reads the defaults.
  */
 export interface AgentSecurityConfig {
   /**
@@ -16,7 +17,13 @@ export interface AgentSecurityConfig {
    * Hosts a command, `os.git.push` or `os.http.request` may send data to without the egress hold asking, kept across sessions (ATO-2528), like ssh `known_hosts`. `github.com` exactly, or `*.example.com` for the domain and its subdomains. "Allow always" on a held call adds its hosts here. Unlike `http.hostAllowlist` it limits nothing. Default empty. Read live.
    */
   knownHosts: string[];
+  /**
+   * What security rules (guard.md) do when their reviewer gives no answer (ATO-2529): `ask` puts the call to you, `block` refuses it. The stricter of this and a guard file's own `onFailure:` wins, so a project file cannot loosen it. Default `ask`. Read live.
+   */
+  guardOnFailure: "ask" | "block";
 }
+
+export type GuardOnFailure = "ask" | "block";
 
 /** Same number as `ASK_EVERY_LEVEL_CONFIDENCE` in the shell guard. */
 export const DEFAULT_ARG_SCAN_THRESHOLD = 0.7;
@@ -26,7 +33,7 @@ export const MAX_KNOWN_HOSTS = 500;
 const HOST_ENTRY_RE = /^(?:\*\.)?[a-z0-9_]([a-z0-9_.-]*[a-z0-9_])?$/;
 
 export function createAgentSecurityDefaults(): AgentSecurityConfig {
-  return { argScanThreshold: DEFAULT_ARG_SCAN_THRESHOLD, knownHosts: [] };
+  return { argScanThreshold: DEFAULT_ARG_SCAN_THRESHOLD, knownHosts: [], guardOnFailure: "ask" };
 }
 
 /** `GitHub.com.` → `github.com`; `null` for anything that is not a host or `*.domain`. */
@@ -69,18 +76,27 @@ function parseKnownHosts(value: unknown, fallback: readonly string[]): string[] 
   return hosts;
 }
 
+function parseGuardOnFailure(value: unknown, fallback: GuardOnFailure): GuardOnFailure {
+  if (value === undefined || value === null) return fallback;
+  if (value === "ask" || value === "block") return value;
+  throw new ConfigValidationError("agent.security.guardOnFailure", `expected "ask" or "block", got ${JSON.stringify(value)}`);
+}
+
 /** Absent keys keep `defaults`; a threshold outside 0.5..1 or a bad host is an error. */
 export function parseAgentSecurityConfig(
   raw: unknown,
   defaults: AgentSecurityConfig = createAgentSecurityDefaults(),
 ): AgentSecurityConfig {
-  if (raw === undefined || raw === null) return { ...defaults, knownHosts: [...(defaults.knownHosts ?? [])] };
+  if (raw === undefined || raw === null) {
+    return { ...defaults, knownHosts: [...(defaults.knownHosts ?? [])], guardOnFailure: defaults.guardOnFailure ?? "ask" };
+  }
   if (typeof raw !== "object" || Array.isArray(raw)) {
     throw new ConfigValidationError("agent.security", `expected an object, got ${JSON.stringify(raw)}`);
   }
-  const block = raw as { argScanThreshold?: unknown; knownHosts?: unknown };
+  const block = raw as { argScanThreshold?: unknown; knownHosts?: unknown; guardOnFailure?: unknown };
   return {
     argScanThreshold: parseThreshold(block.argScanThreshold, defaults.argScanThreshold),
     knownHosts: parseKnownHosts(block.knownHosts, defaults.knownHosts ?? []),
+    guardOnFailure: parseGuardOnFailure(block.guardOnFailure, defaults.guardOnFailure ?? "ask"),
   };
 }

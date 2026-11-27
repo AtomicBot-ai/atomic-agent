@@ -34,6 +34,19 @@ export interface ToolApprovalRecord {
    * summary can say what was caught and what the person answered.
    */
   finding?: SecurityFinding;
+  /**
+   * Set with `denied` when the person's security rules (guard.md)
+   * refused the call before anyone was asked (ATO-2529): what the
+   * reviewer said, or that it gave no answer under `onFailure: block`.
+   * The turn summary and the trace show it next to the call.
+   */
+  guard?: GuardBlockRecord;
+}
+
+/** A security rules refusal on the ledger (`ToolApprovalRecord.guard`). */
+export interface GuardBlockRecord {
+  decision: "block" | "no-answer";
+  reason: string;
 }
 
 /**
@@ -95,4 +108,12 @@ export function recordAutoApproval(
     via,
     reason,
   });
+}
+
+/**
+ * Record that the security rules refused the call running in this async
+ * context (ATO-2529). A no-op outside a tool call.
+ */
+export function recordGuardBlock(category: ApprovalCategory, guard: GuardBlockRecord): void {
+  currentApprovalLedger()?.push({ verdict: "denied", category, at: Date.now(), guard: { ...guard } });
 }
