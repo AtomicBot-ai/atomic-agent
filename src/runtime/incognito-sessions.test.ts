@@ -9,6 +9,7 @@ import { userTurn } from "../session/conversation-turn.js";
 import type { TurnOwnerProbe } from "../session/turn-owner.js";
 import { StructuredLogger, type LogRecord } from "../tracing/structured-logger.js";
 import { TaskStore } from "../tasks/task-store.js";
+import { Database } from "../native/load-better-sqlite3.js";
 import {
   createIncognitoSessions,
   removeIncognitoTrace,
@@ -149,6 +150,33 @@ describe("incognito sessions in the runtime", () => {
       sweepOrphanIncognitoSessions(open(30), tracesDir, logger, tasksDbFile, { ownerProbe: probe(30, alive) }),
     ).toEqual(["s-dead"]);
     expect(liveRunner.get(killed)).toBeNull();
+    expect(liveRunner.get(held)?.status).toBe("cancelled");
+    liveRunner.close();
+  });
+
+  it("deletes a fresh running task that names no owner, prompt and all (ATO-1654)", () => {
+    alive.add(10).add(20);
+    save(open(10), "s-dead", true);
+    const tasksDbFile = join(dir, "tasks.sqlite");
+    const runner = new TaskStore({ dbFile: tasksDbFile, ownerProbe: probe(10, alive) });
+    const crashed = runner.create({ sessionId: "s-dead", userMessage: "secret for s-dead", origin: "cli", maxAttempts: 1 }).id;
+    // Started a moment ago, well inside the staleness window.
+    expect(runner.markRunning(crashed)?.status).toBe("running");
+    const held = runner.create({ sessionId: "s-dead", userMessage: "held by a live runner", origin: "cli", maxAttempts: 1 }).id;
+    const liveRunner = new TaskStore({ dbFile: tasksDbFile, ownerProbe: probe(20, alive) });
+    expect(liveRunner.markRunning(held)?.status).toBe("running");
+    runner.close();
+    // Claimed by a binary that records no owner.
+    const raw = new Database(tasksDbFile);
+    raw.prepare(`UPDATE tasks SET run_owner = NULL WHERE id = ?`).run(crashed);
+    raw.close();
+    alive.delete(10);
+
+    expect(
+      sweepOrphanIncognitoSessions(open(30), tracesDir, logger, tasksDbFile, { ownerProbe: probe(30, alive) }),
+    ).toEqual(["s-dead"]);
+    expect(liveRunner.get(crashed)).toBeNull();
+    // A live process's run is still only cancelled.
     expect(liveRunner.get(held)?.status).toBe("cancelled");
     liveRunner.close();
   });
