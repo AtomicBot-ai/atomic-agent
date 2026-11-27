@@ -42,6 +42,7 @@ import {
   isGuestCommandAllowed,
   resolveSenderRole,
 } from "./guest-access.js";
+import { rotateGuestSession } from "./guest-session-reset.js";
 import {
   formatAttachmentFailure,
   sendAttachments,
@@ -824,16 +825,20 @@ async function handleSlashCommand(
       if (previous && !ctx.inflight.has(ref.key)) {
         ctx.releaseApprovalSession?.(previous);
       }
+      // ATO-2703: in a group the guests' conversation starts over too.
+      const previousGuest = ref.isPrivate ? undefined : rotateGuestSession(ref.key, ctx);
       ctx.logger.info("telegram: rotated session", {
         chatKey: ref.key,
         previousSessionId: previous,
+        ...(previousGuest ? { previousGuestSessionId: previousGuest } : {}),
       });
       await sendText(
         ctx,
         ref.target,
-        previous
+        (previous
           ? `Started a new session for this chat. Previous session ${previous} archived.`
-          : "Started a new session for this chat.",
+          : "Started a new session for this chat.") +
+          (previousGuest ? " The guests' conversation starts over too." : ""),
       );
       return;
     }
