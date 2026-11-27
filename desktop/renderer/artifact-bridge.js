@@ -121,12 +121,13 @@ function abFillComposer(text, title, opts) {
     return 'draft';
   }
   S.draft = text;
-  AB.lastFill = text;
   if (e) {
     e.value = text;
     if (typeof autosize === 'function') autosize(e);
     if (typeof e.setSelectionRange === 'function') e.setSelectionRange(text.length, text.length);
   }
+  // Kept as the box reads it back (a <textarea> turns CR and CRLF into LF; the draft check trims), so a held widget text is not taken for the person's draft.
+  AB.lastFill = String(e ? e.value : text).trim();
   if (typeof refreshSend === 'function') refreshSend();
   if (typeof ctxDraftChanged === 'function') ctxDraftChanged();
   if (typeof toast === 'function' && !(opts && opts.quiet)) toast((title ? name : 'The widget') + ' put a message in the box', 'Press Enter to send it to the agent, or change it first.');

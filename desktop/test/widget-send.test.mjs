@@ -170,6 +170,17 @@ test("once a send empties the box the widget's mark is dropped: the person's own
   assert.deepEqual(runRealSubmit("/runmode cloud"), ["slash:runmode cloud"]);
 });
 
+test("a held widget text with CR line ends or edge spaces is not taken for the person's draft: the next widget still fills", () => {
+  W.widgetSendNowSet(true);
+  globalThis.submit = () => {};   // held: the box keeps its text
+  for (const text of ["/runmode\r\ncloud", "  Laptop B  ", "a\rb"]) {
+    entry.value = ""; B.AB.lastFill = "";
+    assert.equal(W.widgetDeliver(text, "Pick"), "filled");
+    assert.equal(W.widgetDeliver("Laptop C", "Pick"), "filled", JSON.stringify(text));
+    assert.equal(entry.value, "Laptop C");
+  }
+});
+
 test("the Settings row names the switch and its act", () => {
   const html = W.widgetSendRowHTML({ setSwitchHTML: (o) => `<sw on=${o.on} act=${o.act}>` });
   assert.match(html, /Widgets send right away/);
