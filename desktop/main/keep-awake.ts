@@ -62,9 +62,16 @@ export function writeKeepAwakeMode(userData: string, mode: KeepAwakeMode): void 
  * agent's running tasks and its busy turns (`/health` busyTurns, which
  * also counts Telegram and task turns). An unknown count (the agent did
  * not answer, an older agent) counts as none.
+ *
+ * ATO-2519: busyTurns already includes this window's turns and the tasks'
+ * turns, so adding all three counted one chat twice. When the agent can
+ * say, its count is the work, never below what the window or the task
+ * list sees on its own (a task claimed before its turn began, a window
+ * turn the agent has not started yet).
  */
 export function workRunning(liveTurns: number, runningTasks: number | null, busyTurns: number | null): number {
-  return liveTurns + (runningTasks ?? 0) + (busyTurns ?? 0);
+  if (busyTurns === null) return liveTurns + (runningTasks ?? 0);
+  return Math.max(busyTurns, liveTurns, runningTasks ?? 0);
 }
 
 /**

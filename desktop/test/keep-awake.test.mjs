@@ -43,6 +43,10 @@ test('While Working counts window turns, running tasks and the agent\'s busy tur
   assert.equal(K.workRunning(1, null, null), 1);   // a chat streaming in this window
   assert.equal(K.workRunning(0, 1, null), 1);      // a scheduled task
   assert.equal(K.workRunning(0, null, 1), 1);      // a Telegram turn the window never sees
+  // ATO-2519: busyTurns already counts the window's turn and the task's turn: no double count.
+  assert.equal(K.workRunning(1, 0, 1), 1);         // one chat, seen by the window and by /health
+  assert.equal(K.workRunning(1, 1, 2), 2);         // a chat and a task, each counted once
+  assert.equal(K.workRunning(2, 1, 0), 2);         // never below what the window sees on its own
   // Blocker only during a run: on while something runs, off after.
   assert.equal(K.blockerWanted('while-working', K.workRunning(1, 0, 1)), true);
   assert.equal(K.blockerWanted('while-working', K.workRunning(0, 0, 0)), false);
