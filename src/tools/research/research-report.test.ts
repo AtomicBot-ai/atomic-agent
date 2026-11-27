@@ -30,6 +30,7 @@ const result = (over: Partial<ResearchResult> = {}): ResearchResult => ({
       claim: "The library has 95 staff.",
       quote: "Of its 80 staff, 30 work part time.",
       url: "https://a.example/report",
+      title: "Annual [2025] report",
       reason: "number_not_in_quote",
       unsupportedNumbers: ["95"],
     },
