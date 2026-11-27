@@ -15,7 +15,9 @@
  *  - `cli_reason`: for a run that failed with the CLI's own words
  *    (`exited`, `input_truncated`, `reported_error`, `turn_failed`),
  *    what those words say, as one fixed word from `CLI_REASONS`. The
- *    message is matched here, on the machine, and only the word leaves.
+ *    message is matched here, on the machine, and only the word leaves;
+ *  - `cli_version_outdated`: `true` when the CLI was older than the
+ *    version we support (ATO-1685).
  *
  * Read by class name, so this module takes no import from the LLM
  * layer, and walked through `cause`: the step executor hands the report
@@ -176,6 +178,9 @@ function tagsOf(e: Record<string, unknown>): SubscriptionCliFailureTags | undefi
       const message = e.message;
       tags.cli_reason = typeof message === "string" ? classifyCliReason(message) : "other";
     }
+    // The CLI was below the version we support when it failed (ATO-1685,
+    // `noteOutdatedCli` in cli-version-check.ts).
+    if (e.cliVersionOutdated === true) tags.cli_version_outdated = "true";
     return tags;
   }
   if (name === "SubscriptionCliCommandLineError") {

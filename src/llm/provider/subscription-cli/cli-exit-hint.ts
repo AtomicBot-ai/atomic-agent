@@ -33,7 +33,7 @@ export function knownCli(binary: string): "claude" | "codex" | null {
   return name === "claude" || name === "codex" ? name : null;
 }
 
-const CODEX_UPDATE = "`npm install -g @openai/codex@latest` or `brew upgrade codex`";
+export const CODEX_UPDATE = "`npm install -g @openai/codex@latest` or `brew upgrade codex`";
 
 /**
  * The sentence to append to a failure message, with a leading space, or
