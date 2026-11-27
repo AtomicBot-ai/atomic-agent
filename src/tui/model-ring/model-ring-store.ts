@@ -6,13 +6,22 @@ import {
   cleanModelRing,
   formatModelRingEntry,
   type ModelRingEntry,
+  type ModelRingState,
 } from "./model-ring.js";
 
 /**
  * The favourite-model ring (ATO-2169) lives in the state dir, not the
- * config: it is a terminal display shortlist that nothing else reads, so
- * it carries no schema version and a missing or broken file is simply an
- * empty ring. Same shape of file as model-spotlight-seen.json.
+ * config: a display shortlist the agent never reads, so it carries no
+ * schema version and a missing or broken file is simply an empty ring.
+ * Same shape of file as model-spotlight-seen.json.
+ *
+ * ATO-2500: one list for both apps. The desktop runs on the same state
+ * dir (`~/.atomic-agent`) and its model picker's Favorites group reads
+ * and writes this file through its main process
+ * (desktop/main/model-favorites-store.ts), in this format: `{"models":
+ * ["provider/model", ...]}`, oldest first, at most MODEL_RING_MAX. Each
+ * side reads the file again before it changes it, so a star set in one
+ * app is not lost to a write from the other.
  */
 export const MODEL_RING_FILE = "model-favorites.json";
 
@@ -39,4 +48,14 @@ export function writeModelRing(stateDir: string, ring: readonly ModelRingEntry[]
     rmSync(tmp, { force: true });
     return false;
   }
+}
+
+/**
+ * The ring the TUI starts with (ATO-2500): the `--models` list for this
+ * session when one was given, else the shared file.
+ */
+export function startupModelRing(sessionRing: readonly ModelRingEntry[] | null, stateDir: string): ModelRingState {
+  return sessionRing
+    ? { entries: [...sessionRing], sessionOnly: true }
+    : { entries: readModelRing(stateDir), sessionOnly: false };
 }
