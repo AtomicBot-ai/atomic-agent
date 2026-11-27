@@ -12,6 +12,7 @@ import {
   type KeystrokeKind,
   type PasteResult,
 } from "./keystroke-clipboard.js";
+import { activateAppCommand, frontAppCommand, parseFrontApp, type SourceApp } from "./replace-selection.js";
 
 /**
  * The Electron half of keystroke-clipboard.ts: Electron's clipboard, and the
@@ -119,4 +120,20 @@ export function pasteIntoFrontApp(text: string): Promise<PasteResult> {
     return Promise.resolve({ pasted: false, reason: "no-keystroke" });
   }
   return pasteByKeystroke(electronClipboardHost(), { press: pressKeys, sleep }, text);
+}
+
+/** ATO-2268: the app in front (macOS), for the mini chat's "Replace in …"; null elsewhere or when it cannot be read. */
+export async function readFrontApp(): Promise<SourceApp | null> {
+  const cmd = frontAppCommand(process.platform);
+  if (!cmd) return null;
+  const out = await run(cmd, 1500);
+  return out.ran ? parseFrontApp(out.stdout, process.pid) : null;
+}
+
+/** ATO-2268: brings that app back to the front; false when it quit or macOS refused. */
+export async function activateApp(target: SourceApp): Promise<boolean> {
+  const cmd = activateAppCommand(process.platform, target.pid);
+  if (!cmd) return false;
+  const out = await run(cmd, 1500);
+  return out.ran && out.stdout.trim() === "ok";
 }

@@ -79,7 +79,25 @@ function mcComposeWithSelection(prompt, selection) {
   return ask ? ask + '\n\n' + quoted : quoted;
 }
 
+/* ATO-2268: "Replace in <app>" under the answer to a message sent with the
+   selection. main puts it back in place of the selection (main/replace-selection.ts);
+   `label` comes from main (app:quickEntryOpened `replace`), null where it is
+   not offered (off macOS, the app not known). */
+
+/** Whether a reply row gets the button: an answer to the selection, finished, with words in it. */
+function mcReplaceOffered(row, label, streaming) {
+  if (!row || row.k !== 'assistant' || !row.replace || !label || streaming) return false;
+  const text = String(row.text || '').trim();
+  return !!text && text !== '(no reply)' && text !== '(stopped)';
+}
+
+/** The button's markup under that reply; '' when it is not offered. `esc` is the page's escape. */
+function mcReplaceHTML(row, label, streaming, esc) {
+  if (!mcReplaceOffered(row, label, streaming)) return '';
+  return '<div class="mc-replace-row"><button type="button" class="mc-act mc-replace" data-replace="' + esc(String(row.id)) + '">' + esc(label) + '</button></div>';
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {MC_SELECTION_ACTIONS, MC_TRANSLATE_LANGUAGES, mcLanguageName, mcLanguageOptions, mcDefaultLanguage,
-    mcSelectionPrompt, mcSelectionPreview, mcComposeWithSelection};
+    mcSelectionPrompt, mcSelectionPreview, mcComposeWithSelection, mcReplaceOffered, mcReplaceHTML};
 }

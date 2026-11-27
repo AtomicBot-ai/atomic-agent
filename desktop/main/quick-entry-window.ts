@@ -1,4 +1,4 @@
-import { BrowserWindow, globalShortcut, ipcMain, screen } from "electron";
+import { BrowserWindow, clipboard, globalShortcut, ipcMain, Notification, screen } from "electron";
 import { join } from "node:path";
 
 import {
@@ -15,6 +15,9 @@ import {
   type QuickEntryPref,
 } from "./quick-entry.js";
 import { MINI_CHAT_SIZE, miniChatPagePath } from "./mini-chat.js";
+import { activateApp, keystrokesAllowed, pasteIntoFrontApp } from "./keystroke-clipboard-host.js";
+import { replaceInSourceApp, replaceLabel, type SourceApp } from "./replace-selection.js";
+import type { GrabbedSelection } from "./selected-text-ipc.js";
 
 /**
  * The Electron half of ATO-523 (quick-entry.ts holds the rest).
@@ -51,7 +54,7 @@ export interface QuickEntryWiring {
   showMainWindow: () => BrowserWindow | null;
   log: (line: string) => void;
   /** ATO-985: the text selected in the app in front, read before the mini chat window takes the keyboard (selected-text-ipc.ts). */
-  grabSelection?: () => Promise<string | null>;
+  grabSelection?: () => Promise<GrabbedSelection | null>;
 }
 
 const quickWindows = new WeakSet<BrowserWindow>();
@@ -66,6 +69,8 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
   let draft = "";
   let pending: string | null = null;
   let selection: string | null = null;
+  // ATO-2268: the app the selection came from, for "Replace in …" (macOS; null elsewhere).
+  let source: SourceApp | null = null;
   let opening = false;
   let disposed = false;
   let pref: QuickEntryPref = readQuickEntryPref(w.userData);
@@ -74,6 +79,7 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
     const b = box;
     box = null;
     selection = null;
+    source = null;
     if (b && !b.isDestroyed()) b.destroy();
   };
 
@@ -94,8 +100,9 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
     });
   };
 
-  const create = (sel: string | null) => {
-    selection = sel;
+  const create = (sel: GrabbedSelection | null) => {
+    selection = sel ? sel.text : null;
+    source = sel ? sel.app : null;
     const cursor = screen.getCursorScreenPoint();
     const bounds = quickEntryBounds(cursor, screen.getAllDisplays().map((d) => ({ bounds: d.bounds, workArea: d.workArea })), MINI_CHAT_SIZE);
     const win = new BrowserWindow({
@@ -177,9 +184,25 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
   else if (first.state === "invalid") w.log(`[desktop] quick entry: ${pref.accelerator} cannot be used (${first.error})`);
 
   // The box's own page.
-  ipcMain.handle("app:quickEntryOpened", () => ({ draft, label: acceleratorLabel(pref.accelerator, w.platform), selection }));
+  ipcMain.handle("app:quickEntryOpened", () => ({ draft, label: acceleratorLabel(pref.accelerator, w.platform), replace: source ? replaceLabel(source) : null, selection }));
   ipcMain.on("app:quickEntryDraft", (_event, text: unknown) => { draft = typeof text === "string" ? text.slice(0, 20_000) : ""; });
   ipcMain.on("app:quickEntryHide", () => hide());
+  /* ATO-2268: an answer put back in place of the selection, in the app it
+     came from (replace-selection.ts). Only from the mini chat that has it. */
+  ipcMain.handle("app:quickEntryReplace", (event, raw: unknown) => {
+    if (!box || box.isDestroyed() || event.sender !== box.webContents) return { ok: false, hidden: false, error: "This window cannot replace text." };
+    return replaceInSourceApp({
+      allowed: (prompt) => keystrokesAllowed(prompt),
+      hide,
+      activate: activateApp,
+      sleep: (ms) => new Promise<void>((r) => setTimeout(r, ms)),
+      paste: pasteIntoFrontApp,
+      copy: (text) => clipboard.writeText(text),
+      notify: (body) => {
+        try { if (Notification.isSupported()) new Notification({ title: "Atomic Agent", body, silent: true }).show(); } catch { /* no notifications */ }
+      },
+    }, source, raw);
+  });
   ipcMain.handle("app:quickEntrySubmit", (_event, raw: unknown) => {
     const text = quickEntryText(raw);
     if (!text) return { ok: false };
