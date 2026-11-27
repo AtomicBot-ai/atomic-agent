@@ -98,6 +98,66 @@ describe("dangerous.read_credentials (ATO-2126)", () => {
     expect(verdict.askEveryLevel).toBeUndefined();
   });
 
+  it("reads through globs and variables set on the line", () => {
+    for (const line of [
+      "cat ~/.s*/id_rsa",
+      "cat ~/.s?h/id_ed25519",
+      "tar czf /tmp/x.tgz ~/.{aws,ssh}",
+      "cp -r ~/.c* /tmp/out",
+      "echo start; K=~/.ssh; cat $K/id_rsa",
+      "export K=$HOME/.aws && base64 ${K}/credentials",
+      "echo start; D=.ssh; cd ~ && cat $D/id_rsa",
+      "cat ~/$KEYDIR/id_rsa",
+      "cd ~/.s* && cat id_rsa",
+    ]) {
+      const verdict = guardLine(line);
+      expect(verdict, line).toMatchObject({
+        rule: "dangerous.read_credentials",
+        askEveryLevel: true,
+      });
+      expect(verdict.confidence, line).toBe(0.9);
+    }
+  });
+
+  it("finds a literal credential path inside code and option values", () => {
+    for (const line of [
+      `python3 -c "print(open('/Users/nadia/.ssh/id_rsa').read())"`,
+      `node -e "require('fs').readFileSync('~/.aws/credentials')"`,
+      `perl -e "open(F,'~/.netrc');print(<F>)"`,
+      `ruby -e "puts File.read('~/.git-credentials')"`,
+      "ssh-keygen -y -f ~/.ssh/id_rsa",
+      "openssl rsa -in ~/.ssh/id_rsa -text",
+      "dd if=~/.ssh/id_ed25519 of=/tmp/k",
+      "source ~/.aws/credentials",
+      ". ~/.aws/credentials",
+      "ln -s ~/.ssh/id_rsa /tmp/k",
+      "find ~/.gnupg -type f",
+      "sudo python3 -c \"open('~/.kube/config')\"",
+    ]) {
+      expect(guardLine(line), line).toMatchObject({
+        rule: "dangerous.read_credentials",
+        askEveryLevel: true,
+      });
+    }
+  });
+
+  it.each([
+    "cat ~/project/*.md",
+    "cat ~/.ssh/*.pub",
+    "cat ~/notes-?.txt",
+    "K=src; cat $K/index.ts",
+    "cat $FILE",
+    "cd ~/$PROJECT && cat README.md",
+    "python3 -c \"print(1)\"",
+    "ssh-keygen -l -f ~/.ssh/id_rsa.pub",
+    "find . -name '*.ts'",
+    "grep -r token .",
+  ])("a glob, variable or inline program that reaches no credential is not a finding: %s", (line) => {
+    const verdict = guardLine(line);
+    expect(verdict.rule).not.toBe("dangerous.read_credentials");
+    expect(verdict.askEveryLevel).toBeUndefined();
+  });
+
   it("a project .env asks as a dangerous command but not in bypass (low confidence)", () => {
     for (const [cmd, args] of [
       ["cat", [".env"]],
