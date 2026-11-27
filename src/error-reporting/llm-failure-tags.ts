@@ -101,6 +101,27 @@ export interface LlmFailureContext {
   completionFacts?: LlmCompletionFacts;
   /** `ollama` / `llama_server` / `other` for the failing link. Sent as `server_kind`. */
   serverKind?: string;
+  /**
+   * A context-size refusal on the error chain (ATO-2420): the server's
+   * window and prompt count, and how far the overflow compaction got.
+   * Sent as `overflow_*` tags.
+   */
+  contextOverflow?: LlmContextOverflow;
+}
+
+/** {@link LlmFailureContext.contextOverflow}. */
+export interface LlmContextOverflow {
+  /** The window the refusal named (`n_ctx` or the sentence); `null` when none. */
+  serverWindow: number | null;
+  /** The server's count of the refused prompt (`n_prompt_tokens`); `null` when not sent. */
+  serverPromptTokens: number | null;
+  /**
+   * `not_attempted`: the turn failed on the refusal itself (no compaction
+   * wired, stopped, or out of time); `could_not_free_room`: the one
+   * overflow compaction ran and freed nothing; `compacted_still_too_large`:
+   * it freed room and the retry was refused again.
+   */
+  compaction: "not_attempted" | "could_not_free_room" | "compacted_still_too_large";
 }
 
 /** {@link LlmFailureContext.promptBudget}. Every field a token count. */
@@ -184,6 +205,11 @@ const ENGINE_LOCK_STATES: ReadonlySet<string> = new Set([
   "stale_no_owner",
   "stale_too_old",
   "probe_failed",
+]);
+const OVERFLOW_COMPACTION: ReadonlySet<string> = new Set([
+  "not_attempted",
+  "could_not_free_room",
+  "compacted_still_too_large",
 ]);
 const LOCAL_FAULTS: ReadonlySet<string> = new Set([
   "out_of_memory",
@@ -326,6 +352,8 @@ function reportedCount(value: number): string {
  * `prompt_prefix_tokens`, `prompt_tools_tokens`, `prompt_history_tokens`,
  * `prompt_window` and `prompt_reply_reserve`; a truncated reply adds
  * `cut_prompt_tokens`, `cut_reply_tokens` and `cut_reply_cap` (ATO-1678).
+ * A context-size refusal adds `overflow_server_window`,
+ * `overflow_server_prompt_tokens` and `overflow_compaction` (ATO-2420).
  * Counts only, for every engine: no prompt text is read here.
  * A model failure adds its completion's shape and the server kind
  * (`completion-facts-tags.ts`, ATO-2421).
@@ -413,5 +441,12 @@ export function sanitizeLlmFailureTags(
     tags.cut_reply_cap = cut.requestedMaxTokens === undefined ? "none" : safeCount(cut.requestedMaxTokens);
   }
   Object.assign(tags, completionFactsTags(context.completionFacts, context.serverKind));
+  const overflow = context.contextOverflow;
+  if (overflow !== undefined) {
+    tags.overflow_server_window = overflow.serverWindow === null ? "none" : safeCount(overflow.serverWindow);
+    tags.overflow_server_prompt_tokens =
+      overflow.serverPromptTokens === null ? "none" : safeCount(overflow.serverPromptTokens);
+    tags.overflow_compaction = fromVocabulary(overflow.compaction, OVERFLOW_COMPACTION);
+  }
   return Object.keys(tags).length > 0 ? tags : undefined;
 }

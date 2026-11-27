@@ -1335,7 +1335,12 @@ export class LlamaServerClient {
               false,
               undefined,
               {
-                ...(streamError.type !== undefined ? { body: { type: streamError.type } } : {}),
+                // The overflow counts ride along (ATO-2420): without them
+                // the overflow compaction cannot scale the window by the
+                // server's own count of the refused prompt.
+                ...(streamError.type !== undefined
+                  ? { body: { type: streamError.type, ...streamError.counts } }
+                  : {}),
                 midStream: true,
               },
             );
@@ -2078,11 +2083,12 @@ export class LlamaServerClient {
  * shapes: an `error:` event line carrying `{code, message, type}`, and a
  * `data:` payload whose `error` is an object or a string. The status is
  * the event's numeric `code`, else 500. The detail is capped like an
- * HTTP error body's.
+ * HTTP error body's. `counts`: an `exceed_context_size_error`'s `n_ctx` /
+ * `n_prompt_tokens`, when the event carries them (ATO-2420).
  */
 export function parseSseErrorEvent(
   rawEvent: string,
-): { status: number; detail: string; type?: string } | null {
+): { status: number; detail: string; type?: string; counts?: ContextOverflowCounts } | null {
   for (const line of rawEvent.split("\n")) {
     let payload: unknown;
     if (line.startsWith("error:")) {
@@ -2110,7 +2116,9 @@ export function parseSseErrorEvent(
       typeof code === "number" && Number.isInteger(code) && code >= 400 && code < 600 ? code : 500;
     const type = typeof record["type"] === "string" ? record["type"] : undefined;
     const detail = extractLlamaErrorDetail(JSON.stringify({ error: record }));
-    return { status, detail, ...(type !== undefined ? { type } : {}) };
+    const counts = readContextOverflowCounts(JSON.stringify({ error: record }));
+    const hasCounts = counts.contextWindow !== undefined || counts.promptTokens !== undefined;
+    return { status, detail, ...(type !== undefined ? { type } : {}), ...(hasCounts ? { counts } : {}) };
   }
   return null;
 }

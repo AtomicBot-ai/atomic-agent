@@ -22,6 +22,7 @@ import {
 } from "../../local-llm/index.js";
 import { resolveTurnLocalEngine } from "./runtime-turn-service.js";
 import { readCompletionFacts, serverKindOf } from "./model-failure-facts.js";
+import { readContextOverflow } from "./llm-failure-overflow.js";
 
 export interface LlmFailureContextDeps {
   readConfig: () => AtomicAgentConfig;
@@ -93,6 +94,8 @@ export function describeLlmFailure(
   // ATO-2421: what the defective completion looked like, by shape only.
   const completionFacts = readCompletionFacts(event.error);
   if (completionFacts !== undefined) context.completionFacts = completionFacts;
+  const overflow = readContextOverflow(event.error);
+  if (overflow !== undefined) context.contextOverflow = overflow;
   if (event.outage) {
     context.outageWaitedMs = event.outage.waitedMs;
     context.outageAttempts = event.outage.attempts;
