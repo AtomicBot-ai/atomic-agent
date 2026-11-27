@@ -3,6 +3,8 @@ import { argScanVerdict, type ArgScanFinding } from "./arg-scan-finding.js";
 import { matchDangerousArgv } from "./rules-dangerous-argv.js";
 import { matchCredentialRead } from "./rules-credentials.js";
 import { matchEncodedExec } from "./rules-encoded-exec.js";
+import { matchWindowsCredentialRead } from "./rules-credentials-windows.js";
+import { matchWindowsEncodedExec } from "./rules-encoded-exec-windows.js";
 
 interface PatternRule {
   id: string;
@@ -150,7 +152,13 @@ export const dangerousRule: Rule = {
     // Credential reads and encoded commands first: they carry a
     // confidence and, above the threshold, ask at every level (ATO-2126),
     // so a `sudo` or `eval` on the same line must not shadow them.
-    const finding = strongestFinding(matchCredentialRead(input, raw), matchEncodedExec(input));
+    // Windows paths and PowerShell have their own readers (ATO-2728).
+    const finding = strongestFinding(
+      matchCredentialRead(input, raw),
+      matchEncodedExec(input),
+      matchWindowsCredentialRead(input),
+      matchWindowsEncodedExec(input),
+    );
     if (finding !== null) return argScanVerdict(finding);
     for (const pattern of DANGEROUS_PATTERNS) {
       const line = pattern.caseSensitive ? input.joined : input.joinedLower;
