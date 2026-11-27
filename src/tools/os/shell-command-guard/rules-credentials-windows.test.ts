@@ -150,3 +150,68 @@ describe("review round 1 (#1945): bypasses at level 5", () => {
     expect(guardLine(line).askEveryLevel, line).toBeUndefined();
   });
 });
+
+describe("review round 2 (#1945): fail closed on forms the guard cannot follow", () => {
+  // Each line ran unasked at level 5 at ac0d3d3 (rule `default`). Lines
+  // with `${...}` are plain strings: a template literal would fill them in.
+  it.each([
+    // F1945-R2.1: a PowerShell block, a pipeline, delayed expansion,
+    // drive-relative, `..`, braced variables, a subexpression, `+`.
+    String.raw`powershell -command "& {gc ~/.ssh/id_rsa}"`,
+    String.raw`powershell -c "if(1){gc ~/.ssh/id_rsa}"`,
+    String.raw`powershell -c "foreach($f in '~/.ssh/id_rsa'){gc $f}"`,
+    String.raw`powershell -c "{gc ~/.ssh/id_rsa}.Invoke()"`,
+    String.raw`powershell -c "Get-ChildItem ~/.ssh/id_rsa | Get-Content"`,
+    String.raw`powershell -c "'~/.ssh/id_rsa' | gc"`,
+    String.raw`pwsh -c "Get-ChildItem ~/.ssh/id_rsa | Get-Content"`,
+    "ls ~/.ssh | xargs cat",
+    String.raw`cmd /v:on /c type !USERPROFILE!\.ssh\id_rsa`,
+    String.raw`cmd /v:on /c type !HOMEDRIVE!!HOMEPATH!\.ssh\id_rsa`,
+    String.raw`type \Users\x\.ssh\id_rsa`,
+    String.raw`type C:\Users\x\Documents\..\.ssh\id_rsa`,
+    "gc ${HOME}\\.ssh\\id_rsa",
+    "gc ${env:HOMEPATH}\\.ssh\\id_rsa",
+    "gc ${env:HOMEDRIVE}${env:HOMEPATH}\\.ssh\\id_rsa",
+    String.raw`gc $([Environment]::GetFolderPath('UserProfile'))\.ssh\id_rsa`,
+    String.raw`powershell -c "[IO.File]::ReadAllText($HOME+'\.ssh\id_rsa')"`,
+    // A variable the guard does not know, and an 8.3 short name.
+    String.raw`type %FOO%\.ssh\id_rsa`,
+    String.raw`type %USERPROFILE%\SSH~1\id_rsa`,
+    // F1945-R2.2: Copy-Item parameters by name, in any order.
+    String.raw`powershell -c "Copy-Item -Destination C:\tmp\x -Path $HOME\.ssh\id_rsa"`,
+    String.raw`Copy-Item -Destination C:\tmp\x -LiteralPath $HOME\.ssh\id_rsa`,
+    String.raw`Copy-Item -Destination:C:\tmp\x $HOME\.ssh\id_rsa`,
+    // A copy or archive of the whole home folder (below-threshold note).
+    String.raw`robocopy %USERPROFILE% D:\backup /E`,
+    "Compress-Archive -Path $HOME -DestinationPath out.zip",
+    String.raw`Copy-Item -Path $env:USERPROFILE -Destination D:\b -Recurse`,
+  ])("asks at every level, as a credential read: %s", (line) => {
+    const verdict = guardLine(line);
+    expect(verdict, line).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.read_credentials",
+      askEveryLevel: true,
+    });
+    expect(verdict.confidence).toBeGreaterThanOrEqual(ASK_EVERY_LEVEL_CONFIDENCE);
+    // The reason names a read, not a change to a file.
+    expect(verdict.reason, line).toMatch(/^(?:reads|pipes|copies) /);
+  });
+
+  it.each([
+    // Writes into the folder stay writes, with the parameters in any order.
+    String.raw`Copy-Item -Path C:\tmp\k -Destination $HOME\.ssh\id_rsa`,
+    String.raw`Copy-Item -Destination $HOME\.ssh\id_rsa -Path C:\tmp\k`,
+    String.raw`copy C:\tmp\x %USERPROFILE%`,
+    // A listing, a pipeline into no reader, a braced public key, `..` elsewhere.
+    "dir ${HOME}\\.ssh",
+    "gc ${HOME}\\.ssh\\id_rsa.pub",
+    "dir ~/.ssh | Measure-Object",
+    "ls ~/.ssh | wc -l",
+    String.raw`type C:\project\..\README.md`,
+    "find . -exec ls {} ;",
+    "cp notes.txt ~",
+  ])("is not a credential read: %s", (line) => {
+    expect(windowsFinding(line), line).toBeNull();
+    expect(guardLine(line).askEveryLevel, line).toBeUndefined();
+  });
+});

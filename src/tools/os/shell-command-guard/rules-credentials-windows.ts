@@ -6,7 +6,10 @@ import {
   RELATIVE_SECRET_PATH,
   SECRET_PATH,
   SECRET_PIECE,
+  SHORT_NAME_PATH,
+  UNRESOLVED_SECRET_PATH,
 } from "./windows-credential-paths.js";
+import { COPIERS, copyOperands, homeFolderCopy } from "./windows-copy-operands.js";
 
 /**
  * `dangerous.read_credentials` for Windows paths and readers (ATO-2728).
@@ -36,6 +39,21 @@ import {
  * `reg save|export` of the SAM / SECURITY hive name saved credentials
  * themselves. Public material stays out, as on POSIX: `*.pub`,
  * `known_hosts`, `authorized_keys`; `.ssh/config` is the low 0.6.
+ *
+ * Fail closed (review round 2). Spelling out every form one at a time
+ * kept missing one, so a credential path the guard cannot follow asks:
+ * - behind a folder it cannot resolve (`UNRESOLVED_SECRET_PATH`: an
+ *   unknown variable, a subexpression, `..`, a `+` concatenation) or an
+ *   8.3 short name below the home folder, with a reader;
+ * - anywhere on a line with a PowerShell block or subexpression (`{`,
+ *   `}`, `$(`, `@(`): `& {gc ~/.ssh/id_rsa}`, `foreach`, `.Invoke()`;
+ * - in a pipeline stage followed by a reader (`gci ~/.ssh/id_rsa | gc`,
+ *   `ls ~/.ssh | xargs cat`), since the path and the reader are then
+ *   different commands.
+ * A copy or archive of the whole home folder (`robocopy %USERPROFILE%
+ * D:\x /E`, `Compress-Archive -Path $HOME`) takes the credential folders
+ * with it and asks too. Each is a `dangerous.read_credentials` finding,
+ * so the reason says what the command reads.
  */
 
 const SECRET_CONFIDENCE = 0.9;
@@ -53,10 +71,10 @@ const READERS: ReadonlySet<string> = new Set([
   "move-item", "mi", "mv", "import-clixml", "invoke-webrequest", "iwr", "invoke-restmethod",
   "irm", "start-bitstransfer", "send-mailmessage", "format-hex", "fhx",
 ]);
-/** The destination is the last operand, or the second for robocopy. */
-const COPIERS: ReadonlySet<string> = new Set([
-  "copy", "xcopy", "copy-item", "cpi", "cp", "move", "move-item", "mi", "mv", "scp", "rsync",
-]);
+/** What reads the output of the stage before it in a pipeline. */
+const PIPE_READERS: ReadonlySet<string> = new Set(["xargs", "foreach-object", "foreach", "%"]);
+/** A PowerShell block or subexpression: the guard cannot tell what runs inside. */
+const STRUCTURE = /[{}]|[$@]\(/;
 const CD: ReadonlySet<string> = new Set(["cd", "chdir", "pushd", "set-location", "sl", "push-location"]);
 const CODE_RUNNER = /^(?:python[0-9.]*|py|node|perl|ruby)$/;
 const CODE_FLAG = /^(?:-[a-z]*[ce]|--eval|--print)$/;
@@ -69,12 +87,12 @@ const SAVED_CREDENTIALS: readonly RegExp[] = [
   /(?:^|[\s;&|(])reg(?:\.exe)?\s+(?:save|export)\s+(?:hklm|hkey_local_machine)[/\\]+(?:sam|security)\b/,
 ];
 
-/** The joined line split into commands. */
-function commandsOf(line: string): string[] {
-  return line
-    .split(/&&|\|\||[;|&\n]/)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
+const nonEmpty = (parts: readonly string[]): string[] =>
+  parts.map((part) => part.trim()).filter((part) => part.length > 0);
+
+/** The joined line split into statements, each split into its pipeline stages. */
+function statementsOf(line: string): string[][] {
+  return nonEmpty(line.split(/&&|\|\||[;&\n]/)).map((statement) => nonEmpty(statement.split("|")));
 }
 
 /** Words of one command, quotes respected and removed; an inner quoted command adds its words too. */
@@ -88,9 +106,13 @@ function wordsOf(command: string): string[] {
   return words;
 }
 
-/** A word as a program name: no folder, no `.exe`, no PowerShell `&` or `(`. */
+/**
+ * A word as a program name: no folder, no `.exe`, nothing up to a
+ * PowerShell `(` or `{` (`&{gc`, `if(1){gc`), no closing `)` / `}`.
+ */
 function program(word: string): string {
-  const base = word.replace(/^[&(]+/, "").replace(/[)]+$/, "");
+  const open = Math.max(word.lastIndexOf("("), word.lastIndexOf("{"));
+  const base = word.slice(open + 1).replace(/^&+/, "").replace(/[)}]+$/, "");
   const name = base.slice(Math.max(base.lastIndexOf("/"), base.lastIndexOf("\\")) + 1);
   return name.replace(/\.exe$/, "");
 }
@@ -142,6 +164,8 @@ function pieceHits(command: string, words: readonly string[]): SecretHit[] {
 function secretHits(command: string, words: readonly string[], inHome: boolean): SecretHit[] {
   return [
     ...hitsOf(command, SECRET_PATH),
+    ...hitsOf(command, UNRESOLVED_SECRET_PATH),
+    ...hitsOf(command, SHORT_NAME_PATH),
     ...(inHome ? hitsOf(command, RELATIVE_SECRET_PATH) : []),
     ...pieceHits(command, words),
   ];
@@ -155,26 +179,28 @@ function hitFinding(hit: SecretHit, verb: string): ArgScanFinding | null {
   return { id: "dangerous.read_credentials", reason: `${verb} (${hit.text})`, confidence };
 }
 
-/** The operands of the copier in `words`, options left out. */
-function copyOperands(words: readonly string[], at: number): string[] {
-  // `/Y`, `/R:3`, `-Recurse` are options; `/c/Users/...`, `/tmp/k` are paths.
-  return words
-    .slice(at + 1)
-    .filter((word) => !/^-[a-z]/.test(word) && !/^\/[a-z0-9?]+(?::[^/\\]*)?$/.test(word));
-}
-
-/** Only the destination of a copy names the credential folder: a write, not a read. */
+/**
+ * Only the destination of a copy names the credential folder: a write,
+ * not a read. A hit is matched by its text anywhere in the word, since a
+ * fail-closed hit starts inside it (`%\.ssh\id_rsa` in
+ * `%USERPROFILE%\.ssh\id_rsa`).
+ */
 function onlyDestination(words: readonly string[], hits: readonly SecretHit[]): boolean {
   const at = words.findIndex((word) => COPIERS.has(program(word)) || program(word) === "robocopy");
   if (at === -1) return false;
-  const operands = copyOperands(words, at);
-  if (operands.length < 2) return false;
-  const destination = program(words[at]!) === "robocopy" ? operands[1]! : operands.at(-1)!;
-  const sources = operands.filter((word) => word !== destination);
+  const { destination, sources } = copyOperands(words, at, program(words[at]!) === "robocopy");
+  if (destination === undefined) return false;
   return (
-    hits.every((hit) => destination.startsWith(hit.text)) &&
-    !sources.some((word) => hits.some((hit) => word.startsWith(hit.text)))
+    hits.every((hit) => destination.includes(hit.text)) &&
+    !sources.some((word) => hits.some((hit) => word.includes(hit.text)))
   );
+}
+
+/** The strongest finding among `hits`, whatever reads them. */
+function anyHit(hits: readonly SecretHit[], verb: string): ArgScanFinding | null {
+  let best: ArgScanFinding | null = null;
+  for (const hit of hits) best = stronger(best, hitFinding(hit, verb));
+  return best;
 }
 
 function stronger(best: ArgScanFinding | null, hit: ArgScanFinding | null): ArgScanFinding | null {
@@ -193,9 +219,17 @@ function commandFinding(command: string, inHome: boolean): ArgScanFinding | null
     }
   }
   const words = wordsOf(command);
+  const programs = words.map(program);
+  const home = homeFolderCopy(words, programs);
+  if (home !== undefined) {
+    return {
+      id: "dangerous.read_credentials",
+      reason: `copies the whole home folder, credential folders included (${home})`,
+      confidence: SECRET_CONFIDENCE,
+    };
+  }
   const hits = secretHits(command, words, inHome);
   if (hits.length === 0) return null;
-  const programs = words.map(program);
   if (programs.some((name) => CD.has(name))) {
     let best: ArgScanFinding | null = null;
     for (const hit of hits) best = stronger(best, hitFinding(hit, "enters a credential folder"));
@@ -207,9 +241,16 @@ function commandFinding(command: string, inHome: boolean): ArgScanFinding | null
   const reads = codeRunner || DOTNET_READ.test(command) || programs.some((name) => READERS.has(name));
   // Without a reader only a `<` redirect of the path itself reads it.
   const read = reads ? (onlyDestination(words, hits) ? [] : hits) : hits.filter((hit) => hit.redirected);
-  let best: ArgScanFinding | null = null;
-  for (const hit of read) best = stronger(best, hitFinding(hit, "reads a credential file"));
-  return best;
+  return anyHit(read, "reads a credential file");
+}
+
+/** A pipeline stage that reads what the stage before it hands on. */
+const readsInput = (stage: string): boolean =>
+  wordsOf(stage).some((word) => READERS.has(program(word)) || PIPE_READERS.has(program(word)));
+
+/** A credential path in `command`, whether or not it has a reader. */
+function failClosedFinding(command: string, inHome: boolean, verb: string): ArgScanFinding | null {
+  return anyHit(secretHits(command, wordsOf(command), inHome), verb);
 }
 
 /** Whether the next command runs in the home folder, after `command`. */
@@ -227,9 +268,18 @@ export function matchWindowsCredentialRead(input: NormalisedCommand, cwd = ""): 
   let inHome = HOME_ONLY.test(cwd.toLowerCase());
   let best: ArgScanFinding | null = null;
   // cmd drops `^` before the program sees its arguments: `.s^sh` is `.ssh`.
-  for (const command of commandsOf(input.joinedLower.replace(/\^/g, ""))) {
-    best = stronger(best, commandFinding(command, inHome));
-    inHome = inHomeAfter(command, inHome);
+  const line = input.joinedLower.replace(/\^/g, "");
+  // A braced variable (`${HOME}`) is a path root, read by the patterns, not a block.
+  const structured = STRUCTURE.test(line.replace(/\$\{[^{}\s]*\}/g, ""));
+  for (const stages of statementsOf(line)) {
+    for (const [index, stage] of stages.entries()) {
+      best = stronger(best, commandFinding(stage, inHome));
+      if (structured) best = stronger(best, failClosedFinding(stage, inHome, "reads a credential file in a block"));
+      if (stages.slice(index + 1).some(readsInput)) {
+        best = stronger(best, failClosedFinding(stage, inHome, "pipes a credential path into a reader"));
+      }
+      inHome = inHomeAfter(stage, inHome);
+    }
   }
   return best;
 }
