@@ -145,3 +145,20 @@ describe("configuredSubscriptionBinPath", () => {
     expect(configuredSubscriptionBinPath(undefined, "codex")).toBeUndefined();
   });
 });
+
+describe("checkSubscriptionCli and an outdated CLI (ATO-1685)", () => {
+  it("says a Codex older than the supported version needs an update", async () => {
+    const { run } = fakeRunner({ "--version": "codex-cli 0.46.0", "login status": "Logged in using ChatGPT" });
+    const r = await checkSubscriptionCli(codexCliAdapter, { run, ...noFiles });
+    expect(r.state).toBe("ready");
+    expect(r.outdated?.minimum).toBe("0.122.0");
+    expect(r.message).toContain("Codex 0.46.0 is older than 0.122.0");
+  });
+
+  it("says nothing for a current CLI", async () => {
+    const { run } = fakeRunner({ "--version": "codex-cli 0.172.0", "login status": "Logged in using ChatGPT" });
+    const r = await checkSubscriptionCli(codexCliAdapter, { run, ...noFiles });
+    expect(r.outdated).toBeUndefined();
+    expect(r.message).not.toContain("older than");
+  });
+});

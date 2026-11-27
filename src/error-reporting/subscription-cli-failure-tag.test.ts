@@ -167,6 +167,17 @@ describe("cli_reason tag (ATO-1679)", () => {
     expect(extractSubscriptionCliFailureTags(new SubscriptionCliNotInstalledError("claude"))).toEqual({ cli_failure: "not_installed" });
   });
 
+  it("says when the failing CLI was older than we support (ATO-1685)", () => {
+    const err = Object.assign(failure({ stderr: "boom" }), { cliVersionOutdated: true });
+    expect(extractSubscriptionCliFailureTags(err)).toEqual({
+      cli_failure: "exited",
+      cli_exit_code: "1",
+      cli_reason: "other",
+      cli_version_outdated: "true",
+    });
+    expect(extractSubscriptionCliFailureTags(failure({ stderr: "boom" }))?.cli_version_outdated).toBeUndefined();
+  });
+
   it("names a plan without the CLI as plan_required (ATO-2417)", () => {
     const plan = new SubscriptionCliInvocationError(
       "codex turn failed: To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.",
