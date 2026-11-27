@@ -52,7 +52,7 @@ export function createRuntimeMemoryServices(args: MemoryServiceDependencies & {
     ? new NeighborEvolver({
         memoryStore: notesStore,
         maxPerWrite: config.memory.evolution.maxPerWrite,
-        leaseMs: config.memory.evolution.leaseMs,
+        leaseMs: ConsolidatorJob.evolverLeaseMsFor(config.memory.evolution.leaseMs, config.memory.consolidation.distillTimeoutMs),
         logger,
         metrics,
       })
@@ -127,7 +127,7 @@ export function createRuntimeMemoryServices(args: MemoryServiceDependencies & {
         notesStore,
         reflectionSlotId: () => slotManager.sideCallSlotId(),
         timeoutMs: config.memory.reflection.timeoutMs,
-        leaseMs: config.memory.evolution.leaseMs,
+        leaseMs: ConsolidatorJob.evolverLeaseMsFor(config.memory.evolution.leaseMs, config.memory.consolidation.distillTimeoutMs),
         logger,
       }),
       notesStore,

@@ -7,7 +7,7 @@ import type { ProcedureStore } from "../procedures/procedure-store.js";
 
 import { selectCandidatePage } from "./candidate-window.js";
 import { clusterEpisodes, type MemoryCluster } from "./clustering.js";
-import { consolidationLeaseMs } from "./consolidation-lease.js";
+import { consolidationLeaseMs, evolverLeaseMs } from "./consolidation-lease.js";
 import {
   ConsolidationStateStore,
   type AbstainBackoffPolicy,
@@ -211,6 +211,11 @@ export class ConsolidatorJob {
   /** ATO-2506. Cluster lease for a given distill timeout (see consolidation-lease.ts). */
   static leaseMsFor(distillTimeoutMs: number): number {
     return consolidationLeaseMs(distillTimeoutMs);
+  }
+
+  /** ATO-2784. Live-lease window for the evolver (see consolidation-lease.ts). */
+  static evolverLeaseMsFor(evolutionLeaseMs: number, distillTimeoutMs: number): number {
+    return evolverLeaseMs(evolutionLeaseMs, distillTimeoutMs);
   }
 
   constructor(

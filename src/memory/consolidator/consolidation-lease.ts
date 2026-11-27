@@ -18,3 +18,21 @@ export function consolidationLeaseMs(distillTimeoutMs: number): number {
     timeout + CONSOLIDATION_LEASE_MARGIN_MS,
   );
 }
+
+/**
+ * ATO-2784. The window in which the neighbor-evolver (and the reconcile
+ * runner) treat a consolidator lease as live. It must be at least the
+ * consolidator's own lease, or a distill longer than
+ * `memory.evolution.leaseMs` looks expired to the evolver while the
+ * model is still answering.
+ */
+export function evolverLeaseMs(
+  evolutionLeaseMs: number,
+  distillTimeoutMs: number,
+): number {
+  const own =
+    Number.isFinite(evolutionLeaseMs) && evolutionLeaseMs > 0
+      ? evolutionLeaseMs
+      : 0;
+  return Math.max(own, consolidationLeaseMs(distillTimeoutMs));
+}
