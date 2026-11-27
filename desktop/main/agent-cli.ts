@@ -40,7 +40,7 @@ import {
   type SecretsRoute,
 } from "./keychain-keys.js";
 import { defaultProviderModelMode, type ModelMode } from "./provider-model-mode.js";
-import { SUBSCRIPTION_CLI_KIND, subscriptionCliModels } from "./subscription-cli-models.js";
+import { SUBSCRIPTION_CLI_KIND, SUBSCRIPTION_OAUTH_KIND, subscriptionCliModels, subscriptionOauthModels } from "./subscription-cli-models.js";
 
 const run = promisify(execFile);
 
@@ -1514,6 +1514,13 @@ export async function providerModels(
     const entry = read?.config?.llm?.providers?.find((p) => p.id === providerId);
     if (!entry) return { ok: false, error: `provider "${providerId}" is not configured` };
     return { ok: true, models: subscriptionCliModels(entry) };
+  }
+  // ATO-2511: nor does a ChatGPT / Copilot sign-in; `models search` would answer "no searchable cloud models".
+  if (kind === SUBSCRIPTION_OAUTH_KIND) {
+    const read = await readWholeConfig().catch(() => null);
+    const entry = read?.config?.llm?.providers?.find((p) => p.id === providerId);
+    if (!entry) return { ok: false, error: `provider "${providerId}" is not configured` };
+    return { ok: true, models: subscriptionOauthModels(entry) };
   }
   const bundled = kind === "openrouter" || kind === "aimlapi";
   const live = opts.live === true;

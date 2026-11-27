@@ -42,3 +42,22 @@ test("main answers a subscription provider's list before any agent call", () => 
   assert.ok(fn.indexOf("kind === SUBSCRIPTION_CLI_KIND") > 0);
   assert.ok(fn.indexOf("kind === SUBSCRIPTION_CLI_KIND") < fn.indexOf("cli(args"), "short-circuit comes before the models search");
 });
+
+/* ------------------------------------------------------------ ATO-2511 */
+
+test("a ChatGPT sign-in entry lists its pinned model, then its own models, once each", () => {
+  assert.equal(m.SUBSCRIPTION_OAUTH_KIND, "subscription-oauth");
+  assert.deepEqual(m.subscriptionOauthModels({ id: "chatgpt-sub", kind: "subscription-oauth" }), []);
+  assert.deepEqual(
+    m.subscriptionOauthModels({ id: "chatgpt-sub", kind: "subscription-oauth", defaultChatModel: "gpt-6.2-sol", userModels: [{ id: "gpt-6.2-sol" }, { id: "gpt-6-mini" }, { id: 7 }, null] }),
+    [{ provider: "chatgpt-sub", id: "gpt-6.2-sol" }, { provider: "chatgpt-sub", id: "gpt-6-mini" }],
+  );
+});
+
+test("main answers a sign-in provider's list before any agent call (no \"no searchable cloud models\" error)", () => {
+  const src = readFileSync(new URL("../main/agent-cli.ts", import.meta.url), "utf8");
+  const fn = src.slice(src.indexOf("export async function providerModels("));
+  assert.ok(fn.indexOf("kind === SUBSCRIPTION_OAUTH_KIND") > 0);
+  assert.ok(fn.indexOf("kind === SUBSCRIPTION_OAUTH_KIND") < fn.indexOf("cli(args"), "short-circuit comes before the models search");
+  assert.match(fn, /subscriptionOauthModels\(entry\)/);
+});
