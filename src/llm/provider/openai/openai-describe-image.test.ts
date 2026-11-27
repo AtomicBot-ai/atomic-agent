@@ -77,3 +77,24 @@ describe("describeImageViaOpenAi — per-model parameters (ATO-1215)", () => {
     expect(body().stream).toBe(false);
   });
 });
+
+describe("describeImageViaOpenAi thinkTagSafe (Ollama Cloud, issue #283)", () => {
+  const TAGGED = { ...REQUEST, prompt: "is this <think> or </thinking>?" };
+  const parts = (body: Record<string, unknown>) =>
+    (body.messages as Array<{ content: Array<Record<string, unknown>> }>)[0]!.content;
+
+  it("rewrites the tags in the text part and keeps the image", async () => {
+    const { deps, body } = recordingDeps();
+    await describeImageViaOpenAi(deps, "gpt-4o", TAGGED, "/v1", undefined, { thinkTagSafe: true });
+    expect(parts(body())).toEqual([
+      { type: "image_url", image_url: { url: "data:image/png;base64,AQID" } },
+      { type: "text", text: "is this [think] or [/thinking]?" },
+    ]);
+  });
+
+  it("sends the prompt verbatim without the option", async () => {
+    const { deps, body } = recordingDeps();
+    await describeImageViaOpenAi(deps, "gpt-4o", TAGGED);
+    expect(parts(body())[1]).toEqual({ type: "text", text: "is this <think> or </thinking>?" });
+  });
+});
