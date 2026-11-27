@@ -274,13 +274,16 @@ export class ModelProfileManager {
   /**
    * Stamp `sampling` on a freshly detected profile from the same model
    * file (ATO-2202). No path, or a model that names no sampling, leaves
-   * the field off; a failed read is the same as naming none.
+   * the field off; a failed read is the same as naming none. The path
+   * itself is stamped too (`modelPath`, ATO-2482), so the provider can
+   * find the catalog entry and the person's set for this file.
    */
   private async applySampling(
-    profile: ModelProfile,
+    detected: ModelProfile,
     modelPath: string | null,
   ): Promise<ModelProfile> {
-    if (modelPath === null || modelPath.length === 0) return profile;
+    if (modelPath === null || modelPath.length === 0) return detected;
+    const profile: ModelProfile = { ...detected, modelPath };
     let sampling: ModelSamplingDefaults | null = null;
     try {
       sampling = await this.readSampling(modelPath);
@@ -432,6 +435,7 @@ function servedFactsDiffer(prev: ModelProfile, next: ModelProfile): boolean {
     prev.contextWindow !== next.contextWindow ||
     prev.supportsThinkingSwitch !== next.supportsThinkingSwitch ||
     prev.prefixReuse !== next.prefixReuse ||
+    prev.modelPath !== next.modelPath ||
     !sameSampling(prev.sampling, next.sampling)
   );
 }

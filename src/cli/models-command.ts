@@ -32,6 +32,7 @@ import { runModelsTasks } from "./models-tasks-command.js";
 import { runModelsFitTest } from "./models-fit-test-command.js";
 import { runModelsRpcWorker } from "./models-rpc-worker.js";
 import { runModelsShare } from "./models-share-command.js";
+import { runModelsSampling } from "./models-sampling-command.js";
 import { runModelsDir } from "./models-dir-command.js";
 
 const HELP =
@@ -79,6 +80,9 @@ const HELP =
     "  share [--rotate] [--off]      Let other apps and devices use the local model through",
     "                                serve's /raw/v1 (OpenAI-compatible, its own key, off by",
     "                                default); prints the base URL and the key to paste",
+    "  sampling <id> [--temperature <n> ...] [--reset]  Show or set one model's sampling",
+    "                                (model default or your own; --thinking / --no-thinking",
+    "                                for one mode; see models sampling --help)",
     "",
     "Fit-test subcommands:",
     "  tasks collect [--last <n>]    Write your last n tasks (default 10) as a test set;",
@@ -190,6 +194,8 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return await runModelsFitTest(args.slice(1));
       case "share":
         return await runModelsShare(args.slice(1));
+      case "sampling":
+        return await runModelsSampling(args.slice(1));
       case "dir":
         return await runModelsDir(args.slice(1));
       case "list":

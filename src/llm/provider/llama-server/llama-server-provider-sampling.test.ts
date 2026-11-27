@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { LlamaServerClient } from "../../llama-server-client.js";
-import { PLAIN_INSTRUCT_PROFILE, type ModelProfile } from "../../model-profile.js";
+import { PLAIN_INSTRUCT_PROFILE, QWEN_THINK_PROFILE, type ModelProfile } from "../../model-profile.js";
 import type { CompletionRequest, CompletionResult } from "../completion-types.js";
 import { LlamaServerProvider } from "./llama-server-provider.js";
 
@@ -42,5 +42,18 @@ describe("LlamaServerProvider model sampling (ATO-2202)", () => {
     const { provider, sent } = providerFor({ ...PLAIN_INSTRUCT_PROFILE, sampling: SAMPLING });
     await provider.complete({ prompt: "p", modelSampling: { temperature: 1 } });
     expect(sent[0]?.modelSampling).toEqual({ temperature: 1 });
+  });
+});
+
+describe("LlamaServerProvider per-model sampling (ATO-2482)", () => {
+  it("matches the served file to the catalog and picks the thinking-off set", async () => {
+    const { provider, sent } = providerFor({
+      ...QWEN_THINK_PROFILE,
+      modelPath: "/data/models/qwen-3.5-4b/Qwen3.5-4B-Q4_K_M.gguf",
+    });
+    await provider.complete({ prompt: "p", disableThinking: true });
+    expect(sent[0]?.modelSampling).toMatchObject({ temperature: 0.7, topP: 0.8, topK: 20 });
+    await provider.complete({ prompt: "p" });
+    expect(sent[1]?.modelSampling).toMatchObject({ temperature: 1, topP: 0.95, topK: 20 });
   });
 });
