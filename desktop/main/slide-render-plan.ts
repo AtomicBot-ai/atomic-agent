@@ -82,6 +82,24 @@ export function slidesRenderableWith(platform: Platform, soffice: string | null,
 }
 
 /**
+ * Whether a deck points outside its own file: any relationship part
+ * (`*.rels`) with `TargetMode="External"`, the way a linked picture, video,
+ * OLE object or hyperlink is written. LibreOffice may fetch a linked part
+ * while it draws, so such a deck is not handed to it. Fails closed: no
+ * archive, or a `.rels` that cannot be read within the caps, counts as
+ * linking out. `zip` is office-preview.ts's `openZip` result.
+ */
+export function deckLinksOut(zip: { entries: ReadonlyMap<string, unknown>; read: (name: string) => string | null } | null): boolean {
+  if (!zip) return true;
+  for (const name of zip.entries.keys()) {
+    if (!/\.rels$/i.test(name)) continue;
+    const xml = zip.read(name);
+    if (xml === null || /TargetMode\s*=\s*["']External["']/i.test(xml)) return true;
+  }
+  return false;
+}
+
+/**
  * The converters to try for `file`, in order, each writing into `outDir`.
  * `profileUrl` is a `file:` URL of a folder LibreOffice may use as its own
  * profile: a running LibreOffice would otherwise take the request over (and

@@ -12,8 +12,10 @@
  * the output has been read within its cap; it never writes beside the deck.
  * Conversions run one at a time (LibreOffice locks its profile), and the
  * result for one version of a file (path, size, mtime) is kept in a small
- * cache, so the panel's poll and a reopen do not convert again. No network:
- * both programs are told nothing but the file and the output folder.
+ * cache, so the panel's poll and a reopen do not convert again. LibreOffice
+ * is skipped for a deck whose parts link outside the file (a picture, video or
+ * object with TargetMode="External"), so it is never asked to fetch one; such
+ * a deck goes to Quick Look on a Mac, or keeps its text cards.
  *
  * Pure but for the file system and the child process, both injectable: no
  * Electron import, so the unit suite loads it from `out/main` with a stub
@@ -28,10 +30,10 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { sniffImageMime } from "./image-data-url.js";
-import { looksZip } from "./office-preview.js";
+import { looksZip, OFFICE_MAX_FILE_BYTES, openZip } from "./office-preview.js";
 import type { Platform } from "./platform.js";
 import {
-  converterPlans, findSoffice, inlineAttachments, isAttachmentName, pickOutput, quickLookWidth,
+  converterPlans, deckLinksOut, findSoffice, inlineAttachments, isAttachmentName, pickOutput, quickLookWidth,
   SLIDES_HTML_MAX_BYTES, SLIDES_IMAGE_MAX_BYTES, SLIDES_IMAGES_TOTAL_MAX_BYTES, SLIDES_PDF_MAX_BYTES,
   slidesRenderableWith, sofficeCandidates, type SlideConverter, type SlideRender,
 } from "./slide-render-plan.js";
@@ -125,9 +127,15 @@ async function isDeck(real: string): Promise<boolean> {
   }
 }
 
+/** Whether the deck at `real` links outside itself (or cannot be read to tell): then LibreOffice is not asked. */
+async function linksOut(real: string): Promise<boolean> {
+  const bytes = await readCapped(real, OFFICE_MAX_FILE_BYTES);
+  return !bytes || deckLinksOut(openZip(bytes));
+}
+
 async function convert(real: string, platform: Platform, d: SlideRenderDeps): Promise<SlideRender | null> {
   if (!(await isDeck(real))) return null;
-  const soffice = sofficeFor(platform, d);
+  const soffice = (await linksOut(real)) ? null : sofficeFor(platform, d);
   const profile = join(d.tmp, "atomic-agent-soffice-profile");   // kept between runs: a fresh one costs LibreOffice seconds
   const outDir = await mkdtemp(join(d.tmp, "atomic-agent-slides-")).catch(() => null);
   if (!outDir) return null;

@@ -8,11 +8,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import zlib from "node:zlib";
 
 const require = createRequire(import.meta.url);
 const {
   sofficeCandidates, findSoffice, slidesRenderableWith, converterPlans, pickOutput, isAttachmentName,
-  inlineAttachments, quickLookWidth, QLMANAGE, QUICKLOOK_DEFAULT_WIDTH,
+  inlineAttachments, quickLookWidth, QLMANAGE, QUICKLOOK_DEFAULT_WIDTH, deckLinksOut,
 } = require("../out/main/slide-render-plan.js");
 const { renderSlides, slidesRenderable } = require("../out/main/slide-render.js");
 const { fpOfficeHtml, ofSlidesDoc } = require("../renderer/office-preview.js");
@@ -23,7 +24,31 @@ const tmp = mkdtempSync(join(tmpdir(), "sr-tmp-"));
 after(() => { for (const d of [home, tmp]) rmSync(d, { recursive: true, force: true }); });
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 1, 2, 3]);
-const ZIP_HEAD = Buffer.from("PK\x03\x04 a deck's first bytes", "latin1");
+/** A real (stored, uncompressed) ZIP of `files` {name: text}, enough for office-preview.ts's openZip. */
+function storedZip(files) {
+  const locals = [], centrals = [];
+  let off = 0;
+  for (const [name, text] of Object.entries(files)) {
+    const data = Buffer.from(text, "utf8"), nm = Buffer.from(name, "utf8"), crc = zlib.crc32(data);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt32LE(crc, 14);
+    lh.writeUInt32LE(data.length, 18); lh.writeUInt32LE(data.length, 22); lh.writeUInt16LE(nm.length, 26);
+    const ch = Buffer.alloc(46);
+    ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt32LE(crc, 16);
+    ch.writeUInt32LE(data.length, 20); ch.writeUInt32LE(data.length, 24); ch.writeUInt16LE(nm.length, 28); ch.writeUInt32LE(off, 42);
+    locals.push(lh, nm, data); centrals.push(ch, nm);
+    off += 30 + nm.length + data.length;
+  }
+  const cd = Buffer.concat(centrals), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(Object.keys(files).length, 8); end.writeUInt16LE(Object.keys(files).length, 10);
+  end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(off, 16);
+  return Buffer.concat([...locals, cd, end]);
+}
+const LOCAL_RELS = '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/></Relationships>';
+const EXTERNAL_RELS = '<Relationships><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="http://example.invalid/pixel.png" TargetMode="External"/></Relationships>';
+/** A deck's bytes: a ZIP with one slide and its relationships (local unless `rels` says otherwise). */
+const deckBytes = (rels = LOCAL_RELS, extra = {}) => storedZip({ "ppt/slides/slide1.xml": "<p:sld/>", "ppt/slides/_rels/slide1.xml.rels": rels, ...extra });
+const ZIP_HEAD = deckBytes();
 let n = 0;
 /** A file that passes as a deck (its extension and first bytes), with a name of its own so the cache cannot confuse two. */
 function deck(name = `deck${++n}.pptx`, bytes = ZIP_HEAD) {
@@ -144,7 +169,7 @@ test("Quick Look: the page comes back with its pictures inlined and its width, o
   assert.equal(s.calls.length, 1);
   // Rewritten: a new version, converted again.
   await new Promise((done) => setTimeout(done, 20));
-  writeFileSync(file, Buffer.concat([ZIP_HEAD, Buffer.from("v2")]));
+  writeFileSync(file, deckBytes(LOCAL_RELS, { "ppt/slides/slide2.xml": "<p:sld/>" }));
   await renderSlides(file, "darwin", deps);
   assert.equal(s.calls.length, 2);
 });
@@ -229,4 +254,24 @@ test("Quick Look's page is framed with the HTML preview's CSP and a zoom, in qui
   assert.equal(fpSlidesZoom({ clientWidth: 376 }, 753), 376 / 753);
   assert.equal(fpSlidesZoom({ clientWidth: 1000 }, 753), 1);
   assert.equal(fpSlidesZoom(null, 753), 1);
+});
+
+test("a deck that links outside its file is never handed to LibreOffice (review of ATO-2410)", async () => {
+  const { openZip } = require("../out/main/office-preview.js");
+  assert.equal(deckLinksOut(openZip(deckBytes())), false, "local pictures only: LibreOffice may draw it");
+  assert.equal(deckLinksOut(openZip(deckBytes(EXTERNAL_RELS))), true, "a linked picture");
+  assert.equal(deckLinksOut(openZip(deckBytes(EXTERNAL_RELS.replace('"External"', "'external'")))), true, "any quoting or case");
+  assert.equal(deckLinksOut(null), true, "not an archive: fails closed");
+  assert.equal(deckLinksOut({ entries: new Map([["ppt/_rels/presentation.xml.rels", {}]]), read: () => null }), true, "an unreadable .rels: fails closed");
+  // On Linux (LibreOffice only) a linked deck runs nothing and keeps its cards.
+  const lo = stub(() => assert.fail("LibreOffice must not open a linked deck"));
+  const linux = { env: { PATH: "" }, home, tmp, exists: (p) => p === "/usr/bin/soffice", run: lo.run };
+  assert.equal(await renderSlides(deck("linked.pptx", deckBytes(EXTERNAL_RELS)), "linux", linux), null);
+  assert.equal(lo.calls.length, 0);
+  // On a Mac it goes straight to Quick Look.
+  const s = stub((outDir, cmd, args) => { assert.equal(cmd, QLMANAGE); quickLookOutput(outDir, args[args.length - 1], "<html><body>slides</body></html>"); });
+  const mac = { env: { PATH: "" }, home, tmp, exists: (p) => p === "/Applications/LibreOffice.app/Contents/MacOS/soffice" || p === QLMANAGE, run: s.run };
+  const r = await renderSlides(deck("linked-mac.pptx", deckBytes(EXTERNAL_RELS)), "darwin", mac);
+  assert.equal(r.kind, "html");
+  assert.deepEqual(s.calls.map((c) => c.command), [QLMANAGE]);
 });
