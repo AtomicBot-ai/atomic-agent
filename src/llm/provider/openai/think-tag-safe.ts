@@ -4,14 +4,20 @@
  * ollama/ollama#17248 and #17617). A file read, a diff or a user message
  * that merely mentions `<think>` reaches the model altered.
  *
- * Provider-scoped workaround: for `ollama.com` only, the four tags are
- * rewritten to visible brackets before the request goes out. Visible on
- * purpose: an invisible separator (U+200B) would be copied by the model
- * into `os.fs.edit` / `os.fs.write` and plant hidden bytes in files.
- * Each replacement has the same length as its tag. Reasoning fields are
- * never touched. Every other host, local Ollama included, is sent as
- * before. Remove once the upstream bugs are fixed.
+ * Provider-scoped workaround: for Ollama cloud models, wherever they are
+ * reached, the four tags are rewritten to visible brackets before the
+ * request goes out. That is the `ollama.com` host, and a cloud model
+ * (`deepseek-v4-flash:cloud`, `gpt-oss:120b-cloud`) run through a local
+ * Ollama daemon, which proxies it to Ollama Cloud (ATO-2771; that is how
+ * #17617 was reproduced). Visible on purpose: an invisible separator
+ * (U+200B) would be copied by the model into `os.fs.edit` /
+ * `os.fs.write` and plant hidden bytes in files. Each replacement has
+ * the same length as its tag. Reasoning fields are never touched. Local
+ * models on local Ollama, and every other host, are sent byte-identical.
+ * Remove once the upstream bugs are fixed.
  */
+
+import { isLocalServerUrl } from "./local-server-url.js";
 
 const THINK_TAG = /<(\/?)(think|thinking)>/g;
 
@@ -24,6 +30,52 @@ export function isOllamaCloudHost(baseUrl: string | undefined): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether a model id is one Ollama serves from its cloud: the `:cloud`
+ * tag (`deepseek-v4-flash:cloud`) or a `-cloud` tag suffix
+ * (`gpt-oss:120b-cloud`). Only meaningful on an Ollama endpoint.
+ */
+export function isOllamaCloudModel(model: string | undefined): boolean {
+  if (!model) return false;
+  const id = model.trim().toLowerCase();
+  return id.endsWith(":cloud") || id.endsWith("-cloud");
+}
+
+/**
+ * Whether a provider entry is an Ollama daemon rather than the hosted
+ * API: the `ollama` preset id, or a server on this machine or network on
+ * Ollama's default port 11434. Same rule as `isOllamaEntry`
+ * (`ollama/ollama-context-window.ts`) and `isExternalEngineEntry`.
+ */
+export function isOllamaDaemon(
+  id: string | undefined,
+  baseUrl: string | undefined,
+): boolean {
+  if (!baseUrl || isOllamaCloudHost(baseUrl)) return false;
+  if (id === "ollama") return true;
+  if (!isLocalServerUrl(baseUrl)) return false;
+  try {
+    return new URL(baseUrl).port === "11434";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether outgoing tags must be neutralized for this provider and model:
+ * the hosted API always, an Ollama daemon only for a cloud model.
+ */
+export function needsThinkTagSafe(entry: {
+  id?: string | undefined;
+  baseUrl?: string | undefined;
+  model?: string | undefined;
+}): boolean {
+  if (isOllamaCloudHost(entry.baseUrl)) return true;
+  return (
+    isOllamaDaemon(entry.id, entry.baseUrl) && isOllamaCloudModel(entry.model)
+  );
 }
 
 /** `<think>` to `[think]`, `</thinking>` to `[/thinking]`; other text unchanged. */
