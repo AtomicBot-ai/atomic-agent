@@ -1394,7 +1394,8 @@ const SKD = createSkillDraftsController({api: () => BR, paint: () => { if (skill
 /* ATO-2401: Show once, the Record card above Pending review (show-once.js, main/show-once-ipc.ts). */
 const SHOW_ONCE = createShowOnceController({api: () => BR, paint: () => { if (skillsVisible() && !skpTyping()) render(); }, changed: () => SKD.refresh(true)});
 /* ATO-2499: a recorded draft's step pictures in its preview (show-once-draft.js). */
-const SHOW_ONCE_DRAFT = createShowOnceDraftView({api: () => BR, paint: () => { if (skillsVisible() && !skpTyping()) render(); }});
+const SHOW_ONCE_DRAFT = createShowOnceDraftView({api: () => BR, paint: () => { if (skillsVisible() && !skpTyping()) render(); },
+  startChat: (text) => { act('session:new'); submit(text, {plain: true}); }}); // "Test skill": a new chat with the dry run
 const SKP_FILTERS = ['all','enabled','disabled']; // skills-filter.ts FILTER_ORDER
 const SKP_FILTER_LABELS = {all:'All', enabled:'Enabled', disabled:'Disabled'}; // Д43: the tabs, each with its count
 const SKP_MAX_ROWS = 14, SKP_HUB_ROWS = 12, SKP_DETAIL_LINES = 32; // skills-panel.tsx / skills-hub-list.tsx / skills-detail.tsx
@@ -26573,6 +26574,7 @@ function skillsAct(what) {
   if (verb === 'testCancel') { skeCancel(); return; }
   if (verb === 'draft') { SKD.act(arg); return; } // ATO-67: Pending review
   if (verb === 'showOnce') { SHOW_ONCE.act(arg); return; } // ATO-2401: Show once
+  if (verb === 'showOnceDraft') { SHOW_ONCE_DRAFT.act(arg, SKD.state.open); return; } // ATO-2499: Test skill on a recorded draft
   if (verb === 'refresh') {
     if (SKP.mode === 'list' && SKP.view === 'tools') { skpToolsRefresh(); render(); return; } // Item 09: the list on screen is the agent's tools
     if (SKP.mode === 'detail' && SKP.detailName) { refreshSkillList(); skpOpenDetail(SKP.detailName); return; }
