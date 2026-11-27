@@ -27,6 +27,8 @@
   </section>
   <footer class="mc-foot">
     <textarea id="mc-input" class="mc-input" rows="2" spellcheck="true" placeholder="Ask Atomic Agent…" aria-label="Message"></textarea>
+    <!-- ATO-2478: a new chat that runs in the background in the main window (mini-chat-background.js). -->
+    <button id="mc-bg" class="btn btn-s sm" type="button" disabled hidden>Background</button>
     <button id="mc-send" class="btn btn-p sm" type="button" disabled>Send</button>
   </footer>
   <!-- The reply's markdown, as in the main window (vendored marked and DOMPurify, md-render.js). -->
@@ -35,6 +37,7 @@
   <script src="md-render.js"></script>
   <script src="code-highlight.js"></script>
   <script src="mini-chat-selection.js"></script>
+  <script src="mini-chat-background.js"></script>
   <script src="mini-chat.js"></script>
 </body>
 </html>

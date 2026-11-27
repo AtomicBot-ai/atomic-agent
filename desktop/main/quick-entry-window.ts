@@ -52,6 +52,8 @@ export interface QuickEntryWiring {
   modelsTest: boolean;
   /** Shows and focuses the main window, creating it again when it was closed. */
   showMainWindow: () => BrowserWindow | null;
+  /** ATO-2478: the main window as it is, not brought up; null when it is closed. */
+  mainWindow?: () => BrowserWindow | null;
   log: (line: string) => void;
   /** ATO-985: the text selected in the app in front, read before the mini chat window takes the keyboard (selected-text-ipc.ts). */
   grabSelection?: () => Promise<GrabbedSelection | null>;
@@ -68,6 +70,8 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
   let box: BrowserWindow | null = null;
   let draft = "";
   let pending: string | null = null;
+  // ATO-2478: the waiting text goes to a new background chat, not the chat on screen.
+  let pendingBackground = false;
   let selection: string | null = null;
   // ATO-2268: the app the selection came from, for "Replace in …" (macOS; null elsewhere).
   let source: SourceApp | null = null;
@@ -208,6 +212,7 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
     if (!text) return { ok: false };
     draft = "";
     pending = text;
+    pendingBackground = false;
     hide();
     const main = w.showMainWindow();
     if (!main || main.isDestroyed()) return { ok: false };
@@ -215,11 +220,31 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
     if (!main.webContents.isLoading()) main.webContents.send("app:quickEntry");
     return { ok: true };
   });
+  /* ATO-2478: ⌘↩ in the mini chat. The text starts a new chat in the
+     background in the main window (renderer/background-chat.js), which is
+     not brought up: the person stays in the app they were in. Only a main
+     window that is closed is opened again, since the chat runs there. */
+  ipcMain.handle("app:quickEntryBackground", (event, raw: unknown) => {
+    if (!box || box.isDestroyed() || event.sender !== box.webContents) return { ok: false };
+    const text = quickEntryText(raw);
+    if (!text) return { ok: false };
+    draft = "";
+    pending = text;
+    pendingBackground = true;
+    hide();
+    const have = w.mainWindow ? w.mainWindow() : null;
+    const main = have && !have.isDestroyed() ? have : w.showMainWindow();
+    if (!main || main.isDestroyed()) return { ok: false };
+    if (!main.webContents.isLoading()) main.webContents.send("app:quickEntry");
+    return { ok: true };
+  });
   // The main window's page: the text waiting, once.
   ipcMain.handle("app:quickEntryTake", () => {
     const text = pending;
+    const background = pendingBackground;
     pending = null;
-    return text ? { text } : null;
+    pendingBackground = false;
+    return text ? { text, background } : null;
   });
 
   // Settings › General.
