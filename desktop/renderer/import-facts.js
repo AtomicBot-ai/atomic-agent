@@ -113,6 +113,12 @@ function ifactKeyWords(key) {
   const k = String(key || '').replace(/[._-]+/g, ' ').trim();
   return k ? k.charAt(0).toUpperCase() + k.slice(1) : '';
 }
+/** "Try again" after a failed run (ATO-1655): back to the model choice (or the file pick),
+   with the cloud box unticked. The tick is consent for one run; a new run starts without it,
+   the way ifactOpen starts every entry to the step. */
+function ifactRetryState(st) {
+  return {job: null, error: null, cloudOn: false, stage: st && st.path ? 'choose' : 'pick'};
+}
 /** What start sends: the cloud object only with this run's tick. */
 function ifactStartInput(st) {
   const input = {source: st.source, path: st.path};
@@ -371,7 +377,7 @@ if (typeof document !== 'undefined') {
     else if (act === 'start') void ifactStart();
     else if (act === 'stop') void ifactStop();
     else if (act === 'save') void ifactSave();
-    else if (act === 'retry') { IFACT.job = null; IFACT.error = null; IFACT.stage = IFACT.path ? 'choose' : 'pick'; ifactPaint(); }
+    else if (act === 'retry') { Object.assign(IFACT, ifactRetryState(IFACT)); ifactPaint(); }
     else if (act === 'all:on' || act === 'all:off') {
       IFACT.ticks = ifactSetAll(IFACT.job && IFACT.job.candidates, act === 'all:on'); ifactPaint();
     }
@@ -397,5 +403,5 @@ if (typeof document !== 'undefined') {
 if (typeof module !== 'undefined') {
   module.exports = {IFACT_POLL_MS, IFACT_CLOUD_WARNING, IFACT_CHATGPT_HINT, ifactSupported, ifactEnded, ifactStageFor, ifactProgressLine,
     ifactProgressPct, ifactModelLine, ifactTicksFor, ifactToggle, ifactSetAll, ifactApproved, ifactResultLine, ifactShouldPoll,
-    ifactKeyWords, ifactStartInput, ifactEntryHTML, ifactBodyHTML};
+    ifactKeyWords, ifactRetryState, ifactStartInput, ifactEntryHTML, ifactBodyHTML};
 }
