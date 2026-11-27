@@ -32,7 +32,9 @@ test("a page kept in the store is served with its headers, the size reporter and
   const r = s.response(put.url);
   assert.equal(r.status, 200);
   assert.equal(r.headers["Content-Type"], "text/html; charset=utf-8");
-  assert.equal(r.headers["Content-Security-Policy"], F.ARTIFACT_CSP);
+  // ATO-2536: the artifact CSP plus Trusted Types (artifact-rtc-block.ts).
+  assert.equal(r.headers["Content-Security-Policy"], F.ARTIFACT_PAGE_CSP);
+  assert.ok(F.ARTIFACT_PAGE_CSP.startsWith(F.ARTIFACT_CSP + "; "));
   assert.equal(r.headers["X-Content-Type-Options"], "nosniff");
   assert.match(r.headers["Permissions-Policy"], /camera=\(\)/);
   assert.match(r.headers["Permissions-Policy"], /microphone=\(\)/);

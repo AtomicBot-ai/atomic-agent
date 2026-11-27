@@ -1218,6 +1218,8 @@ function createWindow(): BrowserWindow {
   window.webContents.on("will-frame-navigate", (event) => {
     if (!event.isMainFrame && !subframeNavAllowed(event.url)) event.preventDefault();
   });
+  // ATO-2536: no UDP for WebRTC, so no STUN lookup from an artifact frame (artifact-rtc-block.ts); the window makes no peer connection.
+  window.webContents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
 
   /* Item 2 (voice input): until this feature there was no permission handler
      at all, and Electron's default grants everything — the renderer could

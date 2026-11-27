@@ -31,6 +31,10 @@
  *     OpenClaw show-widget's bridge).
  *   - main.ts denies the frame any permission (camera, microphone, clipboard…)
  *     and any navigation away from these schemes (subframeNavAllowed).
+ *   - ATO-2536: no WebRTC, which no CSP directive covers
+ *     (artifact-rtc-block.ts): the page is served under ARTIFACT_PAGE_CSP, its
+ *     markup has no child frames, and a script before it removes the RTC
+ *     constructors.
  *
  * The page's text lives in main, in a small store keyed by a random token;
  * the window only ever gets the URL. Pure: no Electron import, so the unit
@@ -38,6 +42,8 @@
  */
 
 import { randomBytes } from "node:crypto";
+
+import { ARTIFACT_RTC_BLOCK_SCRIPT, ARTIFACT_TRUSTED_TYPES_CSP, stripChildFrames } from "./artifact-rtc-block.js";
 
 export const ARTIFACT_SCHEME = "atomic-art";
 
@@ -57,6 +63,14 @@ export const ARTIFACT_CSP = [
   "base-uri 'none'",
   "sandbox allow-scripts",
 ].join("; ");
+
+/**
+ * What an artifact page is served under: ARTIFACT_CSP plus Trusted Types, so
+ * every HTML string the page writes goes through the frame-stripping default
+ * policy (artifact-rtc-block.ts). ARTIFACT_CSP itself stays as it was for
+ * My Apps (my-apps-store.ts), whose pages do not get that script.
+ */
+export const ARTIFACT_PAGE_CSP = `${ARTIFACT_CSP}; ${ARTIFACT_TRUSTED_TYPES_CSP}`;
 
 /** Nothing a page could ask the browser for. */
 export const ARTIFACT_PERMISSIONS_POLICY = [
@@ -123,10 +137,14 @@ export const ARTIFACT_BRIDGE_SCRIPT =
   + "window.atomicWidget={sendPrompt:sendPrompt,state:state};window.sendPrompt=sendPrompt;"
   + "post({atomicArtifact:'ready'});})();</script>";
 
-/** The document served for a page: standards mode, both colour schemes, the widget bridge, the page, the size reporter. */
+/**
+ * The document served for a page: standards mode, both colour schemes, the
+ * WebRTC block (ATO-2536), the widget bridge, the page without child frames,
+ * the size reporter.
+ */
 export function artifactDocument(html: string): string {
   return "<!doctype html><meta charset=\"utf-8\"><meta name=\"color-scheme\" content=\"light dark\">"
-    + ARTIFACT_BRIDGE_SCRIPT + html + ARTIFACT_SIZE_SCRIPT;
+    + ARTIFACT_RTC_BLOCK_SCRIPT + ARTIFACT_BRIDGE_SCRIPT + stripChildFrames(html) + ARTIFACT_SIZE_SCRIPT;
 }
 
 export type ArtifactPut = { ok: true; url: string } | { ok: false; reason: "empty" | "too-large" };
@@ -184,7 +202,7 @@ export class ArtifactStore {
     if (html === undefined) {
       return { status: 404, headers: { ...artifactHeaders(), "Content-Type": "text/plain; charset=utf-8" }, body: "Not found" };
     }
-    return { status: 200, headers: artifactHeaders(), body: artifactDocument(html) };
+    return { status: 200, headers: { ...artifactHeaders(), "Content-Security-Policy": ARTIFACT_PAGE_CSP }, body: artifactDocument(html) };
   }
 }
 
