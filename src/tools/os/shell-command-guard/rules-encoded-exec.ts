@@ -27,9 +27,16 @@ const DECODER = String.raw`(?:\bbase(?:64|32)\b[^|;&\n]*?\s(?:-[a-z]*d[a-z]*|--d
 const INTERPRETER = String.raw`(?:sh|bash|zsh|dash|ksh|fish|python[0-9.]*|node|perl|ruby|php)`;
 const WRAPPERS = String.raw`(?:(?:sudo|env|command|exec|nohup)\s+(?:-\S+\s+)*)*`;
 
-/** `<decoder> ... | sh` with nothing after the interpreter but options. */
+/**
+ * After the interpreter: options (`-s`, `--login`, a lone `-`), then
+ * redirects (`2>&1`, `> /dev/null`, `>>log`, `&>/dev/null`), then the end
+ * of the command. An operand (`python3 tool.py`, `sh -c '...'`) breaks
+ * the match: the program then comes from that file or string.
+ */
+const INTERPRETER_TAIL = String.raw`(?:\s+-[a-z-]*)*(?:\s*(?:\d*[<>]{1,2}|&>>?)&?\s*[^\s;&|)<>]+)*\s*(?=$|[;&|)\n])`;
+/** `<decoder> ... | sh` with nothing after the interpreter but options and redirects. */
 const PIPE_INTO_INTERPRETER = new RegExp(
-  String.raw`${DECODER}[^;&\n]*?\|\s*${WRAPPERS}(?:\S*/)?${INTERPRETER}(?:\s+-[a-z]*)*\s*(?=$|[;&|)\n])`,
+  String.raw`${DECODER}[^;&\n]*?\|\s*${WRAPPERS}(?:\S*/)?${INTERPRETER}${INTERPRETER_TAIL}`,
 );
 /** `eval "$(... | base64 -d)"`, `bash <(xxd -r -p x)`, `sh -c "$(...)"`. */
 const SUBSTITUTED_INTO_RUNNER = new RegExp(
