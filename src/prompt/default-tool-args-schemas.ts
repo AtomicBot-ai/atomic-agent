@@ -693,6 +693,10 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     "files.search",
     obj({ query: stringSchema, folder: stringSchema, topK: numberSchema }, ["query"]),
   ],
+  [
+    "research.deep",
+    obj({ question: stringSchema, maxSubQuestions: numberSchema, pagesPerQuestion: numberSchema }, ["question"]),
+  ],
 
   // ── tasks ────────────────────────────────────────────────────────────────
   [

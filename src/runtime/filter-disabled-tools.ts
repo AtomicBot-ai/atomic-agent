@@ -141,7 +141,8 @@ const GATED_TOOLS = {
     "browser.annotate",
     "browser.scenario",
   ],
-  webSearch: ["os.web.search"],
+  // research.deep searches first: no search, nothing to research (ATO-2133).
+  webSearch: ["os.web.search", "research.deep"],
   vision: ["vision.describe"],
   audio: ["audio.listen"],
   memoryProfile: [

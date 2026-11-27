@@ -192,6 +192,16 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    // ATO-2133. Rare tier: one line in the catalog, full args through tool.view.
+    name: "research.deep",
+    summary:
+      "Research a question on the web in one call: plans sub-questions, searches and reads a few pages for each, and keeps a finding only when its exact quote is on the page and its numbers are in the quote. Writes a Markdown report (Summary, Findings with link and quote, Contradictions, Unverified claims) to a new file in the working folder and returns it. Use it for questions that need several sources; answer from its verified findings. Call it on its own.",
+    argsSchema:
+      "{ question: string, maxSubQuestions?: number /* 1..5, default 3 */, pagesPerQuestion?: number /* 1..3, default 2 */ }",
+    examples: ['{"question":"How did EU heat pump sales change in 2024 and why?"}'],
+    tier: "rare",
+  },
+  {
     name: "tasks.schedule",
     summary: "Schedule a one-shot task; current session or newSession.",
     argsSchema:

@@ -45,6 +45,7 @@ import { buildAskUserTool } from "./conversation/index.js";
 import { buildToolSearchTool } from "./tool-search/index.js";
 import { buildConversationHistoryTool, buildSessionsSearchTool, registerMemoryTools } from "./memory/index.js";
 import { buildFilesSearchTool } from "./files/index.js";
+import { buildResearchDeepTool } from "./research/index.js";
 import { registerTaskTools } from "./tasks/index.js";
 import { registerSessionTools } from "./sessions/index.js";
 import { registerVisionTools } from "./vision/index.js";
@@ -315,6 +316,8 @@ beforeAll(() => {
   registry.register(buildConversationHistoryTool({ source: { load: unexpected } }));
   // Runtime registers it when the My files index opens (runtime-tool-catalog).
   registry.register(buildFilesSearchTool({ index: { search: async () => unexpected(), listFolders: unexpected, status: unexpected } }));
+  // Runtime registers it with the registry and the side-call model (runtime-tool-catalog, ATO-2133).
+  registry.register(buildResearchDeepTool({ ...dangerous, tools: registry, model: {} }));
   registerTaskTools(registry, taskOptions(true));
   registerSessionTools(registry, sessionOptions(true));
   registerVisionTools(registry, { enabled: true, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
