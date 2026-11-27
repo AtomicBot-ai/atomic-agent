@@ -66,6 +66,24 @@ function llmListAsk(ask, word, ms, timers) {
   });
 }
 
+/* ATO-2739: the Settings error banner's sentence. The reason (one of
+   renderer.js modelListFailLine's sentences, or a short line of ours) sat in
+   parentheses with its own period and status code: "Couldn't fetch the model
+   list (OpenRouter did not accept the saved key (401).). Showing ...". Now it
+   follows a colon, and a status or certificate code moves to the hover detail. */
+const LLM_LIST_CODE = /\s*\(((?:HTTP )?[1-5]\d\d|[A-Z][A-Z0-9_]{3,})\)/g;
+function llmListErrorBanner(error) {
+  const codes = [];
+  const reason = String(error || 'unknown error').trim()
+    .replace(LLM_LIST_CODE, (_, code) => { codes.push(/^\d/.test(code) ? 'HTTP ' + code : code); return ''; })
+    .replace(/[.\s]+$/, '');
+  return {text: 'Couldn\u2019t fetch the model list: ' + reason + '. Showing the current model only.', detail: codes.join(', ')};
+}
+function llmListErrorSpanHTML(error, esc) {
+  const b = llmListErrorBanner(error);
+  return '<span class="grow"' + (b.detail ? ' title="' + esc(b.detail) + '"' : '') + '>' + esc(b.text) + '</span>';
+}
+
 /* A section that shows a provider nobody asked about asks for it, once,
    after the paint that found it (never from inside the paint). */
 const LLM_LIST_KICK = {pending:false};
@@ -76,4 +94,4 @@ function llmListScheduleAsk(run, defer) {
   return true;
 }
 
-if (typeof module !== 'undefined') module.exports = {LLM_LIST_DEADLINE_MS, LLM_LIST_CACHE, LLM_LIST_KICK, llmListCachePut, llmListCacheGet, llmListDeadlineLine, llmListAsk, llmListScheduleAsk};
+if (typeof module !== 'undefined') module.exports = {LLM_LIST_DEADLINE_MS, LLM_LIST_CACHE, LLM_LIST_KICK, llmListCachePut, llmListCacheGet, llmListDeadlineLine, llmListAsk, llmListScheduleAsk, llmListErrorBanner, llmListErrorSpanHTML};
