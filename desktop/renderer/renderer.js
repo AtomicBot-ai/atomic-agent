@@ -4152,7 +4152,9 @@ function toolCard(m) {
     // The failure stays readable without opening the card (a quiet one in the muted ink).
     + ((failed || soft) && !m.open ? '<div class="cardsum' + (soft ? '' : ' bad') + '">' + esc(toolErrLine(m)) + '</div>' : '')
     // A long call's progress (tool_update, chat-media.js), while it runs.
-    + (running ? toolProgressHTML(m, esc) : '')
+    // ATO-2444: a deck's card draws its slides instead (slide-thumbs.js).
+    + (running && !m.slides ? toolProgressHTML(m, esc) : '')
+    + (typeof slideThumbsHTML === 'function' ? slideThumbsHTML(m, esc) : '')
     // ATO-1258: a screenshot the call took, small under its line; a click opens the viewer.
     + toolShotHTML(m, st)
     + (m.open ? '<div class="cardbody">'
@@ -11876,6 +11878,7 @@ function onChatEvent(ev) {
     const card = toolUpdateTarget(S.log, ev.payload, ev.turnId);
     if (!card) return;
     toolUpdateApply(card, ev.payload, ev.at || Date.now());
+    if (typeof slideThumbsAdd === 'function') slideThumbsAdd(card, ev.payload);   // ATO-2444: a deck's slide, as a thumbnail
     render();
     return;
   }
