@@ -1,5 +1,6 @@
 import { LlamaServerError } from "../llama-server-client.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
+import { OpenAiSseError } from "../provider/openai/openai-stream-consumer.js";
 import { TransportError } from "./llm-failures.js";
 import { readContextOverflowCounts, type ContextOverflowCounts } from "./context-overflow-counts.js";
 
@@ -82,7 +83,9 @@ export function readContextLengthFromRejection(error: unknown): number | null {
  * (`n_ctx`, `n_prompt_tokens`), from the first link of the `cause`
  * chain that has them: a `LlamaServerError` keeps them on its parsed
  * body, an `OpenAiHttpError` (llama.cpp behind an OpenAI-compatible
- * entry) in its raw body text. Empty when no link has either.
+ * entry) in its raw body text, and the `OpenAiSseError` under one built
+ * from an error inside the stream on its own `counts` (ATO-2420). Empty
+ * when no link has either.
  */
 export function readServerContextCounts(error: unknown): ContextOverflowCounts {
   let current: unknown = error;
@@ -96,7 +99,9 @@ export function readServerContextCounts(error: unknown): ContextOverflowCounts {
         ? pickCounts(current.body)
         : current instanceof OpenAiHttpError && current.body !== undefined
           ? readContextOverflowCounts(current.body.text)
-          : {};
+          : current instanceof OpenAiSseError
+            ? pickCounts(current.counts)
+            : {};
     if (counts.contextWindow !== undefined || counts.promptTokens !== undefined) {
       return counts;
     }

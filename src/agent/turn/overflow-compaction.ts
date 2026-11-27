@@ -154,10 +154,18 @@ function causeChainText(error: unknown): string {
  * `cause` for logs and error reporting.
  */
 export class ContextWindowExhaustedError extends Error {
-  constructor(message: string, options: { cause: unknown }) {
+  /**
+   * Whether the turn's one overflow compaction freed room before this
+   * refusal (`false`: it ran and could not). Read by error reporting for
+   * the `overflow_compaction` tag (ATO-2420).
+   */
+  readonly compacted: boolean;
+
+  constructor(message: string, options: { cause: unknown; compacted?: boolean }) {
     super(message);
     this.name = "ContextWindowExhaustedError";
     (this as { cause?: unknown }).cause = options.cause;
+    this.compacted = options.compacted === true;
   }
 }
 
@@ -177,6 +185,6 @@ export function contextWindowExhaustedError(input: {
   return new ContextWindowExhaustedError(
     `The conversation no longer fits ${window}, ${after}. ` +
       "Start a new session, or load the model with a larger context size.",
-    { cause: input.cause },
+    { cause: input.cause, compacted: input.compacted },
   );
 }

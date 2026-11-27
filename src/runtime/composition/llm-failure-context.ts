@@ -20,6 +20,7 @@ import {
   type ManagedEngineLivenessReport,
 } from "../../local-llm/index.js";
 import { resolveTurnLocalEngine } from "./runtime-turn-service.js";
+import { readContextOverflow } from "./llm-failure-overflow.js";
 
 export interface LlmFailureContextDeps {
   readConfig: () => AtomicAgentConfig;
@@ -88,6 +89,8 @@ export function describeLlmFailure(
   if (promptBudget !== undefined) context.promptBudget = promptBudget;
   const truncation = readTruncationCounts(event.error);
   if (truncation !== undefined) context.truncationCounts = truncation;
+  const overflow = readContextOverflow(event.error);
+  if (overflow !== undefined) context.contextOverflow = overflow;
   if (event.outage) {
     context.outageWaitedMs = event.outage.waitedMs;
     context.outageAttempts = event.outage.attempts;

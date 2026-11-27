@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { LlamaServerClient, LlamaServerError, parseSseErrorEvent } from "./llama-server-client.js";
+import { readServerContextCounts } from "./reliability/request-size-rejection.js";
 
 /**
  * ATO-1279: a stream the server cuts after answering is marked
@@ -49,6 +50,20 @@ describe("parseSseErrorEvent", () => {
     ).toEqual({ status: 400, detail: "too long", type: "exceed_context_size_error" });
   });
 
+  it("keeps an overflow's n_ctx and n_prompt_tokens (ATO-2420)", () => {
+    expect(
+      parseSseErrorEvent(
+        'error: {"code":400,"message":"the request exceeds the available context size, try increasing it",' +
+          '"type":"exceed_context_size_error","n_prompt_tokens":40123,"n_ctx":32768}',
+      ),
+    ).toEqual({
+      status: 400,
+      detail: "the request exceeds the available context size, try increasing it",
+      type: "exceed_context_size_error",
+      counts: { contextWindow: 32_768, promptTokens: 40_123 },
+    });
+  });
+
   it("is null for ordinary events", () => {
     expect(parseSseErrorEvent('data: {"content":"hi","stop":false}')).toBeNull();
     expect(parseSseErrorEvent("data: [DONE]")).toBeNull();
@@ -75,6 +90,24 @@ describe("LlamaServerClient.completeStream: a cut stream (ATO-1279)", () => {
     expect(failure.midStream).toBe(true);
     expect(failure.timedOut).toBe(false);
     expect(failure.body?.type).toBe("server_error");
+  });
+
+  it("keeps a mid-stream overflow's counts for the overflow compaction (ATO-2420)", async () => {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      progressWatch: false,
+      fetchImpl: fetchReturning(() =>
+        streamOf([
+          'error: {"code":400,"message":"the request exceeds the available context size, try increasing it",' +
+            '"type":"exceed_context_size_error","n_prompt_tokens":40123,"n_ctx":32768}\n\n',
+        ]),
+      ),
+    });
+    const err = (await drain(client)) as LlamaServerError;
+    expect(err).toBeInstanceOf(LlamaServerError);
+    expect(err.status).toBe(400);
+    expect(err.body).toEqual({ type: "exceed_context_size_error", contextWindow: 32_768, promptTokens: 40_123 });
+    expect(readServerContextCounts(err)).toEqual({ contextWindow: 32_768, promptTokens: 40_123 });
   });
 
   it("marks a connection that breaks while the body is read", async () => {
