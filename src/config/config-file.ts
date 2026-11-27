@@ -78,6 +78,44 @@ export function getTrustConfigPaths(paths: {
     // ATO-2331: the per-PR autofix opt-in and attempt cap. The file only, not
     // pr-autofix/: the worktrees beside it are where the model writes fixes.
     join(paths.stateDir, "pr-autofix", "state.json"),
+    // ATO-2496: files that decide who may call this agent. A silently
+    // written entry lets someone in: a token hash with role admin
+    // (`http-tokens.json`, re-read by serve on change), a paired phone
+    // (`http-devices.json`, ATO-2308), a key the writer already knows.
+    ...getStateCredentialFiles(paths.stateDir),
+    ...getStateSecretDirectories(paths.stateDir),
+  ];
+}
+
+/**
+ * ATO-2496: the state files that let a caller in, so a write to one asks
+ * as `trust_config`, not only a read (`getStateSecretPaths`). Pinned in
+ * `config-file.test.ts` against `httpTokensPath`, `httpDevicesPath`,
+ * `serveApiKeyPath` and `modelShareKeyPath`.
+ */
+function getStateCredentialFiles(stateDir: string): string[] {
+  return [
+    join(stateDir, "http-tokens.json"),
+    join(stateDir, "http-devices.json"),
+    join(stateDir, "serve-api.key"),
+    // ATO-2336: the key other apps use the shared model with.
+    join(stateDir, "model-share.key"),
+  ];
+}
+
+/**
+ * ATO-2496: folders whose every file is a sign-in the agent keeps: the
+ * subscription tokens (`auth/chatgpt.json`, `auth/copilot.json`), the MCP
+ * browser sign-ins (`mcp-oauth/<server>.json`) and the WhatsApp linked
+ * device keys (`whatsapp-auth/`). Unlike the plugin folder, a READ tool
+ * under one asks too (`StateSecrets.secretDirectories`), and a write
+ * under one asks as `trust_config`. Each entry ends in a separator.
+ */
+export function getStateSecretDirectories(stateDir: string): readonly string[] {
+  return [
+    join(stateDir, "auth") + sep,
+    join(stateDir, "mcp-oauth") + sep,
+    join(stateDir, "whatsapp-auth") + sep,
   ];
 }
 
@@ -88,9 +126,9 @@ export function isTrustDirectoryEntry(entry: string): boolean {
 
 /**
  * Every file in the agent's state that holds a secret or the trust
- * config: the trust surface above, plus the bearer key the managed
- * llama-server is launched with (`resolveApiKeyFilePath`), the API key
- * `serve` generated for itself (`serveApiKeyPath`), the session
+ * config: the trust surface above (which holds the caller keys and the
+ * sign-in folders, ATO-2496), plus the bearer key the managed
+ * llama-server is launched with (`resolveApiKeyFilePath`), the session
  * records Atomic Chat Core writes with their per-session key
  * (`coreSessionPath`) and the cached Atomic Mail session
  * (`resolveSessionPath`). Reading one of these through an agent tool,
@@ -110,14 +148,9 @@ export function getStateSecretPaths(paths: {
   return [
     ...getTrustConfigPaths(paths),
     join(paths.localModelsDataDir, "llama-server.key"),
-    join(paths.stateDir, "serve-api.key"),
-    // ATO-2336: the key other apps use the shared model with (`modelShareKeyPath`).
-    join(paths.stateDir, "model-share.key"),
     join(paths.localModelsDataDir, "core", "chat.json"),
     join(paths.localModelsDataDir, "core", "embedding.json"),
     join(paths.stateDir, "atomic-mail", "session.json"),
-    // ATO-2308: paired phones and pending pairing links; a written entry would let a phone in.
-    join(paths.stateDir, "http-devices.json"),
   ];
 }
 
