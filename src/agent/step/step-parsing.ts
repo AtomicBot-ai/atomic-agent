@@ -700,6 +700,29 @@ export function prepareStepRepair(args: StepRepairArgs) {
           },
         }
       : {}),
+    // The template split must be repair-shaped too (ATO-1676). A grammar
+    // link on the model's own chat template (`useServerTemplate`, the
+    // default for every family without a hand-built profile) renders
+    // `head + chat.user + foot` and never reads `prompt`, so spreading
+    // `llmParams` alone re-sent the failed request byte for byte: the
+    // same prompt, the same empty answer, `ModelError(empty, repair)`.
+    // The template opens the assistant turn itself, so there is no
+    // prefill to strip, the same as the continuation request.
+    ...(llmParams.chat
+      ? {
+          chat: {
+            ...llmParams.chat,
+            user: buildToolCallRepairPrompt(
+              llmParams.chat.user,
+              repairError,
+              deps.profile,
+              "grammar",
+              false,
+              thinkingOff,
+            ),
+          },
+        }
+      : {}),
     // The grammar-link variant must be repair-shaped too — spreading
     // `llmParams` alone would hand a grammar fallback link the STALE
     // base prompt without the repair notice. It is repair-shaped for
