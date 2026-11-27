@@ -26,9 +26,15 @@
    and reveals through main's preview check (app:filePreviewAction), the same
    roots the preview reads. Another chat brings its own list.
 
+   ATO-2410: a .pptx shows its text cards at once and, when main says the
+   machine can draw the slides, asks main for the pictures in a second step
+   (app:filePreviewSlides) and swaps the cards for them: a PDF in the PDF
+   frame, or Quick Look's page in the sandboxed HTML frame, zoomed to the
+   panel's width (office-preview.js draws both). A failure leaves the cards.
+
    Shared with the Node checks (test/file-preview.test.mjs): parseDelimited,
-   fpFormatSize, fpHtmlDoc, fpLangFor. Everything that touches the DOM is
-   behind `typeof document`. */
+   fpFormatSize, fpHtmlDoc, fpLangFor, fpPdfBase64. Everything that touches
+   the DOM is behind `typeof document`. */
 
 const FP_POLL_MS = 2500;
 const FP_MD_MAX = 200 * 1024;          // markdown rendered; past this the rest shows as text
@@ -195,6 +201,59 @@ async function fpLoad(keepScroll) {
   fpPaintBody(fpBodyHtml(res));
   const after = fpEl() && fpEl().querySelector('.fp-body');
   if (after && top) after.scrollTop = top;
+  fpLoadSlides(seq, path, res);
+}
+
+/* ATO-2410: the second step for a deck. main converts it (seconds, cached per
+   version of the file) while the cards are already on screen; the answer is
+   kept on the preview itself (`office.render`), so a repaint (Source/Preview,
+   a resize) draws the pictures again without asking. A newer open, a closed
+   panel or a reloaded file drops a late answer. */
+function fpLoadSlides(seq, path, res) {
+  const br = fpBridge();
+  const o = res && res.ok && res.kind === 'office' ? res.office : null;
+  if (!o || o.type !== 'pptx' || !o.renderable || !br || !br.filePreviewSlides) return;
+  (async () => {
+    let r = null;
+    try { r = await br.filePreviewSlides(path); } catch (e) { r = null; }
+    if (seq !== FP.seq || !FP.open || FP.path !== path || FP.data !== res) return;
+    if (r && r.ok && (r.kind === 'pdf' || r.kind === 'html')) o.render = r; else o.renderFailed = true;
+    const body = fpEl() && fpEl().querySelector('.fp-body');
+    const top = body ? body.scrollTop : 0;
+    fpPaintBody(fpBodyHtml(res));
+    const after = fpEl() && fpEl().querySelector('.fp-body');
+    if (after && top && !o.render) after.scrollTop = top;
+  })();
+}
+/** The PDF the panel shows: a .pdf file's own bytes, or a deck's slides drawn as one (ATO-2410). */
+function fpPdfBase64(d) {
+  if (!d || !d.ok) return '';
+  if (typeof d.base64 === 'string' && d.base64) return d.base64;
+  const r = d.kind === 'office' && d.office && d.office.render;
+  return r && r.kind === 'pdf' && typeof r.base64 === 'string' ? r.base64 : '';
+}
+/** Quick Look's page for a deck, when that is what main drew (ATO-2410). */
+function fpSlidesPage(d) {
+  const r = d && d.ok && d.kind === 'office' && d.office ? d.office.render : null;
+  return r && r.kind === 'html' && typeof r.html === 'string' ? r : null;
+}
+/** The zoom that fits a page laid out `width` pixels wide into the panel's body, at most 1. */
+function fpSlidesZoom(body, width) {
+  const w = body && body.clientWidth > 0 ? body.clientWidth : 0;
+  const page = width > 0 ? width : 753;
+  return w > 0 && w < page ? w / page : 1;
+}
+/** Resized: the page is zoomed again to the new width (a change under 1% is left alone). */
+function fpSlidesFit() {
+  const el = fpEl();
+  const body = el && el.querySelector('.fp-body');
+  const frame = body && body.querySelector('iframe[data-fp-slides]');
+  const r = frame ? fpSlidesPage(FP.data) : null;
+  if (!r || typeof ofSlidesDoc !== 'function') return;
+  const z = fpSlidesZoom(body, r.width);
+  if (Math.abs(z - (FP.slidesZoom || 1)) < 0.01) return;
+  FP.slidesZoom = z;
+  frame.srcdoc = ofSlidesDoc(r.html, FP_HTML_CSP, z);
 }
 
 /** While open: main's stat of the file every few seconds; a new size or time reloads it. */
@@ -274,11 +333,12 @@ function fpPaintBody(html) {
   if (!body) return;
   fpRevoke();
   body.innerHTML = html;
-  // PDF: the bytes become a blob the frame shows with Chromium's own viewer.
+  // PDF: the bytes become a blob the frame shows with Chromium's own viewer (a deck's slides too, ATO-2410).
   const pdf = body.querySelector('iframe[data-fp-pdf]');
-  if (pdf && FP.data && FP.data.base64) {
+  const b64 = fpPdfBase64(FP.data);
+  if (pdf && b64) {
     try {
-      const bin = atob(FP.data.base64);
+      const bin = atob(b64);
       const bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       FP.blobUrl = URL.createObjectURL(new Blob([bytes], {type: 'application/pdf'}));
@@ -288,6 +348,13 @@ function fpPaintBody(html) {
   // HTML: srcdoc set as a property, never parsed into this document.
   const page = body.querySelector('iframe[data-fp-html]');
   if (page && FP.data && typeof FP.data.text === 'string') page.srcdoc = fpHtmlDoc(FP.data.text);
+  // ATO-2410: Quick Look's page of a deck's slides, the same way, zoomed to the panel.
+  const deck = body.querySelector('iframe[data-fp-slides]');
+  const slides = deck ? fpSlidesPage(FP.data) : null;
+  if (slides && typeof ofSlidesDoc === 'function') {
+    FP.slidesZoom = fpSlidesZoom(body, slides.width);
+    deck.srcdoc = ofSlidesDoc(slides.html, FP_HTML_CSP, FP.slidesZoom);
+  }
 }
 
 function fpTruncNote(d) {
@@ -424,11 +491,12 @@ if (typeof document !== 'undefined') {
       document.removeEventListener('pointerup', up);
       el.classList.remove('fp-dragging');
       try { localStorage.setItem(FP_WIDTH_KEY, String(Math.round(el.getBoundingClientRect().width))); } catch (err) { /* not kept */ }
+      fpSlidesFit();   // ATO-2410
     };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
   });
-  window.addEventListener('resize', () => { if (FP.open) fpApplyWidth(); });
+  window.addEventListener('resize', () => { if (FP.open) { fpApplyWidth(); fpSlidesFit(); } });
 }
 
-if (typeof module !== 'undefined') module.exports = {parseDelimited, fpCsvDelim, fpFormatSize, fpHtmlDoc, fpLangFor, fpBodyHtml, FP_HTML_CSP, FP};
+if (typeof module !== 'undefined') module.exports = {parseDelimited, fpCsvDelim, fpFormatSize, fpHtmlDoc, fpLangFor, fpBodyHtml, fpPdfBase64, fpSlidesZoom, FP_HTML_CSP, FP};

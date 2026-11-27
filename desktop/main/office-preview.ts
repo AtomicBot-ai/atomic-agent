@@ -44,7 +44,8 @@ export const OFFICE_LIMITS = {
 };
 
 export type OfficePreview =
-  | { type: "pptx"; slides: { n: number; title: string; paras: string[] }[]; total: number; truncated: boolean }
+  /** `renderable` (ATO-2410, set by main): this machine can draw the slides (slide-render.ts); the window then asks for the pictures. */
+  | { type: "pptx"; slides: { n: number; title: string; paras: string[] }[]; total: number; truncated: boolean; renderable?: boolean }
   | { type: "docx"; paras: { text: string; heading?: number }[]; truncated: boolean }
   | { type: "xlsx"; sheets: string[]; sheet: string; rows: string[][]; truncated: boolean };
 

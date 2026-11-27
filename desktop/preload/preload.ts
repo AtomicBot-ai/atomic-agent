@@ -254,6 +254,8 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-1053: the preview panel reads a file through main (file-preview.ts), never the disk itself.
   filePreview: (path: string) => ipcRenderer.invoke("app:filePreview", path),
   filePreviewAction: (path: string, action: "open" | "reveal") => ipcRenderer.invoke("app:filePreviewAction", path, action),
+  // ATO-2410: a deck's slides as pictures; {ok:true, kind:'pdf', base64} | {ok:true, kind:'html', html, width} | {ok:false, reason}.
+  filePreviewSlides: (path: string) => ipcRenderer.invoke("app:filePreviewSlides", path),
   // ATO-1136: an HTML artifact kept in main and served sandboxed; answers {ok:true, url:'atomic-art://…/'} | {ok:false, reason}.
   artifactPut: (html: string) => ipcRenderer.invoke("app:artifactPut", html),
   artifactDrop: (url: string) => ipcRenderer.invoke("app:artifactDrop", url),
