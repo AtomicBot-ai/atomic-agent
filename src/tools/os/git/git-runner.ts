@@ -5,6 +5,7 @@ import {
 } from "../../../sandbox/command-runner.js";
 import { buildCommandEnv } from "../../../sandbox/command-env.js";
 import { resolveUserPath } from "../expand-home.js";
+import { assertGuestRepoInside, guestGitEnv } from "./git-guest-scope.js";
 
 /**
  * Result of running `git <subcommand> …` with a structured failure mode.
@@ -30,6 +31,8 @@ export interface GitRunOptions {
   signal: AbortSignal;
   /** Extra env vars — e.g. `GIT_PAGER=cat` is always injected. */
   env?: NodeJS.ProcessEnv;
+  /** A channel guest's call (`ToolContext.guest`): git stays inside `workingDir`. */
+  guest?: boolean | undefined;
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -45,18 +48,24 @@ const DEFAULT_MAX_OUTPUT_BYTES = 512 * 1024;
  *  - The agent's provider keys and tokens are not inherited (ATO-347,
  *    `buildCommandEnv`): git runs hooks and configured helpers, which
  *    must not read them. A caller's explicit `env` still wins.
+ *  - A guest's call never leaves the working directory (`git-guest-scope.ts`).
  *  - Repo root resolution — the repo is always validated before git runs
  *    so we fail loudly if the path is outside any repo.
  */
 export async function runGit(options: GitRunOptions): Promise<GitRunResult> {
   const repoRoot = await resolveRepoRoot(options.repo, options.workingDir);
-  const env: NodeJS.ProcessEnv = {
+  const base: NodeJS.ProcessEnv = {
     ...buildCommandEnv(process.env),
     ...options.env,
     GIT_PAGER: "",
     GIT_TERMINAL_PROMPT: "0",
     LC_ALL: "C",
   };
+  const guest = options.guest === true;
+  const env = guest ? guestGitEnv(base, options.workingDir) : base;
+  if (guest) {
+    await assertGuestRepoInside(repoRoot, options.workingDir, env, options.signal);
+  }
   let result: CommandResult;
   try {
     result = await runCommand("git", ["--no-pager", ...options.args], {
