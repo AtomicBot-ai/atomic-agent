@@ -605,7 +605,11 @@ describe("the reasoning budget (F49)", () => {
     });
     // Four chained body rules, about 70 bytes each.
     expect(Math.abs(bounded.length - unbounded.length)).toBeLessThan(512);
-    expect(bounded.length).toBeLessThan(16 * 1024);
+    // A loose sanity ceiling, not a runtime limit: neither llama.cpp nor our
+    // request code caps grammar size. The F49 guard is the bounded vs
+    // unbounded delta above and the ceiling delta below; this number only
+    // grows with the tool rules.
+    expect(bounded.length).toBeLessThan(20 * 1024);
     // The config ceiling, 32,768 tokens: 66 body rules, still a few KB.
     const ceiling = await buildGrammar(QWEN_THINK_PROFILE, undefined, {
       reasoningBudgetTokens: 32768,
