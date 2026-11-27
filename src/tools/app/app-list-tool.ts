@@ -2,6 +2,7 @@ import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { appDir, isAppId, type AppManifest } from "./app-names.js";
 import { listApps, readApp } from "./app-store.js";
+import { APP_LIST_WHOLE_PAGE_LINE } from "./app-list-page-cut.js";
 import { listAppVersions } from "./app-versions.js";
 import { APP_LIST_TOOL, appDetails, appRefusal, appsRootOf, type AppToolOptions } from "./app-tool-shared.js";
 
@@ -83,7 +84,7 @@ export function buildAppListTool(options: AppToolOptions): ToolDefinition {
         ...listing,
         cut
           ? `current page (first ${budget} characters of ${got.html.length}; app.update needs the whole page):`
-          : "current page:",
+          : APP_LIST_WHOLE_PAGE_LINE,
       ];
       return compressToolResult(
         {
