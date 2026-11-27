@@ -100,6 +100,8 @@ function getStateCredentialFiles(stateDir: string): string[] {
     join(stateDir, "serve-api.key"),
     // ATO-2336: the key other apps use the shared model with.
     join(stateDir, "model-share.key"),
+    // ATO-2451: the lasting `atag launch --config` token (`launchClientKeyPath`).
+    join(stateDir, "launch-client.key"),
   ];
 }
 

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import {
   httpTokensPath,
   readHttpTokens,
   removeHttpToken,
+  removeHttpTokensWhere,
 } from "./http-token-store.js";
 
 let dir: string;
@@ -83,5 +84,29 @@ describe("http token store (ATO-583)", () => {
     expect(source()).toEqual([]);
     rmSync(httpTokensPath(dir));
     expect(source()).toEqual([]);
+  });
+});
+
+describe("http token store writes (ATO-2451)", () => {
+  it("removeHttpTokensWhere drops only the picked tokens and names them", () => {
+    addHttpToken(dir, "phone", "member");
+    addHttpToken(dir, "launch-claude-1-0000abcd", "member");
+    addHttpToken(dir, "launch-codex-2-0000abcd", "member");
+    const gone = removeHttpTokensWhere(dir, (t) => t.name.startsWith("launch-"));
+    expect(gone.sort()).toEqual(["launch-claude-1-0000abcd", "launch-codex-2-0000abcd"]);
+    const left = readHttpTokens(dir);
+    expect(left.ok && left.tokens.map((t) => t.name)).toEqual(["phone"]);
+    expect(removeHttpTokensWhere(dir, () => false)).toEqual([]);
+  });
+
+  it("a lock left by a crashed writer is taken over, and the lock is gone after a write", () => {
+    const lock = `${httpTokensPath(dir)}.lock`;
+    writeFileSync(lock, "");
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(lock, old, old);
+    expect(addHttpToken(dir, "phone", "member").ok).toBe(true);
+    expect(existsSync(lock)).toBe(false);
+    expect(removeHttpToken(dir, "phone")).toEqual({ ok: true });
+    expect(existsSync(lock)).toBe(false);
   });
 });

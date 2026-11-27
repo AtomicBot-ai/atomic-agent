@@ -24,7 +24,7 @@ const input = (over: Partial<PersistInput> = {}): PersistInput => ({
   model: "qwen-local",
   modelGiven: true,
   keyCommand: '"/usr/local/bin/atag" launch --print-key',
-  keySource: { kind: "file", path: "/state/serve-api.key" },
+  keyFile: "/state/launch-client.key",
   env: {},
   home: "/home/u",
   ...over,
@@ -110,15 +110,11 @@ describe("launch --config for OpenCode", () => {
     const written = JSON.parse(files.get(OPENCODE) ?? "{}");
     expect(written.model).toBe("atomic/qwen-local");
     expect(written.provider.other).toEqual({});
-    expect(written.provider.atomic.options).toEqual({ baseURL: "http://127.0.0.1:8787/local/v1", apiKey: "{file:/state/serve-api.key}" });
+    expect(written.provider.atomic.options).toEqual({ baseURL: "http://127.0.0.1:8787/local/v1", apiKey: "{file:/state/launch-client.key}" });
     revertLaunchConfig("/state", "opencode", fs);
     expect(JSON.parse(files.get(OPENCODE) ?? "{}")).toEqual({ model: "anthropic/claude", provider: { other: {} } });
   });
 
-  it("uses {env:ATOMIC_AGENT_API_KEY} when the key comes from the environment", () => {
-    const s = spec("opencode", { keySource: { kind: "env", name: "ATOMIC_AGENT_API_KEY" } });
-    expect(JSON.stringify(s)).toContain("{env:ATOMIC_AGENT_API_KEY}");
-  });
 });
 
 describe("launch --config for Codex", () => {

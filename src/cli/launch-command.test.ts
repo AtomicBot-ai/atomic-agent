@@ -30,6 +30,8 @@ async function run(args: string[], over: LaunchCommandDeps = {}) {
     env: { PATH: "/bin" },
     findBinary: (b) => `/usr/local/bin/${b}`,
     resolveKey: () => ({ key: "the-serve-key" }),
+    issueToken: () => ({ token: "the-run-token", revoke: () => {} }),
+    lastingToken: () => ({ token: "the-lasting-token" }),
     findServe: async () => SERVE,
     checkKey: async () => true,
     probeLocal: async () => ({ ok: true, modelId: "qwen-local" }),
@@ -66,8 +68,9 @@ describe("atag launch (ATO-2172)", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("export ANTHROPIC_BASE_URL=http://127.0.0.1:41234/local\n");
     expect(r.out).toContain(`export ANTHROPIC_AUTH_TOKEN='${MASKED}'`);
-    expect(r.out).not.toContain("the-serve-key");
-    expect(r.err).not.toContain("the-serve-key");
+    expect(r.out).not.toContain("the-lasting-token");
+    expect(r.err).not.toContain("the-lasting-token");
+    expect(r.out + r.err).not.toContain("the-serve-key");
     expect(calls).toHaveLength(0);
     expect(startServe).not.toHaveBeenCalled();
   });
@@ -75,7 +78,7 @@ describe("atag launch (ATO-2172)", () => {
   it("--print-env for codex masks the token variable too", async () => {
     const r = await run(["codex", "--print-env"]);
     expect(r.out).toContain(`export ATOMIC_AGENT_TOKEN='${MASKED}'`);
-    expect(r.out).not.toContain("the-serve-key");
+    expect(r.out).not.toContain("the-lasting-token");
     expect(r.out).toContain("/usr/local/bin/codex -c");
   });
 
@@ -89,10 +92,11 @@ describe("atag launch (ATO-2172)", () => {
     expect(calls[0]?.env).toMatchObject({
       PATH: "/bin",
       ANTHROPIC_BASE_URL: "http://127.0.0.1:41234/local",
-      ANTHROPIC_AUTH_TOKEN: "the-serve-key",
+      ANTHROPIC_AUTH_TOKEN: "the-run-token",
       ANTHROPIC_MODEL: "qwen-local",
     });
-    expect(r.err).not.toContain("the-serve-key");
+    expect(JSON.stringify(calls[0]?.env)).not.toContain("the-serve-key");
+    expect(r.err).not.toContain("the-run-token");
   });
 
   it("a CLI killed by a signal exits 128 + the signal number", async () => {
@@ -216,7 +220,7 @@ describe("atag launch (ATO-2172)", () => {
   it("--print-key prints only the key, for Claude Code's apiKeyHelper (ATO-2448)", async () => {
     const r = await run(["--print-key"]);
     expect(r.code).toBe(0);
-    expect(r.out).toBe("the-serve-key\n");
+    expect(r.out).toBe("the-lasting-token\n");
   });
 
   it("--config writes the CLI's setting for port 8787 and runs nothing; --revert takes it out (ATO-2448)", async () => {
@@ -235,11 +239,38 @@ describe("atag launch (ATO-2172)", () => {
     expect(calls).toHaveLength(0);
     const settings = [...files.entries()].find(([p]) => p.endsWith("settings.json"))?.[1] ?? "";
     expect(JSON.parse(settings).env).toMatchObject({ ANTHROPIC_BASE_URL: "http://127.0.0.1:8787/local", ANTHROPIC_MODEL: "qwen-local" });
+    expect(settings).not.toContain("the-lasting-token");
     expect(settings).not.toContain("the-serve-key");
     expect(r.out).toContain("atag launch claude --revert");
     const back = await run(["claude", "--revert"], over);
     expect(back.code).toBe(0);
     expect([...files.keys()].some((p) => p.endsWith("settings.json"))).toBe(false);
+  });
+
+  it("the run token is removed after the CLI exits and after a failed probe (ATO-2451)", async () => {
+    const revoke = vi.fn();
+    const issueToken = vi.fn(() => ({ token: "the-run-token", revoke }));
+    const { spawn } = fakeSpawn(5);
+    expect((await run(["claude"], { spawn, issueToken })).code).toBe(5);
+    expect(issueToken).toHaveBeenCalledWith("/state", "claude");
+    expect(revoke).toHaveBeenCalledTimes(1);
+    const probed: string[] = [];
+    const down = await run(["claude"], {
+      spawn,
+      issueToken,
+      probeLocal: async (_b, t) => { probed.push(t); return { ok: false, reason: "not_running" }; },
+    });
+    expect(down.code).toBe(1);
+    expect(probed).toEqual(["the-run-token"]);
+    expect(revoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("a failed run token falls back to the serve key with a warning (ATO-2451)", async () => {
+    const { spawn, calls } = fakeSpawn(0);
+    const r = await run(["claude"], { spawn, issueToken: () => ({ error: "locked" }) });
+    expect(r.code).toBe(0);
+    expect(r.err).toContain("could not make a separate key for Claude Code");
+    expect(calls[0]?.env?.ANTHROPIC_AUTH_TOKEN).toBe("the-serve-key");
   });
 
   it("--config and --print-env together are a usage error (ATO-2448)", async () => {
@@ -261,7 +292,7 @@ describe("atag launch (ATO-2172)", () => {
   it("--print-env masks the key inside cline's auth step (ATO-2449)", async () => {
     const r = await run(["cline", "--print-env"]);
     expect(r.out).toContain("/usr/local/bin/cline auth -p openai -k");
-    expect(r.out).not.toContain("the-serve-key");
+    expect(r.out).not.toContain("the-lasting-token");
   });
 
   it("a missing CLI in a terminal is installed after a yes and then started (ATO-2450)", async () => {
