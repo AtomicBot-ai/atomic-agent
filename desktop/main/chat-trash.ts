@@ -3,7 +3,9 @@
  *
  * Delete… on a chat row no longer removes the chat from this machine: it moves
  * it to Trash, as macOS Finder, Claude.ai and Slack's "recently deleted" do.
- * The chat stays in the agent's store untouched; this file only remembers which
+ * The chat stays in the agent's store, stamped `metadata.trashed` (stampTrashed,
+ * POST /api/sessions/{id}/trashed) so the agent's session search leaves it out
+ * as it would a deleted chat; Restore clears the stamp. This file remembers which
  * chats are in Trash, the title each showed and when it went there. The window
  * hides those chats from every list and draws them in a Trash section, with
  * Restore and Delete forever. A chat that has been in Trash for 30 days is
@@ -22,6 +24,27 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_TITLE = 300;
 
 export type TrashEntry = { id: string; title: string; deletedAt: number };
+
+/** AgentClient.sessionRoute: POST /api/sessions/{id}/<path>, answered as status and JSON. */
+export type SessionRoute = (id: string, path: string, method: "POST", body: unknown) => Promise<{ status: number; body: unknown }>;
+
+/**
+ * Stamp the session in Trash (`trashed`) or out of it on the agent, so its
+ * session search hides or shows it (core: route-session-trashed.ts). Null when
+ * done, else why not, and then the caller changes nothing. A 404 goes ahead:
+ * a chat the agent does not hold has nothing to search, and an agent from
+ * before the route ("No route for") cannot be told.
+ */
+export async function stampTrashed(route: SessionRoute, id: string, trashed: boolean): Promise<string | null> {
+  try {
+    const res = await route(id, "trashed", "POST", { trashed });
+    if (res.status === 200 || res.status === 404) return null;
+    const msg = (res.body as { error?: { message?: unknown } } | null)?.error?.message;
+    return typeof msg === "string" && msg ? msg : `HTTP ${res.status}`;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
 
 /** A read of the file, or anything else, as a clean list: one entry per id, newest first. */
 export function coerceTrash(raw: unknown): TrashEntry[] {

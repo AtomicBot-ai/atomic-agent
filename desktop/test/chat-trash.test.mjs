@@ -71,6 +71,30 @@ test("the file round-trips, and a missing or broken file is an empty Trash", () 
   }
 });
 
+test("stampTrashed tells the agent (POST /api/sessions/{id}/trashed) and reads its answer", async () => {
+  const calls = [];
+  const route = (status, body = null) => async (...args) => { calls.push(args); return { status, body }; };
+  assert.equal(await M.stampTrashed(route(200), "s1", true), null);
+  assert.deepEqual(calls[0], ["s1", "trashed", "POST", { trashed: true }]);
+  assert.equal(await M.stampTrashed(route(200), "s1", false), null);
+  assert.deepEqual(calls[1][3], { trashed: false });
+  // A chat the agent does not hold, or an agent from before the route: nothing to hide, go ahead.
+  assert.equal(await M.stampTrashed(route(404), "gone", true), null);
+  assert.equal(await M.stampTrashed(route(500, { error: { message: "disk full" } }), "s1", true), "disk full");
+  assert.equal(await M.stampTrashed(route(503), "s1", true), "HTTP 503");
+  assert.equal(await M.stampTrashed(async () => { throw new Error("ECONNREFUSED"); }, "s1", true), "ECONNREFUSED");
+});
+
+test("wiring: put stamps the chat before it is listed in Trash, restore clears it before it leaves", () => {
+  const ipc = src("../main/chat-trash-ipc.ts");
+  const put = ipc.slice(ipc.indexOf('ipcMain.handle("chatTrash:put"'), ipc.indexOf('ipcMain.handle("chatTrash:restore"'));
+  const restore = ipc.slice(ipc.indexOf('ipcMain.handle("chatTrash:restore"'), ipc.indexOf('ipcMain.handle("chatTrash:forget"'));
+  assert.ok(put.includes("await stamp(id, true)") && put.indexOf("await stamp(id, true)") < put.indexOf("writeTrash("), "put stamps first");
+  assert.match(put, /if \(refused\) return \{ ok: false, error: refused \};/);
+  assert.ok(restore.includes("await stamp(id, false)") && restore.indexOf("await stamp(id, false)") < restore.indexOf("writeTrash("), "restore clears first");
+  assert.match(ipc, /client\.sessionRoute\(sid, path, method, body, 10_000\)/);
+});
+
 test("the renderer counts the days left down to zero", () => {
   assert.equal(R.trashDaysLeft(NOW, NOW), 30);
   assert.equal(R.trashDaysLeft(NOW - 29.5 * DAY, NOW), 1);

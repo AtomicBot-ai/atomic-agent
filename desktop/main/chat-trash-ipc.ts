@@ -2,8 +2,9 @@
  * ATO-2332: the chat Trash's routes (main/chat-trash.ts says what it keeps):
  *
  *   chatTrash:list     -> { ok, entries }   purges what is past 30 days first
- *   chatTrash:put      { id, title } -> { ok, entry }   Delete… on a chat row
- *   chatTrash:restore  { id } -> { ok }     back to the lists (the agent never lost it)
+ *   chatTrash:put      { id, title } -> { ok, entry }   Delete… on a chat row: stamps
+ *                      metadata.trashed on the agent first (its search leaves the chat out)
+ *   chatTrash:restore  { id } -> { ok }     back to the lists: the stamp is cleared first
  *   chatTrash:forget   { id } -> { ok }     Delete forever: DELETE /api/sessions/{id}, then out of Trash
  *   chatTrash:empty    -> { ok, purged }    Empty Trash: Delete forever on every entry
  *
@@ -18,7 +19,7 @@ import { join } from "node:path";
 import { app, ipcMain } from "electron";
 
 import { requestErrorText, type AgentClient } from "./agent-client.js";
-import { purgeExpired, readTrash, trashDrop, trashPut, writeTrash, type TrashEntry } from "./chat-trash.js";
+import { purgeExpired, readTrash, stampTrashed, trashDrop, trashPut, writeTrash, type TrashEntry } from "./chat-trash.js";
 
 const PURGE_EVERY_MS = 6 * 60 * 60 * 1000;
 const FIRST_PURGE_MS = 60 * 1000;
@@ -38,8 +39,10 @@ const idOf = (payload: unknown): string | null => {
   return typeof id === "string" && id && id.length <= 256 ? id : null;
 };
 
-export function wireChatTrashIpc(client: Pick<AgentClient, "deleteSession">): void {
+export function wireChatTrashIpc(client: Pick<AgentClient, "deleteSession" | "sessionRoute">): void {
   const remove = (id: string) => client.deleteSession(id);
+  const stamp = (id: string, trashed: boolean) =>
+    stampTrashed((sid, path, method, body) => client.sessionRoute(sid, path, method, body, 10_000), id, trashed);
 
   const purge = () => inQueue(async () => {
     const before = readTrash(trashPath());
@@ -57,23 +60,30 @@ export function wireChatTrashIpc(client: Pick<AgentClient, "deleteSession">): vo
     }
   });
 
-  ipcMain.handle("chatTrash:put", (_event, payload: unknown) => inQueue(() => {
+  ipcMain.handle("chatTrash:put", (_event, payload: unknown) => inQueue(async () => {
     const id = idOf(payload);
     if (!id) return { ok: false, error: "id required" };
     const rawTitle = (payload as { title?: unknown }).title;
     const title = typeof rawTitle === "string" ? rawTitle : "";
+    // The agent first: a chat its search could still read is not called "in Trash".
+    const refused = await stamp(id, true);
+    if (refused) return { ok: false, error: refused };
     try {
       const entries = trashPut(readTrash(trashPath()), id, title, Date.now());
       writeTrash(trashPath(), entries);
       return { ok: true, entry: entries.find((e) => e.id === id) as TrashEntry };
     } catch (err) {
+      await stamp(id, false);   // not in Trash after all: searchable again, as it is still listed
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }));
 
-  ipcMain.handle("chatTrash:restore", (_event, payload: unknown) => inQueue(() => {
+  ipcMain.handle("chatTrash:restore", (_event, payload: unknown) => inQueue(async () => {
     const id = idOf(payload);
     if (!id) return { ok: false, error: "id required" };
+    // Cleared first: a failed clear keeps the chat in Trash, never listed while search still hides it.
+    const refused = await stamp(id, false);
+    if (refused) return { ok: false, error: refused };
     try {
       writeTrash(trashPath(), trashDrop(readTrash(trashPath()), id));
       return { ok: true };
