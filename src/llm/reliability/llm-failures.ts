@@ -5,6 +5,7 @@ import type {
   ModelFailureStage,
   TruncationDetail,
 } from "./failure-category.js";
+import type { ModelCompletionFacts } from "./model-completion-facts.js";
 
 export interface LlmFailureOptions {
   cause?: unknown;
@@ -40,6 +41,11 @@ export interface ModelErrorOptions extends LlmFailureOptions {
    * model instead of "Retry".
    */
   repeatedOnCloud?: boolean;
+  /**
+   * The defective completion's shape (ATO-2421): finish reason, whether
+   * reasoning came back, the server's token counts. Report-only.
+   */
+  completion?: ModelCompletionFacts;
 }
 
 /**
@@ -157,6 +163,9 @@ export class ModelError extends LlmFailure {
   /** See `ModelErrorOptions.repeatedOnCloud`. */
   readonly repeatedOnCloud?: boolean;
 
+  /** See `ModelErrorOptions.completion`. */
+  readonly completion?: ModelCompletionFacts;
+
   constructor(
     readonly reason: ModelFailureReason,
     message: string,
@@ -175,6 +184,9 @@ export class ModelError extends LlmFailure {
     }
     if (options?.repeatedOnCloud === true) {
       this.repeatedOnCloud = true;
+    }
+    if (options?.completion !== undefined) {
+      this.completion = options.completion;
     }
   }
 }
