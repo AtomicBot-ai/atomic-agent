@@ -9,7 +9,7 @@ Drop a Markdown file into a commands folder and it becomes a slash command, with
 
 First match wins on a name:
 
-1. `<project>/.atomic-agent/commands/`, then `<project>/.claude/commands/` (so a repository's Claude Code commands work as they are). Project commands load only while you trust the folder, the same answer that loads its project skills ([project folder trust](../../skills/docs/project-trust.md)). In a folder you have not trusted they do not appear and do not run.
+1. `<project>/.atomic-agent/commands/`, then `<project>/.claude/commands/` (so a repository's Claude Code commands work as they are). Project commands load once you have trusted anything in that folder (any skill or instruction file, see [project folder trust](../../skills/docs/project-trust.md)); there is no separate answer per command yet. In a folder you have not trusted they do not appear and do not run.
 2. `<stateDir>/commands/`, the profile folder (`~/.atomic-agent/commands/` by default), for commands you want everywhere.
 
 Plugin commands come after both, so your `/review` keeps the bare name even when a plugin ships `review`; the plugin's stays reachable as `/plugin:review`. Built-in commands and skills always win. The palette marks your commands `(project)` or `(profile)`. The folders are read again every time the palette refreshes and when a command runs, so a new or edited file needs no restart.
