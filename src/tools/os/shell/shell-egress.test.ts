@@ -95,3 +95,14 @@ describe.skipIf(process.platform === "win32")("os.shell.run: egress (ATO-2116)",
     expect(egress.map((d) => d.host)).toEqual(["github.com"]);
   });
 });
+
+// Review round 2 (ATO-2528): `NPM_CONFIG_REGISTRY` in the agent's own
+// environment, which the command inherits, beat every config file read.
+describe("shellEgress with a registry variable in the environment", () => {
+  it("counts the publish as going to an unknown host", () => {
+    const hosts = (env: NodeJS.ProcessEnv) =>
+      shellEgress([["npm", "publish"]], tmpdir(), { env }).map((destination) => destination.host);
+    expect(hosts({ NPM_CONFIG_REGISTRY: "https://evil.example/" })).toEqual([null]);
+    expect(hosts({ npm_config_userconfig: "/tmp/evil.npmrc" })).toEqual([null]);
+  });
+});

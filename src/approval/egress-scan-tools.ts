@@ -195,15 +195,33 @@ function publishOperand(args: readonly string[]): boolean {
   return false;
 }
 
-/** npm/pnpm/yarn/cargo/twine/poetry/gem publishing; `program` is the binary, `args` what follows it. */
+/** Flags before the subcommand whose value is the next word (`npm --registry x publish`). */
+const LEADING_VALUE_FLAGS = new Set([...PUBLISH_VALUE_FLAGS, "-C", "--prefix", "--cwd", "--dir", "--globalconfig", "--index", "--host"]);
+
+/** Where the subcommand starts, past leading flags (review round 2: `npm --registry=x publish`). */
+function subcommandAt(args: readonly string[]): number {
+  let at = 0;
+  while (at < args.length && args[at]!.startsWith("-")) {
+    at += !args[at]!.includes("=") && LEADING_VALUE_FLAGS.has(args[at]!) ? 2 : 1;
+  }
+  return at;
+}
+
+/** npm/pnpm/yarn/cargo/twine/poetry/gem publishing; `program` is the binary, `allArgs` what follows it. */
 export function scanPublish(
   program: string,
-  args: readonly string[],
+  allArgs: readonly string[],
   configured?: PublishRegistryResolver,
 ): EgressDestination[] {
+  const args = allArgs.slice(subcommandAt(allArgs));
   const sub = args[0];
+  // Another npmrc (`--userconfig f`) sets a registry this does not read.
+  const otherConfig = flagValue(allArgs, ["--userconfig", "--globalconfig"]) !== undefined;
   const publish = (fallback: string, flags: readonly string[]): EgressDestination[] => {
-    const flag = flagValue(args, flags);
+    const flag = flagValue(allArgs, flags);
+    if (flag === undefined && otherConfig) {
+      return [entry("package_publish", null, "outbound", `the registry ${program} is set to`)];
+    }
     // A flag wins; then the project's config; then the public default.
     // A folder or tarball named on the line publishes that package, with
     // its own `publishConfig`, which this does not read: unknown.
@@ -221,16 +239,21 @@ export function scanPublish(
   }
   // A named cargo registry is set in cargo's config (`[registries.<name>]`).
   if (program === "cargo" && sub === "publish") {
-    const name = flagValue(args, ["--registry"]);
+    const name = flagValue(allArgs, ["--registry"]);
     if (name !== undefined) {
       const index = configured?.("cargo", name);
       return [entry("package_publish", typeof index === "string" ? registryHost(index, "") : null, "outbound", "a cargo registry")];
     }
     return publish("crates.io", ["--index"]);
   }
-  if (program === "twine" && sub === "upload") return publish("upload.pypi.org", ["--repository-url"]);
+  if (program === "twine" && sub === "upload") {
+    // A named repository is set in `~/.pypirc`, which this does not read.
+    return flagValue(allArgs, ["--repository", "-r"]) !== undefined && flagValue(allArgs, ["--repository-url"]) === undefined
+      ? [entry("package_publish", null, "outbound", "a twine repository")]
+      : publish("upload.pypi.org", ["--repository-url"]);
+  }
   if (program === "poetry" && sub === "publish") {
-    return flagValue(args, ["--repository", "-r"]) !== undefined
+    return flagValue(allArgs, ["--repository", "-r"]) !== undefined
       ? [entry("package_publish", null, "outbound", "a poetry repository")]
       : publish("upload.pypi.org", []);
   }

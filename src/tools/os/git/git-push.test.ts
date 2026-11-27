@@ -172,7 +172,7 @@ describe("os.git.push", () => {
       approvalRequired: true,
     });
     await tool.run({}, makeCtx(repo));
-    expect(preview).toContain("git push -u origin main:main");
+    expect(preview).toContain("git push --recurse-submodules=no -u origin main:main");
     expect(preview).toContain(`remote: ${bare}`);
     expect(preview).not.toContain("auth:");
   });
@@ -255,7 +255,7 @@ describe("buildPushInvocation", () => {
       token: TOKEN,
     });
     expect(inv.authenticated).toBe(true);
-    expect(inv.args).toEqual(["push", "-u", "origin", "feat/x:feat/x"]);
+    expect(inv.args).toEqual(["push", "--recurse-submodules=no", "-u", "origin", "feat/x:feat/x"]);
     expect(inv.args.join(" ")).not.toContain(TOKEN);
     expect(inv.env.GIT_CONFIG_KEY_0).toBe(
       "http.https://github.com/.extraheader",
@@ -279,8 +279,24 @@ describe("buildPushInvocation", () => {
       });
       expect(inv.authenticated).toBe(false);
       expect(inv.env).toEqual({});
-      expect(inv.args).toEqual(["push", "origin", "main:main"]);
+      expect(inv.args).toEqual(["push", "--recurse-submodules=no", "origin", "main:main"]);
     }
+  });
+
+  // Review round 2 (F2105-R2.1): with `push.recurseSubmodules=on-demand`
+  // set by an earlier unasked shell call, the push also sent a submodule
+  // commit to the submodule's own (rewritten) remote, which the card did
+  // not show. The flag on the command line wins over that config.
+  it("never pushes submodules along, whatever the config says", () => {
+    const inv = buildPushInvocation({
+      remote: "origin",
+      branch: "main",
+      setUpstream: false,
+      remoteUrl: "https://github.com/acme/widgets.git",
+      token: null,
+    });
+    expect(inv.args.slice(0, 2)).toEqual(["push", "--recurse-submodules=no"]);
+    expect(inv.args.filter((arg) => arg.startsWith("--recurse-submodules"))).toEqual(["--recurse-submodules=no"]);
   });
 
   it("does nothing special without a token", () => {
