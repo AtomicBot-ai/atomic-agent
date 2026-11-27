@@ -485,7 +485,7 @@ Read from the process environment or from `~/.atomic-agent/.env` (a variable alr
 | `ATOMIC_AGENT_LANG` | unset | env only | Interface language of the terminal UI when `tui.language` is `auto`: en or ru. Unset: taken from LC_ALL, LC_MESSAGES or LANG, else English. |
 | `ATOMIC_AGENT_OFFLINE` | unset | env only | Set to 1 to turn offline mode on for this process, whatever config.json says. It cannot be turned off for a running process. |
 | `ATOMIC_AGENT_PROXY` | unset | `network.proxy.url` | Send the agent's web traffic through this HTTP(S) proxy, as `network.proxy.url` does. Wins over the config value when set. |
-| `ATOMIC_AGENT_ALLOWED_ORIGINS` | unset | env only | Comma-separated web origins that may call a keyless local `serve`, besides loopback ones. |
+| `ATOMIC_AGENT_ALLOWED_ORIGINS` | unset | env only | Comma-separated web origins, besides loopback ones, that may call serve's `/mcp` endpoint from a browser (the API key is still required). Deprecated for every other route: serve always has an API key now, so they no longer read it. |
 | `ATOMIC_AGENT_MODEL_CATALOG_URL` | unset | env only | URL of the extra local-model catalog JSON. Unset: the catalog hosted on atomicagent.io. |
 | `ATOMIC_AGENT_RERANK_URL` | unset | env only | Local reranker (llama-server /v1/rerank style) that re-orders My files search hits. Unset: off. Only a server on this machine or the local network is used. |
 | `ATOMIC_AGENT_TELEGRAM_STREAM_REPLIES` | unset | env only | Stream Telegram replies into the owner's DM (private) or not (off). Wins over telegram.streamReplies when set. |
