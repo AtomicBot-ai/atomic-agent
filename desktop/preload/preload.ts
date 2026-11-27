@@ -537,6 +537,9 @@ contextBridge.exposeInMainWorld("atomic", {
   importFactsStop: (id: string) => ipcRenderer.invoke("importFacts:stop", id),
   importFactsForget: (id: string) => ipcRenderer.invoke("importFacts:forget", id),
   importFactsSave: (id: string, approvedIds: string[]) => ipcRenderer.invoke("importFacts:save", id, approvedIds),
+  /** ATO-2482: one local model's sampling, model default or the person's own (model-sampling-ipc.ts). */
+  modelSamplingGet: (id: string) => ipcRenderer.invoke("modelSampling:get", id),
+  modelSamplingSet: (id: string, set: Record<string, unknown> | null) => ipcRenderer.invoke("modelSampling:set", id, set),
   /** ATO-1091: `atag models fit-test` from Settings › Models (fit-test-ipc.ts). */
   fitTestSupported: () => ipcRenderer.invoke("fitTest:supported"),
   fitTestJudges: () => ipcRenderer.invoke("fitTest:judges"),

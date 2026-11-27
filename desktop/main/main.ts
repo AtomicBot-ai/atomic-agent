@@ -77,6 +77,7 @@ import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
 import { wireChatgptOauthIpc } from "./chatgpt-oauth-ipc.js";
 import { wireAgentHubIpc } from "./agent-hub-ipc.js";
 import { wireFitTestIpc } from "./fit-test-ipc.js";
+import { wireModelSamplingIpc } from "./model-sampling-ipc.js";
 import { wireModelsFolderIpc } from "./models-folder-ipc.js";
 import { wireInterviewInviteIpc } from "./interview-invite-ipc.js";
 import { wireRecipesIpc } from "./recipes-ipc.js";
@@ -3438,6 +3439,8 @@ function wireIpc(client: AgentClient): void {
   wireWorkboardIpc({ client });
   // ATO-458: suggested tasks on the empty chat screen (ideas-ipc.ts, renderer/suggestion-cards.js).
   wireIdeasIpc({ client });
+  // ATO-2482: Settings › Models › Sampling (`atag models sampling`).
+  wireModelSamplingIpc();
   // ATO-1091: Settings › Models › "Find the best model for my tasks" (`atag models fit-test`).
   wireFitTestIpc({
     window: () => win,

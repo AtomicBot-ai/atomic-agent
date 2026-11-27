@@ -28333,6 +28333,7 @@ function llmPanelHTML() {
       : llmLocalHTML())
     // Reasoning is the local models' (the managed server and your own server alike), so it follows the views that run one.
     + (view === 'cloud' ? '' : llmTuneHTML())
+    + (view === 'local' && typeof msSectionHTML === 'function' ? msSectionHTML() : '') // ATO-2482: model-sampling.js
     + llmAdvancedHTML(view === 'cloud' ? 'cloud' : 'local');
 }
 /** Which card's setup the pane shows: Fusion's when chosen, else the one the list mode belongs to. */
@@ -30555,6 +30556,7 @@ function llmAct(what) {
   if (verb === 'tune') { llmTuneSet(rest[0], rest[1]); return; }
   if (verb === 'device') { llmDeviceCycle(); return; }
   if (verb === 'ctx' || verb === 'slots') { lcsSet(verb, rest[0]); return; } // ATO-336
+  if (verb === 'ms') { msAct(rest[0], rest[1]); return; } // ATO-2482: model-sampling.js
   if (verb === 'cancelPull') { if (BR) BR.cancelPull(); LLMP.pulling = null; llmRepaint(); return; }
   // Details' Copy (Д56): one value of the route, as drawn.
   if (verb === 'copy') { const f = llmRouteFacts()[+arg]; if (f) copyText(f.value, 'Copied', f.label); return; }

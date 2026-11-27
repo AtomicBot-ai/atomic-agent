@@ -1,0 +1,14 @@
+/* ============================================================
+   Settings › Models › Sampling (ATO-2482): the per-model values grid that
+   model-sampling.js draws inside the tune card. Colours come from tokens only.
+   ============================================================ */
+
+.llm-pane .ms-grid{display:grid;grid-template-columns:minmax(90px,auto) repeat(2,minmax(0,1fr));
+  gap:6px 10px;align-items:center;padding:4px 0 2px}
+.ms-col{font-size:var(--fs-cap);font-weight:600;color:var(--ink-2)}
+.ms-row{font-size:var(--fs-ui);color:var(--ink)}
+.llm-pane .ms-input{width:100%;min-width:0;font-variant-numeric:tabular-nums}
+.ms-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding-top:6px}
+.ms-details{margin-top:4px}
+.ms-details .mono{display:block;white-space:pre-wrap;word-break:break-word;font-size:var(--fs-cap)}
+@media (max-width:520px){.llm-pane .ms-grid{grid-template-columns:1fr 1fr 1fr}}
