@@ -9,7 +9,9 @@
  * starts with GIT_SAFE_PREFIX, the shared desktop list (git-safe-args.ts,
  * ATO-2532: no fsmonitor, no hooks, no pager, no signature check, no
  * index write). `--no-ext-diff --no-textconv` stop the configured
- * external diff and textconv programs.
+ * external diff and textconv programs, and log's explicit
+ * `--pretty=medium` keeps a configured `format.pretty` from asking for a
+ * signature check.
  */
 
 import { execFile } from "node:child_process";
@@ -39,10 +41,15 @@ export function diffArgs(): string[] {
   return ["diff", "HEAD", ...DIFF_FLAGS, "--", "."];
 }
 
-/** `git log -n<count> --stat -p` for the commits that touch the folder. */
+/**
+ * `git log -n<count> --stat -p` for the commits that touch the folder.
+ * `--pretty=medium` is explicit: a repo's `format.pretty` with `%G?`
+ * would make git verify a signed commit with the repo's `gpg.program`,
+ * which `log.showSignature=false` does not cover.
+ */
 export function logArgs(count: number): string[] {
   const n = Math.max(1, Math.floor(count));
-  return ["log", `-n${n}`, "--date=iso", "--stat", "-p", ...DIFF_FLAGS, "--", "."];
+  return ["log", `-n${n}`, "--date=iso", "--pretty=medium", "--stat", "-p", ...DIFF_FLAGS, "--", "."];
 }
 
 /** `git ls-files`: tracked plus untracked files under the folder, minus .gitignore. */
