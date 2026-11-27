@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GIT_SAFE_PREFIX, changedFilesArgs, createRunGit, diffArgs, gitEnv, logArgs, type ExecFileLike } from "./mention-git.js";
+import { GIT_SAFE_PREFIX, changedFilesArgs, gitSafePrefix, createRunGit, diffArgs, gitEnv, logArgs, type ExecFileLike } from "./mention-git.js";
 
 describe("mention git", () => {
   it("puts the fsmonitor-off prefix before every subcommand and keeps a cut answer", async () => {
@@ -15,6 +15,15 @@ describe("mention git", () => {
     expect(await git("/w", logArgs(3))).toEqual({ text: "out", cut: true });
     for (const call of calls) expect(call.args.slice(0, GIT_SAFE_PREFIX.length)).toEqual([...GIT_SAFE_PREFIX]);
     expect(GIT_SAFE_PREFIX).toContain("core.fsmonitor=false");
+  });
+
+  it("covers every setting the desktop hardened in ATO-2532", () => {
+    expect(gitSafePrefix("darwin")).toEqual([
+      "--no-pager", "--no-optional-locks",
+      "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
+      "-c", "core.hooksPath=/dev/null", "-c", "log.showSignature=false", "-c", "protocol.ext.allow=never",
+    ]);
+    expect(gitSafePrefix("win32")).toContain("core.hooksPath=NUL");
   });
 
   it("keeps diffs to the folder and away from configured programs", () => {
