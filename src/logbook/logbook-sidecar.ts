@@ -1,4 +1,5 @@
 import type { LogbookCaptureOutcome } from "./logbook-capture.js";
+import type { IndicatorState } from "./logbook-indicator.js";
 import type { LogbookVisionProvider, PickLocalVisionResult } from "./logbook-local-vision.js";
 import { logbookCapturing, readLogbookSettings, type LogbookSettings } from "./logbook-settings.js";
 import { readLogbookStatus, writeLogbookStatus, type LogbookStatus } from "./logbook-status.js";
@@ -12,7 +13,19 @@ import { appendLogbookEntry, pruneLogbook, type LogbookEntry } from "./logbook-s
  * `logbook stop` or `pause` holds from the next tick, and a frame whose
  * description finishes after a stop is dropped, not stored. Retention
  * is applied once an hour whether the logbook is on or off.
+ *
+ * `indicator` (ATO-2534) is how a process whose frontend is not the TUI
+ * learns that the recording mark is on screen: no capture while it is
+ * `hidden`, a recorded skip while the person is `away`, and a frame
+ * whose mark went away while it was described is dropped. Left out (the
+ * TUI, whose top bar always shows the chip) the mark counts as visible.
  */
+/** Status text while the mark is not on screen. */
+export const INDICATOR_HIDDEN_REASON =
+  "the Logbook mark is not on screen (open the desktop app or the terminal app), so nothing is captured";
+/** Status text while the person is idle or the screen is locked. */
+export const INDICATOR_AWAY_REASON = "you were away or the screen was locked, so nothing was captured";
+
 export const PRUNE_EVERY_MS = 60 * 60 * 1000;
 
 export interface LogbookSidecarDeps {
@@ -23,6 +36,8 @@ export interface LogbookSidecarDeps {
   /** Removes frames a crash left behind; run before the first capture. */
   sweepFrames?: () => Promise<void>;
   logger?: { warn(message: string, data?: Record<string, unknown>): void };
+  /** Whether the recording mark is on screen; omitted means always (the TUI). */
+  indicator?: (now: number) => IndicatorState;
   /** Test seams; default to the files under `<stateDir>/logbook`. */
   readSettings?: (stateDir: string) => LogbookSettings;
   readStatus?: (stateDir: string) => LogbookStatus;
@@ -47,6 +62,8 @@ export function createLogbookSidecar(deps: LogbookSidecarDeps): LogbookSidecar {
   let lastAttemptAt: number | null = null;
   let lastPruneAt: number | null = null;
   let swept = false;
+  let hiddenNoted = false;
+  const indicator: (now: number) => IndicatorState = deps.indicator ?? (() => "visible");
 
   const record = (patch: Partial<LogbookStatus>) => {
     try {
@@ -71,7 +88,19 @@ export function createLogbookSidecar(deps: LogbookSidecarDeps): LogbookSidecar {
       }
       if (!logbookCapturing(settings, now)) return;
       if (lastAttemptAt !== null && now - lastAttemptAt < settings.intervalMinutes * 60_000) return;
+      const mark = indicator(now);
+      // Not on screen: wait without using up the interval, so a frame is taken soon after it shows.
+      if (mark === "hidden") {
+        if (!hiddenNoted) record({ lastAttemptAt: now, lastOutcome: "skipped", lastReason: INDICATOR_HIDDEN_REASON });
+        hiddenNoted = true;
+        return;
+      }
+      hiddenNoted = false;
       lastAttemptAt = now;
+      if (mark === "away") {
+        record({ lastAttemptAt: now, lastOutcome: "skipped", lastReason: INDICATOR_AWAY_REASON });
+        return;
+      }
       inFlight = true;
       try {
         if (!swept) {
@@ -89,7 +118,7 @@ export function createLogbookSidecar(deps: LogbookSidecarDeps): LogbookSidecar {
           return;
         }
         // Stopped, paused or shut down while the model was describing: keep nothing.
-        if (signal.aborted || !logbookCapturing(readSettings(deps.stateDir), Date.now())) {
+        if (signal.aborted || !logbookCapturing(readSettings(deps.stateDir), Date.now()) || indicator(Date.now()) !== "visible") {
           record({ lastAttemptAt: now, lastOutcome: "skipped", lastReason: "the logbook was stopped while the frame was described", provider: pick.provider.id });
           return;
         }
