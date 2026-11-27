@@ -5568,38 +5568,6 @@
       "count": 2
     },
     {
-      "path": "src/llm/provider/model-strict-tools.test.ts",
-      "code": 2322,
-      "message": "Type '{ defaultChatModel: string; id: string; kind: string; baseUrl: string; userModels: { id: string; supportsTools: \"strict\"; }[]; }' is not assignable to type 'LlmProviderConfigEntry'.   Types of property 'userModels' are incompatible.     Type '{ id: string; supportsTools: \"strict\"; }[]' is not assignable to type 'readonly UserModelConfigEntry[]'.       Property 'kind' is missing in type '{ id: string; supportsTools: \"strict\"; }' but required in type 'UserModelConfigEntry'.",
-      "anchor": "{ ...strictEntry, defaultChatModel: \"some-other-model\" }",
-      "line": 40,
-      "count": 1
-    },
-    {
-      "path": "src/llm/provider/model-strict-tools.test.ts",
-      "code": 2322,
-      "message": "Type '{ id: string; kind: string; baseUrl: string; defaultChatModel: string; userModels: { id: string; supportsTools: \"strict\"; }[]; }' is not assignable to type 'LlmProviderConfigEntry'.   Types of property 'userModels' are incompatible.     Type '{ id: string; supportsTools: \"strict\"; }[]' is not assignable to type 'readonly UserModelConfigEntry[]'.       Property 'kind' is missing in type '{ id: string; supportsTools: \"strict\"; }' but required in type 'UserModelConfigEntry'.",
-      "anchor": "strictEntry",
-      "line": 32,
-      "count": 2
-    },
-    {
-      "path": "src/llm/provider/model-strict-tools.test.ts",
-      "code": 2322,
-      "message": "Type '{ id: string; kind: string; baseUrl: string; userModels: { id: string; supportsTools: \"strict\"; }[]; }' is not assignable to type 'LlmProviderConfigEntry'.   Types of property 'userModels' are incompatible.     Type '{ id: string; supportsTools: \"strict\"; }[]' is not assignable to type 'readonly UserModelConfigEntry[]'.       Property 'kind' is missing in type '{ id: string; supportsTools: \"strict\"; }' but required in type 'UserModelConfigEntry'.",
-      "anchor": "noModel",
-      "line": 73,
-      "count": 1
-    },
-    {
-      "path": "src/llm/provider/model-strict-tools.test.ts",
-      "code": 2322,
-      "message": "Type '{ model: string; id: string; kind: string; baseUrl: string; userModels: { id: string; supportsTools: \"strict\"; }[]; }' is not assignable to type 'LlmProviderConfigEntry'.   Types of property 'userModels' are incompatible.     Type '{ id: string; supportsTools: \"strict\"; }[]' is not assignable to type 'readonly UserModelConfigEntry[]'.       Property 'kind' is missing in type '{ id: string; supportsTools: \"strict\"; }' but required in type 'UserModelConfigEntry'.",
-      "anchor": "{ ...byModel, model: \"mercury-2.5\" }",
-      "line": 65,
-      "count": 1
-    },
-    {
       "path": "src/llm/provider/openai/fetch-openai-compat-models.test.ts",
       "code": 2339,
       "message": "Property 'headers' does not exist on type 'never'.",
