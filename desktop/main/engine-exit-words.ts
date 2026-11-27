@@ -5,13 +5,19 @@
  * on its own (desktop/tsconfig.json, rootDir ".") and cannot import src/:
  * keep these patterns and their order in step with that file by hand.
  *
+ * One deliberate difference: the agent's copy counts "unknown architecture"
+ * and "unknown ggml type" as `model_file_corrupt`. Those mean a good file the
+ * engine is too old for, so here they are `model_unsupported`. The agent's
+ * copy needs the same split (a follow-up on main).
+ *
  * The text read here (a server log, a failed start's message) can hold paths
  * and model names: callers keep it and pass on the word only.
  *
  * Pure: no fs, no Electron. The unit tests drive it straight.
  */
 
-export type EngineExitWord = "port_in_use" | "out_of_memory" | "model_file_missing" | "model_file_corrupt" | "gpu_driver";
+export type EngineExitWord =
+  | "port_in_use" | "out_of_memory" | "model_file_missing" | "model_file_corrupt" | "model_unsupported" | "gpu_driver";
 
 /** Ordered as the agent's PATTERNS: the first one that matches wins. */
 export const ENGINE_EXIT_PATTERNS: ReadonlyArray<readonly [EngineExitWord, RegExp]> = [
@@ -26,8 +32,12 @@ export const ENGINE_EXIT_PATTERNS: ReadonlyArray<readonly [EngineExitWord, RegEx
   ],
   [
     "model_file_corrupt",
-    /invalid (?:gguf|magic)|not a gguf|failed to read (?:magic|header|key|tensor)|unknown (?:model )?architecture|unknown (?:tensor|ggml) type|invalid ggml type|tensor [^\n]*(?:out of|not within) [^\n]*bounds|wrong number of tensors|corrupt/i,
+    /invalid (?:gguf|magic)|not a gguf|failed to read (?:magic|header|key|tensor)|tensor [^\n]*(?:out of|not within) [^\n]*bounds|wrong number of tensors|corrupt/i,
   ],
+  /* A good file the bundled engine is too old to read: llama.cpp says "unknown
+     model architecture" for a model newer than it. Not damage, so never a
+     reason to delete or download the file again. */
+  ["model_unsupported", /unknown (?:model )?architecture|unknown (?:tensor|ggml) type|invalid ggml type/i],
   [
     "gpu_driver",
     /cuda driver version is insufficient|no cuda-capable device|ggml_cuda_init: failed|cuda error|cudaerror|vk_error|errordevicelost|device lost|failed to initialize vulkan|vulkan error|ggml_metal_init: error|failed to create metal|no gpu found|failed to load (?:cuda|vulkan|nvcuda)/i,

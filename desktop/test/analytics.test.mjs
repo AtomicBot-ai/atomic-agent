@@ -272,11 +272,20 @@ test("ATO-1739: a broken model file, a GPU driver and an early exit get their ow
   // A recognised line outranks the exit code; no exit known is still other.
   assert.equal(C.backendFailReason(failed, "cudaMalloc failed: out of memory", null, { code: 1 }), "oom");
   assert.equal(C.backendFailReason(failed, "", null, null), "other");
-  for (const reason of ["model_file_missing", "model_file_corrupt", "gpu_driver", "dll_init_failed", "early_exit"]) {
+  for (const reason of ["model_file_missing", "model_file_corrupt", "model_unsupported", "gpu_driver", "dll_init_failed", "early_exit"]) {
     assert.ok(CV.BACKEND_FAIL_REASONS.includes(reason), reason);
     assert.equal(V.validateEvent("local_backend_crashed", { reason }, "main").props.reason, reason);
   }
-  for (const fault of ["model_file_missing", "model_file_corrupt", "gpu_driver"]) assert.ok(CV.ENGINE_FAULTS.includes(fault), fault);
+  for (const fault of ["model_file_missing", "model_file_corrupt", "model_unsupported", "gpu_driver"]) assert.ok(CV.ENGINE_FAULTS.includes(fault), fault);
+});
+
+test("ATO-1739: a good file the engine is too old for is model_unsupported, never a damaged file", () => {
+  assert.equal(C.engineFault("llama_model_load: error loading model: error loading model architecture: unknown model architecture: 'qwen9'"), "model_unsupported");
+  assert.equal(C.engineFault("gguf_init_from_file_impl: tensor 'blk.0.ffn_down.weight' has unknown ggml type 41"), "model_unsupported");
+  assert.equal(C.backendFailReason("`atag models start` failed (exit 1)", "unknown model architecture: 'qwen9'\nllama_model_load_from_file_impl: failed to load model", null), "model_unsupported");
+  // Truncation and garbled headers stay damage.
+  assert.equal(C.engineFault("gguf_init_from_file_impl: invalid magic characters: 'xV4', expected 'GGUF'"), "model_file_corrupt");
+  assert.equal(V.validateEvent("local_backend_crashed", { reason: "model_unsupported" }, "main").props.reason, "model_unsupported");
 });
 
 test("ATO-1739: a start reads the server's exit code from the agent's message, and only the word leaves", () => {
