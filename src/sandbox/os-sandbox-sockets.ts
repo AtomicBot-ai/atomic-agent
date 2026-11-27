@@ -17,10 +17,11 @@
  * that exist are covered (bwrap fails on a missing mount target).
  *
  * This is a list, not a rule: a socket in a place not listed here stays
- * reachable. The complete fix is a seccomp filter that refuses
- * `socket(AF_UNIX)` (Claude Code's Linux sandbox does that); it needs a
- * BPF program handed to bwrap through an extra file descriptor, which
- * the command runner does not pass yet.
+ * reachable by path. On x64 and arm64 hosts the seccomp filter of
+ * `seccomp-unix-block.ts` closes the rest (ATO-2469): no `AF_UNIX`
+ * socket that could reach a socket file can be created (only a stream or
+ * seqpacket `socketpair`). These masks stay as a second layer and as the
+ * only one on other hosts.
  *
  * macOS needs none of this: Seatbelt denies `(remote unix-socket)`.
  */

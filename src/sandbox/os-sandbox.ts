@@ -35,7 +35,9 @@
  *   folders are covered with an empty tmpfs (files with `/dev/null`),
  *   `--unshare-net` drops the network; without network the known local
  *   socket places are covered too (`os-sandbox-sockets.ts`), because a
- *   socket bound to a file path outlives the network namespace.
+ *   socket bound to a file path outlives the network namespace, and a
+ *   seccomp filter refuses `socket(AF_UNIX)` and a datagram
+ *   `socketpair(AF_UNIX)` (`seccomp-unix-block.ts`).
  * - Windows, or Linux without `bwrap`: no sandbox is available. The
  *   caller refuses the command (Jan's rule: no sandbox, no shell) and
  *   says how to turn the mode off.
@@ -54,6 +56,7 @@ import {
   linuxLocalSocketMasks,
   type OsSandboxSocketMask,
 } from "./os-sandbox-sockets.js";
+import { SECCOMP_PROGRAM_FD, unixSocketBlockProgram } from "./seccomp-unix-block.js";
 
 export type OsSandboxMode = "off" | "workspace";
 
@@ -384,7 +387,18 @@ function networkOffSocketMasks(
 }
 
 export type OsSandboxWrap =
-  | { ok: true; command: string; args: string[] }
+  | {
+      ok: true;
+      command: string;
+      args: string[];
+      /**
+       * Bytes the spawn must hand the child on fd 3 (a pipe, closed after
+       * them): the Linux seccomp program for `bwrap --seccomp 3` when the
+       * network is off (ATO-2469). Without it bwrap cannot read fd 3 and
+       * refuses to start, so a caller that drops it fails closed.
+       */
+      fd3Input?: Buffer;
+    }
   | { ok: false; reason: string };
 
 /** Where `sandbox-exec` lives; a test can point elsewhere. */
@@ -534,6 +548,7 @@ function bwrapArgs(
   policy: OsSandboxPolicy,
   command: string,
   args: readonly string[],
+  seccomp: boolean,
 ): string[] {
   // A private pid namespace: `/proc` shows only the sandbox's own
   // processes, so `/proc/<host pid>/root` cannot reach the hidden paths.
@@ -566,6 +581,9 @@ function bwrapArgs(
     ]),
   );
   if (!policy.network) out.push("--unshare-net");
+  // No `AF_UNIX` socket that could reach a socket file can be created
+  // (ATO-2469): closes the ones the path masks above do not know about.
+  if (seccomp) out.push("--seccomp", String(SECCOMP_PROGRAM_FD));
   out.push("--die-with-parent", "--new-session", "--", command, ...args);
   return out;
 }
@@ -576,6 +594,8 @@ export interface WrapOptions {
   bwrap?: string | null;
   /** Whether `sandbox-exec` exists; checked when omitted. */
   seatbeltAvailable?: boolean;
+  /** Linux host CPU for the seccomp program; `process.arch` when omitted. */
+  arch?: string;
 }
 
 /**
@@ -604,7 +624,16 @@ export function wrapWithOsSandbox(
         reason: "bubblewrap (`bwrap`) is not installed; install it with your package manager (for example `sudo apt install bubblewrap`)",
       };
     }
-    return { ok: true, command: bwrap, args: bwrapArgs(policy, command, args) };
+    // Without network, the seccomp filter that refuses `socket(AF_UNIX)`
+    // (ATO-2469). On a host with no program (not x64 or arm64) the path
+    // masks are the only cover, as before.
+    const seccomp = policy.network ? null : unixSocketBlockProgram(options.arch);
+    return {
+      ok: true,
+      command: bwrap,
+      args: bwrapArgs(policy, command, args, seccomp !== null),
+      ...(seccomp === null ? {} : { fd3Input: seccomp }),
+    };
   }
   return {
     ok: false,
