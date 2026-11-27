@@ -362,6 +362,47 @@ class App {
   }
 
   /**
+   * Wait until `sel` names the SAME element, at the same place, for `quietMs`
+   * in a row (ATO-1755). A view that rebuilds itself with innerHTML (Settings
+   * does on every render) can move the element, or lay something over it,
+   * between the moment `clickSel` measures the box and the moment it
+   * presses, and the press lands on whatever is there instead. The app holds
+   * a redraw DURING a press inside Settings (renderSettings, SETDOWN), not
+   * before one. A person clicks a button that stopped moving; this is that,
+   * read repeatedly. The identity lives in a WeakMap the driver keeps on the
+   * page, so the app's own nodes are never written to.
+   */
+  async waitSteady(sel, { nth = 0, quietMs = 500, timeout = 15000 } = {}) {
+    const key = () => this.eval(`(() => {
+      const ns = [...document.querySelectorAll(${JSON.stringify(sel)})].filter((n) => {
+        const r = n.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && getComputedStyle(n).visibility !== 'hidden' && getComputedStyle(n).pointerEvents !== 'none';
+      });
+      const n = ns[${nth}];
+      if (!n) return null;
+      const ids = window.__driveIds || (window.__driveIds = new WeakMap());
+      if (!ids.has(n)) { window.__driveNext = (window.__driveNext || 0) + 1; ids.set(n, window.__driveNext); }
+      const r = n.getBoundingClientRect();
+      return ids.get(n) + '@' + [r.left, r.top, r.width, r.height].map(Math.round).join(',');
+    })()`);
+    const until = Date.now() + timeout;
+    let last = null, since = 0;
+    for (;;) {
+      const now = await key();
+      if (now !== last) { last = now; since = Date.now(); }
+      else if (now && Date.now() - since >= quietMs) return now;
+      if (Date.now() > until) throw new Error(`gave up after ${timeout}ms waiting for ${sel} to stop being re-drawn (last ${last})`);
+      await sleep(100);
+    }
+  }
+
+  /** `clickSel`, but only once the element has held still (see waitSteady). */
+  async clickSelSteady(sel, { nth = 0, quietMs = 500, timeout = 15000, scroll = true } = {}) {
+    await this.waitSteady(sel, { nth, quietMs, timeout });
+    return this.clickSel(sel, { nth, timeout: 8000, scroll });
+  }
+
+  /**
    * Leave an open popover the way a person does since ATO-167 took its Done
    * away: a click OUTSIDE it, on the transparent scrim behind it. A trusted
    * press at a point where the scrim itself is the top element — never a
@@ -634,3 +675,5 @@ export async function launch(o) {
 }
 
 export { sleep };
+/** For unit tests of the driver itself (drive-steady.test.mjs); scenarios use `launch`. */
+export { App };
