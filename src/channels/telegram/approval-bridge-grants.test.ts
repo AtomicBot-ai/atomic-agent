@@ -41,7 +41,7 @@ function harness(overrides: Partial<ApprovalBridgeDeps> = {}) {
     ...overrides,
   });
   const keyboard = (): Keyboard =>
-    (api.sendMessage.mock.calls[0]![2] as { reply_markup: Keyboard }).reply_markup;
+    ((api.sendMessage.mock.calls[0] as unknown[])[2] as { reply_markup: Keyboard }).reply_markup;
   return { bridge, api, decisions, keyboard };
 }
 
@@ -132,7 +132,7 @@ describe("Telegram session grant buttons (GitHub #230)", () => {
     expect(h.api.answerCallbackQuery).toHaveBeenCalledWith("cb-1", {
       text: "Approved for this session",
     });
-    expect(h.api.editMessageText.mock.calls[0]![2]).toBe(
+    expect((h.api.editMessageText.mock.calls[0] as unknown[])[2]).toBe(
       "✅ approved · allowed this session: shell command (risky commands still ask)",
     );
     expect(h.bridge.pendingCount()).toBe(0);
@@ -145,7 +145,7 @@ describe("Telegram session grant buttons (GitHub #230)", () => {
     expect(h.decisions).toEqual([
       { approvalId: "abc", approved: true, reason: "telegram", grant: "shape" },
     ]);
-    expect(h.api.editMessageText.mock.calls[0]![2]).toBe(
+    expect((h.api.editMessageText.mock.calls[0] as unknown[])[2]).toBe(
       "✅ approved · allowed this session: all git commands (risky commands still ask)",
     );
   });
