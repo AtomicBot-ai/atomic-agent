@@ -205,6 +205,8 @@ const KNOWN_KEYS_OUTSIDE_DEFAULTS: Readonly<Record<string, readonly string[]>> =
   // Optional, absent from the defaults: known so a write that drops them
   // clears them (ATO-2106 modelsDirOverride, ATO-1106 loraAdapters).
   "localModels.managed": ["modelsDirOverride", "loraAdapters"],
+  // ATO-2482: dropped when the last per-model set is reset.
+  localModels: ["modelSamplingOverrides"],
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
