@@ -317,7 +317,7 @@ export function mapCliFailure(input: CliFailureInput): Error {
     return new SubscriptionCliInvocationError(
       `"${input.binary}" stopped reading the prompt before it was fully written (exit ${
         input.exitCode ?? "null"
-      }): ${detail || "no output"}${exitHint(input.binary, detail)}`,
+      }): ${detail || "no output"}${exitHint(input.binary, detail, input.exitCode)}`,
       input.exitCode,
       "input_truncated",
     );
@@ -325,7 +325,7 @@ export function mapCliFailure(input: CliFailureInput): Error {
   return new SubscriptionCliInvocationError(
     `"${input.binary}" exited with code ${input.exitCode ?? "null"}: ${
       detail || "no output"
-    }${exitHint(input.binary, detail)}`,
+    }${exitHint(input.binary, detail, input.exitCode)}`,
     input.exitCode,
     "exited",
   );

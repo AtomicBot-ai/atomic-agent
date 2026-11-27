@@ -135,8 +135,23 @@ describe("cli_reason tag (ATO-1679)", () => {
     expect(classifyCliReason('"claude" exited with code 1: no output')).toBe("no_output");
   });
 
+  it("reads GNU env's curly-quoted missing node as node_missing (CLI-E4)", () => {
+    const err = failure({ binary: "/home/a/.npm-global/bin/claude", exitCode: 127, stderr: "/usr/bin/env: ‘node’: No such file or directory" });
+    expect(extractSubscriptionCliFailureTags(err)).toEqual({ cli_failure: "exited", cli_exit_code: "127", cli_reason: "node_missing" });
+  });
+
+  it("says command_not_found for an exit 127 the text does not explain (CLI-E4)", () => {
+    for (const stderr of ["/home/a/.asdf/shims/claude: line 3: asdf: command not found", "env: bun: No such file or directory", ""]) {
+      const err = failure({ exitCode: 127, stderr });
+      expect(extractSubscriptionCliFailureTags(err)).toEqual({ cli_failure: "exited", cli_exit_code: "127", cli_reason: "command_not_found" });
+    }
+    expect(classifyCliReason('"claude" exited with code 127: Segmentation fault', 127)).toBe("command_not_found");
+    // Any other exit code with the same text stays `other`.
+    expect(classifyCliReason('"claude" exited with code 1: Segmentation fault', 1)).toBe("other");
+  });
+
   it("covers every word in the vocabulary", () => {
-    const seen = new Set([...CASES.map(([reason]) => reason), "no_output"]);
+    const seen = new Set([...CASES.map(([reason]) => reason), "no_output", "command_not_found"]);
     expect([...seen].sort()).toEqual([...CLI_REASONS].sort());
   });
 
