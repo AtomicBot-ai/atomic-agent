@@ -46,6 +46,7 @@ import { buildConversationHistoryTool, buildSessionsSearchTool, registerMemoryTo
 import { buildFilesSearchTool, type FileIndexApi } from "../../tools/files/index.js";
 import { buildResearchDeepTool } from "../../tools/research/index.js";
 import { registerLogbookTools } from "../../tools/logbook/index.js";
+import { registerAppTools } from "../../tools/app/index.js";
 import { logbookNotesStayLocal, logbookToolOffered } from "../../logbook/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type VisionDescribeProviderSource, type VisionProviderSource } from "../../tools/vision/index.js";
@@ -422,6 +423,17 @@ export function registerRuntimeCoreTools(input: {
         localModelsUrl: live.localModels.url,
       });
     },
+  });
+  // ATO-2459: My apps (<stateDir>/apps, shared with the desktop). Each
+  // change asks first; incognito chats keep nothing.
+  registerAppTools(toolRegistry, {
+    ...dangerous,
+    stateDir: config.paths.stateDir,
+    trustConfigPaths: getTrustConfigPaths(config.paths),
+    localStepChars: () => getConfig().agent.batchToolResultCharCap,
+    ...(sessionStore.isIncognito
+      ? { isIncognitoSession: (sessionId: string) => sessionStore.isIncognito!(sessionId) }
+      : {}),
   });
 }
 

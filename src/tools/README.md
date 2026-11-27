@@ -19,6 +19,7 @@ This area owns tool registry and adapters. Read [AGENTS.md](AGENTS.md) before ch
 - [files/](files/README.md): the "My files" index (ATO-1621) and its read-only `files.search` tool with page citations
 - [research/](research/README.md): `research.deep` (ATO-2133), web research through `os.web.search` / `os.web.fetch` that keeps a finding only when its quote is on the fetched page, and writes a Markdown report
 - [logbook/](logbook/logbook-query-tool.ts): read-only `logbook.query` over the local [logbook](../logbook/README.md) (ATO-2363), offered while it is on or keeps notes; asks (`logbook_cloud`) when the serving model is not on this computer
+- [app/](app/index.ts): "My apps" (ATO-2459), `app.save` / `app.update` / `app.delete` / `app.list` over `<stateDir>/apps`, the folder the desktop's My apps reads ([layout](app/app-names.ts)); every change asks like a file write under the state dir, an edit keeps the replaced page as a version ([app-versions.ts](app/app-versions.ts)), a delete takes the installed launcher with it
 
 ## Ownership and dependencies
 

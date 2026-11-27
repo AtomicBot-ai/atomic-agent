@@ -652,6 +652,11 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   ["memory.profile.list", obj({})],
   ["memory.profile.history", obj({ key: stringSchema }, ["key"])],
 
+  // ── app (My apps, ATO-2459) ──────────────────────────────────────────────
+  ["app.save", obj({ name: stringSchema, html: stringSchema }, ["name", "html"])],
+  ["app.update", obj({ id: stringSchema, html: stringSchema, name: stringSchema, restoreVersion: integerSchema }, ["id"])],
+  ["app.delete", obj({ id: stringSchema }, ["id"])],
+  ["app.list", obj({ id: stringSchema })],
   // ── memory.notes ─────────────────────────────────────────────────────────
   [
     "memory.notes.store",
