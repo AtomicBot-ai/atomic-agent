@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -82,6 +82,50 @@ describe("mention git", () => {
       expect(existsSync(marker)).toBe(false);
     } finally {
       rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("diffs never step into a submodule", () => {
+    for (const args of [diffArgs(), logArgs(2), changedFilesArgs()]) expect(args).toContain("--submodule=short");
+  });
+
+  it.skipIf(process.platform === "win32")("@diff never runs a submodule's diff.external (real git)", async () => {
+    const top = mkdtempSync(join(tmpdir(), "mention-git-sub-"));
+    try {
+      const marker = join(top, "ext-ran");
+      const evil = join(top, "evil-diff.sh");
+      writeFileSync(evil, `#!/bin/sh\ntouch "${marker}"\n`);
+      chmodSync(evil, 0o755);
+      const who = ["-c", "user.email=a@b", "-c", "user.name=a", "-c", "protocol.file.allow=always"];
+      const git = (cwd: string, args: string[]): string =>
+        execFileSync("git", [...who, ...args], { cwd, encoding: "utf8", env: gitEnv() }).trim();
+      const origin = join(top, "origin");
+      const repo = join(top, "repo");
+      for (const dir of [origin, repo]) {
+        mkdirSync(dir);
+        git(dir, ["init", "-q"]);
+      }
+      writeFileSync(join(origin, "s.txt"), "s\n");
+      git(origin, ["add", "s.txt"]);
+      git(origin, ["commit", "-qm", "s"]);
+      git(repo, ["submodule", "add", "-q", origin, "sub"]);
+      git(repo, ["commit", "-qm", "add sub"]);
+      git(repo, ["config", "diff.submodule", "diff"]);
+      git(join(repo, "sub"), ["config", "diff.external", evil]);
+      writeFileSync(join(repo, "sub", "s.txt"), "changed\n");
+      // The control: the same call without the flag runs the submodule's program.
+      const unsafe = diffArgs().filter((a) => a !== "--submodule=short");
+      try {
+        execFileSync("git", [...GIT_SAFE_PREFIX, ...unsafe], { cwd: repo, env: gitEnv(), stdio: "ignore" });
+      } catch {
+        // Only the marker matters.
+      }
+      expect(existsSync(marker)).toBe(true);
+      rmSync(marker);
+      await createRunGit()(repo, diffArgs()).catch(() => undefined);
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      rmSync(top, { recursive: true, force: true });
     }
   });
 
