@@ -3,6 +3,7 @@ import type { GgufMetadata } from "../catalog/gguf-metadata.js";
 import { buildLlamaServerArgs, type DaemonStartOptions } from "./daemon-lifecycle.js";
 import {
   CPU_MOE_MARGIN_BYTES,
+  cpuMoeRetryOptions,
   decideCpuMoeLayers,
   moeShapeFromMetadata,
   type MoeShape,
@@ -119,5 +120,29 @@ describe("buildLlamaServerArgs --n-cpu-moe", () => {
   it("leaves the launch byte-identical with no layers and on CPU-only", () => {
     expect(build({ ...opts, cpuMoeLayers: 0 })).toEqual(build(opts));
     expect(build({ ...opts, device: "cpu", cpuMoeLayers: 12 })).not.toContain("--n-cpu-moe");
+  });
+});
+
+describe("cpuMoeRetryOptions (one retry without the flag)", () => {
+  const boom = new Error("llama-server exited: failed to allocate CUDA0 buffer");
+
+  it("retries an auto-chosen flag once, with cpuMoe off", () => {
+    expect(cpuMoeRetryOptions({ port: 1 }, 12, boom)).toEqual({ port: 1, cpuMoe: "off" });
+    expect(cpuMoeRetryOptions({ cpuMoe: "auto" as const }, 12, boom)).toEqual({ cpuMoe: "off" });
+  });
+
+  it("does not retry without a flag, a pinned count, off, or a cancelled start", () => {
+    expect(cpuMoeRetryOptions({}, 0, boom)).toBeNull();
+    expect(cpuMoeRetryOptions({ cpuMoe: 20 }, 20, boom)).toBeNull();
+    expect(cpuMoeRetryOptions({ cpuMoe: "off" as const }, 12, boom)).toBeNull();
+    const ac = new AbortController();
+    ac.abort();
+    expect(cpuMoeRetryOptions({ signal: ac.signal }, 12, boom)).toBeNull();
+    expect(cpuMoeRetryOptions({}, 12, Object.assign(new Error("x"), { name: "AbortError" }))).toBeNull();
+  });
+
+  it("cannot loop: the retry it returns never retries again", () => {
+    const retry = cpuMoeRetryOptions({}, 12, boom)!;
+    expect(cpuMoeRetryOptions(retry, 12, boom)).toBeNull();
   });
 });

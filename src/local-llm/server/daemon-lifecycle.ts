@@ -95,6 +95,8 @@ import {
   type SwaFullPreference,
 } from "./swa-full.js";
 import {
+  CPU_MOE_RETRY_NOTE,
+  cpuMoeRetryOptions,
   decideCpuMoeLayers,
   moeShapeFromMetadata,
   type CpuMoePreference,
@@ -1567,11 +1569,19 @@ async function startDaemonNow(
     } catch {
       /* no marker: faults stay unscoped, as before */
     }
-    const session = await loadCoreSession(opts.dataDir, {
-      role: "chat", modelId: model.id, modelPath, port: opts.port, args,
-      ...(opts.mmprojFile ? { mmprojPath: opts.mmprojFile } : {}),
-      ...(opts.signal ? { signal: opts.signal } : {}),
-    });
+    let session: Awaited<ReturnType<typeof loadCoreSession>>;
+    try {
+      session = await loadCoreSession(opts.dataDir, {
+        role: "chat", modelId: model.id, modelPath, port: opts.port, args,
+        ...(opts.mmprojFile ? { mmprojPath: opts.mmprojFile } : {}),
+        ...(opts.signal ? { signal: opts.signal } : {}),
+      });
+    } catch (err) {
+      const retry = cpuMoeRetryOptions(opts, cpuMoe.layers, err);
+      if (!retry) throw err;
+      appendCpuMoeRetryNote(opts.dataDir);
+      return startDaemon(retry);
+    }
     writeFileSync(pidPath, String(session.pid), "utf8");
     const coreShrink = partialOffloadShrinkAfterStart(opts, { contextSize, device });
     if (coreShrink) {
@@ -1638,7 +1648,10 @@ async function startDaemonNow(
       });
     } catch (err) {
       abandonChild(child.pid, pidPath);
-      throw err;
+      const retry = cpuMoeRetryOptions(opts, cpuMoe.layers, err);
+      if (!retry) throw err;
+      writeSync(logFd, CPU_MOE_RETRY_NOTE);
+      return await startDaemon(retry);
     }
     // ATO-868: llama.cpp's fit left part of the model on the CPU under an
     // auto window. Restart once with half the window rather than serve at
@@ -1685,6 +1698,14 @@ async function startDaemonNow(
     };
   } finally {
     closeSync(logFd);
+  }
+}
+
+function appendCpuMoeRetryNote(dataDir: string): void {
+  try {
+    appendFileSync(resolveLogFilePath(dataDir), CPU_MOE_RETRY_NOTE);
+  } catch {
+    /* best effort, like the launch notes */
   }
 }
 
