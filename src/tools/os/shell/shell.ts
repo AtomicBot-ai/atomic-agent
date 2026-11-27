@@ -437,6 +437,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           ...(commandUnreadable ? { commandUnreadable } : {}),
           workdir: ctx.workingDir,
           targetPaths,
+          ...(guardVerdict.askEveryLevel === true ? { askEveryLevel: true as const } : {}),
         },
         ctx.signal,
       );

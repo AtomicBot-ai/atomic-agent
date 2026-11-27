@@ -42,6 +42,8 @@ export interface ApprovalPrompt {
    * See `ApprovalRequest.targetPaths`.
    */
   targetPaths?: readonly string[];
+  /** Asks at every level, bypass included; see `ApprovalRequest.askEveryLevel`. */
+  askEveryLevel?: true;
 }
 
 /**
@@ -207,6 +209,7 @@ export async function requireApproval(
       ...(prompt.targetPaths !== undefined && prompt.targetPaths.length > 0
         ? { targetPaths: [...prompt.targetPaths] }
         : {}),
+      ...(prompt.askEveryLevel === true ? { askEveryLevel: true as const } : {}),
     },
     { signal },
   );

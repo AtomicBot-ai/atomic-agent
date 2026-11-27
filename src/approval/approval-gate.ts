@@ -133,6 +133,14 @@ export interface ApprovalRequest {
    */
   targetPaths?: string[];
   /**
+   * Ask about this request at every approval level, bypass (level 5)
+   * included: no level, grant or allow rule answers it. Set by the shell
+   * tool for a credential read or an encoded command the guard is sure
+   * of (`GuardVerdict.askEveryLevel`, ATO-2126). A deny rule and a
+   * refuse policy still refuse it.
+   */
+  askEveryLevel?: true;
+  /**
    * Set by the gate, never by a caller: what the smart-approval risk
    * review (`risk-review.ts`) said about a request it did not let
    * through, e.g. `risk check: medium (installs a package)`. A surface
@@ -636,7 +644,7 @@ export class ApprovalGate {
       }
       return Promise.resolve({ approvalId, approved: true, reason: auto });
     }
-    if (rule?.decision === "allow") {
+    if (rule?.decision === "allow" && request.askEveryLevel !== true) {
       recordAutoApproval(
         "rule",
         request.category,
@@ -846,6 +854,7 @@ export class ApprovalGate {
    * on auto-approval, or `null` to prompt.
    */
   private autoApproval(request: ApprovalRequest): string | null {
+    if (request.askEveryLevel === true) return null;
     if (isAutoApprovedAt(this.level, request.category)) {
       return `auto-approved (level ${this.level})`;
     }

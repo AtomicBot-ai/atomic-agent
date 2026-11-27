@@ -4,6 +4,19 @@ export interface GuardVerdict {
   action: GuardAction;
   rule: string;
   reason: string;
+  /**
+   * How sure the rule is that the command does what it names, 0..1.
+   * Set on every `dangerous.*` verdict: 1 for an exact pattern, lower
+   * for a heuristic (a project `.env` read). Absent reads as 1.
+   */
+  confidence?: number;
+  /**
+   * The approval gate asks about this command at every level, bypass
+   * (level 5) included: a credential read or an encoded command at or
+   * above `ASK_EVERY_LEVEL_CONFIDENCE` (`arg-scan-finding.ts`, ATO-2126).
+   * Hardline rules block instead; this is their ask-only sibling.
+   */
+  askEveryLevel?: true;
 }
 
 export interface GuardInput {
