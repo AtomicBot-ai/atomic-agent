@@ -229,7 +229,8 @@ function fpLoadSlides(seq, path, res, retry) {
     let r = null;
     try { r = await br.filePreviewSlides(path, retry === true); } catch (e) { r = null; }
     if (seq !== FP.seq || !FP.open || FP.path !== path || FP.data !== res) return;
-    if (r && r.ok && (r.kind === 'pdf' || r.kind === 'html')) o.render = r; else o.renderFailed = true;
+    if (r && r.ok && (r.kind === 'pdf' || r.kind === 'html')) o.render = r;
+    else o.renderFailed = r && r.reason === 'links-out' ? 'links-out' : true;   // ATO-2517: refused on purpose, Reload will not help
     const body = fpEl() && fpEl().querySelector('.fp-body');
     const top = body ? body.scrollTop : 0;
     fpPaintHead();   // ATO-2517: Show text appears with the pictures

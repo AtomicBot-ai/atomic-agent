@@ -100,17 +100,20 @@ test("a path goes into the script as a literal: quotes doubled, curly ones too, 
   assert.equal(psLiteral("C:\\a\u2019b\u2018c.pptx"), "'C:\\a\u2019\u2019b\u2018\u2018c.pptx'");
   assert.equal(psLiteral("C:\\a\nb.pptx"), null);
   assert.equal(psLiteral(""), null);
-  assert.equal(powerPointScript("C:\\a\rb.pptx", "C:\\o\\slides.pdf"), null);
-  const script = powerPointScript("C:\\d.pptx", "C:\\o\\slides.pdf");
-  assert.match(script, /\$app\.Presentations\.Open\('C:\\d\.pptx', -1, 0, 0\)/, "read-only, no window");
+  const paths = { deck: "C:\\d.pptx", copy: "C:\\o\\deck.pptx", pdf: "C:\\o\\slides.pdf", state: "C:\\o\\powerpoint-state.txt" };
+  assert.equal(powerPointScript({ ...paths, deck: "C:\\a\rb.pptx" }), null);
+  assert.equal(powerPointScript({ ...paths, state: "C:\\o\nx" }), null, "every path is checked");
+  const script = powerPointScript(paths);
+  assert.match(script, /Copy-Item -LiteralPath 'C:\\d\.pptx' -Destination 'C:\\o\\deck\.pptx'/, "the person's file is only copied");
+  assert.match(script, /\$app\.Presentations\.Open\('C:\\o\\deck\.pptx', -1, 0, 0\)/, "the copy, read-only, no window");
+  assert.doesNotMatch(script, /Open\('C:\\d\.pptx'/, "never the person's own file");
   assert.match(script, /\$deck\.SaveAs\('C:\\o\\slides\.pdf', 32\)/, "ppSaveAsPDF");
-  assert.match(script, /if \(\$app\.Presentations\.Count -eq 0\) \{ \$app\.Quit\(\) \}/, "the person's own decks keep PowerPoint open");
   assert.match(script, /\$app\.DisplayAlerts = \$alerts/, "the alert setting is put back");
-  const plan = powerPointPlan("C:\\ps.exe", "C:\\d.pptx", "C:\\o\\slides.pdf");
+  const plan = powerPointPlan("C:\\ps.exe", paths);
   assert.equal(plan.kind, "powerpoint");
   assert.deepEqual(plan.args.slice(0, 4), ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand"]);
   assert.equal(Buffer.from(plan.args[4], "base64").toString("utf16le"), script, "the script itself, as UTF-16LE base64");
-  assert.equal(powerPointPlan("C:\\ps.exe", "C:\\d\n.pptx", "C:\\o\\slides.pdf"), null);
+  assert.equal(powerPointPlan("C:\\ps.exe", { ...paths, deck: "C:\\d\n.pptx" }), null);
 });
 
 const WIN = { ProgramFiles: "C:\\Program Files", SystemRoot: "C:\\Windows" };
@@ -201,5 +204,7 @@ test("the wiring: Reload asks main to retry, the poll does not; preload and main
   const pre = readFileSync(new URL("../preload/preload.ts", import.meta.url), "utf8");
   assert.match(pre, /filePreviewSlides: \(path: string, retry\?: boolean\) => ipcRenderer\.invoke\("app:filePreviewSlides", path, retry === true\)/);
   const main = readFileSync(new URL("../main/main.ts", import.meta.url), "utf8");
-  assert.match(main, /renderSlides\(t\.real, process\.platform, \{\}, \{ retry: retry === true \}\)/);
+  assert.match(main, /slideOutcome\(t\.real, process\.platform, \{\}, \{ retry: retry === true \}\)/);
+  assert.match(main, /\{ ok: false, reason: r \?\? "no-render" \}/, "a refused deck's reason reaches the panel");
+  assert.match(fp, /o\.renderFailed = r && r\.reason === 'links-out' \? 'links-out' : true/);
 });

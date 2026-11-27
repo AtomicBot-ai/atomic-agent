@@ -61,8 +61,11 @@ export function looksZip(head: Uint8Array): boolean {
 }
 
 type Entry = { method: number; flags: number; comp: number; size: number; local: number };
-/** `duplicates`: some name appeared twice in the central directory (only the first is kept in `entries`). */
-type Zip = { entries: Map<string, Entry>; duplicates: boolean; read: (name: string) => string | null };
+/**
+ * `duplicates`: some name appeared twice in the central directory (only the first is kept in `entries`).
+ * `bytes` (ATO-2517): one part inflated within the caps, undecoded, for a reader that must honour its encoding.
+ */
+type Zip = { entries: Map<string, Entry>; duplicates: boolean; read: (name: string) => string | null; bytes: (name: string) => Buffer | null };
 
 /** The archive's central directory, and a reader that inflates one part as UTF-8 within the caps. */
 export function openZip(buf: Buffer, limits = OFFICE_LIMITS): Zip | null {
@@ -100,7 +103,7 @@ export function openZip(buf: Buffer, limits = OFFICE_LIMITS): Zip | null {
     p = end;
   }
   let spent = 0;
-  const read = (name: string): string | null => {
+  const bytes = (name: string): Buffer | null => {
     const e = entries.get(name);
     if (!e || e.flags & 1) return null;   // missing, or encrypted
     const room = Math.min(limits.entryBytes, limits.totalBytes - spent);
@@ -116,9 +119,10 @@ export function openZip(buf: Buffer, limits = OFFICE_LIMITS): Zip | null {
     else if (e.method === 8) try { out = inflateRawSync(raw, { maxOutputLength: room }); } catch { return null; }
     else return null;   // over the cap stored, or a method Office does not use
     spent += out.length;
-    return out.toString("utf8");
+    return out;
   };
-  return { entries, duplicates, read };
+  const read = (name: string): string | null => bytes(name)?.toString("utf8") ?? null;
+  return { entries, duplicates, read, bytes };
 }
 
 const ENTITY: Record<string, string> = { lt: "<", gt: ">", amp: "&", quot: "\"", apos: "'" };

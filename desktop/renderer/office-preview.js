@@ -17,9 +17,11 @@
    same sandboxed frame as an .html file (ofSlidesDoc adds the CSP and a zoom
    that fits the page to the panel). Until it answers the cards carry a
    "Drawing the slides" note; when it cannot (`office.renderFailed`) they stay,
-   with a note that Reload tries again (ATO-2517). Once the pictures are
-   there, "Show text" in the head brings the cards back (ofViewButton), and
-   Quick Look's page says when it left the deck's charts out.
+   with a note that Reload tries again (ATO-2517), or, for a deck refused
+   because it links outside its file (`renderFailed: 'links-out'`), why.
+   Once the pictures are there, "Show text" in the head brings the cards
+   back (ofViewButton), and Quick Look's page says when it left the deck's
+   charts out.
 
    Shared with the Node checks (test/office-preview.test.mjs): fpOfficeHtml,
    ofSlidesDoc, ofViewButton. Nothing here touches the DOM. */
@@ -80,7 +82,10 @@ function ofSlidesHtml(o, name, showText) {
   const cut = o.truncated ? ofNote('Showing ' + slides.length + ' of ' + (o.total || slides.length) + ' slides. Open the file to see all of it.') : '';
   const wait = o.renderable && !o.renderFailed && !o.render ? '<div class="fp-note fp-wait">Drawing the slides…</div>' : '';
   // ATO-2517: a failed drawing says Reload tries again, rather than leaving the cards unexplained.
-  const failed = o.renderable && o.renderFailed ? ofNote('The slides could not be drawn as pictures, so this is their text. Reload to try again.') : '';
+  const failed = !o.renderable || !o.renderFailed ? ''
+    : o.renderFailed === 'links-out'
+      ? ofNote('This presentation links to files outside it, so its slides are not drawn here. This is their text. Open the file to see the slides.')
+      : ofNote('The slides could not be drawn as pictures, so this is their text. Reload to try again.');
   return cut + wait + failed + '<div class="fp-office fp-deck">' + slides.map((s) => {
     const paras = (Array.isArray(s.paras) ? s.paras : []).map((p) => '<p>' + ofEsc(p) + '</p>').join('');
     return '<section class="fp-slide"><div class="fp-slide-n">' + ofEsc(s.n) + '</div><div class="fp-slide-c">'

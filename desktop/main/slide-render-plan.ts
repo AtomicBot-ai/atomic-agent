@@ -30,6 +30,7 @@
  * cannot fill memory through the converter; over a cap, the cards stay.
  */
 
+import { isRelsName, relsLinksOut } from "./deck-rels.js";
 import { pathFor, type Platform } from "./platform.js";
 
 export const SLIDES_PDF_MAX_BYTES = 32 * 1024 * 1024;     // file-preview.ts's own PDF cap
@@ -92,23 +93,27 @@ export function slidesRenderableWith(platform: Platform, soffice: string | null,
 
 /**
  * Whether a deck points outside its own file: any relationship part
- * (`*.rels`) with `TargetMode="External"`, the way a linked picture, video,
- * OLE object or hyperlink is written. LibreOffice may fetch a linked part
- * while it draws, so such a deck is not handed to it. Fails closed: no
- * archive, a `.rels` that cannot be read within the caps, a directory that
- * hit openZip's entry cap (entries past it are never looked at) or a name
- * that appears twice (only the first copy is read) counts as linking out.
- * `zip` is office-preview.ts's `openZip` result.
+ * (`*.rels`) with a TargetMode other than Internal or an absolute Target, the
+ * way a linked picture, video, OLE object or hyperlink is written. LibreOffice
+ * and PowerPoint may fetch a linked part while they draw, so such a deck is
+ * handed to neither. Each part is read as XML in its own encoding
+ * (deck-rels.ts, ATO-2517), not matched as UTF-8 text. Fails closed: no
+ * archive, a `.rels` that cannot be read within the caps or parsed, a
+ * directory that hit openZip's entry cap (entries past it are never looked
+ * at) or a name that appears twice (only the first copy is read) counts as
+ * linking out. `zip` is office-preview.ts's `openZip` result.
  */
 export function deckLinksOut(
-  zip: { entries: ReadonlyMap<string, unknown>; duplicates?: boolean; read: (name: string) => string | null } | null,
+  zip: { entries: ReadonlyMap<string, unknown>; duplicates?: boolean; bytes?: (name: string) => Buffer | null; read: (name: string) => string | null } | null,
   maxEntries = DECK_ENTRIES_CAP,
 ): boolean {
   if (!zip || zip.duplicates === true || zip.entries.size >= maxEntries) return true;
   for (const name of zip.entries.keys()) {
-    if (!/\.rels$/i.test(name)) continue;
-    const xml = zip.read(name);
-    if (xml === null || /TargetMode\s*=\s*["']External["']/i.test(xml)) return true;
+    if (!isRelsName(name)) continue;
+    let raw: Buffer | null;
+    if (zip.bytes) raw = zip.bytes(name);
+    else { const text = zip.read(name); raw = text === null ? null : Buffer.from(text, "utf8"); }
+    if (raw === null || relsLinksOut(raw)) return true;
   }
   return false;
 }

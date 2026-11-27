@@ -15,9 +15,11 @@
  * cache, so the panel's poll and a reopen do not convert again. LibreOffice
  * is skipped for a deck whose parts link outside the file (a picture, video or
  * object with TargetMode="External"), so it is never asked to fetch one; such
- * a deck goes to Quick Look on a Mac, or keeps its text cards. PowerPoint on
- * Windows (ATO-2517) follows LibreOffice under the same rule. A failed
- * conversion is cached too, until the panel's Reload asks to try again.
+ * a deck goes to Quick Look on a Mac, or keeps its text cards (and the panel
+ * is told why: "links-out"). PowerPoint on Windows (ATO-2517) follows
+ * LibreOffice under the same rule; a PowerPoint run that fails or times out
+ * is cleaned up (afterPowerPoint). A failed conversion is cached too, until
+ * the panel's Reload asks to try again.
  *
  * Pure but for the file system and the child process, both injectable: no
  * Electron import, so the unit suite loads it from `out/main` with a stub
@@ -39,7 +41,10 @@ import {
   SLIDES_HTML_MAX_BYTES, SLIDES_IMAGE_MAX_BYTES, SLIDES_IMAGES_TOTAL_MAX_BYTES, SLIDES_PDF_MAX_BYTES,
   slidesRenderableWith, sofficeCandidates, type SlideConverter, type SlideRender,
 } from "./slide-render-plan.js";
-import { POWERPOINT_PDF_NAME, powerPointCandidates, powerPointPlan, powerShellPath } from "./slide-render-powerpoint.js";
+import {
+  POWERPOINT_COPY_NAME, POWERPOINT_PDF_NAME, POWERPOINT_STATE_NAME, powerPointCandidates, powerPointCleanupPlan, powerPointKillPlan,
+  powerPointPlan, powerPointState, powerShellPath, type PowerPointPaths,
+} from "./slide-render-powerpoint.js";
 
 export type RunResult = { ok: boolean };
 export type SlideRenderDeps = {
@@ -152,9 +157,28 @@ async function deckFacts(real: string): Promise<{ linksOut: boolean; charts: boo
   return { linksOut: !bytes || deckLinksOut(zip, OFFICE_LIMITS.entries), charts: deckHasCharts(zip) };
 }
 
-async function convert(real: string, platform: Platform, d: SlideRenderDeps): Promise<SlideRender | null> {
+/**
+ * ATO-2517: after a PowerPoint run that gave nothing (failed, or ended by its
+ * time limit with PowerPoint still holding the copy): the cleanup script, and
+ * when that does not finish either, the kill of the PowerPoint that run
+ * started (slide-render-powerpoint.ts says which one that may be).
+ */
+async function afterPowerPoint(powershell: string, paths: PowerPointPaths, d: SlideRenderDeps): Promise<void> {
+  const cleanup = powerPointCleanupPlan(powershell, paths);
+  if (cleanup && (await d.run(cleanup.command, cleanup.args, cleanup.timeoutMs)).ok) return;
+  const state = powerPointState(await readFile(paths.state, "latin1").catch(() => null));
+  const kill = powerPointKillPlan(powershell, state);
+  if (kill) await d.run(kill.command, kill.args, kill.timeoutMs);
+}
+
+/** What one conversion gave: the slides, nothing, or "links-out" when the deck was refused on purpose (ATO-2517). */
+export type SlideOutcome = SlideRender | "links-out" | null;
+
+async function convert(real: string, platform: Platform, d: SlideRenderDeps): Promise<SlideOutcome> {
   if (!(await isDeck(real))) return null;
   const facts = await deckFacts(real);
+  // Off a Mac nothing else can draw it: say why, so the panel does not promise that Reload helps.
+  if (facts.linksOut && platform !== "darwin") return "links-out";
   const soffice = facts.linksOut ? null : sofficeFor(platform, d);
   const powerpoint = facts.linksOut ? null : powerPointFor(platform, d);
   const profile = join(d.tmp, "atomic-agent-soffice-profile");   // kept between runs: a fresh one costs LibreOffice seconds
@@ -163,11 +187,15 @@ async function convert(real: string, platform: Platform, d: SlideRenderDeps): Pr
   try {
     const plans = converterPlans(platform, real, outDir, pathToFileURL(profile).href, soffice);
     // ATO-2517: PowerPoint after LibreOffice on Windows.
-    const pp = powerpoint ? powerPointPlan(powerpoint.powershell, real, join(outDir, POWERPOINT_PDF_NAME)) : null;
+    const ppPaths: PowerPointPaths = {
+      deck: real, copy: join(outDir, POWERPOINT_COPY_NAME), pdf: join(outDir, POWERPOINT_PDF_NAME), state: join(outDir, POWERPOINT_STATE_NAME),
+    };
+    const pp = powerpoint ? powerPointPlan(powerpoint.powershell, ppPaths) : null;
     if (pp) plans.push(pp);
     for (const plan of plans) {
       const got = await tryPlan(plan, outDir, d, facts.charts).catch(() => null);
       if (got) return got;
+      if (plan === pp && powerpoint) await afterPowerPoint(powerpoint.powershell, ppPaths, d).catch(() => undefined);
       // The next converter gets an empty folder, so its output is not mistaken for the first one's.
       for (const n of await readdir(outDir).catch(() => [] as string[])) await rm(join(outDir, n), { recursive: true, force: true }).catch(() => undefined);
     }
@@ -178,7 +206,7 @@ async function convert(real: string, platform: Platform, d: SlideRenderDeps): Pr
 }
 
 const CACHE_MAX = 8;
-const cache = new Map<string, Promise<SlideRender | null>>();
+const cache = new Map<string, Promise<SlideOutcome>>();
 /** ATO-2517: the cached versions whose conversion gave nothing; a retry converts those again. */
 const failed = new Set<string>();
 let queue: Promise<unknown> = Promise.resolve();
@@ -196,6 +224,16 @@ export function renderSlides(
   deps: Partial<SlideRenderDeps> = {},
   opts: { retry?: boolean } = {},
 ): Promise<SlideRender | null> {
+  return slideOutcome(real, platform, deps, opts).then((r) => (typeof r === "string" ? null : r));
+}
+
+/** renderSlides, but a deck refused because it links outside its file says so ("links-out", ATO-2517). */
+export function slideOutcome(
+  real: string,
+  platform: Platform,
+  deps: Partial<SlideRenderDeps> = {},
+  opts: { retry?: boolean } = {},
+): Promise<SlideOutcome> {
   const d = { ...DEFAULT_DEPS, ...deps };
   return stat(real).then((st) => {
     if (!st.isFile()) return null;

@@ -345,7 +345,7 @@ import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
 import { filePreviewSave } from "./file-save.js";
-import { renderSlides, slidesRenderable } from "./slide-render.js";
+import { slideOutcome, slidesRenderable } from "./slide-render.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 import { buildLocalGgufModelDef, resolveLocalGgufFile } from "./local-gguf.js";
 import { discoverLocalModels, registerDiscoveredModel } from "./local-models-found.js";
@@ -3210,8 +3210,8 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("app:filePreviewSlides", async (_event, p: unknown, retry: unknown) => {
     const t = await previewTarget(p, previewRoots(), homedir(), process.platform);
     if (!t.ok) return { ok: false, reason: t.reason };
-    const r = await renderSlides(t.real, process.platform, {}, { retry: retry === true });   // ATO-2517: Reload retries a failed one
-    return r ? { ok: true, ...r } : { ok: false, reason: "no-render" };
+    const r = await slideOutcome(t.real, process.platform, {}, { retry: retry === true });   // ATO-2517: Reload retries a failed one
+    return r && typeof r === "object" ? { ok: true, ...r } : { ok: false, reason: r ?? "no-render" };
   });
   ipcMain.handle("app:filePreviewAction", async (_event, p: unknown, action: unknown) => {
     const t = await previewTarget(p, previewRoots(), homedir(), process.platform);
