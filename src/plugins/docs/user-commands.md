@@ -12,7 +12,7 @@ First match wins on a name:
 1. `<project>/.atomic-agent/commands/`, then `<project>/.claude/commands/` (so a repository's Claude Code commands work as they are). Project commands load once you have trusted anything in that folder (any skill or instruction file, see [project folder trust](../../skills/docs/project-trust.md)); there is no separate answer per command yet. In a folder you have not trusted they do not appear and do not run.
 2. `<stateDir>/commands/`, the profile folder (`~/.atomic-agent/commands/` by default), for commands you want everywhere.
 
-Plugin commands come after both, so your `/review` keeps the bare name even when a plugin ships `review`; the plugin's stays reachable as `/plugin:review`. Built-in commands and skills always win. The palette marks your commands `(project)` or `(profile)`. The folders are read again every time the palette refreshes and when a command runs, so a new or edited file needs no restart.
+Plugin commands come after both, so your `/review` keeps the bare name even when a plugin ships `review`; the plugin's stays reachable as `/plugin:review`. Built-in commands and skills always win. The palette marks your commands `(project)` or `(profile)`. When a file does not load as written, the terminal says so once in the chat, naming the file and the reason (ATO-2773): a file named like a built-in (`help.md`) is skipped with "rename the file", as are a bad file name and a file over 128 KiB; a front matter block that does not parse (with its line), never closes or is not `key: value` lines keeps the command but drops its description and argument hint. The folders are read again every time the palette refreshes and when a command runs, so a new or edited file needs no restart.
 
 ## What a file can do
 

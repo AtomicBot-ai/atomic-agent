@@ -18,6 +18,15 @@ describe("parseModelSpecs (ATO-1092)", () => {
     ]);
   });
 
+  // ATO-2773: the favorite-models spelling works here too.
+  it("takes provider/model, split at the first separator", () => {
+    expect(parseModelSpecs("or/anthropic/claude-x,ollama/qwen3:8b,or:openai/gpt-oss", "x")).toEqual([
+      { spec: "or/anthropic/claude-x", providerId: "or", model: "anthropic/claude-x" },
+      { spec: "ollama/qwen3:8b", providerId: "ollama", model: "qwen3:8b" },
+      { spec: "or:openai/gpt-oss", providerId: "or", model: "openai/gpt-oss" },
+    ]);
+  });
+
   it("treats a trailing colon as the configured model", () => {
     expect(parseModelSpecs("or:", "x")).toEqual([{ spec: "or:", providerId: "or" }]);
   });

@@ -10,6 +10,7 @@ import {
   cleanModelRing,
   currentModelRingEntry,
   describeModelRing,
+  formatModelRingEntry,
   MODEL_RING_MAX,
   nextModelRingEntry,
   parseModelRingEntry,
@@ -25,6 +26,17 @@ describe("model ring entries", () => {
     expect(parseModelRingEntry("openrouter/anthropic/claude-sonnet")).toEqual(e("openrouter", "anthropic/claude-sonnet"));
     expect(parseModelRingEntry(" local-llama/qwen-3.5-4b ")).toEqual(e("local-llama", "qwen-3.5-4b"));
     for (const bad of ["gpt-5", "/gpt-5", "openai/", "", "a b/c"]) expect(parseModelRingEntry(bad)).toBeNull();
+  });
+
+  // ATO-2773: `run -m` and `--models` spell it provider:model; an id
+  // copied from there works here too, and is shown with the slash.
+  it("takes provider:model as well, split on the first separator", () => {
+    expect(parseModelRingEntry("openai:gpt-5")).toEqual(e("openai", "gpt-5"));
+    expect(parseModelRingEntry("ollama:qwen3:8b")).toEqual(e("ollama", "qwen3:8b"));
+    expect(parseModelRingEntry("local-llama/qwen3:8b")).toEqual(e("local-llama", "qwen3:8b"));
+    expect(parseModelRingEntry("openrouter:openai/gpt-oss")).toEqual(e("openrouter", "openai/gpt-oss"));
+    expect(formatModelRingEntry(e("ollama", "qwen3:8b"))).toBe("ollama/qwen3:8b");
+    for (const bad of [":gpt-5", "openai:", "qwen3"]) expect(parseModelRingEntry(bad)).toBeNull();
   });
 
   it("cleans a stored list: junk and repeats out, capped", () => {

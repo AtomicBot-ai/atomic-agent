@@ -73,6 +73,26 @@ describe("SkillsOrchestrator.preparePluginCommand for own commands", () => {
     expect(text).toContain("export const a = 1;");
   });
 
+  // ATO-2773: a built-in's name used to vanish from the palette silently.
+  it("says once in the chat which command file it skipped and why", () => {
+    const emitted: Array<{ type?: string; text?: string }> = [];
+    const runtime = {
+      config: { paths: { stateDir, userConfigFile: join(stateDir, "config.json") }, skills: { projectTrust: [] } },
+      capabilities: { workingDir },
+    } as unknown as AgentRuntime;
+    const watched = new SkillsOrchestrator(runtime, {
+      subscribe: () => () => {},
+      emit: (action: unknown) => emitted.push(action as { type?: string; text?: string }),
+    });
+    put(join(stateDir, "commands", "help.md"), "My help\n");
+    put(join(stateDir, "commands", "ship.md"), "Ship it\n");
+    watched.refresh();
+    watched.refresh();
+    const lines = emitted.filter(a => a.type === "system_message").map(a => a.text);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("help.md skipped: same name as built-in /help, rename the file");
+  });
+
   it("does not run a project command in a folder that is not trusted", () => {
     put(join(workingDir, ".atomic-agent", "commands", "deploy.md"), "Deploy\n");
     expect(() => orchestrator.preparePluginCommand("deploy", "")).toThrow("command /deploy is not available");

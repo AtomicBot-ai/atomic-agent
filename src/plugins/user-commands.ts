@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync, type Dirent } from "node:fs";
 import { join, resolve } from "node:path";
+import { frontMatterProblem } from "./command-front-matter.js";
 import { parseCommandFile, renderCommandTemplate } from "./plugin-commands.js";
 
 /**
@@ -40,6 +41,17 @@ export interface UserCommandOptions {
   projectTrusted: boolean;
 }
 
+/**
+ * A command file that did not load as written (ATO-2773). `skipped`
+ * files are missing from the palette; the others load with defaults.
+ * The terminal shows each one once (tui/skills/user-command-warnings.ts).
+ */
+export interface UserCommandProblem {
+  file: string;
+  reason: string;
+  skipped: boolean;
+}
+
 export const PROJECT_COMMAND_DIRS: readonly string[] = [".atomic-agent/commands", ".claude/commands"];
 export const PROFILE_COMMAND_DIR = "commands";
 
@@ -57,21 +69,33 @@ export function userCommandDirs(options: UserCommandOptions): Array<{ dir: strin
   return [...project.map(dir => ({ dir, source: "project" as const })), { dir: profile, source: "profile" as const }];
 }
 
-export function listUserCommands(options: UserCommandOptions): { commands: UserCommand[]; diagnostics: string[] } {
+export function listUserCommands(options: UserCommandOptions): {
+  commands: UserCommand[];
+  diagnostics: string[];
+  problems: UserCommandProblem[];
+} {
   const commands: UserCommand[] = [];
-  const diagnostics: string[] = [];
+  const problems: UserCommandProblem[] = [];
   const seen = new Set<string>();
   for (const { dir, source } of userCommandDirs(options)) {
     for (const { file, segments } of commandFiles(dir)) {
       const name = segments.join(":").toLowerCase();
       if (!segments.every(s => SEGMENT_RE.test(s.toLowerCase()))) {
-        diagnostics.push(`${file}: "${name}" is not a valid command name`);
+        problems.push({
+          file,
+          reason: `"${name}" is not a valid command name (use letters, digits, dots, dashes or underscores)`,
+          skipped: true,
+        });
         continue;
       }
       if (seen.has(name)) continue;
       try {
-        const parsed = readCommand(file);
+        const { parsed, content } = readCommandFile(file);
         seen.add(name);
+        const metaProblem = frontMatterProblem(content);
+        if (metaProblem !== null) {
+          problems.push({ file, reason: `${metaProblem}, so its description and argument hint are ignored`, skipped: false });
+        }
         commands.push({
           name,
           source,
@@ -81,11 +105,12 @@ export function listUserCommands(options: UserCommandOptions): { commands: UserC
           dir,
         });
       } catch (err) {
-        diagnostics.push(`${file}: ${err instanceof Error ? err.message : String(err)}`);
+        problems.push({ file, reason: readFailure(err), skipped: true });
       }
     }
   }
-  return { commands, diagnostics };
+  const diagnostics = problems.map(p => `${p.file}: ${p.reason}`);
+  return { commands, diagnostics, problems };
 }
 
 /**
@@ -107,8 +132,20 @@ export function renderUserCommand(options: UserCommandOptions, name: string, arg
 const BRACED_INCLUDE_RE = /@\{([^\s{}]+)\}/g;
 
 function readCommand(file: string) {
-  if (statSync(file).size > MAX_COMMAND_BYTES) throw new Error("larger than 128 KiB");
-  return parseCommandFile(readFileSync(file, "utf8"));
+  return readCommandFile(file).parsed;
+}
+
+function readCommandFile(file: string) {
+  if (statSync(file).size > MAX_COMMAND_BYTES) throw new Error(TOO_LARGE);
+  const content = readFileSync(file, "utf8");
+  return { parsed: parseCommandFile(content), content };
+}
+
+const TOO_LARGE = "larger than 128 KiB";
+
+/** Our own size message as is; a file system error in plain words. */
+function readFailure(err: unknown): string {
+  return err instanceof Error && err.message === TOO_LARGE ? TOO_LARGE : "the file could not be read";
 }
 
 /** `*.md` files under `dir`, sorted, symlinks skipped; a missing folder is empty. */
