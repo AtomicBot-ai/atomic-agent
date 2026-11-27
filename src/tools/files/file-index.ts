@@ -45,6 +45,8 @@ export interface FileIndexOptions {
   minCosine?: number;
   /** Photos and audio; off unless `enabled: true` (they cost model time). */
   media?: MediaTextOptions;
+  /** Scanned PDF pages (ATO-2205); without an engine scans are skipped with the reason. */
+  ocr?: FileTextOptions["ocr"];
   maxFileBytes?: number;
   maxFilesPerFolder?: number;
   /**
@@ -87,6 +89,7 @@ export class FileIndex implements FileIndexApi {
         extractFileText(path, {
           signal,
           ...(options.media ? { media: options.media } : {}),
+          ...(options.ocr ? { ocr: options.ocr } : {}),
           ...(options.extractors ? { extractors: options.extractors } : {}),
         }));
     this.indexer = new FileIndexer({

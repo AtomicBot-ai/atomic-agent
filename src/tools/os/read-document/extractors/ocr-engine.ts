@@ -1,10 +1,12 @@
 /**
  * Pluggable OCR seam for the PDF extractor (ATO-681).
  *
- * No engine ships yet: which one to use (pure-JS tesseract.js vs an
- * on-demand native parser) is decided by a measurement on real Russian
- * scans, not here. This interface is what either candidate implements so it
- * can be dropped in without touching the extractor again.
+ * The engine that ships is the vision model the agent already has
+ * (`media-text/vision-ocr-engine.ts`, ATO-2205), used by the file index.
+ * A dedicated OCR engine (pure-JS tesseract.js vs an on-demand native
+ * parser) is still to be picked by a measurement on real Russian scans;
+ * it implements this same interface and drops in without touching the
+ * extractor again.
  *
  * Contract for implementations:
  * - Run fully locally. Language data (at least `rus` and `eng`) must already
@@ -116,4 +118,44 @@ export function mergeOcrText(
     const text = byPage.get(entry.page);
     if (text !== undefined) entry.text = text.trim();
   }
+}
+
+export interface OcrBounds {
+  /** Most pages one file sends to the engine; the rest get a warning. */
+  maxPages?: number;
+  /** Passed to the engine when the request carries none. */
+  signal?: AbortSignal;
+}
+
+/**
+ * The engine with a per-file page limit and the caller's abort signal
+ * (`assessAndOcr` has no signal of its own to pass). Pages past the
+ * limit are not sent; they stay without text and a warning names them,
+ * so a 300-page scan costs at most `maxPages` model calls.
+ */
+export function boundOcrEngine(engine: OcrEngine, bounds: OcrBounds): OcrEngine {
+  return {
+    id: engine.id,
+    unavailableReason: (languages) => engine.unavailableReason(languages),
+    async recognizePdfPages(request) {
+      const signal = request.signal ?? bounds.signal;
+      const limit = bounds.maxPages;
+      const kept = limit !== undefined && request.pages.length > limit ? request.pages.slice(0, Math.max(0, limit)) : request.pages;
+      const run = await engine.recognizePdfPages({ ...request, pages: kept, ...(signal ? { signal } : {}) });
+      if (kept.length === request.pages.length) return run;
+      const skipped = request.pages.slice(kept.length);
+      return {
+        pages: run.pages,
+        warnings: [
+          ...run.warnings,
+          `OCR page limit: recognised ${kept.length} of ${request.pages.length} scanned pages; pages ${formatPages(skipped)} were not read`,
+        ],
+      };
+    },
+  };
+}
+
+function formatPages(pages: readonly number[]): string {
+  const shown = pages.slice(0, 10).join(", ");
+  return pages.length > 10 ? `${shown} and ${pages.length - 10} more` : shown;
 }
