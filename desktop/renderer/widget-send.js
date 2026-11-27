@@ -9,6 +9,16 @@
    show-widget do. Either way a draft the person typed is never
    overwritten: abFillComposer says so and the widget's text waits.
 
+   Widget text is a message, never a command (review): a page or an MCP
+   App controls it, and a card shows only its label, so a hidden
+   "/runmode cloud" or "!cmd" must not reach runSlash or bangOpen. The text
+   a widget put in the box is remembered (WIDGET_SEND.plain); while the box
+   still holds exactly that text, submit() in renderer.js sends it as a
+   plain message (widgetTextIsPlain). Text the person edits is theirs again.
+   An auto-send also leaves the attachment chips for the person's own
+   message ({plain: true}). It answers 'sent' only when the box was emptied:
+   a held send (agent starting, voice, queue full...) leaves the text there.
+
    The choice is per window (localStorage 'atag.widgetSendNow'), off unless
    set. Loaded after artifact-bridge.js; renderer globals (S, $, submit,
    toast) are read at call time. Pure part exported for test/widget-send.test.mjs. */
@@ -16,7 +26,18 @@
 const WIDGET_SEND_KEY = 'atag.widgetSendNow';
 const WIDGET_SEND = {now: (() => {
   try { return typeof localStorage !== 'undefined' && localStorage.getItem(WIDGET_SEND_KEY) === '1'; } catch (e) { return false; }
-})()};
+})(), plain: ''};
+
+/** True when `typed` is, unchanged, the text a widget last put in the box: submit() then sends it as a message, not as a /command or !command. */
+function widgetTextIsPlain(typed) {
+  const t = String(typed == null ? '' : typed).trim();
+  return t !== '' && t === WIDGET_SEND.plain;
+}
+
+function widgetEntryValue() {
+  const e = typeof $ === 'function' ? $('#entry') : null;
+  return String((e ? e.value : (typeof S !== 'undefined' ? S.draft : '')) || '').trim();
+}
 
 function widgetSendNowOn() { return WIDGET_SEND.now === true; }
 
@@ -32,11 +53,20 @@ function widgetSendNowSet(on) {
  */
 function widgetDeliver(text, title) {
   if (typeof abFillComposer !== 'function') return 'none';
-  if (!widgetSendNowOn() || typeof submit !== 'function') return abFillComposer(text, title);
-  // Into the box first, through the same draft check (without its "press Enter" toast); then sent as Enter would.
+  const plain = String(text == null ? '' : text).trim();
+  if (!widgetSendNowOn() || typeof submit !== 'function') {
+    const r = abFillComposer(text, title);
+    if (r === 'filled') WIDGET_SEND.plain = plain;
+    return r;
+  }
+  // Into the box first, through the same draft check (without its "press Enter" toast); then sent as Enter would, as a plain message.
   const r = abFillComposer(text, title, {quiet: true});
   if (r !== 'filled') return r;
-  submit();
+  WIDGET_SEND.plain = plain;
+  submit(undefined, {plain: true});
+  // Held (agent starting, voice, a full queue...): the text is still in the box, waiting for Enter.
+  if (widgetEntryValue() !== '') return 'filled';
+  WIDGET_SEND.plain = '';
   if (typeof AB !== 'undefined') AB.lastFill = '';
   return 'sent';
 }
@@ -52,5 +82,5 @@ function widgetSendRowHTML(h) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {WIDGET_SEND, WIDGET_SEND_KEY, widgetSendNowOn, widgetSendNowSet, widgetDeliver, widgetSendRowHTML};
+  module.exports = {WIDGET_SEND, WIDGET_SEND_KEY, widgetSendNowOn, widgetSendNowSet, widgetTextIsPlain, widgetDeliver, widgetSendRowHTML};
 }

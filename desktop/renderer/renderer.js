@@ -8248,12 +8248,14 @@ function submit(preparedSkillText, opts) {
   if (typeof fitHoldsSend === 'function' && fitHoldsSend()) { toast(FIT_HOLD_TITLE, FIT_HOLD_TEXT, 'bad'); return; }
   const e = $('#entry');
   const typed = typeof preparedSkillText === 'string' ? preparedSkillText : (e ? e.value : S.draft).trim();
+  // ATO-2457: a widget's text left as it was in the box is a message, never a /command or !command (widget-send.js).
+  const widgetPlain = typeof preparedSkillText !== 'string' && typeof widgetTextIsPlain === 'function' && widgetTextIsPlain(typed);
   // ATO-1238: `!command` opens Terminal in the chat's folder with it typed, not run (bang-command.js).
-  if (typeof preparedSkillText !== 'string' && typeof bangCommandOf === 'function' && bangTerminalOk() && bangCommandOf(typed)) { bangOpen(bangCommandOf(typed), typed, workingDir()); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
+  if (!widgetPlain && typeof preparedSkillText !== 'string' && typeof bangCommandOf === 'function' && bangTerminalOk() && bangCommandOf(typed)) { bangOpen(bangCommandOf(typed), typed, workingDir()); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
   /* ATO-405: files in the composer ride in the message itself, as the
      `[attachments]` block the channels send (attachments.js). A slash command
      typed with files waiting runs alone; the chips stay for the next message. */
-  const rawSlash = typeof preparedSkillText !== 'string' && typed.startsWith('/');
+  const rawSlash = !widgetPlain && typeof preparedSkillText !== 'string' && typed.startsWith('/');
   // Continue and the plan hand-off send their own fixed words (`plain`): the chips wait for a message of the person's.
   const withFiles = !rawSlash && !(opts && opts.plain);
   if (withFiles && attPreparing()) { toast('Attachments are still being prepared', 'Send once every chip is ready. Your message stays in the box', 'bad'); return; }
@@ -8267,8 +8269,8 @@ function submit(preparedSkillText, opts) {
      the model, so holding them for the 3-11 s of a switch (with a toast
      whose words are about a message staying in the box) was wrong copy for
      the wrong thing. They go through untouched. */
-  if (text.startsWith('/') && SK.workingDir && !preparedSkillText && !SLASH.some(row => row[0] === text.slice(1).split(/\s+/)[0] || (row[3] || []).includes(text.slice(1).split(/\s+/)[0]))) { submitSkillCommand(text); return; }
-  if (text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
+  if (!widgetPlain && text.startsWith('/') && SK.workingDir && !preparedSkillText && !SLASH.some(row => row[0] === text.slice(1).split(/\s+/)[0] || (row[3] || []).includes(text.slice(1).split(/\s+/)[0]))) { submitSkillCommand(text); return; }
+  if (!widgetPlain && text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
   /* Backlog 24 — Enter while the chat on screen is still opening, or after
      it failed to. The draft STAYS in the box, as it does for a switch below:
      nothing here knows yet which session the message would go with, and
