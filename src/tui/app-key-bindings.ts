@@ -168,7 +168,7 @@ export interface AppKeyContext {
   onStepPairs?: (delta: number) => void;
   /** Run the row picked in one of the composer's route switches. */
   activateComposerSwitch: (row: ComposerSwitchRow) => void;
-  /** Ctrl+P: the next favorite model (ATO-2169); alt+p / ctrl+shift+p the previous one (ATO-2500). Optional, like the hand-off chords. */
+  /** Ctrl+P: the next favorite model (ATO-2169); alt+p (Option as Meta on a Mac) / ctrl+shift+p (kitty keyboard protocol) the previous one (ATO-2500). Optional, like the hand-off chords. */
   onModelRingCycle?: (direction: ModelRingDirection) => void;
   /**
    * Carry out the plan on offer under `mode`, for the plan hand-off
@@ -606,7 +606,8 @@ export function handleAppKey(
   }
   // Ctrl+P switches to the next favorite model (ATO-2169, pi's
   // app.model.cycleForward); alt+p and ctrl+shift+p to the previous one
-  // (ATO-2500, model-ring-keys.ts). Free since the menu moved to Esc; the
+  // (ATO-2500, model-ring-keys.ts), where the terminal can send them:
+  // Option as Meta on a Mac, the kitty keyboard protocol. Free since the menu moved to Esc; the
   // editor never claims them. Same guards as Ctrl+T.
   const ringStep = modelRingKeyDirection(input, key, ctx.vimClaimsEsc);
   if (
