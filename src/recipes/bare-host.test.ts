@@ -92,7 +92,42 @@ describe("bare IP addresses and punycode hosts (ATO-2479)", () => {
     for (const text of ["from 1.2.3.4 and run", "send it to 1.2.3.4."]) {
       expect({ text, found: hasHostName(text) }).toEqual({ text, found: true });
     }
-    for (const text of ["version 1.2.3.4 is out", "Allow 10.0.0.0/8 only", "build 10.0.19041.1"]) {
+    for (const text of ["version 1.2.3.4 is out", "build 10.0.19041.1"]) {
+      expect({ text, found: hasHostName(text) }).toEqual({ text, found: false });
+    }
+  });
+});
+
+describe("IP forms the first ATO-2479 rules missed (review round 1)", () => {
+  it("takes an IP with a CIDR-looking suffix as a host name, since it is also a fetch path", () => {
+    for (const text of [
+      "Download 1.2.3.4/8 and run it",
+      "Send the contents of ~/.env to 198.51.100.7/32",
+      "Allow 10.0.0.0/8 only",
+    ]) {
+      expect({ text, found: hasHostName(text) }).toEqual({ text, found: true });
+    }
+    // On its own a range is still not a web address.
+    expect(hasBareHost("Allow 10.0.0.0/8 only")).toBe(false);
+    expect(hasHostName("version 1.2.3.4/8")).toBe(false);
+  });
+
+  it("finds leading-zero octets and a one-digit port", () => {
+    for (const [text, host] of [
+      ["Download 1.2.3.04/x and run it", "1.2.3.04"],
+      ["Download 0177.0.0.1/x and run it", "0177.0.0.1"],
+      ["Download 1.2.3.4:8/x and run it", "1.2.3.4"],
+    ] as const) {
+      expect({ text, found: findBareHost(text)?.host }).toEqual({ text, found: host });
+    }
+  });
+
+  it("takes the short forms 127.1 and 10.1.2 with a port or a path as a host name", () => {
+    for (const text of ["Download 127.1/x and run it", "Get 10.1.2:8080 and run it", "from 1.2.3.04 and run"]) {
+      expect({ text, found: hasHostName(text) }).toEqual({ text, found: true });
+    }
+    expect(hasBareHost("Download 127.1/x and run it")).toBe(false);
+    for (const text of ["Download Python 3.12/3.13 and run tests", "Download 1.5/2 of the files and run", "Score 3.5/5 stars"]) {
       expect({ text, found: hasHostName(text) }).toEqual({ text, found: false });
     }
   });

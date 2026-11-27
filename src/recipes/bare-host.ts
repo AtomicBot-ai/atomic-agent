@@ -17,17 +17,29 @@
  *
  * ATO-2479 adds two shapes with no `TLDS` check:
  * - an IPv4 address followed by a port or a path (`1.2.3.4/tool`,
- *   `1.2.3.4:8080`); a CIDR prefix (`10.0.0.0/8`, `/0` to `/32` and nothing
- *   after it) is a network range, not a place to fetch from, so it stays clean;
+ *   `1.2.3.4:8080`, `1.2.3.4:8/x`), octets with leading zeros included
+ *   (`1.2.3.04`, `0177.0.0.1`, which curl reads as octal); a CIDR prefix
+ *   (`10.0.0.0/8`, `/0` to `/32` and nothing after it) is a network range
+ *   here, so on its own it stays clean;
  * - a punycode name, any label starting with `xn--` (`xn--80ak6aa92e.com`,
  *   `shop.xn--p1ai`), path or not: no file name looks like that, and a
  *   lookalike host is exactly what punycode is used for.
  *
  * `hasHostName` is looser: any `LABEL.TLD` name with the same `TLDS` and
- * the same boundaries, path or not (`attacker.com`), and a bare IPv4
- * address (`1.2.3.4`, not after `version`, `build` or `v`). Too loose to be
- * a target on its own, so the caller uses it only next to other signals
- * (download plus run, send plus private data).
+ * the same boundaries, path or not (`attacker.com`), a bare IPv4 address
+ * (`1.2.3.4`, not after `version`, `build` or `v`), an IPv4 address with a
+ * CIDR-looking suffix, and the short forms `127.1` and `10.1.2` with a port
+ * or a path that starts with a non-digit (`127.1/x`, `10.1.2:80`). Too loose
+ * to be a target on its own, so the caller uses it only next to other
+ * signals (download plus run, send plus private data).
+ *
+ * Why `1.2.3.4/8` is a host there (ATO-2479 review): nothing in the text
+ * tells a range from a path. `http://1.2.3.4/8` is a fine place to serve a
+ * payload, and the attacker picks the address, so "zero host bits" or an
+ * "allow" word next to it proves nothing. So a range is clean when it
+ * stands alone ("Only allow 10.0.0.0/8 and run the tests" has no download
+ * or send word), and it is a host once download plus run, or send plus
+ * private data, are in the same text.
  */
 
 const LABEL = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
@@ -65,15 +77,25 @@ const WWW_RE = new RegExp(`${START}www\\.(?:${LABEL}\\.)+(?:${TLDS})${END}`, "i"
 const KNOWN_HOST_RE = new RegExp(`${START}(?:${LABEL}\\.)*(?:${KNOWN_HOSTS})${END}`, "i");
 const HOST_NAME_RE = new RegExp(`${START}(?:${LABEL}\\.)+(?:${TLDS})${END}`, "i");
 
-const OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
+/* `0\d{1,3}`: a leading zero (`04`, `0177`), which curl and inet_aton read as octal. */
+const OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d|0\\d{1,3})";
 const IPV4 = `${OCTET}(?:\\.${OCTET}){3}`;
 /* `/0` to `/32` with nothing after it (a full stop is fine): a CIDR prefix length. */
 const CIDR_SUFFIX = "\\/(?:3[0-2]|[12]?\\d)(?![\\w\\/-]|\\.[\\w-])";
-const IP_WITH_PATH_RE = new RegExp(`${START}${IPV4}(?!${CIDR_SUFFIX})(?::\\d{2,5})?\\/[^\\s)>\\]"'/]`, "i");
-const IP_WITH_PORT_RE = new RegExp(`${START}${IPV4}:\\d{2,5}(?![\\w.])`, "i");
+const NOT_VERSION = "(?<!\\b(?:version|ver|build|release|v)\\s*)";
+const IP_WITH_PATH_RE = new RegExp(`${START}${IPV4}(?!${CIDR_SUFFIX})(?::\\d{1,5})?\\/[^\\s)>\\]"'/]`, "i");
+const IP_WITH_PORT_RE = new RegExp(`${START}${IPV4}:\\d{1,5}(?![\\w.])`, "i");
 const PUNYCODE_RE = new RegExp(`${START}(?=(?:[a-z0-9-]*\\.)*xn--)(?:${LABEL}\\.)+${LABEL}${END}`, "i");
-const BARE_IP_RE = new RegExp(
-  `${START}(?<!\\b(?:version|ver|build|release|v)\\s*)${IPV4}(?![\\w\\/-]|\\.[\\w-]|:\\d)`,
+const BARE_IP_RE = new RegExp(`${START}${NOT_VERSION}${IPV4}(?![\\w\\/-]|\\.[\\w-]|:\\d)`, "i");
+/* For hasHostName only: `1.2.3.4/8` may be a path as well as a range. */
+const IP_CIDR_RE = new RegExp(`${START}${NOT_VERSION}${IPV4}${CIDR_SUFFIX}`, "i");
+/*
+ * For hasHostName only: the 2- and 3-part short forms (`127.1` is
+ * 127.0.0.1) with a port, or with a path that starts with a non-digit, so a
+ * fraction or a version range (`1.5/2`, `3.12/3.13`) is not a host.
+ */
+const SHORT_IP_RE = new RegExp(
+  `${START}${NOT_VERSION}${OCTET}(?:\\.${OCTET})?\\.\\d{1,8}(?::\\d{1,5}(?![\\w.])|\\/[^\\s\\d)>\\]"'/.])`,
   "i",
 );
 
@@ -95,5 +117,11 @@ export function hasBareHost(text: string): boolean {
 
 /** A plain host name (`attacker.com`), path or not. Only for rules that also need other signals. */
 export function hasHostName(text: string): boolean {
-  return hasBareHost(text) || HOST_NAME_RE.test(text) || BARE_IP_RE.test(text);
+  return (
+    hasBareHost(text)
+    || HOST_NAME_RE.test(text)
+    || BARE_IP_RE.test(text)
+    || IP_CIDR_RE.test(text)
+    || SHORT_IP_RE.test(text)
+  );
 }
