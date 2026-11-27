@@ -50,6 +50,7 @@ import { deriveChatSessionId } from "./openai-session-id.js";
 import { maintenanceFrame } from "./stream-maintenance-frames.js";
 import { PROJECT_SECTION_MAX_TOKENS } from "../prompt/build-prompt.js";
 import { toolDisabledNotice } from "../agent/tool-disabled-notice.js";
+import { cliOutdatedNotice } from "../agent/cli-outdated-notice.js";
 import { describeToolCall } from "../tools/describe-tool-call.js";
 import { canvasRecordOf, type CanvasRecord } from "../tools/canvas/index.js";
 import { createTurnPhaseTracker } from "./stream-turn-phase.js";
@@ -919,6 +920,25 @@ export function buildStreamEventHook(
           tool: event.tool,
           reason: event.reason,
           notice: toolDisabledNotice(event.tool),
+        });
+      }
+      return;
+    }
+    /* ATO-2523: the Claude Code / Codex CLI that answered is older than
+       Atomic Agent supports. Once per session, with the update commands
+       for this platform and the chat sentence. Extensions-only, like
+       tool_disabled. */
+    if (event.type === "cli_outdated") {
+      if (env.request.extensionsEnabled) {
+        sse.writeEvent("cli_outdated", {
+          object: "atomic.cli_outdated",
+          session_id: env.session.id,
+          step_index: event.stepIndex,
+          cli: event.cli,
+          version: event.version,
+          minimum: event.minimum,
+          update_commands: [...event.updateCommands],
+          notice: cliOutdatedNotice(event),
         });
       }
       return;

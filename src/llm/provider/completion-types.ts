@@ -390,6 +390,27 @@ export interface CompletionResult {
    * reply, as on native tools. Absent when the grammar went out.
    */
   grammarSkipped?: true;
+  /**
+   * The subscription CLI that served this completion is older than the
+   * oldest version Atomic Agent supports (ATO-1685's `--version` check).
+   * The agent loop turns it into one `cli_outdated` event per session
+   * (ATO-2523), so the person is told before a flag it lacks breaks a
+   * turn. Absent when the version is new enough or could not be read.
+   */
+  cliOutdated?: CliOutdated;
+}
+
+/** An outdated subscription CLI (`CompletionResult.cliOutdated`). */
+export interface CliOutdated {
+  cli: "claude" | "codex";
+  /** "Claude Code" or "Codex". */
+  productName: string;
+  /** `x.y.z` as `--version` printed it. */
+  version: string;
+  /** The oldest `x.y.z` Atomic Agent works with. */
+  minimum: string;
+  /** The update command(s) for this platform, plain text, in the order to offer them. */
+  updateCommands: readonly string[];
 }
 
 /** One tool a provider left out of a request (`CompletionResult.droppedTools`). */
