@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import {
   LINKED_MODELS_DIR,
   adoptExternalModel,
   checkServableGguf,
+  linkModelFile,
   linkedFileName,
   modelBlobFromManifest,
   ollamaManifestPath,
@@ -99,5 +100,55 @@ describe("using an Ollama or LM Studio model on our engine (ATO-2490)", () => {
     expect(r.how).toBe("in-place");
     expect(r.path).toBe(gguf);
     expect(r.def.name).toBe("qwen/qwen3-8b (from LM Studio)");
+  });
+
+  it("a dangling link left by an earlier adopt is replaced, not written through", () => {
+    const source = join(root, "blob");
+    writeFileSync(source, "new weights");
+    const dest = join(root, "ollama-qwen3-8b.gguf");
+    const gone = join(root, "removed-blob");
+    symlinkSync(gone, dest);
+    expect(linkModelFile(source, dest, false)).toBe("hardlink");
+    expect(lstatSync(dest).isSymbolicLink()).toBe(false);
+    expect(statSync(dest).ino).toBe(statSync(source).ino);
+    // With --copy the old link is removed first, so nothing lands at its target.
+    symlinkSync(gone, join(root, "second.gguf"));
+    linkModelFile(source, join(root, "second.gguf"), true);
+    expect(() => statSync(gone)).toThrow();
+    expect(readFileSync(join(root, "second.gguf"), "utf8")).toBe("new weights");
+  });
+
+  it("LM Studio key with @quant takes that quant's file", async () => {
+    const dir = join(host.home, ".lmstudio", "models", "lmstudio-community", "Qwen3-8B-GGUF");
+    mkdirSync(dir, { recursive: true });
+    const gguf = () => encodeSyntheticGguf({ ...densePairs(), "tokenizer.chat_template": "{{ x }}" });
+    writeFileSync(join(dir, "Qwen3-8B-Q4_K_M.gguf"), gguf());
+    writeFileSync(join(dir, "Qwen3-8B-Q8_0.gguf"), gguf());
+    const r = await adoptExternalModel("lmstudio", "lmstudio-community/qwen3-8b@q8_0", opts);
+    expect(r.path).toBe(join(dir, "Qwen3-8B-Q8_0.gguf"));
+    await expect(adoptExternalModel("lmstudio", "lmstudio-community/qwen3-8b@q6_k", opts))
+      .rejects.toThrow("Could not find the file of lmstudio-community/qwen3-8b@q6_k");
+  });
+
+  it("an MLX-only LM Studio model is refused as not GGUF, found without lms", async () => {
+    const dir = join(host.home, ".lmstudio", "models", "mlx-community", "Qwen3-8B-4bit");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "model.safetensors"), "weights");
+    writeFileSync(join(dir, "config.json"), "{}");
+    await expect(adoptExternalModel("lmstudio", "mlx-community/qwen3-8b-4bit", opts))
+      .rejects.toThrow("is not stored as a GGUF file");
+  });
+
+  it("lms lists the model with a non-GGUF path: refused as not GGUF, no fallback", async () => {
+    const models = join(host.home, ".lmstudio", "models");
+    const other = join(models, "lmstudio-community", "Qwen3-8B-GGUF");
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, "Qwen3-8B-Q4_K_M.gguf"), encodeSyntheticGguf({ ...densePairs(), "tokenizer.chat_template": "{{ x }}" }));
+    const lms = {
+      bin: "lms",
+      run: async () => ({ code: 0, stdout: JSON.stringify([{ modelKey: "qwen/qwen3-8b", path: "mlx-community/Qwen3-8B-MLX-4bit" }]), stderr: "" }),
+    };
+    await expect(adoptExternalModel("lmstudio", "qwen/qwen3-8b", { ...opts, lms }))
+      .rejects.toThrow("qwen/qwen3-8b from LM Studio is not stored as a GGUF file");
   });
 });
