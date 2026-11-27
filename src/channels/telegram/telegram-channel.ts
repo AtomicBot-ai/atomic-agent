@@ -465,6 +465,7 @@ export class TelegramChannel implements Channel {
             command: "new",
             description: "Start a fresh session for this chat",
           },
+          { command: "fork", description: "Copy this chat's session into a new branch" },
           {
             command: "model",
             description: "Show or switch the provider and model",

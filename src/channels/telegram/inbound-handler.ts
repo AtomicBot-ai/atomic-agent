@@ -21,6 +21,7 @@ import {
 } from "../attachments/inbox.js";
 import { runModelCommand } from "../model-command.js";
 import { runCronCommand } from "./cron-command.js";
+import { runTelegramFork } from "./telegram-fork-command.js";
 import { cronTaskServiceFromRuntime } from "./cron-task-service.js";
 import { formatTaskLiveStatus } from "./task-status-message.js";
 import {
@@ -88,7 +89,7 @@ export interface InboundTextUpdate {
     last_name?: string;
     username?: string;
   };
-  chat: { id: number; type: string; title?: string };
+  chat: { id: number; type: string; title?: string; is_forum?: boolean };
   text: string;
   message_id: number;
   /** Set on every message inside a forum topic (and on replies). */
@@ -298,6 +299,7 @@ function helpText(ctx: InboundContext): string {
     "  /sessions — every chat this bot has a session for\n" +
     "  /switch <session-id> — point this chat at an existing session\n" +
     "  /new — rotate this chat to a fresh session (current one is archived)\n" +
+    "  /fork: copy this chat's session into a new topic (in a forum) or continue the copy here\n" +
     "  /model — show the provider and model in use; /model <provider> [model-id] switches\n" +
     "  /cron — list scheduled tasks; /cron add <cron> <task>, /cron pause|resume|delete <id> (/cron help)\n" +
     "  /cancel — abort this chat's current turn if one is running"
@@ -314,6 +316,8 @@ interface ChatRef {
   /** Human label for `/sessions` and session metadata. */
   label: string;
   chatType: string;
+  /** A supergroup with topics (`chat.is_forum`); `/fork` opens a topic there. */
+  isForum?: boolean;
 }
 
 /**
@@ -508,6 +512,7 @@ function chatRefOf(update: InboundTextUpdate, isPrivate: boolean): ChatRef {
     isPrivate,
     label: threadId === undefined ? base : `${base} › topic ${threadId}`,
     chatType: update.chat.type,
+    ...(update.chat.is_forum === true ? { isForum: true } : {}),
   };
 }
 
@@ -785,6 +790,9 @@ async function handleSlashCommand(
       );
       return;
     }
+    case "/fork":
+      for (const m of await runTelegramFork(ref, ctx)) await sendText(ctx, m.target, m.text);
+      return;
     case "/cancel": {
       const controller = ctx.inflight.get(ref.key);
       if (!controller) {

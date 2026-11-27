@@ -318,6 +318,10 @@ async function handleSlashCommand(
       );
       return;
     }
+    case "/fork":
+      // ATO-2235: the Discord API client cannot open threads yet.
+      await send(ctx, ref.channelId, "Fork is not available on Discord yet. Use `/new` to start a fresh session.");
+      return;
     case "/cancel": {
       const controller = ctx.inflight.get(ref.channelId);
       if (!controller) {
