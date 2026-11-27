@@ -2580,7 +2580,7 @@ function renderSidebar() {
            : ch.rows.length || ch.filed || ch.archived.length ? '' : '<div class="sb-empty">No chats yet</div>')
         + (ch.hidden > 0 ? '<button class="loadmore" data-more="chats">Load more · ' + ch.hidden + ' more</button>' : '')
       + '</div>'
-      + archivedSidebarHTML(ch.archived)))
+      + archivedSidebarHTML(ch.archived) + chatTrashSidebarHTML()))   // ATO-2332: the folded Trash section (chat-trash.js)
       + (showTasks
         ? '<div class="sb-list" data-list="tasks">'
           + '<div class="sb-list-head micro"><span>Cron jobs</span>'
@@ -7932,7 +7932,8 @@ function act(a) {
   }
   if (k === 'delask')    { const ss = SESSIONS.find((x) => x.id === v); if (!ss) return;
                            if (deleteRefused(v)) { render(); return; }   // Backlog 25: before the question, not after it
-                           S.alert = {title:'Delete “' + ss.t + '”?', msg:'The transcript, its tool calls and its work log are removed from this machine. This cannot be undone.', ok:'Delete', act:'del:' + v};
+                           // ATO-2332: Delete… moves the chat to Trash (chat-trash.js); Delete forever is Trash's.
+                           S.alert = {title:'Move “' + ss.t + '” to Trash?', msg:'You can restore it from Trash at the bottom of the sidebar for ' + TRASH_DAYS + ' days. After that it is deleted for good.', ok:'Move to Trash', act:'del:' + v};
                            render(); return; }
   // item 6: a real delete. The old branch only spliced the array, so the row
   // came back on the next load — DELETE /api/sessions/{id} removes it for good
@@ -7940,8 +7941,8 @@ function act(a) {
   if (k === 'del')       { if (!BR || !BR.deleteSession) return;
                            // Backlog 25: and here, for a turn that started while the question was up.
                            if (deleteRefused(v)) { close(); render(); return; }
-                           BR.deleteSession(v).then((res) => {
-                             if (!res || !res.ok) { close(); render(); toast('Could not delete the session', (res && res.error) || ''); return; }
+                           chatTrashPut(v).then((res) => {   // ATO-2332: to Trash, not the agent's DELETE
+                             if (!res || !res.ok) { close(); render(); toast('Could not move the chat to Trash', (res && res.error) || ''); return; }
                              const i = SESSIONS.findIndex((x) => x.id === v);
                              const gone = i >= 0 ? SESSIONS[i].t : v;
                              if (i >= 0) SESSIONS.splice(i, 1);
@@ -7962,7 +7963,7 @@ function act(a) {
                              const wasOpen = S.sessionId === v;
                              if (wasOpen) { S.sessionId = ''; S.agentSession = null; S.log = []; S.history = []; S.busy = false;
                                             forgetApprovalCard(); clearPlanOffer(); S.room = 'chat'; FOCUS.entry = true; }
-                             close(); render(); toast('Session deleted', gone);
+                             close(); render(); toast('Moved to Trash', gone);
                              if (wasOpen) { refreshContext(); refreshSkillList(); }
                            });
                            return; }
@@ -8004,6 +8005,7 @@ function act(a) {
                            render(); nameVisibleSessions(); return; }
   // ATO-1150: archive / unarchive, the Archived section's toggle, the search field's clear (chat-search.js).
   if (chatArchiveAct(k, v, close)) return;
+  if (chatTrashAct(k, v, close)) return;   // ATO-2332: Trash's Restore, Delete forever, Empty Trash (chat-trash.js)
   // item 6: pin / unpin, and the two lists' pagination.
   if (k === 'pin')       { if (!PREFS.pinned.includes(v)) PREFS.pinned.unshift(v); savePrefs(); render(); nameVisibleSessions(); return; }
   if (k === 'unpin')     { PREFS.pinned = PREFS.pinned.filter((x) => x !== v); savePrefs(); render(); nameVisibleSessions(); return; }
@@ -10390,6 +10392,7 @@ function applySessions(res, askedAt) {
       archived:x.archived === true, archivedKnown:typeof x.archived === 'boolean',
     });
   });
+  chatTrashHide(SESSIONS);   // ATO-2332: a chat in Trash is on no list (chat-trash.js)
   settlePendingChats();
   // Q60 review: a kept request of a turn not running here ends with its chat's turn (approvalOver).
   for (const sid of [...PENDING_APPROVALS.keys()]) {
@@ -12866,6 +12869,7 @@ if (BR) {
   loadPrefs();
   loadFolders();   // ATO-1034 (chat-folders.js)
   loadProjects();   // ATO-1146 (chat-projects.js)
+  chatTrashLoad();   // ATO-2332 (chat-trash.js)
   BR.onStatus(applyStatus);
   if (BR.onAutoRestart) BR.onAutoRestart(autoRestartApply);
   BR.onChat(onChatEvent);

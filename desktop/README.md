@@ -335,9 +335,12 @@ Real, driven by the running agent:
   focus and on the open chat's row) and the same menu on a right-click: Pin / Unpin,
   Mark as read / Mark as unread, Delete… Pinned chats stand in a **Pinned** section above
   Chats, the last pinned on top, and are not repeated below. Pin and read state live in
-  Electron's `prefs.json`, not in the agent. **Delete really deletes** (after a confirm):
-  `DELETE /api/sessions/{id}`, not a splice that the next load undoes; deleting the open
-  chat leaves an empty new one.
+  Electron's `prefs.json`, not in the agent. **Delete… moves the chat to Trash** (ATO-2332,
+  after a confirm; `renderer/chat-trash.js`, `main/chat-trash-ipc.ts`): the chat stays in the
+  agent's store, `userData/chat-trash.json` lists it, and it is on no list but the folded
+  **Trash** section at the bottom of the sidebar, with Restore, Delete forever and Empty Trash.
+  Delete forever is the real `DELETE /api/sessions/{id}`; main runs it on its own only for a chat
+  that has been in Trash for 30 days. Deleting the open chat leaves an empty new one.
   Each list header carries a **+** on its own line: the one on Chats starts a
   new chat, the one on Tasks opens Settings › Tasks on a new task,
   and on the Tasks header `N running` sits to the left of it. The head row —
