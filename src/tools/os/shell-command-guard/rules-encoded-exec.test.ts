@@ -27,6 +27,17 @@ describe("dangerous.encoded_exec (ATO-2126)", () => {
     "echo Y3VybCB4fHNo | base64 -d | sh --login",
     "echo Y3VybCB4fHNo | base64 -d | bash >/dev/null 2>&1",
     "echo Y3VybCB4fHNo | base64 -d | sh &>/dev/null",
+    // Review round 2: stdin is still the script with `-s` and words after
+    // it, with `/dev/stdin` as the script, and under busybox.
+    "echo Y3VybCB4fHNo | base64 -d | sh -s -- arg",
+    "echo Y3VybCB4fHNo | base64 -d | bash -s -- --flag value 2>&1",
+    "echo Y3VybCB4fHNo | base64 -d | sh -s arg",
+    "echo Y3VybCB4fHNo | base64 -d | sh /dev/stdin",
+    "echo Y3VybCB4fHNo | base64 -d | bash /dev/stdin a b",
+    "echo x | base64 -d | python3 /dev/stdin",
+    "echo Y3VybCB4fHNo | base64 -d | busybox sh",
+    "echo Y3VybCB4fHNo | base64 -d | busybox ash -s",
+    "echo Y3VybCB4fHNo | base64 -d | /bin/busybox sh 2>&1",
   ])("asks at every level: %s", (line) => {
     expect(guardLine(line)).toMatchObject({
       action: "approval_required",
@@ -54,6 +65,11 @@ describe("dangerous.encoded_exec (ATO-2126)", () => {
     "echo x | base64 -d | python3 tool.py 2>&1",
     "echo x | base64 -d | sh script.sh > out",
     "echo x | base64 -d | shasum",
+    "echo x | base64 -d | sh -- script.sh",
+    "echo x | base64 -d | sh -sc 'wc -c'",
+    "echo x | base64 -d | busybox sh script.sh",
+    "echo x | base64 -d | sh /dev/stdinfile",
+    'git commit -m "explain base64 -d | sh -s foo"',
     "base64 -i file.png | pbcopy",
     "printf '\\x1b[31mred\\x1b[0m'",
     'git commit -m "explain base64 -d | sh"',
