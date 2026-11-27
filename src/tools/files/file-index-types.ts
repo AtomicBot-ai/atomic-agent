@@ -88,4 +88,10 @@ export interface FileIndexApi {
   removeFolder(path: string): Promise<boolean>;
   status(): FileIndexStatus;
   search(options: FileSearchOptions): Promise<FileSearchHit[]>;
+  /**
+   * The indexed text of a file, or of one PDF page of it (ATO-2507,
+   * `research.deep` over My files); `null` when it is not indexed now.
+   * Optional: a host without it gets no document research.
+   */
+  passageText?(path: string, page?: number): string | null;
 }

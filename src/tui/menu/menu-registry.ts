@@ -672,7 +672,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "research",
       description:
-        "research a question on the web: `/research <question>` runs research.deep and saves a report with checked quotes in the working folder",
+        "research a question: `/research <question>` runs research.deep on the web (`--docs` for your My files documents only, `--both` for both) and saves a report with checked quotes in the working folder",
       // Right after /btw (35.75), before /window (36).
       rank: 35.8,
     },

@@ -250,7 +250,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "research",
     description:
-      "research a question on the web: `/research <question>` runs research.deep and saves a report with checked quotes in the working folder",
+      "research a question: `/research <question>` runs research.deep on the web (`--docs` for your My files documents only, `--both` for both) and saves a report with checked quotes in the working folder",
   },
   {
     name: "window",
