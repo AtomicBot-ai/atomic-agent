@@ -20,7 +20,9 @@ import {
   type HandoffCandidate,
   type HandoffTarget,
 } from "../import/index.js";
-import { SessionStore } from "../session/index.js";
+import { readSessionTrashed, SessionStore, type SessionState } from "../session/index.js";
+
+const notTrashed = (s: SessionState): boolean => !readSessionTrashed(s.metadata);
 
 export const HANDOFF_HELP =
   [
@@ -295,7 +297,8 @@ export async function handoffToCommand(
   try {
     session =
       parsed.session === "latest"
-        ? (store.listByWorkingDir(cwd, 1)[0] ?? store.listRecent(1)[0] ?? null)
+        // ATO-2474: "latest" is never a chat in Trash.
+        ? (store.listByWorkingDir(cwd, 20).find(notTrashed) ?? store.listRecent(20).find(notTrashed) ?? null)
         : store.load(parsed.session);
   } finally {
     if (owned) store.close?.();

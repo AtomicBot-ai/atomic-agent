@@ -12,6 +12,10 @@
  * deleted for good (DELETE /api/sessions/{id}) by purgeExpired; nothing
  * younger is ever deleted without the person pressing Delete forever.
  *
+ * ATO-2747: an entry also keeps where the chat sat (pinned, archived, its chat
+ * folder), so Restore puts it back there, as Finder's Put Back does. Entries
+ * written before that have none of the three and restore to the main list.
+ *
  * The list lives in Electron's userData as chat-trash.json, beside prefs.json:
  * one window's view state, never the agent's config. No Electron here, so the
  * Node checks load it (test/chat-trash.test.mjs).
@@ -23,7 +27,37 @@ export const TRASH_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_TITLE = 300;
 
-export type TrashEntry = { id: string; title: string; deletedAt: number };
+const MAX_FOLDER = 256;
+
+/** Where the chat sat when it went to Trash (ATO-2747). Every field is optional. */
+export type TrashPlace = { pinned?: boolean; archived?: boolean; folder?: string };
+export type TrashEntry = { id: string; title: string; deletedAt: number } & TrashPlace;
+
+/** The place fields of `raw` that are well formed; nothing for an old entry. */
+export function coercePlace(raw: unknown): TrashPlace {
+  if (!raw || typeof raw !== "object") return {};
+  const { pinned, archived, folder } = raw as { pinned?: unknown; archived?: unknown; folder?: unknown };
+  const out: TrashPlace = {};
+  if (pinned === true) out.pinned = true;
+  if (archived === true) out.archived = true;
+  if (typeof folder === "string" && folder && folder.length <= MAX_FOLDER) out.folder = folder;
+  return out;
+}
+
+/**
+ * ATO-2747: what the window shows when a Trash step fails. Plain words only;
+ * the agent's message, an HTTP status or a file path goes to the log
+ * (chat-trash-ipc.ts logs it beside the kind), never into a toast.
+ */
+export const TRASH_ERRORS = {
+  missing: "This chat could not be found.",
+  hide: "The agent could not move this chat to Trash right now. Try again in a moment.",
+  show: "The agent could not bring this chat back right now. Try again in a moment.",
+  remove: "The agent could not delete this chat right now. Try again in a moment.",
+  save: "Trash could not be saved on this computer. Try again in a moment.",
+  list: "Trash could not be read right now.",
+} as const;
+export type TrashErrorKind = keyof typeof TRASH_ERRORS;
 
 /** AgentClient.sessionRoute: POST /api/sessions/{id}/<path>, answered as status and JSON. */
 export type SessionRoute = (id: string, path: string, method: "POST", body: unknown) => Promise<{ status: number; body: unknown }>;
@@ -58,15 +92,15 @@ export function coerceTrash(raw: unknown): TrashEntry[] {
     if (typeof id !== "string" || !id || id.length > 256 || seen.has(id)) continue;
     if (typeof deletedAt !== "number" || !Number.isFinite(deletedAt)) continue;
     seen.add(id);
-    out.push({ id, title: typeof title === "string" ? title.slice(0, MAX_TITLE) : "", deletedAt });
+    out.push({ id, title: typeof title === "string" ? title.slice(0, MAX_TITLE) : "", deletedAt, ...coercePlace(e) });
   }
   return out.sort((a, b) => b.deletedAt - a.deletedAt);
 }
 
-/** Chat `id` moved to Trash at `now`; a chat already there keeps its first date. */
-export function trashPut(entries: TrashEntry[], id: string, title: string, now: number): TrashEntry[] {
+/** Chat `id` moved to Trash at `now`, from `place`; a chat already there keeps its first date and place. */
+export function trashPut(entries: TrashEntry[], id: string, title: string, now: number, place?: TrashPlace): TrashEntry[] {
   if (entries.some((e) => e.id === id)) return entries.slice();
-  return coerceTrash([{ id, title, deletedAt: now }, ...entries]);
+  return coerceTrash([{ id, title, deletedAt: now, ...coercePlace(place) }, ...entries]);
 }
 
 /** Chat `id` out of Trash (restored, or deleted for good). */
@@ -99,6 +133,30 @@ export async function purgeExpired(
     } catch { /* kept for the next purge */ }
   }
   return { entries: entries.filter((e) => !purged.includes(e.id)), purged };
+}
+
+/**
+ * Empty Trash (ATO-2747): Delete forever on every entry through `remove`. An
+ * entry the agent could not take now stays in Trash; the counts say how many
+ * of how many went, for "Deleted 7 of 9". `detail` is the last refusal, for
+ * the log only.
+ */
+export async function emptyTrash(
+  entries: TrashEntry[],
+  remove: (id: string) => Promise<unknown>,
+): Promise<{ entries: TrashEntry[]; purged: string[]; failed: number; total: number; detail?: string }> {
+  const purged: string[] = [];
+  let detail: string | undefined;
+  for (const e of entries) {
+    try {
+      await remove(e.id);
+      purged.push(e.id);
+    } catch (err) {
+      detail = err instanceof Error ? err.message : String(err);
+    }
+  }
+  const rest = entries.filter((e) => !purged.includes(e.id));
+  return { entries: rest, purged, failed: rest.length, total: entries.length, ...(detail ? { detail } : {}) };
 }
 
 /** The file's entries; a missing or unreadable file is an empty Trash. */
