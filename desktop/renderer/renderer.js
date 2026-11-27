@@ -18060,7 +18060,7 @@ async function obSettle() {
     OB.settling = false;
     obDispatch({type:'onboarding_error_set', error: 'could not write the setup stamp: ' + (res.error || 'unknown error')});
     // ATO-820: nobody is on the closing screen to read it.
-    if (OB.leftEarly) toast('Setup was not saved', 'It opens again next launch.');
+    if (OB.leftEarly) toast('Setup was not saved', 'It opens again next launch.', 'bad');
     return;
   }
   obSettleSlowClear();
