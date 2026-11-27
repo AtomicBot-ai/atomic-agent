@@ -356,6 +356,7 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
   );
   const llmParams: LlmStreamParams = {
     ...(prompt.contextBudget ? { contextBudget: prompt.contextBudget } : {}),
+    promptWindow: prompt.contextWindow,
     ...buildLlmStreamParams({
       promptText: prompt.text,
       promptMessages: prompt.messages,

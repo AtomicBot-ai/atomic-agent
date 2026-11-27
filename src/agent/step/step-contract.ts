@@ -24,6 +24,12 @@ import type { BatchLoopSignal } from "../dispatch/batch-contract.js";
 
 export interface LlmStreamParams {
   contextBudget?: { window: number | null; replyReserve: number };
+  /**
+   * The window the step's local prompt was built for (`BuiltPrompt.contextWindow`).
+   * A local link whose known window is smaller gets the prompt rebuilt
+   * (and window-checked) through `prepareForLink` (ATO-1678).
+   */
+  promptWindow?: number | null;
   /** Rebuild and commit context for the actual attempted policy/window, including fallback. */
   prepareForLink?: (options: {
     modelMode: import("../../llm/model-mode.js").ResolvedModelMode;
