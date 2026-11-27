@@ -74,6 +74,9 @@ export function getTrustConfigPaths(paths: {
     join(paths.stateDir, "logbook", "settings.json"),
     join(homedir(), ".curlrc"), // a proxy in it reroutes curl (ATO-2116)
     join(homedir(), ".wgetrc"),
+    // ATO-2331: the per-PR autofix opt-in and attempt cap. The file only, not
+    // pr-autofix/: the worktrees beside it are where the model writes fixes.
+    join(paths.stateDir, "pr-autofix", "state.json"),
   ];
 }
 
@@ -114,8 +117,6 @@ export function getStateSecretPaths(paths: {
     join(paths.stateDir, "atomic-mail", "session.json"),
     // ATO-2308: paired phones and pending pairing links; a written entry would let a phone in.
     join(paths.stateDir, "http-devices.json"),
-    // ATO-2331: the per-PR autofix opt-in and attempt cap; a written entry would enable pushes.
-    join(paths.stateDir, "pr-autofix", "state.json"),
   ];
 }
 
