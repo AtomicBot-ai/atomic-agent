@@ -27,6 +27,8 @@ import {
   resolveAudioCapabilities,
 } from "./llama-server-audio.js";
 import { ServerTemplateRenderer } from "./server-template-renderer.js";
+import { requestThinks, resolveRequestSampling } from "./request-sampling.js";
+import { findLocalModelForFile } from "../../../local-llm/catalog/model-for-file.js";
 import type { StructuredLogger } from "../../../tracing/structured-logger.js";
 
 /**
@@ -144,15 +146,32 @@ export class LlamaServerProvider implements LlmProvider {
   }
 
   /**
-   * Hand the client the loaded model's recommended sampling (ATO-2202),
-   * read from its header by the profile manager. The client decides
-   * whether to use it (`localModels.modelSampling`) and keeps the
-   * request's own fields above it.
+   * Hand the client the loaded model's recommended sampling (ATO-2202,
+   * the header plus the catalog entry) and the person's own set for this
+   * model (ATO-2482), each picked for the request's thinking mode
+   * (`request-sampling.ts`). The client decides whether to use the
+   * model's (`localModels.modelSampling`) and keeps the request's own
+   * fields above both. A set the caller already put on the request stays.
    */
   private withModelSampling(request: CompletionRequest): CompletionRequest {
-    if (request.modelSampling !== undefined) return request;
-    const sampling = this.getProfile().sampling;
-    return sampling ? { ...request, modelSampling: sampling } : request;
+    if (request.modelSampling !== undefined && request.userSampling !== undefined) {
+      return request;
+    }
+    const profile = this.getProfile();
+    const localModels = getConfig().localModels;
+    const resolved = resolveRequestSampling({
+      profile,
+      def: profile.modelPath ? findLocalModelForFile(profile.modelPath) : undefined,
+      overrides: localModels.modelSamplingOverrides,
+      thinks: requestThinks(request, profile, localModels.thinking),
+    });
+    const modelSampling = request.modelSampling ?? resolved.modelSampling;
+    const userSampling = request.userSampling ?? resolved.userSampling;
+    return {
+      ...request,
+      ...(modelSampling ? { modelSampling } : {}),
+      ...(userSampling ? { userSampling } : {}),
+    };
   }
 
   async health(): Promise<ProviderHealthResult> {

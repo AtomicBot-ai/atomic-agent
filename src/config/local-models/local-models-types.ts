@@ -3,6 +3,7 @@ import type { BackendVariantPreference, CoreBackendVariant } from "../../local-l
 import type { SwaFullPreference } from "../../local-llm/server/swa-full.js";
 import type { CpuMoePreference } from "../../local-llm/server/cpu-moe.js";
 import type { LoraAdapter } from "../../local-llm/server/lora-adapter.js";
+import type { LocalModelSampling } from "../../local-llm/catalog/model-sampling-sets.js";
 
 export type LocalLlmMode = "external" | "managed";
 
@@ -334,6 +335,8 @@ export interface RuntimeLocalModelsConfig {
    * hand-built runtime config that predates the field reads as off.
    */
   modelSampling?: boolean;
+  /** Mirrors `UserConfigFile.localModels.modelSamplingOverrides` (ATO-2482). */
+  modelSamplingOverrides?: Readonly<Record<string, LocalModelSampling>>;
   /**
    * Mirrors `UserConfigFile.localModels.strictToolArgs`. Optional so a
    * hand-built runtime config that predates the field reads as off.
@@ -441,8 +444,26 @@ export interface UserLocalModelsConfig {
    * model does not name keeps the built-in default (0.2 / 0.95 / 40).
    * llama.cpp-family engines only. Default `false`, unversioned and
    * additive: an older file has no field and reads as off.
+   *
+   * ATO-2482: a curated model's catalog `sampling` (the model card's
+   * values, one set per thinking mode) sits over the header and is used
+   * under the same switch. The person's own sets
+   * (`modelSamplingOverrides`, `customModels[].sampling`) apply either way.
    */
   modelSampling: boolean;
+  /**
+   * The person's own sampling per model id (ATO-2482): `{ "qwen-3.5-4b":
+   * { "temperature": 0.6, "noThinking": { "temperature": 0.5 } } }`.
+   * Fields are `temperature`, `topP`, `topK`, `minP`, `presencePenalty`,
+   * `repeatPenalty`, `repeatLastN`; `thinking` / `noThinking` hold a set
+   * for one mode. Applied over the model's own values whether
+   * `modelSampling` is on or not; a request's own field and the
+   * `ATOMIC_AGENT_LLAMA_*` overrides still win. Written by `atomic-agent
+   * models sampling` and the desktop's Sampling row. Absent by default,
+   * unversioned and additive. An added model keeps its set on its own
+   * entry instead (`customModels[].sampling`).
+   */
+  modelSamplingOverrides?: Record<string, LocalModelSampling>;
   /**
    * Hold a local model's tool ARGUMENTS to each tool's JSON Schema on
    * the grammar path, not only its tool names (ATO-633): a key the

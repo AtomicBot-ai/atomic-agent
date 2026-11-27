@@ -144,3 +144,29 @@ describe("localModels.modelSampling config", () => {
     expect(() => parseUserConfigFile({ localModels: { modelSampling: 3 } })).toThrow(/localModels\.modelSampling/);
   });
 });
+
+describe("resolveSamplingFields user layer (ATO-2482)", () => {
+  it("applies the person's set even when the model's sampling is off", () => {
+    expect(
+      resolveSamplingFields({ modelSampling: QWEN_SAMPLING, userSampling: { temperature: 0.5 } }, {}, false),
+    ).toMatchObject({ temperature: 0.5, top_p: 0.95, top_k: 40 });
+  });
+
+  it("puts the person's set over the model's, under the request and the env", () => {
+    const fields = resolveSamplingFields(
+      { modelSampling: QWEN_SAMPLING, userSampling: { temperature: 0.5, topK: 30, presencePenalty: 1.5 } },
+      { topK: 7 },
+      true,
+    );
+    expect(fields).toMatchObject({ temperature: 0.5, top_k: 7, min_p: 0, presence_penalty: 1.5 });
+    expect(
+      resolveSamplingFields({ temperature: 0, userSampling: { temperature: 0.5 } }, {}, true).temperature,
+    ).toBe(0);
+  });
+
+  it("sends no presence_penalty when no set names one", () => {
+    expect(resolveSamplingFields({ modelSampling: QWEN_SAMPLING }, {}, true)).not.toHaveProperty(
+      "presence_penalty",
+    );
+  });
+});
