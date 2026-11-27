@@ -5,6 +5,7 @@ import type { SessionStore } from "../../session/session-store.js";
 import { buildPrompt } from "../../prompt/build-prompt.js";
 import type { BuildPromptInput, BuiltPrompt } from "../../prompt/build-prompt-types.js";
 import { formatCurrentDate } from "../../prompt/current-date.js";
+import { toolSchemaPromptInput, type ToolSchemaMeasure } from "../../prompt/tool-schema-parts.js";
 import type { CapabilitiesSummary, SkillCatalogEntry, ToolDescriptor } from "../../prompt/stable-prefix.js";
 import type { ModelProfile } from "../../llm/model-profile.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
@@ -27,7 +28,8 @@ export interface RuntimePromptPreviewDependencies {
   resolveCatalogContextWindow(sessionId?: string): number | null;
   profileWindowApplies?(sessionId?: string): boolean;
   resolveModelMode?(sessionId?: string): ResolvedModelMode;
-  resolveToolSchemaTokens?(sessionId: string, descriptors: readonly ToolDescriptor[]): number;
+  /** The native `tools` array this session would send, priced and split by MCP server (ATO-2453). */
+  resolveToolSchema?(sessionId: string, descriptors: readonly ToolDescriptor[]): ToolSchemaMeasure;
 }
 
 /** Build the next prompt without running memory prefetch, inference or persistence. */
@@ -77,8 +79,8 @@ export function buildRuntimePromptInput(config: AtomicAgentConfig, deps: Runtime
       session,
       ...(modelMode ? { modelMode } : {}),
       // Any model mode: a local native-tools link sends the schemas too (ATO-1678).
-      ...(transport === "native_tools" && deps.resolveToolSchemaTokens
-        ? { toolSchemaTokens: deps.resolveToolSchemaTokens(session.id, descriptors) } : {}),
+      ...(transport === "native_tools" && deps.resolveToolSchema
+        ? toolSchemaPromptInput(deps.resolveToolSchema(session.id, descriptors)) : {}),
       // Called, not read: main made the descriptors late-bound so a live MCP
       // add/remove is visible without a restart. The preview wants the same
       // catalogue the next real turn would get.

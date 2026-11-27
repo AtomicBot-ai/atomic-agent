@@ -52,6 +52,12 @@ export function handleContextPanelKey(
     dispatch({ type: "context_panel_closed" });
     return true;
   }
+  // `d` lists or folds each MCP server's tools (ATO-2453). Bare `d`
+  // only: the panel swallows every other bare key anyway.
+  if (input === "d" && !key.ctrl && !key.meta) {
+    dispatch({ type: "context_panel_detail_toggled" });
+    return true;
+  }
   // `-` / `+` work the selector. Each step is applied, not staged: the
   // control *is* the setting, and a selector that needed a second key
   // to mean anything would be a form, not a dial. Arrow keys are not

@@ -140,6 +140,16 @@ a local model, so main sends it over `node:http` and not `fetch`: Node's fetch
 gives up on headers after 300 s with a bare `fetch failed`, and the dropped
 request cancels the compaction on the agent's side.
 
+**What each context row is made of (ATO-2453).** The context popover lists
+the agent's own `parts` under each row (prompt scaffold sections, built-in
+tools, one row per MCP server, the native tool schemas by server), read from
+the session row's `contextUsage` or the `/api/context-preview` reply. A click
+on an MCP server's row lists its tools, biggest first (8 shown, the rest in one
+"+N more" row). On a window of 64k or less, a server (or the built-in tools
+while tool search is off) over 10% of it gets one tip, the same rule as the
+terminal's `/context`. Layout and words:
+[context-parts.js](renderer/context-parts.js).
+
 **The session's model stamp.** The same row carries `metadata.llm` — the
 provider and model that session last ran on. It is reported and never applied:
 `atag serve` pins its provider at boot, so switching costs a config write plus

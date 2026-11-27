@@ -434,4 +434,31 @@ describe("parts and the tip", () => {
     expect(body).toContain("tip: mcp github");
     expect(body).toContain("free");
   });
+
+  /** ATO-2453: `d` / `/context detail` list the server's tools under it. */
+  it("lists the server's tools only in detail, and says which key does it", () => {
+    const withTools = usage({
+      contextWindow: 32_768,
+      parts: [
+        { parent: "prompt scaffold", label: "mcp github", tokens: 4000, mcpServer: "github",
+          tools: [{ label: "create_issue", tokens: 3000 }, { label: "list_prs", tokens: 1000 }] },
+      ],
+    });
+    const draw = (detail: boolean): string => {
+      const { lastFrame, unmount } = render(
+        <Box width={100} height={30} flexDirection="column">
+          <ContextPanel usage={withTools} availableRows={30} availableColumns={100}
+            reservedForReply={4096} detail={detail} />
+        </Box>,
+      );
+      const out = (lastFrame() ?? "").replace(SGR, "");
+      unmount();
+      return out;
+    };
+    expect(draw(false)).not.toContain("create_issue");
+    expect(draw(false)).toContain("d tools");
+    expect(draw(true)).toContain("create_issue");
+    expect(draw(true)).toContain("list_prs");
+    expect(draw(true)).toContain("d hide tools");
+  });
 });
