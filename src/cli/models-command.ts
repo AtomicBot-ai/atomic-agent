@@ -27,6 +27,7 @@ import { runLocalModelsCheck } from "./models-check.js";
 import { runModelsRecommend, runModelsUpgrade } from "./models-recommend.js";
 import { runLocalModelsPullAndRun } from "./models-pull-run.js";
 import { runModelsAsk, runModelsToolcallBench } from "./models-toolcall-bench.js";
+import { runModelsCouncil } from "./models-council-command.js";
 import { runModelsTasks } from "./models-tasks-command.js";
 import { runModelsFitTest } from "./models-fit-test-command.js";
 
@@ -95,6 +96,9 @@ const HELP =
     "                                <provider>:<model>; default the active provider",
     '  ask "<question>" --models a,b  One question, no tools, to several models at once;',
     "            [--json]            answers printed one after another",
+    '  council "<question>"          Ask --models a,b as above, then a judge model (the first',
+    "    --models a,b [--judge c]    listed unless --judge) compares the answers and lists",
+    "    [--json]                    Agree / Disagree / Unique per model (also: ask --council)",
     "",
     "GPU subcommands:",
     "  devices                       List GPU devices (llama-server --list-devices); active marked with *",
@@ -163,7 +167,10 @@ export async function modelsCommand(args: string[]): Promise<number> {
       case "toolcall-bench":
         return await runModelsToolcallBench(args.slice(1));
       case "ask":
+        if (args.includes("--council")) return await runModelsCouncil(args.slice(1));
         return await runModelsAsk(args.slice(1));
+      case "council":
+        return await runModelsCouncil(args.slice(1));
       case "tasks":
         return await runModelsTasks(args.slice(1));
       case "fit-test":
