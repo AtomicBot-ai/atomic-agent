@@ -579,14 +579,15 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       // A call that put the whole command in `args` and named no `cmd`
       // is read back from its argv when that is unambiguous (#901); the
       // recovered call goes through the same guard and approval.
-      const recovered = recoverMissingShellCmd(rawArgs);
+      const platform = process.platform;
+      const recovered = recoverMissingShellCmd(rawArgs, platform);
       if (recovered === null) return runCommand(rawArgs, ctx, null);
       const result = await runCommand(
         { ...rawArgs, cmd: recovered.cmd, args: recovered.args },
         ctx,
         recovered,
       );
-      return markRecoveredResult(result, recovered);
+      return markRecoveredResult(result, recovered, platform);
     },
   };
 }
