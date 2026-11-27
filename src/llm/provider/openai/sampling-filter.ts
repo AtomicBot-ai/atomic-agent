@@ -16,6 +16,7 @@ export function filterCloudCompletionRequest(
     cachePrompt: _cachePrompt,
     imageData: _imageData,
     modelSampling: _modelSampling,
+    userSampling: _userSampling,
     ...rest
   } = request;
   return rest;

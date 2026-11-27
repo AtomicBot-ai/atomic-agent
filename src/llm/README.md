@@ -12,7 +12,7 @@ This area owns inference protocols and model profiles. Read [AGENTS.md](AGENTS.m
 - [server-template-policy.ts](server-template-policy.ts)
 - [llama-server-client.ts](llama-server-client.ts)
 - [dry-sampler.ts](dry-sampler.ts): the opt-in DRY anti-repeat fields for `/completion` (`localModels.drySampler`)
-- [model-sampling-fields.ts](model-sampling-fields.ts): who decides each `/completion` sampling field: request, env, the model's own recommendation ([gguf-sampling.ts](../local-llm/catalog/gguf-sampling.ts), opt-in `localModels.modelSampling`), built-in default
+- [model-sampling-fields.ts](model-sampling-fields.ts): who decides each `/completion` sampling field: request, env, the person's own per-model set (ATO-2482, always), the model's own recommendation ([gguf-sampling.ts](../local-llm/catalog/gguf-sampling.ts) plus the catalog entry, opt-in `localModels.modelSampling`), built-in default. [provider/llama-server/request-sampling.ts](provider/llama-server/request-sampling.ts) picks both sets for the request's thinking mode from the served file (`profile.modelPath`, matched to the catalog by file name)
 - [slot-manager.ts](slot-manager.ts)
 - [toolcall-bench/](toolcall-bench/index.ts): the fixed tool-call reliability prompts, their scoring, and asking one question to several models, and the model council judge prompt and its Agree / Disagree / Unique parser (`models toolcall-bench`, `models ask`, `models council`)
 - [transport-deadlines.ts](transport-deadlines.ts) and [offline-network.ts](offline-network.ts): the process-wide HTTP pool and the offline-mode kill switch composed into it ([offline mode](docs/offline-network.md), ATO-1084)
