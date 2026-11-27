@@ -11,6 +11,7 @@
  */
 
 import type { PullRequestHead } from "./github-checks.js";
+import type { AutofixWatch } from "./pr-autofix-watch-state.js";
 
 export const DEFAULT_AUTOFIX_MAX_ATTEMPTS = 3;
 /** Upper bound an operator may set; a runaway loop is the failure this prevents. */
@@ -32,6 +33,8 @@ export interface AutofixState {
    */
   prevHeadSha: string | null;
   updatedAt: string;
+  /** The background watcher (ATO-2516); absent = not watched. See `pr-autofix-watch-state.ts`. */
+  watch?: AutofixWatch;
 }
 
 export function clampMaxAttempts(raw: unknown): number {

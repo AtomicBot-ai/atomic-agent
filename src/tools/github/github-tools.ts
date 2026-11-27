@@ -330,6 +330,8 @@ export function buildGithubTools(
     approvalRequired: options.approvalRequired,
     isRemoteSyncEnabled: options.isRemoteSyncEnabled ?? (() => false),
     stateDir: options.stateDir ?? (() => getConfig().paths.stateDir),
+    // ATO-2516: the background watch rides on the task scheduler.
+    isWatcherAvailable: () => getConfig().tasks.enabled && getConfig().tasks.schedulerEnabled,
   });
 
   return [whoami, prList, issueList, prCreate, issueCreate, issueComment, prChecks, prAutofix];

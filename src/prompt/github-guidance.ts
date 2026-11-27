@@ -29,5 +29,5 @@ export function isGithubActive(
 export const GITHUB_GUIDANCE = [
   "GitHub is connected: `os.git.checkout` / `os.git.commit` / `os.git.push` change branches, commit and push; `github.pr.create`, `github.issue.create` and `github.issue.comment` publish under the user's account; `github.pr.list` / `github.issue.list` / `github.whoami` read.",
   "To open a pull request: commit, push the branch with `os.git.push`, then call `github.pr.create` — `repo`, `head` and `base` default to the working directory's origin, current branch and the repo's default branch. Never force-push; ask the user instead.",
-  "To fix a PR's failing CI, read `github.pr.checks`, then follow the `pr-autofix` skill: it pushes only through `github.pr.autofix`, which is opt-in per PR and stops after its attempt cap.",
+  "To fix a PR's failing CI, merge conflict or review comments, read `github.pr.checks`, then follow the `pr-autofix` skill: it pushes only through `github.pr.autofix`, which is opt-in per PR, stops after its attempt cap, and can watch the PR in the background.",
 ].join("\n");
