@@ -16349,7 +16349,7 @@ function obWizardHTML() {
         + '<button class="btn btn-s" data-act="wiz:subRecheck"' + (verifying ? ' disabled' : '') + '>Check again</button>'
         + (wizSubNeedsLogin(k) && !verifying
           ? '<button class="btn ' + wizSubLoginCls(k) + '" data-act="wiz:subLogin"' + (WIZ_SUB_POLL.opening ? ' disabled' : '') + '>' + esc(wizSubLoginButton(k)) + ic('arrowR') + '</button></div>'
-          : '<button class="btn btn-p" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
+          : '<button class="btn ' + wizSubNextCls(k) + '" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
             + (verifying ? 'Adding…' : esc(wizSubButton(k)) + ic('arrowR')) + '</button></div>')
       + '</div>';
   }
@@ -22603,7 +22603,7 @@ function wizardHTML() {
         + '<button class="btn btn-s xs" data-act="wiz:subRecheck"' + (verifying ? ' disabled' : '') + '>Check again</button>'
         + (wizSubNeedsLogin(k) && !verifying
           ? '<button class="btn ' + wizSubLoginCls(k) + ' xs" data-act="wiz:subLogin"' + (WIZ_SUB_POLL.opening ? ' disabled' : '') + '>' + esc(wizSubLoginButton(k)) + '</button>'
-          : '<button class="btn btn-p xs" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
+          : '<button class="btn ' + wizSubNextCls(k) + ' xs" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
             + (verifying ? '<span class="tk-spin"></span>Adding\u2026' : esc(wizSubButton(k))) + '</button>'),
       lead);
   }
@@ -22804,6 +22804,11 @@ function wizSubLoginButton(k) {
 /* ATO-2739: the terminal sign-in steps back to a plain button when the browser one leads (chatgpt-oauth-step.js). */
 function wizSubLoginCls(k) {
   return k.subscriptionCli === 'codex' && typeof chatgptOauthIsPrimary === 'function' && chatgptOauthIsPrimary(CHATGPT_OAUTH, wizSubStatus(k)) ? 'btn-s' : 'btn-p';
+}
+/* ATO-2739: no Codex CLI and the browser sign-in leads: the disabled "Use my ChatGPT subscription" is not a second primary. */
+function wizSubNextCls(k) {
+  return k.subscriptionCli === 'codex' && typeof chatgptOauthCliState === 'function' && chatgptOauthCliState(wizSubStatus(k)) === 'missing'
+    && chatgptOauthIsPrimary(CHATGPT_OAUTH, wizSubStatus(k)) ? 'btn-s' : 'btn-p';
 }
 /** Signed out, as far as the login file says: the step's main button is Sign in. */
 function wizSubNeedsLogin(k) { const st = wizSubStatus(k); return !!(st && st.installed && st.signedIn === false); }
@@ -28041,7 +28046,7 @@ async function llmFetchModels(p) {
   const ask = LLMP.modelsAsk = (LLMP.modelsAsk || 0) + 1;
   // A rejected ask still lands below as an error, so modelsBusy always clears.
   const res = await llmListAsk(() => BR.providerModels(p.id, p.kind || '', true), providerWord(p.id))
-    .catch((err) => ({ok:false, error:'could not ask for the list: ' + ((err && err.message) || String(err))}));
+    .catch(llmListAskFailed);   // ATO-2739: raw words only in the detail
   if (LLMP.modelsFor !== p.id || LLMP.modelsAsk !== ask) return;
   LLMP.modelsBusy = false;
   if (res.deadline && res.late) res.late.then((late) => {
@@ -28049,7 +28054,7 @@ async function llmFetchModels(p) {
     llmTakeModels(p, late); llmClampCursors(); llmRepaint();
   });
   if (!res.ok) {
-    if (!LLMP.models.length) LLMP.modelsErr = modelListFailLine(res, providerWord(p.id)) || res.error || 'could not list models';   // ATO-202
+    if (!LLMP.models.length) { LLMP.modelsErr = modelListFailLine(res, providerWord(p.id)) || res.error || 'could not list models'; LLMP.modelsErrDetail = res.detail || ''; }   // ATO-202
   } else llmTakeModels(p, res);
   llmClampCursors();
   llmRepaint();
@@ -29199,7 +29204,7 @@ function llmCloudModelListHTML(tab) {
     // ATO-318: the snapshot built into the app is not the provider's list; say so, with the way to ask again.
     + (section.status === 'ready' && LLMP.modelsStale ? '<div class="llm-counter llm-stale">The live list from ' + who + ' did not load, so this is the list built into the app. '
       + '<button class="llm-link" data-act="llm:modelsRetry">Try again</button></div>' : '')
-    + (section.status === 'error' ? '<div class="tk-notice tk-notice--red">' + ic('alert') + llmListErrorSpanHTML(section.error, esc)
+    + (section.status === 'error' ? '<div class="tk-notice tk-notice--red">' + ic('alert') + llmListErrorSpanHTML(section.error, esc, LLMP.modelsErrDetail)
       + '<button class="llm-link" data-act="llm:modelsRetry">Try again</button></div>' : '')   // ATO-2413
     + (visible.length ? '<div class="tk-list llm-list">' + visible.map((r, i) => llmRowHTML(r, section.sectionStart + start + i, cursor)).join('') + '</div>' : '')
     + (counter ? '<div class="llm-counter">' + esc(counter) + '</div>' : '');

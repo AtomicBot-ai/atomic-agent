@@ -58,8 +58,7 @@ function llmListAsk(ask, word, ms, timers) {
   let answer;
   try { answer = Promise.resolve(ask()); }
   catch (err) { answer = Promise.reject(err); }
-  const settled = answer.then((res) => res || {ok:false, error:'no answer'},
-    (err) => ({ok:false, error:'could not ask for the list: ' + ((err && err.message) || String(err))}));
+  const settled = answer.then((res) => res || {ok:false, error:'no answer'}, llmListAskFailed);
   return new Promise((resolve) => {
     const timer = t.setTimeout(() => resolve({ok:false, deadline:true, error:llmListDeadlineLine(word, limit), late:settled}), limit);
     settled.then((res) => { t.clearTimeout(timer); resolve(res); });
@@ -79,9 +78,18 @@ function llmListErrorBanner(error) {
     .replace(/[.\s]+$/, '');
   return {text: 'Couldn\u2019t fetch the model list: ' + reason + '. Showing the current model only.', detail: codes.join(', ')};
 }
-function llmListErrorSpanHTML(error, esc) {
+function llmListErrorSpanHTML(error, esc, extra) {
   const b = llmListErrorBanner(error);
-  return '<span class="grow"' + (b.detail ? ' title="' + esc(b.detail) + '"' : '') + '>' + esc(b.text) + '</span>';
+  const detail = [b.detail, extra || ''].filter(Boolean).join(', ');
+  return '<span class="grow"' + (detail ? ' title="' + esc(detail) + '"' : '') + '>' + esc(b.text) + '</span>';
+}
+
+/* ATO-2739: the ask itself failed inside the app (the bridge threw, or
+   Chromium's "Illegal invocation"): a fixed sentence on screen, the raw
+   message only as `detail`, for the banner's hover title. */
+const LLM_LIST_ASK_FAILED = 'something went wrong inside the app';
+function llmListAskFailed(err) {
+  return {ok:false, error:LLM_LIST_ASK_FAILED, detail:String((err && err.message) || err || '')};
 }
 
 /* A section that shows a provider nobody asked about asks for it, once,
@@ -94,4 +102,4 @@ function llmListScheduleAsk(run, defer) {
   return true;
 }
 
-if (typeof module !== 'undefined') module.exports = {LLM_LIST_DEADLINE_MS, LLM_LIST_CACHE, LLM_LIST_KICK, llmListCachePut, llmListCacheGet, llmListDeadlineLine, llmListAsk, llmListScheduleAsk, llmListErrorBanner, llmListErrorSpanHTML};
+if (typeof module !== 'undefined') module.exports = {LLM_LIST_DEADLINE_MS, LLM_LIST_CACHE, LLM_LIST_KICK, llmListCachePut, llmListCacheGet, llmListDeadlineLine, llmListAsk, llmListScheduleAsk, llmListErrorBanner, llmListErrorSpanHTML, LLM_LIST_ASK_FAILED, llmListAskFailed};

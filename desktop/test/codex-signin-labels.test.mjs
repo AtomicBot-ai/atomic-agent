@@ -35,9 +35,10 @@ function loadButtons(status, platform, oauth) {
     wizSubStatus: () => status,
     CHATGPT_OAUTH: oauth,
     chatgptOauthIsPrimary: S.chatgptOauthIsPrimary,
+    chatgptOauthCliState: S.chatgptOauthCliState,
   });
   runInContext(slice('function wizSubLoginButton(k)', '/** Signed out, as far as the login file says')
-    + ';this.label = wizSubLoginButton; this.cls = wizSubLoginCls;', ctx);
+    + ';this.label = wizSubLoginButton; this.cls = wizSubLoginCls; this.nextCls = wizSubNextCls;', ctx);
   return ctx;
 }
 const codex = {subscriptionCli: 'codex', word: 'Codex', plan: 'ChatGPT'};
@@ -71,6 +72,17 @@ test('one primary: the browser sign-in leads when the agent can do it and the CL
   assert.match(S.chatgptOauthBlockHTML(fresh(), esc, false, null), /class="btn btn-s" data-act="wiz:chatgptOauth"/);
   // Claude never steps back.
   assert.equal(loadButtons(SIGNED_OUT, 'MacIntel', fresh()).cls(claude), 'btn-p');
+});
+
+test('no Codex CLI and the browser sign-in leads: the disabled Use my subscription button is not a second primary', () => {
+  assert.equal(loadButtons(MISSING, 'MacIntel', fresh()).nextCls(codex), 'btn-s');
+  // Every other case keeps it primary.
+  assert.equal(loadButtons(MISSING, 'MacIntel', {...fresh(), supported: false}).nextCls(codex), 'btn-p');
+  assert.equal(loadButtons(SIGNED_IN, 'MacIntel', fresh()).nextCls(codex), 'btn-p');
+  assert.equal(loadButtons(SIGNED_OUT, 'MacIntel', fresh()).nextCls(codex), 'btn-p');
+  assert.equal(loadButtons(null, 'MacIntel', fresh()).nextCls(codex), 'btn-p');
+  assert.equal(loadButtons(MISSING, 'MacIntel', fresh()).nextCls(claude), 'btn-p');
+  assert.equal((renderer.match(/'<button class="btn ' \+ wizSubNextCls\(k\) \+ '(?: xs)?" data-act="wiz:next"/g) || []).length, 2);
 });
 
 test('"No Codex CLI?" only when the CLI is not installed', () => {
@@ -180,6 +192,24 @@ test('a sign-in that finished just as the restart was clicked is kept, not resta
 
 /* ------------------------------------------- Settings model list error */
 
+test('an ask that failed inside the app shows a fixed sentence; the raw words (Illegal invocation) only in the detail', async () => {
+  const timers = {setTimeout: () => 0, clearTimeout: () => {}};
+  for (const make of [() => { throw new TypeError('Illegal invocation'); }, () => Promise.reject(new TypeError('Illegal invocation'))]) {
+    const res = await L.llmListAsk(make, 'OpenRouter', 30000, timers);
+    assert.equal(res.error, L.LLM_LIST_ASK_FAILED);
+    assert.equal(res.detail, 'Illegal invocation');
+    assert.doesNotMatch(L.llmListErrorBanner(res.error).text, /Illegal invocation|could not ask/);
+    const span = L.llmListErrorSpanHTML(res.error, esc, res.detail);
+    assert.equal(span, '<span class="grow" title="Illegal invocation">Couldn\u2019t fetch the model list: something went wrong inside the app. Showing the current model only.</span>');
+  }
+  // renderer.js: the .catch uses the same helper, the detail is kept and reaches the banner.
+  const fetchFn = renderer.slice(renderer.indexOf('async function llmFetchModels('), renderer.indexOf('function llmTakeModels('));
+  assert.match(fetchFn, /\.catch\(llmListAskFailed\)/);
+  assert.match(fetchFn, /LLMP\.modelsErrDetail = res\.detail \|\| ''/);
+  assert.doesNotMatch(renderer, /could not ask for the list/);
+  assert.match(renderer, /llmListErrorSpanHTML\(section\.error, esc, LLMP\.modelsErrDetail\)/);
+});
+
 test('the model list error has no nested parentheses and no status code in its words', () => {
   const b = L.llmListErrorBanner('OpenRouter did not accept the saved key (401).');
   assert.equal(b.text, 'Couldn’t fetch the model list: OpenRouter did not accept the saved key. Showing the current model only.');
@@ -200,7 +230,7 @@ test('the model list error has no nested parentheses and no status code in its w
   const span = L.llmListErrorSpanHTML('OpenRouter did not accept the saved key (401).', esc);
   assert.equal(span, '<span class="grow" title="HTTP 401">Couldn’t fetch the model list: OpenRouter did not accept the saved key. Showing the current model only.</span>');
   const list = renderer.slice(renderer.indexOf('function llmCloudModelListHTML('));
-  assert.match(list.slice(0, 4000), /ic\('alert'\) \+ llmListErrorSpanHTML\(section\.error, esc\)/);
+  assert.match(list.slice(0, 4000), /ic\('alert'\) \+ llmListErrorSpanHTML\(section\.error, esc, LLMP\.modelsErrDetail\)/);
   assert.doesNotMatch(renderer, /Couldn’t fetch the model list \(/);
 });
 
