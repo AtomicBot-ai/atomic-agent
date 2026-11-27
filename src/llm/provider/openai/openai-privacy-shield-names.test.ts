@@ -92,7 +92,7 @@ describe("OpenAiProvider with the local name pass (ATO-2394)", () => {
     setPrivacyNameDetector(createLocalNameDetector({ model: () => model }));
     const fetchImpl = vi.fn(async () => okResponse());
     const result = await cloud(fetchImpl).complete({ prompt: TEXT, sessionId: "s1" });
-    const sent = String((fetchImpl.mock.calls[0]?.[1] as RequestInit).body);
+    const sent = String(((fetchImpl.mock.calls[0] as unknown[] | undefined)?.[1] as RequestInit).body);
     expect(sent).not.toContain("Иван");
     expect(sent).not.toContain("ivan@example.com");
     expect(sent).toContain("[NAME_1]");
@@ -107,7 +107,7 @@ describe("OpenAiProvider with the local name pass (ATO-2394)", () => {
     setPrivacyNameDetector(createLocalNameDetector({ model: () => model }));
     const fetchImpl = vi.fn(async () => okResponse());
     await cloud(fetchImpl).complete({ prompt: TEXT, sessionId: "s1" });
-    const sent = String((fetchImpl.mock.calls[0]?.[1] as RequestInit).body);
+    const sent = String(((fetchImpl.mock.calls[0] as unknown[] | undefined)?.[1] as RequestInit).body);
     expect(sent).toContain("Иван Петров");
     expect(sent).not.toContain("ivan@example.com");
   });
