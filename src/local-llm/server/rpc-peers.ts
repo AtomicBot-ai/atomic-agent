@@ -51,7 +51,7 @@ export function rpcServerArgs(peers: readonly string[] | undefined, device: stri
 
 /** Whether a `llama-server --help` text lists the `--rpc` option. */
 export function helpListsRpc(helpText: string): boolean {
-  return /(^|[\s,])--rpc\b/m.test(helpText);
+  return /(^|[\s,])--rpc(?![\w-])/m.test(helpText);
 }
 
 export const RPC_UNSUPPORTED_MESSAGE =
