@@ -40,3 +40,6 @@
 .mtgbusy{color:var(--ink-2)}
 .mtgrecover{top:16px;padding-top:12px}
 .mtgrecover p{margin:0;padding:0 14px}
+/* ATO-2749: the mic-denied card sits where the unfinished-meeting card does; that one waits until it is closed. */
+.mtgdenied ~ .mtgrecover{display:none}
+.mtgask{flex:1 1 100%;color:var(--ink-2)}
