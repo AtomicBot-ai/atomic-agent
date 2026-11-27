@@ -9,6 +9,7 @@ import type { ToolCallPayload } from "../../llm/grammar/tool-call-grammar.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
 import { compressToolResult, fullToolResult } from "../../compressor/result-compressor.js";
 import { knownSecretsFromEnv, maskSecretsDeep } from "../../error-reporting/secret-detector.js";
+import { processSecrets } from "../../error-reporting/process-secrets.js";
 import { withoutMcpAppPage } from "../../mcp/mcp-apps.js";
 import { evidenceMarks } from "./step-evidence.js";
 import type { SessionState } from "../../session/session-state.js";
@@ -160,7 +161,7 @@ export function commitStepBatch(args: StepCommitArgs): StepOutcome {
       // for the live `tool_result` frame only; the session file does not
       // need a copy of it.
       ...(result.details !== undefined
-        ? { details: maskSecretsDeep(withoutMcpAppPage(result.details), knownSecretsFromEnv()) }
+        ? { details: maskSecretsDeep(withoutMcpAppPage(result.details), [...knownSecretsFromEnv(), ...processSecrets()]) }
         : {}),
     });
     nextSession = applyStateEffects(nextSession, result, modelMode);

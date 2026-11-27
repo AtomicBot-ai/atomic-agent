@@ -1,5 +1,6 @@
 import type { ToolApprovalRecord } from "../approval/approval-ledger.js";
 import { knownSecretsFromEnv, maskSecrets } from "../error-reporting/secret-detector.js";
+import { processSecrets } from "../error-reporting/process-secrets.js";
 
 export interface RawToolResult {
   tool: string;
@@ -69,7 +70,7 @@ export function compressToolResult(
   const text = raw.output.replace(/\r\n/g, "\n").trimEnd();
   const normalised = UNMASKED_SUMMARY_TOOLS.has(raw.tool)
     ? text
-    : maskSecrets(text, knownSecretsFromEnv());
+    : maskSecrets(text, [...knownSecretsFromEnv(), ...processSecrets()]);
   const { text: tail, truncated: tailTruncated } = extractTail(
     normalised,
     merged.maxTailLines,

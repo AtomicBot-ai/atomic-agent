@@ -28,6 +28,7 @@ import { setDynamicResourceClassResolver } from "../../agent/tool-resource-class
 import { createRuntimeToolRegistry, registerRuntimeCoreTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope, runtimeKnownSecrets, isForeignLlamaServer } from "./runtime-tool-catalog.js";
 import { ModelProfileManager } from "../../llm/model-profile-manager.js";
 import { createApiKeyCommandSource, resetCommandIssuedSecrets } from "../../llm/provider/openai/api-key-command.js";
+import { clearProcessSecretsForTests, registerProcessSecret } from "../../error-reporting/process-secrets.js";
 import { CostAccumulator } from "../../llm/provider/cost-accumulator.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../../llm/model-profile.js";
 import { buildGrammar } from "../../llm/grammar/build-grammar.js";
@@ -518,6 +519,17 @@ describe("runtimeKnownSecrets (ATO-1077)", () => {
       ]);
     } finally {
       resetCommandIssuedSecrets();
+    }
+  });
+
+  it("masks the key serve runs with, which no env variable carries (ATO-1705)", () => {
+    registerProcessSecret("serve-api-key", "9f3c2a7e5b1d8c4a6e0f2b9d7c5a3e1f");
+    try {
+      expect(runtimeKnownSecrets({}, {})).toEqual([
+        { label: "serve-api-key", value: "9f3c2a7e5b1d8c4a6e0f2b9d7c5a3e1f" },
+      ]);
+    } finally {
+      clearProcessSecretsForTests();
     }
   });
 });

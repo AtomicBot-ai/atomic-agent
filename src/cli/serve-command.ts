@@ -4,6 +4,7 @@ import { getConfig } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import { McpElicitationBroker } from "../mcp/mcp-elicitation-broker.js";
 import { createStderrSink } from "../tracing/structured-logger.js";
+import { registerProcessSecret } from "../error-reporting/process-secrets.js";
 import { PrometheusRegistry } from "../tracing/prometheus-registry.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 
@@ -68,6 +69,18 @@ export async function serveCommand(args: string[]): Promise<number> {
     process.stdout.write(`${apiKey.key}\n`);
     return 0;
   }
+  // ATO-1705: name the key to the masker, wherever it came from (a key
+  // from --api-key or the key file is in no env variable), so tool output,
+  // traces and the transcript show `[redacted:serve-api-key]` in its place
+  // (a `ps` listing, a log the agent reads back).
+  registerProcessSecret("serve-api-key", apiKey.key);
+  // Read once, then out of the environment: every child serve starts
+  // (hooks, llama-server, a browser, cloudflared, a CLI provider) would
+  // otherwise inherit it, not only the shell tool that already drops it.
+  // This stops inheritance only: the launch environment itself stays
+  // readable by the same user (/proc/<pid>/environ on Linux, `ps eww` on
+  // macOS), since unsetenv does not touch the original env block.
+  delete process.env.ATOMIC_AGENT_API_KEY;
 
   // ATO-625: refuse the tunnel before anything boots, so a missing
   // cloudflared or a webhook set with no secret never opens a public address.
