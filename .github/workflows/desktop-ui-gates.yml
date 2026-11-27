@@ -1,0 +1,74 @@
+# Desktop UI gates (ATO-2763): two quick checks on the desktop CSS, without
+# building the app.
+# - lint:css: stylelint over desktop/renderer/**/*.css. No hex colours, no
+#   named colours, no rgb()/rgba()/hsl()/hsla() outside the token file
+#   (renderer/styles.css). Colours from before the gate are grandfathered by
+#   count per file in desktop/scripts/stylelint-baseline.json, so only NEW raw
+#   colours fail (desktop/scripts/lint-css.mjs).
+# - test:contrast: WCAG AA contrast of every text-on-background token pair in
+#   the light theme and both dark ones (desktop/test/token-contrast.test.mjs,
+#   pairs in desktop/test/contrast-pairs.json), plus no raw colour below the
+#   token block of styles.css (desktop/test/token-literals.test.mjs) and the
+#   ATO-820 hover/press check (desktop/test/ink-contrast.test.mjs).
+#
+# Neither needs Electron or a build, so dependencies install with
+# --ignore-scripts: electron's own postinstall (the binary download) and
+# scripts/ensure-electron.mjs are skipped. Otherwise the same Node pin and
+# `npm ci` in desktop/ as desktop.yml. No secrets are used.
+
+name: Desktop UI gates
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or SHA to check (empty = the ref this run was started from)"
+        required: false
+        default: ""
+        type: string
+  pull_request:
+    branches:
+      - rel/xp-build
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop-ui-gates.yml"
+
+concurrency:
+  group: desktop-ui-gates-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: css lint + token contrast
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || '' }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Same pin as desktop.yml.
+          node-version: "25.7"
+          check-latest: true
+
+      - name: Install desktop dependencies
+        run: npm ci --ignore-scripts
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+      - name: Raw-colour gate (stylelint)
+        run: npm run lint:css
+
+      - name: Token contrast
+        if: ${{ !cancelled() }}
+        run: npm run test:contrast

@@ -1,0 +1,65 @@
+{
+  "renderer/css/chat.css": {
+    "color-no-hex #000": 1,
+    "color-no-hex #fff": 2,
+    "function-disallowed-list rgba": 1
+  },
+  "renderer/css/composer.css": {
+    "function-disallowed-list rgba": 1
+  },
+  "renderer/css/dictate-anywhere.css": {
+    "color-no-hex #e5484d": 1
+  },
+  "renderer/css/file-preview.css": {
+    "color-no-hex #acb2bb": 1,
+    "color-no-hex #fff": 1
+  },
+  "renderer/css/pet.css": {
+    "color-no-hex #0b3d91": 1,
+    "color-no-hex #101112": 1,
+    "color-no-hex #17191b": 1,
+    "color-no-hex #1e2124": 1,
+    "color-no-hex #1f9d55": 1,
+    "color-no-hex #2a2e32": 1,
+    "color-no-hex #4a4e52": 1,
+    "color-no-hex #5b9dff": 1,
+    "color-no-hex #a6acb2": 1,
+    "color-no-hex #c4342f": 1,
+    "color-no-hex #d8dbde": 1,
+    "color-no-hex #e8a317": 1,
+    "color-no-hex #edeff1": 1,
+    "color-no-hex #f1f2f4": 1,
+    "color-no-hex #ff8a80": 1,
+    "color-no-hex #fff": 8,
+    "color-no-hex #ffffff": 1,
+    "function-disallowed-list rgba": 2
+  },
+  "renderer/css/popovers.css": {
+    "function-disallowed-list rgba": 3
+  },
+  "renderer/css/settings-data.css": {
+    "color-no-hex #fff": 1
+  },
+  "renderer/css/settings.css": {
+    "color-no-hex #b7791f": 1
+  },
+  "renderer/css/shell.css": {
+    "color-no-hex #000": 8
+  },
+  "renderer/css/studio-images.css": {
+    "color-no-hex #000": 1,
+    "color-no-hex #fff": 3,
+    "function-disallowed-list rgba": 3
+  },
+  "renderer/css/studio.css": {
+    "color-no-hex #1f4d36": 1,
+    "color-no-hex #2a82ff": 3,
+    "color-no-hex #2f7f5c": 1,
+    "color-no-hex #edeff1": 1,
+    "color-no-hex #fff": 6,
+    "function-disallowed-list rgba": 15
+  },
+  "renderer/css/workboard.css": {
+    "color-no-hex #c0392b": 1
+  }
+}

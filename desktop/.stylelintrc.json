@@ -1,0 +1,17 @@
+{
+  "rules": {
+    "color-no-hex": true,
+    "color-named": "never",
+    "function-disallowed-list": ["/^(rgb|rgba|hsl|hsla)$/i"]
+  },
+  "overrides": [
+    {
+      "files": ["renderer/styles.css"],
+      "rules": {
+        "color-no-hex": null,
+        "color-named": null,
+        "function-disallowed-list": null
+      }
+    }
+  ]
+}
