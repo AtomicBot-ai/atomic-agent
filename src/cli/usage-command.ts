@@ -10,7 +10,7 @@ import {
 import { formatUsageReportText } from "../session/usage-report-format.js";
 
 /**
- * ATO-2352, ATO-2442 — `atag usage`: tokens and cloud cost per day,
+ * ATO-2352, ATO-2442: `atag usage`: tokens and cloud cost per day,
  * across every session, from `<stateDir>/usage-history.json`, with the
  * tool, project and session splits and the "saved by local" estimate.
  * Read-only. Precedent: `ccusage daily`, Claude Code `/usage`, OpenCode
