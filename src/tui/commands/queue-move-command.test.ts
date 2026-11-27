@@ -47,6 +47,6 @@ describe("queueMoveLine (ATO-2476)", () => {
       queueMoveLine({ from: 2, to: 0 }, queued, () => true),
       queueMoveLine({ from: 9, to: 0 }, queued, () => true),
       queueMoveLine({ from: 1, to: 0 }, queued, () => false),
-    ]) expect(line).not.toMatch(/—/);
+    ]) expect(line).not.toMatch(/\u2014/);
   });
 });
