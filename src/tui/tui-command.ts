@@ -42,6 +42,7 @@ import {
   persistUserTuiShowSteps,
   persistUserTuiVimMode,
   persistUserTuiVerboseSteps,
+  persistUserTuiPet,
   persistUserTuiTheme,
   persistUserWhileBusySubmit,
 } from "./persist-user-tui-config.js";
@@ -222,6 +223,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
     vimMode: config.tui.vimMode,
     // Step notes under tool cards, off unless `/verbose` turned them on (ATO-34).
     verboseSteps: config.tui.verboseSteps,
+    // The pet in the top bar, off unless `/pet` turned it on (ATO-2513).
+    pet: config.tui.pet,
     // The composer's route controls read these on the home screen, and
     // the local-models slice only refreshes while the Models tab is
     // open — unseeded, a managed install mislabels itself `custom`
@@ -663,6 +666,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onShowStepsPersistRequested: (on) => persistShowSteps(on, bus),
         onVimModePersistRequested: (on) => persistVimMode(on, bus),
         onVerboseStepsPersistRequested: (on) => persistVerboseSteps(on, bus),
+        onPetPersistRequested: (on) => persistPet(on, bus),
         onTasksAutoRefreshStart: () => orchestrator.tasks.startAutoRefresh(),
         onTasksRefreshRequested: () => orchestrator.tasks.refresh(),
         onTaskDetailRequested: (taskId) =>
@@ -1410,6 +1414,19 @@ function persistVerboseSteps(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     bus.emit({ type: "runtime_info", line: `verbose setting not saved: ${msg}` });
+  }
+}
+
+/** `/pet` said in the chat what changed; only a failed write is reported. */
+function persistPet(
+  on: boolean,
+  bus: ReturnType<typeof makeTuiEventBus>,
+): void {
+  try {
+    persistUserTuiPet(on);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    bus.emit({ type: "runtime_info", line: `pet setting not saved: ${msg}` });
   }
 }
 

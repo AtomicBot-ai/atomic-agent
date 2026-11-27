@@ -254,6 +254,8 @@ export type TuiAction =
   | { type: "show_steps_set"; on: boolean }
   /** `/verbose on|off`: one plain note per finished step (ATO-34). */
   | { type: "verbose_steps_set"; on: boolean }
+  /** `/pet on|off`: the terminal pet in the top bar (ATO-2513). */
+  | { type: "pet_set"; on: boolean }
   /** `/vim on|off`: vim keys in the composer (`tui.vimMode`). */
   | { type: "vim_mode_set"; on: boolean }
   /** Open the slash palette with a leading-slash query. */

@@ -448,6 +448,8 @@ export interface TuiAppCallbacks {
   onVimModePersistRequested?(on: boolean): void;
   /** Persist verbose step notes into `tui.verboseSteps` (`/verbose`). */
   onVerboseStepsPersistRequested?(on: boolean): void;
+  /** Persist the terminal pet into `tui.pet` (`/pet`, ATO-2513). */
+  onPetPersistRequested?(on: boolean): void;
   /**
    * `/mouse on|off` — flip terminal mouse reporting live. `null` asks
    * for the current state to be reported without changing it. The

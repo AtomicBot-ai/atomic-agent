@@ -742,6 +742,12 @@ export interface TuiState {
    */
   verboseSteps: boolean;
   /**
+   * The terminal pet in the top bar (ATO-2513, `pet/pet-chip.tsx`).
+   * Seeded from `tui.pet` and flipped with `/pet` (persisted). Off by
+   * default.
+   */
+  pet: boolean;
+  /**
    * Spend of each step of the running turn (ATO-34, `/why`), keyed by
    * step index, from the `usage_updated` readings that arrive while it
    * runs. Reset when a turn starts and when the session on screen
@@ -1066,6 +1072,8 @@ export interface InitialTuiLayoutOptions {
   vimMode?: boolean;
   /** Seeds {@link TuiState.verboseSteps} from `tui.verboseSteps`. */
   verboseSteps?: boolean;
+  /** Seeds {@link TuiState.pet} from `tui.pet` (ATO-2513). */
+  pet?: boolean;
   /**
    * Seeds the local-models slice's config-derived facts (mode + chosen
    * model), so the composer's route controls are right on the home
@@ -1162,6 +1170,7 @@ export function createInitialTuiState(
     turnsExpandedById: {},
     showSteps: layout?.showSteps ?? false,
     verboseSteps: layout?.verboseSteps ?? false,
+    pet: layout?.pet ?? false,
     stepSpend: {},
     vimMode: layout?.vimMode ?? false,
     sessionPickerOpen: false,

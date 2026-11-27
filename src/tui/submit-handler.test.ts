@@ -1130,6 +1130,40 @@ describe("/why and /verbose (ATO-34)", () => {
   });
 });
 
+describe("/pet (ATO-2513)", () => {
+  function run(input: string, state: TuiState): Array<{ type: string; text?: string; on?: boolean }> {
+    const dispatched: Array<{ type: string; text?: string; on?: boolean }> = [];
+    handleEditorSubmit(
+      input,
+      state,
+      ((a: { type: string; text?: string; on?: boolean }) => dispatched.push(a)) as never,
+      stubCallbacks(),
+    );
+    return dispatched;
+  }
+
+  it("flips the live value, says so, and on / off set it", () => {
+    const off = createInitialTuiState(fakeSession());
+    expect(off.pet).toBe(false);
+    const first = run("/pet", off);
+    expect(first.find((a) => a.type === "pet_set")?.on).toBe(true);
+    expect(first.find((a) => a.type === "system_message")?.text).toContain("pet on");
+    expect(run("/pet", { ...off, pet: true }).find((a) => a.type === "pet_set")?.on).toBe(false);
+    expect(run("/pet off", off).find((a) => a.type === "pet_set")?.on).toBe(false);
+    expect(run("/pet on", { ...off, pet: true }).find((a) => a.type === "pet_set")?.on).toBe(true);
+  });
+
+  it("asks to persist the choice in tui.pet", () => {
+    const onPetPersistRequested = vi.fn();
+    const push = () => {};
+    const off = createInitialTuiState(fakeSession());
+    runSlashCommand("/pet", off, push, stubCallbacks({ onPetPersistRequested }));
+    expect(onPetPersistRequested).toHaveBeenLastCalledWith(true);
+    runSlashCommand("/pet", { ...off, pet: true }, push, stubCallbacks({ onPetPersistRequested }));
+    expect(onPetPersistRequested).toHaveBeenLastCalledWith(false);
+  });
+});
+
 describe("@ file mentions on submit (ATO-665)", () => {
   it("sends the expanded message on an idle submit", () => {
     const onMessageSubmitted = vi.fn();

@@ -217,6 +217,11 @@ export interface SlashDispatchResult {
    */
   readonly verboseStepsVerb?: "on" | "off" | "toggle";
   /**
+   * `/pet [on|off]` (ATO-2513): the terminal pet in the top bar. Bare
+   * `/pet` is `toggle`; the caller sets `TuiState.pet` and writes `tui.pet`.
+   */
+  readonly petVerb?: "on" | "off" | "toggle";
+  /**
    * `/vim [on|off]` — vim keys in the composer (ATO-662). Bare `/vim` is
    * `toggle`. The caller sets `TuiState.vimMode` and writes
    * `tui.vimMode` through `onVimModePersistRequested`.
@@ -560,6 +565,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return dispatchStepsSub(parsed.args);
     case "verbose":
       return dispatchVerboseSub(parsed.args);
+    case "pet":
+      return dispatchPetSub(parsed.args);
     case "vim":
       return dispatchVimSub(parsed.args);
     case "session":
@@ -883,6 +890,16 @@ function dispatchStepsSub(rawArgs: string): SlashDispatchResult {
   if (verb === "off") return pureActions([], { showStepsVerb: "off" });
   return pureActions([], {
     systemMessage: `usage: /steps [on|off] (got "${rawArgs.trim()}")`,
+  });
+}
+
+/** `/pet` toggles the terminal pet (ATO-2513); `on` / `off` set it. */
+function dispatchPetSub(rawArgs: string): SlashDispatchResult {
+  const verb = rawArgs.trim().toLowerCase();
+  if (verb.length === 0) return pureActions([], { petVerb: "toggle" });
+  if (verb === "on" || verb === "off") return pureActions([], { petVerb: verb });
+  return pureActions([], {
+    systemMessage: `usage: /pet [on|off] (got "${rawArgs.trim()}")`,
   });
 }
 

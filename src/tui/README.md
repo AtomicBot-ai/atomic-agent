@@ -43,6 +43,7 @@ This area owns terminal interface. Read [AGENTS.md](AGENTS.md) before changing i
 - [Swarm management](swarm/README.md)
 - [Plugins panel](plugins/README.md)
 - [Brand badges](brand/README.md)
+- [Terminal pet](pet/README.md)
 
 ## Ownership and dependencies
 

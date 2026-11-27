@@ -825,6 +825,19 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.pet",
+    label: "Terminal pet on/off",
+    group: "run",
+    slash: {
+      name: "pet",
+      description:
+        "a small face in the top bar that shows what the agent is doing: `/pet` toggles | `/pet on` | `/pet off`",
+      // After /verbose (17.75): another display switch.
+      rank: 17.8,
+    },
+  },
+  {
+    kind: "action",
     id: "setup.theme",
     label: "Theme…",
     group: "setup",
