@@ -200,7 +200,9 @@ test("classifiers map to the catalogue's enums", () => {
 test("ATO-773: the engine watchdog's log line becomes a fault code, never text", () => {
   assert.equal(C.engineFault("ggml_backend_cuda_buffer_type_alloc_buffer: allocating 9000 MiB on device 0: cudaMalloc failed: out of memory"), "oom");
   assert.equal(C.engineFault("couldn't bind HTTP server socket, hostname: 127.0.0.1, port: 19091"), "port_in_use");
-  assert.equal(C.engineFault("llama_model_load: error loading model: tensor 'blk.0' data is not within the file bounds"), "load_failed");
+  // ATO-1739: a tensor past the end of the file is a damaged (truncated) model file, as the agent names it.
+  assert.equal(C.engineFault("llama_model_load: error loading model: tensor 'blk.0' data is not within the file bounds"), "model_file_corrupt");
+  assert.equal(C.engineFault("llama_model_load: error loading model: llama_model_loader: failed to load model"), "load_failed");
   assert.equal(C.engineFault("dyld: Library not loaded: @rpath/libggml-metal.dylib"), "missing_lib");
   assert.equal(C.engineFault("Segmentation fault: 11"), "crash");
   assert.equal(C.engineFault("something nobody has seen before"), "unknown");
@@ -247,6 +249,44 @@ test("ATO-278: only the stderr line that names a failure is classified, and time
   // A backend check's "timeout" in the stderr is not the start timing out.
   assert.equal(C.backendFailReason("`atag models start` failed (exit 1)", "backend update check failed: timeout", null), "other");
   assert.equal(C.backendFailReason("the start timed out somewhere else", "", null), "other");
+});
+
+test("ATO-1739: a broken model file, a GPU driver and an early exit get their own words, not other", () => {
+  const failed = "`atag models start` failed (exit 1)";
+  // llama.cpp prints its generic "failed to load model" after the line that says why: the telling line is read.
+  const badMagic = "gguf_init_from_file_impl: invalid magic characters: 'xV4', expected 'GGUF'\n"
+    + "llama_model_load: error loading model: llama_model_loader: failed to load model from /Users/someone/models/m.gguf\n"
+    + "llama_model_load_from_file_impl: failed to load model";
+  assert.equal(C.backendFailReason(failed, badMagic, null), "model_file_corrupt");
+  const missing = "gguf_init_from_file: failed to open GGUF file '/Users/someone/models/m.gguf': No such file or directory\n"
+    + "llama_model_load_from_file_impl: failed to load model";
+  assert.equal(C.backendFailReason(failed, missing, null), "model_file_missing");
+  assert.equal(C.backendFailReason(failed, "ggml_cuda_init: failed to initialize CUDA: CUDA driver version is insufficient for CUDA runtime version", null), "gpu_driver");
+  // The watchdog's log line and the crash reason use the same words.
+  assert.equal(C.engineFault("gguf_init_from_file_impl: invalid magic characters: 'xV4', expected 'GGUF'"), "model_file_corrupt");
+  assert.equal(C.backendFailReason(null, null, "ggml_cuda_init: failed to initialize CUDA: CUDA driver version is insufficient"), "gpu_driver");
+  // Windows 0xC0000142 comes from the server's exit code, never from text: unsigned as Node reports it, or signed.
+  assert.equal(C.backendFailReason(failed, "", null, { code: 3221225794 }), "dll_init_failed");
+  assert.equal(C.backendFailReason(failed, "", null, { code: -1073741502 }), "dll_init_failed");
+  assert.equal(C.backendFailReason(failed, "", null, { code: 1 }), "early_exit");
+  // A recognised line outranks the exit code; no exit known is still other.
+  assert.equal(C.backendFailReason(failed, "cudaMalloc failed: out of memory", null, { code: 1 }), "oom");
+  assert.equal(C.backendFailReason(failed, "", null, null), "other");
+  for (const reason of ["model_file_missing", "model_file_corrupt", "gpu_driver", "dll_init_failed", "early_exit"]) {
+    assert.ok(CV.BACKEND_FAIL_REASONS.includes(reason), reason);
+    assert.equal(V.validateEvent("local_backend_crashed", { reason }, "main").props.reason, reason);
+  }
+  for (const fault of ["model_file_missing", "model_file_corrupt", "gpu_driver"]) assert.ok(CV.ENGINE_FAULTS.includes(fault), fault);
+});
+
+test("ATO-1739: a start reads the server's exit code from the agent's message, and only the word leaves", () => {
+  const exited = (code) => `llama-server exited (code ${code}) before it became healthy. Log tail:\n(no log)`;
+  assert.equal(SU.startFailReason("start_failed", { daemon: "start-failed", error: exited(3221225794) }, () => null), "dll_init_failed");
+  assert.equal(SU.startFailReason("start_failed", { daemon: "start-failed", error: "`atag models start` failed (exit 1)", daemonError: exited(3221225794) }, () => null), "dll_init_failed");
+  assert.equal(SU.startFailReason("start_failed", { daemon: "start-failed", error: exited(1) }, () => null), "early_exit");
+  assert.equal(SU.startFailReason("start_failed", { daemon: "start-failed", error: "llama-server exited (signal SIGKILL) before it became healthy. Log tail:\n(no log)" }, () => null), "early_exit");
+  const corrupt = SU.startFailReason("start_failed", { daemon: "start-failed", error: `${exited(1)}\ninvalid magic characters at /Users/someone/models/m.gguf` }, () => null);
+  assert.equal(corrupt, "model_file_corrupt");
 });
 
 test("ATO-278: a start's reason is read only for start_failed, from the bring-up's answer and the log line", () => {
