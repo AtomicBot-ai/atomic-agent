@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import * as configuration from "../../config/index.js";
 import { resetConfigCache } from "../../config/index.js";
 import type { AgentProfile, AgentProfileSet } from "../../agent-profiles/index.js";
 import type { TaskRecord } from "../../tasks/index.js";
@@ -37,6 +38,7 @@ describe("createBoardAssigneeResolver", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     delete process.env.ATOMIC_AGENT_STATE_DIR;
     resetConfigCache();
     rmSync(stateDir, { recursive: true, force: true });
@@ -75,5 +77,19 @@ describe("createBoardAssigneeResolver", () => {
     expect(run?.notes.join(" ")).toContain('"sonnet" is not set up here');
     const inherit = createBoardAssigneeResolver(() => setOf([profile({ model: "inherit" })]))("writer", context);
     expect(inherit?.notes).toEqual([]);
+  });
+
+  it("pins the run to a configured provider or to the provider a fusion role is set to", () => {
+    vi.spyOn(configuration, "getConfig").mockReturnValue({
+      llm: { providers: [{ id: "p1" }], runMode: { fusion: { roles: { build: "p1" } } } },
+    } as unknown as ReturnType<typeof configuration.getConfig>);
+    for (const model of ["p1", "build"]) {
+      const run = createBoardAssigneeResolver(() => setOf([profile({ model })]))("writer", context);
+      expect(run?.providerId, model).toBe("p1");
+      expect(run?.notes, model).toEqual([]);
+    }
+    // A role that is not set up keeps the usual model.
+    const review = createBoardAssigneeResolver(() => setOf([profile({ model: "review" })]))("writer", context);
+    expect(review?.providerId).toBeUndefined();
   });
 });
