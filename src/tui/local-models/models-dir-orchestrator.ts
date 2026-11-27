@@ -7,8 +7,10 @@ import type { ModelsDirAction, ModelsDirProgress } from "./models-dir-state.js";
  * src/cli/models-dir-command.ts) in-process, reading its lines: one
  * implementation of the move, the busy check, the move marker and the
  * config write. The move runs in the orchestrator's model-operation turn
- * (`inTurn`), so the TUI's own launch start, supervisor restart or `s`
- * waits for it instead of starting a model mid-copy.
+ * (`inTurn`), so the TUI's own launch start, restart or `s` queues behind
+ * it instead of starting a model mid-copy, and the supervisor holds off
+ * while `moving`. That turn is not a blocking switch: chat turns on a
+ * cloud model go on during the copy.
  *
  * Esc stops it through `signal` (never through SIGINT: the TUI owns
  * Ctrl+C), and the command puts every model back.
@@ -50,6 +52,11 @@ export class ModelsDirOrchestrator {
   private stop: AbortController | null = null;
 
   constructor(private readonly deps: ModelsDirOrchestratorDeps) {}
+
+  /** A move is under way, from Enter until the command has ended. */
+  get moving(): boolean {
+    return this.stop !== null;
+  }
 
   private get run(): (args: readonly string[], deps: ModelsDirDeps) => Promise<number> {
     return this.deps.run ?? runModelsDir;
