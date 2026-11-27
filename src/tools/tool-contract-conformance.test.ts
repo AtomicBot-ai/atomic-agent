@@ -57,6 +57,7 @@ import { buildSubagentRunTool } from "./subagent/index.js";
 import { TOOL_ROLES, descriptorsForRole, partitionByRole, roleAdmits } from "./tool-roles.js";
 import { confineReads } from "./read-scope/confine-reads.js";
 import { READ_TOOL_TARGETS } from "./read-scope/read-scope-targets.js";
+import { GUEST_GIT_TOOLS } from "./read-scope/guest-reads.js";
 
 import { OS_FS_READ_CONTRACT } from "./os/fs/fs-read-contract.js";
 import { OS_FS_LIST_CONTRACT } from "./os/fs/fs-list-contract.js";
@@ -514,7 +515,7 @@ describe("whole built-in tool catalog conformance", () => {
     for (const definition of registry.registrations) scoped.register(definition);
     const firstPhase = scoped.registrations.length;
     const confined = confineReads(scoped, { grantedDirs: () => [], readScope: () => "working-dir", approvals: dangerous });
-    expect(new Set(confined)).toEqual(new Set([...READ_TOOL_TARGETS.keys(), "os.shell.run", ...(registry.has("verify.run") ? ["verify.run"] : [])]));
+    expect(new Set(confined)).toEqual(new Set([...READ_TOOL_TARGETS.keys(), ...[...GUEST_GIT_TOOLS].filter((name) => registry.has(name)), "os.shell.run", ...(registry.has("verify.run") ? ["verify.run"] : [])]));
     const replacements = scoped.registrations.slice(firstPhase);
     expect(names(replacements)).toEqual(confined);
     for (const definition of replacements) {

@@ -260,6 +260,7 @@ export async function executeBatch(
           ? { userGroundingTexts: ctx.userGroundingTexts }
           : {}),
         ...(ctx.incognito === true ? { incognito: true } : {}),
+        ...(ctx.guest === true ? { guest: true } : {}),
         ...(ctx.providerId !== undefined ? { providerId: ctx.providerId } : {}),
         ...(ctx.model !== undefined ? { model: ctx.model } : {}),
         ...(ctx.turnId !== undefined ? { turnId: ctx.turnId } : {}),
