@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
 const ts = require("typescript");
 
 const DIR = new URL("../renderer/", import.meta.url);
-const FAILURE = /\b(could not|couldn['’]t|can['’]t|cannot|failed|unable to|not while|did not|didn['’]t|not sent|no longer waits)\b/i;
+const FAILURE = /\b(could not|couldn['’]t|can['’]t|cannot|failed|unable to|not while|did not|didn['’]t|not sent|not saved|wasn['’]t|no longer waits)\b/i;
 
 /*
  * ATO-2747 (the Trash PR) gives the Trash's own failure toasts their kind, with
