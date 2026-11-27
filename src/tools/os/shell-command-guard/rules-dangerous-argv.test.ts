@@ -418,12 +418,59 @@ describe("dangerous.secrets_store_move (ATO-1647)", () => {
   });
 
   it.each([
+    // xargs or find -exec supplies the subcommand (review round 1).
+    "echo env | xargs atag config secrets",
+    "echo get OPENAI_API_KEY | xargs atag config secrets",
+    "echo env | xargs -n1 atag config secrets",
+    "echo env | /usr/bin/xargs atomic-agent config secrets --quiet",
+    "echo env | xargs -I{} atag config secrets {}",
+    "echo env | xargs -I {} atag config secrets {}",
+    "echo env | xargs -I% atag config secrets %",
+    "echo env | xargs -I % npx atomic-agent config secrets %",
+    "echo env | xargs -I SUB atag config secrets SUB",
+    "find . -name x -exec atag config secrets {} ;",
+    // A computed word in the config or secrets slot (review round 1).
+    "atag $A secrets env",
+    "atag $A secrets keychain",
+    "atag $A secrets $S",
+    "atag config $S env",
+    "atag config $S $V",
+    "atag $(echo config) secrets env",
+    "atag config $(echo secrets) env",
+    "atag $A $B env",
+  ])("%s requires approval as dangerous", (line) => {
+    expect(guardLine(line)).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.secrets_store_move",
+    });
+  });
+
+  it.each([
+    "atag $A secrets get OPENAI_API_KEY",
+    "atag config $S get OPENAI_API_KEY",
+    "atag config $S set OPENAI_API_KEY",
+    "echo OPENAI_API_KEY | xargs atag config secrets unset",
+  ])("%s asks as secrets_value_access", (line) => {
+    expect(guardLine(line)).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.secrets_value_access",
+    });
+  });
+
+  it.each([
     "atomic-agent config secrets",
     "atomic-agent config secrets status",
     "atomic-agent config secrets status --json",
     "atomic-agent config secrets --help",
     "atomic-agent config get model",
     "echo config secrets",
+    "echo x | xargs atag config secrets status",
+    "echo model | xargs atag config get",
+    "atag config $S status",
+    "atag $A secrets status",
+    "cp $A $B $C",
+    "echo $A $B notes.md",
+    "atag config get $KEY",
   ])("%s stays on the ordinary path", (line) => {
     expectNotDangerous(line);
   });

@@ -775,6 +775,24 @@ function nextNonOption(
   return null;
 }
 
+/** Every `config secrets` subcommand; under `xargs` anything else is a placeholder. */
+const SECRETS_KNOWN_VERBS: ReadonlySet<string> = new Set([
+  "status",
+  ...SECRETS_VALUE_VERBS,
+  ...SECRETS_STORE_VERBS,
+]);
+
+const SECRETS_LINE_CHOSEN: ArgvCheck = {
+  id: "dangerous.secrets_store_move",
+  reason: "run a config secrets subcommand that is only known when the line runs",
+};
+
+/** `{}` of `xargs -I{}` and `find -exec`, or any unknown word when xargs runs the line. */
+function isPlaceholderVerb(verb: string, fedByXargs: boolean): boolean {
+  if (verb.includes("{}")) return true;
+  return fedByXargs && !SECRETS_KNOWN_VERBS.has(verb.toLowerCase());
+}
+
 /**
  * The agent touching saved keys through its own CLI: `atomic-agent
  * config secrets get|set|unset NAME` (ATO-1639) and `config secrets
@@ -786,20 +804,39 @@ function nextNonOption(
  * app and a person run these; like plugin consent they ask every time
  * below full trust and no `shell` grant covers them. Matched on the
  * words after `config`, not the binary name (`atag`, `npx atomic-agent`,
- * `node dist/index.js`); options between the words are skipped, and a
- * subcommand only known when the line runs (`secrets $S`) asks too.
+ * `node dist/index.js`); options between the words are skipped. A word
+ * only known when the line runs asks too: the subcommand (`secrets $S`),
+ * the `config` or `secrets` word before a known or computed subcommand
+ * (`atag $A secrets env`, `atag config $S env`, the way
+ * `gitInvocations` reads `$g push -f`), and a subcommand that `xargs`
+ * or `find -exec` supplies (`echo env | xargs atag config secrets`,
+ * `xargs -I{} atag config secrets {}`, `xargs -I% ... secrets %`).
  */
 function matchSecretsAccess(
   segments: readonly (readonly string[])[],
 ): ArgvCheck | null {
   for (const words of segments) {
-    for (let i = 0; i < words.length - 1; i += 1) {
-      if (words[i] !== "config") continue;
+    for (let i = 0; i < words.length; i += 1) {
+      const first = words[i]!;
+      const configComputed = !first.startsWith("-") && isComputedWord(first);
+      if (first !== "config" && !configComputed) continue;
       const secrets = nextNonOption(words, i + 1);
-      if (secrets === null || secrets.word.toLowerCase() !== "secrets") continue;
+      if (secrets === null) continue;
+      const secretsComputed = isComputedWord(secrets.word);
+      if (secrets.word.toLowerCase() !== "secrets" && !secretsComputed) continue;
+      const fedByXargs = words
+        .slice(0, i)
+        .some((word) => programName(word) === "xargs");
       const verb = nextNonOption(words, secrets.index + 1)?.word;
-      if (verb === undefined) continue;
+      if (verb === undefined) {
+        if (fedByXargs && !configComputed && !secretsComputed) return SECRETS_LINE_CHOSEN;
+        continue;
+      }
       const lower = verb.toLowerCase();
+      const verbComputed = isComputedWord(verb);
+      // Two computed words in a row (`cp $A $B $C`) say nothing about
+      // this CLI; only a literal subcommand after them makes a match.
+      if (configComputed && secretsComputed && !SECRETS_KNOWN_VERBS.has(lower)) continue;
       if (SECRETS_VALUE_VERBS.has(lower)) {
         return {
           id: "dangerous.secrets_value_access",
@@ -815,12 +852,11 @@ function matchSecretsAccess(
               : "move every saved API key between .env and the OS keychain (config secrets keychain)",
         };
       }
-      if (isComputedWord(verb)) {
-        return {
-          id: "dangerous.secrets_store_move",
-          reason: "run a config secrets subcommand that is only known when the line runs",
-        };
+      if (configComputed || secretsComputed) {
+        if (verbComputed) return SECRETS_LINE_CHOSEN;
+        continue;
       }
+      if (verbComputed || isPlaceholderVerb(verb, fedByXargs)) return SECRETS_LINE_CHOSEN;
     }
   }
   return null;
