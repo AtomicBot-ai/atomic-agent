@@ -1,5 +1,6 @@
 import { looksLikeSecretRef, readSecretSources } from "./secret-refs.js";
 import {
+  forgetSecretRef,
   resolveSecretRef,
   resolveSecretRefSync,
   type SecretSpawner,
@@ -58,6 +59,8 @@ export function applySavedSecretToEnv(
   const env = deps.env ?? process.env;
   const done = plain(name, value, env);
   if (done !== null) return done;
+  // A save reads the reference again: the key may have been rotated.
+  forgetSecretRef(name, value!);
   try {
     env[name] = resolveSecretRefSync(name, value!, {
       sources: readSecretSources(stateDir),
@@ -80,6 +83,7 @@ export async function applySavedSecretToEnvAsync(
   const env = deps.env ?? process.env;
   const done = plain(name, value, env);
   if (done !== null) return done;
+  forgetSecretRef(name, value!);
   try {
     env[name] = await resolveSecretRef(name, value!, {
       sources: readSecretSources(stateDir),

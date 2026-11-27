@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { buildCommandEnv } from "../sandbox/command-env.js";
@@ -124,6 +125,12 @@ export interface SecretRefPlan {
    * is a `bw.cmd` that Node cannot start without a shell.
    */
   verbatim?: boolean;
+  /**
+   * Windows `bw` only: the folder cmd.exe starts in. cmd.exe looks in its
+   * current folder before PATH, so a `bw.cmd` planted in the project the
+   * agent runs in would be picked; the home folder is the user's own.
+   */
+  cwd?: string;
 }
 
 /**
@@ -168,10 +175,12 @@ export function planSecretRef(
       const shell = env.ComSpec ?? env.COMSPEC ?? "cmd.exe";
       return {
         argv: [shell, "/d", "/s", "/c", `"bw get ${ref.field} "${ref.item}""`],
-        env: childEnv,
+        // Also tell cmd.exe not to search its current folder at all.
+        env: { ...childEnv, NoDefaultCurrentDirectoryInExePath: "1" },
         program: "bw",
         timeoutMs: interactive,
         verbatim: true,
+        cwd: homedir(),
       };
     }
     return { argv: ["bw", "get", ref.field, ref.item], env: childEnv, program: "bw", timeoutMs: interactive };

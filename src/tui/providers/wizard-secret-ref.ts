@@ -14,6 +14,7 @@
 import { getConfig } from "../../config/index.js";
 import { secretRefSource, type SecretRefSource } from "../../config/saved-secret-refs.js";
 import {
+  forgetSecretRef,
   resolveSecretRef,
   type SecretSpawner,
   type VaultFetcher,
@@ -67,6 +68,9 @@ export async function readWizardKeyReference(
   const ref = typed.trim();
   if (!looksLikeSecretRef(ref)) return null;
   const source = secretRefSource(ref) ?? "command";
+  // Read it fresh: saving the same reference again is how a rotated key
+  // is picked up, and the check must test the new value (review F2102.4).
+  forgetSecretRef(envVar, ref);
   try {
     const value = await resolveSecretRef(envVar, ref, {
       sources: deps.sources ?? readSecretSources(getConfig().paths.stateDir),

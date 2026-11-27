@@ -144,6 +144,23 @@ describe("readWizardKeyReference", () => {
     );
     expect(error).toContain("\nDetails: OPENROUTER_API_KEY");
   });
+
+  // Review round 1 (F2102.4): the same reference typed again after a key
+  // rotation is read again, so the check tests the new key, not the cached one.
+  it("reads the reference again when it is typed again", async () => {
+    const said =
+      (v: string): SecretSpawner =>
+      async () => ({ stdout: `${v}\n`, stderr: "", exitCode: 0, failure: null });
+    const deps = { sources: EMPTY_SECRET_SOURCES };
+    expect(await readWizardKeyReference(OP_REF, "OPENROUTER_API_KEY", { ...deps, spawn: said("sk-or-old") })).toEqual({
+      ok: true,
+      value: "sk-or-old",
+    });
+    expect(await readWizardKeyReference(OP_REF, "OPENROUTER_API_KEY", { ...deps, spawn: said("sk-or-new") })).toEqual({
+      ok: true,
+      value: "sk-or-new",
+    });
+  });
 });
 
 describe("describeUnreadableSecretRef", () => {

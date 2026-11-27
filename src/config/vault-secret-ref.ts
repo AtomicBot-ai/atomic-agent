@@ -14,7 +14,8 @@ import { MessageChannel, receiveMessageOnPort, Worker } from "node:worker_thread
  * - The token travels to `https://` only, or plain `http://` to this
  *   machine (a dev server): never in clear over the network.
  * - Redirects are refused, so the token is never sent on to another host.
- * - The answer is capped at 1 MiB; only `data.data[field]` as text is used.
+ * - The answer is read with a byte counter and dropped past 1 MiB, before
+ *   it is buffered; only `data.data[field]` as text is used.
  *
  * `.env` loading is synchronous, so the request can also run on a worker
  * thread while this one waits ({@link fetchVaultSync}).
@@ -111,13 +112,35 @@ export async function fetchVault(request: VaultRequest, timeoutMs: number): Prom
       redirect: "error",
       signal: AbortSignal.timeout(timeoutMs),
     });
-    const text = await res.text();
-    if (Buffer.byteLength(text, "utf8") > MAX_VAULT_RESPONSE_BYTES) return { failure: "too-large" };
+    const text = await readCappedText(res.body, MAX_VAULT_RESPONSE_BYTES);
+    if (text === undefined) return { failure: "too-large" };
     return { status: res.status, text };
   } catch (err) {
     const name = (err as { name?: unknown } | null)?.name;
     return { failure: name === "TimeoutError" || name === "AbortError" ? "timeout" : "network" };
   }
+}
+
+/**
+ * The body as text, or `undefined` once more than `max` bytes arrived:
+ * the stream is cancelled there, so an endless answer is never buffered.
+ */
+export async function readCappedText(body: ReadableStream<Uint8Array> | null, max: number): Promise<string | undefined> {
+  if (!body) return "";
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      void reader.cancel().catch(() => undefined);
+      return undefined;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 // The same request on a worker thread; plain JS, so it runs in the SEA build too.
@@ -128,8 +151,27 @@ const { url, headers, timeoutMs, port, shared, max } = workerData;
   let msg;
   try {
     const res = await fetch(url, { headers, redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
-    const text = await res.text();
-    msg = Buffer.byteLength(text, "utf8") > max ? { failure: "too-large" } : { status: res.status, text };
+    // Same byte counter as readCappedText: stop reading past the cap.
+    let text = "";
+    let tooLarge = false;
+    if (res.body) {
+      const reader = res.body.getReader();
+      const chunks = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > max) {
+          tooLarge = true;
+          reader.cancel().catch(() => {});
+          break;
+        }
+        chunks.push(value);
+      }
+      if (!tooLarge) text = Buffer.concat(chunks).toString("utf8");
+    }
+    msg = tooLarge ? { failure: "too-large" } : { status: res.status, text };
   } catch (err) {
     const name = err && err.name;
     msg = { failure: name === "TimeoutError" || name === "AbortError" ? "timeout" : "network" };
