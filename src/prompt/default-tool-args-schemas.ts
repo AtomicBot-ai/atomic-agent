@@ -232,6 +232,8 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       wait: integerSchema,
       kill: integerSchema,
       jobs: booleanSchema,
+      // ATO-2358: come back at the first output line matching it.
+      until: stringSchema,
     }),
   ],
 

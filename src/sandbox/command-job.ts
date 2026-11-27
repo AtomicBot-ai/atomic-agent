@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 
 import { CappedOutput } from "./capped-output.js";
 import { buildCommandEnv } from "./command-env.js";
@@ -47,6 +48,12 @@ export interface CommandJobOutput {
   truncated: boolean;
 }
 
+/** Text a stream produced, as it arrives (`CommandJob.onOutput`). */
+export type CommandJobOutputListener = (
+  text: string,
+  stream: "stdout" | "stderr",
+) => void;
+
 /** Why `waitFor` returned: the child closed, the wait ran out, the signal fired. */
 export type CommandJobWait = "exited" | "elapsed" | "aborted";
 
@@ -67,6 +74,13 @@ export interface CommandJob {
   exited(): CommandJobExit | null;
   /** A snapshot of what both streams have produced so far. */
   output(): CommandJobOutput;
+  /**
+   * Hear each piece of output as it arrives, decoded as UTF-8 per
+   * stream (a character split across chunks arrives whole). Uncapped:
+   * the listener sees bytes the capped snapshot later drops. Returns
+   * the unsubscribe.
+   */
+  onOutput(listener: CommandJobOutputListener): () => void;
   /**
    * Wait up to `ms` (`0` = unbounded) for the child to close, or until
    * `signal` aborts — which returns promptly and leaves the child
@@ -187,8 +201,25 @@ export function startCommandJob(
   // awaiting `exit` itself when a spawn fails.
   exitPromise.catch(() => undefined);
 
-  child.stdout.on("data", (chunk: Buffer) => stdout.append(chunk));
-  child.stderr.on("data", (chunk: Buffer) => stderr.append(chunk));
+  const listeners = new Set<CommandJobOutputListener>();
+  const decoders = {
+    stdout: new StringDecoder("utf8"),
+    stderr: new StringDecoder("utf8"),
+  };
+  const hear = (stream: "stdout" | "stderr", chunk: Buffer) => {
+    if (listeners.size === 0) return;
+    const text = decoders[stream].write(chunk);
+    if (text.length === 0) return;
+    for (const listener of listeners) listener(text, stream);
+  };
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdout.append(chunk);
+    hear("stdout", chunk);
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderr.append(chunk);
+    hear("stderr", chunk);
+  });
   // Nothing is written, so a far end that closed early is not an error.
   child.stdin.on("error", () => undefined);
   child.stdin.end();
@@ -207,6 +238,12 @@ export function startCommandJob(
         stdout: out.text,
         stderr: err.text,
         truncated: out.truncated || err.truncated,
+      };
+    },
+    onOutput(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
       };
     },
     waitFor(ms, signal) {

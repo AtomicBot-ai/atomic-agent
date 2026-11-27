@@ -236,7 +236,7 @@ function renderShellKilled(
  * exist now, that a job exists only once a command came back with its
  * id, and that one not kept ends with the turn that started it.
  */
-function unknownJob(ctx: ShellJobCallContext, id: number): CompressedToolResult {
+export function unknownJob(ctx: ShellJobCallContext, id: number): CompressedToolResult {
   const ids = ctx.jobs.list(ctx.sessionId).map((record) => record.id);
   const now =
     ids.length === 0
@@ -251,15 +251,16 @@ function unknownJob(ctx: ShellJobCallContext, id: number): CompressedToolResult 
 }
 
 /** Report a finished job the way a fresh result would, and forget it. */
-async function collect(
+export async function collect(
   jobs: ShellJobRegistry,
   record: ShellJobRecord,
+  notices: readonly string[] = [],
 ): Promise<CompressedToolResult> {
   const exit = await awaitJobExit(record.job);
   jobs.drop(record);
   const output = record.job.output();
   if (record.state === "killed") return renderShellKilled(record, exit, output);
-  return renderShellExit(record.facts, exit, output, { jobId: record.id });
+  return renderShellExit(record.facts, exit, output, { jobId: record.id, notices });
 }
 
 /**

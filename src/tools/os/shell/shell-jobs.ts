@@ -1,5 +1,6 @@
 import type { CommandJob } from "../../../sandbox/command-job.js";
 import type { ShellCommandFacts } from "./shell-result.js";
+import type { JobLineWatch } from "./shell-job-watch.js";
 
 /**
  * The jobs `os.shell.run` detached instead of killing (F47), per
@@ -46,6 +47,8 @@ export interface ShellJobRecord {
   /** `killed` is set when the stop is sent, before the process is gone. */
   state: ShellJobState;
   stopReason: ShellJobStopReason | null;
+  /** Made by the first `{"wait": id, "until": …}` (ATO-2358), then kept. */
+  lineWatch?: JobLineWatch;
 }
 
 export interface ShellJobRegistryOptions {
