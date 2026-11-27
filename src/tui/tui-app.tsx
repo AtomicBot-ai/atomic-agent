@@ -138,6 +138,7 @@ import { TasksCancelModal } from "./tasks/tasks-cancel-modal.js";
 import { UpdateModal } from "./update/update-modal.js";
 import { ProjectTrustModal } from "./project-trust/project-trust-modal.js";
 import { AppendLocalQuestionModal } from "./append-local-question/append-local-question-modal.js";
+import { appendLocalHotkey } from "./append-local-question/append-local-question-key-bindings.js";
 import { UpdateIndicator } from "./update/update-indicator.js";
 import { UpdateRestartPrompt } from "./update/update-restart-prompt.js";
 import { META_SLOT_SHRINK } from "./components/prompt-meta-bar.js";
@@ -1510,8 +1511,9 @@ export function TuiApp({
     state.updateStatus !== "done" &&
     // The folder trust question claims y / n / Esc the same way (ATO-1481).
     state.projectTrustPrompt === null &&
-    // So does the last-resort fallback question (ATO-1461).
-    state.appendLocalPrompt === null &&
+    // The last-resort fallback question (ATO-1461) does not: it answers
+    // to chords only, so the editor keeps focus and typing stays text
+    // (ATO-2760, `appendLocalHotkey`).
     // When the slash-command palette is open the editor must hold focus
     // regardless of the active debug tab so the operator can type the
     // command and drive ↑↓ / tab / enter selection. Panels that open the
@@ -2100,6 +2102,7 @@ export function TuiApp({
         key,
         state.vimMode && vimClaimsEsc(vimEscClaim.current),
       ) !== null ||
+      appendLocalHotkey(state, input, key) !== null ||
       codingModeMenuOwnsKey(state, key),
     [state],
   );

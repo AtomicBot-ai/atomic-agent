@@ -4,6 +4,7 @@ import { handleAppKey, type AppKeyContext } from "../app-key-bindings.js";
 import { fakeSession } from "../test-fixtures.js";
 import { createInitialTuiState } from "../tui-state.js";
 import { reduceTuiState } from "../agent-event-reducer.js";
+import { appendLocalHotkey } from "./append-local-question-key-bindings.js";
 
 function key(overrides: Partial<Key> = {}): Key {
   return {
@@ -46,11 +47,36 @@ describe("last-resort fallback question", () => {
     expect(reduceTuiState(asked, { type: "append_local_closed" }).appendLocalPrompt).toBeNull();
   });
 
-  it.each([["y", "keep"], ["K", "keep"], ["n", "off"], ["t", "off"]] as const)("answers %s as %s and closes", (input, answer) => {
+  it.each([["y", "keep"], ["Y", "keep"], ["d", "off"]] as const)("answers ctrl+%s as %s and closes (ATO-2760)", (input, answer) => {
     const ctx = context();
-    expect(handleAppKey(input, key(), ctx)).toBe(true);
+    expect(handleAppKey(input, key({ ctrl: true }), ctx)).toBe(true);
     expect(ctx.callbacks.onAppendLocalAnswered).toHaveBeenCalledWith(answer);
     expect(ctx.dispatch).toHaveBeenCalledWith({ type: "append_local_closed" });
+  });
+
+  it.each(["y", "k", "n", "t"])("treats a bare %s as typing, not an answer (ATO-2760)", (input) => {
+    // A message that starts with "now..." must not turn the fallback off.
+    const ctx = context();
+    handleAppKey(input, key(), ctx);
+    expect(ctx.callbacks.onAppendLocalAnswered).not.toHaveBeenCalled();
+    expect(ctx.dispatch).not.toHaveBeenCalledWith({ type: "append_local_closed" });
+    expect(appendLocalHotkey(ctx.state, input, key())).toBeNull();
+  });
+
+  it("leaves Esc to the editor while a draft is typed (ATO-2760)", () => {
+    const ctx = context();
+    ctx.state.inputValue = "now do";
+    expect(appendLocalHotkey(ctx.state, "", key({ escape: true }))).toBeNull();
+    ctx.state.inputValue = "";
+    expect(appendLocalHotkey(ctx.state, "", key({ escape: true }))).toBe("later");
+  });
+
+  it("lets a pending approval keep its ctrl+d (ATO-2760)", () => {
+    const ctx = context();
+    ctx.state.pendingApproval = {
+      approvalId: "ap", sessionId: "session", tool: "os.shell.run", category: "shell", reason: "r",
+    };
+    expect(appendLocalHotkey(ctx.state, "d", key({ ctrl: true }))).toBeNull();
   });
 
   it("puts the question off with Esc without answering", () => {
@@ -63,12 +89,13 @@ describe("last-resort fallback question", () => {
   it("waits behind the folder trust question, and ignores modified or other keys", () => {
     const ctx = context();
     ctx.state.projectTrustPrompt = { workingDir: "/repo", question: "Trust them?", questionId: "abc" };
+    expect(appendLocalHotkey(ctx.state, "y", key({ ctrl: true }))).toBeNull();
     expect(handleAppKey("y", key(), ctx)).toBe(true);
     expect(ctx.callbacks.onProjectTrustAnswered).toHaveBeenCalledWith("trust");
     expect(ctx.callbacks.onAppendLocalAnswered).not.toHaveBeenCalled();
     const other = context();
-    expect(handleAppKey("y", key({ ctrl: true }), other)).toBe(false);
-    expect(handleAppKey("z", key(), other)).toBe(false);
-    expect(other.callbacks.onAppendLocalAnswered).not.toHaveBeenCalled();
+    expect(appendLocalHotkey(other.state, "y", key({ meta: true, ctrl: true }))).toBeNull();
+    expect(appendLocalHotkey(other.state, "z", key({ ctrl: true }))).toBeNull();
+    expect(appendLocalHotkey(other.state, "z", key())).toBeNull();
   });
 });
