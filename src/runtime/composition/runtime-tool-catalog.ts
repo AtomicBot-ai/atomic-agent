@@ -1,4 +1,5 @@
 import type { AtomicAgentConfig } from "../../config/index.js";
+import type { ToolProgressSlide } from "../../agent/agent-contract.js";
 import { DEFAULT_MAX_AUDIO_BYTES, getConfig, getStateSecretPaths, getTrustConfigPaths } from "../../config/index.js";
 import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
@@ -244,10 +245,12 @@ export function registerRuntimeCoreTools(input: {
   browserBackend?: BrowserBackend;
   /** "My files" (ATO-1621): `files.search` is registered when there is an index. */
   fileIndex?: FileIndexApi;
+  /** ATO-2444: the session's event stream, for the slides `os.fs.write_pptx` lays out. Omitted: none. */
+  emitAgentLoopEventFor?: FusionDelegateDeps["emitEvent"];
 } & Pick<RegisterMemoryToolsOptions, "profileStore" | "notesStore" | "lessonStore" | "procedureStore">): void {
   const { config, toolRegistry, dangerous, sessionStore, resolveOriginalRequest, resolvePreviousReply, declaredInputs,
     shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, logger,
-    webSearchKeyHelp, canAskUser, fileIndex } = input;
+    webSearchKeyHelp, canAskUser, fileIndex, emitAgentLoopEventFor } = input;
 
   registerOsTools(toolRegistry, {
     ...dangerous,
@@ -285,6 +288,11 @@ export function registerRuntimeCoreTools(input: {
     // file said yes to) starts language servers without a question
     // (ATO-503). Read live, like the skill gate.
     isTrustedProject: (dir) => isProjectFolderTrusted(config.paths.userConfigFile, config.skills.projectTrust, dir),
+    // ATO-2444: a deck's slides reach the session's UIs as `tool_progress`, one per slide.
+    ...(emitAgentLoopEventFor === undefined ? {} : {
+      onPptxProgress: (sessionId: string, update: { fraction: number; elapsedMs: number; label: string; slide: ToolProgressSlide }) =>
+        emitAgentLoopEventFor(sessionId, { type: "tool_progress", tool: "os.fs.write_pptx", ...update }),
+    }),
   });
   // Computer use (ATO-525): screenshot, click, type, key — macOS, and
   // the screenshot alone on Windows and Linux (ATO-527); opt-in
