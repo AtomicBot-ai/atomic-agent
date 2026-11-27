@@ -51,6 +51,13 @@ export interface LlmFailureContext {
    */
   portHeldByOther?: boolean;
   /**
+   * `localModels.managed.port` is not the shipped one (ATO-2418): the
+   * operator set it, or the TUI moved it off a port something else held.
+   * Read for a refusal or a taken port on a managed engine only. Sent as
+   * `managed_port: default | custom`.
+   */
+  managedPortCustom?: boolean;
+  /**
    * The managed engine's fault in its current run, read from its log by
    * fixed strings (ATO-1279): `out_of_memory` / `server_crashed` /
    * `decode_failed` / `none` / `unknown`. Sent as `local_fault`.
@@ -296,7 +303,9 @@ function reportedCount(value: number): string {
  * and, for the managed engine, `engine_liveness`, `engine_liveness_reason`
  * and `engine_lock`: why the wait judged the process as it did (ATO-1275).
  * A 401 on the managed port with our engine not running adds
- * `port_holder: other_process` (ATO-1277).
+ * `port_holder: other_process` (ATO-1277), and since ATO-2418 the same
+ * `engine_liveness*`, `engine_lock` and `engine_exit_reason` as a refusal.
+ * Both add `managed_port` (`default` / `custom`).
  * A managed engine's failure adds `local_fault`, a fixed word read from
  * its log (ATO-1279).
  * A turn whose outage wait read the local engine adds `engine_wait_verdict`,
@@ -356,7 +365,14 @@ export function sanitizeLlmFailureTags(
         ? UNKNOWN
         : (ENGINE_ALIVE.get(context.engineLiveness) ?? UNKNOWN);
     tags.refused_wait_ms = bucketRefusedWait(context.outageWaitedMs ?? 0);
-    if (tags.local_engine !== "external" && context.engineLiveness !== undefined) {
+  }
+  // A taken port is read like a refusal (ATO-2418): why our engine is not
+  // the one answering on its port.
+  if ((context.connectionRefused === true || context.portHeldByOther === true) && tags.local_engine !== "external") {
+    if (context.managedPortCustom !== undefined) {
+      tags.managed_port = context.managedPortCustom ? "custom" : "default";
+    }
+    if (context.engineLiveness !== undefined) {
       tags.engine_liveness = fromVocabulary(context.engineLiveness, DAEMON_STATES);
       if (context.engineLivenessReason !== undefined) {
         tags.engine_liveness_reason = fromVocabulary(context.engineLivenessReason, ENGINE_LIVENESS_REASONS);
