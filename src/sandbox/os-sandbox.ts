@@ -54,17 +54,17 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-import {
-  bwrapSocketMaskArgs,
-  linuxLocalSocketMasks,
-  type OsSandboxSocketMask,
-} from "./os-sandbox-sockets.js";
+import { gitHookTargets } from "./git-hooks-path.js";
 import {
   bwrapProtectedArgs,
   findProtectedPaths,
   seatbeltProtectedWriteRule,
 } from "./sandbox-protected-paths.js";
-import { gitHookTargets } from "./git-hooks-path.js";
+import {
+  bwrapSocketMaskArgs,
+  linuxLocalSocketMasks,
+  type OsSandboxSocketMask,
+} from "./os-sandbox-sockets.js";
 
 export type OsSandboxMode = "off" | "workspace";
 
