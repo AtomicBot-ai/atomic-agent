@@ -624,7 +624,7 @@ async function deletedWhileWaiting(js: Js, check: Check, agent: StandIn, w: Brow
   const typed = await typeAndEnter(js, follow);
   const onB = await land(js, b, "smoke t26: chat B (h)");
   if (turn) await frame(js, w, { turnId: turn, kind: "done" });
-  await js<boolean>(`(() => { act(${q(`del:${a}`)}); return true; })()`);
+  await js<boolean>(`(() => { ${H} /* the turn's end re-read the agent's list, which has no staged chats: put A's row back, as the sidebar shows it */ if (!SESSIONS.some((s) => s.id === ${q(a)})) SESSIONS.unshift({id: ${q(a)}, t: 'smoke t26: chat A (h)', named: true, titled: true, updatedAt: Date.now(), status: '', turnCount: 2}); act(${q(`del:${a}`)}); return true; })()`);
   await settle(js);
   const deleted = agent.since(mark).some((s) => s.channel === "trash" && s.sessionId === a);   // ATO-2332
   const fresh = await newChat(js);
