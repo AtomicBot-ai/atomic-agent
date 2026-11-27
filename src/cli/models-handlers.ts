@@ -78,6 +78,8 @@ import {
   type DownloadJobKind,
   type DownloadJobMode,
   type DownloadNotifyChannel,
+  modelsDirUnreachableMessage,
+  unreachableModelsDir,
 } from "../local-llm/index.js";
 import { CORE_FALLBACK_LINE, CoreUnavailableError, shouldFallBackFromCore, type CoreFailureInfo } from "../local-llm/core/core-errors.js";
 import { retireIdleCore } from "../local-llm/core/core-sessions.js";
@@ -185,6 +187,9 @@ import {
 export async function runLocalModelsList(): Promise<number> {
   const cfg = getConfig();
   const dataDir = cfg.paths.localModelsDataDir;
+  // ATO-2503: models on an unplugged disk are not "not downloaded".
+  const offDisk = unreachableModelsDir();
+  if (offDisk !== null) process.stderr.write(`note: ${modelsDirUnreachableMessage(offDisk)}\n`);
   process.stdout.write(
     "ID                   | FAMILY   | SIZE   | CONTEXT | DL  | ACTIVE\n",
   );
@@ -192,7 +197,7 @@ export async function runLocalModelsList(): Promise<number> {
   // a model added on first run must show up (and be markable active)
   // in the same list as the curated ones.
   for (const m of listLocalModels()) {
-    const dl = isModelDownloaded(dataDir, m) ? "yes" : "no";
+    const dl = isModelDownloaded(dataDir, m) ? "yes" : offDisk !== null && !m.localPath ? "?" : "no";
     const active =
       cfg.localModels.managed.modelId === m.id &&
       cfg.localModels.mode === "managed"
@@ -515,7 +520,8 @@ export async function runLocalModelsStatus(): Promise<number> {
   if (mid && isKnownLocalModelId(mid)) {
     const m = getLocalModelDef(mid);
     const ok = isModelDownloaded(dataDir, m);
-    modelLine = `${mid}  ${ok ? "✓ downloaded" : "✗ not downloaded"}`;
+    const offDisk = ok || m.localPath ? null : unreachableModelsDir();
+    modelLine = `${mid}  ${ok ? "✓ downloaded" : offDisk !== null ? "✗ models folder not connected" : "✗ not downloaded"}`;
   }
   const st = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
   const health = st.healthy ? "ok" : st.authMismatch ? "key rejected" : st.loading ? "loading" : "down";
