@@ -15,7 +15,7 @@ import {
   type CliRunOutcome,
 } from "./run-cli-completion.js";
 import { SubscriptionCliProvider } from "./subscription-cli-provider.js";
-import { SubscriptionCliNotInstalledError } from "./subscription-cli-errors.js";
+import { SubscriptionCliInvocationError, SubscriptionCliNotInstalledError } from "./subscription-cli-errors.js";
 
 const SUCCESS = JSON.stringify({
   subtype: "success",
@@ -209,19 +209,27 @@ describe("SubscriptionCliProvider.completeStream", () => {
     expect(deltas).toEqual(["hello"]);
   });
 
-  it("fails loudly when the stream ends with no result envelope", async () => {
+  it("fails as a typed CLI failure when the stream ends with no result envelope (ATO-2522)", async () => {
     const provider = makeProvider({
       streamCliImpl: async function* () {
         yield JSON.stringify({ type: "system" });
       },
     });
     const iterator = provider.completeStream({ prompt: "x" });
-    await expect(
-      (async () => {
-        let next = await iterator.next();
-        while (!next.done) next = await iterator.next();
-      })(),
-    ).rejects.toThrow(/without a result envelope/);
+    const err = await (async () => {
+      let next = await iterator.next();
+      while (!next.done) next = await iterator.next();
+    })().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    // A bare Error reached Sentry with no `cli_*` tag and no next step.
+    expect(err).toBeInstanceOf(SubscriptionCliInvocationError);
+    expect((err as SubscriptionCliInvocationError).failureKind).toBe("no_result_envelope");
+    expect((err as SubscriptionCliInvocationError).exitCode).toBe(0);
+    expect((err as Error).message).toMatch(/^Claude Code finished without sending its answer/);
+    expect((err as Error).message).toContain("`claude update`");
+    expect((err as Error).message).not.toContain("envelope");
   });
 
   it("routes rate-limit notices to onNotice instead of failing", async () => {

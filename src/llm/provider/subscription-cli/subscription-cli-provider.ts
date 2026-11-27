@@ -20,6 +20,7 @@ import type { CliAdapterDescriptor } from "./cli-adapter-descriptor.js";
 import { resolveCliBinary } from "./resolve-cli-binary.js";
 import { offlineRefusalFor } from "../../offline-network.js";
 import { runCliCommand, type CliRunner } from "./run-cli-completion.js";
+import { noResultEnvelopeError } from "./cli-no-result-error.js";
 import {
   checkCliVersionOnce,
   noteOutdatedCli,
@@ -237,7 +238,8 @@ export class SubscriptionCliProvider implements LlmProvider {
     }
 
     if (final === null) {
-      throw new Error(`${this.binary} stream ended without a result envelope`);
+      // A typed failure with a fixed kind and a next step (ATO-2522).
+      throw noteOutdatedCli(noResultEnvelopeError(this.binary, this.descriptor.productName), verdict);
     }
     let parsed: CompletionResult;
     try {
