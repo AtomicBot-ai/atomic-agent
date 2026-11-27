@@ -582,8 +582,13 @@ Honestly degraded, and labelled as such in the UI:
   entry the TUI writes (`kind: "subscription-cli"`, `subscriptionCli.cli`,
   Claude's default `sonnet`, no model for Codex). Their model list never goes
   to the network: main answers it from `main/subscription-cli-models.ts`, a
-  copy of the agent's Claude list. Whether the CLI is installed and signed in
-  is not checked here yet.
+  copy of the agent's Claude list. Installed and signed in come from the
+  CLI's login file (`main/subscription-cli-detect.ts`, ATO-756), and then,
+  once per pick and kept for the app's session, from the CLI itself
+  (`main/subscription-cli-live-check.ts`, ATO-1684): `claude auth status` or
+  `codex login status`, and one tiny one-turn `claude -p` only for a Claude
+  Code too old to have the status command. A dead login shows the Sign in
+  step right away; a check that fails or hangs never blocks the step.
 - **The palette search forgives.** ⌘ K ranks commands, Settings sections,
   chats, tasks and skills with `renderer/fuzzy-match.js` (ATO-669): exact,
   prefix, word prefix or slash alias, substring and context matches keep

@@ -22654,14 +22654,15 @@ const WIZ_SUB = new Map();
 function wizSubStatus(k) {
   const cli = k && k.subscriptionCli;
   if (!cli || !BR || !BR.subscriptionStatus) return null;
-  if (WIZ_SUB.has(cli)) { const v = WIZ_SUB.get(cli); return v === 'asking' ? null : v; }
+  /* ATO-1684: laid over by the CLI's own answer, asked once (subscription-live-check.js). */
+  if (WIZ_SUB.has(cli)) { const v = WIZ_SUB.get(cli); return v === 'asking' ? null : (typeof subLiveStatus === 'function' ? subLiveStatus(cli, v) : v); }
   WIZ_SUB.set(cli, 'asking');
   Promise.resolve(BR.subscriptionStatus(cli))
     .then((r) => { WIZ_SUB.set(cli, r && r.ok && r.status ? r.status : {installed: null, signedIn: null}); if (WIZ.row && WIZ.row.subscriptionCli === cli) render(); })
     .catch(() => WIZ_SUB.set(cli, {installed: null, signedIn: null}));
   return null;
 }
-function wizSubRecheck(k) { if (k && k.subscriptionCli) WIZ_SUB.delete(k.subscriptionCli); WIZ.error = null; render(); }
+function wizSubRecheck(k) { if (k && k.subscriptionCli) { WIZ_SUB.delete(k.subscriptionCli); if (typeof subLiveForget === 'function') subLiveForget(k.subscriptionCli); } WIZ.error = null; render(); }
 /** Install steps per CLI and platform; the person runs them, the app never does. */
 function wizSubInstallCmd(cli) {
   const win = /win/i.test(navigator.platform || '');
@@ -22704,6 +22705,8 @@ function wizSubscriptionLines(k) {
   } else {
     lines.push({text: 'Found ' + wizService(k) + '. If the first answer says you are signed out, run ' + cli + (cli === 'codex' ? ' login' : '') + ' in ' + terminal + ' and sign in with your ' + k.plan + ' account.'});
   }
+  const live = typeof subLiveLine === 'function' ? subLiveLine(st, wizService(k), cli) : null;
+  if (live) lines.push(live);
   if (wizBillingSet(k.billingEnv)) {
     lines.push({warn: true, text: k.billingEnv + ' is set on ' + THIS_MACHINE + ', so the ' + k.subscriptionCli
       + ' CLI may bill your API account per token instead of your plan. Unset it to use only your subscription.'});
@@ -22750,7 +22753,8 @@ function wizSubPollTick() {
     if (!st) return;
     const before = WIZ_SUB.get(cli);
     WIZ_SUB.set(cli, st);
-    if (st.installed && st.signedIn === true) {
+    /* ATO-1684: an expired login keeps its file; wait for the CLI itself to say yes. */
+    if (st.installed && st.signedIn === true && !(typeof subLiveHoldsSignedOut === 'function' && subLiveHoldsSignedOut(cli))) {
       wizSubPollStop();
       ANX.subscriptionLoginSucceeded(cli, OB.open, Math.round((Date.now() - WIZ_SUB_POLL.startedAt) / 1000));
       /* Through act, so first run's router (obKey) takes it exactly as it takes the button. */

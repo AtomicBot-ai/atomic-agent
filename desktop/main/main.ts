@@ -18,6 +18,7 @@ import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.j
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { detectSubscriptionCli, isSubscriptionCli } from "./subscription-cli-detect.js";
 import { openLoginTerminal } from "./subscription-cli-login.js";
+import { wireSubscriptionLiveCheckIpc } from "./subscription-cli-live-check-ipc.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
 import { engineBusy, retryWhileEngineBusy } from "./engine-busy-retry.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
@@ -3306,6 +3307,8 @@ function wireIpc(client: AgentClient): void {
   wireWindowSnapshotIpc();
   // ATO-606: the Fusion workers' reasoning level (Settings › Models, `/runmode reasoning`).
   wireFusionReasoningIpc();
+  // ATO-1684: the subscription step's live sign-in check (subscription-cli-live-check-ipc.ts).
+  wireSubscriptionLiveCheckIpc();
   // ATO-1067: "Find on my network", model servers on other PCs of this network (view-only).
   wireLanDiscoveryIpc();
   // ATO-1040: the chat's goal (the TUI's /goal), read and controlled through the agent.
