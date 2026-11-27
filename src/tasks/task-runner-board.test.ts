@@ -143,6 +143,28 @@ describe("TaskRunner and the task board", () => {
     expect(store.get(second.id)?.status).toBe("completed");
   });
 
+  it("does not let waiting cards hold every slot of a scheduler pass (ATO-2498)", async () => {
+    const now = Date.now();
+    // B is due in an hour, so the ten cards waiting on it stay pending
+    // with the oldest sort key on every tick.
+    const blocker = store.create(
+      { sessionId: session.id, userMessage: "later", origin: "cli", maxAttempts: 1, scheduledFor: now + 3_600_000 },
+      now - 20,
+    );
+    const waiting: TaskRecord[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      const card = store.create({ sessionId: session.id, userMessage: `w${i}`, origin: "cli", maxAttempts: 1 }, now - 10 + i);
+      store.setBoardDependencies(card.id, [blocker.id]);
+      waiting.push(card);
+    }
+    const ready = store.create({ sessionId: session.id, userMessage: "ready", origin: "cli", maxAttempts: 1 }, now);
+    const drained = await runner.runDue(now, 10);
+    expect(drained.drained).toBe(1);
+    expect(store.get(ready.id)?.status).toBe("completed");
+    for (const card of waiting) expect(store.get(card.id)?.status).toBe("pending");
+    expect(store.get(blocker.id)?.status).toBe("pending");
+  });
+
   it("still runs a waiting card on an explicit Run now", async () => {
     const first = oneShot();
     const second = oneShot();
