@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import type { AuthThrottle } from "./auth-throttle.js";
+import { throttleAddress, type AuthThrottle } from "./auth-throttle.js";
 import type { DeviceSessions } from "./device-sessions.js";
 import { roleHasScope, type HttpRole, type HttpScope } from "./http-scopes.js";
 import { openaiError } from "./openai-errors.js";
@@ -104,7 +104,7 @@ export function authorizeDeviceCookie(
   if (getBearerToken(req) !== null || getHeader(req, "x-api-key") !== null) return "absent";
   const secret = readCookie(req, DEVICE_COOKIE);
   if (secret === null) return "absent";
-  const address = req.socket?.remoteAddress;
+  const address = throttleAddress(req);
   const wait = throttle ? throttle.retryAfter(address) : 0;
   if (wait > 0) {
     sendAuthThrottled(res, wait);

@@ -1,3 +1,5 @@
+import type { IncomingMessage } from "node:http";
+
 /**
  * ATO-1126: slow down token guessing on a server reachable from the network.
  *
@@ -71,4 +73,22 @@ export class AuthThrottle {
 export function isLoopbackAddress(address: string): boolean {
   const a = address.replace(/^::ffff:/i, "");
   return a === "::1" || /^127(?:\.\d{1,3}){3}$/.test(a);
+}
+
+/**
+ * ATO-2308: the address auth failures are counted against. Usually the
+ * socket's own address. `atag pair --remote` puts a cloudflared quick
+ * tunnel in front of serve's loopback port, so every caller from the
+ * internet arrives from 127.0.0.1 and would never be counted; cloudflared
+ * names the real caller in `cf-connecting-ip` (Cloudflare sets it at its
+ * edge). That header is trusted only when the socket itself is loopback,
+ * where the only other senders are programs on this machine. From any
+ * other socket it is ignored, so a remote caller cannot pick its own key.
+ */
+export function throttleAddress(req: Pick<IncomingMessage, "socket" | "headers">): string | undefined {
+  const socketAddress = req.socket?.remoteAddress;
+  if (!socketAddress || !isLoopbackAddress(socketAddress)) return socketAddress;
+  const raw = req.headers["cf-connecting-ip"];
+  const value = (Array.isArray(raw) ? raw[0] : raw)?.split(",")[0]?.trim();
+  return value && value.length <= 64 ? value : socketAddress;
 }

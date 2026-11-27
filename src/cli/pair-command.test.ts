@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 const serveOn = (host: string): ServeRecord => ({
-  pid: 42, bootPpid: 1, daemon: true, host, port: 8787, cwd: "/tmp", startedAt: "2026-11-27T10:00:00.000Z",
+  pid: 42, bootPpid: 1, daemon: true, host, port: 8787, cwd: "/tmp", startedAt: "2026-11-27T10:00:00.000Z", strongKey: true,
 });
 
 function deps(host = "0.0.0.0", extra: Partial<PairCommandDeps> = {}): PairCommandDeps {
@@ -102,6 +102,24 @@ describe("atag pair", () => {
     expect(events[startAt]).toBe("start:http://127.0.0.1:8787");
     expect(out.join("")).toContain("[QR https://quiet-fox.trycloudflare.com/pair/");
     expect(stopped).toBe(true);
+  });
+
+  it("--remote refuses a short serve key before the warning and never starts cloudflared", async () => {
+    let started = false;
+    const code = await pairCommand(["--remote"], deps("127.0.0.1", {
+      serveRecords: () => [{ ...serveOn("127.0.0.1"), strongKey: false }],
+      tunnel: {
+        findBinary: () => { started = true; return "/usr/local/bin/cloudflared"; },
+        start: () => { started = true; throw new Error("must not start"); },
+      },
+      waitForStop: async () => {},
+    }));
+    expect(code).toBe(1);
+    expect(started).toBe(false);
+    expect(err.join("")).toContain("shorter than 16 characters");
+    expect(err.join("")).not.toContain(REMOTE_WARNING);
+    const read = readDevices(dir);
+    expect(read.ok && read.data.pairings).toEqual([]);
   });
 
   it("--remote without cloudflared says how to install it and opens nothing", async () => {

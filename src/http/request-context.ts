@@ -4,7 +4,7 @@ import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { ApprovalBus } from "./approval-bus.js";
 import type { CompletionRegistry } from "./completion-registry.js";
 import type { UndeliveredSteerStore } from "./undelivered-steers.js";
-import type { AuthThrottle } from "./auth-throttle.js";
+import { throttleAddress, type AuthThrottle } from "./auth-throttle.js";
 import type { McpElicitationBroker } from "../mcp/mcp-elicitation-broker.js";
 import { secretEquals } from "./secret-equal.js";
 
@@ -77,7 +77,7 @@ export function enforceAuth(
   throttle?: AuthThrottle,
 ): boolean {
   if (apiKey === null) return true;
-  const address = req.socket?.remoteAddress;
+  const address = throttleAddress(req);
   /* ATO-1126: an address that kept guessing waits, and the comparison is
      constant-time, so the token cannot be read back from response timing. */
   const wait = throttle ? throttle.retryAfter(address) : 0;

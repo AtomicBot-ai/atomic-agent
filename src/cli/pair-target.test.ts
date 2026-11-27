@@ -5,7 +5,7 @@ import type { ServeRecord } from "./serve-reaper.js";
 
 /** ATO-2308: which address goes into the QR code of `atag pair`. */
 function record(host: string, port = 8787, pid = 100, startedAt = "2026-11-27T10:00:00.000Z"): ServeRecord {
-  return { pid, bootPpid: 1, daemon: true, host, port, cwd: "/tmp", startedAt };
+  return { pid, bootPpid: 1, daemon: true, host, port, cwd: "/tmp", startedAt, strongKey: true };
 }
 
 const alive = () => true;
@@ -28,6 +28,23 @@ describe("resolvePairTarget", () => {
       .toEqual({ ok: true, kind: "remote", originUrl: "http://127.0.0.1:9000" });
     expect(resolvePairTarget({ records: [record("0.0.0.0", 9000)], remote: true, url: null, isAlive: alive }))
       .toEqual({ ok: true, kind: "remote", originUrl: "http://127.0.0.1:9000" });
+  });
+
+  it("--remote refuses a serve whose key is short, or that does not say, and says how to fix it", () => {
+    const short = { ...record("127.0.0.1", 9000), strongKey: false };
+    const out = resolvePairTarget({ records: [short], remote: true, url: null, isAlive: alive });
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.error).toContain("shorter than 16 characters");
+      expect(out.error).toContain("Restart atag serve");
+    }
+    const old: ServeRecord = { pid: 100, bootPpid: 1, daemon: true, host: "127.0.0.1", port: 9000, cwd: "/tmp", startedAt: "2026-11-27T10:00:00.000Z" };
+    const unknown = resolvePairTarget({ records: [old], remote: true, url: null, isAlive: alive });
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok) expect(unknown.error).toContain("older version");
+    // Same Wi-Fi pairing is not affected: serve itself refuses a short key off loopback.
+    expect(resolvePairTarget({ records: [{ ...record("0.0.0.0"), strongKey: false }], remote: false, url: null, isAlive: alive, lanUrls: lan }).ok)
+      .toBe(true);
   });
 
   it("picks the newest live serve and skips dead records", () => {

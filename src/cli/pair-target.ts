@@ -1,4 +1,4 @@
-import { lanUrls as defaultLanUrls } from "./serve-args.js";
+import { lanUrls as defaultLanUrls, MIN_NETWORK_KEY_LENGTH } from "./serve-args.js";
 import type { ServeRecord } from "./serve-reaper.js";
 
 /**
@@ -9,6 +9,8 @@ import type { ServeRecord } from "./serve-reaper.js";
  * - Same Wi-Fi: serve must listen beyond this machine (`--host 0.0.0.0`
  *   or a LAN address); the QR then holds its LAN address.
  * - `--remote`: cloudflared fronts serve's loopback port, wherever serve listens.
+ *   Refused unless serve recorded a key of MIN_NETWORK_KEY_LENGTH or more,
+ *   the same bar `atag serve` sets for a network host (ATO-1126).
  * - `--url`: the operator's own address (a reverse proxy, a VPN name).
  */
 
@@ -66,6 +68,7 @@ export function resolvePairTarget(input: PairTargetInput): PairTarget {
   }
   const host = serve.host.trim();
   if (input.remote) {
+    if (serve.strongKey !== true) return { ok: false, error: weakKeyError(serve.strongKey === false) };
     const target = ANY.has(host) || LOOPBACK.test(host) ? "127.0.0.1" : host;
     return { ok: true, kind: "remote", originUrl: `http://${authority(target, serve.port)}` };
   }
@@ -84,4 +87,15 @@ export function resolvePairTarget(input: PairTargetInput): PairTarget {
     return { ok: true, kind: "lan", baseUrl: first, others };
   }
   return { ok: true, kind: "lan", baseUrl: `http://${authority(host, serve.port)}`, others: [] };
+}
+
+function weakKeyError(known: boolean): string {
+  const why = known
+    ? `the API key of the running atag serve is shorter than ${MIN_NETWORK_KEY_LENGTH} characters and could be guessed`
+    : "the running atag serve is from an older version and does not say how long its API key is";
+  return (
+    `--remote puts serve on the public internet, and ${why}. ` +
+    "Restart atag serve without --api-key (it then uses its generated key) or with a key of at least " +
+    `${MIN_NETWORK_KEY_LENGTH} characters (for example: export ATOMIC_AGENT_API_KEY=$(openssl rand -hex 24)), then run atag pair --remote again`
+  );
 }

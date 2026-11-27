@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import type { AuthThrottle } from "./auth-throttle.js";
+import { throttleAddress, type AuthThrottle } from "./auth-throttle.js";
 import { authorizeDeviceCookie } from "./device-auth.js";
 import type { DeviceSessions } from "./device-sessions.js";
 import { roleHasScope, type HttpRole, type HttpScope } from "./http-scopes.js";
@@ -75,7 +75,7 @@ export function authorizeRequest(
   if (input.apiKey === null || input.namedTokens.length === 0) {
     return enforceAuth(req, res, input.apiKey, throttle);
   }
-  const address = req.socket?.remoteAddress;
+  const address = throttleAddress(req);
   const wait = throttle ? throttle.retryAfter(address) : 0;
   if (wait > 0) {
     sendAuthThrottled(res, wait);

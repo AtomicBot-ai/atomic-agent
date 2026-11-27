@@ -6,7 +6,7 @@ import { createStderrSink } from "../tracing/structured-logger.js";
 import { PrometheusRegistry } from "../tracing/prometheus-registry.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 
-import { HELP, lanUrls, parseArgs } from "./serve-args.js";
+import { HELP, lanUrls, MIN_NETWORK_KEY_LENGTH, parseArgs } from "./serve-args.js";
 import { resolveServeApiKey, serveApiKeyNotice } from "./serve-api-key.js";
 import { watchForOrphaning } from "./serve-orphan-guard.js";
 import {
@@ -210,6 +210,7 @@ export async function serveCommand(args: string[]): Promise<number> {
       port: handle.port,
       cwd: parsed.workingDir,
       startedAt: new Date().toISOString(),
+      strongKey: apiKey.key.length >= MIN_NETWORK_KEY_LENGTH,
     });
     // Each new server tidies up after the generation before it. Failures
     // here are never fatal — the sweep is housekeeping, not startup — and
