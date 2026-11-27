@@ -38,15 +38,25 @@ export const ENGINE_FAILURE_STAGES = ["download", "verify", "backend", "blocked"
 export const ENGINE_RECOVERY_VIA = ["launch", "swap", "update", "start", "switch", "setup", "settings", "other"] as const;
 /** `local_backend_supervised.kind`: what the engine watchdog did (main/daemon-supervisor.ts SupervisorNotice, without `clear`). */
 export const SUPERVISOR_KINDS = ["restarting", "restarted", "restart_failed", "gave_up"] as const;
-/** `local_backend_supervised.fault`: the server log's failure line as a code (classify.ts engineFault); the line itself is never sent. */
-export const ENGINE_FAULTS = ["oom", "port_in_use", "load_failed", "missing_lib", "crash", "unknown"] as const;
+/**
+ * `local_backend_supervised.fault`: the server log's failure line as a code (classify.ts engineFault); the line itself is never sent.
+ * ATO-1739: a missing or damaged model file and a GPU driver are the agent's own words (src/local-llm/server/engine-exit-reason.ts).
+ */
+export const ENGINE_FAULTS = [
+  "oom", "port_in_use", "load_failed", "missing_lib", "crash", "model_file_missing", "model_file_corrupt", "model_unsupported", "gpu_driver", "unknown",
+] as const;
 /**
  * ATO-278: why the local model server did not start (`local_backend_started.reason`, start_failed only) or
  * died mid-session (`local_backend_crashed.reason`), as a code (classify.ts backendFailReason). The ENGINE_FAULTS
  * codes read from the error or the server log's failure line, plus the app's own time limit (`timeout`), a server
  * that came up and stopped answering while the start waited on it (`exited_after_ready`), and `other`. The text is never sent.
+ * ATO-1739: a server that exited before it ever answered, as its exit code says: Windows 0xC0000142 (`dll_init_failed`),
+ * or any other exit with no line recognised (`early_exit`).
  */
-export const BACKEND_FAIL_REASONS = ["oom", "port_in_use", "load_failed", "missing_lib", "crash", "timeout", "exited_after_ready", "other"] as const;
+export const BACKEND_FAIL_REASONS = [
+  "oom", "port_in_use", "load_failed", "missing_lib", "crash", "model_file_missing", "model_file_corrupt", "model_unsupported", "gpu_driver",
+  "dll_init_failed", "early_exit", "timeout", "exited_after_ready", "other",
+] as const;
 export const CODING_MODES = ["default", "plan", "auto", "bypass", "other"] as const;
 export const FIT = ["comfortable", "tight", "over"] as const;
 /** `model_picked.host_ram_gb`: ≤12 → 8, ≤24 → 16, ≤48 → 32, else 64 (renderer/analytics.js ramBucket). */

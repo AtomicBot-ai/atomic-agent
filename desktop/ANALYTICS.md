@@ -155,17 +155,26 @@ Notes on specific properties:
   sent); `quick_deaths` its crash-loop count; `after_ms` how long a restart
   took (restarted only); `engine` as above; `fault` (restart_failed and
   gave_up only) a code for the server log's failure line: oom / port_in_use /
-  load_failed / missing_lib / crash / unknown, or null when the log names
+  load_failed / missing_lib / crash / model_file_missing /
+  model_file_corrupt / model_unsupported / gpu_driver / unknown, or null when the log names
   none. The line itself, the restart's error text and its reason are never
-  sent.
+  sent. The model file and GPU words are the agent's own
+  (`src/local-llm/server/engine-exit-reason.ts`, mirrored in
+  `main/engine-exit-words.ts`, ATO-1739). model_unsupported is a good file
+  the engine is too old to read ("unknown model architecture", "unknown
+  ggml type"); the agent's own copy still counts it as model_file_corrupt.
 - `local_backend_started.reason` (ATO-278): why the start failed, on
   `result: start_failed` only (null otherwise), as a code: oom / port_in_use /
-  load_failed / missing_lib / crash (read from the one line that names a
+  load_failed / missing_lib / crash / model_file_missing /
+  model_file_corrupt / model_unsupported / gpu_driver (read from the one line that names a
   failure in the start's error text, its stderr tail, or the server log's
   current run, after the last launch marker), timeout (the app's own time
   limit on `models start`, nothing else), exited_after_ready (the server came
-  up, then stopped answering while the start waited on it), or other. The
-  error text, the stderr and the log line are never sent.
+  up, then stopped answering while the start waited on it), dll_init_failed
+  (the server exited with Windows 0xC0000142 before it answered),
+  early_exit (it exited before it answered and no line was recognised;
+  ATO-1739, only the exit code is read), or other. The error text, the
+  stderr and the log line are never sent.
 - `local_backend_crashed` (ATO-278): the managed local server the app had
   brought up died mid-session, as the engine watchdog saw it. Sent once per
   death, as the watchdog's recovery begins, and not again while a restart of

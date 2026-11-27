@@ -7,6 +7,8 @@
  * Pure: no fs, no Electron — the unit tests drive it straight.
  */
 
+import { ENGINE_EXIT_PATTERNS } from "./engine-exit-words.js";
+
 /** The marker every managed launch writes before llama.cpp says anything (src/local-llm/server/server-fault.ts LAUNCH_MARKER). */
 const LAUNCH_MARKER = "[atomic-agent] launch:";
 
@@ -26,11 +28,19 @@ export function currentRunText(logText: string): string {
   return at === -1 ? logText : logText.slice(at);
 }
 
-/** The last line naming a failure among the text's last 80 lines, cut to 160 characters, or null. */
+/**
+ * The line naming a failure among the text's last 80 lines, cut to 160
+ * characters, or null. ATO-1739: a line with one of the agent's own words
+ * (engine-exit-words, in its order) comes first, so a bad magic or a CUDA
+ * driver line is not hidden by the "failed to load model" printed after it;
+ * else the last line naming any failure.
+ */
 export function faultLineIn(text: unknown): string | null {
   if (typeof text !== "string" || !text) return null;
-  const lines = text.slice(-16_384).split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(-80);
-  const hit = [...lines].reverse().find((l) => FAULT_RE.test(l));
+  const lines = text.slice(-16_384).split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(-80).reverse();
+  let hit: string | undefined;
+  for (const [, re] of ENGINE_EXIT_PATTERNS) if ((hit = lines.find((l) => re.test(l)))) break;
+  hit ??= lines.find((l) => FAULT_RE.test(l));
   return hit ? (hit.length > 160 ? `${hit.slice(0, 157)}…` : hit) : null;
 }
 

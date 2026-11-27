@@ -4,8 +4,12 @@
  * pick an enum and never leaves this file.
  */
 
+import { engineExitWordIn, isDllInitFailed } from "../engine-exit-words.js";
 import { faultLineIn } from "../server-fault-line.js";
-import { PROVIDER_PRESETS, SUPERVISOR_KINDS } from "./catalog.js";
+import { BACKEND_FAIL_REASONS, ENGINE_FAULTS, PROVIDER_PRESETS, SUPERVISOR_KINDS } from "./catalog.js";
+
+type EngineFault = (typeof ENGINE_FAULTS)[number];
+type BackendFailReason = (typeof BACKEND_FAIL_REASONS)[number];
 
 /** Provider preset id, or `custom` for anything a user named themselves. */
 export function presetOf(id: unknown): string {
@@ -117,11 +121,14 @@ export function voiceError(code: unknown): "spawn" | "too_long" | "other" {
  * log, as a code. The line can hold paths and model names; only the code
  * leaves this file. No line at all is null.
  */
-export function engineFault(line: unknown): "oom" | "port_in_use" | "load_failed" | "missing_lib" | "crash" | "unknown" | null {
+export function engineFault(line: unknown): EngineFault | null {
   if (typeof line !== "string" || !line.trim()) return null;
   if (/library not loaded|cannot open shared object|shared librar|image not found|\.(dll|dylib|so)\b/i.test(line)) return "missing_lib";
   if (/out of memory|failed to allocate|insufficient memory|\boom\b/i.test(line)) return "oom";
   if (/address already in use|couldn'?t bind|EADDRINUSE/i.test(line)) return "port_in_use";
+  // ATO-1739: the agent's own words for a missing or damaged model file and a GPU driver (engine-exit-words).
+  const word = engineExitWordIn(line);
+  if (word) return word === "out_of_memory" ? "oom" : word;
   if (/error loading model|failed to (load|initiali[sz]e)/i.test(line)) return "load_failed";
   if (/segmentation fault|abort|SIGSEGV|SIGABRT/i.test(line)) return "crash";
   return "unknown";
@@ -136,9 +143,13 @@ export function engineFault(line: unknown): "oom" | "port_in_use" | "load_failed
  * Only the line that names a failure is classified (server-fault-line
  * faultLineIn), never a whole stderr: a loaded `ggml-*.dll` note or a
  * backend check's "timeout" is not why the start failed.
+ * ATO-1739: `exit` is the server's own exit before it ever answered
+ * (engine-exit-words serverEarlyExitIn), when the start knew it: Windows'
+ * 0xC0000142 is `dll_init_failed`, any other with no line recognised is
+ * `early_exit`. Only the code is read.
  */
-export function backendFailReason(error: unknown, stderr: unknown, faultLine: unknown):
-  "oom" | "port_in_use" | "load_failed" | "missing_lib" | "crash" | "timeout" | "exited_after_ready" | "other" {
+export function backendFailReason(error: unknown, stderr: unknown, faultLine: unknown, exit?: { code: number | null } | null):
+  BackendFailReason {
   const text = typeof error === "string" ? error.trim() : "";
   // agent-cli modelsStart: the server came up, then stopped answering while the start waited on it.
   if (/stopped answering while it was starting/i.test(text)) return "exited_after_ready";
@@ -148,6 +159,8 @@ export function backendFailReason(error: unknown, stderr: unknown, faultLine: un
     const fault = engineFault(line);
     if (fault && fault !== "unknown") return fault;
   }
+  if (exit && isDllInitFailed(exit.code)) return "dll_init_failed";
+  if (exit) return "early_exit";
   return "other";
 }
 
