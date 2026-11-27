@@ -277,6 +277,24 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     expect(complete.mock.calls[0]?.[0]).toMatchObject({ slotId: -1, cachePrompt: false, maxTokens: 8 });
   });
 
+  it("lets a server added to config.json after start use tool secrets, through the wiring the manager gets (ATO-2530 review round 2)", async () => {
+    const { input } = deps(); input.config.mcp.servers = [disabledServer];
+    const owner = await connect(input);
+    // The check the manager hands every client at spawn.
+    const mayUse = (owner.mcpManager as unknown as { deps: { mayUseToolSecrets?: (s: { name: string }) => boolean } }).deps.mayUseToolSecrets;
+    if (!mayUse) throw new Error("mayUseToolSecrets is not wired");
+    expect(mayUse({ name: "disabled" })).toBe(true);
+    expect(mayUse({ name: "later" })).toBe(false);
+    // `/mcp add` writes config.json first and connects after: the names fixed at start do not list it.
+    await mkdir(dirname(input.config.paths.userConfigFile), { recursive: true });
+    await writeFile(input.config.paths.userConfigFile, JSON.stringify({
+      mcp: { servers: [{ name: "later", enabled: false, transport: { kind: "stdio", command: "must-not-start" } }] },
+    }));
+    resetConfigCache();
+    expect(mayUse({ name: "later" })).toBe(true);
+    expect(mayUse({ name: "never-listed" })).toBe(false);
+  });
+
   it("preserves an unexpected manager-start rejection and does not invent failed-boot rollback", async () => {
     const { input } = deps(); input.config.mcp.servers = [disabledServer];
     const failure = new Error("manager start rejected"); let retained: mcp.McpManager | undefined;
