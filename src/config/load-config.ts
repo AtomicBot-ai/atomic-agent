@@ -318,6 +318,7 @@ export function loadConfig(): AtomicAgentConfig {
       thinking: user.localModels.thinking,
       reasoningBudgetTokens: user.localModels.reasoningBudgetTokens,
       drySampler: user.localModels.drySampler,
+      modelSampling: user.localModels.modelSampling,
       strictToolArgs: user.localModels.strictToolArgs,
       valueSources: localModelsValueSources(user.localModels),
       managed: { ...user.localModels.managed },

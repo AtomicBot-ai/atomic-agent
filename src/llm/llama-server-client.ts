@@ -9,6 +9,7 @@ import { parseProviderErrorBody } from "./provider/openai/parse-provider-error-b
 import { readContextOverflowCounts, type ContextOverflowCounts } from "./reliability/context-overflow-counts.js";
 import { createStreamRepetitionWatcher } from "./reliability/stream-repetition-watcher.js";
 import { drySamplerFields } from "./dry-sampler.js";
+import { resolveSamplingFields } from "./model-sampling-fields.js";
 import { takePromptProgress } from "./llama-prompt-progress.js";
 import { isGrammarRefusal } from "./grammar-refusal.js";
 import { isLoopbackUrlOnPort } from "../local-llm/server/managed-api-key.js";
@@ -561,6 +562,12 @@ export interface LlamaServerClientOptions {
    */
   drySampler?: boolean;
   /**
+   * Overrides `config.localModels.modelSampling` (ATO-2202): use the
+   * loaded model's recommended sampling (`request.modelSampling`) where
+   * the request and the env name none. Omitted, the config decides.
+   */
+  modelSampling?: boolean;
+  /**
    * Debug-level phase log for every streamed completion: sent, headers,
    * first byte, and how it ended (with the phase it was in when it was
    * aborted). Off unless the runtime passes one — the bootstrap client
@@ -611,6 +618,7 @@ export class LlamaServerClient {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly refreshApiKey: (url: string) => Promise<string | null>;
   private readonly drySamplerOverride: boolean | undefined;
+  private readonly modelSamplingOverride: boolean | undefined;
   private readonly logger:
     | (Pick<StructuredLogger, "debug"> & Partial<Pick<StructuredLogger, "warn">>)
     | undefined;
@@ -691,6 +699,7 @@ export class LlamaServerClient {
     this.refreshApiKey = options.refreshApiKey ??
       ((url) => refreshCoreKeyForUrl(getConfig().paths.localModelsDataDir, url));
     this.drySamplerOverride = options.drySampler;
+    this.modelSamplingOverride = options.modelSampling;
     this.logger = options.logger;
   }
 
@@ -1913,17 +1922,19 @@ export class LlamaServerClient {
       prompt: request.prompt,
       stream,
       cache_prompt: request.cachePrompt ?? true,
-      temperature: request.temperature ?? ENV_TEMPERATURE ?? 0.2,
-      top_p: request.topP ?? ENV_TOP_P ?? 0.95,
-      top_k: request.topK ?? ENV_TOP_K ?? 40,
+      // ATO-2202: the model's own sampling sits under the request and
+      // the env, opt-in like DRY until measured on real tasks.
+      ...resolveSamplingFields(
+        request,
+        { temperature: ENV_TEMPERATURE, topP: ENV_TOP_P, topK: ENV_TOP_K },
+        this.modelSamplingOverride ?? (config.localModels.modelSampling === true),
+      ),
       // The per-step cap first, then the turn's own ceiling (a fusion
       // worker's `workerMaxOutputTokens`), then the config knob.
       n_predict: resolveNPredict(
         request.maxTokens ?? request.maxOutputTokens,
         config.localModels.completionMaxTokens,
       ),
-      repeat_penalty: request.repeatPenalty ?? 1.1,
-      repeat_last_n: request.repeatLastN ?? 256,
     };
     // ATO-332: opt-in, off by default until measured on real tasks.
     if (this.drySamplerOverride ?? (config.localModels.drySampler === true)) {

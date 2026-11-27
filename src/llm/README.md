@@ -12,6 +12,7 @@ This area owns inference protocols and model profiles. Read [AGENTS.md](AGENTS.m
 - [server-template-policy.ts](server-template-policy.ts)
 - [llama-server-client.ts](llama-server-client.ts)
 - [dry-sampler.ts](dry-sampler.ts): the opt-in DRY anti-repeat fields for `/completion` (`localModels.drySampler`)
+- [model-sampling-fields.ts](model-sampling-fields.ts): who decides each `/completion` sampling field: request, env, the model's own recommendation ([gguf-sampling.ts](../local-llm/catalog/gguf-sampling.ts), opt-in `localModels.modelSampling`), built-in default
 - [slot-manager.ts](slot-manager.ts)
 - [toolcall-bench/](toolcall-bench/index.ts): the fixed tool-call reliability prompts, their scoring, and asking one question to several models (`models toolcall-bench`, `models ask`)
 - [transport-deadlines.ts](transport-deadlines.ts) and [offline-network.ts](offline-network.ts): the process-wide HTTP pool and the offline-mode kill switch composed into it ([offline mode](docs/offline-network.md), ATO-1084)

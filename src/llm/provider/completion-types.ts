@@ -4,6 +4,8 @@
  * agent loop stays provider-agnostic above the registry seam.
  */
 
+import type { ModelSamplingDefaults } from "../../local-llm/catalog/gguf-sampling.js";
+
 export type ToolCallTransport = "grammar" | "native_tools";
 
 /**
@@ -178,6 +180,14 @@ export interface CompletionRequest {
   seed?: number;
   repeatPenalty?: number;
   repeatLastN?: number;
+  /**
+   * The serving model's own recommended sampling (ATO-2202), attached by
+   * the llama-server provider from the model profile. The llama-server
+   * client uses it under this request's explicit fields and the
+   * `ATOMIC_AGENT_LLAMA_*` overrides, over its built-in defaults, and only
+   * when `localModels.modelSampling` is on. Ignored by other providers.
+   */
+  modelSampling?: ModelSamplingDefaults;
   sessionId?: string;
   signal?: AbortSignal;
   /**

@@ -1248,6 +1248,10 @@ export interface UserConfigFile {
 // ATO-332). `true` adds llama.cpp's DRY anti-repeat sampler fields to
 // every `/completion` request, window 256 tokens (`src/llm/dry-sampler.ts`); only llama.cpp
 // engines receive them. An older file has no field and reads as off.
+// Unversioned, additive: `localModels.modelSampling` (default `false`,
+// ATO-2202). `true` sends the loaded model's own recommended sampling
+// (`src/local-llm/catalog/gguf-sampling.ts`) where the request names
+// none. An older file has no field and reads as off.
 // Unversioned, additive: `skills.selfLearning` (`enabled` true,
 // `minSteps` 10, ATO-67). An older file has no block and reads the
 // defaults, so self-learning is on after an upgrade, as in OpenClaw.
