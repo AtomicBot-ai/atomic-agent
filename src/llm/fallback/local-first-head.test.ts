@@ -100,6 +100,32 @@ describe("localFirstTurnHead (ATO-2208)", () => {
     ).toEqual({ head: "local-b" });
   });
 
+  it("keeps a session too long for the local window in the cloud (ATO-2537)", () => {
+    expect(localFirstTurnHead(input({ tooLongFor: () => true })))
+      .toEqual({ head: null, reason: "too-long" });
+    expect(localFirstTurnHead(input({ tooLongFor: () => false })))
+      .toEqual({ head: "local-llama" });
+  });
+
+  it("no size check keeps the local head", () => {
+    expect(localFirstTurnHead(input())).toEqual({ head: "local-llama" });
+  });
+
+  it("takes a later local link whose window fits", () => {
+    expect(
+      localFirstTurnHead(
+        input({
+          providers: [
+            { id: "openrouter" },
+            { id: "local-small", local: true },
+            { id: "local-big", local: true },
+          ],
+          tooLongFor: (id) => id === "local-small",
+        }),
+      ),
+    ).toEqual({ head: "local-big" });
+  });
+
   it("with the head set on the chain, a failed local turn goes on in the cloud and says so", () => {
     const notices: ProviderSwitchNotice[] = [];
     const chain = new ProviderFallbackChain({
