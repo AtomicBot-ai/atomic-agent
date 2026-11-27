@@ -32,6 +32,7 @@ import { runModelsTasks } from "./models-tasks-command.js";
 import { runModelsFitTest } from "./models-fit-test-command.js";
 import { runModelsRpcWorker } from "./models-rpc-worker.js";
 import { runModelsShare } from "./models-share-command.js";
+import { runModelsDir } from "./models-dir-command.js";
 
 const HELP =
   [
@@ -112,6 +113,9 @@ const HELP =
     "     [--port <n>] [--cache]     one (llama.cpp rpc-server, port 50052; loopback unless --lan,",
     "                                no password: trusted networks only). On the main computer",
     "                                list it in localModels.managed.rpcServers",
+    "  dir [<folder>|--reset]        Show the models folder, or move every downloaded model to",
+    "      [--json]                  <folder> (an external disk, say) and use it from then on;",
+    "                                --reset moves them back to the default folder",
     "",
     "Embedding subcommands (memory-v2 phase 1B — second daemon for /embedding):",
     "  list-embeddings               Show embedding catalog + disk presence + daemon health",
@@ -186,6 +190,8 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return await runModelsFitTest(args.slice(1));
       case "share":
         return await runModelsShare(args.slice(1));
+      case "dir":
+        return await runModelsDir(args.slice(1));
       case "list":
         return runLocalModelsList();
       case "catalog":

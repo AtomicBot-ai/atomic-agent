@@ -37,6 +37,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `localModels.managed.parallel` (default `"auto"`).
 - `localModels.managed.swaFull` (default `"auto"`).
 - `localModels.managed.loraAdapters` (default absent: no adapters; `{ "<modelId>": { "path": "/abs/adapter.gguf", "scale"?: number } }` launches that model with `--lora`, or `--lora-scaled` when `scale` is not 1).
+- `localModels.managed.modelsDirOverride` (default absent: models stay in `<dataDir>/models`; a folder path, `~` allowed, keeps the downloaded models there, for example on an external disk. Written by `atomic-agent models dir <folder>`, which needs an empty folder and moves only model folders (a GGUF inside), leaving any other file where it is; removed by `models dir --reset`).
 - `localModels.embeddings.enabled` (default `false`).
 - `localModels.embeddings.modelId` (default `null`).
 - `localModels.embeddings.port` (default `19092`).

@@ -467,6 +467,9 @@ export function prepareLocalModelsInputs(
   };
   const loraAdapters = parseLoraAdapters(rawManaged.loraAdapters, "localModels.managed.loraAdapters");
   if (loraAdapters) managed.loraAdapters = loraAdapters;
+  if (rawManaged.modelsDirOverride !== undefined && rawManaged.modelsDirOverride !== null) {
+    managed.modelsDirOverride = parseNonEmptyString(rawManaged.modelsDirOverride, "localModels.managed.modelsDirOverride");
+  }
 
   const rawEmbeddings =
     (localModels.embeddings as Record<string, unknown> | undefined) ?? {};
