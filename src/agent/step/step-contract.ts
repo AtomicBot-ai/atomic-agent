@@ -171,6 +171,8 @@ export type LlmCompleteStream = (
 
 export interface StepDependencies {
   prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal, options?: import("../../session/workspace-context.js").WorkspacePrepareOptions) => import("../../session/workspace-context.js").SessionWorkspace;
+  /** Trusted path-scoped project rules of the session folder, for a local step (ATO-2443). */
+  preparePathRules?: (session: SessionState, signal?: AbortSignal) => readonly import("../../session/workspace-context.js").PathRule[];
   /** Publish completed cloud tool pairs even if the batch then cancels. */
   commitSession?: (state: SessionState) => void;
   modelModePolicy?: import("../../llm/model-mode.js").ModelModePolicy;
@@ -357,6 +359,8 @@ export interface StepApprovalPostureSource {
 
 export interface StepContext {
   workspace?: import("../../session/workspace-context.js").SessionWorkspace;
+  /** Path-scoped project rules for a local step (ATO-2443); a cloud step reads `workspace.pathRules`. */
+  localPathRules?: readonly import("../../session/workspace-context.js").PathRule[];
   session: SessionState;
   toolDescriptors: readonly ToolDescriptor[];
   capabilities: CapabilitiesSummary;

@@ -18,6 +18,8 @@ import { isChannelGuestSession } from "../../session/channel-guest-session.js";
 
 export interface RuntimePromptPreviewDependencies {
   prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal, options?: WorkspacePrepareOptions) => import("../../session/workspace-context.js").SessionWorkspace;
+  /** Path-scoped project rules for a local preview, as the local step reads them (ATO-2443). */
+  preparePathRules?: (session: SessionState, signal?: AbortSignal) => readonly import("../../session/workspace-context.js").PathRule[];
   workingDir: string;
   sessionStore: Pick<SessionStore, "load">;
   profileStore: Pick<ProfileStore, "listForPrompt">;
@@ -74,9 +76,11 @@ export function buildRuntimePromptInput(config: AtomicAgentConfig, deps: Runtime
     // The same window the step passes, so the preview budgets instructions as the real turn does (ATO-312).
     const workspace = modelMode?.mode === "cloud" ? deps.prepareWorkspace?.(session, true, undefined, { contextWindow }) : undefined;
     if (workspace) session = reconcileCloudSkills(session, workspace);
+    const pathRules = modelMode?.mode === "cloud" ? undefined : deps.preparePathRules?.(session);
     const descriptors = deps.effectiveToolDescriptors();
     return {
       ...(workspace ? { workspace } : {}),
+      ...(pathRules?.length ? { pathRules } : {}),
       session,
       ...(modelMode ? { modelMode } : {}),
       // Any model mode: a local native-tools link sends the schemas too (ATO-1678).

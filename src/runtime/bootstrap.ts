@@ -8,7 +8,7 @@ import { completePlain, PLAIN_COMPLETE_PARTITION, type PlainCompleteInput } from
 import { shapeStructuredAnswer, type StructuredAnswerInput } from "./structured-answer.js";
 import { createBackgroundCompaction } from "./compaction-background.js";
 import { createCompactionTokenCounter } from "./compaction-token-counter.js";
-import { createWorkspaceLoader } from "./session-workspace.js";
+import { createPathRulesLoader, createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills, recurringTaskTexts, startRuntimeSkillCurator } from "./composition/runtime-skills.js";
 import { createExperienceReviewer } from "./composition/runtime-experience-review.js";
 import { createRuntimeMentions } from "./composition/runtime-mentions.js";
@@ -606,6 +606,7 @@ export async function createAgentRuntime(
 
   const promptPreviewDeps = {
     prepareWorkspace: createWorkspaceLoader(config, logger),
+    preparePathRules: createPathRulesLoader(config),
     workingDir, sessionStore, profileStore, capabilities, effectiveToolDescriptors,
     getSkillCatalog: skillCatalogState.getSkillCatalog,
     getLiveProfile: connectedLocal.getLiveProfile,
@@ -698,6 +699,7 @@ export async function createAgentRuntime(
   // down the loop.
   const loopDeps = {
     prepareWorkspace: promptPreviewDeps.prepareWorkspace,
+    preparePathRules: promptPreviewDeps.preparePathRules,
     compaction: compaction.control,
     registry: toolRegistry,
     // A getter, so `runtime.setPlanMode` is observed by the next tool

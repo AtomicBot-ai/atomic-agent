@@ -35,7 +35,7 @@ import {
   formatProviderWaitNotice,
 } from "./format-provider-outage.js";
 import { reduceMemoryHealthWarning } from "./reduce-memory-health-warning.js";
-import { formatFeedLine } from "./format-event.js";
+import { formatFeedLine, formatPathRuleAttached } from "./format-event.js";
 import {
   formatFusionWorkerLine,
   fusionWorkerLineColor,
@@ -1396,6 +1396,9 @@ function reduceStepEvent(
         ...state,
         plan: event.plan.items.length > 0 ? event.plan : null,
       };
+    case "path_rule_attached":
+      // ATO-2443: one line in the chat, after the call that matched the rule.
+      return appendChatMessage(state, { role: "system", text: formatPathRuleAttached(event.path) });
     case "rare_tool_autoloaded":
       return appendFeed(state, {
         kind: "runtime_info",
