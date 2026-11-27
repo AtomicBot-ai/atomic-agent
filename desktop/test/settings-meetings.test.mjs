@@ -88,3 +88,44 @@ test("wiring: the pane's hooks in renderer.js, the script before renderer.js, ro
   assert.match(src("../main/meeting-ipc.ts"), /readMeetingPrefs\(app\.getPath\("userData"\)\)\.folder \?\? meetingDefaultDir\(\)/);
   assert.match(src("../main/meeting-system-ipc.ts"), /readMeetingPrefs\(app\.getPath\("userData"\)\)\.systemAudio/);
 });
+
+test("Delete when the notes cannot be moved: the row goes, and a red line says the notes stayed", async () => {
+  const before = globalThis.BR.meetingTrash;
+  globalThis.BR.meetingTrash = async (n) => { calls.push(["trash", n]); return { ok: false, error: "notes-trash-failed" }; };
+  try {
+    M.meetingsTabEntered();
+    for (let i = 0; i < 5; i++) await tick();
+    assert.equal(M.MS.items.length, 1);
+    M.meetingsAct("delete:" + NAME);
+    M.meetingsAct("deleteConfirm:" + NAME);
+    for (let i = 0; i < 5; i++) await tick();
+    assert.equal(M.MS.items.length, 0, "the transcript is in the Trash");
+    assert.equal(toasts.at(-1).kind, "bad");
+    assert.match(M.MS.err, /notes could not be/);
+    assert.equal(M.MS.msg, null, "no 'and its notes were moved' line");
+  } finally {
+    globalThis.BR.meetingTrash = before;
+  }
+});
+
+test("the speaker model can be removed, or downloaded from the offer, with the switch off", async () => {
+  const prefs = M.MS.prefs, voices = M.MS.voices;
+  try {
+    M.MS.busy = null; M.MS.download = null;
+    M.MS.prefs = { folder: null, systemAudio: true, voices: false };
+    M.MS.voices = { known: true, supported: true, installed: true };
+    assert.match(M.meetingsTab(), /data-act="meetings:voicesRemove"/);
+    M.MS.voices = { known: true, supported: true, installed: false, downloadBytes: 56_000_000 };
+    assert.match(M.meetingsTab(), /data-act="meetings:voicesGet"/);
+    let installs = 0;
+    globalThis.BR.meetingVoicesInstall = async () => { installs++; return { ok: true }; };
+    calls.length = 0;
+    M.meetingsAct("voicesGet");
+    for (let i = 0; i < 3; i++) await tick();
+    assert.equal(installs, 1);
+    assert.deepEqual(calls.find((c) => c[0] === "set"), ["set", { voices: true }], "Download turns the switch on");
+  } finally {
+    delete globalThis.BR.meetingVoicesInstall;
+    M.MS.prefs = prefs; M.MS.voices = voices; M.MS.download = null;
+  }
+});

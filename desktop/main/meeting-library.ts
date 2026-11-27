@@ -9,7 +9,7 @@
  * The minutes the meeting-notes skill writes next to it are
  * `Meeting … transcript.notes.md`; Delete moves both to the Trash.
  */
-import { readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export const MEETING_FILE_RE = /^Meeting (\d{4})-(\d{2})-(\d{2}) (\d{2})-(\d{2}) transcript\.txt$/;
@@ -69,4 +69,29 @@ export function listMeetings(folder: string): MeetingFile[] {
   }
   out.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0) || (a.name < b.name ? 1 : -1));
   return out.slice(0, MEETING_LIST_MAX);
+}
+
+export type MeetingTrashResult = { ok: true } | { ok: false; error: "not-found" | "trash-failed" | "notes-trash-failed" };
+
+/**
+ * Delete: the transcript, then its notes, to the Trash (`trash` is
+ * electron's shell.trashItem). Notes that stay behind (locked by an editor,
+ * no permission) are "notes-trash-failed", so the page can say so.
+ */
+export async function trashMeeting(folder: string, name: unknown, trash: (path: string) => Promise<void>): Promise<MeetingTrashResult> {
+  const path = meetingFilePath(folder, name);
+  if (!path || !existsSync(path)) return { ok: false, error: "not-found" };
+  try {
+    await trash(path);
+  } catch {
+    return { ok: false, error: "trash-failed" };
+  }
+  const notes = join(folder, meetingNotesName(String(name)));
+  if (!existsSync(notes)) return { ok: true };
+  try {
+    await trash(notes);
+  } catch {
+    return { ok: false, error: "notes-trash-failed" };
+  }
+  return { ok: true };
 }

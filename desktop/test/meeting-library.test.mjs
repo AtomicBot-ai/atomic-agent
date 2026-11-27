@@ -36,3 +36,23 @@ test("a name from the page reaches only a transcript in the folder", () => {
   }
   assert.ok(Number.isNaN(L.meetingNameTime("Meeting 2026-02-31 10-00 transcript.txt")));
 });
+
+test("Delete: notes that cannot be moved to the Trash are reported, not swallowed", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mtg-trash-"));
+  const name = "Meeting 2026-11-27 14-05 transcript.txt";
+  writeFileSync(join(dir, name), "a");
+  writeFileSync(join(dir, L.meetingNotesName(name)), "notes");
+  const moved = [];
+  const lockedNotes = async (p) => {
+    if (p.endsWith(".notes.md")) throw new Error("EBUSY");
+    moved.push(p);
+  };
+  assert.deepEqual(await L.trashMeeting(dir, name, lockedNotes), { ok: false, error: "notes-trash-failed" });
+  assert.deepEqual(moved, [join(dir, name)]);
+  const both = [];
+  writeFileSync(join(dir, name), "a");
+  assert.deepEqual(await L.trashMeeting(dir, name, async (p) => { both.push(p); }), { ok: true });
+  assert.deepEqual(both, [join(dir, name), join(dir, L.meetingNotesName(name))]);
+  assert.deepEqual(await L.trashMeeting(dir, "../" + name, async () => {}), { ok: false, error: "not-found" });
+  assert.deepEqual(await L.trashMeeting(dir, name, async () => { throw new Error("no"); }), { ok: false, error: "trash-failed" });
+});

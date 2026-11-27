@@ -36,6 +36,7 @@ const MS_REASONS = {
   'not-found': 'That file is gone. It may have been moved or deleted.',
   'open-failed': 'No app on this computer opened that file.',
   'trash-failed': 'The file could not be moved to the Trash.',
+  'notes-trash-failed': 'The transcript was moved to the Trash, but its notes could not be. They are still in the folder; an app may have them open.',
   'write-failed': 'The setting could not be saved.',
 };
 
@@ -174,7 +175,11 @@ function meetingsAct(what) {
     msCall(verb, () => BR.meetingSettingsSet({[verb]: on}), (r) => { msTake(r); if (verb === 'voices') msVoicesRefresh(); });
     return;
   }
-  if (verb === 'voicesGet') { MS.download = 0; msRepaint(); BR.meetingVoicesInstall().then(() => msVoicesRefresh(), () => msVoicesRefresh()); return; }
+  if (verb === 'voicesGet') {
+    // Download (also the after-recording offer) means "tell voices apart": the switch goes on with it.
+    if (!(MS.prefs && MS.prefs.voices)) BR.meetingSettingsSet({voices: true}).then((r) => { msTake(r); msRepaint(); }, () => {});
+    MS.download = 0; msRepaint(); BR.meetingVoicesInstall().then(() => msVoicesRefresh(), () => msVoicesRefresh()); return;
+  }
   if (verb === 'voicesCancel') { BR.meetingVoicesCancel().catch(() => {}); return; }
   if (verb === 'voicesRemove') { msCall('voices', () => BR.meetingVoicesRemove(), () => { MS.msg = 'The speaker model was removed. It downloads again the next time you record.'; msVoicesRefresh(); }); return; }
   if (verb === 'deleteCancel') { MS.confirm = null; msRepaint(); return; }
@@ -186,8 +191,11 @@ function meetingsAct(what) {
   else if (verb === 'delete') { MS.confirm = arg; msRepaint(); }
   else if (verb === 'deleteConfirm') {
     MS.confirm = null;
-    msCall(arg, () => BR.meetingTrash(arg), () => {
-      MS.items = (MS.items || []).filter((x) => x.name !== arg);
+    const drop = () => { MS.items = (MS.items || []).filter((x) => x.name !== arg); };
+    // notes-trash-failed: the transcript is gone, its notes stayed; the row goes, the red line says so.
+    const run = () => BR.meetingTrash(arg).then((r) => { if (r && r.error === 'notes-trash-failed') drop(); return r; });
+    msCall(arg, run, () => {
+      drop();
       MS.msg = msTitle(item) + (item.notes ? ' and its notes were' : ' was') + ' moved to the Trash.';
     });
   }
@@ -243,7 +251,8 @@ function meetingsTab() {
   const sys = msSwitchRow('systemAudio', 'Record the other side of the call', 'Your microphone is Me, the sound of the call is Them. On a Mac this asks for Screen and System Audio Recording once.');
   const voices = msSwitchRow('voices', 'Tell speakers apart by voice', msVoicesText(MS.voices, MS.download));
   const va = msVoicesActions();
-  const vrow = va && MS.prefs && MS.prefs.voices ? '<div class="ms-vacts">' + va + '</div>' : '';
+  // Shown with the switch off too: Download for the after-recording offer, Remove for a model already here.
+  const vrow = va ? '<div class="ms-vacts">' + va + '</div>' : '';
   const rows = MS.items || [];
   const head = '<div class="set-sechead mf-head"><h4 class="set-plgtitle">Saved meetings</h4>'
     + (rows.length ? '<span class="set-counts">' + rows.length + (rows.length === 1 ? ' meeting' : ' meetings') + '</span>' : '')

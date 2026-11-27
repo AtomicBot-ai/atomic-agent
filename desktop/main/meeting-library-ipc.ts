@@ -7,18 +7,18 @@
  *   meeting:list            the saved meetings in the folder, newest first
  *   meeting:open            a transcript (or its notes) in the default app
  *   meeting:show            a transcript in Finder / Explorer
- *   meeting:trash           a transcript and its notes to the Trash (the page confirmed first)
+ *   meeting:trash           a transcript and its notes to the Trash (the page confirmed first;
+ *                           notes that stay behind are error "notes-trash-failed")
  *
  * The page names files only by their name; meeting-library.ts accepts the
  * recorder's own names and nothing else, inside the current folder.
  * Choices are kept in userData/meetings.json (meeting-prefs.ts).
  */
 import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 
 import { meetingDefaultDir, meetingSaveDir } from "./meeting-ipc.js";
-import { listMeetings, meetingFilePath, meetingNotesName } from "./meeting-library.js";
+import { listMeetings, meetingFilePath, trashMeeting } from "./meeting-library.js";
 import { mergeMeetingPrefs, readMeetingPrefs, writeMeetingPrefs } from "./meeting-prefs.js";
 
 const userData = () => app.getPath("userData");
@@ -70,17 +70,5 @@ export function wireMeetingLibraryIpc(): void {
     return { ok: true };
   });
 
-  ipcMain.handle("meeting:trash", async (_event, name: unknown) => {
-    const folder = meetingSaveDir();
-    const path = meetingFilePath(folder, name);
-    if (!path || !existsSync(path)) return { ok: false, error: "not-found" };
-    try {
-      await shell.trashItem(path);
-    } catch {
-      return { ok: false, error: "trash-failed" };
-    }
-    const notes = join(folder, meetingNotesName(String(name)));
-    if (existsSync(notes)) await shell.trashItem(notes).catch(() => undefined);
-    return { ok: true };
-  });
+  ipcMain.handle("meeting:trash", (_event, name: unknown) => trashMeeting(meetingSaveDir(), name, (path) => shell.trashItem(path)));
 }
