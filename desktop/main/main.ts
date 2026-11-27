@@ -4299,12 +4299,12 @@ function wireIpc(client: AgentClient): void {
    New project now), which the app's bridge always is. */
 function sidebarHeadersExpected(sb: { pinnedRows?: number; folders?: number; tasks: unknown[] }): string {
   // W2 QA (16.11): ATO-1034's chat folders are listed under Projects; there is no "Folders" section.
-  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Projects", "Chats", ...(sb.tasks.length > 0 ? ["Cron jobs"] : [])]);
+  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Projects", "Chats", ...(sb.tasks.length > 0 ? ["Scheduled tasks"] : [])]);
 }
 /** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js, studio/shell.js).
     W2: Studio's one row, then Cron jobs (the Tasks tab), Skills and Plugins; New project is on the Projects header.
     ATO-1072: Recipes last (the saved recipes sheet). */
-const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Studio", "Cron jobs", "Task board", "Skills", "Plugins", "Recipes"]);   // ATO-2257: Task board
+const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Studio", "Scheduled tasks", "Task board", "Skills", "Plugins", "Recipes"]);   // ATO-2257: Task board
 type Sb = {
   headers: string[];
   pinnedRows?: number;
@@ -6622,7 +6622,7 @@ async function sidebarTest(
     );
     if (apiTasks.length === 0) {
       // Calm (S1): no tasks, no Tasks section — the list's absence is the empty state.
-      check("an empty tasks list is not drawn", !sb.headers.includes("Cron jobs") && sb.tasksEmpty === "", JSON.stringify(sb.headers));
+      check("an empty tasks list is not drawn", !sb.headers.includes("Scheduled tasks") && sb.tasksEmpty === "", JSON.stringify(sb.headers));
     } else {
       const first = sb.tasks[0];
       const src = apiTasks.find((t) => t.id === first.id);
@@ -6780,7 +6780,7 @@ async function settingsTest(
   // Calm (S5): the window's own panes and nav sections, in nav order.
   // ATO-1129 (#1533): Phone push sits in Connections, after Discord. ATO-1630: Monid after Composio.
   const PANES = ["general", "llm", "mcp", "telegram", "discord", "push", "composio", "monid", "memory", "myfiles", "myapps", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
-  const LABELS = ["General", "Models", "Connections", "Memory", "My files", "My apps", "Cron jobs", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];   // W2: Tasks reads "Cron jobs"
+  const LABELS = ["General", "Models", "Connections", "Memory", "My files", "My apps", "Scheduled tasks", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];   // W2, ATO-2743: Tasks reads "Scheduled tasks"
   const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", push: "connections", composio: "connections", monid: "connections", memory: "memory", myfiles: "myfiles", myapps: "myapps",
     tasks: "tasks", webhooks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
 
@@ -9202,7 +9202,7 @@ async function settingsTestPartC(
   // ATO-531: Overwrite carries an amber "Can replace your data" tag and says what it replaces.
   const impDrawn = impView.title === "Hermes → Atomic Agent"
     // ATO-1034 (folders): the folders switch sits before Overwrite. W2: the rows in plain words.
-    && same(impView.labels, ["Source", "Source folder", "Chats", "Scheduled jobs", "API keys", "Keep chats in their projects", "Overwrite Can replace your data", "Chats to import"])
+    && same(impView.labels, ["Source", "Source folder", "Chats", "Scheduled tasks", "API keys", "Keep chats in their projects", "Overwrite Can replace your data", "Chats to import"])
     && same(impView.source, ["Hermes"]) && impView.dir === imp.form.sourceDir && impView.limit === imp.form.limit
     && same(impView.switches, { sessions: imp.form.sessions, cron: imp.form.cron, secrets: imp.form.secrets, overwrite: imp.form.overwrite });
   check(

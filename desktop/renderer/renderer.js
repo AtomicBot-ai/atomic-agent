@@ -1237,7 +1237,7 @@ const SETTINGS_SECTIONS = [
   ['myfiles','My files','folder',['myfiles']],   // ATO-1626: renderer/my-files.js
   ['myapps','My apps','window',['myapps']],   // ATO-2383: renderer/my-apps.js
   // ATO-445: the agent's webhook routes sit beside Tasks, since each event becomes one (renderer/webhooks.js).
-  ['tasks','Cron jobs','tasks',['tasks','webhooks']],   // W2: visible name only, the id stays
+  ['tasks','Scheduled tasks','tasks',['tasks','webhooks']],   // W2, ATO-2743: visible name only, the id stays
   ['skills','Skills','skills',['skills']],
   // ATO-954: installed plugins (renderer/plugins-pane.js).
   ['plugins','Plugins','puzzle',['plugins']],
@@ -1247,7 +1247,7 @@ const SETTINGS_SECTIONS = [
 ];
 /* Every pane, in nav order: [pane id, the name it goes by]. */
 const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['discord','Discord'],['push','Phone push'],['composio','Composio'],['monid','Monid'],['memory','Memory'],
-                       ['tasks','Cron jobs'],['webhooks','Webhooks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
+                       ['tasks','Scheduled tasks'],['webhooks','Webhooks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
 SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'memory') + 1, 0, ['myfiles','My files']);   // ATO-1626
 SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'myfiles') + 1, 0, ['myapps','My apps']);   // ATO-2383
 /* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
@@ -1547,7 +1547,7 @@ const IMP_SOURCE_META = {
   'atomic-agent':{label:'Atomic Agent', logo:'', dir:'~/.atomic-agent', toggles:['sessions','memory','skills','mcp','providers','cron','secrets'], cronOff:true,
     hint:'Another Atomic Agent data folder, such as one from another computer or another profile. It is only read, never changed.'},
 };
-const IMP_TOGGLE_TITLES = {skills:'Skills', memory:'Memory', mcp:'Connected tools', sessions:'Chats', providers:'Cloud models', cron:'Scheduled jobs', secrets:'API keys'};
+const IMP_TOGGLE_TITLES = {skills:'Skills', memory:'Memory', mcp:'Connected tools', sessions:'Chats', providers:'Cloud models', cron:'Scheduled tasks', secrets:'API keys'};
 /* W2 (owner: "developer-speak"): what each row brings, in plain words, per source. */
 const IMP_TOGGLE_WORDS = {
   sessions:'Your chats, kept in their projects and folders',
@@ -1555,7 +1555,7 @@ const IMP_TOGGLE_WORDS = {
   memory:'Notes and instructions the agent remembers',
   mcp:'Tools you connected (MCP servers)',
   providers:'Cloud model providers you set up',
-  cron:'Jobs that run on a schedule',
+  cron:'Tasks that run on a schedule',
   secrets:'Your API keys, stored only on ' + THIS_MACHINE,
 };
 const IMP_SOURCE_WORDS = {
@@ -1564,11 +1564,11 @@ const IMP_SOURCE_WORDS = {
   codex:{memory:'Your instructions for Codex (AGENTS.md)', secrets:'Your OpenAI API key, stored only on ' + THIS_MACHINE},
   'claude-app':{sessions:'Your conversations, in a folder per Claude project when the export says which', memory:'Each project’s instructions and files, as notes the agent remembers'},
   'atomic-agent':{sessions:'Your chats, in the projects and folders they were in', memory:'Notes and facts the agent remembers',
-    cron:'Scheduled jobs and tasks. Off unless you turn it on', secrets:'API keys saved in that folder, stored only on ' + THIS_MACHINE},
+    cron:'Scheduled tasks. Off unless you turn it on', secrets:'API keys saved in that folder, stored only on ' + THIS_MACHINE},
 };
 function impToggleWords(source, t) { return (IMP_SOURCE_WORDS[source] && IMP_SOURCE_WORDS[source][t]) || IMP_TOGGLE_WORDS[t] || ''; }
 /* The report's Kind column, in the same words. */
-const IMP_KIND_WORDS = {sessions:'chat', skills:'skill', memory:'memory', mcp:'tool', providers:'cloud model', cron:'job', secrets:'API key', projects:'project', folders:'project'};   // W2 QA: a chat folder is a project with no disk folder
+const IMP_KIND_WORDS = {sessions:'chat', skills:'skill', memory:'memory', mcp:'tool', providers:'cloud model', cron:'scheduled task', secrets:'API key', projects:'project', folders:'project'};   // W2 QA: a chat folder is a project with no disk folder
 const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
 /* Settings › Diagnostics (Д56/Д58): what each row's Copy takes, and the model
    server's log shown there — open or not, its last read, the poll's timer. */
@@ -2068,7 +2068,7 @@ const SLASH = [
   ['llm','open LLM Local/Cloud/External panel','provider <id>'],
   ['mcp','open MCP tab (servers + discovered tools)','add|remove <name>'],
   ['model','open chat model picker','pull|use|status <id>'],
-  ['tasks','jump to the Tasks tab (cron + ingress UI)'],
+  ['tasks','open Scheduled tasks (cron jobs and webhooks)'],
   ['task','create, cancel or run a task','new|cancel|run <id>'],
   ['telegram','telegram channel','enable|disable|start|stop|pair|token'],
   ['import','open the Import tab (one-shot migration)'],
@@ -2127,7 +2127,9 @@ const PAL = [
     ['link','Composio','Settings · Connections','','settings:composio'],
     ['link','Monid','Settings · Connections','','settings:monid'],
     ['memory','Memory','Settings','⌘ 4','settings:memory'],
-    ['tasks','Cron jobs','Settings','','settings:tasks'],
+    // ATO-2743: one name for the feature; the sixth slot is extra search words, so the old names still find it.
+    ['tasks','Scheduled tasks','Settings','','settings:tasks','cron jobs schedule automation webhooks'],
+    ['link','Webhooks','Settings · Scheduled tasks','','settings:webhooks','hooks events'],
     ['skills','Skills','Settings','','settings:skills'],
     ['puzzle','Plugins','Settings','','settings:plugins'],
     ['lock','Privacy','Settings','⇧ ⌘ ,','settings:privacy'],
@@ -2476,7 +2478,7 @@ function roomTitle() {
     const ses = S.sessionId ? chatById(S.sessionId) : null;
     return ses && ses.t ? ses.t : '';
   }
-  if (S.room === 'tasks')  return 'Cron jobs';   // W2: the Tasks feature's visible name
+  if (S.room === 'tasks')  return 'Scheduled tasks';   // W2, ATO-2743: the Tasks feature's visible name
   if (S.room === 'board')  return 'Task board';   // ATO-2257 (workboard.js)
   if (S.room === 'skills') return 'Skills';
   return '';
@@ -2600,11 +2602,11 @@ function renderSidebar() {
       + archivedSidebarHTML(ch.archived) + chatTrashSidebarHTML()))   // ATO-2332: the folded Trash section (chat-trash.js)
       + (showTasks
         ? '<div class="sb-list" data-list="tasks">'
-          + '<div class="sb-list-head micro"><span>Cron jobs</span>'
+          + '<div class="sb-list-head micro"><span>Scheduled tasks</span>'
             // countRunningTasks (sidebar-tasks-selector.ts) counts the FULL snapshot, not the page.
             + (tk.running > 0 ? '<span class="ct tnum">' + tk.running + ' running</span>' : '')
             // `tasks:new` reaches tasksAct('new'): Settings › Tasks with the create form up.
-            + '<button class="iconbtn sb-add" data-act="tasks:new" title="New cron job" aria-label="New cron job">' + ic('plus') + '</button></div>'
+            + '<button class="iconbtn sb-add" data-act="tasks:new" title="New scheduled task" aria-label="New scheduled task">' + ic('plus') + '</button></div>'
           + tk.rows.map(taskRow).join('')
           + (tk.hidden > 0 ? '<button class="loadmore" data-more="tasks">Load more · ' + tk.hidden + ' more</button>' : '')
         + '</div>'
@@ -5461,7 +5463,7 @@ function palRows() {
   if (S.scope) return SCOPES[S.scope].rows.map((r) => ({ic:r[0], t:r[1], cx:r[2], sc:r[3], act:r[4]}));
   const q = S.q.trim().toLowerCase();
   const all = [];
-  PAL.forEach(([g, rows]) => rows.forEach((r) => all.push({ic:r[0], t:r[1], cx:r[2], sc:r[3], act:r[4], g})));
+  PAL.forEach(([g, rows]) => rows.forEach((r) => all.push({ic:r[0], t:r[1], cx:r[2], sc:r[3], act:r[4], g, kw:r[5] || ''})));   // ATO-2743: kw
   if (!q) return null; // grouped rendering
   // ATO-669: fuzzyRank (fuzzy-match.js) keeps the old exact/prefix/substring order
   // and adds a subsequence tier ("mdl" finds Models) and a one-typo tier after it.
@@ -5483,7 +5485,7 @@ function palRows() {
     hits.push({ic:'chevD', t:more + ' more chats', cx:'Show every chat that matches', sc:'', act:'palette:morechats', badge:'session', more:true});
   }
   fuzzyFilter(q, TASKS, (t) => t.t).slice(0, 3)
-    .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Cron job · ' + t.when, sc:'', act:'room:tasks', badge:'task', dot:taskDot(t)}));
+    .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Scheduled task · ' + t.when, sc:'', act:'room:tasks', badge:'task', dot:taskDot(t)}));
   fuzzyFilter(q, SKILLS, (s) => s.t).slice(0, 3)
     .forEach((s) => hits.push({ic:'skills', t:s.t, cx:'Skill · ' + s.s, sc:'', act:SK.workingDir ? 'skill:compose:' + s.t : 'room:skills', badge:'skill'}));
   // W2 QA: words inside past chats (GET /api/sessions/search), after the rest; a chat already listed by title is not repeated.
@@ -5571,7 +5573,7 @@ function paletteHTML() {
   } else {
     // Ranked commands first, then a header before the chats, tasks and skills that
     // match. Headers sit between rows only; data-palrow indexes stay the flat order.
-    const heads = {session:'Chats', task:'Cron jobs', skill:'Skills', message:'In chat messages', bg:'Background'};
+    const heads = {session:'Chats', task:'Scheduled tasks', skill:'Skills', message:'In chat messages', bg:'Background'};
     let last = '';
     flat.forEach((r, i) => {
       if (r.badge && r.badge !== last) list += '<div class="palgroup">' + heads[r.badge] + '</div>';
@@ -5584,7 +5586,7 @@ function paletteHTML() {
     + '<div class="palin">' + ic('search')
       + (sc ? '<span class="palscope tk-chip tk-chip--blue tk-chip--sm">' + esc(sc.label)
         + '<span class="palscope-x" data-popscope="1" role="button" title="Back to all commands" aria-label="Back to all commands">' + ic('x') + '</span></span>' : '')
-      + '<input id="palq" autocomplete="off" spellcheck="false" placeholder="' + (sc ? esc(sc.ph) : 'Search commands, settings, chats, cron jobs and skills…') + '" value="' + esc(S.q) + '">'
+      + '<input id="palq" autocomplete="off" spellcheck="false" placeholder="' + (sc ? esc(sc.ph) : 'Search commands, settings, chats, scheduled tasks and skills…') + '" value="' + esc(S.q) + '">'
       + keycaps('esc') + '</div>'
     + '<div class="pallist' + (q ? ' q' : '') + '" id="pallist">' + list + '</div>'
     + '<div class="palfoot"><span>' + keycaps('↩') + ' ' + (S.scope ? 'Apply' : 'Go') + '</span>'
@@ -17725,12 +17727,12 @@ async function obWriteCustomEndpoint(chatUrl, embeddingUrl) {
 function obImportRegistry(id) {
   if (id === 'hermes') return [
     {id:'sessions', label:'Sessions', description:'Conversation history (state.db) -> sessions.sqlite'},
-    {id:'cron', label:'Cron jobs', description:'Scheduled jobs (cron/jobs.json) -> tasks.sqlite'},
+    {id:'cron', label:'Scheduled tasks', description:'Scheduled jobs (cron/jobs.json) -> tasks.sqlite'},
     {id:'secrets', label:'Provider key', description:'OPENROUTER_API_KEY / AIMLAPI_API_KEY -> <stateDir>/.env'},
   ];
   if (id === 'openclaw') return [
     {id:'sessions', label:'Sessions', description:'Transcript logs (agents/<agent>/sessions/*.jsonl) -> sessions.sqlite'},
-    {id:'cron', label:'Cron jobs', description:'Scheduled jobs (state/openclaw.sqlite cron_jobs) -> tasks.sqlite'},
+    {id:'cron', label:'Scheduled tasks', description:'Scheduled jobs (state/openclaw.sqlite cron_jobs) -> tasks.sqlite'},
   ];
   if (id === 'claude-code') return [
     {id:'skills', label:'Skills', description:'Skill directories (skills/*/SKILL.md) -> global skills dir'},
@@ -25358,7 +25360,7 @@ function tkListHTML() {
     const hiddenBefore = start;
     const hiddenAfter = Math.max(0, rows.length - start - page.length);
     const more = (dir, n) => '<tr class="set-morerow"><td colspan="5"><button class="tuimore" data-act="tasks:page:' + dir + '">' + (dir === 'up' ? '↑ ' + n + ' above' : '↓ ' + n + ' below') + '</button></td></tr>';
-    body = '<div class="tk-list set-tblcard"><table class="tk-tbl set-tktbl" aria-label="Tasks">'
+    body = '<div class="tk-list set-tblcard"><table class="tk-tbl set-tktbl" aria-label="Scheduled tasks">'
       + '<thead><tr><th>Status</th><th>Schedule</th><th>Next run</th><th>Session</th><th>Message</th></tr></thead><tbody>'
       + (hiddenBefore > 0 ? more('up', hiddenBefore) : '')
       + page.map((row, idx) => {
@@ -31633,7 +31635,7 @@ function impFormHTML(f) {
     + '<div class="tk-card sd-rows">'
     + sw('overwrite', 'Overwrite', 'Replaces what you already have here when the source differs: a chat with the same id, '
       + 'including messages you added to it here, a skill with the same name, and an API key with a different value. '
-      + 'Scheduled jobs that already exist are added again as a second copy. Preview import shows what would change.',
+      + 'Scheduled tasks that already exist are added again as a second copy. Preview import shows what would change.',
       ' <span class="tk-chip tk-chip--sm tk-chip--amber">Can replace your data</span>') + '</div>'
     // Д52: `--limit N` caps the sessions imported, newest first (src/cli/import-command.ts); "Limit / no limit" said none of that.
     + (f.source === 'atomic-agent' ? '' : '<div class="tk-field sd-frow sd-limit' + (fc === 'limit' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-limit">Chats to import</label>'

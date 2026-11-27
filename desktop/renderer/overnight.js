@@ -279,7 +279,7 @@ async function ovnStart() {
   OVN.open = false;
   ovnPaint();
   ovnSchedule();
-  if (typeof toast === 'function') toast('Overnight run started', 'It shows in the corner and in Tasks.');
+  if (typeof toast === 'function') toast('Overnight run started', 'It shows in the corner and in Scheduled tasks.');
 }
 
 async function ovnStop(id) {

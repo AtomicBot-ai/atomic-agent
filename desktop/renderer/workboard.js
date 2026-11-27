@@ -10,7 +10,7 @@
    to another lane, or pick one in its menu); moving never runs, pauses or
    ends the task (src/tasks/task-board-lanes.ts). A card shows the task's
    message, its assignee (an agent profile name) and note, both editable, and
-   a Run now button that is the Cron jobs tab's own run (agent:runTask).
+   a Run now button that is the Scheduled tasks tab's own run (agent:runTask).
 
    Opened from the sidebar's Task board row and the palette (`board:open`). */
 
@@ -169,10 +169,10 @@ function workboardView() {
   if (WB.cards === null && !WB.loading && !WB.error && !WB.unsupported) setTimeout(wbLoad, 0);
   let body = '<div class="wb-head"><p class="sd-cap grow">Your agent\'s tasks by stage. Drag a card to another lane; moving it does not run or stop the task.</p>'
     + '<button class="btn btn-g sm" data-act="board:refresh">' + ic('refresh') + 'Refresh</button></div>';
-  if (WB.unsupported) body += '<div class="tk-empty"><p>This agent has no task board yet. Update Atomic Agent to use it; your tasks are in Cron jobs.</p></div>';
+  if (WB.unsupported) body += '<div class="tk-empty"><p>This agent has no task board yet. Update Atomic Agent to use it; your tasks are in Scheduled tasks.</p></div>';
   else if (WB.error) body += '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(WB.error) + '</span></div>';
   if (WB.cards === null && !WB.unsupported && !WB.error) body += '<div class="tk-empty"><span class="tk-spin"></span><p>Reading tasks…</p></div>';
-  else if (WB.cards && !WB.cards.length) body += '<div class="tk-empty"><p>No tasks yet. Schedule one in Cron jobs, or ask the agent to do something later.</p></div>';
+  else if (WB.cards && !WB.cards.length) body += '<div class="tk-empty"><p>No tasks yet. Schedule one in Scheduled tasks, or ask the agent to do something later.</p></div>';
   else if (WB.cards) body += wbBoardHTML(WB.cards, {rel: relTime, running: WB.running, editing: WB.editing, draft: WB.draft, error: WB.editError});
   return '<div class="scroller"><div class="wb">' + body + '</div></div>';
 }

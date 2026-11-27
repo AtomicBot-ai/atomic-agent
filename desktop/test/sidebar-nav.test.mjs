@@ -4,18 +4,18 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 const {sidebarNavItems, railGlyph, toggleSidebar, sidebarToggleView, lucideIcon, studioMenuItems, LUCIDE} = createRequire(import.meta.url)('../renderer/sidebar-nav.js');
 
-// ATO-457 (U-24), W2: under Studio, Cron jobs (the Tasks tab), Skills and Plugins are standing rows, whatever the agent holds.
-// ATO-2257: the Task board row sits under Cron jobs and opens its own room.
-test('the section rows are Cron jobs, Task board, Skills, Plugins, Recipes, reaching the ⌘ 2 / ⌘ 3 verbs, the board, Settings › Plugins and the recipes sheet', () => {
+// ATO-457 (U-24), W2: under Studio, Scheduled tasks (the Tasks tab, ATO-2743), Skills and Plugins are standing rows, whatever the agent holds.
+// ATO-2257: the Task board row sits under Scheduled tasks and opens its own room.
+test('the section rows are Scheduled tasks, Task board, Skills, Plugins, Recipes, reaching the ⌘ 2 / ⌘ 3 verbs, the board, Settings › Plugins and the recipes sheet', () => {
   const items = sidebarNavItems(null);
-  assert.deepEqual(items.map((n) => n.label), ['Cron jobs', 'Task board', 'Skills', 'Plugins', 'Recipes']);
+  assert.deepEqual(items.map((n) => n.label), ['Scheduled tasks', 'Task board', 'Skills', 'Plugins', 'Recipes']);
   assert.deepEqual(items.map((n) => n.id), ['tasks', 'board', 'skills', 'plugins', 'recipes'], 'the internal ids stay');
   assert.deepEqual(items.map((n) => n.act), ['room:tasks', 'board:open', 'room:skills', 'settings:plugins', 'recipe:gallery']);
   assert.deepEqual(items.map((n) => n.chord), ['⌘ 2', '', '⌘ 3', '', '']);
   assert.deepEqual(items.map((n) => n.icon), ['timer', 'kanban', 'bookOpen', 'puzzle', 'scrollText']);
   assert.ok(items.every((n) => !n.on), 'nothing is lit while Settings is closed');
   // The old {projects} option no longer adds a New project row.
-  assert.deepEqual(sidebarNavItems(null, {projects: true}).map((n) => n.label), ['Cron jobs', 'Task board', 'Skills', 'Plugins', 'Recipes']);
+  assert.deepEqual(sidebarNavItems(null, {projects: true}).map((n) => n.label), ['Scheduled tasks', 'Task board', 'Skills', 'Plugins', 'Recipes']);
 });
 
 test('the row whose Settings tab is open is the lit one', () => {
@@ -61,7 +61,7 @@ test('the sidebar draws one Studio row first in the section rows, and its popove
 
 test('the View menu and the section rows name the same ⌘ 2 / ⌘ 3 places', () => {
   const menu = readFileSync(new URL('../main/menu.ts', import.meta.url), 'utf8');
-  assert.match(menu, /item\("Cron jobs", "room:tasks", "CommandOrControl\+2"\)/);
+  assert.match(menu, /item\("Scheduled tasks", "room:tasks", "CommandOrControl\+2"\)/);
   assert.match(menu, /item\("Skills", "room:skills", "CommandOrControl\+3"\)/);
 });
 
