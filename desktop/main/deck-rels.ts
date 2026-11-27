@@ -12,7 +12,12 @@
  *   must name the same family. Anything else (UTF-32, a legacy code page, a
  *   byte that is not valid UTF-8, a NUL) is "cannot tell".
  * - A document type declaration is refused: it can define an entity
- *   (`TargetMode="&e;"`) or give TargetMode a default value.
+ *   (`TargetMode="&e;"`) or give TargetMode a default value. So is a comment,
+ *   CDATA section or processing instruction (all but a leading XML
+ *   declaration): PowerPoint never writes one in a .rels part, and where each
+ *   ends is where a scanner and a real parser can disagree (`<!-->`).
+ * - The first guard's pattern (`TargetMode="External"` over the text) still
+ *   applies on top, so this reading can only add refusals to it.
  * - Every start tag's attributes are read with their quotes, and each value
  *   has its character and entity references resolved (`&#69;xternal` is
  *   External); an undefined entity, a stray `<` or quote, a repeated
@@ -128,20 +133,30 @@ function pointsOut(attrs: Map<string, string>): boolean {
   return /^[A-Za-z][A-Za-z0-9+.-]*:/.test(t) || t.startsWith("//") || t.startsWith("\\") || t.startsWith("/\\");
 }
 
+/** The pattern the first guard used: kept as an extra check over the decoded text, so the scanner can only add refusals. */
+const EXTERNAL_MODE = /TargetMode\s*=\s*["']External["']/i;
+
 /** Whether a `.rels` part's bytes link outside the deck, or cannot be read well enough to tell (then true). */
 export function relsLinksOut(raw: Uint8Array): boolean {
   const xml = decodeXmlBytes(raw);
-  if (xml === null) return true;
+  if (xml === null || EXTERNAL_MODE.test(xml)) return true;
   let pos = 0;
   for (;;) {
     const lt = xml.indexOf("<", pos);
     if (lt < 0) return false;
-    if (xml.startsWith("<!", lt) && !xml.startsWith("<!--", lt) && !xml.startsWith("<![CDATA[", lt)) return true;   // a DOCTYPE: entities or attribute defaults
-    const close = xml.startsWith("<?", lt) ? "?>" : xml.startsWith("<!--", lt) ? "-->" : xml.startsWith("<![CDATA[", lt) ? "]]>" : xml.startsWith("</", lt) ? ">" : "";
-    if (close) {
-      const at = xml.indexOf(close, lt + 2);
-      if (at < 0) return true;   // an unterminated declaration, comment or closing tag
-      pos = at + close.length;
+    // PowerPoint never writes a comment, CDATA, DOCTYPE or processing instruction in a .rels part, and
+    // where each one ends is exactly where a scanner and a real parser can disagree (`<!-->`): refuse them.
+    if (lt === 0 && /^<\?xml[ \t\r\n]/.test(xml)) {
+      const at = xml.indexOf("?>", 5);
+      if (at < 0) return true;
+      pos = at + 2;
+      continue;
+    }
+    if (xml.startsWith("<!", lt) || xml.startsWith("<?", lt)) return true;
+    if (xml.startsWith("</", lt)) {
+      const at = xml.indexOf(">", lt + 2);
+      if (at < 0) return true;   // an unterminated closing tag
+      pos = at + 1;
       continue;
     }
     const tag = startTag(xml, lt + 1);

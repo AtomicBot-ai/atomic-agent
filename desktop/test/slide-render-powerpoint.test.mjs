@@ -55,7 +55,27 @@ const scriptOf = (args) => Buffer.from(args[args.indexOf("-EncodedCommand") + 1]
 const stateOf = (script) => /Set-Content -LiteralPath '((?:[^']|'')*)'/.exec(script)[1].replace(/''/g, "'");
 const WIN = { ProgramFiles: "C:\\Program Files", SystemRoot: "C:\\Windows" };
 const winDeps = (run) => ({ env: WIN, home, tmp, exists: (p) => p.endsWith("POWERPNT.EXE") || p.endsWith("powershell.exe"), run });
-/** A stub PowerShell: `main` plays the first script (and may write its state file), the others answer `cleanup` / `kill`. */
+/**
+ * What the cleanup script exits with when GetActiveObject throws (no PowerPoint to attach to), read
+ * from the script's own catch: `exit N`, or `if ($s[0] -eq 'X') { exit N }` checked against the state.
+ */
+function cleanupExitWhenNotAttached(script, stateText) {
+  const m = /GetActiveObject\('PowerPoint\.Application'\) \} catch \{ ([^\n]*) \}$/m.exec(script);
+  assert.ok(m, "the cleanup attaches inside a try/catch");
+  const first = String(stateText).split(/\r?\n/)[0];
+  for (const part of m[1].split(";").map((x) => x.trim())) {
+    const cond = /^if \(\$s\[0\] -eq '([01])'\) \{ exit (\d+) \}$/.exec(part);
+    if (cond) { if (first === cond[1]) return Number(cond[2]); continue; }
+    const plain = /^exit (\d+)$/.exec(part);
+    if (plain) return Number(plain[1]);
+    assert.fail(`unexpected catch step: ${part}`);
+  }
+  return 0;
+}
+/**
+ * A stub PowerShell: `main` plays the first script (and may write its state file), the others answer `cleanup` / `kill`.
+ * `cleanup: "no-attach"` plays a PowerPoint not in the ROT: the cleanup's own catch decides its exit code.
+ */
 function playPowerShell({ state, cleanup = false }) {
   const calls = [];
   const run = async (_command, args, timeoutMs) => {
@@ -63,6 +83,7 @@ function playPowerShell({ state, cleanup = false }) {
     const kind = script.includes("Presentations.Open") ? "main" : script.includes("GetActiveObject") ? "cleanup" : script.includes("Stop-Process") ? "kill" : "?";
     calls.push({ kind, script, timeoutMs });
     if (kind === "main") { if (state) writeFileSync(stateOf(script), state); return { ok: false }; }   // ended by its time limit
+    if (kind === "cleanup" && cleanup === "no-attach") return { ok: cleanupExitWhenNotAttached(script, state) === 0 };
     return { ok: kind === "cleanup" ? cleanup : true };
   };
   return { calls, run };
@@ -105,6 +126,19 @@ test("a run ended by its time limit is cleaned up; a hung PowerPoint we started 
   assert.equal(await renderSlides(deck(), "win32", winDeps(s.run)), null);
   assert.deepEqual(s.calls.map((c) => c.kind), ["main", "cleanup", "kill"]);
   assert.match(s.calls[2].script, /-ge 638700000000000000/);
+});
+
+test("a PowerPoint we started that the cleanup cannot attach to (hung in start-up) is still ended", async () => {
+  // Round-2 review: the cleanup's catch used to `exit 0`, so a POWERPNT hung before it registered was never killed.
+  const hung = playPowerShell({ state: "0\r\n638700000000000000\r\n1\r\n1\r\n", cleanup: "no-attach" });
+  assert.equal(await renderSlides(deck(), "win32", winDeps(hung.run)), null);
+  assert.deepEqual(hung.calls.map((c) => c.kind), ["main", "cleanup", "kill"]);
+  assert.match(hung.calls[2].script, /-ge 638700000000000000/);
+  const theirs = playPowerShell({ state: "1\r\n638700000000000000\r\n1\r\n1\r\n", cleanup: "no-attach" });
+  await renderSlides(deck(), "win32", winDeps(theirs.run));
+  assert.deepEqual(theirs.calls.map((c) => c.kind), ["main", "cleanup"], "the person's own PowerPoint: nothing to end");
+  assert.equal(cleanupExitWhenNotAttached(powerPointCleanupScript(PATHS), "0\r\n1\r\n"), 1);
+  assert.equal(cleanupExitWhenNotAttached(powerPointCleanupScript(PATHS), "1\r\n1\r\n"), 0);
 });
 
 test("a cleanup that worked needs no kill; the person's own PowerPoint is never ended", async () => {

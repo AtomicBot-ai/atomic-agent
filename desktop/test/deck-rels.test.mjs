@@ -59,7 +59,25 @@ test("what PowerPoint itself writes stays local", () => {
   assert.equal(linksOut(Buffer.from("\ufeff" + LOCAL, "utf8")), false, "UTF-8 with its mark");
   assert.equal(linksOut(Buffer.from("\ufeff" + LOCAL.replace("UTF-8", "UTF-16"), "utf16le")), false, "a genuine UTF-16 part is read, not refused");
   assert.equal(linksOut(rel('Target="../media/a.png" TargetMode="Internal"')), false);
-  assert.equal(linksOut('<Relationships><!-- a <note> --><![CDATA[ <x TargetMode="External"/> ]]></Relationships>'), false, "a comment or CDATA is not a tag");
+});
+
+test("round 2: a comment, CDATA or processing instruction fails closed (no scanner desync)", () => {
+  // The review's payload: our scan read `<!-->` as a whole comment, then a PI whose `?>` sat in
+  // the trailing comment, and skipped the External relationship a real parser reads.
+  const payload = '<Relationships><!--> <?x --><Relationship Id="r" Type="x/image" Target="file://h/s/p.png" TargetMode="External"/><!-- ?> --></Relationships>';
+  assert.equal(relsLinksOut(Buffer.from(payload)), true);
+  assert.equal(relsLinksOut(Buffer.from(payload.replace("<!-->", "<!--->"))), true, "the <!---> variant");
+  assert.equal(linksOut(payload), true, "and through the deck check");
+  // Without the old pattern as a backstop, these still refuse on the comment, CDATA or PI alone.
+  assert.equal(linksOut('<Relationships><!-- a note --></Relationships>'), true, "a plain comment");
+  assert.equal(linksOut('<Relationships><![CDATA[ x ]]></Relationships>'), true, "CDATA");
+  assert.equal(linksOut('<Relationships><?pi x?></Relationships>'), true, "a processing instruction");
+  assert.equal(linksOut(' <?xml version="1.0"?><Relationships/>'), true, "an XML declaration that is not first");
+  assert.equal(linksOut('<?xml-stylesheet href="x"?><Relationships/>'), true, "a PI named like the declaration");
+  assert.equal(linksOut('<?xml version="1.0"?><Relationships/>'), false, "a leading XML declaration is fine");
+  // The old pattern still applies over the decoded text, whatever the scan says.
+  // (Inside another attribute's value the scan sees no TargetMode; only the pattern catches it.)
+  assert.equal(relsLinksOut(Buffer.from('<Relationships note="TargetMode = \'External\'"><Relationship Id="r" Target="x.png"/></Relationships>')), true);
 });
 
 test("the review's bypasses: a character reference and UTF-16 both read as External", () => {

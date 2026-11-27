@@ -129,7 +129,8 @@ export function powerPointScript(p: PowerPointPaths): string | null {
  * still open (matched by its own folder, never the person's own decks), puts
  * the two settings back and quits only a PowerPoint the first script started
  * that has nothing else open. No state file: the first script never got as
- * far as PowerPoint, nothing to do.
+ * far as PowerPoint, nothing to do. No PowerPoint to attach to while the
+ * first script had none running: exit 1, so the caller's kill still runs.
  */
 export function powerPointCleanupScript(p: PowerPointPaths): string | null {
   const q = literals(p);
@@ -139,7 +140,9 @@ export function powerPointCleanupScript(p: PowerPointPaths): string | null {
     `if (-not (Test-Path -LiteralPath ${q.state})) { exit 0 }`,
     `$s = @(Get-Content -LiteralPath ${q.state})`,
     "if ($s.Count -lt 2) { exit 0 }",
-    "try { $app = [System.Runtime.InteropServices.Marshal]::GetActiveObject('PowerPoint.Application') } catch { exit 0 }",
+    // Cannot attach: a PowerPoint the first script started may still be hung in its start-up, before it is
+    // registered. Report that as not cleaned up, so the caller's kill (ours only, by start time) runs.
+    "try { $app = [System.Runtime.InteropServices.Marshal]::GetActiveObject('PowerPoint.Application') } catch { if ($s[0] -eq '0') { exit 1 }; exit 0 }",
     // By file and folder name: a short (8.3) temp path from Node would not equal PowerPoint's FullName.
     `$name = Split-Path -Leaf ${q.copy}`,
     `$dir = Split-Path -Leaf (Split-Path -Parent ${q.copy})`,
