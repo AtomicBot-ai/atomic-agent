@@ -32,6 +32,17 @@
  *      `TrustedHTML.fromLiteral` is removed. A `document.write` that stops
  *      inside a tag name is refused, since the parser would join it with the
  *      next one.
+ *      The default policy's `createScript` passes only the sinks that run
+ *      in the same realm, so a `javascript:` self-navigation (sink
+ *      "Location href"), which would give the frame a new document, is
+ *      refused (review round 2).
+ *   2b. Main (artifact-nav-guard.ts): a frame that shows an artifact page,
+ *      or that such a page starts a navigation of, may only go to another
+ *      `atomic-art://` page, never to `blob:`, `data:`, `javascript:` or
+ *      `about:`; a `blob:` target anywhere must be the window's own
+ *      (`blob:file://`). If a document main did not serve still commits in
+ *      an artifact frame, main runs this guard in it and sends the frame to
+ *      a "Not found" page.
  *   3. Main (artifact-frame-ipc.ts, watchArtifactChildFrames): if a child
  *      frame still appears under an artifact page, main forgets the page and
  *      reloads its frame, which ends every connection the page started. This
@@ -76,6 +87,8 @@ export function stripChildFrames(html: string): string {
  */
 export const ARTIFACT_PAGE_EXTRA_CSP = "require-trusted-types-for 'script'; webrtc 'block'";
 
+/** The guard as plain script text; main also runs it in a document of an artifact frame it did not serve (artifact-nav-guard.ts). */
+export const ARTIFACT_RTC_BLOCK_JS = `(${artifactPageGuard.toString()})(${JSON.stringify(CHILD_FRAME_TAG_NAMES)});`;
+
 /** Put before the widget bridge and the page. Nothing here reaches the network. */
-export const ARTIFACT_RTC_BLOCK_SCRIPT =
-  `<script>(${artifactPageGuard.toString()})(${JSON.stringify(CHILD_FRAME_TAG_NAMES)});</script>`;
+export const ARTIFACT_RTC_BLOCK_SCRIPT = `<script>${ARTIFACT_RTC_BLOCK_JS}</script>`;

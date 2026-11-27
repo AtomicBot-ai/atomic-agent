@@ -176,7 +176,24 @@ export function artifactPageGuard(frameTags: string[]): void {
         : undefined;
       return call(make, this, [a[0], { createHTML: html, createScript: sc, createScriptURL: su }]);
     });
-    call(make, tt, ["default", { createHTML: strip, createScript: (s: string) => s, createScriptURL: (s: string) => s }]);
+    // createScript (review round 2): a `javascript:` URL the page navigates
+    // itself to ("Location href") would replace the document with a new one,
+    // a fresh realm this script never ran in. Only the script sinks that run
+    // in this realm pass (eval, Function, string timers, a script element's
+    // text); any other sink, or none, is refused. The browser calls the
+    // default policy with (value, "TrustedScript", sink).
+    const SINKS = table();
+    const sinkNames = ["eval", "Function", "Window setTimeout", "Window setInterval",
+      "HTMLScriptElement text", "HTMLScriptElement textContent", "HTMLScriptElement innerText", "SVGScriptElement text"];
+    for (let i = 0; i < sinkNames.length; i++) SINKS[sinkNames[i]] = 1;
+    const script = function (...b: unknown[]): string {
+      const v = str(b[0]);
+      if (b.length < 3 || SINKS[str(b[2])] !== 1) throw new DE("This script sink is not available in an artifact", "NotSupportedError");
+      return v;
+    };
+    // Run again by main on a document it did not serve (artifact-nav-guard.ts):
+    // a default policy that is already there stays.
+    try { call(make, tt, ["default", { createHTML: strip, createScript: script, createScriptURL: (s: string) => s }]); } catch { /* already made */ }
     if (W.TrustedHTML) lock(W.TrustedHTML, "fromLiteral", undefined);
   }
 }

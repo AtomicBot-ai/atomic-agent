@@ -30,7 +30,10 @@
  *     rate-limits every message (precedents: Claude artifacts' sendPrompt,
  *     OpenClaw show-widget's bridge).
  *   - main.ts denies the frame any permission (camera, microphone, clipboard…)
- *     and any navigation away from these schemes (subframeNavAllowed).
+ *     and any navigation away from these schemes (subframeNavAllowed); an
+ *     artifact frame may go only to another artifact page, never to a
+ *     `blob:`, `data:` or `javascript:` document of its own
+ *     (artifact-nav-guard.ts, ATO-2536).
  *   - ATO-2536: no WebRTC, which no CSP directive covers
  *     (artifact-rtc-block.ts): the page is served under ARTIFACT_PAGE_CSP, its
  *     markup has no child frames, and a script before it removes the RTC
@@ -210,7 +213,9 @@ export class ArtifactStore {
  * A frame inside the window may go only to these: an artifact page, the
  * file preview's own frames (`about:srcdoc`, a PDF's `blob:`) and the PDF
  * viewer Chromium puts inside that blob frame. A link in an artifact page
- * (http, https, file, anything else) does not navigate.
+ * (http, https, file, anything else) does not navigate. main.ts asks
+ * artifact-nav-guard.ts first, which narrows this for artifact frames (only
+ * `atomic-art://`) and for `blob:` (only the window's own).
  */
 export function subframeNavAllowed(url: string): boolean {
   const u = String(url || "");

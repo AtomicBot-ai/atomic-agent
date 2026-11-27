@@ -37,6 +37,8 @@ function runBlock() {
   const policies = [];
   class TrustedTypePolicyFactory {
     createPolicy(name, rules) {
+      // Like the browser: a second "default" policy is refused.
+      if (name === "default" && policies.some((p) => p.name === "default")) throw new TypeError("default policy exists");
       policies.push({ name, rules });
       return { name, createHTML: (s) => { const h = rules.createHTML; if (typeof h !== "function") throw new TypeError("no createHTML"); return h(s); } };
     }
@@ -55,6 +57,27 @@ function runBlock() {
   const page = (code) => vm.runInContext(code, ctx);
   return { ctx, policies, seen, page };
 }
+
+test("review round 2: the default policy refuses a javascript: navigation and passes same-realm script sinks", () => {
+  const { policies } = runBlock();
+  const script = policies[0].rules.createScript;
+  // A javascript: URL the page navigates its own frame to: a new document the guard never ran in.
+  assert.throws(() => script("'<script>new RTCPeerConnection()</script>'", "TrustedScript", "Location href"), { name: "NotSupportedError" });
+  // No sink, or one not on the list: refused (fail closed).
+  assert.throws(() => script("1"), { name: "NotSupportedError" });
+  assert.throws(() => script("1", "TrustedScript", "Something new"), { name: "NotSupportedError" });
+  for (const sink of ["eval", "Function", "Window setTimeout", "Window setInterval", "HTMLScriptElement text", "HTMLScriptElement textContent", "HTMLScriptElement innerText"]) {
+    assert.equal(script("x + 1", "TrustedScript", sink), "x + 1", sink);
+  }
+});
+
+test("review round 2: the guard can run twice in one document (main runs it again)", () => {
+  const { ctx, policies, page } = runBlock();
+  assert.doesNotThrow(() => vm.runInContext(B.ARTIFACT_RTC_BLOCK_JS, ctx));
+  assert.equal(policies.filter((p) => p.name === "default").length, 1);
+  assert.equal(ctx.RTCPeerConnection, undefined);
+  assert.throws(() => page("document.createElement('iframe')"), { name: "NotSupportedError" });
+});
 
 test("the page runs with no RTC constructor, and cannot put one back", () => {
   const { ctx } = runBlock();
