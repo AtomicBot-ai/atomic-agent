@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import type { AtomicAgentConfig } from "../config/index.js";
 import { recordProjectTrust } from "../config/skill-policy-commands.js";
 import type { ProjectTrustRecord } from "../config/skills-config.js";
-import { instructionTrust, projectTrustHint, skillTrust, trustKey, type ProjectItemTrust } from "../skills/project-trust.js";
+import { commandTrust, instructionTrust, projectTrustHint, skillTrust, trustKey, type ProjectItemTrust } from "../skills/project-trust.js";
+import { listProjectCommandTrustKeys } from "../plugins/user-commands.js";
+import { projectCommandKeyPath } from "../plugins/project-command-trust.js";
 import { loadWorkspaceSkills } from "../skills/workspace-skills.js";
 import { loadProjectInstructions } from "./project-instructions.js";
 import { listProjectAgentProfilePaths } from "../agent-profiles/profile-loader.js";
@@ -10,10 +12,16 @@ import { listProjectAgentProfilePaths } from "../agent-profiles/profile-loader.j
 /**
  * The one-time question about a folder's project skills, instruction
  * files and subagent profile files (ATO-298 soft trust, ATO-566), shared by the TUI, the HTTP routes and the
- * CLI. Nothing here decides on its own: without an answer every item
- * stays unloaded.
+ * CLI. Project slash command files (ATO-2531) are asked about too, each
+ * for its exact text. Nothing here decides on its own: without an answer
+ * every item stays unloaded.
  */
-export interface ProjectTrustItemsView { skills: string[]; instructions: string[] }
+export interface ProjectTrustItemsView {
+  skills: string[];
+  instructions: string[];
+  /** Project slash command files, workspace-relative paths (the hash stays internal). */
+  commands: string[];
+}
 export interface ProjectTrustStatus {
   workingDir: string;
   /** Items with no answer yet. They are what a question asks about. */
@@ -43,7 +51,12 @@ export class ProjectTrustConflictError extends Error {
   }
 }
 
-interface Inventory { workingDir: string; skills: string[]; instructions: string[]; record: ProjectTrustRecord | undefined }
+interface Inventory {
+  workingDir: string; skills: string[]; instructions: string[];
+  /** Command trust keys (`<path>#<hash>`). */
+  commands: string[];
+  record: ProjectTrustRecord | undefined;
+}
 
 /**
  * What the folder ships right now. Project skills come from every project
@@ -59,7 +72,8 @@ function inventory(config: AtomicAgentConfig, workingDir: string): Inventory {
   // Subagent profile files (ATO-566) are asked about like instruction files, by path.
   const instructions = [...loadProjectInstructions(scan.workingDir, undefined, { allow: () => false }).found,
     ...listProjectAgentProfilePaths(scan.workingDir, config.paths.stateDir)];
-  return { workingDir: trustKey(scan.workingDir) ?? scan.workingDir, skills, instructions, record: scan.projectTrust };
+  const commands = listProjectCommandTrustKeys(scan.workingDir, config.paths.stateDir);
+  return { workingDir: trustKey(scan.workingDir) ?? scan.workingDir, skills, instructions, commands, record: scan.projectTrust };
 }
 
 function split<T extends string>(items: readonly T[], trustOf: (item: T) => ProjectItemTrust): Record<ProjectItemTrust, T[]> {
@@ -68,27 +82,41 @@ function split<T extends string>(items: readonly T[], trustOf: (item: T) => Proj
   return out;
 }
 
-function status(found: Inventory): ProjectTrustStatus {
+/** The status, plus the pending command keys an answer records (the view shows paths only). */
+function evaluate(found: Inventory): { status: ProjectTrustStatus; pendingCommandKeys: string[] } {
   const skills = split(found.skills, name => skillTrust(found.record, name));
   const instructions = split(found.instructions, path => instructionTrust(found.record, path));
-  const pending = { skills: skills.pending, instructions: instructions.pending };
-  const any = pending.skills.length + pending.instructions.length > 0;
+  const commands = split(found.commands, key => commandTrust(found.record, key));
+  const paths = (keys: readonly string[]) => keys.map(projectCommandKeyPath);
+  const pending = { skills: skills.pending, instructions: instructions.pending, commands: paths(commands.pending) };
+  const any = pending.skills.length + pending.instructions.length + pending.commands.length > 0;
   const hasEarlierAnswer = !!found.record && [found.record.trustedSkills, found.record.declinedSkills,
-    found.record.trustedInstructions, found.record.declinedInstructions].some(list => list.length > 0);
-  return {
+    found.record.trustedInstructions, found.record.declinedInstructions,
+    found.record.trustedCommands ?? [], found.record.declinedCommands ?? []].some(list => list.length > 0);
+  // The id covers the command hashes: a file edited after the question was shown changes it.
+  const asked = [found.workingDir, pending.skills, pending.instructions, commands.pending];
+  const status: ProjectTrustStatus = {
     workingDir: found.workingDir,
     pending,
-    trusted: { skills: skills.trusted, instructions: instructions.trusted },
-    declined: { skills: skills.declined, instructions: instructions.declined },
-    questionId: any ? createHash("sha256").update(JSON.stringify([found.workingDir, pending])).digest("hex").slice(0, 16) : null,
+    trusted: { skills: skills.trusted, instructions: instructions.trusted, commands: paths(commands.trusted) },
+    declined: { skills: skills.declined, instructions: instructions.declined, commands: paths(commands.declined) },
+    questionId: any ? createHash("sha256").update(JSON.stringify(asked)).digest("hex").slice(0, 16) : null,
     question: any ? describeProjectTrustQuestion(pending, hasEarlierAnswer) : null,
     hasEarlierAnswer,
     hint: projectTrustHint(found.workingDir),
   };
+  return { status, pendingCommandKeys: commands.pending };
+}
+
+function status(found: Inventory): ProjectTrustStatus {
+  return evaluate(found).status;
 }
 
 /** "This folder has 3 project skills and AGENTS.md. Trust them?" */
-export function describeProjectTrustQuestion(pending: ProjectTrustItemsView, isNew = false): string {
+export function describeProjectTrustQuestion(
+  pending: Pick<ProjectTrustItemsView, "skills" | "instructions"> & { commands?: readonly string[] },
+  isNew = false,
+): string {
   const adjective = isNew ? "new " : "";
   const parts: string[] = [];
   const s = pending.skills.length;
@@ -96,8 +124,11 @@ export function describeProjectTrustQuestion(pending: ProjectTrustItemsView, isN
   const n = pending.instructions.length;
   if (n && n <= 2) parts.push(`${isNew ? "new " : ""}${pending.instructions.join(" and ")}`);
   else if (n) parts.push(`${n} ${adjective}instruction files`);
-  const total = s + n;
-  return `This folder has ${parts.join(" and ")}. Trust ${total === 1 ? "it" : "them"}?`;
+  const c = pending.commands?.length ?? 0;
+  if (c) parts.push(`${c} ${adjective}project command${c === 1 ? "" : "s"}`);
+  const total = s + n + c;
+  const list = parts.length <= 2 ? parts.join(" and ") : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+  return `This folder has ${list}. Trust ${total === 1 ? "it" : "them"}?`;
 }
 
 export function inspectProjectTrust(config: AtomicAgentConfig, workingDir: string): ProjectTrustStatus {
@@ -109,10 +140,11 @@ export function inspectProjectTrust(config: AtomicAgentConfig, workingDir: strin
  * `questionId` must match the current pending set or nothing is written.
  */
 export function answerProjectTrust(config: AtomicAgentConfig, workingDir: string, answer: ProjectTrustAnswer, questionId: string): ProjectTrustStatus {
-  const current = status(inventory(config, workingDir));
+  const { status: current, pendingCommandKeys } = evaluate(inventory(config, workingDir));
   if (current.questionId === null) return current;
   if (current.questionId !== questionId) throw new ProjectTrustConflictError(current);
-  recordProjectTrust(current.workingDir, answer === "trust" ? "trusted" : "declined", current.pending);
+  recordProjectTrust(current.workingDir, answer === "trust" ? "trusted" : "declined",
+    { skills: current.pending.skills, instructions: current.pending.instructions, commands: pendingCommandKeys });
   return inspectProjectTrust(config, workingDir);
 }
 
@@ -122,6 +154,7 @@ export function answerProjectTrust(config: AtomicAgentConfig, workingDir: string
  */
 export function setProjectTrust(config: AtomicAgentConfig, workingDir: string, trusted: boolean): ProjectTrustStatus {
   const found = inventory(config, workingDir);
-  recordProjectTrust(found.workingDir, trusted ? "trusted" : "declined", { skills: found.skills, instructions: found.instructions });
+  recordProjectTrust(found.workingDir, trusted ? "trusted" : "declined",
+    { skills: found.skills, instructions: found.instructions, commands: found.commands });
   return inspectProjectTrust(config, workingDir);
 }

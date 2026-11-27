@@ -31,7 +31,7 @@ describe("/api/project-trust", () => {
     expect(harness.runtime.skillRegistry.list().some(s => s.manifest.name === "repo-skill")).toBe(false);
     const first = await status();
     expect(first.question).toBe("This folder has 1 project skill and AGENTS.md. Trust them?");
-    expect(first.pending).toEqual({ skills: ["repo-skill"], instructions: ["AGENTS.md"] });
+    expect(first.pending).toEqual({ skills: ["repo-skill"], instructions: ["AGENTS.md"], commands: [] });
 
     const accepted = await answer({ answer: "trust", questionId: first.questionId });
     expect(accepted.status).toBe(200);
@@ -73,10 +73,10 @@ describe("/api/project-trust", () => {
     const trusted = await answer({ answer: "trust", scope: "all" });
     expect(trusted.status).toBe(200);
     const after = (await trusted.json()) as Status;
-    expect(after.trusted).toEqual({ skills: ["one"], instructions: ["AGENTS.md"] });
+    expect(after.trusted).toEqual({ skills: ["one"], instructions: ["AGENTS.md"], commands: [] });
     expect(harness.runtime.skillRegistry.list().some(s => s.manifest.name === "one")).toBe(true);
     const revoked = (await (await answer({ answer: "decline", scope: "all" })).json()) as Status;
-    expect(revoked.trusted).toEqual({ skills: [], instructions: [] });
+    expect(revoked.trusted).toEqual({ skills: [], instructions: [], commands: [] });
     expect(revoked.question).toBeNull();
     expect(harness.runtime.skillRegistry.list().some(s => s.manifest.name === "one")).toBe(false);
   });

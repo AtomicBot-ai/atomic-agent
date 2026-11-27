@@ -142,14 +142,14 @@ describe("skillCommand", () => {
     expect(stdout).toContain("untrusted: This folder has 2 project skills and AGENTS.md. Run atomic-agent skill project on --workspace ");
 
     stdout = ""; expect(await skillCommand(["project", "on", "--workspace", workspace])).toBe(0);
-    expect(stdout).toContain("(trusted: 2 skills, 1 instruction files)");
+    expect(stdout).toContain("(trusted: 2 skills, 1 instruction files, 0 commands)");
     stdout = ""; await skillCommand(["list"]);
     expect(stdout).toMatch(/local-one\t.*\[project\]\tenabled/); expect(stdout).not.toContain("untrusted:");
     stdout = ""; await skillCommand(["list", "--workspace", workspace]);
     expect(stdout).toMatch(/cloud-one\t\[project\]\tenabled/); expect(stdout).toContain("instructions: 1 trusted, 0 not trusted yet, 0 declined");
 
     stdout = ""; expect(await skillCommand(["project", "off", "--workspace", workspace])).toBe(0);
-    expect(stdout).toContain("(declined: 2 skills, 1 instruction files)");
+    expect(stdout).toContain("(declined: 2 skills, 1 instruction files, 0 commands)");
     stdout = ""; await skillCommand(["list"]);
     expect(stdout).toMatch(/local-one\t.*\[project\]\tdeclined/); expect(stdout).not.toContain("untrusted:");
   });

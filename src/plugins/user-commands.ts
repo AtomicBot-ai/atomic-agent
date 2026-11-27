@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync, type Dirent } from "node:fs";
 import { join, resolve } from "node:path";
 import { frontMatterProblem } from "./command-front-matter.js";
 import { parseCommandFile, renderCommandTemplate } from "./plugin-commands.js";
+import { projectCommandKey } from "./project-command-trust.js";
 
 /**
  * The operator's own slash commands (ATO-2229): Markdown prompt templates
@@ -11,7 +12,9 @@ import { parseCommandFile, renderCommandTemplate } from "./plugin-commands.js";
  *
  * Folders, first match wins on a name:
  * 1. `<project>/.atomic-agent/commands/`, then `<project>/.claude/commands/`
- *    (only while the operator trusts the folder, like project skills);
+ *    (each file only once the operator trusted its exact text, ATO-2531:
+ *    a new or edited file stays hidden until the folder trust question
+ *    asks about it; an untrusted file does not hide a profile command);
  * 2. `<stateDir>/commands/` (the profile, `~/.atomic-agent/commands/`).
  * Plugin commands come after both. `team/review.md` becomes `/team:review`.
  *
@@ -37,8 +40,12 @@ export interface UserCommandOptions {
   stateDir: string;
   /** The session's working folder: project commands and `@file` paths are relative to it. */
   workingDir: string;
-  /** Whether the operator trusts the working folder; project commands load only then. */
-  projectTrusted: boolean;
+  /**
+   * Whether the operator trusted this project command file, by its trust
+   * key (`projectCommandKey`: path and hash of the text). Project commands
+   * load one by one, only when this says yes.
+   */
+  isProjectCommandTrusted: (key: string) => boolean;
 }
 
 /**
@@ -63,9 +70,7 @@ const SEGMENT_RE = /^[a-z0-9][a-z0-9._-]*$/;
 /** The folders searched, in precedence order. */
 export function userCommandDirs(options: UserCommandOptions): Array<{ dir: string; source: UserCommandSource }> {
   const profile = resolve(options.stateDir, PROFILE_COMMAND_DIR);
-  const project = options.projectTrusted
-    ? PROJECT_COMMAND_DIRS.map(d => resolve(options.workingDir, d)).filter(dir => dir !== profile)
-    : [];
+  const project = projectCommandDirs(options.workingDir, profile);
   return [...project.map(dir => ({ dir, source: "project" as const })), { dir: profile, source: "profile" as const }];
 }
 
@@ -91,6 +96,8 @@ export function listUserCommands(options: UserCommandOptions): {
       if (seen.has(name)) continue;
       try {
         const { parsed, content } = readCommandFile(file);
+        const trustKey = source === "project" ? projectCommandKey(options.workingDir, file, content) : undefined;
+        if (trustKey !== undefined && !options.isProjectCommandTrusted(trustKey)) continue;
         seen.add(name);
         const metaProblem = frontMatterProblem(content);
         if (metaProblem !== null) {
@@ -123,17 +130,18 @@ export function renderUserCommand(options: UserCommandOptions, name: string, arg
   const key = name.toLowerCase();
   const command = listUserCommands(options).commands.find(c => c.name === key);
   if (!command) return null;
-  const parsed = readCommand(command.file);
+  const { parsed, content } = readCommandFile(command.file);
+  // The text sent is the text read here: a file swapped after the listing
+  // above is checked again rather than sent on the old answer.
+  if (command.source === "project" && !options.isProjectCommandTrusted(projectCommandKey(options.workingDir, command.file, content))) {
+    return null;
+  }
   const rendered = renderCommandTemplate(parsed.body, args, { root: command.dir, data: command.dir });
   return rendered.replace(BRACED_INCLUDE_RE, "@$1");
 }
 
 /** Gemini CLI's `@{path}` form; a path with spaces stays as written. */
 const BRACED_INCLUDE_RE = /@\{([^\s{}]+)\}/g;
-
-function readCommand(file: string) {
-  return readCommandFile(file).parsed;
-}
 
 function readCommandFile(file: string) {
   if (statSync(file).size > MAX_COMMAND_BYTES) throw new Error(TOO_LARGE);
@@ -146,6 +154,31 @@ const TOO_LARGE = "larger than 128 KiB";
 /** Our own size message as is; a file system error in plain words. */
 function readFailure(err: unknown): string {
   return err instanceof Error && err.message === TOO_LARGE ? TOO_LARGE : "the file could not be read";
+}
+
+function projectCommandDirs(workingDir: string, profile: string): string[] {
+  return PROJECT_COMMAND_DIRS.map(d => resolve(workingDir, d)).filter(dir => dir !== profile);
+}
+
+/**
+ * Every project command file the folder ships, as trust keys, for the
+ * folder trust question (runtime/project-trust.ts). All valid files, not
+ * only the first per name: a declined `.atomic-agent/commands/x.md` would
+ * otherwise let an unasked `.claude/commands/x.md` take its name.
+ */
+export function listProjectCommandTrustKeys(workingDir: string, stateDir: string): string[] {
+  const keys: string[] = [];
+  for (const dir of projectCommandDirs(workingDir, resolve(stateDir, PROFILE_COMMAND_DIR))) {
+    for (const { file, segments } of commandFiles(dir)) {
+      if (!segments.every(s => SEGMENT_RE.test(s.toLowerCase()))) continue;
+      try {
+        keys.push(projectCommandKey(workingDir, file, readCommandFile(file).content));
+      } catch {
+        // Too large or unreadable: it never loads, so it is not asked about.
+      }
+    }
+  }
+  return keys;
 }
 
 /** `*.md` files under `dir`, sorted, symlinks skipped; a missing folder is empty. */
