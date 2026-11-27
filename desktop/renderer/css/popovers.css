@@ -20,6 +20,13 @@
 .popover .popfoot .btn:not(.icon){height:26px;padding:0 10px;font-size:var(--fs-label)}
 .popover .btn svg{width:14px;height:14px}
 
+/* ATO-2009: a tall popover (the add-provider wizard in a small window) reaches
+   up over the 52px toolbar band, a `-webkit-app-region: drag` region. Chromium
+   subtracts only elements that declare `no-drag` (see #settings in
+   settings.css), so in that band a click on the address field started a window
+   drag instead of focusing it, and right-click had no Paste. */
+body.electron .popover{-webkit-app-region:no-drag}
+
 /* ---------------- model selector popup ---------------- */
 .selpop{width:460px;max-height:60vh}
 .selhead{flex:none;display:flex;align-items:center;gap:8px;min-height:32px;padding:4px 8px;
