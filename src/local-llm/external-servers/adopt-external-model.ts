@@ -22,6 +22,7 @@ import {
   copyFileSync,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -120,11 +121,13 @@ function startsWithGguf(path: string): boolean {
   }
 }
 
+function notGgufError(label: string): Error {
+  return new Error(`${label} is not stored as a GGUF file, so the local engine cannot run it. Keep using it through its app.`);
+}
+
 /** Refuse what our engine cannot serve right. Throws a sentence. */
 export async function checkServableGguf(path: string, label: string): Promise<void> {
-  if (!startsWithGguf(path)) {
-    throw new Error(`${label} is not stored as a GGUF file, so the local engine cannot run it. Keep using it through its app.`);
-  }
+  if (!startsWithGguf(path)) throw notGgufError(label);
   const meta = await readGgufMetadata(path).catch(() => null);
   if (meta && !meta.truncated && typeof meta.keys["tokenizer.chat_template"] !== "string") {
     throw new Error(`${label} has no chat template inside its file, so it would answer in the wrong format here. Keep using it through its app.`);
@@ -141,10 +144,22 @@ function sameFile(a: string, b: string): boolean {
   }
 }
 
-/** Link (or copy) `source` to `dest`. Returns how. Throws a sentence. */
+/**
+ * Link (or copy) `source` to `dest`. Returns how. Throws a sentence.
+ * Whatever already sits at `dest` is replaced unless it is the same file,
+ * including a dangling symbolic link left by an earlier adopt of a blob
+ * Ollama has since removed (`existsSync` follows links and would miss it,
+ * and a copy would then write through it).
+ */
 export function linkModelFile(source: string, dest: string, copy: boolean): LinkHow {
-  if (existsSync(dest)) {
-    if (sameFile(source, dest)) return "hardlink";
+  let existing: ReturnType<typeof lstatSync> | null = null;
+  try {
+    existing = lstatSync(dest);
+  } catch {
+    // nothing there yet
+  }
+  if (existing) {
+    if (sameFile(source, dest)) return existing.isSymbolicLink() ? "symlink" : "hardlink";
     unlinkSync(dest);
   }
   try {
@@ -167,9 +182,25 @@ export function linkModelFile(source: string, dest: string, copy: boolean): Link
   throw new Error(`Could not link the model file into Atomic Agent's folder (it is on another disk). Copying it would take ${gb} GB; run again with --copy to do that.`);
 }
 
-/** An LM Studio model's `.gguf`: from `lms ls --json`, else the first matching file in its models folders. */
+/** `q8_0` from `publisher/model@q8_0`, lower case without separators, or null. */
+function quantOf(key: string): string | null {
+  const at = key.lastIndexOf("@");
+  return at > 0 ? squash(key.slice(at + 1)) || null : null;
+}
+
+function squash(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/**
+ * An LM Studio model's `.gguf`: from `lms ls --json`, else a matching file
+ * in its models folders. A key with `@quant` only takes a file of that
+ * quant. A model LM Studio keeps in another format (MLX on a Mac) is
+ * refused with the not-GGUF sentence rather than "could not find".
+ */
 export async function findLmStudioFile(key: string, opts: AdoptOptions): Promise<string> {
   const host = opts.host ?? currentHost();
+  const label = `${key} from LM Studio`;
   let folder: string | null = null;
   try {
     const settings = JSON.parse(readFileSync(lmstudioSettingsFile(host), "utf8")) as { downloadsFolder?: unknown };
@@ -179,14 +210,39 @@ export async function findLmStudioFile(key: string, opts: AdoptOptions): Promise
   }
   const dirs = lmstudioModelsDirs(host, folder).filter((d) => existsSync(d));
   const listed = await lmsList(dirs[0] ?? null, opts.lms ?? {}).catch(() => []);
-  const hit = listed.find((m) => m.modelKey === key && m.path && /\.gguf$/i.test(m.path) && existsSync(m.path));
+  const mine = listed.filter((m) => m.modelKey === key && m.path);
+  const hit = mine.find((m) => /\.gguf$/i.test(m.path!) && existsSync(m.path!));
   if (hit && hit.path) return hit.path;
+  if (mine.length > 0 && mine.every((m) => !/\.gguf$/i.test(m.path!))) throw notGgufError(label);
   const want = key.split("/").pop()!.split("@")[0]!.toLowerCase();
+  const quant = quantOf(key);
+  let otherFormat = false;
   for (const dir of dirs) {
-    const found = ggufFilesUnder(dir, 4).filter((f) => relative(dir, f).toLowerCase().includes(want)).sort();
+    const found = ggufFilesUnder(dir, 4)
+      .filter((f) => relative(dir, f).toLowerCase().includes(want))
+      .filter((f) => quant === null || squash(basename(f)).includes(quant))
+      .sort();
     if (found[0]) return found[0];
+    otherFormat ||= hasOtherWeightsUnder(dir, want, 4);
   }
+  if (otherFormat) throw notGgufError(label);
   throw new Error(`Could not find the file of ${key} in LM Studio's models folder.`);
+}
+
+/** A folder matching `want` that holds `.safetensors` weights (MLX) but no `.gguf`. */
+function hasOtherWeightsUnder(dir: string, want: string, depth: number, base = dir): boolean {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  const matches = relative(base, dir).toLowerCase().includes(want);
+  for (const e of entries) {
+    if (matches && e.isFile() && /\.safetensors$/i.test(e.name)) return true;
+    if (e.isDirectory() && depth > 0 && hasOtherWeightsUnder(join(dir, e.name), want, depth - 1, base)) return true;
+  }
+  return false;
 }
 
 /** `.gguf` files under `dir`, `depth` folders down, projectors left out. */
