@@ -1,4 +1,5 @@
 export type {
+  GrammarFailurePath,
   LlmFailureCategory,
   ModelFailureReason,
   ModelFailureStage,
@@ -14,6 +15,7 @@ export {
   TransportError,
 } from "./llm-failures.js";
 export type {
+  GrammarErrorOptions,
   LlmFailureOptions,
   ModelErrorOptions,
   ToolExecutionErrorKind,
