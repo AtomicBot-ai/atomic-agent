@@ -371,9 +371,9 @@ Real, driven by the running agent:
   Delete forever is the real `DELETE /api/sessions/{id}`; main runs it on its own only for a chat
   that has been in Trash for 30 days. Deleting the open chat leaves an empty new one.
   Each list header carries a **+** on its own line: the one on Chats starts a
-  new chat, the one on Tasks opens Settings › Tasks on a new task,
-  and on the Tasks header `N running` sits to the left of it. The head row —
-  the lockup and the workspace chip — carries no plus at all; the user asked
+  new chat, the one on Scheduled tasks opens Settings › Scheduled tasks on a new task,
+  and on the Scheduled tasks header `N running` sits to the left of it. The head row,
+  the lockup and the workspace chip, carries no plus at all; the user asked
   for it there and nowhere else. The dot on a row is a 6px ring seated on the
   label's optical centre rather than on its line box.
   Pinning and the read stamps live in Electron's `userData/prefs.json` — per
@@ -381,10 +381,10 @@ Real, driven by the running agent:
   either, and its `config.json` is the operator's file. On a machine that has
   never run this window every historical chat is therefore unread until it is
   opened; that is honest, not a bug. Under New chat stand two section rows,
-  **Tasks** and **Skills** (ATO-457, the owner's call on U-24): the places
+  **Scheduled tasks** and **Skills** (ATO-457, the owner's call on U-24): the places
   ⌘ 2 and ⌘ 3 lead to, drawn whether or not any task exists. They open
-  Settings › Tasks and Settings › Skills, the same verbs as the chords, the
-  palette and View › Tasks / Skills, and the row whose tab is open is lit
+  Settings › Scheduled tasks and Settings › Skills, the same verbs as the chords, the
+  palette and View › Scheduled tasks / Skills, and the row whose tab is open is lit
   (`renderer/sidebar-nav.js`, unit-tested in `test/sidebar-nav.test.mjs`).
   Collapsed — Setup › Hide or show the sidebar, or a window narrower
   than 1000px — the two lists stay as a column of small discs, each holding
@@ -664,7 +664,10 @@ Honestly degraded, and labelled as such in the UI:
   does not have; the tool counters come from the open session's store rows.
   The Privacy tab shows the effective `analytics.enabled` (the schema default
   when `config.json` has no key, read with `atag config get`), as the TUI does.
-- **Tasks** start in plain words (ATO-519): New task asks one sentence, such
+- **Scheduled tasks** (one name in Settings, the sidebar, the View menu, the
+  palette and Import, ATO-2743; the palette still finds it by "cron", "jobs",
+  "schedule", "automation" and "webhook", and has a Webhooks row for the
+  section's Webhooks pane) start in plain words (ATO-519): New task asks one sentence, such
   as "every weekday at 9, send me a summary", and sends it as the first message
   of a new chat, where the agent schedules it with its own `tasks.cron` /
   `tasks.schedule` tools ([task-ask.js](renderer/task-ask.js)). **Set up
@@ -1220,11 +1223,11 @@ Honestly degraded, and labelled as such in the UI:
   unchanged. There is no auto-detection beyond this, and no analyzer takes
   more than one locale.
 
-- **Tasks and Skills are the settings tabs.** ⌘2/⌘3, the palette hits and
-  View › Tasks/Skills all open the settings window on that tab — one
+- **Scheduled tasks and Skills are the settings tabs.** ⌘2/⌘3, the palette hits and
+  View › Scheduled tasks/Skills all open the settings window on that tab: one
   implementation, as the TUI's Manage tabs are. ⌘1 closes it and returns to
-  the transcript. The sidebar's own Tasks list (above) is the summary; a row
-  clicked there opens that task in the Tasks tab.
+  the transcript. The sidebar's own Scheduled tasks list (above) is the summary; a row
+  clicked there opens that task in the Scheduled tasks tab.
 
 ## Verification
 
