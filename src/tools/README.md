@@ -17,6 +17,7 @@ This area owns tool registry and adapters. Read [AGENTS.md](AGENTS.md) before ch
 - [tool-output-secrets.ts](tool-output-secrets.ts)
 - [describe-tool-call.ts](describe-tool-call.ts): a tool call as one readable line ("Read config.ts", "Ran npm test · failed") for the TUI, Telegram and desktop frames
 - [files/](files/README.md): the "My files" index (ATO-1621) and its read-only `files.search` tool with page citations
+- [research/](research/README.md): `research.deep` (ATO-2133), web research through `os.web.search` / `os.web.fetch` that keeps a finding only when its quote is on the fetched page, and writes a Markdown report
 
 ## Ownership and dependencies
 

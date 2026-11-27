@@ -264,6 +264,9 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "fusion.delegate": "approval_gated",
   // Same for subagent.run (ATO-1670): several subagent turns in one call.
   "subagent.run": "approval_gated",
+  // ATO-2133: searches, page reads and model calls inside one call, then
+  // a report written through the fs funnel: solo.
+  "research.deep": "approval_gated",
 
   // verify.* — read-only checks. `verify.syntax` spawns nothing that
   // writes (node --check, tsc --noEmit, python compile(), bash -n), so
@@ -423,6 +426,9 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "os.fs.write": FS_WRITE_CATEGORIES,
     // ATO-1137: the same funnel (`requireFsApproval`, kind `write`).
     "canvas.render": FS_WRITE_CATEGORIES,
+    // ATO-2133: its os.web.fetch calls may ask (`http`, `http_write`),
+    // then the report is a new file through the same funnel.
+    "research.deep": [...FS_WRITE_CATEGORIES, "http", "http_write"],
     "os.fs.edit": FS_WRITE_CATEGORIES,
     // A patch that deletes a file asks as `fs_trash` (`fs-patch.ts`).
     "os.fs.patch": [...FS_WRITE_CATEGORIES, "fs_trash"],
@@ -491,6 +497,8 @@ const SOLO_REGARDLESS_OF_APPROVAL: ReadonlySet<string> = new Set([
   // Its turns run inside the call, like a fan-out (ATO-1670); the
   // per-turn child count also relies on one call per step.
   "subagent.run",
+  // A fan-out of searches and page reads in one call (ATO-2133).
+  "research.deep",
   "ask_user",
 ]);
 

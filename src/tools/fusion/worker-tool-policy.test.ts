@@ -45,6 +45,8 @@ describe("worker tool policy", () => {
         "os.screen.press",
         "os.screen.type",
         "plan.update",
+        // ATO-2133: a research fan-out and a report nobody is shown.
+        "research.deep",
         "tasks.cancel",
         "tasks.cron",
         "tasks.schedule",

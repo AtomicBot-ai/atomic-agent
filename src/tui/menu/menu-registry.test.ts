@@ -246,6 +246,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "ask a quick side question: `/btw <question>` — the model sees this chat, runs no tools, and nothing is saved to the session",
   },
+  // ATO-2133: web research with checked quotes.
+  {
+    name: "research",
+    description:
+      "research a question on the web: `/research <question>` runs research.deep and saves a report with checked quotes in the working folder",
+  },
   {
     name: "window",
     description: "open a new terminal window running atomic-agent (ctrl+n)",

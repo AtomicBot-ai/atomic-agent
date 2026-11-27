@@ -21,6 +21,7 @@ import { describeThinkLevel, parseThinkCommand } from "./think-command.js";
 import type { ReasoningLevel } from "../../llm/reasoning-levels.js";
 import { parseLearnCommand, type LearnCommand } from "../../skills/learning/learn-command.js";
 import { parseExportCommand, type ChatExportRequest } from "./export-command.js";
+import { parseResearchCommand } from "./research-command.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -31,6 +32,8 @@ export interface SlashDispatchResult {
   readonly skillInvocation?: { name: string; input: string };
   /** A plugin command: the caller renders its template and sends it as the message. */
   readonly pluginCommandInvocation?: { name: string; args: string };
+  /** A built-in command that becomes a message, sent as typed (`/research`, ATO-2133). */
+  readonly messageText?: string;
   readonly modelModeCommand?: ModelModeCommand;
   /**
    * Reducer actions the caller should dispatch in order. Empty when the
@@ -454,6 +457,12 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return question.length === 0
         ? pureActions([], { systemMessage: SIDE_QUESTION_USAGE })
         : pureActions([], { sideQuestionText: question });
+    }
+    case "research": {
+      const research = parseResearchCommand(parsed.args);
+      return research.kind === "usage"
+        ? pureActions([], { systemMessage: research.message })
+        : pureActions([], { messageText: research.text });
     }
     case "persona":
       return pureActions([], { personaCommand: parsePersonaCommand(parsed.args) });

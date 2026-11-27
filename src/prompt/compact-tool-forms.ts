@@ -225,6 +225,10 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Search My files folders; paste each hit's `cite` as is.",
     tier: RARE,
   },
+  "research.deep": {
+    summary: "Web research with checked quotes; writes a report file. Answer from its verified findings; call it alone.",
+    tier: RARE,
+  },
   "tasks.schedule": { summary: "Schedule a one-shot task.", tier: RARE },
   "tasks.cron": { summary: "Schedule a recurring task.", tier: RARE },
   "tasks.list": { summary: "List tasks.", tier: RARE },

@@ -130,6 +130,13 @@ describe("gated-call approval categories", () => {
     expect(gatedCallRunsUnattended("subagent.run", { level: 5 })).toBe(false);
   });
 
+  it("keeps research.deep solo at every level and names the prompts it can raise (ATO-2133)", () => {
+    expect(resourceClassFor("research.deep")).toBe("approval_gated");
+    expect(isSoloRegardlessOfApproval("research.deep")).toBe(true);
+    expect(gatedCallRunsUnattended("research.deep", { level: 5 })).toBe(false);
+    expect(approvalCategoriesFor("research.deep")).toEqual(expect.arrayContaining(["fs_write_workspace", "http", "http_write"]));
+  });
+
   it("treats a gated MCP tool as category `other`", () => {
     setDynamicResourceClassResolver((name) =>
       name.startsWith("mcp.demo.") ? "approval_gated" : null,

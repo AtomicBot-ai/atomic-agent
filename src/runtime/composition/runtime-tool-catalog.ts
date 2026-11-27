@@ -43,6 +43,7 @@ import { buildCanvasRenderTool } from "../../tools/canvas/index.js";
 import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActive } from "../../tools/tool-search/index.js";
 import { buildSessionsSearchTool, registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
 import { buildFilesSearchTool, type FileIndexApi } from "../../tools/files/index.js";
+import { buildResearchDeepTool } from "../../tools/research/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
 import { IMAGE_GENERATE_TOOL, openRouterImageKey, registerImageTools } from "../../tools/image/index.js";
@@ -185,6 +186,16 @@ export function createRuntimeToolRegistry(
       toolRegistry.register(tool);
     }
   }
+  // ATO-2133: web research through this registry's os.web.search and
+  // os.web.fetch (registered later; looked up per call), on the same
+  // side-call model as browser.extract. The report goes through the fs
+  // write funnel like canvas.render.
+  toolRegistry.register(buildResearchDeepTool({
+    ...dangerous,
+    trustConfigPaths: getTrustConfigPaths(config.paths),
+    tools: toolRegistry,
+    model: browserExtract,
+  }));
   return toolRegistry;
 }
 

@@ -666,6 +666,19 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.research",
+    label: "Deep research",
+    group: "run",
+    slash: {
+      name: "research",
+      description:
+        "research a question on the web: `/research <question>` runs research.deep and saves a report with checked quotes in the working folder",
+      // Right after /btw (35.75), before /window (36).
+      rank: 35.8,
+    },
+  },
+  {
+    kind: "action",
     id: "run.why",
     label: "Why: explain the last step",
     group: "run",

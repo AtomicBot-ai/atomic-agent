@@ -278,6 +278,7 @@ function runEnhanceCurrentDraft(
  * exactly as if the user had typed it.
  */
 function prepareInvocationText(result: SlashDispatchResult, callbacks: TuiAppCallbacks): string {
+  if (result.messageText !== undefined) return result.messageText;
   if (result.skillInvocation) {
     if (!callbacks.prepareSkillInvocation) throw new Error("Skill invocation is unavailable");
     const { name, input } = result.skillInvocation;
@@ -324,7 +325,7 @@ export function runSlashCommand(
 ): void {
   reportBuiltInSlashCommand(raw, via, callbacks);
   const result: SlashDispatchResult = dispatchSlashCommand(raw, skillSlashCommands(state.skillsPanel));
-  if (result.skillInvocation || result.pluginCommandInvocation) {
+  if (result.skillInvocation || result.pluginCommandInvocation || result.messageText !== undefined) {
     if (!canTypeMessage(state)) return;
     try {
       const text = prepareInvocationText(result, callbacks);
