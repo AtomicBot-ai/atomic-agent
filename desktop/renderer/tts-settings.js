@@ -24,7 +24,7 @@ function ttsSettingsVoiceOptions(lang) {
 
 /* ATO-1167: the engine row. "Neural voice" is a speech model from the
    Atomic Chat catalog served by Atomic Core on this computer
-   (main/core-speech.ts); its status line and Download button are filled in
+   (main/core-speech.ts; the words call it the app's local engine, ATO-2742); its status line and Download button are filled in
    by ttsSettingsCorePaint once main answers. */
 const TTS_CORE_UI = {status: null, busy: false, line: '', listening: false};
 
@@ -39,13 +39,35 @@ function ttsCoreStatusText(st) {
   if (st.ok) return (st.model ? st.model.name : 'The neural voice') + ' reads replies on this computer.';
   const name = st.model ? st.model.name + ' (' + ttsGb(st.model.bytes) + ')' : 'the voice model';
   switch (st.reason) {
-    case 'core-too-old': return 'This build\'s Atomic Core has no voice engine yet. The system voices read until an update brings it.';
+    case 'core-too-old': return 'This version of the app cannot run the neural voice yet. The system voices read until an update brings it.';
     case 'catalog-unavailable': return 'The list of neural voices could not be loaded. Check your connection and try again.';
     case 'no-model': return 'No neural voice is offered for this computer yet.';
     case 'model-not-downloaded': case 'engine-not-installed': return 'Download ' + name + ' to read with it. It runs on this computer, no key and no internet after the download.';
-    case 'core-unavailable': return 'Atomic Core could not be reached. Try again.';
+    case 'core-unavailable': return 'The app\'s local engine, which runs the neural voice, did not answer. Try again.';
     default: return 'The neural voice cannot read right now.';
   }
+}
+
+/** ATO-2742: where this system adds a voice for `lang` ('en' | 'ru'). The
+    voices are Chromium's speechSynthesis list: macOS Spoken Content, Windows
+    speech voices (SAPI), and on Linux speech-dispatcher with a synthesizer
+    such as espeak-ng. */
+function ttsVoiceHelp(platform, lang) {
+  const which = lang === 'ru' ? 'Russian' : 'English';
+  if (platform === 'win32') return 'On Windows, add a ' + which + ' voice in Settings › Time & language › Speech › Manage voices, then restart the app.';
+  if (platform === 'linux') return 'On Linux, install speech-dispatcher and a voice for it, such as espeak-ng, with your package manager, then restart the app.';
+  return 'On a Mac, add one in System Settings › Accessibility › Spoken Content › System Voice › Manage Voices.';
+}
+
+/** ATO-2742: the line under the dialog, true for both engines it offers. */
+function ttsSettingsFootNote(hasCore) {
+  const sys = 'System voices come with your computer\'s operating system.';
+  const core = ' The neural voice is a speech model the app downloads and runs on this computer.';
+  return sys + (hasCore ? core : '') + ' A reply is read by the voice of its language.';
+}
+
+function ttsPlatform() {
+  return typeof PLATFORM !== 'undefined' ? PLATFORM : (typeof BR !== 'undefined' && BR && BR.platform) || 'darwin';
 }
 
 function ttsCoreRowHTML() {
@@ -119,13 +141,13 @@ function ttsSettingsHTML() {
       + '<button type="button" class="btn btn-t xs" data-tts-try="' + L.id + '"' + (o.count ? '' : ' disabled') + '>Try</button></span></label>';
     if (!o.count) {
       h += '<p class="ttsset-note">No ' + (L.id === 'ru' ? 'Russian' : 'English') + ' voice on this computer. '
-        + 'On a Mac, add one in System Settings › Accessibility › Spoken Content › System Voice › Manage Voices.</p>';
+        + esc(ttsVoiceHelp(ttsPlatform(), L.id)) + '</p>';
     }
   });
   h += '<label class="ttsset-row"><span>Speed</span><span class="ttsset-pick">'
     + '<input type="range" min="0.5" max="2" step="0.1" value="' + TTS.rate + '" data-tts-rate>'
     + '<output data-tts-rate-out>' + TTS.rate.toFixed(1) + '×</output></span></label>'
-    + '<p class="ttsset-note">Voices are your system\'s own. A reply is read by the voice of its language.</p>'
+    + '<p class="ttsset-note">' + esc(ttsSettingsFootNote(!!(typeof BR !== 'undefined' && BR && BR.ttsCoreStatus))) + '</p>'
     + '<div class="ttsset-foot"><button class="btn xs" value="close">Done</button></div></form>';
   return h;
 }
@@ -183,4 +205,4 @@ function ttsSettingsChanged(e) {
   }
 }
 
-if (typeof module !== 'undefined') module.exports = { ttsCoreStatusText, ttsGb };
+if (typeof module !== 'undefined') module.exports = { ttsCoreStatusText, ttsGb, ttsVoiceHelp, ttsSettingsFootNote };

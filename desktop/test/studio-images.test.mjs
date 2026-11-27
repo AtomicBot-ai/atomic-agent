@@ -324,6 +324,25 @@ test('the local model hint says what Generate does: it loads a downloaded model 
   assert.doesNotMatch(view, /\bload the model first/i);
 });
 
+test('ATO-2742: the Generate button shows Ctrl on Windows and Linux, not ⌘', () => {
+  const had = globalThis.atomic;
+  try {
+    delete globalThis.atomic;
+    assert.equal(L.simgGoKey(), '⌘ ↵');
+    for (const platform of ['win32', 'linux']) {
+      globalThis.atomic = {platform};
+      assert.equal(L.simgGoKey(), 'Ctrl ↵', platform);
+    }
+    globalThis.atomic = {platform: 'darwin'};
+    assert.equal(L.simgGoKey(), '⌘ ↵');
+  } finally {
+    if (had === undefined) delete globalThis.atomic; else globalThis.atomic = had;
+  }
+  const view = readFileSync(new URL('../renderer/studio/images-view.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(view, /<kbd>⌘/, 'no Mac chord written into the markup');
+  assert.match(view, /'<kbd>' \+ esc\(simgGoKey\(\)\) \+ '<\/kbd><\/button>'/);
+});
+
 test('the machine is "this Mac" only on macOS; Windows and Linux say "this computer" (ATO-1400)', () => {
   const had = globalThis.atomic;
   try {

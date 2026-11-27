@@ -158,6 +158,16 @@ test("openTerminalWithCommand: when open fails, the launch folder is removed", a
   assert.equal(res.error, "open-failed");
   assert.match(res.message, /Terminal/);
   assert.deepEqual(readdirSync(d.root), []);
+  // ATO-2742: the OS error's own text is kept apart for the log, never in the words the toast shows.
+  assert.equal(res.message, "Terminal could not be opened.");
+  assert.equal(res.detail, "Unable to find application named 'Terminal'");
+});
+
+test("ATO-2742: terminalFail puts a human note in the message and the raw detail beside it", () => {
+  assert.deepEqual(T.terminalFail("open-failed", undefined, "The command is on your clipboard."),
+    { ok: false, error: "open-failed", message: "Terminal could not be opened. The command is on your clipboard." });
+  assert.deepEqual(T.terminalFail("open-failed", "EACCES: permission denied"),
+    { ok: false, error: "open-failed", message: "Terminal could not be opened.", detail: "EACCES: permission denied" });
 });
 
 test("sweepLaunchDirs: only our old launch folders go", () => {

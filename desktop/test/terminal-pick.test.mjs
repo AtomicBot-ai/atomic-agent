@@ -59,7 +59,15 @@ test("pasteHint: Ctrl+V on Windows, Ctrl+Shift+V in a Linux terminal, typed-in f
 
 test("noTerminalMessage names what to install and says the command is on the clipboard", () => {
   assert.match(P.noTerminalMessage("win32"), /Windows Terminal.*PowerShell.*clipboard/);
-  assert.match(P.noTerminalMessage("linux"), /x-terminal-emulator, gnome-terminal, konsole or xterm.*clipboard/);
+  assert.match(P.noTerminalMessage("linux"), /GNOME Terminal, Konsole or xterm.*clipboard/);
+});
+
+test("ATO-2742: the message is plain words, with no program file names or PATH", () => {
+  for (const platform of ["win32", "linux"]) {
+    const m = P.noTerminalMessage(platform);
+    assert.match(m, /^No terminal was found on this computer/, platform);
+    assert.doesNotMatch(m, /PATH|wt\.exe|x-terminal-emulator|gnome-terminal/, platform);
+  }
 });
 
 test("makeWhich (POSIX): PATH order, absolute dirs only, no names with a slash", () => {

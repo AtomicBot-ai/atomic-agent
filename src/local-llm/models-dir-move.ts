@@ -9,7 +9,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
  * Only folders we own move: a model folder is a non-hidden directory
  * with a `.gguf` (or a `.gguf.part` download) directly inside it. Any
  * other entry of the current folder stays where it is, and the new folder
- * must be empty (a `.DS_Store` aside), so pointing the models folder at
+ * must be empty (a `.DS_Store`, `desktop.ini` and the like aside), so pointing the models folder at
  * ~/Documents can never pull the user's own files along later.
  *
  * Each model folder is renamed when both folders are on the same disk. Across disks a rename
@@ -101,8 +101,20 @@ function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Names an OS drops into any folder; they do not make a folder "not empty". */
-const IGNORED_IN_TARGET = new Set([".DS_Store"]);
+/**
+ * Names an OS or a file manager drops into any folder; they do not make a
+ * folder "not empty" (ATO-2742). macOS: `.DS_Store`, and `._.DS_Store` on a
+ * FAT or exFAT disk. Windows Explorer: `desktop.ini`, `Thumbs.db`,
+ * `ehthumbs.db`. KDE Dolphin: `.directory`. Windows and macOS disks ignore
+ * case, so the match does too. The desktop's folder check
+ * (desktop/main/models-folder.ts folderListingIsEmpty) keeps the same list.
+ */
+const IGNORED_IN_TARGET = new Set([".ds_store", "._.ds_store", "desktop.ini", "thumbs.db", "ehthumbs.db", ".directory"]);
+
+/** True for a file the OS or a file manager put there, not the person. */
+export function isFolderJunk(name: string): boolean {
+  return IGNORED_IN_TARGET.has(name.toLowerCase());
+}
 
 /** A model folder we wrote: non-hidden directory with a GGUF (or GGUF download) in it. */
 export async function isOwnedModelEntry(dir: string, name: string): Promise<boolean> {
@@ -140,7 +152,7 @@ export async function moveModelsDir(
   }
 
   if (existsSync(dst)) {
-    const present = (await readdir(dst)).filter((e) => !IGNORED_IN_TARGET.has(e));
+    const present = (await readdir(dst)).filter((e) => !isFolderJunk(e));
     if (present.length > 0) {
       throw new ModelsDirMoveError(`the new folder ${dst} is not empty; pick an empty folder or a new one`);
     }
@@ -150,7 +162,7 @@ export async function moveModelsDir(
   const skipped: string[] = [];
   for (const e of all) {
     if (await isOwnedModelEntry(src, e)) entries.push(e);
-    else if (!IGNORED_IN_TARGET.has(e)) skipped.push(e);
+    else if (!isFolderJunk(e)) skipped.push(e);
   }
   await mkdir(dst, { recursive: true });
 

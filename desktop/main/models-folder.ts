@@ -93,20 +93,40 @@ export function leftoversFromStdout(stdout: string): string[] {
   return [...stdout.matchAll(/^could not delete the old copy at (.+); delete it by hand$/gm)].map((m) => m[1]!.trim());
 }
 
-/**
- * The agent's refusal in words for the pane. Its line is `models dir: <why>`;
- * an agent without the subcommand says `unknown subcommand: dir`.
- */
-/** Said when the picked folder already holds something (the agent refuses it too). */
-export const NOT_EMPTY_WORDS = "That folder is not empty. Pick an empty folder, or make a new one with New Folder.";
-
-/** True when a folder listing counts as empty: nothing, or only `.DS_Store`. */
-export function folderListingIsEmpty(names: readonly string[]): boolean {
-  return names.every((n) => n === ".DS_Store");
+/** Said when the picked folder already holds something (the agent refuses it too). The folder dialog's own button name. */
+export function notEmptyWords(platform: NodeJS.Platform = process.platform): string {
+  const make = platform === "darwin" ? "make a new one with New Folder"
+    : platform === "win32" ? "make a new one with New folder"
+      : "make a new one with Create Folder";
+  return `That folder is not empty. Pick an empty folder, or ${make}.`;
 }
 
-export function moveErrorWords(stderr: string, code: number | null): string {
-  if (/is not empty/.test(stderr)) return NOT_EMPTY_WORDS;
+/**
+ * ATO-2742: files an OS or a file manager drops into any folder, matched
+ * without case. macOS `.DS_Store` (and `._.DS_Store` on a FAT or exFAT disk),
+ * Windows Explorer `desktop.ini`, `Thumbs.db`, `ehthumbs.db`, KDE Dolphin
+ * `.directory`. The agent's own check keeps the same list
+ * (src/local-llm/models-dir-move.ts isFolderJunk), so a folder this says is
+ * empty is one the agent moves into.
+ */
+const FOLDER_JUNK = new Set([".ds_store", "._.ds_store", "desktop.ini", "thumbs.db", "ehthumbs.db", ".directory"]);
+
+/** True when a folder listing counts as empty: nothing, or only the files above. */
+export function folderListingIsEmpty(names: readonly string[]): boolean {
+  return names.every((n) => FOLDER_JUNK.has(n.toLowerCase()));
+}
+
+/** Said when a move failed for a reason the agent did not put in words. */
+export const MOVE_FAILED_WORDS = "The models were not moved. Try again.";
+
+/**
+ * The agent's refusal in words for the pane. Its line is `models dir: <why>`
+ * (written for people, shown as it is); an agent without the subcommand says
+ * `unknown subcommand: dir`. Anything else is not shown: the pane says
+ * MOVE_FAILED_WORDS and the raw text goes behind Details (moveErrorDetail).
+ */
+export function moveErrorWords(stderr: string, _code: number | null, platform: NodeJS.Platform = process.platform): string {
+  if (/is not empty/.test(stderr)) return notEmptyWords(platform);
   if (/unknown subcommand: dir\b/.test(stderr)) {
     return "This version of the agent cannot move models yet. Update the agent, then try again.";
   }
@@ -116,7 +136,19 @@ export function moveErrorWords(stderr: string, code: number | null): string {
   if (/a model download is running/.test(stderr)) {
     return "Wait for the model download to finish, or pause it, then move the models.";
   }
-  const said = stderr.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop();
-  if (said) return said.replace(/^models dir: /, "").replace(/^./, (c) => c.toUpperCase());
-  return `The models were not moved (exit code ${code ?? "none"}).`;
+  const said = lastLine(stderr);
+  if (said && /^models dir: /.test(said)) return said.replace(/^models dir: /, "").replace(/^./, (c) => c.toUpperCase());
+  return MOVE_FAILED_WORDS;
+}
+
+/** The raw text behind Details when moveErrorWords had no words of its own, else "". */
+export function moveErrorDetail(stderr: string, code: number | null): string {
+  const said = lastLine(stderr);
+  if (said && /^models dir: |unknown subcommand: dir\b/.test(said)) return "";
+  if (/is not empty|a local model is running|a model download is running/.test(stderr)) return "";
+  return said || `exit code ${code ?? "none"}`;
+}
+
+function lastLine(text: string): string {
+  return text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop() ?? "";
 }

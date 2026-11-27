@@ -42,9 +42,21 @@ test("a js, python or unnamed block has no button", () => {
   }
 });
 
-test("ATO-1430: Windows and Linux get the button too; another system does not", () => {
-  for (const platform of ["win32", "linux"]) assert.match(frame(platform)(pre("bash")), /data-mdterm/, platform);
+test("ATO-1430: Linux gets the button too; another system does not", () => {
+  assert.match(frame("linux")(pre("bash")), /data-mdterm/);
   for (const platform of ["freebsd", "aix"]) assert.doesNotMatch(frame(platform)(pre("bash")), /data-mdterm/, platform);
+});
+
+test("ATO-2742: Windows opens PowerShell, so a bash block keeps Copy alone and a PowerShell block gets the button", () => {
+  const f = frame("win32");
+  for (const lang of ["bash", "sh", "zsh", "shell", "console", ""]) {
+    const h = f(pre(lang));
+    assert.doesNotMatch(h, /data-mdterm/, lang || "(none)");
+    assert.match(h, /data-mdcopy/, "Copy stays");
+  }
+  for (const lang of ["powershell", "PowerShell", "pwsh", "ps1"]) assert.match(f(pre(lang, "Get-ChildItem")), /data-mdterm/, lang);
+  // macOS and Linux are unchanged: a PowerShell block there has no button.
+  for (const platform of ["darwin", "linux"]) assert.doesNotMatch(frame(platform)(pre("powershell")), /data-mdterm/, platform);
 });
 
 test("an older preload without the bridge, or the demo with none, shows no button", () => {
