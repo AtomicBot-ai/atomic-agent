@@ -70,7 +70,7 @@ test('the chip markup: draggable, focusable, named by its place, Option on a Mac
   const b = R.qorderNextButtonHTML(2, {esc, ic});
   assert.match(b, /data-qnext="2"[^>]*aria-label="Send next"/);
   assert.match(b, /data-i="up"/);
-  for (const s of [html, b]) assert.doesNotMatch(s, /—/);
+  for (const s of [html, b]) assert.doesNotMatch(s, /\u2014/);
 });
 
 /* The renderer side, against a small fake of renderer.js's queue state. */
