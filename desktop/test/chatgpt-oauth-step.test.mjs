@@ -169,7 +169,8 @@ test('renderer.js wires the two verbs, also inside first run, and both wizard sc
   assert.match(src, /a === 'wiz:subCopy' \|\| a === 'wiz:chatgptOauth' \|\| a === 'wiz:chatgptOauthCancel'\)\) \{/);
   assert.equal((src.match(/\+ wizChatgptOauthHTML\(k, (?:true|false)\)/g) || []).length, 2);
   const html = readFileSync(new URL('../renderer/index.html', import.meta.url), 'utf8');
-  assert.ok(html.indexOf('chatgpt-oauth-step.js') > 0 && html.indexOf('chatgpt-oauth-step.js') < html.indexOf('renderer.js'));
+  // The script tags, not the first mention: index.html's comments name renderer.js long before its tag.
+  assert.ok(html.indexOf('<script src="chatgpt-oauth-step.js">') > 0 && html.indexOf('<script src="chatgpt-oauth-step.js">') < html.indexOf('<script src="renderer.js">'));
 });
 
 /* ------------------------------------------------------------ ATO-1749 */
