@@ -10,6 +10,13 @@ import type { TuiState } from "../tui-state.js";
  * on ctrl+p); LM Studio and Cursor pin favourite models above the list.
  */
 
+/**
+ * How the listing names the back key (ATO-2500). alt+p only reaches the app
+ * from a terminal that sends Alt as Meta, which macOS Terminal.app and
+ * iTerm2 do not by default, so the hint says so.
+ */
+export const MODEL_RING_BACK_HINT = "alt+p (on a Mac: Option as Meta)";
+
 /** One favourite. `provider` is a configured provider id; local models use `local-llama`. */
 export interface ModelRingEntry {
   provider: string;
@@ -180,5 +187,5 @@ export function describeModelRing(
     const mark = current && sameModelRingEntry(e, current) ? "*" : " ";
     return `${mark} ${i + 1}. ${formatModelRingEntry(e)}`;
   });
-  return ["Favorite models (ctrl+p switches to the next one, alt+p to the previous one):", ...lines].join("\n");
+  return [`Favorite models (ctrl+p switches to the next one, ${MODEL_RING_BACK_HINT} to the previous one):`, ...lines].join("\n");
 }

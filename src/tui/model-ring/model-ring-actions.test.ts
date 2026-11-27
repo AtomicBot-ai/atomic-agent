@@ -15,7 +15,7 @@ import { reduceUiAction } from "../reduce-ui-actions.js";
 import { selectMetaBarFit } from "../select-chrome-rows.js";
 import { cycleModelRing, runModelRingCommand } from "./model-ring-actions.js";
 import { modelRingKeyDirection } from "./model-ring-keys.js";
-import { selectModelRingReadout } from "./model-ring.js";
+import { describeModelRing, selectModelRingReadout } from "./model-ring.js";
 import { readModelRing, startupModelRing, writeModelRing } from "./model-ring-store.js";
 
 const e = (provider: string, model: string) => ({ provider, model });
@@ -168,6 +168,17 @@ describe("ATO-2500: back key, --models, the bar readout", () => {
     expect(modelRingKeyDirection("p", { ctrl: false, shift: false, meta: true }, true)).toBeNull();
     expect(modelRingKeyDirection("p", { ctrl: false, shift: false, meta: false })).toBeNull();
     expect(modelRingKeyDirection("o", { ctrl: true, shift: false, meta: false })).toBeNull();
+  });
+
+  it("the listing says alt+p needs Option as Meta on a Mac, and a Mac's Option+P character stays text", () => {
+    // Terminal.app and iTerm2 with default settings send "π" for Option+P,
+    // no meta: the hint must not promise a back key there, and the
+    // character must not be swallowed as one (it is typed).
+    const ring = [{ provider: "openai", model: "gpt-5" }, { provider: "openrouter", model: "a/b" }];
+    const listing = describeModelRing(ring, ring[0]!);
+    expect(listing).toContain("alt+p (on a Mac: Option as Meta) to the previous one");
+    expect(listing).not.toContain("any terminal");
+    expect(modelRingKeyDirection("\u03c0", { ctrl: false, shift: false, meta: false })).toBeNull();
   });
 
   it("alt+p reaches the switch going backwards, from the global key handler", () => {

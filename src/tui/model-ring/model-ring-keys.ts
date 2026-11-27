@@ -7,8 +7,12 @@ import type { ModelRingDirection } from "./model-ring.js";
  * when it is not a ring key. ctrl+p is the next favourite (pi's
  * `app.model.cycleForward`). The previous one answers to ctrl+shift+p,
  * pi's `cycleBackward`, which only a terminal speaking the kitty keyboard
- * protocol can tell from ctrl+p, and to alt+p, which every terminal can
- * send (Esc then p). With vim on, an Esc-prefixed `p` is the Esc vim
+ * protocol can tell from ctrl+p, and to alt+p. alt+p needs a terminal
+ * that sends Alt as Meta (Esc then p): Linux and Windows terminals do by
+ * default, but macOS Terminal.app and iTerm2 type a character ("π") for
+ * Option+P until "Use Option as Meta key" (Terminal.app) or "Option key:
+ * Esc+" (iTerm2) is on. That character is never mapped here, so typing it
+ * still works. With vim on, an Esc-prefixed `p` is the Esc vim
  * takes to leave INSERT followed by a paste, so alt+p stands down then
  * (the abort chord's rule, ATO-662).
  */
