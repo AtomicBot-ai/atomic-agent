@@ -4,7 +4,7 @@
  * registers it and opens the file dialog for a ChatGPT export.
  *
  *   importFacts:info    whether the agent has the step, the cloud models to offer
- *   importFacts:pick    the native dialog for the export .zip
+ *   importFacts:pick    the native dialog for the export .zip or its unpacked folder
  *   importFacts:start / job / stop / forget / save   the agent's /api/import/facts/*
  *
  * The start payload is checked in full before the agent is asked
@@ -14,6 +14,7 @@
 import { dialog, ipcMain, type BrowserWindow } from "electron";
 
 import * as A from "./analytics/index.js";
+import { factsPickDialogOptions } from "./import-facts-dialog.js";
 import { createImportFactsHandlers, type ImportFactsDeps } from "./import-facts.js";
 
 export function wireImportFactsIpc(deps: { window: () => BrowserWindow | null; client: ImportFactsDeps["client"] }): void {
@@ -23,14 +24,10 @@ export function wireImportFactsIpc(deps: { window: () => BrowserWindow | null; c
     onSaved: (i) => A.importFactsStep({ step: "saved", source: i.source, local: i.local, state: i.state, found: i.found, saved: i.saved, skipped: i.skipped }),
   });
   ipcMain.handle("importFacts:info", () => h.info());
-  ipcMain.handle("importFacts:pick", async (_event, source: unknown) => {
+  // ATO-2740: `kind` is the window's "Choose ZIP file" / "Choose folder" on Windows and Linux (import-facts-dialog.ts).
+  ipcMain.handle("importFacts:pick", async (_event, source: unknown, kind: unknown) => {
     const win = deps.window();
-    const chatgpt = source === "chatgpt";
-    const opts = {
-      title: chatgpt ? "Choose the .zip from ChatGPT's Export data" : "Choose the .zip from Claude's Export data",
-      properties: (process.platform === "darwin" ? ["openFile", "openDirectory"] : ["openFile"]) as Array<"openFile" | "openDirectory">,
-      filters: [{ name: chatgpt ? "ChatGPT data export" : "Claude data export", extensions: ["zip"] }],
-    };
+    const opts = factsPickDialogOptions(source, kind);
     const picked = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
     if (picked.canceled || !picked.filePaths[0]) return { ok: false, cancelled: true };
     return { ok: true, path: picked.filePaths[0] };

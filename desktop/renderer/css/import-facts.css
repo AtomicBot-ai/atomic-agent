@@ -48,3 +48,10 @@
 .ifact-entry-t{font-size:var(--fs-ui);font-weight:600;color:var(--ink)}
 .ifact-entry-d{font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2)}
 .ifact-entry .btn{flex:none}
+
+/* ATO-2740: the question before a close drops the run or its found facts, and the agent's words behind Details. */
+.ifact-ask{margin:0;font-size:var(--fs-ui);line-height:1.45;color:var(--ink)}
+.ifact-errmore{margin:-6px 0 0;font-size:var(--fs-label);line-height:1.45;color:var(--ink-2)}
+.ifact-errmore > summary{width:max-content;cursor:pointer;color:var(--ink-2)}
+.ifact-errmore > summary:hover{color:var(--ink)}
+.ifact-errmore > pre{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--font-mono);font-size:var(--fs-label)}
