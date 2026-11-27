@@ -573,6 +573,10 @@ contextBridge.exposeInMainWorld("atomic", {
   showOnceCancel: () => ipcRenderer.invoke("showOnce:cancel"),
   showOnceOpenAccessibility: () => ipcRenderer.invoke("showOnce:openAccessibility"),
   onShowOnceState: (cb: (payload: unknown) => void) => on("showOnce:state", cb),
+  // ATO-2499: the Record card's switches, a draft's step pictures, the Screen Recording pane.
+  showOnceSetOption: (key: string, value: boolean) => ipcRenderer.invoke("showOnce:setOption", key, value),
+  showOnceDraftSnapshots: (id: string) => ipcRenderer.invoke("showOnce:draftSnapshots", id),
+  showOnceOpenScreenRecording: () => ipcRenderer.invoke("showOnce:openScreenRecording"),
   /** ATO-954: Settings › Plugins (main/plugins-ipc.ts). */
   pluginList: () => ipcRenderer.invoke("cli:pluginList"),
   /** ATO-1129: Settings › Connections › Phone push (main/push-ipc.ts). */

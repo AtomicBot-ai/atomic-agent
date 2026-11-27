@@ -13,7 +13,7 @@
 // stdout, one JSON object per line:
 //   {"ready":true}                               the helper is listening
 //   {"untrusted":true}                           no Accessibility for the app; exits 3
-//   {"id":n,"app":{..},"window":{..},"windowTitle":"..","element":{..},"focused":{..}}
+//   {"id":n,"app":{..},"window":{..},"windowTitle":"..","windowId":n,"element":{..},"focused":{..}}
 //   {"ev":"app","app":{..},"title":".."}         another app came to the front
 //   {"ev":"window","app":{..},"title":".."}      its window in front changed or was renamed
 //   {"ev":"menu","app":{..},"path":["File","Export To","PDF…"]}   a menu command ran
@@ -127,11 +127,24 @@ func clickProbe(_ x: Double, _ y: Double) -> [String: Any] {
   return out
 }
 
+/// The front window of `pid` on screen (layer 0), for a picture of it (ATO-2499 snapshots).
+func frontWindowId(ofApp pid: pid_t) -> Int? {
+  let opts: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+  guard let list = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else { return nil }
+  for w in list where (w[kCGWindowOwnerPID as String] as? Int) == Int(pid) && (w[kCGWindowLayer as String] as? Int) == 0 {
+    return w[kCGWindowNumber as String] as? Int
+  }
+  return nil
+}
+
 func keyProbe() -> [String: Any] {
   var out: [String: Any] = [:]
   let front = NSWorkspace.shared.frontmostApplication
   out["app"] = appInfo(front) ?? NSNull()
-  if let pid = front?.processIdentifier { out["windowTitle"] = windowTitle(ofApp: pid) }
+  if let pid = front?.processIdentifier {
+    out["windowTitle"] = windowTitle(ofApp: pid)
+    if let wid = frontWindowId(ofApp: pid) { out["windowId"] = wid }
+  }
   if let el = child(attr(AXUIElementCreateSystemWide(), kAXFocusedUIElementAttribute as String)), let d = describe(el) {
     out["focused"] = d
   }

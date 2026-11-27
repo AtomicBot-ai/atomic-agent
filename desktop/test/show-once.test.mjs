@@ -210,13 +210,13 @@ test("the card: Record when idle, a red recording line with Stop while recording
   assert.ok(rec.includes('data-act="skills:showOnce:stop"') && rec.includes('data-act="skills:showOnce:cancel"'));
   assert.ok(!rec.includes("showOnce:start"));
   const saved = R.showOnceCardHTML({ ...base, last: { kind: "saved", id: "deadbeef", name: "show-once-numbers-20261127-0905", steps: 1 } }, esc);
-  assert.ok(saved.includes("Saved show-once-numbers-20261127-0905 (1 step) as a draft under Pending review"));
+  assert.ok(saved.includes("Saved show-once-numbers-20261127-0905 (1 step) under To review."));
   assert.ok(saved.includes("/u/.atomic-agent/skills-pending/deadbeef"));
   const denied = R.showOnceCardHTML({ ...base, last: { kind: "error", error: "Allow it", permission: true } }, esc);
   assert.ok(denied.includes('data-act="skills:showOnce:accessibility"'));
 });
 
-test("the controller follows the pushed state and reloads Pending review once per saved draft", async () => {
+test("the controller follows the pushed state and reloads To review once per saved draft", async () => {
   let push = null, changed = 0, paints = 0, started = 0;
   const br = {
     showOnceState: async () => base,

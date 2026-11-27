@@ -96,6 +96,8 @@ export interface ShowOnceProbe {
   focused: ShowOnceElement | null;
   /** ATO-2499: the title of the window the event happened in (the Accessibility helper only; osascript gives none). */
   windowTitle: string | null;
+  /** The window's CGWindowID (the helper only), for a picture of it. */
+  windowId?: number | null;
 }
 
 const EMPTY: ShowOnceProbe = { app: null, window: null, element: null, focused: null, windowTitle: null };
@@ -137,7 +139,10 @@ export function parseShowOnceProbe(stdout: string | object): ShowOnceProbe {
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ...EMPTY };
   const o = parsed as Record<string, unknown>;
-  return { app: parseApp(o.app), window: parseRect(o.window), element: parseElement(o.element), focused: parseElement(o.focused), windowTitle: str(o.windowTitle) };
+  const probe: ShowOnceProbe = { app: parseApp(o.app), window: parseRect(o.window), element: parseElement(o.element), focused: parseElement(o.focused), windowTitle: str(o.windowTitle) };
+  const id = num(o.windowId);
+  if (id !== null && Number.isInteger(id) && id > 0) probe.windowId = id;
+  return probe;
 }
 
 export function showOnceProbeArgs(kind: "click" | "key", x = 0, y = 0): string[] {
