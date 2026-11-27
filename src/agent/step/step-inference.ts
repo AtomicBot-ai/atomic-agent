@@ -39,6 +39,8 @@ import { reconcileCloudSkills } from "../../session/workspace-context.js";
 export function refreshStepWorkspace(ctx: StepContext, deps: StepDependencies): void {
   const cloud = deps.modelMode?.mode === "cloud";
   ctx.workspace = (cloud || ctx.session.inheritedWorkspace) ? deps.prepareWorkspace?.(ctx.session, cloud, ctx.signal, { contextWindow: deps.contextWindow ?? null }) : undefined;
+  // ATO-2443: a local step has no project instructions, but path rules still attach (after the conversation).
+  ctx.localPathRules = cloud ? undefined : deps.preparePathRules?.(ctx.session, ctx.signal);
   if (cloud && ctx.workspace) {
     const next = reconcileCloudSkills(ctx.session, ctx.workspace);
     if (next !== ctx.session) { ctx.session = next; deps.commitSession?.(next); }
@@ -95,6 +97,7 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
       : roleToolDescriptors;
   const basePromptInput: BuildPromptInput = {
     ...(ctx.workspace ? { workspace: ctx.workspace } : {}),
+    ...(ctx.localPathRules?.length ? { pathRules: ctx.localPathRules } : {}),
     session: ctx.session,
     toolDescriptors: stepToolDescriptors,
     capabilities: ctx.capabilities,

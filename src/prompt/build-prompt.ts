@@ -57,6 +57,7 @@ import {
   truncateToTokens,
 } from "./token-budget.js";
 import { readSessionProject, renderSessionProjectBody } from "../session/session-project.js";
+import { clipLocalPathRules, localPathRulesBudget, renderLocalPathRules } from "./path-rule-sections.js";
 
 /**
  * ATO-42: the most the `### project` block takes in the local prompt. The
@@ -293,6 +294,12 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const project =
     projectFull !== null ? truncateToTokens(projectFull, PROJECT_SECTION_MAX_TOKENS) : null;
   const projectTokens = project !== null ? estimateTokens(project) : 0;
+  // ATO-2443: path rules a file tool attached; after the conversation, capped for a small window.
+  const projectRulesFull = renderLocalPathRules(input.pathRules ?? input.workspace?.pathRules ?? [], input.session.turns,
+    input.workspace ? [input.session.workingDir, input.workspace.workingDir] : [input.session.workingDir]);
+  const projectRules =
+    projectRulesFull !== null ? clipLocalPathRules(projectRulesFull, localPathRulesBudget(contextWindow)) : null;
+  const projectRulesTokens = projectRules !== null ? estimateTokens(projectRules) : 0;
   const projectReport =
     projectFull !== null && project !== null
       ? {
@@ -418,7 +425,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
 
   // `contextWindow` was resolved above, before the stable prefix.
   const sessionTokenEstimate =
-    estimateTokens(sessionPartsForBudget) + loadedToolsTokens + projectTokens;
+    estimateTokens(sessionPartsForBudget) + loadedToolsTokens + projectTokens + projectRulesTokens;
   // A `native_tools` link sends the tool schemas beside the text; the
   // window holds them too (ATO-1678). The cloud prompt always counted
   // them; a local one (Ollama, LM Studio, a Fusion worker leg) did not,
@@ -554,6 +561,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   if (loadedToolsRendered.body !== null) {
     tailAfter.push("### loaded-tools", loadedToolsRendered.body, ``);
   }
+  if (projectRules !== null) {
+    tailAfter.push(`### project-rules`, projectRules, ``);
+  }
   if (taskPolicy !== null) {
     tailAfter.push(`### task-policy`, taskPolicy.body, ``);
   }
@@ -667,6 +677,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       memoryIndex: memoryIndexTokens,
       taskPolicy: taskPolicyTokens,
       ...(projectTokens > 0 ? { project: projectTokens } : {}),
+      ...(projectRulesTokens > 0 ? { projectRules: projectRulesTokens } : {}),
       ...(compactionTokens ? { compaction: compactionTokens } : {}),
       ...(toolSchemaTokens > 0 ? { toolSchema: toolSchemaTokens } : {}),
       total:
@@ -676,6 +687,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
         recalledTokens +
         memoryIndexTokens +
         projectTokens +
+        projectRulesTokens +
         taskPolicyTokens + compactionTokens + toolSchemaTokens,
     },
     replyReserve: effectiveReplyReserve(

@@ -554,6 +554,9 @@ async function handleStream(
  *    file it wrote, for the chat to show (extensions opt-in only, ATO-1137)
  *  - `plan_updated` → `event: plan_updated` with the whole checklist
  *    (extensions opt-in only, ATO-486)
+ *  - `path_rule_attached` → `event: path_rule_attached` {path, patterns}:
+ *    a path-scoped project rule joined the prompt (extensions opt-in
+ *    only, ATO-2443)
  *  - compaction lifecycle and `history_trimmed` → named frames of the
  *    same names (extensions opt-in only, `stream-maintenance-frames.ts`)
  *  - `tool_disabled` → `event: tool_disabled` with the chat sentence
@@ -760,6 +763,21 @@ export function buildStreamEventHook(
             items: inner.plan.items.map((item) => ({ step: item.step, status: item.status })),
             updatedAt: inner.plan.updatedAt,
           },
+        });
+      } else if (inner.type === "path_rule_attached") {
+        /* ATO-2443: a file tool touched a file a path-scoped rule covers,
+           so the rule is in the prompt from the next step. A host shows
+           one line in the transcript. Extensions-only. */
+        if (!env.request.extensionsEnabled) return;
+        sse.writeEvent("path_rule_attached", {
+          id: env.completionId,
+          object: "chat.completion.path_rule_attached",
+          created: env.created,
+          model: env.request.model,
+          session_id: env.session.id,
+          step_index: inner.stepIndex,
+          path: inner.path,
+          patterns: [...inner.patterns],
         });
       } else if (inner.type === "assistant_delta") {
         if (inner.text.length === 0) return;
