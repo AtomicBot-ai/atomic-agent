@@ -1,5 +1,6 @@
 import { checkLlamaServer } from "../llm/llama-server-health.js";
-import { getHeader, sendJson, type HttpHandler } from "./request-context.js";
+import { isLocalRequest } from "./auth-throttle.js";
+import { sendJson, type HttpHandler } from "./request-context.js";
 
 /** `::ffff:127.0.0.1` is how a v4 loopback peer shows up on a v6 socket. */
 export function isLoopback(remoteAddress: string | undefined): boolean {
@@ -61,7 +62,7 @@ export function createHealthHandler(): HttpHandler {
     sendJson(res, degraded && strict ? 503 : 200, {
       status: degraded ? "degraded" : "ok",
       runtime: "atomic-agent",
-      ...(isLoopback(req.socket.remoteAddress) && getHeader(req, "cf-connecting-ip") === null
+      ...(isLocalRequest(req)
         ? {
             pid: process.pid,
             ppid: process.ppid,
