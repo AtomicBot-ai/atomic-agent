@@ -83,6 +83,43 @@ describe.skipIf(process.platform === "win32")("os.shell.run writing a startup or
     });
   });
 
+  // Review round 2 (F2069-R2.1..R2.3): a glob or brace hid the name, an
+  // extract into home named no file, and `git config --global` wrote
+  // ~/.gitconfig unasked.
+  it.each([
+    "echo 'source /tmp/p' | tee -a ~/.zsh?c",
+    "tee -a ~/.{zsh,bash}rc < /dev/null",
+    "printf 'ssh-ed25519 AAAA k' | tee -a ~/.s?h/authorized_k?ys",
+    "tar xzf /tmp/atomic-missing-p.tgz -C ~",
+    "cd ~ && unzip /tmp/atomic-missing-x.zip",
+    "git config --global core.hooksPath /tmp/atomic-hooks",
+  ])("asks in bypass for a write the line hides: %s", async (cmd) => {
+    await expect(tool().run({ cmd }, ctx())).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatchObject({
+      askEveryLevel: true,
+      securityFinding: { rule: "dangerous.write_startup_file" },
+    });
+    await expect(readFile(join(home, ".zshrc"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(home, ".gitconfig"), "utf8")).rejects.toThrow();
+  });
+
+  it("asks in bypass for a direct exec of tar into home", async () => {
+    const run = tool().run({ cmd: "tar", args: ["xzf", "/tmp/atomic-missing-p.tgz", "-C", home] }, ctx());
+    await expect(run).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    expect(asked[0]).toMatchObject({ askEveryLevel: true, securityFinding: { rule: "dangerous.write_startup_file" } });
+  });
+
+  it.each(["ls -la ~/.ssh/id_* || true", "cat ~/.ssh/*.pub || true", "echo $(date) && cat ~/.gitconfig || true"])(
+    "does not claim a write for a read-only line: %s",
+    async (cmd) => {
+      await tool().run({ cmd }, ctx()).catch(() => undefined);
+      for (const request of asked) {
+        expect(request.securityFinding?.rule).not.toBe("dangerous.write_startup_file");
+      }
+    },
+  );
+
   it("asks in bypass for a direct exec of bash -c with such a line", async () => {
     const run = tool().run(
       { cmd: "bash", args: ["-c", "echo ssh-ed25519 AAAA >> ~/.ssh/authorized_keys; : $(true)"] },
