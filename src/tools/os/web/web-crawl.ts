@@ -158,8 +158,12 @@ export function buildOsWebCrawlTool(options: OsWebCrawlOptions = {}): ToolDefini
       // Mutable: a start page that redirects within the site moves it.
       const scope: CrawlScope = { start, robots };
       const fetchCfg = options.config?.web.fetch;
+      // No browser for a channel guest (ATO-2703), as in `os.web.fetch`:
+      // it is not DNS-pinned and runs the page's scripts.
       const renderer =
-        options.renderPage !== undefined && (fetchCfg?.renderWithBrowser ?? true) ? options.renderPage : undefined;
+        options.renderPage !== undefined && (fetchCfg?.renderWithBrowser ?? true) && ctx.guest !== true
+          ? options.renderPage
+          : undefined;
       const report = await runCrawl({
         args,
         scope,
