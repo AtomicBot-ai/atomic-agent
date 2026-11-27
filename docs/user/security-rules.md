@@ -22,13 +22,13 @@ Block installing global packages (npm -g, pip without a virtualenv, brew).
 ```
 
 - `tools:` the tools the reviewer checks. Leave it out for the list above.
-- `onFailure:` what happens when the reviewer gives no answer (model off, timeout, unreadable reply). `ask` (default): you are asked; where nobody can be asked (a fusion worker) the call is refused. `block`: the call is refused. The reviewer never fails open.
+- `onFailure:` what happens when the reviewer gives no answer (model off, timeout, unreadable reply). `ask` (default): you are asked; where nobody can be asked (a fusion worker) the call is refused. `block`: the call is refused. The reviewer never fails open. The setting `agent.security.guardOnFailure: block` makes this `block` for every file; a file's own `ask` cannot loosen it.
 
 ## What is covered
 
 The reviewer sees a call of a listed tool when the call would go to approval, and also these calls that run without asking:
 
-- `os.shell.run`: every command that asks, and the trusted read-only tools `gh`, `gog` and `icalBuddy` (they read private repositories, your Google account and your calendar).
+- `os.shell.run`: every command, including those that run without asking: the trusted read-only tools `gh`, `gog` and `icalBuddy`, and commands the shell guard deems harmless (`cat`, `echo`, `cp`), so a rule like "never read .env" holds for any shell command.
 - `os.http.request`: every request, GETs included, under any `http.approvalMode`.
 - `os.web.fetch`: every fetch.
 - `os.fs.write`, `os.fs.edit`, `os.fs.patch`, `os.fs.move`, `os.fs.trash`, `skill.run_script`, `os.git.commit`, `os.git.push`: every call that goes to approval at any level (bypass included), and a fusion worker's calls its folder scope would run.
@@ -36,8 +36,15 @@ The reviewer sees a call of a listed tool when the call would go to approval, an
 Not covered:
 
 - File reads: `os.fs.read`, `os.fs.list`, `os.fs.grep`, document and archive reads, and read-only git tools never ask for approval inside your project, so a rule never sees them. A rule like "never read .env" holds only for shell commands. Naming one of these in `tools:` logs a warning when the file is read.
-- Commands the shell guard deems harmless (`pwd`, `echo hi`, `node --version`).
 - Tools not in the list: email, GitHub and MCP tools, browser actions, image and video generation, `fusion.delegate`. Add their names to `tools:` to have their approval requests reviewed.
+
+## Where refusals show
+
+A call the rules refused is recorded with the call: the turn summary and the session trace (`approvals` on the `tool_invocation` row, with `guard: {decision, reason}`) say which call was refused and why.
+
+## Measuring false blocks
+
+`npm run eval:guard-false-blocks -- --traces <stateDir>/traces --rules ~/.atomic-agent/guard.md --limit 100` replays the tool calls of ordinary sessions through the reviewer and reports how many it would block. The target is at most 2%. It needs `ATOMIC_AGENT_EVAL_LLAMA_URL` (a llama-server) and runs no tool.
 
 ## What ALLOW means
 

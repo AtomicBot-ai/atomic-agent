@@ -29,6 +29,7 @@
     "smoke:e2e": "node scripts/smoke-e2e.mjs",
     "eval": "vitest run --config eval/vitest.config.ts",
     "eval:judge": "tsx eval/scripts/judge-from-jsonl.ts",
+    "eval:guard-false-blocks": "tsx eval/scripts/guard-false-blocks.ts",
     "eval:privacy-names": "tsx eval/scripts/run-privacy-names.ts",
     "eval:lint": "tsc -p eval/tsconfig.json --noEmit",
     "eval:stub": "node eval/scripts/stub-llama-server.mjs",

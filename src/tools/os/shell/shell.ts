@@ -488,12 +488,12 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         },
         ctx.signal,
       );
-    } else if (
-      (scopedByFanout && guardVerdict.action === "approval_required") ||
-      isTrustedReadOnlyVerdict(guardVerdict)
-    ) {
+    } else {
       // The fan-out's yes does not cover the person's security rules
-      // (ATO-2111), nor does the guard's trust in a read-only tool.
+      // (ATO-2111), nor does the guard's trust in a read-only tool, nor
+      // its "safe" verdict (`echo`, `cat`, `cp`: ATO-2529): every call
+      // that skips the gate still meets guard.md when one covers the
+      // shell. Without a guard file this is a no-op.
       await requireGuardOnShortcut(
         options,
         {
