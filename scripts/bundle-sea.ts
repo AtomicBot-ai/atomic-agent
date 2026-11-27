@@ -85,7 +85,11 @@ async function main(): Promise<number> {
     // WebAssembly helper and native image code that cannot be inlined, and
     // it is not shipped next to the binary yet, so in the binary the import
     // fails and the channel reports `disabled` with a clear reason.
-    external: ["better-sqlite3", "playwright-core", "@napi-rs/keyring", "baileys"],
+    // `sqlite-vec` (ATO-1658) is a devDependency for tests only. Keeping it
+    // external means the binary never picks it up from the build machine's
+    // node_modules: it stays an optional runtime import that falls back to
+    // the vector scan when the package is not next to the agent.
+    external: ["better-sqlite3", "playwright-core", "@napi-rs/keyring", "baileys", "sqlite-vec"],
     // Bake the published version into the binary so `getAppVersion()`
     // (see src/version.ts) resolves without a shipped package.json.
     define: {
