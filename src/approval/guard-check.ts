@@ -98,3 +98,6 @@ export const GUARD_FAILURE_BLOCK_REASON =
 
 /** The note a prompt carries when the reviewer failed under `onFailure: ask`. */
 export const GUARD_FAILURE_ASK_NOTE = "security rules check: no answer from the reviewer, asking you";
+
+/** `ApprovalGate.guardRefusal` with `askOnFailure`: no answer, and the person can be asked. */
+export const GUARD_ASK_PERSON = "security rules: no answer from the reviewer, ask the person";
