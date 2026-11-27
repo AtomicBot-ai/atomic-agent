@@ -334,6 +334,9 @@ import { isQuickEntryWindow, wireQuickEntry } from "./quick-entry-window.js";
 import { wireSelectedText } from "./selected-text-ipc.js";
 import { readQuickEntryPref } from "./quick-entry.js";
 import { isDictatePill, wireDictateAnywhere } from "./dictate-anywhere-window.js";
+import { wirePetIpc, type PetHub } from "./pet-ipc.js";
+import { readPetPrefs } from "./pet-prefs.js";
+import { isPetWindow } from "./pet-window.js";
 import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
@@ -1936,7 +1939,8 @@ function wireIpc(client: AgentClient): void {
     }
   });
 
-  ipcMain.handle("agent:approve", async (_event, payload: unknown) => {
+  /* ATO-2391: the desktop pet answers through this same function when no window card takes its click. */
+  const approveFromUi = async (payload: unknown) => {
     const { approvalId, decision, reason } = payload as {
       approvalId?: string;
       decision?: string;
@@ -1950,10 +1954,17 @@ function wireIpc(client: AgentClient): void {
     try {
       const data = await client.resolveApproval(approvalId, known, reason);
       chatTurns.approvalAnswered({ approvalId, decision: known });   // ATO-1026: the turn leaves "approval"
+      petHub?.approvalAnswered(approvalId);   // ATO-2391: the pet's bubble goes
       return { ok: true, data };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  };
+  ipcMain.handle("agent:approve", (_event, payload: unknown) => approveFromUi(payload));
+  petHub = wirePetIpc(client, {
+    userData: app.getPath("userData"), platform: process.platform, quiet: SMOKE || FIRST_RUN_PROBE,
+    mainWindow: () => win, showMainWindow: openWindowAgain, menuChanged: rebuildMenu,
+    approve: (approvalId, decision) => approveFromUi({ approvalId, decision }),
   });
 
   /* ATO-1502: an ask_user question's answer (renderer/question-card.js):
@@ -1972,6 +1983,7 @@ function wireIpc(client: AgentClient): void {
     try {
       const data = await client.answerQuestion(p.approvalId, answer);
       chatTurns.approvalAnswered({ approvalId: p.approvalId, decision: answer.skip ? "deny" : "allow-once" });   // ATO-1026: the turn leaves "approval"
+      petHub?.approvalAnswered(p.approvalId);   // ATO-2391
       return { ok: true, data };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -11531,7 +11543,7 @@ void app.whenReady().then(async () => {
   app.on("activate", () => {
     // ATO-1018: a marks overlay is not a window of the app. ATO-523: nor is the quick-entry box. ATO-1064: nor the dictation pill.
     // ATO-561: nor is a chat in its own window: the Dock click brings the main window back.
-    if (appWindows().filter((w) => !isQuickEntryWindow(w) && !isChatPopout(w) && !isDictatePill(w)).length === 0) openWindowAgain();
+    if (appWindows().filter((w) => !isQuickEntryWindow(w) && !isChatPopout(w) && !isDictatePill(w) && !isPetWindow(w)).length === 0) openWindowAgain();
   });
 });
 
@@ -11558,6 +11570,8 @@ const loginHost = (): LoginItemHost => ({
 let tray: Tray | null = null;
 /** ATO-1609: opens the mini chat window (quick-entry-window.ts), for the menu and the tray; set once it is wired. */
 let showMiniChat: (() => void) | null = null;
+/** ATO-2391: the desktop pet (pet-ipc.ts); set once the agent is wired. */
+let petHub: PetHub | null = null;
 
 /** The menu bar, with the Agent menu's two checkboxes as they are now; `bg:*` commands are main's own. */
 function rebuildMenu(): void {
@@ -11571,6 +11585,8 @@ function rebuildMenu(): void {
     }
     if (command === "remote:open") { openRemoteConnect(); return; }
     if (command === "mini:open") { showMiniChat?.(); return; }
+    if (command === "pet:toggle") { petHub?.toggle(); return; }
+    if (command === "pet:dnd") { petHub?.toggleDnd(); return; }
     if (command.startsWith("awake:")) {
       const mode = command.slice("awake:".length) as KeepAwakeMode;
       if (KEEP_AWAKE_MODES.includes(mode)) { writeKeepAwakeMode(userData, mode); void syncKeepAwake(); }
@@ -11586,7 +11602,7 @@ function rebuildMenu(): void {
       return;
     }
     send("app:menu", command);
-  }, { keepRunning: readBackgroundPrefs(userData).keepRunning, startAtLogin: startsAtLogin(loginHost()), keepAwake: readKeepAwakeMode(userData) });
+  }, { keepRunning: readBackgroundPrefs(userData).keepRunning, startAtLogin: startsAtLogin(loginHost()), keepAwake: readKeepAwakeMode(userData), pet: readPetPrefs(userData) });
 }
 
 /* ---- ATO-592: Keep Computer Awake (keep-awake.ts) ---- */

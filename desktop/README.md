@@ -164,6 +164,27 @@ waits or restarts. The chip and the chosen row show the project's model
 stay one per agent, and the local model rows say "Local model is shared by
 all projects". A remote agent keeps one model for every chat.
 
+**Desktop pet (ATO-2391).** View › Desktop Pet › Show Pet puts a small atom
+on the screen, above every app, that shows what the agent is doing: idle,
+resting, thinking, working (a tool call), done, failed, or waiting for you.
+Off by default; the choice, Do Not Disturb and the spot it was dragged to
+live in `<userData>/pet.json`, never in the agent's config. It reads the
+frames the main window already gets (`chat`, `approval`) and calls nothing,
+so it costs no tokens ([pet-events.ts](main/pet-events.ts),
+[pet-state.ts](main/pet-state.ts): priorities, at least 0.7 s per state,
+done and failed go back to idle, resting after two quiet minutes). The
+window takes clicks only over the sprite and its bubble
+([pet-window.ts](main/pet-window.ts)). A waiting request opens a bubble
+with the action (the preview's first line, e.g. the command; the gate's reason
+on a second line) and Allow once and Deny; the click is handed to the main window, which
+answers it with its own card (`answerLive`, [pet-relay.js](renderer/pet-relay.js)),
+and only when no page holds the card does main answer through
+`agent:approve`'s own function ([pet-ipc.ts](main/pet-ipc.ts)). Never
+Always allow, and never Allow for a question, a high risk verdict, a request
+held after outside content (its note shows in the risk line), one with no
+preview, or the categories kept for the full card (`PET_WINDOW_ONLY_CATEGORIES`): those offer
+Review. Do Not Disturb hides the bubble and the done / failed flashes.
+
 **Why not the NDJSON sidecar.** `dist/sidecar/main.js` exists only in a source
 checkout, and the shipped single-file binary has no `sidecar` subcommand. A
 desktop app has to work against what people installed. The sidecar also has no
@@ -2072,6 +2093,7 @@ desktop/
   main/backend-switch.ts the TUI's backend/provider/model decisions, main-side
   main/main.ts           lifecycle, window, IPC, the smoke harness
   main/menu.ts           the native menu bar
+  main/pet-*.ts          the desktop pet: frames to states, the window, its routes (ATO-2391)
   main/edit-context-menu.ts  the right-click edit menu and spellcheck switch
   main/speech.ts         the one voice-input child: probe, start/stop, audio, install
   main/updater.ts        app updates (electron-updater), only ever on a click

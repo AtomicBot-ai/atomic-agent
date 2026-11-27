@@ -1,0 +1,191 @@
+/* ATO-2391: the desktop pet (pet.html). A transparent window: the sprite
+   at the bottom, the approval bubble above it. Colours are fixed for the
+   sprite (it sits over any app) and follow the system theme for the bubble.
+   Atomic blue is the app's own (styles.css --p-accent / --i-accent). */
+
+:root {
+  --pet-blue: #0B3D91;
+  --pet-blue-lit: #5B9DFF;
+  --pet-green: #1F9D55;
+  --pet-red: #C4342F;
+  --pet-amber: #E8A317;
+  --pet-ink: #101112;
+  --pet-ink-2: #4A4E52;
+  --pet-paper: #FFFFFF;
+  --pet-line: #D8DBDE;
+  --pet-btn: #F1F2F4;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pet-ink: #EDEFF1;
+    --pet-ink-2: #A6ACB2;
+    --pet-paper: #17191B;
+    --pet-line: #2A2E32;
+    --pet-btn: #1E2124;
+  }
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  font: 13px/1.35 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--pet-ink);
+}
+
+/* ---- the sprite ---- */
+.sprite {
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  width: 96px;
+  height: 96px;
+  cursor: grab;
+  touch-action: none;
+  --pet-core: var(--pet-blue);
+  --pet-orbit: var(--pet-blue-lit);
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .35));
+}
+.sprite:active { cursor: grabbing; }
+.sprite svg { width: 100%; height: 100%; overflow: visible; }
+.orbits { transform-box: view-box; transform-origin: 50px 50px; animation: pet-spin 12s linear infinite; }
+.orbit ellipse { fill: none; stroke: var(--pet-orbit); stroke-width: 3; opacity: .9; }
+.electron { fill: var(--pet-orbit); stroke: #fff; stroke-width: 1; }
+.core { transform-box: view-box; transform-origin: 50px 50px; animation: pet-bob 3.2s ease-in-out infinite; }
+.nucleus { fill: var(--pet-core); stroke: #fff; stroke-width: 2.5; }
+.eyes { display: none; fill: #fff; stroke: #fff; stroke-width: 2; stroke-linecap: round; }
+.eyes path { fill: none; }
+.mouth { fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; }
+.eyes-open { display: inline; }
+
+.badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 10px;
+  box-sizing: border-box;
+  font: 700 13px/20px Inter, -apple-system, sans-serif;
+  text-align: center;
+  color: #fff;
+  background: var(--pet-core);
+  border: 1.5px solid #fff;
+}
+.badge:empty { display: none; }
+
+/* idle: slow spin, a gentle bob (the defaults above) */
+
+/* sleeping: still, faded, eyes shut */
+.st-sleeping .orbits { animation: none; opacity: .45; }
+.st-sleeping .core { animation: pet-bob 6s ease-in-out infinite; }
+.st-sleeping .eyes-open, .st-sleeping .mouth { display: none; }
+.st-sleeping .eyes-closed { display: inline; }
+.st-sleeping .badge { background: var(--pet-ink-2); }
+
+/* thinking: a quicker spin */
+.st-thinking .orbits { animation-duration: 4s; }
+
+/* working: fast spin, the core pulses */
+.st-working .orbits { animation-duration: 1.1s; }
+.st-working .core { animation: pet-pulse .9s ease-in-out infinite; }
+
+/* done: green, happy */
+.st-done .sprite { --pet-core: var(--pet-green); }
+.st-done .eyes-open { display: none; }
+.st-done .eyes-happy { display: inline; }
+.st-done .core { animation: pet-hop .6s ease-out 2; }
+
+/* error: red, crossed eyes, one shake */
+.st-error .sprite { --pet-core: var(--pet-red); --pet-orbit: #FF8A80; }
+.st-error .orbits { animation: none; }
+.st-error .eyes-open, .st-error .mouth { display: none; }
+.st-error .eyes-x { display: inline; }
+.st-error .core { animation: pet-shake .45s ease-in-out 2; }
+
+/* waiting for you: amber, a hop now and then */
+.st-waiting .sprite { --pet-core: var(--pet-amber); }
+.st-waiting .orbits { animation-duration: 8s; }
+.st-waiting .core { animation: pet-hop 1.8s ease-out infinite; }
+
+/* do not disturb: quieter and see-through, nothing hops */
+.dnd .sprite { opacity: .6; }
+.dnd .core { animation: none; }
+.dnd .badge { background: var(--pet-ink-2); }
+
+@keyframes pet-spin { to { transform: rotate(360deg); } }
+@keyframes pet-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2.5px); } }
+@keyframes pet-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+@keyframes pet-hop { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
+@keyframes pet-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .orbits, .core { animation: none !important; }
+}
+
+/* ---- the bubble ---- */
+.bubble {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 116px;
+  max-height: 136px;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--pet-paper);
+  border: 1px solid var(--pet-line);
+  box-shadow: 0 10px 28px -12px rgba(16, 17, 18, .45);
+}
+.bubble[hidden] { display: none; }
+.bubble::after {
+  content: "";
+  position: absolute;
+  right: 56px;
+  bottom: -7px;
+  width: 12px;
+  height: 12px;
+  background: var(--pet-paper);
+  border-right: 1px solid var(--pet-line);
+  border-bottom: 1px solid var(--pet-line);
+  transform: rotate(45deg);
+}
+.b-title { font-weight: 600; padding-right: 18px; overflow-wrap: anywhere; }
+.b-text { margin-top: 3px; color: var(--pet-ink-2); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.b-detail { margin-top: 2px; color: var(--pet-ink-2); font-size: 12px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.b-risk { margin-top: 3px; color: var(--pet-amber); font-size: 12px; }
+.b-msg { margin-top: 3px; font-size: 12px; color: var(--pet-ink-2); }
+.b-detail[hidden], .b-risk[hidden], .b-msg[hidden], .b-more[hidden] { display: none; }
+.b-actions { display: flex; gap: 6px; margin-top: 8px; }
+.b-btn {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--pet-line);
+  background: var(--pet-btn);
+  color: var(--pet-ink);
+  cursor: pointer;
+}
+.b-btn[hidden] { display: none; }
+.b-btn:disabled { opacity: .5; cursor: default; }
+.b-primary { background: var(--pet-blue); border-color: var(--pet-blue); color: #fff; }
+.b-quiet { margin-left: auto; }
+.b-more { margin-top: 5px; font-size: 11px; color: var(--pet-ink-2); }
+.b-x {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--pet-ink-2);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+}
