@@ -66,7 +66,9 @@ export interface SchedulerOptions {
    * drain — today the mail trigger (ATO-601), which turns new inbox
    * messages into tasks. Called on every interval tick this process
    * leads, after the leadership check and without waiting; each sidecar
-   * throttles itself and must not throw.
+   * throttles itself and must not throw. With a leadership gate, not on
+   * the tick that gains leadership (#1735): the previous leader may have
+   * started its own on its last tick and only stands by on its next.
    */
   sidecars?: readonly SchedulerSidecar[];
 }
@@ -123,9 +125,13 @@ export class Scheduler {
     if (this.timer !== null) return;
     if (this.stopping) return;
     const handler = () => {
+      const wasLeading = this.leading;
       if (!this.leads()) return;
       void this.tickOnce();
-      this.tickSidecars();
+      // #1735: a process that just took leadership waits one tick before
+      // its sidecars, so the one it took over from has seen the hand-over
+      // on its own tick and stopped starting them.
+      if (wasLeading === true || !this.options.leadership) this.tickSidecars();
     };
     this.timer = this.clock.setInterval(handler, this.options.tickMs);
   }
