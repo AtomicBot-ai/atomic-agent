@@ -507,3 +507,5 @@ button.set-search:hover{border-color:var(--bd)}
 .mailtask-subject{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mailtask-meta{font-size:var(--fs-label);color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mailtask-acts{display:flex;gap:6px;flex:none}
+/* ATO-2744: Dismiss on a waiting mail task asks on the card first. */
+.mailtask-ask{align-self:center;font-size:var(--fs-label);color:var(--ink-2)}

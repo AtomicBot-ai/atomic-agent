@@ -3,7 +3,10 @@
  * does the work and says why it is built this way).
  *
  *   hub:scan() → { ok: true, sessions: HubSession[], now }
- *              | { ok: false, reason: "remote" | "failed", message }
+ *              | { ok: false, reason: "remote" | "failed", message, detail? }
+ *
+ * `message` is the sentence the sheet shows; on "failed" the raw words of
+ * what went wrong are in `detail`, under Details (ATO-2744).
  *
  * Connected to an agent on another computer, the sessions on THIS computer
  * are not the ones that agent can continue (the same rule as handoff.ts),
@@ -15,6 +18,8 @@ import { homedir } from "node:os";
 import { ipcMain } from "electron";
 
 import { scanAgentSessions, type HubFsDeps } from "./agent-hub-scan.js";
+
+export const HUB_FAILED_MESSAGE = "Couldn't read your Claude Code and Codex sessions. Try Refresh.";
 
 export const HUB_REMOTE_MESSAGE =
   "This app is connected to an agent on another computer. Its Claude Code and Codex sessions are listed there.";
@@ -46,7 +51,7 @@ export function wireAgentHubIpc(opts: { isRemote: () => boolean }): void {
       const sessions = scanAgentSessions({ home: homedir(), env: process.env, now, deps: nodeHubFs });
       return { ok: true, sessions, now };
     } catch (err) {
-      return { ok: false, reason: "failed", message: err instanceof Error ? err.message : String(err) };
+      return { ok: false, reason: "failed", message: HUB_FAILED_MESSAGE, detail: err instanceof Error ? err.message : String(err) };
     }
   });
 }

@@ -19,7 +19,7 @@ const MF_POLL_MS = 3000;
 const MF = {
   folders: null,       // MyFilesFolder[] once read
   status: null,        // MyFilesStatus once read
-  err: null,           // the last call's error text
+  err: null,           // the last call's error: a sentence, or {text, hint, detail} (human-error.js)
   unsupported: false,  // the agent has no file index (501, old agent, capabilities without fileIndex)
   remote: false,       // a remote agent: its folders are listed, not added or removed from here
   loading: false,      // a folder list read is running
@@ -51,7 +51,7 @@ function mfProgressText(st) {
   if (st.running) return st.found ? 'Indexing ' + Math.min(done, st.found) + ' of ' + mfPlural(st.found, 'file') : 'Looking for files…';
   if (!st.found) return '';
   const parts = [mfPlural(st.indexed || 0, 'file') + ' indexed'];
-  if (st.failed) parts.push(st.failed + ' could not be read');
+  if (st.failed) parts.push(st.failed + " couldn't be read");
   if (st.skipped) parts.push(st.skipped + ' skipped');
   return parts.join(' · ');
 }
@@ -90,8 +90,32 @@ function mfRepaint() {
   if (typeof paneRepaintKeepFocus === 'function') paneRepaintKeepFocus(myFilesTab()); else render();
 }
 
+/* ATO-2744: main's words when they read as a sentence (MY_FILES_TEXT, the 400 codes in words); an
+   agent's own raw message goes under Details instead. */
+function mfFailure(res) {
+  const said = String((res && res.error) || '').trim();
+  const line = typeof herrSentence === 'function' ? herrSentence(said) : said;
+  return {text: line || "The agent didn't answer. Try Refresh.", hint: '', detail: line === said ? '' : said};
+}
+
+/* A call that threw (the bridge, not the agent): one sentence, the thrown words under Details. */
+function mfThrown(e) {
+  return {text: "Couldn't reach the agent. Try Refresh.", hint: '', detail: String((e && e.message) || e || '')};
+}
+
+/* The file the index last failed on: its name in words, the macOS privacy hint for EPERM / EACCES
+   (with Open Privacy Settings when the bridge has privacy:open), the path and the agent's words under Details. */
+function mfLastErrorHTML(le, platform, canOpenPrivacy) {
+  if (!le || !le.message || typeof herrFsRead !== 'function') return '';
+  const e = herrFsRead(le.message, mfBase(le.path) || 'a file', platform);
+  e.detail = [le.path || '', String(le.message)].filter(Boolean).join('\n');
+  const open = platform === 'darwin' && canOpenPrivacy && herrIsPermission(le.message)
+    ? ' <button class="btn btn-s sm" data-act="myfiles:privacy">Open Privacy Settings</button>' : '';
+  return '<div class="mf-lasterr">' + herrBodyHTML(e) + open + '</div>';
+}
+
 function mfApplyFailure(res) {
-  MF.err = (res && res.error) || 'The agent did not answer.';
+  MF.err = mfFailure(res);
   MF.unsupported = !!res && res.reason === 'unsupported';
   if (res && res.reason === 'remote') MF.remote = true;
 }
@@ -112,7 +136,7 @@ async function mfRefreshFolders() {
       if (MF.unsupported) MF.folders = [];
     }
   } catch (e) {
-    MF.err = String((e && e.message) || e);
+    MF.err = mfThrown(e);
   } finally {
     MF.loading = false;
   }
@@ -166,7 +190,7 @@ async function mfAdd() {
       MF.wasRunning = true;
     } else mfApplyFailure(res);
   } catch (e) {
-    MF.err = String((e && e.message) || e);
+    MF.err = mfThrown(e);
   } finally {
     MF.adding = false;
   }
@@ -183,7 +207,7 @@ async function mfRemove(index) {
     if (res && res.ok) MF.msg = res.removed ? 'Removed ' + f.name + ' from My files. The files themselves are untouched.' : f.name + ' was already removed.';
     else mfApplyFailure(res);
   } catch (e) {
-    MF.err = String((e && e.message) || e);
+    MF.err = mfThrown(e);
   } finally {
     MF.busy = null;
   }
@@ -195,6 +219,7 @@ function myFilesAct(what) {
   const {verb, index} = mfParseAct(what);
   if (verb === 'refresh') { mfRefreshFolders().then(() => mfRefreshStatus()); return; }
   if (verb === 'add') { mfAdd(); return; }
+  if (verb === 'privacy') { if (typeof BR !== 'undefined' && BR && typeof BR.privacyOpen === 'function') BR.privacyOpen('fullDiskAccess'); return; }
   if (verb === 'remove' && index !== null) { MF.confirm = index; mfRepaint(); return; }
   if (verb === 'removeCancel') { MF.confirm = null; mfRepaint(); return; }
   if (verb === 'removeConfirm' && index !== null) { mfRemove(index); return; }
@@ -212,9 +237,8 @@ function mfProgressHTML() {
       + '<span class="mf-fill' + (pct === null ? ' mf-fill--wait' : '') + '" style="width:' + (pct === null ? 100 : pct) + '%"></span></div>'
     : '';
   const cur = st.running && st.current ? '<span class="mf-cur mono" title="' + esc(st.current) + '">' + esc(mfBase(st.current)) + '</span>' : '';
-  const last = st.lastError && st.lastError.message
-    ? '<p class="mf-lasterr">Could not read <span class="mono" title="' + esc(st.lastError.path || '') + '">' + esc(mfBase(st.lastError.path)) + '</span>: ' + esc(st.lastError.message) + '</p>'
-    : '';
+  const last = mfLastErrorHTML(st.lastError, typeof PLATFORM !== 'undefined' ? PLATFORM : '',
+    typeof BR !== 'undefined' && !!BR && typeof BR.privacyOpen === 'function');
   return '<div class="mf-progress' + (st.running ? ' is-running' : '') + '" aria-live="polite">'
     + '<div class="mf-ptext">' + (st.running ? '<span class="tk-spin" aria-hidden="true"></span>' : ic('check')) + '<span class="grow">' + esc(text) + '</span>' + cur + '</div>'
     + bar + last + '</div>';
@@ -256,10 +280,10 @@ function myFilesTab() {
     + '</div>';
   const remote = MF.remote ? '<div class="tk-notice tk-notice--blue mf-note">' + ic('info') + '<span class="grow">This app is connected to an agent on another computer. Its folders are shown here; add or remove them on that computer.</span></div>' : '';
   const msg = MF.msg ? '<div class="tk-notice tk-notice--blue mf-note">' + ic('info') + '<span class="grow">' + esc(MF.msg) + '</span></div>' : '';
-  const err = MF.err ? '<div class="tuierr tk-notice tk-notice--red mf-note">' + ic('alert') + '<span class="grow">' + esc(MF.err) + '</span></div>' : '';
+  const err = MF.err ? herrNoticeHTML(MF.err, {icon: ic('alert'), cls: 'tuierr mf-note'}) : '';
   let body;
   if (!MF.folders) {
-    body = MF.err ? '' : '<div class="tk-empty set-empty mf-empty"><span class="tk-spin"></span><p>reading folders…</p></div>';
+    body = MF.err ? '' : '<div class="tk-empty set-empty mf-empty"><span class="tk-spin"></span><p>Reading folders…</p></div>';
   } else if (!rows.length) {
     body = '<div class="tk-empty set-empty mf-empty"><span class="tk-ico tk-ico--lg">' + ic('folder') + '</span><h4>No folders yet</h4>'
       + '<p>' + (canAdd ? 'Add a folder with your documents, and you can ask the agent about them in any chat.' : 'No folders are indexed on the other computer yet.') + '</p></div>';
@@ -269,4 +293,4 @@ function myFilesTab() {
   return '<div class="set-pane mf-pane">' + about + head + remote + err + msg + mfProgressHTML() + body + '</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {mfPercent, mfProgressText, mfFolderMeta, mfParseAct, mfBase, MF_INTRO, MF_POLL_MS};
+if (typeof module !== 'undefined') module.exports = {mfPercent, mfProgressText, mfFolderMeta, mfParseAct, mfBase, mfFailure, mfThrown, mfLastErrorHTML, MF_INTRO, MF_POLL_MS};

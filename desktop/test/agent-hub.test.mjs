@@ -244,3 +244,27 @@ test("hooks: renderer.js palette, overlay and act; index.html; main.ts and prelo
   assert.match(ipc, /if \(opts\.isRemote\(\)\) return \{ ok: false, reason: "remote"/);
   assert.ok(!/writeFileSync|mkdirSync|rmSync|unlinkSync|renameSync/.test(ipc), "read-only");
 });
+
+test("ATO-2744: Terminal is named only where its buttons are; failures are sentences with raw words under Details", () => {
+  // The renderer loads human-error.js first; its functions are globals there.
+  Object.assign(globalThis, require("../renderer/human-error.js"));
+  assert.equal(R.hubCaption(true), "Your Claude Code and Codex sessions from the last day. Continue one here, or open it in Terminal.");
+  assert.equal(R.hubCaption(false), "Your Claude Code and Codex sessions from the last day. Continue one here.");
+  const src = readFileSync(new URL("../renderer/agent-hub.js", import.meta.url), "utf8");
+  assert.match(src, /'<p class="sd-cap">' \+ esc\(hubCaption\(hubTerminalOk\(\)\)\) \+ '<\/p>'/);
+  assert.match(src, /if \(AG_HUB\.error\) body \+= herrNoticeHTML\(AG_HUB\.error, \{icon: ic\('alert'\)\}\);/);
+  // main's sentence and its raw words (agent-hub-ipc.ts)
+  assert.deepEqual(R.hubScanError({ ok: false, reason: "failed", message: "Couldn't read your Claude Code and Codex sessions. Try Refresh.", detail: "EACCES: permission denied, scandir '/Users/me/.claude/projects'" }),
+    { text: "Couldn't read your Claude Code and Codex sessions. Try Refresh.", detail: "EACCES: permission denied, scandir '/Users/me/.claude/projects'" });
+  // an older main that sent the raw message itself
+  assert.deepEqual(R.hubScanError({ ok: false, reason: "failed", message: "EMFILE: too many open files" }),
+    { text: "Couldn't read your Claude Code and Codex sessions. Try Refresh.", detail: "EMFILE: too many open files" });
+  assert.deepEqual(R.hubScanError({ ok: false, reason: "remote", message: "This app is connected to an agent on another computer." }),
+    { text: "This app is connected to an agent on another computer.", detail: "" });
+  // Continue here: handoff.js's raw words fold away, a real sentence stays.
+  assert.deepEqual(R.hubContinueError("session id is not valid"), { text: "Couldn't continue this session here. Try again.", detail: "session id is not valid" });
+  assert.deepEqual(R.hubContinueError("This agent version cannot continue a Codex session. Update Atomic Agent."),
+    { text: "This agent version cannot continue a Codex session. Update Atomic Agent.", detail: "" });
+  const ipc = readFileSync(new URL("../main/agent-hub-ipc.ts", import.meta.url), "utf8");
+  assert.match(ipc, /return \{ ok: false, reason: "failed", message: HUB_FAILED_MESSAGE, detail: err instanceof Error \? err\.message : String\(err\) \};/);
+});

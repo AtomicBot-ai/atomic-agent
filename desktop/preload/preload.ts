@@ -572,6 +572,8 @@ contextBridge.exposeInMainWorld("atomic", {
   showOnceStop: () => ipcRenderer.invoke("showOnce:stop"),
   showOnceCancel: () => ipcRenderer.invoke("showOnce:cancel"),
   showOnceOpenAccessibility: () => ipcRenderer.invoke("showOnce:openAccessibility"),
+  /** ATO-2744: one whitelisted macOS Privacy pane (main/privacy-pane.ts); refused off macOS. */
+  privacyOpen: (pane: "fullDiskAccess" | "inputMonitoring") => ipcRenderer.invoke("privacy:open", pane),
   onShowOnceState: (cb: (payload: unknown) => void) => on("showOnce:state", cb),
   /** ATO-954: Settings › Plugins (main/plugins-ipc.ts). */
   pluginList: () => ipcRenderer.invoke("cli:pluginList"),

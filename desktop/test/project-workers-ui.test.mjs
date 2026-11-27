@@ -151,3 +151,28 @@ test("main.ts: startTurn takes a worker's folder, and the worker IPC is wired wi
   const pre = read("../preload/preload.ts");
   for (const ch of ["projects:startWorkers", "projects:workers", "projects:workersStarted", "projects:workersChanged"]) assert.ok(pre.includes(`"${ch}"`), ch);
 });
+
+test("ATO-2744: a failed start in words: git's known cases, kept copies, raw words under Details", () => {
+  // The renderer loads human-error.js first; its functions are globals there.
+  Object.assign(globalThis, require("../renderer/human-error.js"));
+  const noCommits = PW.pworkersError({ ok: false, reason: "git", error: "Couldn't make a worker copy of this folder with git.",
+    detail: "Worker 1\nfatal: invalid reference: HEAD", kept: 0 });
+  assert.equal(noCommits.text, "This folder has no commits yet. Make a first commit, then try again.");
+  assert.equal(noCommits.hint, "");
+  assert.match(noCommits.detail, /fatal: invalid reference: HEAD/);
+  const denied = PW.pworkersError({ ok: false, reason: "git", error: "x", detail: "Worker 2\nfatal: could not create directory: Permission denied", kept: 1 });
+  assert.equal(denied.text, "Atomic Agent can't write to this folder.");
+  assert.equal(denied.hint, "One worker copy was already made and kept.");
+  const copy = PW.pworkersError({ ok: false, error: "Couldn't copy the folder for the worker.", detail: "Worker 1\nEACCES: permission denied", kept: 2 });
+  assert.equal(copy.text, "Couldn't copy the folder for the worker.");
+  assert.equal(copy.hint, "2 worker copies were already made and kept.");
+  assert.equal(PW.pworkersError(null).text, "The worker chats didn't start. Try again.");
+  const html = herrNoticeHTML(noCommits);
+  assert.ok(html.indexOf("fatal:") > html.indexOf("<summary>Details</summary>"), "git's words only under Details");
+  const src = read("../renderer/project-workers.js");
+  assert.match(src, /if \(sh\.error\) body \+= herrNoticeHTML\(sh\.error, \{icon: ic\('alert'\)\}\);/);
+  assert.match(src, /<b title="' \+ esc\(sh\.folder\) \+ '">' \+ esc\(herrBase\(sh\.folder\)\) \+ '<\/b>/);
+  const ipc = read("../main/project-workers-ipc.ts");
+  assert.match(ipc, /return \{ ok: false, error: made\.error, detail, kept: workers\.length/);
+  assert.ok(!/error: `Worker \$\{i \+ 1\}/.test(ipc), "no worker number or paths in the sentence");
+});
