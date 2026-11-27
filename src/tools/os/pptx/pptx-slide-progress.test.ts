@@ -50,6 +50,17 @@ describe("slideProgressOf", () => {
   });
 });
 
+describe("slideProgressOf: comparison", () => {
+  it("sends both sides of a comparison, each its heading and first points (review of #2085)", () => {
+    const s = slide({ bullets: ["Before", "  a", "  b", "  c", "  d", "  e", "After", "  f"] });
+    const laid = layoutSlide(s);
+    expect(laid.layout).toBe("comparison");
+    const p = slideProgressOf(laid, 0, deck([s]));
+    expect(p.bullets).toEqual(["Before", "  a", "  b", "After", "  f"]);
+    expect(p.bullets.length).toBeLessThanOrEqual(THUMB_BULLETS);
+  });
+});
+
 describe("slideReporter", () => {
   it("is undefined without a sink, and a sink that throws never fails the build", () => {
     expect(slideReporter(undefined, "s", deck([slide()]), Date.now())).toBeUndefined();

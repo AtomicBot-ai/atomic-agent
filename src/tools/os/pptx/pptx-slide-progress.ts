@@ -1,5 +1,6 @@
 import type { LaidOutSlide } from "./pptx-layout.js";
-import type { PptxDeckSpec } from "./pptx-spec.js";
+import type { PptxBullet, PptxDeckSpec } from "./pptx-spec.js";
+import { comparisonSides } from "./pptx-text-fit.js";
 
 /**
  * ATO-2444: what a host needs to draw one slide of a deck as a thumbnail
@@ -32,6 +33,19 @@ function clip(text: string): string {
   return flat.length <= THUMB_CHARS ? flat : `${flat.slice(0, THUMB_CHARS - 1).trimEnd()}…`;
 }
 
+/**
+ * The bullets a thumbnail gets, in order. A comparison sends both sides,
+ * each its heading and first points, so a long left side never leaves
+ * the thumbnail's right column empty (review of #2085).
+ */
+function thumbBullets(laid: LaidOutSlide): readonly PptxBullet[] {
+  const { bullets } = laid.slide;
+  if (laid.layout !== "comparison") return bullets.slice(0, THUMB_BULLETS);
+  const half = THUMB_BULLETS / 2;
+  const [left, right] = comparisonSides(bullets);
+  return [...left.slice(0, half), ...right.slice(0, half)];
+}
+
 export function slideProgressOf(
   laid: LaidOutSlide,
   index: number,
@@ -46,7 +60,7 @@ export function slideProgressOf(
     layout: laid.layout,
     title: clip(slide.title),
     ...(slide.subtitle === undefined ? {} : { subtitle: clip(slide.subtitle) }),
-    bullets: slide.bullets.slice(0, THUMB_BULLETS).map((b) => `${"  ".repeat(b.level)}${clip(b.text)}`),
+    bullets: thumbBullets(laid).map((b) => `${"  ".repeat(b.level)}${clip(b.text)}`),
     ...(visual === undefined ? {} : { visual }),
     moved: laid.moved,
     theme: spec.theme,

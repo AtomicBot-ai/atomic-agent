@@ -145,7 +145,8 @@ describe("buildPptx", () => {
     expect(slide.match(/<a:tc>/g)).toHaveLength(9);
     expect(slide).toContain("<a:t>Pro &amp; Team</a:t>");
     expect(slide).toContain("<a:t>&lt;10</a:t>");
-    // Bullets keep the left half; the table takes the right one.
+    // ATO-2444: with one bullet the table leads across the body and the bullet sits under it, still in the body placeholder.
+    expect(built.layouts[0]!.layout).toBe("table");
     expect(slide).toContain('<p:ph type="body" idx="1"/>');
     const result = await pptxExtractor({ data: built.data, sourcePath: "deck.pptx" });
     expect(result.text).toContain("Plan");

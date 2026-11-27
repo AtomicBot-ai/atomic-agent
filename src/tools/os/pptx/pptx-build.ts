@@ -122,7 +122,7 @@ export async function buildPptx(input: BuildPptxInput): Promise<BuildPptxResult>
     const n = index + 1;
     // Layout picked (or the model's kept), and bullets the layout cannot
     // hold moved to the speaker notes, before anything is written.
-    const laid = layoutSlide(asked);
+    const laid = layoutSlide(asked, index);
     const slide = laid.slide;
     layouts.push({ layout: laid.layout, moved: laid.moved });
     input.onSlide?.(laid, index);
