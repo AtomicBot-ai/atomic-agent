@@ -33,7 +33,7 @@ function chatPopoutCanOffer() {
 function chatPopoutOpen(id) {
   const B = typeof window !== 'undefined' ? window.atomic : null;
   if (!id || !B || typeof B.chatPopoutOpen !== 'function') return Promise.resolve(false);
-  const say = (t) => { if (t && typeof toast === 'function') toast(t.title, t.sub); };
+  const say = (t) => { if (t && typeof toast === 'function') toast(t.title, t.sub, 'bad'); };
   if (typeof RUNNING !== 'undefined' && cwoStreamsHere(RUNNING, id)) {
     say({title: 'Could not open the chat in a new window', sub: CWO_LIVE_LINE});
     return Promise.resolve(false);

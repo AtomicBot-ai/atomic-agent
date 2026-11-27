@@ -213,7 +213,7 @@ function chatVideoActionNote(verb, r) {
   const why = r && r.reason === 'outside' ? 'Only a clip in your home folder can be saved or shown from a reply.'
     : r && r.reason === 'failed' && r.error ? String(r.error)
     : 'The clip may have been moved or deleted.';
-  return {title: verb === 'save' ? 'Could not save it' : 'Could not show it', sub: why};
+  return {title: verb === 'save' ? 'Could not save it' : 'Could not show it', sub: why, kind: 'bad'};
 }
 
 /** Runs one action through the bridge; resolves to the note chatVideoActionNote gives (null: nothing to say). */
@@ -232,7 +232,7 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
     ev.preventDefault();
     ev.stopPropagation();
     chatVideoAction(b.dataset.vidAct, b.dataset.vidPath).then((note) => {
-      if (note && typeof toast === 'function') toast(note.title, note.sub);
+      if (note && typeof toast === 'function') toast(note.title, note.sub, note.kind);
     });
   }, true);
 }
