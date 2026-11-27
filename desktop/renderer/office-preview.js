@@ -16,10 +16,13 @@
    in the same frame as a .pdf file, or Quick Look's HTML page, shown in the
    same sandboxed frame as an .html file (ofSlidesDoc adds the CSP and a zoom
    that fits the page to the panel). Until it answers the cards carry a
-   "Drawing the slides" note; when it cannot (`office.renderFailed`) they stay.
+   "Drawing the slides" note; when it cannot (`office.renderFailed`) they stay,
+   with a note that Reload tries again (ATO-2517). Once the pictures are
+   there, "Show text" in the head brings the cards back (ofViewButton), and
+   Quick Look's page says when it left the deck's charts out.
 
    Shared with the Node checks (test/office-preview.test.mjs): fpOfficeHtml,
-   ofSlidesDoc. Nothing here touches the DOM. */
+   ofSlidesDoc, ofViewButton. Nothing here touches the DOM. */
 
 function ofEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c])); }
 
@@ -60,14 +63,25 @@ function ofSlidesDoc(html, csp, zoom) {
   return s.slice(0, end) + head + s.slice(end);
 }
 
-function ofSlidesHtml(o, name) {
-  const frame = ofSlidesFrameHtml(o, name);
-  if (frame) return frame;
+/** ATO-2517: Quick Look's page leaves a deck's charts out; the pictures say so. */
+function ofChartsNote(o) {
+  const r = o && o.render;
+  return r && r.kind === 'html' && r.charts === true
+    ? ofNote('Charts are not drawn in this view. Open the file to see them, or install LibreOffice to draw them here.')
+    : '';
+}
+
+/** `showText` (ATO-2517): the text cards even when the pictures are there. */
+function ofSlidesHtml(o, name, showText) {
+  const frame = showText ? null : ofSlidesFrameHtml(o, name);
+  if (frame) return ofChartsNote(o) + frame;
   const slides = Array.isArray(o.slides) ? o.slides : [];
   if (!slides.length) return '<div class="fp-msg">This presentation has no slides.</div>';
   const cut = o.truncated ? ofNote('Showing ' + slides.length + ' of ' + (o.total || slides.length) + ' slides. Open the file to see all of it.') : '';
-  const wait = o.renderable && !o.renderFailed ? '<div class="fp-note fp-wait">Drawing the slides…</div>' : '';
-  return cut + wait + '<div class="fp-office fp-deck">' + slides.map((s) => {
+  const wait = o.renderable && !o.renderFailed && !o.render ? '<div class="fp-note fp-wait">Drawing the slides…</div>' : '';
+  // ATO-2517: a failed drawing says Reload tries again, rather than leaving the cards unexplained.
+  const failed = o.renderable && o.renderFailed ? ofNote('The slides could not be drawn as pictures, so this is their text. Reload to try again.') : '';
+  return cut + wait + failed + '<div class="fp-office fp-deck">' + slides.map((s) => {
     const paras = (Array.isArray(s.paras) ? s.paras : []).map((p) => '<p>' + ofEsc(p) + '</p>').join('');
     return '<section class="fp-slide"><div class="fp-slide-n">' + ofEsc(s.n) + '</div><div class="fp-slide-c">'
       + (s.title ? '<div class="fp-slide-t">' + ofEsc(s.title) + '</div>' : '')
@@ -102,14 +116,27 @@ function ofSheetHtml(o) {
     + '<div class="prose fp-prose"><div class="mdtbl fp-tbl"><table><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div></div>';
 }
 
-/** The panel's body for a preview of kind "office". */
-function fpOfficeHtml(d) {
+/**
+ * ATO-2517: the head's "Show text" / "Show slides" button for a deck whose
+ * pictures are there; '' otherwise. It flips file-preview.js's FP.view, the
+ * same switch as the Source / Preview button of a Markdown or HTML file.
+ */
+function ofViewButton(d, view) {
+  const o = d && d.ok && d.kind === 'office' ? d.office : null;
+  if (!o || o.type !== 'pptx' || !ofSlidesFrameHtml(o, '')) return '';
+  return view === 'source'
+    ? '<button class="fp-btn fp-tog" data-fp="view" title="Show the slides as pictures">Show slides</button>'
+    : '<button class="fp-btn fp-tog" data-fp="view" title="Show the text of each slide">Show text</button>';
+}
+
+/** The panel's body for a preview of kind "office"; `view` 'source' shows a deck's text (ATO-2517). */
+function fpOfficeHtml(d, view) {
   const o = d && d.office;
   if (!o) return '<div class="fp-msg">This file could not be read.</div>';
-  if (o.type === 'pptx') return ofSlidesHtml(o, d.name || 'Slides');
+  if (o.type === 'pptx') return ofSlidesHtml(o, d.name || 'Slides', view === 'source');
   if (o.type === 'docx') return ofDocHtml(o);
   if (o.type === 'xlsx') return ofSheetHtml(o);
   return '<div class="fp-msg">This file could not be read.</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {fpOfficeHtml, ofColName, ofSlidesDoc};
+if (typeof module !== 'undefined') module.exports = {fpOfficeHtml, ofColName, ofSlidesDoc, ofViewButton};

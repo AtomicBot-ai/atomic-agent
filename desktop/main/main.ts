@@ -3207,10 +3207,10 @@ function wireIpc(client: AgentClient): void {
      PDF when it is installed, Quick Look's page on macOS, else nothing and the
      text cards stay. The same root check as the preview; the file itself is
      only read, the converter writes into a temporary folder of its own. */
-  ipcMain.handle("app:filePreviewSlides", async (_event, p: unknown) => {
+  ipcMain.handle("app:filePreviewSlides", async (_event, p: unknown, retry: unknown) => {
     const t = await previewTarget(p, previewRoots(), homedir(), process.platform);
     if (!t.ok) return { ok: false, reason: t.reason };
-    const r = await renderSlides(t.real, process.platform);
+    const r = await renderSlides(t.real, process.platform, {}, { retry: retry === true });   // ATO-2517: Reload retries a failed one
     return r ? { ok: true, ...r } : { ok: false, reason: "no-render" };
   });
   ipcMain.handle("app:filePreviewAction", async (_event, p: unknown, action: unknown) => {
