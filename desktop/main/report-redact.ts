@@ -174,8 +174,17 @@ function holdsToken(segment: string): boolean {
   return false;
 }
 
+/**
+ * ATO-1741: a ChatGPT sign-in link (`https://auth.openai.com/oauth/authorize?...`).
+ * Its query carries the PKCE challenge, the state and the loopback callback, none
+ * of which a report needs: the whole query goes, the host and path stay.
+ */
+const OPENAI_AUTHORIZE = /^(https?:\/\/auth\.openai\.com\/oauth\/authorize\?)(.+)$/is;
+
 /** One URL: its user:password, its secret query values and its token-holding path segments go; the rest stays. */
 function scrubUrl(url: string): string {
+  const authorize = OPENAI_AUTHORIZE.exec(url);
+  if (authorize) return `${authorize[1]}${gone(authorize[2]!)}`;
   const parts = /^([a-z][a-z0-9+.-]*:\/\/)([^/?#]*)([^?#]*)(.*)$/is.exec(url);
   if (!parts) return url;
   const [, scheme, authority, path, rest] = parts as unknown as [string, string, string, string, string];

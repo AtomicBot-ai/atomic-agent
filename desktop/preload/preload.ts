@@ -212,6 +212,10 @@ contextBridge.exposeInMainWorld("atomic", {
   subscriptionLogin: (cli: "claude" | "codex") => ipcRenderer.invoke("cli:subscriptionLogin", cli),
   // ATO-1684: ask the CLI itself whether it is signed in. {ok, check: {cli, state, via, fix, apiKeyLogin?, checkedAt}}
   subscriptionLiveCheck: (cli: "claude" | "codex", force?: boolean) => ipcRenderer.invoke("cli:subscriptionLiveCheck", { cli, force: force === true }),
+  // ATO-1741: ChatGPT sign-in through the bundled agent. {ok, state, reason?, providerId?}; never a link or token.
+  chatgptOauthStart: () => ipcRenderer.invoke("chatgptOauth:start"),
+  chatgptOauthCancel: () => ipcRenderer.invoke("chatgptOauth:cancel"),
+  chatgptOauthStatus: () => ipcRenderer.invoke("chatgptOauth:status"),
   removeProvider: (id: string) => ipcRenderer.invoke("cli:removeProvider", id),
   modelsStart: () => ipcRenderer.invoke("cli:modelsStart"),
   traceUsage: (stateDir: string, sessionId: string) =>
