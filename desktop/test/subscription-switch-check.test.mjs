@@ -160,3 +160,61 @@ test("hooks: the menu's provider and model rows, the step's end, and index.html"
   const at = html.indexOf('src="subscription-switch-check.js"');
   assert.ok(at > html.indexOf('src="subscription-live-check.js"') && at < html.indexOf('src="renderer.js"'));
 });
+
+// Settings › Models: Use on a saved provider row, or a model row, runs the
+// same check as the composer's menu. Settings is an overlay with the menu
+// closed, so the hint is the toast.
+function loadSettings(opts) {
+  const base = load({ ...opts, selectorOpen: false });
+  const calls = [];
+  runInContext(
+    "var LLMP = {busy: false, choosing: null, msg: null};"
+    + "function restartStopsTurn() { return null; }"
+    + "function llmReport() {} function llmRepaint() {} function llmRefresh() {} function bswReport() {}"
+    + "function llmRestartRefusal() { return ''; } function llmFail() { return 'failed'; } function savedKeyLine() { return ''; }"
+    + "function llmSwitchTail() { return ''; } function swxSaid() { return false; } function llmOpenWizard() {}"
+    + "function llmProvider(id) { return selProviders().find((p) => p.id === id) || null; }"
+    + "function swxRun(_w, _t, fn) { return Promise.resolve().then(fn); }"
+    + "var SWXBR = {activateProvider: (id) => { calls.push(['provider', id]); return Promise.resolve({ok: true}); },"
+    + " selectCloudModel: (pid, m) => { calls.push(['model', pid, m]); return Promise.resolve({ok: true}); }};\n"
+    + slice("async function llmSwitchProvider(id) {", "async function llmSelectChatModel(pid, modelId) {")
+    + slice("async function llmSelectChatModel(pid, modelId) {", "\n}\n") + "\n}\n"
+    + "this.use = llmSwitchProvider; this.pick = llmSelectChatModel;",
+    Object.assign(base.ctx, { calls }),
+  );
+  return { ...base, calls };
+}
+
+test("Settings › Models Use on a signed-out Claude Code shows the sign-in toast", async () => {
+  const { ctx, toasts, liveAsked, calls } = loadSettings({ live: { state: "signed_out" } });
+  assert.equal(await ctx.use("claude-cli"), true);
+  await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [["provider", "claude-cli"]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(liveAsked)), [["claude", false]]);
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].t, "Claude Code is not signed in");
+  assert.equal(ctx.WIZ.phase, null, "the step does not open over Settings");
+});
+
+test("Settings › Models picking a Codex model row runs the check too; signed in shows nothing", async () => {
+  const out = loadSettings({ live: { state: "signed_out" }, active: "codex-cli" });
+  await out.ctx.pick("codex-cli", "gpt-5.5");
+  await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(out.liveAsked)), [["codex", false]]);
+  assert.equal(out.toasts[0].t, "Codex is not signed in");
+  const fine = loadSettings({ live: { state: "signed_in" } });
+  await fine.ctx.use("claude-cli");
+  await tick();
+  assert.equal(fine.toasts.length, 0);
+  const other = loadSettings({ live: { state: "signed_out" }, active: "openrouter" });
+  await other.ctx.use("openrouter");
+  await tick();
+  assert.equal(other.liveAsked.length, 0, "not a subscription CLI: no check");
+});
+
+test("hooks: Settings › Models Use and model rows call the check after a switch lands", () => {
+  const use = slice("async function llmSwitchProvider(id) {", "async function llmSelectChatModel(pid, modelId) {");
+  assert.match(use, /llmRefresh\(\);\n  if \(typeof subSwitchCheck === 'function'\) subSwitchCheck\(id\);[^\n]*\n  return true;/);
+  const pick = slice("async function llmSelectChatModel(pid, modelId) {", "\n}\n");
+  assert.match(pick, /bswReport\(res, 'Selected chat model ' \+ pid \+ '\/' \+ modelId \+ '\.'\);\n  if \(typeof subSwitchCheck === 'function'\) subSwitchCheck\(pid\);/);
+});

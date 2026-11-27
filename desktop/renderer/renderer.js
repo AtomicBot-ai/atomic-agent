@@ -29778,6 +29778,7 @@ async function llmSwitchProvider(id) {
   llmReport('Active text: ' + id + (model ? ' · ' + model : '') + ' · ' + transport, 'cloud');
   LLMP.msg = {text:'Switched active text provider to "' + id + '". New messages use ' + transport + '.' + (res.daemonLine ? ' ' + res.daemonLine : '') + llmSwitchTail(res)};
   llmRefresh();
+  if (typeof subSwitchCheck === 'function') subSwitchCheck(id);   // ATO-2463: Settings › Models › Use
   return true;
 }
 async function llmSelectChatModel(pid, modelId) {
@@ -29798,6 +29799,7 @@ async function llmSelectChatModel(pid, modelId) {
     llmRepaint(); return;
   }
   bswReport(res, 'Selected chat model ' + pid + '/' + modelId + '.');
+  if (typeof subSwitchCheck === 'function') subSwitchCheck(pid);   // ATO-2463: Settings › Models › Use
   // r5 item 10: swxRun re-read the live config before it resolved.
   const transport = res.transport || 'native_tools';
   llmReport('Active text: ' + pid + ' · ' + modelId + ' · ' + transport, 'cloud');
