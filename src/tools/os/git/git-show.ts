@@ -31,12 +31,14 @@ export const osGitShowTool: ToolDefinition = {
       runGit({
         repo,
         workingDir: ctx.workingDir,
+        guest: ctx.guest,
         args: ["show", "--no-patch", `--format=${metaFormat}`, revision],
         signal: ctx.signal,
       }),
       runGit({
         repo,
         workingDir: ctx.workingDir,
+        guest: ctx.guest,
         args: ["show", "--numstat", "--format=", revision],
         signal: ctx.signal,
       }),
@@ -44,6 +46,7 @@ export const osGitShowTool: ToolDefinition = {
         ? runGit({
             repo,
             workingDir: ctx.workingDir,
+            guest: ctx.guest,
             args: ["show", "--format=", "--unified=3", revision],
             signal: ctx.signal,
             maxOutputBytes: 2 * 1024 * 1024,
