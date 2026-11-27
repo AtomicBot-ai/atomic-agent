@@ -85,10 +85,19 @@ describe("createShellJobHostControls", () => {
   it("resizes a backend that can (a native pty)", () => {
     const { host, job } = setup();
     const sizes: number[][] = [];
-    Object.assign(job, { resize: (cols: number, rows: number) => sizes.push([cols, rows]) });
+    let alive = true;
+    Object.assign(job, {
+      resize: (cols: number, rows: number) => {
+        sizes.push([cols, rows]);
+        return alive;
+      },
+    });
     expect(host.list("s-1")[0]!.resizable).toBe(true);
     expect(host.resize("s-1", 1, 100, 30)).toBe("resized");
     expect(sizes).toEqual([[100, 30]]);
+    // The native pty (ATO-2484) answers false once its terminal is gone.
+    alive = false;
+    expect(host.resize("s-1", 1, 80, 24)).toBe("not_supported");
   });
 
   it("stops a job as the user, and the model is told so", () => {
