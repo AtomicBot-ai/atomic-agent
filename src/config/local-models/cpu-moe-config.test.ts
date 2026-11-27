@@ -21,8 +21,14 @@ describe("localModels.managed.cpuMoe (ATO-2380)", () => {
     expect(parsedCpuMoe(0)).toBe("off");
   });
 
+  it("reads the count `config set` hands over as a string (ATO-2455)", () => {
+    expect(parsedCpuMoe("16")).toBe(16);
+    expect(parsedCpuMoe(" 8 ")).toBe(8);
+    expect(parsedCpuMoe("0")).toBe("off");
+  });
+
   it("names the field for a value llama.cpp cannot take", () => {
-    for (const bad of ["on", -1, 2.5, 513, true]) {
+    for (const bad of ["on", -1, 2.5, 513, true, "513", "2.5", "-1", ""]) {
       expect(() => parsedCpuMoe(bad)).toThrow(/localModels\.managed\.cpuMoe/);
     }
   });
