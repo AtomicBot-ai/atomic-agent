@@ -3,7 +3,8 @@ import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { readWorkspaceFile, isWithinWorkspace } from "../skills/workspace-files.js";
 import { gitFailure, gitUnavailable, runGitInWorkspace, type GitResult } from "./project-instructions-git.js";
-import { ancestorDirs, cursorRuleAlwaysApplies, cursorRulesDir, foreignRootNames, instructionImports, isCursorRule, isForeign, isSensitive, listCursorRules, priorityOf, rootNames, scopeRank, slashed, truncateUtf8 } from "./project-instruction-files.js";
+import { ancestorDirs, cursorRuleAlwaysApplies, cursorRulesDir, foreignRootNames, instructionImports, isCursorRule, isForeign, isOwnRule, isSensitive, listRuleFiles, ownRulesDir, priorityOf, rootNames, ruleAlwaysApplies, scopeRank, slashed, truncateUtf8 } from "./project-instruction-files.js";
+import { loadPathRules, type PathRule } from "./project-path-rules-load.js";
 
 export { cursorRuleAlwaysApplies, instructionImports, runGitInWorkspace, type GitResult };
 
@@ -38,6 +39,8 @@ export interface ProjectInstructionsResult {
    * load. This is what a trust question counts. Capped at {@link MAX_FOUND}.
    */
   found: string[];
+  /** Trusted rules scoped by `paths:`/`globs:`; not part of `instructions` and not in the byte budget (ATO-2247). */
+  pathRules: PathRule[];
 }
 export const DEFAULT_INSTRUCTION_BYTES = 48 * 1024;
 const DEFAULT_INSTRUCTION_FILES = 64;
@@ -88,16 +91,17 @@ export function loadProjectInstructions(workingDir: string, signal?: AbortSignal
   const diagnostics = new Diagnostics();
   const watched = new Set<string>([resolve(workingDir)]);
   const found: string[] = [];
+  const pathRules: PathRule[] = [];
   try {
-    return { instructions: loadInstructions(workingDir, diagnostics, signal, options, watched, found), diagnostics: diagnostics.lines(), watched: [...watched], found };
+    return { instructions: loadInstructions(workingDir, diagnostics, signal, options, watched, found, pathRules), diagnostics: diagnostics.lines(), watched: [...watched], found, pathRules };
   } catch (error) {
     if (signal?.aborted) throw signal.reason ?? error;
     diagnostics.add(`Project instructions unavailable: ${error instanceof Error ? error.message : String(error)}`);
-    return { instructions: [], diagnostics: diagnostics.lines(), watched: [...watched], found: [] };
+    return { instructions: [], diagnostics: diagnostics.lines(), watched: [...watched], found: [], pathRules: [] };
   }
 }
 
-function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: AbortSignal | undefined, options: ProjectInstructionOptions, watched: Set<string>, found: string[]): ProjectInstruction[] {
+function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: AbortSignal | undefined, options: ProjectInstructionOptions, watched: Set<string>, found: string[], pathRules: PathRule[]): ProjectInstruction[] {
   const root = realpathSync(workingDir);
   const runGit = options.runGit ?? runGitInWorkspace;
   const maxFiles = options.maxFiles ?? DEFAULT_INSTRUCTION_FILES;
@@ -138,17 +142,20 @@ function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: 
   // Outside Git (or at home) nothing below the workspace root is walked: a folder such
   // as ~ holds unrelated projects and privacy-protected directories.
   // Root names are checked directly, even if ignored; absent ones take no file slot.
-  for (const name of [...rootNames, ...foreignRootNames, cursorRulesDir]) watch(join(root, name));
+  for (const name of [...rootNames, ...foreignRootNames, cursorRulesDir, ownRulesDir]) watch(join(root, name));
   paths.push(...[...rootNames, ...foreignRootNames].filter(p => existsSync(join(root, p))));
-  paths.push(...listCursorRules(root, (category, item) => diagnostics.add(category, item)));
+  const ruleFiles = listRuleFiles(root, (category, item) => diagnostics.add(category, item));
+  paths.push(...ruleFiles.always); ruleFiles.scoped.forEach(path => watch(join(root, path)));
   paths = [...new Set(paths)].filter(p => !p.split(/[\\/]/).some(part => excluded.has(part)));
   // Trust is decided per discovered file before anything is read; withheld
   // files take no file slot and leave no diagnostic in the model's context.
   const allow = options.allow;
   // Folders above the workspace first, then by depth below it.
   const fileDepth = (path: string) => { const above = scopeRank(dirname(slashed(path))); return above < 0 ? above : slashed(path).split("/").length; };
-  const discovered = [...new Set(paths.map(slashed))].sort((a, b) => fileDepth(a) - fileDepth(b) || a.localeCompare(b));
+  // Path-scoped rules are asked about like any other file; trusted ones wait for a matching path.
+  const discovered = [...new Set([...paths, ...ruleFiles.scoped].map(slashed))].sort((a, b) => fileDepth(a) - fileDepth(b) || a.localeCompare(b));
   found.push(...discovered.slice(0, MAX_FOUND));
+  pathRules.push(...loadPathRules(root, ruleFiles.scoped.filter(p => !allow || allow(p)), (category, item) => diagnostics.add(category, item)));
   if (allow) paths = paths.filter(p => allow(slashed(p)));
   // An import of a discovered file that is not allowed would load it through the back door.
   // Letter case is folded where the file system ignores it, so `@agents.md` is `AGENTS.md`.
@@ -248,8 +255,8 @@ function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: 
     }
     if (!file) return;
     if (file.content.includes("\0")) { diagnostics.add("Skipped binary instruction", rel(actual)); return; }
-    if (depth === 0 && isCursorRule(path) && !cursorRuleAlwaysApplies(file.content)) {
-      diagnostics.add("Skipped Cursor rules that apply only to matching files or on request", rel(actual));
+    if (depth === 0 && (isCursorRule(label) || isOwnRule(label)) && !ruleAlwaysApplies(label, file.content)) {
+      diagnostics.add("Skipped rules that apply only to matching files or on request", rel(actual));
       return;
     }
     let body = file.content;
@@ -281,7 +288,7 @@ function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: 
   // (and their imports); within a scope, higher precedence first, which also
   // determines the label of a deduplicated import.
   const scopeOf = (path: string) => {
-    if (isForeign(path)) return ".";
+    if (isForeign(path) || isOwnRule(path)) return ".";
     const dir = dirname(path);
     return slashed(basename(path) === "CLAUDE.md" && basename(dir) === ".claude" ? dirname(dir) : dir);
   };

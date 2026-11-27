@@ -13,6 +13,18 @@ export interface SessionWorkspace {
   skills: WorkspaceSkills;
   instructions: readonly { path: string; scope: string; body: string; priority: number }[];
   diagnostics: readonly string[];
+  /** Rules scoped by `paths:`/`globs:`; each enters the prompt tail only after a tool touched a matching file (ATO-2247). */
+  pathRules?: readonly PathRule[];
+}
+
+/** A project rule that applies to matching files only. */
+export interface PathRule {
+  /** Workspace-relative path of the rule file, with forward slashes. */
+  path: string;
+  /** Glob patterns, relative to the workspace; a pattern without `/` matches a file name in any folder. */
+  patterns: readonly string[];
+  /** Rule text without its frontmatter. */
+  body: string;
 }
 
 export interface WorkspacePrepareOptions {
