@@ -258,20 +258,36 @@ describe("runtime turn ownership recipes", () => {
     expect(fixture.loop.runTurn.mock.calls[1]?.[1]).not.toHaveProperty("providerId");
   });
 
-  it("hands the router the session's prompt size and the local window (ATO-2537)", async () => {
+  it("hands the router the session's size and the local window (ATO-2537)", async () => {
     const route = vi.mocked(routeTurnProvider);
     route.mockClear();
     const localWindow = vi.fn(() => 16_384);
     fixture.deps.inference.resolveLocalContextWindow = localWindow;
     const service = createRuntimeTurnService(fixture.config, fixture.deps);
-    const long: SessionState = { ...session("long"), contextUsage: { ...EMPTY_CONTEXT_USAGE, tokens: 100_000 } };
+    const long: SessionState = {
+      ...session("long"),
+      contextUsage: {
+        ...EMPTY_CONTEXT_USAGE,
+        tokens: 100_000,
+        conversationTokens: 80_000,
+        sections: [
+          { label: "prompt scaffold", tokens: 15_000 },
+          { label: "conversation", tokens: 80_000 },
+          { label: "context summary", tokens: 2_000 },
+          { label: "loaded tools", tokens: 3_000 },
+        ],
+      },
+    };
     await service.executeTurn(long, "request");
     const params = route.mock.calls.at(-1)?.[0];
-    expect(params?.sessionPromptTokens).toBe(100_000 + estimateTokens("request"));
+    expect(params?.sessionSize).toEqual({
+      historyTokens: 82_000 + estimateTokens("request"),
+      fixedTokens: 18_000,
+    });
     expect(params?.localContextWindow).toBe(localWindow);
     // A session that never built a prompt: size unknown.
     await service.executeTurn(session("fresh"), "request");
-    expect(route.mock.calls.at(-1)?.[0].sessionPromptTokens).toBeNull();
+    expect(route.mock.calls.at(-1)?.[0].sessionSize).toBeNull();
   });
 
   it("unknown pins reject before enqueue and before recorder/all other turn work", async () => {
