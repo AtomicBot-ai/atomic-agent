@@ -10,6 +10,8 @@ export const ONBOARDING_STEPS = [
   "intro", "choose", "local_pick", "local_hf_ref", "local_hf_pick", "local_download", "wait_or_jump",
   "cloud", "custom_chat_url", "custom_embedding_url", "propose_second", "import_pick", "import_preview",
   "import_done", "finished", "other",
+  // ATO-2489: the setup step listing the model servers found running here.
+  "found_server",
 ] as const;
 
 /** Provider preset ids (src/llm/provider/presets/provider-presets.ts + the built-in cloud kinds). */

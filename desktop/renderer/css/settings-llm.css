@@ -75,6 +75,12 @@
 .llm-pane .llm-found-row{cursor:default}
 .llm-pane .llm-found-row .btn{flex:none}
 .llm-pane .llm-found-row .btn .tk-spin{width:12px;height:12px}
+/* ATO-2489: model servers found running here (local-servers.js). */
+.llm-pane .lsv-row{cursor:default}
+.llm-pane .lsv-row .btn{flex:none}
+.llm-pane .lsv-row .lsv-on{margin-left:6px}
+.llm-pane .lsv-row .lsv-models{color:var(--ink-3, var(--ink-2))}
+.llm-pane .lsv-note .tk-spin{width:12px;height:12px;margin-right:6px;vertical-align:-2px}
 .llm-pane .llm-fz-need{display:flex;flex-direction:column;align-items:flex-start;gap:0}
 .llm-pane .llm-fusion > .llm-empty-acts{margin:0 2px}
 .llm-pane .llm-list{padding:4px}
