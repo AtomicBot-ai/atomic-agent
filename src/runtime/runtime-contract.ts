@@ -24,6 +24,7 @@ import type { ApprovalHandler } from "../approval/approval-router.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import type { FileIndexApi } from "../tools/files/index.js";
+import type { MentionServices } from "../mentions/index.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 import type { ProviderRegistry } from "../llm/provider/index.js";
 import type { ReasoningEffort } from "../llm/provider/completion-types.js";
@@ -778,6 +779,13 @@ export interface AgentRuntime {
    * have one; the routes answer 501 without it.
    */
   fileIndex?: FileIndexApi;
+  /**
+   * `@` mentions (ATO-2472): the expansion every surface sends with a
+   * message (`@file`, `@diff`, `@git:N`, ranges, folders, links,
+   * `@problems`) and the problems behind `GET /api/problems`. Optional
+   * so test doubles and older hosts need not have it.
+   */
+  mentions?: MentionServices;
   /**
    * Register `handler` as the approval sink for `sessionId`. Every
    * `ApprovalRequest` whose `sessionId` matches will be routed to

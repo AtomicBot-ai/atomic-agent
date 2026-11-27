@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { expandFileMentions, mentionTokens, resolveMentionedFile } from "./expand-mentions.js";
+import { expandFileMentions, mentionTokens, resolveMentionedFile } from "./expand-file-mentions.js";
 import { splitMentionedFiles } from "./mention-block.js";
 
 let base: string;

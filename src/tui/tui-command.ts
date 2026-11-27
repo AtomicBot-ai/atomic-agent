@@ -93,7 +93,8 @@ import {
 } from "./startup-working-dir.js";
 import { readRecentWorkingDirs } from "../session/index.js";
 import { detectLocalServers } from "../llm/provider/presets/detect-local-servers.js";
-import { createMentionFileIndex, expandFileMentions } from "./file-mentions/index.js";
+import { createMentionFileIndex } from "./file-mentions/index.js";
+import { createMentionSender } from "./file-mentions/mention-sender.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
 import {
   loadUninstallPreview,
@@ -327,6 +328,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
 
   // One file list per working directory for the session (file-mentions/).
   const mentionFiles = createMentionFileIndex();
+  // ATO-2472: `@diff`, `@git:N`, ranges, folders, links and `@problems`, sent in typing order.
+  const mentionSender = createMentionSender(runtime.mentions, () => runtime.capabilities.workingDir);
   const orchestrator = new ChatOrchestrator(runtime, bus, {
     maxSteps,
     llamaUrl: config.localModels.url,
@@ -579,16 +582,17 @@ export async function tuiCommand(args: string[]): Promise<number> {
             approved: false,
             reason: message,
           });
-          orchestrator.steerMessage(message);
+          mentionSender.send(message, (text) => orchestrator.steerMessage(text));
         },
-        onMessageSubmitted: (text) => orchestrator.sendMessage(text),
+        onMessageSubmitted: (text) => mentionSender.send(text, (sent) => orchestrator.sendMessage(sent)),
+        onMessageSubmittedLater: (pending) => mentionSender.send(pending, (sent) => orchestrator.sendMessage(sent)),
         // The `@` palette and its expansion (ATO-665) read the same folder
         // the agent's own tools are rooted at.
         listMentionFiles: () => mentionFiles.list(runtime.capabilities.workingDir),
-        expandFileMentions: (text) => expandFileMentions(text, runtime.capabilities.workingDir),
+        expandFileMentions: (text) => mentionSender.expand(text),
         onLastTurnRollbackRequested: (expect) => orchestrator.rollbackLastTurn(expect),
         onQueueClearRequested: () => orchestrator.clearQueue(),
-        onMessageSteered: (text) => orchestrator.steerMessage(text),
+        onMessageSteered: (text) => mentionSender.send(text, (sent) => orchestrator.steerMessage(sent)),
         onWhileBusyModePersistRequested: (mode) =>
           persistWhileBusyMode(mode, bus),
         // The mode is a stance for this session, so it moves the live

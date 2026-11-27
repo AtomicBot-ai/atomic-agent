@@ -7,14 +7,16 @@
  *     made twice: on the path as written (`@../x`, `@/etc/passwd`), and
  *     on the real path after symlinks, so a link inside the folder that
  *     points out of it is refused too.
- *   - A word that does not resolve to a file stays plain text and adds
- *     nothing: `@team`, `@src/` (a folder) and `@missing.ts` are prose.
+ *   - A word that does not resolve to a file is not this module's:
+ *     `@team` and `@missing.ts` stay prose, and `@diff`, `@src/`,
+ *     `@a.ts:10-20` and the rest are context-mentions.ts's.
+ *   - The agent's own key and trust files are named, never inlined.
  *   - Size is capped per file and per message, and a cut is stated in
  *     the message itself, so the model never mistakes a head for a file.
  *
- * Synchronous on purpose: it runs between Enter and the send, the reads
- * are bounded by the caps below, and an async step there would let two
- * quick submits overtake each other.
+ * Synchronous on purpose: plain file mentions go out with no wait, and
+ * the reads are bounded by the caps below. The kinds that need git, the
+ * network or a language server are the async context-mentions.ts.
  */
 
 import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
@@ -37,7 +39,15 @@ export const DEFAULT_MENTION_LIMITS: MentionLimits = {
 };
 
 const MENTION_TOKEN = /(^|[\s([{"'`])@([^\s@]+)/g;
-const TRAILING_PUNCTUATION = /[.,;:!?)\]}"'`]+$/;
+export const TRAILING_PUNCTUATION = /[.,;:!?)\]}"'`]+$/;
+
+/**
+ * Real paths a mention never reads, whatever the folder (ATO-2472): the
+ * agent's own key and trust files (`getStateSecretPaths`), the same set
+ * the read tools ask about as `state_secret` at dispatch. A mention has
+ * no approval to ask, so it refuses them.
+ */
+export type IsProtectedPath = (realPath: string) => boolean;
 
 /** The distinct `@words` of `text`, in order, without the `@`. */
 export function mentionTokens(text: string): string[] {
@@ -49,7 +59,7 @@ export function mentionTokens(text: string): string[] {
   return [...seen];
 }
 
-function inside(root: string, path: string): boolean {
+export function inside(root: string, path: string): boolean {
   const rel = relative(root, path);
   return rel.length > 0 && !rel.startsWith("..") && !isAbsolute(rel);
 }
@@ -67,7 +77,7 @@ export function resolveMentionedFile(root: string, token: string): string | null
   }
 }
 
-function readHead(path: string, max: number): Buffer {
+export function readHead(path: string, max: number): Buffer {
   const fd = openSync(path, "r");
   try {
     const buffer = Buffer.alloc(max);
@@ -96,21 +106,22 @@ function readMentioned(
 }
 
 /**
- * `text` with the block for its `@`-mentioned files appended, or `text`
- * unchanged when none of its `@words` is a file in `workingDir`.
+ * The entries for `text`'s `@`-mentioned files, in order, within
+ * `limits`. A protected file is named but not inlined.
  */
-export function expandFileMentions(
+export function mentionedFiles(
   text: string,
   workingDir: string,
   limits: MentionLimits = DEFAULT_MENTION_LIMITS,
-): string {
+  isProtected: IsProtectedPath = () => false,
+): MentionedFile[] {
   const tokens = mentionTokens(text);
-  if (tokens.length === 0) return text;
+  if (tokens.length === 0) return [];
   let root: string;
   try {
     root = realpathSync(workingDir);
   } catch {
-    return text;
+    return [];
   }
   const files: MentionedFile[] = [];
   const done = new Set<string>();
@@ -122,6 +133,10 @@ export function expandFileMentions(
     const real = token.length > 0 ? resolveMentionedFile(root, token) : null;
     if (!real || done.has(real)) continue;
     done.add(real);
+    if (isProtected(real)) {
+      files.push({ path: token, bytes: 0, content: "", skipped: "the agent's own settings file is never inlined" });
+      continue;
+    }
     try {
       const file = readMentioned(token, real, budget, limits);
       budget -= Buffer.byteLength(file.content, "utf8");
@@ -131,5 +146,18 @@ export function expandFileMentions(
       // stays prose, exactly like a path that never existed.
     }
   }
-  return appendMentionBlock(text, files);
+  return files;
+}
+
+/**
+ * `text` with the block for its `@`-mentioned files appended, or `text`
+ * unchanged when none of its `@words` is a file in `workingDir`.
+ */
+export function expandFileMentions(
+  text: string,
+  workingDir: string,
+  limits: MentionLimits = DEFAULT_MENTION_LIMITS,
+  isProtected: IsProtectedPath = () => false,
+): string {
+  return appendMentionBlock(text, mentionedFiles(text, workingDir, limits, isProtected));
 }

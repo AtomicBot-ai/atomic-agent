@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createMentionFileIndex, walkFiles, type FileIndexLimits } from "./file-index.js";
+import { createMentionFileIndex, listGitFilesArgs, walkFiles, type FileIndexLimits } from "./file-index.js";
 
 const limits: FileIndexLimits = { maxFiles: 100, budgetMs: 1000, freshMs: 1000 };
 
@@ -66,5 +66,13 @@ describe("createMentionFileIndex", () => {
   it("treats a failed listing as an empty one", async () => {
     const index = createMentionFileIndex({ limits, listFiles: async () => { throw new Error("boom"); } });
     expect(await index.list("/p")).toEqual([]);
+  });
+});
+
+describe("listGitFilesArgs (ATO-2472)", () => {
+  it("turns the folder's fsmonitor off before listing", () => {
+    const args = listGitFilesArgs();
+    expect(args.slice(0, 5)).toEqual(["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false"]);
+    expect(args).toContain("ls-files");
   });
 });
