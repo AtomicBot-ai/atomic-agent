@@ -85,6 +85,7 @@ import { isCoreOperationBusy } from "../local-llm/core/core-operation.js";
 import { activeCoreVersion, CORE_VERSION } from "../local-llm/core/core-state.js";
 import { selectManagedEngine } from "../local-llm/engine-selection.js";
 import { persistManagedEngine } from "./models-engine.js";
+import { clearChatPortForStart, clearEmbeddingPortForStart } from "./models-start-port-clearance.js";
 import { reportLocalEngineFailed } from "../analytics/index.js";
 import { getAppVersion } from "../version.js";
 
@@ -683,6 +684,14 @@ async function runLocalModelsStartNow(
     return 1;
   }
 
+  // ATO-2458: our own stale or wedged server on the port is adopted or stopped; the port is never moved.
+  const adoptedChatPid = await clearChatPortForStart(cfg, mid);
+  if (adoptedChatPid !== null) {
+    process.stdout.write(`chat: already running pid ${adoptedChatPid}, healthy on port ${cfg.localModels.managed.port}\n`);
+    await runLocalModelsStartEmbedding(signal);
+    return 0;
+  }
+
   const m = getLocalModelDef(mid);
   const tpl = resolveChatTemplatePath(m) ?? undefined;
   const mmprojFile =
@@ -716,6 +725,7 @@ async function runLocalModelsStartNow(
     } else {
       const emb = await getEmbeddingDaemonStatus(dataDir, embCfg.port);
       if (emb.running) embRunningPid = emb.pid;
+      else embRunningPid = await clearEmbeddingPortForStart(cfg, embCfg.modelId as string);
     }
   }
 
@@ -988,6 +998,11 @@ export async function runLocalModelsStartEmbedding(signal?: AbortSignal): Promis
     // Core's module may be starting or restarting, with no process yet.
     const what = now.pid !== null ? `running pid ${now.pid}` : now.loading ? "starting" : "running";
     process.stdout.write(`embedding: already ${what} on port ${now.port} (${modelId})\n`);
+    return 0;
+  }
+  const adoptedPid = await clearEmbeddingPortForStart(cfg, modelId);
+  if (adoptedPid !== null) {
+    process.stdout.write(`embedding: already running pid ${adoptedPid} on port ${emb.port} (${modelId})\n`);
     return 0;
   }
   // ATO-379: the desktop reaches this on its own, so it is an automatic start too.
