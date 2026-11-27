@@ -66,7 +66,7 @@ test("the block parses into one entry per file, with its size and any cut", () =
   assert.deepEqual(s.files, [
     { path: "src/app.ts", size: "4 KB", note: "" },
     { path: "big.log", size: "2.0 MB", note: "truncated" },
-    { path: "logo.png", size: "12 KB", note: "not inlined" },
+    { path: "logo.png", size: "12 KB", note: "binary", skipped: true },
   ]);
 });
 
@@ -75,7 +75,7 @@ test("the bubble collapses to the typed text and a line per file", () => {
     "explain @src/app.ts and @big.log",
     "@src/app.ts · 4 KB",
     "@big.log · 2.0 MB · truncated",
-    "@logo.png · 12 KB · not inlined",
+    "@logo.png · 12 KB · skipped: binary",
   ].join("\n"));
   const html = R.fmSentHTML(R.fmSplitBlock(message).files);
   assert.equal((html.match(/class="usrcap/g) || []).length, 3);

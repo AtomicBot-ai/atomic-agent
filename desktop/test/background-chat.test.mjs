@@ -104,19 +104,57 @@ test("its end: a toast while elsewhere, none when the person is looking at it, o
   assert.equal(d.toasts.length, n, "the chat is on screen");
 });
 
-test("a refused start says so and adopts nothing; an empty query does nothing", async () => {
+test("a refused start keeps the task in the palette, says why in words and offers Retry; an empty query does nothing", async () => {
   const c = load({ ok: false, error: "no model" });
   vm.runInContext("bgChatFromPalette()", c);
   await new Promise((r) => setImmediate(r));
   assert.equal(c.adopted.length, 0);
-  assert.equal(c.toasts.at(-1).kind, "bad");
-  assert.match(c.toasts.at(-1).s, /no model/);
+  assert.equal(c.S.overlay, "palette", "the palette stays open");
+  assert.equal(c.S.q, "  write the release notes ", "the typed task is kept");
+  assert.deepEqual(c.acts, [], "nothing closed it");
+  const row = vm.runInContext("bgChatPaletteRow(S.q, 2)", c);
+  assert.match(row.t, /^Retry background chat: “write the release notes”/);
+  assert.match(row.cx, /No model is ready/);
+  assert.doesNotMatch(row.cx, /unknown error|no model$/);
+  assert.match(vm.runInContext("bgChatEmptyRowHTML(S.q)", c), /Retry background chat.*No model is ready/);
+  // Retry is the same ⌘↩: it asks again.
+  vm.runInContext("bgChatFromPalette()", c);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(c.chats.length, 2);
 
   const e = load({ ok: true, turnId: "t-2" });
   e.S.q = "   ";
   assert.equal(vm.runInContext("bgChatFromPalette()", e), false);
   assert.equal(e.chats.length, 0);
   assert.equal(e.S.overlay, "palette");
+});
+
+test("a failure after the palette was closed brings it back with the task; the raw IPC text is never shown", async () => {
+  const c = load(null);
+  c.BR.chat = async () => { c.act("close"); throw new Error("Error invoking remote method 'agent:chat': Error: agent not running"); };
+  vm.runInContext("bgChatFromPalette()", c);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(c.S.overlay, "palette");
+  assert.equal(c.S.q, "write the release notes");
+  const row = vm.runInContext("bgChatPaletteRow(S.q, 1)", c);
+  assert.match(row.cx, /The agent is not running right now/);
+  assert.doesNotMatch(JSON.stringify(c.toasts) + row.cx, /Error invoking remote method/);
+  assert.equal(BG.bgChatErrorLine("something odd"), "Something went wrong while starting it. Try again.");
+});
+
+test("a second ⌘↩ while it starts says so and starts nothing more", async () => {
+  const c = load(null);
+  let release;
+  c.BR.chat = (...args) => { c.chats.push(args); return new Promise((r) => { release = r; }); };
+  vm.runInContext("bgChatFromPalette()", c);
+  assert.match(vm.runInContext("bgChatPaletteRow(S.q, 1)", c).t, /^Starting a background chat/);
+  vm.runInContext("bgChatFromPalette()", c);
+  assert.equal(c.chats.length, 1);
+  assert.equal(c.toasts.at(-1).t, "Still starting the background chat");
+  assert.equal(c.toasts.at(-1).kind, "info");
+  release({ ok: true, turnId: "t-3" });
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(c.acts, ["close"]);
 });
 
 test("renderer.js hooks: palette row, empty state, header, act, ⌘↩, turn end; index.html loads it first", () => {
