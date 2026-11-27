@@ -166,6 +166,25 @@ describe("app.list page budget on a local model", () => {
     expect(capBatchSummaries([r], [{ args: { id: saved.app.id } }], 32_000)[0]).toBe(r.summary);
   });
 
+  it("says the page is cut when a batched step's shared budget clips it", async () => {
+    const o = options({ localStepChars: () => 32_000 });
+    const page = `${"<p>row</p>\n".repeat(2_200)}${lastLine}`; // ~24,000 chars: fits a step of its own
+    const saved = saveApp(appsRoot(o.stateDir), { name: "Mid", html: page });
+    if (!saved.ok) throw new Error("save");
+    const registry = new ToolRegistry();
+    registry.register(buildAppListTool(o));
+    const r = await registry.invoke(APP_LIST_TOOL, { id: saved.app.id }, { ...ctx, modelMode: "local" as const });
+    expect(r.details).toMatchObject({ pageTruncated: false });
+    expect(r.summary).toContain("\ncurrent page:\n");
+    const read = { tool: "os.fs.read", summary: "x".repeat(10_000) };
+    const out = capBatchSummaries([read, r], [{ args: { path: "a.txt" } }, { args: { id: saved.app.id } }], 32_000);
+    expect(out[1]).not.toBe(r.summary);
+    expect(out[1]).not.toContain(lastLine);
+    expect(out[1]).not.toContain("\ncurrent page:\n");
+    expect(out[1]).toContain("app.update needs the whole page, so call app.list with this id alone first");
+    expect(out[0]!.length + out[1]!.length).toBeLessThanOrEqual(32_000);
+  });
+
   it("gives a cloud model the whole page", async () => {
     const o = options({ localStepChars: () => 32_000 });
     const saved = saveApp(appsRoot(o.stateDir), { name: "Big", html: bigPage });
