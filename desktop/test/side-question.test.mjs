@@ -74,14 +74,24 @@ test("an answer that lands after the card was closed or replaced is dropped", as
 
 test("failures are worded; an old agent says to update; the question is escaped", async () => {
   assert.match(B.btwOutcome({ ok: false, supported: false }).text, /cannot answer side questions/);
-  assert.equal(B.btwOutcome({ ok: false, supported: true, error: "timed out" }).text, "Couldn't answer the side question: timed out.");
+  assert.deepEqual(B.btwOutcome({ ok: false, supported: true, error: "timed out" }),
+    { status: "failed", text: "The agent took too long to answer. Try asking again.", detail: "timed out" });
   assert.equal(B.btwOutcome({ ok: true, text: "  " }).status, "failed");
-  B.btwAsk(["<b>hi</b>"], { bridge: { askSideQuestion: async () => { throw new Error("gone"); } } });
+  B.btwAsk(["<b>hi</b>"], { bridge: { askSideQuestion: async () => { throw new Error("Error invoking remote method 'agent:btw': Error: gone"); } } });
   await tick(); await tick();
   assert.equal(B.BTW.card.status, "failed");
-  assert.match(B.btwCardHTML(h), /gone/);
-  assert.doesNotMatch(B.btwCardHTML(h), /<b>/);
+  const html = B.btwCardHTML(h);
+  // ATO-2751: a plain sentence first; the raw reason only behind Details, without Electron's wrapper.
+  assert.match(html, /btw-fail">Couldn't answer the side question\. Try asking again\.<details class="btw-det"><summary>Details<\/summary><code>gone<\/code>/);
+  assert.doesNotMatch(html, /Error invoking remote method/);
+  assert.doesNotMatch(html, /<b>/);
   B.btwClose();
+});
+
+test("the usage line is a sentence, not command-line help", () => {
+  assert.doesNotMatch(B.BTW_USAGE, /^usage:/i);
+  assert.doesNotMatch(B.BTW_USAGE, /<question>/);
+  assert.match(B.BTW_USAGE, /^Type your question after \/btw/);
 });
 
 test("main checks the request before it goes to the agent", () => {
