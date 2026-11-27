@@ -33,6 +33,7 @@ import type { StreamParser, StreamParseEvent } from "../../llm/grammar/stream-pa
 import { createStreamParser } from "../../llm/grammar/stream-parser.js";
 import { reasoningOpenEmittedByModel } from "../../llm/model-profile.js";
 import { estimateTokens } from "../../prompt/token-budget.js";
+import { assertPromptFitsWindow } from "./window-fit-guard.js";
 import { assertContextCapacity } from "../../llm/provider/context-capacity.js";
 import { reconcileCloudSkills } from "../../session/workspace-context.js";
 
@@ -293,6 +294,9 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
     }
   }
   deps.onEvent?.({ type: "prompt_built", prompt, slotId: slot.slotId });
+  // A window the instructions and tool schemas alone fill gets a plain
+  // error before the request, not a reply cut after a few tokens (ATO-1678).
+  assertPromptFitsWindow(prompt, deps.modelMode?.mode);
   deps.onEvent?.({
     type: "prompt_captured",
     stepIndex: ctx.stepIndex,

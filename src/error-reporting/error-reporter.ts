@@ -82,8 +82,16 @@ export function captureError(
   client.capture(scrubbed);
 }
 
-/** Error names that mean "the operator has a step to take", not a bug. */
-const EXPECTED_USER_ACTION_ERRORS: ReadonlySet<string> = new Set(["AtomicChatNotRunningError"]);
+/**
+ * Error names that mean "the operator has a step to take", not a bug.
+ * `ContextWindowTooSmallError` (ATO-1678): the window cannot hold the
+ * instructions and tool schemas; a bigger context or fewer tools is
+ * the person's fix, and the chat already says so.
+ */
+const EXPECTED_USER_ACTION_ERRORS: ReadonlySet<string> = new Set([
+  "AtomicChatNotRunningError",
+  "ContextWindowTooSmallError",
+]);
 
 /** True when `err` or its `cause` chain (5 deep) is such an error. */
 function isExpectedUserActionFailure(err: unknown): boolean {
