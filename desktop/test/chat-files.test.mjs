@@ -201,3 +201,16 @@ test('image.generate paths written with ~ are listed expanded, as main stats the
   assert.deepEqual(CF.chatFilesOf(log, {home: '/Users/n'}).map((f) => f.path), ['/Users/n/Pictures/a.png']);
   assert.deepEqual(CF.chatFilesOf(log, {home: '/Users/n', missing: new Set(['/Users/n/Pictures/a.png'])}), []);
 });
+
+// ATO-2518: a live card whose label was clipped before `path` still lists its file, from the agent's office_file.
+test('an Office card with the agent\'s officeFile lists that path, whatever its clipped args say', () => {
+  const clipped = '{"slides":[{"title":"Q1","bullets":["a long bullet"]},{"title":"Q2","bullets":["anoth';
+  const log = [
+    {k: 'tool', name: 'os.fs.write_pptx', ok: true, args: clipped, officeFile: {path: '/Users/n/Decks/sales.pptx', change: 'created'}, out: 'created'},
+  ];
+  const argsOfClipped = (m) => { try { return JSON.parse(m.args); } catch { return {}; } };
+  const files = CF.chatFilesOf(log, {workingDir: '/w', home: '/Users/n', argsOf: argsOfClipped});
+  assert.deepEqual(files.map((f) => [f.path, f.from]), [['/Users/n/Decks/sales.pptx', 'agent']]);
+  // Without it (an older agent) the clipped label names no file.
+  assert.deepEqual(CF.chatFilesOf([{...log[0], officeFile: undefined}], {workingDir: '/w', home: '/Users/n', argsOf: argsOfClipped}), []);
+});
