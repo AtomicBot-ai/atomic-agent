@@ -9,6 +9,7 @@ export {
   LOGBOOK_DIR,
   logbookCapturing,
   logbookDir,
+  MAX_EXCLUDED_APPS,
   MAX_INTERVAL_MINUTES,
   MAX_RETENTION_DAYS,
   MIN_INTERVAL_MINUTES,
