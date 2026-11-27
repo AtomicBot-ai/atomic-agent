@@ -28,7 +28,7 @@ const USAGE =
 
 /** Shown when fewer than two models were named: the council needs `--models` (ATO-2770). */
 const MODELS_HINT =
-  "A council compares two or more models. Name them with --models (a provider id, or <provider>:<model>), for example:\n" +
+  "A council compares two or more models. Name them with --models (a provider id, or <provider>/<model>; : works too), for example:\n" +
   '  atomic-agent models council "<question>" --models openrouter:openai/gpt-5,openrouter:anthropic/claude-sonnet-4.5\n';
 
 /** What `--json` prints. */

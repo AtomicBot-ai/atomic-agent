@@ -91,7 +91,7 @@ export const RUN_HELP =
     "  --output-format <f>  text (default) | json (one result object at the end) | stream-json (one JSON event per line)",
     "  --json               Same as --output-format stream-json: one JSON event per line, not one object;",
     "                       for a single result object use --output-format json",
-    "  -m, --model <m>      Model for every turn: <model> on the active provider, <provider> or <provider>:<model>",
+    "  -m, --model <m>      Model for every turn: <model> on the active provider, <provider> or <provider>/<model> (: works too)",
     "  --resume <id>        Continue a saved chat (an id or a unique id prefix)",
     "  -c, --continue       Continue the newest saved chat in this folder",
     "  -o, --output-last-message <file>  Write the last reply to this file",
