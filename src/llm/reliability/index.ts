@@ -19,6 +19,7 @@ export type {
   ToolExecutionErrorKind,
   ToolExecutionErrorOptions,
   UnregisteredToolNameClass,
+  UnregisteredToolSource,
 } from "./llm-failures.js";
 export { classifyFailure } from "./classify-failure.js";
 export { classifyFailureCause } from "./classify-failure-cause.js";

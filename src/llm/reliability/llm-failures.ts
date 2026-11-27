@@ -193,9 +193,25 @@ export type ToolExecutionErrorKind = "unregistered";
  */
 export type UnregisteredToolNameClass = "near_miss" | "mcp_like" | "other";
 
+/**
+ * Where else an unregistered name is known (`unregistered-tool-source.ts`,
+ * ATO-2423): in the tool list the step's prompt showed
+ * (`prompt_advertised`, our bug), in our static catalog but switched off
+ * here (`gated_off`), an MCP name of a server with no registered tool
+ * (`mcp_server_missing`) or of a server that has others
+ * (`mcp_tool_missing`), or nowhere (`not_in_catalog`).
+ */
+export type UnregisteredToolSource =
+  | "prompt_advertised"
+  | "gated_off"
+  | "mcp_server_missing"
+  | "mcp_tool_missing"
+  | "not_in_catalog";
+
 export interface ToolExecutionErrorOptions extends LlmFailureOptions {
   kind?: ToolExecutionErrorKind;
   nameClass?: UnregisteredToolNameClass;
+  knownElsewhere?: UnregisteredToolSource;
 }
 
 /**
@@ -210,6 +226,7 @@ export class ToolExecutionError extends LlmFailure {
   readonly category = "tool" as const;
   readonly kind?: ToolExecutionErrorKind;
   readonly nameClass?: UnregisteredToolNameClass;
+  readonly knownElsewhere?: UnregisteredToolSource;
 
   constructor(
     readonly tool: string,
@@ -220,6 +237,7 @@ export class ToolExecutionError extends LlmFailure {
     this.name = "ToolExecutionError";
     if (options?.kind !== undefined) this.kind = options.kind;
     if (options?.nameClass !== undefined) this.nameClass = options.nameClass;
+    if (options?.knownElsewhere !== undefined) this.knownElsewhere = options.knownElsewhere;
   }
 }
 

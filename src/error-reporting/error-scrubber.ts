@@ -99,6 +99,11 @@ export interface ScrubbedErrorEvent {
    */
   toolNameClass?: string;
   /**
+   * `ToolExecutionError.knownElsewhere` for an unregistered tool (ATO-2423),
+   * restricted to its fixed enum (`unregistered-tool-source.ts`).
+   */
+  toolKnownElsewhere?: string;
+  /**
    * Class of the host in `TransportError.url`, when present
    * (`localhost` / `private` / `known_cloud` / `other`). Neither the URL
    * nor the host name itself ever travels.
@@ -191,6 +196,13 @@ const KNOWN_TOOL_ERROR_KINDS = new Set(["unregistered"]);
 
 /** Mirror of `UnregisteredToolNameClass` in `src/llm/reliability/llm-failures.ts` — a fixed 3-value enum, safe to allowlist verbatim. */
 const KNOWN_TOOL_NAME_CLASSES = new Set(["near_miss", "mcp_like", "other"]);
+const KNOWN_TOOL_SOURCES = new Set([
+  "prompt_advertised",
+  "gated_off",
+  "mcp_server_missing",
+  "mcp_tool_missing",
+  "not_in_catalog",
+]);
 
 /**
  * Bounded identifier pattern for tool names (mirrors `MCP_TOOL_NAME_RE` in
@@ -537,6 +549,12 @@ export function scrubError(
   if (toolErrorKind.kind !== undefined) event.toolErrorKind = toolErrorKind.kind;
   if (toolErrorKind.nameClass !== undefined) {
     event.toolNameClass = toolErrorKind.nameClass;
+  }
+  if (toolErrorKind.kind !== undefined) {
+    const knownElsewhere = (err as { knownElsewhere?: unknown }).knownElsewhere;
+    if (typeof knownElsewhere === "string" && KNOWN_TOOL_SOURCES.has(knownElsewhere)) {
+      event.toolKnownElsewhere = knownElsewhere;
+    }
   }
   if (transportHost !== undefined) event.transportHost = transportHost;
   if (upstreamErrorType !== undefined) {
