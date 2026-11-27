@@ -43,13 +43,20 @@ export function isLoopback(remoteAddress: string | undefined): boolean {
  * closed model-server port costs about two seconds to refuse on Windows.
  * `status` is then the sidecar's own (`ok`), and `llama.reachable` is null.
  *
- * They are answered **only to loopback**. `workingDir` is static
- * configuration, but `busyTurns` is live behaviour — on `--host 0.0.0.0`
+ * They are answered **only to loopback**, and so are `workingDir`,
+ * `llama.url` and `llama.error`: a folder path names the user and the
+ * project, and the desktop's Allow phones on this Wi-Fi binds serve to
+ * 0.0.0.0, where this route is open to every host on the network
+ * (ATO-2493 review). Everyone gets `status`, `runtime`,
+ * `llama.reachable` and `llama.latencyMs`. `busyTurns` is live behaviour — on `--host 0.0.0.0`
  * it would be an activity oracle for the whole network, which is a new
  * kind of disclosure for a route that is public by design. The sweep
  * only ever probes 127.0.0.1, so it loses nothing. A loopback request
  * that carries `cf-connecting-ip` came in through a cloudflared tunnel
- * (`atag pair --remote`, ATO-2308) and is treated as remote.
+ * (`atag pair --remote`, ATO-2308) and is treated as remote. A remote
+ * client that needs the folder (the desktop's Run overnight against an
+ * agent on another computer) reads `capabilities.workingDir` from
+ * `GET /api/capabilities`, which sits behind the serve key and its throttle.
  *
  * `busyTurnOrigins` (ATO-2519) says where each of those turns came from,
  * one entry per turn: `{ origin }` is the channel (`telegram`, `discord`,
@@ -68,22 +75,23 @@ export function createHealthHandler(): HttpHandler {
         : await checkLlamaServer({ retries: 0 });
     const strict = params.get("strict") === "1";
     const degraded = llama.reachable === false;
+    const local = isLocalRequest(req);
     sendJson(res, degraded && strict ? 503 : 200, {
       status: degraded ? "degraded" : "ok",
       runtime: "atomic-agent",
-      ...(isLocalRequest(req)
+      ...(local
         ? {
             pid: process.pid,
             ppid: process.ppid,
             ...busyTurnFields(ctx.runtime.turnController.busyTurns()),
+            workingDir: ctx.runtime.capabilities.workingDir,
           }
         : {}),
-      workingDir: ctx.runtime.capabilities.workingDir,
       llama: {
-        url: ctx.runtime.config.localModels.url,
+        ...(local ? { url: ctx.runtime.config.localModels.url } : {}),
         reachable: llama.reachable,
         latencyMs: llama.latencyMs,
-        error: llama.error,
+        ...(local ? { error: llama.error } : {}),
       },
     });
   };

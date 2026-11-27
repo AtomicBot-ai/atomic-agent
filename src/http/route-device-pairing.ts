@@ -20,7 +20,7 @@ import { getHeader, type HttpHandler } from "./request-context.js";
 /** 32 random bytes in base64url, exactly what `createPairing` makes. */
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
-const HEADERS = {
+export const PAIR_PAGE_HEADERS = {
   "cache-control": "no-store",
   "x-content-type-options": "nosniff",
   // The token is in this page's address: never hand it on as a Referer.
@@ -29,17 +29,19 @@ const HEADERS = {
     "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
 };
 
-function page(title: string, body: string): string {
+/** A small page in the pairing style; `body` is trusted HTML. Shared with route-pair-code.ts. */
+export function page(title: string, body: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title}</title>
 <style>:root{color-scheme:light dark}body{margin:0;padding:32px 20px;font:16px/1.5 -apple-system,system-ui,sans-serif;max-width:440px}
-button{font:inherit;width:100%;padding:14px;border:0;border-radius:12px;background:#2f6bff;color:#fff}p{color:#5b616b}</style>
+button{font:inherit;width:100%;padding:14px;border:0;border-radius:12px;background:#2f6bff;color:#fff}p{color:#5b616b}
+input{font:inherit;font-size:24px;letter-spacing:4px;text-transform:uppercase;text-align:center;width:100%;padding:12px;margin:0 0 12px;border:1px solid #c9ccd2;border-radius:12px}.err{color:#c4342f}</style>
 </head><body><h1>${title}</h1>${body}</body></html>`;
 }
 
-function sendPage(res: ServerResponse, status: number, html: string): void {
-  res.writeHead(status, { ...HEADERS, "content-type": "text/html; charset=utf-8" });
+export function sendPage(res: ServerResponse, status: number, html: string): void {
+  res.writeHead(status, { ...PAIR_PAGE_HEADERS, "content-type": "text/html; charset=utf-8" });
   res.end(html);
 }
 
@@ -51,7 +53,8 @@ const CONFIRM_PAGE = page(
 
 const USED_PAGE = page(
   "This link does not work",
-  "<p>A pairing link works once, for 5 minutes. Run <code>atag pair</code> again on your computer and scan the new code.</p>",
+  "<p>A pairing link works once, for 5 minutes. Run <code>atag pair</code> again on your computer and scan the new code.</p>"
+    + '<p><a href="/panel/pair">Type a code instead</a></p>',
 );
 
 const OFF_PAGE = page("Pairing is off", "<p>This server does not pair phones.</p>");
@@ -95,7 +98,7 @@ export function createPairRedeemHandler(devices: DeviceSessions | null): HttpHan
         : USED_PAGE);
     }
     res.writeHead(303, {
-      ...HEADERS,
+      ...PAIR_PAGE_HEADERS,
       "set-cookie": deviceCookieHeader(req, result.secret),
       location: "/panel",
     });

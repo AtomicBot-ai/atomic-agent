@@ -133,6 +133,7 @@ import {
 } from "./route-panel.js";
 import { createSetSessionWorkingDirHandler } from "./session-working-dir.js";
 import { createPairPageHandler, createPairRedeemHandler } from "./route-device-pairing.js";
+import { createPairCodePageHandler, createPairCodeRedeemHandler } from "./route-pair-code.js";
 import { createDevicePairingHandler, createListDevicesHandler, createRevokeDeviceHandler } from "./route-devices.js";
 import type { DeviceSessions } from "./device-sessions.js";
 import { createRestoreFileHandler } from "./route-fs-restore.js";
@@ -246,6 +247,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     // ATO-2308: the QR link of `atag pair`; the one-time token in the path is the credential.
     { method: "GET", path: "/pair/{token}", handler: createPairPageHandler(options.devices ?? null), requiresAuth: false },
     { method: "POST", path: "/pair/{token}", handler: createPairRedeemHandler(options.devices ?? null), requiresAuth: false },
+    // ATO-2494: the same pairing by its short code, for the iPhone home-screen app.
+    { method: "GET", path: "/panel/pair", handler: createPairCodePageHandler(options.devices ?? null), requiresAuth: false },
+    { method: "POST", path: "/panel/pair", handler: createPairCodeRedeemHandler(options.devices ?? null), requiresAuth: false },
     { method: "POST", path: "/api/devices/pairing", handler: createDevicePairingHandler(options.devices ?? null) },
     { method: "GET", path: "/api/devices", handler: createListDevicesHandler(options.devices ?? null) },
     { method: "DELETE", path: "/api/devices/{id}", handler: createRevokeDeviceHandler(options.devices ?? null) },
