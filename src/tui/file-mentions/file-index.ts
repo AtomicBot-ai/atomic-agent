@@ -17,6 +17,7 @@ import { execFile } from "node:child_process";
 import type { Dirent } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { GIT_SAFE_PREFIX, gitEnv } from "../../mentions/mention-git.js";
 
 export interface FileIndexLimits {
   /** Most paths kept. */
@@ -43,15 +44,20 @@ export const SKIPPED_DIRS: ReadonlySet<string> = new Set([
 
 export type ListFiles = (root: string, limits: FileIndexLimits) => Promise<string[]>;
 
+/** The arguments of the listing: GIT_SAFE_PREFIX first, so a folder's own `core.fsmonitor` never runs (ATO-2472). */
+export function listGitFilesArgs(): string[] {
+  return [...GIT_SAFE_PREFIX, "ls-files", "-z", "--cached", "--others", "--exclude-standard"];
+}
+
 /** `git ls-files`; rejects outside a repository or past the budget. */
 export function listGitFiles(root: string, limits: FileIndexLimits): Promise<string[]> {
   return new Promise((done, fail) => {
     execFile(
       "git",
-      ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+      listGitFilesArgs(),
       // Git gets more than the walk's budget: in a big checkout it is
       // still the faster and more correct of the two.
-      { cwd: root, timeout: limits.budgetMs * 10, maxBuffer: 64 * 1024 * 1024, windowsHide: true },
+      { cwd: root, timeout: limits.budgetMs * 10, maxBuffer: 64 * 1024 * 1024, windowsHide: true, env: gitEnv() },
       (error, stdout) => {
         if (error) return fail(error);
         const paths = String(stdout).split("\0").filter((p) => p.length > 0);

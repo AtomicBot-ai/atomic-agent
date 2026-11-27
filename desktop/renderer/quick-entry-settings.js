@@ -169,6 +169,8 @@ async function quickEntryDeliver() {
   const got = await BR.quickEntryTake().catch(() => null);
   const text = got && typeof got.text === 'string' ? got.text.trim() : '';
   if (!text) return;
+  // ATO-2478: ⌘↩ in the quick entry window: a new chat in the background; the chat on screen stays (background-chat.js).
+  if (got.background === true && typeof bgChatFromQuickEntry === 'function') { void bgChatFromQuickEntry(text); return; }
   act('session:new');
   S.draft = text;
   const e = $('#entry');

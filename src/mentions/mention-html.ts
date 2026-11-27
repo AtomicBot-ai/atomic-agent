@@ -1,8 +1,8 @@
 /**
- * ATO-2241: the words of an HTML page for an `@https://...` mention.
+ * ATO-2241, shared since ATO-2472: the words of an HTML page for an `@https://...` mention.
  * One left-to-right scan with indexOf, so the time is linear in the page
  * size whatever the markup: lazy regexes over `<!--` or an unclosed
- * `<script` are quadratic and would freeze the main process on a 512 KB
+ * `<script` are quadratic and would stall the agent's event loop on a 512 KB
  * page. A comment, raw-text block or tag with no end drops the rest of
  * the page.
  */

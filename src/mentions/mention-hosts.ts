@@ -1,5 +1,5 @@
 /**
- * ATO-2241: is a link's host this computer or the local network? Used by
+ * ATO-2241, shared since ATO-2472: is a link's host this computer or the local network? Used by
  * mention-url.ts so a public link cannot redirect the read to a local
  * address (a router page, a dev server, a cloud metadata endpoint). A host
  * the person typed as local stays allowed: `@http://localhost:3000` is on

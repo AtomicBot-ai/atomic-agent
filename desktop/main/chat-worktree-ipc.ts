@@ -28,6 +28,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { gitSafeArgs } from "./git-safe-args.js";
 import { addWorktree, dirInWorktree, dirtyReason, isInside, parseWorktreePorcelain, type GitExec } from "./chat-worktree-git.js";
 
 export interface WorktreeRecord { sessionId: string; originalWorkingDir: string }
@@ -165,10 +166,10 @@ export class ChatWorktrees {
   }
 }
 
-/** git with no hooks and no prompts, as the agent runs it for worktrees; null when git cannot start. */
+/** git with no hooks, fsmonitor or prompts (git-safe-args.ts, ATO-2532); null when git cannot start. */
 export function gitExecWith(env: () => NodeJS.ProcessEnv): GitExec {
   return (args, cwd) => new Promise((resolve) => {
-    execFile("git", ["--no-pager", "-c", "core.hooksPath=/dev/null", ...args],
+    execFile("git", [...gitSafeArgs(), ...args],
       { cwd, env: { ...env(), GIT_PAGER: "", GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" }, timeout: 60_000, maxBuffer: 1024 * 1024, windowsHide: true, encoding: "utf8" },
       (error, stdout, stderr) => {
         if (error && (error as NodeJS.ErrnoException).code === "ENOENT" && !existsSync(cwd)) { resolve({ code: 1, stdout: "", stderr: `${cwd} does not exist` }); return; }

@@ -1,14 +1,14 @@
-// Unit tests for main/mention-kinds.ts and main/mention-url.ts (ATO-2241), against the built output.
+// Unit tests for main/mention-kinds.ts (ATO-2241, ATO-2472), against the built output.
 // Run: npm run build && npm run test:unit
-// Which `@` words are diff / git / ranges / links, what the palette offers for them,
-// and the bounded, http(s)-only page read behind `@https://...`.
+// Which `@` words are diff / git / problems / ranges / links and what the palette offers for them.
+// Reading them is the agent's (src/mentions/ in core, tested there); main/mention-core.ts is
+// tested in mention-core.test.mjs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const K = require("../out/main/mention-kinds.js");
-const U = require("../out/main/mention-url.js");
 
 // ---------------------------------------------------------------- kinds
 
@@ -43,106 +43,9 @@ test("the palette offers diff and git:5 for a prefix, and keeps a typed range, l
   assert.deepEqual(K.contextSuggestions("readme"), []);
 });
 
-// ---------------------------------------------------------------- links
-
-const page = (body, type = "text/html; charset=utf-8", status = 200) =>
-  async () => new Response(body, { status, headers: { "content-type": type } });
-
-test("an HTML page comes back as its words, without scripts and styles", async () => {
-  const fetchUrl = U.createFetchUrl(page("<html><head><title>T</title><style>x{}</style></head><body><h1>Hello &amp; welcome</h1><script>evil()</script><p>Second&nbsp;line</p></body></html>"));
-  const got = await fetchUrl("https://example.com/");
-  assert.equal(got.text, "Hello & welcome\nSecond line");
-  assert.equal(got.cut, false);
-});
-
-test("a page past the byte cap is cut and the read stops there", async () => {
-  let pulled = 0;
-  const endless = new ReadableStream({
-    pull(controller) { pulled += 1; controller.enqueue(new TextEncoder().encode("a".repeat(1000))); },
-  });
-  const fetchUrl = U.createFetchUrl(async () => new Response(endless, { headers: { "content-type": "text/plain" } }), 5_000, 2_500);
-  const got = await fetchUrl("https://example.com/big");
-  assert.equal(got.text.length, 2_500);
-  assert.equal(got.cut, true);
-  assert.ok(pulled < 10);
-});
-
-test("a page that does not answer in time is named, not waited on", async () => {
-  const hang = (_url, init) => new Promise((_resolve, reject) => {
-    init.signal.addEventListener("abort", () => reject(new Error("aborted")));
-  });
-  const fetchUrl = U.createFetchUrl(hang, 30);
-  await assert.rejects(fetchUrl("https://slow.example/"), (err) => err instanceof U.UrlSkip && /no answer/.test(err.message));
-});
-
-test("an error status, a binary answer and a non-http link are refused with a reason", async () => {
-  await assert.rejects(U.createFetchUrl(page("nope", "text/plain", 404))("https://x.example/"),
-    (err) => err instanceof U.UrlSkip && err.message === "HTTP 404");
-  await assert.rejects(U.createFetchUrl(page("PNG", "image/png"))("https://x.example/a.png"),
-    (err) => err instanceof U.UrlSkip && /not a text page \(image\/png\)/.test(err.message));
-  let called = false;
-  await assert.rejects(U.createFetchUrl(async () => { called = true; return new Response("x"); })("file:///etc/hosts"),
-    (err) => err instanceof U.UrlSkip);
-  assert.equal(called, false);
-});
-
-// ---------------------------------------------------------------- linear HTML
-
-const H = require("../out/main/mention-html.js");
-const HALF_MB = 512 * 1024;
-
-test("512 KB of hostile markup is reduced in linear time, not frozen on", () => {
-  for (const [name, body] of [
-    ["unclosed comments", "<!--".repeat(HALF_MB / 4)],
-    ["unclosed scripts", "<script".repeat(Math.floor(HALF_MB / 7))],
-    ["scripts with no end tag", "<script>".repeat(HALF_MB / 8)],
-    ["bare angle brackets", "<".repeat(HALF_MB)],
-    ["tags with no end", "<a".repeat(HALF_MB / 2)],
-  ]) {
-    const started = performance.now();
-    H.htmlToText(body);
-    const took = performance.now() - started;
-    assert.ok(took < 500, `${name}: ${Math.round(took)} ms`);
-  }
-});
-
-test("the scan keeps text, a bare < and line ends; an unclosed comment drops the rest", () => {
-  assert.equal(H.htmlToText("<p>a < b</p><p>c</p>"), "a < b\nc");
-  assert.equal(H.htmlToText("<!DOCTYPE html><div>one<br>two</div>"), "one\ntwo");
-  assert.equal(H.htmlToText("kept <!-- never closed <p>gone</p>"), "kept");
-  assert.equal(H.htmlToText("<SCRIPT>x()</Script >after"), "after");
-});
-
-// ---------------------------------------------------------------- local addresses
-
-const N = require("../out/main/mention-hosts.js");
-
-test("loopback, private and link-local hosts are local; public ones are not", () => {
-  for (const host of ["localhost", "app.localhost", "127.0.0.1", "10.1.2.3", "172.20.0.1", "192.168.1.1",
-    "169.254.169.254", "100.100.1.1", "0.0.0.0", "[::1]", "[fe80::1]", "[fd12::1]", "[::ffff:7f00:1]", "printer.local"]) {
-    assert.equal(N.isLocalHost(host), true, host);
-  }
-  for (const host of ["example.com", "8.8.8.8", "172.32.0.1", "[2606:4700::1111]", "localhost.example.com"]) {
-    assert.equal(N.isLocalHost(host), false, host);
-  }
-});
-
-/** A fetch answer as fetch gives it after redirects (`url` is the final address). */
-const landed = (finalUrl, body = "inside") => async () => ({
-  ok: true, status: 200, url: finalUrl,
-  headers: new Headers({ "content-type": "text/plain" }),
-  body: new Response(body).body,
-});
-
-test("a public link that redirects to a local address is refused", async () => {
-  for (const target of ["http://127.0.0.1/admin", "http://169.254.169.254/latest/meta-data/", "http://192.168.1.1/"]) {
-    await assert.rejects(U.createFetchUrl(landed(target))("https://public.example/go"),
-      (err) => err instanceof U.UrlSkip && err.message === "redirected to a local address", target);
-  }
-});
-
-test("a local link typed on purpose is still read, and a public landing is fine", async () => {
-  assert.equal((await U.createFetchUrl(landed("http://localhost:3000/"))("http://localhost:3000")).text, "inside");
-  assert.equal((await U.createFetchUrl(landed("http://127.0.0.1:8080/b"))("http://localhost:8080/a")).text, "inside");
-  assert.equal((await U.createFetchUrl(landed("https://www.example.com/"))("https://example.com/")).text, "inside");
+test("ATO-2472: problems is a keyword the palette offers, and folders come from the file list", () => {
+  assert.deepEqual(K.parseMentionKind("problems"), { kind: "problems" });
+  assert.deepEqual(K.contextSuggestions("pro"), ["problems"]);
+  assert.deepEqual(K.contextSuggestions("problems"), ["problems"]);
+  assert.deepEqual(K.foldersOf(["README.md", "src/a.ts", "src/tui/b.ts", "docs/x.md"]), ["docs/", "src/", "src/tui/"]);
 });

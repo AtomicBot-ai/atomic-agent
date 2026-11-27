@@ -7444,7 +7444,8 @@ function toastHTML(t) {
   return '<span class="tk-ico tk-ico--sm ' + (bad ? 'tk-ico--red' : info ? 'tk-ico--blue' : 'tk-ico--green') + '">'
     + ic(bad ? 'alert' : info ? 'download' : 'check') + '</span>'
     + '<span class="toast-body"><span class="toast-t">' + esc(t.t) + '</span>'
-    + (t.s ? '<span class="toast-s">' + esc(t.s) + '</span>' : '') + '</span>'
+    + (t.s ? '<span class="toast-s">' + esc(t.s) + '</span>' : '')
+    + (typeof toastActionHTML === 'function' ? toastActionHTML(t) : '') + '</span>'   // ATO-2478: one button, "Open" (toast-actions.js)
     // r2: every toast can be dismissed before its 6 s are up. Icon only, so
     // the toast's textContent (what the drivers read) is unchanged.
     + '<button class="iconbtn sm toast-x" data-act="toastx:' + t.id + '" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button>';

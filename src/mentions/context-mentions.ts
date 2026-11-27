@@ -1,14 +1,20 @@
 /**
- * ATO-2241: `@` mentions beyond whole files, expanded on send next to them.
- * mention-kinds.ts tells the words apart; mention-git.ts, mention-url.ts
- * and mention-local.ts read them. Every entry goes into the same
- * `<mentioned-files>` block file-mentions.ts writes, under the same caps
- * (files per message, bytes per entry, bytes per message), so the chat
- * collapses it to one line per mention and "send again" puts back the
- * typed text only (renderer/file-mentions.js), with no renderer change.
+ * `@` mentions beyond whole files, expanded on send next to them
+ * (ATO-2241 in the desktop; one implementation for the terminal and the
+ * desktop since ATO-2472). mention-kinds.ts tells the words apart;
+ * mention-git.ts, mention-url.ts, mention-local.ts and the problems
+ * source read them. Every entry goes into the same `<mentioned-files>`
+ * block as `@file` (mention-block.ts), under the same caps (entries per
+ * message, bytes per entry, bytes per message), so the chat collapses it
+ * to one line per mention and input history keeps the typed text only.
  *
- * A word that is a real file stays file-mentions.ts's: `@diff` with a file
+ * A word that is a real file stays a file mention: `@diff` with a file
  * named `diff` in the folder inlines that file.
+ *
+ * Scope: ranges and folders pass the `@file` guard (inside the working
+ * folder on the written and the real path); git runs with `--relative
+ * -- .` in the working folder; `@problems` reports files inside it only;
+ * the agent's own key files are never inlined.
  */
 
 import { realpathSync } from "node:fs";
@@ -16,29 +22,28 @@ import { realpathSync } from "node:fs";
 import {
   DEFAULT_MENTION_LIMITS,
   TRAILING_PUNCTUATION,
-  appendMentionBlock,
   mentionTokens,
   mentionedFiles,
   resolveMentionedFile,
+  type IsProtectedPath,
   type MentionLimits,
-  type MentionedFile,
-} from "./file-mentions.js";
+} from "./expand-file-mentions.js";
+import { appendMentionBlock, type MentionedFile } from "./mention-block.js";
 import { diffArgs, logArgs, runGit, type GitOutput, type RunGit } from "./mention-git.js";
 import { parseMentionKind, type MentionKind } from "./mention-kinds.js";
-import {
-  LocalSkip,
-  folderListing,
-  listFolder,
-  readLineRange,
-  resolveMentionedDir,
-  type ListFolder,
-} from "./mention-local.js";
+import { LocalSkip, folderListing, listFolder, readLineRange, resolveMentionedDir, type ListFolder } from "./mention-local.js";
+import { formatProblems } from "./mention-problems.js";
 import { UrlSkip, createFetchUrl, type FetchUrl } from "./mention-url.js";
+import type { WorkspaceProblems } from "../tools/os/fs/lsp/index.js";
 
 export interface ContextMentionDeps {
   runGit: RunGit;
   fetchUrl: FetchUrl;
   listFolder: ListFolder;
+  /** The working folder's problems; absent reads as language servers off. */
+  problems?: (workingDir: string) => Promise<WorkspaceProblems>;
+  /** The agent's own key and trust files (`getStateSecretPaths`), by real path. */
+  isProtected?: IsProtectedPath;
 }
 
 export const DEFAULT_CONTEXT_DEPS: ContextMentionDeps = {
@@ -61,6 +66,19 @@ function targetOf(root: string, raw: string): { shown: string; target: Target } 
   return dir ? { shown, target: { kind: "folder", dir } } : null;
 }
 
+/** Whether `text` has any `@word` this module would read (cheap, sync, no reads beyond stat). */
+export function hasContextMentions(text: string, workingDir: string): boolean {
+  const tokens = mentionTokens(text);
+  if (tokens.length === 0) return false;
+  let root: string;
+  try {
+    root = realpathSync.native(workingDir);
+  } catch {
+    return false;
+  }
+  return tokens.some((raw) => targetOf(root, raw) !== null);
+}
+
 function gitText(out: GitOutput, empty: string): { text: string; cut: boolean } {
   return out.text.trim().length === 0 ? { text: empty, cut: false } : out;
 }
@@ -72,8 +90,10 @@ async function read(root: string, shown: string, target: Target, deps: ContextMe
       return gitText(await deps.runGit(root, diffArgs()), "No uncommitted changes to tracked files.\n");
     case "git":
       return gitText(await deps.runGit(root, logArgs(target.count)), "No commits touch this folder.\n");
+    case "problems":
+      return { text: formatProblems(deps.problems ? await deps.problems(root) : { state: "off" }), cut: false };
     case "range": {
-      const text = readLineRange(root, target.path, target.start, target.end);
+      const text = readLineRange(root, target.path, target.start, target.end, deps.isProtected);
       return text === null ? null : { text, cut: false };
     }
     case "url":
@@ -86,6 +106,7 @@ async function read(root: string, shown: string, target: Target, deps: ContextMe
 function reasonOf(err: unknown, target: Target): string {
   if (err instanceof UrlSkip || err instanceof LocalSkip) return err.message;
   if (target.kind === "diff" || target.kind === "git") return "not a git checkout, or git failed";
+  if (target.kind === "problems") return "the language servers did not answer";
   return "could not be read";
 }
 
@@ -93,7 +114,7 @@ function reasonOf(err: unknown, target: Target): string {
 function capBytes(text: string, cap: number): string {
   const buf = Buffer.from(text, "utf8");
   if (buf.length <= cap) return text;
-  return buf.subarray(0, cap).toString("utf8").replace(/\uFFFD+$/, "");
+  return buf.subarray(0, cap).toString("utf8").replace(/�+$/, "");
 }
 
 /**
@@ -111,7 +132,7 @@ export async function contextMentions(
   if (tokens.length === 0) return [];
   let root: string;
   try {
-    root = realpathSync(workingDir);
+    root = realpathSync.native(workingDir);
   } catch {
     return [];
   }
@@ -151,26 +172,11 @@ export async function contextMentions(
 export async function expandMentions(
   text: string,
   workingDir: string,
-  limits: MentionLimits = DEFAULT_MENTION_LIMITS,
   deps: ContextMentionDeps = DEFAULT_CONTEXT_DEPS,
+  limits: MentionLimits = DEFAULT_MENTION_LIMITS,
 ): Promise<string> {
-  const files = mentionedFiles(text, workingDir, limits);
+  const files = mentionedFiles(text, workingDir, limits, deps.isProtected);
   const bytes = files.reduce((sum, f) => sum + Buffer.byteLength(f.content, "utf8"), 0);
   const extra = await contextMentions(text, workingDir, { files: files.length, bytes }, limits, deps);
   return appendMentionBlock(text, [...files, ...extra]);
-}
-
-/** expandLastUserMessage (file-mentions.ts) with the mentions above as well. */
-export async function expandLastUserMessageWithContext<T extends { role: string; content: string }>(
-  messages: readonly T[],
-  folder: string | null,
-  limits: MentionLimits = DEFAULT_MENTION_LIMITS,
-  deps: ContextMentionDeps = DEFAULT_CONTEXT_DEPS,
-): Promise<T[]> {
-  const out = [...messages];
-  const last = out[out.length - 1];
-  if (!folder || !last || last.role !== "user") return out;
-  const content = await expandMentions(last.content, folder, limits, deps);
-  if (content !== last.content) out[out.length - 1] = { ...last, content };
-  return out;
 }

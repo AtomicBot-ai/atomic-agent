@@ -14,9 +14,10 @@
    card drops an answer still on its way. */
 
 const BTW_MAX_CHARS = 4000;   // the agent's limit (src/runtime/side-question.ts)
-const BTW_USAGE = 'usage: /btw <question>, a quick side question that is not saved to the chat';
+/* ATO-2751: said as a sentence, not as command-line help. */
+const BTW_USAGE = 'Type your question after /btw, for example: /btw which port does the server use? The answer is not saved to the chat.';
 
-/* The card: null, or {id, question, status: 'asking' | 'done' | 'failed', text}. */
+/* The card: null, or {id, question, status: 'asking' | 'done' | 'failed', text, detail}. */
 const BTW = {card: null, seq: 0};
 
 /** The question from the words after `/btw`: {ok, text} or {ok:false, error}. */
@@ -35,12 +36,25 @@ function btwSessionOf(sessionId) {
   return id && id.indexOf('waiting-') !== 0 ? id : undefined;
 }
 
-/** The card's words for the agent's answer (main's {ok, supported, text?, error?}). */
+/** The reason as the agent or the bridge gave it, without Electron's "Error invoking remote method" wrapper. */
+function btwDetail(raw) {
+  return String(raw || '').trim().replace(/^Error invoking remote method '[^']*':\s*/, '').replace(/^(?:\w*Error):\s*/, '');
+}
+
+/**
+ * The card's words for the agent's answer (main's {ok, supported, text?, error?}).
+ * ATO-2751: a failure is a plain sentence; the raw reason is `detail`, shown
+ * behind Details.
+ */
 function btwOutcome(r) {
   if (r && r.ok && typeof r.text === 'string' && r.text.trim()) return {status: 'done', text: r.text.trim()};
   if (r && r.supported === false) return {status: 'failed', text: 'This agent cannot answer side questions. Update Atomic Agent to use /btw.'};
-  const why = String((r && r.error) || 'the agent gave no answer').trim().replace(/[.!?\s]+$/, '');
-  return {status: 'failed', text: "Couldn't answer the side question: " + why + '.'};
+  const detail = btwDetail(r && r.error);
+  const text = !detail ? 'The agent gave no answer. Try asking again.'
+    : /timed? ?out|timeout|no answer in/i.test(detail) ? 'The agent took too long to answer. Try asking again.'
+      : /not running|not connected|ECONNREFUSED|disconnected/i.test(detail) ? 'The agent is not running right now. Try again in a moment.'
+        : "Couldn't answer the side question. Try asking again.";
+  return {status: 'failed', text, detail};
 }
 
 /**
@@ -53,7 +67,7 @@ function btwAsk(words, deps) {
   const bridge = deps && deps.bridge;
   if (!bridge || typeof bridge.askSideQuestion !== 'function') return 'Side questions need the desktop app.';
   const id = ++BTW.seq;
-  BTW.card = {id, question: q.text, status: 'asking', text: ''};
+  BTW.card = {id, question: q.text, status: 'asking', text: '', detail: ''};
   const paint = (deps && deps.paint) || (() => {});
   paint();
   Promise.resolve()
@@ -86,7 +100,8 @@ function btwCardHTML(h) {
   const body = c.status === 'asking'
     ? '<div class="btw-body btw-wait">Thinking…</div>'
     : c.status === 'failed'
-      ? '<div class="btw-body btw-fail">' + esc(c.text) + '</div>'
+      ? '<div class="btw-body btw-fail">' + esc(c.text)
+        + (c.detail ? '<details class="btw-det"><summary>Details</summary><code>' + esc(c.detail) + '</code></details>' : '') + '</div>'
       : '<div class="btw-body btw-md">' + (typeof h.md === 'function' ? h.md(c.text) : esc(c.text)) + '</div>';
   return '<div class="btwcard" role="region" aria-label="Side question" aria-live="polite">'
     + '<div class="btw-top"><span class="btw-l">/btw</span><span class="btw-q" title="' + esc(c.question) + '">' + esc(c.question) + '</span>'
@@ -115,5 +130,5 @@ if (typeof document !== 'undefined') {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {BTW, BTW_MAX_CHARS, BTW_USAGE, btwQuestionFrom, btwSessionOf, btwOutcome, btwAsk, btwClose, btwCardHTML};
+  module.exports = {BTW, BTW_MAX_CHARS, BTW_USAGE, btwQuestionFrom, btwSessionOf, btwOutcome, btwDetail, btwAsk, btwClose, btwCardHTML};
 }

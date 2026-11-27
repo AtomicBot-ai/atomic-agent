@@ -19,6 +19,7 @@
 import type { Dirent } from "node:fs";
 import { cp, lstat, mkdir, readdir, stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
+import { gitSafeArgs } from "./git-safe-args.js";
 
 export const MAX_WORKERS = 3;
 /** A task is a short brief, not a document; a longer one is cut, not refused. */
@@ -77,9 +78,9 @@ async function exists(path: string): Promise<boolean> {
 }
 
 /** The repo's top folder when `folder` is inside a git work tree, else null. */
-export async function gitTop(folder: string, exec: Exec): Promise<string | null> {
+export async function gitTop(folder: string, exec: Exec, platform: NodeJS.Platform = process.platform): Promise<string | null> {
   try {
-    const { stdout } = await exec("git", ["-C", folder, "rev-parse", "--show-toplevel"], { timeout: 15000 });
+    const { stdout } = await exec("git", [...gitSafeArgs(platform), "-C", folder, "rev-parse", "--show-toplevel"], { timeout: 15000 });
     const top = stdout.trim();
     return top ? top : null;
   } catch {
@@ -138,10 +139,11 @@ export async function makeWorkerDir(
   }
   try { await mkdir(base, { recursive: true }); } catch (e) { return { ok: false, error: errText(e) }; }
 
-  const top = await gitTop(projectFolder, exec);
+  const top = await gitTop(projectFolder, exec, platform);
   if (top) {
     try {
-      await exec("git", ["-C", top, "worktree", "add", "--detach", root, "HEAD"], { timeout: 120000 });
+      // No hook of the project's own repo runs on checkout (ATO-2532).
+      await exec("git", [...gitSafeArgs(platform), "-C", top, "worktree", "add", "--detach", root, "HEAD"], { timeout: 120000 });
     } catch (e) {
       return { ok: false, error: `git worktree add failed: ${errText(e)}` };
     }

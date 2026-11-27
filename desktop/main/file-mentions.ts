@@ -28,6 +28,7 @@ import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import fuzzysort from "fuzzysort";
+import { gitSafeArgs } from "./git-safe-args.js";
 
 // ---------------------------------------------------------------- listing
 
@@ -61,7 +62,8 @@ export function listGitFiles(root: string, limits: FileIndexLimits): Promise<str
   return new Promise((done, fail) => {
     execFile(
       "git",
-      ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+      // The folder's own config must not run a program (ATO-2532).
+      [...gitSafeArgs(), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
       // Git gets more than the walk's budget: in a big checkout it is
       // still the faster and more correct of the two.
       { cwd: root, timeout: limits.budgetMs * 10, maxBuffer: 64 * 1024 * 1024, windowsHide: true },

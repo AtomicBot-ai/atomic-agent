@@ -14,5 +14,9 @@
 .btw-body{max-height:240px;overflow:auto;font-size:var(--fs-body, 14px);color:var(--ink);overflow-wrap:anywhere}
 .btw-wait{color:var(--ink-2)}
 .btw-fail{color:var(--critical)}
+/* ATO-2751: the raw reason, folded away under the plain sentence. */
+.btw-det{margin-top:4px;color:var(--ink-2);font-size:var(--fs-cap)}
+.btw-det summary{cursor:pointer;width:max-content}
+.btw-det code{display:block;margin-top:4px;font-family:var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere}
 .btw-md > :first-child{margin-top:0}
 .btw-md > :last-child{margin-bottom:0}
