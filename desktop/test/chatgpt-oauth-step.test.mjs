@@ -42,14 +42,15 @@ test('nothing is drawn until main says the agent supports it', () => {
   assert.equal(S.chatgptOauthBlockHTML({...fresh(), supported: null}, esc, false), '');
   assert.equal(S.chatgptOauthBlockHTML({...fresh(), supported: false}, esc, false), '');
   const html = S.chatgptOauthBlockHTML(fresh(), esc, false);
-  assert.match(html, /data-act="wiz:chatgptOauth">Sign in with ChatGPT</);
+  assert.match(html, /data-act="wiz:chatgptOauth">Sign in with ChatGPT in the browser</);
   assert.match(html, />Experimental</);
 });
 
-test('while signing in: the browser line and Cancel, no Sign in button', () => {
+test('while signing in: the browser line, Open the sign-in page again and Cancel, no Sign in button', () => {
   const html = S.chatgptOauthBlockHTML({...fresh(), running: true}, esc, true);
   assert.match(html, /Finish signing in in your browser/);
   assert.match(html, /data-act="wiz:chatgptOauthCancel"/);
+  assert.match(html, /data-act="wiz:chatgptOauthReopen">Open the sign-in page again</);
   assert.doesNotMatch(html, /data-act="wiz:chatgptOauth"/);
   assert.match(html, /btn btn-s xs/);
 });
@@ -166,7 +167,7 @@ test('renderer.js wires the two verbs, also inside first run, and both wizard sc
   const src = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
   assert.match(src, /a === 'wiz:chatgptOauth'\) \{ wizChatgptOauthStart\(WIZ\.row\)/);
   assert.match(src, /a === 'wiz:chatgptOauthCancel'\) \{ chatgptOauthCancel\(BR, true\)/);
-  assert.match(src, /a === 'wiz:subCopy' \|\| a === 'wiz:chatgptOauth' \|\| a === 'wiz:chatgptOauthCancel'\)\) \{/);
+  assert.match(src, /a === 'wiz:subCopy' \|\| a === 'wiz:chatgptOauth' \|\| a === 'wiz:chatgptOauthCancel' \|\| a === 'wiz:chatgptOauthReopen'\)\) \{/);
   assert.equal((src.match(/\+ wizChatgptOauthHTML\(k, (?:true|false)\)/g) || []).length, 2);
   const html = readFileSync(new URL('../renderer/index.html', import.meta.url), 'utf8');
   // The script tags, not the first mention: index.html's comments name renderer.js long before its tag.

@@ -181,9 +181,10 @@ test('ATO-845: signed out, the main button says Sign in with the plan, and Copy 
   ctx.lines(claude); ctx.lines(codex); await tick();
   assert.equal(ctx.needsLogin(codex), true);
   assert.equal(ctx.loginButton(claude), 'Sign in with Claude');
-  assert.equal(ctx.loginButton(codex), 'Sign in with ChatGPT');
+  // ATO-2739: Codex's terminal sign-in names the terminal, never the browser sign-in's words.
+  assert.equal(ctx.loginButton(codex), 'Sign in with Codex in Terminal');
   const lines = plain(ctx.lines(codex));
-  assert.match(lines[1].text, /^Press Sign in with ChatGPT\. A Terminal window opens/);
+  assert.match(lines[1].text, /^Press Sign in with Codex in Terminal\. A Terminal window opens/);
   const code = lines.filter((l) => l.code);
   assert.deepEqual(code.map((l) => [l.text, l.copy]), [['codex login', true]]);
   assert.ok(lines.find((l) => l.small && /did not open/.test(l.text)), 'the fallback line is small');
