@@ -824,11 +824,20 @@ Honestly degraded, and labelled as such in the UI:
   `activateProvider` restart applies. Fallover events are not on the HTTP
   API, so the Fallback status line says so instead of "on primary".
 - **Telegram** shows config + `.env` facts only: `telegram.enabled`, the
-  owner, and whether `TELEGRAM_BOT_TOKEN` is set. The token prompt writes
-  the key through a port of `src/config/dotenv-writer.ts` (atomic rename,
-  0600, quoting for whitespace/shell characters); `T`/`O`/`e` clear the
-  token, unset the owner and flip `telegram.enabled`, each with the restart
-  note. Every line in the tab that asks for a restart (that note, the
+  owner, and whether `TELEGRAM_BOT_TOKEN` is set. The Connect card says what
+  the bot is for, lists the three steps and opens @BotFather
+  (`renderer/telegram-token.js`, ATO-426). The token prompt shows the token's
+  shape as its placeholder, has a Show / Hide eye, keeps Save disabled until
+  there is text, refuses a value that is not shaped like a token, and asks
+  Telegram's `getMe` once through main (`main/telegram-token-check.ts`, IPC
+  `telegram:checkToken`): a token Telegram rejects is never written, one
+  that could not be checked (offline) is written with a warning, and a good
+  one is confirmed as `@my_bot`. The write goes through a port of
+  `src/config/dotenv-writer.ts` (atomic rename, 0600, quoting for
+  whitespace/shell characters). The `e` key flips `telegram.enabled`;
+  removing the token or the owner is a button that takes a second click, and
+  no single key does either (the former `T`/`O` are gone). Every change
+  carries the restart note. Every line in the tab that asks for a restart (that note, the
   "Waiting for a restart" status and the pairing card's "Telegram is not
   running") has a primary Restart agent beside it and says the app stays
   open; the Restart the bot row's own Restart does the same (ATO-900 item 6,

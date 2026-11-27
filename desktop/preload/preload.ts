@@ -460,6 +460,8 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("agent:telegramPairing", { op, replaceOwner: replaceOwner === true }),
   // ATO-758: the live channel's state and another poller of the same bot.
   telegramChannel: () => ipcRenderer.invoke("agent:telegramChannel"),
+  /** ATO-426 (main/telegram-token-check.ts): one getMe before a token is saved; the answer never carries the token. */
+  telegramCheckToken: (value: string) => ipcRenderer.invoke("telegram:checkToken", { value }),
   // ATO-516: the Discord bot's live state (GET /api/discord/channel).
   discordChannel: () => ipcRenderer.invoke("agent:discordChannel"),
   /** ATO-1094: the next-step suggestion stored after a chat's last turn (`{supported, text}`). */
