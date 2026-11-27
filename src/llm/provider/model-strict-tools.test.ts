@@ -24,7 +24,7 @@ const strictEntry = {
   kind: "openai-compatible",
   baseUrl: "https://gate.example/v1",
   defaultChatModel: "mercury-2.5",
-  userModels: [{ id: "mercury-2.5", supportsTools: "strict" as const }],
+  userModels: [{ id: "mercury-2.5", kind: "chat" as const, supportsTools: "strict" as const }],
 };
 
 describe("modelWantsStrictTools", () => {
