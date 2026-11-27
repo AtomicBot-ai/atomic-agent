@@ -67,6 +67,7 @@ import { isAnthropicHost, isAnthropicModel } from "./prompt-cache-control.js";
 import { isLocalServerUrl } from "./local-server-url.js";
 import {
   createChunkUnmasker,
+  learnNamesForRequest,
   maskOpenAiBody,
   shieldVaultFor,
   unmaskCompletion,
@@ -441,6 +442,14 @@ export class OpenAiProvider implements LlmProvider {
     let sentBody: Record<string, unknown> | undefined;
     // Privacy Shield (ATO-1081): one vault for the body and the reply.
     const vault = shieldVaultFor(request.sessionId, this.localServer);
+    // ATO-2394: names and addresses from the local model, before any body is masked.
+    if (vault) {
+      await learnNamesForRequest(
+        vault,
+        () => this.buildBody(request, false, this.shapeFor(request)).messages,
+        request.signal,
+      );
+    }
     const post = (body: Record<string, unknown>) =>
       openAiPostJson(
         this.http,
@@ -851,6 +860,14 @@ export class OpenAiProvider implements LlmProvider {
     // Privacy Shield (ATO-1081): one vault for every attempt of this
     // completion, so a reopen masks the same way and the reply unmasks.
     const vault = shieldVaultFor(request.sessionId, this.localServer);
+    // ATO-2394: names and addresses from the local model, before any body is masked.
+    if (vault) {
+      await learnNamesForRequest(
+        vault,
+        () => this.buildBody(activeRequest, true, shape).messages,
+        request.signal,
+      );
+    }
     let body = this.buildBody(activeRequest, true, shape, vault);
     const path = `${this.chatPathPrefix}/chat/completions`;
     let accumulated = "";

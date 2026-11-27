@@ -66,7 +66,7 @@ describe("loadConfig", () => {
     expect(loadConfig().privacy?.shield.enabled).toBe(false);
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...USER_CONFIG_DEFAULTS,
-      privacy: { shield: { enabled: true } },
+      privacy: { shield: { enabled: true, localNames: false } },
     });
     resetConfigCache();
     expect(loadConfig().privacy?.shield.enabled).toBe(true);
