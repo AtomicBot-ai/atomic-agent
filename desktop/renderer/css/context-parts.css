@@ -1,0 +1,17 @@
+/* ATO-2453: the context popover's part rows (context-parts.js). A part sits
+   indented under the section it breaks down; an MCP server's part is a button
+   that lists its tools, indented once more. */
+.ctxpop .kvgrid dt.ctxpart{padding-left:16px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ctxpop .kvgrid dt.ctxtool{padding-left:32px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:var(--fs-label)}
+/* Tool names are the server's own spelling: no capital first letter. */
+.ctxpop .kvgrid dt.ctxtool::first-letter{text-transform:none}
+.ctxpop .kvgrid dt.ctxmore{font-family:var(--font-ui);font-style:italic}
+.ctxpop .ctxexp{display:inline-flex;align-items:center;gap:4px;max-width:100%;padding:0;border:0;background:none;color:inherit;font:inherit;cursor:pointer;text-align:left}
+.ctxpop .ctxexp:hover{color:var(--ink)}
+.ctxpop .ctxexp:focus-visible{outline:2px solid var(--brand);outline-offset:2px;border-radius:3px}
+.ctxpop .ctxcaret{flex:none;width:10px;font-size:9px;line-height:1}
+.ctxpop .ctxcount{flex:none;margin-left:4px;color:var(--ink-2);opacity:.8}
+.ctxpop .ctxtip{color:var(--ink-2)}
+/* The rows can now outgrow a short window: the readout scrolls and the dial
+   and footer under it stay in view (the popover has a max-height there). */
+.ctxpop .ctxin{flex:0 1 auto;min-height:0;overflow-y:auto}
