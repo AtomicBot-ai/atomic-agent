@@ -18,6 +18,7 @@ export {
   type LocalNameDetectorOptions,
   type LocalNameModel,
 } from "./local-name-detector.js";
+export { KEEP_WORDS, refineFoundValues } from "./name-value-filter.js";
 export {
   PLACEHOLDER,
   PrivacyVault,

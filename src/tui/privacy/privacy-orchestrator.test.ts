@@ -214,5 +214,46 @@ describe("PrivacyOrchestrator", () => {
     const settled = actions.find((a) => a.type === "privacy_action_settled");
     expect(settled?.error).toContain("not available");
   });
-});
 
+  it("toggleShieldNames() flips the names switch and re-reads its status (ATO-2527)", async () => {
+    const { actions, bus } = makeBus();
+    let names = false;
+    const setEnabled = vi.fn(async (on: boolean) => {
+      names = on;
+    });
+    const runtime = {
+      getApprovalLevel: () => 1,
+      approvals: { sessionGrants: () => ({ categories: [], shapes: [] }) },
+      privacyShield: {
+        isEnabled: () => true,
+        setEnabled: async () => {},
+        stats: () => ({ masked: 0, sessions: 0 }),
+        localNames: {
+          status: () => ({ enabled: names, state: names ? "ready" : "off", model: { provider: "lmstudio", model: "qwen3-4b" } }),
+          setEnabled,
+        },
+      },
+    } as unknown as AgentRuntime;
+    await new PrivacyOrchestrator(runtime, bus).toggleShieldNames();
+    expect(setEnabled).toHaveBeenCalledWith(true);
+    expect(actions.find((a) => a.type === "privacy_action_settled")?.message).toBe("hiding names on");
+    const synced = actions.filter((a) => a.type === "privacy_synced").pop();
+    expect((synced?.shield as { names?: unknown }).names).toEqual({
+      enabled: true,
+      state: "ready",
+      model: "qwen3-4b (lmstudio)",
+    });
+  });
+
+  it("toggleShieldNames() does nothing to an agent without the names switch", async () => {
+    const { actions, bus } = makeBus();
+    const runtime = {
+      getApprovalLevel: () => 1,
+      approvals: { sessionGrants: () => ({ categories: [], shapes: [] }) },
+      privacyShield: { isEnabled: () => true, setEnabled: async () => {}, stats: () => ({ masked: 0, sessions: 0 }) },
+    } as unknown as AgentRuntime;
+    await new PrivacyOrchestrator(runtime, bus).toggleShieldNames();
+    expect(actions.some((a) => a.type === "privacy_action_started")).toBe(false);
+    expect(actions.find((a) => a.type === "privacy_action_settled")?.error).toContain("not available");
+  });
+});

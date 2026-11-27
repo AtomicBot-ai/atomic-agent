@@ -7,6 +7,7 @@ import {
   readOfflineModeControl,
   snapshotOfflineMode,
 } from "./offline-mode.js";
+import { readPrivacyNamesControl } from "./privacy-names.js";
 import { readPrivacyShieldControl, snapshotPrivacyShield } from "./privacy-shield.js";
 
 /**
@@ -101,6 +102,38 @@ export class PrivacyOrchestrator {
       this.bus.emit({
         type: "privacy_action_settled",
         error: `privacy shield toggle failed: ${msg}`,
+      });
+    }
+    this.refresh();
+  }
+
+  /**
+   * Flip the names pass of Privacy Shield (ATO-2527) through the agent's
+   * control, which persists `privacy.shield.localNames`. A runtime
+   * without it gets a plain line and no state change.
+   */
+  async toggleShieldNames(): Promise<void> {
+    const names = readPrivacyNamesControl(readPrivacyShieldControl(this.runtime));
+    if (!names) {
+      this.bus.emit({
+        type: "privacy_action_settled",
+        error: "hiding names is not available in this agent build",
+      });
+      return;
+    }
+    this.bus.emit({ type: "privacy_action_started" });
+    try {
+      const next = names.status().enabled !== true;
+      await names.setEnabled(next);
+      this.bus.emit({
+        type: "privacy_action_settled",
+        message: next ? "hiding names on" : "hiding names off",
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.bus.emit({
+        type: "privacy_action_settled",
+        error: `could not switch hiding names: ${msg}`,
       });
     }
     this.refresh();

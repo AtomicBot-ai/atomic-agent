@@ -664,6 +664,12 @@ Honestly degraded, and labelled as such in the UI:
   does not have; the tool counters come from the open session's store rows.
   The Privacy tab shows the effective `analytics.enabled` (the schema default
   when `config.json` has no key, read with `atag config get`), as the TUI does.
+  Under Privacy Shield, a names row (ATO-2527,
+  [privacy-names.js](renderer/privacy-names.js)) switches
+  `privacy.shield.localNames` through `POST /api/privacy-shield` and says which
+  model on this computer reads the text; with none set up it says only emails,
+  phones, cards and keys are hidden and links to Models › Local models. An
+  agent without the switch gets a disabled row that asks for an update.
 - **Tasks** start in plain words (ATO-519): New task asks one sentence, such
   as "every weekday at 9, send me a summary", and sends it as the first message
   of a new chat, where the agent schedules it with its own `tasks.cron` /

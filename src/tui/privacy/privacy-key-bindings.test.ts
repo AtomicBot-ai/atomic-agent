@@ -138,5 +138,23 @@ describe("handlePrivacyTabKey", () => {
     expect(handlePrivacyTabKey("m", emptyKey(), withShield)).toBe(true);
     expect(onPrivacyShieldToggleRequested).toHaveBeenCalledTimes(1);
   });
-});
 
+  it("n toggles hiding names only when the agent has that switch (ATO-2527)", () => {
+    const onPrivacyNamesToggleRequested = vi.fn();
+    const base = privacyState();
+    const shield = { supported: true, enabled: true, masked: 0, sessionMasked: null };
+    const noNames: TuiState = { ...base, privacyPanel: { ...base.privacyPanel, shield } };
+    expect(handlePrivacyTabKey("n", emptyKey(), ctx(noNames, { onPrivacyNamesToggleRequested }))).toBe(true);
+    expect(onPrivacyNamesToggleRequested).not.toHaveBeenCalled();
+
+    const withNames: TuiState = {
+      ...base,
+      privacyPanel: {
+        ...base.privacyPanel,
+        shield: { ...shield, names: { enabled: false, state: "off", model: null } },
+      },
+    };
+    expect(handlePrivacyTabKey("n", emptyKey(), ctx(withNames, { onPrivacyNamesToggleRequested }))).toBe(true);
+    expect(onPrivacyNamesToggleRequested).toHaveBeenCalledTimes(1);
+  });
+});

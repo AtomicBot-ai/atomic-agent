@@ -32,4 +32,17 @@ describe("runtime.privacyShield (ATO-1082)", () => {
       session: { masked: 2, lastRequest: 2 },
     });
   });
+
+  it("persists the names switch and reports its status (ATO-2527)", async () => {
+    const written: boolean[] = [];
+    const control = createPrivacyShieldControl({
+      persist: () => {},
+      persistNames: (on) => written.push(on),
+      namesStatus: () => ({ enabled: written.at(-1) === true, state: "no-local-model", model: null }),
+    });
+    expect(control.localNames?.status().enabled).toBe(false);
+    await control.localNames?.setEnabled(true);
+    expect(written).toEqual([true]);
+    expect(control.localNames?.status()).toEqual({ enabled: true, state: "no-local-model", model: null });
+  });
 });
