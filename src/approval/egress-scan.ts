@@ -24,6 +24,7 @@
  */
 import { scanCurl, scanWget } from "./egress-scan-http.js";
 import { gitSubcommand, scanGit, type GitRemoteResolver } from "./egress-scan-git.js";
+import { REGISTRY_VARIABLE_RE } from "./registry-variables.js";
 import {
   scanBucket,
   scanContainer,
@@ -123,6 +124,8 @@ interface CallState {
   gitUnsafe: boolean;
   /** A part sets a proxy variable or a curl / wget config location. */
   rerouted: boolean;
+  /** A part sets where a package publish goes (`NPM_CONFIG_REGISTRY=x`, review round 2). */
+  registryRerouted: boolean;
 }
 
 /**
@@ -133,7 +136,7 @@ interface CallState {
  * "earlier parts only": a loop can run a later part first.
  */
 function readCallState(segments: readonly (readonly string[])[]): CallState {
-  const state: CallState = { gitUnsafe: false, rerouted: false };
+  const state: CallState = { gitUnsafe: false, rerouted: false, registryRerouted: false };
   for (const words of segments) {
     let start = 0;
     const names: string[] = [];
@@ -156,6 +159,7 @@ function readCallState(segments: readonly (readonly string[])[]): CallState {
     }
     if (names.some((name) => GIT_VARIABLE_RE.test(name))) state.gitUnsafe = true;
     if (names.some((name) => PROXY_VARIABLE_RE.test(name))) state.rerouted = true;
+    if (names.some((name) => REGISTRY_VARIABLE_RE.test(name))) state.registryRerouted = true;
     if (setter) continue;
     if (DIR_CHANGERS.has(program)) state.gitUnsafe = true;
     // A sourced file can export a proxy.
@@ -176,10 +180,12 @@ function scanSegment(
   let start = 0;
   let gitIndirect = false;
   let rerouted = call.rerouted || options.httpConfigWritten === true;
+  let registryRerouted = call.registryRerouted;
   while (start < words.length && ENV_ASSIGNMENT_RE.test(words[start]!)) {
     const name = variableName(words[start]!);
     if (GIT_VARIABLE_RE.test(name)) gitIndirect = true;
     if (PROXY_VARIABLE_RE.test(name)) rerouted = true;
+    if (REGISTRY_VARIABLE_RE.test(name)) registryRerouted = true;
     start += 1;
   }
   const head = words[start];
@@ -204,8 +210,12 @@ function scanSegment(
     // After a `cd` (or another change of folder) the project config read
     // from `cwd` is not the one the publish uses: unknown, not the public
     // default (review round 1 of ATO-2528).
-    const registry =
-      call.gitUnsafe && options.publishRegistry !== undefined ? () => null : options.publishRegistry;
+    // A registry variable set for the call wins over every config file.
+    const registry = registryRerouted
+      ? () => null
+      : call.gitUnsafe && options.publishRegistry !== undefined
+        ? () => null
+        : options.publishRegistry;
     return scanPublish(program, args, registry);
   }
   if (SCRIPT_PROGRAMS.test(program)) return scanInlineScript(program, args);

@@ -1,4 +1,5 @@
 import { PREFIX_COMMANDS, programName, splitCommandSegments } from "../shell-command-guard/command-segments.js";
+import { runsInlineCodeAt } from "../shell-command-guard/inline-code-flags.js";
 
 /**
  * Whether the script of a `sh -c` / `bash -lc` is built at run time, so
@@ -18,7 +19,8 @@ import { PREFIX_COMMANDS, programName, splitCommandSegments } from "../shell-com
  */
 const SUBSTITUTION_RE = /\$\(|`|\{\}/;
 const VARIABLE_RE = /\$\{?[A-Za-z_0-9@*#?!-]/;
-const RUNS_ITS_ARGUMENTS = new Set(["eval", "source", ".", "exec"]);
+/** `trap "$X" EXIT` runs its argument as code too (review round 2). */
+const RUNS_ITS_ARGUMENTS = new Set(["eval", "source", ".", "exec", "trap"]);
 /**
  * Programs that run a command given in their own arguments (review round
  * 1): `timeout 9 $X`, `su -c "$X"`, `flock f $X`, `setsid $X`, `chroot /
@@ -35,6 +37,8 @@ const RUNS_A_COMMAND = new Set([
   "valgrind", "busybox", "fakeroot", "proot", "firejail", "sandbox-exec", "pkexec", "torsocks",
   "proxychains", "proxychains4", "tsocks", "xvfb-run", "dbus-launch", "flatpak-spawn",
   "sh", "bash", "zsh", "dash", "ksh", "ash", "mksh", "fish", "ssh",
+  // Review round 2: `coproc $X`, `chronic $X`, `gdb --args $X`.
+  "coproc", "chronic", "gdb", "lldb",
 ]);
 const FIND_EXEC = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
 
@@ -87,6 +91,11 @@ export function nestedScriptBuiltAtRunTime(script: string): boolean {
       if (VARIABLE_RE.test(w)) lastVariable = index;
     });
     if (lastVariable > 0 && runsACommand(words.slice(0, lastVariable))) return true;
+    // `python3 -c "os.system('$X')"`: the inline code itself is built
+    // at run time (review round 2).
+    if (words.some((_, index) => runsInlineCodeAt(words, index)) && words.some((w) => VARIABLE_RE.test(w))) {
+      return true;
+    }
   }
   return false;
 }
