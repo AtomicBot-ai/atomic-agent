@@ -14,6 +14,12 @@ import { readJsonBody, sendError, sendJson, type HandlerContext, type HttpHandle
  *                                        400 { error: { code, message } }
  *   DELETE /api/files/folders {path}   → 200 { removed: boolean }
  *   GET    /api/files/status           → 200 Status
+ *   POST   /api/files/retry            → 200 { requeued: number }
+ *
+ * `retry` (ATO-2501) reads again the skipped files a reader turned on
+ * since can read: scans, photos and audio after `vision.indexFiles` is
+ * switched on or the OCR data is in place. Status also carries
+ * `ocrPages` and `skippedReasons` (`[{ reason, count }]`).
  *
  * The 400 `code` is one of `not_absolute`, `not_found`,
  * `not_a_directory`, `already_added`, `inside_added`, `too_broad`
@@ -60,6 +66,13 @@ export function createFileIndexStatusHandler(): HttpHandler {
   return async (_req, res, ctx) => {
     const index = indexOr501(res, ctx);
     if (index) sendJson(res, 200, index.status());
+  };
+}
+
+export function createRetrySkippedFilesHandler(): HttpHandler {
+  return async (_req, res, ctx) => {
+    const index = indexOr501(res, ctx);
+    if (index) sendJson(res, 200, { requeued: index.retrySkipped() });
   };
 }
 
