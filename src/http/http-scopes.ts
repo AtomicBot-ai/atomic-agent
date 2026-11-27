@@ -73,6 +73,9 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "GET /api/skills/{name}": "read",
   "POST /api/skills/install": "admin",
   "POST /api/skills/uninstall": "admin",
+  // ATO-2441: listing is a read; rendering may run shell lines (each one asks), like a turn.
+  "GET /api/commands": "read",
+  "POST /api/commands/render": "chat",
   "GET /api/project-trust": "read",
   "POST /api/project-trust": "admin",
   "POST /api/mcp/servers/{name}/restart": "admin",

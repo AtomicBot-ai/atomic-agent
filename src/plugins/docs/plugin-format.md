@@ -50,9 +50,9 @@ Typing `/tools:review src/a.ts "only tests"` renders the body and sends the resu
 
 Frontmatter: `description` (otherwise the first body line) and `argument-hint` are shown in the palette. `allowed-tools` is a hint only and grants nothing; every tool call still goes through the normal approvals. `model` is ignored: the command runs on the current model.
 
-Nothing in a template is executed. Claude Code runs `` !`command` `` lines and inlines `@file` references; Atomic Agent leaves both as plain text, so the model sees them and can decide to run the command or read the file through its usual, approval-gated tools. Your own commands from `.atomic-agent/commands/`, a project's `.claude/commands/` and `~/.atomic-agent/commands/` use this format too and do inline `@file`: [user-commands.md](user-commands.md). `~/.claude/commands` is not read.
+Nothing in a template is executed. Claude Code runs `` !`command` `` lines and inlines `@file` references; Atomic Agent leaves both as plain text, so the model sees them and can decide to run the command or read the file through its usual, approval-gated tools. Your own commands from `.atomic-agent/commands/`, a project's `.claude/commands/`, `~/.atomic-agent/commands/` and `~/.claude/commands/` use this format too, inline `@file` and run their shell lines through the normal approval: [user-commands.md](user-commands.md).
 
-The desktop app does not list plugin commands yet.
+The desktop `/` menu lists plugin commands and your own through `GET /api/commands`.
 
 ## Switching parts off
 
