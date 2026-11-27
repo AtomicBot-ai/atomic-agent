@@ -298,6 +298,8 @@
   font-size:var(--fs-ui);color:var(--ink-3);white-space:nowrap}
 .tk-work .tk-spin{width:12px;height:12px;margin:0 1px;border-width:1.5px}
 .tk-work-t{color:var(--ink-2)}   /* ATO-1025: no shimmer; the spinner and the seconds already say it is alive */
+/* ATO-2005: the dim line over a real answer written after the loop guard's stop (stopped-reply.js). */
+.tk-stopnote-t{font-size:var(--fs-label);line-height:1.4;color:var(--ink-3)}
 .tk-work-n{font-variant-numeric:tabular-nums}
 
 /* tool calls and folded runs — `.card` / `.cardhead` / `.cardbody` / `.cardsum`

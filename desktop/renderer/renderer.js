@@ -2356,7 +2356,7 @@ function toolDisabledLine(p) {
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
 const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'tool_update', 'delta', 'reply_polished', 'progress_note', 'reply_attachments', 'fusion_worker',
-  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered', 'provider_switched', 'tool_disabled', 'project_instructions',
+  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered', 'provider_switched', 'tool_disabled', 'project_instructions', 'loop_stopped',
   // ATO-259 / ATO-295: context maintenance inside the turn (context-compaction.js).
   'compaction_started', 'compaction_progress', 'compaction_completed', 'compaction_failed', 'history_trimmed']);
 /* ATO-259: the compaction row of the turn on screen (`rowId`, spinning until
@@ -3136,8 +3136,8 @@ function item(m) {
   if (m.k === 'assistant' && pausedKind(m)) return pausedRowHTML(m);
   if (m.k === 'assistant' && stoppedSentence(m)) return stoppedRowHTML(m);
   // 0.6.7 item 10: a reply nothing has reached yet has "Working…" over it.
-  if (m.k === 'assistant') return workingRowHTML(m) + '<div class="turn"><div></div>'
-    + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + replyFilesStrip(m) + changedFilesCardHTML(m.changed, {esc, ic}) + attachStrip(m) + replyDot(m) + msgActs(m)
+  if (m.k === 'assistant') return workingRowHTML(m) + stoppedNoteHTML(m, esc) + '<div class="turn"><div></div>'
+    + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(stoppedReplyBody(m)) + '</div>' + replyFilesStrip(m) + changedFilesCardHTML(m.changed, {esc, ic}) + attachStrip(m) + replyDot(m) + msgActs(m)
     /* Item 1 (plan hand-off): INSIDE the content column, before its two closing
        divs — appended after them the bar would leave `.turn` and lose the
        two-column grid alignment this branch exists to keep. It hangs off the
@@ -11720,6 +11720,8 @@ function onChatEvent(ev) {
     render();
     return;
   }
+  // ATO-2005: the loop guard stopped the turn; the reply it ends with gets the dim note (stopped-reply.js).
+  if (ev.kind === 'loop_stopped') { if (markLoopStopped(item, ev.payload)) render(); return; }
   // ATO-42: the agent cut the chat's project instructions to fit (project-instructions-line.js).
   if (ev.kind === 'project_instructions') { if (projectInstructionsDraw(ev.payload, S.log, item, nid, esc)) render(); return; }
   /* Run mode — Fusion. One leg of a fan-out started, ran a tool, ended or was
@@ -21029,29 +21031,7 @@ function pausedSentence(m) {
   const head = (/^\(paused: ([^)]*)\)/.exec(t) || [, 'the task stopped before it finished'])[1].replace(/\.$/, '');
   return 'Paused: ' + head + '.';
 }
-/* The same for the loop guard's stop (src/agent/loop-detector.ts
-   formatForcedLoopReply): "(stopped: stuck in a no-progress loop on
-   `os.fs.list` after 5 blocked attempts). I could not make further progress
-   \u2026". Nothing is paused, so there is nothing to continue; sending again
-   starts over. '' when the reply is not one of those. */
-function stoppedSentence(m) {
-  if (!m || m.k !== 'assistant' || m.placeholder) return '';
-  const t = String(m.text || '').trim();
-  let mt;
-  if ((mt = /^\(stopped: stuck in a no-progress loop on `([^`]+)` after (\d+) blocked attempts\)/.exec(t))) {
-    return 'Stopped: the agent kept repeating the same step without getting anywhere (' + mt[2] + ' tries). The task may be incomplete.';
-  }
-  // v0.6.6 wording: "(stopped: `tool` kept returning the same no-progress
-  // outcome, and the same call was refused N times in a row …)" or "… and
-  // this call was not run)".
-  if ((mt = /^\(stopped: `([^`]+)` kept returning the same no-progress outcome(?:, and the same call was refused (\d+) times? in a row)?/.exec(t))) {
-    return 'Stopped: the agent kept repeating the same step without getting anywhere' + (mt[2] ? ' (' + mt[2] + ' tries)' : '') + '. The task may be incomplete.';
-  }
-  if ((mt = /^\(stopped: `([^`]+)` hit the limit on different arguments/.exec(t))) {
-    return 'Stopped: the agent kept trying variations of the same step. The task may be incomplete.';
-  }
-  return '';
-}
+/* The loop guard's stop: stoppedSentence and friends live in stopped-reply.js (ATO-2005). */
 function stoppedRowHTML(m) {
   return '<div class="sysrow warn"><span class="sys-ic warn">' + ic('alert') + '</span>'
     + '<span class="sys-tx" title="' + esc(String(m.text || '')) + '">' + esc(stoppedSentence(m)) + '</span></div>';
