@@ -4,14 +4,17 @@
 //     fixture(dir, ctx) -> meta          writes the start folder, returns hidden expectations
 //     check(dir, meta, ctx) -> { pass, reason, details? }   deterministic, no LLM
 //     solve(dir, meta, ctx)              reference solution, used only by unit tests }
-// ctx = { window, trace, run } (trace/run only at check time).
+// ctx = { window, trace, run } (trace/run only at check time). run.stdout is the
+// agent's replies, one line per turn; reply-only tasks read it, and their solve()
+// sets it.
 // `meta` is written next to the results, never into the agent's folder.
 
 import core from "./core.mjs";
 import hard from "./hard.mjs";
+import ownComputer from "./own-computer.mjs";
 import stress from "./stress.mjs";
 
-export const TASKS = [...core, ...hard, ...stress];
+export const TASKS = [...core, ...hard, ...ownComputer, ...stress];
 
 export function getTask(id) {
   const t = TASKS.find((x) => x.id === id);
