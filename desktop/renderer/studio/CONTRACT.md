@@ -10,8 +10,10 @@ with the local chat model `studio-gpu-share.ts`. Preload:
 `desktop/preload/preload.ts` (`studio` namespace). Keep this file and those in
 step.
 
-Core shapes are cited from **atomic-chat-core v0.18.6** (the pinned
-`BUNDLED_CORE_VERSION`, `desktop/main/core-bundle.ts`):
+Core shapes are cited from **atomic-chat-core v0.18.6**; the routes below
+are unchanged at v0.24.10, the pinned `BUNDLED_CORE_VERSION`
+(`desktop/main/core-bundle.ts`), whose recipes may leave out `steps`,
+`cfgScale` and `seed` for a cloud job:
 types in `src/contracts/diffusion.ts` and `src/contracts/media.ts`, routes in
 `src/server/control/routes/diffusion.ts`, `diffusion-video.ts`, `media.ts`,
 `cloud.ts`, events in `src/diffusion/session.ts`, remote rules in
