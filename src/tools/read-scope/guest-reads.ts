@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import { isInside } from "../../approval/fanout-scope.js";
 import {
@@ -12,6 +12,7 @@ import {
 } from "../../sandbox/os-sandbox.js";
 import { resolveUserPath } from "../os/expand-home.js";
 import type { ToolContext } from "../tool-registry.js";
+import { isGuestSecretPathUnder } from "./guest-secret-files.js";
 import { canonical } from "./read-scope.js";
 import { READ_TOOL_TARGETS, URL_LIKE } from "./read-scope-targets.js";
 
@@ -30,7 +31,10 @@ import { READ_TOOL_TARGETS, URL_LIKE } from "./read-scope-targets.js";
  *    no user-named roots, no grants);
  *  - is, or is inside, a credential folder of the home directory
  *    (`SECRET_HOME_PATHS`, `MCP_SECRET_HOME_PATHS`) or the agent's state
- *    directory, or is a `.env` / `.env.*` / `.envrc` file (any case);
+ *    directory, or is a secret-looking file or folder below the working
+ *    directory (`.env` / `.env.*` / `.envrc`, keys, credential files,
+ *    `secrets/`: `guest-secret-files.ts`, any case); a walk drops nested
+ *    ones from its results itself (ATO-2703);
  *  - for a tool that walks a folder, contains one of those folders (a
  *    working directory that is the home folder cannot be grepped whole);
  *  - is a `file:` URL.
@@ -135,11 +139,6 @@ function deniedFolders(home: string, stateDir: string | undefined): string[] {
   return [...new Set(raw.flatMap((p) => [p, canonical(p)]))];
 }
 
-function isEnvFile(path: string): boolean {
-  const name = basename(path).toLowerCase();
-  return name === ".env" || name === ".envrc" || name.startsWith(".env.");
-}
-
 /** Why `absolute` is refused to a guest, or `null` when it may be read. */
 function guestDenial(
   tool: string,
@@ -153,7 +152,11 @@ function guestDenial(
   if (!isInside(root, lexical) || !isInside(canonical(root), real)) {
     return `${absolute} is outside the working directory (${workingDir})`;
   }
-  if (isEnvFile(lexical) || isEnvFile(real)) return `${absolute} is a secrets file`;
+  // `.env*`, keys, credential files, or a `secrets` / `.ssh` folder below
+  // the working directory (`guest-secret-files.ts`, ATO-2703).
+  if (isGuestSecretPathUnder(root, lexical) || isGuestSecretPathUnder(canonical(root), real)) {
+    return `${absolute} is a secrets file or folder`;
+  }
   for (const secret of denied) {
     if (isInside(secret, lexical) || isInside(secret, real)) {
       return `${absolute} is a credential folder or the agent's own state`;
