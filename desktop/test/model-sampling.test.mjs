@@ -45,6 +45,17 @@ test("a draft becomes one set per mode, blanks left out, and out-of-range values
   assert.match(R.msValidate({ thinking: { topK: "2.5" }, noThinking: {} }), /whole number/);
 });
 
+test("Save keeps the fields the boxes do not show, set from the terminal", () => {
+  const custom = { presencePenalty: 1.5, temperature: 0.6, noThinking: { repeatPenalty: 1.05, topK: 30 } };
+  const draft = { thinking: { temperature: "" }, noThinking: { temperature: "0.5", topK: "" } };
+  assert.deepEqual(R.msSetFromDraft(draft, custom), {
+    presencePenalty: 1.5,
+    noThinking: { repeatPenalty: 1.05, temperature: 0.5 },
+  });
+  // Every box empty: the hidden fields stay, so Save does not reset them.
+  assert.deepEqual(R.msSetFromDraft({ thinking: {}, noThinking: {} }, { presencePenalty: 1.5 }), { presencePenalty: 1.5 });
+});
+
 test("main builds the agent calls and refuses an id that is not one", () => {
   assert.deepEqual(M.samplingArgs("qwen-3.5-4b"), ["models", "sampling", "qwen-3.5-4b", "--json"]);
   assert.deepEqual(M.samplingArgs("qwen-3.5-4b", null), ["models", "sampling", "qwen-3.5-4b", "--reset", "--json"]);

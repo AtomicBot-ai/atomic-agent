@@ -78,11 +78,25 @@ function msValidate(draft) {
   return null;
 }
 
-/* The set `--set` writes: one object per mode, blank fields left out. */
-function msSetFromDraft(draft) {
+/* Fields of a stored set (or of one mode) the boxes do not show, such as
+   presencePenalty or repeatPenalty set from the terminal. */
+function msHiddenFields(set) {
   const out = {};
+  if (!set || typeof set !== 'object') return out;
+  for (const [k, v] of Object.entries(set)) {
+    if (MS_FIELDS.some((f) => f.key === k) || MS_MODES.some(([mode]) => mode === k)) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+/* The set `--set` writes: one object per mode, blank fields left out.
+   `--set` replaces the whole set, so the fields of `custom` (the person's
+   stored set) that the boxes do not show are carried over. */
+function msSetFromDraft(draft, custom) {
+  const out = msHiddenFields(custom);
   for (const [mode] of MS_MODES) {
-    const sub = {};
+    const sub = msHiddenFields(custom && custom[mode]);
     for (const f of MS_FIELDS) {
       const raw = String((draft && draft[mode] && draft[mode][f.key]) || '').trim();
       if (raw !== '') sub[f.key] = Number(raw);
@@ -233,7 +247,7 @@ async function msAct(verb, arg) {
     if (!MS.draft) MS.draft = msDraftFromReport(MS.report);
     MS.invalid = msValidate(MS.draft);
     if (MS.invalid) { llmRepaint(); return; }
-    const set = msSetFromDraft(MS.draft);
+    const set = msSetFromDraft(MS.draft, MS.report.custom);
     await msWrite(id, Object.keys(set).length ? set : null, Object.keys(set).length ? 'Sampling: custom.' : 'Sampling: model default.');
     return;
   }
