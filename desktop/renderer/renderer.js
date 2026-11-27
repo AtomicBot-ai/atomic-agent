@@ -2140,7 +2140,8 @@ const PAL = [
     ['star','Recipes…','','','recipe:gallery'],   // ATO-1072 (chat-recipe.js)
     ['x','Clear transcript','','','clear'],
     ['gauge','Context window','','','context'],
-    ['copy','Show session id','','⌃ ⌘ C','session:id'],
+    // ATO-2001: no chord drawn; nothing binds ⌃⌘C (palette-shortcuts.test.mjs checks every hint).
+    ['copy','Show session id','','','session:id'],
   ]],
   ['Model', [
     ['cloud','Switch chat model…','','⇧ ⌘ M','selector:model'],
@@ -2162,7 +2163,9 @@ const PAL = [
     ['key','Analytics','','','settings:general'],
   ]],
   ['Help', [
-    ['doc','List built-in tools','','⌥ ⌘ T','tools'],
+    // ATO-2001: the row drew ⌥⌘T, which no menu item or key handler binds (menu.ts has
+    // Option chords for 0, F, E and K only); the hint is gone, the click still works.
+    ['doc','List built-in tools','','','tools'],
     ['download','Save report for support','','','dump'],
     ['flag','Report an issue…','','/bug','help.report'],
     // ATO-1465: the community server, the same act as Help › Join Discord and the sidebar button.
