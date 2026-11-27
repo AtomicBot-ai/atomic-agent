@@ -78,7 +78,7 @@ export function violation(edge) {
   const area = source.split('/')[1];
   const frontendConfigOwners = {
     'src/config/tui-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts', 'src/config/session-rail-config.ts'],
-    'src/config/channel-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts', 'src/config/config-values.ts'],
+    'src/config/channel-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts', 'src/config/config-values.ts', 'src/config/telegram-allowed-users.ts'],
     'src/config/integration-config.ts': ['src/config/composio-accounts-config.ts', 'src/config/config-primitives.ts', 'src/config/config-validation-error.ts', 'src/config/config-values.ts', 'src/config/push-config.ts'],
     'src/config/push-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts'],
   };
