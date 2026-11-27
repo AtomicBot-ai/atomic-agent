@@ -4,15 +4,19 @@
  * is read in chunks and the read is cancelled past the cap. Only text
  * answers are used (HTML is reduced to its words); anything else is named,
  * not inlined. A public link that redirects to this computer or the local
- * network is refused (mention-hosts.ts); a local link typed as such is read.
+ * network is refused before the redirect is followed, and every hop is
+ * pinned to the addresses that were checked (mention-url-hops.ts, ATO-2797);
+ * a local link typed as such is read.
  * HTML is cut down by mention-html.ts in linear time. Offline mode
  * (`network.offline`) is checked before the request; the process-wide
  * dispatcher would refuse it anyway, this only says so plainly.
  */
 
 import { findOfflineNetworkError, offlineRefusal } from "../llm/offline-network.js";
-import { isLocalHost } from "./mention-hosts.js";
 import { htmlToText } from "./mention-html.js";
+import { UrlSkip, defaultFetch, defaultVetHost, fetchCheckedHops, type FetchLike, type VetHost } from "./mention-url-hops.js";
+
+export { UrlSkip } from "./mention-url-hops.js";
 
 export const URL_TIMEOUT_MS = 8_000;
 /** Most raw bytes read from one page (HTML markup is cut down after). */
@@ -26,31 +30,32 @@ export interface FetchedPage {
 
 export type FetchUrl = (url: string) => Promise<FetchedPage>;
 
-/** Raised for an answer that is read but not used: the reason goes in the block. */
-export class UrlSkip extends Error {}
-
 const TEXT_TYPE = /^(text\/|application\/(json|xml|xhtml\+xml|javascript|ld\+json)|[^;]*\+(json|xml))/i;
 
-export function createFetchUrl(
-  fetchImpl: typeof fetch = fetch,
-  timeoutMs: number = URL_TIMEOUT_MS,
-  maxBytes: number = URL_MAX_RAW_BYTES,
-): FetchUrl {
+export interface FetchUrlOptions {
+  timeoutMs?: number;
+  maxBytes?: number;
+  /** How each hop's host is checked; the web tools' SSRF guard by default. */
+  vetHost?: VetHost;
+}
+
+export function createFetchUrl(fetchImpl: FetchLike = defaultFetch, options: FetchUrlOptions = {}): FetchUrl {
+  const timeoutMs = options.timeoutMs ?? URL_TIMEOUT_MS;
+  const maxBytes = options.maxBytes ?? URL_MAX_RAW_BYTES;
+  const vetHost = options.vetHost ?? defaultVetHost;
   return async (url) => {
     const protocol = new URL(url).protocol;
     if (protocol !== "http:" && protocol !== "https:") throw new UrlSkip("only http and https links are read");
     if (offlineRefusal(url, "@link") !== null) throw new UrlSkip("offline mode is on");
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let release = (): void => undefined;
     try {
-      const res = await fetchImpl(url, { signal: controller.signal, redirect: "follow", headers: { accept: "text/html, text/plain, */*;q=0.5" } });
-      const final = res.url || url;
-      if (!/^https?:/i.test(final)) throw new UrlSkip("redirected away from http");
-      // A typed local host is on purpose; a public link landing on one is not.
-      if (!isLocalHost(new URL(url).hostname) && isLocalHost(new URL(final).hostname)) {
-        await res.body?.cancel().catch(() => undefined);
-        throw new UrlSkip("redirected to a local address");
-      }
+      const answer = await fetchCheckedHops(url, {
+        fetchImpl, vetHost, signal: controller.signal, headers: { accept: "text/html, text/plain, */*;q=0.5" },
+      });
+      release = answer.release;
+      const res = answer.res;
       if (!res.ok) throw new UrlSkip(res.status === 404 ? "page not found" : "the site refused the request");
       const type = res.headers.get("content-type") ?? "text/plain";
       if (!TEXT_TYPE.test(type.trim())) throw new UrlSkip(`not a text page (${type.split(";")[0]})`);
@@ -64,6 +69,7 @@ export function createFetchUrl(
       throw new UrlSkip("could not be fetched");
     } finally {
       clearTimeout(timer);
+      release();
     }
   };
 }
