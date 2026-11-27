@@ -7,8 +7,11 @@
    (role → provider id) with `roleModels` (role → model on it), so one
    provider entry can serve several roles with a model each. A role with no
    provider runs on the workers' model; one with a provider and no model
-   runs that provider's default; a llama-server entry serves the model it
-   loaded and ignores a name (ATO-1563 shows "Loaded on the server" in the
+   runs what the agent resolves for it (the workers' model on the workers'
+   provider, the planner's model on the planner's provider, else the entry's
+   default); a llama-server entry serves the model it loaded and ignores a
+   name, and a second local entry runs on the workers' model unless
+   mixLocalModels is set (ATO-1563 shows "Loaded on the server" in the
    composer the same way). `review` is also the judge's model when the judge
    has none of its own; `plan` does not move the planner itself.
 
@@ -30,6 +33,8 @@ const FZROLE = {
   lists: {},
   /** Provider ids whose list was asked for in this window. */
   asked: new Set(),
+  /** The run mode of the last paint, so a saved line names the model that runs. */
+  rm: null,
 };
 
 const FZROLE_ROLES = [
@@ -41,6 +46,7 @@ const FZROLE_ROLES = [
 ];
 const FZROLE_JUDGE_NOTE = ' When the judge is on and has no model of its own, it uses this one too.';
 const FZROLE_SERVER_TIP = 'This server runs the model it has loaded. Change the model on the server itself.';
+const FZROLE_ONE_LOCAL = 'this computer runs one local model at a time. Set llm.runMode.fusion.mixLocalModels to true if it can hold both.';
 
 function fzroleEsc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
@@ -62,6 +68,43 @@ function fzroleCurrent(cfg, role) {
   const m = fzroleMap(fz.roleModels)[role];
   const providerId = typeof p === 'string' && p ? p : null;
   return {providerId, model: providerId && typeof m === 'string' && m ? m : null};
+}
+
+/**
+ * The model a role on `entry` with no model of its own runs, as the agent
+ * resolves it (src/llm/run-mode/resolve-run-mode.ts): on the workers'
+ * provider the workers' model, on the planner's provider the planner's
+ * model, otherwise the entry's default. {model, why} or null.
+ */
+function fzroleDefaultFor(cfg, rm, entry) {
+  if (!entry) return null;
+  const r = rm || {};
+  if (entry.id === r.workerProviderId && r.workerModel) return {model: r.workerModel, why: 'the workers’ model'};
+  if (entry.id === r.orchestratorProviderId) {
+    const o = r.orchestratorModel || fzroleFusion(cfg).orchestratorModel;
+    if (o) return {model: o, why: 'the planner’s model'};
+  }
+  const d = entry.defaultChatModel || entry.model || '';
+  return d ? {model: d, why: ''} : null;
+}
+
+/**
+ * True when a llama-server role cannot get its own model: the fan-out
+ * already holds a local model on the planner's or the workers' leg, the
+ * role's entry is another one, and mixLocalModels is not set. The agent
+ * runs such a role on the workers' model (src/tools/fusion/role-models.ts).
+ */
+function fzroleSecondLocal(cfg, rm, entry) {
+  if (!entry || entry.kind !== 'llama-server' || fzroleFusion(cfg).mixLocalModels === true) return false;
+  const providers = fzroleProviders(cfg);
+  const isLocal = (id) => {
+    if (!id) return false;
+    const p = providers.find((x) => x.id === id);
+    return p ? p.kind === 'llama-server' : id === 'local-llama';
+  };
+  const r = rm || {};
+  const held = [r.orchestratorProviderId, r.workerProviderId].filter(isLocal);
+  return held.length > 0 && !held.includes(entry.id);
 }
 
 /** How the model half of a row is drawn for this provider entry (null = no provider). */
@@ -90,7 +133,10 @@ function fzroleRows(cfg, rm, lists, word) {
     const mode = cur.providerId && !entry ? 'missing' : fzroleModelMode(entry);
     const row = {role: r.role, label: r.label, help: r.help + (r.role === 'review' && !fz.judgeProvider ? FZROLE_JUDGE_NOTE : ''),
       providerId: cur.providerId, model: cur.model, mode, providerOptions, modelOptions: [], status: null, note: ''};
-    if (mode === 'workers') row.note = workerModel ? 'Runs on ' + workerModel : 'Runs on the workers’ model';
+    if ((mode === 'server' || mode === 'local') && fzroleSecondLocal(cfg, rm, entry)) {
+      row.secondLocal = true;
+      row.note = 'Runs on the workers’ model' + (workerModel ? ' (' + workerModel + ')' : '') + ': ' + FZROLE_ONE_LOCAL;
+    } else if (mode === 'workers') row.note = workerModel ? 'Runs on ' + workerModel : 'Runs on the workers’ model';
     else if (mode === 'server') {
       const loaded = entry.defaultChatModel || entry.model || '';
       row.note = loaded ? 'Loaded on the server: ' + loaded : 'Loaded on the server';
@@ -98,12 +144,12 @@ function fzroleRows(cfg, rm, lists, word) {
     else if (mode === 'missing') row.note = 'Pick a provider that is set up';
     else {
       const list = (lists && lists[entry.id]) || {status: 'loading', models: []};
-      const dflt = entry.defaultChatModel || entry.model || '';
+      const dflt = fzroleDefaultFor(cfg, rm, entry);
       const ids = [];
       (list.models || []).forEach((m) => { if (m && m.id && m.kind !== 'embedding' && !ids.includes(m.id)) ids.push(m.id); });
       // The saved name stays a choice while the list loads, fails or lacks it.
       if (cur.model && !ids.includes(cur.model)) ids.unshift(cur.model);
-      row.modelOptions = [{value: '', label: dflt ? 'Default (' + dflt + ')' : 'The provider’s default', selected: !cur.model}]
+      row.modelOptions = [{value: '', label: dflt ? 'Default (' + dflt.model + (dflt.why ? ', ' + dflt.why : '') + ')' : 'The provider’s default', selected: !cur.model}]
         .concat(ids.map((id) => ({value: id, label: id, selected: id === cur.model})));
       row.status = list.status;
       if (list.status === 'loading') row.note = 'Loading models…';
@@ -114,13 +160,20 @@ function fzroleRows(cfg, rm, lists, word) {
   });
 }
 
-/** The sentence a saved change leaves, before the restart line. */
-function fzroleSavedLine(role, after, word) {
+/**
+ * The sentence a saved change leaves, before the restart line. `cfg` and
+ * `rm` (optional) name the model a role with no model of its own runs.
+ */
+function fzroleSavedLine(role, after, word, cfg, rm) {
   const name = typeof word === 'function' ? word : (id) => id;
   const r = FZROLE_ROLES.find((x) => x.role === role);
   const label = r ? r.label : role;
   if (!after || !after.providerId) return label + ' now runs on the workers’ model.';
-  return label + ': ' + (after.model || 'the default model') + ' on ' + name(after.providerId) + '.';
+  const entry = fzroleProviders(cfg).find((p) => p.id === after.providerId) || null;
+  if (fzroleSecondLocal(cfg, rm, entry)) return label + ' runs on the workers’ model: ' + FZROLE_ONE_LOCAL;
+  if (after.model) return label + ': ' + after.model + ' on ' + name(after.providerId) + '.';
+  const dflt = fzroleDefaultFor(cfg, rm, entry);
+  return label + ': ' + (dflt ? dflt.model + (dflt.why ? ' (' + dflt.why + ')' : '') : 'the default model') + ' on ' + name(after.providerId) + '.';
 }
 
 /** What a failed write shows: a plain sentence, the agent's words behind Details. */
@@ -149,7 +202,7 @@ function fzroleRowHTML(row, busy) {
   const model = row.mode === 'list'
     ? fzroleSelectHTML('id="fzrole-model-' + row.role + '" data-fzrole-model="' + row.role + '" data-fzrole-for="' + fzroleEsc(row.providerId) + '"',
       row.label + ': model', row.modelOptions, off || row.status === 'loading')
-    : '<span class="fzrole-fixed"' + (row.mode === 'server' ? ' title="' + fzroleEsc(FZROLE_SERVER_TIP) + '"' : '') + '>' + fzroleEsc(row.note) + '</span>';
+    : '<span class="fzrole-fixed"' + (row.mode === 'server' && !row.secondLocal ? ' title="' + fzroleEsc(FZROLE_SERVER_TIP) + '"' : '') + '>' + fzroleEsc(row.note) + '</span>';
   // Loading, error and empty read as the same one line under the lists.
   const line = row.mode === 'list' && row.note
     ? '<div class="fzrole-line' + (row.status === 'error' ? ' fzrole-line--err' : '') + '">'
@@ -184,6 +237,7 @@ function fzroleWord(id) { return typeof providerWord === 'function' ? providerWo
 /** Settings › Models › Fusion, under the worker reasoning row; `rm` is the resolved run mode. */
 function fzRolesSettingsHTML(rm) {
   const cfg = typeof LIVE_CONFIG !== 'undefined' ? LIVE_CONFIG : null;
+  FZROLE.rm = rm || null;
   const rows = fzroleRows(cfg, rm, FZROLE.lists, fzroleWord);
   // A list nobody asked for yet is asked for after this paint, never from inside it.
   rows.filter((r) => r.mode === 'list' && !FZROLE.asked.has(r.providerId)).forEach((r) => {
@@ -249,7 +303,9 @@ async function fzroleSave(role, providerId, model) {
   else {
     // The lists stay disabled until the window holds the new file, so they never flash the old value.
     if (res.changed && typeof refreshLiveConfig === 'function') await Promise.resolve(refreshLiveConfig()).catch(() => null);
-    FZROLE.msg = res.changed ? fzroleSavedLine(role, res.after, fzroleWord) : null;
+    FZROLE.msg = res.changed
+      ? fzroleSavedLine(role, res.after, fzroleWord, typeof LIVE_CONFIG !== 'undefined' ? LIVE_CONFIG : null, FZROLE.rm)
+      : null;
   }
   FZROLE.busy = null;
   fzroleRepaint();
@@ -277,6 +333,7 @@ if (typeof document !== 'undefined') {
 if (typeof module !== 'undefined') {
   module.exports = {
     FZROLE, FZROLE_ROLES, FZROLE_JUDGE_NOTE, fzroleCurrent, fzroleModelMode, fzroleRows, fzroleSavedLine, fzroleErrorOf,
+    fzroleDefaultFor, fzroleSecondLocal,
     fzroleRequest, fzroleRowHTML, fzroleSectionHTML,
   };
 }

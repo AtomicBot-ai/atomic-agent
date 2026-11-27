@@ -226,3 +226,47 @@ test("the script, the stylesheet, the bridge, the route and the Settings row are
   assert.ok(ipc.includes("rewriteWholeConfig((cfg) => planFusionRole(cfg, req))"));
   assert.ok(src("../renderer/renderer.js").includes("llmWorkersHTML(rm) + fzrSettingsHTML(rm) + fzRolesSettingsHTML(rm)"));
 });
+
+test("Default names the planner's model on the planner's provider, as the agent runs it", () => {
+  const cfg = cfgWith({ orchestratorProvider: "openrouter", orchestratorModel: "O", roles: { review: "openrouter" } });
+  const rm = { orchestratorProviderId: "openrouter", orchestratorModel: "O", workerProviderId: "local-llama", workerModel: "qwen3-8b" };
+  const review = R.fzroleRows(cfg, rm, { openrouter: { status: "ready", models: [] } }, word).find((r) => r.role === "review");
+  assert.match(review.modelOptions[0].label, /O, the planner’s model/);
+  assert.doesNotMatch(review.modelOptions[0].label, /gpt-5/);
+  assert.equal(R.fzroleSavedLine("review", { providerId: "openrouter", model: null }, word, cfg, rm),
+    "Review: O (the planner’s model) on OpenRouter.");
+});
+
+test("Default names the workers' model on the workers' provider", () => {
+  const cfg = cfgWith({ roles: { build: "lmstudio" } });
+  const rm = { orchestratorProviderId: "openrouter", workerProviderId: "lmstudio", workerModel: "W" };
+  const build = R.fzroleRows(cfg, rm, {}, word).find((r) => r.role === "build");
+  assert.match(build.modelOptions[0].label, /W, the workers’ model/);
+  assert.equal(R.fzroleSavedLine("build", { providerId: "lmstudio", model: null }, word, cfg, rm),
+    "Build: W (the workers’ model) on LM Studio.");
+});
+
+test("elsewhere Default is still the entry's own default", () => {
+  const cfg = cfgWith({ roles: { review: "openrouter" } });
+  const rm = { orchestratorProviderId: "lmstudio", workerProviderId: "local-llama", workerModel: "qwen3-8b" };
+  const review = R.fzroleRows(cfg, rm, {}, word).find((r) => r.role === "review");
+  assert.equal(review.modelOptions[0].label, "Default (openai/gpt-5)");
+});
+
+test("a second llama-server role says it runs on the workers' model unless mixLocalModels is set", () => {
+  const rm = { orchestratorProviderId: "openrouter", workerProviderId: "local-llama", workerModel: "qwen3-8b" };
+  const held = R.fzroleRows(cfgWith({ roles: { review: "box" } }), rm, {}, word).find((r) => r.role === "review");
+  assert.equal(held.secondLocal, true);
+  assert.match(held.note, /^Runs on the workers’ model \(qwen3-8b\)/);
+  assert.match(held.note, /one local model at a time/);
+  assert.doesNotMatch(R.fzroleRowHTML(held, null), /title=/);
+  assert.match(R.fzroleSavedLine("review", { providerId: "box", model: null }, word, cfgWith({ roles: { review: "box" } }), rm),
+    /runs on the workers’ model/);
+  const mixed = R.fzroleRows(cfgWith({ roles: { review: "box" }, mixLocalModels: true }), rm, {}, word).find((r) => r.role === "review");
+  assert.equal(mixed.secondLocal, undefined);
+  assert.match(mixed.note, /Loaded on the server: qwen3-coder/);
+  // No local leg held (both legs in the cloud): the server's own model runs.
+  const cloud = { orchestratorProviderId: "openrouter", workerProviderId: "lmstudio", workerModel: "W" };
+  const free = R.fzroleRows(cfgWith({ roles: { review: "box" } }), cloud, {}, word).find((r) => r.role === "review");
+  assert.match(free.note, /Loaded on the server/);
+});

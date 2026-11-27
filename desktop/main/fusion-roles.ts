@@ -5,7 +5,9 @@
  * id) and, since the core change it stacks on, `roleModels` (role → model
  * name on that provider), so several roles can share one provider entry
  * with a model each. A role with no provider runs on the worker leg; a
- * role with a provider and no model runs that provider's default model;
+ * role with a provider and no model runs the workers' model on the
+ * workers' provider, the planner's model on the planner's provider, and
+ * the provider's default model elsewhere;
  * a llama-server entry serves the model it loaded and the agent ignores a
  * name there (src/llm/run-mode/resolve-run-mode.ts).
  *
