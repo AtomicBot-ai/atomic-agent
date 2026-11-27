@@ -240,7 +240,7 @@ const ANX = (() => {
   /* ---------- ATO-845: signing in to a subscription CLI ----------
      The funnel: the Sign in click, whether the system terminal opened, and
      the sign-in the wizard then saw. Only the CLI name and fixed words. */
-  function subCli(cli) { return cli === 'claude' || cli === 'codex' ? cli : 'other'; }
+  function subCli(cli) { return cli === 'claude' || cli === 'codex' || cli === 'chatgpt-oauth' ? cli : 'other'; }
   function subStep(inOnboarding) { return inOnboarding ? 'onboarding' : 'settings'; }
   function subscriptionLoginClicked(cli, inOnboarding) {
     track('subscription_login_clicked', {cli: subCli(cli), step: subStep(inOnboarding)});
@@ -253,6 +253,12 @@ const ANX = (() => {
   }
   function subscriptionLoginSucceeded(cli, inOnboarding, seconds) {
     track('subscription_login_succeeded', {cli: subCli(cli), step: subStep(inOnboarding), seconds_to_sign_in: typeof seconds === 'number' ? seconds : null});
+  }
+  /* ATO-1749: the ChatGPT sign-in through the bundled agent (cli chatgpt-oauth)
+     that did not end signed in. Only the fixed outcome, never the agent's words. */
+  function subscriptionOauthEnded(outcome, inOnboarding) {
+    const known = ['cancelled', 'timeout', 'no_account', 'failed'];
+    track('subscription_oauth_login_ended', {outcome: known.includes(outcome) ? outcome : 'failed', step: subStep(inOnboarding)});
   }
 
   /* ---------- MCP servers ---------- */
@@ -301,5 +307,6 @@ const ANX = (() => {
     apprShown, apprAnswered, apprClosed, modeVia, modeChanged, planHandoff, paneTick,
     obStep, obSkipped, modelPicked, ramBucket, endpointTested, providerStarted, providerFailed,
     mcpAdded, mcpAction, subscriptionLoginClicked, subscriptionTerminalOpened, subscriptionLoginSucceeded,
+    subscriptionOauthEnded,
   };
 })();

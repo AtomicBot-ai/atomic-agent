@@ -7642,6 +7642,8 @@ function act(a) {
   if (a === 'wiz:subRecheck') { wizSubRecheck(WIZ.row); return; }
   if (a === 'wiz:subLogin') { wizSubLogin(WIZ.row); return; }
   if (a === 'wiz:subCopy') { wizSubCopy(WIZ.row); return; }
+  if (a === 'wiz:chatgptOauth') { wizChatgptOauthStart(WIZ.row); return; }   // ATO-1747
+  if (a === 'wiz:chatgptOauthCancel') { chatgptOauthCancel(BR, true); render(); return; }
   if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'pick_model' ? 'configure' : WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.forId = null; render(); return; }
   if (a === 'wiz:next') { wizNext(); return; }
   /* The second of the two buttons an unchecked key offers. It is the
@@ -16269,6 +16271,7 @@ function obWizardHTML() {
       + '<div class="ob-kicker">Subscription</div>'
       + '<div class="ob-h">' + wizKindMark(k) + esc(wizService(k)) + '</div>'
       + wizSubscriptionLines(k).map((l) => wizSubLineHTML(l, 'div', 'is-warn')).join('')
+      + wizChatgptOauthHTML(k, false)
       + (WIZ.error ? '<div class="ob-err">' + ic('alert') + '<span>' + esc(WIZ.error) + '</span></div>'
           + (wizErrDetail() ? '<details class="ob-errmore"><summary>Details</summary><span>' + esc(wizErrDetail()) + '</span></details>' : '') : '')
       + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>'
@@ -18544,7 +18547,7 @@ if (BR) {
        nothing at all until they were listed. Same shape as the defect the
        operator once reported as "when I click on next, nothing happens". */
     if (OB.open && OB.step === 'cloud'
-        && (a === 'wiz:model' || a === 'wiz:useDefault' || a === 'wiz:saveUnchecked' || a === 'wiz:subRecheck' || a === 'wiz:subLogin' || a === 'wiz:subCopy')) {
+        && (a === 'wiz:model' || a === 'wiz:useDefault' || a === 'wiz:saveUnchecked' || a === 'wiz:subRecheck' || a === 'wiz:subLogin' || a === 'wiz:subCopy' || a === 'wiz:chatgptOauth' || a === 'wiz:chatgptOauthCancel')) {
       return prevAct(a);
     }
     if (OB.open && OB.step === 'cloud' && (a === 'wiz:cancel' || a === 'wiz:back')) {
@@ -22531,6 +22534,7 @@ function wizardHTML() {
   if (k.subscriptionCli) {
     return selShell(wizService(k),
       '<div class="selbody selwiz">' + wizSubscriptionLines(k).map((l) => wizSubLineHTML(l, 'p', 'tk-help--warn')).join('')
+      + wizChatgptOauthHTML(k, true)
       + (WIZ.error ? '<div class="ob-err"' + (wizErrDetail() ? ' title="' + esc(wizErrDetail()) + '"' : '') + '>' + esc(WIZ.error) + '</div>' : '')
       + '</div>',
       '<button class="btn btn-g xs" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button><span class="grow"></span>'
@@ -22791,6 +22795,22 @@ async function wizSubLogin(k) {
   wizSubPollStop();
   WIZ_SUB_POLL.timer = setInterval(wizSubPollTick, WIZ_SUB_POLL_MS);
   render();
+}
+/* ATO-1747: the Codex row's second way in, the bundled agent's own ChatGPT
+   sign-in (chatgpt-oauth-step.js). The agent writes the entry; this only activates it. */
+function wizChatgptOauthHTML(k, compact) {
+  if (!k || k.subscriptionCli !== 'codex' || typeof chatgptOauthBlockHTML !== 'function') return '';
+  chatgptOauthAskSupported(BR, render);
+  return chatgptOauthBlockHTML(CHATGPT_OAUTH, esc, compact);
+}
+function wizChatgptOauthStart(k) {
+  if (!k || typeof chatgptOauthStart !== 'function') return;
+  chatgptOauthStart({br: BR, render, anx: ANX, inOnboarding: OB.open,
+    onStep: () => WIZ.row === k && WIZ.phase === 'configure',
+    activate: (id) => {
+      WIZ.phase = 'verifying'; WIZ.error = null; render();
+      wizActivate({id, kind: 'subscription-oauth', word: 'ChatGPT', label: 'ChatGPT subscription (experimental)'}, id, '', null);
+    }});
 }
 async function wizSubscriptionStep(k) {
   const id = k.id;
