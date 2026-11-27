@@ -25,7 +25,7 @@ export function createWorkspaceLoader(config: AtomicAgentConfig, logger?: Pick<S
     const instructions = cloud
       ? loadProjectInstructions(session.workingDir, signal, { contextWindow: options.contextWindow ?? null,
         allow: path => instructionTrust(trust, path) === "trusted", allowKey: [...allowed].sort().join("\0") })
-      : { instructions: [], diagnostics: [], found: [] };
+      : { instructions: [], diagnostics: [], found: [], pathRules: [] };
     if (logger) {
       const withheldSkills = skills.entries.filter(e => e.record.source === "project" && skillTrust(trust, e.record.manifest.name) === "pending").map(e => e.record.manifest.name);
       const withheldFiles = instructions.found.filter(path => instructionTrust(trust, path) === "pending");
@@ -38,6 +38,6 @@ export function createWorkspaceLoader(config: AtomicAgentConfig, logger?: Pick<S
       }
     }
     return { workingDir: skills.workingDir, cloud, skills, instructions: instructions.instructions,
-      diagnostics: [...instructions.diagnostics, ...skills.diagnostics] };
+      pathRules: instructions.pathRules ?? [], diagnostics: [...instructions.diagnostics, ...skills.diagnostics] };
   };
 }
