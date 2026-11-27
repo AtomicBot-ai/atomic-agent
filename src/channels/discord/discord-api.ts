@@ -190,6 +190,24 @@ export class DiscordApi {
       : [];
   }
 
+  /**
+   * Open a public thread in a guild text channel, not attached to any
+   * message (type 11 = PUBLIC_THREAD; it archives after a day without
+   * messages). Returns the thread's channel id. Discord refuses in a DM
+   * and inside a thread, and without "Create Public Threads" (ATO-2456).
+   */
+  async createThread(channelId: string, name: string): Promise<string> {
+    const body = (await this.request("POST", `/channels/${channelId}/threads`, {
+      name: name.slice(0, 100),
+      type: 11,
+      auto_archive_duration: 1440,
+    })) as { id?: unknown } | undefined;
+    if (typeof body?.id !== "string") {
+      throw new DiscordApiError("Discord returned no thread id.", 0);
+    }
+    return body.id;
+  }
+
   /** Open (or reuse) the DM channel with a user. */
   async createDmChannel(userId: string): Promise<string> {
     const body = (await this.request("POST", "/users/@me/channels", {
