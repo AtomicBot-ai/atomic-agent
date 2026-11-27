@@ -101,6 +101,20 @@ describe("applyMcpToolNameRule", () => {
     );
   });
 
+  // Wave 10: groups added after canvas-tool (conversation-tool, research-tool)
+  // must stay ahead of mcp-native-tool when it goes out and comes back.
+  it("restores mcp-native-tool after a group added behind canvas-tool, with mcp-server-tool after it", () => {
+    const g = "tool-name ::= verify-tool | canvas-tool | conversation-tool | research-tool | mcp-native-tool";
+    const dyn = 'mcp-server-tool ::= "\\"mcp.docs.search\\""';
+    const off = applyMcpToolNameRule(g, null, false);
+    expect(off).toBe("tool-name ::= verify-tool | canvas-tool | conversation-tool | research-tool");
+    expect(applyMcpToolNameRule(off, null, true)).toBe(g);
+    expect(applyMcpToolNameRule(off, dyn, true)).toBe(
+      "tool-name ::= verify-tool | canvas-tool | conversation-tool | research-tool | mcp-native-tool | mcp-server-tool\n" + dyn + "\n",
+    );
+    expect(applyMcpToolNameRule(g, dyn, true)).toMatch(/\| mcp-native-tool \| mcp-server-tool\n/);
+  });
+
   it("replaces the static placeholder with the dynamic rule", () => {
     const dyn = 'mcp-server-tool ::= "\\"mcp.github.create_issue\\""';
     const out = applyMcpToolNameRule(baseGrammar, dyn);
