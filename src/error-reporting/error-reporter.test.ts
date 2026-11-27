@@ -102,7 +102,7 @@ describe("captureError", () => {
     const { client, captured } = fakeClient();
     captureError(client, loopbackReset(), { source: "uncaughtException" });
     expect(captured).toHaveLength(1);
-    expect(captured[0].socketTags).toEqual({
+    expect(captured[0]?.socketTags).toEqual({
       socket_error_code: "ECONNRESET",
       socket_peer: "loopback",
       undici_frame: "no",
@@ -113,7 +113,7 @@ describe("captureError", () => {
     const { client, captured } = fakeClient();
     captureError(client, loopbackReset(), { source: "tool_exec" });
     expect(captured).toHaveLength(1);
-    expect(captured[0].socketTags).toBeUndefined();
+    expect(captured[0]?.socketTags).toBeUndefined();
   });
 
   it("tags a global reset it cannot prove is loopback", () => {
@@ -124,7 +124,7 @@ describe("captureError", () => {
     });
     captureError(client, err, { source: "unhandledRejection" });
     expect(captured).toHaveLength(1);
-    expect(captured[0].socketTags).toEqual({
+    expect(captured[0]?.socketTags).toEqual({
       socket_error_code: "ECONNRESET",
       socket_peer: "unknown",
       undici_frame: "no",
