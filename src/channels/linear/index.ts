@@ -16,6 +16,17 @@ export { LinearChannel } from "./linear-channel.js";
 export type { LinearChannelDeps, LinearEndpoint } from "./linear-channel.js";
 export { LinearApi, LinearApiError, fitCommentBody, linearAuthHeader } from "./linear-api.js";
 export { LinearApprovalBridge, formatLinearPrompt } from "./linear-approval-bridge.js";
+export {
+  downloadLinearUpload,
+  findLinearUploads,
+  isLinearUploadUrl,
+  receiveLinearUploads,
+  LINEAR_ATTACHMENT_LIMIT_BYTES,
+  LINEAR_ATTACHMENTS_PER_COMMENT,
+} from "./linear-attachments.js";
+export { LINEAR_HELP_TEXT, parseLinearCommand, runLinearCommand } from "./linear-commands.js";
+export type { LinearCommand } from "./linear-commands.js";
+export { LinearTurnQueue, LINEAR_QUEUE_LIMIT } from "./linear-turn-queue.js";
 export { handleLinearEvent, acquireOrCreateSession } from "./linear-inbound-handler.js";
 export type { LinearInboundContext } from "./linear-inbound-handler.js";
 export { mentionsAgent, stripAgentMention } from "./linear-mention.js";
@@ -39,6 +50,7 @@ export const LINEAR_CHANNEL: ChannelDefinition = {
       handles: readLinearMentions(ctx.channelConfig.options),
       onAssign: readLinearOnAssign(ctx.channelConfig.options),
       sessionMapPath: resolve(ctx.stateDir, "linear-session.json"),
+      inboxDir: resolve(ctx.stateDir, "inbox", "linear"),
       lock: new PidLockfile(resolve(ctx.stateDir, "linear.lock")),
       onStatus: ctx.emitStatus,
     }),

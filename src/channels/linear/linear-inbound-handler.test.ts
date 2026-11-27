@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { handleLinearEvent, type LinearInboundContext } from "./linear-inbound-handler.js";
 import { LinearOwnComments } from "./linear-own-comments.js";
+import { LinearTurnQueue } from "./linear-turn-queue.js";
 import type { LinearTarget, LinearWebhookPayload } from "./linear-types.js";
 
 const OWNER = "u-owner";
@@ -13,6 +14,9 @@ function fakeSessions() {
     get: (key: string) => chats.get(key) ?? { current: null },
     setCurrent: vi.fn((key: string, id: string) => {
       chats.set(key, { current: id });
+    }),
+    rotate: vi.fn((key: string) => {
+      chats.set(key, { current: null });
     }),
   };
 }
@@ -43,7 +47,7 @@ function makeCtx(over: Partial<LinearInboundContext> = {}, replyText = "Here is 
     onAssign: true,
     own,
     bridge: null,
-    inflight: new Map(),
+    turns: new LinearTurnQueue(),
     seen: new Set(),
     ensureApprovalSession: vi.fn(),
     ...over,
@@ -151,7 +155,7 @@ describe("handleLinearEvent: comments", () => {
 
   it("settles an approval answer from an owner without a mention", async () => {
     const tryAnswer = vi.fn(() => "Approved.");
-    const { ctx, runTurn, posted } = makeCtx({ bridge: { tryAnswer } });
+    const { ctx, runTurn, posted } = makeCtx({ bridge: { tryAnswer, pendingIn: () => 0 } });
     await handleLinearEvent(comment("yes ABCD"), ctx);
     expect(tryAnswer).toHaveBeenCalledWith("issue-7", "yes ABCD");
     expect(runTurn).not.toHaveBeenCalled();
@@ -160,7 +164,7 @@ describe("handleLinearEvent: comments", () => {
 
   it.each(["yes ABCD", "always ABCD"])("does not let a non-owner settle an approval with %j", async (body) => {
     const tryAnswer = vi.fn(() => "Approved.");
-    const { ctx, runTurn, posted } = makeCtx({ bridge: { tryAnswer } });
+    const { ctx, runTurn, posted } = makeCtx({ bridge: { tryAnswer, pendingIn: () => 0 } });
     await handleLinearEvent(comment(body, { userId: "u-stranger" }), ctx);
     expect(tryAnswer).not.toHaveBeenCalled();
     expect(ctx.post).not.toHaveBeenCalled();
@@ -198,5 +202,96 @@ describe("handleLinearEvent: assignment", () => {
     await handleLinearEvent(assigned(), off.ctx);
     expect(runTurn).not.toHaveBeenCalled();
     expect(off.runTurn).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleLinearEvent: commands (ATO-2464)", () => {
+  it("answers @agent /status without running a turn", async () => {
+    const { ctx, runTurn, posted } = makeCtx();
+    await handleLinearEvent(comment("@agent first"), ctx);
+    await handleLinearEvent(comment("@agent /status"), ctx);
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    expect(posted[1]?.body).toMatch(/^This issue is on session `s1`\. Idle\.$/);
+  });
+
+  it("@agent /new archives the issue's session so the next mention starts fresh", async () => {
+    const { ctx, runTurn, posted } = makeCtx();
+    await handleLinearEvent(comment("@agent first"), ctx);
+    await handleLinearEvent(comment("@agent /new"), ctx);
+    await handleLinearEvent(comment("@agent second"), ctx);
+    expect(posted[1]?.body).toContain("Previous session `s1` archived");
+    const ids = runTurn.mock.calls.map((c) => (c[0] as { id: string }).id);
+    expect(ids).toEqual(["s1", "s2"]);
+  });
+
+  it("a lone 'stop' after the mention cancels instead of queueing a turn", async () => {
+    let release: () => void = () => {};
+    const { ctx, runTurn, posted } = makeCtx();
+    runTurn.mockImplementationOnce(
+      (_s: unknown, _t: string, opts: { signal?: AbortSignal; eventHook?: (e: unknown) => void }) =>
+        new Promise((resolve) => {
+          opts.eventHook?.({ type: "step_started" });
+          release = () => resolve({});
+          opts.signal?.addEventListener("abort", () => resolve({}));
+        }),
+    );
+    const running = handleLinearEvent(comment("@agent long job"), ctx);
+    await vi.waitFor(() => expect(ctx.turns.busy("issue-7")).toBe(true));
+    await handleLinearEvent(comment("@agent stop"), ctx);
+    await running;
+    release();
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    expect(posted.map((p) => p.body)).toEqual(["Cancelling the current request.", "Turn cancelled."]);
+  });
+
+  it("does not treat a request that starts with a command word as a command", async () => {
+    const { ctx, runTurn } = makeCtx();
+    await handleLinearEvent(comment("@agent stop the deploy and report"), ctx);
+    expect(runTurn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("handleLinearEvent: queue while busy (ATO-2464)", () => {
+  it("queues a second mention on a busy issue instead of refusing it", async () => {
+    let release: () => void = () => {};
+    const { ctx, runTurn, posted } = makeCtx();
+    runTurn.mockImplementationOnce(
+      (_s: unknown, _t: string, opts: { eventHook?: (e: unknown) => void }) =>
+        new Promise((resolve) => {
+          release = () => {
+            opts.eventHook?.({ type: "llm_event", event: { type: "assistant_reply", text: "first answer" } });
+            resolve({});
+          };
+        }),
+    );
+    const first = handleLinearEvent(comment("@agent first"), ctx);
+    await vi.waitFor(() => expect(ctx.turns.busy("issue-7")).toBe(true));
+    const second = handleLinearEvent(comment("@agent second"), ctx);
+    await vi.waitFor(() => expect(runTurn).toHaveBeenCalledTimes(2));
+    release();
+    await Promise.all([first, second]);
+    const bodies = posted.map((p) => p.body);
+    expect(bodies[0]).toMatch(/^Queued:/);
+    expect(bodies).toContain("first answer");
+    expect(bodies).toContain("Here is the summary.");
+    expect(bodies.some((b) => b.startsWith("I am already working"))).toBe(false);
+  });
+});
+
+describe("handleLinearEvent: attachments (ATO-2464)", () => {
+  it("downloads a Linear upload and hands the agent its local path", async () => {
+    const save = vi.fn(async (input: { name?: string; bytes: Uint8Array }) => ({
+      path: `/state/inbox/linear/2026-11-27/120000-${input.name}`,
+      name: input.name ?? "x",
+      bytes: input.bytes.byteLength,
+      mimeType: "image/png",
+    }));
+    const download = vi.fn(async () => ({ bytes: new Uint8Array([1, 2, 3]), mimeType: "image/png" }));
+    const { ctx, runTurn } = makeCtx({ attachments: { inbox: { dir: "/state/inbox/linear", save }, download } });
+    await handleLinearEvent(comment("@agent what is wrong here? ![shot.png](https://uploads.linear.app/a/b/shot.png)"), ctx);
+    expect(download).toHaveBeenCalledWith("https://uploads.linear.app/a/b/shot.png");
+    const prompt = runTurn.mock.calls[0]![1];
+    expect(prompt).toContain("[attachments]");
+    expect(prompt).toContain("/state/inbox/linear/2026-11-27/120000-shot.png");
   });
 });

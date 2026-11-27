@@ -56,9 +56,15 @@ Every request is checked before its body is read: `Linear-Signature` must be the
 3. The agent answers as a reply in that comment thread. Mention it again on the same issue and it remembers the earlier exchange.
 4. A forged request is refused: `curl -X POST -H 'Linear-Signature: 00' -d '{}' http://127.0.0.1:3979/linear/webhook` answers 401.
 
+## Commands, queue and files (ATO-2464)
+
+- `@agent /status` says which session the issue is on, whether a request runs or waits, and how many approvals wait. `@agent /new` archives the issue's session so the next mention starts fresh (refused while a request runs). `@agent /cancel` (or `/stop`) stops the running request and the ones queued on the issue. `@agent /help` lists them. As on Discord, a lone `stop`, `cancel` or `status` after the mention counts too; "@agent stop the deploy" is still a request ([linear-commands.ts](linear-commands.ts)).
+- A mention on an issue the agent is still answering is queued, not refused: the comment "Queued: ..." says so, and the requests run in order. At most 4 requests per issue are held, the running one included ([linear-turn-queue.ts](linear-turn-queue.ts)).
+- Files attached to the comment that mentions the agent (Linear uploads, `https://uploads.linear.app/...`) are downloaded with the API key and saved to `<stateDir>/inbox/linear/<date>/`; the agent gets their local paths like files sent on Telegram or Discord. Up to 5 files and 25 MB each; the key is sent to `uploads.linear.app` only, never along a redirect ([linear-attachments.ts](linear-attachments.ts)).
+
 ## Not yet supported
 
-Linear Agent sessions (`AgentSessionEvent`, the "agent" app actor), polling without a public URL, slash commands in comments, and file attachments.
+Linear Agent sessions (`AgentSessionEvent`, the "agent" app actor) and polling without a public URL.
 
 ## Files
 
@@ -68,3 +74,4 @@ Linear Agent sessions (`AgentSessionEvent`, the "agent" app actor), polling with
 - [linear-inbound-handler.ts](linear-inbound-handler.ts) and [linear-mention.ts](linear-mention.ts): what starts a turn.
 - [linear-api.ts](linear-api.ts): `viewer` and `commentCreate`.
 - [linear-approval-bridge.ts](linear-approval-bridge.ts): approvals as comments.
+- [linear-commands.ts](linear-commands.ts), [linear-turn-queue.ts](linear-turn-queue.ts), [linear-attachments.ts](linear-attachments.ts): comment commands, the per-issue queue, uploads.
