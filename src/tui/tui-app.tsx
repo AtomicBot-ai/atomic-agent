@@ -877,6 +877,8 @@ export interface TuiAppCallbacks {
   onOfflineToggleRequested?(): void | Promise<void>;
   /** Privacy tab: toggle Privacy Shield (masking before cloud models). */
   onPrivacyShieldToggleRequested?(): void | Promise<void>;
+  /** ATO-2527: `n` in the Privacy tab flips hiding names with a local model. */
+  onPrivacyNamesToggleRequested?(): void | Promise<void>;
   /** Privacy tab: re-read the persisted `analytics.enabled` snapshot. */
   onPrivacyRefreshRequested?(): void;
   /** Integrations tab: re-read credential presence + live server state. */
