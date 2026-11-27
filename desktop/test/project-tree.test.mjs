@@ -15,7 +15,7 @@ import vm from "node:vm";
 const require = createRequire(import.meta.url);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const { listTreeDir, cleanRel, sortEntries } = require("../out/main/project-tree.js");
-const { markFor, parseStatus } = require("../out/main/project-tree-git.js");
+const { markFor, parseStatus, gitIgnored, runGitCode } = require("../out/main/project-tree-git.js");
 
 const home = mkdtempSync(join(tmpdir(), "pt-home-"));
 const away = mkdtempSync(join(tmpdir(), "pt-away-"));
@@ -50,6 +50,26 @@ test("a git checkout: .gitignore'd entries left out, folders first, git marks, a
   assert.deepEqual(names(src), ["deep/*", "a.ts:M", "file 2.ts", "file 10.ts"], "digits as numbers");
   const deep = await listTreeDir(repo, "src/deep", [home], P);
   assert.deepEqual(names(deep), ["d.ts", "new.ts:U"]);
+});
+
+test("check-ignore gets its paths on stdin, NUL-separated (git refuses -z without --stdin)", async () => {
+  const calls = [];
+  const stub = async (cwd, args, input) => { calls.push({ args, input }); return { code: 0, out: "build/\0" }; };
+  const got = await gitIgnored(stub, repo, ["build/", "README.md"]);
+  assert.deepEqual([...got], ["build"]);
+  assert.deepEqual(calls, [{ args: ["check-ignore", "--stdin", "-z"], input: "build/\0README.md\0" }], "no paths on the command line");
+  const real = await gitIgnored(runGitCode, repo, ["node_modules/", "build/", "debug.log", "src/", "README.md"]);
+  assert.deepEqual([...real].sort(), ["build", "debug.log", "node_modules"], "the real git answers through stdin");
+});
+
+test("a link to a folder in the checkout does not stop .gitignore from applying", { skip: P === "win32" }, async () => {
+  symlinkSync(join(repo, "src"), join(repo, "srclink"));
+  const top = await listTreeDir(repo, "", [home], P);
+  assert.deepEqual(names(top), ["src/*", "srclink/", ".gitignore", "README.md"], "node_modules/, build/ and *.log still left out");
+  const inLink = await listTreeDir(repo, "srclink", [home], P);
+  assert.equal(inLink.ok, true);
+  assert.equal(inLink.git, false, "git does not follow the link, so its folder is a plain one");
+  assert.deepEqual(names(inLink), ["deep/", "a.ts", "file 2.ts", "file 10.ts"]);
 });
 
 test("outside a checkout: the mention walk's skipped folders are left out, no marks", async () => {

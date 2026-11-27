@@ -7,7 +7,9 @@
  * folder, with mention-git.ts's GIT_SAFE_PREFIX in front (no fsmonitor hook,
  * no index write) and without inherited GIT_DIR and friends, a time limit and
  * an output cap. `git check-ignore` answers exit code 1 when nothing is
- * ignored; that is an answer here, not a failure.
+ * ignored; that is an answer here, not a failure. Its paths go on stdin
+ * (`--stdin -z`: git refuses `-z` without `--stdin`, and stdin has no
+ * command-line length limit, which Windows puts near 32k).
  *
  * No Electron import, so the unit suite loads it from `out/main`.
  */
@@ -19,7 +21,8 @@ import { GIT_MAX_OUTPUT, GIT_SAFE_PREFIX, GIT_TIMEOUT_MS } from "./mention-git.j
 /** One file's state, as the tree shows it (VS Code's letters). */
 export type GitMark = "M" | "A" | "D" | "R" | "U" | "C";
 
-export type Git = (cwd: string, args: readonly string[]) => Promise<{ code: number; out: string }>;
+/** Runs git; `input`, when given, is written to its stdin. */
+export type Git = (cwd: string, args: readonly string[], input?: string) => Promise<{ code: number; out: string }>;
 
 function gitEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
@@ -28,9 +31,9 @@ function gitEnv(): NodeJS.ProcessEnv {
 }
 
 /** git with its exit code; a git that is not there, or ran past its time, rejects. */
-export const runGitCode: Git = (cwd, args) =>
+export const runGitCode: Git = (cwd, args, input) =>
   new Promise((done, fail) => {
-    execFile(
+    const child = execFile(
       "git", [...GIT_SAFE_PREFIX, ...args],
       { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_OUTPUT, windowsHide: true, encoding: "utf8", env: gitEnv() },
       (error, stdout) => {
@@ -41,6 +44,9 @@ export const runGitCode: Git = (cwd, args) =>
         fail(error);
       },
     );
+    // A git that dies early closes its stdin; the exit code above is the answer.
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(input ?? "");
   });
 
 /** The folder's place in its checkout (`sub/dir/`, `` at the top), or null outside one. */
@@ -55,13 +61,17 @@ export async function gitPrefix(git: Git, cwd: string): Promise<string | null> {
   }
 }
 
-/** Which of `rels` (paths under `cwd`, `/`-separated) .gitignore leaves out. */
+/**
+ * Which of `rels` (paths under `cwd`, `/`-separated) .gitignore leaves out.
+ * A path git cannot take (one beyond a symbolic link) fails its whole
+ * chunk, so the caller sends links without a trailing slash.
+ */
 export async function gitIgnored(git: Git, cwd: string, rels: readonly string[]): Promise<Set<string>> {
   const out = new Set<string>();
   for (let i = 0; i < rels.length; i += 200) {
     const chunk = rels.slice(i, i + 200);
     try {
-      const r = await git(cwd, ["check-ignore", "-z", "--", ...chunk]);
+      const r = await git(cwd, ["check-ignore", "--stdin", "-z"], chunk.join("\0") + "\0");
       if (r.code !== 0 && r.code !== 1) continue;
       for (const p of r.out.split("\0")) if (p) out.add(p.replace(/\\/g, "/").replace(/\/$/, ""));
     } catch {

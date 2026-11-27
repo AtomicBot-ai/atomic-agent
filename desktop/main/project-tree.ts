@@ -91,7 +91,13 @@ export async function listTreeDir(
   const git = opts.git === undefined ? runGitCode : opts.git;
   const prefix = git ? await gitPrefix(git, base) : null;
   const inGit = prefix !== null;
+  // A folder reached through a link inside the checkout is not git's: git
+  // does not follow links and refuses paths beyond one, so it is shown as a
+  // plain folder.
+  const viaLink = rel !== "" && realDir !== P.join(realBase, ...rel.split("/"));
+  const asGit = inGit && !viaLink;
   const entries: TreeEntry[] = [];
+  const links = new Set<string>();
   for (const d of dirents) {
     let isDir = d.isDirectory();
     if (d.isSymbolicLink()) {
@@ -99,13 +105,17 @@ export async function listTreeDir(
       if (!t) continue;
       isDir = t.isDirectory();
     } else if (!isDir && !d.isFile()) continue;
-    if (d.name === ".git" || (!inGit && isDir && SKIPPED_DIRS.has(d.name))) continue;
-    entries.push({ name: d.name, rel: rel ? `${rel}/${d.name}` : d.name, dir: isDir });
+    if (d.name === ".git" || (!asGit && isDir && SKIPPED_DIRS.has(d.name))) continue;
+    const entryRel = rel ? `${rel}/${d.name}` : d.name;
+    if (d.isSymbolicLink()) links.add(entryRel);
+    entries.push({ name: d.name, rel: entryRel, dir: isDir });
   }
   let shown = entries;
-  if (prefix !== null && git && entries.length) {
+  if (asGit && prefix !== null && git && entries.length) {
     // A folder goes with a trailing slash, so a `build/` pattern matches it.
-    const ignored = await gitIgnored(git, base, entries.map((e) => (e.dir ? e.rel + "/" : e.rel)));
+    // A link goes without one: git takes a link as a file, and `link/` is a
+    // path beyond a link, which fails the whole check-ignore call.
+    const ignored = await gitIgnored(git, base, entries.map((e) => (e.dir && !links.has(e.rel) ? e.rel + "/" : e.rel)));
     shown = entries.filter((e) => !ignored.has(e.rel));
     const marks = await gitStatus(git, base, prefix, rel ? `:(literal)${rel}` : ".");
     for (const e of shown) {
@@ -115,5 +125,5 @@ export async function listTreeDir(
   }
   sortEntries(shown);
   const max = opts.max ?? TREE_MAX_ENTRIES;
-  return { ok: true, root: base, rel, entries: shown.slice(0, max), cut: shown.length > max, git: inGit };
+  return { ok: true, root: base, rel, entries: shown.slice(0, max), cut: shown.length > max, git: asGit };
 }
