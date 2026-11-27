@@ -50,6 +50,16 @@ export interface WorkerLegRef {
   turnModel?: string;
 }
 
+/**
+ * What tells two legs apart: the provider and the model its turns ask
+ * for. One provider entry can serve several roles with a model each
+ * (`llm.runMode.fusion.roleModels`), so the provider id alone is not a
+ * leg; grouping, width and pricing go by this key.
+ */
+export function legKey(leg: { providerId: string; turnModel?: string }): string {
+  return `${leg.providerId}\u0000${leg.turnModel ?? ""}`;
+}
+
 /** Every model a task may name, worker leg first, each once. */
 export function allowedModels(
   workerLeg: WorkerLegRef,
@@ -58,11 +68,10 @@ export function allowedModels(
   const out = [{ providerId: workerLeg.providerId, model: workerLeg.model }];
   for (const entry of Object.values(roles?.byRole ?? {})) {
     if (entry === undefined) continue;
-    if (out.some((o) => o.providerId === entry.providerId)) continue;
-    out.push({
-      providerId: entry.providerId,
-      model: entry.model ?? entry.providerId,
-    });
+    const model = entry.model ?? entry.providerId;
+    // Two roles on one entry with a model each are two names (roleModels).
+    if (out.some((o) => o.providerId === entry.providerId && o.model === model)) continue;
+    out.push({ providerId: entry.providerId, model });
   }
   return out;
 }
@@ -164,7 +173,12 @@ export function resolveTaskLegs(
       legs.set(task.id, workerDefault());
       continue;
     }
-    if (picked.providerId === workerLeg.providerId) {
+    // The worker leg's own provider AND model: the worker leg. The same
+    // provider asked for another model (roleModels) is a leg of its own.
+    if (
+      picked.providerId === workerLeg.providerId &&
+      (picked.turnModel ?? "") === (workerLeg.turnModel ?? "")
+    ) {
       legs.set(task.id, {
         ...workerDefault(),
         ...(picked.role === undefined ? {} : { role: picked.role }),

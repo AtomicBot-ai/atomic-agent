@@ -456,6 +456,10 @@ export function runSlashCommand(
   if (result.runModeWorkers !== undefined) {
     callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
   }
+  if (result.runModeRole !== undefined) {
+    callbacks.onFusionRoleChangeRequested?.(result.runModeRole.role, result.runModeRole.pin);
+  }
+  if (result.runModeListRoles) callbacks.onFusionRolesListRequested?.();
   if (result.compactionVerb) callbacks.onCompactionRequested?.(result.compactionVerb, result.compactionInstructions);
   if (result.mcpAuthVerb) {
     callbacks.onMcpAuthRequested?.(result.mcpAuthVerb.name, result.mcpAuthVerb.action);

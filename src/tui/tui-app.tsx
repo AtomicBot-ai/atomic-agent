@@ -674,6 +674,13 @@ export interface TuiAppCallbacks {
    * without changing the mode.
    */
   onFusionWorkersChangeRequested?(workers: number): void;
+  /** `/runmode role <role> <provider> [model] | off`: set one fusion role. */
+  onFusionRoleChangeRequested?(
+    role: import("../config/llm-run-mode-config.js").FusionRole,
+    pin: import("../config/fusion-role-pin.js").FusionRolePin,
+  ): void;
+  /** `/runmode roles`: list the fusion roles and the model each runs. */
+  onFusionRolesListRequested?(): void;
   /**
    * `/worker stop|escalate <id>` and `/worker steer <id> <note>`: the
    * person's action on one running fusion worker of `sessionId` (ATO-66,

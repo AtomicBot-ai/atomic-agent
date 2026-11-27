@@ -97,9 +97,16 @@ export function withoutSetAsideProviderRefs(
     if (named(next.escalationProvider)) delete next.escalationProvider;
     if (named(next.judgeProvider)) delete next.judgeProvider;
     if (next.roles !== null && typeof next.roles === "object" && !Array.isArray(next.roles)) {
+      const gone = Object.entries(next.roles).filter(([, id]) => named(id)).map(([role]) => role);
       const roles = Object.entries(next.roles).filter(([, id]) => !named(id));
       if (roles.length > 0) next.roles = Object.fromEntries(roles);
       else delete next.roles;
+      // A role's model label goes with its pin, as a leg's does.
+      if (gone.length > 0 && next.roleModels !== null && typeof next.roleModels === "object" && !Array.isArray(next.roleModels)) {
+        const models = Object.entries(next.roleModels).filter(([role]) => !gone.includes(role));
+        if (models.length > 0) next.roleModels = Object.fromEntries(models);
+        else delete next.roleModels;
+      }
     }
     out.runMode = { ...runMode, fusion: next };
   }
