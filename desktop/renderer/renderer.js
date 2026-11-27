@@ -338,7 +338,7 @@ const LIVE_ELSEWHERE_LINE = 'Still answering your last message. The reply will a
    pending card's Details. */
 const CATEGORY_PLAIN = {
   fs_write_workspace:'edit files in this folder', fs_write_home:'edit files in your home folder',
-  fs_trash:'move files to the Trash', http:'make a web request', shell:'run a terminal command', shell_dangerous:'run a dangerous command', shell_secret:'run a command that uses a saved secret',
+  fs_trash:'move files to the Trash', http:'make a web request', shell:'run a terminal command', shell_dangerous:'run a dangerous command', shell_secret:'use a saved secret in a command, web request or script',
   script:'run a skill\u2019s script', proc_kill:'stop a running program', browser_nonweb:'open a non-web link',
   trust_config:'change the agent\u2019s trust settings', fusion_fanout:'split the work across helper models',
   other:'take this step', publish:'publish to GitHub', git_remote:'sync with a git remote', email:'send an email',
@@ -4294,7 +4294,7 @@ function apprHomePaths(t) {
 function apprCode(s) { return '<code>' + esc(clipWords(s, 90)) + '</code>'; }
 const APPR_FALLBACK = {
   fs_write_workspace:'change a file in this folder', fs_write_home:'change a file outside this folder',
-  fs_trash:'move files to the Trash', http:'send a web request', shell:'run a command', shell_dangerous:'run a dangerous command', shell_secret:'run a command with a saved secret',
+  fs_trash:'move files to the Trash', http:'send a web request', shell:'run a command', shell_dangerous:'run a dangerous command', shell_secret:'use a saved secret in a command, request or script',
   script:'run a skill script', proc_kill:'stop a process', browser_nonweb:'open a non-web address',
   trust_config:'change its own settings', fusion_fanout:'hand work to its workers', publish:'publish to GitHub',
   git_remote:'talk to a git remote', email:'send an e-mail', fs_read_outside:'read outside this folder',

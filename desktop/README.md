@@ -1012,8 +1012,10 @@ Honestly degraded, and labelled as such in the UI:
   ([secret-source-labels.ts](main/secret-source-labels.ts), `sources` on
   `app:dotenvKeys`); the renderer words are in
   [secret-source.js](renderer/secret-source.js). A plain `.env` key gets no
-  label. A command that uses a tool secret asks as `shell_secret`
-  ("command · uses a secret"), shown in the full card like `shell_dangerous`.
+  label. A command, web request (`os.http.request`) or skill script that
+  uses a tool secret asks as `shell_secret` ("command · uses a secret"),
+  shown in the full card like `shell_dangerous`; the plain words say "use a
+  saved secret in a command, web request or script".
 - **Import** is the TUI's Hermes/OpenClaw form over `atag import <source>
   … --dry-run` (preview) and `… --yes` (apply) — always exactly one of the
   two, never a bare run (which exits 0 on a non-TTY having written nothing).
