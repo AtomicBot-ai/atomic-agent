@@ -28,6 +28,7 @@ import {
   createHttpServer,
   createHttpTokenSource,
 } from "../http/index.js";
+import { createDeviceSessions } from "../http/device-sessions.js";
 import type { HttpServerHandle } from "../http/index.js";
 
 /**
@@ -143,6 +144,8 @@ export async function serveCommand(args: string[]): Promise<number> {
       },
     });
     const namedTokens = createHttpTokenSource(stateDir);
+    // ATO-2308: phones paired by `atag pair` sign in with a cookie as members.
+    const deviceSessions = createDeviceSessions(stateDir);
     handle = await createHttpServer({
       runtime,
       host: parsed.host,
@@ -152,12 +155,14 @@ export async function serveCommand(args: string[]): Promise<number> {
         metricsRegistry,
         // ATO-693: off unless --a2a; parseArgs already refused it without a key.
         a2a: parsed.a2a ? { publicUrl: a2aPublicUrl() } : null,
+        devices: deviceSessions,
       }),
       approvalBus,
       completionRegistry,
       elicitations,
       // ATO-583: `atag http tokens add` names tokens with a role; the key stays admin.
       namedTokens,
+      deviceSessions,
     });
     const baseUrl = `http://${handle.host}:${handle.port}`;
     // ATO-583 named tokens beside the always-on key (serve always has a key now).

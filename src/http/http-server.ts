@@ -16,6 +16,7 @@ import { AuthThrottle } from "./auth-throttle.js";
 import { enforceLoopbackGuard } from "./loopback-guard.js";
 import { routeKey, scopeForRoute, type HttpScope } from "./http-scopes.js";
 import type { StoredHttpToken } from "./http-token-store.js";
+import type { DeviceSessions } from "./device-sessions.js";
 import { authorizeRequest } from "./scoped-auth.js";
 
 /** ATO-1126: one per process; loopback callers are never counted. */
@@ -76,6 +77,8 @@ export interface HttpServerOptions {
   elicitations?: McpElicitationBroker;
   /** ATO-583: named tokens with roles, read per request (`createHttpTokenSource`). */
   namedTokens?: () => readonly StoredHttpToken[];
+  /** ATO-2308: phones paired by QR (`atag pair`), signed in with a cookie as members. */
+  deviceSessions?: DeviceSessions;
 }
 
 export interface HttpServerHandle {
@@ -183,7 +186,7 @@ export function createHttpServer(
         completionRegistry,
         undeliveredSteers,
         ...(options.elicitations ? { elicitations: options.elicitations } : {}),
-      }, options.namedTokens);
+      }, options.namedTokens, options.deviceSessions);
     } catch (err) {
       handleRouteError(res, err);
     }
@@ -237,6 +240,7 @@ async function dispatch(
   routes: CompiledRoute[],
   baseCtx: Omit<HandlerContext, "params">,
   namedTokens?: () => readonly StoredHttpToken[],
+  deviceSessions?: DeviceSessions,
 ): Promise<void> {
   const url = parseRequestUrl(req);
   if (!url) {
@@ -263,6 +267,7 @@ async function dispatch(
     namedTokens: namedTokens?.() ?? [],
     scope: matched.route.scope,
     route: matched.route.key,
+    ...(deviceSessions ? { devices: deviceSessions } : {}),
   }, authThrottle)) {
     return;
   }

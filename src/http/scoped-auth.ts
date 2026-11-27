@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { AuthThrottle } from "./auth-throttle.js";
+import { authorizeDeviceCookie } from "./device-auth.js";
+import type { DeviceSessions } from "./device-sessions.js";
 import { roleHasScope, type HttpRole, type HttpScope } from "./http-scopes.js";
 import { hashHttpToken, type StoredHttpToken } from "./http-token-store.js";
 import { openaiError } from "./openai-errors.js";
@@ -28,6 +30,8 @@ export interface ScopedAuthInput {
   scope: HttpScope;
   /** `"POST /api/config"`, for the 403 message. */
   route: string;
+  /** ATO-2308: phones paired by QR, signed in by a cookie (device-auth.ts). */
+  devices?: DeviceSessions;
 }
 
 /**
@@ -66,6 +70,8 @@ export function authorizeRequest(
   input: ScopedAuthInput,
   throttle?: AuthThrottle,
 ): boolean {
+  const byDevice = authorizeDeviceCookie(req, res, input, throttle);
+  if (byDevice !== "absent") return byDevice === "allowed";
   if (input.apiKey === null || input.namedTokens.length === 0) {
     return enforceAuth(req, res, input.apiKey, throttle);
   }

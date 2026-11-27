@@ -119,6 +119,9 @@ import {
   createPanelScriptHandler,
 } from "./route-panel.js";
 import { createSetSessionWorkingDirHandler } from "./session-working-dir.js";
+import { createPairPageHandler, createPairRedeemHandler } from "./route-device-pairing.js";
+import { createDevicePairingHandler, createListDevicesHandler, createRevokeDeviceHandler } from "./route-devices.js";
+import type { DeviceSessions } from "./device-sessions.js";
 import { createRestoreFileHandler } from "./route-fs-restore.js";
 import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
 import * as importFacts from "./route-import-facts.js";
@@ -157,6 +160,8 @@ export interface RouteTableOptions {
    * routes out of the table, so they answer 404.
    */
   a2a?: A2aOptions | null;
+  /** ATO-2308: phones paired by QR. Omitted, the pairing routes answer 404. */
+  devices?: DeviceSessions | null;
 }
 
 /**
@@ -198,6 +203,12 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "GET", path: "/panel/manifest.webmanifest", handler: createPanelManifestHandler(), requiresAuth: false },
     { method: "GET", path: "/panel/icon.svg", handler: createPanelIconSvgHandler(), requiresAuth: false },
     { method: "GET", path: "/panel/icon-180.png", handler: createPanelIconPngHandler(), requiresAuth: false },
+    // ATO-2308: the QR link of `atag pair`; the one-time token in the path is the credential.
+    { method: "GET", path: "/pair/{token}", handler: createPairPageHandler(options.devices ?? null), requiresAuth: false },
+    { method: "POST", path: "/pair/{token}", handler: createPairRedeemHandler(options.devices ?? null), requiresAuth: false },
+    { method: "POST", path: "/api/devices/pairing", handler: createDevicePairingHandler(options.devices ?? null) },
+    { method: "GET", path: "/api/devices", handler: createListDevicesHandler(options.devices ?? null) },
+    { method: "DELETE", path: "/api/devices/{id}", handler: createRevokeDeviceHandler(options.devices ?? null) },
     // ATO-646: Prometheus scrape target. Authenticated like every /api route.
     { method: "GET", path: "/metrics", handler: createMetricsHandler(options.metricsRegistry) },
     // ATO-549: the agent as an MCP server over Streamable HTTP (route-mcp-endpoint.ts).
