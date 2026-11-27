@@ -10,7 +10,7 @@ import { coerceFloatLike } from "../config-primitives.js";
  */
 export interface AgentSecurityConfig {
   /**
-   * The confidence at or above which an argument finding (a credential read, an encoded command, a secret in an HTTP body) asks at every approval level, bypass included. Range 0.5 to 1, default 0.7. Below it a finding asks as an ordinary dangerous action and goes quiet at full trust. Read live.
+   * The confidence at or above which an argument finding (a credential read, an encoded command, a secret in an HTTP body) asks at every approval level, bypass included. Range 0.5 to 0.7, default 0.7: it can only make the check stricter, and a value above 0.7 (up to 1) reads as 0.7, so an edit of the config file cannot quiet these asks. Below it a finding asks as an ordinary dangerous action and goes quiet at full trust. Read live.
    */
   argScanThreshold: number;
   /**
@@ -28,6 +28,13 @@ export type GuardOnFailure = "ask" | "block";
 /** Same number as `ASK_EVERY_LEVEL_CONFIDENCE` in the shell guard. */
 export const DEFAULT_ARG_SCAN_THRESHOLD = 0.7;
 export const MIN_ARG_SCAN_THRESHOLD = 0.5;
+/**
+ * The highest threshold that takes effect (review round 1 of ATO-2505):
+ * the default. The model can edit config.json unasked at full trust, so
+ * a setting that could raise the bar would let it switch the bypass asks
+ * off. Lowering it, the direction a person wants, still works.
+ */
+export const MAX_ARG_SCAN_THRESHOLD = DEFAULT_ARG_SCAN_THRESHOLD;
 export const MAX_KNOWN_HOSTS = 500;
 
 const HOST_ENTRY_RE = /^(?:\*\.)?[a-z0-9_]([a-z0-9_.-]*[a-z0-9_])?$/;
@@ -51,7 +58,7 @@ function parseThreshold(value: unknown, fallback: number): number {
       `expected number in [${MIN_ARG_SCAN_THRESHOLD}, 1], got ${JSON.stringify(value)}`,
     );
   }
-  return threshold;
+  return Math.min(threshold, MAX_ARG_SCAN_THRESHOLD);
 }
 
 function parseKnownHosts(value: unknown, fallback: readonly string[]): string[] {
@@ -82,7 +89,7 @@ function parseGuardOnFailure(value: unknown, fallback: GuardOnFailure): GuardOnF
   throw new ConfigValidationError("agent.security.guardOnFailure", `expected "ask" or "block", got ${JSON.stringify(value)}`);
 }
 
-/** Absent keys keep `defaults`; a threshold outside 0.5..1 or a bad host is an error. */
+/** Absent keys keep `defaults`; a threshold outside 0.5..1 or a bad host is an error; a threshold above 0.7 reads as 0.7. */
 export function parseAgentSecurityConfig(
   raw: unknown,
   defaults: AgentSecurityConfig = createAgentSecurityDefaults(),

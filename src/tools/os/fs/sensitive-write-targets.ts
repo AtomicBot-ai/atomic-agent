@@ -1,5 +1,6 @@
+import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { SECRET_HOME_PATHS } from "../../../sandbox/os-sandbox.js";
 
 /**
@@ -34,9 +35,13 @@ const SENSITIVE_HOME_ENTRIES: readonly string[] = [
   ...SECRET_HOME_PATHS.map((entry) => entry.toLowerCase()),
 ];
 
+/**
+ * `path` relative to home, lowercased; `""` for the home folder itself,
+ * `null` outside it.
+ */
 function below(home: string, path: string): string | null {
   const rel = relative(home, path).replace(/\\/g, "/");
-  if (rel.length === 0 || rel.startsWith("..") || isAbsolute(rel)) return null;
+  if (rel.startsWith("..") || isAbsolute(rel)) return null;
   return rel.toLowerCase();
 }
 
@@ -52,10 +57,84 @@ export function sensitiveWriteTargets(
   homeDir: string = homedir(),
 ): string[] {
   const home = resolve(homeDir).toLowerCase();
-  return paths.filter((path) => {
-    const rel = below(home, resolve(cwd, path).toLowerCase());
-    return rel !== null && SENSITIVE_HOME_ENTRIES.some((entry) => matchesEntry(rel, entry));
-  });
+  return paths.filter((path) => isSensitive(home, resolve(cwd, path)));
+}
+
+/**
+ * The home folder itself counts too (review round 1): a copy, move or
+ * extract into it (`cp /tmp/x/.bashrc ~/`, `tar xzf p.tgz -C ~`) can
+ * drop any startup file there without naming it.
+ */
+function isSensitive(home: string, absolute: string): boolean {
+  const rel = below(home, absolute.toLowerCase());
+  if (rel === null) return false;
+  return rel === "" || SENSITIVE_HOME_ENTRIES.some((entry) => matchesEntry(rel, entry));
+}
+
+/** `path` with symlinks resolved, through its nearest existing parent. */
+async function realPathOf(path: string): Promise<string> {
+  let existing = path;
+  const rest: string[] = [];
+  for (;;) {
+    try {
+      return join(await realpath(existing), ...rest);
+    } catch {
+      const parent = dirname(existing);
+      if (parent === existing) return path;
+      rest.unshift(basename(existing));
+      existing = parent;
+    }
+  }
+}
+
+/**
+ * `sensitiveWriteTargets` that also follows symlinks (review round 1):
+ * `ln -s ~ h` then a write of `h/.ssh/authorized_keys` is a write into
+ * the SSH folder. A path counts when either its written form or its real
+ * one is sensitive, compared with the real home folder too.
+ */
+export async function realSensitiveWriteTargets(
+  paths: readonly string[],
+  cwd: string = process.cwd(),
+  homeDir: string = homedir(),
+): Promise<string[]> {
+  const lexical = new Set(sensitiveWriteTargets(paths, cwd, homeDir));
+  const homes = [resolve(homeDir), await realPathOf(resolve(homeDir))].map((h) => h.toLowerCase());
+  const found: string[] = [];
+  for (const path of paths) {
+    if (lexical.has(path)) {
+      found.push(path);
+      continue;
+    }
+    const real = await realPathOf(resolve(cwd, path));
+    if (homes.some((home) => isSensitive(home, real))) found.push(path);
+  }
+  return found;
+}
+
+/** Names that, on a line whose targets cannot be read, mean a sensitive write may be in it. */
+const SENSITIVE_NAMES: readonly string[] = [
+  ...new Set([
+    ...SENSITIVE_HOME_ENTRIES.map((entry) => entry.replace(/\/$/, "")),
+    "authorized_keys",
+    "start menu/programs/startup",
+  ]),
+];
+
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const SENSITIVE_NAME_RE = new RegExp(
+  `(?:^|[^a-z0-9_.-])(?:${SENSITIVE_NAMES.map(escapeRegExp).join("|")})(?![a-z0-9_-])`,
+);
+
+/**
+ * Whether a command line names one of the sensitive home entries
+ * (`.ssh`, `.bashrc`, `LaunchAgents`, ...), case-folded and with `\`
+ * read as `/`. The shell uses it when it cannot read the line's write
+ * targets (`$(…)`, a variable, a glob): then a sensitive name on the line
+ * is taken as a sensitive write, so the check fails closed.
+ */
+export function mentionsSensitiveHomeEntry(line: string): boolean {
+  return SENSITIVE_NAME_RE.test(line.toLowerCase().replace(/\\/g, "/"));
 }
 
 /** The line the approval card adds for such a write. */

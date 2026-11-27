@@ -169,6 +169,32 @@ function registryHost(value: string | undefined, fallback: string): string | nul
  */
 export type PublishRegistryResolver = (program: string, registryName?: string) => string | null | undefined;
 
+const JS_PUBLISHERS = new Set(["npm", "pnpm", "yarn"]);
+/** Flags of `npm|pnpm|yarn publish` whose value is the next word. */
+const PUBLISH_VALUE_FLAGS = new Set([
+  "--tag", "--access", "--otp", "--registry", "-w", "--workspace", "--provenance-file",
+  "--userconfig", "--scope", "--auth-type", "--publish-branch", "--report-summary",
+  "--new-version", "--message", "-m", "--filter", "-F",
+]);
+
+/**
+ * Whether `npm publish <folder|tarball>` names a package other than the
+ * one in the current folder (review round 1 of ATO-2528). `.` and `./`
+ * are the current folder.
+ */
+function publishOperand(args: readonly string[]): boolean {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (arg === "--") return args.slice(i + 1).some((a) => a !== "." && a !== "./");
+    if (arg.startsWith("-")) {
+      if (!arg.includes("=") && PUBLISH_VALUE_FLAGS.has(arg)) i += 1;
+      continue;
+    }
+    if (arg !== "." && arg !== "./") return true;
+  }
+  return false;
+}
+
 /** npm/pnpm/yarn/cargo/twine/poetry/gem publishing; `program` is the binary, `args` what follows it. */
 export function scanPublish(
   program: string,
@@ -179,6 +205,12 @@ export function scanPublish(
   const publish = (fallback: string, flags: readonly string[]): EgressDestination[] => {
     const flag = flagValue(args, flags);
     // A flag wins; then the project's config; then the public default.
+    // A folder or tarball named on the line publishes that package, with
+    // its own `publishConfig`, which this does not read: unknown.
+    const operand = JS_PUBLISHERS.has(program) && publishOperand(args.slice(program === "yarn" && sub === "npm" ? 2 : 1));
+    if (flag === undefined && operand && configured !== undefined) {
+      return [entry("package_publish", null, "outbound", `the registry ${program} is set to`)];
+    }
     const fromConfig = flag === undefined && configured !== undefined ? configured(program) : undefined;
     const host = fromConfig === null ? null : registryHost(flag ?? fromConfig, fallback);
     return [entry("package_publish", host, "outbound", `the registry ${program} is set to`)];

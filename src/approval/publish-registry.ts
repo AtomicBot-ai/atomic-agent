@@ -5,7 +5,8 @@
  *
  * npm, pnpm and yarn: `publishConfig.registry` in the nearest
  * `package.json`, then `@scope:registry` (for a scoped package name) or
- * `registry` in an `.npmrc` from the project folder up, then `~/.npmrc`.
+ * `registry` in an `.npmrc` from the project folder up, then `~/.npmrc`;
+ * for yarn 2+ `.yarnrc.yml` instead of `.npmrc`.
  * cargo: the `[registries.<name>]` `index` of `--registry <name>` or of
  * `[registry] default`, in `.cargo/config.toml` (or `config`) from the
  * project folder up, then `~/.cargo/`.
@@ -56,7 +57,32 @@ function npmrcValue(text: string, key: string): string | undefined {
   return undefined;
 }
 
-function npmRegistry(cwd: string, home: string): string | null | undefined {
+/**
+ * yarn 2+ reads `.yarnrc.yml` and ignores `.npmrc` (review round 1):
+ * `npmPublishRegistry`, else `npmRegistryServer`, from the nearest file
+ * that sets one. A file with `npmScopes` and neither key is not read
+ * here (`null`); files without any of them leave yarn's default
+ * (`undefined`). `false` when no `.yarnrc.yml` is in reach, so `.npmrc`
+ * applies (yarn 1).
+ */
+function yarnBerryRegistry(cwd: string, home: string): string | null | undefined | false {
+  let seen = false;
+  let scoped = false;
+  for (const dir of [...folders(cwd), home]) {
+    const text = readSmall(join(dir, ".yarnrc.yml"));
+    if (text === null) continue;
+    seen = true;
+    for (const key of ["npmPublishRegistry", "npmRegistryServer"]) {
+      const match = new RegExp(`^${key}\\s*:\\s*["']?([^"'\\s#]+)`, "m").exec(text);
+      if (match !== null) return plain(match[1]!);
+    }
+    if (/^npmScopes\s*:/m.test(text)) scoped = true;
+  }
+  if (!seen) return false;
+  return scoped ? null : undefined;
+}
+
+function npmRegistry(cwd: string, home: string, program: string): string | null | undefined {
   let scope: string | undefined;
   for (const dir of folders(cwd)) {
     const text = readSmall(join(dir, "package.json"));
@@ -70,6 +96,10 @@ function npmRegistry(cwd: string, home: string): string | null | undefined {
       return null;
     }
     break;
+  }
+  if (program === "yarn") {
+    const berry = yarnBerryRegistry(cwd, home);
+    if (berry !== false) return berry;
   }
   const keys = scope !== undefined ? [`${scope}:registry`, "registry"] : ["registry"];
   for (const dir of [...folders(cwd), home]) {
@@ -133,7 +163,7 @@ export function publishRegistryUrl(
   home: string = homedir(),
 ): string | null | undefined {
   try {
-    if (program === "npm" || program === "pnpm" || program === "yarn") return npmRegistry(cwd, home);
+    if (program === "npm" || program === "pnpm" || program === "yarn") return npmRegistry(cwd, home, program);
     if (program === "cargo") return cargoRegistry(cwd, registryName, home);
     return undefined;
   } catch {

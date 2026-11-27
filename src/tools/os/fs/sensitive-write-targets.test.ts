@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { sensitiveWriteReason, sensitiveWriteTargets } from "./sensitive-write-targets.js";
+import {
+  mentionsSensitiveHomeEntry,
+  sensitiveWriteReason,
+  sensitiveWriteTargets,
+} from "./sensitive-write-targets.js";
 
 const HOME = "/home/nadia";
 
@@ -19,6 +23,9 @@ describe("sensitiveWriteTargets (ATO-2505)", () => {
     "/home/nadia/Documents/PowerShell/Microsoft.PowerShell_profile.ps1",
     "/home/nadia/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/run.bat",
     "/home/nadia/.BASHRC",
+    // Review round 1: home itself, the destination of `cp x/.bashrc ~/`.
+    "/home/nadia",
+    "/home/nadia/",
   ])("is sensitive: %s", (path) => {
     expect(sensitiveWriteTargets([path], "/tmp/project", HOME)).toEqual([path]);
   });
@@ -32,7 +39,6 @@ describe("sensitiveWriteTargets (ATO-2505)", () => {
     "/home/nadia/.bashrc.bak",
     "/home/nadia/.sshd/notes",
     "/home/nadia/notes.txt",
-    "/home/nadia",
     "/tmp/.bashrc",
     "/home/other/.bashrc",
   ])("is not sensitive: %s", (path) => {
@@ -44,4 +50,21 @@ describe("sensitiveWriteTargets (ATO-2505)", () => {
     expect(reason).toContain("(a, b, c and 2 more)");
     expect(reason).toContain("asks in every mode");
   });
+
+  it.each([
+    "echo k >> ~/.ssh/authorized_keys; : $(true)",
+    "cp x C:\\Users\\n\\.BASHRC",
+    "echo calc > \"%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\x.bat\"",
+    "echo k >> ~/.ss?/authorized_keys",
+    "tee -a $HOME/Library/LaunchAgents/x.plist",
+  ])("names a sensitive home entry: %s", (line) => {
+    expect(mentionsSensitiveHomeEntry(line)).toBe(true);
+  });
+
+  it.each(["echo $(date) > notes.txt", "aws --profile dev s3 ls", "cat project/.sshd.conf", "grep x README.md"])(
+    "names none: %s",
+    (line) => {
+      expect(mentionsSensitiveHomeEntry(line)).toBe(false);
+    },
+  );
 });

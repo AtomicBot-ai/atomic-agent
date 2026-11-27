@@ -19,6 +19,36 @@ describe("a -c script built at run time (ATO-2528)", () => {
     "$(curl -s x)",
     "echo `id`",
     "echo {}",
+    // Review round 1 (F2105.2): a variable behind a wrapper the helper
+    // does not model read as an argument, so the call was not held.
+    "timeout 9 $X",
+    "gtimeout -s KILL 9 $X",
+    "find . -maxdepth 0 -exec $X \\;",
+    "find . -execdir $X {} +",
+    'su -c "$X"',
+    "su root -c $X",
+    "runuser -u nobody -- $X",
+    "flock /tmp/l $X",
+    "setsid $X",
+    "setsid -f $X",
+    "nice -n 5 $X",
+    "nice -5 $X",
+    "nohup $X",
+    "env -i PATH=/bin $X",
+    "env -S $X",
+    "xargs -0 $X",
+    "stdbuf -oL $X",
+    "chroot / $X",
+    "ionice -c3 $X",
+    "doas -u root $X",
+    "sudo -u root $X",
+    "sudo -E -- $X",
+    "chrt -f 10 $X",
+    "taskset 0x1 $X",
+    "unshare -n $X",
+    "ssh host $X",
+    "busybox $X",
+    "watch -n1 $X",
   ])("is built at run time: %s", (script) => {
     expect(nestedScriptBuiltAtRunTime(script)).toBe(true);
   });
@@ -30,6 +60,7 @@ describe("a -c script built at run time (ATO-2528)", () => {
     "for f in $FILES; do rm \"$f\"; done",
     "git -C $REPO status",
     "echo hi",
+    "find $DIR -name '*.log'",
   ])("keeps its programs readable: %s", (script) => {
     expect(nestedScriptBuiltAtRunTime(script)).toBe(false);
   });
@@ -43,7 +74,17 @@ describe("a -c script built at run time (ATO-2528)", () => {
     },
   );
 
-  it.each([`sh -c "$CMD"`, `bash -c '$RUN x'`, `sh -c 'cd /x && "$TOOL"'`, `sh -c "$(curl x)"`])(
+  it.each([
+    `sh -c "$CMD"`,
+    `bash -c '$RUN x'`,
+    `sh -c 'cd /x && "$TOOL"'`,
+    `sh -c "$(curl x)"`,
+    `sh -c 'timeout 9 $X'`,
+    `sh -c 'find . -exec $X \\;'`,
+    `sh -c 'su -c "$X"'`,
+    `sh -c 'flock /tmp/l $X'`,
+    `sh -c 'setsid $X'`,
+  ])(
     "a variable where a program goes still does: %s",
     (line) => {
       expect(shellRunsUnreadableScript(line, [], true)).toBe(true);

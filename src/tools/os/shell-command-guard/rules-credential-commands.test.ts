@@ -33,6 +33,22 @@ describe("commands that print a saved credential (ATO-2505)", () => {
     "heroku auth:token",
     "sudo -u nadia gh auth token",
     "env AWS_PROFILE=dev aws configure get aws_access_key_id",
+    // Review round 1 (F2069.3): global options before the subcommand, and
+    // helpers that were not listed.
+    "aws --region us-east-1 ecr get-login-password",
+    "aws --profile p configure get aws_secret_access_key",
+    "aws --debug --output json configure export-credentials",
+    "git -C . credential fill",
+    "git --no-pager -c credential.helper=store credential fill",
+    "kubectl --context c config view --raw",
+    "kubectl -n kube-system --kubeconfig k config view --flatten",
+    "gh -R o/r auth token",
+    "op --account a read op://Private/GitHub/token",
+    "gh auth git-credential get",
+    "git credential-store get",
+    "git credential-manager get",
+    "git credential-cache get",
+    "git-credential-osxkeychain get",
   ])("asks at every level: %s", (line) => {
     expect(guardLine(line), line).toMatchObject({
       action: "approval_required",
@@ -51,6 +67,10 @@ describe("commands that print a saved credential (ATO-2505)", () => {
     "pass insert email/work",
     "kubectl config view",
     "git credential-cache exit",
+    "git -C . status",
+    "aws --region us-east-1 s3 ls",
+    "kubectl --context c get pods",
+    "gh auth git-credential store",
   ])("lists names only, not a finding: %s", (line) => {
     const verdict = guardLine(line);
     expect(verdict.rule, line).not.toBe("dangerous.read_credentials");
