@@ -20,6 +20,13 @@ import type { ToolRole } from "../tools/tool-roles.js";
 export interface BuildPromptInput {
   workspace?: import("../session/workspace-context.js").SessionWorkspace;
   /**
+   * Path-scoped project rules for a local prompt (ATO-2443), which has no
+   * cloud workspace: each joins `### project-rules`, after the
+   * conversation, once a file tool touched a matching file. A cloud prompt
+   * reads `workspace.pathRules` instead.
+   */
+  pathRules?: readonly import("../session/workspace-context.js").PathRule[];
+  /**
    * Estimated cost of the request's native `tools` array (JSON schemas),
    * set on a `native_tools` link in either model mode. The window holds
    * it beside the prompt text, so the budget subtracts it (ATO-1678;
@@ -287,6 +294,18 @@ export interface BuiltPrompt {
     recalled: number;
     memoryIndex: number;
     taskPolicy: number;
+    /**
+     * The `### project` block (ATO-42) as sent, after its
+     * `PROJECT_SECTION_MAX_TOKENS` cut; included in `total` (ATO-2452).
+     * Absent when the chat is in no project.
+     */
+    project?: number;
+    /**
+     * Path-scoped project rules attached so far (ATO-2443): the local
+     * `### project-rules` section, or the cloud journal's `project-rule:`
+     * entries. Absent when none is attached.
+     */
+    projectRules?: number;
     /**
      * The native `tools` array sent beside the text (`toolSchemaTokens`);
      * included in `total`. Absent when the request carries none.

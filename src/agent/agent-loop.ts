@@ -613,6 +613,7 @@ export class AgentLoop {
           ? this.deps.resolveLlmSlice?.(contextProviderId, turnModel) ?? pinnedSlice : pinnedSlice;
         const stepDeps: StepDependencies = {
             prepareWorkspace: this.deps.prepareWorkspace,
+            preparePathRules: this.deps.preparePathRules,
             registry: this.deps.registry,
             compactPromptLatch: this.compactPromptLatch,
             personaLatch: this.personaLatch,

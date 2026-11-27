@@ -169,6 +169,19 @@ export type StepEvent =
       source: "auto";
       stepIndex: number;
     }
+  /**
+   * A path-scoped project rule joined the prompt (ATO-2443): a file tool
+   * in this step read or changed a file its patterns match. Emitted once
+   * per rule per session, after the step's turns are recorded; the rule
+   * is in the next step's prompt. `path` is the rule file (workspace
+   * relative, or `~/...` for a global rule).
+   */
+  | {
+      type: "path_rule_attached";
+      path: string;
+      patterns: readonly string[];
+      stepIndex: number;
+    }
   | {
       type: "assistant_reply";
       text: string;
