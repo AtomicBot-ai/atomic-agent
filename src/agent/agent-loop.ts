@@ -548,6 +548,12 @@ export class AgentLoop {
             ...(options.routeNote !== undefined
               ? { routeNote: options.routeNote }
               : {}),
+            ...(options.hookContext !== undefined
+              ? { hookContext: options.hookContext }
+              : {}),
+            ...(options.sessionHookContext !== undefined
+              ? { sessionHookContext: options.sessionHookContext }
+              : {}),
             ...(options.answerChannel !== undefined
               ? { answerChannel: options.answerChannel }
               : {}),

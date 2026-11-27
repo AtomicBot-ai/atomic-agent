@@ -20,7 +20,7 @@ The actual flat assembly in `build-prompt.ts` is:
 1. Optional project (the client's project instructions, ATO-42, capped at `PROJECT_SECTION_MAX_TOKENS`), memory-index, session-facts, recalled; world.
 2. Optional request when the original user request was packed out of view.
 3. Optional context summary, then fresh conversation.
-4. Optional route, profile, lessons, procedures, loaded-skills, loaded-tools, task-policy, notice.
+4. Optional route, hook-session-start (ATO-2198: what SessionStart hooks printed, on every turn of the session), hook-context (what UserPromptSubmit hooks printed for this turn), profile, lessons, procedures, loaded-skills, loaded-tools, task-policy, notice.
 5. Respond anchor and profile-specific generation framing.
 
 Empty optional sections are omitted. Notice composition and structured messages share this contract. Sections changed by a step follow conversation; moving them above it can invalidate already read transcript context. The turn's memory snapshot is fetched before stepping.

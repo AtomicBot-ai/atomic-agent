@@ -14,7 +14,7 @@ import { decideCompaction, MIN_SUMMARY_RESERVE_TOKENS, NO_PREFIX_REUSE_TARGET_RA
 import { PLAIN_INSTRUCT_PROFILE } from "../llm/model-profile.js";
 import type { CompletionResult } from "../llm/provider/completion-types.js";
 import { buildNativeMessages } from "../llm/provider/openai/openai-native-messages.js";
-import { createContextCompaction, logCompactionOutcome, skipMessage, SKIP_MESSAGES } from "./context-compaction.js";
+import { createContextCompaction, logCompactionOutcome, skipMessage, SKIP_MESSAGES, type ContextCompactionDependencies } from "./context-compaction.js";
 import { TurnController } from "./turn-controller.js";
 import type { CompactionEvent } from "../agent/compaction-control.js";
 import { estimateTokens } from "../prompt/token-budget.js";
@@ -50,7 +50,7 @@ function input(session: SessionState): BuildPromptInput {
     contextWindow: 12000, conversationMaxTokens: 4000, conversationMaxPairs: 200,
     capabilities: { platform: "darwin", arch: "arm64", browserChannel: "chrome", workingDir: dir, hasClipboard: false, hasWmctrl: false, hasNotifications: false } };
 }
-function fixture(state = history(), promptInput = input) {
+function fixture(state = history(), promptInput = input, extra: Partial<ContextCompactionDependencies> = {}) {
   let stored = state;
   // These contracts are about model summaries; extractive and auto have their own file.
   const config: CompactionConfig = { ...createCompactionDefaults(), mode: "model", summaryMaxTokens: 250 };
@@ -62,6 +62,7 @@ function fixture(state = history(), promptInput = input) {
   const service = createContextCompaction({
     config: () => config, sessionStore: { load: (id) => id === state.id ? stored : null }, turnController,
     complete, route, persist, emit: (event) => events.push(event), sideCallSlotId: () => 3, promptInput,
+    ...extra,
   });
   return { ...service, complete, persist, events, config, route, turnController, stored: () => stored };
 }
@@ -675,5 +676,28 @@ describe("compaction outcome logging", () => {
       result: { status: "compacted", reason: "manual", tokensBefore: 10, tokensAfter: 5 } });
     expect(logger.info).not.toHaveBeenCalled();
     expect(logger.warn).not.toHaveBeenCalled();
+  });
+});
+
+describe("PreCompact hooks (ATO-2198)", () => {
+  const wide = (session: SessionState): BuildPromptInput => ({ ...input(session), contextWindow: 32000, conversationMaxTokens: 8000 });
+
+  it("runs before the summary call with the manual trigger and the user's instructions", async () => {
+    const state = history();
+    const order: string[] = [];
+    const beforeCompact = vi.fn(async () => { order.push("hook"); });
+    const f = fixture(state, wide, { beforeCompact });
+    f.complete.mockImplementation(async () => { order.push("summary"); return completion(); });
+    expect(await f.compactSession(state.id, { instructions: "keep the deploy plan" })).toMatchObject({ status: "compacted" });
+    expect(beforeCompact).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: state.id, cwd: dir, trigger: "manual", instructions: "keep the deploy plan",
+    }));
+    expect(order[0]).toBe("hook");
+  });
+
+  it("a hook that throws does not stop the compaction", async () => {
+    const state = history();
+    const f = fixture(state, wide, { beforeCompact: async () => { throw new Error("hook crashed"); } });
+    expect(await f.compactSession(state.id)).toMatchObject({ status: "compacted" });
   });
 });

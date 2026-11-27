@@ -114,7 +114,7 @@ import { AgentLoop } from "../agent/agent-loop.js";
 import { TurnUsageMeter } from "../analytics/index.js";
 
 import { installGlobalErrorHandlers } from "../error-reporting/index.js";
-import { ToolHookEngine, installToolHooks } from "../hooks/index.js";
+import { SessionHookEngine, ToolHookEngine, installToolHooks } from "../hooks/index.js";
 import { activePolicy, installPolicy, loadPolicy, policyRuleMatch } from "../policy/index.js";
 
 /**
@@ -268,6 +268,8 @@ export async function createAgentRuntime(
   // on mtime), so editing hooks.json needs no restart. A hook's `ask` goes
   // to the same approval gate as the tools' own prompts.
   installToolHooks(new ToolHookEngine({ stateDir: config.paths.stateDir, approvals, logger }));
+  // Same files: SessionStart / UserPromptSubmit / Stop / PreCompact (ATO-2198).
+  const sessionHooks = new SessionHookEngine({ stateDir: config.paths.stateDir, logger });
 
   // Issue #112. Every local text probe below hangs off this one answer,
   // and it is available here — hundreds of lines before
@@ -608,6 +610,7 @@ export async function createAgentRuntime(
     sideCallSlotId: compactionSideSlot,
     costOf: compactionCost,
     tokenCounter: createCompactionTokenCounter({ config: () => getConfig(), route: compactionRoute }),
+    beforeCompact: (facts) => sessionHooks.beforeCompact(facts),
     // ATO-676: used only when `agent.compaction.memoryFlush` is on.
     memoryNotes: {
       enabled: () => getConfig().memory.notes.enabled,
@@ -953,6 +956,7 @@ export async function createAgentRuntime(
     state: turnState, lifecycle, logger,
     emitEvent: emitAgentLoopEventFor,
     experienceReview,
+    sessionHooks,
   });
   const { steer, controlGoal } = turnService;
   const runQueuedTurn = holdWhileRunning(keepAwake, turnService.runTurn);
