@@ -1,5 +1,6 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../../tool-registry.js";
+import { refuseOptionLike } from "./git-arg-guard.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
 export const osGitDiffTool: ToolDefinition = {
@@ -14,6 +15,7 @@ export const osGitDiffTool: ToolDefinition = {
       rawArgs.revisionRange.length > 0
         ? rawArgs.revisionRange
         : undefined;
+    refuseOptionLike("os.git.diff", "revisionRange", revisionRange);
     const staged = rawArgs.staged === true;
     const context = parseContext(rawArgs.context, 3);
     const paths = parsePaths(rawArgs.paths);

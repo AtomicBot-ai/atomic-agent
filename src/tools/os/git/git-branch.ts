@@ -1,6 +1,7 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import { listingResultCaps } from "../../../compressor/listing-caps.js";
 import type { ToolDefinition } from "../../tool-registry.js";
+import { refuseOptionLike } from "./git-arg-guard.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
 /**
@@ -34,6 +35,7 @@ export const osGitBranchTool: ToolDefinition = {
       typeof rawArgs.contains === "string" && rawArgs.contains.length > 0
         ? rawArgs.contains
         : undefined;
+    refuseOptionLike("os.git.branch", "contains", contains);
     const pattern =
       typeof rawArgs.pattern === "string" && rawArgs.pattern.length > 0
         ? rawArgs.pattern
