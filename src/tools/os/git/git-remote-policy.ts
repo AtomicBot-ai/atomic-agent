@@ -1,3 +1,4 @@
+import type { EgressDestination } from "../../../approval/egress-scan.js";
 import { compressToolResult, type CompressedToolResult } from "../../../compressor/result-compressor.js";
 import {
   requireApproval,
@@ -69,6 +70,8 @@ export interface GitRemoteApprovalRequest {
   reason: string;
   preview: string;
   affectedResources: string[];
+  /** Where the verb sends data (ATO-2528): the card line and the egress hold. */
+  egress?: EgressDestination[];
 }
 
 /** One funnel for every network verb: category `git_remote`, always. */
@@ -86,6 +89,7 @@ export async function requireGitRemoteApproval(
       reason: request.reason,
       preview: request.preview,
       affectedResources: request.affectedResources,
+      ...(request.egress !== undefined && request.egress.length > 0 ? { egress: request.egress } : {}),
     },
     signal,
   );

@@ -11,6 +11,7 @@ import {
   resolveGithubToken,
   scrubGithubToken,
 } from "../../../github/index.js";
+import { gitPushEgress } from "../../../approval/egress-tool-destinations.js";
 import { requireBranchName } from "./git-checkout.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
@@ -91,6 +92,7 @@ export function buildOsGitPushTool(options: OsGitPushOptions): ToolDefinition {
           reason: `push ${branch} to ${remote}`,
           preview: `git ${invocation.args.join(" ")}\nremote: ${remoteUrl}${invocation.authenticated ? "\nauth: GitHub token from the Integrations tab" : ""}`,
           affectedResources: [remoteUrl],
+          egress: gitPushEgress(remoteUrl, remote),
         },
         ctx.signal,
       );

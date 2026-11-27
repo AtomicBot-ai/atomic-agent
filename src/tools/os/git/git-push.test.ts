@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ApprovalGate } from "../../../approval/approval-gate.js";
+import { ApprovalGate, type ApprovalRequest } from "../../../approval/approval-gate.js";
 import { buildOsGitPushTool, buildPushInvocation } from "./git-push.js";
 import {
   makeCtx,
@@ -89,6 +89,32 @@ describe("os.git.push", () => {
       "branch.feat/x.remote",
     ]).catch(() => ({ stdout: "" }));
     expect(upstream.stdout.trim()).toBe("");
+  });
+
+  it("names the remote host as egress, and the hold asks for it in bypass (ATO-2528)", async () => {
+    await runGitRaw(repo, ["remote", "add", "gh", "https://github.com/example/repo.git"]);
+    const asked: ApprovalRequest[] = [];
+    const gate: ApprovalGate = new ApprovalGate({
+      level: 5,
+      emit: (req) => {
+        asked.push(req);
+        gate.reject(req.approvalId, "no");
+      },
+    });
+    const tool = buildOsGitPushTool({ ...SYNC_ON, approvals: gate, approvalRequired: true });
+    await expect(tool.run({ remote: "gh" }, makeCtx(repo))).rejects.toThrow(/declined/);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.egress).toEqual([
+      { kind: "git_remote", host: "github.com", direction: "outbound", label: "github.com", unapproved: true },
+    ]);
+  });
+
+  it("a push to a local remote names no egress and runs in bypass (ATO-2528)", async () => {
+    const asked: ApprovalRequest[] = [];
+    const gate = new ApprovalGate({ level: 5, emit: (req) => asked.push(req) });
+    const tool = buildOsGitPushTool({ ...SYNC_ON, approvals: gate, approvalRequired: true });
+    expect((await tool.run({}, makeCtx(repo))).status).toBe("ok");
+    expect(asked).toHaveLength(0);
   });
 
   it("previews the command and the remote before asking", async () => {

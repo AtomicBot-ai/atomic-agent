@@ -117,13 +117,15 @@ describe("os.http.request with a secret in what it sends (ATO-2505)", () => {
 
   it("stays quiet in bypass when the threshold is above the finding", async () => {
     const { gate, asked } = recordingGate(5);
+    gate.setEgressKnownHosts(() => ["collector.example"]);
     const result = await buildTool(gate, "writes", 0.9).run(leak, makeCtx());
     expect(result.status).toBe("ok");
     expect(asked).toHaveLength(0);
   });
 
-  it("runs an ordinary POST unasked in bypass", async () => {
+  it("runs an ordinary POST to a known host unasked in bypass", async () => {
     const { gate, asked } = recordingGate(5);
+    gate.setEgressKnownHosts(() => ["example.com"]);
     const result = await buildTool(gate).run(
       { url: "https://example.com/upload", method: "POST", body: '{"rows":3}' },
       makeCtx(),
