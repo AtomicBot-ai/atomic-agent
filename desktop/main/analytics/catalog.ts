@@ -157,8 +157,10 @@ export const EVENTS: Record<string, EventSpec> = {
       kind: en(["local", "cloud", "custom"], { nullable: true }),
     },
   },
-  /* ATO-845: the subscription sign-in funnel (renderer.js wizSubLogin). */
-  subscription_login_clicked: { owner: "ui", props: { cli: en(["claude", "codex"]), step: en(["onboarding", "settings"]) } },
+  /* ATO-845: the subscription sign-in funnel (renderer.js wizSubLogin).
+     ATO-1749: cli chatgpt-oauth is the ChatGPT sign-in through the bundled
+     agent, no terminal (renderer/chatgpt-oauth-step.js). */
+  subscription_login_clicked: { owner: "ui", props: { cli: en(["claude", "codex", "chatgpt-oauth"]), step: en(["onboarding", "settings"]) } },
   subscription_terminal_opened: {
     owner: "ui",
     props: {
@@ -171,7 +173,12 @@ export const EVENTS: Record<string, EventSpec> = {
   },
   subscription_login_succeeded: {
     owner: "ui",
-    props: { cli: en(["claude", "codex"]), step: en(["onboarding", "settings"]), seconds_to_sign_in: int({ min: 0, nullable: true }) },
+    props: { cli: en(["claude", "codex", "chatgpt-oauth"]), step: en(["onboarding", "settings"]), seconds_to_sign_in: int({ min: 0, nullable: true }) },
+  },
+  /* ATO-1749: a chatgpt-oauth sign-in that did not end signed in. No email, plan, link or token. */
+  subscription_oauth_login_ended: {
+    owner: "ui",
+    props: { outcome: en(["cancelled", "timeout", "no_account", "failed"]), step: en(["onboarding", "settings"]) },
   },
   custom_endpoint_tested: { owner: "ui", props: { kind: en(["chat", "embedding"]), reachable: bool } },
   model_configured: {
