@@ -21,12 +21,14 @@ import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { ChatSessionMap } from "../chat-session-map.js";
 import { runModelCommand } from "../model-command.js";
 import type { SlackApi } from "./slack-api.js";
+import { runSlackFork } from "./slack-fork-command.js";
 import { markdownToSlack } from "./slack-format.js";
 import { scrubSlackError, type SlackMessageEvent, type SlackTarget } from "./slack-types.js";
 
 export interface SlackInboundContext {
   runtime: AgentRuntime;
-  api: Pick<SlackApi, "postText">;
+  /** `postMessage` lets `!fork` open a thread; without it the fork stays here. */
+  api: Pick<SlackApi, "postText"> & Partial<Pick<SlackApi, "postMessage">>;
   sessions: Pick<ChatSessionMap, "get" | "setCurrent" | "rotate"> &
     Partial<Pick<ChatSessionMap, "touch">>;
   logger: StructuredLogger;
@@ -53,6 +55,7 @@ const HELP_TEXT = [
   "Commands: `/atomic <command>`, or type them with `!` in a message or thread:",
   "• `!status`: this conversation's session id",
   "• `!new`: start a fresh session here (the current one is archived)",
+  "• `!fork`: copy this conversation's session into a new thread (in a DM, continue the copy here)",
   "• `!model`: show the provider and model; `!model <provider> [model-id]` switches",
   "• `!cancel`: stop the turn running here",
 ].join("\n");
@@ -155,6 +158,9 @@ export async function handleCommand(
       await post(ctx, ref, previous ? `Started a new session. Previous session \`${previous}\` archived.` : "Started a new session.");
       return true;
     }
+    case "fork":
+      await post(ctx, ref, await runSlackFork(ref, ctx));
+      return true;
     case "model":
       // Owner-gated already: `route` drops non-owners before this runs.
       await post(

@@ -468,6 +468,14 @@ describe("handleDiscordMessage — per-channel sessions", () => {
     expect(ctx.sent[0]).toContain("s-old");
   });
 
+  it("/fork says it is not available yet and leaves the session alone", async () => {
+    const pointer = fakePointer({ c1: { current: "s-old" } });
+    const ctx = makeCtx({ sessionPointer: pointer as never });
+    await handleDiscordMessage(msg({ content: "/fork" }), ctx);
+    expect(pointer.get("c1").current).toBe("s-old");
+    expect(ctx.sent[0]).toContain("Fork is not available on Discord yet");
+  });
+
   it("/status reports this channel's session", async () => {
     const pointer = fakePointer({
       c1: { current: "s-here" },

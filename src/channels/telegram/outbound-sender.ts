@@ -60,6 +60,15 @@ export interface TelegramApi {
    * than dropping it silently.
    */
   downloadFile?(fileId: string): Promise<Uint8Array>;
+  /**
+   * Open a forum topic (Bot API `createForumTopic`; grammy's `bot.api`
+   * has it). Only `/fork` uses it; it fails when the chat is not a forum
+   * or the bot lacks "Manage topics", and `/fork` then forks in place.
+   */
+  createForumTopic?(
+    chatId: number,
+    name: string,
+  ): Promise<{ message_thread_id: number } | unknown>;
 
   /**
    * Upload a local file to a chat — `sendPhoto` for `kind: "photo"`,
