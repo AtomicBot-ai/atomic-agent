@@ -87,6 +87,10 @@ import {
   createResumeTaskHandler,
 } from "./route-task-controls.js";
 import {
+  createTaskBoardHandler,
+  createUpdateTaskBoardCardHandler,
+} from "./route-task-board.js";
+import {
   createAcceptIdeaHandler,
   createDismissIdeaHandler,
   createListIdeasHandler,
@@ -463,6 +467,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "POST", path: "/api/tasks/{id}/pause", handler: createPauseTaskHandler() },
     { method: "POST", path: "/api/tasks/{id}/resume", handler: createResumeTaskHandler() },
     { method: "GET", path: "/api/tasks/{id}/runs", handler: createListTaskRunsHandler() },
+    // ATO-2257: the task board (cards in lanes); moving a card leaves the status alone.
+    { method: "GET", path: "/api/task-board", handler: createTaskBoardHandler() },
+    { method: "POST", path: "/api/tasks/{id}/board", handler: createUpdateTaskBoardCardHandler() },
     {
       method: "POST",
       path: "/api/tasks/drain",
