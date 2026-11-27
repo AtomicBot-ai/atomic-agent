@@ -36,7 +36,9 @@ export type ShellJobStopReason =
   | "session_end"
   | "evicted"
   | "ceiling"
-  | "shutdown";
+  | "shutdown"
+  /** The person, from the TUI's `/stop` (ATO-2437). */
+  | "user";
 
 export interface ShellJobRecord {
   /** Per session, from 1 — what the model quotes back. */

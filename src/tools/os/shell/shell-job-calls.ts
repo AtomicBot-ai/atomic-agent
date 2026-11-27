@@ -154,6 +154,7 @@ const STOP_WORDING: Record<ShellJobStopReason, string> = {
   evicted: "to stay within the job limit",
   ceiling: "at the job ceiling",
   shutdown: "at shutdown",
+  user: "by the user",
 };
 
 export interface ShellDetachRender {
