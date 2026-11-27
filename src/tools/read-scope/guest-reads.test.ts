@@ -100,6 +100,43 @@ describe("guest read scope", () => {
     expect(refused("os.fs.read", { path: "keys/id_rsa" })).not.toBeNull();
   });
 
+  it("refuses .envrc in any case, like .env", () => {
+    for (const path of [".envrc", ".ENVRC", "src/.EnvRc", ".ENV.local"]) {
+      expect(refused("os.fs.read", { path }), path).not.toBeNull();
+    }
+  });
+
+  it("refuses git arguments that name files the path checks never see", () => {
+    for (const [tool, args] of [
+      // `<rev>:<path>` prints a tracked file, `.env` or outside the folder.
+      ["os.git.show", { revision: "HEAD:.env" }],
+      ["os.git.show", { revision: "HEAD~3:.env" }],
+      ["os.git.show", { repo: work, revision: "main:../.ssh/id_rsa" }],
+      ["os.git.log", { revisionRange: "HEAD:README.md" }],
+      ["os.git.diff", { revisionRange: "HEAD~1:a HEAD:b" }],
+      ["os.git.blame", { path: "README.md", revision: "HEAD:x" }],
+      ["os.git.branch", { contains: "HEAD:x" }],
+      // Pathspec magic (`:/` is the repo top), options, globs, relative secrets.
+      ["os.git.diff", { paths: [":/"] }],
+      ["os.git.log", { path: ":(top).env" }],
+      ["os.git.show", { revision: "--output=/tmp/x" }],
+      ["os.git.diff", { paths: ["*.env"] }],
+      ["os.git.blame", { path: ".env" }],
+      ["os.git.blame", { path: "../.ssh/id_rsa" }],
+    ] as const) {
+      const result = refused(tool, { ...args });
+      expect(result, `${tool} ${JSON.stringify(args)}`).not.toBeNull();
+      expect(result!.details.reason).toBe(GUEST_READ_REFUSAL_REASON);
+    }
+    // A plain revision and a relative file inside still run.
+    expect(refused("os.git.blame", { path: "README.md", revision: "HEAD~1" })).toBeNull();
+    expect(refused("os.git.log", { revisionRange: "main..HEAD", path: "src" })).toBeNull();
+    // The owner is not limited.
+    expect(
+      checkGuestRead("os.git.show", { revision: "HEAD:.env" }, { workingDir: work }, opts()),
+    ).toBeNull();
+  });
+
   it("refuses files.search over the owner's folders", () => {
     expect(refused("files.search", { query: "invoice" })).not.toBeNull();
   });
