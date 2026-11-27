@@ -4,9 +4,9 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
-import { CORE_VERSION, coreDataDir, coreKeyForUrl, coreSessionPath, coreVersionDir, readCoreSession, writeCoreJson } from "./core-state.js";
-import { loadCoreSession, stopCoreSession } from "./core-sessions.js";
-import { connectCore } from "./core-client.js";
+import { CORE_VERSION, coreDataDir, coreKeyForUrl, coreSessionPath, coreVersionDir, orphanedCoreSession, readCoreSession, writeCoreJson } from "./core-state.js";
+import { loadCoreSession, recoverOrphanedCoreSessions, stopCoreSession } from "./core-sessions.js";
+import { connectCore, ensureCore } from "./core-client.js";
 
 const fake = vi.hoisted(() => ({ call: vi.fn(), snapshot: vi.fn(), instanceId: "owned" }));
 vi.mock("./core-client.js", () => ({
@@ -127,5 +127,33 @@ describe("a Core model server that has not exited after its stop (ATO-1748)", ()
     await expect(stopCoreSession(dir, "chat", { releaseWaitMs: 5_000 })).resolves.toBe(true);
     expect(existsSync(coreSessionPath(dir, "chat"))).toBe(false);
     expect(fake.call.mock.calls.filter(([path]) => String(path).endsWith("/unload"))).toHaveLength(1);
+  });
+
+  describe("once Core itself has gone (models stop, TUI exit)", () => {
+    beforeEach(() => rmSync(join(coreDataDir(dir, CORE_VERSION), "atomic-core", "instance.lock"), { force: true }));
+
+    it("is not an orphan: no orphan key, no new Core started to reap it", async () => {
+      const { pid, port } = await lingeringSession();
+      // No live Core lock: an unmarked record of a live process would be an orphan.
+      expect(orphanedCoreSession(dir, "chat")?.pid).toBe(pid);
+      await stopOnWindows();
+      expect(record()).toMatchObject({ pid, awaitingExit: true });
+      expect(orphanedCoreSession(dir, "chat")).toBeNull();
+      expect(coreKeyForUrl(dir, `http://127.0.0.1:${port}`)).toBeNull();
+      await expect(recoverOrphanedCoreSessions(dir)).resolves.toBe(false);
+      expect(ensureCore).not.toHaveBeenCalled();
+    });
+
+    it("a later stop with Core down waits for it and forgets it once gone, without a new Core", async () => {
+      const { pid } = await lingeringSession();
+      await stopOnWindows();
+      vi.mocked(connectCore).mockResolvedValue(null);
+      await expect(stopCoreSession(dir, "chat", { releaseWaitMs: 300 })).resolves.toBe(true);
+      expect(record()).toMatchObject({ pid, awaitingExit: true });
+      child?.kill("SIGKILL");
+      await expect(stopCoreSession(dir, "chat", { releaseWaitMs: 5_000 })).resolves.toBe(true);
+      expect(existsSync(coreSessionPath(dir, "chat"))).toBe(false);
+      expect(ensureCore).not.toHaveBeenCalled();
+    });
   });
 });

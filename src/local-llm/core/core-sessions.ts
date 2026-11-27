@@ -115,18 +115,19 @@ export async function stopCoreSession(dataDir: string, role: "chat" | "embedding
   const path = coreSessionPath(dataDir, role);
   const record = readCoreJson<CoreSessionRecord>(path);
   if (!record) return false;
+  // Unloaded by an earlier stop whose release wait ran out (ATO-1748): Core
+  // no longer has it, up or down. Wait for it again; the record stays while it
+  // holds on. Never the crashed-Core reap below: there is nothing to reap.
+  if (record.awaitingExit) {
+    await settlePendingExit(dataDir, role, record, opts.releaseWaitMs ?? RELEASE_WAIT_MS);
+    return true;
+  }
   const client = await connectCore(dataDir, record.coreVersion);
   if (!client) {
     let alive = true;
     try { process.kill(record.pid, 0); } catch (err) { alive = (err as NodeJS.ErrnoException).code !== "ESRCH"; }
     // Core crashed and left its model running: a new Core reaps it.
     if (alive) { await reapThroughNewCore(dataDir, role, record); return true; }
-  }
-  // Unloaded by an earlier stop whose release wait ran out (ATO-1748): Core
-  // no longer has it. Wait for it again; the record stays while it holds on.
-  if (record.awaitingExit) {
-    await settlePendingExit(dataDir, role, record, opts.releaseWaitMs ?? RELEASE_WAIT_MS);
-    return true;
   }
   if (client) {
     const snapshot = await client.snapshot();

@@ -144,7 +144,9 @@ export function readCoreSession(dataDir: string, role: "chat" | "embedding"): Co
  */
 export function orphanedCoreSession(dataDir: string, role: "chat" | "embedding"): CoreSessionRecord | null {
   const record = readSessionRecord(dataDir, role);
-  if (!record || liveCoreOwner(dataDir, record.coreVersion)) return null;
+  // Already unloaded (ATO-1748): nothing for a new Core to reap; its stop or
+  // the next load on its port waits for it (`core-pending-exit.ts`).
+  if (!record || record.awaitingExit || liveCoreOwner(dataDir, record.coreVersion)) return null;
   return pidAlive(record.pid) ? record : null;
 }
 /**
