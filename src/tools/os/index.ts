@@ -154,7 +154,7 @@ export type {
   ShellJobStopReason,
 } from "./shell/shell-jobs.js";
 export { createBackgroundJobsControl } from "./shell/background-jobs-control.js";
-export type { BackgroundJobsControl } from "./shell/background-jobs-control.js";
+export type { BackgroundJobsControl, BackgroundJobView } from "./shell/background-jobs-control.js";
 export type { MonitorWake, MonitorWakeHandler } from "./shell/shell-monitor-wake.js";
 
 export interface RegisterOsToolsOptions extends DangerousToolOptions {
