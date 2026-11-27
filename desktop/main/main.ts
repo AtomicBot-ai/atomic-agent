@@ -62,6 +62,7 @@ import { wireIncognitoChatsIpc } from "./incognito-chats-ipc.js";
 import { wireMiniChatIpc } from "./mini-chat-ipc.js";
 import { chatPopoutTurnRefused, isChatPopout, wireChatPopoutIpc } from "./chat-popout-ipc.js";
 import { wireChatRewindIpc } from "./chat-rewind-ipc.js";
+import { wireAnswerVersionsIpc } from "./answer-versions-ipc.js";
 import { wireTraceTreeIpc } from "./trace-tree-ipc.js";
 import { wireProjectWorkersIpc } from "./project-workers-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
@@ -3320,6 +3321,7 @@ function wireIpc(client: AgentClient): void {
   wireChatPopoutIpc({ mainWindow: () => win, liveSessionIds: () => [...liveTurns.values()].map((t) => t.sessionId) });
   // ATO-1056/1058: Roll back here, Edit and Fork from here on a message (chat-rewind-ipc.ts).
   wireChatRewindIpc(client);
+  wireAnswerVersionsIpc(client);   // ATO-2114: the ‹ 2/3 › answer switcher (answer-versions-ipc.ts)
   // ATO-639: Diagnostics' Timeline, one chat's trace as a tree (trace-tree-ipc.ts).
   wireTraceTreeIpc({ ipcMain });
   // ATO-1113: "Run overnight", a durable task in a folder with a budget and a time limit.

@@ -3408,7 +3408,8 @@ function msgActs(m) {
     const tps = last && m.speed && typeof replySpeedHTML === 'function' ? replySpeedHTML(m.speed) : '';
     const kvc = last && m.kvCache && typeof cacheShareHTML === 'function' ? cacheShareHTML(m.kvCache) : '';   // ATO-631 (kv-cache-share.js)
     // ATO-1046: Read aloud after copy, under a finished reply (tts.js).
-    return '<div class="' + cls + '">' + tps + kvc + again + copy + (typeof ttsButtonHTML === 'function' && !m.placeholder ? ttsButtonHTML(m) : '')
+    return '<div class="' + cls + '">' + (typeof answerVersionsHTML === 'function' ? answerVersionsHTML(m) : '')   // ATO-2114: ‹ 2/3 › (answer-versions.js)
+      + tps + kvc + again + copy + (typeof ttsButtonHTML === 'function' && !m.placeholder ? ttsButtonHTML(m) : '')
       + (typeof rewindActsHTML === 'function' ? rewindActsHTML(m) : '') + '</div>';   // ATO-1058: Fork (chat-rewind.js)
   }
   // Review fix: no `usr` modifier class here. The right-alignment the user
@@ -21934,7 +21935,7 @@ function sessionTurnsToLog(turns) {
     if (t.kind === 'assistant_reply' && t.stopped) { log.push({id:nid(), k:'assistant', text:'(stopped)', placeholder:true}); return; }
     // B1: a progress note (`progressNote`) is an interim row, never a reply.
     if (t.kind === 'assistant_reply') {
-      const entry = {id:nid(), k: t.progressNote ? 'interim' : 'assistant', text:t.text || ''};
+      const entry = {id:nid(), k: t.progressNote ? 'interim' : 'assistant', text:t.text || '', storedAt: t.at};   // ATO-2114: orders answer versions
       // ATO-408: the files the reply delivered (`reply.attachments`), drawn under it.
       const files = t.progressNote ? [] : replyFilesOf(t.attachments);
       if (files.length) { entry.replyFiles = files; named.push(...files); }

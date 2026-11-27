@@ -705,6 +705,10 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("agent:rewind", { sessionId, priorQuestions, expectText, files }),
   forkSession: (sessionId: string, priorQuestions: number, expectText: string) =>
     ipcRenderer.invoke("agent:forkSession", { sessionId, priorQuestions, expectText }),
+  /** ATO-2114: the earlier answers kept for the last question, and putting one back (answer-versions-ipc.ts). */
+  previousReplies: (sessionId: string) => ipcRenderer.invoke("agent:previousReplies", { sessionId }),
+  restorePreviousReply: (sessionId: string, index: number) =>
+    ipcRenderer.invoke("agent:restorePreviousReply", { sessionId, index }),
   /** ATO-448: continue a reply a restart cut off (POST /api/sessions/{id}/resume); `release` gives it back. */
   resumeInterruptedTurn: (sessionId: string, release?: boolean) =>
     ipcRenderer.invoke("agent:resumeInterruptedTurn", { sessionId, release: release === true }),
