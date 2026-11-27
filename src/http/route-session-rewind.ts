@@ -2,6 +2,7 @@ import type { ServerResponse } from "node:http";
 
 import type { ConversationTurn } from "../session/conversation-turn.js";
 import { planFork, questionRowIndex, type ForkRefusal } from "../session/session-fork.js";
+import { keepBranch } from "../session/session-message-branches.js";
 import { listRewindPoints, planRewind, type RewindRefusal } from "../session/session-rewind.js";
 import type { SessionState } from "../session/session-state.js";
 import {
@@ -48,7 +49,7 @@ interface Point {
   priorQuestions: number;
   text: string;
   at: number;
-  body: { files?: unknown; conversation?: unknown };
+  body: { files?: unknown; conversation?: unknown; keepBranch?: unknown };
 }
 
 export function createListRewindPointsHandler(): HttpHandler {
@@ -112,7 +113,8 @@ export function createRewindHandler(preview: boolean): HttpHandler {
     const done = restoreFiles
       ? await applyFileRestore(store, session.id, files)
       : { restored: [], deleted: [], failed: [] };
-    ctx.runtime.sessionStore.save(plan.state);
+    // ATO-2470: an edit (`keepBranch: true`) keeps the rows it cuts as a version of the message.
+    ctx.runtime.sessionStore.save(point.body.keepBranch === true ? keepBranch(session, turnIndex, plan.state) : plan.state);
     ctx.runtime.sessionStore.clearTurnProgress(session.id);
     // The turns those copies belong to are gone.
     await store.dropSince(session.id, at);
@@ -151,7 +153,7 @@ async function readPoint(
   ctx: HandlerContext,
 ): Promise<Point | null> {
   const id = ctx.params.id ?? "";
-  let body: { priorQuestions?: unknown; expectText?: unknown; files?: unknown; conversation?: unknown } | null;
+  let body: { priorQuestions?: unknown; expectText?: unknown; files?: unknown; conversation?: unknown; keepBranch?: unknown } | null;
   try {
     body = (await readJsonBody<unknown>(req)) as typeof body;
   } catch (err) {
