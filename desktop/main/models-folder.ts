@@ -49,6 +49,8 @@ export interface ModelsFolderInfo {
   dir: string;
   defaultDir: string;
   custom: boolean;
+  /** ATO-2503: false when the folder is not there (its disk unplugged). An older agent never says, read as true. */
+  reachable: boolean;
 }
 
 export function parseModelsFolderInfo(stdout: string): ModelsFolderInfo | null {
@@ -58,7 +60,7 @@ export function parseModelsFolderInfo(stdout: string): ModelsFolderInfo | null {
     try {
       const v = JSON.parse(text) as Partial<ModelsFolderInfo>;
       if (typeof v.dir === "string" && v.dir && typeof v.defaultDir === "string") {
-        return { dir: v.dir, defaultDir: v.defaultDir, custom: v.custom === true };
+        return { dir: v.dir, defaultDir: v.defaultDir, custom: v.custom === true, reachable: v.reachable !== false };
       }
     } catch {
       /* not this line */
@@ -81,6 +83,34 @@ export function parseModelsMoveLine(line: string): ModelsMoveProgress | null {
   const total = Number(m[3]);
   return index >= 1 && total >= index ? { entry: m[1]!, index, total } : null;
 }
+
+/** ATO-2503: one `copied <done> of <total> bytes (<model>)` line of a move across disks. */
+export interface ModelsMoveBytes {
+  entry: string;
+  done: number;
+  size: number;
+}
+
+export function parseModelsMoveBytes(line: string): ModelsMoveBytes | null {
+  const m = /^copied (\d+) of (\d+) bytes \((.+)\)\s*$/.exec(line.trim());
+  if (!m) return null;
+  const done = Number(m[1]);
+  const size = Number(m[2]);
+  return Number.isFinite(done) && Number.isFinite(size) && size > 0 && done <= size ? { entry: m[3]!, done, size } : null;
+}
+
+/**
+ * ATO-2503: how long a move may go without a line before it counts as hung
+ * (a disk that stopped answering mid-copy). A copy across disks prints its
+ * bytes twice a second, so ten quiet minutes is no slow disk.
+ */
+export const MOVE_QUIET_LIMIT_MS = 10 * 60_000;
+/** After SIGTERM (the agent then puts every model back), how long before SIGKILL. */
+export const MOVE_KILL_GRACE_MS = 30_000;
+
+export const MOVE_HUNG_WORDS =
+  "The move stopped answering for 10 minutes, so it was stopped. Your models are still in the old folder. " +
+  "If the new folder has a partly copied model in it, delete that before you try again.";
 
 /** `models folder: <path>`, the last line of a move that worked. */
 export function movedToFromStdout(stdout: string): string | null {
@@ -116,6 +146,13 @@ export function moveErrorWords(stderr: string, code: number | null): string {
   if (/a model download is running/.test(stderr)) {
     return "Wait for the model download to finish, or pause it, then move the models.";
   }
+  // ATO-2503: the agent's words for an unplugged disk, a move under way, a stopped move, a starting model.
+  if (/is its disk connected\?/.test(stderr)) {
+    return "The disk with your models folder is not connected. Connect it and try again, or use the default folder.";
+  }
+  if (/already being moved|being moved to another folder/.test(stderr)) return "The models are already being moved. Wait for that to finish.";
+  if (/the move was stopped/.test(stderr)) return "The move was stopped. Your models are back in the old folder.";
+  if (/a local model is starting/.test(stderr)) return "A local model is starting. Wait for it, stop it, then move the models.";
   const said = stderr.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop();
   if (said) return said.replace(/^models dir: /, "").replace(/^./, (c) => c.toUpperCase());
   return `The models were not moved (exit code ${code ?? "none"}).`;

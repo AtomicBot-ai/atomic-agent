@@ -13,9 +13,19 @@
  *                        write here is. Progress goes to the window as
  *                        `modelsFolder:progress` {entry, index, total}.
  *
+ *   modelsFolder:cancel  stops a move under way (SIGTERM: the agent puts every
+ *                        model back); {ok}.
+ *
  * The agent refuses while a local model runs or a background download goes;
  * a pull this window runs is refused here (`pulling`), since its partial
  * file sits in the folder being moved.
+ *
+ * ATO-2503: the move runs in the daemon's turn (backend-switch inDaemonTurn),
+ * as the llama.cpp update does, so no Start, launch start or supervisor
+ * restart begins while models are copied, and the agent's own marker
+ * refuses any that would. Progress carries bytes across disks. A move quiet
+ * for MOVE_QUIET_LIMIT_MS is stopped (SIGTERM, then SIGKILL), so a disk that
+ * stops answering cannot hold the config lock and the daemon's turn for ever.
  */
 
 import { spawn } from "node:child_process";
@@ -25,14 +35,20 @@ import { dialog, ipcMain, type BrowserWindow } from "electron";
 
 import { resolveBinary } from "./agent-client.js";
 import { atagRun, plainCliError, withConfigLock } from "./agent-cli.js";
+import { inDaemonTurn } from "./backend-switch.js";
 import {
   folderListingIsEmpty,
   leftoversFromStdout,
   movedToFromStdout,
+  MOVE_HUNG_WORDS,
+  MOVE_KILL_GRACE_MS,
+  MOVE_QUIET_LIMIT_MS,
   moveErrorWords,
   NOT_EMPTY_WORDS,
   parseModelsFolderInfo,
+  parseModelsMoveBytes,
   parseModelsMoveLine,
+  type ModelsMoveProgress,
 } from "./models-folder.js";
 import { agentEnv } from "./state-dir.js";
 
@@ -52,8 +68,11 @@ export interface ModelsFolderIpcDeps {
 
 const REMOTE = "This app is connected to an agent on another computer: its models folder is set there.";
 
+const CLOSED: ModelsFolderMoveAnswer = { ok: false, error: "The app is closing; the models were not moved." };
+
 export function wireModelsFolderIpc(deps: ModelsFolderIpcDeps): void {
   let moving = false;
+  let stopMove: (() => void) | null = null;
 
   ipcMain.handle("modelsFolder:info", async () => {
     if (deps.isRemote()) return { ok: false, error: REMOTE };
@@ -92,37 +111,94 @@ export function wireModelsFolderIpc(deps: ModelsFolderIpcDeps): void {
     if (!binary) return { ok: false, error: "The agent is not installed." };
     moving = true;
     try {
-      return await withConfigLock(() => runMove(binary, reset ? ["models", "dir", "--reset"] : ["models", "dir", path], deps));
+      const args = reset ? ["models", "dir", "--reset"] : ["models", "dir", path];
+      return await inDaemonTurn(
+        () => withConfigLock(() => runMove(binary, args, deps, (stop) => { stopMove = stop; })),
+        () => CLOSED,
+      );
     } finally {
       moving = false;
+      stopMove = null;
     }
+  });
+
+  ipcMain.handle("modelsFolder:cancel", async () => {
+    if (!stopMove) return { ok: false, error: "No move is under way." };
+    stopMove();
+    return { ok: true };
   });
 }
 
-function runMove(binary: string, args: string[], deps: ModelsFolderIpcDeps): Promise<ModelsFolderMoveAnswer> {
+/** What the window hears while a move runs: the model, and bytes across disks. */
+export type ModelsFolderProgress = ModelsMoveProgress & { done?: number; size?: number };
+
+interface RunMoveTimers {
+  quietMs?: number;
+  graceMs?: number;
+}
+
+/** Run `atag models dir ...` and answer how it went; `onStop` hands out the stop for Cancel. */
+function runMove(
+  binary: string,
+  args: string[],
+  deps: Pick<ModelsFolderIpcDeps, "window">,
+  onStop: (stop: () => void) => void = () => {},
+  timers: RunMoveTimers = {},
+): Promise<ModelsFolderMoveAnswer> {
+  const quietMs = timers.quietMs ?? MOVE_QUIET_LIMIT_MS;
+  const graceMs = timers.graceMs ?? MOVE_KILL_GRACE_MS;
   const child = spawn(binary, args, { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let stdout = "";
   let stderr = "";
   let partial = "";
+  let last: ModelsMoveProgress | null = null;
+  let hung = false;
+  let quiet: NodeJS.Timeout | null = null;
+  let kill: NodeJS.Timeout | null = null;
+  const send = (p: ModelsFolderProgress) => deps.window()?.webContents.send("modelsFolder:progress", p);
+  const stop = () => {
+    if (kill || child.exitCode !== null) return;
+    child.kill("SIGTERM");
+    kill = setTimeout(() => { if (child.exitCode === null) child.kill("SIGKILL"); }, graceMs);
+    kill.unref?.();
+  };
+  const heard = () => {
+    if (quiet) clearTimeout(quiet);
+    quiet = setTimeout(() => { hung = true; stop(); }, quietMs);
+    quiet.unref?.();
+  };
+  onStop(stop);
+  heard();
   child.stdout?.on("data", (chunk: Buffer) => {
+    heard();
     const text = chunk.toString("utf8");
     stdout += text;
     const lines = (partial + text).split(/\r?\n/);
     partial = lines.pop() ?? "";
     for (const line of lines) {
       const p = parseModelsMoveLine(line);
-      if (p) deps.window()?.webContents.send("modelsFolder:progress", p);
+      if (p) { last = p; send(p); continue; }
+      const b = parseModelsMoveBytes(line);
+      if (b && last) send({ ...last, entry: b.entry, done: b.done, size: b.size });
     }
   });
-  child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
+  child.stderr?.on("data", (chunk: Buffer) => { heard(); stderr += chunk.toString("utf8"); });
   return new Promise((resolve) => {
     let settled = false;
     const finish = (code: number | null, err?: Error) => {
       if (settled) return;
       settled = true;
+      if (quiet) clearTimeout(quiet);
+      if (kill) clearTimeout(kill);
       const dir = code === 0 && !err ? movedToFromStdout(stdout) : null;
       if (dir) { resolve({ ok: true, dir, leftovers: leftoversFromStdout(stdout) }); return; }
-      resolve({ ok: false, error: err ? err.message : moveErrorWords(plainCliError(stderr), code) });
+      if (hung) { resolve({ ok: false, error: MOVE_HUNG_WORDS }); return; }
+      // A Cancel the agent did not get to answer (SIGKILL, or Windows, where a kill is immediate).
+      if (kill && !/the move was stopped/.test(stderr)) {
+        resolve({ ok: false, error: "The move was stopped. Your models are still in the old folder; a partly copied model may be left in the new one." });
+        return;
+      }
+      resolve({ ok: false, error: err ? "Could not run the agent to move the models." : moveErrorWords(plainCliError(stderr), code) });
     };
     child.on("close", (code) => finish(code));
     child.on("error", (err) => finish(null, err));

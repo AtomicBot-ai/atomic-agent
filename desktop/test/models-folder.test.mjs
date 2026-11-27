@@ -43,7 +43,7 @@ test("every desktop model path follows the moved folder", () => {
 });
 
 test("what `atag models dir` prints is read back", () => {
-  assert.deepEqual(M.parseModelsFolderInfo('{"dir":"/x/models","defaultDir":"/d/models","custom":true}\n'), { dir: "/x/models", defaultDir: "/d/models", custom: true });
+  assert.deepEqual(M.parseModelsFolderInfo('{"dir":"/x/models","defaultDir":"/d/models","custom":true}\n'), { dir: "/x/models", defaultDir: "/d/models", custom: true, reachable: true });
   assert.equal(M.parseModelsFolderInfo("/x/models\n"), null);
   assert.deepEqual(M.parseModelsMoveLine("moving qwen-3.5-4b (2/5)"), { entry: "qwen-3.5-4b", index: 2, total: 5 });
   assert.equal(M.parseModelsMoveLine("moving x (6/5)"), null);
@@ -106,6 +106,62 @@ test("Change shows the dialog's 'folder must be empty' error and moves nothing",
     assert.equal(R.MDIR.error, M.NOT_EMPTY_WORDS);
     assert.equal(moved, false);
   } finally {
+    delete globalThis.BR;
+  }
+});
+
+// ATO-2503: bytes across disks, a hung move, an unplugged disk, Cancel.
+test("byte lines of a move across disks are read back", () => {
+  assert.deepEqual(M.parseModelsMoveBytes("copied 3100000000 of 12000000000 bytes (qwen-3.5-4b)"), { entry: "qwen-3.5-4b", done: 3100000000, size: 12000000000 });
+  assert.equal(M.parseModelsMoveBytes("copied 5 of 0 bytes (x)"), null);
+  assert.equal(M.parseModelsMoveBytes("copied 9 of 5 bytes (x)"), null);
+  assert.equal(M.parseModelsMoveBytes("moving x (1/1)"), null);
+  assert.ok(M.MOVE_QUIET_LIMIT_MS >= 60_000);
+  assert.ok(M.MOVE_KILL_GRACE_MS > 0);
+});
+
+test("an unplugged disk, a move under way and a stopped move read as what to do", () => {
+  assert.deepEqual(M.parseModelsFolderInfo('{"dir":"/Volumes/USB/m","defaultDir":"/d","custom":true,"reachable":false}'), { dir: "/Volumes/USB/m", defaultDir: "/d", custom: true, reachable: false });
+  assert.match(M.moveErrorWords("models dir: the models folder /Volumes/USB/m is not there (is its disk connected?); connect it and try again\n", 1), /not connected/);
+  assert.match(M.moveErrorWords("models dir: the models are already being moved; wait for that move to finish\n", 1), /already being moved/);
+  assert.match(M.moveErrorWords("models dir: the move was stopped; every model is back in the old folder\n", 1), /back in the old folder/);
+  assert.match(M.moveErrorWords("models dir: a local model is starting; wait for it\n", 1), /is starting/);
+});
+
+test("the progress line carries bytes across disks", () => {
+  assert.equal(R.mdirBytes(12_000_000_000), "12.0 GB");
+  assert.equal(R.mdirBytes(850_000_000), "850 MB");
+  assert.equal(R.mdirProgressLine({ entry: "qwen", index: 1, total: 2, done: 3_100_000_000, size: 12_000_000_000 }), "Moving qwen (1 of 2), 3.1 of 12.0 GB copied…");
+  assert.equal(R.mdirProgressLine({ entry: "qwen", index: 1, total: 2 }), "Moving qwen (1 of 2)…");
+  const html = R.mdirCardHTML({ info: { dir: "/x", custom: true }, phase: "moving", progress: { entry: "qwen", index: 1, total: 1, done: 50, size: 100 } }, h);
+  assert.match(html, /<progress[^>]*value="50"/);
+  assert.match(html, /data-mdir="cancel"/);
+});
+
+test("a folder whose disk is not connected says so and offers only the default folder", () => {
+  const html = R.mdirCardHTML({ info: { dir: "/Volumes/USB/m", custom: true, reachable: false }, phase: "idle" }, h);
+  assert.match(html, /not connected/);
+  assert.doesNotMatch(html, /data-mdir="change"/);
+  assert.match(html, /data-mdir="reset"/);
+  const ok = R.mdirCardHTML({ info: { dir: "/Volumes/USB/m", custom: true, reachable: true }, phase: "idle" }, h);
+  assert.doesNotMatch(ok, /not connected/);
+});
+
+test("Cancel asks main once and shows Stopping", async () => {
+  let asked = 0;
+  globalThis.BR = { modelsFolderInfo: async () => ({ ok: true }), modelsFolderCancel: async () => { asked += 1; return { ok: true }; } };
+  try {
+    R.MDIR.phase = "moving";
+    R.MDIR.cancelling = false;
+    await R.mdirCancel();
+    await R.mdirCancel();
+    assert.equal(asked, 1);
+    assert.equal(R.MDIR.cancelling, true);
+    R.MDIR.info = { dir: "/x", custom: false };
+    assert.match(R.mdirCardHTML(R.MDIR, h), /Stopping…/);
+  } finally {
+    R.MDIR.phase = "idle";
+    R.MDIR.cancelling = false;
     delete globalThis.BR;
   }
 });
