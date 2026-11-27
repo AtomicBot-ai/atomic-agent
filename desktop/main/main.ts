@@ -345,6 +345,7 @@ import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
 import { filePreviewSave } from "./file-save.js";
+import { PreviewOpenedFiles, previewSaveScope } from "./preview-save-scope.js";
 import { renderSlides, slidesRenderable } from "./slide-render.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 import { buildLocalGgufModelDef, resolveLocalGgufFile } from "./local-gguf.js";
@@ -3197,8 +3198,12 @@ function wireIpc(client: AgentClient): void {
      capped, nothing run. Open and Reveal go through the same check, and Open
      still never runs a file (openWithoutRunning). */
   const previewRoots = (): string[] => previewRootsFor(imageRoots(), client.isRemote ? null : client.status.workingDir);
+  const previewOpened = new PreviewOpenedFiles(); // ATO-2533: the files Save may write outside the working folder.
+  const previewWorkingDir = (): string | null => (client.isRemote ? null : client.status.workingDir) || null;
   ipcMain.handle("app:filePreview", async (_event, p: unknown) => {
     const r = await filePreview(p, previewRoots(), homedir(), process.platform);
+    const editable = r.ok && typeof r.text === "string" && r.editable !== false;
+    if (r.ok && editable && _event.sender === win?.webContents) await previewOpened.remember(r.path, previewWorkingDir());
     // ATO-2410: a deck says whether this machine can draw its slides; the window then asks app:filePreviewSlides.
     if (r.ok && r.kind === "office" && r.office && r.office.type === "pptx") r.office.renderable = slidesRenderable(process.platform);
     return r;
@@ -3220,11 +3225,15 @@ function wireIpc(client: AgentClient): void {
     if (action === "open") return openWithoutRunning(t.real);
     return { ok: false, reason: "unknown" };
   });
-  /* ATO-2347: Save from the panel's editor (file-save.ts): the same roots and
-     path check as the read, text files only, never a new file, and nothing
-     written when the file changed since the panel read it unless `force`. */
-  ipcMain.handle("app:filePreviewSave", (_event, p: unknown, text: unknown, stamp: unknown, force: unknown) =>
-    filePreviewSave(p, text, stamp, previewRoots(), homedir(), process.platform, { force: force === true }));
+  /* ATO-2347: Save from the panel's editor (file-save.ts): the same path
+     check as the read but narrower roots (ATO-2533), text files only, never
+     a new file, and nothing written when the file changed since the panel read it unless `force`. */
+  ipcMain.handle("app:filePreviewSave", (_event, p: unknown, text: unknown, stamp: unknown, force: unknown) => {
+    // ATO-2533: only the main window's page, and only the chat's working folder or a file the panel opened.
+    if (!win || _event.sender !== win.webContents) return { ok: false, reason: "outside" };
+    const scope = previewSaveScope(previewWorkingDir(), previewOpened, process.platform);
+    return filePreviewSave(p, text, stamp, scope.roots, homedir(), process.platform, { force: force === true, allows: scope.allows });
+  });
   ipcMain.handle("app:imageSaveAs", async (event, p: unknown) => {
     const opened = await openImage(p, imageRoots(), homedir(), process.platform);
     if (!opened.ok) return { ok: false, reason: opened.reason };
