@@ -25,10 +25,12 @@ import { readJsonBody, sendError, sendJson, type HttpHandler } from "./request-c
  * (those rows appear only after a real turn). `replyCap` is
  * `config.localModels.completionMaxTokens`, what the TUI panel is handed
  * as `reservedForReply`; `reservedForReply` is the part of it the prompt
- * budget really holds back on this window (`BuiltPrompt.replyReserve`,
- * `effectiveReplyReserve`: the figure `computeEffectiveConversationCap`
- * subtracts, also on `usage.replyReserve`) — a 96k cap on a
- * 32k window is not a 96k reservation. A panel drawing it still clamps it
+ * budget really holds back on this window, the same number as
+ * `usage.replyReserve`: on a local prompt `BuiltPrompt.replyReserve`
+ * (`effectiveReplyReserve`, the figure `computeEffectiveConversationCap`
+ * subtracts), on a cloud prompt `contextBudget.replyReserve` (the raw cap
+ * the cloud budget subtracts). On a local prompt a 96k cap on a 32k
+ * window is not a 96k reservation. A panel drawing it still clamps it
  * to what the prompt left of the window (the TUI's `replyReserveShown`,
  * the desktop's `ctxReplyReserve`), so it can show less than this.
  * 404 for an unknown session, 400 for a bad body.
@@ -65,14 +67,17 @@ export function createContextPreviewHandler(): HttpHandler {
       }
       throw err;
     }
+    const usage = contextUsageFromPrompt(prompt);
     sendJson(res, 200, {
       basis: "built",
-      usage: contextUsageFromPrompt(prompt),
+      usage,
       contextWindow: prompt.contextWindow,
-      // The budget's own figure (it also raises the reserve for a bounded
-      // think block); recomputed only for a prompt that does not carry it.
+      // The budget's own figure, read from the readout so the reply carries
+      // one reserve: the local budget's (raised for a bounded think block)
+      // or the cloud budget's raw cap. Recomputed only for a prompt that
+      // carries neither.
       reservedForReply:
-        prompt.replyReserve ??
+        usage.replyReserve ??
         effectiveReplyReserve(
           getConfig().localModels.completionMaxTokens,
           prompt.contextWindow,
