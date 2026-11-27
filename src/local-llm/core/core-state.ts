@@ -43,6 +43,12 @@ export interface CoreSession {
 export interface CoreSessionRecord extends CoreSession {
   coreVersion: string;
   instanceId: string;
+  /**
+   * Core unloaded this session, but its llama-server had not exited within
+   * the Windows release wait (ATO-1748). It is no longer a live session; the
+   * record stays so the next load on its port waits for it first.
+   */
+  awaitingExit?: boolean;
 }
 export function coreRoot(dataDir: string): string { return resolve(dataDir, "core"); }
 /**
@@ -126,7 +132,7 @@ function liveCoreOwner(dataDir: string, version: string): { instanceId: string }
 }
 export function readCoreSession(dataDir: string, role: "chat" | "embedding"): CoreSessionRecord | null {
   const record = readSessionRecord(dataDir, role);
-  if (!record) return null;
+  if (!record || record.awaitingExit) return null;
   if (liveCoreOwner(dataDir, record.coreVersion)?.instanceId !== record.instanceId) return null;
   return pidAlive(record.pid) ? record : null;
 }
