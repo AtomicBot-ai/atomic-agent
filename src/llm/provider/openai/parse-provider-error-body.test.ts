@@ -163,6 +163,17 @@ describe("readProviderErrorReason", () => {
     ).toEqual({ kind: "credit_exhausted", code: "insufficient_credits" });
   });
 
+  it("reads a new-api gateway's 403 insufficient_user_quota as exhausted credit (ATO-1673)", () => {
+    expect(
+      read(
+        403,
+        JSON.stringify({
+          error: { code: "insufficient_user_quota", message: "user quota is not enough", type: "new_api_error" },
+        }),
+      ),
+    ).toEqual({ kind: "credit_exhausted", code: "insufficient_user_quota" });
+  });
+
   it("treats a 402 that talks about credit as exhausted credit", () => {
     expect(
       read(

@@ -3217,3 +3217,64 @@ describe("reduceTuiState per-step spend for /why (ATO-34)", () => {
     expect(second.stepSpend).toEqual({});
   });
 });
+
+/* ATO-1673: a cloud provider that refused says which refusal on the first
+   line; its sentence goes under Details. An empty account or a rate
+   limit is not a bug to file. */
+describe("a cloud provider's refusal reads as the refusal it is", () => {
+  const onCloud = (): TuiState => {
+    const base = createInitialTuiState(fakeSession());
+    return {
+      ...base,
+      providersPanel: { ...base.providersPanel, rows: [providerRow({ isActiveText: true })] },
+    };
+  };
+  const failed = (state: TuiState, message: string, cause: Parameters<typeof failureVerdict>[0]): string =>
+    apply(state, [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new TransportError(message, 402, "https://openrouter.ai/api/v1/chat/completions"),
+          category: "transport",
+          failure: failureVerdict(cause),
+        },
+      },
+    ]).messages.find((m) => m.role === "system" && m.variant === "warn")?.text ?? "";
+
+  it("opens with the out-of-credit phrase, keeps the provider's sentence under Details, and offers no /report", () => {
+    const said = failed(onCloud(), '"openrouter" rejected the request (402). This request requires more credits.', "out_of_credit");
+    expect(said.split("\n").slice(0, 2)).toEqual([
+      "Turn failed: Your account with this provider is out of credit.",
+      'Details: "openrouter" rejected the request (402). This request requires more credits.',
+    ]);
+    expect(said).not.toContain("couldn't get a reply");
+    expect(said).not.toContain("/report");
+  });
+
+  it("names a rate limit and a refused key, the key keeping the /report line", () => {
+    expect(failed(onCloud(), '"gemini" is rate-limiting this key (429).', "rate_limited")).toMatch(
+      /^Turn failed: Too many requests right now\. Try again in a moment\.\nDetails: /,
+    );
+    const key = failed(onCloud(), '"openrouter" did not accept your API key.', "auth_rejected");
+    expect(key.startsWith("Turn failed: The provider did not accept your API key.\nDetails: ")).toBe(true);
+    expect(key).toContain("/report");
+  });
+
+  it("says a cloud model can't use tools, not that the provider lacks it", () => {
+    const said = failed(
+      onCloud(),
+      '"openrouter" says this model can\'t use tools (404), and the agent needs them to work. Pick a model that supports tool calling.',
+      "model_not_found",
+    );
+    const first = said.split("\n")[0] ?? "";
+    expect(first).not.toContain("doesn't have this model");
+    expect(first).toBe("Turn failed: This model can't use tools. Pick one that supports tool calling with /model.");
+  });
+
+  it("leaves a local route to its own hints", () => {
+    const said = failed(createInitialTuiState(fakeSession()), "llama-server returned http 404: not found", "model_not_found");
+    expect(said.startsWith("Turn failed: couldn't get a reply from the provider.")).toBe(true);
+  });
+});
