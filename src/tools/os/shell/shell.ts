@@ -16,6 +16,10 @@ import {
   wrapWithOsSandbox,
   type OsSandboxSettings,
 } from "../../../sandbox/os-sandbox.js";
+import {
+  ensureSandboxCacheRoot,
+  withSandboxCacheEnv,
+} from "../../../sandbox/sandbox-cache-env.js";
 import { quoteCmdArg } from "../../../sandbox/shell-invocation.js";
 import {
   requireApproval,
@@ -405,19 +409,17 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     let spawnCommand = spawnSpec.command;
     let spawnArgs = spawnSpec.args;
     let sandboxNotice: string | null = null;
+    let sandboxCacheRoot: string | null = null;
     if (sandbox.mode === "workspace") {
-      const wrapped = wrapWithOsSandbox(
-        spawnSpec.command,
-        spawnSpec.args,
-        // Roots from the session's working directory only: `cwd` is a
-        // model-supplied argument, so it may start the command anywhere
-        // but never widens what the sandbox allows.
-        buildOsSandboxPolicy({
-          workspaceRoots: [ctx.workingDir],
-          ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
-          network: sandbox.network,
-        }),
-      );
+      // Roots from the session's working directory only: `cwd` is a
+      // model-supplied argument, so it may start the command anywhere
+      // but never widens what the sandbox allows.
+      const policy = buildOsSandboxPolicy({
+        workspaceRoots: [ctx.workingDir],
+        ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+        network: sandbox.network,
+      });
+      const wrapped = wrapWithOsSandbox(spawnSpec.command, spawnSpec.args, policy);
       if (!wrapped.ok) {
         return compressToolResult({
           tool: "os.shell.run",
@@ -427,9 +429,18 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       }
       spawnCommand = wrapped.command;
       spawnArgs = wrapped.args;
+      // Package caches go to a private folder under temp, never the
+      // shared ones in the home folder (ATO-1651).
+      sandboxCacheRoot = ensureSandboxCacheRoot();
       sandboxNotice = sandbox.network
-        ? "Safe Mode sandbox: writes outside the working folder, temp and download caches, and reads of credential folders, are blocked. An `Operation not permitted` error comes from that, not from the command."
-        : "Safe Mode sandbox: writes outside the working folder, temp and download caches, reads of credential folders, internet and local-socket connections, DNS and opening URLs are blocked; loopback (127.0.0.1) stays open. An `Operation not permitted` or name-resolution error comes from that, not from the command.";
+        ? "Safe Mode sandbox: writes outside the working folder and temp, and reads of credential folders, are blocked. An `Operation not permitted` error comes from that, not from the command."
+        : "Safe Mode sandbox: writes outside the working folder and temp, reads of credential folders, internet and local-socket connections, DNS and opening URLs are blocked; loopback (127.0.0.1) stays open. An `Operation not permitted` or name-resolution error comes from that, not from the command.";
+      sandboxNotice +=
+        " Package caches (npm, npx, pip, Go, cargo, Maven, Gradle and similar) use a private sandbox cache under temp, not the shared ones in the home folder.";
+      if (policy.narrowedRoots !== undefined) {
+        sandboxNotice +=
+          " The working folder is the home folder or above it, so it is not writable inside the sandbox; only temp is. Start the session in a project folder to write files there.";
+      }
     }
     // Its own process group, so a stop reaches what the command
     // started too (`sleep 30 &` behind a subshell used to outlive the
@@ -438,11 +449,15 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // mid-session is filtered the same way. The toolchain additions
     // (non-interactive switches, PATH folders) are fixed values applied
     // after the filter, never read from the call.
+    const commandEnv = withToolchainEnv(
+      buildCommandEnv(process.env, options.envPassthrough ?? []),
+    );
     const job = startCommandJob(spawnCommand, spawnArgs, {
       cwd,
-      env: withToolchainEnv(
-        buildCommandEnv(process.env, options.envPassthrough ?? []),
-      ),
+      env:
+        sandboxCacheRoot === null
+          ? commandEnv
+          : withSandboxCacheEnv(commandEnv, sandboxCacheRoot),
       ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
       ...(spawnSpec.windowsVerbatimArguments
         ? { windowsVerbatimArguments: true }

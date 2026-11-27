@@ -121,6 +121,31 @@ describe.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-e
       }
     });
 
+    // ATO-1651: `npx -y server` still works inside the sandbox, but npm's
+    // cache (with `_npx`) is a private writable folder under temp, not
+    // the shared `~/.npm` that a later `npx` outside would run from.
+    it("points npm's cache at a private writable sandbox cache", async () => {
+      const CACHE_PROBE = `const fs = require("node:fs"), path = require("node:path");
+const dir = process.env.npm_config_cache ?? "";
+let wrote = "unset";
+if (dir) { try { fs.mkdirSync(path.join(dir, "_npx"), { recursive: true }); fs.writeFileSync(path.join(dir, "_npx", "probe"), "x"); wrote = "ok"; } catch (e) { wrote = e.code; } }
+console.error("cache-report " + JSON.stringify({ dir, wrote }));
+process.exit(1);`;
+      const client = new McpClient(
+        {
+          name: "sbx-cache",
+          enabled: true,
+          transport: { kind: "stdio", command: process.execPath, args: ["-e", CACHE_PROBE] },
+        } as McpServerConfig,
+        { oauthStateDir: state, sandbox: () => ({ mode: "workspace", network: false }) },
+      );
+      const message = await connectError(client);
+      expect(message).toContain("cache-report");
+      expect(message).toContain("atomic-agent-sandbox-cache");
+      expect(message).not.toContain(join(homedir(), ".npm"));
+      expect(message).toContain('"wrote":"ok"');
+    });
+
     // Review round 2: an argument naming a file in the state dir must not
     // reopen the state dir around it.
     it("a file argument in the state dir does not reopen the state dir", async () => {
