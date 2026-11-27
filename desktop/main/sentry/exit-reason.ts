@@ -203,8 +203,10 @@ export function freeMemoryBucket(freeBytes: number | null | undefined): "lt_512m
 }
 
 /** Windows NTSTATUS codes an exit code may carry, as a word (0xC000009A is 3221225626). Null for any other code. */
-export function windowsExitStatus(code: number | null | undefined): "insufficient_resources" | "no_memory" | "stack_overflow" | "killed_from_outside" | "access_violation" | null {
+export function windowsExitStatus(code: number | null | undefined): "insufficient_resources" | "no_memory" | "stack_overflow" | "killed_from_outside" | "access_violation" | "ctrl_c_exit" | null {
   switch (code) {
+    // ATO-2416: STATUS_CONTROL_C_EXIT, a console close, Ctrl+C or a logoff: ended from outside, not a crash.
+    case 0xc000013a: return "ctrl_c_exit";
     case 0xc000009a: return "insufficient_resources";
     case 0xc0000017: return "no_memory";
     case 0xc00000fd: return "stack_overflow";

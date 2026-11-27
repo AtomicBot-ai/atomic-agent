@@ -228,6 +228,15 @@ no agent is running).
   lt_50 / lt_75 / lt_90 / gte_90, and `agent_mem_verdict` (ok / warn /
   exit). A growing agent shows a high `agent_heap`; a small machine shows a
   modest `agent_rss` with a high `agent_mem_share`.
+  ATO-2416: `stopped_by` is os (the system was shutting down or logging
+  off) / outside_signal / parent_gone / memory_guard / boot_failed / self
+  (no word of why: a crash or a kill); `agent_close` is the word serve's own
+  closing line said (sigterm / sigint / sighup / parent_exited /
+  parent_exited_busy / memory_guard / serve_failed,
+  `main/sentry/agent-exit-context.ts`), and `turns_in_flight` is 0 / 1 /
+  gt_1. `exit_status` also reads ctrl_c_exit (Windows 0xC000013A: a console
+  close, Ctrl+C or a logoff ended it). `app_quitting` is read at the exit
+  itself.
 - Scrubbing: the message is dropped (no message type is allowlisted); the
   type is kept only when it matches `SomethingError` / `SomethingException`
   or is one of the shell's own names, else `Error`; a renderer value that is

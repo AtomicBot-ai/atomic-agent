@@ -334,6 +334,7 @@ import * as A from "./analytics/index.js";
 import { AgentMemoryTracker } from "./agent-memory-sample.js";
 import { appMemoryBytes } from "./app-memory.js";
 import { lastErrorCategory, lastErrorSentence, reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
+import { nextCloseWord, type AgentCloseWord } from "./sentry/agent-exit-context.js";
 // ATO-229: app updates, only ever on a click (main/updater.ts).
 import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
 import { MOVE_PROMPT, offerMove, shouldOfferMove } from "./move-to-applications.js";
@@ -1149,6 +1150,8 @@ function createWindow(): BrowserWindow {
     }).catch(() => undefined);
   });
   wireWindowErrorReporting(window, () => recovered);
+  // ATO-2416: Windows logging off or shutting down; an agent exit after it is the system's doing.
+  window.on("session-end", () => { osEnding = true; });
 
   // Renderer faults must never be silent: they surface in the app log
   // and, under --smoke, on stdout where CI can see them.
@@ -1340,6 +1343,9 @@ const LAST_WORDS_MS = 30_000;
 let agentSaidSinceStart = 0;
 /** ATO-1285: every line the current agent wrote, INFO included, so a report can tell a silent death from one whose words were filtered. */
 let agentLinesSinceStart = 0;
+/** ATO-2416: why the current agent said it was closing (serve's own INFO line), and whether the OS is ending the session. */
+let agentClosedBy: AgentCloseWord | null = null;
+let osEnding = false;
 /** ATO-1285: the current agent's last error in plain words, for the card shown once the automatic restarts ran out. */
 function agentExitCause(): string | null {
   const n = Math.min(agentSaidSinceStart, AGENT_SAID.length);
@@ -4113,11 +4119,13 @@ function wireIpc(client: AgentClient): void {
     const exitedAt = Date.now();
     // ATO-424: the machine's free memory at the exit itself, not 300 ms later.
     const exitFreeMem = freemem();
+    // ATO-2416: read at the exit itself, as the free memory is: a quit begun in the next 300 ms is not this exit's cause.
+    const exitQuitting = quitting;
     setTimeout(() => {
       const n = Math.min(agentSaidSinceStart, AGENT_SAID.length);
       const lines = n > 0 ? AGENT_SAID.slice(-n) : [];
       const at = n > 0 ? AGENT_SAID_AT.slice(-n) : [];
-      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS), { freeMemBytes: exitFreeMem, quitting, agentMemory: agentMemory.latest(), linesSinceStart: agentLinesSinceStart });
+      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS), { freeMemBytes: exitFreeMem, quitting: exitQuitting, agentMemory: agentMemory.latest(), linesSinceStart: agentLinesSinceStart, closedBy: agentClosedBy, osEnding });
     }, 300).unref?.();
   });
   let agentStateWas: string | undefined;
@@ -4126,6 +4134,7 @@ function wireIpc(client: AgentClient): void {
     if (status?.state === "starting" && agentStateWas !== "starting") {
       agentSaidSinceStart = 0;
       agentLinesSinceStart = 0;
+      agentClosedBy = null;
       // ATO-1111: the last memory sample is the agent's that wrote it, not the next one's.
       agentMemory.reset();
     }
@@ -4141,6 +4150,7 @@ function wireIpc(client: AgentClient): void {
   client.on("log", (event: { stream?: string; line?: string; level?: AgentLogLevel }) => {
     const line = String(event.line ?? "");
     agentLinesSinceStart += 1;
+    agentClosedBy = nextCloseWord(agentClosedBy, line);
     agentMemory.observe(line);
     /* ATO-121: agent.log tagged every stderr line ERR, and serve's routine
        INFO lines filled this ring. A structured line is tagged with its own
@@ -11308,7 +11318,7 @@ function watchCoreUpdates(): void {
 
 void app.whenReady().then(async () => {
   // ATO-1030: macOS and Linux say so before the OS shuts down (Windows: the window's `session-end`).
-  powerMonitor.on("shutdown", () => A.noteSessionTrouble("os_shutdown"));
+  powerMonitor.on("shutdown", () => { osEnding = true; A.noteSessionTrouble("os_shutdown"); });
   /* ATO-370: a mac app run from the DMG or Downloads cannot update itself.
      Ask before anything starts: Move relaunches the app from /Applications,
      so nothing of this launch should be running by then. Not now asks again

@@ -17,6 +17,7 @@ import { app, type BrowserWindow } from "electron";
 import { noteSessionTrouble, windowCrashed } from "../analytics/index.js";
 import { reportError } from "./client.js";
 import type { AgentMemorySample } from "../agent-memory-sample.js";
+import { stoppedBy, turnsBucket, type AgentCloseWord } from "./agent-exit-context.js";
 import { agentExitStatus, agentRssBucket, freeMemoryBucket, lastErrorCategory, lastErrorFacts, linesBucket, shareBucket, uptimeBucket } from "./exit-reason.js";
 
 /** Main process and app-wide events. Call once, early. */
@@ -103,13 +104,15 @@ export function reportRendererError(payload: unknown): void {
  * sentinel means the agent closed itself on `--parent-pid`, not a crash.
  */
 export function reportAgentExit(
-  detail: { exitCode?: number | null; signal?: string | null; phase?: string; uptimeMs?: number | null; sentinelAlive?: boolean | null },
+  detail: { exitCode?: number | null; signal?: string | null; phase?: string; uptimeMs?: number | null; sentinelAlive?: boolean | null; turnsInFlight?: number | null },
   lastLines: readonly string[] = [],
   /** ATO-424: the machine at the exit — free memory in bytes, and whether the app was already quitting. */
   /* ATO-1111: and the agent's own last memory sample (agent-memory-sample.ts), sent as buckets:
      a growing agent (big rss, heap near its ceiling) reads apart from a small machine. */
-  machine: { freeMemBytes?: number | null; quitting?: boolean; agentMemory?: AgentMemorySample | null; linesSinceStart?: number | null } = {},
+  /* ATO-2416: and why serve said it was closing (agent-exit-context.ts), whether the OS was ending the session. */
+  machine: { freeMemBytes?: number | null; quitting?: boolean; agentMemory?: AgentMemorySample | null; linesSinceStart?: number | null; closedBy?: AgentCloseWord | null; osEnding?: boolean } = {},
 ): void {
+  const turns = turnsBucket(detail.turnsInFlight);
   // ATO-1285: what the last lines say, as code / class / file words only (exit-reason.ts lastErrorFacts).
   const facts = lastErrorFacts(lastLines);
   const lines = linesBucket(machine.linesSinceStart);
@@ -145,6 +148,10 @@ export function reportAgentExit(
       ...(lines ? { agent_lines: lines } : {}),
       uptime: uptimeBucket(detail.uptimeMs) ?? undefined,
       ...(sentinel ? { sentinel_alive: sentinel } : {}),
+      // ATO-2416: who ended it, the word serve closed with, and whether a turn was streaming.
+      stopped_by: stoppedBy(machine.closedBy ?? null, machine.osEnding === true),
+      ...(machine.closedBy ? { agent_close: machine.closedBy } : {}),
+      ...(turns ? { turns_in_flight: turns } : {}),
     },
   });
 }

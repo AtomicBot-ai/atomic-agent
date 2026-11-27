@@ -1106,6 +1106,8 @@ export class AgentClient extends EventEmitter {
       phase: this.status.state === "starting" ? "starting" : "running",
       uptimeMs: at === undefined ? null : Date.now() - at,
       sentinelAlive,
+      // ATO-2416: whether a turn was streaming from it (a count, the error report's bucket).
+      turnsInFlight: this.turns.size,
     });
     this.setStatus({
       state: "error",
