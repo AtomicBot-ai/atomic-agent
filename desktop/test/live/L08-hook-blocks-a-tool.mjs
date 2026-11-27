@@ -55,11 +55,35 @@ async function until(fn, what, ms = 30000) {
   }
 }
 
+/* ATO-1755. Settings rebuilds its whole window with innerHTML on every
+   render, and the Plugins pane renders again when a write answers and again
+   when the list read after it lands (plugins-pane.js plgWrite, pluginsRefresh).
+   plugins.json is on disk BEFORE that answer comes back (the CLI writes it,
+   then exits, then the IPC answers), so "saved" is not "done redrawing": the
+   "saving…" question still lies over the window and the rows are about to
+   move. Done pressed in that gap closed nothing, and the next question was
+   typed into nothing. The gap grows when the machine is busy, which is why
+   only the full run hit it. The pane is done when nothing it shows is still working: the
+   Refresh button is not disabled (no list read running), no row shows a
+   spinner (no write running), no question is open. */
+const PANE_SETTLED = `!!document.querySelector('[data-act="plugins:refresh"]')`
+  + ` && !document.querySelector('[data-act="plugins:refresh"][disabled]')`
+  + ` && !document.querySelector('.set-plgrow .tk-spin')`
+  + ` && !document.querySelector('#settings .set-overlay')`;
+const paneSettled = (app, what) => app.waitFor(PANE_SETTLED, `Settings › Plugins done redrawing ${what}`, { timeout: 30000 });
+
 async function openPluginsPane(app) {
-  await app.clickSel('.sb-settings');
-  await app.clickSel('button.setrow[data-act="settings:plugins"]');
+  await app.clickSelSteady('.sb-settings');
+  await app.clickSelSteady('button.setrow[data-act="settings:plugins"]');
   await app.waitFor(`[...document.querySelectorAll('.set-plgrow')].some((r) => r.textContent.includes(${JSON.stringify(NAME)}))`,
     'the plugin listed in Settings › Plugins', { timeout: 30000 });
+  await paneSettled(app, 'after opening');
+}
+
+/* Done, once it holds still, and Settings really gone before anything is typed. */
+async function closeSettings(app) {
+  await app.clickSelSteady('[data-act="settings:close"]');
+  await app.waitFor(`!document.querySelector('#settings')`, 'Settings closed', { timeout: 10000 });
 }
 
 /** One write the scripted model asks for, up to the point the app answers. */
@@ -92,11 +116,12 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
 
   // ---- consent, by clicking --------------------------------------------------
   await openPluginsPane(app);
-  await app.clickSel(`[data-act="plugins:expand:${NAME}"]`);
-  await app.clickSel(`[data-act="plugins:code:${NAME}"]`);
-  await app.clickSel('[data-act="plugins:codeConfirm"]');
+  await app.clickSelSteady(`[data-act="plugins:expand:${NAME}"]`);
+  await app.clickSelSteady(`[data-act="plugins:code:${NAME}"]`);
+  await app.clickSelSteady('[data-act="plugins:codeConfirm"]');
   await until(() => pluginRecord(stateDir).runsCodeAccepted === true, 'the consent saved in plugins.json');
-  await app.clickSel('[data-act="settings:close"]');
+  await paneSettled(app, 'after the consent');
+  await closeSettings(app);
 
   // ---- the deny ---------------------------------------------------------------
   const denied = await askForWrite(app, model, 'forbidden-after-consent.txt');
@@ -127,11 +152,12 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
   const preRuns = pre().length;
   await openPluginsPane(app);
   if (!(await app.eval(`!!document.querySelector('[data-act="plugins:part:${NAME}:hook:PreToolUse"]')`))) {
-    await app.clickSel(`[data-act="plugins:expand:${NAME}"]`);
+    await app.clickSelSteady(`[data-act="plugins:expand:${NAME}"]`);
   }
-  await app.clickSel(`[data-act="plugins:part:${NAME}:hook:PreToolUse"]`);
+  await app.clickSelSteady(`[data-act="plugins:part:${NAME}:hook:PreToolUse"]`);
   await until(() => (pluginRecord(stateDir).disabledParts ?? []).includes('hook:PreToolUse'), 'the part saved as off in plugins.json');
-  await app.clickSel('[data-act="settings:close"]');
+  await paneSettled(app, 'after switching the part off');
+  await closeSettings(app);
 
   const off = await askForWrite(app, model, 'forbidden-while-off.txt');
   check(off.turn.pending, 'with the guard off the write reaches the normal approval card');
