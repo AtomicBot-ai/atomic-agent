@@ -27,11 +27,12 @@
  *
  * `hasHostName` is looser: any `LABEL.TLD` name with the same `TLDS` and
  * the same boundaries, path or not (`attacker.com`), a bare IPv4 address
- * (`1.2.3.4`, not after `version`, `build` or `v`), an IPv4 address with a
- * CIDR-looking suffix, and the short forms `127.1` and `10.1.2` with a port
- * or a path that starts with a non-digit (`127.1/x`, `10.1.2:80`). Too loose
- * to be a target on its own, so the caller uses it only next to other
- * signals (download plus run, send plus private data).
+ * (`1.2.3.4`, not after `version`, `build` or `v`), an IPv4 address followed
+ * by `/` and anything (`1.2.3.4/`, `1.2.3.4/8`, `1.2.3.4//x`), and the
+ * short forms `127.1` and `10.1.2` with a port or a path that starts with
+ * a non-digit (`127.1/x`, `10.1.2:80`). Too loose to be a target on its
+ * own, so the caller uses it only next to other signals (download plus run,
+ * send plus private data).
  *
  * Why `1.2.3.4/8` is a host there (ATO-2479 review): nothing in the text
  * tells a range from a path. `http://1.2.3.4/8` is a fine place to serve a
@@ -87,8 +88,12 @@ const IP_WITH_PATH_RE = new RegExp(`${START}${IPV4}(?!${CIDR_SUFFIX})(?::\\d{1,5
 const IP_WITH_PORT_RE = new RegExp(`${START}${IPV4}:\\d{1,5}(?![\\w.])`, "i");
 const PUNYCODE_RE = new RegExp(`${START}(?=(?:[a-z0-9-]*\\.)*xn--)(?:${LABEL}\\.)+${LABEL}${END}`, "i");
 const BARE_IP_RE = new RegExp(`${START}${NOT_VERSION}${IPV4}(?![\\w\\/-]|\\.[\\w-]|:\\d)`, "i");
-/* For hasHostName only: `1.2.3.4/8` may be a path as well as a range. */
-const IP_CIDR_RE = new RegExp(`${START}${NOT_VERSION}${IPV4}${CIDR_SUFFIX}`, "i");
+/*
+ * For hasHostName only: an IPv4 address followed by `/` and anything at all
+ * (nothing, a path, a CIDR length). `1.2.3.4/8` may be a path as well as a
+ * range, and `1.2.3.4/` is the server root.
+ */
+const IP_SLASH_RE = new RegExp(`${START}${NOT_VERSION}${IPV4}(?::\\d{1,5})?\\/`, "i");
 /*
  * For hasHostName only: the 2- and 3-part short forms (`127.1` is
  * 127.0.0.1) with a port, or with a path that starts with a non-digit, so a
@@ -121,7 +126,7 @@ export function hasHostName(text: string): boolean {
     hasBareHost(text)
     || HOST_NAME_RE.test(text)
     || BARE_IP_RE.test(text)
-    || IP_CIDR_RE.test(text)
+    || IP_SLASH_RE.test(text)
     || SHORT_IP_RE.test(text)
   );
 }
