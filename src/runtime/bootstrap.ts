@@ -69,7 +69,7 @@ import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import type { BrowserExtractModelRef } from "../tools/browser/extract-request.js";
-import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
+import { createShellJobHostControls, DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
 import { FileCheckpointStore, fileCheckpointsRoot } from "../tools/os/fs/fs-checkpoint-store.js";
 import { ToolOutputSpill } from "../tools/index.js";
 import { registerSessionTools } from "../tools/sessions/index.js";
@@ -1063,6 +1063,8 @@ export async function createAgentRuntime(
       steer: (parentSessionId: string, taskId: string, text: string) =>
         fusionLiveWorkers.steer(parentSessionId, taskId, text),
     },
+    // ATO-2485: the person's view of the kept shell jobs (route-shell-jobs.ts).
+    shellJobs: createShellJobHostControls(shellJobs),
     fusionRuns: {
       listResumable: (sessionId?: string) =>
         fusionRuns.listResumable(sessionId).map((run) => ({
