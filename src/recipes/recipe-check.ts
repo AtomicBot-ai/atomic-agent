@@ -5,6 +5,7 @@ import {
   type SkillScanFinding,
   type SkillScanVerdict,
 } from "../skills/hub/skill-security-scanner.js";
+import { hasBareHost } from "./bare-host.js";
 import { findHiddenCharacters } from "./hidden-characters.js";
 import { recipePlaceholders, renderRecipePrompt, type Recipe } from "./recipe-format.js";
 import { recipeTexts } from "./recipe-link.js";
@@ -95,6 +96,29 @@ const EXECUTE_RE = /\b(?:execut(?:e|es|ed|ing|able)|install(?:s|ed|ing)?(?!\.\w)
 const SEND_RE = /\b(?:send(?:s|ing)?|sent|post(?:s|ed|ing)?|upload(?:s|ed|ing)?|e-?mail(?:s|ed|ing)?|paste(?:s|d)?|pasting)\b/i;
 const PRIVATE_DATA_RE = /\b(?:files?|folders?|contents?|keys?|passwords?|tokens?|secrets?|credentials?)\b|(?:^|[\s"'(])\.env\b|~\//i;
 const PIPE_TO_SHELL_RE = /\|\s*(?:sudo\s+)?(?:sh|bash|zsh|powershell|pwsh|iex)\b/i;
+/*
+ * ATO-1649: more ways to say the same thing. A URL without `https://` counts
+ * as a target (bare-host.ts), and so do installer words and package files.
+ * "download and run" is both signals in one phrase; `bash a.sh` and
+ * `./a.sh` are run words. Pipes also catch `| sudo -E bash`, `| /bin/sh`,
+ * `| dash`, a download piped into python, node, perl, ruby or php (as the
+ * shell guard's `curl_pipe_sh`), and process substitution:
+ * `bash <(curl …)`, `sh -c "$(curl …)"`, `source <(wget …)`, `eval "$(curl …)"`
+ * (the shell guard's `curl_process_substitution`).
+ */
+const SCRIPT_EXTRA_RE = /\b(?:setup\s+(?:file|program|wizard|script|package)|install(?:ation)?\s+(?:file|package|program))\b|\.(?:deb|rpm|apk|ipa|msix|appx|vbs|scr|command|xpi|crx)\b/i;
+const EXECUTE_EXTRA_RE = /\b(?:run|start|launch) the setup\b|\b(?:open|start|launch|double[- ]click) (?:the )?(?:installer|setup(?: file| program)?|package)\b|\bdouble[- ]click (?:it|them|this|that)\b|\b(?:ba|z|k|da)?sh\s+(?:-\S+\s+){0,2}[^\s|;&]*\.(?:sh|bash|zsh)\b|\bsource\s+[^\s|;&]+\.(?:sh|bash|zsh)\b|(?:^|[\s;&("'`])\.\/[\w.-]+\.(?:sh|bash|zsh|run|bin|appimage|command)\b/i;
+const DOWNLOAD_AND_RUN_RE = /\b(?:download|grab)(?:\s*,\s*|\s+(?:and|&|then|and then)\s+)(?:run|execute|launch|install)\b/i;
+const PIPE_TO_SHELL_EXTRA_RE = /\|\s*(?:sudo\s+(?:-\S+\s+){1,4})?(?:(?:\/usr)?\/bin\/)?(?:sh|bash|zsh|ksh|dash|powershell|pwsh)\b/i;
+const FETCH_PIPE_INTERPRETER_RE = /\b(?:curl|wget)\b[^|]{0,300}\|\s*(?:sudo\s+(?:-\S+\s+){0,4})?(?:python[0-9.]*|node|perl|ruby|php)(?![\w.-])(?!\s+-m\b)/i;
+const FETCH_SUBSTITUTION_RE = /(?:\b(?:ba|z|k|da)?sh|\bsource|\beval|(?:^|\s)\.)\s+(?:-\S+\s+){0,3}["']?(?:<\s*)?(?:<\(|\$\(|`)\s*(?:curl|wget)\b/i;
+/*
+ * Installing a package by name runs code someone else published (a typo
+ * name is enough). Caution, not dangerous: plenty of honest tasks do it.
+ * A bare `npm install` (the project's own dependencies) and
+ * `pip install -r requirements.txt` stay ok.
+ */
+const PACKAGE_INSTALL_RE = /\b(?:(?:pip[0-9.]*|pipx|uv\s+pip|conda|mamba|npm|gem|cargo|brew|apt(?:-get)?|dnf|yum|winget|choco|scoop|go)\s+install|npm\s+i|(?:yarn|pnpm|bun|poetry|uv)\s+(?:global\s+)?add|pacman\s+-S|npx|uvx|bunx|pnpm\s+dlx|pipx\s+run)\s+(?:-(?![re]\b)\S+\s+){0,3}(?!-[re]\b)(?!(?:and|then|to|in|for|with|from|the|it|on|all|deps|dependencies)\b)[\w@~+.:\/-]/i;
 
 function lineOf(text: string, index: number): number {
   let n = 1;
@@ -102,11 +126,11 @@ function lineOf(text: string, index: number): number {
   return n;
 }
 
-function findingAt(rule: string, file: string, text: string, index: number): RecipeFinding {
+function findingAt(rule: string, file: string, text: string, index: number, severity: RecipeFinding["severity"] = "dangerous"): RecipeFinding {
   const line = lineOf(text, index);
   const trimmed = (text.split("\n")[line - 1] ?? "").trim();
   return {
-    severity: "dangerous",
+    severity,
     rule,
     file,
     line,
@@ -118,15 +142,25 @@ function scanPlainLanguage(file: string, text: string): RecipeFinding[] {
   const out: RecipeFinding[] = [];
   // Matching is done on the raw text with \s, which already spans newlines,
   // so line numbers stay true to what the person sees.
-  const pipe = PIPE_TO_SHELL_RE.exec(text);
+  const pipe = PIPE_TO_SHELL_RE.exec(text)
+    ?? PIPE_TO_SHELL_EXTRA_RE.exec(text)
+    ?? FETCH_PIPE_INTERPRETER_RE.exec(text)
+    ?? FETCH_SUBSTITUTION_RE.exec(text);
   if (pipe) out.push(findingAt("pipe-to-shell", file, text, pipe.index));
-  const target = URL_RE.test(text) || SCRIPT_RE.test(text);
+  const bareHost = hasBareHost(text);
+  const target = URL_RE.test(text) || SCRIPT_RE.test(text) || SCRIPT_EXTRA_RE.test(text) || bareHost;
   const download = DOWNLOAD_RE.exec(text);
-  if (download && target && EXECUTE_RE.test(text)) out.push(findingAt("download-and-run", file, text, download.index));
+  const downloadAndRun = DOWNLOAD_AND_RUN_RE.exec(text);
+  if (downloadAndRun) out.push(findingAt("download-and-run", file, text, downloadAndRun.index));
+  else if (download && target && (EXECUTE_RE.test(text) || EXECUTE_EXTRA_RE.test(text))) {
+    out.push(findingAt("download-and-run", file, text, download.index));
+  }
   const send = SEND_RE.exec(text);
-  if (send && PRIVATE_DATA_RE.test(text) && (URL_RE.test(text) || EMAIL_RE.test(text))) {
+  if (send && PRIVATE_DATA_RE.test(text) && (URL_RE.test(text) || EMAIL_RE.test(text) || bareHost)) {
     out.push(findingAt("send-out-data", file, text, send.index));
   }
+  const pkg = PACKAGE_INSTALL_RE.exec(text);
+  if (pkg) out.push(findingAt("package-install", file, text, pkg.index, "caution"));
   return out;
 }
 
@@ -138,6 +172,7 @@ const RULE_SENTENCES: Array<[readonly string[], string]> = [
   [["recursive-delete", "disk-wipe", "fork-bomb", "chmod-root", "history-wipe"], "Asks the agent to delete files, wipe a disk or damage the system."],
   [["prompt-injection", "prompt-override", "hide-from-user", "approval-bypass"], "Tries to change the agent's rules, skip approvals or hide steps from you."],
   [["network-fetch", "netcat"], "Asks the agent to fetch from or connect to the internet."],
+  [["package-install"], "Asks the agent to install a package or tool by name."],
 ];
 
 /** Check one recipe. Pure: no I/O, never throws on a parsed recipe. */
