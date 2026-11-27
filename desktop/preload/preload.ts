@@ -372,7 +372,9 @@ contextBridge.exposeInMainWorld("atomic", {
   incognitoClose: (id: string) => ipcRenderer.invoke("incognito:close", { id }),
   /** ATO-2332: the chat Trash: list (purges past 30 days), put, restore, delete forever, empty (main/chat-trash-ipc.ts). */
   chatTrashList: () => ipcRenderer.invoke("chatTrash:list"),
-  chatTrashPut: (id: string, title: string) => ipcRenderer.invoke("chatTrash:put", { id, title }),
+  // ATO-2747: `place` is where the chat sat (pinned, archived, its chat folder), for Restore.
+  chatTrashPut: (id: string, title: string, place?: { pinned?: boolean; archived?: boolean; folder?: string }) =>
+    ipcRenderer.invoke("chatTrash:put", { ...(place || {}), id, title }),
   chatTrashRestore: (id: string) => ipcRenderer.invoke("chatTrash:restore", { id }),
   chatTrashForget: (id: string) => ipcRenderer.invoke("chatTrash:forget", { id }),
   chatTrashEmpty: () => ipcRenderer.invoke("chatTrash:empty"),
