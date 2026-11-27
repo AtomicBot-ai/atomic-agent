@@ -200,6 +200,8 @@ contextBridge.exposeInMainWorld("atomic", {
   /** `opts.trigger` (onboarding | settings | selector) only labels the download for analytics. */
   modelsPull: (id: string, opts?: { trigger?: string; mmproj?: boolean }) =>
     opts === undefined ? ipcRenderer.invoke("cli:modelsPull", id) : ipcRenderer.invoke("cli:modelsPull", id, opts),
+  /** ATO-1745: the engine card's "Download model again": a damaged file is deleted first, then the usual pull. */
+  modelsRedownload: (id: string) => ipcRenderer.invoke("cli:modelsRedownload", id),
   cancelPull: () => ipcRenderer.invoke("cli:cancelPull"),
   onPull: (cb: (payload: unknown) => void) => on("cli:pull", cb),
   /** ATO-1503: pause keeps the partial file, resume continues from it (renderer/dl-pause.js). */

@@ -16,7 +16,7 @@ const consts = new Map(ast.statements.filter(ts.isVariableStatement)
 // Values made inside the vm context have its own prototypes, which deepStrictEqual tells apart.
 const eq = (actual, expected) => assert.deepEqual(JSON.parse(JSON.stringify(actual)), expected);
 const NAMES = ['diagScrub', 'diagHealthRows', 'diagEngineRow', 'diagModelRow', 'diagProviderRow', 'diagHealthHTML',
-  'diagCheckProvider', 'diagNoteProviderError', 'diagProviderOk'];
+  'diagCheckProvider', 'diagNoteProviderError', 'diagProviderOk', 'engfModelFix'];
 
 function fixture(over = {}) {
   const verified = [], unverifiedSet = [];
@@ -79,6 +79,25 @@ test('the engine that did not install is red with Download again, unless it cann
   r = fixture({DWATCH: {kind: 'gave_up'}}).rows();
   assert.equal(r.engine.tone, 'bad'); assert.equal(r.engine.fix.act, 'diag:startModel');
   assert.equal(fixture({DWATCH: {kind: 'restarting'}}).rows().engine.tone, 'wait');
+});
+
+test('ATO-1745: a damaged or missing model file offers Download model again, never Start model', () => {
+  const down = {LLMP: {status: {daemonRunning: false, health: 'down'}, daemonPhase: null}, SET: {health: {llamaReachable: false}}};
+  for (const reason of ['model_file_corrupt', 'model_file_missing']) {
+    const r = fixture({...down, ENGF: {f: {why: 'The model file is damaged. Download the model again.', at: 1, retryable: false, reason}}}).rows();
+    assert.equal(r.engine.tone, 'bad');
+    eq(r.engine.fix, {act: 'engf:redownload', label: 'Download model again'});
+    assert.equal(r.model.tone, 'bad');
+    eq(r.model.fix, {act: 'engf:redownload', label: 'Download model again'});
+  }
+  // Any other failure keeps its own way out: a model too big for the machine has none, the model row keeps Start model.
+  const load = fixture({...down, ENGF: {f: {why: 'Try a smaller model', at: 1, retryable: false, reason: 'load'}}}).rows();
+  assert.equal(load.engine.fix, null);
+  eq(load.model.fix, {act: 'diag:startModel', label: 'Start model'});
+  // A model too new for the engine is a good file: no re-download, the model row keeps Start model.
+  const newer = fixture({...down, ENGF: {f: {why: 'This model needs a newer engine.', at: 1, retryable: false, reason: 'model_unsupported'}}}).rows();
+  assert.equal(newer.engine.fix, null);
+  eq(newer.model.fix, {act: 'diag:startModel', label: 'Start model'});
 });
 
 test('a stopped model is red with Start model; an external server sends to Models', () => {
