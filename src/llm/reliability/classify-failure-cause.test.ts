@@ -273,6 +273,27 @@ const SAMPLES: ReadonlyArray<
     "tool_crashed",
     "retry",
   ],
+  // ATO-1686: the unknown-tool streak, bare and under the loop's wrapper.
+  [
+    "a model that kept calling tools that do not exist",
+    new ToolExecutionError("os.grep", "tool not registered in this agent: os.grep", {
+      kind: "unregistered",
+      nameClass: "near_miss",
+    }),
+    "unknown_tools_repeated",
+    "switch-model",
+  ],
+  [
+    "the same streak wrapped by the step",
+    new Error("step failed", {
+      cause: new ToolExecutionError("function_name", "tool not registered in this agent: function_name", {
+        kind: "unregistered",
+        nameClass: "other",
+      }),
+    }),
+    "unknown_tools_repeated",
+    "switch-model",
+  ],
   ["a user abort", new CancelledError(), "cancelled", "none"],
   ["something that is not even an Error", "not even an error", "tool_crashed", "retry"],
 ];

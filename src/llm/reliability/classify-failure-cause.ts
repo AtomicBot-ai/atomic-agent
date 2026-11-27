@@ -161,6 +161,11 @@ function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
   if (category === "transport") {
     return waitCauseToId(classifyProviderWaitCause(err));
   }
+  // ATO-1686: the model kept calling tools that do not exist until the
+  // step's streak limit stopped the turn. Not a tool that broke.
+  if (chain.some((l) => l instanceof ToolExecutionError && l.kind === "unregistered")) {
+    return "unknown_tools_repeated";
+  }
   if (chain.some((l) => l instanceof ToolExecutionError)) return "tool_crashed";
   if (category === "grammar") return "unreadable_reply";
   if (category === "model") return "unfinished_reply";
