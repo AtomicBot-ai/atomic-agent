@@ -149,3 +149,26 @@ export function decideCpuMoeLayers(input: CpuMoeDecisionInput): CpuMoeDecision {
       `(GPU short by ~${gib(shortBytes)} GiB, ~${gib(shape.expertBytesPerLayer)} GiB of experts per layer, estimated)`,
   };
 }
+
+/**
+ * The one retry a failed launch gets when `"auto"` chose the experts'
+ * layers (review M1): the estimate can be short, and llama.cpp's own fit
+ * does not adjust a launch that already overrides tensor placement. The
+ * retry runs without the flag (`cpuMoe: "off"`), which is the launch the
+ * model had before ATO-2380. `null`: no retry (no flag, a pinned count,
+ * `"off"`, or the caller cancelled).
+ */
+export function cpuMoeRetryOptions<T extends { cpuMoe?: CpuMoePreference; signal?: AbortSignal }>(
+  opts: T,
+  layers: number,
+  err: unknown,
+): (T & { cpuMoe: "off" }) | null {
+  if (layers <= 0) return null;
+  if ((opts.cpuMoe ?? "auto") !== "auto") return null;
+  if (opts.signal?.aborted) return null;
+  if (err instanceof Error && err.name === "AbortError") return null;
+  return { ...opts, cpuMoe: "off" };
+}
+
+export const CPU_MOE_RETRY_NOTE =
+  "[atomic-agent] launch: cpu-moe: the load with experts on the CPU failed; retrying once without --n-cpu-moe\n";
