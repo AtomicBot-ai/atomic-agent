@@ -4,6 +4,9 @@
  *   approvalNotify:describe  the main window's page drew (or kept) an
  *                            approval card: its words, its chat, whether
  *                            that chat is on screen
+ *   approvalNotify:pending   the page: the ids of the cards still open, on
+ *                            every change and every few seconds; a shown
+ *                            notification whose card went closes
  *   approvalNotify:open      main → page: a notification was clicked, take
  *                            the chat to open (sent once the page is up)
  *   approvalNotify:take      the page: the chat to open, once (asked at load
@@ -80,6 +83,9 @@ export function wireApprovalNotify(client: AgentClient, w: ApprovalNotifyWiring)
   const isMain = (sender: WebContents) => live()?.webContents === sender;
   ipcMain.on("approvalNotify:describe", (event, raw: unknown) => {
     if (isMain(event.sender)) void notifier.fromPage(raw);
+  });
+  ipcMain.on("approvalNotify:pending", (event, raw: unknown) => {
+    if (isMain(event.sender)) notifier.stillOpen(raw);
   });
   ipcMain.handle("approvalNotify:take", (event) => {
     if (!isMain(event.sender)) return null;

@@ -149,6 +149,7 @@ contextBridge.exposeInMainWorld("atomic", {
      notification (main/approval-notify-ipc.ts); a click on it opens that chat here. */
   approvalNotify: (payload: unknown) => ipcRenderer.send("approvalNotify:describe", payload),
   approvalNotifyTake: () => ipcRenderer.invoke("approvalNotify:take"),
+  approvalNotifyPending: (ids: string[]) => ipcRenderer.send("approvalNotify:pending", ids),
   onApprovalNotifyOpen: (cb: (payload: unknown) => void) => on("approvalNotify:open", cb),
   approve: (approvalId: string, decision: "allow-once" | "allow-in-chat" | "allow-always" | "deny", reason?: string) =>
     ipcRenderer.invoke("agent:approve", { approvalId, decision, reason }),

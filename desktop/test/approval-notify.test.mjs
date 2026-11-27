@@ -181,3 +181,50 @@ test("wiring: script tag after renderer.js, preload bridges, main channels and h
   const page = src("../renderer/approval-notify.js");
   for (const s of ["B.approvalNotify(", "B.approvalNotifyTake()", "onApprovalNotifyOpen("]) assert.ok(page.includes(s), s);
 });
+
+test("a card gone from the page's list (answered elsewhere, turn over) closes its notification", async () => {
+  const { n, state } = harness();
+  await n.fromPage(card());
+  await n.fromPage(card({ approvalId: "ap_2" }));
+  assert.deepEqual(n.stillOpen(["ap_1", "ap_2"]), []);
+  // One list without it is not enough: a page that just loaded lists nothing until the replay.
+  assert.deepEqual(n.stillOpen(["ap_2"]), []);
+  assert.deepEqual(state.closed, []);
+  assert.deepEqual(n.stillOpen(["ap_2"]), ["ap_1"]);
+  assert.deepEqual(state.closed, ["ap_1"]);
+  // Back in the list in between resets the count.
+  n.stillOpen([]);
+  n.stillOpen(["ap_2"]);
+  assert.deepEqual(n.stillOpen([]), []);
+  assert.deepEqual(n.stillOpen([]), ["ap_2"]);
+  // Gone means over: a late replay of it does not ring again.
+  assert.equal(await n.fromPage(card()), false);
+  assert.deepEqual(n.stillOpen("junk"), []);
+});
+
+test("a notification raised with no page closes only after the page described its card", async () => {
+  const { n, state } = harness({ page: false });
+  await n.fromAgent({ approvalId: "ap_x", sessionId: "s1", category: "shell", preview: "ls" });
+  // The reopened page has not drawn it yet: its lists do not close it.
+  state.page = true;
+  n.stillOpen([]);
+  n.stillOpen([]);
+  assert.deepEqual(state.closed, []);
+  await n.fromPage(card({ approvalId: "ap_x" }));
+  n.stillOpen([]);
+  assert.deepEqual(n.stillOpen([]), ["ap_x"]);
+});
+
+test("page: the open card ids it lists for main", () => {
+  const rows = [
+    { k: "approval", approvalId: "b" }, { k: "approval", approvalId: "a" },
+    { k: "approval", approvalId: "c", state: "approved" }, { k: "approval", approvalId: "d", stored: true }, { k: "tool" },
+  ];
+  const isOpen = (m) => !m.state;
+  assert.deepEqual(R.apnOpenIds([rows, [{ k: "approval", approvalId: "a" }]], isOpen), ["a", "b"]);
+  assert.deepEqual(R.apnOpenIds([], isOpen), []);
+  const page = src("../renderer/approval-notify.js");
+  assert.ok(page.includes("B.approvalNotifyPending(ids)"));
+  assert.ok(src("../preload/preload.ts").includes('ipcRenderer.send("approvalNotify:pending", ids)'));
+  assert.ok(src("../main/approval-notify-ipc.ts").includes('ipcMain.on("approvalNotify:pending"'));
+});

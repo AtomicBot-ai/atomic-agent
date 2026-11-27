@@ -16,7 +16,9 @@
  * One notification per request id, however many times the stream replays
  * it, and none for a request that arrived while the window was focused on
  * its chat. Same switch as the turn-end note: `tui.notify.enabled`. A
- * request answered from the window or the pet closes its notification.
+ * request answered from the window or the pet closes its notification; one
+ * whose card went away (answered elsewhere, its turn over) closes once the
+ * page's list of open cards stops naming it (stillOpen).
  */
 
 import { cleanNotificationText } from "./turn-notify.js";
@@ -170,12 +172,17 @@ export class ApprovalNotifier {
   /** Requests answered here, so a late notification is not raised. */
   private readonly answeredIds = new Set<string>();
   private readonly shown = new Map<string, () => void>();
+  /** Requests the page described: only those can be found gone from its list. */
+  private readonly described = new Set<string>();
+  /** How many page lists in a row a shown request was missing from. */
+  private readonly missing = new Map<string, number>();
 
   constructor(private readonly deps: ApprovalNotifierDeps) {}
 
   /** The page drew (or kept) a card. True when a notification went up. */
   async fromPage(raw: unknown): Promise<boolean> {
     const d = readApprovalDescription(raw);
+    if (d) remember(this.described, d.approvalId);
     if (!d || this.seen.has(d.approvalId) || this.answeredIds.has(d.approvalId)) return false;
     remember(this.seen, d.approvalId);
     // Someone looking at that very chat sees the card come up.
@@ -210,6 +217,33 @@ export class ApprovalNotifier {
   /** The notification was clicked or dismissed: nothing left to close. */
   forget(approvalId: string): void {
     this.shown.delete(approvalId);
+    this.missing.delete(approvalId);
+  }
+
+  /**
+   * The page's list of the cards still open (approvalNotify:pending, sent
+   * on every change and every few seconds). The events stream has no
+   * "resolved" frame, so a request answered in the TUI, Telegram or the
+   * phone, or dropped with its turn (stopped, timed out), is known only by
+   * its card going away. A shown request the page described and now lists
+   * no more, in two lists in a row (a page that just loaded lists nothing
+   * until the replay), is taken as over: its notification closes. Returns
+   * the ids closed.
+   */
+  stillOpen(raw: unknown): string[] {
+    if (!Array.isArray(raw)) return [];
+    const open = new Set(raw.filter((x): x is string => typeof x === "string"));
+    const closed: string[] = [];
+    for (const id of [...this.shown.keys()]) {
+      if (!this.described.has(id)) continue;
+      if (open.has(id)) { this.missing.delete(id); continue; }
+      const n = (this.missing.get(id) ?? 0) + 1;
+      if (n < 2) { this.missing.set(id, n); continue; }
+      this.missing.delete(id);
+      this.answered(id);
+      closed.push(id);
+    }
+    return closed;
   }
 
   private async raise(note: ApprovalNote, target: ApprovalTarget, nowSeen: () => boolean): Promise<boolean> {

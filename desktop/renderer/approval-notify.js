@@ -12,7 +12,12 @@
    A click on the notification brings the window up and says so
    (approvalNotify:open); this file then takes the chat (approvalNotify:take)
    and opens it the way "Open in big window" does (mchoOpen): openSession
-   draws the chat's kept card.
+   draws the chat's kept card. A card that went meanwhile (answered in the
+   TUI or on the phone, its turn over) leaves just the chat to open.
+
+   The events stream says nothing when a request ends elsewhere, so this
+   file also lists the cards still open (approvalNotify:pending, on a change
+   and every 5 s); main closes the notification of one no longer listed.
 
    Reads renderer.js's globals (BR, S, APPROVAL_CARDS, chatApprovalCards,
    approvalOpen, approvalOnScreen, apprAsk, chatById, openSession, act) only
@@ -79,6 +84,32 @@ function apnOnApproval(payload) {
   }));
 }
 
+/** The ids of every open card in `lists` (each an array of rows), sorted, once each. */
+function apnOpenIds(lists, isOpen) {
+  const ids = new Set();
+  for (const list of lists || []) {
+    for (const m of list || []) {
+      if (m && m.k === 'approval' && !m.stored && typeof m.approvalId === 'string' && (!isOpen || isOpen(m))) ids.add(m.approvalId);
+    }
+  }
+  return [...ids].sort();
+}
+
+let APN_LAST = null;
+/** Tells main which cards are still open (a notification whose card went closes): on a change, and every few seconds. */
+function apnSyncPending(force) {
+  const B = typeof window !== 'undefined' ? window.atomic : null;
+  if (!B || typeof B.approvalNotifyPending !== 'function' || typeof S === 'undefined') return;
+  const lists = [S.log];
+  if (typeof LIVE_TURNS !== 'undefined') for (const rec of LIVE_TURNS.values()) if (rec && Array.isArray(rec.log)) lists.push(rec.log);
+  if (typeof APPROVAL_CARDS !== 'undefined') lists.push([...APPROVAL_CARDS.values()]);
+  const ids = apnOpenIds(lists, typeof approvalOpen === 'function' ? approvalOpen : null);
+  const key = ids.join(',');
+  if (!force && key === APN_LAST) return;
+  APN_LAST = key;
+  B.approvalNotifyPending(ids);
+}
+
 /** approvalNotify:take's answer → the chat id to open, or null. */
 function apnTarget(res) {
   const id = res && typeof res.sessionId === 'string' ? res.sessionId.trim() : '';
@@ -113,7 +144,13 @@ function apnTakeAndOpen() {
 }
 
 if (typeof window !== 'undefined' && window.atomic && typeof window.atomic.onApproval === 'function') {
-  window.atomic.onApproval(apnOnApproval);
+  window.atomic.onApproval((p) => { apnOnApproval(p); apnSyncPending(false); });
+  // A turn that ends, stops or is answered elsewhere takes its card with it.
+  let apnSoon = null;   // one look per burst of frames, not one per streamed token
+  if (typeof window.atomic.onChat === 'function') window.atomic.onChat(() => {
+    if (!apnSoon) apnSoon = setTimeout(() => { apnSoon = null; apnSyncPending(false); }, 250);
+  });
+  setInterval(() => apnSyncPending(true), 5000);
   if (typeof window.atomic.onApprovalNotifyOpen === 'function') window.atomic.onApprovalNotifyOpen(() => { apnTakeAndOpen(); });
   // A window opened again by the click: the chat is taken once the page is up.
   if (document.readyState === 'complete') apnTakeAndOpen();
@@ -121,5 +158,5 @@ if (typeof window !== 'undefined' && window.atomic && typeof window.atomic.onApp
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {apnPlain, apnFindCard, apnDescribe, apnTarget};
+  module.exports = {apnPlain, apnFindCard, apnDescribe, apnTarget, apnOpenIds};
 }
