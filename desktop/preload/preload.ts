@@ -210,6 +210,8 @@ contextBridge.exposeInMainWorld("atomic", {
   subscriptionStatus: (cli: "claude" | "codex") => ipcRenderer.invoke("cli:subscriptionStatus", cli),
   // ATO-845: open the system terminal with `claude` / `codex login` running. {ok, terminal?, reason?}
   subscriptionLogin: (cli: "claude" | "codex") => ipcRenderer.invoke("cli:subscriptionLogin", cli),
+  // ATO-1684: ask the CLI itself whether it is signed in. {ok, check: {cli, state, via, fix, apiKeyLogin?, checkedAt}}
+  subscriptionLiveCheck: (cli: "claude" | "codex", force?: boolean) => ipcRenderer.invoke("cli:subscriptionLiveCheck", { cli, force: force === true }),
   removeProvider: (id: string) => ipcRenderer.invoke("cli:removeProvider", id),
   modelsStart: () => ipcRenderer.invoke("cli:modelsStart"),
   traceUsage: (stateDir: string, sessionId: string) =>
