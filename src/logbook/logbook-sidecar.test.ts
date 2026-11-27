@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { ProviderCapabilities } from "../llm/provider/llm-provider.js";
 import type { LogbookCaptureOutcome } from "./logbook-capture.js";
 import type { LogbookVisionProvider, PickLocalVisionResult } from "./logbook-local-vision.js";
 import { DEFAULT_LOGBOOK_SETTINGS, type LogbookSettings } from "./logbook-settings.js";
@@ -10,7 +11,7 @@ import type { LogbookEntry } from "./logbook-store.js";
 const LOCAL: LogbookVisionProvider = {
   id: "local-llama",
   name: "llama-server",
-  capabilities: { vision: true, visionSource: "mmproj" },
+  capabilities: { vision: true, visionSource: "mmproj" } as ProviderCapabilities,
   describeImage: async () => ({ text: "x", durationMs: 1 }),
 };
 
@@ -110,7 +111,7 @@ describe("logbook sidecar", () => {
     await s.sidecar.tick(T0, signal());
     await s.sidecar.tick(T0 + 60_000, signal());
     expect(s.prune).toHaveBeenCalledTimes(1);
-    expect(s.prune.mock.calls[0]![1]).toBe(7);
+    expect((s.prune.mock.calls[0] as unknown[])[1]).toBe(7);
     await s.sidecar.tick(T0 + PRUNE_EVERY_MS, signal());
     expect(s.prune).toHaveBeenCalledTimes(2);
   });

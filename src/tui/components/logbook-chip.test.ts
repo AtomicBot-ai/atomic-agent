@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_LOGBOOK_SETTINGS } from "../../logbook/logbook-settings.js";
-import { logbookChipLabel, logbookChipState } from "./logbook-chip.js";
+import { logbookChipLabel, logbookChipState, readLogbookChipState } from "./logbook-chip.js";
 
 const OFF = { ...DEFAULT_LOGBOOK_SETTINGS, excludeApps: [] };
 
@@ -16,5 +16,13 @@ describe("logbook chip", () => {
     expect(logbookChipState(paused, 5_000)).toBe("paused");
     expect(logbookChipLabel("paused")).toBe("◌ logbook paused");
     expect(logbookChipState(paused, 10_000)).toBe("on");
+  });
+
+  it("reads off, never throws, when the config has no paths", () => {
+    // The chip renders in the top bar on every frame: a throw here blanked the whole TUI.
+    const noPaths = (): string => {
+      throw new Error("config has no paths");
+    };
+    expect(readLogbookChipState(undefined, noPaths)).toBe("off");
   });
 });

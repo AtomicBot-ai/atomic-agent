@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { ProviderCapabilities } from "../llm/provider/llm-provider.js";
 import type { LlmProviderConfigEntry } from "../llm/provider/registry/provider-types.js";
 import {
   entryRunsOnThisMachine,
@@ -13,7 +14,7 @@ function provider(id: string, vision: boolean): LogbookVisionProvider {
   return {
     id,
     name: id,
-    capabilities: { vision, visionSource: vision ? "mmproj" : "absent" },
+    capabilities: { vision, visionSource: vision ? "mmproj" : "absent" } as ProviderCapabilities,
     describeImage: async () => ({ text: "x", durationMs: 1 }),
   };
 }
