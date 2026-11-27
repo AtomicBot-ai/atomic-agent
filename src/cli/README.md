@@ -74,7 +74,7 @@ Before saving, the carried history is fitted into a local model's window (ATO-11
 
 ## Model share
 
-`models share [--rotate] [--off] [--port <p>] [--json]` (ATO-2336, [models-share-command.ts](models-share-command.ts)) turns `localModels.managed.share` on, makes the share key on first use and prints the base URL (`http://127.0.0.1:<port>/raw/v1`, plus each LAN address) and the key to paste into another OpenAI-compatible app. `--rotate` replaces the key, `--off` turns sharing off and keeps the key. The routes and their rules: the "Shared local model" section of the [HTTP guide](../http/README.md).
+`models share [--local | --network] [--rotate] [--off] [--port <p>] [--json]` (ATO-2336, [models-share-command.ts](models-share-command.ts)) turns `localModels.managed.share` on, makes the share key on first use and prints the base URL (`http://127.0.0.1:<port>/raw/v1`, plus each LAN address) and the key to paste into another OpenAI-compatible app. `--network` (ATO-2483) lets a running serve open the model routes alone on `0.0.0.0`, `--local` keeps them on this computer; without either the saved choice stays. `--rotate` replaces the key, `--off` turns sharing off, forgets `--network` and keeps the key. The routes and their rules: the "Shared local model" section of the [HTTP guide](../http/README.md).
 
 ## Model fit-test
 

@@ -16,6 +16,7 @@ import {
   parseArgs,
 } from "./serve-args.js";
 import { modelShareNotice } from "./serve-model-share-notice.js";
+import { createServeModelShare, type ServeModelShare } from "./serve-model-share.js";
 import { resolveServeApiKey, serveApiKeyNotice } from "./serve-api-key.js";
 import {
   MEMORY_GUARD_EXIT_CODE,
@@ -134,6 +135,7 @@ export async function serveCommand(args: string[]): Promise<number> {
   let orphanWatch: OrphanWatch | null = null;
   let memoryGuard: ServeMemoryGuard | null = null;
   let tunnel: WebhookTunnel | null = null;
+  let modelShare: ServeModelShare | null = null;
   try {
     runtime = await createAgentRuntime({
       workingDir: parsed.workingDir,
@@ -182,6 +184,8 @@ export async function serveCommand(args: string[]): Promise<number> {
     const namedTokens = createHttpTokenSource(stateDir);
     // ATO-2308: phones paired by `atag pair` sign in with a cookie as members.
     const deviceSessions = createDeviceSessions(stateDir);
+    // ATO-2483: the shared model's own listener, with the main listener's raw handlers.
+    modelShare = createServeModelShare(runtime);
     handle = await createHttpServer({
       runtime,
       host: parsed.host,
@@ -192,6 +196,8 @@ export async function serveCommand(args: string[]): Promise<number> {
         // ATO-693: off unless --a2a; parseArgs already refused it without a key.
         a2a: parsed.a2a ? { publicUrl: a2aPublicUrl() } : null,
         devices: deviceSessions,
+        rawModelHandlers: modelShare.rawModel,
+        modelShare: modelShare.listener,
       }),
       approvalBus,
       completionRegistry,
@@ -218,6 +224,7 @@ export async function serveCommand(args: string[]): Promise<number> {
       process.stderr.write(`[atomic-agent] serve reachable at ${url}\n`);
     }
     process.stderr.write(modelShareNotice(isModelShareEnabled(), isLoopbackListenHost(parsed.host)));
+    await modelShare.attach({ host: handle.host, port: handle.port });
     if (parsed.tunnel && tunnelCheck) {
       tunnel = await startWebhookTunnel({
         runtime,
@@ -298,6 +305,7 @@ export async function serveCommand(args: string[]): Promise<number> {
     elicitations.closeAll();
     // The public address goes first, before the API it fronts.
     if (tunnel) await tunnel.stop().catch(() => {});
+    if (modelShare) await modelShare.stop().catch(() => {});
     if (handle) await handle.close();
     if (runtime) await runtime.shutdown(crashedShutdown ? { crashed: true } : undefined);
     // Released last, and only once the port and the databases are

@@ -41,6 +41,18 @@ import { remoteMediaProblem } from "./raw-model-body-guard.js";
 
 export const RAW_MODEL_PREFIX = "/raw/v1";
 
+/**
+ * ATO-2483: the body cap of the raw route. Every other route keeps
+ * `MAX_JSON_BODY_BYTES` (1 MiB); a chat with a photo or two inline as
+ * base64 `data:` URLs (the only way remote-media guarding lets media in)
+ * is several MiB, so 1 MiB answered 413. 32 MiB holds a handful of phone
+ * photos; OpenAI's own image inputs stop at 20 MB per image. The body is
+ * read only after the share key was checked (`admit`), and one raw request
+ * runs at a time, so an unauthenticated caller cannot make serve hold more
+ * than nothing, and an authenticated one at most this much.
+ */
+export const RAW_MODEL_MAX_BODY_BYTES = 32 * 1024 * 1024;
+
 export interface RawModelUpstream {
   /** Base URL of the model server, e.g. `http://127.0.0.1:19091`. */
   baseUrl: string;
@@ -117,7 +129,7 @@ export function createRawModelHandlers(deps: RawModelShareDeps = defaultRawModel
       return;
     }
     try {
-      const body = method === "POST" ? await readRawBody(req) : undefined;
+      const body = method === "POST" ? await readRawBody(req, RAW_MODEL_MAX_BODY_BYTES) : undefined;
       const mediaProblem = remoteMediaProblem(body);
       if (mediaProblem) {
         sendError(res, 400, openaiError(mediaProblem, "invalid_request_error", null, "remote_media_refused"));
