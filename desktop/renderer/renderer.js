@@ -8695,7 +8695,7 @@ document.addEventListener('click', (e) => {
     if (!text || !BR || typeof BR.terminalOpenWithCommand !== 'function') { fail(); return; }
     // ATO-1424 answers {ok:true, cwd, usedHome} or {ok:false, error, message}.
     Promise.resolve().then(() => BR.terminalOpenWithCommand({ command: text, cwd: workingDir() || null }))
-      .then((r) => { if (!r || r.ok !== true) fail(r && r.message); }, () => fail());
+      .then((r) => { if (!r || r.ok !== true) fail(r && r.message); else if (typeof r.hint === 'string') toast('Terminal opened', r.hint); }, () => fail());
     return;
   }
   // ATO-1251: a table's Copy (TSV, pastes into a spreadsheet) and Markdown, read off the drawn cells.
@@ -23873,10 +23873,10 @@ function codeBlockFrame(pre) {
     + lit + (prev ? chatArtifactCodeSlot(pre) : '') + '</div>';
 }
 /** ATO-1426: whether a code block in `lang` gets "Open in Terminal". The
-    platforms are one list, macOS only until ATO-1422 says otherwise; an older
+    platforms are one list (ATO-1430: Windows and Linux too); an older
     preload without the bridge shows no button. */
 function codeBlockTerminalOk(lang) {
-  const platforms = ['darwin'];
+  const platforms = ['darwin', 'win32', 'linux'];
   return platforms.includes(PLATFORM) && /^(?:bash|sh|zsh|shell|console)$/i.test(lang)
     && !!(BR && typeof BR.terminalOpenWithCommand === 'function');
 }
