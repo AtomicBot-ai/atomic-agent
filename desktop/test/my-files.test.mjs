@@ -156,7 +156,7 @@ test("capabilities: `fileIndex: true` turns the screen on, anything else keeps i
   assert.equal(F.hasFileIndex(null), false);
 });
 
-test("preload exposes the five calls on the routes main handles", () => {
+test("preload exposes the six calls on the routes main handles", () => {
   const preload = readFileSync(new URL("../preload/preload.ts", import.meta.url), "utf8");
   const ipc = readFileSync(new URL("../main/my-files-ipc.ts", import.meta.url), "utf8");
   for (const [name, channel] of [
@@ -165,9 +165,45 @@ test("preload exposes the five calls on the routes main handles", () => {
     ["filesRemoveFolder", "files:removeFolder"],
     ["filesListFolders", "files:listFolders"],
     ["filesStatus", "files:status"],
+    ["filesRetry", "files:retry"],
   ]) {
     assert.match(preload, new RegExp(`${name}: .*"${channel}"`), name);
     assert.ok(ipc.includes(`ipcMain.handle("${channel}"`), channel);
   }
   assert.doesNotMatch(ipc, /readFile|readdir|statSync/, "main reads no files itself");
+});
+
+// ATO-2501: scans, photos and audio.
+test("status carries the scanned pages read and the skip reasons, and an older agent reads as none", () => {
+  const r = F.interpretStatus(200, JSON.stringify({ running: false, found: 3, indexed: 1, failed: 0, skipped: 2, updatedAt: "x",
+    ocrPages: 12, skippedReasons: [{ reason: "disabled", count: 1 }, { reason: "", count: 4 }, { reason: "no text in the file", count: 0 }, "junk",
+      { reason: "scan: OCR not available (no vision model is configured)", count: 1 }] }));
+  assert.equal(r.status.ocrPages, 12);
+  assert.deepEqual(r.status.skippedReasons, [
+    { reason: "disabled", count: 1 },
+    { reason: "scan: OCR not available (no vision model is configured)", count: 1 },
+  ]);
+  const old = F.parseStatus({ running: false, found: 1, indexed: 1, failed: 0, skipped: 0 });
+  assert.equal(old.ocrPages, 0);
+  assert.deepEqual(old.skippedReasons, []);
+  const many = Array.from({ length: 12 }, (_, i) => ({ reason: `r${i}`, count: 1 }));
+  assert.equal(F.parseSkippedReasons(many).length, 8);
+});
+
+test("retry posts to /api/files/retry and reads `requeued`", async () => {
+  const f = fakeFetch(200, { requeued: 3 });
+  const r = await F.retrySkipped(env(f));
+  assert.deepEqual(r, { ok: true, requeued: 3 });
+  assert.equal(f.calls[0].init.method, "POST");
+  assert.match(f.calls[0].url, /\/api\/files\/retry$/);
+  assert.equal((await F.retrySkipped(env(fakeFetch(200, { requeued: "3" })))).ok, false, "not a number is a bad reply");
+  const old = await F.retrySkipped(env(fakeFetch(404, { error: { message: "No route for POST /api/files/retry" } })));
+  assert.equal(old.reason, "unsupported");
+});
+
+test("retry is refused on a remote agent and sends nothing", async () => {
+  const f = fakeFetch(200, { requeued: 1 });
+  const r = await F.retrySkipped(env(f, true));
+  assert.equal(r.reason, "remote");
+  assert.equal(f.calls.length, 0);
 });

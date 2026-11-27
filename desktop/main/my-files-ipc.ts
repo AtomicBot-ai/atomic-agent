@@ -9,6 +9,8 @@
  *   files:listFolders   `GET /api/files/folders`. Checks `/api/capabilities`
  *                       first: an agent without `fileIndex` is `unsupported`.
  *   files:status        `GET /api/files/status`, the progress the screen polls.
+ *   files:retry         `POST /api/files/retry` (ATO-2501): read the skipped scans,
+ *                       photos and audio again; refused on a remote agent.
  *
  * Main reads no files itself: the agent walks and indexes the folders
  * (main/my-files.ts has the parsing, test/my-files.test.mjs tests it).
@@ -24,6 +26,7 @@ import {
   listFolders,
   pickRefusal,
   removeFolder,
+  retrySkipped,
   type MyFilesTarget,
 } from "./my-files.js";
 
@@ -71,4 +74,5 @@ export function wireMyFilesIpc(deps: MyFilesIpcDeps): void {
   });
 
   ipcMain.handle("files:status", () => indexStatus(env));
+  ipcMain.handle("files:retry", () => retrySkipped(env));
 }
