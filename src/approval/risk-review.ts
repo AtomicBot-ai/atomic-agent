@@ -1,6 +1,6 @@
 import { newUntrustedNonce, wrapUntrusted } from "../tools/untrusted-text.js";
 import type { ApprovalRequest } from "./approval-gate.js";
-import { outboundDestinations } from "./egress-scan.js";
+import { cleanEgressLabel, outboundDestinations } from "./egress-scan.js";
 import {
   formatApprovalCategory,
   isGrantableCategory,
@@ -258,7 +258,7 @@ export function riskReviewActionText(request: ApprovalRequest): string | null {
       ? stripShellComments(preview)
       : preview;
   const egressLabels = [
-    ...new Set(outboundDestinations(request.egress).map((d) => `${d.label} (${d.kind})`)),
+    ...new Set(outboundDestinations(request.egress).map((d) => `${cleanEgressLabel(d.label)} (${d.kind})`)),
   ];
   const lines = [
     `description: ${request.reason}`,

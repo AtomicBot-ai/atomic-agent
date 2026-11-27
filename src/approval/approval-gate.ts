@@ -50,7 +50,7 @@ import {
 } from "./untrusted-taint.js";
 import type { UserQuestion, UserQuestionAnswer } from "./user-question.js";
 import { EgressSessionHosts, unknownOutbound } from "./egress-hold.js";
-import type { EgressDestination } from "./egress-scan.js";
+import { withUnreadableScript, type EgressDestination } from "./egress-scan.js";
 
 export interface ApprovalRequest {
   approvalId: string;
@@ -669,9 +669,20 @@ export class ApprovalGate {
     }
     // Data going to a host nobody approved is put to a person: the level
     // (bypass included), a grant, an allow rule and the reviewer stand
-    // down, as for an ask rule (ATO-2116, egress-hold.ts).
-    const egressHeld =
-      this.unapprovedEgress(request.sessionId, request.egress).length > 0;
+    // down, as for an ask rule (ATO-2116, egress-hold.ts). A script fed
+    // to a shell cannot be read, so it counts as data to an unknown host.
+    if (request.commandUnreadable === true) {
+      request.egress = withUnreadableScript(request.egress, true);
+    }
+    const unapproved = this.unapprovedEgress(request.sessionId, request.egress);
+    const egressHeld = unapproved.length > 0;
+    // The card names the hosts that caused the hold first and never
+    // folds them into "+N more" (`formatEgressLine`).
+    if (egressHeld && request.egress !== undefined) {
+      request.egress = request.egress.map((d) =>
+        unapproved.includes(d) ? { ...d, unapproved: true as const } : d,
+      );
+    }
     const auto =
       rule?.decision === "ask" || this.taintHeld.has(approvalId) || egressHeld
         ? null

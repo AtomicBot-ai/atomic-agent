@@ -280,7 +280,8 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     const commandUnreadable = shellRunsUnreadableScript(cmd, execArgs, useShell);
     // Where the command sends data (ATO-2116): shown on the card, and a
     // host nobody approved keeps a fan-out scope from settling the call.
-    const egress = shellEgress(commandSegments, cwd);
+    // A script fed to a shell counts as data to an unknown host.
+    const egress = shellEgress(commandSegments, cwd, { commandUnreadable, targetPaths });
     const ruleCheck = {
       sessionId: ctx.sessionId,
       tool: "os.shell.run",
