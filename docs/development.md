@@ -17,6 +17,7 @@ Use Node >=25.7 (the package/Volta floor supports ESM Node SEA) and `npm ci` wit
 - `npm test` runs the configured unit/integration suite. `npm run test:ci` uses the same suite and quarantine registry as PR CI; both former exclusions are released. See [local CI and quarantine](testing/local-ci.md).
 - CI also tests a scoped document-extractor install with the optional canvas package removed. Consult the workflow rather than deleting optional dependencies in your normal working install.
 - `npm run typecheck:tests` checks all src TS/TSX against concrete existing debt and rejects new errors or reduced coverage. `npm run typecheck:tests:raw` intentionally exits nonzero until that debt is eliminated; `npm run typecheck:tests:reduce` only removes resolved entries. `npx tsc -p tsconfig.scripts.json --noEmit` checks TS build scripts. These are separate from production lint.
+- Releases: [release quality](RELEASE-QUALITY.md) defines bug levels P0 to P3, fix targets and the rule that an open P0/P1 UI bug blocks a release.
 - Runtime evals (`eval`, `eval-memory`, `eval-agents`) have their own configs, datasets and provider/server requirements. Check each harness README first; do not equate a stub run with a real model benchmark.
 
 ## Task routes

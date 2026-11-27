@@ -1,0 +1,7 @@
+# Keep blank issues on: the desktop "Report an Issue" button opens
+# issues/new?title=...&body=... and that link must keep working.
+blank_issues_enabled: true
+contact_links:
+  - name: Ask the community on Discord
+    url: https://discord.gg/DCqtG8WZX8
+    about: Setup questions and help from the team and other users.
