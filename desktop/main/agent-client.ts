@@ -36,7 +36,7 @@ import {
   WATCH_SENTINEL_SOURCE,
   WINDOWS_GRACEFUL_MS,
 } from "./platform.js";
-import { startServe } from "./serve-launch.js";
+import { serveSpawnArgs, startServe } from "./serve-launch.js";
 
 /**
  * Supervises one `atag serve` child process and speaks to it over the
@@ -991,16 +991,18 @@ export class AgentClient extends EventEmitter {
     const sentinel = process.platform === "win32" ? spawnWatchSentinel() : null;
     let child: ChildProcess;
     try {
-      // ATO-2538: the key goes on stdin, in neither the command line nor the environment (serve-launch.ts).
-      child = startServe({
+      child = startServe(
         binary,
-        port,
-        watchArgs: serveWatchArgs(process.platform, sentinel?.pid),
-        cwd: this.status.workingDir,
-        // r5 item 9: `atag serve` runs on the desktop's own state directory.
-        env: agentEnv(),
-        token,
-      });
+        // ATO-2538: the key goes on stdin, in neither the command line nor the environment.
+        serveSpawnArgs(port, serveWatchArgs(process.platform, sentinel?.pid)),
+        {
+          cwd: this.status.workingDir,
+          // r5 item 9: `atag serve` runs on the desktop's own state directory.
+          // startServe drops any key from it and sends this launch's key on stdin (serve-launch.ts).
+          env: agentEnv(),
+          token,
+        },
+      );
     } catch (err) {
       // Nothing was started for the stand-in to stand in for.
       sentinel?.kill();

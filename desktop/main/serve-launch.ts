@@ -66,32 +66,19 @@ export function sendServeKey(stdin: Writable | null, token: string): void {
   stdin.end(`${token}\n`);
 }
 
-/** What `startServe` needs to start one `atag serve`. */
-export interface ServeLaunch {
-  binary: string;
-  port: number;
-  /** The platform's watch arguments (`serveWatchArgs`). */
-  watchArgs: readonly string[];
-  cwd: string;
-  /** The agent environment; any key in it is dropped. */
-  env: NodeJS.ProcessEnv;
-  /** This launch's API key, sent on stdin only. */
-  token: string;
-  /** Put before serve's own arguments. Only the test sets it, to run a stand-in program (`-e <script> --`). */
-  leadingArgs?: readonly string[];
-}
-
 /**
- * Start `atag serve` and hand it its key: the one place the desktop does
- * this (agent-client.ts). The test starts its stand-in child through this
- * same function, so a key put back on the command line or in the
- * environment here fails it.
+ * Start `atag serve` with `args` (`serveSpawnArgs`) and hand it its key: the
+ * one place the desktop does this (agent-client.ts). The environment is
+ * `opts.env` without any key, and the key goes on stdin only. The test
+ * starts a real stand-in child through this same function, so a key put
+ * back in the environment, on the command line or in the stdio here fails it.
  */
-export function startServe(l: ServeLaunch): ChildProcess {
-  const child = spawn(l.binary, [...(l.leadingArgs ?? []), ...serveSpawnArgs(l.port, l.watchArgs)], {
-    cwd: l.cwd,
-    ...serveSpawnOptions(l.env),
-  });
-  sendServeKey(child.stdin, l.token);
+export function startServe(
+  binary: string,
+  args: readonly string[],
+  opts: { cwd: string; env: NodeJS.ProcessEnv; token: string },
+): ChildProcess {
+  const child = spawn(binary, [...args], { cwd: opts.cwd, ...serveSpawnOptions(opts.env) });
+  sendServeKey(child.stdin, opts.token);
   return child;
 }

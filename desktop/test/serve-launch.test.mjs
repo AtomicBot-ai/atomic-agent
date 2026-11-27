@@ -48,11 +48,8 @@ test("a child started this way gets the key on stdin and has it nowhere else", a
     "  process.stdout.write(JSON.stringify({ envVar: process.env.ATOMIC_AGENT_API_KEY ?? null, envHasKey, argv: process.argv, line: data.split('\\n')[0], rest: data.split('\\n').slice(1).join('') }));",
     "});",
   ].join("\n");
-  const child = L.startServe({
-    binary: process.execPath,
-    leadingArgs: ["-e", script, "--"],
-    port: 5000,
-    watchArgs: ["--parent-pid", "77"],
+  // A node -e stand-in for the agent binary, then serve's real arguments.
+  const child = L.startServe(process.execPath, ["-e", script, "--", ...L.serveSpawnArgs(5000, ["--parent-pid", "77"])], {
     cwd: process.cwd(),
     env: { ...process.env, ATOMIC_AGENT_API_KEY: "inherited-key-123" },
     token,
@@ -85,7 +82,7 @@ test("the spawn options: no key in the env, stdin piped for it, no console windo
    startServe, never spawns the binary itself, and names no key variable. */
 test("agent-client.ts starts serve through startServe only", () => {
   const src = readFileSync(new URL("../main/agent-client.ts", import.meta.url), "utf8");
-  assert.match(src, /child = startServe\(\{/);
+  assert.match(src, /child = startServe\(/);
   assert.doesNotMatch(src, /spawn\(\s*binary\b/, "no spawn of the agent binary of its own");
   assert.doesNotMatch(src, /ATOMIC_AGENT_API_KEY|SERVE_API_KEY_ENV/);
 });
