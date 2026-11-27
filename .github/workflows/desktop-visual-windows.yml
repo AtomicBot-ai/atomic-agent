@@ -1,0 +1,158 @@
+# Desktop visual diff on Windows (ATO-2762): the screenshot suite from
+# desktop/test/visual/ on a GitHub-hosted Windows runner, compared with
+# desktop/test/visual/baselines/win32/. Fonts, scrollbars and DPI scaling
+# render differently on Windows, so it has its own baselines and a softer
+# limit than the second Mac.
+#
+# The build steps are the ones desktop-smoke-windows.yml has proven: the
+# agent bundle .exe (the app supervises it), then the desktop app.
+#
+# While baselines/win32/ is empty every shot is reported as "new" and the
+# job passes; download the artifact and commit its actual/*.png under
+# desktop/test/visual/baselines/win32/ to make them the first baselines
+# (desktop/test/visual/README.md).
+#
+# Electron on a Windows runner sometimes hangs on launch (VS Code's CI sees
+# the same), so a failed run is retried once before the job fails.
+#
+# THIS REPOSITORY IS PUBLIC, AND SO ARE THIS JOB'S LOG AND ITS ARTIFACTS.
+# The run starts from an empty throwaway state dir with no provider and no
+# key; the artifact holds screenshots, report.html and summary.json only.
+# Never add a secret to this workflow.
+
+name: Desktop visual diff (Windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or SHA to test (empty = the ref this run was started from)"
+        required: false
+        default: ""
+        type: string
+      screens:
+        description: "Screen ids to shoot, comma separated (empty = all)"
+        required: false
+        default: ""
+        type: string
+  pull_request:
+    branches:
+      - rel/xp-build
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop-visual-windows.yml"
+
+concurrency:
+  group: desktop-visual-windows-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  visual:
+    name: visual (win32-x64)
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || '' }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Same pin as desktop.yml and desktop-smoke-windows.yml: the SEA needs Node >= 25.7.
+          node-version: "25.7"
+          check-latest: true
+          architecture: x64
+
+      # ---- agent bundle (as desktop-smoke-windows.yml) ------------------------
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and build
+        run: npm run build
+
+      - name: Bundle CLI for SEA
+        run: npm run bundle:sea
+
+      - name: Fetch runtime assets (ripgrep for host)
+        run: npm run bundle:fetch-assets
+
+      - name: Build Node SEA binary
+        run: npm run bundle:build-binary
+
+      - name: Package bundle
+        run: npx tsx scripts/package-bundle.ts win32-x64
+
+      # ---- desktop app ------------------------------------------------------
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build desktop app
+        working-directory: desktop
+        run: npm run build
+
+      # ---- the visual diff ----------------------------------------------------
+      # Softer than the Mac defaults (0.1 per pixel, 0.1% of the shot): the
+      # runner's GPU-less rendering and ClearType add a little noise.
+      - name: Run the visual diff (one retry)
+        env:
+          VISUAL_OUT_ROOT: ${{ runner.temp }}/desktop-visual
+          VISUAL_BASELINES: desktop/test/visual/baselines/win32
+          VISUAL_PIXEL_THRESHOLD: "0.15"
+          VISUAL_MAX_DIFF_RATIO: "0.005"
+          VISUAL_SCREENS: ${{ inputs.screens || '' }}
+          ATOMIC_AGENT_BIN: ${{ github.workspace }}/bundle/win32-x64/atomic-agent.exe
+        run: |
+          set +e
+          node desktop/test/visual/run.mjs --out "$VISUAL_OUT_ROOT/try-1"
+          code=$?
+          if [ "$code" -ne 0 ]; then
+            echo "::warning::visual diff exited $code, retrying once"
+            node desktop/test/visual/run.mjs --out "$VISUAL_OUT_ROOT/try-2"
+            code=$?
+          fi
+          exit "$code"
+
+      - name: Write the job summary
+        if: always()
+        env:
+          VISUAL_OUT_ROOT: ${{ runner.temp }}/desktop-visual
+        run: |
+          node -e '
+            const fs = require("fs"), path = require("path");
+            const root = process.env.VISUAL_OUT_ROOT;
+            const tries = ["try-2", "try-1"].map((t) => path.join(root, t, "summary.json")).filter((p) => fs.existsSync(p));
+            if (!tries.length) { console.log("no summary.json"); process.exit(0); }
+            const s = JSON.parse(fs.readFileSync(tries[0], "utf8"));
+            const lines = ["## Desktop visual diff (Windows)", "",
+              "Run: " + path.basename(path.dirname(tries[0])), "",
+              "| status | shots |", "| --- | --- |",
+              ...Object.entries(s.counts).filter(([, n]) => n).map(([k, n]) => "| " + k + " | " + n + " |"), "",
+              "Fonts: " + (s.fonts && s.fonts.ok ? "loaded" : "NOT loaded"),
+              s.fatal ? "Stopped: " + s.fatal : "",
+              "Open report.html from the artifact for before, after and diff."];
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
+          '
+
+      # Public artifact: report.html, summary.json and the PNGs (actual/,
+      # baseline/, diff/) of every try. actual/ is what to commit as the first
+      # baselines while baselines/win32/ is empty.
+      - name: Upload report and shots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-visual-win32-x64-${{ github.run_number }}
+          path: ${{ runner.temp }}/desktop-visual/
+          if-no-files-found: warn
+          retention-days: 14
