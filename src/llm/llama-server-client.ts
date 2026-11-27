@@ -13,6 +13,12 @@ import { takePromptProgress } from "./llama-prompt-progress.js";
 import { isGrammarRefusal } from "./grammar-refusal.js";
 import { isLoopbackUrlOnPort } from "../local-llm/server/managed-api-key.js";
 import { managedPortsOf } from "./describe-llama-health-failure.js";
+import {
+  FOREIGN_KEY_REFUSAL_ADVICE,
+  FOREIGN_KEY_REFUSAL_MESSAGE,
+  readOwnEngineState,
+  type OwnEngineState,
+} from "./llama-own-engine-state.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type {
   CompletionRequest,
@@ -555,6 +561,12 @@ export interface LlamaServerClientOptions {
    */
   refreshApiKey?: (url: string) => Promise<string | null>;
   /**
+   * Asked when a 401 stands after the key refresh: whether our own model
+   * process is behind `url` (ATO-1732). Defaults to `readOwnEngineState`
+   * on the live config. Injectable for tests.
+   */
+  ownEngineState?: (url: string) => OwnEngineState;
+  /**
    * Overrides `config.localModels.drySampler`: send llama.cpp's DRY
    * anti-repeat sampler fields with every `/completion` request. When omitted, the
    * client reads the config on each request.
@@ -610,6 +622,7 @@ export class LlamaServerClient {
   private readonly completionRetryBackoffMsOverride: number | undefined;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly refreshApiKey: (url: string) => Promise<string | null>;
+  private readonly ownEngineState: (url: string) => OwnEngineState;
   private readonly drySamplerOverride: boolean | undefined;
   private readonly logger:
     | (Pick<StructuredLogger, "debug"> & Partial<Pick<StructuredLogger, "warn">>)
@@ -690,6 +703,7 @@ export class LlamaServerClient {
     this.sleep = options.sleep ?? defaultSleep;
     this.refreshApiKey = options.refreshApiKey ??
       ((url) => refreshCoreKeyForUrl(getConfig().paths.localModelsDataDir, url));
+    this.ownEngineState = options.ownEngineState ?? ((url) => readOwnEngineState(url, getConfig()));
     this.drySamplerOverride = options.drySampler;
     this.logger = options.logger;
   }
@@ -1977,6 +1991,11 @@ export class LlamaServerClient {
     return true;
   }
 
+  /** `ownEngineState` that never throws: a failed read keeps the key words. */
+  private readOwnEngine(url: string): OwnEngineState {
+    try { return this.ownEngineState(url); } catch { return "unknown"; }
+  }
+
   private resolveRetryParams(): { maxAttempts: number; backoffMs: number } {
     const config = getConfig();
     const maxAttempts = Math.max(
@@ -2030,7 +2049,7 @@ export class LlamaServerClient {
               continue;
             }
           }
-          throw keyRefusedError(err, headers.authorization !== undefined);
+          throw keyRefusedError(err, headers.authorization !== undefined, this.readOwnEngine(url));
         }
         if (!isRetryableLlamaError(err) || i >= maxAttempts) throw err;
         await this.sleep(computeBackoffMs(backoffMs, i));
@@ -2298,9 +2317,20 @@ function isUnauthorized(err: unknown): err is LlamaServerError {
  * `keySent` false is a server started with `--api-key` while the agent
  * has no key for it at all (ATO-313): "refused the agent's key" and a
  * restart would send the operator the wrong way, so it names the key to set.
+ *
+ * `ownEngine` `gone` is the managed chat port answering 401 while our own
+ * model process is not there (ATO-1732): another program holds the port,
+ * so neither a restart nor a key would help. The error stays a 401
+ * `LlamaServerError`; only the words change.
  */
-export function keyRefusedError(err: LlamaServerError, keySent = true): LlamaServerError {
-  const advice = keySent
+export function keyRefusedError(
+  err: LlamaServerError,
+  keySent = true,
+  ownEngine: OwnEngineState = "unknown",
+): LlamaServerError {
+  const advice = ownEngine === "gone"
+    ? `${FOREIGN_KEY_REFUSAL_MESSAGE} ${FOREIGN_KEY_REFUSAL_ADVICE}`
+    : keySent
     ? "The local model server refused the agent's key. " +
       "For the model the agent runs, restart it (atomic-agent models stop, then atomic-agent models start); " +
       "for your own server, check localModels.apiKey or ATOMIC_AGENT_LLAMA_API_KEY."
