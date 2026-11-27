@@ -64,6 +64,8 @@ export function getTrustConfigPaths(paths: {
     join(paths.stateDir, SECRET_SOURCES_FILE),
     join(paths.stateDir, "approval-rules.json"),
     join(paths.stateDir, "hooks.json"),
+    // Plain-text security rules the reviewer enforces (ATO-2111).
+    join(paths.stateDir, "guard.md"),
     join(paths.stateDir, "plugins", "plugins.json"),
     join(paths.stateDir, "plugins", "marketplaces.json"),
     join(paths.stateDir, "plugins", "installed") + sep,

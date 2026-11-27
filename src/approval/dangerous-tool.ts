@@ -173,6 +173,43 @@ export function savedRuleDenies(
 }
 
 /**
+ * For a call a fan-out scope settles without the gate's `request`: the
+ * person's plain-text security rules still review it (ATO-2111). Throws
+ * the refusal (never the user's decision) when they block it or the
+ * reviewer gives no answer.
+ */
+export async function requireGuardOnShortcut(
+  options: DangerousToolOptions,
+  prompt: ApprovalPrompt,
+  signal: AbortSignal,
+): Promise<void> {
+  if (!options.approvalRequired) return;
+  const reason = await options.approvals.guardRefusal?.(
+    {
+      sessionId: prompt.sessionId,
+      tool: prompt.tool,
+      category: prompt.category,
+      reason: prompt.reason,
+      ...(prompt.preview !== undefined ? { preview: prompt.preview } : {}),
+      ...(prompt.affectedResources !== undefined
+        ? { affectedResources: [...prompt.affectedResources] }
+        : {}),
+      ...(prompt.egress !== undefined && prompt.egress.length > 0
+        ? { egress: prompt.egress.map((d) => ({ ...d })) }
+        : {}),
+      ...(prompt.workdir !== undefined ? { workdir: prompt.workdir } : {}),
+      ...(prompt.targetPaths !== undefined && prompt.targetPaths.length > 0
+        ? { targetPaths: [...prompt.targetPaths] }
+        : {}),
+    },
+    signal,
+  );
+  if (reason !== null && reason !== undefined) {
+    throw new ApprovalDeniedError(prompt.tool, reason, { byUser: false });
+  }
+}
+
+/**
  * Shared helper used by dangerous tools (shell.run, fs.write,
  * skill.run_script, …). Centralising it ensures every tool sends the same
  * approval payload shape and honours the `approvalRequired` override in a

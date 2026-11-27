@@ -62,6 +62,7 @@ import { ApprovalRulesStore } from "../approval/approval-rules-store.js";
 
 import { ApprovalRouter } from "../approval/approval-router.js";
 import { installRiskReviewer } from "./composition/runtime-risk-review.js";
+import { installSecurityGuard } from "./composition/runtime-security-guard.js";
 
 import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 
@@ -560,6 +561,12 @@ export async function createAgentRuntime(
     resolveTransport: (providerId) => resolveActiveLlmSlice(providerId).transport,
     sideCallSlotId: () => slotManager.sideCallSlotId(),
     userRequest: (sessionId) => turnRequests.get(sessionId), logger,
+  });
+  // Plain-text security rules (ATO-2111): on while a guard.md exists, read per call.
+  installSecurityGuard({
+    approvals, stateDir: config.paths.stateDir, readConfig: () => getConfig(), complete: (params) => llmComplete(params),
+    resolveTransport: (providerId) => resolveActiveLlmSlice(providerId).transport,
+    sideCallSlotId: () => slotManager.sideCallSlotId(), userRequest: (sessionId) => turnRequests.get(sessionId), logger,
   });
   // Review after outside content (ATO-618): off unless `agent.taintReview`, read live.
   approvals.setTaintReview(() => getConfig().agent.taintReview);

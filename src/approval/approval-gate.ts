@@ -51,6 +51,15 @@ import {
 import type { UserQuestion, UserQuestionAnswer } from "./user-question.js";
 import { EgressSessionHosts, unknownOutbound } from "./egress-hold.js";
 import { withUnreadableScript, type EgressDestination } from "./egress-scan.js";
+import {
+  GUARD_FAILURE_ASK_NOTE,
+  GUARD_FAILURE_BLOCK_REASON,
+  guardBlockReason,
+  guardRulesFor,
+  runGuard,
+  type SecurityGuard,
+} from "./guard-check.js";
+import type { GuardRules } from "./guard-rules.js";
 
 export interface ApprovalRequest {
   approvalId: string;
@@ -433,6 +442,12 @@ export class ApprovalGate {
   private egressAllowlist: () => readonly string[] | null = () => null;
   /** Hosts each session approved data going to (`egress-hold.ts`, ATO-2116). */
   private readonly egressHosts = new EgressSessionHosts();
+  /** Plain-text security rules (`guard-check.ts`, ATO-2111); unset = off. */
+  private guard: SecurityGuard | undefined;
+  /** Approval ids re-entering `request` after the guard allowed them (or failed). */
+  private readonly guardChecked = new Set<string>();
+  /** Approval ids whose guard review failed under `onFailure: ask`: a person decides. */
+  private readonly guardHeld = new Set<string>();
 
   constructor(options: { emit: ApprovalEmitter; level?: ApprovalLevel }) {
     this.emitter = options.emit;
@@ -530,6 +545,90 @@ export class ApprovalGate {
       allowlist,
       sessionHosts: this.egressHosts.known(sessionId, this.grantsBySession.get(sessionId)),
     });
+  }
+
+  /**
+   * Install (or with `undefined` remove) the plain-text security rules
+   * (ATO-2111). Whether they apply is read per request from the guard
+   * files, so creating or deleting a file needs no restart.
+   */
+  setGuard(guard: SecurityGuard | undefined): void {
+    this.guard = guard;
+  }
+
+  /**
+   * For a call a tool settles without `request` (a fan-out scope): the
+   * refusal the security rules give it, or `null` to go on. Nobody can be
+   * asked there, so a reviewer failure refuses whatever `onFailure` says.
+   */
+  async guardRefusal(
+    params: Omit<ApprovalRequest, "approvalId">,
+    signal?: AbortSignal,
+  ): Promise<string | null> {
+    const guard = this.guard;
+    if (guard === undefined) return null;
+    const workdir = params.workdir ?? currentApprovalWorkdir();
+    const request: ApprovalRequest = {
+      ...params,
+      approvalId: randomUUID(),
+      ...(workdir !== undefined ? { workdir } : {}),
+    };
+    const rules = guardRulesFor(guard, request, this.guardWorkdir(request));
+    if (rules === null) return null;
+    const outcome = await runGuard(guard, request, rules, signal);
+    if (outcome.kind === "allow") return null;
+    return outcome.kind === "block"
+      ? guardBlockReason(outcome.reason)
+      : "Blocked by your security rules: the rules reviewer gave no answer, and nobody can be asked here";
+  }
+
+  /** The folder the project guard file is read from: a worker's parent project, else the request's. */
+  private guardWorkdir(request: ApprovalRequest): string | undefined {
+    return this.policiesBySession.get(request.sessionId)?.ruleWorkdir ?? request.workdir;
+  }
+
+  /**
+   * Review `request` against the security rules. A block, or a failure
+   * under `onFailure: block`, refuses it here; an allow goes on through
+   * the normal gate, and a failure under `onFailure: ask` goes on as a
+   * prompt that no level, grant, allow rule or reviewer can answer (a
+   * session under a refuse policy is refused).
+   */
+  private async requestAfterGuard(
+    request: ApprovalRequest,
+    rules: GuardRules,
+    signal: AbortSignal | undefined,
+  ): Promise<ApprovalDecision> {
+    const guard = this.guard;
+    const outcome =
+      guard === undefined
+        ? ({ kind: "failed", onFailure: rules.onFailure } as const)
+        : await runGuard(guard, request, rules, signal);
+    if (signal?.aborted) {
+      throw new ApprovalGateError("approval aborted before a decision was made", request.approvalId);
+    }
+    if (outcome.kind === "block" || (outcome.kind === "failed" && outcome.onFailure === "block")) {
+      return {
+        approvalId: request.approvalId,
+        approved: false,
+        reason: outcome.kind === "block" ? guardBlockReason(outcome.reason) : GUARD_FAILURE_BLOCK_REASON,
+        automatic: true,
+      };
+    }
+    const ask = outcome.kind === "failed";
+    this.guardChecked.add(request.approvalId);
+    if (ask) this.guardHeld.add(request.approvalId);
+    try {
+      // Awaited so the marks last while a later step (a review, a
+      // prompt) re-enters `request` with the same id.
+      return await this.request(
+        { ...request, ...(ask ? { riskNote: GUARD_FAILURE_ASK_NOTE } : {}) },
+        signal ? { signal } : {},
+      );
+    } finally {
+      this.guardChecked.delete(request.approvalId);
+      this.guardHeld.delete(request.approvalId);
+    }
   }
 
   /** Record that `sessionId` read outside content (`source`) in its running turn. */
@@ -675,10 +774,18 @@ export class ApprovalGate {
         automatic: true,
       });
     }
+    // The person's plain-text security rules (ATO-2111): reviewed before
+    // the level, a grant, an allow rule or bypass could run the call. A
+    // block refuses it; an allow only lets the gate below go on.
+    if (this.guard !== undefined && !this.guardChecked.has(approvalId)) {
+      const guardRules = guardRulesFor(this.guard, request, this.guardWorkdir(request));
+      if (guardRules !== null) return this.requestAfterGuard(request, guardRules, signal);
+    }
     // Data going to a host nobody approved is put to a person: the level
     // (bypass included), a grant, an allow rule and the reviewer stand
     // down, as for an ask rule (ATO-2116, egress-hold.ts). A script fed
     // to a shell cannot be read, so it counts as data to an unknown host.
+    // A guard review that gave no answer under `onFailure: ask` holds too.
     if (request.commandUnreadable === true) {
       request.egress = withUnreadableScript(request.egress, true);
     }
@@ -691,8 +798,9 @@ export class ApprovalGate {
         unapproved.includes(d) ? { ...d, unapproved: true as const } : d,
       );
     }
+    const heldForPerson = egressHeld || this.guardHeld.has(approvalId);
     const auto =
-      rule?.decision === "ask" || this.taintHeld.has(approvalId) || egressHeld
+      rule?.decision === "ask" || this.taintHeld.has(approvalId) || heldForPerson
         ? null
         : this.autoApproval(request);
     if (auto) {
@@ -707,7 +815,7 @@ export class ApprovalGate {
       }
       return Promise.resolve({ approvalId, approved: true, reason: auto });
     }
-    if (rule?.decision === "allow" && request.askEveryLevel !== true && !egressHeld) {
+    if (rule?.decision === "allow" && request.askEveryLevel !== true && !heldForPerson) {
       recordAutoApproval(
         "rule",
         request.category,
@@ -720,7 +828,7 @@ export class ApprovalGate {
       });
     }
     // An "ask" rule means the person wants the prompt: no model rates it away.
-    if (rule?.decision !== "ask" && !egressHeld && this.shouldReviewRisk(request)) {
+    if (rule?.decision !== "ask" && !heldForPerson && this.shouldReviewRisk(request)) {
       return this.requestAfterReview(request, signal);
     }
     // Would prompt from here on. A session under a refuse policy gets its

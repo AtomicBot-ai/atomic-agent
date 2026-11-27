@@ -1,10 +1,12 @@
 import {
   requireApproval,
+  requireGuardOnShortcut,
   savedRuleOverridesScope,
   type DangerousToolOptions,
 } from "../../../approval/dangerous-tool.js";
 import type { ApprovalCategory } from "../../../approval/approval-level.js";
 import { getProjectApprovalRulesPath } from "../../../approval/approval-rules-store.js";
+import { getProjectGuardPath } from "../../../approval/guard-rules.js";
 import {
   categorizeFsMutation,
   type FsMutationKind,
@@ -167,6 +169,9 @@ export async function requireFsApproval(
       : [
           ...(request.trustConfigPaths ?? []),
           getProjectApprovalRulesPath(request.workingDir),
+          // The project's security rules (ATO-2111): only additive, but
+          // deleting them would drop what they add.
+          getProjectGuardPath(request.workingDir),
         ];
   const category = await categorizeFsMutation(request.kind, request.paths, {
     workingDir: request.workingDir,
@@ -209,6 +214,23 @@ export async function requireFsApproval(
       workdir: request.workingDir,
     })
   ) {
+    // The fan-out's yes does not cover the person's security rules (ATO-2111).
+    await requireGuardOnShortcut(
+      options,
+      {
+        sessionId: request.sessionId,
+        tool: request.tool,
+        category,
+        reason: request.reason,
+        ...(request.preview !== undefined ? { preview: request.preview } : {}),
+        ...(request.affectedResources !== undefined
+          ? { affectedResources: request.affectedResources }
+          : {}),
+        workdir: request.workingDir,
+        targetPaths,
+      },
+      signal,
+    );
     return { category };
   }
   const outcome = await requireApproval(

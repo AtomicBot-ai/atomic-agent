@@ -6,6 +6,7 @@ import {
 } from "../../../sandbox/command-runner.js";
 import {
   requireApproval,
+  requireGuardOnShortcut,
   type DangerousToolOptions,
 } from "../../../approval/dangerous-tool.js";
 import type {
@@ -141,6 +142,23 @@ export function buildOsHttpRequestTool(
           ctx.signal,
         );
         if (urlCheck !== null) noteUrlSendAllowed(urlCheck, ctx.sessionId, options.urlSendSites);
+      } else {
+        // A request that asks nobody (a GET under "writes", anything
+        // under "never") still meets the person's security rules
+        // (ATO-2111): its URL alone can carry data out.
+        const shownUrl = maskUrlSecrets(args.url);
+        await requireGuardOnShortcut(
+          options,
+          {
+            sessionId: ctx.sessionId,
+            tool: "os.http.request",
+            category: httpApprovalCategory(args.method),
+            reason: `${args.method} ${shownUrl}`,
+            preview: buildHttpApprovalPreview(args),
+            affectedResources: [shownUrl],
+          },
+          ctx.signal,
+        );
       }
 
       let guarded;
