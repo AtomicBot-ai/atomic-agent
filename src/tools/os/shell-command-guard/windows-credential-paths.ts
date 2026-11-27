@@ -11,7 +11,15 @@ import { SECRET_HOME_PATHS } from "../../../sandbox/os-sandbox.js";
  * behind `\\?\` / `\\.\`, and the UNC admin share `\\<host>\c$\Users\<name>`),
  * Git Bash `/c/Users/<name>` and WSL `/mnt/c/Users/<name>`. `%APPDATA%`
  * and `%LOCALAPPDATA%` (and their `$env:` forms) stand for the AppData
- * folders.
+ * folders. Review round 2 adds cmd's delayed `!USERPROFILE!` /
+ * `!HOMEDRIVE!!HOMEPATH!`, the braced `${HOME}` / `${env:HOMEPATH}` forms
+ * and a drive-relative `\Users\<name>`.
+ *
+ * Fail closed (review round 2): `UNRESOLVED_SECRET_PATH` is a credential
+ * entry behind a folder the guard cannot work out: after a variable it
+ * does not know (`%X%`, `!X!`, `$x`, `${x}`), a `)` of a subexpression
+ * (`$([Environment]::GetFolderPath(...))`), a `..` segment, or a `+`
+ * string concatenation. It counts as below the home folder.
  */
 
 const WINDOWS_SECRET_PATHS: readonly string[] = [
@@ -33,7 +41,7 @@ const NAME = String.raw`[^/\\"'|;&<>\s][^/\\"'|;&<>]*`;
 /** `C:`, `\\?\C:`, `\\.\C:`, `\\host\c$`, `\\?\UNC\host\c$`. */
 const DRIVE = String.raw`(?:(?:[/\\]{2}[?.][/\\]+)?[a-z]:|[/\\]{2}(?:[?.][/\\]+unc[/\\]+)?[^/\\\s"'|;&<>]+[/\\]+[a-z]\$)`;
 /** The home folder itself, without the separator after it. */
-const HOME_ROOT = String.raw`(?:%userprofile%|%homedrive%%homepath%|%homepath%|%home%|\$env:homedrive\$env:homepath|\$env:userprofile|\$\{env:userprofile\}|\$env:homepath|\$env:home|\$home|~|${DRIVE}${SEP}users${SEP}${NAME}|/[a-z]/users/${NAME}|/mnt/[a-z]/users/${NAME})`;
+const HOME_ROOT = String.raw`(?:[%!]userprofile[%!]|(?:[%!]homedrive[%!])?[%!]homepath[%!]|[%!]home[%!]|(?:\$\{?env:homedrive\}?)?\$\{?env:homepath\}?|\$\{?env:(?:userprofile|home)\}?|\$\{?home\}?|~|${DRIVE}${SEP}users${SEP}${NAME}|[/\\]users${SEP}${NAME}|/[a-z]/users/${NAME}|/mnt/[a-z]/users/${NAME})`;
 const APPDATA = String.raw`(?:%appdata%|\$env:appdata|\$\{env:appdata\})${SEP}`;
 const LOCALAPPDATA = String.raw`(?:%localappdata%|\$env:localappdata|\$\{env:localappdata\})${SEP}`;
 
@@ -52,12 +60,26 @@ const BELOW_LOCAL = alternation(
   WINDOWS_SECRET_PATHS.filter((p) => p.startsWith("appdata/local/")).map((p) => p.slice(14)),
 );
 /** What is named below the credential entry. */
-const END = String.raw`((?:[/\\][^"'|;&<>\s]*)?)(?=$|["'|;&<>\s),])`;
+const END = String.raw`((?:[/\\][^"'|;&<>\s{}]*)?)(?=$|["'|;&<>\s),{}])`;
 const LEFT = String.raw`(?:^|[\s"'=(,@:])`;
 
 /** A credential path below the home folder: groups 1-3 the entry, 4 the rest. */
 export const SECRET_PATH = new RegExp(
   String.raw`${LEFT}(?:${HOME_ROOT}${SEP}(${BELOW})|${APPDATA}(${BELOW_ROAMING})|${LOCALAPPDATA}(${BELOW_LOCAL}))${END}`,
+  "g",
+);
+/**
+ * A credential entry behind a folder the guard cannot resolve: group 1
+ * the entry, 2 the rest. A `+` may be followed straight by the entry
+ * (`$HOME + '.ssh\id_rsa'`); every other form needs the separator.
+ */
+export const UNRESOLVED_SECRET_PATH = new RegExp(
+  String.raw`(?:(?:[)}%!]|\.\.|\$[a-z_][a-z_0-9]*(?::[a-z_0-9]+)?)${SEP}|\+\s*['"]?(?:${SEP})?)(?:\.${SEP})?(${BELOW})${END}`,
+  "g",
+);
+/** An 8.3 short name right below the home folder (`SSH~1`): group 1 the name, 2 the rest. */
+export const SHORT_NAME_PATH = new RegExp(
+  String.raw`${LEFT}${HOME_ROOT}${SEP}([^/\\\s"'|;&<>~]{1,8}~[0-9])${END}`,
   "g",
 );
 /** The same entries named relative to the home folder: group 1 the entry, 2 the rest. */
