@@ -105,8 +105,9 @@ export async function runModelsDir(args: readonly string[], deps: ModelsDirDeps 
       commit: () => saveOverride(cfg.paths.userConfigFile, reset ? null : target),
     });
     if (json) {
-      write(`${JSON.stringify({ dir: target, moved: result.moved, leftovers: result.leftovers })}\n`);
+      write(`${JSON.stringify({ dir: target, moved: result.moved, skipped: result.skipped, leftovers: result.leftovers })}\n`);
     } else {
+      if (result.skipped.length > 0) write(`left in place (not model folders): ${result.skipped.join(", ")}\n`);
       for (const left of result.leftovers) write(`could not delete the old copy at ${left}; delete it by hand\n`);
       write(`models folder: ${target}\n`);
     }

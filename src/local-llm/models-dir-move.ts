@@ -6,8 +6,13 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
  * Move every downloaded model from one models folder to another
  * (ATO-2106), the way LM Studio's "Change models directory" does.
  *
- * Each entry (one folder per model, plus any partial download) is
- * renamed when both folders are on the same disk. Across disks a rename
+ * Only folders we own move: a model folder is a non-hidden directory
+ * with a `.gguf` (or a `.gguf.part` download) directly inside it. Any
+ * other entry of the current folder stays where it is, and the new folder
+ * must be empty (a `.DS_Store` aside), so pointing the models folder at
+ * ~/Documents can never pull the user's own files along later.
+ *
+ * Each model folder is renamed when both folders are on the same disk. Across disks a rename
  * fails with `EXDEV`; the entry is then copied, the copy's byte count is
  * checked against the source, and the source is deleted only after
  * `commit` (the caller's config write) has succeeded. A failure before
@@ -43,6 +48,8 @@ export interface ModelsDirMoveOptions {
 export interface ModelsDirMoveResult {
   /** Entries now in the new folder. */
   moved: string[];
+  /** Entries of the current folder that are not model folders; left in place. */
+  skipped: string[];
   /** Copied entries whose original could not be deleted afterwards. */
   leftovers: string[];
 }
@@ -94,6 +101,21 @@ function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Names an OS drops into any folder; they do not make a folder "not empty". */
+const IGNORED_IN_TARGET = new Set([".DS_Store"]);
+
+/** A model folder we wrote: non-hidden directory with a GGUF (or GGUF download) in it. */
+export async function isOwnedModelEntry(dir: string, name: string): Promise<boolean> {
+  if (name.startsWith(".")) return false;
+  const p = join(dir, name);
+  try {
+    if (!(await lstat(p)).isDirectory()) return false;
+    return (await readdir(p)).some((f) => /\.gguf(\.part)?$/i.test(f));
+  } catch {
+    return false;
+  }
+}
+
 type Done = { entry: string; how: "renamed" | "copied" };
 
 export async function moveModelsDir(
@@ -108,7 +130,7 @@ export async function moveModelsDir(
   const realDst = await realOrNearest(dst);
   if (isSameOrInside(realDst, realSrc) && isSameOrInside(realSrc, realDst)) {
     await opts.commit?.();
-    return { moved: [], leftovers: [] };
+    return { moved: [], skipped: [], leftovers: [] };
   }
   if (isSameOrInside(realDst, realSrc)) {
     throw new ModelsDirMoveError(`the new folder ${dst} is inside the current models folder ${src}`);
@@ -117,12 +139,20 @@ export async function moveModelsDir(
     throw new ModelsDirMoveError(`the current models folder ${src} is inside the new folder ${dst}; pick an empty or separate folder`);
   }
 
-  const entries = existsSync(src) ? (await readdir(src)).sort() : [];
-  await mkdir(dst, { recursive: true });
-  const taken = entries.filter((e) => existsSync(join(dst, e)));
-  if (taken.length > 0) {
-    throw new ModelsDirMoveError(`the new folder already has ${taken.join(", ")}; move or delete those first`);
+  if (existsSync(dst)) {
+    const present = (await readdir(dst)).filter((e) => !IGNORED_IN_TARGET.has(e));
+    if (present.length > 0) {
+      throw new ModelsDirMoveError(`the new folder ${dst} is not empty; pick an empty folder or a new one`);
+    }
   }
+  const all = existsSync(src) ? (await readdir(src)).sort() : [];
+  const entries: string[] = [];
+  const skipped: string[] = [];
+  for (const e of all) {
+    if (await isOwnedModelEntry(src, e)) entries.push(e);
+    else if (!IGNORED_IN_TARGET.has(e)) skipped.push(e);
+  }
+  await mkdir(dst, { recursive: true });
 
   // Across disks every byte is copied before any source is deleted, so the
   // new disk needs room for all of it.
@@ -191,5 +221,5 @@ export async function moveModelsDir(
       leftovers.push(join(src, d.entry));
     }
   }
-  return { moved: done.map((d) => d.entry), leftovers };
+  return { moved: done.map((d) => d.entry), skipped, leftovers };
 }

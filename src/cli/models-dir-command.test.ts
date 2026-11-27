@@ -81,6 +81,17 @@ describe("models dir (ATO-2106)", () => {
     expect(existsSync(getConfig().paths.userConfigFile) ? configTree().localModels?.managed?.modelsDirOverride : undefined).toBeUndefined();
   });
 
+  it("refuses a folder that is not empty and saves nothing", async () => {
+    const docs = join(stateDir, "Documents");
+    mkdirSync(docs, { recursive: true });
+    writeFileSync(join(docs, "letter.txt"), "dear");
+    expect(await runModelsDir([docs], deps())).toBe(1);
+    expect(err.join("")).toContain("is not empty");
+    expect(existsSync(join(docs, "qwen-3.5-4b"))).toBe(false);
+    expect(readFileSync(join(docs, "letter.txt"), "utf8")).toBe("dear");
+    expect(existsSync(getConfig().paths.userConfigFile) ? configTree().localModels?.managed?.modelsDirOverride : undefined).toBeUndefined();
+  });
+
   it("rejects a folder and --reset together", async () => {
     expect(await runModelsDir(["/x", "--reset"], deps())).toBe(2);
   });

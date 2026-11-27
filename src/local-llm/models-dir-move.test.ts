@@ -117,11 +117,40 @@ describe("moveModelsDir (ATO-2106)", () => {
     await expect(moveModelsDir(from, join(root, "old"))).rejects.toThrow("is inside the new folder");
   });
 
-  it("refuses when the new folder already holds a model of the same name", async () => {
-    mkdirSync(join(to, "qwen-a"), { recursive: true });
-    await expect(moveModelsDir(from, to)).rejects.toThrow("already has qwen-a");
+  it("refuses a new folder that is not empty and moves nothing", async () => {
+    mkdirSync(to, { recursive: true });
+    writeFileSync(join(to, "notes.txt"), "mine");
+    await expect(moveModelsDir(from, to)).rejects.toThrow("is not empty");
     expect(existsSync(join(from, "qwen-a", "a.gguf"))).toBe(true);
-    expect(existsSync(join(from, "qwen-b", "b.gguf"))).toBe(true);
+    expect(existsSync(join(to, "qwen-a"))).toBe(false);
+    expect(readFileSync(join(to, "notes.txt"), "utf8")).toBe("mine");
+  });
+
+  it("accepts a new folder that holds only .DS_Store", async () => {
+    mkdirSync(to, { recursive: true });
+    writeFileSync(join(to, ".DS_Store"), "");
+    const result = await moveModelsDir(from, to);
+    expect(result.moved).toEqual(["qwen-a", "qwen-b"]);
+  });
+
+  it("leaves foreign files and folders of the current folder where they are", async () => {
+    writeFileSync(join(from, "tax-return.pdf"), "private");
+    mkdirSync(join(from, "Photos"), { recursive: true });
+    writeFileSync(join(from, "Photos", "cat.jpg"), "meow");
+    mkdirSync(join(from, ".hidden"), { recursive: true });
+    writeFileSync(join(from, ".hidden", "x.gguf"), "h");
+    const result = await moveModelsDir(from, to, {
+      rename: async () => {
+        throw exdev();
+      },
+    });
+    expect(result.moved).toEqual(["qwen-a", "qwen-b"]);
+    expect(result.skipped).toEqual([".hidden", "Photos", "tax-return.pdf"]);
+    expect(readFileSync(join(from, "tax-return.pdf"), "utf8")).toBe("private");
+    expect(readFileSync(join(from, "Photos", "cat.jpg"), "utf8")).toBe("meow");
+    expect(existsSync(join(to, "tax-return.pdf"))).toBe(false);
+    expect(existsSync(join(to, "Photos"))).toBe(false);
+    expect(existsSync(join(to, ".hidden"))).toBe(false);
   });
 
   it("moves nothing but still commits when the folder is the same", async () => {
