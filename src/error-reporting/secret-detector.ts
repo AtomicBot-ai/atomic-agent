@@ -37,6 +37,7 @@
  */
 
 import { isSecretEnvName } from "../sandbox/command-env.js";
+import { resolvedSecretValues } from "../sandbox/resolved-secret-values.js";
 
 /** A value known to be secret, and the non-secret label shown in its place. */
 export interface KnownSecret {
@@ -323,11 +324,26 @@ function usableKnownValue(value: string): boolean {
   return hasDigit(value) || (/[a-z]/.test(value) && /[A-Z]/.test(value)) || /[^A-Za-z0-9_-]/.test(value);
 }
 
-/** Usable known secrets, longest first, so a value containing another is replaced whole. */
+/**
+ * Whether an exact value would be masked by the known-value layer. A
+ * tool secret that would not (too short, a plain word) is refused before
+ * it is substituted into a command (ATO-476), since its echo would reach
+ * the model unmasked.
+ */
+export function isMaskableSecretValue(value: string): boolean {
+  return usableKnownValue(value.trim());
+}
+
+/**
+ * Usable known secrets, longest first, so a value containing another is
+ * replaced whole. The values resolved from secret references in this
+ * process (`resolved-secret-values.ts`, ATO-476/ATO-2339) are always
+ * added, whatever list the caller passed.
+ */
 function usableKnownSecrets(known: readonly KnownSecret[]): KnownSecret[] {
   const seen = new Set<string>();
   const out: KnownSecret[] = [];
-  for (const secret of known) {
+  for (const secret of [...known, ...resolvedSecretValues()]) {
     const value = secret.value.trim();
     if (seen.has(value)) continue;
     if (!usableKnownValue(value)) continue;

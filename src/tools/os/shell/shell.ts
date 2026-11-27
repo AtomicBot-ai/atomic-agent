@@ -78,6 +78,12 @@ import {
   formatInteractiveHandoff,
 } from "./interactive-prompt.js";
 import { waitWatchingForPrompt } from "./wait-watching-for-prompt.js";
+import type { ToolSecretSource } from "../../../config/tool-secrets.js";
+import {
+  checkShellSecrets,
+  describeShellSecretUse,
+  fillShellSecrets,
+} from "./shell-secrets.js";
 
 export {
   isOpaqueInterpreterShape,
@@ -136,6 +142,11 @@ export interface OsShellToolOptions extends DangerousToolOptions {
   promptWatch?: { pollMs?: number; quietMs?: number };
   /** Test seam: how long a `background: true` command is watched. */
   backgroundSettleMs?: number;
+  /**
+   * Tool secrets a command may name as `{{secret:NAME}}` (ATO-476),
+   * filled in only after approval. Omitted ⇒ none: a placeholder fails.
+   */
+  secrets?: ToolSecretSource;
 }
 
 /**
@@ -242,6 +253,20 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       });
     }
 
+    // `{{secret:NAME}}` (ATO-476): every name must be a configured tool
+    // secret before anything is asked. Such a command always goes to the
+    // gate, and the approval names the secrets it uses.
+    const secretCheck = checkShellSecrets(cmd, execArgs, useShell, options.secrets);
+    if (!secretCheck.ok) {
+      return compressToolResult({
+        tool: "os.shell.run",
+        status: "error",
+        output: `os.shell.run: ${secretCheck.message}`,
+        details: { cmd, rawArgs: rawArgList, cwd, shell: useShell },
+      });
+    }
+    const secretNames = secretCheck.names;
+
     // For the subshell path we hand a single command line to the OS
     // shell (`sh -c` / `cmd.exe /c`). When the model supplied separate
     // argv tokens alongside a shell-bearing `cmd`, quote them on Windows
@@ -310,7 +335,8 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       savedRuleDenies(options.approvals, ruleCheck);
     if (
       (guardVerdict.action === "approval_required" && !scopedByFanout) ||
-      deniedBySavedRule
+      deniedBySavedRule ||
+      secretNames.length > 0
     ) {
       // Shape grant unit: the bare binary name (lowercased), so `[a]`
       // and "Allow in this chat" cover exactly the argv[0] that would
@@ -323,7 +349,10 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       // --hard`, `sudo`) asks as `shell_dangerous` with no shape: no
       // `shell` grant, no `[a]` on `git` and no level below full trust
       // runs it unasked, and no prompt offers to remember it (ATO-1220).
-      const commandShape = dangerous
+      // A command that uses a tool secret (ATO-476) asks the same way:
+      // the human sees each one, and no earlier grant lets one through.
+      const strict = dangerous || secretNames.length > 0;
+      const commandShape = strict
         ? undefined
         : shellGrantShape(guardInput.cmd, commandLine, useShell);
       // Saved approval rules match on argv and on the session's folder.
@@ -333,7 +362,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         {
           sessionId: ctx.sessionId,
           tool: "os.shell.run",
-          category: dangerous ? "shell_dangerous" : "shell",
+          category: strict ? "shell_dangerous" : "shell",
           reason:
             `${guardVerdict.reason} in ${cwd}` +
             // The user approves the lifetime too: a background command
@@ -343,7 +372,8 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
               : "") +
             (recovered === null
               ? ""
-              : " (command reconstructed from args: the call had no cmd)"),
+              : " (command reconstructed from args: the call had no cmd)") +
+            describeShellSecretUse(secretNames),
           // Quoted like the shell would need it, so the human approves
           // the argv that runs, not a re-joined look-alike (ATO-433).
           preview: formatShellPreview(cmd, execArgs, useShell),
@@ -359,7 +389,45 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       );
     }
 
-    const spawnSpec = resolveShellSpawn(cmd, execArgs, useShell);
+    // After approval, and only into what is spawned: `facts`, the
+    // result and every record keep the placeholders.
+    let runCmd = cmd;
+    let runArgs: readonly string[] = execArgs;
+    if (secretNames.length > 0 && options.secrets !== undefined) {
+      const filled = await fillShellSecrets(
+        cmd,
+        execArgs,
+        useShell,
+        secretNames,
+        options.secrets,
+        (c, a) => {
+          const line = [c, ...a].join(" ");
+          const tokens = line.split(/\s+/).filter((t) => t.length > 0);
+          const verdict =
+            (useShell
+              ? checkBrowserBypassLine(line, cwd)
+              : checkBrowserBypassArgv(c, [...a], cwd)) ??
+            checkShellCommandGuard(
+              useShell && tokens.length > 0
+                ? { cmd: tokens[0]!, rawArgs: tokens.slice(1), cwd }
+                : { cmd: c, rawArgs: [...a], cwd },
+              options.shellPolicy,
+            );
+          return verdict.action === guardVerdict.action && verdict.rule === guardVerdict.rule;
+        },
+      );
+      if (!filled.ok) {
+        return compressToolResult({
+          tool: "os.shell.run",
+          status: "error",
+          output: `os.shell.run: ${filled.message}`,
+          details: { cmd, rawArgs: rawArgList, cwd, shell: useShell },
+        });
+      }
+      runCmd = filled.cmd;
+      runArgs = filled.args;
+    }
+    const spawnSpec = resolveShellSpawn(runCmd, runArgs, useShell);
     const facts: ShellCommandFacts = {
       cmd,
       args: execArgs,

@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { ToolRegistry } from "../tool-registry.js";
 import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
+import { createToolSecretSource } from "../../config/tool-secrets.js";
 import { buildOsShellTool } from "./shell/shell.js";
 import type { ShellGuardPolicy } from "./shell-command-guard/index.js";
 import type { ShellJobRegistry } from "./shell/shell-jobs.js";
@@ -232,7 +233,13 @@ export function registerOsTools(
       approvalRequired: options.approvalRequired,
       defaultTimeoutMs: options.config.tools.shell.defaultTimeoutMs,
       envPassthrough: options.config.tools.shell.envPassthrough,
-      ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+      ...(options.stateDir === undefined
+        ? {}
+        : {
+            stateDir: options.stateDir,
+            // `{{secret:NAME}}` (ATO-476): `toolSecrets` of `<stateDir>/secret-sources.json`.
+            secrets: createToolSecretSource(options.stateDir),
+          }),
       ...(options.shellPolicy === undefined
         ? {}
         : { shellPolicy: options.shellPolicy }),
