@@ -370,6 +370,12 @@ Real, driven by the running agent:
   **Trash** section at the bottom of the sidebar, with Restore, Delete forever and Empty Trash.
   Delete forever is the real `DELETE /api/sessions/{id}`; main runs it on its own only for a chat
   that has been in Trash for 30 days. Deleting the open chat leaves an empty new one.
+  The agent owns the mark (ATO-2474, `main/chat-trash-sync.ts`, `renderer/chat-trash-view.js`):
+  its lists, the terminal included, leave a chat in Trash out, and `GET /api/sessions` says
+  `trashed` on each row, so a chat restored in the terminal (`/sessions --restore`) leaves this
+  Trash on the next refresh. On the first start with this, every chat already in
+  `chat-trash.json` is stamped on the agent (`userData/chat-trash-agent.json` records the run).
+  A chat's title in the Trash section opens it read only: the composer is one line with Restore.
   Each list header carries a **+** on its own line: the one on Chats starts a
   new chat, the one on Tasks opens Settings › Tasks on a new task,
   and on the Tasks header `N running` sits to the left of it. The head row —

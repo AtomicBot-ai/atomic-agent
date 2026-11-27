@@ -4419,6 +4419,7 @@ function apprResource(m) {
 }
 
 function composer() {
+  if (typeof chatTrashViewing === 'function' && chatTrashViewing()) return chatTrashComposerHTML();   // ATO-2474: a chat in Trash is read only (chat-trash-view.js)
   const running = S.busy || !!S.pending;
   /* Soft Tactile: every status line is a chip, then machine text. What the
      drivers read is kept — `.statusstrip` (+ gated / waiting / appstatus),
@@ -8036,6 +8037,7 @@ function act(a) {
                            render(); nameVisibleSessions(); return; }
   // ATO-1150: archive / unarchive, the Archived section's toggle, the search field's clear (chat-search.js).
   if (chatArchiveAct(k, v, close)) return;
+  if (typeof chatTrashViewAct === 'function' && chatTrashViewAct(k, v, close)) return;   // ATO-2474: open a chat in Trash to read it (chat-trash-view.js)
   if (chatTrashAct(k, v, close)) return;   // ATO-2332: Trash's Restore, Delete forever, Empty Trash (chat-trash.js)
   // item 6: pin / unpin, and the two lists' pagination.
   if (k === 'pin')       { if (!PREFS.pinned.includes(v)) PREFS.pinned.unshift(v); savePrefs(); render(); nameVisibleSessions(); return; }
@@ -8240,6 +8242,7 @@ function submit(preparedSkillText, opts) {
   // promises it will not: post the pre-dictation draft and land the
   // transcript in an empty composer afterwards. So Enter waits.
   if (VOICE.state === 'finishing') return;
+  if (typeof chatTrashHoldsSend === 'function' && chatTrashHoldsSend()) return;   // ATO-2474: nothing is sent into a chat in Trash (chat-trash-view.js)
   // ATO-1042: the starter model is still on its way; the draft stays and the line above says how far it is.
   if (typeof starterHoldsSend === 'function' && starterHoldsSend()) { toast('The model is still downloading', 'Your message stays here; send it once the line above says Ready.', 'bad'); return; }
   // ATO-1091: a model test has the local model server; the draft stays (fit-test.js fitHoldsSend).
@@ -10443,8 +10446,10 @@ function applySessions(res, askedAt) {
       workingDir:typeof x.workingDir === 'string' ? x.workingDir : null,
       // ATO-1150: the agent's archive flag; an agent from before it sends no field (chat-search.js falls back to prefs.json).
       archived:x.archived === true, archivedKnown:typeof x.archived === 'boolean',
+      trashed:typeof x.trashed === 'boolean' ? x.trashed : undefined,   // ATO-2474: the agent's Trash mark (chat-trash-view.js)
     });
   });
+  if (typeof chatTrashFollowAgent === 'function') chatTrashFollowAgent(SESSIONS);   // ATO-2474: a chat the agent has in Trash is on no list either (chat-trash-view.js)
   chatTrashHide(SESSIONS);   // ATO-2332: a chat in Trash is on no list (chat-trash.js)
   settlePendingChats();
   // Q60 review: a kept request of a turn not running here ends with its chat's turn (approvalOver).

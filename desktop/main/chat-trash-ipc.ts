@@ -1,7 +1,8 @@
 /**
  * ATO-2332: the chat Trash's routes (main/chat-trash.ts says what it keeps):
  *
- *   chatTrash:list     -> { ok, entries }   purges what is past 30 days first
+ *   chatTrash:list     -> { ok, entries }   purges what is past 30 days first, then follows
+ *                      the agent's mark (ATO-2474, chat-trash-sync.ts)
  *   chatTrash:put      { id, title, pinned?, archived?, folder? } -> { ok, entry }   Delete… on a
  *                      chat row: stamps metadata.trashed on the agent first (its search leaves
  *                      the chat out); the entry keeps where the chat sat (ATO-2747)
@@ -25,6 +26,7 @@ import { join } from "node:path";
 import { app, ipcMain } from "electron";
 
 import { requestErrorText, type AgentClient } from "./agent-client.js";
+import { followAgent } from "./chat-trash-sync.js";
 import {
   TRASH_ERRORS, coercePlace, emptyTrash, purgeExpired, readTrash, stampTrashed, trashDrop, trashPut, writeTrash,
   type TrashEntry, type TrashErrorKind,
@@ -34,6 +36,7 @@ const PURGE_EVERY_MS = 6 * 60 * 60 * 1000;
 const FIRST_PURGE_MS = 60 * 1000;
 
 const trashPath = () => join(app.getPath("userData"), "chat-trash.json");
+const migratedPath = () => join(app.getPath("userData"), "chat-trash-agent.json");
 
 let queue: Promise<unknown> = Promise.resolve();
 /** Run `job` after every job before it, whatever they returned. */
@@ -56,7 +59,7 @@ function failed(kind: TrashErrorKind, detail?: string): { ok: false; error: stri
   return { ok: false, error: TRASH_ERRORS[kind] };
 }
 
-export function wireChatTrashIpc(client: Pick<AgentClient, "deleteSession" | "sessionRoute">): void {
+export function wireChatTrashIpc(client: Pick<AgentClient, "deleteSession" | "sessionRoute" | "sessions">): void {
   const remove = (id: string) => client.deleteSession(id);
   const stamp = (id: string, trashed: boolean) =>
     stampTrashed((sid, path, method, body) => client.sessionRoute(sid, path, method, body, 10_000), id, trashed);
@@ -68,10 +71,14 @@ export function wireChatTrashIpc(client: Pick<AgentClient, "deleteSession" | "se
     return out;
   });
 
+  // ATO-2474: the agent owns the mark; the list follows it (chat-trash-sync.ts).
+  const follow = () => inQueue(() => followAgent(client, trashPath(), migratedPath(), (id) => stamp(id, true)));
+
   ipcMain.handle("chatTrash:list", async () => {
     try {
       const out = await purge();
-      return { ok: true, entries: out.entries };
+      const followed = await follow().catch(() => null);
+      return { ok: true, entries: followed ? followed.entries : out.entries };
     } catch (err) {
       return { ...failed("list", detailOf(err)), entries: readTrash(trashPath()) };
     }
