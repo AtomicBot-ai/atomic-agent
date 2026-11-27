@@ -17089,7 +17089,7 @@ async function obActivateLocal(id) {
      (restartStopsTurn) — the restart stops them all. */
   if (restartStopsTurn()) {
     DL.deferred = id;
-    toast('Not while a turn is running', id + ' is downloaded — it starts when the turn ends', 'info');
+    toast('Not while a turn is running', id + ' is downloaded. It starts when the turn ends.', 'info');
     render();
     return;
   }
@@ -17105,7 +17105,7 @@ async function obActivateLocal(id) {
      re-parks the id rather than dropping the pick. */
   const res = await swxRun('starting ' + id + '…', {backend:'local', model:id},
     () => SWXBR.selectLocalModel(id),
-    () => { DL.deferred = id; toast('Not while a turn is running', id + ' is downloaded — it starts when the turn ends', 'info'); render(); });
+    () => { DL.deferred = id; toast('Not while a turn is running', id + ' is downloaded. It starts when the turn ends.', 'info'); render(); });
   if (res && res.superseded) return;
   if (!res || !res.ok) {
     if (res && res.error === 'a turn is running') return;   // re-parked above
