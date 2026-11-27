@@ -32,6 +32,7 @@ const TAINT_SENSITIVE: Record<ApprovalCategory, boolean> = {
   http_write: true,
   shell: true,
   shell_dangerous: true,
+  shell_secret: true,
   script: true,
   proc_kill: false,
   git_remote: true,

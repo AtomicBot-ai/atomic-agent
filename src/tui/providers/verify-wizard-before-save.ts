@@ -17,8 +17,9 @@ import {
   verifyProviderKey,
 } from "../../llm/provider/verify/index.js";
 import { describeProviderVerifyOutcome } from "./describe-verify-outcome.js";
-import { verifyTargetForWizard } from "./providers-wizard-target.js";
+import { envHintForWizard, verifyTargetForWizard } from "./providers-wizard-target.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
+import { readWizardKeyReference, type WizardSecretRefDeps } from "./wizard-secret-ref.js";
 
 export type WizardVerifyGate =
   | { readonly proceed: true; readonly warning: string | null }
@@ -26,12 +27,28 @@ export type WizardVerifyGate =
 
 export async function verifyWizardBeforeSave(
   wizard: ProvidersWizardState,
-  opts: { signal?: AbortSignal } = {},
+  opts: { signal?: AbortSignal; secretRefs?: WizardSecretRefDeps } = {},
 ): Promise<WizardVerifyGate> {
-  const target = verifyTargetForWizard(wizard);
+  // ATO-2530: a key typed as a reference (`op://…`) is read first, for
+  // every service including keyless ones, so a locked 1Password stops the
+  // save with a plain sentence instead of a reference saved that the next
+  // start cannot read. The read value is cached for this process, so the
+  // save that follows does not ask 1Password again.
+  const typed = wizard.apiKeyBuffer.trim();
+  const read = await readWizardKeyReference(
+    typed,
+    envHintForWizard(wizard) || "API_KEY",
+    opts.secretRefs,
+  );
+  if (read && !read.ok) return { proceed: false, error: read.error };
+
+  const found = verifyTargetForWizard(wizard);
   // Nothing to check: a keyless local server, or a service that saves
   // without a key on purpose. Both keep the behaviour they had before.
-  if (!target) return { proceed: true, warning: null };
+  if (!found) return { proceed: true, warning: null };
+  // The service is asked with the value, never the reference.
+  const target =
+    read && read.ok && found.apiKey === typed ? { ...found, apiKey: read.value } : found;
 
   const result = await verifyProviderKey(target, {
     ...(opts.signal ? { signal: opts.signal } : {}),

@@ -185,6 +185,8 @@ export const FUSION_WORKER_OPERATOR_ONLY_REFUSED =
 /** Categories a fan-out's directory never covers (see above). */
 const OPERATOR_ONLY_CATEGORIES: ReadonlySet<ApprovalCategory> = new Set([
   "shell_dangerous",
+  // A command handed a secret (ATO-2530): each use is the operator's call.
+  "shell_secret",
   "trust_config",
   "state_secret",
   "email",

@@ -61,11 +61,13 @@ describe("resolveSecretRefSync / resolveSecretRef", () => {
     expect(childEnv.OPENROUTER_API_KEY).toBeUndefined();
     expect(childEnv.BW_CLIENTSECRET).toBeUndefined();
     expect(childEnv.PATH).toBe("/usr/bin");
-    expect(f.calls[0]!.options.timeoutMs).toBe(3_000);
+    // op may wait on Touch ID: 30 s unless the sources file sets a timeout (ATO-2530).
+    expect(f.calls[0]!.options.timeoutMs).toBe(30_000);
     expect(f.calls[0]!.options.maxBytes).toBe(SECRET_REF_MAX_OUTPUT_BYTES);
   });
 
-  it("runs bw get <field> <item> for bw://", async () => {
+  // On Windows bw goes through cmd.exe (secret-refs-platform.test.ts).
+  it.skipIf(process.platform === "win32")("runs bw get <field> <item> for bw://", async () => {
     const f = fake({ stdout: VALUE });
     await resolveSecretRef("NPM_TOKEN", "bw://npm publish/password", {
       sources: EMPTY_SECRET_SOURCES,

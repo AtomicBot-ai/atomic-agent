@@ -442,8 +442,9 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       // --hard`, `sudo`) asks as `shell_dangerous` with no shape: no
       // `shell` grant, no `[a]` on `git` and no level below full trust
       // runs it unasked, and no prompt offers to remember it (ATO-1220).
-      // A command that uses a tool secret (ATO-476) asks the same way:
-      // the human sees each one, and no earlier grant lets one through.
+      // A command that uses a tool secret (ATO-476) asks the same way,
+      // as `shell_secret` (ATO-2530): the human sees each one, and no
+      // earlier grant lets one through. Dangerous wins the label.
       const strict = dangerous || secretNames.length > 0;
       const commandShape = strict
         ? undefined
@@ -455,7 +456,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         {
           sessionId: ctx.sessionId,
           tool: "os.shell.run",
-          category: strict ? "shell_dangerous" : "shell",
+          category: dangerous ? "shell_dangerous" : secretNames.length > 0 ? "shell_secret" : "shell",
           reason:
             `${security.forcesGate ? security.finding!.reason : guardVerdict.reason} in ${cwd}` +
             // The user approves the lifetime too: a background command
