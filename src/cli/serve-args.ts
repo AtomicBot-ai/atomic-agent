@@ -4,11 +4,14 @@
  * command file stays about running a server rather than describing one.
  */
 
-import { isIP } from "node:net";
 import { networkInterfaces } from "node:os";
 import { resolve } from "node:path";
 
 import { normalizeTunnelHostname, type TunnelRequest } from "./cloudflared.js";
+import { serveApiKeyError } from "./serve-api-key-rules.js";
+
+// ATO-2538: the key rules live in serve-api-key-rules.ts; these names stay importable from here.
+export { isLoopbackListenHost, MIN_NETWORK_KEY_LENGTH, serveApiKeyError } from "./serve-api-key-rules.js";
 
 export interface ServeArgs {
   host: string;
@@ -20,6 +23,12 @@ export interface ServeArgs {
    * (`resolveServeApiKey`), never without one.
    */
   apiKey: string | null;
+  /**
+   * ATO-2538 `--api-key-stdin`: the key comes as the first line of stdin
+   * (the desktop's launch), so it is in no argument and no environment.
+   * `apiKey` is then `null` until serve has read it (serve-api-key-stdin.ts).
+   */
+  apiKeyStdin: boolean;
   noApproval: boolean;
   parentPid: number | null;
   noParentExit: boolean;
@@ -52,6 +61,8 @@ export const HELP =
     "                      generated on the first run: a key is always required, on loopback too.",
     "                      On a network host it must be at least 16 characters, and an address",
     "                      that sends 10 wrong keys in a minute waits a minute",
+    "  --api-key-stdin     Read the key from the first line of stdin instead, so it is in no",
+    "                      argument and no environment variable (`ps`, /proc/<pid>/environ)",
     "  --print-api-key     Print the key serve runs with (generating it if needed) and exit,",
     "                      e.g. curl -H \"Authorization: Bearer $(atomic-agent serve --print-api-key)\"",
     "  --refuse-approvals  Refuse every approval prompt at once (set by `atag launch`, whose clients cannot answer one)",
@@ -120,6 +131,7 @@ export function parseArgs(
   let workingDir: string | null = null;
   let apiKey: string | null = null;
   let apiKeyProvided = false;
+  let apiKeyStdin = false;
   let noApproval = false;
   let parentPid: number | null = null;
   let noParentExit = process.env.ATOMIC_AGENT_SERVE_NO_PARENT_EXIT === "1";
@@ -166,6 +178,9 @@ export function parseArgs(
         apiKeyProvided = true;
         break;
       }
+      case "--api-key-stdin":
+        apiKeyStdin = true;
+        break;
       case "--refuse-approvals":
         refuseApprovals = true;
         break;
@@ -216,39 +231,16 @@ export function parseArgs(
         return { error: `unknown flag: ${flag}` };
     }
   }
-  if (!apiKeyProvided) {
+  if (apiKeyStdin && apiKeyProvided) {
+    return { error: "--api-key and --api-key-stdin both give the key; pass one" };
+  }
+  if (!apiKeyProvided && !apiKeyStdin) {
     const envKey = process.env.ATOMIC_AGENT_API_KEY;
     apiKey = envKey && envKey.length > 0 ? envKey : null;
   }
-  // A bearer header is trimmed before it is compared, so a key of only
-  // whitespace could never be sent back: serve would start and refuse
-  // every request.
-  const servesNothing = reapOnly || printApiKey;
-  if (!servesNothing && apiKey !== null && apiKey.trim().length === 0) {
-    return {
-      error:
-        "the API key is only whitespace (--api-key or ATOMIC_AGENT_API_KEY); set a real token",
-    };
-  }
-  if (!servesNothing && apiKey === null && !isLoopbackListenHost(host)) {
-    return { error: missingKeyOnNetworkError(host) };
-  }
-  // ATO-1126: on the network the key is all that stands between a stranger and the agent's tools.
-  if (!servesNothing && apiKey !== null && apiKey.length < MIN_NETWORK_KEY_LENGTH && !isLoopbackListenHost(host)) {
-    return {
-      error:
-        `--host ${host} accepts connections from other machines, and an API key of ${apiKey.length} characters can be guessed. ` +
-        `Use at least ${MIN_NETWORK_KEY_LENGTH} (for example: export ATOMIC_AGENT_API_KEY=$(openssl rand -hex 24)).`,
-    };
-  }
-  // ATO-693: A2A hands the agent and its tools to other programs; never without a key, even on loopback.
-  if (!reapOnly && a2a && apiKey === null) {
-    return {
-      error:
-        "--a2a lets other agents run tasks here and needs an API key: set --api-key <token> or ATOMIC_AGENT_API_KEY " +
-        "(for example: export ATOMIC_AGENT_API_KEY=$(openssl rand -hex 24))",
-    };
-  }
+  // A key from stdin is checked once serve has read it (serve-api-key-stdin.ts).
+  const keyError = apiKeyStdin ? null : serveApiKeyError(apiKey, { host, a2a, reapOnly, printApiKey });
+  if (keyError !== null) return { error: keyError };
   let tunnel: TunnelRequest | null = null;
   if (tunnelName !== null || tunnelHostname !== null) {
     if (tunnelName === null || tunnelHostname === null) {
@@ -266,6 +258,7 @@ export function parseArgs(
     port,
     workingDir: workingDir ?? process.cwd(),
     apiKey,
+    apiKeyStdin,
     noApproval,
     refuseApprovals,
     parentPid,
@@ -275,54 +268,6 @@ export function parseArgs(
     tunnel,
     a2a,
   };
-}
-
-/** ATO-1126: the shortest API key serve takes on a network host. */
-export const MIN_NETWORK_KEY_LENGTH = 16;
-
-/**
- * Whether a `--host` value only accepts connections from this machine.
- * Decided from the literal alone, never by a DNS lookup:
- *  - `localhost` (and `localhost.`);
- *  - an IPv4 literal in 127/8, as `net.isIP` accepts it (dotted quad
- *    only, so shorthand such as `127.1` or `127.0.0.256` is not one);
- *  - the IPv6 loopback in any spelling (`::1`, `0:0:0:0:0:0:0:1`) and
- *    an IPv4-mapped 127/8 address (`::ffff:127.0.0.1`).
- * Everything else, `0.0.0.0`, `::`, a LAN address, a hostname or a
- * numeric string that is not an IP literal, counts as reachable from
- * other machines.
- */
-export function isLoopbackListenHost(host: string): boolean {
-  const h = host.trim().replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
-  if (h === "localhost") return true;
-  const kind = isIP(h);
-  if (kind === 4) return h.split(".")[0] === "127";
-  if (kind === 6) {
-    // The URL parser prints the canonical compressed form, so every
-    // spelling of one address compares equal. A zone id (`fe80::1%eth0`)
-    // passes isIP but not the URL parser, and is never loopback.
-    if (h.includes("%")) return false;
-    const canonical = new URL(`http://[${h}]/`).hostname;
-    return canonical === "[::1]" || /^\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\]$/.test(canonical);
-  }
-  return false;
-}
-
-/**
- * Whoever holds the key gets the agent and every tool it runs: shell
- * commands, file writes, the config file. On loopback serve falls back to
- * its own generated key (`serve-api-key.ts`); on a network host the parse
- * wants a key the operator chose and knows (ATO-760), so a machine never
- * opens to the network with a key nobody meant to hand out.
- */
-function missingKeyOnNetworkError(host: string): string {
-  return (
-    `--host ${host} accepts connections from other machines, and whoever holds the API key ` +
-    "can run the agent and its tools there. " +
-    "Choose the key yourself with --api-key <token> or the ATOMIC_AGENT_API_KEY environment variable " +
-    "(for example: export ATOMIC_AGENT_API_KEY=$(openssl rand -hex 24)), " +
-    "or listen on 127.0.0.1"
-  );
 }
 
 /**
