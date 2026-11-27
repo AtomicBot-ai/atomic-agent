@@ -1,5 +1,5 @@
 /**
- * ATO-2485 — the terminal panel's routes (renderer/agent-jobs.js).
+ * ATO-2485: the terminal panel's routes (renderer/agent-jobs.js).
  *
  *   agentJobs:list    the chat's shell jobs  (GET  /api/sessions/{id}/shell-jobs)
  *   agentJobs:output  output from a position (GET  …/shell-jobs/{jobId}/output)

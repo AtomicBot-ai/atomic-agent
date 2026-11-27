@@ -1,5 +1,5 @@
 /**
- * ATO-2485 — what the window may ask of the agent's shell jobs, checked
+ * ATO-2485: what the window may ask of the agent's shell jobs, checked
  * before it reaches the agent (agent-jobs-ipc.ts), and the agent's
  * refusals in words the terminal panel shows.
  *
