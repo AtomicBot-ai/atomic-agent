@@ -59,7 +59,7 @@ export class LinearApi {
 
   /** The user (or app) the API key acts as. Rejects when the key is refused. */
   async viewer(): Promise<LinearViewer> {
-    const data = await this.request(VIEWER_QUERY, {});
+    const data = await this.query(VIEWER_QUERY, {});
     const viewer = (data as { viewer?: { id?: unknown; name?: unknown } }).viewer;
     if (typeof viewer?.id !== "string") throw new LinearApiError("Linear returned no viewer", "bad_response");
     return { id: viewer.id, name: typeof viewer.name === "string" ? viewer.name : "" };
@@ -72,7 +72,7 @@ export class LinearApi {
   async createComment(target: LinearTarget, body: string): Promise<string> {
     const input: Record<string, string> = { issueId: target.issueId, body: fitCommentBody(body) };
     if (target.parentId) input.parentId = target.parentId;
-    const data = await this.request(COMMENT_CREATE_MUTATION, { input });
+    const data = await this.query(COMMENT_CREATE_MUTATION, { input });
     const result = (data as { commentCreate?: { success?: unknown; comment?: { id?: unknown } } }).commentCreate;
     if (result?.success !== true || typeof result.comment?.id !== "string") {
       throw new LinearApiError("Linear did not create the comment", "bad_response");
@@ -80,7 +80,8 @@ export class LinearApi {
     return result.comment.id;
   }
 
-  private async request(query: string, variables: Record<string, unknown>): Promise<unknown> {
+  /** One GraphQL call; resolves `data`, throws `LinearApiError` (`auth` when the key is refused). */
+  async query(query: string, variables: Record<string, unknown>): Promise<unknown> {
     const res = await this.fetchImpl(this.url, {
       method: "POST",
       headers: {
