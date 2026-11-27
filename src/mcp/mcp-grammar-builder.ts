@@ -31,29 +31,36 @@ const MCP_SERVER_TOOL = "mcp-server-tool";
 const MCP_NATIVE_TOOL = "mcp-native-tool";
 /** A named rule in the alternation (`os-tool`), not a literal (`"\"finish\""`). */
 const GROUP_RE = /^[a-z][a-z0-9-]*$/;
+/** Built-in groups `mcp-native-tool` follows in the static grammar. */
+const NATIVE_ANCHORS: readonly string[] = ["verify-tool", "plan-tool", "canvas-tool"];
 
 /**
  * Where a reference goes back, so the rule reads as the static grammar
- * writes it. `mcp-server-tool` follows `mcp-native-tool`. `mcp-native-tool`
- * closes the built-in groups: before `mcp-server-tool` when that is in,
- * else after the last named group, whatever its name, so a group added
- * to the static line later (ATO-2261, ATO-2133) cannot end up behind it.
- * A rule that went out and came back must be byte-identical to one that
- * never left, or the profile manager's grammar drifts from the
- * catalog's (ATO-1029).
+ * writes it. `mcp-server-tool` follows `mcp-native-tool`. With none of
+ * {@link NATIVE_ANCHORS} on the line, `mcp-native-tool` goes at the end,
+ * as before. With one, it closes the built-in groups: before
+ * `mcp-server-tool` when that is in, else after the last named group
+ * past the last anchor, so a group added after `canvas-tool` later
+ * (ATO-2261, ATO-2133) cannot end up behind it. A rule that went out and
+ * came back must be byte-identical to one that never left, or the
+ * profile manager's grammar drifts from the catalog's (ATO-1029).
  */
 function insertionIndex(alternatives: readonly string[], ref: string): number {
   if (ref === MCP_SERVER_TOOL) {
     const native = alternatives.indexOf(MCP_NATIVE_TOOL);
     return native === -1 ? alternatives.length : native + 1;
   }
+  const anchor = Math.max(-1, ...NATIVE_ANCHORS.map((name) => alternatives.indexOf(name)));
+  if (anchor === -1) return alternatives.length;
   const server = alternatives.indexOf(MCP_SERVER_TOOL);
-  if (server !== -1) return server;
-  let lastGroup = -1;
-  alternatives.forEach((alt, i) => {
+  if (server > anchor) return server;
+  let lastGroup = anchor;
+  for (let i = anchor + 1; i < alternatives.length; i++) {
+    const alt = alternatives[i]!;
+    if (alt === MCP_SERVER_TOOL) break;
     if (GROUP_RE.test(alt)) lastGroup = i;
-  });
-  return lastGroup === -1 ? alternatives.length : lastGroup + 1;
+  }
+  return lastGroup + 1;
 }
 
 /**
