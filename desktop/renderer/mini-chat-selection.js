@@ -91,10 +91,14 @@ function mcReplaceOffered(row, label, streaming) {
   return !!text && text !== '(no reply)' && text !== '(stopped)';
 }
 
-/** The button's markup under that reply; '' when it is not offered. `esc` is the page's escape. */
+/** The button's markup under that reply; '' when it is not offered. `esc` is the page's escape.
+    ATO-2738: the button opens the preview first (data-replace-ask, mini-chat-replace-preview.js);
+    with the preview open, the preview stands in its place. */
 function mcReplaceHTML(row, label, streaming, esc) {
   if (!mcReplaceOffered(row, label, streaming)) return '';
-  return '<div class="mc-replace-row"><button type="button" class="mc-act mc-replace" data-replace="' + esc(String(row.id)) + '">' + esc(label) + '</button></div>';
+  const preview = typeof mcRpHTML === 'function' ? mcRpHTML(row, label, esc) : '';
+  if (preview) return preview;
+  return '<div class="mc-replace-row"><button type="button" class="mc-act mc-replace" data-replace-ask="' + esc(String(row.id)) + '">' + esc(label) + '</button></div>';
 }
 
 if (typeof module !== 'undefined') {

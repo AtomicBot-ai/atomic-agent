@@ -1,6 +1,7 @@
 import { ipcMain } from "electron";
 
-import { keystrokesAllowed, readFrontApp, readSelectedText } from "./keystroke-clipboard-host.js";
+import { keystrokesAllowed, readSelectedText } from "./keystroke-clipboard-host.js";
+import { readFrontApp } from "./replace-front-app-host.js";   // ATO-2738: the window in front on Windows and Linux too
 import { replaceAvailable, type SourceApp } from "./replace-selection.js";
 import {
   mergeSelectedTextPref,

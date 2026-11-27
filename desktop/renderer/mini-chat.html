@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="css/chat.css">
+<link rel="stylesheet" href="css/diff-lines.css">
 <link rel="stylesheet" href="css/mini-chat.css">
 </head>
 <body class="mini-chat">
@@ -27,6 +28,8 @@
   </section>
   <footer class="mc-foot">
     <textarea id="mc-input" class="mc-input" rows="2" spellcheck="true" placeholder="Ask Atomic Agent…" aria-label="Message"></textarea>
+    <!-- ATO-2478: a new chat that runs in the background in the main window (mini-chat-background.js). -->
+    <button id="mc-bg" class="btn btn-s sm" type="button" disabled hidden>Background</button>
     <button id="mc-send" class="btn btn-p sm" type="button" disabled>Send</button>
   </footer>
   <!-- The reply's markdown, as in the main window (vendored marked and DOMPurify, md-render.js). -->
@@ -34,7 +37,11 @@
   <script src="vendor/purify.js"></script>
   <script src="md-render.js"></script>
   <script src="code-highlight.js"></script>
+  <!-- ATO-2738: what Replace will change, shown first (diff-lines.js draws the lines). -->
+  <script src="diff-lines.js"></script>
+  <script src="mini-chat-replace-preview.js"></script>
   <script src="mini-chat-selection.js"></script>
+  <script src="mini-chat-background.js"></script>
   <script src="mini-chat.js"></script>
 </body>
 </html>

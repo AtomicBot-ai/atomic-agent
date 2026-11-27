@@ -33,3 +33,13 @@ body.mini-chat{display:flex;flex-direction:column;height:100%;background:var(--p
 .mc-replace{border-color:var(--brand)}
 .mc-replace:disabled{opacity:.6;cursor:default}
 @media (prefers-reduced-motion: reduce){.mc-dot{animation:none}}
+/* ATO-2738: the preview before Replace: what was selected (red) and what goes there (green). */
+.mc-rp{margin-top:8px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--lift)}
+.mc-rp.bad .mc-rp-head{color:var(--critical)}
+.mc-rp-head{font-size:var(--fs-cap);line-height:18px;color:var(--ink-2)}
+.mc-rp-legend{display:flex;gap:12px;font-size:var(--fs-cap);line-height:18px;color:var(--ink-2);margin-bottom:4px}
+.mc-rp-was::before,.mc-rp-will::before{content:"";display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.mc-rp-was::before{background:var(--critical)}
+.mc-rp-will::before{background:var(--success)}
+.mc-rp-body{max-height:200px;overflow:auto}
+.mc-rp-acts{display:flex;gap:8px;margin-top:8px}
