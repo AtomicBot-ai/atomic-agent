@@ -198,6 +198,8 @@ on the focused button and the keys named under them; it gives the keyboard
 back when focus leaves or the bubble goes ([pet-window.ts](main/pet-window.ts)
 `keyboard`). Keys answer only the request that was shown when the person
 clicked, after it has been on screen half a second, never from a held key;
+mouse clicks on Allow and Deny follow the same rule, and the second click of
+a double-click never answers;
 when the shown request changes the keyboard is dropped and the next one needs
 its own click, and main refuses an answer for any request but the one its last
 view showed (`petKeyArmed` in renderer/pet.js, `shownId` in main/pet-ipc.ts). View › Desktop Pet › Make Your Own Pet… (also in the pet's

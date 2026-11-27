@@ -54,7 +54,10 @@ function boot(onAnswer) {
   function show(id, more = 0) { viewCb({ state: id ? "waiting" : "idle", dnd: false, approval: id ? req(id) : null, more }); }
   const key = (k, repeat = false) => { for (const fn of listeners.doc.keydown || []) fn({ key: k, repeat, preventDefault() {} }); };
   const later = (ms) => { ctx.clock += ms; };
-  return { els, answers, focus, show, key, later, click: () => els.bubble.fire("pointerdown") };
+  const win = (type) => { for (const fn of listeners.win[type] || []) fn({}); };
+  // A mouse press on a bubble button: pointerdown bubbles up to the bubble, then the click.
+  const press = (id, detail = 1) => { els.bubble.fire("pointerdown"); els[id].fire("click", { detail }); };
+  return { els, answers, focus, show, key, later, win, press, click: () => els.bubble.fire("pointerdown") };
 }
 
 /** The bridge as main behaves: the next request's view arrives before the answer's reply. */
@@ -103,6 +106,7 @@ test("the shown request changing under a focused bubble drops the keys", async (
   p.later(1000);
   p.click();
   p.show("B");   // A was answered in the window, or its turn ended
+  assert.equal(p.focus.at(-1), false, "the keyboard went back the moment the request changed");
   p.later(1000);
   p.key("Enter");
   p.key("Escape");
@@ -124,7 +128,7 @@ test("a key right after a request appears waits until it has been on screen a mo
   assert.deepEqual(p.answers, [["A", "allow"]]);
 });
 
-test("Enter or Space on a focused Deny button is held to the same rule; a mouse click is not", async () => {
+test("Enter or Space on a focused Deny button is held to the same rule as the keys", async () => {
   const p = boot(() => Promise.resolve({ ok: true }));
   p.show("A");
   p.later(1000);
@@ -134,9 +138,58 @@ test("Enter or Space on a focused Deny button is held to the same rule; a mouse 
   p.els["b-deny"].fire("click", { detail: 0 });
   await settle();
   assert.deepEqual(p.answers, [], "a keyboard click for a request nobody picked");
+});
+
+test("a double-click on Allow answers A only, never B arriving under the pointer", async () => {
+  const p = boot(nextFirst("B"));
+  p.show("A", 1);
+  p.later(1000);
+  p.press("b-allow", 1);
+  await settle();
+  assert.equal(p.els["b-text"].textContent, "run B", "the bubble now shows B");
+  p.later(150);
+  p.press("b-allow", 2);
+  await settle();
+  assert.deepEqual(p.answers, [["A", "allow"]], "the second click of the double-click did not reach B");
+  // A fast single click on B, too soon after it appeared, does not answer it either.
+  p.press("b-allow", 1);
+  await settle();
+  assert.deepEqual(p.answers, [["A", "allow"]], "a click under the arm time");
+  // One deliberate click once B has been on screen a moment works.
+  p.later(P.PET_KEY_ARM_MS);
+  p.press("b-allow", 1);
+  await settle();
+  assert.deepEqual(p.answers, [["A", "allow"], ["B", "allow"]]);
+});
+
+test("a mouse click answers only the request its press began on", async () => {
+  const p = boot(() => Promise.resolve({ ok: true }));
+  p.show("A", 1);
+  p.later(1000);
+  p.click();          // pointerdown on A
+  p.show("B");        // B replaces A while the button is held
+  p.later(1000);
   p.els["b-deny"].fire("click", { detail: 1 });
   await settle();
-  assert.deepEqual(p.answers, [["B", "deny"]], "the mouse still answers what it clicked");
+  assert.deepEqual(p.answers, [], "the release landed on B, which the press was not for");
+  p.press("b-deny", 1);
+  await settle();
+  assert.deepEqual(p.answers, [["B", "deny"]], "a fresh press on B answers B");
+});
+
+test("the window losing focus drops the keys until the next click", async () => {
+  const p = boot(() => Promise.resolve({ ok: true }));
+  p.show("A");
+  p.later(1000);
+  p.click();
+  p.win("blur");
+  p.key("Enter");
+  await settle();
+  assert.deepEqual(p.answers, [], "Enter after the window lost focus");
+  p.click();
+  p.key("Enter");
+  await settle();
+  assert.deepEqual(p.answers, [["A", "allow"]]);
 });
 
 test("petKeyArmed: no repeat, the picked request only, after the arm time", () => {

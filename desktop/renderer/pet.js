@@ -189,8 +189,11 @@ function petBoot() {
     }, () => { busy = null; msg = 'The answer did not go through. Open Atomic Agent to answer it.'; paint(); });
   };
 
-  // A keyboard click (detail 0: Enter or Space on the button) is held to the same rule as the keys.
-  const pressed = (e) => !e || e.detail !== 0 || armed(false);
+  // A click, by mouse or by Enter/Space on the button (detail 0), is held to the
+  // same rule as the keys: the request the press began on (pointerdown took it),
+  // shown PET_KEY_ARM_MS. The second click of a double-click never answers, so
+  // a double-click on A's Allow cannot approve B arriving under the pointer.
+  const pressed = (e) => !(e && e.detail > 1) && armed(false);
   $('b-allow').addEventListener('click', (e) => { if (pressed(e)) answer('allow'); });
   $('b-deny').addEventListener('click', (e) => { if (pressed(e)) answer('deny'); });
   $('b-open').addEventListener('click', () => BR.open());
