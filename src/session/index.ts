@@ -238,3 +238,9 @@ export {
   readSessionArchivedSetAt,
   withSessionArchived,
 } from "./session-archived.js";
+export {
+  SESSION_TRASHED_METADATA_KEY,
+  SESSION_TRASHED_SET_AT_KEY,
+  readSessionTrashed,
+  withSessionTrashed,
+} from "./session-trashed.js";
