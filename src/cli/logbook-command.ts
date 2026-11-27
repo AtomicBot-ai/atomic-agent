@@ -82,6 +82,7 @@ export async function logbookCommand(args: string[], deps: LogbookCommandDeps = 
     now: deps.now ?? (() => new Date()),
     platform: deps.platform ?? process.platform,
     write,
+    writeErr,
   };
   try {
     switch (sub) {
