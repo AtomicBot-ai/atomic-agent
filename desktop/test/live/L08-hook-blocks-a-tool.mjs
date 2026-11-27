@@ -26,6 +26,7 @@ import { REPO_DIR } from '../drive.mjs';
 import { Failure, SCENARIO_NAME, ask, check, main, sleep, waitTurn } from '../harness.mjs';
 import { liveScenario } from './live-harness.mjs';
 import { call, reply } from './scripted-model.mjs';
+import { closeSettings, openPluginsPane, paneSettled } from './settings-plugins.mjs';
 
 const run_ = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -53,37 +54,6 @@ async function until(fn, what, ms = 30000) {
     if (Date.now() > end) throw new Failure(`gave up after ${ms}ms waiting for ${what}`);
     await sleep(150);
   }
-}
-
-/* ATO-1755. Settings rebuilds its whole window with innerHTML on every
-   render, and the Plugins pane renders again when a write answers and again
-   when the list read after it lands (plugins-pane.js plgWrite, pluginsRefresh).
-   plugins.json is on disk BEFORE that answer comes back (the CLI writes it,
-   then exits, then the IPC answers), so "saved" is not "done redrawing": the
-   "saving…" question still lies over the window and the rows are about to
-   move. Done pressed in that gap closed nothing, and the next question was
-   typed into nothing. The gap grows when the machine is busy, which is why
-   only the full run hit it. The pane is done when nothing it shows is still working: the
-   Refresh button is not disabled (no list read running), no row shows a
-   spinner (no write running), no question is open. */
-const PANE_SETTLED = `!!document.querySelector('[data-act="plugins:refresh"]')`
-  + ` && !document.querySelector('[data-act="plugins:refresh"][disabled]')`
-  + ` && !document.querySelector('.set-plgrow .tk-spin')`
-  + ` && !document.querySelector('#settings .set-overlay')`;
-const paneSettled = (app, what) => app.waitFor(PANE_SETTLED, `Settings › Plugins done redrawing ${what}`, { timeout: 30000 });
-
-async function openPluginsPane(app) {
-  await app.clickSelSteady('.sb-settings');
-  await app.clickSelSteady('button.setrow[data-act="settings:plugins"]');
-  await app.waitFor(`[...document.querySelectorAll('.set-plgrow')].some((r) => r.textContent.includes(${JSON.stringify(NAME)}))`,
-    'the plugin listed in Settings › Plugins', { timeout: 30000 });
-  await paneSettled(app, 'after opening');
-}
-
-/* Done, once it holds still, and Settings really gone before anything is typed. */
-async function closeSettings(app) {
-  await app.clickSelSteady('[data-act="settings:close"]');
-  await app.waitFor(`!document.querySelector('#settings')`, 'Settings closed', { timeout: 10000 });
 }
 
 /** One write the scripted model asks for, up to the point the app answers. */
@@ -115,7 +85,7 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
   check(post().length === 0, 'the PostToolUse hook did not run without consent', JSON.stringify(post()));
 
   // ---- consent, by clicking --------------------------------------------------
-  await openPluginsPane(app);
+  await openPluginsPane(app, NAME);
   await app.clickSelSteady(`[data-act="plugins:expand:${NAME}"]`);
   await app.clickSelSteady(`[data-act="plugins:code:${NAME}"]`);
   await app.clickSelSteady('[data-act="plugins:codeConfirm"]');
@@ -150,7 +120,7 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
 
   // ---- switched off, by clicking ----------------------------------------------
   const preRuns = pre().length;
-  await openPluginsPane(app);
+  await openPluginsPane(app, NAME);
   if (!(await app.eval(`!!document.querySelector('[data-act="plugins:part:${NAME}:hook:PreToolUse"]')`))) {
     await app.clickSelSteady(`[data-act="plugins:expand:${NAME}"]`);
   }
