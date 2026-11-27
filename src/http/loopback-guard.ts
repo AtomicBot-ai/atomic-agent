@@ -15,9 +15,10 @@ import { getHeader, sendError } from "./request-context.js";
  *
  * With no key, every request must therefore:
  * - name a loopback host in `Host` (rebinding sends the attacker's name);
- * - carry no `Origin`, or a loopback one, or one listed in
- *   `ATOMIC_AGENT_ALLOWED_ORIGINS` (browsers add `Origin` to every
- *   cross-site POST and every CORS request; curl and CLI clients send none);
+ * - carry no `Origin`, or a loopback one (browsers add `Origin` to every
+ *   cross-site POST and every CORS request; curl and CLI clients send none).
+ *   No setting widens this: `ATOMIC_AGENT_ALLOWED_ORIGINS` is read by
+ *   `/mcp` alone, on top of the key (mcp-origin.ts, ATO-2475);
  * - send its body as JSON (`application/json` is not a CORS "simple"
  *   type, so a browser cannot send it cross-site without a preflight,
  *   and the preflight gets no permissive CORS headers back).
@@ -28,14 +29,6 @@ import { getHeader, sendError } from "./request-context.js";
  * server built with `unauthenticated: true`: tests and embedders.
  */
 
-/**
- * Extra web origins `originAllowed` accepts. Under `serve` (always keyed,
- * #1710) only `/mcp` still reads it, for its Origin check; the
- * keyless-server use above is deprecated and kept for tests and
- * embedders (ATO-1705).
- */
-export const ALLOWED_ORIGINS_ENV = "ATOMIC_AGENT_ALLOWED_ORIGINS";
-
 const BODY_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export interface LoopbackGuardRejection {
@@ -45,8 +38,6 @@ export interface LoopbackGuardRejection {
 }
 
 export interface LoopbackGuardOptions {
-  /** `process.env` by default; tests pass their own. */
-  env?: NodeJS.ProcessEnv;
   /** `os.hostname()` by default. */
   machineHostname?: string;
 }
@@ -76,27 +67,13 @@ function hostAllowed(host: string | null, machineHostname: string): boolean {
   return isLoopbackHostname(url.hostname, machineHostname);
 }
 
-function allowListed(origin: string, env: NodeJS.ProcessEnv): boolean {
-  const raw = env[ALLOWED_ORIGINS_ENV];
-  if (!raw) return false;
-  const normalized = origin.trim().replace(/\/$/, "").toLowerCase();
-  for (const entry of raw.split(",")) {
-    const want = entry.trim().replace(/\/$/, "").toLowerCase();
-    if (want.length === 0) continue;
-    if (want === "*") return true;
-    if (want.endsWith("*") ? normalized.startsWith(want.slice(0, -1)) : normalized === want) return true;
-  }
-  return false;
-}
-
-/** No `Origin`, a loopback one, or one in `ATOMIC_AGENT_ALLOWED_ORIGINS`. Also used by `/mcp` (route-mcp-endpoint.ts). */
-export function originAllowed(
-  origin: string | null,
-  env: NodeJS.ProcessEnv = process.env,
-  machineHostname: string = osHostname(),
-): boolean {
+/**
+ * No `Origin`, or a loopback `http(s)` one. Nothing else: no setting adds
+ * origins here (ATO-2475). `/mcp` builds its own check on this one
+ * (mcp-origin.ts).
+ */
+export function originAllowed(origin: string | null, machineHostname: string = osHostname()): boolean {
   if (origin === null) return true;
-  if (allowListed(origin, env)) return true;
   let url: URL;
   try {
     url = new URL(origin.trim());
@@ -124,7 +101,6 @@ export function checkLoopbackRequest(
   req: IncomingMessage,
   options: LoopbackGuardOptions = {},
 ): LoopbackGuardRejection | null {
-  const env = options.env ?? process.env;
   const machineHostname = options.machineHostname ?? osHostname();
   if (!hostAllowed(getHeader(req, "host"), machineHostname)) {
     return {
@@ -133,11 +109,11 @@ export function checkLoopbackRequest(
       message: "Host is not a loopback name; without an API key this server answers only localhost",
     };
   }
-  if (!originAllowed(getHeader(req, "origin"), env, machineHostname)) {
+  if (!originAllowed(getHeader(req, "origin"), machineHostname)) {
     return {
       status: 403,
       code: "origin_not_allowed",
-      message: `Cross-origin requests are refused without an API key; allow an origin with ${ALLOWED_ORIGINS_ENV}`,
+      message: "Cross-origin requests are refused without an API key",
     };
   }
   const method = (req.method ?? "GET").toUpperCase();
