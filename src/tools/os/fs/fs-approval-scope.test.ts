@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { getTrustConfigPaths } from "../../../config/config-file.js";
 import { categorizeFsMutation, resolveFsScope } from "./fs-approval-scope.js";
-import { getTrustConfigPaths } from "../../../config/config-file.js";
 
 describe("fs approval scope", () => {
   let root: string;
