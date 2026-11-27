@@ -96,6 +96,8 @@ function turnFoldsOf(log, opts) {
         failed: tools.filter((x) => failedOf(log[x])).length,
         // ATO-1145: each call the agent allowed by itself, with the row it belongs to.
         auto: tools.flatMap((x) => (Array.isArray(log[x].autoApproved) ? log[x].autoApproved : []).map((a) => Object.assign({row: log[x]}, a))),
+        // ATO-2505 / ATO-2529: what an argument check caught and what the security rules refused (approval-security.js).
+        security: tools.flatMap((x) => (Array.isArray(log[x].security) ? log[x].security : []).map((r) => Object.assign({row: log[x]}, r))),
       });
     }
     i = j - 1;
@@ -144,7 +146,8 @@ function turnSumHTML(f, open, ms, deps) {
       + '<span class="ts-l">' + esc(label) + '</span>'
       + (f.failed ? '<span class="ts-sep" aria-hidden="true">·</span><span class="ts-bad">' + f.failed + ' failed</span>' : '')
       + (time ? '<span class="ts-sep" aria-hidden="true">·</span><span class="ts-du tnum">' + esc(time) + '</span>' : '')
-    + '</button>' + turnAutoHTML(f, deps) + '</div></div>';
+    + '</button>' + turnAutoHTML(f, deps)
+    + (typeof turnSecurityHTML === 'function' ? turnSecurityHTML(f, deps) : '') + '</div></div>';
 }
 
 if (typeof module !== 'undefined') module.exports = {STEPS_KEY, STEPS, TURN_OPEN, TURN_AUTO_OPEN, stepsAlwaysSet, autoApprovedOf, autoViaText, turnFoldable, turnFoldsOf, turnSumLabel, turnAutoHTML, turnSumHTML};

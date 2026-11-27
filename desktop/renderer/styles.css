@@ -654,4 +654,6 @@ button.tk-hint:hover{background:var(--hover);color:var(--ink)}
 .set-whk-kv > span{font-size:var(--fs-label);color:var(--ink-2)}
 .set-whk-field{display:flex;flex-direction:column;gap:4px;font-size:var(--fs-label);color:var(--ink-2)}
 .set-whk-field input,.set-whk-field textarea{font:inherit;font-size:var(--fs-ui);color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:8px;padding:6px 8px;resize:vertical}
+/* ATO-2528: Settings › Privacy › Known hosts, the Add host field (security-settings.js). */
+.set-khost-add input{width:100%;box-sizing:border-box;font:inherit;font-size:var(--fs-ui);color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:8px;padding:6px 8px}
 .set-whk-form .set-tbacts{display:flex;justify-content:flex-end;gap:8px}
