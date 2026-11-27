@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { classifyShellCall } from "./shell-job-calls.js";
+import { hasUntil } from "./shell-job-until.js";
 
 /**
  * ATO-891: some models fill every optional field of `os.shell.run` with
@@ -79,5 +80,16 @@ describe("classifyShellCall", () => {
       expect(form.kind).toBe("invalid");
       expect(form.kind === "invalid" && form.message).toContain("wait must be a job id");
     }
+  });
+});
+
+/** ATO-2358: a zero-filling model's `until: ""` is no pattern. */
+describe("hasUntil", () => {
+  it("reads blank and empty values as absent", () => {
+    expect(hasUntil(undefined)).toBe(false);
+    expect(hasUntil(null)).toBe(false);
+    expect(hasUntil("")).toBe(false);
+    expect(hasUntil(false)).toBe(false);
+    expect(hasUntil("ready")).toBe(true);
   });
 });

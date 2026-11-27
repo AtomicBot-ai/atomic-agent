@@ -55,6 +55,12 @@ import {
   runShellKill,
   runShellWait,
 } from "./shell-job-calls.js";
+import {
+  hasUntil,
+  runShellWaitUntil,
+  runShellWaitUntilById,
+} from "./shell-job-until.js";
+import { compileWatchPattern } from "./shell-job-watch.js";
 import { ShellJobRegistry } from "./shell-jobs.js";
 import {
   markRecoveredResult,
@@ -195,6 +201,22 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // wanted stopped. The turn's abort signal stays the safety valve.
     // A zero `timeoutMs` reads as omitted (zero-filling models, ATO-1175).
     const timeout = resolveShellTimeout(rawArgs.timeoutMs, defaultTimeoutMs);
+    // `until` (ATO-2358): start in the background and come back at the
+    // first output line matching it. A bad pattern is refused before
+    // anything is asked or run.
+    const until = hasUntil(rawArgs.until) ? rawArgs.until : undefined;
+    if (until !== undefined) {
+      const compiled = compileWatchPattern(until);
+      if (!compiled.ok) {
+        return compressToolResult({
+          tool: "os.shell.run",
+          status: "error",
+          output: `os.shell.run: ${compiled.message}`,
+          details: { cmd, invalidCall: true },
+        });
+      }
+    }
+    const background = rawArgs.background === true || until !== undefined;
 
     // Two execution modes. Direct-exec (`spawn(cmd, args)`) keeps argv
     // semantics and shell-glob expansion. Subshell (`sh -c <line>`) is
@@ -338,7 +360,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
             `${guardVerdict.reason} in ${cwd}` +
             // The user approves the lifetime too: a background command
             // outlives the turn (ATO-1252).
-            (rawArgs.background === true
+            (background
               ? " (starts in the background and keeps running until the session ends or it is stopped)"
               : "") +
             (recovered === null
@@ -436,7 +458,17 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // `background: true` (a dev server, a watcher): watched briefly for
     // an early failure, then handed back as a kept job. It went through
     // the same guard and approval above; only the wait differs.
-    if (rawArgs.background === true) {
+    if (background && until !== undefined) {
+      // A spawn failure rejects here, as on the plain background path.
+      await job.waitFor(1, ctx.signal);
+      const { record } = jobs.register(ctx.sessionId, job, facts, true);
+      const jobCtx = { jobs, sessionId: ctx.sessionId, defaultTimeoutMs, signal: ctx.signal };
+      const result = await runShellWaitUntil(jobCtx, record, until, timeout.timeoutMs);
+      // A cancelled turn does not leave behind what it was starting.
+      if (ctx.signal.aborted && record.state === "running") jobs.stop(record, "kill");
+      return result;
+    }
+    if (background) {
       const early = await job.waitFor(backgroundSettleMs, ctx.signal);
       if (early === "elapsed") {
         const { record, evicted } = jobs.register(ctx.sessionId, job, facts, true);
@@ -537,7 +569,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
   return {
     name: "os.shell.run",
     description:
-      "Run an OS command in the session working directory. Prefer the structured form `{cmd, args:[...]}` (argv globs `*`/`?` are expanded). Shell metacharacters (`|`, `&&`, `;`, `>`, `<`, `$`, backticks) are interpreted via the OS subshell (`sh -c` on macOS/Linux, `cmd.exe /c` on Windows) — a full command line passed as `cmd` (e.g. `\"ffprobe -v quiet … f.mp3\"` or `\"pip3 list | grep foo\"`) runs as written. Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Not for controlling web browsers (`osascript` scripts that read or set tabs and URLs, `open -a <browser> <url>`): those are refused; use the browser tools. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. Run the steps of a task yourself (installs such as `brew install`, `npm i -g`, `pip install`, `git clone`, builds, `make`, `docker run`) instead of printing them for the user to type: the approval prompt is how the user keeps control. The command has no terminal and no stdin; a command that stops at a sign-in, a password, sudo or a terminal question comes back with \"this step needs the user: …\" — hand over only that step. Pass `background: true` for a command that keeps running (a dev server, a watcher): it is started, watched for 3 s, and returned as a kept job. " +
+      "Run an OS command in the session working directory. Prefer the structured form `{cmd, args:[...]}` (argv globs `*`/`?` are expanded). Shell metacharacters (`|`, `&&`, `;`, `>`, `<`, `$`, backticks) are interpreted via the OS subshell (`sh -c` on macOS/Linux, `cmd.exe /c` on Windows) — a full command line passed as `cmd` (e.g. `\"ffprobe -v quiet … f.mp3\"` or `\"pip3 list | grep foo\"`) runs as written. Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Not for controlling web browsers (`osascript` scripts that read or set tabs and URLs, `open -a <browser> <url>`): those are refused; use the browser tools. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. Run the steps of a task yourself (installs such as `brew install`, `npm i -g`, `pip install`, `git clone`, builds, `make`, `docker run`) instead of printing them for the user to type: the approval prompt is how the user keeps control. The command has no terminal and no stdin; a command that stops at a sign-in, a password, sudo or a terminal question comes back with \"this step needs the user: …\" — hand over only that step. Pass `background: true` for a command that keeps running (a dev server, a watcher): it is started, watched for 3 s, and returned as a kept job. Pass `until` (a case-insensitive regular expression, e.g. \"ready|error\") to come back as soon as the command or job prints a matching line instead of polling: `{cmd, until}` starts it as a kept background job, `{wait: id, until}` watches a job; each match is reported once, so the next `until` waits for the next one. " +
       describeShellTimeoutDefault(defaultTimeoutMs),
     readonly: false,
     async run(rawArgs, ctx) {
@@ -560,6 +592,15 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       }
       if (form.kind === "jobs") return listShellJobs(jobCtx);
       if (form.kind === "wait") {
+        if (hasUntil(rawArgs.until)) {
+          return runShellWaitUntilById(
+            jobCtx,
+            form.id,
+            rawArgs.until,
+            rawArgs.timeoutMs,
+            rawArgs.keep === true,
+          );
+        }
         return runShellWait(jobCtx, form.id, rawArgs.timeoutMs, rawArgs.keep === true);
       }
       if (form.kind === "kill") return runShellKill(jobCtx, form.id);
