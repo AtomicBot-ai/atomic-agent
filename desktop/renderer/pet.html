@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>Atomic Agent Pet</title>
+<!-- ATO-2391: the desktop pet (main/pet-window.ts, main/pet-ipc.ts). Transparent; only the sprite and the bubble take clicks. -->
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="css/pet.css">
+</head>
+<body class="pet st-idle">
+  <section id="bubble" class="bubble hit" role="dialog" aria-labelledby="b-title" hidden>
+    <button id="b-close" class="b-x" type="button" aria-label="Hide this for now" title="Hide this for now">×</button>
+    <div id="b-title" class="b-title"></div>
+    <div id="b-text" class="b-text"></div>
+    <div id="b-risk" class="b-risk" hidden></div>
+    <div id="b-msg" class="b-msg" role="status" hidden></div>
+    <div class="b-actions">
+      <button id="b-allow" class="b-btn b-primary" type="button">Allow once</button>
+      <button id="b-deny" class="b-btn" type="button">Deny</button>
+      <button id="b-open" class="b-btn b-quiet" type="button">Open</button>
+    </div>
+    <div id="b-more" class="b-more" hidden></div>
+  </section>
+  <div id="pet" class="sprite hit" role="img" aria-label="Atomic Agent is idle" title="Atomic Agent is idle">
+    <svg viewBox="0 0 100 100" aria-hidden="true">
+      <g class="orbits">
+        <g class="orbit"><ellipse cx="50" cy="50" rx="44" ry="15"/><circle class="electron" cx="94" cy="50" r="4"/></g>
+        <g class="orbit" transform="rotate(60 50 50)"><ellipse cx="50" cy="50" rx="44" ry="15"/><circle class="electron" cx="6" cy="50" r="4"/></g>
+        <g class="orbit" transform="rotate(120 50 50)"><ellipse cx="50" cy="50" rx="44" ry="15"/><circle class="electron" cx="94" cy="50" r="4"/></g>
+      </g>
+      <g class="core">
+        <circle class="nucleus" cx="50" cy="50" r="19"/>
+        <g class="eyes eyes-open"><circle cx="43.5" cy="48" r="2.8"/><circle cx="56.5" cy="48" r="2.8"/></g>
+        <g class="eyes eyes-closed"><path d="M40 49 q3.5 3 7 0 M53 49 q3.5 3 7 0"/></g>
+        <g class="eyes eyes-happy"><path d="M40 50 q3.5 -5 7 0 M53 50 q3.5 -5 7 0"/></g>
+        <g class="eyes eyes-x"><path d="M41 45 l5 5 M46 45 l-5 5 M54 45 l5 5 M59 45 l-5 5"/></g>
+        <path class="mouth" d="M45.5 56 q4.5 3.5 9 0"/>
+      </g>
+    </svg>
+    <span id="badge" class="badge" aria-hidden="true"></span>
+  </div>
+  <script src="pet.js"></script>
+</body>
+</html>

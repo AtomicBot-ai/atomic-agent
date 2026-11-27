@@ -175,6 +175,19 @@ contextBridge.exposeInMainWorld("atomic", {
      the mini chat page. The main window opens it; that page asks which chat it was opened for. */
   chatPopoutOpen: (sessionId: string) => ipcRenderer.invoke("chatPopout:open", sessionId),
   chatPopoutMine: () => ipcRenderer.invoke("chatPopout:mine"),
+  /* ATO-2391: the desktop pet's page (main/pet-ipc.ts), and the main window's half:
+     an Allow / Deny from the pet, answered by this window's own card (renderer/pet-relay.js). */
+  pet: {
+    attach: () => ipcRenderer.invoke("pet:attach"),
+    onView: (cb: (payload: unknown) => void) => on("pet:view", cb),
+    hover: (inside: boolean) => ipcRenderer.send("pet:hover", inside === true),
+    drag: (phase: "start" | "end") => ipcRenderer.send("pet:drag", phase),
+    answer: (approvalId: string, decision: "allow" | "deny") => ipcRenderer.invoke("pet:answer", { approvalId, decision }),
+    open: () => ipcRenderer.send("pet:open"),
+    menu: () => ipcRenderer.send("pet:menu"),
+  },
+  onPetRelay: (cb: (payload: unknown) => void) => on("pet:relayAnswer", cb),
+  petRelayResult: (reqId: string, handled: boolean) => ipcRenderer.send("pet:relayResult", { reqId, handled: handled === true }),
 
   /** Setup wizard: real config writes and the real model catalogue. */
   configGet: () => ipcRenderer.invoke("cli:configGet"),
