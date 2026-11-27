@@ -68,7 +68,9 @@ import {
 } from "./shell-job-until.js";
 import { compileWatchPattern } from "./shell-job-watch.js";
 import { runShellWrite } from "./shell-job-write.js";
-import { ttyEnv, wrapForTty } from "./tty-wrap.js";
+import { ttyEnv } from "./tty-wrap.js";
+import { startInteractiveJob, type TtyBackend } from "./tty-spawn.js";
+import type { NodePtyModule } from "../../../native/load-node-pty.js";
 import { ShellJobRegistry } from "./shell-jobs.js";
 import { shellEgress } from "./shell-egress.js";
 import {
@@ -183,6 +185,8 @@ export interface OsShellToolOptions extends DangerousToolOptions {
    * filled in only after approval. Omitted ⇒ none: a placeholder fails.
    */
   secrets?: ToolSecretSource;
+  /** Test seam: the pty binding for `tty: true` jobs (ATO-2484). */
+  loadPty?: () => NodePtyModule | null;
 }
 
 /**
@@ -531,10 +535,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       runArgs = filled.args;
     }
     const plainSpawn = resolveShellSpawn(runCmd, runArgs, useShell);
-    const ttySpawn = interactive ? wrapForTty(plainSpawn.command, plainSpawn.args) : null;
-    const spawnSpec = ttySpawn
-      ? { ...plainSpawn, command: ttySpawn.command, args: ttySpawn.args }
-      : plainSpawn;
+    const spawnSpec = plainSpawn;
     const facts: ShellCommandFacts = {
       cmd,
       args: execArgs,
@@ -606,21 +607,42 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         ? commandEnv
         : withSandboxCacheEnv(commandEnv, sandboxCacheRoot);
     const dropSocketEnv = sandbox.mode === "workspace" && !sandbox.network;
-    const job = startCommandJob(spawnCommand, spawnArgs, {
-      cwd,
-      // Package caches go to the private sandbox cache (ATO-1651); without
-      // network the socket variables (`SSH_AUTH_SOCK`, `DOCKER_HOST`,
-      // D-Bus) are dropped too (ATO-1652); a tty job adds its terminal
-      // variables last (ATO-2277).
-      env: (interactive ? ttyEnv : (env: NodeJS.ProcessEnv) => env)(
-        dropSocketEnv ? withoutLocalSocketEnv(cachedEnv) : cachedEnv,
-      ),
-      ...(interactive ? { keepStdinOpen: true, stopDescendants: true } : {}),
-      ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
-      ...(spawnSpec.windowsVerbatimArguments
-        ? { windowsVerbatimArguments: true }
-        : {}),
-    });
+    // Package caches go to the private sandbox cache (ATO-1651); without
+    // network the socket variables (`SSH_AUTH_SOCK`, `DOCKER_HOST`,
+    // D-Bus) are dropped too (ATO-1652); a tty job adds its terminal
+    // variables last (ATO-2277).
+    const jobEnv = (interactive ? ttyEnv : (env: NodeJS.ProcessEnv) => env)(
+      dropSocketEnv ? withoutLocalSocketEnv(cachedEnv) : cachedEnv,
+    );
+    // A `tty: true` job runs on node-pty, else `script(1)`, else pipes
+    // (tty-spawn.ts, ATO-2484). Safe Mode refused it above, so its
+    // spawn is never the sandbox wrapper.
+    const interactiveJob = interactive
+      ? startInteractiveJob(
+          {
+            command: spawnCommand,
+            args: spawnArgs,
+            ...(spawnSpec.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+          },
+          {
+            cwd,
+            env: jobEnv,
+            ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
+          },
+          options.loadPty ? { loadPty: options.loadPty } : {},
+        )
+      : null;
+    const ttyBackend: TtyBackend | null = interactiveJob?.backend ?? null;
+    const job =
+      interactiveJob?.job ??
+      startCommandJob(spawnCommand, spawnArgs, {
+        cwd,
+        env: jobEnv,
+        ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
+        ...(spawnSpec.windowsVerbatimArguments
+          ? { windowsVerbatimArguments: true }
+          : {}),
+      });
     // `node --check a b c` exits 0 having read only `a`. Said first,
     // because nothing in node's own output says it — and a reply built
     // on that exit code claims a check that never ran.
@@ -661,7 +683,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           maxJobs: jobs.maxJobs,
           notices,
           detachNotice: interactive
-            ? formatShellInteractiveNotice(record.id, ttySpawn?.tty === true)
+            ? formatShellInteractiveNotice(record.id, ttyBackend !== null && ttyBackend !== "pipes")
             : formatShellBackgroundNotice(record.id),
         });
       }

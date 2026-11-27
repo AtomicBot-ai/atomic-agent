@@ -15,7 +15,10 @@ import { quotePosixArg } from "./shell-interpretation.js";
  *   `-e` passes the command's exit code, `-f` flushes as it goes.
  * - Windows, or no `script` on the machine: plain pipes; stdin still
  *   takes input, but the program sees no terminal, and the result says
- *   so. A native ConPTY / node-pty backend is a follow-up.
+ *   so.
+ *
+ * This is the fallback: when the node-pty binding loads, tty-spawn.ts
+ * runs the job on it instead (ATO-2484), ConPTY on Windows included.
  */
 
 export interface TtySpawn {

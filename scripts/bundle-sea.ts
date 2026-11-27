@@ -89,7 +89,10 @@ async function main(): Promise<number> {
     // external means the binary never picks it up from the build machine's
     // node_modules: it stays an optional runtime import that falls back to
     // the vector scan when the package is not next to the agent.
-    external: ["better-sqlite3", "playwright-core", "@napi-rs/keyring", "baileys", "sqlite-vec"],
+    // `@lydell/node-pty` (interactive shell jobs, ATO-2484) is the same
+    // shape as the keyring: a per-platform prebuild next to the binary
+    // (see `scripts/copy-node-pty-runtime.ts`).
+    external: ["better-sqlite3", "playwright-core", "@napi-rs/keyring", "@lydell/node-pty", "baileys", "sqlite-vec"],
     // Bake the published version into the binary so `getAppVersion()`
     // (see src/version.ts) resolves without a shipped package.json.
     define: {

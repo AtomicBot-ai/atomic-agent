@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { BUNDLE_TARGETS } from "./bundle-targets.js";
 import {
   archiveName,
+  bundledPackageNames,
   distTag,
   launcherManifest,
   platformManifest,
@@ -121,6 +122,32 @@ describe("npm packages of a release", () => {
       "darwin-arm64",
       "win32-x64",
       "atomic-agent",
+    ]);
+  });
+});
+
+// ATO-2484: scoped packages (`@lydell/node-pty`, `@napi-rs/keyring`) were
+// skipped, so npm left them out of the platform tarball.
+describe("bundledPackageNames", () => {
+  it("lists plain and scoped packages, skipping dot folders and folders without a manifest", () => {
+    const tree: Record<string, string[]> = {
+      "": [".bin", "better-sqlite3", "@lydell", "@napi-rs", "stray"],
+      "@lydell": ["node-pty", "node-pty-darwin-arm64"],
+      "@napi-rs": ["keyring", "keyring-darwin-arm64"],
+    };
+    const manifests = new Set([
+      "better-sqlite3",
+      "@lydell/node-pty",
+      "@lydell/node-pty-darwin-arm64",
+      "@napi-rs/keyring",
+      "@napi-rs/keyring-darwin-arm64",
+    ]);
+    expect(bundledPackageNames((dir) => tree[dir] ?? [], (name) => manifests.has(name))).toEqual([
+      "better-sqlite3",
+      "@lydell/node-pty",
+      "@lydell/node-pty-darwin-arm64",
+      "@napi-rs/keyring",
+      "@napi-rs/keyring-darwin-arm64",
     ]);
   });
 });
