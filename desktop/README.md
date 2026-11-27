@@ -830,6 +830,16 @@ Honestly degraded, and labelled as such in the UI:
   see the GPU, so the fit goes by RAM and no speed is shown), and the pick:
   the most precise 4-bit-or-more quant that fits and answers at 20 tok/s or
   more, moved to the front so both pick lists open on it as "Recommended".
+  **Experts in RAM (ATO-2455).** The agent sees the GPU, so main reads its
+  `models recommend --json` once in the background (`main/moe-fit.ts`, never
+  on a Mac): a mixture-of-experts model that overflows a GPU with memory of
+  its own gets "Fits, experts in RAM" on its Local models row (with the
+  agent's speed estimate in the tooltip) and on its Hugging Face quants
+  (`withDedicatedGpu`, the agent's rule copied). Advanced › Engine has
+  "Experts on CPU: Auto / Off / 8 / 16 / 32" (`renderer/local-cpu-moe.js`,
+  `localModels.managed.cpuMoe`), shown for a mixture-of-experts model or a
+  setting that is not Auto; a change restarts a running model server, and Off
+  takes the badges away.
   The pick list follows the TUI's `MouseListRow` contract rather than the
   Local pane's model rows: the first click on a file selects it, a second
   click on the selected one starts the download — the rows above it activate

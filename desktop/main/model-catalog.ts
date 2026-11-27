@@ -229,6 +229,18 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
     tag: "High Performance",
   },
   {
+    id: "qwen-3-next-80b-a3b",
+    moe: true,
+    purpose: "reasoning",
+    name: "Qwen3-Next 80B-A3B GGUF",
+    description: "Biggest Qwen, text only, for 64 GB machines and up",
+    minRamGb: 48,
+    recommendedRamGb: 64,
+    sizeGb: 46.07,
+    contextLabel: "256K",
+    vision: false,
+  },
+  {
     id: "nemotron-3.5-30b-a3b",
     moe: true,
     purpose: "reasoning",
