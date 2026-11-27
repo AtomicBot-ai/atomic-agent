@@ -99,7 +99,7 @@ function cmodeMenuHTML(deps) {
       '<button class="cmoderow' + (r.id === cur ? ' on' : '') + '" role="menuitemradio" aria-checked="' + (r.id === cur ? 'true' : 'false') + '"'
         + ' data-cmode="' + r.id + '" data-conv="1">'
         + '<span class="cmodeic">' + ic(r.icon) + '</span>'
-        + '<span class="col"><span class="ml">' + esc(r.word) + '</span><span class="cap">' + esc(r.hint) + '</span></span>'
+        + '<span class="col"><span class="ml">' + esc(r.word) + '</span><span class="cap">' + esc(kbdText(r.hint)) + '</span></span>'
         + '<span class="cmodeck">' + (r.id === cur ? ic('check') : '') + '</span></button>').join('')
     + '</div>';
 }
