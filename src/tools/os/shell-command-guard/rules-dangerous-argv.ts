@@ -757,26 +757,68 @@ function matchPluginConsent(
 const SECRETS_VALUE_VERBS: ReadonlySet<string> = new Set(["get", "set", "unset"]);
 
 /**
- * The agent touching one saved key through its own CLI: `atomic-agent
- * config secrets get|set|unset NAME` (ATO-1639). `get` prints the value
- * from .env or the OS keychain without naming either file, so the
- * path-based state-secret check never sees it, and output masking does
- * not survive `| base64`. Only the desktop app and a person run these;
- * like plugin consent they ask every time below full trust and no `shell`
- * grant covers them. Matched on the words after `config`, not the binary
- * name (`atag`, `npx atomic-agent`, `node dist/index.js`).
+ * The `config secrets` subcommands that move every saved key between
+ * `.env` and the OS keychain (ATO-1647). `env` takes them out of the
+ * keychain into a plaintext file; `keychain` moves them back.
+ */
+const SECRETS_STORE_VERBS: ReadonlySet<string> = new Set(["env", "keychain"]);
+
+/** The next word at or after `from` that is not an option, with its index. */
+function nextNonOption(
+  words: readonly string[],
+  from: number,
+): { word: string; index: number } | null {
+  for (let i = from; i < words.length; i += 1) {
+    const word = words[i]!;
+    if (!word.startsWith("-")) return { word, index: i };
+  }
+  return null;
+}
+
+/**
+ * The agent touching saved keys through its own CLI: `atomic-agent
+ * config secrets get|set|unset NAME` (ATO-1639) and `config secrets
+ * env|keychain` (ATO-1647). `get` prints the value from .env or the OS
+ * keychain without naming either file, so the path-based state-secret
+ * check never sees it, and output masking does not survive `| base64`.
+ * `env` silently moves every key out of the keychain into a plaintext
+ * `.env`, a downgrade a prompt injection could ask for. Only the desktop
+ * app and a person run these; like plugin consent they ask every time
+ * below full trust and no `shell` grant covers them. Matched on the
+ * words after `config`, not the binary name (`atag`, `npx atomic-agent`,
+ * `node dist/index.js`); options between the words are skipped, and a
+ * subcommand only known when the line runs (`secrets $S`) asks too.
  */
 function matchSecretsAccess(
   segments: readonly (readonly string[])[],
 ): ArgvCheck | null {
   for (const words of segments) {
-    for (let i = 0; i < words.length - 2; i += 1) {
-      if (words[i] !== "config" || words[i + 1] !== "secrets") continue;
-      const verb = words[i + 2];
-      if (verb !== undefined && SECRETS_VALUE_VERBS.has(verb)) {
+    for (let i = 0; i < words.length - 1; i += 1) {
+      if (words[i] !== "config") continue;
+      const secrets = nextNonOption(words, i + 1);
+      if (secrets === null || secrets.word.toLowerCase() !== "secrets") continue;
+      const verb = nextNonOption(words, secrets.index + 1)?.word;
+      if (verb === undefined) continue;
+      const lower = verb.toLowerCase();
+      if (SECRETS_VALUE_VERBS.has(lower)) {
         return {
           id: "dangerous.secrets_value_access",
-          reason: `read or change a saved API key (config secrets ${verb})`,
+          reason: `read or change a saved API key (config secrets ${lower})`,
+        };
+      }
+      if (SECRETS_STORE_VERBS.has(lower)) {
+        return {
+          id: "dangerous.secrets_store_move",
+          reason:
+            lower === "env"
+              ? "move every saved API key out of the OS keychain into the plaintext .env (config secrets env)"
+              : "move every saved API key between .env and the OS keychain (config secrets keychain)",
+        };
+      }
+      if (isComputedWord(verb)) {
+        return {
+          id: "dangerous.secrets_store_move",
+          reason: "run a config secrets subcommand that is only known when the line runs",
         };
       }
     }

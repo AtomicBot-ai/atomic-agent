@@ -376,6 +376,59 @@ describe("dangerous.secrets_value_access", () => {
   });
 });
 
+describe("dangerous.secrets_store_move (ATO-1647)", () => {
+  it.each([
+    "atomic-agent config secrets env",
+    "atag config secrets env",
+    "npx atomic-agent config secrets env",
+    "npx -y atomic-agent config secrets env",
+    "node dist/index.js config secrets env",
+    "node ./dist/cli/index.js config secrets env",
+    "/usr/local/bin/atomic-agent config secrets env",
+    "atomic-agent --verbose config secrets env",
+    "atomic-agent config --verbose secrets --quiet env",
+    "atomic-agent config secrets ENV",
+    "cd x && atomic-agent config secrets env",
+    "ls; atomic-agent config secrets env",
+    "atomic-agent config secrets env | cat",
+    "atomic-agent config secrets env > /dev/null 2>&1",
+    "true || atomic-agent config secrets env",
+    "(atomic-agent config secrets env)",
+    "atomic-agent config secrets keychain",
+    "atomic-agent config secrets $SUB",
+    "atomic-agent config secrets $(echo env)",
+  ])("%s requires approval as dangerous", (line) => {
+    expect(guardLine(line)).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.secrets_store_move",
+    });
+  });
+
+  it("the direct-exec argv form asks too", () => {
+    expect(guardArgv("atomic-agent", ["config", "secrets", "env"])).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.secrets_store_move",
+    });
+    expect(
+      guardArgv("npx", ["atomic-agent", "config", "secrets", "env"]),
+    ).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.secrets_store_move",
+    });
+  });
+
+  it.each([
+    "atomic-agent config secrets",
+    "atomic-agent config secrets status",
+    "atomic-agent config secrets status --json",
+    "atomic-agent config secrets --help",
+    "atomic-agent config get model",
+    "echo config secrets",
+  ])("%s stays on the ordinary path", (line) => {
+    expectNotDangerous(line);
+  });
+});
+
 describe("dangerous.skill_draft_consent (ATO-67)", () => {
   it.each([
     "atomic-agent skill learned approve a1b2c3",
