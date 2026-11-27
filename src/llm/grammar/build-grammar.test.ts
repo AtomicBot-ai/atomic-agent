@@ -969,6 +969,29 @@ describe("os.shell.run cannot be called with empty args", () => {
     }
   });
 
+  // ATO-2425: the job forms carry no `cmd` (the tool refuses one that
+  // does), so before the fix a local model could not wait for, kill or
+  // list a job at all.
+  it("accepts the job forms {wait}, {kill}, {jobs} without a cmd", async () => {
+    const plain = buildGrammarForTools(await buildGrammar(PLAIN_INSTRUCT_PROFILE), ["os.shell.run", "os.fs.read"]);
+    expect(gbnfAccepts(plain, "root", '[{"tool":"os.shell.run","args":{"wait":3}}]')).toBe(true);
+    expect(gbnfAccepts(plain, "root", '[{"tool":"os.shell.run","args":{"wait":12,"timeoutMs":60000,"keep":true}}]')).toBe(true);
+    expect(gbnfAccepts(plain, "root", '[{"tool":"os.shell.run","args":{"kill":2}}]')).toBe(true);
+    expect(gbnfAccepts(plain, "root", '[{"tool":"os.shell.run","args":{"jobs":true}}]')).toBe(true);
+    for (const profile of [PLAIN_INSTRUCT_PROFILE, QWEN_THINK_PROFILE, GEMMA4_THINK_PROFILE]) {
+      const g = await buildGrammar(profile);
+      expect(gbnfAccepts(g, "shell-args", '{"wait":1}'), profile.id).toBe(true);
+      expect(gbnfAccepts(g, "shell-args", '{"kill":40}'), profile.id).toBe(true);
+      expect(gbnfAccepts(g, "shell-args", '{"jobs":true}'), profile.id).toBe(true);
+      // still refused: no id, a zero or negative id, `jobs: false`, an empty cmd
+      expect(gbnfAccepts(g, "shell-args", '{"wait":0}'), profile.id).toBe(false);
+      expect(gbnfAccepts(g, "shell-args", '{"kill":-1}'), profile.id).toBe(false);
+      expect(gbnfAccepts(g, "shell-args", '{"jobs":false}'), profile.id).toBe(false);
+      expect(gbnfAccepts(g, "shell-args", '{"timeoutMs":5}'), profile.id).toBe(false);
+      expect(gbnfAccepts(g, "shell-args", '{"cmd":""}'), profile.id).toBe(false);
+    }
+  });
+
   it("the static grammar file has no generic way to name os.shell.run", () => {
     const { readFileSync } = require("node:fs") as typeof import("node:fs");
     const { resolve } = require("node:path") as typeof import("node:path");
