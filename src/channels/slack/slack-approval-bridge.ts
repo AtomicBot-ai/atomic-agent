@@ -127,6 +127,13 @@ export class SlackApprovalBridge {
     const sessionGrant =
       grantKind === null ? null : sessionGrantScope(grantKind, posted?.sessionGrants);
     const forged = (verb === "always" && !always) || (grantKind !== null && sessionGrant === null);
+    if (forged && posted !== undefined) {
+      // A choice this prompt never offered (ATO-2778): ignore it. The
+      // request is still open, so its message and buttons stay as they
+      // are and Approve / Deny still work.
+      this.deps.logger.warn("slack: ignoring an approval choice the prompt did not offer", { verb });
+      return true;
+    }
     const approved = verb === "yes" || always || sessionGrant !== null;
     const settled = forged
       ? false

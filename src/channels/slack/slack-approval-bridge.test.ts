@@ -104,6 +104,22 @@ describe("SlackApprovalBridge", () => {
     expect(api.updateMessage.mock.calls[0]?.[2]).toMatch(/already expired/);
   });
 
+  it("ignores an unoffered always or grant click on an open prompt, and Approve still works (ATO-2778)", async () => {
+    const { bridge, api, approvals } = makeBridge();
+    // A dangerous command: no Allow always (canGrantAlways is false) and no session grant.
+    bridge.handlerFor({ channel: "C1", threadTs: "99.0" })(request({ category: "shell_dangerous" }));
+    await flush();
+    await bridge.handleBlockActions(click("always"));
+    await bridge.handleBlockActions(click("session"));
+    await bridge.handleBlockActions(click("shape"));
+    expect(approvals.resolve).not.toHaveBeenCalled();
+    expect(api.updateMessage).not.toHaveBeenCalled();
+
+    await bridge.handleBlockActions(click("yes"));
+    expect(approvals.resolve).toHaveBeenCalledWith({ approvalId: "ap-1", approved: true, reason: "approved from Slack" });
+    expect(api.updateMessage.mock.calls[0]?.[2]).toMatch(/Approved by <@UOWNER>/);
+  });
+
   it("says so when the gate already settled", async () => {
     const { bridge, api } = makeBridge(false);
     await bridge.handleBlockActions(click("yes"));

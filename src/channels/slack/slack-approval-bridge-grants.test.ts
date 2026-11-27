@@ -94,7 +94,8 @@ describe("Slack session grant buttons (ATO-2509)", () => {
     await flush();
     await h.bridge.handleBlockActions(click("shape", "op"));
     expect(h.resolve).not.toHaveBeenCalled();
-    expect(h.api.updateMessage.mock.calls[0]?.[2]).toMatch(/already expired/);
+    // The prompt is still open: its message and buttons stay (ATO-2778).
+    expect(h.api.updateMessage).not.toHaveBeenCalled();
   });
 
   it("resolves the kind click as an approval with a category grant and says what was allowed", async () => {
