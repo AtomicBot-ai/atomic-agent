@@ -40,3 +40,11 @@ export function cloudToolsUnsupportedSentence(who: string, status: number): stri
     `Pick a model that supports tool calling.`
   );
 }
+
+/** The part of that sentence a reader of a failed turn matches on. */
+const OWN_SENTENCE = /\bsays this model can't use tools\b/;
+
+/** Whether a turn's error message is the sentence above. */
+export function saysModelCannotUseTools(message: string): boolean {
+  return OWN_SENTENCE.test(message);
+}

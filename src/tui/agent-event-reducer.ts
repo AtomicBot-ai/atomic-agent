@@ -834,11 +834,6 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // sentence says what happened and what to change; the transport
       // wording ("couldn't reach the provider") would not be true.
       const spendLimit = findDailySpendLimitError(event.error);
-      // ATO-334: the out-of-memory sentence is already plain and says
-      // what to do; the transport wording around it would not.
-      // ATO-1686: the model kept calling tools that don't exist; the
-      // catalog's sentence and where to pick another model, not "a tool
-      // call failed".
       // ATO-1673: a cloud provider that refused (credit, key, rate limit,
       // model) says which in plain words; its sentence goes under Details.
       const providerRefusal = formatProviderRefusalForChat(
@@ -847,6 +842,11 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         !["cloud", "fusion"].includes(selectComposerBackend(state)),
         describeFailedAttempts(event.error),
       );
+      // ATO-334: the out-of-memory sentence is already plain and says
+      // what to do; the transport wording around it would not.
+      // ATO-1686: the model kept calling tools that don't exist; the
+      // catalog's sentence and where to pick another model, not "a tool
+      // call failed".
       const chatError = event.failure?.cause === "unknown_tools_repeated"
         ? `${event.failure.phrase} Pick one with /model.\nDetails: ${event.error.message}`
         : spendLimit !== null

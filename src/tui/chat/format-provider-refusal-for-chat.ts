@@ -1,3 +1,4 @@
+import { saysModelCannotUseTools } from "../../llm/provider/openai/cloud-tools-unsupported.js";
 import type { FailureVerdict } from "../../llm/reliability/index.js";
 
 const MAX_CHARS = 480;
@@ -17,6 +18,9 @@ const PROVIDER_REFUSALS: ReadonlySet<string> = new Set([
   "model_not_found",
   "request_rejected",
 ]);
+
+/** The first line for a cloud model that takes no tools (ATO-1673). */
+const TOOLS_HEADLINE = "This model can't use tools. Pick one that supports tool calling with /model.";
 
 /**
  * The account's state, never a defect of the agent: no `/report` line
@@ -44,7 +48,11 @@ export function formatProviderRefusalForChat(
   const collapsed = message.trim().replace(/\s+/g, " ");
   const body = collapsed.length > MAX_CHARS ? `${collapsed.slice(0, MAX_CHARS)}…` : collapsed;
   const details = `${body}${fallbackNote}`.trim();
-  const head = `Turn failed: ${failure.phrase}`;
+  // A cloud model without tools: say so, not "turned down" or "doesn't
+  // have this model" (the desktop line reads the same sentence).
+  const head = saysModelCannotUseTools(collapsed)
+    ? `Turn failed: ${TOOLS_HEADLINE}`
+    : `Turn failed: ${failure.phrase}`;
   return details.length > 0 ? `${head}\nDetails: ${details}` : head;
 }
 
