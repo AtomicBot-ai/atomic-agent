@@ -685,9 +685,13 @@ async function runLocalModelsStartNow(
   }
 
   // ATO-2458: our own stale or wedged server on the port is adopted or stopped; the port is never moved.
-  const adoptedChatPid = await clearChatPortForStart(cfg, mid);
+  // A one-start `--ctx-size` (the desktop's restart after running out of memory) must launch, never adopt.
+  const adoptedChatPid = opts.contextSize === undefined ? await clearChatPortForStart(cfg, mid) : null;
   if (adoptedChatPid !== null) {
-    process.stdout.write(`chat: already running pid ${adoptedChatPid}, healthy on port ${cfg.localModels.managed.port}\n`);
+    // Same shape as a fresh start: the desktop reads its ready line from it (backend-switch readyLine).
+    process.stdout.write(
+      `chat: started pid ${adoptedChatPid}, healthy on port ${cfg.localModels.managed.port} (our server was already running)\n`,
+    );
     await runLocalModelsStartEmbedding(signal);
     return 0;
   }

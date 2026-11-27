@@ -199,7 +199,7 @@ async function judgeHolder(
   return {
     kind: "stop",
     pid: holder.pid,
-    why: `stopped a leftover llama-server ${who} — nothing of ${holder.atagDataDir} is running`,
+    why: `stopped a leftover llama-server ${who}: nothing of ${holder.atagDataDir} is running`,
   };
 }
 

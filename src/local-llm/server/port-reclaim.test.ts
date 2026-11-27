@@ -68,7 +68,7 @@ describe("reclaimManagedPort", () => {
     expect(out).toMatchObject({ kind: "stopped", pid: 46051 });
     expect(d.stopped).toEqual([46051]);
     expect(describeReclaim(out, "chat server", 19091)).toBe(
-      `local-llm: chat server — stopped a leftover llama-server pid 46051 (llama-server) — nothing of ${QA} is running`,
+      `local-llm: chat server — stopped a leftover llama-server pid 46051 (llama-server): nothing of ${QA} is running`,
     );
   });
 

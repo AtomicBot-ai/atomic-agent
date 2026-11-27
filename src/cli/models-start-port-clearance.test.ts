@@ -96,7 +96,23 @@ describe("models start port clearance", () => {
     await expect(runLocalModelsStart()).resolves.toBe(0);
 
     expect(localLlm.startChatAndEmbeddingDaemons).not.toHaveBeenCalled();
-    expect(out.join("")).toMatch(/^chat: already running pid 61655, healthy on port /m);
+    // The desktop's ready line (backend-switch readyLine) reads only this shape.
+    expect(out.join("")).toMatch(/^chat: started pid 61655, healthy on port \d+ \(our server was already running\)$/m);
+  });
+
+  it("a one-start --ctx-size launches with that window and never adopts", async () => {
+    vi.mocked(localLlm.reclaimManagedPort).mockResolvedValue({ kind: "adopted", pid: 61655 });
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockResolvedValue({
+      chat: { pid: 778 },
+      embedding: { skipped: true },
+    } as never);
+
+    await expect(runLocalModelsStart({ contextSize: 4096 })).resolves.toBe(0);
+
+    expect(localLlm.reclaimManagedPort).not.toHaveBeenCalled();
+    expect(localLlm.startChatAndEmbeddingDaemons).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].chat.contextSize).toBe(4096);
+    expect(out.join("")).toMatch(/^chat: started pid 778, healthy on port /m);
   });
 
   it("leaves a stranger on the port: the PortTakenError stays and the config port is unchanged", async () => {
