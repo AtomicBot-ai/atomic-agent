@@ -77,7 +77,7 @@ export function pickLocalLlamaKey(inputs: {
 }
 
 /** The managed ports and data dir `<stateDir>/config.json` names, with the agent's defaults. */
-function managedSideFromFile(): { ports: number[]; dataDir: string } {
+export function managedSideFromFile(): { ports: number[]; dataDir: string } {
   let managed: { port?: unknown; dataDirOverride?: unknown } | undefined;
   let embeddings: { port?: unknown } | undefined;
   try {
