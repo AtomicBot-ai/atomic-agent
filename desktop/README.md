@@ -621,6 +621,11 @@ Honestly degraded, and labelled as such in the UI:
   `codex login status`, and one tiny one-turn `claude -p` only for a Claude
   Code too old to have the status command. A dead login shows the Sign in
   step right away; a check that fails or hangs never blocks the step.
+  Switching the chat to a saved one in the composer's model menu asks the
+  same kept check (`renderer/subscription-switch-check.js`, ATO-2463): a dead
+  login opens the same step in the menu (Sign in, the command with Copy),
+  or a toast with the command when the menu has closed. Signing in there
+  closes the step without rewriting the saved entry.
 - **The palette search forgives.** ⌘ K ranks commands, Settings sections,
   chats, tasks and skills with `renderer/fuzzy-match.js` (ATO-669): exact,
   prefix, word prefix or slash alias, substring and context matches keep

@@ -19933,6 +19933,7 @@ async function selActivate(row) {
       SEL.kind = 'model'; SEL.cursor = 0; SEL.filter = ''; render();
       selLoadModels(row.id);
     }
+    if (typeof subSwitchCheck === 'function') subSwitchCheck(row.id);   // ATO-2463: an expired Claude Code / Codex sign-in shows now
     return;
   }
   if (row.type === 'cloudModel') {
@@ -19961,7 +19962,7 @@ async function selActivate(row) {
     // refused opens that provider's key window, as picking the provider does.
     if (res && res.needsKey) { bswOpenKey(pid, res.keyInvalid); return; }
     if (!res || !res.ok) toast('Could not select the model', (res && res.error) || '');
-    else bswReport(res, 'Selected chat model ' + pid + '/' + row.id + '.');
+    else { bswReport(res, 'Selected chat model ' + pid + '/' + row.id + '.'); if (typeof subSwitchCheck === 'function') subSwitchCheck(pid); }   // ATO-2463
     return;
   }
   if (row.type === 'localModel') {
@@ -22879,6 +22880,8 @@ function wizChatgptOauthStart(k) {
 }
 async function wizSubscriptionStep(k) {
   const id = k.id;
+  /* ATO-2463: the step a switch opened for a saved entry closes once signed in (subscription-switch-check.js). */
+  if (typeof subSwitchSignedInDone === 'function' && subSwitchSignedInDone(k)) return;
   /* The model step's second pass: the entry is saved, the choice is made. */
   if (WIZ.modelChosen) return wizActivate(k, id, WIZ.modelPick || '', null);
   /* ATO-756: Enter reaches here too; a CLI known to be missing is not saved. */
@@ -29775,6 +29778,7 @@ async function llmSwitchProvider(id) {
   llmReport('Active text: ' + id + (model ? ' · ' + model : '') + ' · ' + transport, 'cloud');
   LLMP.msg = {text:'Switched active text provider to "' + id + '". New messages use ' + transport + '.' + (res.daemonLine ? ' ' + res.daemonLine : '') + llmSwitchTail(res)};
   llmRefresh();
+  if (typeof subSwitchCheck === 'function') subSwitchCheck(id);   // ATO-2463: Settings › Models › Use
   return true;
 }
 async function llmSelectChatModel(pid, modelId) {
@@ -29795,6 +29799,7 @@ async function llmSelectChatModel(pid, modelId) {
     llmRepaint(); return;
   }
   bswReport(res, 'Selected chat model ' + pid + '/' + modelId + '.');
+  if (typeof subSwitchCheck === 'function') subSwitchCheck(pid);   // ATO-2463: Settings › Models › Use
   // r5 item 10: swxRun re-read the live config before it resolved.
   const transport = res.transport || 'native_tools';
   llmReport('Active text: ' + pid + ' · ' + modelId + ' · ' + transport, 'cloud');
