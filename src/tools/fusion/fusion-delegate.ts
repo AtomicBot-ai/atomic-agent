@@ -1746,6 +1746,11 @@ export function buildFusionDelegateTool(
             const diffstats = sumDiffStats([r, again]);
             return diffstats.length === 0 ? again : { ...again, diffstats };
           });
+          // The checkpoint keeps the same list (ATO-2488), or a resume
+          // would report the retry's files alone.
+          for (const r of merged) {
+            if (retryIds.has(r.id)) run?.recordFiles(r.id, r.diffstats ?? []);
+          }
           const evaluated = await evaluateContract(
             merged.filter((r) => retryIds.has(r.id)),
             merged,
