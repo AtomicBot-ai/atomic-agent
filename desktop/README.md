@@ -67,6 +67,7 @@ window shows "Not while a turn is running".
 | "Trust this folder?" and Settings › Skills' folder-trust switch (ATO-1250) | `GET` / `POST /api/project-trust` |
 | "Local model is set as your last-resort fallback. Keep it?", asked once (ATO-1461; hidden on an agent without the route) | `GET` / `POST /api/fallback/local-question` |
 | The grey next-step suggestion in the empty composer, Tab takes it (ATO-1094; only while Settings › General › Suggest a next step, `tui.nextStepSuggestions`, is on; hidden on an agent without the route) | `GET /api/sessions/{id}/next-step` |
+| The agent's shell jobs under the chat (ATO-2485): a tab per job, its output, Take over to type into an interactive one (a password prompt hides the typing by itself), Stop job; the typed text goes to the job only, never to the chat; hidden on an agent without the routes (`renderer/agent-jobs.js`, `main/agent-jobs-ipc.ts`) | `GET /api/sessions/{id}/shell-jobs`, `GET …/{jobId}/output`, `POST …/{jobId}/input`, `POST …/{jobId}/stop` |
 
 The turn stream is sent with `X-Atomic-Extensions: 1`, which upgrades it from
 plain OpenAI chunks to atomic's named frames — `session_id`,

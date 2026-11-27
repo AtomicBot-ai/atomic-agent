@@ -834,6 +834,13 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("agent:fusionWorkerStop", { sessionId, taskId }),
   fusionWorkerSteer: (sessionId: string, taskId: string, text: string) =>
     ipcRenderer.invoke("agent:fusionWorkerSteer", { sessionId, taskId, text }),
+  /** ATO-2485 — the agent's shell jobs in the terminal panel; the typed text goes to the job only. */
+  agentJobsList: (sessionId: string) => ipcRenderer.invoke("agentJobs:list", sessionId),
+  agentJobOutput: (sessionId: string, jobId: number, since: number) =>
+    ipcRenderer.invoke("agentJobs:output", { sessionId, jobId, since }),
+  agentJobInput: (sessionId: string, jobId: number, text: string, eof: boolean) =>
+    ipcRenderer.invoke("agentJobs:input", { sessionId, jobId, text, eof }),
+  agentJobStop: (sessionId: string, jobId: number) => ipcRenderer.invoke("agentJobs:stop", { sessionId, jobId }),
 
   /** ATO-229 — app updates (main/updater.ts). Nothing downloads or installs
    *  except through updateDownload / updateInstall, each a click. Every call

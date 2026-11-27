@@ -49,6 +49,7 @@
 <link rel="stylesheet" href="css/studio-video.css">
 <link rel="stylesheet" href="css/rich-blocks.css">
 <link rel="stylesheet" href="css/answer-versions.css">
+<link rel="stylesheet" href="css/agent-jobs.css">
 </head>
 <body>
 <div id="desktop">
@@ -65,6 +66,8 @@
         <aside id="canvaspane" hidden></aside>
         <aside id="inspector"></aside>
       </div>
+      <!-- ATO-2485: the agent's shell jobs, "Take over" to type into one (agent-jobs.js draws it, render() never does). -->
+      <div id="agentjobs" hidden></div>
       <div id="console" class="hide"></div>
       <!-- Backlog 18: the download card. ATO-1185: it is the popover of the
            downloads icon in the sidebar header (dl-indicator.js), over the
@@ -334,6 +337,9 @@
 <script src="studio/video.js"></script>
 <script src="project-instructions-line.js"></script>
 <script src="renderer.js"></script>
+<!-- ATO-2485: the agent's shell jobs in the terminal panel. -->
+<script src="agent-jobs-logic.js"></script>
+<script src="agent-jobs.js"></script>
 <!-- ATO-1063: a chat the mini window started, opened here by its "Open in big window". -->
 <script src="mini-chat-handoff.js"></script>
 <!-- ATO-561: "Open in new window" on a chat row. -->
