@@ -742,6 +742,20 @@ Honestly degraded, and labelled as such in the UI:
   did not go through, and Engine not ready with Download again when the local
   engine failed. The mapping is [memory-model-card.js](renderer/memory-model-card.js);
   after a step the list is read again for up to 30 s while the server loads.
+- **Start on the local model** (Settings › Models › Cloud › Advanced ›
+  Fallback chain, under "Use local models as the last resort"; ATO-2434)
+  is `llm.fallback.localFirst` (default off; the agent side is
+  `src/llm/docs/fallback.md`). On, a chat turn whose active provider is a
+  cloud one starts on the local model and goes to the cloud only when the
+  local one fails. It writes the whole `llm.fallback` object through the
+  same `config set` as the chain, so the chain and the last-resort switch are
+  kept, and says the change applies after Restart Agent Runtime (serve keeps
+  the config it booted with). It is off and disabled, with the reason under
+  it, when no local model is set up (no `llama-server` provider, or a managed
+  engine with no model chosen) or no cloud provider is configured; a switch
+  that is already on can always be turned off. A failed write says "Could not
+  save this setting" with the agent's words behind Details
+  ([local-first-switch.js](renderer/local-first-switch.js)).
 - **The local-model recommendation** ranks that catalogue against the machine
   it is running on, in the first-run picker and in Settings › LLM › Local, off
   the same two functions (`fitFor` / `orderModelsByFit` in `renderer.js`) so

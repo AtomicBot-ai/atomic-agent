@@ -29341,7 +29341,7 @@ function llmFallbackHTML() {
       + '<button class="tk-switch' + (view.appendLocal ? ' on' : '') + '" role="switch" aria-checked="' + view.appendLocal + '" data-act="llm:fb:local" aria-label="Append local as last resort"></button>'
       + '<span class="llm-fbl-t">Use local models as the last resort</span>'
       + '<span class="grow"></span><span class="set-state' + (view.appendLocal ? ' on' : '') + '">' + (view.appendLocal ? 'On' : 'Off') + '</span>'
-    + '</div></section>';
+    + '</div>' + llmLocalFirstHTML() + '</section>';
 }
 /* llm-panel-modals.tsx PromptBox copy, one at a time; a modal takes the whole pane as in the TUI. */
 function llmModalHTML() {
@@ -30402,6 +30402,14 @@ async function llmFallbackPersist(chain, appendLocal) {
   llmClampCursors();
   llmRepaint();
 }
+/* ATO-2434: "Start on the local model", llm.fallback.localFirst (renderer/local-first-switch.js); the same whole-object write as above.
+   Made on first use (a hoisted function, so the boot render above cannot reach it before it exists). */
+function llmLfs() {
+  return llmLfs.sw || (llmLfs.sw = createLocalFirstSwitch({fallback: () => llmBlock().fallback, write: (next) => llmWrite('fallback', next), refresh: refreshLiveConfig,
+    saved: (on) => llmRestartMsg('Start on the local model: ' + (on ? 'on' : 'off')), repaint: llmRepaint}));
+}
+function llmLocalFirstNow() { const a = llmProvider(llmActiveTextId()); return localFirstView(llmBlock().fallback, llmProviders(), a ? a.kind : null, (LIVE_CONFIG && LIVE_CONFIG.localModels) || null); }
+function llmLocalFirstHTML() { return localFirstSwitchHTML(llmLocalFirstNow(), llmLfs().state, esc); }
 /**
  * llm-panel-reducer.ts resolveModeFromActiveRoute: `cloud` for a cloud
  * provider, `local` for llama-server, and nothing at all until a provider is
@@ -30637,6 +30645,7 @@ function llmAct(what) {
     if (sub === 'pickCancel') { LLMP.fallbackPicker = null; llmRepaint(); return; }
     if (sub === 'remove') { llmFallbackRemove(); return; }
     if (sub === 'local') { llmFallbackPersist(llmDeclaredChain(view.links), !view.appendLocal); return; }
+    if (sub === 'localFirst') { llmLfs().toggle(llmLocalFirstNow()); return; }   // ATO-2434
   }
 }
 function llmFallbackEnter() {
