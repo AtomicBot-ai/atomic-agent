@@ -1,3 +1,4 @@
+import { SUBSCRIPTION_CLI_KIND } from "../config/provider-auth-mode.js";
 import { isLocalServerUrl } from "../llm/provider/openai/local-server-url.js";
 import type { ResolvedLlmConfig } from "../llm/provider/registry/provider-types.js";
 
@@ -8,6 +9,18 @@ import type { ResolvedLlmConfig } from "../llm/provider/registry/provider-types.
  * serves the one model the agent loaded for everyone. A Fusion turn may
  * ask a local OpenAI-compatible server for its role's model
  * (`localServer: "allow"`, ATO-1560).
+ *
+ * Subscription entries (ATO-1592). The turn model reaches them as the
+ * variant's `defaultChatModel`:
+ * - `subscription-cli` with `cli: "claude"` passes it as `--model`, so
+ *   it is honoured.
+ * - `subscription-cli` with `cli: "codex"` is refused: under a ChatGPT
+ *   login Codex rejects every explicit model id (`-m`, see
+ *   codex-cli-adapter.ts), so every such turn would fail. The entry's
+ *   own configured model is still accepted, since the operator set it.
+ * - `subscription-oauth` sends it as the request's model to the ChatGPT
+ *   or Copilot backend; a model the plan does not offer comes back as
+ *   that backend's error, as with any cloud entry.
  */
 export function perTurnModelRefusal(
   resolved: ResolvedLlmConfig,
@@ -32,6 +45,13 @@ export function perTurnModelRefusal(
   if (entry === undefined) return `cannot pin turn to llm provider "${providerId}": not configured`;
   if (entry.kind === "llama-server") {
     return `"${providerId}" is a local model, which is shared by all projects; a per-turn model works on cloud providers only`;
+  }
+  if (
+    entry.kind === SUBSCRIPTION_CLI_KIND &&
+    entry.subscriptionCli?.cli === "codex" &&
+    model.trim() !== entry.defaultChatModel?.trim()
+  ) {
+    return `"${providerId}" runs the Codex CLI, which uses the model its ChatGPT login picks; a per-turn model does not work there`;
   }
   if (options.localServer !== "allow" && isLocalServerUrl(entry.baseUrl ?? entry.url)) {
     return `"${providerId}" is a local model, which is shared by all projects; a per-turn model works on cloud providers only`;
