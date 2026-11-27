@@ -467,6 +467,13 @@ export function prepareLocalModelsInputs(
   };
   const loraAdapters = parseLoraAdapters(rawManaged.loraAdapters, "localModels.managed.loraAdapters");
   if (loraAdapters) managed.loraAdapters = loraAdapters;
+  // ATO-2483: the shared model's listener; absent keeps it on this computer, port 8787.
+  if (rawManaged.shareNetwork !== undefined && rawManaged.shareNetwork !== null) {
+    managed.shareNetwork = parseBool(rawManaged.shareNetwork, "localModels.managed.shareNetwork");
+  }
+  if (rawManaged.sharePort !== undefined && rawManaged.sharePort !== null) {
+    managed.sharePort = parseBoundedPositiveInt(rawManaged.sharePort, "localModels.managed.sharePort", 1, 65535);
+  }
   if (rawManaged.modelsDirOverride !== undefined && rawManaged.modelsDirOverride !== null) {
     managed.modelsDirOverride = parseNonEmptyString(rawManaged.modelsDirOverride, "localModels.managed.modelsDirOverride");
   }

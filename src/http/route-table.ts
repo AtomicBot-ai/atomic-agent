@@ -151,7 +151,9 @@ import { createMetricsHandler } from "./route-metrics.js";
 import { a2aRoutes, type A2aOptions } from "./route-a2a.js";
 import { createMcpEndpointHandlers, MCP_ENDPOINT_PATH } from "./route-mcp-endpoint.js";
 import type { PrometheusRegistry } from "../tracing/prometheus-registry.js";
-import { createRawModelHandlers, RAW_MODEL_PREFIX, type RawModelShareDeps } from "./route-raw-model.js";
+import { createRawModelHandlers, RAW_MODEL_PREFIX, type RawModelHandlers, type RawModelShareDeps } from "./route-raw-model.js";
+import { createModelShareHandlers } from "./route-model-share.js";
+import type { ModelShareListener } from "./model-share-listener.js";
 
 export interface RouteTableOptions {
   /**
@@ -168,6 +170,13 @@ export interface RouteTableOptions {
   a2a?: A2aOptions | null;
   /** ATO-2336: what the raw model routes read; tests inject their own (route-raw-model.ts). */
   rawModel?: RawModelShareDeps;
+  /**
+   * ATO-2483: serve's raw handlers, shared with the share listener so both
+   * keep one in-flight cap and one auth throttle. Omitted, they are made here.
+   */
+  rawModelHandlers?: RawModelHandlers;
+  /** ATO-2483: the share listener `POST /api/model-share` opens and closes; omitted, only the setting is written. */
+  modelShare?: ModelShareListener | null;
   /** ATO-2308: phones paired by QR. Omitted, the pairing routes answer 404. */
   devices?: DeviceSessions | null;
 }
@@ -193,7 +202,8 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
   // ATO-549: the MCP sessions open on `/mcp` belong to this server too.
   const mcpEndpoint = createMcpEndpointHandlers();
   // ATO-2336: one in-flight cap shared by both raw routes.
-  const rawModel = createRawModelHandlers(options.rawModel);
+  const rawModel = options.rawModelHandlers ?? createRawModelHandlers(options.rawModel);
+  const modelShare = createModelShareHandlers({ listener: options.modelShare ?? null });
   return [
     {
       method: "GET",
@@ -211,6 +221,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     // behind the serve key: the handler takes the share key and only it.
     { method: "GET", path: `${RAW_MODEL_PREFIX}/models`, handler: rawModel.models, requiresAuth: false },
     { method: "POST", path: `${RAW_MODEL_PREFIX}/chat/completions`, handler: rawModel.chatCompletions, requiresAuth: false },
+    // ATO-2483: Settings › Models "Share this model": the mode, the key and the addresses (admin).
+    { method: "GET", path: "/api/model-share", handler: modelShare.get },
+    { method: "POST", path: "/api/model-share", handler: modelShare.set },
     // ATO-1128: the phone panel's page; it holds no data and asks for the key (route-panel.ts).
     { method: "GET", path: "/panel", handler: createPanelPageHandler(), requiresAuth: false },
     { method: "GET", path: "/panel/app.js", handler: createPanelScriptHandler(), requiresAuth: false },

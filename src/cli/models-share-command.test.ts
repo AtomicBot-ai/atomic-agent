@@ -31,6 +31,20 @@ describe("models share", () => {
     expect(parseShareArgs(["--nope"])).toHaveProperty("error");
   });
 
+  it("parses --local and --network, and refuses both together or with --off (ATO-2483)", () => {
+    expect(parseShareArgs(["--network"])).toMatchObject({ where: "network", off: false });
+    expect(parseShareArgs(["--local"])).toMatchObject({ where: "local" });
+    expect(parseShareArgs([])).not.toHaveProperty("where");
+    expect(parseShareArgs(["--local", "--network"])).toHaveProperty("error");
+    expect(parseShareArgs(["--off", "--network"])).toHaveProperty("error");
+  });
+
+  it("says how other devices reach it in network mode instead of asking for --host", () => {
+    const text = formatShareSummary({ key: "k".repeat(64), urls: { local: "http://127.0.0.1:8787/raw/v1", lan: [] }, rotated: false, network: true });
+    expect(text).not.toContain("--host 0.0.0.0");
+    expect(text).toContain("plain http");
+  });
+
   it("gives /raw/v1 base URLs for this computer and each LAN address", () => {
     expect(shareBaseUrls(8787, ["http://192.168.1.5:8787"])).toEqual({
       local: "http://127.0.0.1:8787/raw/v1",

@@ -213,6 +213,20 @@ export interface UserManagedLocalLlmConfig {
    * Share the local model with other apps and devices (ATO-2336): `true` makes `atomic-agent serve` answer `GET /raw/v1/models` and `POST /raw/v1/chat/completions`, the bare model with no agent, for callers that send the share key (`atomic-agent models share` turns this on and prints the key). Off when absent (the default): those routes answer 404. Additive and unversioned: a file without the key reads as `false`.
    */
   share: boolean;
+  /**
+   * ATO-2483: with `share` on, also listen for the shared model on the
+   * local network (`0.0.0.0`), not only on this computer (`127.0.0.1`).
+   * Absent or `false` (default): this computer only. Turning sharing off
+   * removes the key, so the network is always an explicit choice. Only the
+   * `/raw/v1` routes are on that listener. Additive and unversioned.
+   */
+  shareNetwork?: boolean;
+  /**
+   * ATO-2483: the port of the shared model's own listener (default 8787,
+   * serve's own default port). A serve already listening on it answers the
+   * `/raw/v1` routes on its main listener instead. Additive and unversioned.
+   */
+  sharePort?: number;
 }
 
 /**
