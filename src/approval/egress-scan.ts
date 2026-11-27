@@ -200,7 +200,14 @@ function scanSegment(
   if (program === "aws" && args[0] === "s3") return scanBucket("s3", args.slice(2));
   if (program === "gsutil") return scanBucket("gs", args.slice(1));
   if (program === "gcloud" && args[0] === "storage") return scanBucket("gs", args.slice(2));
-  if (PUBLISH_PROGRAMS.has(program)) return scanPublish(program, args, call.gitUnsafe ? undefined : options.publishRegistry);
+  if (PUBLISH_PROGRAMS.has(program)) {
+    // After a `cd` (or another change of folder) the project config read
+    // from `cwd` is not the one the publish uses: unknown, not the public
+    // default (review round 1 of ATO-2528).
+    const registry =
+      call.gitUnsafe && options.publishRegistry !== undefined ? () => null : options.publishRegistry;
+    return scanPublish(program, args, registry);
+  }
   if (SCRIPT_PROGRAMS.test(program)) return scanInlineScript(program, args);
   return [];
 }

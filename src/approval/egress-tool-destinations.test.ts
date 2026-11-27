@@ -21,6 +21,23 @@ describe("egress of os.git.push and os.http.request (ATO-2528)", () => {
     ]);
   });
 
+  // Review round 1 (F2105.1): `git push origin` sends to every pushurl.
+  it("a remote with several push URLs goes to each of their hosts", () => {
+    expect(
+      gitPushEgress(
+        ["https://github.com/me/r.git", "https://evil.example/x.git", "git@github.com:me/r.git", "/srv/r.git"],
+        "origin",
+      ).map((entry) => entry.host),
+    ).toEqual(["github.com", "evil.example"]);
+    expect(gitPushEgress(["https://github.com/me/r.git", ""], "origin").map((entry) => entry.host)).toEqual([
+      "github.com",
+      null,
+    ]);
+    expect(gitPushEgress([], "origin")).toEqual([
+      { kind: "git_remote", host: null, direction: "outbound", label: 'git remote "origin"' },
+    ]);
+  });
+
   it("a POST sends, a GET only fetches", () => {
     const url = new URL("https://API.example.com/x");
     expect(httpRequestEgress(url, "post")[0]).toMatchObject({ host: "api.example.com", direction: "outbound" });

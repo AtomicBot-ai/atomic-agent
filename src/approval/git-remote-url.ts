@@ -121,17 +121,28 @@ function defaultGlobalConfigPaths(): string[] {
   ];
 }
 
-/**
- * The URL `git push [remote]` run in `cwd` sends to, or `null` when it
- * cannot be read plainly. `remote` `null` is the push default: the
- * branch's `pushRemote`, `remote.pushDefault`, the branch's `remote`,
- * then `origin`. A `pushurl` wins over `url`, as in git.
- */
+/** The first URL of `gitRemoteUrls`, or `null`. */
 export function gitRemoteUrl(
   cwd: string,
   remote: string | null,
   options: GitRemoteUrlOptions = {},
 ): string | null {
+  return gitRemoteUrls(cwd, remote, options)?.[0] ?? null;
+}
+
+/**
+ * Every URL `git push [remote]` run in `cwd` sends to, or `null` when it
+ * cannot be read plainly. `remote` `null` is the push default: the
+ * branch's `pushRemote`, `remote.pushDefault`, the branch's `remote`,
+ * then `origin`. Git pushes to each `pushurl` of the remote, or to each
+ * `url` when it has none, so all of them are returned, in file order
+ * (review round 1 of ATO-2528: only the last one was).
+ */
+export function gitRemoteUrls(
+  cwd: string,
+  remote: string | null,
+  options: GitRemoteUrlOptions = {},
+): string[] | null {
   const repo = findRepository(cwd);
   if (repo === null) return null;
   const text = readSmall(join(repo.commonDir, "config"));
@@ -158,5 +169,6 @@ export function gitRemoteUrl(
       (branch !== undefined ? last(config, `branch.${branch}.remote`) : undefined) ??
       "origin";
   }
-  return last(config, `remote.${name}.pushurl`) ?? last(config, `remote.${name}.url`) ?? null;
+  const urls = config.get(`remote.${name}.pushurl`) ?? config.get(`remote.${name}.url`) ?? [];
+  return urls.length > 0 ? [...urls] : null;
 }
