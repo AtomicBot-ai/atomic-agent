@@ -42,19 +42,26 @@ export interface MentionServicesOptions {
   platform?: NodeJS.Platform;
 }
 
+// The native realpath returns the spelling on disk, as read-scope.ts
+// canonical() does; the JS one keeps the typed case, so `@.ENV` on a
+// case-insensitive macOS volume would miss the protected `.env`.
 function canonicalOf(path: string): string {
   try {
-    return realpathSync(path);
+    return realpathSync.native(path);
   } catch {
     return path;
   }
 }
 
-/** A check against the protected files, by real path, without case on Windows. */
+/**
+ * A check against the protected files, by real path. Case is folded on
+ * Windows and macOS, whose default volumes ignore it: refusing a distinct
+ * `.ENV` on a case-sensitive Mac volume is the safe side.
+ */
 export function protectedPathCheck(files: readonly string[], platform: NodeJS.Platform = process.platform): IsProtectedPath {
-  const fold = (p: string): string => (platform === "win32" ? p.toLowerCase() : p);
+  const fold = (p: string): string => (platform === "win32" || platform === "darwin" ? p.toLowerCase() : p);
   const set = new Set(files.filter((f) => !f.endsWith(sep) && !f.endsWith("/")).map((f) => fold(canonicalOf(f))));
-  return (real) => set.has(fold(real));
+  return (real) => set.has(fold(canonicalOf(real)));
 }
 
 /** Tracked changes and untracked files under `dir`, relative to it. */
