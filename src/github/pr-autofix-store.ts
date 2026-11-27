@@ -20,7 +20,7 @@ export function autofixKey(slug: string, number: number): string {
   return `${slug.toLowerCase()}#${number}`;
 }
 
-/** The state file; also a protected `state_secret` path (config-file.ts). */
+/** The state file; on the trust list in config-file.ts (`trust_config` write, `state_secret` read). */
 export function autofixStatePath(stateDir: string): string {
   return join(stateDir, AUTOFIX_DIR, "state.json");
 }

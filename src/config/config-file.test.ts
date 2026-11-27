@@ -972,7 +972,6 @@ describe("the state's secret files (ATO-877)", () => {
       coreSessionPath(paths.localModelsDataDir, "chat"),
       coreSessionPath(paths.localModelsDataDir, "embedding"),
       resolveSessionPath(stateDir),
-      autofixStatePath(stateDir),
     ]);
     expect(getStateSecretPaths(paths)).toContain(getDotenvPath(stateDir));
     expect(getStateSecretPaths(paths)).toContain(paths.userConfigFile);
@@ -999,5 +998,21 @@ describe("the state's secret files (ATO-877)", () => {
       localModelsDataDir: join(stateDir, "models"),
     };
     expect(getTrustConfigPaths(paths)).toContain(secretsStorePath(stateDir));
+  });
+
+  it("protects the PR autofix state like the approval rules, not its worktrees (ATO-2331)", () => {
+    const stateDir = join(tmpdir(), "atomic-state");
+    const paths = {
+      stateDir,
+      userConfigFile: getUserConfigPath(stateDir),
+      localModelsDataDir: join(stateDir, "models"),
+    };
+    // A written state.json would turn autofix on or reset its cap: writing
+    // it asks as trust_config, reading it as state_secret.
+    const trust = getTrustConfigPaths(paths);
+    expect(trust).toContain(autofixStatePath(stateDir));
+    expect(isTrustDirectoryEntry(autofixStatePath(stateDir))).toBe(false);
+    expect(trust.some((entry) => isTrustDirectoryEntry(entry) && entry.includes("pr-autofix"))).toBe(false);
+    expect(getStateSecretPaths(paths)).toContain(autofixStatePath(stateDir));
   });
 });

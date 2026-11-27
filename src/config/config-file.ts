@@ -61,6 +61,9 @@ export function getTrustConfigPaths(paths: {
     join(paths.stateDir, "plugins", "plugins.json"),
     join(paths.stateDir, "plugins", "marketplaces.json"),
     join(paths.stateDir, "plugins", "installed") + sep,
+    // ATO-2331: the per-PR autofix opt-in and attempt cap. The file only, not
+    // pr-autofix/: the worktrees beside it are where the model writes fixes.
+    join(paths.stateDir, "pr-autofix", "state.json"),
   ];
 }
 
@@ -97,8 +100,6 @@ export function getStateSecretPaths(paths: {
     join(paths.localModelsDataDir, "core", "chat.json"),
     join(paths.localModelsDataDir, "core", "embedding.json"),
     join(paths.stateDir, "atomic-mail", "session.json"),
-    // ATO-2331: the per-PR autofix opt-in and attempt cap; a written entry would enable pushes.
-    join(paths.stateDir, "pr-autofix", "state.json"),
   ];
 }
 
