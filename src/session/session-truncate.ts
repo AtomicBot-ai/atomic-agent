@@ -8,6 +8,7 @@ import {
   type PreviousReply,
 } from "./session-previous-replies.js";
 import { LIVE_SESSION_STATUSES } from "./session-retention.js";
+import { foldStaleReplies } from "./session-message-branches.js";
 
 /**
  * Cutting a chat back to an earlier point (ATO-1297).
@@ -42,12 +43,15 @@ export interface TruncateSessionResult {
  * to `[0, turns.length]`; cutting at the end returns the state as is.
  */
 export function truncateSessionAt(
-  state: SessionState,
+  original: SessionState,
   index: number,
 ): TruncateSessionResult {
-  const length = state.turns.length;
+  const length = original.turns.length;
   const cut = Math.max(0, Math.min(length, Math.floor(index)));
-  if (cut >= length) return { state, compactionCovered: false };
+  if (cut >= length) return { state: original, compactionCovered: false };
+  // ATO-2470: answers kept for a question the chat has moved past become
+  // versions of that answer before the cut decides what stays.
+  const state = foldStaleReplies(original);
 
   const removed = state.turns.slice(cut);
   const recorded = state.macroTurnStarts;
@@ -98,6 +102,14 @@ export function truncateSessionAt(
     countQuestions(next.turns) !== next.previousReplies.priorQuestions
   ) {
     delete next.previousReplies;
+  }
+  // Versions of a message (ATO-2470) stay for the questions the kept rows
+  // reach and the next one; the ones past it belonged to the rows cut.
+  if (next.messageBranches !== undefined) {
+    const reach = countQuestions(next.turns);
+    const kept = next.messageBranches.filter((branch) => branch.priorQuestions <= reach);
+    if (kept.length > 0) next.messageBranches = kept;
+    else delete next.messageBranches;
   }
   if (next.cloudContext !== undefined && next.cloudContext.turnsThrough > cut) {
     next.cloudContext = {

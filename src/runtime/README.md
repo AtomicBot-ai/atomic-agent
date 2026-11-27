@@ -13,6 +13,7 @@ This area owns runtime assembly and ownership. Read [AGENTS.md](AGENTS.md) befor
 - [turn-controller.ts](turn-controller.ts)
 - [steering-inbox.ts](steering-inbox.ts)
 - [turn-checkpoints.ts](turn-checkpoints.ts)
+- [session-rewind-service.ts](session-rewind-service.ts): taking a chat back to a question with its files (chat and files, chat only, files only), shared by the HTTP rewind routes and the terminal's `/rewind` (ATO-2467).
 - [llm-fallback-seam.ts](llm-fallback-seam.ts)
 - [session-workspace.ts](session-workspace.ts): per-session cloud preparation; [workspace contract](docs/cloud-workspace.md).
 
