@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApprovalGate, type ApprovalRequest } from "./approval-gate.js";
 import type { ApprovalLevel } from "./approval-level.js";
 import { ApprovalRulesStore } from "./approval-rules-store.js";
-import type { EgressDestination } from "./egress-scan.js";
+import { formatEgressLine, UNREADABLE_SCRIPT_EGRESS, type EgressDestination } from "./egress-scan.js";
 import type { RiskReviewInput, RiskReviewer } from "./risk-review.js";
 
 const toX: EgressDestination = { kind: "url", host: "x.io", direction: "outbound", label: "x.io" };
@@ -49,7 +49,7 @@ describe("ApprovalGate egress hold (ATO-2116)", () => {
     const pending = g.request(curl([toX]));
     await settle();
     expect(emitted).toHaveLength(1);
-    expect(emitted[0]!.egress).toEqual([toX]);
+    expect(emitted[0]!.egress).toEqual([{ ...toX, unapproved: true }]);
     g.reject(emitted[0]!.approvalId, "");
     await expect(pending).resolves.toMatchObject({ approved: false });
   });
@@ -189,5 +189,48 @@ describe("ApprovalGate egress hold (ATO-2116)", () => {
       await expect(g.request(curl([toX]))).resolves.toMatchObject({ approved: false, automatic: true });
       expect(emitted).toHaveLength(0);
     });
+  });
+});
+
+describe("ApprovalGate egress hold: the card names the held host (ATO-2116 review)", () => {
+  it("holds a request marked commandUnreadable at level 5, even with no egress listed", async () => {
+    const emitted: ApprovalRequest[] = [];
+    const g = new ApprovalGate({ emit: (r) => emitted.push(r), level: 5 });
+    const pending = g.request({
+      ...curl(undefined),
+      preview: "printf 'x' | sh",
+      commandSegments: [["printf", "x"], ["sh"]],
+      commandUnreadable: true,
+    });
+    await settle();
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]!.egress).toEqual([{ ...UNREADABLE_SCRIPT_EGRESS, unapproved: true }]);
+    g.reject(emitted[0]!.approvalId, "");
+    await expect(pending).resolves.toMatchObject({ approved: false });
+  });
+
+  it("marks only the unapproved host, and the card lists it before four known ones", async () => {
+    const emitted: ApprovalRequest[] = [];
+    const g = new ApprovalGate({ emit: (r) => emitted.push(r), level: 5 });
+    g.setEgressAllowlist(() => ["*.example.com"]);
+    const known = ["a", "b", "c", "d"].map(
+      (h): EgressDestination => ({
+        kind: "url",
+        host: `${h}.example.com`,
+        direction: "outbound",
+        label: `${h}.example.com`,
+      }),
+    );
+    const evil: EgressDestination = { kind: "url", host: "evil.test", direction: "outbound", label: "evil.test" };
+    const pending = g.request(curl([...known, evil]));
+    await settle();
+    expect(emitted).toHaveLength(1);
+    const egress = emitted[0]!.egress!;
+    expect(egress.filter((d) => d.unapproved === true).map((d) => d.host)).toEqual(["evil.test"]);
+    expect(formatEgressLine(egress)).toBe(
+      "sends data to -> evil.test, a.example.com, b.example.com, c.example.com (+1 more)",
+    );
+    g.reject(emitted[0]!.approvalId, "");
+    await expect(pending).resolves.toMatchObject({ approved: false });
   });
 });

@@ -6,7 +6,8 @@
  * `git remote "origin"` otherwise. A `-c` that touches `remote.*`,
  * `url.*`, `branch.*` or `include*`, a `--git-dir` / `--work-tree`, or a
  * `GIT_*` variable in front can change where the push goes, so the
- * remote is then never resolved. Idea from Goose's egress inspector
+ * remote is then never resolved; nor is it when another part of the same
+ * call changes the folder or the remotes (`egress-scan.ts`). Idea from Goose's egress inspector
  * (`git push` outbound, `git clone|pull|fetch` inbound, Apache-2.0).
  */
 import { hasUrlScheme, hostOfGitUrl, normaliseHost } from "./egress-host.js";
@@ -22,6 +23,16 @@ export type GitRemoteResolver = (remote: string | null, chdir: string | undefine
 const GLOBAL_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"]);
 const PUSH_VALUE = new Set(["--repo", "-o", "--push-option", "--receive-pack", "--exec"]);
 const FETCH_LIKE = new Set(["clone", "fetch", "pull", "ls-remote"]);
+
+/** The subcommand of `git <args>` past its global flags (`git -C x remote add` → `remote`). */
+export function gitSubcommand(args: readonly string[]): string | undefined {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (!arg.startsWith("-")) return arg;
+    if (!arg.includes("=") && GLOBAL_VALUE.has(arg)) i += 1;
+  }
+  return undefined;
+}
 
 function remoteEntry(remote: string | null, resolver: GitRemoteResolver | undefined, chdir: string | undefined): EgressDestination | null {
   const label = remote === null ? "the default git remote" : `git remote "${remote}"`;
