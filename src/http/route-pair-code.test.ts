@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { DEVICE_COOKIE } from "./device-auth.js";
-import { MAX_CODE_FAILURES } from "./device-code.js";
+import { MAX_CODE_FAILURES, MAX_CODE_FAILURES_PER_ADDRESS } from "./device-code.js";
 import { createDeviceSessions, type DeviceSessions } from "./device-sessions.js";
 import { DEVICE_IDLE_MS, PAIRING_TTL_MS } from "./device-store.js";
 import { createHttpServer, type HttpServerHandle, type RouteDefinition } from "./http-server.js";
@@ -74,8 +74,10 @@ function call(port: number, method: string, path: string, headers: Record<string
 }
 
 const FORM = { "content-type": "application/x-www-form-urlencoded" };
-const postCode = (port: number, code: string): Promise<Answer> =>
-  call(port, "POST", "/panel/pair", FORM, new URLSearchParams({ code }).toString());
+const postCode = (port: number, code: string, headers: Record<string, string> = {}): Promise<Answer> =>
+  call(port, "POST", "/panel/pair", { ...FORM, ...headers }, new URLSearchParams({ code }).toString());
+/** As if from another host: serve trusts `cf-connecting-ip` on a loopback socket (the tunnel). */
+const from = (address: string): Record<string, string> => ({ "cf-connecting-ip": address });
 
 function newPairing(): { token: string; code: string } {
   const made = devices.createPairing();
@@ -140,16 +142,50 @@ describe("GET and POST /panel/pair", () => {
     expect(devices.list()).toEqual([]);
   });
 
-  it(`stops taking codes after ${MAX_CODE_FAILURES} wrong ones, until a new code is made`, async () => {
+  it(`stops taking codes after ${MAX_CODE_FAILURES} wrong ones from all callers, until a new code is made`, async () => {
     const port = await start();
     const { code } = newPairing();
-    for (let i = 0; i < MAX_CODE_FAILURES; i++) await postCode(port, "ZZZZ-ZZZZ");
-    const locked = await postCode(port, code);
+    for (let i = 0; i < MAX_CODE_FAILURES; i++) {
+      await postCode(port, "ZZZZ-ZZZZ", from(`203.0.113.${Math.floor(i / MAX_CODE_FAILURES_PER_ADDRESS) + 1}`));
+    }
+    const locked = await postCode(port, code, from("198.51.100.7"));
     expect(locked.status).toBe(429);
     expect(locked.body).toContain("Too many wrong codes");
     clock = new Date(clock.getTime() + 1_000);
     const fresh = newPairing();
     expect((await postCode(port, fresh.code)).status).toBe(303);
+  });
+
+  it(`one address spends at most ${MAX_CODE_FAILURES_PER_ADDRESS} wrong codes; others still pair`, async () => {
+    const port = await start();
+    const { code } = newPairing();
+    for (let i = 0; i < MAX_CODE_FAILURES_PER_ADDRESS; i++) {
+      expect((await postCode(port, "ZZZZ-ZZZZ", from("203.0.113.5"))).status).toBe(400);
+    }
+    expect((await postCode(port, code, from("203.0.113.5"))).status).toBe(429);
+    expect((await postCode(port, code, from("203.0.113.6"))).status).toBe(303);
+  });
+
+  it("posts from another web page are refused and spend none of the budget", async () => {
+    const port = await start();
+    const { code } = newPairing();
+    for (let i = 0; i < MAX_CODE_FAILURES; i++) {
+      expect((await postCode(port, "ZZZZ-ZZZZ", { origin: "https://evil.example" })).status).toBe(403);
+      expect((await postCode(port, "ZZZZ-ZZZZ", { origin: "null" })).status).toBe(403);
+      expect((await postCode(port, "ZZZZ-ZZZZ", { "sec-fetch-site": "cross-site" })).status).toBe(403);
+      expect((await postCode(port, "ZZZZ-ZZZZ", { "sec-fetch-site": "same-site" })).status).toBe(403);
+    }
+    const own = { origin: `http://127.0.0.1:${port}`, "sec-fetch-site": "same-origin" };
+    expect((await postCode(port, code, own)).status).toBe(303);
+  });
+
+  it("input that cannot be a code spends none of the budget", async () => {
+    const port = await start();
+    const { code } = newPairing();
+    for (let i = 0; i < MAX_CODE_FAILURES + 1; i++) {
+      expect((await postCode(port, "x")).status).toBe(400);
+    }
+    expect((await postCode(port, code)).status).toBe(303);
   });
 });
 
