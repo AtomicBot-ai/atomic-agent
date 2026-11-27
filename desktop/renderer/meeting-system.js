@@ -56,7 +56,10 @@ function mtgSystemHTML() {
 }
 
 function mtgSpeakersNote() {
-  return MTGS.state === 'on' ? 'You are Me, the other side of the call is Them.' : 'Speakers are guessed from pauses.';
+  // ATO-2514: and by voice when the diarizer is on (meeting-voices.js).
+  const voices = typeof MTGV !== 'undefined' && MTGV.on;
+  if (MTGS.state === 'on') return voices ? 'You are Me, the call is Them, and voices on the call are told apart.' : 'You are Me, the other side of the call is Them.';
+  return voices ? 'Speakers are told apart by voice on this computer.' : 'Speakers are guessed from pauses.';
 }
 
 function mtgsSet(state, reason) {
@@ -105,6 +108,7 @@ function mtgsListen() {
 async function mtgSystemStart() {
   if (typeof BR === 'undefined' || !BR || !BR.meetingSystemStart) { mtgsSet('off', 'unsupported'); return; }
   mtgsListen();
+  if (typeof mtgVoicesRefresh === 'function') mtgVoicesRefresh();   // ATO-2514: is this meeting's speakers told apart by voice
   mtgsSet('starting');
   let r = null;
   try { r = await BR.meetingSystemStart(); } catch (e) { r = null; }

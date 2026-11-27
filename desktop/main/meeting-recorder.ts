@@ -30,6 +30,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ChunkPlanner, checkFrame, pcmSeconds, planRecovery } from "./meeting-plan.js";
 import { buildTurns } from "./meeting-speakers.js";
+import { diarizeChannel } from "./meeting-voices.js";
 import { isMeetingId, type MeetingChannel, type MeetingMeta } from "./meeting-store.js";
 import { assembleSegments, meetingDocument, meetingFileName, minutesPrompt, shiftSegments } from "./meeting-transcript.js";
 import type { TranscribeRun } from "./transcribe-file.js";
@@ -89,10 +90,13 @@ export class MeetingRecorder {
     if (this.current) return { ok: false, error: "busy" };
     const av = await this.available();
     if (!av.ok || !av.locale) return { ok: false, error: av.reason ?? "unavailable" };
+    // ATO-2514: keep each channel whole for the diarizer (and start its first-use download).
+    const voices = this.deps.voices ? await this.deps.voices.prepare().catch(() => false) : false;
     if (this.current) return { ok: false, error: "busy" };
     let meta: MeetingMeta;
     try {
       meta = this.deps.store.create((this.deps.now ?? Date.now)(), av.locale);
+      if (voices) { meta = { ...meta, voices: true }; this.deps.store.writeMeta(meta); }
     } catch (err) {
       return { ok: false, error: "disk", message: err instanceof Error ? err.message : String(err) };
     }
@@ -120,6 +124,9 @@ export class MeetingRecorder {
       // The disk refused (full, folder gone): stop rather than pretend to record.
       this.stop("disk");
       return;
+    }
+    if (cur.meta.voices) {
+      try { this.deps.store.appendFull(cur.meta.id, frame, ch); } catch { /* the chunks still carry the meeting */ }
     }
     if (state.planner.push(frame.byteLength, typeof peak === "number" ? peak : 1)) this.cut(cur, ch);
   }
@@ -208,9 +215,16 @@ export class MeetingRecorder {
       const theirs = store.transcripts(id, "them");
       const duration = mine.reduce((n, c) => n + c.duration, 0);
       const recordedThem = meta.themLead !== undefined || theirs.length > 0;
+      // ATO-2514: voices on the other side when it was recorded, else on the microphone.
+      const voiceCh: MeetingChannel = recordedThem ? "them" : "me";
+      const voice = meta.voices && this.deps.voices
+        ? await diarizeChannel(store, this.deps.voices, id, voiceCh, voiceCh === "them" ? meta.themLead ?? 0 : 0,
+          (fraction) => this.deps.emit({ type: "voices-run", id, fraction }))
+        : null;
       const { turns, method } = buildTurns({
         me: assembleSegments(mine),
         them: recordedThem ? shiftSegments(assembleSegments(theirs), meta.themLead ?? 0) : null,
+        voice,
       });
       if (!turns.length && !failed) {
         store.remove(id);

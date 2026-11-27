@@ -1175,6 +1175,18 @@ Honestly degraded, and labelled as such in the UI:
   `themLead` seconds in (meta.json); `meeting-speakers.ts` puts both
   channels on one clock and drops microphone lines that are the call heard
   through the speakers.
+- **Speakers by voice (ATO-2514).** With `Tell speakers apart by voice` on
+  (Settings, Meetings; on by default) the recorder also keeps each channel
+  whole as `full.wav` until Make notes, then runs the agent's
+  `atomic-agent diarize run` (sherpa-onnx v1.13.8, Apache-2.0; pyannote
+  segmentation-3.0, MIT; 3D-Speaker CAM++, Apache-2.0) on the other side of
+  the call (Them 1, Them 2 in a group call) or, without system audio, on the
+  microphone (Speaker 1, Speaker 2). Nothing is bundled: the first meeting
+  starts `diarize install`, about 56 to 64 MB once, with progress and Skip in
+  the panel (`main/meeting-voices.ts`, `meeting-voices-ipc.ts`,
+  `renderer/meeting-voices.js`). An older agent, an OS without a prebuilt
+  engine, a failed download or the switch off falls back to Me / Them or the
+  pause guess, and the saved file says which was used.
 - **Voice input: what is and is not possible.** `SpeechAnalyzer` is macOS
   26+, so on anything older the button is disabled and says
   `Voice input needs macOS 26 or later`; the app itself runs from

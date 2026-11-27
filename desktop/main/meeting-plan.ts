@@ -147,3 +147,27 @@ export function checkFrame(chunk: unknown): Uint8Array | null {
   if (chunk.byteLength === 0 || chunk.byteLength > MEETING_MAX_FRAME_BYTES || chunk.byteLength % 2 !== 0) return null;
   return chunk;
 }
+
+/**
+ * ATO-2514: the 44-byte RIFF header of a 16 kHz mono s16le WAV holding
+ * `dataBytes` of samples. The whole-channel recording the diarizer reads is
+ * written header first and appended to; its sizes are set at Make notes.
+ */
+export function wavHeader(dataBytes: number): Buffer {
+  const n = Number.isFinite(dataBytes) && dataBytes > 0 ? Math.floor(dataBytes) : 0;
+  const h = Buffer.alloc(WAV_HEADER_BYTES);
+  h.write("RIFF", 0, "ascii");
+  h.writeUInt32LE(Math.min(36 + n, 0xffffffff), 4);
+  h.write("WAVE", 8, "ascii");
+  h.write("fmt ", 12, "ascii");
+  h.writeUInt32LE(16, 16);
+  h.writeUInt16LE(1, 20);
+  h.writeUInt16LE(1, 22);
+  h.writeUInt32LE(16_000, 24);
+  h.writeUInt32LE(MEETING_BYTES_PER_SECOND, 28);
+  h.writeUInt16LE(2, 32);
+  h.writeUInt16LE(16, 34);
+  h.write("data", 36, "ascii");
+  h.writeUInt32LE(Math.min(n, 0xffffffff), 40);
+  return h;
+}
