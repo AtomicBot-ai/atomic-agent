@@ -71,7 +71,7 @@ import { wireTraceTreeIpc } from "./trace-tree-ipc.js";
 import { wireProjectWorkersIpc } from "./project-workers-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
 import { wireMyFilesIpc } from "./my-files-ipc.js";
-import { wireMyAppsIpc } from "./my-apps-ipc.js";
+import { openAppFromDeeplink, wireMyAppsIpc } from "./my-apps-ipc.js";
 import { wireImportFactsIpc } from "./import-facts-ipc.js";
 import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
 import { wireChatgptOauthIpc } from "./chatgpt-oauth-ipc.js";
@@ -475,6 +475,7 @@ const deeplinks = wireDeeplinks({
   showWindow: () => openWindowAgain(),
   notify: () => send("deeplink:new"),
   log: (line) => console.error(line),
+  direct: (request) => app.isReady() && openAppFromDeeplink(request),   // ATO-2459: an installed My apps launcher opens just its app
 });
 {
   const testLink = process.argv.find((a) => a.startsWith("--deeplink-test="));
