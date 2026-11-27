@@ -85,6 +85,8 @@ export class DiscordChannel implements Channel {
   private readonly cursor: DiscordMessageCursor;
   private readonly handled = new RecentMessageIds();
   private catchingUp: Promise<unknown> | null = null;
+  /** A READY arrived during a run: read the history once more after it. */
+  private catchUpAgain = false;
   private readonly inbox: AttachmentInbox;
   /**
    * `sessionId -> approval binding`. One per channel that is (or recently
@@ -233,10 +235,15 @@ export class DiscordChannel implements Channel {
   /**
    * A fresh gateway session (restart, or a drop that could not be
    * resumed) missed whatever was sent meanwhile: read it back. One run
-   * at a time; a READY during a run waits for the next one.
+   * at a time; a READY during a run is remembered and starts one more
+   * run when this one ends, so the gap before that READY is read too.
    */
   private startCatchUp(api: DiscordApi): void {
-    if (this.catchingUp || this.botUserId === null) return;
+    if (this.botUserId === null) return;
+    if (this.catchingUp) {
+      this.catchUpAgain = true;
+      return;
+    }
     this.catchingUp = catchUpDiscordChannels({
       api,
       cursor: this.cursor,
@@ -250,6 +257,15 @@ export class DiscordChannel implements Channel {
       })
       .finally(() => {
         this.catchingUp = null;
+        const again = this.catchUpAgain;
+        this.catchUpAgain = false;
+        if (
+          again &&
+          this.currentState !== "stopping" &&
+          this.currentState !== "disabled"
+        ) {
+          this.startCatchUp(api);
+        }
       });
   }
 

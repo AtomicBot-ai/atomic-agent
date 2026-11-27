@@ -45,7 +45,7 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function setup(history: unknown[]) {
+function setup(history: unknown[], holdFirstRead?: Promise<void>) {
   const dir = mkdtempSync(join(tmpdir(), "atomic-discord-catchup-ch-"));
   dirs.push(dir);
   const historyReads: string[] = [];
@@ -60,6 +60,7 @@ function setup(history: unknown[]) {
       }
       if ((init?.method ?? "GET") === "GET" && url.includes("/messages?after=")) {
         historyReads.push(url);
+        if (historyReads.length === 1 && holdFirstRead) await holdFirstRead;
         return new Response(JSON.stringify(history));
       }
       if (init?.method === "POST") {
@@ -202,6 +203,32 @@ describe("DiscordChannel catch-up on READY", () => {
     expect(entry?.lastMessageId).toBe(id);
     // A DM has no guild.
     expect(entry?.guildId).toBeUndefined();
+    await t.channel.stop();
+  });
+
+  it("a READY that lands during a catch-up run starts one more run after it", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const t = setup([], held);
+    new DiscordMessageCursor(t.cursorPath).advance("c1", sf(30), "g1");
+
+    await t.channel.start();
+    await vi.waitFor(() => expect(t.socket()).not.toBeNull());
+    t.socket().frame(OP.DISPATCH, { session_id: "gs1" }, "READY");
+    await vi.waitFor(() => expect(t.historyReads).toHaveLength(1));
+    // A second fresh gateway session while the first run still waits on
+    // its history read: the gap before it must be read too, not dropped.
+    t.socket().frame(OP.DISPATCH, { session_id: "gs2" }, "READY");
+    for (let i = 0; i < 10; i += 1) await new Promise((r) => setTimeout(r, 0));
+    expect(t.historyReads).toHaveLength(1);
+
+    release();
+    await vi.waitFor(() => expect(t.historyReads).toHaveLength(2));
+    // Exactly one extra run, not one per READY forever.
+    for (let i = 0; i < 10; i += 1) await new Promise((r) => setTimeout(r, 0));
+    expect(t.historyReads).toHaveLength(2);
     await t.channel.stop();
   });
 });
