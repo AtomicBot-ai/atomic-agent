@@ -1,0 +1,29 @@
+/* ============================================================
+   ATO-2534: the "● Logbook" chip in the toolbar and its menu
+   (renderer/logbook-chip.js). The menu is drawn into #lbk-root,
+   outside what render() redraws. Colours come from tokens only;
+   the dot is the critical token while on, amber while paused.
+   ============================================================ */
+
+.lbkchip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;margin-right:4px;border-radius:999px;
+  background:transparent;border:1px solid var(--bd);color:var(--ink-2);font:500 var(--fs-cap)/1 var(--font-ui);
+  -webkit-app-region:no-drag;cursor:pointer}
+.lbkchip:hover{background:var(--hover);color:var(--ink)}
+.lbkchip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.lbkdot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--critical)}
+.lbkdot.paused,.lbkchip.paused .lbkdot{background:var(--amber-text)}
+
+#lbk-root{position:fixed;top:0;left:0;width:0;height:0;z-index:2147482000}
+.lbkmenu{position:fixed;width:280px;max-width:calc(100vw - 16px);display:flex;flex-direction:column;padding:6px;
+  background:var(--lift);border:1px solid var(--bd);border-radius:var(--r-sheet);box-shadow:var(--sh-pop);
+  font:400 var(--fs-cap)/1.4 var(--font-ui);color:var(--ink);-webkit-app-region:no-drag}
+.lbkhead{display:flex;gap:10px;align-items:flex-start;padding:8px 8px 10px;border-bottom:1px solid var(--bd);margin-bottom:4px}
+.lbkhead .lbkdot{margin-top:4px}
+.lbksub{color:var(--ink-2);margin-top:2px}
+.lbkitem{display:block;width:100%;text-align:left;padding:7px 8px;border-radius:var(--r-well);background:transparent;color:var(--ink);font:inherit}
+.lbkitem:hover:not([disabled]){background:var(--hover)}
+.lbkitem[disabled]{opacity:.55;cursor:default}
+.lbknote{padding:4px 8px 6px;color:var(--ink-2)}
+.lbkerr{margin:2px 4px 6px;padding:6px 8px;border-radius:var(--r-well);background:var(--warn-wash);color:var(--ink)}
+.lbklink{background:transparent;color:var(--accent-text);font:inherit;text-decoration:underline;padding:0}
+.lbkdetails{margin-top:4px;color:var(--ink-2);word-break:break-word}

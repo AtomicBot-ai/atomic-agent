@@ -2497,6 +2497,7 @@ function renderToolbar() {
     + (open ? '' : sidebarToggleHTML() + searchBtnHTML())
     + (t ? '<div class="tb-title"><b title="' + esc(t) + '">' + esc(t) + '</b></div>' : '')
     + '<div class="tb-right">'
+      + (typeof logbookChipHTML === 'function' ? logbookChipHTML() : '')   /* ATO-2534: ● Logbook (logbook-chip.js) */
       /* ATO-1256: this chat's files in the panel beside it (chat-files.js, file-preview.js). */
       + (S.room === 'chat' ? '<button class="iconbtn' + (filesPanelOpen() ? ' on' : '') + '" data-act="toggle:files"'
         + ' aria-pressed="' + filesPanelOpen() + '"'
