@@ -11,7 +11,8 @@ import { Database as DatabaseCtor } from "../../native/load-better-sqlite3.js";
  *
  *   - `folders`: the folders the person added.
  *   - `files`: every supported file seen in them, with the mtime and size
- *     it was read at and whether it is pending, indexed, failed or skipped.
+ *     it was read at, whether it is pending, indexed, failed or skipped,
+ *     and how many scanned pages OCR read (`ocr_pages`, ATO-2501).
  *   - `chunks`: about 1000 characters of a file each, with the PDF page or
  *     the time offset the text comes from.
  *   - `chunks_fts`: FTS5 over `chunks.text` (external content, kept in
@@ -38,7 +39,8 @@ CREATE TABLE IF NOT EXISTS files (
   size INTEGER NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('pending', 'indexed', 'failed', 'skipped')),
   reason TEXT,
-  indexed_at TEXT
+  indexed_at TEXT,
+  ocr_pages INTEGER
 );
 CREATE INDEX IF NOT EXISTS files_by_folder ON files(folder);
 CREATE INDEX IF NOT EXISTS files_by_status ON files(status);
@@ -91,7 +93,19 @@ function migrate(db: Database.Database): void {
     );
   }
   db.exec(DDL);
+  addOcrPagesColumn(db);
   db.pragma(`user_version = ${FILE_INDEX_SCHEMA_VERSION}`);
+}
+
+/**
+ * `files.ocr_pages` (ATO-2501) on a file made before it. Added without a
+ * schema bump on purpose: the desktop and the terminal share one state
+ * dir, and an older build refuses a newer `user_version` outright, while
+ * an extra nullable column is invisible to it (it names its columns).
+ */
+function addOcrPagesColumn(db: Database.Database): void {
+  const columns = db.prepare(`PRAGMA table_info(files)`).all() as { name: string }[];
+  if (!columns.some((column) => column.name === "ocr_pages")) db.exec(`ALTER TABLE files ADD COLUMN ocr_pages INTEGER`);
 }
 
 export function float32ToBuffer(vector: Float32Array): Buffer {

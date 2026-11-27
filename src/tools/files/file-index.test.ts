@@ -394,6 +394,6 @@ describe("status maths", () => {
 
   it("leaves current and lastError out when there are none", () => {
     const status = statusFrom({ found: 1, indexed: 0, failed: 0, skipped: 0 }, { running: true, updatedAt: "t" });
-    expect(Object.keys(status).sort()).toEqual(["failed", "found", "indexed", "running", "skipped", "updatedAt"]);
+    expect(Object.keys(status).sort()).toEqual(["failed", "found", "indexed", "ocrPages", "running", "skipped", "skippedReasons", "updatedAt"]);
   });
 });
