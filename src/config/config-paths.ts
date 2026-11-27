@@ -83,9 +83,20 @@ export function listConfigLeaves(): readonly ConfigLeaf[] {
   return [...INDEX.leaves.values()];
 }
 
+/**
+ * Optional leaves: keys with no default, absent from `USER_CONFIG_DEFAULTS`
+ * (so not in `listConfigLeaves` or the settings reference), that `get`,
+ * `set` and `unset` still address. ATO-2503: `config set
+ * localModels.managed.modelsDirOverride <folder>` was refused as an
+ * unknown key although `models dir` writes it and the docs name it.
+ */
+const OPTIONAL_LEAVES: ReadonlyMap<string, ConfigLeaf> = new Map(
+  ["localModels.managed.modelsDirOverride"].map((key) => [key, { key, defaultValue: undefined, isArray: false }]),
+);
+
 /** Look up a leaf by dotted key, or `undefined` if it is not one. */
 export function findConfigLeaf(key: string): ConfigLeaf | undefined {
-  return INDEX.leaves.get(key);
+  return INDEX.leaves.get(key) ?? OPTIONAL_LEAVES.get(key);
 }
 
 /** True when `key` names an object node (e.g. `localModels.managed`). */
@@ -190,7 +201,8 @@ export function formatConfigValue(key: string, value: unknown): string {
   ) {
     return JSON.stringify(value.map(() => "***"));
   }
-  return JSON.stringify(value);
+  // An unset optional leaf (no default) reads as null, not "undefined".
+  return JSON.stringify(value) ?? "null";
 }
 
 /** Read a dotted path out of a config tree, or `undefined` if absent. */

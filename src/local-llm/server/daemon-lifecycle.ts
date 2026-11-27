@@ -111,6 +111,8 @@ import {
 import { resolvePlatformAsset } from "../backend/platform-assets.js";
 import { assertBackendRunsOnThisMac } from "../backend/macos-min-version.js";
 import { assertPortFree, waitForOwnDaemon } from "./daemon-launch-guard.js";
+import { assertNoModelsDirMove } from "../models-dir-move-lock.js";
+import { missingModelError } from "../models-dir-guard.js";
 import {
   loraAdapterArgs,
   loraAdapterFileProblem,
@@ -1347,6 +1349,8 @@ export async function startDaemon(
 async function startDaemonNow(
   opts: DaemonStartOptions,
 ): Promise<DaemonStartResult> {
+  // ATO-2503: never while another process moves the models folder.
+  assertNoModelsDirMove(opts.dataDir);
   // A crashed Core may have left its model running on our pid mirror and
   // port: a new Core reaps it before this start reads either.
   await recoverOrphanedCoreSessions(opts.dataDir);
@@ -1372,11 +1376,9 @@ async function startDaemonNow(
   // own file; everything else from the managed per-model directory.
   const modelPath = resolveChatModelWeightsPath(opts.dataDir, model);
   if (!existsSync(modelPath)) {
-    throw new Error(
-      model.localPath
-        ? `model ${opts.modelId} file not found: ${model.localPath}`
-        : `model ${opts.modelId} not downloaded; run 'atomic-agent models pull ${opts.modelId}'`,
-    );
+    if (model.localPath) throw new Error(`model ${opts.modelId} file not found: ${model.localPath}`);
+    // ATO-2503: a models folder on an unplugged disk says so.
+    throw missingModelError(`model ${opts.modelId} not downloaded; run 'atomic-agent models pull ${opts.modelId}'`);
   }
   if (opts.loraAdapter) {
     const problem =
@@ -1979,6 +1981,7 @@ export function buildEmbeddingServerArgs(
 export async function startEmbeddingDaemon(
   opts: EmbeddingDaemonStartOptions,
 ): Promise<{ pid: number; port?: number }> {
+  assertNoModelsDirMove(opts.dataDir); // ATO-2503
   if (getEmbeddingModelDef(opts.modelId).requiresCoreEmbeddingModule) {
     return startCoreModuleEmbedding(opts);
   }
@@ -2009,7 +2012,7 @@ export async function startEmbeddingDaemon(
     model.filename,
   );
   if (!existsSync(modelPath)) {
-    throw new Error(
+    throw missingModelError(
       `embedding model ${opts.modelId} not downloaded; run 'atomic-agent models pull-embedding ${opts.modelId}'`,
     );
   }
@@ -2086,7 +2089,7 @@ async function startCoreModuleEmbedding(
   }
   const modelPath = resolveModelFilePath(opts.dataDir, model.id, model.filename);
   if (!existsSync(modelPath)) {
-    throw new Error(
+    throw missingModelError(
       `embedding model ${opts.modelId} not downloaded; run 'atomic-agent models pull-embedding ${opts.modelId}'`,
     );
   }

@@ -112,8 +112,21 @@ export {
   resolveEmbeddingPidFilePath,
   resolveEmbeddingLogFilePath,
 } from "./backend-paths.js";
-export { getModelsDirOverride, setModelsDirOverride } from "./models-dir-override.js";
-export { moveModelsDir, ModelsDirMoveError } from "./models-dir-move.js";
+export {
+  getModelsDirOverride,
+  modelsDirUnreachableMessage,
+  setModelsDirOverride,
+  unreachableModelsDir,
+  type ModelsDirOverrideSource,
+} from "./models-dir-override.js";
+export { moveModelsDir, ModelsDirMoveError, type ModelsDirMoveBytes } from "./models-dir-move.js";
+export {
+  acquireModelsDirMoveLock,
+  assertNoModelsDirMove,
+  MODELS_DIR_MOVE_BUSY_MESSAGE,
+  ModelsDirMoveBusyError,
+  modelsDirMoveOwner,
+} from "./models-dir-move-lock.js";
 
 export {
   DEFAULT_GIVE_UP_AFTER_MS,
