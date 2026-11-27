@@ -133,7 +133,8 @@ describe("cpuMoeRetryOptions (one retry without the flag)", () => {
   const boom = new Error("llama-server exited: failed to allocate CUDA0 buffer");
 
   it("retries an auto-chosen flag once, with cpuMoe off", () => {
-    expect(cpuMoeRetryOptions({ port: 1 }, 12, boom)).toEqual({ port: 1, cpuMoe: "off" });
+    const launch = { port: 1 };
+    expect(cpuMoeRetryOptions(launch, 12, boom)).toEqual({ port: 1, cpuMoe: "off" });
     expect(cpuMoeRetryOptions({ cpuMoe: "auto" as const }, 12, boom)).toEqual({ cpuMoe: "off" });
   });
 
