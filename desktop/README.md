@@ -481,6 +481,21 @@ Real, driven by the running agent:
   same provider step (`cloud`); Back from the URL step returns to the Custom
   list. A click scenario that wants Ollama clicks **Custom**, not
   **Cloud models**. The terminal's own wizard is unchanged.
+- model servers already running here (ATO-2489, `renderer/local-servers.js`
+  for Settings, `renderer/local-servers-setup.js` for the setup step,
+  `main/local-servers-ipc.ts`): the app runs `atag local-servers --json`, the
+  core's own probe (Ollama on 11434, LM Studio on 1234, the Llama app or a
+  llama-server on 9931, 800 ms each). When one answers, the Custom card says
+  `Found running here: Llama app, Ollama.`, the cursor starts on it, and
+  Custom opens the `found_server` step: every server found (a choice when
+  several run) with its models and what is loaded, then **Something else**
+  for the full Custom list. A pick goes the usual way: Ollama and LM Studio
+  open their preset row on the Custom list and check it at once (no key),
+  the Llama app opens the llama.cpp address step with its address filled in.
+  The closing line then says `Ollama connected`. Settings › Local lists the
+  same servers under **Running on this Mac** with Use / Switch to it / In
+  use and Check again. An agent without the command, or an app connected to
+  an agent on another computer, shows nothing.
 - the add-provider wizard: the TUI's kind list (nothing preselected) → key /
   base URL → verification by listing the provider's models under that key →
   saved, activated, and a default model picked
