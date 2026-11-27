@@ -2176,7 +2176,9 @@ const PAL = [
     // ATO-1465: the community server, the same act as Help › Join Discord and the sidebar button.
     ['logo:discord','Join Discord','','','help.discord'],   // ATO-1634: Discord's mark
     ['chat','Talk to the team ($50 credits)…','','/feedback','help.feedback'],   // ATO-1467
-    ['x','Quit','','⌘ Q','quit'],
+    /* ATO-2521: named as File › Exit is off macOS (menu.ts), and no chord on Windows, where
+       Electron gives the quit role no accelerator; Linux keeps Ctrl+Q, the role's default there. */
+    ['x', IS_MAC ? 'Quit' : 'Exit', '', IS_WIN ? '' : '⌘ Q', 'quit'],
   ]],
 ];
 
