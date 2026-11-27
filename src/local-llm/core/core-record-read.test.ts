@@ -56,19 +56,39 @@ describe("refreshCoreKeyForUrl with a record that did not read at first", () => 
 });
 
 describe("coreRecordClaimsPort", () => {
-  it("is true for a record naming the port, in either role", () => {
+  const live = (): boolean => true;
+  const dead = (): boolean => false;
+
+  it("is true for a record naming the port with a live server, in either role", () => {
     put("embedding", JSON.stringify({ ...record, is_embedding: true }));
-    expect(coreRecordClaimsPort(dir, 19091)).toBe(true);
+    expect(coreRecordClaimsPort(dir, 19091, live)).toBe(true);
+  });
+
+  // Review fix: a readable record whose server is gone is not ours answering
+  // the 401; the turn keeps LocalPortTakenError (ATO-1277, ATO-1732).
+  it("is false for a readable record naming the port whose pid is dead", () => {
+    put("chat", JSON.stringify(record));
+    expect(coreRecordClaimsPort(dir, 19091, dead)).toBe(false);
+  });
+
+  it("is false for a record Core already unloaded (awaitingExit), even with a live pid", () => {
+    put("chat", JSON.stringify({ ...record, awaitingExit: true }));
+    expect(coreRecordClaimsPort(dir, 19091, live)).toBe(false);
+  });
+
+  it("is false for a record with no usable pid", () => {
+    put("chat", JSON.stringify({ ...record, pid: undefined }));
+    expect(coreRecordClaimsPort(dir, 19091, live)).toBe(false);
   });
 
   it("is true for a record that is there and does not read", () => {
     put("chat", "{half");
-    expect(coreRecordClaimsPort(dir, 19091)).toBe(true);
+    expect(coreRecordClaimsPort(dir, 19091, dead)).toBe(true);
   });
 
   it("is false for a record naming another port, or no record at all", () => {
     expect(coreRecordClaimsPort(dir, 19091)).toBe(false);
     put("chat", JSON.stringify({ ...record, port: 19999 }));
-    expect(coreRecordClaimsPort(dir, 19091)).toBe(false);
+    expect(coreRecordClaimsPort(dir, 19091, live)).toBe(false);
   });
 });

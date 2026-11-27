@@ -127,4 +127,15 @@ describe("readOwnEngineState with no pid file on disk (ATO-1732)", () => {
     const idle = liveness({ operationLock: () => "free", startPending: () => false });
     expect(readOwnEngineState(url, config("managed", dir), idle)).toBe("core_session");
   });
+
+  // Review fix: our Core's server died and left a readable record naming the
+  // port; another program answers 401 there. That is not our engine: gone,
+  // so the turn says another program holds the port (ATO-1277, ATO-1732).
+  it("reads gone for a readable Core record naming the port with a dead pid", () => {
+    const dir = emptyDataDir();
+    const deadPid = 2_147_483_646;
+    mkdirSync(join(dir, "core"), { recursive: true });
+    writeFileSync(join(dir, "core", "chat.json"), JSON.stringify({ pid: deadPid, port: 9931, model_id: "m" }));
+    expect(readOwnEngineState(url, config("managed", dir), state("dead"))).toBe("gone");
+  });
 });

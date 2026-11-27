@@ -36,19 +36,43 @@ export async function readCoreRecordSettled(
   }
 }
 
+/** Whether `pid` names a live process (EPERM: alive, someone else's). */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 /**
- * Whether a Core session record of ours claims loopback `port`: a record
- * that names it, or one that is there and cannot be read (it may well name
- * it). Read only, sync, for judging a 401: Core's own model server on that
- * port is then the likely one that answered, not another program.
+ * Whether a Core session record of ours claims loopback `port`. Read only,
+ * sync, for judging a 401: Core's own model server on that port is then the
+ * likely one that answered, not another program.
+ *
+ * - A record that is there and cannot be read claims it (it may well name
+ *   the port): the ATO-2460 case.
+ * - A readable record claims it only when it names the port, its server's
+ *   pid is alive and Core has not already unloaded it (`awaitingExit`). A
+ *   dead pid is not ours answering: the 401 already went through the key
+ *   refresh, which reads Core's live session, so a live session on that
+ *   port would have given the current key. Another program it stays
+ *   (ATO-1277, ATO-1732).
  */
-export function coreRecordClaimsPort(dataDir: string, port: number): boolean {
+export function coreRecordClaimsPort(
+  dataDir: string,
+  port: number,
+  alive: (pid: number) => boolean = pidAlive,
+): boolean {
   for (const role of ["chat", "embedding"] as const) {
     const path = coreSessionPath(dataDir, role);
     if (!existsSync(path)) continue;
     const record = readCoreJson<Partial<CoreSessionRecord>>(path);
     if (record === null || typeof record !== "object") return true;
-    if (record.port === port) return true;
+    if (record.port !== port) continue;
+    if ((record as { awaitingExit?: unknown }).awaitingExit === true) continue;
+    if (typeof record.pid === "number" && record.pid > 0 && alive(record.pid)) return true;
   }
   return false;
 }
