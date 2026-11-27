@@ -31,8 +31,14 @@ export function coreLoadOverrides(args: readonly string[], speculative: { mtp?: 
   extras.push("--slots");
   // Core's own default keeps the vision projector on the CPU
   // (`--no-mmproj-offload`); the llama-server engine offloads it.
+  // `n_predict` and `reasoning_budget` -1: no server-wide answer or thinking
+  // cap, as on the llama-server engine. Core 0.24 otherwise starts
+  // llama-server with `--n-predict 16384` and `--reasoning-budget 8192`;
+  // the agent sends its own `n_predict` per step and bounds reasoning in its
+  // grammar. Older Cores ignore `reasoning_budget` and already default to -1.
   return { ctx_size: ctx, parallel, concurrent_mode: false, auto_unload: false,
-    mtp: speculative.mtp === true, dflash: false, offload_mmproj: true, extra_args: extras.join(" ") };
+    mtp: speculative.mtp === true, dflash: false, offload_mmproj: true,
+    n_predict: -1, reasoning_budget: -1, extra_args: extras.join(" ") };
 }
 
 export async function loadCoreSession(dataDir: string, options: {

@@ -76,6 +76,9 @@ describe("Core host contract", () => {
     // The vision projector is offloaded as on the llama-server engine, not
     // kept on the CPU by Core's default --no-mmproj-offload.
     expect(o).toMatchObject({ offload_mmproj: true });
+    // No server-wide answer or thinking cap: Core 0.24's defaults (16384, 8192)
+    // would cut a step the agent itself sent with n_predict -1.
+    expect(o).toMatchObject({ n_predict: -1, reasoning_budget: -1 });
     expect(o.extra_args).toContain('"/a path/template.jinja"');
     expect(o.extra_args).toContain("--slots");
     expect(o.extra_args).not.toContain("--model");
