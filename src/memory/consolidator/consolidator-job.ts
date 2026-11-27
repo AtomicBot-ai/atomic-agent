@@ -5,16 +5,34 @@ import type { LinkStore } from "../links/link-store.js";
 import type { MemoryEntry, MemoryStore } from "../memory-store.js";
 import type { ProcedureStore } from "../procedures/procedure-store.js";
 
+import { selectCandidatePage } from "./candidate-window.js";
 import { clusterEpisodes, type MemoryCluster } from "./clustering.js";
+import {
+  ConsolidationStateStore,
+  type AbstainBackoffPolicy,
+} from "./consolidation-state-store.js";
 import { DistillRunner } from "./distill-runner.js";
+import {
+  logTickSummary,
+  zeroSummary,
+  type ConsolidatorTickResult,
+} from "./tick-summary.js";
+
+export type { ConsolidatorTickResult } from "./tick-summary.js";
+
+/** ATO-2506. Longest an abstained cluster is put off by default. */
+const DEFAULT_ABSTAIN_BACKOFF_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * Memory-v2 phase 5. The cold-path consolidator.
  *
  * One tick of `runOnce` does the following, sequentially:
  *
- *   1. **Select**       candidate episodes — `consolidated_into IS NULL`
- *                       AND `updated_at <= now - cooldownMs`.
+ *   1. **Select**       one page of candidate episodes (see
+ *                       candidate-window.ts): `consolidated_into IS
+ *                       NULL`, older than `cooldownMs`, not put off by
+ *                       an abstain backoff; the page moves to older
+ *                       notes tick by tick.
  *   2. **Acquire lease** on every candidate so the reflection-side
  *                       neighbor-evolver (phase 3) skips them while
  *                       distillation is in flight. The lease window
@@ -44,8 +62,11 @@ import { DistillRunner } from "./distill-runner.js";
  *
  * Cross-phase invariants pinned here:
  *
- *   - **One LLM call per cluster.** No retry loop — failures count
- *     as "skip the cluster", a future tick can retry.
+ *   - **One LLM call per cluster.** No retry loop: failures and
+ *     timeouts count as "skip the cluster", the next tick can retry.
+ *     An abstain puts the cluster's notes off with a doubling,
+ *     persisted backoff (ATO-2506) so a few stubborn clusters cannot
+ *     take every tick's distill budget.
  *   - **Fire-safe.** Errors are caught at every layer, never
  *     bubble up to the Scheduler.
  *   - **Idempotent on re-tick.** Re-running on the same data
@@ -64,43 +85,6 @@ import { DistillRunner } from "./distill-runner.js";
  * the source of truth — see ../docs/retrieval.md
  * §5.C deferred for the full plan.
  */
-export interface ConsolidatorTickResult {
-  outcome: "ok" | "none" | "failed";
-  clustersConsidered: number;
-  lessonsCreated: number;
-  lessonsAbstained: number;
-  failures: number;
-  /**
-   * Phase 6. Count of lessons demoted to `status='deprecated'`
-   * during this tick.
-   */
-  lessonsDeprecatedByAge: number;
-  lessonsDeprecatedByOverflow: number;
-  /**
-   * Phase 7a. Count of lessons demoted because their `vote_score`
-   * went negative before they ever helped a turn. Always `0`
-   * when `voting.enabled === false`.
-   */
-  lessonsDeprecatedByVote: number;
-  /**
-   * Phase 7a. Whether the per-tick `decayAllScores` pass ran on
-   * this tick. `false` when voting is disabled or the runtime
-   * could not construct a `VoteStore`.
-   */
-  voteDecayApplied: boolean;
-  /**
-   * Phase 7b. Count of procedures persisted in the same tick.
-   * Always `<= lessonsCreated` because every procedure is paired
-   * with a lesson (invariant 21). `0` when procedures are
-   * disabled.
-   */
-  proceduresCreated: number;
-  proceduresDeprecatedByCascade: number;
-  proceduresDeprecatedByAge: number;
-  proceduresDeprecatedByVote: number;
-  proceduresDeprecatedByOverflow: number;
-}
-
 export interface ConsolidatorJobOptions {
   /** Master switch — driven by `memory.consolidation.enabled`. */
   enabled: boolean;
@@ -139,6 +123,14 @@ export interface ConsolidatorJobOptions {
    * `memory.procedures.deprecationAgeMs`.
    */
   procedureDeprecationAgeMs?: number;
+  /**
+   * ATO-2506. Wait after the first abstain on a cluster; each further
+   * abstain doubles it, up to `abstainBackoffMaxMs` (default 7 days).
+   * Defaults to `intervalMs`, i.e. the cluster sits out at least the
+   * next tick. `0` disables the backoff.
+   */
+  abstainBackoffBaseMs?: number;
+  abstainBackoffMaxMs?: number;
 }
 
 export interface ConsolidatorJobDeps {
@@ -155,6 +147,11 @@ export interface ConsolidatorJobDeps {
    */
   procedureStore?: ProcedureStore | null;
   distillRunner: DistillRunner;
+  /**
+   * ATO-2506. Abstain backoff and candidate page cursor. Defaults to a
+   * store on `memoryStore`'s own SQLite handle.
+   */
+  stateStore?: ConsolidationStateStore;
   /**
    * Memory-v2 phase 7a — optional vote store. When present **and**
    * `voteSignalDecay` is positive, every tick decays scores before
@@ -208,12 +205,18 @@ export class ConsolidatorJob {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private readonly now: () => number;
+  private readonly stateStore: ConsolidationStateStore;
 
   constructor(
     private readonly options: ConsolidatorJobOptions,
     private readonly deps: ConsolidatorJobDeps,
   ) {
     this.now = deps.now ?? Date.now;
+    this.stateStore =
+      deps.stateStore ??
+      new ConsolidationStateStore({
+        db: deps.memoryStore.getDatabaseHandleForEmbeddings(),
+      });
   }
 
   /**
@@ -260,7 +263,9 @@ export class ConsolidatorJob {
   async runOnce(signal?: AbortSignal): Promise<ConsolidatorTickResult> {
     if (this.running) {
       // Reentry guard — the previous tick still owns the lease set.
-      return zeroSummary();
+      const skipped = zeroSummary();
+      logTickSummary(this.deps.logger, skipped, "already_running");
+      return skipped;
     }
     this.running = true;
     const sig = signal ?? new AbortController().signal;
@@ -315,14 +320,23 @@ export class ConsolidatorJob {
         ? { proceduresCreated: result.proceduresCreated }
         : {}),
     });
+    logTickSummary(this.deps.logger, result);
     return result;
   }
 
   private async runTick(signal: AbortSignal): Promise<ConsolidatorTickResult> {
     const now = this.now();
-    const candidates = this.selectCandidates(now);
+    const { candidates, page } = selectCandidatePage(
+      { memoryStore: this.deps.memoryStore, stateStore: this.stateStore },
+      { now, cooldownMs: this.options.cooldownMs },
+    );
+    const read: ConsolidatorTickResult = {
+      ...zeroSummary(),
+      candidates: candidates.length,
+      candidatePage: page,
+    };
     if (candidates.length === 0) {
-      return zeroSummary();
+      return read;
     }
     const clusters = clusterEpisodes(
       candidates,
@@ -334,7 +348,7 @@ export class ConsolidatorJob {
       { linkStore: this.deps.linkStore },
     );
     if (clusters.length === 0) {
-      return zeroSummary();
+      return read;
     }
 
     const byId = new Map<number, MemoryEntry>();
@@ -342,6 +356,7 @@ export class ConsolidatorJob {
 
     let lessonsCreated = 0;
     let lessonsAbstained = 0;
+    let notesDeferred = 0;
     let failures = 0;
     let proceduresCreated = 0;
 
@@ -364,6 +379,7 @@ export class ConsolidatorJob {
           if (persisted.procedureCreated) proceduresCreated += 1;
         } else if (persisted.outcome === "none") {
           lessonsAbstained += 1;
+          notesDeferred += this.deferAbstained(acquired, now);
         } else {
           failures += 1;
         }
@@ -381,21 +397,37 @@ export class ConsolidatorJob {
     const outcome: ConsolidatorTickResult["outcome"] =
       lessonsCreated > 0 ? "ok" : failures > 0 ? "failed" : "none";
     return {
+      ...read,
       outcome,
       clustersConsidered: clusters.length,
       lessonsCreated,
       lessonsAbstained,
+      notesDeferred,
       failures,
-      lessonsDeprecatedByAge: 0,
-      lessonsDeprecatedByOverflow: 0,
-      lessonsDeprecatedByVote: 0,
-      voteDecayApplied: false,
       proceduresCreated,
-      proceduresDeprecatedByCascade: 0,
-      proceduresDeprecatedByAge: 0,
-      proceduresDeprecatedByVote: 0,
-      proceduresDeprecatedByOverflow: 0,
     };
+  }
+
+  /**
+   * ATO-2506. Put off the notes of a cluster the model abstained from.
+   * Never fails the tick: on an error the cluster is simply due again.
+   */
+  private deferAbstained(ids: readonly number[], now: number): number {
+    const baseMs = this.options.abstainBackoffBaseMs ?? this.options.intervalMs;
+    if (!(baseMs > 0)) return 0;
+    const policy: AbstainBackoffPolicy = {
+      baseMs,
+      maxMs: this.options.abstainBackoffMaxMs ?? DEFAULT_ABSTAIN_BACKOFF_MAX_MS,
+    };
+    try {
+      return this.stateStore.deferAbstained(ids, now, policy);
+    } catch (err) {
+      this.deps.logger?.warn?.("consolidator.defer.failed", {
+        members: ids,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return 0;
+    }
   }
 
   /**
@@ -624,25 +656,7 @@ export class ConsolidatorJob {
         }
       }
     }
-    if (
-      byAge > 0 ||
-      byOverflow > 0 ||
-      byVote > 0 ||
-      proceduresByCascade > 0 ||
-      proceduresByAge > 0 ||
-      proceduresByVote > 0 ||
-      proceduresByOverflow > 0
-    ) {
-      this.deps.logger?.info?.("consolidator.sweep.done", {
-        byAge,
-        byOverflow,
-        byVote,
-        proceduresByCascade,
-        proceduresByAge,
-        proceduresByVote,
-        proceduresByOverflow,
-      });
-    }
+    // ATO-2506: the counts go into the one `consolidator.tick` line.
     return {
       byAge,
       byOverflow,
@@ -707,27 +721,6 @@ export class ConsolidatorJob {
       });
       return false;
     }
-  }
-
-  /**
-   * Pull episodes that survived `cooldownMs` and are not yet
-   * archived. The phase 1A utility-weighted eviction has already
-   * thinned out useless rows; we just need to exclude "still hot"
-   * rows and rows that a previous tick already promoted.
-   */
-  private selectCandidates(now: number): MemoryEntry[] {
-    const threshold = now - this.options.cooldownMs;
-    // The age filter runs in SQL, before the row cap. Filtering after
-    // the cap read the newest 200 rows and then dropped the young ones,
-    // so on a busy store the window held few or no eligible episodes
-    // (#903).
-    return this.deps.memoryStore.list({
-      excludeArchived: true,
-      // ATO-1124: a note the person turned off is not distilled.
-      excludeDisabled: true,
-      updatedBefore: threshold,
-      limit: 200,
-    });
   }
 
   /**
@@ -904,26 +897,6 @@ export class ConsolidatorJob {
       );
     }
   }
-}
-
-/** Phase 6: shared zero-summary so the new fields stay in sync. */
-function zeroSummary(): ConsolidatorTickResult {
-  return {
-    outcome: "none",
-    clustersConsidered: 0,
-    lessonsCreated: 0,
-    lessonsAbstained: 0,
-    failures: 0,
-    lessonsDeprecatedByAge: 0,
-    lessonsDeprecatedByOverflow: 0,
-    lessonsDeprecatedByVote: 0,
-    voteDecayApplied: false,
-    proceduresCreated: 0,
-    proceduresDeprecatedByCascade: 0,
-    proceduresDeprecatedByAge: 0,
-    proceduresDeprecatedByVote: 0,
-    proceduresDeprecatedByOverflow: 0,
-  };
 }
 
 /**
