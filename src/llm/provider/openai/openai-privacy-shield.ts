@@ -44,8 +44,9 @@ export function shieldVaultFor(
 const NAME_ROLES: ReadonlySet<string> = new Set(["user", "tool", "function"]);
 
 /**
- * Vaults whose first names pass has run in this process; from then on
- * assistant replies are skipped. A reply written after that pass came
+ * Vaults whose first names pass has read every text through in this
+ * process (no timeout, error or call cap); from then on assistant
+ * replies are skipped. A reply written after that pass came
  * from the cloud through this vault, with the vault's values put back,
  * so any name in it is known already or one the cloud wrote itself.
  * Replies the vault never saw are read once, on its first pass: an
@@ -115,17 +116,15 @@ export async function learnNamesForRequest(
   const detector = privacyNameDetector();
   if (detector === null) return;
   const replies = !repliesRead.has(vault);
-  // The detector reads the texts only when a local model is there and
-  // the switch is on; only a pass that read them counts as the first.
-  const pass = { read: false };
+  // Only a pass that read every text through counts as the first: one
+  // with no local model, a timeout, an error or the call cap reads the
+  // replies again next time (review round 2).
+  const outcome = { complete: false };
   try {
-    const found = await detector.detect(() => {
-      pass.read = true;
-      return messageTextsForNames(readMessages(), { replies });
-    }, signal);
+    const found = await detector.detect(() => messageTextsForNames(readMessages(), { replies }), signal, outcome);
     const values = refineFoundValues(found);
     if (values.length > 0) vault.learn(values);
-    if (pass.read && signal?.aborted !== true) repliesRead.add(vault);
+    if (outcome.complete && signal?.aborted !== true) repliesRead.add(vault);
   } catch {
     // The detector does not throw by contract; if it ever does, regex only.
   }

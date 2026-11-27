@@ -95,6 +95,32 @@ describe("local name detector (ATO-2394)", () => {
     expect(vault.mask(EN)).toBe(regexOnly(EN));
   });
 
+  it("says a pass is complete only when every paragraph was read (review round 2)", async () => {
+    const done = { complete: false };
+    const { model } = fakeModel(() => answer([]));
+    await createLocalNameDetector({ model: () => model }).detect(() => [EN], undefined, done);
+    expect(done.complete).toBe(true);
+
+    const timedOut = { complete: true };
+    const { model: hanging } = fakeModel(() => new Promise<string>(() => undefined));
+    await createLocalNameDetector({ model: () => hanging, timeoutMs: 20 }).detect(() => [EN], undefined, timedOut);
+    expect(timedOut.complete).toBe(false);
+
+    const broken = { complete: true };
+    const { model: garbled } = fakeModel(() => "not json");
+    await createLocalNameDetector({ model: () => garbled }).detect(() => [EN], undefined, broken);
+    expect(broken.complete).toBe(false);
+
+    const capped = { complete: true };
+    const { model: small } = fakeModel(() => answer([]));
+    await createLocalNameDetector({ model: () => small, maxChunkChars: 10, maxCallsPerDetect: 1 }).detect(() => ["Anna wrote.\n\nBob replied."], undefined, capped);
+    expect(capped.complete).toBe(false);
+
+    const none = { complete: true };
+    await createLocalNameDetector({ model: () => null }).detect(() => [EN], undefined, none);
+    expect(none.complete).toBe(false);
+  });
+
   it("does not call the model once the caller has cancelled", async () => {
     const { model, users } = fakeModel(() => answer([{ text: "John Smith", kind: "NAME" }]));
     const detector = createLocalNameDetector({ model: () => model });

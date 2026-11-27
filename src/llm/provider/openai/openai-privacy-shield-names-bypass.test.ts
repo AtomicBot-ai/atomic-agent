@@ -118,6 +118,25 @@ describe("Privacy Shield names before the cloud call (ATO-2527)", () => {
     expect(second).not.toContain("A reply the cloud wrote through this vault.");
   });
 
+  it("does not count a first pass that timed out: the old replies are read again (review round 2)", async () => {
+    const hanging: LocalNameModel = { id: "local", local: true, complete: () => new Promise<string>(() => undefined) };
+    const reading = readingModel([{ text: "Мария Соколова", kind: "NAME" }]);
+    let model: LocalNameModel = hanging;
+    setPrivacyNameDetector(createLocalNameDetector({ model: () => model, timeoutMs: 20 }));
+    const vault = privacyVaultFor("s-timeout");
+    const messages = [
+      { role: "user", content: "nothing here" },
+      { role: "assistant", content: "Мария Соколова просит счёт" },
+    ];
+    await learnNamesForRequest(vault, () => messages);
+    model = reading;
+    await learnNamesForRequest(vault, () => messages);
+    expect(reading.complete.mock.calls.map((c) => c[0].user).join("\n")).toContain("Мария Соколова просит счёт");
+    const body: Record<string, unknown> = { messages };
+    maskOpenAiBody(body, vault);
+    expect(JSON.stringify(body)).not.toContain("Соколова");
+  });
+
   it("keeps the first pass for when a local model is there", async () => {
     setPrivacyShieldEnabled(true);
     let model: LocalNameModel | null = null;

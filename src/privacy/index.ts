@@ -14,6 +14,7 @@ export {
 export {
   createLocalNameDetector,
   splitParagraphs,
+  type DetectOutcome,
   type LocalNameDetector,
   type LocalNameDetectorOptions,
   type LocalNameModel,
