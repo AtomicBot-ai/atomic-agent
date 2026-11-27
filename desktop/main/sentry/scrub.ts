@@ -5,7 +5,8 @@
  *
  *  - the message is dropped unless the error type is on STATIC_MESSAGE_ERRORS
  *    (empty, like the agent's: add a type only after auditing every place
- *    that constructs it);
+ *    that constructs it), or it is a TypeError on one of V8's fixed
+ *    templates naming a code identifier (TYPE_ERROR_TEMPLATES, ATO-1731);
  *  - the type name is kept only when it is `SomethingError` /
  *    `SomethingException` or one of the shell's own names (KNOWN_TYPES),
  *    else `Error` — a thrown non-Error's "name" can be anything;
@@ -26,6 +27,34 @@ export interface StackFrame {
 }
 
 export const STATIC_MESSAGE_ERRORS = new Set<string>([]);
+
+/**
+ * ATO-1731: V8's own TypeError texts, kept only when they match one of these
+ * templates exactly and the one quoted part is a code identifier: ASCII
+ * `[A-Za-z_$][A-Za-z0-9_$]*` segments joined by dots, at most
+ * MAX_IDENTIFIER characters. A space, a slash, a colon (so no path or URL),
+ * a quote or any non-ASCII letter fails the match and the message is cut as
+ * before. Every other TypeError text is still dropped.
+ */
+export const TYPE_ERROR_TEMPLATES: readonly RegExp[] = [
+  /^Cannot read properties of (?:undefined|null) \(reading '([^']*)'\)$/,
+  /^Cannot set properties of (?:undefined|null) \(setting '([^']*)'\)$/,
+  /^(\S*) is not a function$/,
+  /^(\S*) is not iterable$/,
+];
+export const MAX_IDENTIFIER = 64;
+const IDENTIFIER_RE = /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
+
+function templateTypeError(message: string): string | undefined {
+  for (const re of TYPE_ERROR_TEMPLATES) {
+    const m = re.exec(message);
+    if (!m) continue;
+    const name = m[1] ?? "";
+    return name.length <= MAX_IDENTIFIER && IDENTIFIER_RE.test(name) ? message : undefined;
+  }
+  return undefined;
+}
+
 export const MAX_FRAMES = 30;
 
 const TYPE_RE = /^[A-Z][A-Za-z0-9]{0,50}(Error|Exception)$/;
@@ -42,9 +71,12 @@ export function safeType(name: unknown): string {
   return typeof name === "string" && (KNOWN_TYPES.has(name) || TYPE_RE.test(name)) ? name : "Error";
 }
 
-/** The message, only for a type whose messages are known to be static. */
+/** The message, only for a type whose messages are known to be static, or a TypeError on a fixed template (ATO-1731). */
 export function safeMessage(type: string, message: unknown): string | undefined {
-  return STATIC_MESSAGE_ERRORS.has(type) && typeof message === "string" ? message.slice(0, 200) : undefined;
+  if (typeof message !== "string") return undefined;
+  if (STATIC_MESSAGE_ERRORS.has(type)) return message.slice(0, 200);
+  if (type === "TypeError") return templateTypeError(message);
+  return undefined;
 }
 
 /** Any path (POSIX, Windows, file:// URL, app:// URL) down to its last segment. */
