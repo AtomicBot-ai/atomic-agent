@@ -35,7 +35,8 @@ function petBubbleModel(view, hidden) {
   return {
     approvalId: a.approvalId,
     title: a.question ? 'Atomic Agent has a question' : 'Allow ' + tool + '?',
-    text: inWindow ? (a.text ? a.text + ' ' : '') + 'Review this one in Atomic Agent.' : String(a.text || ''),
+    text: String(a.text || ''),
+    detail: inWindow ? (a.detail ? a.detail + ' ' : '') + 'Review this one in Atomic Agent.' : String(a.detail || ''),
     risk: String(a.risk || ''),
     allow: a.canAllow === true && !a.question,
     deny: !a.question,
@@ -72,6 +73,8 @@ function petBoot() {
     if (!m) { msg = ''; return; }
     $('b-title').textContent = m.title;
     $('b-text').textContent = m.text;
+    $('b-detail').textContent = m.detail;
+    $('b-detail').hidden = !m.detail;
     $('b-risk').textContent = m.risk;
     $('b-risk').hidden = !m.risk;
     $('b-msg').textContent = msg;

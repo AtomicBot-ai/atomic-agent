@@ -173,12 +173,14 @@ so it costs no tokens ([pet-events.ts](main/pet-events.ts),
 done and failed go back to idle, resting after two quiet minutes). The
 window takes clicks only over the sprite and its bubble
 ([pet-window.ts](main/pet-window.ts)). A waiting request opens a bubble
-with Allow once and Deny; the click is handed to the main window, which
+with the action (the preview's first line, e.g. the command; the gate's reason
+on a second line) and Allow once and Deny; the click is handed to the main window, which
 answers it with its own card (`answerLive`, [pet-relay.js](renderer/pet-relay.js)),
 and only when no page holds the card does main answer through
 `agent:approve`'s own function ([pet-ipc.ts](main/pet-ipc.ts)). Never
-Always allow, and never Allow for a question, a high risk verdict or the
-categories kept for the full card (`PET_WINDOW_ONLY_CATEGORIES`): those offer
+Always allow, and never Allow for a question, a high risk verdict, a request
+held after outside content (its note shows in the risk line), one with no
+preview, or the categories kept for the full card (`PET_WINDOW_ONLY_CATEGORIES`): those offer
 Review. Do Not Disturb hides the bubble and the done / failed flashes.
 
 **Why not the NDJSON sidecar.** `dist/sidecar/main.js` exists only in a source

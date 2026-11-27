@@ -81,8 +81,8 @@ test("not an approval: no id, or an id that could be markup", () => {
 });
 
 test("the bubble's words: one clean line, clipped", () => {
-  const a = petApprovalFrom(ask({ reason: "line one\nline\u0007 two" }), 0);
-  assert.equal(a.text, "line one line two");
+  const a = petApprovalFrom(ask({ preview: "line one\u0007 two\nline three" }), 0);
+  assert.equal(a.text, "line one two");
   assert.equal(petClean("x".repeat(300)).length, 140);
   assert.equal(petApprovalFrom(ask({ reason: "", preview: "first\nsecond" }), 0).text, "first");
   assert.equal(petRiskLine({ riskLevel: "medium", riskReason: "installs a package" }), "Risk check: medium. Installs a package");
@@ -90,8 +90,8 @@ test("the bubble's words: one clean line, clipped", () => {
 });
 
 test("Allow is offered only for an ordinary request", () => {
-  assert.equal(petCanAllow({ category: "shell" }), true);
-  assert.equal(petCanAllow({ category: "shell", riskLevel: "high" }), false, "a high risk verdict needs the full card");
+  assert.equal(petCanAllow({ category: "shell", preview: "ls" }), true);
+  assert.equal(petCanAllow({ category: "shell", preview: "ls", riskLevel: "high" }), false, "a high risk verdict needs the full card");
   assert.equal(petCanAllow({ category: "shell_dangerous" }), false);
   assert.equal(petCanAllow({ category: "trust_config" }), false);
   assert.equal(petCanAllow({ category: "user_question" }), false);
@@ -112,4 +112,35 @@ test("petDecision: allow-once or deny for the shown request, nothing else", () =
   assert.deepEqual(petDecision({ approvalId: "ap-1", decision: "deny" }, risky), { decision: "deny" });
   const q = petApprovalFrom(ask({ category: "user_question" }), 0);
   assert.ok("error" in petDecision({ approvalId: "ap-1", decision: "deny" }, q), "a question is answered in the window");
+});
+
+const GENERIC = "no shell guard rule matched; approval required in /Users/me/project";
+
+test("the bubble shows the command, with the gate's reason under it", () => {
+  const a = petApprovalFrom(ask({ reason: GENERIC, preview: "rm -rf build\necho done" }), 0);
+  assert.equal(a.text, "rm -rf build", "the preview's first line, not the generic reason");
+  assert.equal(a.detail, GENERIC);
+  assert.equal(a.canAllow, true);
+  assert.equal(petApprovalFrom(ask({ reason: "ls -la", preview: "ls -la" }), 0).detail, "", "no second line that repeats the first");
+});
+
+test("no preview: the reason is all there is, and Allow waits for the full card", () => {
+  const a = petApprovalFrom(ask({ reason: GENERIC, preview: undefined }), 0);
+  assert.equal(a.text, GENERIC);
+  assert.equal(a.detail, "");
+  assert.equal(a.canAllow, false, "never allow what the bubble cannot show");
+  assert.equal(petApprovalFrom(ask({ preview: "  \n" }), 0).canAllow, false, "a blank preview shows nothing either");
+  assert.ok("error" in petDecision({ approvalId: "ap-1", decision: "allow" }, a));
+});
+
+test("a request held after outside content: no Allow, and the note is in the risk line", () => {
+  const held = { category: "shell", preview: "ls", riskNote: "held: outside content from evil.example" };
+  assert.equal(petCanAllow(held), false);
+  assert.equal(petRiskLine(held), "held: outside content from evil.example");
+  assert.equal(petRiskLine({ ...held, riskLevel: "medium", riskReason: "reads a file" }), "Risk check: medium. Reads a file held: outside content from evil.example");
+  const a = petApprovalFrom({ approvalId: "ap-9", ...held }, 0);
+  assert.equal(a.canAllow, false);
+  assert.match(a.risk, /evil\.example/);
+  assert.ok("error" in petDecision({ approvalId: "ap-9", decision: "allow" }, a));
+  assert.equal(petCanAllow({ ...held, riskNote: "   " }), true, "a blank note holds nothing");
 });

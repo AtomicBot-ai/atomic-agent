@@ -17,8 +17,13 @@
  *
  * What the pet may offer for a request is decided here too (petCanAllow):
  * Allow once and Deny for an ordinary request; only Open (and Deny) for a
- * question, a high risk verdict or a category that deserves the full card.
- * The pet never answers anything by itself.
+ * question, a high risk verdict, a request held after outside content (a
+ * riskNote), one with no preview of the action, or a category that deserves
+ * the full card. The pet never answers anything by itself.
+ *
+ * The bubble's words are the action itself (the preview's first line, e.g.
+ * the shell command), with the gate's reason under it: the reason alone is
+ * often generic ("no shell guard rule matched; approval required in ...").
  */
 
 export type PetActivity = "thinking" | "working";
@@ -29,9 +34,11 @@ export interface PetApproval {
   approvalId: string;
   sessionId: string | null;
   tool: string;
-  /** What is asked, one line, clipped. */
+  /** What is asked: the preview's first line (the command), clipped; the reason when there is no preview. */
   text: string;
-  /** "Risk check: medium. Installs a package", or "". */
+  /** The gate's reason, a second line under `text`, or "". */
+  detail: string;
+  /** "Risk check: medium. Installs a package", the held-after-outside-content note, or "". */
   risk: string;
   /** An ask_user question: answered in the window, never with Allow. */
   question: boolean;
@@ -70,18 +77,36 @@ export function petClean(raw: unknown, max = TEXT_MAX): string {
   return flat.length > max ? flat.slice(0, max - 1).trimEnd() + "…" : flat;
 }
 
-/** The risk line, in the card's words (renderer/approval-risk.js apprRiskLine). */
+/** The preview's first line, cleaned; "" when there is none. */
+function previewFirstLine(p: Record<string, unknown>): string {
+  return typeof p.preview === "string" ? petClean(p.preview.replace(/\r\n?/g, "\n").split("\n")[0]) : "";
+}
+
+/** The gate held it after outside content (approval-gate.ts formatTaintNote). */
+function hasRiskNote(p: Record<string, unknown>): boolean {
+  return typeof p.riskNote === "string" && p.riskNote.trim() !== "";
+}
+
+/**
+ * The risk line, in the card's words (renderer/approval-risk.js apprRiskLine),
+ * followed by the note of a request held after outside content.
+ */
 export function petRiskLine(p: Record<string, unknown>): string {
   const level = typeof p.riskLevel === "string" && RISK_LEVELS.includes(p.riskLevel) ? p.riskLevel : "";
-  if (!level) return "";
-  const reason = petClean(p.riskReason, 100);
-  return reason ? `Risk check: ${level}. ${reason.charAt(0).toUpperCase()}${reason.slice(1)}` : `Risk check: ${level}.`;
+  const reason = level ? petClean(p.riskReason, 100) : "";
+  const verdict = !level ? "" : reason ? `Risk check: ${level}. ${reason.charAt(0).toUpperCase()}${reason.slice(1)}` : `Risk check: ${level}.`;
+  const note = hasRiskNote(p) ? petClean(p.riskNote, 160) : "";
+  return [verdict, note].filter(Boolean).join(" ");
 }
 
 /** Whether the bubble may offer Allow once for this request. */
 export function petCanAllow(p: Record<string, unknown>): boolean {
   if (p.category === "user_question") return false;
   if (p.riskLevel === "high") return false;
+  // Held after outside content: the full card shows what came in and why.
+  if (hasRiskNote(p)) return false;
+  // Nothing shows what would run: never allow it unseen.
+  if (!previewFirstLine(p)) return false;
   return !(typeof p.category === "string" && PET_WINDOW_ONLY_CATEGORIES.includes(p.category));
 }
 
@@ -91,13 +116,16 @@ export function petApprovalFrom(raw: unknown, now: number): PetApproval | null {
   const p = raw as Record<string, unknown>;
   if (typeof p.approvalId !== "string" || !/^[A-Za-z0-9_.:-]{1,200}$/.test(p.approvalId)) return null;
   const question = p.category === "user_question";
-  const firstLine = typeof p.preview === "string" ? p.preview.split("\n")[0] : "";
-  const text = question ? "The agent has a question for you." : petClean(p.reason) || petClean(firstLine) || "";
+  const action = previewFirstLine(p);
+  const reason = petClean(p.reason);
+  const text = question ? "The agent has a question for you." : action || reason;
+  const detail = question || !action || reason === action ? "" : reason;
   return {
     approvalId: p.approvalId,
     sessionId: typeof p.sessionId === "string" && p.sessionId ? p.sessionId : null,
     tool: petClean(p.tool, 60) || "a tool",
     text,
+    detail,
     risk: petRiskLine(p),
     question,
     canAllow: petCanAllow(p),

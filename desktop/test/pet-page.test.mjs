@@ -28,8 +28,19 @@ test("the bubble: a request kept for the full card offers Review and Deny, never
   assert.equal(m.allow, false);
   assert.equal(m.deny, true);
   assert.equal(m.openLabel, "Review");
-  assert.match(m.text, /Review this one in Atomic Agent/);
+  assert.equal(m.text, "run ls", "the command stays the first line");
+  assert.match(m.detail, /Review this one in Atomic Agent/);
   assert.equal(m.risk, "Risk check: high.");
+});
+
+test("the bubble: the gate's reason is a second line under the command", () => {
+  const m = P.petBubbleModel({ state: "waiting", approval: req({ text: "rm -rf build", detail: "no shell guard rule matched" }), more: 0 }, new Set());
+  assert.equal(m.text, "rm -rf build");
+  assert.equal(m.detail, "no shell guard rule matched");
+  assert.equal(P.petBubbleModel({ state: "waiting", approval: req(), more: 0 }, new Set()).detail, "");
+  const html = read("../renderer/pet.html");
+  assert.match(html, /id="b-detail"/, "the page has the second line");
+  assert.match(read("../renderer/pet.js"), /\$\('b-detail'\)\.textContent = m\.detail/, "and fills it as text");
 });
 
 test("the bubble: a question is answered in the window only", () => {
