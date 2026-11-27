@@ -78,6 +78,12 @@
 .selpop .selout .cap{flex:none;font-size:var(--fs-label);color:var(--ink-3)}
 .selpop .selout :is(.logo,.tk-ico){opacity:.7}
 .selpop .selr{margin-left:auto;flex:none;display:flex;align-items:center;gap:6px;padding-left:4px}
+/* ATO-2169: a model row's favourite star; quiet until hovered or set. */
+.selpop .selfav{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;color:var(--ink-3);opacity:0;cursor:pointer}
+.selpop .modelrow:hover .selfav,.selpop .modelrow:focus-visible .selfav,.selpop .selfav:focus-visible{opacity:.8}
+.selpop .selfav:hover{opacity:1;color:var(--ink)}
+.selpop .selfav.on{opacity:1;color:var(--amber)}
+.selpop .selfav svg{width:13px;height:13px}
 /* Chat review (Д21): Where it runs › Add provider, on a row with nothing to run on. */
 .selpop .seladd{padding:0 10px 0 8px;gap:4px}
 .selpop .seladd svg{width:12px;height:12px}
