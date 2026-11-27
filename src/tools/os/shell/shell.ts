@@ -834,13 +834,15 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       // recovered call goes through the same guard and approval.
       const platform = process.platform;
       const recovered = recoverMissingShellCmd(rawArgs, platform);
-      if (recovered === null) return runCommand(rawArgs, ctx, null);
+      // A started command can print a value typed into a job (ATO-2486):
+      // its tail, its `until` match or its whole output.
+      if (recovered === null) return hideTyped(await runCommand(rawArgs, ctx, null));
       const result = await runCommand(
         { ...rawArgs, cmd: recovered.cmd, args: recovered.args },
         ctx,
         recovered,
       );
-      return markRecoveredResult(result, recovered, platform);
+      return hideTyped(markRecoveredResult(result, recovered, platform));
     },
   };
 }
