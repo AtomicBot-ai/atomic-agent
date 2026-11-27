@@ -110,8 +110,19 @@ export function describeCouncilCost(forecast: CouncilCostForecast): string {
   return parts.join("");
 }
 
-/** Why the council must not start under `maxUsd`, or null. */
+/**
+ * Why the council must not start under `maxUsd`, or null. A seat with no
+ * known price cannot be held to a limit, so with a limit set it refuses
+ * too (local and plan-billed seats are free, never "unpriced"). Both
+ * reasons end the same way, so every client shows them as they are.
+ */
 export function councilOverBudget(forecast: CouncilCostForecast, maxUsd: number | undefined): string | null {
-  if (maxUsd === undefined || forecast.maxUsd <= maxUsd) return null;
+  if (maxUsd === undefined) return null;
+  if (forecast.unpriced.length > 0) {
+    const seats = forecast.unpriced.join(", ");
+    const verb = forecast.unpriced.length === 1 ? "is" : "are";
+    return `the price of ${seats} ${verb} unknown, so this council cannot be kept under the ${dollars(maxUsd)} limit; nothing was sent`;
+  }
+  if (forecast.maxUsd <= maxUsd) return null;
   return `this council could cost up to ${dollars(forecast.maxUsd)}, over the ${dollars(maxUsd)} limit; nothing was sent`;
 }
