@@ -196,7 +196,8 @@ function chatFilesOf(log, deps) {
       if (CF_WRITES.has(m.name) && typeof d.argsOf === 'function') {
         const a = d.argsOf(m) || {};
         // ATO-2409: an Office writer's call counts when it wrote (never `os.fs.xlsx op: read`).
-        const w = CF_OFFICE.has(m.name) ? cfOfficeWrite(m.name, a) : {path: a.path};
+        // ATO-2518: the path the agent named on the frame (`officeFile`, absolute) beats the call's clipped label.
+        const w = CF_OFFICE.has(m.name) ? (m.officeFile && m.officeFile.path ? {path: m.officeFile.path} : cfOfficeWrite(m.name, a)) : {path: a.path};
         if (w) add(cfAbsolute(w.path, d.workingDir, d.home), 'agent');
       } else if (m.name === 'image.generate') {
         cfGeneratedPaths(m.out).forEach((p) => add(cfAbsolute(p, '', d.home), 'image'));

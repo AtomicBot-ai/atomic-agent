@@ -20,7 +20,11 @@
    its own, made by the renderer from the call's `path` (chat-files.js
    cfOfficeWrite) with a "created" or "updated" badge where the counts go, so
    the card and the Results tab name the deck or the workbook the turn made
-   and a click opens the Office preview (office-preview.js).
+   and a click opens the Office preview (office-preview.js). ATO-2518: an agent
+   with `office_file: {path, change}` on the frame names the file itself, so the
+   row no longer depends on the call's label, which is clipped to 120 characters
+   and loses `path` when the blocks or slides come first; the label stays the
+   fallback for an older agent.
 
    An older agent sends no `diffstat`: no card, and the Results tab lists
    the reply's files without counts. The session store keeps no tool
@@ -62,6 +66,24 @@ function changedFileOfOfficeWrite(w, abs) {
   const path = typeof abs === 'string' && abs ? abs : (w && typeof w.path === 'string' ? w.path : '');
   if (!path) return null;
   return {path, added: 0, removed: 0, office: w && w.created ? 'created' : 'updated'};
+}
+
+/** ATO-2518: the frame's `office_file`, checked: `{path, change}` (the file an ok
+    Office writer made or changed, absolute, as the agent wrote it) or null. An
+    older agent sends none; the row then comes from the call's path
+    (changedFileOfOfficeWrite), which the clipped `tool_progress` label can lose. */
+function officeFileOfFrame(p) {
+  const o = p && typeof p === 'object' ? p.office_file : null;
+  if (!o || typeof o !== 'object') return null;
+  if (typeof o.path !== 'string' || !o.path || /[\0\n]/.test(o.path)) return null;
+  if (o.change !== 'created' && o.change !== 'updated') return null;
+  return {path: o.path, change: o.change};
+}
+
+/** ATO-2518: the "Changed files" row for the frame's `office_file`, or null. */
+function changedFileOfOfficeFrame(p) {
+  const o = officeFileOfFrame(p);
+  return o ? {path: o.path, added: 0, removed: 0, office: o.change} : null;
 }
 
 /** The badge a merged row keeps: a file the turn created stays "created" through its later edits. */
@@ -156,5 +178,5 @@ function resultsPaneHTML(log, deps) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {CHANGED_FILES_MAX, changedFileOfFrame, changedFilesOfFrame, changedFileOfOfficeWrite, changedFilesAdd, changedFilesBase, changedFilesCardHTML, changedFilesPaths, turnResultFiles, latestReply, resultsPaneHTML};
+  module.exports = {CHANGED_FILES_MAX, changedFileOfFrame, changedFilesOfFrame, changedFileOfOfficeWrite, officeFileOfFrame, changedFileOfOfficeFrame, changedFilesAdd, changedFilesBase, changedFilesCardHTML, changedFilesPaths, turnResultFiles, latestReply, resultsPaneHTML};
 }
