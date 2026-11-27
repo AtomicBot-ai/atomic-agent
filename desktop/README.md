@@ -921,6 +921,23 @@ Honestly degraded, and labelled as such in the UI:
   too. Every change owes a restart; the tab's Restart agent works as on the
   Telegram tab (an `agent_restarted` `manual` trigger). The token never
   reaches state, markup or a message.
+- **Linear** (Settings › Connections, after Discord; ATO-2464,
+  `renderer/linear-settings.js` for the state, `linear-pane.js` for the
+  markup, `linear-tab.js` for the glue, loaded after `renderer.js`) does what
+  `atag connect linear` does for the agent's Linear channel
+  (`src/channels/linear`). The API key is checked first with one `viewer`
+  query from main (`linear:checkKey`, `main/linear-key-check.ts`); a key
+  Linear refuses or that could not be checked is not saved. A good key goes
+  to the key store as `LINEAR_API_KEY` through `app:dotenvSet`, and the
+  whole `channels.linear` block (`enabled`, `ownerIds`, `options.mode`,
+  `options.mention`, other options kept) goes in one `configSetPath`. The
+  key's own user becomes the owner when there is none, and the mode defaults
+  to polling, so no tunnel is needed. Webhook asks for
+  `LINEAR_WEBHOOK_SECRET` first and switches once it is saved; removing the
+  secret goes back to polling. Installing the agent as a Linear app (OAuth)
+  stays in the CLI (`atag connect linear --app`). Every change owes a
+  restart, as on the Discord tab. Errors are the tab's own words: no key,
+  secret or server text reaches state, markup or a message.
 - **Composio** (Settings › Connections, beside MCP servers and Telegram; the
   palette's Composio row) is the TUI Integrations tab's Composio row
   (`src/integrations/composio-integration.ts`, its setup walkthrough and

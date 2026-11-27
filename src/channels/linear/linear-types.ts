@@ -87,6 +87,30 @@ export function readLinearOnAssign(options: Options): boolean | null {
   return typeof options.onAssign === "boolean" ? options.onAssign : null;
 }
 
+/** How Linear reaches the agent: a signed webhook, or polling the API (ATO-2464). */
+export type LinearMode = "webhook" | "poll";
+
+export const LINEAR_DEFAULT_POLL_SECONDS = 60;
+export const LINEAR_MIN_POLL_SECONDS = 15;
+export const LINEAR_MAX_POLL_SECONDS = 3600;
+
+/** `options.mode` when set to `webhook` or `poll`, else `null` (decided at start by the webhook secret). */
+export function readLinearMode(options: Options): LinearMode | null {
+  return options.mode === "webhook" || options.mode === "poll" ? options.mode : null;
+}
+
+/** No explicit mode: webhook when its signing secret is saved, polling otherwise. */
+export function resolveLinearMode(explicit: LinearMode | null, hasWebhookSecret: boolean): LinearMode {
+  return explicit ?? (hasWebhookSecret ? "webhook" : "poll");
+}
+
+/** `options.pollSeconds` clamped to 15..3600, default 60; returned in ms. */
+export function readLinearPollMs(options: Options): number {
+  const raw = Number(options.pollSeconds);
+  const seconds = Number.isFinite(raw) && raw > 0 ? raw : LINEAR_DEFAULT_POLL_SECONDS;
+  return Math.round(Math.min(LINEAR_MAX_POLL_SECONDS, Math.max(LINEAR_MIN_POLL_SECONDS, seconds)) * 1000);
+}
+
 /** A Linear user or app as webhooks carry it. */
 export interface LinearActor {
   id?: string;
@@ -117,6 +141,31 @@ export interface LinearIssueData {
   assigneeId?: string | null;
 }
 
+/**
+ * `agentSession` of an `AgentSessionEvent` (Linear Agents API, ATO-2464):
+ * someone mentioned or delegated to the agent installed as a Linear app.
+ */
+export interface LinearAgentSessionData {
+  id?: string;
+  issueId?: string;
+  issue?: { id?: string; identifier?: string; title?: string; url?: string } | null;
+  /** The comment that started the session, when one did. */
+  comment?: { id?: string; body?: string } | null;
+  creatorId?: string;
+  creator?: { id?: string; name?: string } | null;
+}
+
+/** `agentActivity` of a `prompted` event: the person's follow-up, or a stop signal. */
+export interface LinearAgentActivityData {
+  id?: string;
+  userId?: string;
+  user?: { id?: string; name?: string } | null;
+  /** `stop` when the person pressed Stop in Linear. */
+  signal?: string | null;
+  content?: { type?: string; body?: string } | null;
+  body?: string;
+}
+
 /** One webhook payload. */
 export interface LinearWebhookPayload {
   /** `create`, `update`, `remove`. */
@@ -132,10 +181,41 @@ export interface LinearWebhookPayload {
   webhookTimestamp?: number;
   webhookId?: string;
   organizationId?: string;
+  /** `AgentSessionEvent` only (`action` is `created` or `prompted`). */
+  agentSession?: LinearAgentSessionData;
+  agentActivity?: LinearAgentActivityData;
+  /** Linear's own summary of the issue and thread, for `created`. */
+  promptContext?: string;
 }
 
-/** Where a reply goes: the issue, optionally the top-level comment of a thread. */
+/**
+ * What a post is, for an agent session (Linear Agents API activity
+ * types): `thought` (working on it), `response` (the answer),
+ * `elicitation` (asking the person, here: approvals), `error`. A plain
+ * comment ignores it.
+ */
+export type LinearActivityKind = "thought" | "response" | "elicitation" | "error";
+
+const SEEN_CAP = 500;
+
+/** Add `key` to a bounded set; false when it was already there (a redelivery). */
+export function rememberOnce(seen: Set<string>, key: string): boolean {
+  if (seen.has(key)) return false;
+  seen.add(key);
+  if (seen.size > SEEN_CAP) {
+    const oldest = seen.values().next().value;
+    if (oldest !== undefined) seen.delete(oldest);
+  }
+  return true;
+}
+
+/**
+ * Where a reply goes: the issue, optionally the top-level comment of a
+ * thread; or, with `agentSessionId`, the Linear agent session (an
+ * activity instead of a comment). `issueId` is then the conversation key.
+ */
 export interface LinearTarget {
   issueId: string;
   parentId?: string;
+  agentSessionId?: string;
 }

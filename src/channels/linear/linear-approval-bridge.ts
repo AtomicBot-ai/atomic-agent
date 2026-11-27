@@ -17,7 +17,7 @@ import { randomInt } from "node:crypto";
 import type { ApprovalGate, ApprovalRequest } from "../../approval/approval-gate.js";
 import { describeAlwaysRule } from "../../approval/approval-rules.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
-import { scrubLinearError, type LinearTarget } from "./linear-types.js";
+import { scrubLinearError, type LinearActivityKind, type LinearTarget } from "./linear-types.js";
 
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const CODE_LENGTH = 4;
@@ -26,7 +26,8 @@ const PREVIEW_MAX_CHARS = 1500;
 const REPLY_RE = /^\s*(yes|y|approve|no|n|deny|always)\s+`?([a-z0-9]{4})`?\s*[.!]?\s*$/i;
 
 export interface LinearApprovalBridgeDeps {
-  post: (target: LinearTarget, body: string) => Promise<void>;
+  /** In an agent session the prompt is an `elicitation` (Linear shows it as a question). */
+  post: (target: LinearTarget, body: string, kind?: LinearActivityKind) => Promise<void>;
   approvals: Pick<ApprovalGate, "resolve"> & Partial<Pick<ApprovalGate, "canGrantAlways">>;
   logger: StructuredLogger;
   /** Test seam for the code generator. */
@@ -55,7 +56,7 @@ export class LinearApprovalBridge {
         issueId: target.issueId,
         ...(alwaysLabel !== undefined ? { alwaysLabel } : {}),
       });
-      void this.deps.post(target, formatLinearPrompt(request, code, alwaysLabel)).catch((err) => {
+      void this.deps.post(target, formatLinearPrompt(request, code, alwaysLabel), "elicitation").catch((err) => {
         this.deps.logger.warn("linear: failed to post approval prompt", { error: scrubLinearError(err) });
       });
     };
