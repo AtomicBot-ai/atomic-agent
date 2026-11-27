@@ -7,15 +7,17 @@ import { saveRecording, tidyDraft, type CompleteFn } from "./show-once-finish.js
 import type { ShowOnceHelperPush } from "./show-once-helper.js";
 import { SHOW_ONCE_LIMITS, ShowOnceLog, isShowOnceAction, type ShowOnceEvent, type ShowOnceRect } from "./show-once-log.js";
 import type { ShowOnceOptions } from "./show-once-options.js";
+import { hasXdotool } from "./show-once-linux.js";
+import { showOnceGate, showOnceOsName, showOnceSupport, type ShowOnceSupport } from "./show-once-platform.js";
 import { openShowOnceProber, type ShowOnceProber } from "./show-once-prober.js";
 import { wireShowOnceReviewIpc } from "./show-once-review-ipc.js";
 import { ShowOnceSnapshots } from "./show-once-snapshots.js";
-import { startShowOnceCapture } from "./show-once-start.js";
+import { startShowOnceCapture, startShowOnceHook, type HookKey, type HookMouse, type ShowOnceHook } from "./show-once-start.js";
 import { showOnceTray } from "./show-once-tray.js";
 
 /**
- * ATO-2401 "Show once" (Settings › Skills): Record, do a routine once in a
- * Mac app, Stop, and the steps are saved as a skill draft under To review.
+ * ATO-2401 "Show once" (Settings › Skills): Record, do a routine once in an
+ * app, Stop, and the steps are saved as a skill draft under To review.
  * Routes: showOnce:state (what the card draws, also pushed on each change),
  * showOnce:start (`{ok:false, reason}` when it cannot), showOnce:stop (saves,
  * show-once-finish.ts), showOnce:cancel (keeps nothing). The switches, a
@@ -33,11 +35,11 @@ import { showOnceTray } from "./show-once-tray.js";
  * window after each step in apps that are neither browsers nor protected
  * (show-once-snapshots.ts). Discard in To review deletes all of it.
  *
- * The listener is uiohook-napi, which needs Accessibility for the app.
- * ATO-2499: what was under each event comes from show-once-prober.ts (the
- * Accessibility helper, or osascript per event), the helper's window and
- * menu events go into the log in the same order, and after the save the
- * chat model tidies the draft when that switch is on.
+ * The listener is uiohook-napi (on macOS it needs Accessibility). ATO-2499:
+ * what was under each event comes from show-once-prober.ts, the helper's
+ * window and menu events go into the log in order, and after the save the
+ * chat model tidies the draft when that switch is on. Windows and Linux
+ * (X11) record too; show-once-platform.ts says when this one cannot.
  */
 
 type Deps = {
@@ -47,16 +49,6 @@ type Deps = {
   /** ATO-2499: the agent's POST /api/complete (agent-client.ts plainComplete), for the tidy pass. */
   complete?: CompleteFn;
 };
-
-interface HookMouse { button: number; clicks: number; x: number; y: number }
-interface HookKey { keycode: number; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }
-interface ShowOnceHook {
-  on(event: "mousedown", fn: (e: HookMouse) => void): unknown;
-  on(event: "keydown", fn: (e: HookKey) => void): unknown;
-  removeListener(event: "mousedown" | "keydown", fn: (e: never) => void): unknown;
-  start(): void;
-  stop(): void;
-}
 
 export type ShowOnceLast =
   | { kind: "saved"; id: string; name: string; steps: number; pictures: number; tidy: "off" | "running" | "done" | "failed"; tidyError?: string }
@@ -76,6 +68,9 @@ export interface ShowOnceState {
   options: ShowOnceOptions;
   /** Pictures need macOS Screen Recording for the app: false shows the hint and its button. */
   screenAllowed: boolean;
+  /** ATO-2499: "macOS", "Windows" or "Linux"; and why Record cannot run here (Wayland, no xdotool), else null. */
+  os: string;
+  unsupported: string | null;
 }
 
 type Aim = { windowId?: number | null; rect?: ShowOnceRect | null };
@@ -91,6 +86,8 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
   let timer: NodeJS.Timeout | null = null;
   let chain: Promise<void> = Promise.resolve();
   let prober: ShowOnceProber | null = null;
+  let support: ShowOnceSupport | null = null; // asked again on each Record (xdotool may be installed since)
+  const supportNow = () => (support ??= showOnceSupport(process.platform, process.env, hasXdotool));
   const review = wireShowOnceReviewIpc({ stateDir: deps.stateDir, isRemote: deps.isRemote, log: deps.log, changed: () => broadcast() });
   const nativeDir = () => (app.isPackaged ? join(process.resourcesPath, "native") : join(__dirname, "..", "native"));
   const screenAllowed = () => {
@@ -98,7 +95,7 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
   };
 
   const state = (): ShowOnceState => ({
-    available: process.platform === "darwin" && !deps.isRemote(),
+    available: ["darwin", "win32", "linux"].includes(process.platform) && !deps.isRemote(),
     recording: hook !== null,
     saving,
     steps: log ? log.actionCount : 0,
@@ -108,6 +105,8 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
     draftsDir: pendingDraftsRoot(deps.stateDir),
     options: review.options(),
     screenAllowed: process.platform === "darwin" ? screenAllowed() : false,
+    os: showOnceOsName(process.platform),
+    unsupported: (() => { const s = supportNow(); return s.ok ? null : s.message; })(),
   });
   const broadcast = () => {
     const payload = state();
@@ -192,45 +191,33 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
 
   const start = (): { ok: true } | { ok: false; reason: string; error: string } => {
     if (hook) return { ok: true };
-    if (process.platform !== "darwin") return { ok: false, reason: "platform", error: "Show once records Mac apps; it is not on this system yet." };
-    if (deps.isRemote()) return { ok: false, reason: "remote", error: "Show once records on the computer that runs the agent." };
-    if (!systemPreferences.isTrustedAccessibilityClient(false)) {
-      systemPreferences.isTrustedAccessibilityClient(true); // macOS shows its own prompt
-      const error = "Allow Atomic Agent in System Settings › Privacy & Security › Accessibility, then click Record again.";
-      last = { kind: "error", error, permission: true };
+    support = null;
+    const gate = showOnceGate({ platform: process.platform, remote: deps.isRemote(), support: supportNow(),
+      axTrusted: (prompt) => systemPreferences.isTrustedAccessibilityClient(prompt) });
+    if (!gate.ok) {
+      if (gate.permission) last = { kind: "error", error: gate.error, permission: true };
       broadcast();
-      return { ok: false, reason: "permission", error };
+      return { ok: false, reason: gate.reason, error: gate.error };
     }
     // The menu bar item first, the listener second: recording never runs unseen.
     const started = startShowOnceCapture<ShowOnceHook, Tray>({
       showIndicator: () => showOnceTray(() => void finish(true), () => void finish(false)),
-      startListener: () => {
-        const h = loadUiohook() as unknown as ShowOnceHook;
-        h.on("mousedown", onMouse);
-        h.on("keydown", onKey);
-        try {
-          h.start();
-        } catch (err) {
-          try { h.removeListener("mousedown", onMouse as (e: never) => void); h.removeListener("keydown", onKey as (e: never) => void); } catch { /* gone */ }
-          throw err;
-        }
-        return h;
-      },
+      startListener: () => startShowOnceHook(loadUiohook() as unknown as ShowOnceHook, onMouse, onKey),
     });
     if (!started.ok) {
       const what = started.stage === "indicator" ? "could not show the menu bar item" : "could not start the listener";
       deps.log(`[desktop] show once: ${what}: ${started.message}`);
-      const error = "Could not start recording on this Mac.";
+      const error = "Could not start recording on this computer.";
       last = { kind: "error", error };
       broadcast();
       return { ok: false, reason: "failed", error };
     }
     hook = started.hook;
     tray = started.indicator;
-    log = new ShowOnceLog(process.pid);
+    log = new ShowOnceLog(process.pid, process.platform);
     startedAt = Date.now();
     // Pictures only with the switch on and Screen Recording allowed (else macOS gives a blank desktop).
-    shots = review.options().snapshots && screenAllowed() ? new ShowOnceSnapshots(join(deps.stateDir, "show-once-shots", String(startedAt))) : null;
+    shots = process.platform === "darwin" && review.options().snapshots && screenAllowed() ? new ShowOnceSnapshots(join(deps.stateDir, "show-once-shots", String(startedAt))) : null;
     last = null;
     chain = openShowOnceProber({ nativeDir: nativeDir(), platform: process.platform, onPush, log: deps.log })
       .then((p) => {
@@ -262,7 +249,7 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
     }
     let saved: Awaited<ReturnType<typeof saveRecording>> | null = null;
     try {
-      saved = await saveRecording(deps.stateDir, steps, recordedAt, pictures);
+      saved = await saveRecording(deps.stateDir, steps, recordedAt, pictures, showOnceOsName(process.platform));
       last = saved.kind === "empty" ? { kind: "empty" }
         : { kind: "saved", id: saved.id, name: saved.name, steps: saved.steps, pictures: saved.pictures, tidy: review.options().tidy && deps.complete ? "running" : "off" };
     } catch (err) {
@@ -273,7 +260,7 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
     broadcast();
     const mine = last;
     if (saved && saved.kind === "saved" && mine && mine.kind === "saved" && mine.tidy === "running" && deps.complete) {
-      const res = await tidyDraft(deps.complete, saved, steps, recordedAt, deps.log);
+      const res = await tidyDraft(deps.complete, saved, steps, recordedAt, deps.log, showOnceOsName(process.platform));
       // A newer recording's line is not overwritten by this one's tidy.
       if (last === mine) {
         last = res.ok ? { ...mine, tidy: "done" } : res.gone ? { ...mine, tidy: "off" } : { ...mine, tidy: "failed", tidyError: res.error };

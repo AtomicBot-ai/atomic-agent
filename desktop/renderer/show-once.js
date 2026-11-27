@@ -1,14 +1,16 @@
 /* ATO-2401 "Show once" (Settings › Skills): the Record card. main/show-once-ipc.ts records and saves the
    draft; this draws its state and sends Record / Stop / Discard. Shared by the renderer and the Node checks.
    ATO-2499: two switches under Record (tidy the draft with the chat model; a picture of the window after
-   each step), the tidy pass's progress on the saved line, and "To review" for the drafts' section. */
+   each step), the tidy pass's progress on the saved line, and "To review" for the drafts' section.
+   Windows and Linux (`s.os`): no picture switch (macOS screencapture only), the tray instead of the menu
+   bar, and `s.unsupported` (Wayland, no xdotool) in place of the Record button. */
 function showOnceSince(startedAt) {
   if (typeof startedAt !== 'number' || !isFinite(startedAt)) return '';
   const d = new Date(startedAt);
   return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
 const SHOW_ONCE_KEPT = 'Only clicks, shortcuts, menu commands and which app and window are in front are recorded. Never what you type, '
-  + 'nothing in password managers, settings or Atomic Agent itself. It stays on this Mac.';
+  + 'nothing in password managers, settings or Atomic Agent itself. It stays on this computer.';
 const SHOW_ONCE_TIDY_HINT = 'After you stop, the model you chat with names the routine and lists what to ask for each time. '
   + 'It gets the steps as text, never pictures. The steps themselves stay as recorded.';
 const SHOW_ONCE_SNAP_HINT = 'A picture of the window after each step, to check the draft against. Never of browsers or protected apps. '
@@ -20,9 +22,10 @@ function showOnceSwitchHTML(key, on, label, hint, esc) {
 }
 function showOnceOptionsHTML(s, esc) {
   const o = s.options || {};
+  const mac = !s.os || s.os === 'macOS';
   let out = showOnceSwitchHTML('tidy', o.tidy !== false, 'Tidy the draft with your chat model', SHOW_ONCE_TIDY_HINT, esc)
-    + showOnceSwitchHTML('snapshots', !!o.snapshots, 'Save a picture of the window after each step', SHOW_ONCE_SNAP_HINT, esc);
-  if (o.snapshots && !s.screenAllowed) {
+    + (mac ? showOnceSwitchHTML('snapshots', !!o.snapshots, 'Save a picture of the window after each step', SHOW_ONCE_SNAP_HINT, esc) : '');
+  if (mac && o.snapshots && !s.screenAllowed) {
     out += '<div class="tk-notice set-softnote"><span class="grow">Pictures need Screen Recording for Atomic Agent. Until it is allowed, '
       + 'recordings are saved without them.</span><button class="btn btn-s sm" data-act="skills:showOnce:screen">Open Screen Recording settings</button></div>';
   }
@@ -51,7 +54,8 @@ function showOnceCardHTML(s, esc) {
     if (s.saving) return '<div class="tk-notice tk-notice--blue set-softnote show-once" role="status"><span class="grow">' + head + 'saving the draft…</span></div>';
     return '<div class="tk-notice tk-notice--red set-softnote show-once" role="status" aria-live="polite">'
       + '<span class="grow"><span class="show-once-dot" aria-hidden="true">●</span> ' + head + 'recording, ' + steps + where
-      + (since ? ' · since ' + since : '') + '. Do the routine in its app, then click Stop here or on "● Recording steps" in the menu bar.</span>'
+      + (since ? ' · since ' + since : '') + '. Do the routine in its app, then click Stop here or on "● Recording steps" '
+      + (!s.os || s.os === 'macOS' ? 'in the menu bar' : '(the Atomic Agent icon in the system tray)') + '.</span>'
       + '<button class="btn btn-blue sm" data-act="skills:showOnce:stop">Stop and save</button>'
       + '<button class="btn btn-s sm" data-act="skills:showOnce:cancel">Discard</button></div>';
   }
@@ -65,8 +69,11 @@ function showOnceCardHTML(s, esc) {
     note = '<div class="tuierr tk-notice tk-notice--red show-once-last"><span class="grow">' + esc(last.error) + '</span>'
       + (last.permission ? '<button class="btn btn-s sm" data-act="skills:showOnce:accessibility">Open Accessibility settings</button>' : '') + '</div>';
   }
-  return '<div class="tk-notice set-softnote show-once"><span class="grow">' + head + 'record a routine you do in a Mac app once, '
-    + 'and it becomes a skill draft the agent can repeat. ' + SHOW_ONCE_KEPT + '</span>'
+  const place = !s.os || s.os === 'macOS' ? 'a Mac app' : 'an app on this computer';
+  const intro = '<span class="grow">' + head + 'record a routine you do in ' + place + ' once, and it becomes a skill draft the agent can repeat. ';
+  // ATO-2499: Wayland, or Linux without xdotool: say why and what to do, with no Record button.
+  if (s.unsupported) return '<div class="tk-notice set-softnote show-once">' + intro + esc(s.unsupported) + '</span></div>';
+  return '<div class="tk-notice set-softnote show-once">' + intro + SHOW_ONCE_KEPT + '</span>'
     + '<button class="btn btn-s sm" data-act="skills:showOnce:start">Record</button></div>' + showOnceOptionsHTML(s, esc) + note;
 }
 function createShowOnceController(deps) {

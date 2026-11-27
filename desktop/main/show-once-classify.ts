@@ -45,6 +45,28 @@ const BROWSER_BUNDLE_PREFIXES: readonly string[] = [
   "ai.perplexity.comet", "com.openai.atlas",
 ];
 
+/**
+ * ATO-2499 Windows and Linux: there an app is named by its executable
+ * (show-once-win.ts `notepad.exe`, show-once-linux.ts `gedit`), lowercased,
+ * so these lists match it exactly. Settings, sign-in and password prompts,
+ * keyrings and automation tools record nothing, as on the Mac.
+ */
+const DESKTOP_PROTECTED_EXES: ReadonlySet<string> = new Set([
+  "atomic agent.exe", "atomic-agent-desktop",
+  "systemsettings.exe", "consent.exe", "logonui.exe", "lockapp.exe", "credentialuibroker.exe", "credwiz.exe",
+  "keepass.exe", "keepassxc.exe", "1password.exe", "bitwarden.exe", "autohotkey.exe", "autohotkey64.exe", "autohotkeyu64.exe",
+  "gnome-control-center", "systemsettings", "systemsettings5", "seahorse", "keepassxc", "kwalletmanager5", "kwalletmanager",
+  "gcr-prompter", "gcr4-ssh-askpass", "pinentry", "pinentry-gnome3", "pinentry-qt", "polkit-gnome-authentication-agent-1",
+  "polkit-kde-authentication-agent-1", "lxqt-policykit-agent", "1password", "bitwarden", "xdotool", "autokey-gtk", "autokey-qt",
+]);
+
+const DESKTOP_BROWSER_EXES: ReadonlySet<string> = new Set([
+  "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe", "arc.exe", "zen.exe", "librewolf.exe",
+  "waterfox.exe", "browser.exe", "comet.exe", "iexplore.exe", "chromium.exe",
+  "chrome", "google-chrome", "chromium", "chromium-browser", "firefox", "firefox-bin", "firefox-esr", "brave", "brave-browser",
+  "opera", "vivaldi-bin", "msedge", "microsoft-edge", "zen", "zen-bin", "librewolf", "epiphany", "falkon", "yandex_browser",
+]);
+
 export type ShowOnceAppClass = "own" | "protected" | "browser" | "open" | "unknown";
 
 function idMatches(list: readonly string[], lower: string): boolean {
@@ -59,7 +81,9 @@ export function showOnceAppClass(app: ShowOnceApp | null, ownPid: number): ShowO
   if (app.pid !== null && app.pid === ownPid) return "own";
   if (!app.bundleId) return "unknown";
   const lower = app.bundleId.toLowerCase();
-  if (lower === "io.atomicagent.desktop") return "own";
+  if (lower === "io.atomicagent.desktop" || lower === "atomic agent.exe" || lower === "atomic-agent-desktop") return "own";
+  if (DESKTOP_PROTECTED_EXES.has(lower)) return "protected";
+  if (DESKTOP_BROWSER_EXES.has(lower)) return "browser";
   if (idMatches(SHOW_ONCE_PROTECTED_BUNDLE_IDS, lower) || PROTECTED_NAME_RE.test(app.name || "")) return "protected";
   if (BROWSER_BUNDLE_PREFIXES.some((p) => lower.startsWith(p))) return "browser";
   return "open";
@@ -88,11 +112,20 @@ const ACTION_KEYS: Readonly<Record<number, string>> = {
 
 export type KeyKind = { kind: "ignore" } | { kind: "text" } | { kind: "keys"; keys: string };
 
-/** What one keydown is: nothing (a modifier alone), typing, or a chord to keep. */
-export function classifyKey(e: { keycode: number; meta: boolean; ctrl: boolean; alt: boolean; shift: boolean }): KeyKind {
+/**
+ * What one keydown is: nothing (a modifier alone), typing, or a chord to keep.
+ * ATO-2499 `platform`: off the Mac the meta key is the Windows (Super) key,
+ * whose chords belong to the desktop (Win+R, Win+D), so they are left out,
+ * as are Alt+Tab, Alt+Esc, Ctrl+Esc and Ctrl+Alt+Delete.
+ */
+export function classifyKey(e: { keycode: number; meta: boolean; ctrl: boolean; alt: boolean; shift: boolean }, platform: string = "darwin"): KeyKind {
   if (MODIFIER_CODES.has(e.keycode)) return { kind: "ignore" };
   const text = TEXT_KEYS[e.keycode];
   const action = ACTION_KEYS[e.keycode];
+  if (platform !== "darwin" && (e.meta || (e.alt && (e.keycode === 15 || e.keycode === 1)) || (e.ctrl && e.keycode === 1)
+    || (e.ctrl && e.alt && (e.keycode === 3667 || e.keycode === 83)))) {
+    return { kind: "ignore" };
+  }
   const mods = [e.ctrl ? "ctrl" : "", e.alt ? "alt" : "", e.shift ? "shift" : "", e.meta ? "cmd" : ""].filter(Boolean);
   // App and space switching, Spotlight and launchers, Force Quit: the agent's screen guard refuses
   // these chords (refusedChordReason in screen-protected.ts), so a replay could not press them anyway.
