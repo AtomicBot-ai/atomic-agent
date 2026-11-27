@@ -156,6 +156,7 @@ export const INTERNAL_ENV_NAMES: ReadonlyMap<string, string> = new Map([
   ["ATOMIC_AGENT_INSTALL_SOURCE", "set by the install scripts for analytics"],
   ["ATOMIC_AGENT_KEYCHAIN_PROBE", "a throwaway keychain account name, not a variable"],
   ["ATOMIC_AGENT_INK_INCREMENTAL", "a one-off switch for the session-swap render measurement, not a user setting"],
+  ["ATOMIC_AGENT_TOKEN", "set by `atag launch` on the CLI it starts (Codex, OpenCode) to carry the serve key"],
 ]);
 
 /** The env variable that wins over `configKey`, or null. */
