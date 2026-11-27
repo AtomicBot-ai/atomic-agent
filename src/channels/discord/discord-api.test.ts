@@ -11,6 +11,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("DiscordApi.acknowledgeInteraction (ATO-2778)", () => {
+  it("posts callback type 6, which leaves the clicked message untouched", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await new DiscordApi({ token: TOKEN }).acknowledgeInteraction("i1", "itok");
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://discord.com/api/v10/interactions/i1/itok/callback");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ type: 6 });
+  });
+});
+
 describe("DiscordApi.sendFile", () => {
   it("uploads the file as multipart with payload_json and files[0], no JSON content-type", async () => {
     const dir = mkdtempSync(join(tmpdir(), "atomic-discord-api-"));

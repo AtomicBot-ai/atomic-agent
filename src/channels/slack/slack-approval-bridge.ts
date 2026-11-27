@@ -15,6 +15,13 @@
 import type { ApprovalGate, ApprovalRequest } from "../../approval/approval-gate.js";
 import { describeAlwaysRule } from "../../approval/approval-rules.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
+import {
+  sessionGrantLabels,
+  sessionGrantOffer,
+  sessionGrantScope,
+  sessionGrantSummary,
+  type SessionGrantOffer,
+} from "../approval-session-grants.js";
 import type { SlackApi } from "./slack-api.js";
 import { escapeSlackText } from "./slack-format.js";
 import { scrubSlackError, type SlackBlockActionsPayload, type SlackTarget } from "./slack-types.js";
@@ -40,6 +47,8 @@ interface Pending {
   ts: string | null;
   headline: string;
   alwaysLabel?: string;
+  /** The session grants whose buttons were posted (ATO-2509). */
+  sessionGrants?: SessionGrantOffer;
 }
 
 export class SlackApprovalBridge {
@@ -63,17 +72,20 @@ export class SlackApprovalBridge {
       this.deps.approvals.canGrantAlways?.(request) === true
         ? describeAlwaysRule(request)
         : undefined;
+    // The same "this session" grants Telegram and the TUI offer (ATO-2509).
+    const sessionGrants = request.question ? null : sessionGrantOffer(request);
     const headline = `Approval needed: \`${escapeSlackText(request.tool)}\` (${request.category})`;
     const ts = await this.deps.api.postMessage(
       target,
       headline,
-      approvalBlocks(request, headline, alwaysLabel),
+      approvalBlocks(request, headline, alwaysLabel, sessionGrants),
     );
     this.pending.set(request.approvalId, {
       target,
       ts,
       headline,
       ...(alwaysLabel !== undefined ? { alwaysLabel } : {}),
+      ...(sessionGrants !== null ? { sessionGrants } : {}),
     });
   }
 
@@ -110,24 +122,38 @@ export class SlackApprovalBridge {
     // "Allow always" counts only where this bridge offered it: a forged
     // action_id cannot save a rule the prompt never showed.
     const always = verb === "always" && posted?.alwaysLabel !== undefined;
-    const approved = verb === "yes" || always;
-    const settled =
-      verb === "always" && !always
-        ? false
-        : this.deps.approvals.resolve({
-            approvalId,
-            approved,
-            ...(approved ? { reason: "approved from Slack" } : {}),
-            ...(always ? { grant: "always" as const } : {}),
-          });
+    // A session grant likewise counts only where its button was posted.
+    const grantKind = verb === "session" ? "s" : verb === "shape" ? "a" : null;
+    const sessionGrant =
+      grantKind === null ? null : sessionGrantScope(grantKind, posted?.sessionGrants);
+    const forged = (verb === "always" && !always) || (grantKind !== null && sessionGrant === null);
+    if (forged && posted !== undefined) {
+      // A choice this prompt never offered (ATO-2778): ignore it. The
+      // request is still open, so its message and buttons stay as they
+      // are and Approve / Deny still work.
+      this.deps.logger.warn("slack: ignoring an approval choice the prompt did not offer", { verb });
+      return true;
+    }
+    const approved = verb === "yes" || always || sessionGrant !== null;
+    const settled = forged
+      ? false
+      : this.deps.approvals.resolve({
+          approvalId,
+          approved,
+          ...(approved ? { reason: "approved from Slack" } : {}),
+          ...(always ? { grant: "always" as const } : {}),
+          ...(sessionGrant !== null ? { grant: sessionGrant } : {}),
+        });
     this.pending.delete(approvalId);
     const outcome = !settled
       ? "This request already expired or was answered elsewhere."
       : always
         ? `Approved by <@${actorId}>. Saved: ${escapeSlackText(posted?.alwaysLabel ?? "")}.`
-        : approved
-          ? `Approved by <@${actorId}>.`
-          : `Denied by <@${actorId}>.`;
+        : sessionGrant !== null && posted?.sessionGrants
+          ? `Approved by <@${actorId}> for this session: ${escapeSlackText(sessionGrantSummary(sessionGrant, posted.sessionGrants))}.`
+          : approved
+            ? `Approved by <@${actorId}>.`
+            : `Denied by <@${actorId}>.`;
     if (channel !== undefined && messageTs !== undefined) {
       const headline = posted?.headline ?? "Approval";
       await this.quietly(() =>
@@ -170,11 +196,16 @@ function button(text: string, actionId: string, approvalId: string, style?: stri
   };
 }
 
-/** The prompt: headline, reason, fenced preview, Approve / Deny (+ Allow always). */
+/**
+ * The prompt: headline, reason, fenced preview, Approve / Deny, then the
+ * offered session grants with Telegram's labels (`session` for the kind,
+ * `shape` for the command shape; ATO-2509), then Allow always.
+ */
 export function approvalBlocks(
   request: ApprovalRequest,
   headline: string,
   alwaysLabel?: string,
+  sessionGrants: SessionGrantOffer | null = null,
 ): Array<Record<string, unknown>> {
   const lines = [`*${headline}*`, escapeSlackText(request.reason)];
   if (request.preview) {
@@ -189,6 +220,13 @@ export function approvalBlocks(
     button("Approve", `${ACTION_ID_PREFIX}yes:${id}`, id, "danger"),
     button("Deny", `${ACTION_ID_PREFIX}no:${id}`, id),
   ];
+  const grants = sessionGrantLabels(sessionGrants);
+  if (grants.category !== undefined) {
+    elements.push(button(grants.category, `${ACTION_ID_PREFIX}session:${id}`, id));
+  }
+  if (grants.shape !== undefined) {
+    elements.push(button(grants.shape, `${ACTION_ID_PREFIX}shape:${id}`, id));
+  }
   if (alwaysLabel !== undefined) {
     elements.push(button(alwaysLabel, `${ACTION_ID_PREFIX}always:${id}`, id, "primary"));
   }

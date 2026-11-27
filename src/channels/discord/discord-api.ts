@@ -144,6 +144,22 @@ export class DiscordApi {
   }
 
   /**
+   * Acknowledge a button press and leave its message as it is
+   * (interaction callback type 6 = DEFERRED_UPDATE_MESSAGE), for a click
+   * the bot refuses while the question is still open (ATO-2778).
+   */
+  async acknowledgeInteraction(
+    interactionId: string,
+    interactionToken: string,
+  ): Promise<void> {
+    await this.request(
+      "POST",
+      `/interactions/${interactionId}/${interactionToken}/callback`,
+      { type: 6 },
+    );
+  }
+
+  /**
    * Upload one local file to a channel as its own message. Multipart
    * on the same messages endpoint: `payload_json` names the attachment
    * slot, `files[0]` carries the bytes. Returns the message id.
