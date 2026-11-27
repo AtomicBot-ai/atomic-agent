@@ -17,6 +17,8 @@
     "build": "node scripts/ensure-electron.mjs && tsc -p tsconfig.json && node scripts/copy-renderer.mjs && node scripts/vendor-math.mjs && node scripts/build-speech-helper.mjs",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test:unit": "node --test test/*.test.mjs",
+    "test:contrast": "node --test test/token-contrast.test.mjs test/token-literals.test.mjs test/ink-contrast.test.mjs",
+    "lint:css": "node scripts/lint-css.mjs",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
     "smoke": "npm run build && electron . --smoke",
@@ -43,6 +45,7 @@
   "devDependencies": {
     "electron": "44.0.0",
     "electron-builder": "26.15.3",
+    "stylelint": "^16.10.0",
     "typescript": "^5.6.0"
   },
   "dependencies": {
