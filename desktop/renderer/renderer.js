@@ -5470,6 +5470,7 @@ function palRows() {
     PALMSG.hits.filter((h) => !listed.has('ses:' + h.sessionId)).slice(0, 8)
       .forEach((h) => hits.push({ic:'chat', t:h.title || 'Chat', cx:palMsgSnippet(h.snippet), sc:'', act:'ses:' + h.sessionId, badge:'message'}));
   }
+  { const bg = typeof bgChatPaletteRow === 'function' ? bgChatPaletteRow(S.q, hits.length) : null; if (bg) hits.push(bg); }   // ATO-2309 (background-chat.js)
   return hits;
 }
 
@@ -5542,11 +5543,12 @@ function paletteHTML() {
     list = '<div class="palempty"><div class="palempty-t">No results for &ldquo;' + esc(q) + '&rdquo;</div>'
       + '<div class="cap">No command, chat, task or skill matches.</div>'
       + '<button class="palrow" data-ask="1"><span class="ic">' + ic('arrowR') + '</span>'
-      + '<span class="ti">Ask the agent &ldquo;' + esc(q) + '&rdquo;</span><span class="cx"></span><span class="sc">' + keycaps('↩') + '</span></button></div>';
+      + '<span class="ti">Ask the agent &ldquo;' + esc(q) + '&rdquo;</span><span class="cx"></span><span class="sc">' + keycaps('↩') + '</span></button>'
+      + (typeof bgChatEmptyRowHTML === 'function' ? bgChatEmptyRowHTML(q) : '') + '</div>';   // ATO-2309
   } else {
     // Ranked commands first, then a header before the chats, tasks and skills that
     // match. Headers sit between rows only; data-palrow indexes stay the flat order.
-    const heads = {session:'Chats', task:'Cron jobs', skill:'Skills', message:'In chat messages'};
+    const heads = {session:'Chats', task:'Cron jobs', skill:'Skills', message:'In chat messages', bg:'Background'};
     let last = '';
     flat.forEach((r, i) => {
       if (r.badge && r.badge !== last) list += '<div class="palgroup">' + heads[r.badge] + '</div>';
@@ -7984,6 +7986,7 @@ function act(a) {
   // ATO-576: a project's chat in its own branch, and Remove in Edit project's worktree list (chat-worktree.js).
   if (k === 'pwtnew' || k === 'pwtrm') { if (k === 'pwtnew') { close(); render(); } worktreeAct(k, v); return; }
   if (k === 'pworkers' || k === 'pwstart' || k === 'pwfill') { pworkersAct(k, v || ''); return; }   // ATO-1173 (project-workers.js)
+  if (k === 'bgchat') { if (typeof bgChatFromPalette === 'function') bgChatFromPalette(); return; }   // ATO-2309 (background-chat.js)
   if (k === 'fautosort') { FOLDERS.state.autoSort = !FOLDERS.state.autoSort; saveFolders(); foldersAfterSessions(); render(); return; }
   if (k === 'frename')   { close(); render(); renameStart(v, 'folder'); return; }
   if (k === 'fdel')      { close(); const f = folderById(FOLDERS.state, v);
@@ -10055,6 +10058,9 @@ document.addEventListener('keydown', (e) => {
   if (mod && k === 'Enter' && e.target.id === 'mcp-json') { e.preventDefault(); mcpAddSubmit(e.target.value); return; }
   // ATO-510: Enter in the review block's name field adds too.
   if (k === 'Enter' && e.target.id === 'mcp-name' && MCP.addModal) { e.preventDefault(); mcpAddSubmit(MCP.addModal.json); return; }
+  // ATO-2309: ⌘↩ in the ⌘K palette starts its text in a new background chat (background-chat.js);
+  // APPR_CHORD_AT drops the menu's Send copy of the chord (Windows), which would send the composer once the palette closed.
+  if (mod && !e.shiftKey && !e.altKey && k === 'Enter' && S.overlay === 'palette' && !S.scope && typeof bgChatFromPalette === 'function') { e.preventDefault(); APPR_CHORD_AT = Date.now(); ANX.via('palette'); bgChatFromPalette(); return; }
   // ATO-328: Enter in an Exa key field saves it, in the chat card and in Settings alike, through act() as the Save click does (ui_action exakey:save:*).
   if (k === 'Enter' && !mod && e.target.dataset && e.target.dataset.exaKey) { e.preventDefault(); ANX.via('key'); act('exakey:save:' + e.target.dataset.exaKey); return; }
   /* ATO-226: by `sk`, so ⌘K, ⌘N, ⌘. and the rest work on a Russian layout
@@ -11521,6 +11527,7 @@ function onChatEvent(ev) {
       if (sid) notePendingEnded(sid);  // item 27: its stand-in waits for the agent to store the turn
       if (sid && typeof goalTurnEnded === 'function') void goalTurnEnded(sid);  // ATO-1040: a pause / clear asked of its goal has landed
       if (sid && typeof workerTurnEnded === 'function') workerTurnEnded(sid, ev.kind);  // ATO-1173: a worker chat's badge
+      if (typeof bgChatTurnEnded === 'function') bgChatTurnEnded(ev.turnId, sid, ev.kind);  // ATO-2309: a background chat's toast
       if (ev.kind === 'error' && sid) ATTN.add(sid);
       nextStepTurnEnded(sid, ev.kind);   // ATO-1094: retire the old suggestion; a finished turn asks for a new one
       const endedSince = (LIVE_TURNS.get(ev.turnId) || {}).startedAt || 0;   // B01: closeChatApprovals, read before liveTurnEnded drops it
