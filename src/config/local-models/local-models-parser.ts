@@ -42,6 +42,7 @@ import {
   type CpuMoePreference,
 } from "../../local-llm/server/cpu-moe.js";
 import { rpcPeerProblem } from "../../local-llm/server/rpc-peers.js";
+import { DRAFT_MODEL_DEFAULT, draftModelPreferenceProblem } from "../../local-llm/server/draft-model.js";
 
 /** Pre-v41 `autoUpdate: false` was a dead default; force the live default. */
 const MANAGED_AUTO_UPDATE_DEFAULTS_VERSION = 41;
@@ -133,6 +134,14 @@ export function parseRpcServers(raw: unknown, field: string): string[] {
     if (problem) throw new ConfigValidationError(`${field}[${i}]`, problem);
     return entry as string;
   });
+}
+
+/** `localModels.managed.draftModel` (ATO-2424): `"off"`, `"auto"`, a model id or an absolute `.gguf` path. */
+export function parseDraftModelPreference(raw: unknown, field: string): string {
+  if (raw === undefined || raw === null) return DRAFT_MODEL_DEFAULT;
+  const problem = draftModelPreferenceProblem(raw);
+  if (problem) throw new ConfigValidationError(field, problem);
+  return raw as string;
 }
 
 /**
@@ -469,6 +478,7 @@ export function prepareLocalModelsInputs(
     ),
     cpuMoe: parseCpuMoePreference(rawManaged.cpuMoe, "localModels.managed.cpuMoe"),
     rpcServers: parseRpcServers(rawManaged.rpcServers, "localModels.managed.rpcServers"),
+    draftModel: parseDraftModelPreference(rawManaged.draftModel, "localModels.managed.draftModel"),
   };
   const loraAdapters = parseLoraAdapters(rawManaged.loraAdapters, "localModels.managed.loraAdapters");
   if (loraAdapters) managed.loraAdapters = loraAdapters;

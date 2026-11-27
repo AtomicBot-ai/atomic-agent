@@ -48,6 +48,7 @@ export function createLocalModelsDefaults(): UserLocalModelsConfig {
       swaFull: "auto",
       cpuMoe: "auto",
       rpcServers: [],
+      draftModel: "off",
     },
     embeddings: {
       enabled: false,

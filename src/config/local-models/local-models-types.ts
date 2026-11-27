@@ -161,6 +161,18 @@ export interface UserManagedLocalLlmConfig {
    */
   rpcServers?: string[];
   /**
+   * Draft-model speculative decoding (`--model-draft`, ATO-2424):
+   * `"off"` (default); `"auto"` uses the catalog's draft for the chat
+   * model; a model id or an absolute path to a `.gguf` names one. The
+   * draft is added only when it fits in what the fitted context window
+   * left, on a GPU, with the llama-server engine (Atomic Core does not run
+   * speculative decoding on TurboQuant yet), for a model whose cache can
+   * drop rejected tokens and a draft with the same tokenizer. A launch the
+   * draft breaks retries once without it. Additive and unversioned.
+   * Applied on the next daemon start.
+   */
+  draftModel?: string;
+  /**
    * Stop the managed chat daemon when the last CLI session exits.
    * `true` (default) — closing the terminal frees the RAM/VRAM the
    * model was holding; a second live session keeps the daemon up (see

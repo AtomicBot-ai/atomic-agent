@@ -46,6 +46,8 @@ const HELP =
     "  pull <id> [--background]      Download a GGUF model from Hugging Face (resumes a partial;",
     "            [--mmproj] [--run]  --background keeps going after this terminal closes;",
     "                                --mmproj also fetches the vision projector;",
+    "                                --draft also fetches its speculative-decoding draft",
+    "                                model (implied when localModels.managed.draftModel is on);",
     "                                --run then makes it active and starts it, with the",
     "                                projector on a vision model (not with --background))",
     "  downloads [pause|resume|      List background downloads; pause one (partial kept),",
