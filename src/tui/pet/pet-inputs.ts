@@ -12,7 +12,13 @@ import { PetMachine, type PetEnding, type PetInputs, type PetStep } from "./pet-
  * - thinking: a turn runs and no tool does;
  * - how a turn ended: the newest `runHistory` entry, which the reducer
  *   writes exactly once per finished turn.
+ *
+ * `reply` and `finish` are how a turn answers and ends, not a tool the
+ * person waits on: they never make the pet work (the thinking indicator and
+ * the status snapshot skip them the same way).
  */
+const PET_TURN_END_TOOLS: ReadonlySet<string> = new Set(["reply", "finish"]);
+
 export type PetTuiView = Pick<
   TuiState,
   "status" | "pendingApproval" | "streamingToolCalls" | "streamingToolCards" | "runHistory"
@@ -24,8 +30,8 @@ export function petInputsFromTui(state: PetTuiView): PetInputs {
     return { activity: null, waiting };
   }
   const toolRunning =
-    state.streamingToolCalls.length > 0 ||
-    state.streamingToolCards.some((card) => card.status === "pending");
+    state.streamingToolCalls.some((call) => !PET_TURN_END_TOOLS.has(call.tool)) ||
+    state.streamingToolCards.some((card) => card.status === "pending" && !PET_TURN_END_TOOLS.has(card.tool));
   return { activity: toolRunning ? "working" : "thinking", waiting };
 }
 

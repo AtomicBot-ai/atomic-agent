@@ -46,6 +46,23 @@
         { "at": 2000, "dnd": false, "activity": "thinking", "state": "thinking" },
         { "at": 3000, "ended": "stopped", "state": "idle", "nextAt": 123000 }
       ]
+    },
+    {
+      "name": "a turn that goes quiet without an ending rests from its last busy moment",
+      "steps": [
+        { "at": 0, "activity": "thinking", "state": "thinking" },
+        { "at": 200000, "activity": "thinking", "state": "thinking", "nextAt": null },
+        { "at": 200001, "state": "idle", "nextAt": 320000 }
+      ]
+    },
+    {
+      "name": "turning do not disturb on clears a flash that is showing",
+      "steps": [
+        { "at": 0, "state": "idle" },
+        { "at": 1000, "ended": "done", "state": "done", "nextAt": 4000 },
+        { "at": 1800, "dnd": true, "state": "idle", "nextAt": 121000 },
+        { "at": 1900, "dnd": false, "state": "idle", "nextAt": 121000 }
+      ]
     }
   ]
 }

@@ -34,6 +34,21 @@ describe("terminal pet inputs (ATO-2513)", () => {
     expect(petInputsFromTui({ ...running, streamingToolCards: [{ ...pendingCard, status: "ok" as const }] }).activity).toBe("thinking");
   });
 
+  it("works while a real tool call is in flight (the reducer's streamingToolCalls)", () => {
+    const running = { ...base(), status: "running" as const };
+    const call = { id: "s", stepIndex: 0, tool: "os.shell.exec", args: {}, startedAt: 0 };
+    expect(petInputsFromTui({ ...running, streamingToolCalls: [call] }).activity).toBe("working");
+  });
+
+  it("keeps thinking while the turn's own reply or finish call streams", () => {
+    const running = { ...base(), status: "running" as const };
+    for (const tool of ["reply", "finish"]) {
+      const call = { id: "r", stepIndex: 0, tool, args: {}, startedAt: 0 };
+      expect(petInputsFromTui({ ...running, streamingToolCalls: [call] }).activity).toBe("thinking");
+      expect(petInputsFromTui({ ...running, streamingToolCards: [{ ...pendingCard, tool }] }).activity).toBe("thinking");
+    }
+  });
+
   it("waits while an approval request is on screen", () => {
     const waiting = { ...base(), status: "awaiting_approval" as const, pendingApproval: { approvalId: "a1" } as never };
     expect(petInputsFromTui(waiting).waiting).toBe(true);
