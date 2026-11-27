@@ -201,3 +201,24 @@ test("ATO-2745: Forget name says what it did", async () => {
   await c.act("remove:gmail:work");
   assert.deepEqual(said, ['The name "work" is forgotten. The gmail account stays signed in on Composio.']);
 });
+
+// ATO-2745: a failed read or write is a plain line; what the settings write said goes behind Details.
+test("ATO-2745: account errors are a plain line plus Details", async () => {
+  assert.deepEqual(R.cmpaSplit("Could not save the accounts: config changed since it was read", "x"), { line: "Could not save the accounts.", detail: "config changed since it was read" });
+  assert.deepEqual(R.cmpaSplit('There is already a gmail account named "work".', "x"), { line: 'There is already a gmail account named "work".', detail: null });
+  const br = {
+    composioListAccounts: async () => { throw new Error("ipc gone"); },
+    composioRemoveAccount: async () => ({ ok: false, error: "Could not save the accounts: EACCES" }),
+  };
+  const c = R.createComposioAccounts({ bridge: () => br, stateDir: () => "/s", repaint: () => {}, changed: () => {} });
+  await c.refresh();
+  assert.equal(c.state.error, "Could not read the accounts.");
+  assert.deepEqual(c.state.errorDetail, { for: "Could not read the accounts.", text: "ipc gone" });
+  await c.act("remove:gmail:work");
+  assert.equal(c.state.error, "Could not save the accounts.");
+  const html = R.composioAccountsHTML({ ...c.state, accounts: [WORK] }, h);
+  assert.match(html, /tk-help--err">Could not save the accounts\.<\/p><details class="set-errmore"><summary>Details<\/summary><span>EACCES<\/span><\/details>/);
+  const conn = R.composioAccountsHTML({ accounts: [WORK], connected: null, connectedError: "Could not ask Composio which accounts are signed in: HTTP 502", drafts: {} }, h);
+  assert.match(conn, /Could not ask Composio which accounts are signed in\.<\/p><details class="set-errmore"><summary>Details<\/summary><span>HTTP 502<\/span>/);
+  assert.ok(!conn.includes("in: HTTP 502"));
+});

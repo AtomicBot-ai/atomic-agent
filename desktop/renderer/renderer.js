@@ -30910,7 +30910,7 @@ async function tgRefreshOnce() {
   if (cfg && cfg.ok && cfg.config) { LIVE_CONFIG = cfg.config; dropGateNoticesIfCleared(); }   // ATO-204: B02's refusal
   TG.envKeys = Array.isArray(env) ? env : [];
   TG.dotenvKeys = dotenv && dotenv.ok ? dotenv.keys : [];
-  if (dotenv && dotenv.ok === false) TG.lastError = 'Could not read the saved token: ' + (dotenv.error || 'unknown error');
+  if (dotenv && dotenv.ok === false) tgFail(TG, 'Could not read the saved token', dotenv);   // ATO-2745
   if (eff && eff.ok && eff.value && typeof eff.value === 'object') TG.cfg = eff.value;
   TG.keysKnown = true;
   tgRepaint();
@@ -31006,7 +31006,7 @@ function tgNoticesHTML() {
   const msg = TG.message && !stale ? TG.message : null;
   const restartBtn = tgRestartButtonHTML(TG.restart, {esc, ic});
   const note = (text, tail) => '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + text + '</span>' + (tail || '') + '</div>';
-  return (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + '</span></div>' : '')
+  return (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + tgErrorDetailHTML(TG, {esc}) + '</span></div>' : '')
     + tgOtherPollerHTML(TG.channel)
     + (msg && TG.msgKind === 'owed' && owed ? note(esc(msg) + ' <span class="sec">' + esc(TG_RESTART_APPLY) + '</span>', restartBtn)
       : (msg && !(TG.msgKind === 'owed' && tgRestartSpeaks(TG.restart)) ? note(esc(msg)) : '') + (owed ? note(esc(TG_RESTART_APPLY), restartBtn) : ''))
@@ -31082,7 +31082,7 @@ async function tgTokenSave(value, opts) {
   await tgRefresh();
   if (tgEnabled() === false) {
     const w = await BR.configSet('telegram.enabled', 'true');
-    if (!w || w.ok === false) TG.lastError = 'Could not turn Telegram on: ' + ((w && w.error) || 'unknown error');
+    if (!w || w.ok === false) tgFail(TG, 'Could not turn Telegram on', w);
     else tgSetMessage(savedLine.replace(/^Token saved([^.]*)\./, 'Token saved$1 and Telegram turned on.'), 'owed');
     await tgRefresh();
   }
@@ -31095,7 +31095,7 @@ async function tgClearToken() {
   TG.busy = true; tgRepaint();
   const res = await BR.dotenvSet(stateDir, 'TELEGRAM_BOT_TOKEN', null);
   TG.busy = false;
-  if (!res || res.ok === false) TG.lastError = 'Could not remove the token: ' + ((res && res.error) || 'unknown error');
+  if (!res || res.ok === false) tgFail(TG, 'Could not remove the token', res);
   else tgSetMessage('Token removed.', 'owed');
   await tgRefresh();
 }
@@ -31104,7 +31104,7 @@ async function tgSetEnabled(enabled) {
   TG.busy = true; tgRepaint();
   const res = await BR.configSet('telegram.enabled', String(!!enabled));
   TG.busy = false;
-  if (!res || res.ok === false) TG.lastError = 'Could not turn Telegram ' + (enabled ? 'on' : 'off') + ': ' + ((res && res.error) || 'unknown error');
+  if (!res || res.ok === false) tgFail(TG, 'Could not turn Telegram ' + (enabled ? 'on' : 'off'), res);
   else tgSetMessage(enabled ? 'Telegram turned on.' : 'Telegram turned off.', 'owed');
   await tgRefresh();
 }
@@ -31113,7 +31113,7 @@ async function tgClearOwner() {
   TG.busy = true; tgRepaint();
   const res = await BR.configUnset('telegram.ownerUserId');
   TG.busy = false;
-  if (!res || res.ok === false) TG.lastError = 'Could not clear the owner: ' + ((res && res.error) || 'unknown error');
+  if (!res || res.ok === false) tgFail(TG, 'Could not clear the owner', res);
   else tgSetMessage('Owner cleared. The bot ignores every message until you pair again.', 'owed');
   await tgRefresh();
 }

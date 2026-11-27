@@ -63,6 +63,21 @@ function tgTokenCheckOutcome(res) {
   return {save:true, message:'Token saved. ' + TG_TOKEN_UNCHECKED, error:null, bot:null};
 }
 
+/* ATO-2745: a failed step on the tab (`st` is renderer.js TG): a plain line, and what the write or
+   read said kept beside it for a Details fold. The detail names the line it belongs to, so a later
+   line never shows an older answer. */
+function tgFail(st, what, res) {
+  st.lastError = what + '.';
+  const raw = [res && res.error, res && res.detail].filter(Boolean).join('\n');
+  st.lastErrorDetail = raw ? {for: st.lastError, text: raw} : null;
+}
+/* The Details under the tab's red line, or '' when there is none for this line. `h`: {esc}. */
+function tgErrorDetailHTML(st, h) {
+  const d = st && st.lastErrorDetail;
+  if (!st || !st.lastError || !d || d.for !== st.lastError || !d.text) return '';
+  return '<details class="set-errmore"><summary>Details</summary><span>' + h.esc(d.text) + '</span></details>';
+}
+
 /* The Connect card (no token yet): why, the steps, the two actions. `h`: {esc, ic, logo?}. */
 function tgConnectCardHTML(h) {
   const mark = (typeof h.logo === 'function' && h.logo('telegram', 'lg', 'send')) || '<span class="tk-ico tk-ico--lg tk-ico--blue">' + h.ic('send') + '</span>';
@@ -99,5 +114,5 @@ function tgTokenPromptCardHTML(t, h) {
 
 if (typeof module !== 'undefined') {
   module.exports = {TG_BOTFATHER_URL, TG_TOKEN_RE, TG_TOKEN_PLACEHOLDER, TG_TOKEN_EMPTY, TG_TOKEN_SHAPE, TG_TOKEN_REJECTED, TG_TOKEN_UNCHECKED, TG_SETUP_STEPS,
-    tgTokenClean, tgTokenInitial, tgTokenSaveEnabled, tgTokenCheckOutcome, tgConnectCardHTML, tgTokenPromptCardHTML};
+    tgTokenClean, tgTokenInitial, tgTokenSaveEnabled, tgTokenCheckOutcome, tgConnectCardHTML, tgTokenPromptCardHTML, tgFail, tgErrorDetailHTML};
 }

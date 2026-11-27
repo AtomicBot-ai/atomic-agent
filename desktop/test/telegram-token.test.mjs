@@ -211,3 +211,24 @@ test('ATO-2745: honest storage words, no title="Enter", and Details for a failed
   const note = index.indexOf('<script src="key-stored-note.js">');
   assert.ok(note > 0 && note < index.indexOf('<script src="telegram-token.js">') && note < index.indexOf('<script src="discord-settings.js">'));
 });
+
+// ATO-2745: the tab's other failures (turn on, remove the token, clear the owner, read the token)
+// are a plain line with the raw answer behind Details, and a later line never shows an older answer.
+test('ATO-2745: tgFail gives a plain line and Details that belong to it', () => {
+  const st = {lastError: null, lastErrorDetail: null};
+  T.tgFail(st, 'Could not turn Telegram on', {ok:false, error:'config changed since it was read'});
+  assert.equal(st.lastError, 'Could not turn Telegram on.');
+  assert.equal(T.tgErrorDetailHTML(st, h), '<details class="set-errmore"><summary>Details</summary><span>config changed since it was read</span></details>');
+  T.tgFail(st, 'Could not remove the token', null);
+  assert.equal(st.lastError, 'Could not remove the token.');
+  assert.equal(T.tgErrorDetailHTML(st, h), '', 'no answer, no Details');
+  T.tgFail(st, 'Could not clear the owner', {ok:false, error:'<locked>'});
+  st.lastError = 'Something else.';
+  assert.equal(T.tgErrorDetailHTML(st, h), '', 'an older answer is not shown under a newer line');
+  for (const what of ['Could not turn Telegram on', 'Could not remove the token', 'Could not clear the owner', 'Could not read the saved token']) {
+    assert.ok(source.includes("tgFail(TG, '" + what + "'"), what);
+  }
+  assert.ok(source.includes("tgFail(TG, 'Could not turn Telegram ' + (enabled ? 'on' : 'off'), res)"));
+  assert.ok(!/TG\.lastError = 'Could not [^']*: ' \+/.test(source), 'no raw answer glued onto a Telegram line');
+  assert.ok(source.includes("esc(TG.lastError) + tgErrorDetailHTML(TG, {esc})"));
+});

@@ -192,7 +192,7 @@ function updResultLine(st) {
   const r = st.manualCheck && st.manualCheck.result;
   if (r && r.kind === 'error') return {text: r.message, tone: 'warn'};
   if (st.phase === 'available' && st.version) return {text: 'Version ' + st.version + ' is available', tone: 'ok'};
-  if (r && r.kind === 'up-to-date') return {text: 'You’re up to date — ' + st.currentVersion, tone: 'ok'};
+  if (r && r.kind === 'up-to-date') return {text: 'You’re up to date (version ' + st.currentVersion + ').', tone: 'ok'};
   return {text: '', tone: ''};
 }
 

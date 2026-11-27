@@ -43,7 +43,20 @@ function cmpaRows(accounts, connected) {
     : x.toolkit.localeCompare(y.toolkit)));
 }
 
-/* The card. `st`: {loading, accounts, connected, connectedError, busy, drafts, error}; `h`: {esc, ic}. */
+/* ATO-2745: main's "Could not save the accounts: <what the write said>" as a plain line and the raw
+   part for Details; a sentence without a raw part (the list rules' own words) stays as it is. */
+function cmpaSplit(text, fallback, raw) {
+  const t = String(text || '');
+  const m = /^(Could not [^:]+): ([\s\S]+)$/.exec(t);
+  if (m) return {line: m[1] + '.', detail: m[2]};
+  return {line: t || fallback, detail: raw || null};
+}
+/* The Details fold under a line, only when it belongs to that line. */
+function cmpaDetailsHTML(line, d, h) {
+  return line && d && d.for === line && d.text ? '<details class="set-errmore"><summary>Details</summary><span>' + h.esc(d.text) + '</span></details>' : '';
+}
+
+/* The card. `st`: {loading, accounts, connected, connectedError, busy, drafts, error, errorDetail}; `h`: {esc, ic}. */
 function composioAccountsHTML(st, h) {
   const busy = !!st.busy;
   const rows = cmpaRows(st.accounts, st.connected);
@@ -80,15 +93,20 @@ function composioAccountsHTML(st, h) {
   }
   const apps = Array.from(new Set(rows.map((r) => r.toolkit))).filter((t) => rows.filter((r) => r.toolkit === t).length > 1 && !appsWithDefault.has(t));
   const notes = (apps.length ? '<p class="sd-cap sd-block">' + h.esc(apps.join(', ')) + ': no default, so the agent uses the account connected last.</p>' : '')
-    + (st.connectedError ? '<p class="sd-cap sd-block">' + h.esc(st.connectedError) + '</p>' : '')
-    + (st.error ? '<p class="tk-help tk-help--err">' + h.esc(st.error) + '</p>' : '');
+    + (st.connectedError ? (() => { const c = cmpaSplit(st.connectedError, ''); return '<p class="sd-cap sd-block">' + h.esc(c.line) + '</p>' + cmpaDetailsHTML(c.line, c.detail && {for: c.line, text: c.detail}, h); })() : '')
+    + (st.error ? '<p class="tk-help tk-help--err">' + h.esc(st.error) + '</p>' + cmpaDetailsHTML(st.error, st.errorDetail, h) : '');
   return '<div class="tk-card sd-rows sd-cmpaccts">' + head + body + notes + '</div>';
 }
 
 /* The controller. `deps`: {bridge() → BR, stateDir() → string|null, repaint(), changed(text)}. */
 function createComposioAccounts(deps) {
-  const st = {loading:false, accounts:[], connected:null, connectedError:null, busy:null, drafts:{}, error:null, chain:null};
-  const call = async (fn) => { try { return await fn(); } catch (e) { return {ok:false, error: e && e.message ? e.message : String(e)}; } };
+  const st = {loading:false, accounts:[], connected:null, connectedError:null, busy:null, drafts:{}, error:null, errorDetail:null, chain:null};
+  // A thrown call has no sentence of its own: the caller's plain line, its message as the detail.
+  const call = async (fn) => { try { return await fn(); } catch (e) { return {ok:false, thrown: e && e.message ? e.message : String(e)}; } };
+  const fail = (res, fallback) => {
+    const c = cmpaSplit(res && res.error, fallback, res && res.thrown);
+    st.error = c.line; st.errorDetail = c.detail ? {for: c.line, text: c.detail} : null;
+  };
   async function refreshOnce() {
     const br = deps.bridge();
     if (!br || !br.composioListAccounts) return;
@@ -100,7 +118,7 @@ function createComposioAccounts(deps) {
       st.connected = Array.isArray(res.connected) ? res.connected : null;
       st.connectedError = res.connectedError || null;
       if (st.error && st.error.startsWith('Could not read')) st.error = null;
-    } else st.error = (res && res.error) || 'Could not read the accounts.';
+    } else fail(res, 'Could not read the accounts.');
     deps.repaint();
   }
   function refresh() {
@@ -114,7 +132,7 @@ function createComposioAccounts(deps) {
     st.busy = 'edit'; st.error = null; deps.repaint();
     const res = await call(() => run(br));
     st.busy = null;
-    if (!res || !res.ok) { st.error = (res && res.error) || 'Could not save the accounts.'; deps.repaint(); return false; }
+    if (!res || !res.ok) { fail(res, 'Could not save the accounts.'); deps.repaint(); return false; }
     if (Array.isArray(res.accounts)) st.accounts = res.accounts;
     deps.changed(said);
     deps.repaint();
@@ -148,5 +166,5 @@ if (typeof document !== 'undefined') {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {CMPA_ALIAS_RE, cmpaAliasClean, cmpaRows, composioAccountsHTML, createComposioAccounts};
+  module.exports = {CMPA_ALIAS_RE, cmpaAliasClean, cmpaRows, cmpaSplit, composioAccountsHTML, createComposioAccounts};
 }
