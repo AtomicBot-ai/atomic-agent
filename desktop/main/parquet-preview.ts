@@ -21,7 +21,9 @@
  * Guards: the footer is checked by hand first (the PAR1 mark, a metadata
  * length that fits the file and PARQUET_MAX_META_BYTES); the row groups that
  * would have to be read for the first rows must fit PARQUET_MAX_READ_BYTES;
- * a page that says it unpacks to more than that is refused.
+ * a page that says it unpacks to more than that is refused, in every codec
+ * (Snappy too: hyparquet's own Snappy path would allocate the size the page
+ * header claims before unpacking, so Snappy goes through the same check).
  *
  * No Electron import, so the unit suite loads it from `out/main`.
  */
@@ -59,6 +61,7 @@ type Decompress = (input: Uint8Array, outputLength: number) => Uint8Array;
 type Lib = {
   parquetMetadataAsync(file: unknown): Promise<Meta>;
   parquetRead(options: Record<string, unknown>): Promise<void>;
+  snappyUncompress(input: Uint8Array, output: Uint8Array): void;
 };
 type Meta = {
   num_rows: bigint | number;
@@ -73,19 +76,35 @@ function hyparquet(): Lib {
   return lib;
 }
 
+/** Refuses a page that says it unpacks past the read cap, before anything is allocated. */
+function checkPageSize(outputLength: number): void {
+  if (!(outputLength >= 0) || outputLength > PARQUET_MAX_READ_BYTES) throw new Error("page too large");
+}
+
 /** A codec through zlib, refusing a page that says it unpacks past the read cap. */
 function viaZlib(fn: ((b: Uint8Array, o: zlib.ZlibOptions) => Buffer) | undefined): Decompress | undefined {
   if (typeof fn !== "function") return undefined;
   return (input, outputLength) => {
-    if (!(outputLength >= 0) || outputLength > PARQUET_MAX_READ_BYTES) throw new Error("page too large");
+    checkPageSize(outputLength);
     return fn(input, { maxOutputLength: Math.max(1, outputLength) });
   };
 }
 
-/** The codecs Node can unpack (ZSTD needs Node 22.15 or later, which Electron 44 has). */
-export function zlibCompressors(): Record<string, Decompress> {
+/**
+ * The codecs handed to hyparquet, each behind the page-size check: Snappy
+ * through hyparquet's own decoder (`snappy`), GZIP, Brotli and ZSTD through
+ * zlib (ZSTD needs Node 22.15 or later, which Electron 44 has).
+ */
+export function pageCompressors(snappy: (input: Uint8Array, output: Uint8Array) => void): Record<string, Decompress> {
   const z = zlib as unknown as Record<string, ((b: Uint8Array, o: zlib.ZlibOptions) => Buffer) | undefined>;
-  const out: Record<string, Decompress> = {};
+  const out: Record<string, Decompress> = {
+    SNAPPY: (input, outputLength) => {
+      checkPageSize(outputLength);
+      const page = new Uint8Array(outputLength);
+      snappy(input, page);
+      return page;
+    },
+  };
   const gzip = viaZlib(z.gunzipSync);
   const brotli = viaZlib(z.brotliDecompressSync);
   const zstd = viaZlib(z.zstdDecompressSync);
@@ -188,7 +207,7 @@ export async function parquetPreview(
   if (want > 0 && columns.length > 0) {
     try {
       await pq.parquetRead({
-        file, metadata: meta, columns, rowStart: 0, rowEnd: want, compressors: zlibCompressors(),
+        file, metadata: meta, columns, rowStart: 0, rowEnd: want, compressors: pageCompressors(pq.snappyUncompress),
         onComplete: (rows: unknown[][]) => { raw = rows; },
       });
     } catch (err) {
