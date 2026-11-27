@@ -38,7 +38,8 @@ import type { GoalSpec, GoalState } from "../../agent/goal/index.js";
 import { createRuntimeGoalRunner } from "./runtime-goal.js";
 import { createNextStepSuggester } from "./runtime-next-step.js";
 import type { createExperienceReviewer } from "./runtime-experience-review.js";
-import { routeTurnProvider, sessionPromptEstimate } from "./runtime-turn-router.js";
+import { routeTurnProvider } from "./runtime-turn-router.js";
+import { localFirstSessionSize } from "./local-first-fit.js";
 import { continueOnStopHooks, startTurnHooks } from "./runtime-session-hooks.js";
 import type { SessionHookEngine } from "../../hooks/session-hook-engine.js";
 import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
@@ -110,8 +111,8 @@ export interface RuntimeTurnDependencies {
       & Partial<Pick<ProviderFallbackChain, "turnHeadCoolingDown">>;
     /**
      * The window a local link builds its prompt against, for the
-     * local-first size check (ATO-2537). Omitted (tests, embedders): the
-     * check is skipped.
+     * local-first size check (ATO-2537); null when not known yet.
+     * Omitted (tests, embedders): the check is skipped.
      */
     resolveLocalContextWindow?: (providerId: string) => number | null;
   };
@@ -571,8 +572,8 @@ export function createRuntimeTurnService(
       isRegistered: (id) => providerRegistry.getProvider(id) !== undefined,
       logger,
       sessionId: session.id,
-      sessionPromptTokens: sessionPromptEstimate(
-        traces.readContextUsage(session.id)?.tokens ?? session.contextUsage?.tokens ?? null,
+      sessionSize: localFirstSessionSize(
+        traces.readContextUsage(session.id) ?? session.contextUsage,
         userMessage,
       ),
       ...(deps.inference.resolveLocalContextWindow !== undefined

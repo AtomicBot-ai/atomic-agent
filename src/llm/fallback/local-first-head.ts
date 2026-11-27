@@ -66,23 +66,14 @@ export interface LocalFirstInput {
   /** Whether this link cannot serve here now (no model downloaded). */
   isUnavailable: (providerId: string) => boolean;
   /**
-   * Tokens the session's next prompt needs, as far as the caller knows
-   * (the last prompt's size plus the new message). Null or absent:
-   * unknown, the size check is skipped.
+   * Whether the session's next prompt would trigger compaction on this
+   * link's window (ATO-2537; the caller sizes it, see
+   * `runtime/composition/local-first-fit.ts`). Absent: never.
    */
-  sessionPromptTokens?: number | null;
-  /** The window a local link would build the prompt against. Null: unknown. */
-  localContextWindow?: (providerId: string) => number | null;
-  /**
-   * Share of the local window the prompt may fill: past it, automatic
-   * compaction would run (`agent.compaction.triggerRatio`). Default 0.9.
-   */
-  fitRatio?: number;
+  tooLongFor?: (providerId: string) => boolean;
   /** Whether this link failed as a turn head recently and still rests. */
   isCoolingDown?: (providerId: string) => boolean;
 }
-
-const DEFAULT_FIT_RATIO = 0.9;
 
 export type LocalFirstDecision =
   | { head: string }
@@ -115,14 +106,7 @@ export function localFirstTurnHead(input: LocalFirstInput): LocalFirstDecision {
   return { head: local.id };
 }
 
-/** Whether the session's prompt fits this link's window (unknown: yes). */
+/** Whether the session fits this link's window (no size check: yes). */
 function fitsLocalWindow(input: LocalFirstInput, providerId: string): boolean {
-  const tokens = input.sessionPromptTokens;
-  if (tokens === undefined || tokens === null || !(tokens > 0)) return true;
-  const window = input.localContextWindow?.(providerId) ?? null;
-  if (window === null || !(window > 0)) return true;
-  const ratio = input.fitRatio !== undefined && input.fitRatio > 0 && input.fitRatio <= 1
-    ? input.fitRatio
-    : DEFAULT_FIT_RATIO;
-  return tokens <= window * ratio;
+  return input.tooLongFor?.(providerId) !== true;
 }

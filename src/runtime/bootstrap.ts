@@ -98,6 +98,7 @@ import { isLocalLinkWithoutModel } from "./local-link-availability.js";
 import { explainLocalEngineState, readLocalEngineState } from "./local-engine-state.js";
 import { isCloudLink } from "./cloud-link.js";
 import { createLocalOutOfMemoryPort, type LocalModelRestarter } from "./local-out-of-memory.js";
+import { createLocalFirstWindowResolver } from "./local-first-window.js";
 import { createRuntimePromptPreview, buildRuntimePromptInput } from "./composition/runtime-prompt-preview.js";
 import { captureModelModePolicy, resolveModelMode } from "../llm/model-mode.js";
 export { SessionNotFoundError } from "./session-not-found-error.js";
@@ -971,7 +972,8 @@ export async function createAgentRuntime(
     sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies, turnsWithoutQuestions },
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
     inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain,
-      resolveLocalContextWindow: (id) => connectedLocal.getLiveProfile().contextWindow ?? resolveCatalogContextWindow(id) },
+      resolveLocalContextWindow: createLocalFirstWindowResolver({ liveWindow: () => connectedLocal.getLiveProfile().contextWindow,
+        catalogWindow: (id) => resolveCatalogContextWindow(id), readConfig: () => getConfig() }) },
     traces, telemetry: { observability, analyticsStateStore, turnUsageMeter, sessionUsage, metrics },
     state: turnState, lifecycle, logger,
     emitEvent: emitAgentLoopEventFor,

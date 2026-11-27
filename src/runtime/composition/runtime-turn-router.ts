@@ -6,7 +6,7 @@ import { localFirstTurnHead } from "../../llm/fallback/index.js";
 import { extractRouteFeatures, routeTurn, type RouteDecision } from "../../llm/router/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import { isLocalLinkWithoutModel } from "../local-link-availability.js";
-import { estimateTokens } from "../../prompt/token-budget.js";
+import { fitsLocalWindow, type LocalFirstSessionSize } from "./local-first-fit.js";
 
 export interface RouteTurnProviderParams {
   config: AtomicAgentConfig;
@@ -23,11 +23,15 @@ export interface RouteTurnProviderParams {
    */
   linkUnavailable?: (llm: ResolvedLlmConfig, providerId: string) => boolean;
   /**
-   * Tokens this session's next prompt needs, as far as the caller knows
-   * (ATO-2537). Absent or null: unknown, local-first does not check size.
+   * This session's size from its last prompt plus the new message
+   * (ATO-2537, `localFirstSessionSize`). Absent or null: no prompt built
+   * yet, local-first does not check size.
    */
-  sessionPromptTokens?: number | null;
-  /** The window a local link builds its prompt against. Absent: unknown. */
+  sessionSize?: LocalFirstSessionSize | null;
+  /**
+   * The window a local link builds its prompt against; null when not
+   * known yet. Absent (tests, embedders): local-first does not check size.
+   */
   localContextWindow?: (providerId: string) => number | null;
   /**
    * Whether a link failed as this session's turn head recently and still
@@ -89,6 +93,11 @@ function localFirstProvider(params: RouteTurnProviderParams): string | undefined
   const unavailable =
     params.linkUnavailable ??
     ((llm: ResolvedLlmConfig, id: string) => isLocalLinkWithoutModel(llm, id, params.config));
+  const size = params.sessionSize ?? null;
+  const windowOf = params.localContextWindow;
+  const tooLongFor = size !== null && windowOf !== undefined
+    ? (id: string) => !fitsLocalWindow(size, windowOf(id), params.config)
+    : undefined;
   const decision = localFirstTurnHead({
     localFirst: true,
     effectiveRunMode: params.runMode.effective,
@@ -100,23 +109,16 @@ function localFirstProvider(params: RouteTurnProviderParams): string | undefined
     hasImage: extractRouteFeatures(params.userMessage).hasImage,
     isRegistered: params.isRegistered,
     isUnavailable: (id) => unavailable(resolved, id),
-    ...(params.sessionPromptTokens !== undefined
-      ? { sessionPromptTokens: params.sessionPromptTokens }
-      : {}),
-    ...(params.localContextWindow !== undefined
-      ? { localContextWindow: params.localContextWindow }
-      : {}),
     ...(params.isCoolingDown !== undefined ? { isCoolingDown: params.isCoolingDown } : {}),
-    ...(params.config.agent?.compaction?.triggerRatio !== undefined
-      ? { fitRatio: params.config.agent.compaction.triggerRatio }
-      : {}),
+    ...(tooLongFor !== undefined ? { tooLongFor } : {}),
   });
   if (decision.head === null) {
     if (decision.reason === "too-long") {
       // Sizes only: never the message.
       params.logger.info("local-first cascade: session too long for the local window, turn stays in the cloud", {
         sessionId: params.sessionId,
-        promptTokens: params.sessionPromptTokens ?? null,
+        historyTokens: size?.historyTokens ?? null,
+        fixedTokens: size?.fixedTokens ?? null,
       });
     }
     if (decision.reason === "cooling-down") {
@@ -132,23 +134,6 @@ function localFirstProvider(params: RouteTurnProviderParams): string | undefined
     providerId: decision.head,
   });
   return decision.head;
-}
-
-/**
- * What the session's next prompt needs, for the local-first size check
- * (ATO-2537): the last prompt this session built (`contextUsage.tokens`,
- * the provider's own count once a step completed) plus the new message.
- * Null when no prompt was built yet: a new session is small, and an
- * unknown size keeps today's behaviour.
- */
-export function sessionPromptEstimate(
-  lastPromptTokens: number | null | undefined,
-  userMessage: string,
-): number | null {
-  if (lastPromptTokens === null || lastPromptTokens === undefined || !(lastPromptTokens > 0)) {
-    return null;
-  }
-  return lastPromptTokens + estimateTokens(userMessage);
 }
 
 function routerProviders(
