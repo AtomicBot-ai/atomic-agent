@@ -5,6 +5,7 @@ import {
 } from "./commands/slash-command-handler.js";
 import { runRunModeVerb } from "./commands/run-mode-verb.js";
 import { runModelModeCommand } from "./commands/model-mode-command.js";
+import { runModelRingCommand } from "./model-ring/model-ring-actions.js";
 import { runPersonaCommand } from "./commands/persona-command.js";
 import { describeThinkLevel } from "./commands/think-command.js";
 import {
@@ -421,6 +422,7 @@ export function runSlashCommand(
     runModelModeCommand(result.modelModeCommand, dispatch);
     callbacks.onSkillsRefreshRequested?.();
   }
+  if (result.modelRingCommand) runModelRingCommand(result.modelRingCommand, state, dispatch);
   if (result.personaCommand) runPersonaCommand(result.personaCommand, dispatch);
   // ATO-490: `/think`. The level reaches the orchestrator, which sends it on the next turns.
   if (result.reasoningLevel !== undefined) callbacks.onReasoningLevelChanged?.(result.reasoningLevel);

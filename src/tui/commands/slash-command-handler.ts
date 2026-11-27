@@ -21,6 +21,7 @@ import { describeThinkLevel, parseThinkCommand } from "./think-command.js";
 import type { ReasoningLevel } from "../../llm/reasoning-levels.js";
 import { parseLearnCommand, type LearnCommand } from "../../skills/learning/learn-command.js";
 import { parseExportCommand, type ChatExportRequest } from "./export-command.js";
+import { MODEL_RING_USAGE, parseModelRingCommand, type ModelRingCommand } from "../model-ring/model-ring-command.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -32,6 +33,8 @@ export interface SlashDispatchResult {
   /** A plugin command: the caller renders its template and sends it as the message. */
   readonly pluginCommandInvocation?: { name: string; args: string };
   readonly modelModeCommand?: ModelModeCommand;
+  /** `/model favorite …` (ATO-2169): the submit path reads and writes the ring. */
+  readonly modelRingCommand?: ModelRingCommand;
   /**
    * Reducer actions the caller should dispatch in order. Empty when the
    * command was unknown or required no state change.
@@ -959,6 +962,10 @@ function dispatchModelsSub(
       { type: "providers_inline_models_ensure_requested", providerId: null },
     ]);
   }
+  if (bits[0] === "favorite" || bits[0] === "favorites" || bits[0] === "fav") {
+    const ring = parseModelRingCommand(bits.slice(1).join(" "));
+    return ring ? pureActions([], { modelRingCommand: ring }) : pureActions([], { systemMessage: MODEL_RING_USAGE });
+  }
   if (bits[0] === "pull" && bits[1]) {
     return {
       ...pureActions([
@@ -994,7 +1001,7 @@ function dispatchModelsSub(
   } catch {
     return pureActions([], {
       systemMessage:
-        "usage: /model | /model pull <id> | /model use <id> | /model status | /model <base-url>",
+        "usage: /model | /model pull <id> | /model use <id> | /model favorite | /model status | /model <base-url>",
     });
   }
 }

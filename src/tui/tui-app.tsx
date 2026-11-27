@@ -84,6 +84,7 @@ import {
 import { MenuPopup } from "./menu/menu-popup.js";
 import type { MenuNode } from "./menu/menu-registry.js";
 import { ApprovalModal } from "./approval-modal.js";
+import { cycleModelRing } from "./model-ring/model-ring-actions.js";
 import { ChatLog } from "./chat/chat-log.js";
 import {
   ComposerSwitchPopup,
@@ -1843,6 +1844,7 @@ export function TuiApp({
       activateMenuNode,
       onStepPairs: stepConversationPairs,
       activateComposerSwitch,
+      onModelRingCycle: () => cycleModelRing(state, dispatch, callbacks),   // ATO-2169
       onPlanExecute: executePlan,
       onPlanDismiss: dismissPlan,
     });
