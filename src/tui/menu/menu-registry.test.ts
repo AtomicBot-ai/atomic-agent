@@ -222,7 +222,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "queue",
     description:
-      "parked messages: `/queue` list | `/queue <msg>` park one | `/queue clear` | `/queue mode` make Enter queue",
+      "parked messages: `/queue` list | `/queue <msg>` park one | `/queue next <n>` send it next | `/queue move <n> <place>` | `/queue clear` | `/queue mode` make Enter queue",
   },
   {
     name: "steer",

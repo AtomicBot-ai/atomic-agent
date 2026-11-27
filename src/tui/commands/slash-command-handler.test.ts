@@ -613,6 +613,16 @@ describe("dispatchSlashCommand", () => {
     ).toBeUndefined();
   });
 
+  it("/queue next and /queue move reorder the parked messages; other words are still parked (ATO-2476)", () => {
+    const next = dispatchSlashCommand("/queue next 3");
+    expect(next.queueMove).toEqual({ from: 2, to: 0 });
+    expect(next.submitWhileBusy).toBeUndefined();
+    expect(dispatchSlashCommand("/queue move 1 2").queueMove).toEqual({ from: 0, to: 1 });
+    const text = dispatchSlashCommand("/queue next steps for the doc");
+    expect(text.queueMove).toBeUndefined();
+    expect(text.submitWhileBusy).toEqual({ mode: "queue", text: "next steps for the doc" });
+  });
+
   it("/uninstall opens the ladder and asks for a plan — it removes nothing", () => {
     const result = dispatchSlashCommand("/uninstall");
     expect(result.actions).toEqual([{ type: "uninstall_opened" }]);
