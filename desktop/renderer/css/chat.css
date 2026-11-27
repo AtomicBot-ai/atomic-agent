@@ -524,6 +524,9 @@
 .cf-add{color:var(--success)}
 .cf-del{color:var(--critical)}
 .cf-none{color:var(--ink-2)}
+/* ATO-2409: an Office file's badge where its counts would be. */
+.cf-tag{color:var(--ink-2)}
+.cf-created{color:var(--success)}
 .cf-pane .cf-list{padding:0 6px}
 
 /* ---------------- plan hand-off (item 1) ----------------

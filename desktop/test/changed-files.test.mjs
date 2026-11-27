@@ -54,6 +54,51 @@ test('the renderer puts every change of a frame on the card, not only its single
   assert.match(src, /for \(const changedFile of changedFilesOfFrame\(p\)\) item\.changed = changedFilesAdd\(item\.changed, changedFile\)/);
 });
 
+// ATO-2409: a Word, Excel or PowerPoint file the turn made is on the card, with a badge instead of counts.
+test('an Office writer\'s call is a "created" or "updated" row; the badge survives a later edit of the file', () => {
+  const made = C.changedFileOfOfficeWrite({path: 'sales.docx', created: true}, '/w/Atomic Agent Marketer Kit/sales.docx');
+  assert.deepEqual(made, {path: '/w/Atomic Agent Marketer Kit/sales.docx', added: 0, removed: 0, office: 'created'});
+  const changed = C.changedFileOfOfficeWrite({path: '/w/sales.xlsx', created: false}, '');
+  assert.deepEqual(changed, {path: '/w/sales.xlsx', added: 0, removed: 0, office: 'updated'}, 'the call\'s own path when none was made absolute');
+  assert.equal(C.changedFileOfOfficeWrite({created: true}, ''), null);
+  assert.equal(C.changedFileOfOfficeWrite(null, ''), null);
+  let list = C.changedFilesAdd([], made);
+  list = C.changedFilesAdd(list, changed);
+  list = C.changedFilesAdd(list, C.changedFileOfOfficeWrite({path: 'sales.docx', created: false}, made.path));
+  list = C.changedFilesAdd(list, {path: '/w/notes.md', added: 2, removed: 0});
+  assert.deepEqual(list, [
+    {path: made.path, added: 0, removed: 0, edits: 2, office: 'created'},
+    {path: '/w/sales.xlsx', added: 0, removed: 0, edits: 1, office: 'updated'},
+    {path: '/w/notes.md', added: 2, removed: 0, edits: 1},
+  ]);
+  const html = C.changedFilesCardHTML(list, deps);
+  assert.match(html, /Changed files \(3\)/);
+  assert.match(html, /data-file="\/w\/Atomic Agent Marketer Kit\/sales\.docx"[^>]*>.*?<span class="cf-name">sales\.docx<\/span><span class="cf-counts mono"><span class="cf-tag cf-created">created<\/span>/);
+  assert.match(html, /<span class="cf-name">sales\.xlsx<\/span><span class="cf-counts mono"><span class="cf-tag cf-updated">updated<\/span>/);
+  assert.match(html, /<span class="cf-name">notes\.md<\/span><span class="cf-counts mono"><span class="cf-add">\+2<\/span>/);
+  assert.ok(!html.includes('no line changes'), 'an Office file never says "no line changes"');
+  // The Results tab counts them as changed files too.
+  assert.match(C.resultsPaneHTML([{k: 'assistant', changed: list}], deps), /Changed files \(3\)/);
+});
+
+test('the renderer puts an ok Office call on the card and under "Saved to", and chips a bare name the chat wrote (ATO-2409)', () => {
+  const src = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
+  // tool_result: the row is made from the call's path, only for an ok call.
+  assert.match(src, /const officeWrite = item && card\.ok === true && typeof cfOfficeWrite === 'function' \? cfOfficeWrite\(card\.name, toolArgsObj\(card\.args\)\) : null;/);
+  assert.match(src, /if \(officeWrite\) item\.changed = changedFilesAdd\(item\.changed, changedFileOfOfficeWrite\(officeWrite, cfAbsolute\(officeWrite\.path, workingDir\(\), homeDir\(\)\)\)\);/);
+  // "Saved to": the strip's path collector knows the Office writers.
+  const written = src.slice(src.indexOf('\nfunction cardWrittenPaths('), src.indexOf('\nfunction cardTrashedPaths('));
+  assert.match(written, /cfOfficeWrite\(m\.name, cardArgs\(m\) \|\| \{\}\)/);
+  assert.match(written, /if \(office\) return \[resolveAgentPath\(office\.path, cwd\)\];/);
+  // A code span with a bare name the chat wrote is that file's chip.
+  const prose = src.slice(src.indexOf('\nfunction renderProseFresh('), src.indexOf('\nfunction codeBlockFrame('));
+  assert.match(prose, /chatFilesByName\(raw\)/);
+  assert.match(prose, /known \? chip\(known, h\)/);
+  // The page loads chat-files.js (the writers' list) before renderer.js.
+  const html = readFileSync(new URL('../renderer/index.html', import.meta.url), 'utf8');
+  assert.ok(html.indexOf('src="chat-files.js"') > 0 && html.indexOf('src="chat-files.js"') < html.indexOf('src="renderer.js"'));
+});
+
 test('changes to one file add up on one row, files keep the order they were first touched', () => {
   let list = C.changedFilesAdd(undefined, {path: '/w/a.ts', added: 3, removed: 1});
   list = C.changedFilesAdd(list, {path: '/w/b.md', added: 10, removed: 0});

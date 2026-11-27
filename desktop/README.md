@@ -284,8 +284,12 @@ Real, driven by the running agent:
   carries a 1–6 character extension, so a bare `/path/to/Makefile` or a
   directory stays plain text
 - files a turn actually wrote — `os.fs.write`, `os.fs.edit`, `os.fs.patch`
-  with `apply: true`, `os.fs.archive.extract` — are attached under the reply
-  as a `Saved to <path>` line per file plus a chip. The paths come from the
+  with `apply: true`, `os.fs.archive.extract`, and the Office writers
+  `os.fs.docx`, `os.fs.xlsx` (not `op: read`), `os.fs.write_pptx` (ATO-2409:
+  the `path` of the call; they also get a "created"/"updated" row on the
+  "Changed files" card, and a bare `sales.docx` in a reply is their chip) —
+  are attached under the reply as a `Saved to <path>` line per file plus a
+  chip. The paths come from the
   session store: the call's own args and the tool's own result line (`wrote N
   bytes to …`, the patch report's `✓ <file>` lines, `extracted … to <dir>`),
   each confirmed with `fs.stat` before it is drawn, so a chip is never shown

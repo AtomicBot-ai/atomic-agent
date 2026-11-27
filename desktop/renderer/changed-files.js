@@ -15,6 +15,13 @@
    instead (ATO-1702): the files its workers changed, one row each, added to
    the same card.
 
+   An Office writer (os.fs.docx, os.fs.xlsx, os.fs.write_pptx) sends no
+   diffstat: a .docx has no lines to count. ATO-2409: its ok call is a row of
+   its own, made by the renderer from the call's `path` (chat-files.js
+   cfOfficeWrite) with a "created" or "updated" badge where the counts go, so
+   the card and the Results tab name the deck or the workbook the turn made
+   and a click opens the Office preview (office-preview.js).
+
    An older agent sends no `diffstat`: no card, and the Results tab lists
    the reply's files without counts. The session store keeps no tool
    details, so a reopened chat has no counts either. Rows are .filechip
@@ -48,6 +55,21 @@ function changedFilesOfFrame(p) {
   return out;
 }
 
+/** ATO-2409: the row for an Office writer's ok call: `w` is cfOfficeWrite's
+    answer (`{path, created}`), `abs` the path made absolute by the renderer.
+    No line counts; `office` says "created" or "updated" in their place. */
+function changedFileOfOfficeWrite(w, abs) {
+  const path = typeof abs === 'string' && abs ? abs : (w && typeof w.path === 'string' ? w.path : '');
+  if (!path) return null;
+  return {path, added: 0, removed: 0, office: w && w.created ? 'created' : 'updated'};
+}
+
+/** The badge a merged row keeps: a file the turn created stays "created" through its later edits. */
+function changedFilesOffice(a, b) {
+  const tag = a === 'created' || b === 'created' ? 'created' : (a || b);
+  return tag ? {office: tag} : {};
+}
+
 /** The list with one more change: a file already on it adds its counts, a new one goes last. */
 function changedFilesAdd(list, entry) {
   const out = Array.isArray(list) ? list.slice() : [];
@@ -55,9 +77,9 @@ function changedFilesAdd(list, entry) {
   const i = out.findIndex((f) => f.path === entry.path);
   if (i >= 0) {
     const f = out[i];
-    out[i] = {path: f.path, added: f.added + entry.added, removed: f.removed + entry.removed, edits: (f.edits || 1) + 1};
+    out[i] = {path: f.path, added: f.added + entry.added, removed: f.removed + entry.removed, edits: (f.edits || 1) + 1, ...changedFilesOffice(f.office, entry.office)};
   } else if (out.length < CHANGED_FILES_MAX) {
-    out.push({path: entry.path, added: entry.added, removed: entry.removed, edits: 1});
+    out.push({path: entry.path, added: entry.added, removed: entry.removed, edits: 1, ...changedFilesOffice(entry.office, '')});
   }
   return out;
 }
@@ -68,8 +90,10 @@ function changedFilesBase(path) {
   return i >= 0 ? s.slice(i + 1) : s;
 }
 
-/** "+12 −3" for one file; a side that is zero is left out, a file with neither says "no line changes". */
+/** "+12 −3" for one file; a side that is zero is left out, a file with neither says "no line changes".
+    ATO-2409: an Office file has no lines; its badge says "created" or "updated" instead. */
 function changedFilesCountsHTML(f, esc) {
+  if (f.office === 'created' || f.office === 'updated') return '<span class="cf-tag cf-' + f.office + '">' + f.office + '</span>';
   const parts = [];
   if (f.added) parts.push('<span class="cf-add">+' + esc(String(f.added)) + '</span>');
   if (f.removed) parts.push('<span class="cf-del">−' + esc(String(f.removed)) + '</span>');
@@ -132,5 +156,5 @@ function resultsPaneHTML(log, deps) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {CHANGED_FILES_MAX, changedFileOfFrame, changedFilesOfFrame, changedFilesAdd, changedFilesBase, changedFilesCardHTML, changedFilesPaths, turnResultFiles, latestReply, resultsPaneHTML};
+  module.exports = {CHANGED_FILES_MAX, changedFileOfFrame, changedFilesOfFrame, changedFileOfOfficeWrite, changedFilesAdd, changedFilesBase, changedFilesCardHTML, changedFilesPaths, turnResultFiles, latestReply, resultsPaneHTML};
 }

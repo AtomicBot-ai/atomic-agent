@@ -11803,6 +11803,9 @@ function onChatEvent(ev) {
     // ATO-1187: a write/edit's lines added/removed go on the turn's "Changed files" card (changed-files.js).
     // ATO-1702: a fusion.delegate's `diffstats` (its workers' files) go on the same card.
     if (item) for (const changedFile of changedFilesOfFrame(p)) item.changed = changedFilesAdd(item.changed, changedFile);
+    // ATO-2409: an Office writer (docx, xlsx, pptx) sends no diffstat; its ok call is a "created"/"updated" row from the call's path (chat-files.js cfOfficeWrite).
+    const officeWrite = item && card.ok === true && typeof cfOfficeWrite === 'function' ? cfOfficeWrite(card.name, toolArgsObj(card.args)) : null;
+    if (officeWrite) item.changed = changedFilesAdd(item.changed, changedFileOfOfficeWrite(officeWrite, cfAbsolute(officeWrite.path, workingDir(), homeDir())));
     render();
     return;
   }
@@ -23847,7 +23850,9 @@ function renderProseFresh(text) {
     const h = md.held[+i];
     const code = /^<code class="mdcode">([\s\S]*)<\/code>$/.exec(h);
     const raw = code ? code[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim() : '';
-    return raw && codeSpanIsPath(raw) ? chip(raw, h) : h.startsWith('<pre class="mdpre"') ? codeBlockFrame(h) : h;
+    // ATO-2409: a bare name the chat wrote (`sales.docx`) is that file's chip (chat-files.js chatFilesByName; main confirms the path as ever).
+    const known = raw && !codeSpanIsPath(raw) && typeof chatFilesByName === 'function' ? chatFilesByName(raw) : '';
+    return raw && codeSpanIsPath(raw) ? chip(raw, h) : known ? chip(known, h) : h.startsWith('<pre class="mdpre"') ? codeBlockFrame(h) : h;
   });
   // ATO-664: the finished markup through DOMPurify too (md-render.js), behind the escaping.
   return mdSanitize(html.replace(/\u0001(\d+)\u0001/g, (m, i) => chips[+i]));
@@ -24039,6 +24044,9 @@ function resolveAgentPath(p, cwd) {
 /** Files a tool card wrote — the agent's own result line first, its args
     second. Only ok cards, only the four write tools. */
 function cardWrittenPaths(m, cwd) {
+  // ATO-2409: an Office writer's ok call (docx, xlsx, pptx) saved the `path` it was given (chat-files.js cfOfficeWrite).
+  const office = m.k === 'tool' && m.ok === true && !m.forced && typeof cfOfficeWrite === 'function' ? cfOfficeWrite(m.name, cardArgs(m) || {}) : null;
+  if (office) return [resolveAgentPath(office.path, cwd)];
   if (m.k !== 'tool' || m.ok !== true || m.forced || !WRITE_TOOLS.has(m.name)) return [];
   const a = cardArgs(m) || {};
   const out = String(m.out || '');
