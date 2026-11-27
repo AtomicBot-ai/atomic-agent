@@ -113,6 +113,8 @@ export function getStateSecretPaths(paths: {
     join(paths.stateDir, "serve-api.key"),
     // ATO-2336: the key other apps use the shared model with (`modelShareKeyPath`).
     join(paths.stateDir, "model-share.key"),
+    // ATO-2451: the lasting `atag launch --config` token (`launchClientKeyPath`).
+    join(paths.stateDir, "launch-client.key"),
     join(paths.localModelsDataDir, "core", "chat.json"),
     join(paths.localModelsDataDir, "core", "embedding.json"),
     join(paths.stateDir, "atomic-mail", "session.json"),

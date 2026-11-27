@@ -17,7 +17,7 @@ import { persistSpecFor, type PersistInput } from "./launch-config-targets.js";
 import { DEFAULT_LAUNCH_MODEL, type LaunchIntegration } from "./launch-integrations.js";
 import type { LocalModelProbe } from "./launch-local-model.js";
 import { DEFAULT_SERVE_PORT, loopbackBaseUrl, type LaunchServe } from "./launch-serve.js";
-import { serveApiKeyPath } from "./serve-api-key.js";
+import { lastingToken, launchClientKeyPath } from "./launch-token.js";
 
 /** Name of the fallback model label in local mode (same as launch-command.ts). */
 const LOCAL_FALLBACK = "local-model";
@@ -38,9 +38,10 @@ export interface LaunchConfigDeps {
   readonly findServe: (stateDir: string, cwd: string | null) => Promise<LaunchServe | null>;
   readonly probeLocal: (baseUrl: string, token: string) => Promise<LocalModelProbe>;
   readonly cwd: string;
+  /** Asks serve for the model name only. */
   readonly key: string;
-  /** Whether the key came from ATOMIC_AGENT_API_KEY rather than the key file. */
-  readonly keyFromEnv: boolean;
+  /** ATO-2451: the lasting `member` token the CLI's setting reads (launch-token.ts). */
+  readonly lastingToken?: (stateDir: string) => { readonly token: string } | { readonly error: string };
   readonly write: (text: string) => void;
   readonly writeErr: (text: string) => void;
 }
@@ -75,7 +76,7 @@ export async function runLaunchConfig(
     model,
     modelGiven: local || parsed.model !== null,
     keyCommand,
-    keySource: deps.keyFromEnv ? { kind: "env", name: "ATOMIC_AGENT_API_KEY" } : { kind: "file", path: serveApiKeyPath(deps.stateDir) },
+    keyFile: launchClientKeyPath(deps.stateDir),
     env: deps.env,
     home: deps.home ?? homedir(),
   };
@@ -83,6 +84,12 @@ export async function runLaunchConfig(
   if (!spec) {
     deps.writeErr(`launch: ${integration.displayName} has no lasting setting; run atag launch ${integration.id} each time instead.\n`);
     return 2;
+  }
+  // The token the setting points at must exist before the CLI first reads it.
+  const lasting = (deps.lastingToken ?? lastingToken)(deps.stateDir);
+  if ("error" in lasting) {
+    deps.writeErr(`launch: could not save the key for ${integration.displayName} in the Atomic Agent folder; nothing was changed.\n`);
+    return 1;
   }
   const applied = applyLaunchConfig(deps.stateDir, integration.id, spec, fs);
   if (!applied.ok) {

@@ -6,8 +6,9 @@
  *
  * The key is never written in clear where the CLI can fetch it itself:
  * Claude Code runs `apiKeyHelper` (`atag launch --print-key`), OpenCode
- * reads `{file:...}` or `{env:...}`, Codex reads the variable named by
- * `env_key`, which the person exports in their shell.
+ * reads `{file:...}`, Codex and Qwen Code read the variable named by
+ * `env_key` / `envKey`, which the person exports in their shell. The key
+ * is the lasting `member` token of launch-token.ts, not the serve key.
  */
 
 import { join } from "node:path";
@@ -24,8 +25,8 @@ export interface PersistInput {
   readonly modelGiven: boolean;
   /** Shell command that prints the key (`"<atag>" launch --print-key`). */
   readonly keyCommand: string;
-  /** Where the key can be read from without a shell, for OpenCode. */
-  readonly keySource: { readonly kind: "file"; readonly path: string } | { readonly kind: "env"; readonly name: string };
+  /** ATO-2451: the 0600 file with the lasting launch token, for OpenCode's `{file:...}`. */
+  readonly keyFile: string;
   readonly env: NodeJS.ProcessEnv;
   readonly home: string;
 }
@@ -82,7 +83,7 @@ function codexSpec(input: PersistInput): PersistSpec {
 }
 
 function openCodeSpec(input: PersistInput): PersistSpec {
-  const apiKey = input.keySource.kind === "file" ? `{file:${input.keySource.path}}` : `{env:${input.keySource.name}}`;
+  const apiKey = `{file:${input.keyFile}}`;
   return {
     kind: "json",
     file: openCodeConfigPath(input.env, input.home),
