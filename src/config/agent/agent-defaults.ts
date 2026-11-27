@@ -1,5 +1,6 @@
 import { createCompactionDefaults } from "./compaction-config.js";
 import { createPromptDefaults } from "./prompt-config.js";
+import { createAgentSecurityDefaults } from "./security-config.js";
 import type { UserAgentConfig } from "./agent-types.js";
 import { createAgentGoalDefaults, createProviderWaitDefaults, createAgentTaskDefaults } from "../agent-execution-config.js";
 
@@ -26,6 +27,7 @@ export function createAgentDefaults(): UserAgentConfig {
     smartApproval: false,
     smartApprovalModel: null,
     taintReview: false,
+    security: createAgentSecurityDefaults(),
     prompt: createPromptDefaults(),
     tools: { search: "auto" },
   };

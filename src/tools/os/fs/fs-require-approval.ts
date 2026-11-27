@@ -12,6 +12,7 @@ import {
   type FsMutationKind,
 } from "./fs-approval-scope.js";
 import type { DeclaredInputsRegistry } from "./fs-declared-inputs.js";
+import { sensitiveWriteReason, sensitiveWriteTargets } from "./sensitive-write-targets.js";
 import type { FileRestoreStore } from "./fs-restore-store.js";
 import type { LspDiagnostics } from "./lsp/index.js";
 
@@ -192,7 +193,11 @@ export async function requireFsApproval(
   // Nor a call a saved deny or ask rule covers: the scope speaks for a
   // directory, the rule for this action.
   const targetPaths = request.targetPaths ?? [];
+  // A shell startup file, the SSH folder or a credential file in home
+  // asks at every level, bypass and fan-out scopes included (ATO-2505).
+  const sensitive = sensitiveWriteTargets(request.paths, request.workingDir);
   if (
+    sensitive.length === 0 &&
     category !== "trust_config" &&
     options.approvals.fanoutScopes.allows(request.sessionId, request.paths) &&
     !(
@@ -239,7 +244,20 @@ export async function requireFsApproval(
       sessionId: request.sessionId,
       tool: request.tool,
       category,
-      reason: request.reason,
+      reason:
+        sensitive.length === 0
+          ? request.reason
+          : `${request.reason} (${sensitiveWriteReason(sensitive)})`,
+      ...(sensitive.length > 0
+        ? {
+            askEveryLevel: true as const,
+            securityFinding: {
+              rule: "dangerous.write_startup_file",
+              reason: sensitiveWriteReason(sensitive),
+              confidence: 1,
+            },
+          }
+        : {}),
       ...(request.preview !== undefined ? { preview: request.preview } : {}),
       ...(request.affectedResources !== undefined
         ? { affectedResources: request.affectedResources }

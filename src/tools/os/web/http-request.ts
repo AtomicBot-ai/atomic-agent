@@ -15,6 +15,7 @@ import type {
 } from "../../../config/index.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import { CurlUnavailableError } from "./ensure-curl.js";
+import { httpSecretFinding, readArgScanThreshold } from "./http-body-secrets.js";
 import {
   executeGuardedHttpRequest,
   isCurlTransportError,
@@ -52,6 +53,11 @@ export interface OsHttpRequestOptions extends DangerousToolOptions {
   lookup?: HostLookup;
   /** Sites a chat already used under `http.urlDataGuard: "strict"` (ATO-1377). Defaults to the shared store. */
   urlSendSites?: UrlSendSites;
+  /**
+   * `agent.security.argScanThreshold` (ATO-2505), read live: at or above
+   * it a secret in the body or query asks at every level. Absent: 0.7.
+   */
+  argScanThreshold?: () => number;
 }
 
 interface HttpArgs {
@@ -115,10 +121,16 @@ export function buildOsHttpRequestTool(
               options.urlSendSites,
             )
           : null;
+      // ATO-2505: a secret in the body or query asks whatever the mode;
+      // a sure one asks at every level, bypass included.
+      const secret = httpSecretFinding(args.urlObj, args.body);
+      const secretAsksEveryLevel =
+        secret !== null && secret.confidence >= readArgScanThreshold(options.argScanThreshold);
       if (
         needsApproval(httpCfg.approvalMode, args.method) ||
         heldForOutsideContent(options, httpCfg, ctx.sessionId) ||
-        urlCheck !== null
+        urlCheck !== null ||
+        secret !== null
       ) {
         // Every text the prompt (and the ledger) shows has secrets in the
         // query, fragment and body masked (ATO-1471).
@@ -128,11 +140,14 @@ export function buildOsHttpRequestTool(
           {
             sessionId: ctx.sessionId,
             tool: "os.http.request",
-            category: urlCheck !== null ? "http_write" : httpApprovalCategory(args.method),
+            category:
+              urlCheck !== null || secret !== null ? "http_write" : httpApprovalCategory(args.method),
             reason:
-              urlCheck !== null
+              (urlCheck !== null
                 ? urlSendReason(shownUrl, urlCheck)
-                : `${args.method} ${shownUrl}`,
+                : `${args.method} ${shownUrl}`) + (secret !== null ? ` (${secret.reason})` : ""),
+            ...(secret !== null ? { securityFinding: secret } : {}),
+            ...(secretAsksEveryLevel ? { askEveryLevel: true as const } : {}),
             preview: buildHttpApprovalPreview(args),
             affectedResources: [shownUrl],
             // "Allow for this session" and "Allow always" cover this

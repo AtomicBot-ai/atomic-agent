@@ -24,6 +24,7 @@ import {
 } from "../approval/approval-preview.js";
 import { formatRiskLine } from "../approval/risk-review.js";
 import { formatEgressLine } from "../approval/egress-scan.js";
+import { formatSecurityFindingLine } from "../approval/security-finding-line.js";
 import {
   APPROVAL_CHORDS,
   canEditPath,
@@ -126,6 +127,8 @@ export function ApprovalModal({
   const riskLine = formatRiskLine(request);
   // Where the command sends data (ATO-2116).
   const egressLine = formatEgressLine(request.egress);
+  // The argument check that raised the prompt (ATO-2505).
+  const findingLine = formatSecurityFindingLine(request);
   return (
     <Box
       flexDirection="column"
@@ -156,6 +159,7 @@ export function ApprovalModal({
           </Text>
         ) : null}
         {egressLine !== null ? <Text color="yellow">{egressLine}</Text> : null}
+        {findingLine !== null ? <Text color={theme.colors.error}>{findingLine}</Text> : null}
         {request.preview ? (
           <ApprovalPreview
             request={request}

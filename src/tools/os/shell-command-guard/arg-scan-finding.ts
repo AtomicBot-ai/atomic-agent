@@ -8,9 +8,9 @@ import type { GuardVerdict } from "./guard-types.js";
  *
  * Same shape as Goose's security scanner (`crates/goose/src/security/
  * scanner.rs`): every pattern finding carries a confidence and one
- * threshold decides which findings stop the call. A config key for it
- * (`agent.security.argScanThreshold`) is a follow-up; the constant keeps
- * this slice free of a config schema change.
+ * threshold decides which findings stop the call. This is the default;
+ * `agent.security.argScanThreshold` (0.5..1, ATO-2505) overrides it live
+ * through `ShellGuardPolicy.argScanThreshold`.
  */
 export const ASK_EVERY_LEVEL_CONFIDENCE = 0.7;
 

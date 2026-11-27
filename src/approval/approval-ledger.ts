@@ -28,6 +28,24 @@ export interface ToolApprovalRecord {
    * `session grant: git`, `rule r_8f3a2c1d`, `risk review: low (lists files)`.
    */
   reason?: string;
+  /**
+   * Set with `approved` / `denied` when an argument check raised the
+   * prompt (ATO-2505, `ApprovalRequest.securityFinding`), so the turn
+   * summary can say what was caught and what the person answered.
+   */
+  finding?: SecurityFinding;
+}
+
+/**
+ * What an argument check found (ATO-2505): the rule id
+ * (`dangerous.read_credentials`, `dangerous.encoded_exec`,
+ * `dangerous.write_startup_file`, `dangerous.http_secret`), a short human
+ * line, and how sure the check is, 0..1.
+ */
+export interface SecurityFinding {
+  rule: string;
+  reason: string;
+  confidence: number;
 }
 
 /** What auto-approved a request (`ToolApprovalRecord.via`). */

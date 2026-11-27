@@ -325,6 +325,10 @@ export function registerOsTools(
       approvals: options.approvals,
       approvalRequired: options.approvalRequired,
       config: options.config,
+      // The same live threshold the shell guard reads (ATO-2505).
+      ...(options.shellPolicy?.argScanThreshold === undefined
+        ? {}
+        : { argScanThreshold: options.shellPolicy.argScanThreshold }),
     }),
   );
   registry.register(

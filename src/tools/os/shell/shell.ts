@@ -101,6 +101,7 @@ import {
   fillShellSecrets,
 } from "./shell-secrets.js";
 import { ghReadOnlyRule } from "../shell-command-guard/rules-trusted/gh.js";
+import { shellSecurityCheck } from "./shell-security-check.js";
 import { gogReadOnlyRule } from "../shell-command-guard/rules-trusted/gog.js";
 import { icalBuddyReadOnlyRule } from "../shell-command-guard/rules-trusted/ical-buddy.js";
 
@@ -371,7 +372,10 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // reset --hard`, `sudo`): the operator approved a directory of work,
     // not those, so it goes to the gate too, where a worker's refuse
     // policy hands it back as a step for the operator (ATO-1223).
-    const dangerous = isDangerousGuardRule(guardVerdict.rule);
+    // A write into a startup, SSH or credential file in home asks at
+    // every level, like a credential read (ATO-2505).
+    const security = shellSecurityCheck(guardVerdict, targetPaths, cwd);
+    const dangerous = isDangerousGuardRule(guardVerdict.rule) || security.forcesGate;
     const commandSegments = shellRuleSegments(cmd, execArgs, useShell);
     const commandUnreadable = shellRunsUnreadableScript(cmd, execArgs, useShell);
     // Where the command sends data (ATO-2116): shown on the card, and a
@@ -413,7 +417,8 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     if (
       (guardVerdict.action === "approval_required" && !scopedByFanout) ||
       deniedBySavedRule ||
-      secretNames.length > 0
+      secretNames.length > 0 ||
+      security.forcesGate
     ) {
       // Shape grant unit: the bare binary name (lowercased), so `[a]`
       // and "Allow in this chat" cover exactly the argv[0] that would
@@ -441,7 +446,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           tool: "os.shell.run",
           category: strict ? "shell_dangerous" : "shell",
           reason:
-            `${guardVerdict.reason} in ${cwd}` +
+            `${security.forcesGate ? security.finding!.reason : guardVerdict.reason} in ${cwd}` +
             // The user approves the lifetime too: a background command
             // outlives the turn (ATO-1252).
             (background
@@ -465,7 +470,8 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           ...(egress.length > 0 ? { egress } : {}),
           workdir: ctx.workingDir,
           targetPaths,
-          ...(guardVerdict.askEveryLevel === true ? { askEveryLevel: true as const } : {}),
+          ...(security.askEveryLevel ? { askEveryLevel: true as const } : {}),
+          ...(security.finding !== undefined ? { securityFinding: security.finding } : {}),
         },
         ctx.signal,
       );
