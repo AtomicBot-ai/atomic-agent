@@ -9,6 +9,8 @@
  * while the chip is shown in a visible window or the menu bar icon is
  * up, and `{visible:false}` once when neither is. A report holds 45 s on
  * the runtime's side, so a crashed window stops the capture by itself.
+ * ATO-2526: `away` is true while the screen is locked or the person is
+ * idle (logbook-away.ts); the runtime then skips without a screenshot.
  */
 
 export type LogbookState = "off" | "on" | "paused";
@@ -23,6 +25,13 @@ export interface LogbookChipView {
   lastReason: string | null;
   supported: boolean;
   reason: string | null;
+  /** ATO-2526: what Settings › Logbook shows and edits. */
+  retentionDays: number;
+  excludeApps: string[];
+  titleOnlyApps: string[];
+  standupAt: string | null;
+  /** Days with notes, newest first, for the timeline's day list. */
+  days: string[];
 }
 
 /** How often main asks the runtime for the state. */
@@ -42,6 +51,10 @@ function str(v: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
 
+function strings(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
 /** GET /api/logbook's answer, or null for anything else. */
 export function parseLogbookView(raw: unknown): LogbookChipView | null {
   if (!raw || typeof raw !== "object") return null;
@@ -59,6 +72,11 @@ export function parseLogbookView(raw: unknown): LogbookChipView | null {
     lastReason: str(last.lastReason),
     supported: platform.supported !== false,
     reason: str(platform.reason),
+    retentionDays: num(settings.retentionDays) ?? 14,
+    excludeApps: strings(settings.excludeApps),
+    titleOnlyApps: strings(settings.titleOnlyApps),
+    standupAt: str(settings.standupAt),
+    days: strings(o.days).slice().sort().reverse(),
   };
 }
 
@@ -117,6 +135,7 @@ export function logbookErrorText(status: number, body: unknown): string {
   if (status === 409 && err && typeof err.message === "string") return err.message;
   if (status === 404) return "This version of the agent has no logbook controls. Update Atomic Agent to use them.";
   if (status === 403) return "The logbook can be changed only on the computer it runs on.";
+  if (status === 400) return "The agent did not take that. Check the values and try again.";
   return "Atomic Agent did not answer. Try again in a moment.";
 }
 

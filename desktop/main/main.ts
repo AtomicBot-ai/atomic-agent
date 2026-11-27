@@ -61,6 +61,8 @@ import { wireWorkboardIpc } from "./workboard-ipc.js";
 import { wireIdeasIpc } from "./ideas-ipc.js";
 import { wireLogbookIpc } from "./logbook-ipc.js";
 import { createLogbookTray } from "./logbook-tray.js";
+import { watchLogbookAway } from "./logbook-away.js";
+import { showLogbookTimeline, wireLogbookTimelineIpc } from "./logbook-timeline-ipc.js";
 import { wireSessionGoalIpc } from "./session-goal-ipc.js";
 import { wireSideQuestionIpc } from "./side-question-ipc.js";
 import { wireIncognitoChatsIpc } from "./incognito-chats-ipc.js";
@@ -3441,7 +3443,10 @@ function wireIpc(client: AgentClient): void {
   // ATO-458: suggested tasks on the empty chat screen (ideas-ipc.ts, renderer/suggestion-cards.js).
   wireIdeasIpc({ client });
   // ATO-2534: the logbook's ● chip and menu bar icon; the runtime captures only while one is shown (logbook-ipc.ts).
-  const logbook = wireLogbookIpc({ client, window: () => win, tray: createLogbookTray({ act: (a, m) => void logbook.act(a, m), openWindow: () => openWindowAgain() }) });
+  // ATO-2526: away on lock or idle (logbook-away.ts), Settings › Logbook and the day timeline (logbook-timeline-ipc.ts).
+  const logbookAway = watchLogbookAway(() => void logbook.beat());
+  const logbook = wireLogbookIpc({ client, window: () => win, away: logbookAway, tray: createLogbookTray({ act: (a, m) => void logbook.act(a, m), openWindow: () => openWindowAgain(), openTimeline: () => { openWindowAgain(); showLogbookTimeline(win); } }) });
+  wireLogbookTimelineIpc(logbook, () => client.isRemote);
   // ATO-1091: Settings › Models › "Find the best model for my tasks" (`atag models fit-test`).
   wireFitTestIpc({
     window: () => win,

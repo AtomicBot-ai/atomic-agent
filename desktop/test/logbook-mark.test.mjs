@@ -23,6 +23,7 @@ test("reads GET /api/logbook and refuses anything else", () => {
   assert.deepEqual(M.parseLogbookView(VIEW), {
     state: "on", pausedUntil: null, intervalMinutes: 5, notesToday: 3,
     lastOutcome: "skipped", lastReason: "A password manager was in front.", supported: true, reason: null,
+    retentionDays: 14, excludeApps: [], titleOnlyApps: [], standupAt: null, days: [],
   });
   assert.equal(M.parseLogbookView({ state: "recording" }), null);
   assert.equal(M.parseLogbookView(null), null);

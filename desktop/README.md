@@ -1173,6 +1173,20 @@ Honestly degraded, and labelled as such in the UI:
   no), and `{visible:false}` once when neither is. A report holds 45 s, so a
   crashed or quit app stops the capture by itself. A remote agent gets none
   of this. Pure half: `main/logbook-mark.ts`.
+- **Settings › Logbook and the day timeline (ATO-2526).** Settings has a
+  Logbook section (`renderer/logbook-settings.js`): Turn on / Turn off, how
+  often, how many days notes are kept, apps never captured, apps noted by
+  window title only (no screenshot, no model), and an opt-in morning standup
+  time (a cron task the runtime files, see the logbook README). Save writes
+  `PATCH /api/logbook/settings`. Open the timeline (also in the chip's and
+  the menu bar's menus) shows one day's notes newest first
+  (`renderer/logbook-timeline.js`, `GET /api/logbook/day`); a note or the
+  whole day is deleted after a confirm (`DELETE /api/logbook/entries`).
+  Main: `main/logbook-timeline-ipc.ts`, pure half `main/logbook-prefs.ts`.
+  While the screen is locked, the computer sleeps or there was no input for
+  5 minutes (`main/logbook-away.ts`, Electron `powerMonitor`), the mark
+  carries `away: true` and the runtime skips without a screenshot; a lock
+  tells the runtime at once.
 - **Voice input: what is and is not possible.** `SpeechAnalyzer` is macOS
   26+, so on anything older the button is disabled and says
   `Voice input needs macOS 26 or later`; the app itself runs from
