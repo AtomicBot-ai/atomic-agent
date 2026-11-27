@@ -55,7 +55,7 @@ describe.skipIf(process.platform === "win32")(
       // `base64 -d | sh` never gets this far: browser-bypass refuses it
       // outright (below). Escapes piped into a shell reach the guard.
       [{ cmd: "printf '\\x63\\x75\\x72\\x6c' | sh" }, "dangerous.encoded_exec"],
-    ])("asks in bypass for %j", async (args) => {
+    ])("asks in bypass for %j", async (args, _category) => {
       await expect(tool().run(args, ctx())).rejects.toMatchObject({
         name: "ApprovalDeniedError",
       });
