@@ -64,6 +64,20 @@ posix("recursive readers rooted at the state folder (ATO-2496)", () => {
     expect(findStateSecretReads("files.search", { query: "token", folder: stateDir }, ctx(), secrets)).not.toEqual([]);
   });
 
+  // Review round 2: with `path` omitted the tools walk the working
+  // directory, and that may be the state folder itself.
+  it("asks when the path is omitted and the working directory is the state folder", () => {
+    const inState = { workingDir: stateDir };
+    expect(findStateSecretReads("os.code.search", { pattern: '"accessToken": $V', lang: "json" }, inState, secrets)).not.toEqual([]);
+    expect(findStateSecretReads("os.code.search", { pattern: "$A", lang: "json" }, inState, secrets)).not.toEqual([]);
+    expect(findStateSecretReads("os.code.rewrite", { pattern: "$K: $V", rewrite: "$K: $V", lang: "json" }, inState, secrets)).not.toEqual([]);
+    expect(findStateSecretReads("os.fs.code_map", {}, inState, secrets)).not.toEqual([]);
+    expect(findStateSecretReads("os.fs.grep", { pattern: "accessToken" }, inState, secrets)).not.toEqual([]);
+    // The same calls from the project folder stay quiet.
+    expect(findStateSecretReads("os.code.search", { pattern: "$A", lang: "json" }, ctx(), secrets)).toEqual([]);
+    expect(findStateSecretReads("os.fs.grep", { pattern: "accessToken" }, ctx(), secrets)).toEqual([]);
+  });
+
   it("leaves a code search of the project alone", () => {
     expect(findStateSecretReads("os.code.search", { path: work, lang: "ts", pattern: "$A" }, ctx(), secrets)).toEqual([]);
   });

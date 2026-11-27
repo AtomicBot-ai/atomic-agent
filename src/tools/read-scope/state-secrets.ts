@@ -82,6 +82,19 @@ export const RECURSIVE_READ_TOOLS: ReadonlySet<string> = new Set([
   "files.search",
 ]);
 
+/**
+ * Recursive readers whose omitted root is the working directory: with no
+ * `path` they walk `ctx.workingDir`, which may be the state folder itself.
+ * (`files.search` without a `folder` searches My files; a move without
+ * a source moves nothing.)
+ */
+const WORKING_DIR_WHEN_OMITTED: ReadonlySet<string> = new Set([
+  "os.fs.grep",
+  "os.code.search",
+  "os.code.rewrite",
+  "os.fs.code_map",
+]);
+
 interface CanonicalSecrets {
   /** Each secret file, lexically resolved and canonicalised. */
   files: string[];
@@ -162,7 +175,8 @@ function directoryHolding(path: string, known: CanonicalSecrets): string | null 
  * The secret files a read-class call targets (the `READ_TOOL_TARGETS`
  * argument of `tool`), deduplicated; empty when it touches none. A
  * recursive reader (`RECURSIVE_READ_TOOLS`) also counts when its root is
- * a folder of the state that holds a secret.
+ * a folder of the state that holds a secret; an omitted root is the
+ * working directory (`WORKING_DIR_WHEN_OMITTED`).
  */
 export function findStateSecretReads(
   tool: string,
@@ -175,7 +189,10 @@ export function findStateSecretReads(
   if (secrets.files.length === 0 && (secrets.secretDirectories ?? []).length === 0) return [];
   const known = canonicalSecrets(secrets);
   const hits = new Set<string>();
-  for (const target of targetsOf(args)) {
+  const named = targetsOf(args);
+  const targets =
+    named.length === 0 && WORKING_DIR_WHEN_OMITTED.has(tool) ? [ctx.workingDir] : named;
+  for (const target of targets) {
     if (URL_LIKE.test(target)) continue;
     let path: string;
     try {
