@@ -9681,7 +9681,7 @@ function cpuNoticeHTML() {
    Settings › Models, each with the one way out: download the engine again.
    llama.cpp is never offered here (support-only CLI). Never a spinner left
    turning. */
-const ENGF_TITLE = 'The local engine isn\u2019t ready';
+/* ENGF_TITLE and the per-reason titles: engine-failure-title.js (ATO-2515). */
 /** Nadya's wording (ATO-374), the same in Settings › Models and in the error card. */
 const CPUFB_LINE = 'The model couldn\u2019t load on your graphics card. Switched to the CPU build, it will be slower.';
 function cpufbApply(n) {
@@ -9716,8 +9716,8 @@ function engfApply(f) {
   ENGF.f = f && typeof f === 'object' && typeof f.why === 'string' ? f : null;
   if (ENGF.f && ENGF.said !== ENGF.f.at) {
     ENGF.said = ENGF.f.at;
-    appSay('The local engine is not ready: ' + (ENGF.f.detail || ENGF.f.why), 'caution');
-    toast(ENGF_TITLE, ENGF.f.why, 'bad');
+    appSay(engfSayLine(ENGF.f), 'caution');
+    toast(engfTitleOf(ENGF.f), ENGF.f.why, 'bad');
   }
   render();
   if (llmVisible()) llmRepaint();
@@ -9751,7 +9751,7 @@ function engfNoticeHTML() {
   const f = ENGF.f;
   return '<div class="statusstrip engfail" role="alert">'
     + '<span class="ss-ic err">' + ic('alert') + '</span>'
-    + '<span class="ss-text" title="' + esc(f.detail || '') + '"><b class="ss-title">' + esc(ENGF_TITLE) + '</b>' + esc(f.why) + (f.cpuFallback ? ' ' + esc(CPUFB_LINE) : '') + '</span>'
+    + '<span class="ss-text" title="' + esc(f.detail || '') + '"><b class="ss-title">' + esc(engfTitleOf(f)) + '</b>' + esc(f.why) + (f.cpuFallback ? ' ' + esc(CPUFB_LINE) : '') + '</span>'
     + engfActsHTML('xs')
     + '<button class="iconbtn sm" data-act="engf:dismiss" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button></div>';
 }
@@ -9760,7 +9760,7 @@ function engfCardHTML() {
   const f = ENGF.f;
   if (!f) return '';
   return '<div class="tk-notice tk-notice--red llm-engfail" role="alert">' + ic('alert')
-    + '<span class="grow"><b>' + esc(ENGF_TITLE) + '</b><span class="llm-note">' + esc(f.why) + '</span>'
+    + '<span class="grow"><b>' + esc(engfTitleOf(f)) + '</b><span class="llm-note">' + esc(f.why) + '</span>'
     + engfCpuLineHTML(f)
     + (f.detail ? '<span class="llm-note llm-engfail-detail">' + esc(f.detail) + '</span>' : '') + '</span>'
     + '<span class="llm-engfail-acts">' + engfActsHTML('sm') + '</span></div>';
@@ -15250,7 +15250,7 @@ function obProgressHTML() {
   // weights bar: the model download below it is still running.
   // A Core failure (main's engine:failure) is said plainly, with its two ways out.
   const runtimeErr = DL.runtimeError && ENGF.f
-    ? '<div class="ob-err ob-engfail">' + ic('alert') + '<span><b>' + esc(ENGF_TITLE) + '</b> ' + esc(ENGF.f.why) + '</span>'
+    ? '<div class="ob-err ob-engfail">' + ic('alert') + '<span><b>' + esc(engfTitleOf(ENGF.f)) + '</b> ' + esc(ENGF.f.why) + '</span>'
       + '<span class="ob-engfail-acts">' + engfActsHTML('xs') + '</span></div>'
     : DL.runtimeError
     ? '<div class="ob-err">' + ic('alert') + '<span>' + esc(DL.runtimeError) + '</span></div>' : '';
