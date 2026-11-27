@@ -15,11 +15,11 @@ const request = {
 } as unknown as ApprovalRequest;
 
 function makeBridge() {
-  const posted: Array<{ target: LinearTarget; body: string }> = [];
+  const posted: Array<{ target: LinearTarget; body: string; kind?: string }> = [];
   const resolve = vi.fn(() => true);
   const bridge = new LinearApprovalBridge({
-    post: async (target, body) => {
-      posted.push({ target, body });
+    post: async (target, body, kind) => {
+      posted.push({ target, body, ...(kind ? { kind } : {}) });
     },
     approvals: { resolve: resolve as never },
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
@@ -35,6 +35,8 @@ describe("LinearApprovalBridge", () => {
     await vi.waitFor(() => expect(posted).toHaveLength(1));
     expect(posted[0]?.target).toEqual({ issueId: "issue-7", parentId: "c1" });
     expect(posted[0]?.body).toContain("Reply `yes K7Q2` to approve");
+    // In an agent session Linear shows it as a question (ATO-2464).
+    expect(posted[0]?.kind).toBe("elicitation");
     expect(bridge.pendingIn("issue-7")).toBe(1);
 
     expect(bridge.tryAnswer("issue-9", "yes K7Q2")).toContain("No pending approval");

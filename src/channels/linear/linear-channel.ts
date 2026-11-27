@@ -38,10 +38,8 @@ import {
   LINEAR_WEBHOOK_SECRET_KEY,
   resolveLinearMode,
   resolveLinearSecret,
-  type LinearMode,
   scrubLinearError,
-  type LinearTarget,
-  type LinearWebhookPayload,
+  type LinearActivityKind, type LinearMode, type LinearTarget, type LinearWebhookPayload,
 } from "./linear-types.js";
 
 const DELIVERY_CAP = 500;
@@ -154,7 +152,7 @@ export class LinearChannel implements Channel {
     this.api = api;
     this.inbox = this.deps.inboxDir === undefined ? null : createAttachmentInbox({ dir: this.deps.inboxDir });
     this.bridge = new LinearApprovalBridge({
-      post: (target, body) => this.post(target, body),
+      post: (target, body, kind) => this.post(target, body, kind),
       approvals: this.deps.approvals,
       logger: this.deps.logger,
     });
@@ -203,14 +201,15 @@ export class LinearChannel implements Channel {
     }
   }
 
-  /** Post a comment as the API key's user, recording it for the loop guard. */
-  private async post(target: LinearTarget, body: string): Promise<void> {
+  /** Post a comment (or an agent activity) as the key's user, recording it for the loop guard. */
+  private async post(target: LinearTarget, body: string, kind: LinearActivityKind = "response"): Promise<void> {
     const api = this.api;
     if (api === null) return;
     const fitted = fitCommentBody(body);
     this.own.notePending(fitted);
     try {
-      this.own.notePosted(await api.createComment(target, fitted));
+      if (target.agentSessionId) await api.createAgentActivity(target.agentSessionId, kind, fitted);
+      else this.own.notePosted(await api.createComment(target, fitted));
     } catch (err) {
       throw new Error(scrubLinearError(err, this.secrets));
     }
@@ -231,7 +230,7 @@ export class LinearChannel implements Channel {
     const inbox = this.inbox;
     void handleLinearEvent(payload, {
       runtime: this.deps.runtime,
-      post: (target, body) => this.post(target, body),
+      post: (target, body, kind) => this.post(target, body, kind),
       sessions: this.sessions,
       logger: this.deps.logger,
       ownerIds: this.ownerIds,
