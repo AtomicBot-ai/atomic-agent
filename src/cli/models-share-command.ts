@@ -3,7 +3,7 @@ import { ensureUserConfigFileSync, writeUserConfigFileSync } from "../config/con
 import type { UserConfigFile } from "../config/config-schema.js";
 import { ensureModelShareKey, modelShareKeyPath, rotateModelShareKey } from "../http/model-share-key.js";
 import { RAW_MODEL_PREFIX } from "../http/route-raw-model.js";
-import { readModelShareSettings, writeModelShareMode } from "../http/model-share-settings.js";
+import { readModelShareSettings, writeModelShareMode, writeModelSharePort } from "../http/model-share-settings.js";
 import { lanUrls } from "./serve-args.js";
 
 /**
@@ -36,12 +36,11 @@ export const SHARE_HELP =
     "               model routes only, plain http. Asked for each time: --off forgets it",
     "  --rotate     Make a new key; apps that used the old one get 401",
     "  --off        Stop sharing (the routes answer 404); the key is kept",
-    "  --port <p>   The port serve listens on (default 8787)",
+    "  --port <p>   The shared model's port, saved as localModels.managed.sharePort (default 8787)",
     "  --json       Print { enabled, key, urls, keyPath } instead",
     "",
-    "A serve that itself listens on <port> answers there; other devices then reach it",
-    "only when that serve listens on the network:",
-    "  atomic-agent serve --host 0.0.0.0 --api-key <a key you choose>",
+    "A serve that itself listens on <port> answers there. In --local mode only apps on",
+    "this computer get an answer, also from a serve started with --host 0.0.0.0.",
   ].join("\n") + "\n";
 
 export interface ShareArgs {
@@ -49,12 +48,13 @@ export interface ShareArgs {
   where?: "local" | "network";
   off: boolean;
   rotate: boolean;
-  port: number;
+  /** ATO-2483: `--port` writes `localModels.managed.sharePort`; `null` keeps the saved port. */
+  port: number | null;
   json: boolean;
 }
 
 export function parseShareArgs(args: readonly string[]): ShareArgs | { help: true } | { error: string } {
-  const out: ShareArgs = { off: false, rotate: false, port: 8787, json: false };
+  const out: ShareArgs = { off: false, rotate: false, port: null, json: false };
   for (let i = 0; i < args.length; i += 1) {
     const flag = args[i];
     switch (flag) {
@@ -111,22 +111,26 @@ export function formatShareSummary(input: { key: string; urls: { local: string; 
     "",
     input.network
       ? "Other devices: a running serve (or the desktop app) opens this port on the network for the model routes only."
-      : "Other devices need serve on the network: atomic-agent models share --network, or atomic-agent serve --host 0.0.0.0 --api-key <a key you choose>",
+      : "Only apps on this computer can use it. For other devices too: atomic-agent models share --network",
     "Warning: traffic on the local network is plain http; anyone on the same network can read it.",
     "One request at a time: a second one gets 429 while the first runs. Stop with: atomic-agent models share --off",
   ];
   return `${lines.join("\n")}\n`;
 }
 
-/** Write `localModels.managed.share` to the config file; no write when it already holds `enabled`. */
+/**
+ * Write `localModels.managed.share` to the config file; no write when it
+ * already holds `enabled`. Off also drops `shareNetwork` (ATO-2483).
+ */
 export function setModelShareEnabled(path: string, enabled: boolean): void {
   const user = ensureUserConfigFileSync(path);
   if (user.localModels.managed.share === enabled) return;
+  const { shareNetwork: _forgotten, ...rest } = user.localModels.managed;
   const next: UserConfigFile = {
     ...user,
     localModels: {
       ...user.localModels,
-      managed: { ...user.localModels.managed, share: enabled },
+      managed: enabled ? { ...user.localModels.managed, share: true } : { ...rest, share: false },
     },
   };
   writeUserConfigFileSync(path, next);
@@ -159,11 +163,15 @@ export async function runModelsShare(args: readonly string[]): Promise<number> {
   }
   if (parsed.where) writeModelShareMode(config.paths.userConfigFile, parsed.where);
   else setModelShareEnabled(config.paths.userConfigFile, true);
-  const urls = shareBaseUrls(parsed.port);
+  if (parsed.port !== null) writeModelSharePort(config.paths.userConfigFile, parsed.port);
+  // ATO-2483: the same rule as GET /api/model-share: the saved port, and
+  // addresses for other devices only when the mode lets them in.
+  const settings = readModelShareSettings(config.paths.userConfigFile);
+  const urls = shareBaseUrls(settings.port, settings.mode === "network" ? undefined : []);
   if (parsed.json) {
-    process.stdout.write(`${JSON.stringify({ enabled: true, mode: readModelShareSettings(config.paths.userConfigFile).mode, key, urls, keyPath: modelShareKeyPath(stateDir) })}\n`);
+    process.stdout.write(`${JSON.stringify({ enabled: true, mode: settings.mode, key, urls, keyPath: modelShareKeyPath(stateDir) })}\n`);
   } else {
-    process.stdout.write(formatShareSummary({ key, urls, rotated: parsed.rotate, network: readModelShareSettings(config.paths.userConfigFile).mode === "network" }));
+    process.stdout.write(formatShareSummary({ key, urls, rotated: parsed.rotate, network: settings.mode === "network" }));
   }
   return 0;
 }

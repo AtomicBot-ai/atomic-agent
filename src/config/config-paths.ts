@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { USER_CONFIG_DEFAULTS } from "./config-schema.js";
 import { ConfigValidationError } from "./config-validation-error.js";
 import { writeOwnerOnlyFileAtomicSync } from "./owner-only-file.js";
+import { withoutStaleShareNetwork } from "./local-models/share-network-on-disk.js";
 
 /**
  * Dotted-key addressing for `atomic-agent config get|set|unset|list`.
@@ -280,7 +281,7 @@ export function writeRawUserConfigFileSync(
   tree: Record<string, unknown>,
 ): void {
   mkdirSync(dirname(path), { recursive: true });
-  const payload = JSON.stringify(tree, null, 2) + "\n";
+  const payload = JSON.stringify(withoutStaleShareNetwork(tree), null, 2) + "\n";
   writeOwnerOnlyFileAtomicSync(path, payload);
 }
 

@@ -23,7 +23,7 @@ describe("models share", () => {
   });
 
   it("parses --rotate, --off, --port and --json, and refuses --off with --rotate", () => {
-    expect(parseShareArgs([])).toEqual({ off: false, rotate: false, port: 8787, json: false });
+    expect(parseShareArgs([])).toEqual({ off: false, rotate: false, port: null, json: false });
     expect(parseShareArgs(["--rotate", "--port", "9000", "--json"])).toEqual({ off: false, rotate: true, port: 9000, json: true });
     expect(parseShareArgs(["--off"])).toMatchObject({ off: true });
     expect(parseShareArgs(["--off", "--rotate"])).toHaveProperty("error");
@@ -62,7 +62,9 @@ describe("models share", () => {
     expect(text).toContain("http://192.168.1.5:8787/raw/v1");
     expect(text).toContain("k".repeat(64));
     expect(text).toContain("plain http");
-    expect(text).toContain("--host 0.0.0.0");
+    // ATO-2483: local mode refuses other devices even on a serve on 0.0.0.0, so --network is the one way.
+    expect(text).toContain("models share --network");
+    expect(text).not.toContain("--host 0.0.0.0");
   });
 
   it("writes localModels.managed.share on and off in the config file", () => {

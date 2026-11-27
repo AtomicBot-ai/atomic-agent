@@ -2,8 +2,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { getConfig, readUserConfigFileSync } from "../config/index.js";
 import { apiKeyForUrl } from "../local-llm/server/managed-api-key.js";
-import { AuthThrottle } from "./auth-throttle.js";
+import { AuthThrottle, isLoopbackAddress } from "./auth-throttle.js";
 import { readModelShareKey } from "./model-share-key.js";
+import { readModelShareSettings } from "./model-share-settings.js";
 import { openaiError } from "./openai-errors.js";
 import { createInFlightLimit, type InFlightLimit } from "./raw-model-limit.js";
 import {
@@ -63,6 +64,12 @@ export interface RawModelUpstream {
 export interface RawModelShareDeps {
   /** Whether sharing is switched on now. */
   isEnabled: () => boolean;
+  /**
+   * ATO-2483: `true` while the mode is "This computer" (local): callers
+   * from another address get 404, also on a serve whose own listener is on
+   * the network. Omitted: no address check (tests of the other rules).
+   */
+  localOnly?: () => boolean;
   /** The share key, `null` when none was made. */
   readKey: () => string | null;
   /** Where the model is now. */
@@ -89,6 +96,7 @@ export function isModelShareEnabled(): boolean {
 export function defaultRawModelShareDeps(): RawModelShareDeps {
   return {
     isEnabled: isModelShareEnabled,
+    localOnly: () => readModelShareSettings().mode === "local",
     readKey: () => readModelShareKey(getConfig().paths.stateDir),
     upstream: () => {
       const config = getConfig();
@@ -150,7 +158,9 @@ export function createRawModelHandlers(deps: RawModelShareDeps = defaultRawModel
 
 /** Switch, key, then the bearer check. `true` when the request may go on. */
 function admit(req: IncomingMessage, res: ServerResponse, deps: RawModelShareDeps, throttle: AuthThrottle): boolean {
-  if (!deps.isEnabled()) {
+  // ATO-2483: in local mode a caller from another device sees the route as
+  // missing, the same answer as off, before any key is looked at.
+  if (!deps.isEnabled() || (deps.localOnly?.() === true && !isLoopbackAddress(req.socket?.remoteAddress ?? ""))) {
     const method = (req.method ?? "GET").toUpperCase();
     const path = new URL(req.url ?? "/", "http://localhost").pathname;
     sendError(res, 404, openaiError(`No route for ${method} ${path}`, "invalid_request_error"));
@@ -171,8 +181,12 @@ function admit(req: IncomingMessage, res: ServerResponse, deps: RawModelShareDep
     sendAuthThrottled(res, wait);
     return false;
   }
-  if (!secretEquals(getBearerToken(req) ?? getHeader(req, "x-api-key"), key)) {
-    throttle.failed(address);
+  const sent = getBearerToken(req) ?? getHeader(req, "x-api-key");
+  if (!secretEquals(sent, key)) {
+    // ATO-2483: only a wrong key counts as a guess. A request with no key
+    // (the desktop's Find on my network probing for a shared model) guesses
+    // nothing, and counting it locked the real app out with 429.
+    if (sent) throttle.failed(address);
     sendInvalidApiKey(res);
     return false;
   }

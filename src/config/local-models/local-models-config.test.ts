@@ -57,7 +57,10 @@ describe("local model configuration domain seams", () => {
   it("reads the shared model's listener as this computer on 8787 unless the file says otherwise (ATO-2483)", () => {
     expect(parseLocal({}).managed.shareNetwork).toBeUndefined();
     expect(parseLocal({}).managed.sharePort).toBeUndefined();
-    expect(parseLocal({ managed: { shareNetwork: true, sharePort: 9000 } }).managed).toMatchObject({ shareNetwork: true, sharePort: 9000 });
+    expect(parseLocal({ managed: { share: true, shareNetwork: true, sharePort: 9000 } }).managed).toMatchObject({ shareNetwork: true, sharePort: 9000 });
+    // An off by any path forgets the network: it is read only while sharing is on.
+    expect(parseLocal({ managed: { share: false, shareNetwork: true } }).managed.shareNetwork).toBeUndefined();
+    expect(parseLocal({ managed: { shareNetwork: true } }).managed.shareNetwork).toBeUndefined();
     expect(() => parseLocal({ managed: { shareNetwork: "maybe" } })).toThrow();
     expect(() => parseLocal({ managed: { sharePort: 70000 } })).toThrow();
     expect(() => parseLocal({ managed: { sharePort: 0 } })).toThrow();
