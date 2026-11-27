@@ -185,6 +185,16 @@ contextBridge.exposeInMainWorld("atomic", {
     answer: (approvalId: string, decision: "allow" | "deny") => ipcRenderer.invoke("pet:answer", { approvalId, decision }),
     open: () => ipcRenderer.send("pet:open"),
     menu: () => ipcRenderer.send("pet:menu"),
+    /* ATO-2513: the bubble takes the keyboard after a click on it, and gives it back. */
+    focus: (on: boolean) => ipcRenderer.send("pet:focus", on === true),
+    /* ATO-2513: the made pet that shows (main/pet-skins-ipc.ts), and the main window's "Make your own pet". */
+    skin: () => ipcRenderer.invoke("pet:skinGet"),
+    onSkin: (cb: (payload: unknown) => void) => on("pet:skin", cb),
+    skins: () => ipcRenderer.invoke("pet:skins"),
+    saveSkin: (name: string, frames: Record<string, string>) => ipcRenderer.invoke("pet:saveSkin", { name, frames }),
+    useSkin: (id: string) => ipcRenderer.invoke("pet:useSkin", id),
+    deleteSkin: (id: string) => ipcRenderer.invoke("pet:deleteSkin", id),
+    onOpenMaker: (cb: () => void) => on("pet:openMaker", () => cb()),
   },
   onPetRelay: (cb: (payload: unknown) => void) => on("pet:relayAnswer", cb),
   petRelayResult: (reqId: string, handled: boolean) => ipcRenderer.send("pet:relayResult", { reqId, handled: handled === true }),

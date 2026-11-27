@@ -20,6 +20,12 @@ import { quickEntryWindowLevel } from "./quick-entry.js";
  * - dragged by the sprite: main follows the cursor while the page holds the
  *   button (dragStart / dragEnd), so a fast move never leaves it behind.
  *
+ * ATO-2513: a click on the bubble lets the window take the keyboard
+ * (keyboard(true)): Tab, Enter = Allow once, Esc = Deny. It gives it back
+ * when it loses focus or the bubble goes (keyboard(false)), so the pet
+ * never holds the keyboard by itself. Linux cannot switch a window's
+ * focusability after creation: there the click only asks for focus.
+ *
  * The page uses the main window's preload (window.atomic.pet), as the
  * dictation pill and the mini chat do.
  */
@@ -42,6 +48,8 @@ export interface PetWindow {
   dragStart(): void;
   /** The drag is over; the window's top left, to be saved. */
   dragEnd(): { x: number; y: number } | null;
+  /** ATO-2513: take the keyboard for the bubble (true) or give it back (false). */
+  keyboard(on: boolean): void;
   close(): void;
 }
 
@@ -92,6 +100,10 @@ export function openPetWindow(prefs: PetPrefs, platform: NodeJS.Platform, onClos
     stopDrag();
     onClosed();
   });
+  // ATO-2513: focus left the pet (a click elsewhere): it stops taking the keyboard.
+  const switchable = platform === "darwin" || platform === "win32";
+  const unfocusable = () => { if (switchable && !win.isDestroyed()) win.setFocusable(false); };
+  win.on("blur", unfocusable);
   void win.loadFile(join(__dirname, "..", "renderer", "pet.html")).catch(() => {});
 
   return {
@@ -123,6 +135,17 @@ export function openPetWindow(prefs: PetPrefs, platform: NodeJS.Platform, onClos
       if (!was || win.isDestroyed()) return null;
       const [x, y] = win.getPosition();
       return typeof x === "number" && typeof y === "number" ? { x, y } : null;
+    },
+    keyboard(on) {
+      if (win.isDestroyed()) return;
+      if (!on) {
+        if (win.isFocused()) win.blur();
+        unfocusable();
+        return;
+      }
+      if (switchable) win.setFocusable(true);
+      if (platform === "win32") win.setSkipTaskbar(true);
+      win.focus();
     },
     close() {
       stopDrag();

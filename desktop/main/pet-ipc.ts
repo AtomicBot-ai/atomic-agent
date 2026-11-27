@@ -4,7 +4,10 @@
  *
  * It listens to the same AgentClient events main.ts sends the main window
  * (`chat`, `approval`) and sends the page one computed view (pet:view).
- * Nothing is asked of the agent and no model is called: it costs no tokens.
+ * ATO-2513: while the pet is up it also reads the newest session rows
+ * every few seconds (pet-outside-poll.ts), for turns the desktop did not
+ * start (cron, Telegram, the terminal). No model is called: it costs no
+ * tokens.
  *
  *   pet:attach   the page is up: the view now
  *   pet:hover    the pointer is over the sprite or the bubble (clicks are
@@ -13,6 +16,8 @@
  *   pet:answer   Allow once / Deny in the bubble, see below
  *   pet:open     the main window comes up
  *   pet:menu     the sprite's right click: Do Not Disturb, Open, Hide Pet
+ *   pet:focus    ATO-2513: a click on the bubble, the window takes the
+ *                keyboard (true), or gives it back (false)
  *
  * Answers go the way the window's own card answers. When the main window's
  * page is up, the click is handed to it (pet:relayAnswer) and its card is
@@ -32,6 +37,8 @@ import { PetTracker, petDecision, type PetDecision } from "./pet-events.js";
 import { mergePetPrefs, readPetPrefs, writePetPrefs, type PetPrefs } from "./pet-prefs.js";
 import { PetMachine, petView } from "./pet-state.js";
 import { openPetWindow, type PetWindow } from "./pet-window.js";
+import { startPetOutsidePoll, type PetOutsidePoll } from "./pet-outside-poll.js";
+import { wirePetSkins } from "./pet-skins-ipc.js";
 
 export interface PetWiring {
   userData: string;
@@ -52,6 +59,8 @@ export interface PetHub {
   prefs(): PetPrefs;
   toggle(): void;
   toggleDnd(): void;
+  /** ATO-2513: the main window comes up with "Make your own pet" open. */
+  openMaker(): void;
   /** A request was answered elsewhere (the window's card, its question card). */
   approvalAnswered(approvalId: string): void;
 }
@@ -73,6 +82,7 @@ export function wirePetIpc(client: AgentClient, w: PetWiring): PetHub {
   const machine = new PetMachine(Date.now());
   machine.setDoNotDisturb(prefs.dnd);
   let pet: PetWindow | null = null;
+  let outside: PetOutsidePoll | null = null;
   let timer: NodeJS.Timeout | null = null;
   const relays = new Map<string, (r: RelayResult) => void>();
   let relaySeq = 0;
@@ -84,7 +94,9 @@ export function wirePetIpc(client: AgentClient, w: PetWiring): PetHub {
 
   const view = () => {
     const now = Date.now();
-    const out = machine.step({ activity: tracker.activity(now), waiting: tracker.pending().length > 0 }, now);
+    // This window's own turns first (they know a tool call from thinking), then outside ones (ATO-2513).
+    const activity = tracker.activity(now) ?? outside?.turns.activity(now) ?? null;
+    const out = machine.step({ activity, waiting: tracker.pending().length > 0 }, now);
     if (timer) { clearTimeout(timer); timer = null; }
     if (out.nextAt !== null) timer = setTimeout(refresh, Math.max(16, out.nextAt - now));
     return petView(out.state, machine.doNotDisturb, tracker.pending());
@@ -102,12 +114,31 @@ export function wirePetIpc(client: AgentClient, w: PetWiring): PetHub {
 
   const open = () => {
     if (pet || w.quiet || !prefs.enabled) return;
-    const opened = openPetWindow(prefs, w.platform, () => { if (pet === opened) pet = null; });
+    const opened = openPetWindow(prefs, w.platform, () => {
+      if (pet !== opened) return;
+      pet = null;
+      outside?.stop();
+      outside = null;
+    });
     pet = opened;
+    outside ??= startPetOutsidePoll({
+      read: (limit) => client.recentSessions(limit),
+      tracker,
+      changed: (endings) => {
+        const now = Date.now();
+        for (const e of endings) {
+          tracker.sessionEnded(e.sessionId);
+          machine.ended(e.ending, now);
+        }
+        refresh();
+      },
+    });
   };
   const close = () => {
     const p = pet;
     pet = null;
+    outside?.stop();
+    outside = null;
     p?.close();
   };
 
@@ -157,6 +188,10 @@ export function wirePetIpc(client: AgentClient, w: PetWiring): PetHub {
     if (isPet(event.sender)) pet?.setHover(inside === true);
   });
 
+  ipcMain.on("pet:focus", (event, on: unknown) => {
+    if (isPet(event.sender)) pet?.keyboard(on === true);
+  });
+
   ipcMain.on("pet:drag", (event, phase: unknown) => {
     if (!isPet(event.sender) || !pet) return;
     if (phase === "start") pet.dragStart();
@@ -199,6 +234,23 @@ export function wirePetIpc(client: AgentClient, w: PetWiring): PetHub {
   };
   ipcMain.on("pet:open", (event) => { if (isPet(event.sender)) showMain(); });
 
+  /* ATO-2513: made pets and the one that shows (pet-skins-ipc.ts). */
+  const openMaker = () => {
+    showMain();
+    const main = w.mainWindow();
+    if (!main || main.isDestroyed()) return;
+    const send = () => { if (!main.isDestroyed()) main.webContents.send("pet:openMaker"); };
+    if (main.webContents.isLoading()) main.webContents.once("did-finish-load", send);
+    else send();
+  };
+  const skins = wirePetSkins({
+    userData: w.userData,
+    isMain,
+    isPet,
+    sendToPet: (channel, payload) => pet?.send(channel, payload),
+    openMaker,
+  });
+
   const hub: PetHub = {
     prefs: () => ({ ...prefs }),
     toggle() {
@@ -213,6 +265,7 @@ export function wirePetIpc(client: AgentClient, w: PetWiring): PetHub {
       refresh();
       w.menuChanged();
     },
+    openMaker,
     approvalAnswered(approvalId) {
       if (tracker.approvalAnswered(approvalId)) refresh();
     },
@@ -223,6 +276,7 @@ export function wirePetIpc(client: AgentClient, w: PetWiring): PetHub {
     Menu.buildFromTemplate([
       { label: "Do Not Disturb", type: "checkbox", checked: prefs.dnd, click: () => hub.toggleDnd() },
       { label: "Open Atomic Agent", click: showMain },
+      ...skins.menuItems(),
       { type: "separator" },
       { label: "Hide Pet", click: () => hub.toggle() },
     ]).popup({ window: pet.win });

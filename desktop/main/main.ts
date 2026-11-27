@@ -11634,6 +11634,7 @@ function rebuildMenu(): void {
     if (command === "mini:open") { showMiniChat?.(); return; }
     if (command === "pet:toggle") { petHub?.toggle(); return; }
     if (command === "pet:dnd") { petHub?.toggleDnd(); return; }
+    if (command === "pet:maker") { petHub?.openMaker(); return; }   // ATO-2513
     if (command.startsWith("awake:")) {
       const mode = command.slice("awake:".length) as KeepAwakeMode;
       if (KEEP_AWAKE_MODES.includes(mode)) { writeKeepAwakeMode(userData, mode); void syncKeepAwake(); }
