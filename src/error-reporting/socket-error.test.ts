@@ -7,7 +7,7 @@ import {
 } from "./socket-error.js";
 
 /** undici's `SocketError` as `fetch` hands it over, wrapped in `TypeError`. */
-function undiciSocketError(remoteAddress: string): Error {
+function fetchSocketError(remoteAddress: string): Error {
   const inner = Object.assign(new Error("other side closed"), {
     name: "SocketError",
     code: "UND_ERR_SOCKET",
@@ -18,9 +18,9 @@ function undiciSocketError(remoteAddress: string): Error {
 
 describe("isLoopbackPeerGone", () => {
   it("claims a socket to a local server closed under the request", () => {
-    expect(isLoopbackPeerGone(undiciSocketError("127.0.0.1"))).toBe(true);
-    expect(isLoopbackPeerGone(undiciSocketError("::1"))).toBe(true);
-    expect(isLoopbackPeerGone(undiciSocketError("::ffff:127.0.0.1"))).toBe(
+    expect(isLoopbackPeerGone(fetchSocketError("127.0.0.1"))).toBe(true);
+    expect(isLoopbackPeerGone(fetchSocketError("::1"))).toBe(true);
+    expect(isLoopbackPeerGone(fetchSocketError("::ffff:127.0.0.1"))).toBe(
       true,
     );
   });
@@ -34,7 +34,7 @@ describe("isLoopbackPeerGone", () => {
   });
 
   it("does not claim a remote peer", () => {
-    expect(isLoopbackPeerGone(undiciSocketError("203.0.113.7"))).toBe(false);
+    expect(isLoopbackPeerGone(fetchSocketError("203.0.113.7"))).toBe(false);
   });
 
   it("does not claim a reset whose peer it cannot prove", () => {
@@ -62,7 +62,7 @@ describe("isLoopbackPeerGone", () => {
 
 describe("socketErrorTags", () => {
   it("names the code and the peer class, never the address or port", () => {
-    const tags = socketErrorTags(undiciSocketError("203.0.113.7"));
+    const tags = socketErrorTags(fetchSocketError("203.0.113.7"));
     expect(tags).toEqual({
       socket_error_code: "UND_ERR_SOCKET",
       socket_peer: "remote",
