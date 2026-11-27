@@ -31,3 +31,14 @@ describe("subscriptionCliStatusLine (ATO-1204)", () => {
     expect(r.text).not.toMatch(/ready/);
   });
 });
+
+describe("subscriptionCliStatusLine and an outdated CLI (ATO-1685)", () => {
+  const outdated = { minimum: "0.122.0", message: "Codex 0.46.0 is older than 0.122.0. Update it." };
+  it("warns instead of ready", () => {
+    expect(subscriptionCliStatusLine({ ...base, outdated }, "codex")).toEqual({ text: outdated.message, tone: "warn" });
+  });
+  it("keeps the sign-in step first", () => {
+    const r = subscriptionCliStatusLine({ ...base, state: "signed_out", signedIn: false, fix: "codex login", outdated }, "codex");
+    expect(r.text).toContain("codex login");
+  });
+});

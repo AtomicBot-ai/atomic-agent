@@ -2,6 +2,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  resolveDotenvSecretRefs,
+  type DotenvSecretRefsResult,
+} from "./dotenv-secret-refs.js";
+import {
   loadKeychainSecrets,
   type KeychainLoadResult,
   type SecretKeychain,
@@ -47,6 +51,12 @@ export interface DotenvLoadResult {
    * are also in `loaded` above. Names only, never values.
    */
   keychain?: KeychainLoadResult;
+  /**
+   * Values written as secret references (`op://`, `bw://`, `cmd://`,
+   * ATO-2339), resolved into `process.env` only; absent when there were
+   * none. Names only, never values.
+   */
+  secretRefs?: DotenvSecretRefsResult;
 }
 
 /** I/O seams, injectable for tests. Production callers omit them. */
@@ -245,6 +255,8 @@ export function loadDotenvFromStateDir(
       }
     }
   }
+  const secretRefs = resolveDotenvSecretRefs(stateDir, result.loaded);
+  if (secretRefs) result.secretRefs = secretRefs;
   return result;
 }
 

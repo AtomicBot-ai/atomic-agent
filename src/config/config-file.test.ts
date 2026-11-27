@@ -7,17 +7,22 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 
 import { getApprovalRulesPath } from "../approval/approval-rules-store.js";
 import { resolveSessionPath } from "../atomic-mail/atomic-mail-store.js";
+import { autofixStatePath } from "../github/pr-autofix-store.js";
 import { resolveApiKeyFilePath } from "../local-llm/backend-paths.js";
 import { serveApiKeyPath } from "../cli/serve-api-key.js";
+import { modelShareKeyPath } from "../http/model-share-key.js";
+import { httpDevicesPath } from "../http/device-store.js";
 import { coreSessionPath } from "../local-llm/core/core-state.js";
 import { userHooksPath } from "../hooks/hook-config.js";
 import { secretsStorePath } from "./secret-store.js";
+import { SECRET_SOURCES_FILE } from "./secret-refs.js";
 import { installedPluginDir, pluginsRoot } from "../plugins/plugin-store.js";
+import { LOGBOOK_SETTINGS_FILE, logbookDir } from "../logbook/logbook-settings.js";
 import {
   ensureUserConfigFileSync,
   getDotenvPath,
@@ -948,6 +953,11 @@ describe("the state's secret files (ATO-877)", () => {
     expect(trust).toContain(userHooksPath(stateDir));
     expect(trust).toContain(join(pluginsRoot(stateDir), "plugins.json"));
     expect(trust).toContain(join(pluginsRoot(stateDir), "marketplaces.json"));
+    // A write to the logbook switch turns screen capture on (ATO-2363). The
+    // whole folder is listed, so a folder moved onto it is caught as well.
+    expect(trust).toContain(logbookDir(stateDir) + sep);
+    expect(isTrustDirectoryEntry(logbookDir(stateDir) + sep)).toBe(true);
+    expect(join(logbookDir(stateDir), LOGBOOK_SETTINGS_FILE).startsWith(logbookDir(stateDir) + sep)).toBe(true);
     // A directory entry: its trailing separator is what makes it a prefix.
     expect(trust).toContain(dirname(installedPluginDir(stateDir, "x")) + sep);
     expect(isTrustDirectoryEntry(dirname(installedPluginDir(stateDir, "x")) + sep)).toBe(true);
@@ -968,9 +978,11 @@ describe("the state's secret files (ATO-877)", () => {
       ...getTrustConfigPaths(paths),
       resolveApiKeyFilePath(paths.localModelsDataDir),
       serveApiKeyPath(stateDir),
+      modelShareKeyPath(stateDir),
       coreSessionPath(paths.localModelsDataDir, "chat"),
       coreSessionPath(paths.localModelsDataDir, "embedding"),
       resolveSessionPath(stateDir),
+      httpDevicesPath(stateDir),
     ]);
     expect(getStateSecretPaths(paths)).toContain(getDotenvPath(stateDir));
     expect(getStateSecretPaths(paths)).toContain(paths.userConfigFile);
@@ -989,6 +1001,13 @@ describe("the state's secret files (ATO-877)", () => {
     expect(getStateSecretPaths(paths)).toContain(getApprovalRulesPath(stateDir));
   });
 
+  it("protects ~/.curlrc and ~/.wgetrc, which can reroute curl and wget (ATO-2116)", () => {
+    const stateDir = join(tmpdir(), "atomic-state");
+    const trust = getTrustConfigPaths({ stateDir, userConfigFile: getUserConfigPath(stateDir) });
+    expect(trust).toContain(join(homedir(), ".curlrc"));
+    expect(trust).toContain(join(homedir(), ".wgetrc"));
+  });
+
   it("protects the OS keychain switch like .env (ATO-474)", () => {
     const stateDir = join(tmpdir(), "atomic-state");
     const paths = {
@@ -997,5 +1016,36 @@ describe("the state's secret files (ATO-877)", () => {
       localModelsDataDir: join(stateDir, "models"),
     };
     expect(getTrustConfigPaths(paths)).toContain(secretsStorePath(stateDir));
+  });
+
+  it("protects the secret-reference sources like .env (ATO-2339, ATO-476)", () => {
+    const stateDir = join(tmpdir(), "atomic-state");
+    const paths = {
+      stateDir,
+      userConfigFile: getUserConfigPath(stateDir),
+      localModelsDataDir: join(stateDir, "models"),
+    };
+    // Its `command` runs at start and its `toolSecrets` widen what a
+    // command may use: a silent write would be a self-escalation.
+    const sources = join(stateDir, SECRET_SOURCES_FILE);
+    expect(sources).toBe(join(stateDir, "secret-sources.json"));
+    expect(getTrustConfigPaths(paths)).toContain(sources);
+    expect(getStateSecretPaths(paths)).toContain(sources);
+  });
+
+  it("protects the PR autofix state like the approval rules, not its worktrees (ATO-2331)", () => {
+    const stateDir = join(tmpdir(), "atomic-state");
+    const paths = {
+      stateDir,
+      userConfigFile: getUserConfigPath(stateDir),
+      localModelsDataDir: join(stateDir, "models"),
+    };
+    // A written state.json would turn autofix on or reset its cap: writing
+    // it asks as trust_config, reading it as state_secret.
+    const trust = getTrustConfigPaths(paths);
+    expect(trust).toContain(autofixStatePath(stateDir));
+    expect(isTrustDirectoryEntry(autofixStatePath(stateDir))).toBe(false);
+    expect(trust.some((entry) => isTrustDirectoryEntry(entry) && entry.includes("pr-autofix"))).toBe(false);
+    expect(getStateSecretPaths(paths)).toContain(autofixStatePath(stateDir));
   });
 });

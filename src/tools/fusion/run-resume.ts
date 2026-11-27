@@ -2,6 +2,7 @@ import type {
   CheckpointTask,
   FusionRunCheckpoint,
 } from "./run-checkpoint.js";
+import { readDiffStats } from "./worker-diffstats.js";
 import { WorkerRunCollector, type WorkerTaskResult } from "./worker-result.js";
 
 /**
@@ -107,6 +108,9 @@ export function planResume(
 
 function carriedResult(task: CheckpointTask): WorkerTaskResult {
   const r = task.result!;
+  // The files it changed before the restart (ATO-1756); an older
+  // checkpoint has none, and a damaged entry is dropped, not fatal.
+  const diffstats = readDiffStats(r.diffstats);
   return {
     id: task.id,
     title: task.title,
@@ -118,6 +122,7 @@ function carriedResult(task: CheckpointTask): WorkerTaskResult {
     tools: r.tools,
     ...(r.error === undefined ? {} : { error: r.error }),
     notes: [...(r.notes ?? []), CARRIED_NOTE],
+    ...(diffstats.length === 0 ? {} : { diffstats }),
   };
 }
 

@@ -36,6 +36,8 @@ describe("gated-call approval categories", () => {
 
   it("level 5 runs every categorised gated tool unattended", () => {
     for (const name of Object.keys(listApprovalCategoriesByTool())) {
+      // Solo by design (research.deep), asserted false in its own test below.
+      if (isSoloRegardlessOfApproval(name)) continue;
       expect(gatedCallRunsUnattended(name, { level: 5 }), name).toBe(true);
     }
   });
@@ -84,6 +86,13 @@ describe("gated-call approval categories", () => {
     }
   });
 
+  it("keeps logbook.query solo: it asks as logbook_cloud until full trust (ATO-2363)", () => {
+    expect(resourceClassFor("logbook.query")).toBe("approval_gated");
+    expect(approvalCategoriesFor("logbook.query")).toEqual(["logbook_cloud"]);
+    expect(gatedCallRunsUnattended("logbook.query", { level: 4 })).toBe(false);
+    expect(gatedCallRunsUnattended("logbook.query", { level: 5 })).toBe(true);
+  });
+
   it("honours a session category grant, but never for a non-grantable category", () => {
     expect(
       gatedCallRunsUnattended("os.screen.click", {
@@ -128,6 +137,13 @@ describe("gated-call approval categories", () => {
     expect(resourceClassFor("subagent.run")).toBe("approval_gated");
     expect(isSoloRegardlessOfApproval("subagent.run")).toBe(true);
     expect(gatedCallRunsUnattended("subagent.run", { level: 5 })).toBe(false);
+  });
+
+  it("keeps research.deep solo at every level and names the prompts it can raise (ATO-2133)", () => {
+    expect(resourceClassFor("research.deep")).toBe("approval_gated");
+    expect(isSoloRegardlessOfApproval("research.deep")).toBe(true);
+    expect(gatedCallRunsUnattended("research.deep", { level: 5 })).toBe(false);
+    expect(approvalCategoriesFor("research.deep")).toEqual(expect.arrayContaining(["fs_write_workspace", "http", "http_write"]));
   });
 
   it("treats a gated MCP tool as category `other`", () => {

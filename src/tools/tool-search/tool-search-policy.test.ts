@@ -63,4 +63,12 @@ describe("applyToolSearch", () => {
     }
     expect(CORE_TOOL_NAMES.has("os.git.commit")).toBe(false);
   });
+
+  it("keeps os.code.lsp fully described when it is in the list, which is only while LSP is on (ATO-2373)", () => {
+    expect(CORE_TOOL_NAMES.has("os.code.lsp")).toBe(true);
+    const lsp = d("os.code.lsp", "Language-server navigation. ".repeat(10));
+    const out = applyToolSearch([lsp, d("os.code.search", "ast-grep ".repeat(20))], true);
+    expect(out[0]).toBe(lsp);
+    expect(out[1]!.tier).toBe("rare");
+  });
 });

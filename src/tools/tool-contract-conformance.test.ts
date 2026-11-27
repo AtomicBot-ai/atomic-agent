@@ -43,11 +43,13 @@ import { planUpdateTool } from "./plan/index.js";
 import { buildCanvasRenderTool } from "./canvas/index.js";
 import { buildAskUserTool } from "./conversation/index.js";
 import { buildToolSearchTool } from "./tool-search/index.js";
-import { buildSessionsSearchTool, registerMemoryTools } from "./memory/index.js";
+import { buildConversationHistoryTool, buildSessionsSearchTool, registerMemoryTools } from "./memory/index.js";
 import { buildFilesSearchTool } from "./files/index.js";
+import { buildResearchDeepTool } from "./research/index.js";
 import { registerTaskTools } from "./tasks/index.js";
 import { registerSessionTools } from "./sessions/index.js";
 import { registerVisionTools } from "./vision/index.js";
+import { registerLogbookTools } from "./logbook/index.js";
 import { registerAudioListenTools } from "./audio/index.js";
 import { registerImageTools } from "./image/index.js";
 import { registerVideoTools } from "./video/index.js";
@@ -57,6 +59,7 @@ import { buildSubagentRunTool } from "./subagent/index.js";
 import { TOOL_ROLES, descriptorsForRole, partitionByRole, roleAdmits } from "./tool-roles.js";
 import { confineReads } from "./read-scope/confine-reads.js";
 import { READ_TOOL_TARGETS } from "./read-scope/read-scope-targets.js";
+import { GUEST_GIT_TOOLS } from "./read-scope/guest-reads.js";
 
 import { OS_FS_READ_CONTRACT } from "./os/fs/fs-read-contract.js";
 import { OS_FS_LIST_CONTRACT } from "./os/fs/fs-list-contract.js";
@@ -114,7 +117,7 @@ const TERMINALS = {
   finish: { owner: "tools/finish + OpenAI adapter", reason: "Native adapter supplies the session terminal even when a role hides its descriptor; its wire schema overrides the catalog schema" },
 };
 const CONDITIONAL = {
-  registration: { owner: "runtime/bootstrap", reason: "Browser, memory, tasks, sessions, vision, audio and screen builders follow their enabled gates" },
+  registration: { owner: "runtime/bootstrap", reason: "Browser, memory, tasks, sessions, vision, audio, screen and os.code.lsp builders follow their enabled gates" },
   availability: { owner: "runtime/filter-disabled-tools", reason: "Web, email, GitHub, fusion, subagent, image and video definitions stay registered while unavailable descriptors are hidden" },
   mcp: { owner: "mcp/McpManager + runtime/bootstrap", reason: "Meta tools are registered once; server-qualified tools and external schemas belong to the live catalog" },
   wrapper: { owner: "tools/read-scope/confine-reads", reason: "The protection phase replaces selected definitions without changing their catalog metadata" },
@@ -266,6 +269,8 @@ const gates: ToolGateConfig = {
   image: { available: true },
   video: { available: true },
   screen: { enabled: true, point: true },
+  lsp: { enabled: true },
+  logbook: { enabled: true },
 };
 
 let directory: string;
@@ -294,7 +299,8 @@ beforeAll(() => {
   registry.register(replyTool);
   for (const definition of buildBrowserTools(browser, dangerous)) registry.register(definition);
   registerOsTools(registry, { ...dangerous, shellJobs, listRecentSessionDirs: () => [], config: {
-    http: USER_CONFIG_DEFAULTS.http, projects: USER_CONFIG_DEFAULTS.projects, tools: USER_CONFIG_DEFAULTS.tools,
+    // `tools.lsp.enabled` registers os.code.lsp (ATO-2373); no server starts.
+    http: USER_CONFIG_DEFAULTS.http, projects: USER_CONFIG_DEFAULTS.projects, tools: { ...USER_CONFIG_DEFAULTS.tools, lsp: { enabled: true } },
     web: { fetch: USER_CONFIG_DEFAULTS.web.fetch, search: { ...USER_CONFIG_DEFAULTS.web.search, provider: "duckduckgo", persistCache: false } },
   } });
   registerOsScreenTools(registry, { ...dangerous, enabled: true, point: true, platform: "darwin" });
@@ -310,11 +316,16 @@ beforeAll(() => {
   registerMemoryTools(registry, memoryOptions(true));
   // Runtime registers it beside the memory tools, always on (runtime-tool-catalog).
   registry.register(buildSessionsSearchTool({ source: { searchTranscripts: unexpected, listSearchableChatLines: unexpected } }));
+  // Runtime registers it beside the memory tools, always on (runtime-tool-catalog, ATO-2261).
+  registry.register(buildConversationHistoryTool({ source: { load: unexpected } }));
   // Runtime registers it when the My files index opens (runtime-tool-catalog).
   registry.register(buildFilesSearchTool({ index: { search: async () => unexpected(), listFolders: unexpected, status: unexpected } }));
+  // Runtime registers it with the registry and the side-call model (runtime-tool-catalog, ATO-2133).
+  registry.register(buildResearchDeepTool({ ...dangerous, tools: registry, model: {} }));
   registerTaskTools(registry, taskOptions(true));
   registerSessionTools(registry, sessionOptions(true));
   registerVisionTools(registry, { enabled: true, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
+  registerLogbookTools(registry, { ...dangerous, stateDir: directory, notesStayLocal: () => true });
   registerAudioListenTools(registry, { enabled: true, provider: () => undefined, maxAudioBytes: 1024 });
   registerImageTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });
   registerVideoTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });
@@ -355,7 +366,7 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(123);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(129);
     expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(DEFAULT_TOOL_DESCRIPTORS.length);
     expect(registry.list()).toHaveLength(registry.registrations.length);
     for (const definition of registry.registrations) {
@@ -458,6 +469,8 @@ describe("whole built-in tool catalog conformance", () => {
       { group: GATED_TOOL_NAMES.image, next: { ...gates, image: { available: false } } },
       { group: GATED_TOOL_NAMES.video, next: { ...gates, video: { available: false } } },
       { group: GATED_TOOL_NAMES.screen, next: { ...gates, screen: { enabled: false } } },
+      { group: GATED_TOOL_NAMES.lsp, next: { ...gates, lsp: { enabled: false } } },
+      { group: GATED_TOOL_NAMES.logbook, next: { ...gates, logbook: { enabled: false } } },
     ];
     for (const family of families) {
       expect(names(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, family.next))).toEqual(names(DEFAULT_TOOL_DESCRIPTORS).filter((name) => !new Set<string>(family.group).has(name)));
@@ -473,6 +486,12 @@ describe("whole built-in tool catalog conformance", () => {
     expect(new Set(names(buildBrowserTools(browser, dangerous)))).toEqual(new Set(GATED_TOOL_NAMES.browser));
     const screen = new RecordingRegistry(); registerOsScreenTools(screen, { ...dangerous, enabled: true, point: true, platform: "darwin" });
     expect(names(screen.registrations)).toEqual([...GATED_TOOL_NAMES.screen]);
+    const osOff = new RecordingRegistry();
+    registerOsTools(osOff, { ...dangerous, shellJobs, listRecentSessionDirs: () => [], config: {
+      http: USER_CONFIG_DEFAULTS.http, projects: USER_CONFIG_DEFAULTS.projects, tools: { ...USER_CONFIG_DEFAULTS.tools, lsp: { enabled: false } },
+      web: { fetch: USER_CONFIG_DEFAULTS.web.fetch, search: { ...USER_CONFIG_DEFAULTS.web.search, provider: "duckduckgo", persistCache: false } },
+    } });
+    for (const name of GATED_TOOL_NAMES.lsp) expect(osOff.has(name), name).toBe(false);
   });
 
   it("keeps role order, loaded-tool unions, native wire names and grammar membership aligned", async () => {
@@ -512,7 +531,7 @@ describe("whole built-in tool catalog conformance", () => {
     for (const definition of registry.registrations) scoped.register(definition);
     const firstPhase = scoped.registrations.length;
     const confined = confineReads(scoped, { grantedDirs: () => [], readScope: () => "working-dir", approvals: dangerous });
-    expect(new Set(confined)).toEqual(new Set([...READ_TOOL_TARGETS.keys(), "os.shell.run", ...(registry.has("verify.run") ? ["verify.run"] : [])]));
+    expect(new Set(confined)).toEqual(new Set([...READ_TOOL_TARGETS.keys(), ...[...GUEST_GIT_TOOLS].filter((name) => registry.has(name)), "os.shell.run", ...(registry.has("verify.run") ? ["verify.run"] : [])]));
     const replacements = scoped.registrations.slice(firstPhase);
     expect(names(replacements)).toEqual(confined);
     for (const definition of replacements) {

@@ -4,6 +4,11 @@ import type { ReadScope } from "../../config/index.js";
 import { isFusionWorkerSessionId } from "../../session/fusion-worker-session.js";
 import type { ToolDefinition, ToolRegistry } from "../tool-registry.js";
 import {
+  checkGuestRead,
+  GUEST_GIT_TOOLS,
+  guestShellRefusal,
+} from "./guest-reads.js";
+import {
   checkWorkerRead,
   findSessionReadOutside,
   workerReadRefusal,
@@ -99,6 +104,8 @@ export function confineReads(
   const secrets = options.stateSecrets ?? null;
   const confined: string[] = [];
   const scoped = () => options.readScope?.() === "working-dir";
+  const guestOptions =
+    options.stateSecrets === undefined ? {} : { stateDir: options.stateSecrets.stateDir };
   const install = (name: string, run: ToolDefinition["run"]): void => {
     const inner = registry.get(name);
     confined.push(name);
@@ -112,6 +119,9 @@ export function confineReads(
     if (!registry.has(name)) continue;
     const inner = registry.get(name);
     install(name, async (args, ctx) => {
+      // A channel guest's session first: a refusal at every level.
+      const guest = checkGuestRead(name, args, ctx, guestOptions);
+      if (guest !== null) return guest;
       const worker = checkWorkerRead(
         name,
         args,
@@ -144,6 +154,16 @@ export function confineReads(
       );
       return refusal ?? inner.run(args, ctx);
     });
+  }
+
+  // Read-only git tools read a repo anywhere: a guest's stays inside the
+  // working directory (`guest-reads.ts`). Nobody else is checked here.
+  for (const name of GUEST_GIT_TOOLS) {
+    if (!registry.has(name)) continue;
+    const inner = registry.get(name);
+    install(name, async (args, ctx) =>
+      checkGuestRead(name, args, ctx, guestOptions) ?? inner.run(args, ctx),
+    );
   }
 
   if (asker !== null) {
@@ -219,6 +239,8 @@ export function confineReads(
       if (!registry.has(name)) continue;
       const inner = registry.get(name);
       install(name, async (args, ctx) => {
+        // Hidden from guests by their tool filter too; refused here as well.
+        if (ctx.guest === true) return guestShellRefusal(name);
         for (const call of callsOf(args)) {
           const refusal = await checkCommand(name, call, ctx);
           if (refusal !== null) return refusal;

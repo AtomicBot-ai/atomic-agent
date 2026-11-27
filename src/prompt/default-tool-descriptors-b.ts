@@ -3,6 +3,7 @@ import { SCREEN_TOOL_DESCRIPTORS } from "./screen-tool-descriptors.js";
 import { OS_FS_CODE_MAP_CONTRACT } from "../tools/os/code-map/code-map-contract.js";
 import { OS_CODE_SEARCH_CONTRACT } from "../tools/os/code/code-search-contract.js";
 import { OS_CODE_REWRITE_CONTRACT } from "../tools/os/code/code-rewrite-contract.js";
+import { OS_CODE_LSP_CONTRACT } from "../tools/os/code/code-lsp-contract.js";
 
 /** Second half of `DEFAULT_TOOL_DESCRIPTORS` (order is load-bearing). */
 export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
@@ -57,6 +58,8 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
   // Same reason (ATO-696).
   OS_CODE_SEARCH_CONTRACT.descriptor,
   OS_CODE_REWRITE_CONTRACT.descriptor,
+  // Same reason (ATO-2373); dropped by the `lsp` gate while it is off.
+  OS_CODE_LSP_CONTRACT.descriptor,
   {
     name: "skill.view",
     summary: "Load an installed skill body (SKILL.md) into the session tail.",
@@ -172,6 +175,15 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    name: "conversation.history",
+    summary:
+      "Search or reread the earlier part of this chat that was compacted into a summary: exact numbers, paths, tool calls and tool output the summary left out. Only this chat, only what the summary replaced.",
+    argsSchema:
+      "{ query?: string, limit?: number /* 1..20 */, from?: number /* record from a hit */, count?: number /* 1..40 */ }",
+    examples: ['{"query":"invoice total"}', '{"from":12}'],
+    tier: "rare",
+  },
+  {
     name: "files.search",
     summary:
       "Search the folders the person added in My files (PDF, Word, slides, sheets, text). Each hit has the file, PDF page, a snippet and a `cite` link: paste `cite` exactly as given after what you took from it.",
@@ -180,6 +192,26 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
       '{"query":"notice period termination"}',
       '{"query":"Q3 revenue","folder":"/Users/me/Reports","topK":5}',
     ],
+    tier: "rare",
+  },
+  {
+    // ATO-2133. Rare tier: one line in the catalog, full args through tool.view.
+    name: "research.deep",
+    summary:
+      "Research a question on the web in one call: plans sub-questions, searches and reads a few pages for each, and keeps a finding only when its exact quote is on the page and its numbers are in the quote. Writes a Markdown report (Summary, Findings with link and quote, Contradictions, Unverified claims) to a new file in the working folder and returns it. Use it for questions that need several sources; answer from its verified findings. Call it on its own.",
+    argsSchema:
+      "{ question: string, maxSubQuestions?: number /* 1..5, default 3 */, pagesPerQuestion?: number /* 1..3, default 2 */ }",
+    examples: ['{"question":"How did EU heat pump sales change in 2024 and why?"}'],
+    tier: "rare",
+  },
+  {
+    // ATO-2363: offered only while the logbook is on or keeps notes (`GATED_TOOLS.logbook`).
+    name: "logbook.query",
+    summary:
+      "Read the person's logbook: short notes a local model wrote about their screen every few minutes, kept on this computer. Use for what they did on a day and for standups.",
+    argsSchema:
+      "{ day?: string /* today (default), yesterday or YYYY-MM-DD */, part?: 'morning' | 'afternoon' | 'evening', from?: string /* HH:MM */, to?: string /* HH:MM */, contains?: string, limit?: number /* 1..400 */ }",
+    examples: ['{"day":"yesterday","part":"afternoon"}'],
     tier: "rare",
   },
   {
@@ -453,7 +485,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     summary:
       "Show the user a chart or a page in the chat as a canvas: give `chart` (bar|line|area|pie|table) with `labels` and `series` [{ name, values }], or `html` you wrote. Saves a self-contained HTML file in the working folder and returns its path. Use it for dashboards, comparisons and any numbers the user would rather see than read.",
     argsSchema:
-      "{ title: string, chart?: 'bar' | 'line' | 'area' | 'pie' | 'table', labels?: string[] /* x axis or pie slices */, series?: [{ name: string, values: number[] /* one per label */ }] /* 1..8 */, values?: number[] /* one series, instead of series */, html?: string /* a page or fragment, instead of chart */, subtitle?: string, name?: string /* file name hint */ }",
+      "{ title: string, chart?: 'bar' | 'line' | 'area' | 'pie' | 'table', labels?: string[] /* x axis or pie slices */, series?: [{ name: string, values: number[] /* one per label */ }] /* 1..8 */, values?: number[] /* one series, instead of series */, html?: string /* a page or fragment, instead of chart; may be a live widget: in the desktop app its script can call sendPrompt(text) to put a message in the user's box and atomicWidget.state.get()/set(obj) to keep its state */, subtitle?: string, name?: string /* file name hint */ }",
     examples: [
       '{"title":"Revenue by quarter","chart":"bar","labels":["Q1","Q2","Q3","Q4"],"series":[{"name":"2025","values":[120,135,150,170]},{"name":"2026","values":[140,160,155,190]}]}',
       '{"title":"Disk usage","chart":"pie","labels":["Photos","Code","Other"],"values":[52,31,17]}',

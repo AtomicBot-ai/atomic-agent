@@ -19,12 +19,21 @@ const MAX_CAUSE_DEPTH = 6;
  * name still reports: such a name can be a tool the prompt shows but
  * the registry lacks (a server that went down, a catalog out of step),
  * which is ours to fix. Any other `ToolExecutionError` still reports.
+ *
+ * Nor is a near miss left out when the step's own tool list showed the
+ * name (`knownElsewhere: "prompt_advertised"`, ATO-2423): the prompt
+ * advertised a tool the registry lacks, so the bug is ours even though
+ * the name looks like a typo of a real one.
  */
 export function isUnregisteredToolStreak(error: unknown): boolean {
   let current: unknown = error;
   for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth += 1) {
     if (current instanceof ToolExecutionError) {
-      return current.kind === "unregistered" && current.nameClass === "near_miss";
+      return (
+        current.kind === "unregistered" &&
+        current.nameClass === "near_miss" &&
+        current.knownElsewhere !== "prompt_advertised"
+      );
     }
     if (!(current instanceof Error)) return false;
     current = (current as { cause?: unknown }).cause;

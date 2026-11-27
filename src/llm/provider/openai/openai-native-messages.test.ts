@@ -457,3 +457,76 @@ describe("buildNativeMessages: never ends on an assistant message (ATO-1681)", (
     expect(out.at(-1)!.role).toBe("user");
   });
 });
+
+describe("buildNativeMessages thinkTagSafe (Ollama Cloud, issue #283)", () => {
+  const tagged = prompt({
+    system: "### system\nnever print <think>",
+    turns: [
+      { kind: "user", text: "what does <thinking> do?" },
+      {
+        kind: "assistant_tool_call",
+        tool: "os.fs.read",
+        args: { path: "tags.ts", note: "</think>" },
+        reasoning: "<think>look at the file</think>",
+      },
+      {
+        kind: "tool_result",
+        tool: "os.fs.read",
+        status: "ok",
+        body: "const TAGS = ['<think>', '</think>', '<thinking>', '</thinking>'];",
+        truncated: false,
+      },
+      { kind: "assistant_reply", text: "it lists <think> and </thinking>" },
+    ],
+    tail: "### respond\n<think> is a tag",
+  });
+
+  it("rewrites the tags in every content and in tool-call arguments", () => {
+    const messages = buildNativeMessages(tagged, { ...options, thinkTagSafe: true });
+    const wire = JSON.stringify(messages);
+    expect(wire).not.toMatch(/<\/?think(ing)?>/);
+    expect(messages[0]).toEqual({ role: "system", content: "### system\nnever print [think]" });
+    expect(messages[1]).toEqual({ role: "user", content: "what does [thinking] do?" });
+    const call = (messages[2]!.tool_calls as Array<{ function: { arguments: string } }>)[0]!;
+    expect(JSON.parse(call.function.arguments)).toEqual({ path: "tags.ts", note: "[/think]" });
+    expect(messages[3]).toEqual({
+      role: "tool",
+      tool_call_id: "call_1",
+      content: "const TAGS = ['[think]', '[/think]', '[thinking]', '[/thinking]'];",
+    });
+    expect(messages[4]).toEqual({ role: "assistant", content: "it lists [think] and [/thinking]" });
+    expect(messages.at(-1)).toEqual({ role: "user", content: "### respond\n[think] is a tag" });
+  });
+
+  it("keeps the reasoning handed back untouched", () => {
+    const messages = buildNativeMessages(tagged, {
+      ...options,
+      preserveReasoning: true,
+      thinkTagSafe: true,
+    });
+    expect(messages[2]!.reasoning_content).toBe("<think>look at the file</think>");
+  });
+
+  it("rewrites an orphan result line too", () => {
+    const messages = buildNativeMessages(
+      prompt({
+        turns: [
+          { kind: "tool_result", tool: "os.fs.read", status: "ok", body: "<think>", truncated: false },
+        ],
+      }),
+      { ...options, thinkTagSafe: true },
+    );
+    expect(messages[1]).toEqual({ role: "user", content: "tool_result[os.fs.read ok]: [think]" });
+  });
+
+  it("sends every tag verbatim without the option", () => {
+    const plain = buildNativeMessages(tagged, options);
+    expect(buildNativeMessages(tagged, { ...options, thinkTagSafe: false })).toEqual(plain);
+    expect(plain[0]!.content).toBe("### system\nnever print <think>");
+    expect(plain[3]!.content).toBe(
+      "const TAGS = ['<think>', '</think>', '<thinking>', '</thinking>'];",
+    );
+    const call = (plain[2]!.tool_calls as Array<{ function: { arguments: string } }>)[0]!;
+    expect(call.function.arguments).toBe(JSON.stringify({ path: "tags.ts", note: "</think>" }));
+  });
+});

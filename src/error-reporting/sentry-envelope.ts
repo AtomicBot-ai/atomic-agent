@@ -76,18 +76,24 @@ export function buildEnvelope(
   if (ev.tool) tags.tool = ev.tool;
   if (ev.toolErrorKind) tags.tool_error_kind = ev.toolErrorKind;
   if (ev.toolNameClass) tags.tool_name_class = ev.toolNameClass;
+  if (ev.toolKnownElsewhere) tags.tool_known_elsewhere = ev.toolKnownElsewhere;
   if (ev.transportHost) tags.transport_host = ev.transportHost;
   if (ev.upstreamErrorType) {
     tags.upstream_error_type = ev.upstreamErrorType;
   }
-  // ATO-1673: what was refused, as fixed words. Tags only: the
-  // fingerprint keeps the shape it has, so no live issue re-groups.
+  // ATO-1673: what was refused, as fixed words. ATO-1687: the reason is
+  // also a fingerprint element (see `buildFingerprint`); param and code
+  // stay tags only.
   if (ev.upstreamReason) tags.upstream_reason = ev.upstreamReason;
   if (ev.upstreamErrorParam) tags.upstream_error_param = ev.upstreamErrorParam;
   if (ev.upstreamErrorCode) tags.upstream_error_code = ev.upstreamErrorCode;
+  // ATO-2419: person / ours / provider / unknown. Tag only.
+  if (ev.failureOwner) tags.failure_owner = ev.failureOwner;
   // Context tags never re-group issues: they stay out of the fingerprint.
   if (ev.llmFailureTags) Object.assign(tags, ev.llmFailureTags);
   if (ev.cliFailureTags) Object.assign(tags, ev.cliFailureTags);
+  if (ev.socketTags) Object.assign(tags, ev.socketTags);
+  if (ev.grammarFailureTags) Object.assign(tags, ev.grammarFailureTags);
 
   const event = {
     event_id: eventId,
@@ -166,12 +172,24 @@ export function buildFingerprint(ev: ScrubbedErrorEvent): string[] {
   // argument does NOT hold for `httpStatus`, which is already live on
   // every transport issue — putting it here re-groups all of them, so
   // it is deliberately left out. See the follow-up note in the PR.
+  //
+  // ATO-1687: `upstreamReason` follows the same rule, for the same
+  // reason one level down. Cloud providers send the same
+  // `invalid_request_error` type (or none) for no credit (402,
+  // `out_of_credit`), a wrong model id (404, `model_not_found`) and a
+  // malformed request of ours (400, `tool_result_missing`, ...), so all
+  // of them shared one issue. The reason is a fixed word read on this machine
+  // (`upstream-error-detail.ts`), so the split stays bounded. Spread like
+  // the type: an event without a reason keeps its fingerprint element
+  // for element. `upstreamErrorParam` and `upstreamErrorCode` stay tags
+  // only; they are finer than an issue should be.
   return [
     "{{ default }}",
     ev.errorType,
     ev.category ?? "",
     discriminatorOf(ev),
     ...(ev.upstreamErrorType !== undefined ? [ev.upstreamErrorType] : []),
+    ...(ev.upstreamReason !== undefined ? [ev.upstreamReason] : []),
     topFrame,
   ];
 }

@@ -1,6 +1,8 @@
 import { isBrokenPipeError } from "./broken-pipe.js";
 import { isFusionStopError } from "./fusion-stop.js";
+import { isLoopbackPeerGone, socketErrorTags } from "./socket-error.js";
 import { scrubError } from "./error-scrubber.js";
+import { isExpectedSubscriptionCliFailure } from "./subscription-cli-expected.js";
 import type { LlmFailureContext } from "./llm-failure-tags.js";
 import type { SentryClient } from "./sentry-client.js";
 
@@ -48,6 +50,12 @@ export function captureError(
   // the global sources are filtered — an EPIPE surfaced by a tool still
   // reports, because there it may well be a bug in ours.
   if (isGlobalSource(opts.source) && isBrokenPipeError(err)) return;
+  // Same for a socket to this machine reset or closed under a request:
+  // a local model server restarting (ATO-1735). Only an unhandled
+  // rejection, which is non-fatal: an uncaught one ends the process,
+  // so it still reports. Only a proven loopback peer; a tool's own
+  // reset still reports.
+  if (opts.source === "unhandledRejection" && isLoopbackPeerGone(err)) return;
   // Atomic Chat not being open is not a defect: the operator was told in
   // plain words to open it (ATO-1278). Matched by name, so this module
   // takes no import from the LLM layer.
@@ -56,6 +64,9 @@ export function captureError(
   // a replacement, a hand-back) is not a defect, and the rows already
   // say why (ATO-1677).
   if (isFusionStopError(err)) return;
+  // A signed-out Claude Code or Codex, a spent plan limit, or a plan
+  // without the CLI: the account's state, told in chat (ATO-2417).
+  if (isExpectedSubscriptionCliFailure(err)) return;
   const error =
     err instanceof Error
       ? err
@@ -64,6 +75,10 @@ export function captureError(
         });
   const scrubbed = scrubError(error, opts);
   if (scrubbed.category === "cancelled") return;
+  if (isGlobalSource(opts.source)) {
+    const socketTags = socketErrorTags(err);
+    if (socketTags !== undefined) scrubbed.socketTags = socketTags;
+  }
   client.capture(scrubbed);
 }
 

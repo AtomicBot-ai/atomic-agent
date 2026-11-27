@@ -7,6 +7,7 @@ import type { CreateAgentRuntimeOptions } from "../runtime/bootstrap.js";
 import { StructuredLogger } from "../tracing/structured-logger.js";
 
 import { getConfig } from "../config/index.js";
+import { clearProcessSecretsForTests, processSecrets } from "../error-reporting/process-secrets.js";
 import { serveApiKeyPath } from "./serve-api-key.js";
 import { serveCommand } from "./serve-command.js";
 
@@ -204,6 +205,32 @@ describe("serve's own API key", () => {
     } finally {
       stdout.mockRestore();
       vi.unstubAllEnvs();
+    }
+  });
+
+  it("names the key it runs with to the secret masker before booting (ATO-1705)", async () => {
+    clearProcessSecretsForTests();
+    vi.stubEnv("ATOMIC_AGENT_API_KEY", "");
+    try {
+      await serveBootOptions();
+      const key = readFileSync(serveApiKeyPath(getConfig().paths.stateDir), "utf-8").trim();
+      expect(processSecrets()).toEqual([{ label: "serve-api-key", value: key }]);
+    } finally {
+      vi.unstubAllEnvs();
+      clearProcessSecretsForTests();
+    }
+  });
+
+  it("takes a key from ATOMIC_AGENT_API_KEY, then removes it from the environment children inherit (ATO-1705)", async () => {
+    clearProcessSecretsForTests();
+    vi.stubEnv("ATOMIC_AGENT_API_KEY", "desktop-key-0123456789abcdef");
+    try {
+      await serveBootOptions();
+      expect(process.env.ATOMIC_AGENT_API_KEY).toBeUndefined();
+      expect(processSecrets()).toEqual([{ label: "serve-api-key", value: "desktop-key-0123456789abcdef" }]);
+    } finally {
+      vi.unstubAllEnvs();
+      clearProcessSecretsForTests();
     }
   });
 });

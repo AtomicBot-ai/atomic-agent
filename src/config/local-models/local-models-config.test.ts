@@ -47,6 +47,13 @@ describe("local model configuration domain seams", () => {
     expect(() => parseLocal({ managed: { promptDiskCache: 7 } })).toThrow();
   });
 
+  it("keeps model sharing off unless the file turns it on (ATO-2336)", () => {
+    expect(createLocalModelsDefaults().managed.share).toBe(false);
+    expect(parseLocal({}).managed.share).toBe(false);
+    expect(parseLocal({ managed: { share: true } }).managed.share).toBe(true);
+    expect(() => parseLocal({ managed: { share: 7 } })).toThrow();
+  });
+
   it("looks for an External llama.cpp on llama-server's own default port 9931 when no url is stored", () => {
     expect(createLocalModelsDefaults().url).toBe("http://127.0.0.1:9931");
     expect(parseLocal({}).url).toBe("http://127.0.0.1:9931");
@@ -60,8 +67,10 @@ describe("local model configuration domain seams", () => {
     const root = schema.parseUserConfigFile({}).localModels;
     expect(parsed).toStrictEqual(defaults);
     expect(root).toStrictEqual(defaults);
-    expect(Object.keys(defaults)).toEqual(["url", "mode", "completionMaxTokens", "requestTimeoutMs", "useServerTemplate", "thinking", "reasoningBudgetTokens", "drySampler", "strictToolArgs", "managed", "embeddings", "download", "customModels"]);
-    expect(Object.keys(defaults.managed)).toEqual(["engine", "modelId", "port", "dataDirOverride", "autoUpdate", "stopOnExit", "autoRestart", "promptDiskCache", "device", "backendVariant", "coreBackendVariant", "contextSize", "tensorSplit", "parallel", "swaFull"]);
+    expect(Object.keys(defaults)).toEqual(["url", "mode", "completionMaxTokens", "requestTimeoutMs", "useServerTemplate", "thinking", "reasoningBudgetTokens", "drySampler", "modelSampling", "strictToolArgs", "managed", "embeddings", "download", "customModels"]);
+    // Order-independent and open-ended: each managed key has its own test,
+    // and parallel PRs add keys here (wave 10: cpuMoe, rpcServers, share).
+    expect(Object.keys(defaults.managed)).toEqual(expect.arrayContaining(["engine", "modelId", "port", "dataDirOverride", "autoUpdate", "stopOnExit", "autoRestart", "promptDiskCache", "device", "backendVariant", "coreBackendVariant", "contextSize", "tensorSplit", "parallel", "swaFull"]));
     expect(defaults.managed).not.toBe(other.managed);
     expect(defaults.embeddings).not.toBe(other.embeddings);
     expect(defaults.download).not.toBe(other.download);

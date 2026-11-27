@@ -129,17 +129,18 @@ function isWindowsCmdBuiltin(cmd: string): boolean {
 export function needsShellInterpretation(
   cmd: string,
   args: readonly string[],
+  platform: NodeJS.Platform = process.platform,
 ): boolean {
   if (SHELL_METACHAR_RE.test(cmd)) return true;
   // On Windows the model may emit `%VAR%` expansion, which only means
   // something inside a `cmd.exe` subshell. `$` (POSIX) is already covered
   // by SHELL_METACHAR_RE above.
-  if (process.platform === "win32" && /%[^%\s]+%/.test(cmd)) return true;
+  if (platform === "win32" && /%[^%\s]+%/.test(cmd)) return true;
   // A bare cmd.exe builtin must go through the interpreter or `spawn`
   // ENOENTs. `cmd` here is a single token (metachar/pre-joined cases are
   // handled above), so a straight builtin lookup is safe.
   if (
-    process.platform === "win32" &&
+    platform === "win32" &&
     !/\s/.test(cmd.trim()) &&
     isWindowsCmdBuiltin(cmd)
   ) {

@@ -3,9 +3,11 @@ import {
   type FusionRole,
 } from "../../config/llm-run-mode-config.js";
 import {
+  builtinAgentProfileSet,
   compileToolAllowlist,
   type AgentProfileSet,
 } from "../../agent-profiles/index.js";
+import type { StructuredLogger } from "../../tracing/index.js";
 import type { DelegateTask } from "./delegate-args.js";
 
 /**
@@ -103,4 +105,50 @@ export function applyTaskProfiles(
     return next;
   });
   return { ok: true, tasks: out, applied };
+}
+
+export interface LoadAndApplyTaskProfilesInput {
+  tasks: DelegateTask[];
+  /** The folder the call runs in; profiles are loaded for it. */
+  workingDir: string;
+  /** The runtime's loader. Absent (tests, embedders): the built-ins. */
+  resolveAgentProfiles?: (workingDir: string) => AgentProfileSet;
+  /** Where a task's profile `model` may point (`allowedModels`). */
+  allowedModels: readonly { providerId: string; model: string }[];
+  logger?: Pick<StructuredLogger, "warn">;
+  /** Starts each log line: `fusion` or `subagent`. */
+  logPrefix: string;
+}
+
+/**
+ * The one profile step `fusion.delegate` and `subagent.run` both run
+ * (ATO-1743): load the profiles for the folder, fall back to the
+ * built-ins when the loader throws, log the loader's problems, and apply
+ * them to the tasks. A call where no task names a profile loads nothing
+ * and hands the same `tasks` array back. A failed load never fails the
+ * call; an unknown profile name does (`applyTaskProfiles`).
+ */
+export function loadAndApplyTaskProfiles(
+  input: LoadAndApplyTaskProfilesInput,
+): ApplyTaskProfilesResult {
+  const { tasks, logger, logPrefix } = input;
+  if (!tasks.some((t) => t.profile !== undefined)) {
+    return { ok: true, tasks, applied: [] };
+  }
+  let profiles: AgentProfileSet;
+  try {
+    profiles =
+      input.resolveAgentProfiles?.(input.workingDir) ?? builtinAgentProfileSet();
+  } catch (err) {
+    logger?.warn(`${logPrefix}: loading agent profiles failed`, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    profiles = builtinAgentProfileSet();
+  }
+  if (profiles.diagnostics.length > 0) {
+    logger?.warn(`${logPrefix}: agent profile problems`, {
+      diagnostics: profiles.diagnostics,
+    });
+  }
+  return applyTaskProfiles(tasks, profiles, input.allowedModels);
 }

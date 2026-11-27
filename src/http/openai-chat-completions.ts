@@ -25,7 +25,7 @@ import {
 } from "../session/index.js";
 import { getConfig } from "../config/index.js";
 
-import { checkWorkingDir } from "./session-working-dir.js";
+import { checkWorkingDir, refuseDeviceFolder } from "./session-working-dir.js";
 import { chatGoalSpec, goalProgressFrame } from "./chat-goal.js";
 import type { GoalState } from "../agent/goal/index.js";
 import { parseProjectFields, type SessionProject } from "../session/session-project.js";
@@ -178,7 +178,7 @@ interface ParsedRequest {
  */
 export function createChatCompletionsHandler(): HttpHandler {
   return async (req, res, ctx) => {
-    const parsed = await parseRequestBody(req, res);
+    const parsed = await parseRequestBody(req, res, ctx);
     if (!parsed) return;
     const session = resolveSession(parsed, ctx);
     const completionId = makeCompletionId();
@@ -923,6 +923,22 @@ export function buildStreamEventHook(
       }
       return;
     }
+    /* ATO-2004/2005: the loop guard stopped the turn (`level: "breaker"`).
+       The reply that follows is the model's summary step (or the canned
+       fallback), so a host can mark it as written after a stop without
+       reading the text. Extensions-only, like tool_disabled. */
+    if (event.type === "loop_detected" && event.level === "breaker") {
+      if (env.request.extensionsEnabled) {
+        sse.writeEvent("loop_stopped", {
+          object: "atomic.loop_stopped",
+          session_id: env.session.id,
+          step_index: event.stepIndex,
+          tool: event.tool,
+          ...(event.detector ? { detector: event.detector } : {}),
+        });
+      }
+      return;
+    }
     if (event.type === "provider_recovered") {
       if (env.request.extensionsEnabled) {
         sse.writeEvent("provider_recovered", {
@@ -1420,6 +1436,7 @@ function safeStringify(value: unknown): string {
 async function parseRequestBody(
   req: IncomingMessage,
   res: ServerResponse,
+  ctx: Pick<HandlerContext, "pairedDevice">,
 ): Promise<ParsedRequest | null> {
   let body: ChatCompletionRequest;
   try {
@@ -1466,6 +1483,8 @@ async function parseRequestBody(
   }
   let workingDir: string | null = null;
   if (body.working_dir !== undefined && body.working_dir !== null) {
+    // ATO-2308: also reached by /v1/responses and /v1/messages (compat-bridge.ts passes ctx).
+    if (refuseDeviceFolder(res, ctx, "working_dir")) return null;
     const check = checkWorkingDir(body.working_dir);
     if (!check.ok) {
       sendError(res, 400, openaiError(check.error, "invalid_request_error", "working_dir"));

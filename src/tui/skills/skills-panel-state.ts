@@ -116,6 +116,8 @@ export interface PluginCommandRow {
   command: string;
   description: string;
   argumentHint?: string;
+  /** Set for the operator's own commands (ATO-2229); absent for plugin commands. */
+  source?: "project" | "profile";
 }
 
 /** Root state slice for the Skills tab. */

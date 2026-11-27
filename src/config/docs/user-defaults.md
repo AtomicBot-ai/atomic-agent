@@ -19,6 +19,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `localModels.thinking` (default `"auto"`).
 - `localModels.reasoningBudgetTokens` (default `0`, no bound; a positive value is enforced in full; until ATO-607 llama.cpp's repeat limit capped it at 499, see #600).
 - `localModels.drySampler` (default `false`; `true` sends llama.cpp's DRY anti-repeat sampler, looking at the last 256 tokens of prompt plus reply, with every `/completion` request to Atomic Core, managed or External llama-server, never to Ollama or cloud providers).
+- `localModels.modelSampling` (default `false`; `true` uses the loaded model's own recommended temperature, top-p, top-k, min-p and repeat penalty from its GGUF `general.sampling.*` keys or a sibling `generation_config.json`, under the request's own values and the `ATOMIC_AGENT_LLAMA_*` overrides, ATO-2202).
 - `localModels.strictToolArgs` (default `false`; `true` holds a local model's tool arguments to each tool's JSON Schema in the request grammar, so an unknown key or a missing required one cannot be sampled; a tool whose schema does not convert keeps the any-object rule, ATO-633).
 - `localModels.managed.engine` (default `"atomic-core"`).
 - `localModels.managed.modelId` (default `null`).
@@ -28,6 +29,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `localModels.managed.stopOnExit` (default `true`).
 - `localModels.managed.autoRestart` (default `true`).
 - `localModels.managed.promptDiskCache` (default `false`).
+- `localModels.managed.share` (default `false`; `true` opens serve's `/raw/v1` model routes to callers with the share key, ATO-2336).
 - `localModels.managed.device` (default `"auto"`).
 - `localModels.managed.backendVariant` (default `"auto"`).
 - `localModels.managed.coreBackendVariant` (default `"auto"`).
@@ -35,6 +37,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `localModels.managed.parallel` (default `"auto"`).
 - `localModels.managed.swaFull` (default `"auto"`).
 - `localModels.managed.loraAdapters` (default absent: no adapters; `{ "<modelId>": { "path": "/abs/adapter.gguf", "scale"?: number } }` launches that model with `--lora`, or `--lora-scaled` when `scale` is not 1).
+- `localModels.managed.modelsDirOverride` (default absent: models stay in `<dataDir>/models`; a folder path, `~` allowed, keeps the downloaded models there, for example on an external disk. Written by `atomic-agent models dir <folder>`, which needs an empty folder and moves only model folders (a GGUF inside), leaving any other file where it is; removed by `models dir --reset`).
 - `localModels.embeddings.enabled` (default `false`).
 - `localModels.embeddings.modelId` (default `null`).
 - `localModels.embeddings.port` (default `19092`).
@@ -123,7 +126,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `tools.shell.envPassthrough` (default `["GITHUB_TOKEN", "NOTION_API_KEY"]`).
 - `tools.screen.enabled` (default `false`): the macOS `os.screen.*` computer-use tools ([OS tools](../../tools/os/README.md)); read at start.
 - `tools.screen.point` (default `true`): `os.screen.point`, which only draws marks through the desktop app, plus `os.screen.capture`, on macOS, independent of `tools.screen.enabled`; read at start.
-- `tools.lsp.enabled` (default `false`): after `os.fs.write` / `edit` / `patch` change a TypeScript, JavaScript or Python file inside a git repository, list the errors the change added, from `typescript-language-server` or `pyright-langserver` already on PATH (never installed); outside a trusted project folder the first start in a repository asks once; read at start.
+- `tools.lsp.enabled` (default `false`): after `os.fs.write` / `edit` / `patch` change a source file inside a git repository, list the errors the change added, from a language server already on PATH (never installed): `typescript-language-server`, `pyright-langserver`, `gopls`, `rust-analyzer`, `clangd`, `jdtls`, `sourcekit-lsp` or `csharp-ls`; it also registers `os.code.lsp` (definition, references, hover, symbols) on the same servers (ATO-2373); outside a trusted project folder the first start in a repository asks once; read at start.
 
 ## browser
 
@@ -146,6 +149,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 ## privacy
 
 - `privacy.shield.enabled` (default `false`): Privacy Shield. Emails, phone numbers, card numbers, IBANs and keys in a request to a cloud model are replaced with placeholders such as `[EMAIL_1]` and put back in the reply and in tool calls on this machine. Local models are never masked ([privacy shield](../../privacy/README.md)).
+- `privacy.shield.localNames` (default `false`): with the shield on, a model on this machine also finds people's names, street addresses and organisations and they go out as `[NAME_1]`, `[ADDRESS_1]`, `[ORG_1]`. Needs a local model; without one only the masks above apply. Never sent to a cloud model for detection.
 
 ## sessions
 
@@ -258,7 +262,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `skills.clawhub.apiBase` (default `"https://clawhub.ai"`).
 - `skills.clawhub.browseLimit` (default `100`).
 - `skills.clawhub.nonSuspiciousOnly` (default `true`).
-- `skills.selfLearning.enabled` (default `true`, ATO-67): after a turn of at least `skills.selfLearning.minSteps` model steps, one background model call reviews it and may write a new user skill or patch a learned one it used. The previous version is saved first; `/learn` (TUI) and `atomic-agent skill learned` list the changes, `/learn undo <id>` and `atomic-agent skill learned undo <id>` take one back. A turn that read outside content (web, MCP, email, HTTP) or came from a chat channel or a plain HTTP caller only saves a draft marked "Pending review", used once `/learn approve <id>` (`atomic-agent skill learned approve <id>`) says so; `discard <id>` deletes it. Never touches starter, hub, plugin, shared or project skills. Set `false` to turn it off.
+- `skills.selfLearning.enabled` (default `true`, ATO-67): after a turn of at least `skills.selfLearning.minSteps` model steps, one background model call reviews it and may write a new user skill or patch a learned one it used. The previous version is saved first; `/learn` (TUI) and `atomic-agent skill learned` list the changes, `/learn undo <id>` and `atomic-agent skill learned undo <id>` take one back. A turn that read outside content (web, MCP, email, HTTP), read local files or command output (ATO-1650: a downloaded file or `curl` output can carry someone else's text) or came from a chat channel or a plain HTTP caller only saves a draft marked "Pending review", used once `/learn approve <id>` (`atomic-agent skill learned approve <id>`) says so; `discard <id>` deletes it. Never touches starter, hub, plugin, shared or project skills. Set `false` to turn it off.
 - `skills.selfLearning.minSteps` (default `10`): model steps a turn needs before it is reviewed, 1 to 1000.
 - `skills.eval.judgeProvider`: unset. A provider id from `llm.providers` that grades `judge` checks in `atomic-agent skill eval` (ATO-1101). Unset, the active text provider grades them when it is a cloud provider; with a local model active, `skill eval` stops with exit 2 until this is set or `ATOMIC_AGENT_JUDGE_URL` is.
 

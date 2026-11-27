@@ -77,7 +77,8 @@ import { createInterviewInviteController } from "./interview-invite/interview-in
 import { detectKittyKeyboard } from "./detect-kitty-keyboard.js";
 import { setShiftEnterNewline } from "./shift-enter-support.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
-import { createIndexedSessionPickerSearch, INDEXED_SEARCH_LIMIT } from "./session-rail/session-search.js";
+import { INDEXED_SEARCH_LIMIT } from "./session-rail/session-search.js";
+import { createSessionPickerSearchIndex } from "./session-rail/session-search-index.js";
 import { createHerdrReporter } from "./herdr-reporter.js";
 import {
   detectTerminalBackground,
@@ -91,6 +92,7 @@ import {
   resolveStartupWorkingDir,
 } from "./startup-working-dir.js";
 import { readRecentWorkingDirs } from "../session/index.js";
+import { detectLocalServers } from "../llm/provider/presets/detect-local-servers.js";
 import { createMentionFileIndex, expandFileMentions } from "./file-mentions/index.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
 import {
@@ -522,6 +524,20 @@ export async function tuiCommand(args: string[]): Promise<number> {
     kittyKeyboard,
     mouse: () => mouseTracking,
   });
+  // ATO-1153: the picker's search reads message text from the store;
+  // ATO-1510: and asks the FTS5 index for sessions not loaded yet;
+  // ATO-1659: built once per list in the background, not per keystroke.
+  const pickerSearch = createSessionPickerSearchIndex({
+    index: {
+      sync: (budget) => runtime.sessionStore.syncTranscriptIndex(budget),
+      match: (query) =>
+        runtime.sessionStore
+          .matchTranscripts({ query, limit: INDEXED_SEARCH_LIMIT })
+          // Archived chats stay out of search, as they stay off the rail.
+          .filter((hit) => !runtime.sessionStore.isArchived(hit.sessionId)),
+    },
+    source: (id) => runtime.sessionStore.listChatLines(id),
+  });
   const ink = render(
     React.createElement(TuiApp, {
       session: sessionInfo,
@@ -593,16 +609,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onRewindRequested: (turnIndex, expectText) =>
           orchestrator.rewindTo(turnIndex, expectText),
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
-        // ATO-1153: the picker's search reads message text from the store;
-        // ATO-1510: and asks the FTS5 index for sessions not loaded yet.
-        searchSessions: createIndexedSessionPickerSearch(
-          (query) =>
-            runtime.sessionStore
-              .searchTranscripts({ query, limit: INDEXED_SEARCH_LIMIT })
-              // Archived chats stay out of search, as they stay off the rail.
-              .hits.filter((hit) => !runtime.sessionStore.isArchived(hit.sessionId)),
-          (id) => runtime.sessionStore.listChatLines(id),
-        ),
+        searchSessions: pickerSearch.search,
+        sessionSearchStatus: pickerSearch,
         onSessionPinToggled: (id) => orchestrator.togglePinned(id),
         onSessionMoveRequested: (id, toIndex) =>
           orchestrator.moveSession(id, toIndex),
@@ -843,6 +851,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.providers.completeWizard(wizard),
         onProvidersWizardSubmitCancel: () =>
           orchestrator.providers.cancelWizardVerification(),
+        onDetectLocalServers: () => detectLocalServers(),
         onProvidersRemove: (id) =>
           void orchestrator.providers.removeProviderById(id),
         onImportPreview: (form) => orchestrator.import.preview(form),

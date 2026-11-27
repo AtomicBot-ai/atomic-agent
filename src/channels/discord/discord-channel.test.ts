@@ -276,8 +276,11 @@ describe("DiscordChannel per-channel approval bindings", () => {
     await settle();
     expect(socket).not.toBeNull();
     const owner = { id: "111" };
+    // Real Discord ids are unique; the channel now drops a repeated id
+    // as a duplicate delivery (ATO-2248).
+    let nextId = 1000;
     const inGuild = (channel_id: string, content: string) => ({
-      id: `m-${channel_id}`,
+      id: String(++nextId),
       channel_id,
       guild_id: "g1",
       content: `<@9> ${content}`,

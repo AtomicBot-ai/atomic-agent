@@ -56,9 +56,14 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   // Same for a canvas (ATO-1137): only the orchestrator's stream reaches
   // the chat, so a worker's chart would be a file nobody is shown.
   "canvas.render",
+  // A fan-out inside a worker, and a report file nobody is shown (ATO-2133).
+  "research.deep",
   // Nobody watches a worker's session, so its question would reach nobody
   // (ATO-489); the gate would refuse it anyway.
   "ask_user",
+  // ATO-2363: a worker runs on the local leg, so logbook.query would read
+  // the screen notes unasked and hand them to a cloud orchestrator.
+  "logbook.query",
 ]);
 
 /** `RunTurnOptions.toolFilter` for a worker turn. */

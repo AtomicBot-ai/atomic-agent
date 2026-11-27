@@ -32,7 +32,9 @@ export type CoreFailureStage = "download" | "verify" | "backend" | "start";
  */
 export type CoreFailureReason =
   | "network" | "server" | "disk" | "checksum" | "version" | "unsupported"
-  | "no_backend" | "not_installed" | "not_ready" | "spawn" | "unknown";
+  | "no_backend" | "not_installed" | "not_ready" | "spawn" | "unknown"
+  // Why the downloaded binary would not run its version check (ATO-1742, core-spawn-reason.ts).
+  | "spawn_dll_init" | "spawn_access" | "spawn_missing" | "spawn_timeout" | "spawn_exit";
 
 /**
  * The structured part of a failure, for UIs that render buttons and for

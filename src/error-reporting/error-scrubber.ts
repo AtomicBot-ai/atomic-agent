@@ -12,7 +12,9 @@ import { sanitizeLlmFailureTags, type LlmFailureContext } from "./llm-failure-ta
 import { maskSecrets } from "./secret-detector.js";
 import { extractAnswerFailureTags } from "./answer-failure-tag.js";
 import { extractSubscriptionCliFailureTags } from "./subscription-cli-failure-tag.js";
+import { extractGrammarFailureTags } from "./grammar-failure-tag.js";
 import { extractUpstreamErrorDetail } from "./upstream-error-detail.js";
+import { classifyFailureOwner, requestHostIsLocal } from "./failure-owner.js";
 
 /** Neutral, transport-agnostic shape of a scrubbed error report. */
 export interface ScrubbedErrorEvent {
@@ -99,6 +101,11 @@ export interface ScrubbedErrorEvent {
    */
   toolNameClass?: string;
   /**
+   * `ToolExecutionError.knownElsewhere` for an unregistered tool (ATO-2423),
+   * restricted to its fixed enum (`unregistered-tool-source.ts`).
+   */
+  toolKnownElsewhere?: string;
+  /**
    * Class of the host in `TransportError.url`, when present
    * (`localhost` / `private` / `known_cloud` / `other`). Neither the URL
    * nor the host name itself ever travels.
@@ -132,6 +139,12 @@ export interface ScrubbedErrorEvent {
   /** `error.code` of the provider body, bounded enum shape. */
   upstreamErrorCode?: string;
   /**
+   * Who acts on a provider's HTTP refusal (`failure-owner.ts`, ATO-2419):
+   * `person`, `ours`, `provider` or `unknown`. Only on `llm_failure`
+   * events that carry a status and are not a tool's failure.
+   */
+  failureOwner?: string;
+  /**
    * `llm_failure` turn context as ready-made tags (`provider_id`,
    * `local_engine`, `outage_waited_ms`, `outage_attempts`,
    * `daemon_state`, and for a refused connection `local_engine_alive`
@@ -147,6 +160,13 @@ export interface ScrubbedErrorEvent {
    * `llmFailureTags`: they stay out of the fingerprint.
    */
   cliFailureTags?: Record<string, string>;
+  /**
+   * `socket_error_code`, `socket_peer`, `undici_frame` for a global
+   * socket failure (`socket-error.ts`, ATO-1735). Context only.
+   */
+  socketTags?: Record<string, string>;
+  /** `grammar_path` / `grammar_skipped` (`grammar-failure-tag.ts`, ATO-2422). */
+  grammarFailureTags?: Record<string, string>;
   /** Path-stripped stack frames (basenames only — no home dir / username). */
   frames: SentryStackFrame[];
 }
@@ -191,6 +211,13 @@ const KNOWN_TOOL_ERROR_KINDS = new Set(["unregistered"]);
 
 /** Mirror of `UnregisteredToolNameClass` in `src/llm/reliability/llm-failures.ts` — a fixed 3-value enum, safe to allowlist verbatim. */
 const KNOWN_TOOL_NAME_CLASSES = new Set(["near_miss", "mcp_like", "other"]);
+const KNOWN_TOOL_SOURCES = new Set([
+  "prompt_advertised",
+  "gated_off",
+  "mcp_server_missing",
+  "mcp_tool_missing",
+  "not_in_catalog",
+]);
 
 /**
  * Bounded identifier pattern for tool names (mirrors `MCP_TOOL_NAME_RE` in
@@ -538,6 +565,12 @@ export function scrubError(
   if (toolErrorKind.nameClass !== undefined) {
     event.toolNameClass = toolErrorKind.nameClass;
   }
+  if (toolErrorKind.kind !== undefined) {
+    const knownElsewhere = (err as { knownElsewhere?: unknown }).knownElsewhere;
+    if (typeof knownElsewhere === "string" && KNOWN_TOOL_SOURCES.has(knownElsewhere)) {
+      event.toolKnownElsewhere = knownElsewhere;
+    }
+  }
   if (transportHost !== undefined) event.transportHost = transportHost;
   if (upstreamErrorType !== undefined) {
     event.upstreamErrorType = upstreamErrorType;
@@ -552,11 +585,17 @@ export function scrubError(
   if (detail.upstreamErrorCode !== undefined) {
     event.upstreamErrorCode = detail.upstreamErrorCode;
   }
+  if (opts.source === "llm_failure" && category !== "tool") {
+    const owner = classifyFailureOwner(httpStatus, detail.upstreamReason, requestHostIsLocal(err));
+    if (owner !== undefined) event.failureOwner = owner;
+  }
   const llmFailureTags = sanitizeLlmFailureTags(opts.llmFailure);
   if (llmFailureTags !== undefined) event.llmFailureTags = llmFailureTags;
   const cliFailureTags = extractSubscriptionCliFailureTags(err);
   if (cliFailureTags !== undefined) {
     event.cliFailureTags = cliFailureTags;
   }
+  const grammarFailureTags = extractGrammarFailureTags(err);
+  if (grammarFailureTags !== undefined) event.grammarFailureTags = grammarFailureTags;
   return event;
 }

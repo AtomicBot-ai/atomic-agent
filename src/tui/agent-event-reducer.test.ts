@@ -2975,6 +2975,29 @@ describe("reduceTuiState session usage (ATO-569)", () => {
   });
 });
 
+/* ATO-1686: a turn the unknown-tool streak ended says the model is the
+   problem and where to pick another, not "a tool call failed". */
+describe("a model that keeps calling tools that don't exist", () => {
+  it("shows the catalog sentence and points at /model", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("tool not registered in this agent: os.grep"),
+          category: "tool",
+          failure: failureVerdict("unknown_tools_repeated"),
+        },
+      },
+    ]);
+    const msg = next.messages.find((m) => m.role === "system" && m.variant === "warn");
+    expect(msg?.text).toContain("This model keeps calling tools that don't exist. Try another model.");
+    expect(msg?.text).toContain("/model");
+    expect(msg?.text).not.toContain("a tool call failed");
+  });
+});
+
 /* ATO-1457: a turn that failed because the provider refused the API key
    offers `[check key]`, which opens that provider's key field. */
 describe("a refused API key offers the key field", () => {

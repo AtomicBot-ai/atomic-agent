@@ -139,6 +139,22 @@ describe.skipIf(process.platform === "win32")(
       expect(asked).toHaveLength(1);
     });
 
+    it("config secrets env asks at level 4 and past a shell grant (ATO-1647)", async () => {
+      gate.setLevel(4);
+      answer = (req) =>
+        req.category === "shell"
+          ? { approved: true, grant: "category" }
+          : { approved: false, reason: "no" };
+      await runDenied({ cmd: "atomic-agent", args: ["config", "secrets", "env"] });
+      await runDenied({ cmd: "cd . && npx atomic-agent config secrets env" });
+      await runDenied({ cmd: "node dist/index.js config secrets env | cat" });
+      expect(asked).toHaveLength(3);
+      for (const req of asked) {
+        expect(req.category).toBe("shell_dangerous");
+        expect(canGrantCategory(req)).toBe(false);
+      }
+    });
+
     it("a dangerous line in a subshell asks as shell_dangerous too", async () => {
       answer = (req) =>
         req.category === "shell"

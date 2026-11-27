@@ -1,5 +1,10 @@
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import { readModelPrefixReuse } from "../local-llm/catalog/gguf-metadata.js";
+import {
+  readModelSamplingDefaults,
+  sameSampling,
+  type ModelSamplingDefaults,
+} from "../local-llm/catalog/gguf-sampling.js";
 import { applyMcpToolNameRule } from "../mcp/mcp-grammar-builder.js";
 import { buildGrammar } from "./grammar/build-grammar.js";
 import type { LlamaServerClient } from "./llama-server-client.js";
@@ -65,6 +70,13 @@ export interface ModelProfileManagerOptions {
     reasons: string[];
   } | null>;
   /**
+   * Reads the recommended sampling for the model file `/props.model_path`
+   * names (ATO-2202). Defaults to `readModelSamplingDefaults` (header plus
+   * sibling `generation_config.json`, memoised per path); tests inject a
+   * stub. `null` leaves the profile without `sampling`.
+   */
+  readSampling?: (modelPath: string) => Promise<ModelSamplingDefaults | null>;
+  /**
    * Whether the daemon was launched with `--swa-full`, which makes a
    * sliding-window model's cache partially reusable again. Read per
    * refresh; absent means unknown (treated as not set).
@@ -127,6 +139,9 @@ export class ModelProfileManager {
   private readonly readPrefixReuse: NonNullable<
     ModelProfileManagerOptions["readPrefixReuse"]
   >;
+  private readonly readSampling: NonNullable<
+    ModelProfileManagerOptions["readSampling"]
+  >;
   private readonly swaFullActive: (() => boolean) | undefined;
   private readonly logger: StructuredLogger | undefined;
 
@@ -141,6 +156,7 @@ export class ModelProfileManager {
     this.onTotalSlots = options.onTotalSlots;
     this.readThroughput = options.readThroughput;
     this.readPrefixReuse = options.readPrefixReuse ?? readModelPrefixReuse;
+    this.readSampling = options.readSampling ?? readModelSamplingDefaults;
     this.swaFullActive = options.swaFullActive;
     this.logger = options.logger;
   }
@@ -255,6 +271,32 @@ export class ModelProfileManager {
     return { ...profile, prefixReuse };
   }
 
+  /**
+   * Stamp `sampling` on a freshly detected profile from the same model
+   * file (ATO-2202). No path, or a model that names no sampling, leaves
+   * the field off; a failed read is the same as naming none.
+   */
+  private async applySampling(
+    profile: ModelProfile,
+    modelPath: string | null,
+  ): Promise<ModelProfile> {
+    if (modelPath === null || modelPath.length === 0) return profile;
+    let sampling: ModelSamplingDefaults | null = null;
+    try {
+      sampling = await this.readSampling(modelPath);
+    } catch {
+      sampling = null;
+    }
+    if (sampling === null) return profile;
+    if (!sameSampling(sampling, this.profile.sampling)) {
+      this.logger?.info("model sampling defaults read from the model", {
+        modelPath,
+        sampling,
+      });
+    }
+    return { ...profile, sampling };
+  }
+
   async refreshIfStale(): Promise<ModelProfileRefreshResult> {
     if (!this.stale) {
       return {
@@ -283,9 +325,11 @@ export class ModelProfileManager {
       if (totalSlots !== null) {
         this.onTotalSlots?.(totalSlots);
       }
-      const nextProfile = await this.applyPrefixReuse(
-        detectModelProfile(props),
-        typeof props.model_path === "string" ? props.model_path : null,
+      const modelPath =
+        typeof props.model_path === "string" ? props.model_path : null;
+      const nextProfile = await this.applySampling(
+        await this.applyPrefixReuse(detectModelProfile(props), modelPath),
+        modelPath,
       );
       const nextModelId = normaliseId(
         typeof props.model_alias === "string" ? props.model_alias : null,
@@ -387,7 +431,8 @@ function servedFactsDiffer(prev: ModelProfile, next: ModelProfile): boolean {
     prev.vision.source !== next.vision.source ||
     prev.contextWindow !== next.contextWindow ||
     prev.supportsThinkingSwitch !== next.supportsThinkingSwitch ||
-    prev.prefixReuse !== next.prefixReuse
+    prev.prefixReuse !== next.prefixReuse ||
+    !sameSampling(prev.sampling, next.sampling)
   );
 }
 

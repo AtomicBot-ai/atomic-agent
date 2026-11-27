@@ -8,23 +8,39 @@ import {
   type Extractor,
 } from "../os/read-document/index.js";
 import { extractMediaText, mediaKindForPath, type MediaTextOptions } from "../os/media-text/media-text.js";
+import { boundOcrEngine, DEFAULT_OCR_LANGUAGES, type OcrEngine } from "../os/read-document/extractors/ocr-engine.js";
+import { createPdfExtractor } from "../os/read-document/extractors/pdf-extractor.js";
 import { pageSegments, type TextSegment } from "./file-chunker.js";
 
 /**
  * The text of one file for the index, through the readers the agent
  * already has: `os.fs.read_document`'s extractors for documents (PDF
  * pages kept), and `media-text.ts` for photos and audio, only when the
- * caller turned it on. A file nothing can read is `skipped` with the
- * reason; a reader that throws is `failed`.
+ * caller turned it on. Pages of a PDF without a text layer go to the OCR
+ * engine when one is passed (ATO-2205), up to `ocr.maxPages` per file. A
+ * file nothing can read is `skipped` with the reason (a scan says why OCR
+ * did not read it: `scan: OCR not available (...)`); a reader that throws
+ * is `failed`.
  */
 export type FileTextResult =
   | { status: "ok"; segments: TextSegment[] }
   | { status: "skipped"; reason: string }
   | { status: "failed"; error: string };
 
+export interface FileOcrOptions {
+  /** The engine for scanned pages, read per file; unset means scans are skipped. */
+  engine?: OcrEngine | (() => OcrEngine | undefined);
+  /** Most scanned pages recognised per file. Default 30. */
+  maxPages?: number;
+  /** Default `["rus", "eng"]`. */
+  languages?: readonly string[];
+}
+
 export interface FileTextOptions {
   /** Photos and audio: `media-text.ts` options. Off (`enabled` unset) skips them. */
   media?: MediaTextOptions;
+  /** Scanned PDF pages. Without an engine a scan is skipped with the reason. */
+  ocr?: FileOcrOptions;
   /** Most PDF pages read per file. Default 2000. */
   maxPages?: number;
   /** Test seam: extractors by format, instead of the real libraries. */
@@ -48,6 +64,8 @@ export function isIndexablePath(path: string): boolean {
 }
 
 const DEFAULT_MAX_PAGES = 2000;
+/** A scanned page costs one vision call; 30 covers most contracts and receipts. */
+export const DEFAULT_MAX_OCR_PAGES = 30;
 
 export async function extractFileText(path: string, options: FileTextOptions = {}): Promise<FileTextResult> {
   try {
@@ -63,7 +81,11 @@ export async function extractFileText(path: string, options: FileTextOptions = {
 
 async function documentText(path: string, options: FileTextOptions): Promise<FileTextResult> {
   const format = detectDocumentFormat(path, undefined);
-  const extractor = await resolveDocumentExtractor(format, options.extractors ? { extractors: options.extractors } : {});
+  const ocr: ReadyOcr = format === "pdf" ? await readyOcr(options) : { engine: undefined, unavailable: undefined };
+  const extractors = ocr.engine && !options.extractors?.pdf
+    ? { ...options.extractors, pdf: createPdfExtractor({ ocrEngine: ocr.engine, ocrLanguages: ocrLanguages(options) }) }
+    : options.extractors;
+  const extractor = await resolveDocumentExtractor(format, extractors ? { extractors } : {});
   const result = await extractor({
     data: await readFile(path),
     sourcePath: path,
@@ -72,7 +94,7 @@ async function documentText(path: string, options: FileTextOptions): Promise<Fil
     includeTables: true,
   });
   if (format === "pdf" && result.textLayer?.status === "scanned") {
-    return { status: "skipped", reason: "scanned PDF without a text layer (OCR is not wired into the index yet)" };
+    return { status: "skipped", reason: scanSkipReason(result.warnings, ocr) };
   }
   // Only PDF pages become citations (`#page=N`); other formats keep
   // their slide/chapter dividers as plain text.
@@ -95,6 +117,51 @@ async function mediaText(path: string, options: FileTextOptions): Promise<FileTe
   // timestamped transcript arrives.
   const segments = nonEmpty(result.text);
   return segments.length === 0 ? { status: "skipped", reason: "no text in the file" } : { status: "ok", segments };
+}
+
+interface ReadyOcr {
+  /** Bounded, ready to run; unset when there is none or it cannot run. */
+  engine: OcrEngine | undefined;
+  /** Why scans cannot be read right now. */
+  unavailable: string | undefined;
+}
+
+/**
+ * The engine, checked once per PDF (a cheap local check), so a scan that
+ * stays unread says why: no engine set up, or the engine's own reason.
+ */
+async function readyOcr(options: FileTextOptions): Promise<ReadyOcr> {
+  const raw = typeof options.ocr?.engine === "function" ? options.ocr.engine() : options.ocr?.engine;
+  if (raw === undefined) return { engine: undefined, unavailable: "no OCR engine is set up for the file index" };
+  let unavailable: string | undefined;
+  try {
+    unavailable = await raw.unavailableReason(ocrLanguages(options));
+  } catch (error) {
+    unavailable = error instanceof Error ? error.message : String(error);
+  }
+  if (unavailable !== undefined) return { engine: undefined, unavailable };
+  const engine = boundOcrEngine(raw, {
+    maxPages: options.ocr?.maxPages ?? DEFAULT_MAX_OCR_PAGES,
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  return { engine, unavailable: undefined };
+}
+
+function ocrLanguages(options: FileTextOptions): readonly string[] {
+  return options.ocr?.languages ?? DEFAULT_OCR_LANGUAGES;
+}
+
+/** The skip reason of a PDF that is still a scan after the OCR step. */
+function scanSkipReason(warnings: readonly string[], ocr: ReadyOcr): string {
+  const engine = ocr.engine;
+  if (engine === undefined) return `scan: OCR not available (${ocr.unavailable ?? "no OCR engine"})`;
+  const failedPrefix = `OCR engine ${engine.id} failed: `;
+  const failed = warnings.find((w) => w.startsWith(failedPrefix));
+  if (failed !== undefined) return `scan: OCR failed (${failed.slice(failedPrefix.length)})`;
+  const unavailablePrefix = `OCR engine ${engine.id} unavailable: `;
+  const unavailable = warnings.find((w) => w.startsWith(unavailablePrefix));
+  if (unavailable !== undefined) return `scan: OCR not available (${unavailable.slice(unavailablePrefix.length)})`;
+  return "scan: OCR found no text";
 }
 
 function nonEmpty(text: string): TextSegment[] {

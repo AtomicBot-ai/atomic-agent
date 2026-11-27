@@ -100,6 +100,52 @@ describe.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-e
       expect(existsSync(join(outside, "escaped.txt"))).toBe(false);
     });
 
+    // ATO-1651: a session started in the home folder must not make the
+    // whole home (rc files, tool `bin` folders) writable.
+    it("a working folder of ~ is not writable", async () => {
+      const target = join(outside, "escaped.txt");
+      const result = await tool(on).run(
+        { cmd: 'echo out > "$ATO469_OUTSIDE/escaped.txt"; echo end' },
+        { ...ctx(), workingDir: homedir() },
+      );
+      expect(existsSync(target)).toBe(false);
+      expect(result.summary).toContain("home folder or above it");
+    });
+
+    // ATO-1651: package caches go to a private folder under temp, which
+    // stays writable, so `npm install` and `npx` keep working.
+    it("points package caches at a writable sandbox cache", async () => {
+      const result = await tool(on).run(
+        {
+          cmd: 'mkdir -p "$npm_config_cache/_npx" && echo cache-ok > "$npm_config_cache/_npx/p" && cat "$npm_config_cache/_npx/p"; echo "cache=$npm_config_cache gomod=$GOMODCACHE"',
+        },
+        ctx(),
+      );
+      expect(result.summary).toContain("cache-ok");
+      expect(result.summary).toContain("atomic-agent-sandbox-cache");
+      expect(result.summary).not.toContain(`cache=${join(homedir(), ".npm")}`);
+    });
+
+    // ATO-1652: without network the socket variables are not passed on,
+    // so a client never gets pointed at a socket the sandbox hides.
+    it("drops SSH_AUTH_SOCK and DOCKER_HOST without network, keeps them with it", async () => {
+      const saved = { ssh: process.env.SSH_AUTH_SOCK, docker: process.env.DOCKER_HOST };
+      process.env.SSH_AUTH_SOCK = "/tmp/ssh-ato1652/agent.1";
+      process.env.DOCKER_HOST = "unix:///tmp/ato1652-docker.sock";
+      try {
+        const cmd = 'echo "ssh=[$SSH_AUTH_SOCK] docker=[$DOCKER_HOST]"';
+        const off = await tool(on).run({ cmd }, ctx());
+        expect(off.summary).toContain("ssh=[] docker=[]");
+        const net = await tool({ mode: "workspace", network: true }).run({ cmd }, ctx());
+        expect(net.summary).toContain("ssh=[/tmp/ssh-ato1652/agent.1]");
+      } finally {
+        if (saved.ssh === undefined) delete process.env.SSH_AUTH_SOCK;
+        else process.env.SSH_AUTH_SOCK = saved.ssh;
+        if (saved.docker === undefined) delete process.env.DOCKER_HOST;
+        else process.env.DOCKER_HOST = saved.docker;
+      }
+    });
+
     it("runs as before when Safe Mode is off", async () => {
       await mkdir(join(outside, "d"), { recursive: true });
       const target = join(outside, "d", "free.txt");

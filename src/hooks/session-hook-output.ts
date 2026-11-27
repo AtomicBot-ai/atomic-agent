@@ -1,0 +1,110 @@
+import type { HookRunResult } from "./hook-runner.js";
+import { describeHookSource, type HookCommand, type SessionHookEvent } from "./hook-types.js";
+
+const MAX_TEXT_CHARS = 2_000;
+
+/** What the hooks of one session event said, combined. */
+export interface SessionHookVerdict {
+  /**
+   * UserPromptSubmit: the prompt is refused with this reason.
+   * Stop: the agent keeps working, with this reason as its instruction.
+   * Never set for SessionStart or PreCompact, which cannot block.
+   */
+  block?: string;
+  /** SessionStart / UserPromptSubmit: text the model reads with this turn. */
+  context?: string;
+  /** A hook that failed, timed out or printed bad JSON. Never blocking. */
+  error?: string;
+}
+
+function clip(text: string): string {
+  const t = text.trim();
+  return t.length > MAX_TEXT_CHARS ? `${t.slice(0, MAX_TEXT_CHARS)}…` : t;
+}
+
+function str(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? clip(value) : undefined;
+}
+
+/** Events whose plain stdout (exit 0, not JSON) is context, as in Claude Code. */
+function stdoutIsContext(event: SessionHookEvent): boolean {
+  return event === "SessionStart" || event === "UserPromptSubmit";
+}
+
+/** Events that may block: refuse the prompt, or make the agent go on. */
+function canBlock(event: SessionHookEvent): boolean {
+  return event === "UserPromptSubmit" || event === "Stop";
+}
+
+/**
+ * One session-event hook run, read the way Claude Code reads it:
+ *
+ * - exit 2: UserPromptSubmit refuses the prompt, Stop makes the agent go
+ *   on; stderr is the reason. SessionStart / PreCompact cannot block, so
+ *   their stderr is only logged.
+ * - exit 0: SessionStart / UserPromptSubmit plain stdout is context; JSON
+ *   may carry `decision: "block"` + `reason`, `continue: false` +
+ *   `stopReason`, and `hookSpecificOutput.additionalContext`.
+ * - any other exit, a timeout, or a failure to start: a non-blocking error.
+ */
+export function interpretSessionHookRun(event: SessionHookEvent, hook: HookCommand, run: HookRunResult): SessionHookVerdict {
+  const who = `${event} hook "${hook.command}" from ${describeHookSource(hook.source)}`;
+  if (run.timedOut) return { error: `${who} timed out after ${Math.round(hook.timeoutMs / 1000)} s and was stopped` };
+  if (run.spawnError !== undefined) return { error: `${who} did not run: ${run.spawnError}` };
+  if (run.exitCode === 2) {
+    const reason = str(run.stderr) ?? "blocked by hook (exit code 2, no message)";
+    return canBlock(event) ? { block: reason } : { error: `${who} exited 2 (${event} cannot block): ${reason}` };
+  }
+  if (run.exitCode !== 0) {
+    const tail = str(run.stderr);
+    return { error: `${who} failed with exit code ${run.exitCode ?? "unknown"}${tail ? `: ${tail}` : ""}` };
+  }
+  const out = run.stdout.trim();
+  if (!out.startsWith("{")) {
+    const text = str(out);
+    return text !== undefined && stdoutIsContext(event) ? { context: text } : {};
+  }
+  let json: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(out);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    json = parsed as Record<string, unknown>;
+  } catch {
+    return { error: `${who} printed output that looks like JSON but does not parse; ignored` };
+  }
+  return sessionVerdictFromJson(event, json);
+}
+
+export function sessionVerdictFromJson(event: SessionHookEvent, json: Record<string, unknown>): SessionHookVerdict {
+  const specific = json.hookSpecificOutput;
+  const hso = specific !== null && typeof specific === "object" && !Array.isArray(specific) ? (specific as Record<string, unknown>) : {};
+  const context = stdoutIsContext(event) ? str(hso.additionalContext) : undefined;
+  const withContext = context !== undefined ? { context } : {};
+  if (event === "Stop") {
+    // `continue: false` means "stop for good", which is what a Stop already does.
+    if (json.continue === false) return {};
+    return json.decision === "block" ? { block: str(json.reason) ?? "a Stop hook asked to keep working" } : {};
+  }
+  if (event === "UserPromptSubmit") {
+    if (json.continue === false) return { block: str(json.stopReason) ?? str(json.reason) ?? "a hook stopped this prompt" };
+    if (json.decision === "block") return { block: str(json.reason) ?? "blocked by hook" };
+  }
+  return withContext;
+}
+
+/** Hooks of one event ran in parallel: any block wins; contexts and errors are all kept. */
+export function combineSessionVerdicts(verdicts: readonly SessionHookVerdict[]): SessionHookVerdict {
+  const block = join(verdicts.map((v) => v.block));
+  const context = join(verdicts.map((v) => v.context));
+  const error = join(verdicts.map((v) => v.error));
+  return {
+    ...(block ? { block } : {}),
+    ...(context ? { context } : {}),
+    ...(error ? { error } : {}),
+  };
+}
+
+function join(parts: readonly (string | undefined)[]): string | undefined {
+  const kept = parts.filter((p): p is string => typeof p === "string" && p !== "");
+  return kept.length > 0 ? kept.join("\n") : undefined;
+}

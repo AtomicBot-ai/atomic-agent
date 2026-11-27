@@ -1,4 +1,5 @@
 import { checkLlamaServer } from "../llm/llama-server-health.js";
+import { isLocalRequest } from "./auth-throttle.js";
 import { sendJson, type HttpHandler } from "./request-context.js";
 
 /** `::ffff:127.0.0.1` is how a v4 loopback peer shows up on a v6 socket. */
@@ -45,7 +46,9 @@ export function isLoopback(remoteAddress: string | undefined): boolean {
  * configuration, but `busyTurns` is live behaviour — on `--host 0.0.0.0`
  * it would be an activity oracle for the whole network, which is a new
  * kind of disclosure for a route that is public by design. The sweep
- * only ever probes 127.0.0.1, so it loses nothing.
+ * only ever probes 127.0.0.1, so it loses nothing. A loopback request
+ * that carries `cf-connecting-ip` came in through a cloudflared tunnel
+ * (`atag pair --remote`, ATO-2308) and is treated as remote.
  */
 export function createHealthHandler(): HttpHandler {
   return async (req, res, ctx) => {
@@ -59,7 +62,7 @@ export function createHealthHandler(): HttpHandler {
     sendJson(res, degraded && strict ? 503 : 200, {
       status: degraded ? "degraded" : "ok",
       runtime: "atomic-agent",
-      ...(isLoopback(req.socket.remoteAddress)
+      ...(isLocalRequest(req)
         ? {
             pid: process.pid,
             ppid: process.ppid,

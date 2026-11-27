@@ -59,6 +59,8 @@ const TAINT_SENSITIVE: Record<ApprovalCategory, boolean> = {
   user_question: false,
   // Sends into another chat or reads its private context (ATO-570).
   session_cross: true,
+  // Screen notes leave the machine in the model's context (ATO-2363).
+  logbook_cloud: true,
   // MCP tools that are gated land here: arbitrary third-party code.
   other: true,
 };

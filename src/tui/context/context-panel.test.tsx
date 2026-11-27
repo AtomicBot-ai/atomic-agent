@@ -30,6 +30,8 @@ function usage(overrides: Partial<ContextUsageView> = {}): ContextUsageView {
     // N tasks costs `overhead + N * 4000`.
     pairCosts: [4000, 4000, 4000, 4000, 4000, 4000, 4000, 4000],
     sections: SECTIONS,
+    parts: [],
+    toolSearchActive: false,
     ...overrides,
   };
 }
@@ -383,5 +385,53 @@ describe("on the shortest pane the app can hand it", () => {
 
   it("brings the breakdown back when there is room", () => {
     expect(drawn(24).join("\n")).toContain("prompt scaffold");
+  });
+});
+
+/**
+ * ATO-2355: the scaffold row itemised under itself, and the one tip a
+ * small window gets when an MCP server is what filled it.
+ */
+describe("parts and the tip", () => {
+  const detailed = (): ContextUsageView =>
+    usage({
+      tokens: 10_240,
+      contextWindow: 32_768,
+      percent: 31,
+      conversationTokens: 4000,
+      sections: [
+        { label: "prompt scaffold", tokens: 6240 },
+        { label: "conversation", tokens: 4000 },
+      ],
+      parts: [
+        { parent: "prompt scaffold", label: "persona", tokens: 1240 },
+        { parent: "prompt scaffold", label: "built-in tools", tokens: 1000 },
+        { parent: "prompt scaffold", label: "mcp github", tokens: 4000, mcpServer: "github" },
+      ],
+    });
+
+  it("lists each part under the row it breaks down", () => {
+    const body = lines(detailed(), 100, 24);
+    const scaffold = body.findIndex((l) => l.includes("prompt scaffold"));
+    const github = body.findIndex((l) => l.includes("· mcp github"));
+    const conversation = body.findIndex((l) => l.includes("conversation"));
+    expect(scaffold).toBeGreaterThanOrEqual(0);
+    expect(github).toBeGreaterThan(scaffold);
+    expect(github).toBeLessThan(conversation);
+    expect(body[github]).toContain("4k");
+    expect(body.join("\n")).toContain("· persona");
+  });
+
+  it("names the server and the fix", () => {
+    const body = lines(detailed(), 100, 24).join("\n");
+    expect(body).toContain("tip: mcp github takes 12% of the window");
+    expect(body).toContain("turn it off in /mcp, or set agent.tools.search: on");
+  });
+
+  it("sheds the parts before the tip on a short pane", () => {
+    const body = lines(detailed(), 100, 14).join("\n");
+    expect(body).not.toContain("· mcp github");
+    expect(body).toContain("tip: mcp github");
+    expect(body).toContain("free");
   });
 });

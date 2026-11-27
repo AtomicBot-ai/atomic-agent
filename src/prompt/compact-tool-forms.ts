@@ -113,6 +113,10 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Syntax-aware search and replace (ast-grep); dry-run unless apply=true (may require approval).",
     tier: RARE,
   },
+  "os.code.lsp": {
+    summary:
+      "Language-server navigation: definition, references, hover or symbols at path:line (1-based); col or query names the symbol.",
+  },
   "os.fs.edit": {
     summary:
       "Replace text in a file (may require approval). oldString must match the file text exactly (copy it from os.fs.read, same indentation) and be unique unless replaceAll.",
@@ -134,7 +138,7 @@ const FORMS: Record<string, CompactToolForm> = {
     tier: RARE,
   },
   "os.fs.write_pptx": {
-    summary: "Create an editable .pptx deck: per slide title, bullets, an image, table or chart, notes (may require approval).",
+    summary: "Create an editable .pptx deck: per slide title, bullets, an image, table or chart, notes, optional layout (auto-picked; overflow goes to notes). Numbers and quotes only from the user's sources (may require approval).",
     tier: RARE,
   },
   "os.git.status": { summary: "Git status and current branch." },
@@ -158,6 +162,8 @@ const FORMS: Record<string, CompactToolForm> = {
   "github.issue.list": { summary: "List issues.", tier: RARE },
   "github.issue.create": { summary: "File an issue.", tier: RARE },
   "github.issue.comment": { summary: "Comment on an issue or PR.", tier: RARE },
+  "github.pr.checks": { summary: "CI status and failing job logs of a PR.", tier: RARE },
+  "github.pr.autofix": { summary: "Opt-in CI autofix: enable, prepare, push.", tier: RARE },
   "os.proc.list": { summary: "List processes.", tier: RARE },
   "os.proc.kill": { summary: "Signal a process (may require approval).", tier: RARE },
   "os.http.request": {
@@ -221,10 +227,19 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Search past chats by their words, then read around a hit.",
     tier: RARE,
   },
+  "conversation.history": {
+    summary: "Find exact details this chat's summary dropped: `query`, then `from` to read.",
+    tier: RARE,
+  },
   "files.search": {
     summary: "Search My files folders; paste each hit's `cite` as is.",
     tier: RARE,
   },
+  "research.deep": {
+    summary: "Web research with checked quotes; writes a report file. Answer from its verified findings; call it alone.",
+    tier: RARE,
+  },
+  "logbook.query": { summary: "Read the local notes about the person's screen for a day.", tier: RARE },
   "tasks.schedule": { summary: "Schedule a one-shot task.", tier: RARE },
   "tasks.cron": { summary: "Schedule a recurring task.", tier: RARE },
   "tasks.list": { summary: "List tasks.", tier: RARE },

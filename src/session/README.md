@@ -22,7 +22,9 @@ SessionState holds turns, loaded descriptors and transient recalled context; Ses
 
 The optional version-1 [cloud context journal](cloud-context.ts) records the exact model-visible history and state updates in the existing session JSON. It has stable transcript-based call IDs, a processed transcript boundary and a boundary hash; old sessions initialize it on their first cloud build. Assembly extends it without mutation, runtime persists it before inference, and preview never commits. Current recalled inputs remain transient, but messages already shown to a cloud model remain journaled. A Gemini 3 call keeps its opaque `thoughtSignature` there and in the transcript, on the step's first call (ATO-1680). Complete output increases stored session size; retention still applies to whole inactive sessions. Switching to local leaves the journal intact and uses the local projection; previously clipped local records cannot be reconstructed.
 
-[Search over past chats](session-search.ts) (ATO-1149) is an FTS5 index of the chat lines `listChatLines` reads, in the same file. It is filled at search time, not on writes: each search reads changed transcripts without the write lock and writes them 25 sessions per transaction, up to 500 per search. Every channel is indexed with a `source` label and task sessions rank lower; incognito chats, Fusion workers and sessions stamped `metadata.internal` / `metadata.subagent` are never indexed (`classifySessionForSearch`).
+[Search over past chats](session-search.ts) (ATO-1149) is an FTS5 index of the chat lines `listChatLines` reads, in the same file. It is filled at search time, not on writes: each search reads changed transcripts without the write lock and writes them 25 sessions per transaction, up to 500 per search. `syncTranscriptIndex(budget)` and `matchTranscripts` split the same work for a caller that spreads the sync over ticks and then only reads (the TUI picker, ATO-1659). Every channel is indexed with a `source` label and task sessions rank lower; incognito chats, Fusion workers and sessions stamped `metadata.internal` / `metadata.subagent` are never indexed (`classifySessionForSearch`). A chat in the desktop's Trash (`metadata.trashed`, [session-trashed.ts](session-trashed.ts), ATO-2332) is left out when the search or a hit read runs (`sessionTrashedForSearch`), not at index time, since moving it to Trash or back does not touch `updated_at`.
+
+The agent rereads its own compacted history with `conversation.history` ([conversation-history.ts](../tools/memory/conversation-history.ts), ATO-2261): word search or a ranged read over the records before `compaction.coveredThrough` of the calling session only (tool calls and output included), within a 16,000-character window. `renderCompactionContext` ends the summary with a line pointing at it.
 
 ## Task-specific reading
 
@@ -31,6 +33,8 @@ Read README.md for state/retention changes; ../runtime/docs/lifecycle.md for con
 ## Validation
 
 `npx vitest run src/session`; `npm run lint`; `npm run docs:check`. The production typecheck excludes tests; see [development checks](../../docs/development.md).
+
+[Usage history](usage-history.ts) (ATO-2352): tokens and spend per spend day (the `llm.costTracking.dailyResetHourUtc` day, like `daily-spend.json`), split by model and by billing (`cloud`, `local`, `plan`), in `<stateDir>/usage-history.json`. The runtime records every metered completion, local ones from their timings; only counts and model ids are stored, 400 days at most. Only priced calls add dollars; an unpriced cloud call is counted as unpriced. [usage-history-report.ts](usage-history-report.ts) sums it for `atomic-agent usage`.
 
 [Session compaction](session-compaction.ts) owns checkpoint validation and the shared history projection. The full transcript stays intact; semantic coverage and mechanical pack cuts have separate boundaries. Runtime owns [summarization and checkpoint persistence](../runtime/docs/compaction.md).
 

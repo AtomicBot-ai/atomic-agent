@@ -91,7 +91,7 @@ async function blendedHits(deps: FileSearchDeps, request: FileSearchRequest): Pr
   }
   const cosine = new Map<number, number>();
   const keywordIds = keyword.map((m) => m.chunkId);
-  for (const candidate of candidates(deps, deps.vectors, client.model, queryVector, request, keywordIds)) {
+  for (const candidate of await candidates(deps, deps.vectors, client.model, queryVector, request, keywordIds)) {
     if (candidate.vector.length !== queryVector.length) continue;
     cosine.set(candidate.chunkId, cosineSimilarity(queryVector, candidate.vector));
   }
@@ -129,14 +129,14 @@ async function blendedHits(deps: FileSearchDeps, request: FileSearchRequest): Pr
  * else a scan of every stored vector keeping the closest `scanLimit`,
  * plus the keyword hits.
  */
-function candidates(
+async function candidates(
   deps: FileSearchDeps,
   vectors: NonNullable<FileSearchDeps["vectors"]>,
   model: string,
   query: Float32Array,
   request: FileSearchRequest,
   keywordIds: readonly number[],
-): ChunkVector[] {
+): Promise<ChunkVector[]> {
   if (request.under === null && deps.nearest) {
     const ids = deps.nearest(model, query, Math.max(request.topK * NEAREST_PER_HIT, NEAREST_MIN));
     if (ids !== null) return vectors.byIds(model, [...ids, ...keywordIds]);

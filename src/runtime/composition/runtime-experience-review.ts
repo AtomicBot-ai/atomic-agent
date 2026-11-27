@@ -13,6 +13,7 @@ import {
   EXPERIENCE_REVIEW_LIMITS,
   EXPERIENCE_REVIEW_SCHEMA,
   EXPERIENCE_REVIEW_SYSTEM,
+  localContentSources,
   patchableSkillNames,
   readPatchCandidates,
   runExperienceReview,
@@ -52,6 +53,8 @@ export interface ExperienceReviewerDeps {
    * (`ApprovalGate.outsideContentSources`, the ATO-618 taint, recorded
    * whatever `agent.taintReview` says). Non-empty: the review runs, but a
    * skill it learned waits as a pending draft for the owner's approval.
+   * Local files and command output the turn read are added to it
+   * (`skills/learning/local-content-sources.ts`, ATO-1650).
    */
   outsideContentSources: (sessionId: string) => readonly string[];
   /** Test seam; the release list by default. */
@@ -251,6 +254,10 @@ export function createExperienceReviewer(deps: ExperienceReviewerDeps) {
       const experience = enabled && info.result.stepCount >= minSteps ? collectTurnExperience(state.turns) : null;
       // Read now: the taint is cleared when the session's next turn starts.
       const outsideSources = [...deps.outsideContentSources(state.id)];
+      // Local files and command output can carry someone else's text too (ATO-1650).
+      for (const label of localContentSources(experience)) {
+        if (!outsideSources.includes(label)) outsideSources.push(label);
+      }
       const verdict = shouldReviewTurn({
         enabled,
         stepCount: info.result.stepCount,

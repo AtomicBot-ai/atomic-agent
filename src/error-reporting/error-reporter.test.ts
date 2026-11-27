@@ -83,6 +83,53 @@ describe("captureError", () => {
     captureError(client, err, { source: "tool_exec" });
     expect(captured).toHaveLength(1);
   });
+
+  // ATO-1735: a local model server restarting under a request.
+  const loopbackReset = () =>
+    Object.assign(new Error("read ECONNRESET"), {
+      code: "ECONNRESET",
+      address: "127.0.0.1",
+    });
+
+  it("drops an unhandled rejection that is a loopback reset", () => {
+    const { client, captured } = fakeClient();
+    captureError(client, loopbackReset(), { source: "unhandledRejection" });
+    expect(captured).toHaveLength(0);
+  });
+
+  // An uncaught one takes the fatal exit: the crash must stay visible.
+  it("still reports an uncaught loopback reset, with the socket tags", () => {
+    const { client, captured } = fakeClient();
+    captureError(client, loopbackReset(), { source: "uncaughtException" });
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.socketTags).toEqual({
+      socket_error_code: "ECONNRESET",
+      socket_peer: "loopback",
+      undici_frame: "no",
+    });
+  });
+
+  it("still reports a loopback reset raised by a tool", () => {
+    const { client, captured } = fakeClient();
+    captureError(client, loopbackReset(), { source: "tool_exec" });
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.socketTags).toBeUndefined();
+  });
+
+  it("tags a global reset it cannot prove is loopback", () => {
+    const { client, captured } = fakeClient();
+    const err = Object.assign(new Error("read ECONNRESET"), {
+      code: "ECONNRESET",
+      syscall: "read",
+    });
+    captureError(client, err, { source: "unhandledRejection" });
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.socketTags).toEqual({
+      socket_error_code: "ECONNRESET",
+      socket_peer: "unknown",
+      undici_frame: "no",
+    });
+  });
 });
 
 /** A stdio stream as far as the guard can tell: events, and a write that records. */

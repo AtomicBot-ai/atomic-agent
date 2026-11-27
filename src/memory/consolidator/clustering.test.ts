@@ -183,4 +183,78 @@ describe("clusterEpisodes (phase 5)", () => {
     expect(clusters).toHaveLength(1);
     expect(clusters[0]?.members).toEqual([a.id, b.id, c.id]);
   });
+
+  // Shape of the store in #903: every note carries tags (and the
+  // `reflection` stamp), the link graph has 3 edges in total, and the
+  // only 3-node link component shares no tag. Before the tag pass this
+  // returned no cluster at all, so no lesson could ever form.
+  it("groups by shared tag when the link graph is too thin to reach the floor (#903)", () => {
+    const topics = ["pnpm", "docker", "git", "tests", "release"];
+    const notes: MemoryEntry[] = [];
+    for (let i = 0; i < 30; i += 1) {
+      const topic = topics[i % topics.length]!;
+      const extra = i % 2 === 0 ? ["general"] : [];
+      notes.push(seed(h, `episode ${i} about ${topic}`, ["reflection", topic, ...extra]));
+    }
+    // RELATES_TO path 0 - 1 - 2 (topics pnpm, docker, git: no shared
+    // topic tag) plus one DUPLICATES pair.
+    h.linkStore.add({ fromId: notes[0]!.id, toId: notes[1]!.id, kind: "RELATES_TO" });
+    h.linkStore.add({ fromId: notes[1]!.id, toId: notes[2]!.id, kind: "RELATES_TO" });
+    h.linkStore.add({ fromId: notes[3]!.id, toId: notes[4]!.id, kind: "DUPLICATES" });
+
+    const clusters = clusterEpisodes(
+      notes,
+      { minClusterSize: 3, requireSharedTag: true, maxClusters: 5 },
+      { linkStore: h.linkStore },
+    );
+
+    expect(clusters).toHaveLength(5);
+    const byId = new Map(notes.map((n) => [n.id, n]));
+    const seen = new Set<number>();
+    for (const cluster of clusters) {
+      const tag = cluster.sharedTags[0]!;
+      expect(topics).toContain(tag);
+      expect(cluster.members.length).toBeGreaterThanOrEqual(3);
+      for (const id of cluster.members) {
+        expect(byId.get(id)!.tags).toContain(tag);
+        expect(seen.has(id)).toBe(false);
+        seen.add(id);
+      }
+    }
+  });
+
+  it("keeps link clusters first and does not reuse their members in tag groups", () => {
+    const a = seed(h, "note A", ["pnpm"]);
+    const b = seed(h, "note B", ["pnpm"]);
+    const c = seed(h, "note C", ["pnpm"]);
+    const d = seed(h, "note D", ["pnpm"]);
+    const e = seed(h, "note E", ["pnpm"]);
+    const f = seed(h, "note F", ["pnpm"]);
+    const g = seed(h, "note G", ["git"]);
+    h.linkStore.add({ fromId: d.id, toId: e.id, kind: "RELATES_TO" });
+    h.linkStore.add({ fromId: e.id, toId: f.id, kind: "RELATES_TO" });
+
+    const clusters = clusterEpisodes(
+      [a, b, c, d, e, f, g],
+      { minClusterSize: 3, requireSharedTag: true, maxClusters: 5 },
+      { linkStore: h.linkStore },
+    );
+    expect(clusters).toEqual([
+      { members: [d.id, e.id, f.id], sharedTags: ["pnpm"] },
+      { members: [a.id, b.id, c.id], sharedTags: ["pnpm"] },
+    ]);
+  });
+
+  it("does not group by tag when requireSharedTag=false (link-only mode unchanged)", () => {
+    const a = seed(h, "note A", ["pnpm"]);
+    const b = seed(h, "note B", ["pnpm"]);
+    const c = seed(h, "note C", ["pnpm"]);
+
+    const clusters = clusterEpisodes(
+      [a, b, c],
+      { minClusterSize: 3, requireSharedTag: false, maxClusters: 5 },
+      { linkStore: h.linkStore },
+    );
+    expect(clusters).toEqual([]);
+  });
 });

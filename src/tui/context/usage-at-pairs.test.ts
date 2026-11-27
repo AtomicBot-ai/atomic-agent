@@ -22,6 +22,8 @@ function view(overrides: Partial<ContextUsageView> = {}): ContextUsageView {
       { label: "conversation", tokens: 32_000 },
       { label: "recalled memory", tokens: 3000 },
     ],
+    parts: [],
+    toolSearchActive: false,
     ...overrides,
   };
 }

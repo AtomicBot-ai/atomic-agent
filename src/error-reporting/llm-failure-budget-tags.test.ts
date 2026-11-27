@@ -57,3 +57,33 @@ describe("sanitizeLlmFailureTags: prompt budget and cut counts (ATO-1678)", () =
     expect(tags?.cut_reply_tokens).toBe("unknown");
   });
 });
+
+/**
+ * ATO-2420: a context-size refusal's own numbers beside the budget, so a
+ * report tells "our window was wrong" from "our estimate undercounted".
+ */
+describe("sanitizeLlmFailureTags: context overflow (ATO-2420)", () => {
+  it("sends the server's window, its prompt count and how far the compaction got", () => {
+    const tags = sanitizeLlmFailureTags({
+      contextOverflow: { serverWindow: 32_768, serverPromptTokens: 40_123, compaction: "compacted_still_too_large" },
+    });
+    expect(tags).toEqual({
+      overflow_server_window: "32768",
+      overflow_server_prompt_tokens: "40123",
+      overflow_compaction: "compacted_still_too_large",
+    });
+  });
+
+  it("says none for numbers the server did not send, and unknown for a word outside the vocabulary", () => {
+    const tags = sanitizeLlmFailureTags({
+      contextOverflow: {
+        serverWindow: null,
+        serverPromptTokens: null,
+        compaction: "something else" as unknown as "not_attempted",
+      },
+    });
+    expect(tags?.overflow_server_window).toBe("none");
+    expect(tags?.overflow_server_prompt_tokens).toBe("none");
+    expect(tags?.overflow_compaction).toBe("unknown");
+  });
+});

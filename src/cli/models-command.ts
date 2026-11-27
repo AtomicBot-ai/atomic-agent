@@ -27,8 +27,12 @@ import { runLocalModelsCheck } from "./models-check.js";
 import { runModelsRecommend, runModelsUpgrade } from "./models-recommend.js";
 import { runLocalModelsPullAndRun } from "./models-pull-run.js";
 import { runModelsAsk, runModelsToolcallBench } from "./models-toolcall-bench.js";
+import { runModelsCouncil } from "./models-council-command.js";
 import { runModelsTasks } from "./models-tasks-command.js";
 import { runModelsFitTest } from "./models-fit-test-command.js";
+import { runModelsRpcWorker } from "./models-rpc-worker.js";
+import { runModelsShare } from "./models-share-command.js";
+import { runModelsDir } from "./models-dir-command.js";
 
 const HELP =
   [
@@ -72,6 +76,9 @@ const HELP =
     "                                the state dir, or our hosted catalog; ATOMIC_AGENT_MODEL_",
     "                                CATALOG_URL overrides it), each with its fit for this",
     "                                machine; --refresh fetches the URL",
+    "  share [--rotate] [--off]      Let other apps and devices use the local model through",
+    "                                serve's /raw/v1 (OpenAI-compatible, its own key, off by",
+    "                                default); prints the base URL and the key to paste",
     "",
     "Fit-test subcommands:",
     "  tasks collect [--last <n>]    Write your last n tasks (default 10) as a test set;",
@@ -95,10 +102,20 @@ const HELP =
     "                                <provider>:<model>; default the active provider",
     '  ask "<question>" --models a,b  One question, no tools, to several models at once;',
     "            [--json]            answers printed one after another",
+    '  council "<question>"          Ask --models a,b as above, then a judge model (the first',
+    "    --models a,b [--judge c]    listed unless --judge) compares the answers and lists",
+    "    [--json]                    Agree / Disagree / Unique per model (also: ask --council)",
     "",
     "GPU subcommands:",
     "  devices                       List GPU devices (llama-server --list-devices); active marked with *",
     "  use-device <auto|cpu|Vulkan0> Set the managed daemon's GPU (auto-picks best discrete by default)",
+    "  rpc-worker [--lan|--host <ip>] Lend this computer's memory and GPU to a model on another",
+    "     [--port <n>] [--cache]     one (llama.cpp rpc-server, port 50052; loopback unless --lan,",
+    "                                no password: trusted networks only). On the main computer",
+    "                                list it in localModels.managed.rpcServers",
+    "  dir [<folder>|--reset]        Show the models folder, or move every downloaded model to",
+    "      [--json]                  <folder> (an external disk, say) and use it from then on;",
+    "                                --reset moves them back to the default folder",
     "",
     "Embedding subcommands (memory-v2 phase 1B — second daemon for /embedding):",
     "  list-embeddings               Show embedding catalog + disk presence + daemon health",
@@ -163,11 +180,18 @@ export async function modelsCommand(args: string[]): Promise<number> {
       case "toolcall-bench":
         return await runModelsToolcallBench(args.slice(1));
       case "ask":
+        if (args.includes("--council")) return await runModelsCouncil(args.slice(1));
         return await runModelsAsk(args.slice(1));
+      case "council":
+        return await runModelsCouncil(args.slice(1));
       case "tasks":
         return await runModelsTasks(args.slice(1));
       case "fit-test":
         return await runModelsFitTest(args.slice(1));
+      case "share":
+        return await runModelsShare(args.slice(1));
+      case "dir":
+        return await runModelsDir(args.slice(1));
       case "list":
         return runLocalModelsList();
       case "catalog":
@@ -214,6 +238,8 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return runLocalModelsDevices();
       case "use-device":
         return runLocalModelsUseDevice(args[1]);
+      case "rpc-worker":
+        return await runModelsRpcWorker(args.slice(1));
       case "list-embeddings":
         return runLocalModelsListEmbeddings();
       case "pull-embedding":

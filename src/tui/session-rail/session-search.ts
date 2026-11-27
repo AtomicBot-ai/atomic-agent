@@ -202,7 +202,8 @@ export function snippetAround(
   return `${start > 0 ? "…" : ""}${body}${end < text.length ? "…" : ""}`;
 }
 
-function joinCapped(lines: readonly { text: string }[], max: number): string {
+/** A session's lines joined, at most `max` characters: the text the matcher keeps. */
+export function joinCapped(lines: readonly { text: string }[], max: number): string {
   let out = "";
   for (const line of lines) {
     if (out.length >= max) break;

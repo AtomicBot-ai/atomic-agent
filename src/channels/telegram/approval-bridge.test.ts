@@ -149,6 +149,9 @@ describe("ApprovalBridge.dispatch", () => {
           { text: "✅ Approve", callback_data: "appr:abc:y" },
           { text: "❌ Deny", callback_data: "appr:abc:n" },
         ],
+        // GitHub #230: the session grant the TUI offers. No shape row:
+        // this request carries no command shape.
+        [{ text: "Allow shell command this session", callback_data: "appr:abc:s" }],
       ],
     });
     expect(h.bridge.pendingCount()).toBe(1);
@@ -335,22 +338,25 @@ describe("Allow always over Telegram (ATO-1142)", () => {
     });
     await h.bridge.dispatch(alwaysReq(), 7);
     const rows = keyboardOf(h).inline_keyboard;
-    expect(rows).toHaveLength(2);
-    expect(rows[1]).toEqual([
+    // Approve / Deny, the two session grants (GitHub #230), then the rule.
+    expect(rows).toHaveLength(4);
+    expect(rows[3]).toEqual([
       { text: 'Always allow "git status" in this project', callback_data: "appr:abc:w" },
     ]);
   });
 
-  it("sends only the two buttons when the gate does not offer it", async () => {
+  it("sends no rule button when the gate does not offer it", async () => {
+    const noRule = (k: ReturnType<typeof keyboardOf>) =>
+      k.inline_keyboard.flat().every((b) => !b.callback_data.endsWith(":w"));
     const h = makeHarness({
       approvals: { resolve: vi.fn(() => true), canGrantAlways: () => false },
     });
     await h.bridge.dispatch(alwaysReq(), 7);
-    expect(keyboardOf(h).inline_keyboard).toHaveLength(1);
+    expect(noRule(keyboardOf(h))).toBe(true);
     // A gate with no rules support at all: same.
     const bare = makeHarness();
     await bare.bridge.dispatch(alwaysReq(), 7);
-    expect(keyboardOf(bare).inline_keyboard).toHaveLength(1);
+    expect(noRule(keyboardOf(bare))).toBe(true);
   });
 
   it("resolves `w` as an approval with grant always and says what was saved", async () => {

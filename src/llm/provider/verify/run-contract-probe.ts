@@ -52,6 +52,8 @@ import {
   modelParamProfile,
   resolveTemperature,
 } from "../openai/model-params.js";
+import { temperatureLessonFromResponse } from "../openai/allowed-temperature.js";
+import { bodyAfterTemperatureLesson } from "../openai/temperature-resend.js";
 import {
   accumulateProbeStream,
   type ProbeStreamObservation,
@@ -151,13 +153,25 @@ export async function runProviderContractProbe(
     );
   }
 
-  const run = async (body: Record<string, unknown>): Promise<RungOutcome> =>
-    runRung(target, body, {
-      deadline,
-      state,
-      ...(opts.signal ? { signal: opts.signal } : {}),
-      ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
-    });
+  const rungCtx = {
+    deadline,
+    state,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  };
+  // A rung refused for its temperature alone ("`temperature` is
+  // deprecated for this model") is sent once more without it, like a
+  // turn (#1554); the lesson is kept, so later rungs are built obeying it.
+  const run = async (body: Record<string, unknown>): Promise<RungOutcome> => {
+    const outcome = await runRung(target, body, rungCtx);
+    if (outcome.kind !== "http_error") return outcome;
+    const resend = bodyAfterTemperatureLesson(
+      model,
+      temperatureLessonFromResponse(outcome.httpStatus, outcome.body),
+      body,
+    );
+    return resend === undefined ? outcome : runRung(target, resend, rungCtx);
+  };
 
   // Rung 1 — the real contract, forced.
   const forced = await run(probeBody(target, model, "required_named"));

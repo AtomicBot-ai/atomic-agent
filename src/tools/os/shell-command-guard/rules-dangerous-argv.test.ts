@@ -376,6 +376,106 @@ describe("dangerous.secrets_value_access", () => {
   });
 });
 
+describe("dangerous.secrets_store_move (ATO-1647)", () => {
+  it.each([
+    "atomic-agent config secrets env",
+    "atag config secrets env",
+    "npx atomic-agent config secrets env",
+    "npx -y atomic-agent config secrets env",
+    "node dist/index.js config secrets env",
+    "node ./dist/cli/index.js config secrets env",
+    "/usr/local/bin/atomic-agent config secrets env",
+    "atomic-agent --verbose config secrets env",
+    "atomic-agent config --verbose secrets --quiet env",
+    "atomic-agent config secrets ENV",
+    "cd x && atomic-agent config secrets env",
+    "ls; atomic-agent config secrets env",
+    "atomic-agent config secrets env | cat",
+    "atomic-agent config secrets env > /dev/null 2>&1",
+    "true || atomic-agent config secrets env",
+    "(atomic-agent config secrets env)",
+    "atomic-agent config secrets keychain",
+    "atomic-agent config secrets $SUB",
+    "atomic-agent config secrets $(echo env)",
+  ])("%s requires approval as dangerous", (line) => {
+    expect(guardLine(line)).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.secrets_store_move",
+    });
+  });
+
+  it("the direct-exec argv form asks too", () => {
+    expect(guardArgv("atomic-agent", ["config", "secrets", "env"])).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.secrets_store_move",
+    });
+    expect(
+      guardArgv("npx", ["atomic-agent", "config", "secrets", "env"]),
+    ).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.secrets_store_move",
+    });
+  });
+
+  it.each([
+    // xargs or find -exec supplies the subcommand (review round 1).
+    "echo env | xargs atag config secrets",
+    "echo get OPENAI_API_KEY | xargs atag config secrets",
+    "echo env | xargs -n1 atag config secrets",
+    "echo env | /usr/bin/xargs atomic-agent config secrets --quiet",
+    "echo env | xargs -I{} atag config secrets {}",
+    "echo env | xargs -I {} atag config secrets {}",
+    "echo env | xargs -I% atag config secrets %",
+    "echo env | xargs -I % npx atomic-agent config secrets %",
+    "echo env | xargs -I SUB atag config secrets SUB",
+    "find . -name x -exec atag config secrets {} ;",
+    // A computed word in the config or secrets slot (review round 1).
+    "atag $A secrets env",
+    "atag $A secrets keychain",
+    "atag $A secrets $S",
+    "atag config $S env",
+    "atag config $S $V",
+    "atag $(echo config) secrets env",
+    "atag config $(echo secrets) env",
+    "atag $A $B env",
+  ])("%s requires approval as dangerous", (line) => {
+    expect(guardLine(line)).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.secrets_store_move",
+    });
+  });
+
+  it.each([
+    "atag $A secrets get OPENAI_API_KEY",
+    "atag config $S get OPENAI_API_KEY",
+    "atag config $S set OPENAI_API_KEY",
+    "echo OPENAI_API_KEY | xargs atag config secrets unset",
+  ])("%s asks as secrets_value_access", (line) => {
+    expect(guardLine(line)).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.secrets_value_access",
+    });
+  });
+
+  it.each([
+    "atomic-agent config secrets",
+    "atomic-agent config secrets status",
+    "atomic-agent config secrets status --json",
+    "atomic-agent config secrets --help",
+    "atomic-agent config get model",
+    "echo config secrets",
+    "echo x | xargs atag config secrets status",
+    "echo model | xargs atag config get",
+    "atag config $S status",
+    "atag $A secrets status",
+    "cp $A $B $C",
+    "echo $A $B notes.md",
+    "atag config get $KEY",
+  ])("%s stays on the ordinary path", (line) => {
+    expectNotDangerous(line);
+  });
+});
+
 describe("dangerous.skill_draft_consent (ATO-67)", () => {
   it.each([
     "atomic-agent skill learned approve a1b2c3",

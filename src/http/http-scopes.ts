@@ -107,6 +107,7 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /api/sessions/{id}/goal": "chat",
   "GET /api/sessions/{id}/next-step": "read",
   "POST /api/sessions/{id}/archived": "chat",
+  "POST /api/sessions/{id}/trashed": "chat",
   "POST /api/sessions/{id}/rollback-last-turn": "chat",
   "GET /api/sessions/{id}/previous-replies": "read",
   "POST /api/sessions/{id}/restore-previous-reply": "chat",
@@ -158,6 +159,10 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "DELETE /api/telegram/pairing": "admin",
   "GET /api/telegram/channel": "read",
   "GET /api/discord/channel": "read",
+  // ATO-2308: paired phones; a phone itself is a member and cannot list or revoke.
+  "POST /api/devices/pairing": "admin",
+  "GET /api/devices": "admin",
+  "DELETE /api/devices/{id}": "admin",
   // Tasks and ideas.
   "POST /api/tasks": "chat",
   "GET /api/tasks": "read",
@@ -167,6 +172,8 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /api/tasks/{id}/pause": "chat",
   "POST /api/tasks/{id}/resume": "chat",
   "GET /api/tasks/{id}/runs": "read",
+  "GET /api/task-board": "read",
+  "POST /api/tasks/{id}/board": "chat",
   "POST /api/tasks/drain": "chat",
   "POST /api/tasks/wake": "chat",
   "GET /api/ideas": "read",

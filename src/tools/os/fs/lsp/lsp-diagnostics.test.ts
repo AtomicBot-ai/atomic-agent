@@ -115,7 +115,8 @@ describe("createLspDiagnostics (ATO-503)", () => {
 
   it("starts nothing for a language it has no server for", async () => {
     const { lsp, starts } = setup();
-    expect(await lsp.diagnoseChange(change({ absolute: `${REPO}/main.go` }))).toBeNull();
+    // Go has gopls since ATO-2373; Ruby still has no server.
+    expect(await lsp.diagnoseChange(change({ absolute: `${REPO}/main.rb` }))).toBeNull();
     expect(starts).toEqual([]);
   });
 

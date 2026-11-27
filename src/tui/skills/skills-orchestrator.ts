@@ -28,6 +28,9 @@ import {
   type StagedSkillInstall,
 } from "../../skills/index.js";
 import { listPluginCommands, renderPluginCommand } from "../../plugins/plugin-commands.js";
+import { listUserCommands, renderUserCommand, type UserCommandOptions } from "../../plugins/user-commands.js";
+import { isProjectFolderTrusted } from "../../skills/project-trust.js";
+import { expandFileMentions } from "../file-mentions/expand-mentions.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TuiEventBus } from "../tui-app.js";
 import type { HubSkillRow } from "./skills-panel-state.js";
@@ -123,11 +126,28 @@ export class SkillsOrchestrator {
       + (input ? `\n\n${input}` : "");
   }
 
-  /** Render a plugin command template; the result is sent as the user's message. */
+  /**
+   * Render the operator's own command (ATO-2229) or a plugin command
+   * template; the result is sent as the user's message. Own commands win,
+   * matching the palette; plugin names always contain `:`.
+   */
   preparePluginCommand(name: string, args: string): string {
-    const text = renderPluginCommand(this.runtime.config.paths.stateDir, name, args);
+    const options = this.userCommandOptions();
+    const own = renderUserCommand(options, name, args);
+    if (own === null && !name.includes(":")) throw new Error(`command /${name} is not available`);
+    // Own commands inline `@path` files like a typed message; plugin templates stay plain text.
+    const text = own !== null ? expandFileMentions(own, options.workingDir)
+      : renderPluginCommand(this.runtime.config.paths.stateDir, name, args);
     rememberRenderedCommand(text, args);
     return text;
+  }
+
+  /** Project commands load only in a folder the operator trusts, read live. */
+  private userCommandOptions(): UserCommandOptions {
+    const workingDir = this.currentSession()?.workingDir ?? this.runtime.capabilities.workingDir;
+    const { paths, skills } = this.runtime.config;
+    return { stateDir: paths.stateDir, workingDir,
+      projectTrusted: isProjectFolderTrusted(paths.userConfigFile, skills.projectTrust, workingDir) };
   }
 
   /**
@@ -137,11 +157,13 @@ export class SkillsOrchestrator {
    */
   private refreshPluginCommands(): void {
     try {
+      const own = listUserCommands(this.userCommandOptions()).commands.map(c => ({ name: c.name, command: c.name,
+        description: c.description, source: c.source, ...(c.argumentHint ? { argumentHint: c.argumentHint } : {}) }));
       const { commands } = listPluginCommands(this.runtime.config.paths.stateDir);
       this.bus.emit({
         type: "skills_plugin_commands_set",
-        commands: commands.map(c => ({ name: c.name, command: c.command, description: c.description,
-          ...(c.argumentHint ? { argumentHint: c.argumentHint } : {}) })),
+        commands: [...own, ...commands.map(c => ({ name: c.name, command: c.command, description: c.description,
+          ...(c.argumentHint ? { argumentHint: c.argumentHint } : {}) }))],
       });
       this.pluginCommandsError = null;
     } catch (err) {

@@ -3,8 +3,8 @@
  *
  * Core's load call takes `mtp` and `dflash` switches, but its argument
  * builder clears both for the `llamacpp` provider (the TurboQuant fork
- * that serves chat): `src/runtime/llamacpp/args.ts` in Core 0.18.6 (the
- * version this build pins) and still in 0.24.1, with the comment that
+ * that serves chat): `src/runtime/llamacpp/args.ts` in Core 0.18.6 and
+ * still in 0.24.10 (the version this build pins), with the comment that
  * the TurboQuant plugin has no speculative decoding. On
  * `llamacpp-upstream` Core emits `--spec-type draft-mtp` for a model
  * with an MTP head, on a llama.cpp build new enough for it. DFlash also

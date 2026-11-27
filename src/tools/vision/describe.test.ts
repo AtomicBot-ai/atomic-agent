@@ -136,6 +136,68 @@ describe("buildVisionDescribeTool", () => {
     expect(pins).toEqual([undefined, undefined, "worker"]);
   });
 
+  it("sends the image through the turn model's provider copy, the base one without a model (ATO-1588)", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "vision-tool-"));
+    const path = join(tmp, "image.png");
+    await writeFile(path, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const base = fakeProvider();
+    const variant = fakeProvider();
+    const asked: [string | undefined, string | undefined][] = [];
+    const tool = buildVisionDescribeTool({
+      provider: async (providerId, model) => {
+        asked.push([providerId, model]);
+        return model === "x" ? variant : base;
+      },
+      maxImagesPerCall: 2,
+      maxImageBytes: 1024,
+    });
+    const onTurnModel = await tool.run(
+      { prompt: "describe", path },
+      { ...ctx(tmp), providerId: "cloud", model: "x" },
+    );
+    expect(onTurnModel.status).toBe("ok");
+    expect(variant.describeImage).toHaveBeenCalledTimes(1);
+    expect(base.describeImage).not.toHaveBeenCalled();
+    await tool.run({ prompt: "describe", path }, { ...ctx(tmp), providerId: "cloud" });
+    expect(base.describeImage).toHaveBeenCalledTimes(1);
+    expect(variant.describeImage).toHaveBeenCalledTimes(1);
+    expect(asked).toEqual([["cloud", "x"], ["cloud", undefined]]);
+  });
+
+  it("checks vision for the turn's model, not the entry's default (ATO-1588)", async () => {
+    const base = fakeProvider();
+    const textOnly = fakeProvider({ capabilities: { vision: false, visionSource: "absent" } as ProviderCapabilities });
+    const tool = buildVisionDescribeTool({
+      provider: async (_providerId, model) => (model === "text-model" ? textOnly : base),
+      maxImagesPerCall: 2,
+      maxImageBytes: 1024,
+    });
+    const result = await tool.run(
+      { prompt: "describe", path: "x.png" },
+      { ...ctx(process.cwd()), providerId: "cloud", model: "text-model" },
+    );
+    expect(result.status).toBe("error");
+    expect(result.details).toMatchObject({ reason: "model-cannot-see" });
+    expect(textOnly.describeImage).not.toHaveBeenCalled();
+    expect(base.describeImage).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the turn model's provider cannot be built, without trying another (ATO-1588)", async () => {
+    const tool = buildVisionDescribeTool({
+      provider: async () => {
+        throw new Error("no such model");
+      },
+      maxImagesPerCall: 2,
+      maxImageBytes: 1024,
+    });
+    const result = await tool.run(
+      { prompt: "x", path: "x.png" },
+      { ...ctx(process.cwd()), providerId: "cloud", model: "x" },
+    );
+    expect(result.status).toBe("error");
+    expect(result.summary).toMatch(/no such model/);
+  });
+
   it("refuses when nothing serves the step, without calling anyone", async () => {
     const tool = buildVisionDescribeTool({
       provider: () => undefined,

@@ -101,6 +101,10 @@ export function finishStepBatchRepair(
   );
   parsed = readForeignShapes(args, completion, parsed);
   parsed = admitRepairedJson(args, completion, parsed);
+  // The repair of a reply served without the grammar is free text too:
+  // the same prose rule as the first parse, or a body that opens with
+  // `{` or `[` fails the step below (ATO-2422).
+  parsed = admitProseWithoutGrammar(args, completion, parsed);
   if (parsed.ok) {
     const taken = policy.takeProgressNote(parsed.batch, completion);
     policy.setProgressNote(taken.note);
@@ -148,7 +152,12 @@ export function finishStepBatchRepair(
       throw new GrammarError(
         parsed.error.message,
         rawPreview(completion.content),
-        { cause: parsed.error },
+        {
+          cause: parsed.error,
+          path: "repair_failed",
+          transport: retryParseDeps.toolTransport,
+          grammarSkipped: completion.grammarSkipped === true,
+        },
       );
     }
     deps.logger?.warn("degrading unparseable completion to a reply", {

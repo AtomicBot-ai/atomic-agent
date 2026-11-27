@@ -6,7 +6,7 @@ import {
   type HttpHandler,
   type HandlerContext,
 } from "./request-context.js";
-import { checkWorkingDir } from "./session-working-dir.js";
+import { checkWorkingDir, refuseDeviceFolder } from "./session-working-dir.js";
 import {
   IDEA_STATUSES,
   IdeaStateError,
@@ -133,6 +133,8 @@ export function createAcceptIdeaHandler(): HttpHandler {
             let taskSessionId = sessionId;
             let opened: string | null = null;
             if (!taskSessionId && carry?.workingDir) {
+              // ATO-2308: a paired phone does not open work in a folder; acceptIdea releases the idea.
+              if (ctx.pairedDevice) throw new DeviceFolderRefused();
               const dir = checkWorkingDir(carry.workingDir);
               if (dir.ok) {
                 const fresh = ctx.runtime.createSession({ metadata: { source: "http-task" }, persist: false });
@@ -181,11 +183,18 @@ export function createAcceptIdeaHandler(): HttpHandler {
           },
         });
       } catch (err) {
+        if (err instanceof DeviceFolderRefused) {
+          refuseDeviceFolder(res, ctx, "workingDir");
+          return;
+        }
         if (!sendDecisionError(res, err)) throw err;
       }
     });
   };
 }
+
+/** Thrown from the task factory so acceptIdea puts the idea back before the 403. */
+class DeviceFolderRefused extends Error {}
 
 export function createDismissIdeaHandler(): HttpHandler {
   return async (_req, res, ctx) => {

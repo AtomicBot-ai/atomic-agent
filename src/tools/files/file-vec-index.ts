@@ -18,11 +18,18 @@ const RESYNC_BATCH = 500;
  * candidate slot but never a wrong score. One table per model and
  * dimension. `put` mirrors every write; deletes are not mirrored, and the
  * row counts are compared before each query instead: when they differ the
- * table is resynced (missing rows added, orphans dropped). Any error turns
- * the mirror off for the process and search goes back to a scan.
+ * table is resynced (missing rows added, orphans dropped). A resync
+ * compares ids only and reads the vector blob of just the rows the mirror
+ * lacks (ATO-1657). A row whose blob never decodes is remembered as
+ * skipped (in memory, until `put` rewrites it or the row is gone) and
+ * counted as mirrored, so it does not force a resync and a scan on every
+ * search. Any error turns the mirror off for the process and search goes
+ * back to a scan.
  */
 export class FileVecIndex {
   private readonly tables = new Map<string, string>();
+  /** Per table, `chunk_vectors` rows whose blob does not decode, so they are never mirrored. */
+  private readonly skipped = new Map<string, Set<number>>();
   private broken = false;
 
   constructor(
@@ -41,6 +48,7 @@ export class FileVecIndex {
     try {
       this.db.prepare(`DELETE FROM ${table} WHERE rowid = ?`).run(BigInt(chunkId));
       this.db.prepare(`INSERT INTO ${table} (rowid, embedding) VALUES (?, ?)`).run(BigInt(chunkId), float32ToBuffer(vector));
+      this.skipped.get(table)?.delete(chunkId);
     } catch {
       this.broken = true;
     }
@@ -51,7 +59,7 @@ export class FileVecIndex {
     const table = this.table(model, query.length);
     if (table === null) return null;
     try {
-      if (!this.inSync(table, model, query.length)) return null;
+      if (!this.syncTable(table, model, query.length)) return null;
       const limit = Math.max(1, Math.min(VEC_K_MAX, Math.trunc(k)));
       const rows = this.db
         .prepare(`SELECT rowid AS id FROM ${table} WHERE embedding MATCH ? AND k = ${limit}`)
@@ -63,12 +71,27 @@ export class FileVecIndex {
     }
   }
 
+  /**
+   * Bring the mirror of `model` at `dim` up to date; whether it now matches
+   * `chunk_vectors` (skipped rows count as mirrored). Never throws.
+   */
+  sync(model: string, dim: number): boolean {
+    const table = this.table(model, dim);
+    if (table === null) return false;
+    try {
+      return this.syncTable(table, model, dim);
+    } catch {
+      this.broken = true;
+      return false;
+    }
+  }
+
   private table(model: string, dim: number): string | null {
     if (this.broken || !Number.isInteger(dim) || dim < 1 || dim > MAX_DIM) return null;
     const key = `${model}\u0000${dim}`;
     const known = this.tables.get(key);
     if (known !== undefined) return known;
-    const name = `chunk_vec_${createHash("sha256").update(key).digest("hex").slice(0, 16)}`;
+    const name = vecTableName(model, dim);
     try {
       this.db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS ${name} USING vec0(embedding float[${dim}] distance_metric=cosine)`);
     } catch {
@@ -79,44 +102,68 @@ export class FileVecIndex {
     return name;
   }
 
-  private inSync(table: string, model: string, dim: number): boolean {
+  private syncTable(table: string, model: string, dim: number): boolean {
     const want = this.vectors.countFor(model, dim);
-    if (this.count(table) === want) return true;
+    if (this.mirroredCount(table) === want) return true;
     this.resync(table, model, dim);
-    return this.count(table) === want;
+    return this.mirroredCount(table) === want;
+  }
+
+  /** Rows in the mirror plus the rows it skips as undecodable. */
+  private mirroredCount(table: string): number {
+    return this.count(table) + (this.skipped.get(table)?.size ?? 0);
   }
 
   private count(table: string): number {
     return Number((this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number | bigint }).n);
   }
 
-  /** Add what `chunk_vectors` has and the mirror lacks; drop what it no longer has. */
+  /**
+   * Add what `chunk_vectors` has and the mirror lacks; drop what it no
+   * longer has. Ids are compared first; only the missing rows' blobs are
+   * read, and a blob that does not decode is skipped from then on.
+   */
   private resync(table: string, model: string, dim: number): void {
     const run = this.db.transaction(() => {
       const mirrored = new Set(
         (this.db.prepare(`SELECT rowid AS id FROM ${table}`).all() as { id: number | bigint }[]).map((row) => Number(row.id)),
       );
+      const oldSkipped = this.skipped.get(table) ?? new Set<number>();
+      const skipped = new Set<number>();
+      const missing: number[] = [];
       const wanted = new Set<number>();
-      const page = this.db.prepare(
-        `SELECT chunk_id AS chunkId, vector FROM chunk_vectors
-          WHERE model = ? AND dim = ? AND chunk_id > ? ORDER BY chunk_id LIMIT ${RESYNC_BATCH}`,
-      );
+      const ids = this.db.prepare(`SELECT chunk_id AS chunkId FROM chunk_vectors WHERE model = ? AND dim = ?`);
+      for (const row of ids.iterate(model, dim) as Iterable<{ chunkId: number }>) {
+        wanted.add(row.chunkId);
+        if (mirrored.has(row.chunkId)) continue;
+        if (oldSkipped.has(row.chunkId)) skipped.add(row.chunkId);
+        else missing.push(row.chunkId);
+      }
       const insert = this.db.prepare(`INSERT INTO ${table} (rowid, embedding) VALUES (?, ?)`);
-      let after = -1;
-      for (;;) {
-        const rows = page.all(model, dim, after) as { chunkId: number; vector: Buffer }[];
-        if (rows.length === 0) break;
+      // Stay well under SQLite's bound-parameter limit.
+      for (let i = 0; i < missing.length; i += RESYNC_BATCH) {
+        const part = missing.slice(i, i + RESYNC_BATCH);
+        const rows = this.db
+          .prepare(
+            `SELECT chunk_id AS chunkId, vector FROM chunk_vectors
+              WHERE model = ? AND dim = ? AND chunk_id IN (${part.map(() => "?").join(",")})`,
+          )
+          .all(model, dim, ...part) as { chunkId: number; vector: Buffer }[];
         for (const row of rows) {
-          wanted.add(row.chunkId);
-          if (mirrored.has(row.chunkId)) continue;
           const vector = bufferToFloat32(row.vector, dim);
-          if (vector !== null) insert.run(BigInt(row.chunkId), float32ToBuffer(vector));
+          if (vector === null) skipped.add(row.chunkId);
+          else insert.run(BigInt(row.chunkId), float32ToBuffer(vector));
         }
-        after = rows[rows.length - 1]!.chunkId;
       }
       const drop = this.db.prepare(`DELETE FROM ${table} WHERE rowid = ?`);
       for (const id of mirrored) if (!wanted.has(id)) drop.run(BigInt(id));
+      return skipped;
     });
-    run();
+    this.skipped.set(table, run());
   }
+}
+
+/** The vec0 table that mirrors `model` at `dim`. */
+export function vecTableName(model: string, dim: number): string {
+  return `chunk_vec_${createHash("sha256").update(`${model}\u0000${dim}`).digest("hex").slice(0, 16)}`;
 }

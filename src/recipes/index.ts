@@ -32,3 +32,5 @@ export type { RecipeCheckResult, RecipeFinding } from "./recipe-check.js";
 
 export { findHiddenCharacters } from "./hidden-characters.js";
 export type { HiddenCharacter } from "./hidden-characters.js";
+
+export { STANDUP_RECIPE } from "./standup-recipe.js";

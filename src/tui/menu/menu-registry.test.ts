@@ -181,7 +181,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "model",
     description:
-      "open chat model picker · subcommands: pull <id> | use <id> | status | <base-url>",
+      "open chat model picker · subcommands: pull <id> | use <id> | favorite [add|remove] | status | <base-url>",
     aliases: ["models", "local"],
   },
   // Added with the reasoning level (ATO-490).
@@ -245,6 +245,12 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "btw",
     description:
       "ask a quick side question: `/btw <question>` — the model sees this chat, runs no tools, and nothing is saved to the session",
+  },
+  // ATO-2133: web research with checked quotes.
+  {
+    name: "research",
+    description:
+      "research a question on the web: `/research <question>` runs research.deep and saves a report with checked quotes in the working folder",
   },
   {
     name: "window",

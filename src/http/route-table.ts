@@ -56,6 +56,7 @@ import { createRenameSessionHandler } from "./route-session-title.js";
 import { createGetSessionGoalHandler, createSessionGoalActionHandler } from "./route-session-goal.js";
 import { createExportSessionHandler } from "./route-session-export.js";
 import { createSetSessionArchivedHandler } from "./route-session-archived.js";
+import { createSetSessionTrashedHandler } from "./route-session-trashed.js";
 import {
   createEscalateFusionWorkerHandler,
   createListFusionWorkersHandler,
@@ -86,6 +87,10 @@ import {
   createPauseTaskHandler,
   createResumeTaskHandler,
 } from "./route-task-controls.js";
+import {
+  createTaskBoardHandler,
+  createUpdateTaskBoardCardHandler,
+} from "./route-task-board.js";
 import {
   createAcceptIdeaHandler,
   createDismissIdeaHandler,
@@ -119,6 +124,9 @@ import {
   createPanelScriptHandler,
 } from "./route-panel.js";
 import { createSetSessionWorkingDirHandler } from "./session-working-dir.js";
+import { createPairPageHandler, createPairRedeemHandler } from "./route-device-pairing.js";
+import { createDevicePairingHandler, createListDevicesHandler, createRevokeDeviceHandler } from "./route-devices.js";
+import type { DeviceSessions } from "./device-sessions.js";
 import { createRestoreFileHandler } from "./route-fs-restore.js";
 import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
 import * as importFacts from "./route-import-facts.js";
@@ -143,6 +151,7 @@ import { createMetricsHandler } from "./route-metrics.js";
 import { a2aRoutes, type A2aOptions } from "./route-a2a.js";
 import { createMcpEndpointHandlers, MCP_ENDPOINT_PATH } from "./route-mcp-endpoint.js";
 import type { PrometheusRegistry } from "../tracing/prometheus-registry.js";
+import { createRawModelHandlers, RAW_MODEL_PREFIX, type RawModelShareDeps } from "./route-raw-model.js";
 
 export interface RouteTableOptions {
   /**
@@ -157,6 +166,10 @@ export interface RouteTableOptions {
    * routes out of the table, so they answer 404.
    */
   a2a?: A2aOptions | null;
+  /** ATO-2336: what the raw model routes read; tests inject their own (route-raw-model.ts). */
+  rawModel?: RawModelShareDeps;
+  /** ATO-2308: phones paired by QR. Omitted, the pairing routes answer 404. */
+  devices?: DeviceSessions | null;
 }
 
 /**
@@ -179,6 +192,8 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
   const mcpOAuth = createMcpOAuthHandlers();
   // ATO-549: the MCP sessions open on `/mcp` belong to this server too.
   const mcpEndpoint = createMcpEndpointHandlers();
+  // ATO-2336: one in-flight cap shared by both raw routes.
+  const rawModel = createRawModelHandlers(options.rawModel);
   return [
     {
       method: "GET",
@@ -192,12 +207,22 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
       handler: createModelsHandler(),
       requiresAuth: false,
     },
+    // ATO-2336: the bare local model for other apps, off by default. Not
+    // behind the serve key: the handler takes the share key and only it.
+    { method: "GET", path: `${RAW_MODEL_PREFIX}/models`, handler: rawModel.models, requiresAuth: false },
+    { method: "POST", path: `${RAW_MODEL_PREFIX}/chat/completions`, handler: rawModel.chatCompletions, requiresAuth: false },
     // ATO-1128: the phone panel's page; it holds no data and asks for the key (route-panel.ts).
     { method: "GET", path: "/panel", handler: createPanelPageHandler(), requiresAuth: false },
     { method: "GET", path: "/panel/app.js", handler: createPanelScriptHandler(), requiresAuth: false },
     { method: "GET", path: "/panel/manifest.webmanifest", handler: createPanelManifestHandler(), requiresAuth: false },
     { method: "GET", path: "/panel/icon.svg", handler: createPanelIconSvgHandler(), requiresAuth: false },
     { method: "GET", path: "/panel/icon-180.png", handler: createPanelIconPngHandler(), requiresAuth: false },
+    // ATO-2308: the QR link of `atag pair`; the one-time token in the path is the credential.
+    { method: "GET", path: "/pair/{token}", handler: createPairPageHandler(options.devices ?? null), requiresAuth: false },
+    { method: "POST", path: "/pair/{token}", handler: createPairRedeemHandler(options.devices ?? null), requiresAuth: false },
+    { method: "POST", path: "/api/devices/pairing", handler: createDevicePairingHandler(options.devices ?? null) },
+    { method: "GET", path: "/api/devices", handler: createListDevicesHandler(options.devices ?? null) },
+    { method: "DELETE", path: "/api/devices/{id}", handler: createRevokeDeviceHandler(options.devices ?? null) },
     // ATO-646: Prometheus scrape target. Authenticated like every /api route.
     { method: "GET", path: "/metrics", handler: createMetricsHandler(options.metricsRegistry) },
     // ATO-549: the agent as an MCP server over Streamable HTTP (route-mcp-endpoint.ts).
@@ -315,6 +340,8 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "GET", path: "/api/sessions/{id}/next-step", handler: createGetSessionNextStepHandler() },
     // ATO-1150: archive or unarchive a chat (metadata.archived, seen by the desktop and the terminal).
     { method: "POST", path: "/api/sessions/{id}/archived", handler: createSetSessionArchivedHandler() },
+    // ATO-2332: the desktop's Trash (metadata.trashed); search leaves a chat in Trash out.
+    { method: "POST", path: "/api/sessions/{id}/trashed", handler: createSetSessionTrashedHandler() },
     // ATO-1298: take the last plain question and answer back, for a real retry.
     { method: "POST", path: "/api/sessions/{id}/rollback-last-turn", handler: createRollbackLastTurnHandler() },
     // ATO-864: the earlier answers a regenerate kept, and putting one back.
@@ -443,6 +470,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "POST", path: "/api/tasks/{id}/pause", handler: createPauseTaskHandler() },
     { method: "POST", path: "/api/tasks/{id}/resume", handler: createResumeTaskHandler() },
     { method: "GET", path: "/api/tasks/{id}/runs", handler: createListTaskRunsHandler() },
+    // ATO-2257: the task board (cards in lanes); moving a card leaves the status alone.
+    { method: "GET", path: "/api/task-board", handler: createTaskBoardHandler() },
+    { method: "POST", path: "/api/tasks/{id}/board", handler: createUpdateTaskBoardCardHandler() },
     {
       method: "POST",
       path: "/api/tasks/drain",

@@ -44,6 +44,7 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "hook_ask",
   "user_question",
   "session_cross",
+  "logbook_cloud",
   "other",
 ];
 
@@ -153,6 +154,8 @@ describe("approval ladder", () => {
       user_question: null,
       // Another chat's messages, read or written (ATO-570).
       session_cross: 5,
+      // Screen notes going to a cloud model (ATO-2363).
+      logbook_cloud: 5,
       other: 5,
     };
     for (const [category, from] of Object.entries(silentFrom) as [
@@ -202,6 +205,9 @@ describe("approval ladder", () => {
     );
     expect(formatApprovalCategory("session_cross")).toBe(
       "another chat · read / send",
+    );
+    expect(formatApprovalCategory("logbook_cloud")).toBe(
+      "logbook · notes to a cloud model",
     );
   });
 

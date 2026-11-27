@@ -141,7 +141,9 @@ describe("F35 — nothing verification does reaches the workspace", () => {
     expectCopiesGone(copies.dirs);
   });
 
-  it("a service that logs to its directory leaves the workspace byte-identical", async () => {
+  // freePort() closes its port before the service binds it, and another
+  // test worker can take the port in between; a retry gets a new one.
+  it("a service that logs to its directory leaves the workspace byte-identical", { timeout: 30_000, retry: 2 }, async () => {
     const port = await freePort();
     const before = await snapshotTree(work);
     const server =
@@ -152,10 +154,10 @@ describe("F35 — nothing verification does reaches the workspace", () => {
       { kind: "service", start: { cmd: NODE, args: ["-e", server] }, ready: { port }, requests: [{ path: "/a" }, { path: "/b" }], checks: ["status 200"] },
       { workingDir: work, config: CONFIG, workspace: copies.workspace },
     );
-    expect(out.ok).toBe(true);
+    expect(out.ok, out.summary).toBe(true);
     expect(await snapshotTree(work)).toEqual(before);
     expectCopiesGone(copies.dirs);
-  }, 30_000);
+  });
 
   it("the copy is removed even when the run is killed on timeout", async () => {
     const before = await snapshotTree(work);

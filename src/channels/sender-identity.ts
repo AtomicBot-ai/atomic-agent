@@ -68,7 +68,16 @@ export interface SenderIdentity {
   chatId: string;
   /** Forum topic / thread id, where the surface has one. */
   threadId?: string | undefined;
+  /**
+   * What the sender may do (ATO-2221): `owner` or `guest`. Set by the
+   * channel from its own allowlist, never from message text. Absent: no
+   * `role=` field, the line is unchanged.
+   */
+  role?: SenderRole | undefined;
 }
+
+/** A sender's standing with the bot, as the channel decided it. */
+export type SenderRole = "owner" | "guest";
 
 /**
  * Longest display name that reaches the prompt. Discord caps global
@@ -166,6 +175,10 @@ export function formatSenderLine(sender: SenderIdentity): string {
   if (userId !== undefined) parts.push(`user=${userId}`);
   if (chatId !== undefined) parts.push(`chat=${chatId}`);
   if (threadId !== undefined) parts.push(`thread=${threadId}`);
+  // A closed set, checked rather than trusted: only the two known words render.
+  if (sender.role === "owner" || sender.role === "guest") {
+    parts.push(`role=${sender.role}`);
+  }
   return parts.join(" ");
 }
 

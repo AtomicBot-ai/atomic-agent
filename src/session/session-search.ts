@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { SESSION_TITLE_METADATA_KEY } from "./session-title.js";
+import { SESSION_TRASHED_METADATA_KEY } from "./session-trashed.js";
 import {
   FUSION_WORKER_ID_PREFIX,
   FUSION_WORKER_METADATA_KEY,
@@ -224,8 +225,34 @@ export function classifySessionForSearch(row: ClassifyRow): SessionSearchSource 
 }
 
 /**
+ * ATO-2332: whether the chat is in the desktop's Trash
+ * (`metadata.trashed: true`, `session-trashed.ts`). Checked when a search
+ * or a hit read runs, not when the index is filled: moving a chat to Trash
+ * or out of it does not touch `updated_at`, which is what the index keys
+ * its rows on, so a classification made at index time would keep showing
+ * a chat trashed after it was indexed, and hide a restored one for good.
+ */
+export function sessionTrashedForSearch(row: Pick<ClassifyRow, "metadata">): boolean {
+  if (typeof row.metadata !== "string") return false;
+  try {
+    const parsed: unknown = JSON.parse(row.metadata);
+    return (
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) &&
+      (parsed as Record<string, unknown>)[SESSION_TRASHED_METADATA_KEY] === true
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** SQL twin of {@link sessionTrashedForSearch} for the search query. */
+const NOT_TRASHED_SQL = `NOT COALESCE(CASE WHEN json_valid(s.payload)
+         THEN json_type(s.payload, '$.metadata.${SESSION_TRASHED_METADATA_KEY}') = 'true' END, 0)`;
+
+/**
  * The searchable source of stored session `id`, or `null` when it is
- * hidden from search or not stored. A plain read, no index needed.
+ * hidden from search (ATO-2332: in Trash too) or not stored. A plain
+ * read, no index needed.
  */
 export function searchableSessionSource(
   db: Database.Database,
@@ -234,7 +261,8 @@ export function searchableSessionSource(
   const row = db
     .prepare(`SELECT ${CLASSIFY_COLUMNS} FROM sessions AS s WHERE s.id = ?`)
     .get(id) as ClassifyRow | undefined;
-  return row === undefined ? null : classifySessionForSearch(row);
+  if (row === undefined || sessionTrashedForSearch(row)) return null;
+  return classifySessionForSearch(row);
 }
 
 const SOURCES: ReadonlySet<string> = new Set([
@@ -343,6 +371,7 @@ export class SessionSearchIndex {
          JOIN session_search_state AS st ON st.session_id = l.session_id
         WHERE session_search_fts MATCH @match
           AND st.source IS NOT NULL
+          AND ${NOT_TRASHED_SQL}
           AND (@exclude IS NULL OR l.session_id <> @exclude)
           AND (@workingDir IS NULL OR s.working_dir = @workingDir)
         ORDER BY bm25(session_search_fts)
@@ -416,15 +445,25 @@ export class SessionSearchIndex {
       // much of it may be behind.
       pending = (this.countStaleStmt.get() as { n: number }).n;
     }
+    return { hits: this.match(options), pending };
+  }
+
+  /**
+   * The hits for `options` from what is indexed now, with no {@link sync}
+   * first: a read, never the write lock. For a caller that keeps the
+   * index current itself, a few sessions at a time (the TUI session
+   * picker, ATO-1659), so a keystroke is not a sync.
+   */
+  match(options: SessionSearchOptions): SessionSearchHit[] {
     const limit = clampLimit(options.limit);
     const terms = searchTerms(options.query);
-    if (terms.length === 0) return { hits: [], pending };
+    if (terms.length === 0) return [];
     // Every term first; when that finds nothing, any of them.
     let hits = this.run(terms.join(" AND "), options, limit);
     if (hits.length === 0 && terms.length > 1) {
       hits = this.run(terms.join(" OR "), options, limit);
     }
-    return { hits, pending };
+    return hits;
   }
 
   private run(

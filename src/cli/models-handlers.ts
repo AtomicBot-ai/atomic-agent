@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { getConfig, resetConfigCache } from "../config/index.js";
 import {
   ensureUserConfigFileSync,
@@ -303,7 +302,7 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
     });
     if (tty) process.stderr.write(`\n`);
     else if (lastLine) process.stderr.write(`done: ${lastLine}\n`);
-    const savedPath = join(dataDir, "models", m.id, m.filename);
+    const savedPath = resolveModelFilePath(dataDir, m.id, m.filename);
     process.stdout.write(`done. model saved to ${savedPath}\n`);
     if (
       mode === "with-mmproj" &&
@@ -784,6 +783,8 @@ async function runLocalModelsStartNow(
         parallel: cfg.localModels.managed.parallel,
         localLegRole,
         swaFull: cfg.localModels.managed.swaFull,
+        ...(cfg.localModels.managed.cpuMoe === undefined ? {} : { cpuMoe: cfg.localModels.managed.cpuMoe }),
+        ...(cfg.localModels.managed.rpcServers?.length ? { rpcServers: cfg.localModels.managed.rpcServers } : {}),
         ...(loraAdapterForModel(cfg.localModels.managed.loraAdapters, mid)
           ? { loraAdapter: loraAdapterForModel(cfg.localModels.managed.loraAdapters, mid) }
           : {}),
@@ -908,8 +909,11 @@ async function runLocalModelsStartNow(
       result.chat.tokensPerSecond === null
         ? ""
         : `, ~${roundTokensPerSecond(result.chat.tokensPerSecond)} tok/s single stream`;
+    const moeLine = result.chat.cpuMoeLayers
+      ? `, experts of ${result.chat.cpuMoeLayers} layers in system RAM (localModels.managed.cpuMoe)`
+      : "";
     process.stdout.write(
-      `chat: started pid ${result.chat.pid}, healthy on port ${cfg.localModels.managed.port}${visionLine}${speedLine}\n`,
+      `chat: started pid ${result.chat.pid}, healthy on port ${cfg.localModels.managed.port}${visionLine}${moeLine}${speedLine}\n`,
     );
     if (embRunningPid !== null) {
       process.stdout.write(
@@ -1369,7 +1373,7 @@ export async function runLocalModelsPullEmbedding(
     await downloadEmbeddingModel(dataDir, m, { onProgress, onRetry });
     if (tty) process.stderr.write(`\n`);
     else if (lastLine) process.stderr.write(`done: ${lastLine}\n`);
-    const savedPath = join(dataDir, "models", m.id, m.filename);
+    const savedPath = resolveModelFilePath(dataDir, m.id, m.filename);
     process.stdout.write(`done. embedding model saved to ${savedPath}\n`);
     return 0;
   } catch (e) {

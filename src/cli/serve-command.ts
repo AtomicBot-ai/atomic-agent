@@ -1,12 +1,21 @@
 import { resolveBootApprovalLevel } from "../approval/approval-level.js";
+import { refuseApproval } from "./serve-refuse-approvals.js";
 import { getConfig } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import { McpElicitationBroker } from "../mcp/mcp-elicitation-broker.js";
 import { createStderrSink } from "../tracing/structured-logger.js";
+import { registerProcessSecret } from "../error-reporting/process-secrets.js";
 import { PrometheusRegistry } from "../tracing/prometheus-registry.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 
-import { HELP, lanUrls, parseArgs } from "./serve-args.js";
+import {
+  HELP,
+  isLoopbackListenHost,
+  lanUrls,
+  MIN_NETWORK_KEY_LENGTH,
+  parseArgs,
+} from "./serve-args.js";
+import { modelShareNotice } from "./serve-model-share-notice.js";
 import { resolveServeApiKey, serveApiKeyNotice } from "./serve-api-key.js";
 import { watchForOrphaning } from "./serve-orphan-guard.js";
 import {
@@ -27,7 +36,9 @@ import {
   CompletionRegistry,
   createHttpServer,
   createHttpTokenSource,
+  isModelShareEnabled,
 } from "../http/index.js";
+import { createDeviceSessions } from "../http/device-sessions.js";
 import type { HttpServerHandle } from "../http/index.js";
 
 /**
@@ -67,6 +78,18 @@ export async function serveCommand(args: string[]): Promise<number> {
     process.stdout.write(`${apiKey.key}\n`);
     return 0;
   }
+  // ATO-1705: name the key to the masker, wherever it came from (a key
+  // from --api-key or the key file is in no env variable), so tool output,
+  // traces and the transcript show `[redacted:serve-api-key]` in its place
+  // (a `ps` listing, a log the agent reads back).
+  registerProcessSecret("serve-api-key", apiKey.key);
+  // Read once, then out of the environment: every child serve starts
+  // (hooks, llama-server, a browser, cloudflared, a CLI provider) would
+  // otherwise inherit it, not only the shell tool that already drops it.
+  // This stops inheritance only: the launch environment itself stays
+  // readable by the same user (/proc/<pid>/environ on Linux, `ps eww` on
+  // macOS), since unsetenv does not touch the original env block.
+  delete process.env.ATOMIC_AGENT_API_KEY;
 
   // ATO-625: refuse the tunnel before anything boots, so a missing
   // cloudflared or a webhook set with no secret never opens a public address.
@@ -133,6 +156,11 @@ export async function serveCommand(args: string[]): Promise<number> {
         logSinks: [createStderrSink()],
         metricSinks: [metricsRegistry.sink],
         onApprovalRequest: (request) => {
+          // ATO-2172: a serve for a launched coding CLI has nobody to ask.
+          if (parsed.refuseApprovals && runtime) {
+            refuseApproval(runtime.approvals, request);
+            return;
+          }
           // ATO-1111: drop mirrored prompts whose turn was aborted, so a
           // window that never reconnects /api/events does not keep them.
           const live = runtime;
@@ -143,6 +171,8 @@ export async function serveCommand(args: string[]): Promise<number> {
       },
     });
     const namedTokens = createHttpTokenSource(stateDir);
+    // ATO-2308: phones paired by `atag pair` sign in with a cookie as members.
+    const deviceSessions = createDeviceSessions(stateDir);
     handle = await createHttpServer({
       runtime,
       host: parsed.host,
@@ -152,12 +182,14 @@ export async function serveCommand(args: string[]): Promise<number> {
         metricsRegistry,
         // ATO-693: off unless --a2a; parseArgs already refused it without a key.
         a2a: parsed.a2a ? { publicUrl: a2aPublicUrl() } : null,
+        devices: deviceSessions,
       }),
       approvalBus,
       completionRegistry,
       elicitations,
       // ATO-583: `atag http tokens add` names tokens with a role; the key stays admin.
       namedTokens,
+      deviceSessions,
     });
     const baseUrl = `http://${handle.host}:${handle.port}`;
     // ATO-583 named tokens beside the always-on key (serve always has a key now).
@@ -176,6 +208,7 @@ export async function serveCommand(args: string[]): Promise<number> {
     for (const url of lanUrls(parsed.host, handle.port)) {
       process.stderr.write(`[atomic-agent] serve reachable at ${url}\n`);
     }
+    process.stderr.write(modelShareNotice(isModelShareEnabled(), isLoopbackListenHost(parsed.host)));
     if (parsed.tunnel && tunnelCheck) {
       tunnel = await startWebhookTunnel({
         runtime,
@@ -205,6 +238,7 @@ export async function serveCommand(args: string[]): Promise<number> {
       port: handle.port,
       cwd: parsed.workingDir,
       startedAt: new Date().toISOString(),
+      strongKey: apiKey.key.length >= MIN_NETWORK_KEY_LENGTH,
     });
     // Each new server tidies up after the generation before it. Failures
     // here are never fatal — the sweep is housekeeping, not startup — and

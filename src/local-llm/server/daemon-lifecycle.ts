@@ -88,12 +88,20 @@ import {
   sharesSystemMemory,
   type ListDevices,
 } from "../backend/gpu-devices.js";
-import { managedDeviceTable } from "../backend/managed-devices.js";
+import { managedDeviceSource, managedDeviceTable } from "../backend/managed-devices.js";
 import {
   resolveSwaFullDecision,
   type SwaFullDecision,
   type SwaFullPreference,
 } from "./swa-full.js";
+import {
+  CPU_MOE_RETRY_NOTE,
+  cpuMoeRetryOptions,
+  decideCpuMoeLayers,
+  moeShapeFromMetadata,
+  type CpuMoePreference,
+} from "./cpu-moe.js";
+import { assertRpcLaunchable, rpcServerArgs } from "./rpc-peers.js";
 import {
   getEmbeddingModelDef,
   getLocalModelDef,
@@ -246,6 +254,23 @@ export interface DaemonStartOptions {
    * `buildLlamaServerArgs` appends `--swa-full` when `true`.
    */
   swaFullFlag?: boolean;
+  /**
+   * `localModels.managed.cpuMoe` (ATO-2380, see `cpu-moe.ts`). Undefined
+   * means `"auto"`, which adds no flag unless the model overflows a GPU
+   * with memory of its own.
+   */
+  cpuMoe?: CpuMoePreference;
+  /**
+   * Resolved by `startDaemon` from `cpuMoe`, the header and the device
+   * budget; internal. A positive value appends `--n-cpu-moe <n>`.
+   */
+  cpuMoeLayers?: number;
+  /**
+   * `localModels.managed.rpcServers` (ATO-2338, `rpc-peers.ts`): peers
+   * appended as `--rpc a,b`. `startDaemon` refuses them on an engine
+   * build without RPC. Empty / undefined keeps the launch byte-identical.
+   */
+  rpcServers?: readonly string[];
   /**
    * Run the throughput probe once the server is healthy (default
    * `true`): one 64-token completion whose `timings.predicted_per_second`
@@ -696,7 +721,10 @@ export function buildLlamaServerArgs(
   if (effectiveContextSize && effectiveContextSize > 0) {
     args.push("--ctx-size", String(effectiveContextSize));
   }
-  if (opts.device && opts.device !== "cpu") {
+  // With RPC peers a `--device` list would have to name them as well, or
+  // llama.cpp offloads only to the listed local device: leave it out so
+  // every local GPU and every peer is used (ATO-2338).
+  if (opts.device && opts.device !== "cpu" && (opts.rpcServers?.length ?? 0) === 0) {
     args.push("--device", opts.device);
   }
   if (
@@ -717,6 +745,10 @@ export function buildLlamaServerArgs(
   if (opts.swaFullFlag === true) {
     args.push("--swa-full");
   }
+  if (opts.device !== "cpu" && opts.cpuMoeLayers !== undefined && opts.cpuMoeLayers > 0) {
+    args.push("--n-cpu-moe", String(opts.cpuMoeLayers));
+  }
+  args.push(...rpcServerArgs(opts.rpcServers, opts.device));
   if (opts.mmprojFile) {
     args.push("--mmproj", opts.mmprojFile);
     // Vision-capable models (notably Gemma-4 with `gemma4v` projector and
@@ -804,6 +836,8 @@ export async function resolveEffectiveContextSize(
   autoSlotsCap: number | null;
   kvBudgetBytes: number | null;
   deviceBudgetBytes: number | null;
+  /** The device shares the system's RAM (Apple silicon, integrated GPU). */
+  sharesSystemMemory: boolean;
   note: string | null;
   /** What was set aside beside weights and cache, for the daemon log. */
   reserveNote: string | null;
@@ -950,6 +984,7 @@ export async function resolveEffectiveContextSize(
     autoSlotsCap: gpu ? gpu.maxSlots : null,
     kvBudgetBytes: kvBudgetBytes === null ? null : Math.max(0, kvBudgetBytes),
     deviceBudgetBytes: budgetBytes(false),
+    sharesSystemMemory: systemMemoryMiB !== null,
     note,
     reserveNote,
   };
@@ -1237,6 +1272,8 @@ export interface DaemonStartResult {
    * model without it (its session reports no mmproj), so vision is off.
    */
   projectorDropped?: boolean;
+  /** `--n-cpu-moe` the launch used (`cpu-moe.ts`); 0 / absent: none. */
+  cpuMoeLayers?: number;
 }
 
 /**
@@ -1328,6 +1365,7 @@ async function startDaemonNow(
   // ATO-116: a build stamped for a newer macOS than this Mac's is refused
   // by dyld before it prints a line; say so instead of a crash or timeout.
   assertBackendRunsOnThisMac(binPath);
+  await assertRpcLaunchable(opts.rpcServers, () => managedDeviceSource(opts.dataDir, opts.engine));
 
   const model = getLocalModelDef(opts.modelId);
   // A model registered from disk launches straight from the operator's
@@ -1358,7 +1396,9 @@ async function startDaemonNow(
   // Atomic Core it is Core's own llama-server, run as Core runs it.
   const listDevices = opts.listDevices ?? managedDeviceTable(opts.dataDir, opts.engine);
   const device = await resolveManagedDevice(binPath, opts.device, {
-    multiGpu: (opts.tensorSplit?.length ?? 0) > 0,
+    // RPC peers are devices too: an auto pick of one local GPU would emit
+    // `--device <id>`, which leaves them out (review M3, ATO-2338).
+    multiGpu: (opts.tensorSplit?.length ?? 0) > 0 || (opts.rpcServers?.length ?? 0) > 0,
     listDevices,
   });
   // The header says what the KV cache really costs and whether the
@@ -1374,6 +1414,7 @@ async function startDaemonNow(
     autoSlotsCap,
     kvBudgetBytes,
     deviceBudgetBytes,
+    sharesSystemMemory,
     note: contextNote,
     reserveNote,
   } = await resolveEffectiveContextSize(device, model, {
@@ -1430,6 +1471,22 @@ async function startDaemonNow(
           contextSize,
           swaFull: swaFull.enabled,
         }) <= deviceBudgetBytes;
+  // ATO-2380: a mixture-of-experts model that overflows the GPU keeps
+  // some layers' experts in system RAM instead of whole layers.
+  const cpuMoe = decideCpuMoeLayers({
+    preference: opts.cpuMoe ?? "auto",
+    rpcPeers: (opts.rpcServers?.length ?? 0) > 0,
+    shape: header ? moeShapeFromMetadata(header, model.fileSizeGb * 1e9) : null,
+    device,
+    sharesSystemMemory,
+    deviceBudgetBytes,
+    kvBytes: estimateLaunchKvBytes({
+      kvLayout: kvLayout ? buildKvLayout(kvLayout) : null,
+      modelSizeGb: model.fileSizeGb,
+      contextSize,
+      swaFull: swaFull.enabled,
+    }),
+  });
   // The speed an earlier start measured on this same launch, read before
   // this one clears the record: carried over, it spares the probe
   // (`readReusableThroughput`).
@@ -1452,6 +1509,7 @@ async function startDaemonNow(
       ...opts,
       device,
       swaFullFlag: swaFull.enabled,
+      cpuMoeLayers: cpuMoe.layers,
       ...(completionMaxTokens === undefined ? {} : { completionMaxTokens }),
       ...(autoSlotsCap === null ? {} : { autoSlotsCap }),
     },
@@ -1500,6 +1558,7 @@ async function startDaemonNow(
         ]
       : []),
     `[atomic-agent] launch: ${swaFull.reason}`,
+    `[atomic-agent] launch: ${cpuMoe.reason}`,
     `[atomic-agent] launch: prefix reuse ${effectivePrefixReuse ?? "unknown"}${reuseWhy}`,
     "",
   ].join("\n");
@@ -1516,11 +1575,19 @@ async function startDaemonNow(
     } catch {
       /* no marker: faults stay unscoped, as before */
     }
-    const session = await loadCoreSession(opts.dataDir, {
-      role: "chat", modelId: model.id, modelPath, port: opts.port, args,
-      ...(opts.mmprojFile ? { mmprojPath: opts.mmprojFile } : {}),
-      ...(opts.signal ? { signal: opts.signal } : {}),
-    });
+    let session: Awaited<ReturnType<typeof loadCoreSession>>;
+    try {
+      session = await loadCoreSession(opts.dataDir, {
+        role: "chat", modelId: model.id, modelPath, port: opts.port, args,
+        ...(opts.mmprojFile ? { mmprojPath: opts.mmprojFile } : {}),
+        ...(opts.signal ? { signal: opts.signal } : {}),
+      });
+    } catch (err) {
+      const retry = cpuMoeRetryOptions(opts, cpuMoe.layers, err);
+      if (!retry) throw err;
+      appendCpuMoeRetryNote(opts.dataDir);
+      return startDaemon(retry);
+    }
     writeFileSync(pidPath, String(session.pid), "utf8");
     const coreShrink = partialOffloadShrinkAfterStart(opts, { contextSize, device });
     if (coreShrink) {
@@ -1551,7 +1618,7 @@ async function startDaemonNow(
     // reports `mmproj_path: null`; an older Core omits the field.
     const projectorDropped = Boolean(opts.mmprojFile) && (session.mmproj_path === null || session.mmproj_path === "");
     return { pid: session.pid, contextSize, swaFull, prefixReuse: effectivePrefixReuse, tokensPerSecond,
-      autoContextCeiling, ...(projectorDropped ? { projectorDropped } : {}) };
+      autoContextCeiling, cpuMoeLayers: cpuMoe.layers, ...(projectorDropped ? { projectorDropped } : {}) };
   }
 
   const logFd = openSync(resolveLogFilePath(opts.dataDir), "a");
@@ -1587,7 +1654,10 @@ async function startDaemonNow(
       });
     } catch (err) {
       abandonChild(child.pid, pidPath);
-      throw err;
+      const retry = cpuMoeRetryOptions(opts, cpuMoe.layers, err);
+      if (!retry) throw err;
+      writeSync(logFd, CPU_MOE_RETRY_NOTE);
+      return await startDaemon(retry);
     }
     // ATO-868: llama.cpp's fit left part of the model on the CPU under an
     // auto window. Restart once with half the window rather than serve at
@@ -1630,9 +1700,18 @@ async function startDaemonNow(
       swaFull,
       prefixReuse: effectivePrefixReuse,
       autoContextCeiling,
+      cpuMoeLayers: cpuMoe.layers,
     };
   } finally {
     closeSync(logFd);
+  }
+}
+
+function appendCpuMoeRetryNote(dataDir: string): void {
+  try {
+    appendFileSync(resolveLogFilePath(dataDir), CPU_MOE_RETRY_NOTE);
+  } catch {
+    /* best effort, like the launch notes */
   }
 }
 
@@ -1661,11 +1740,13 @@ async function savePromptCachesBeforeStop(dataDir: string, opts?: StopDaemonOpti
     const core = (() => {
       try {
         return JSON.parse(readFileSync(coreSessionPath(dataDir, "chat"), "utf-8")) as
-          { pid?: unknown; port?: unknown; api_key?: unknown };
+          { pid?: unknown; port?: unknown; api_key?: unknown; awaitingExit?: unknown };
       } catch {
         return null;
       }
     })();
+    // Core already unloaded that session; its server is only on its way out (ATO-1748).
+    if (core?.awaitingExit === true) return;
     if (core && typeof core.pid === "number" && typeof core.port === "number") {
       target = { pid: core.pid, port: core.port, apiKey: typeof core.api_key === "string" ? core.api_key : null };
     } else {

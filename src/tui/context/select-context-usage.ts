@@ -1,5 +1,6 @@
 import { CONVERSATION_SECTION_LABEL } from "../context-usage-from-prompt.js";
 import { catalogEntryLookupForKind } from "../providers/providers-model-options.js";
+import type { ContextUsagePart } from "../../session/context-usage.js";
 import type { ContextUsageSection, TuiState } from "../tui-state.js";
 
 /**
@@ -45,6 +46,10 @@ export interface ContextUsageView {
    */
   droppedTurns: number;
   sections: readonly ContextUsageSection[];
+  /** What the scaffold and loaded-tools rows are made of (ATO-2355). */
+  parts: readonly ContextUsagePart[];
+  /** Tools already load on demand through `tool.search`. */
+  toolSearchActive: boolean;
 }
 
 /**
@@ -222,6 +227,8 @@ export function selectContextUsage(state: TuiState): ContextUsageView | null {
     conversationBoundBy,
     droppedPairs,
     pairCosts,
+    parts = [],
+    toolSearchActive = false,
   } = state.contextUsage;
   // Nothing has been built yet: the chip stays off the bar rather than
   // showing a zero, which would claim the window is empty when what we
@@ -256,6 +263,8 @@ export function selectContextUsage(state: TuiState): ContextUsageView | null {
     pairCosts,
     droppedTurns,
     sections,
+    parts,
+    toolSearchActive,
   };
 }
 

@@ -28,6 +28,12 @@ import { getHeader, sendError } from "./request-context.js";
  * server built with `unauthenticated: true`: tests and embedders.
  */
 
+/**
+ * Extra web origins `originAllowed` accepts. Under `serve` (always keyed,
+ * #1710) only `/mcp` still reads it, for its Origin check; the
+ * keyless-server use above is deprecated and kept for tests and
+ * embedders (ATO-1705).
+ */
 export const ALLOWED_ORIGINS_ENV = "ATOMIC_AGENT_ALLOWED_ORIGINS";
 
 const BODY_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);

@@ -17,6 +17,14 @@ describe("partialPlaceholderStart", () => {
     expect(partialPlaceholderStart("hi [EMAIL_12")).toBe(3);
   });
 
+  it("holds the local model's placeholders too (ATO-2394)", () => {
+    expect(partialPlaceholderStart("hi [NA")).toBe(3);
+    expect(partialPlaceholderStart("hi [ORG_")).toBe(3);
+    // The longest one, cut just before its bracket.
+    expect(partialPlaceholderStart("hi [ADDRESS_999999")).toBe(3);
+    expect(partialPlaceholderStart("hi [NAME_1]")).toBe(11);
+  });
+
   it("releases a tail that cannot", () => {
     expect(partialPlaceholderStart("hi [EMAIL_1]")).toBe(12);
     expect(partialPlaceholderStart("arr[i")).toBe(5);

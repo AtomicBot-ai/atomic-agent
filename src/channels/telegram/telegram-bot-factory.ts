@@ -238,6 +238,8 @@ export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
         id: msg.chat.id,
         type: msg.chat.type,
         ...(typeof title === "string" ? { title } : {}),
+        // A forum supergroup: `/fork` opens a new topic there.
+        ...("is_forum" in msg.chat && msg.chat.is_forum === true ? { is_forum: true } : {}),
       },
       text: msg.text,
       message_id: msg.message_id,

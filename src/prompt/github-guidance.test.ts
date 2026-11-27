@@ -73,6 +73,8 @@ describe("the ### integrations prefix section", () => {
       "os.git.commit",
       "github.pr.create",
       "github.issue.create",
+      "github.pr.checks",
+      "github.pr.autofix",
     ]) {
       expect(GITHUB_GUIDANCE).toContain(name);
     }

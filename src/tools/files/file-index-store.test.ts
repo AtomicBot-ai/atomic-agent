@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { openFileIndexDb, FILE_INDEX_SCHEMA_VERSION } from "./file-index-schema.js";
 import { FileIndexStore, likePrefix } from "./file-index-store.js";
-import { FileVectorStore } from "./file-vector-store.js";
+import { FileVectorStore, SCAN_PAGE } from "./file-vector-store.js";
 
 let db: Database.Database;
 let store: FileIndexStore;
@@ -123,7 +123,7 @@ describe("FileIndexStore", () => {
 });
 
 describe("FileVectorStore", () => {
-  it("lists chunks missing a vector for a model and scans what it has", () => {
+  it("lists chunks missing a vector for a model and scans what it has", async () => {
     store.addFolder(DOCS, AT);
     store.upsertSeen(DOCS, pdf, 1, 1, undefined);
     const ids = store.saveChunks(store.nextPending()!.id, [{ ord: 0, text: "one" }, { ord: 1, text: "two" }], AT)!;
@@ -131,13 +131,13 @@ describe("FileVectorStore", () => {
     vectors.put(ids[0]!, "m", new Float32Array([0.5, 0.25]));
     expect(vectors.missing("m", 10).map((c) => c.chunkId)).toEqual([ids[1]]);
     expect(vectors.missing("other", 10)).toHaveLength(2);
-    const scanned = vectors.scan("m", DOCS, 10);
+    const scanned = await vectors.scan("m", DOCS, 10);
     expect(scanned).toHaveLength(1);
     expect([...scanned[0]!.vector]).toEqual([0.5, 0.25]);
-    expect(vectors.scan("m", join("/", "elsewhere"), 10)).toEqual([]);
+    expect(await vectors.scan("m", join("/", "elsewhere"), 10)).toEqual([]);
   });
 
-  it("with a query, an old chunk that matches best is still a candidate past the scan limit", () => {
+  it("with a query, an old chunk that matches best is still a candidate past the scan limit", async () => {
     store.addFolder(DOCS, AT);
     store.upsertSeen(DOCS, pdf, 1, 1, undefined);
     const texts = Array.from({ length: 6 }, (_, i) => ({ ord: i, text: `chunk ${i}` }));
@@ -146,10 +146,31 @@ describe("FileVectorStore", () => {
     vectors.put(ids[0]!, "m", new Float32Array([1, 0]));
     for (const id of ids.slice(1)) vectors.put(id, "m", new Float32Array([0, 1]));
     const query = new Float32Array([1, 0]);
-    expect(vectors.scan("m", null, 2).map((c) => c.chunkId)).not.toContain(ids[0]);
-    const scored = vectors.scan("m", null, 2, [], query);
+    expect((await vectors.scan("m", null, 2)).map((c) => c.chunkId)).not.toContain(ids[0]);
+    const scored = await vectors.scan("m", null, 2, [], query);
     expect(scored).toHaveLength(2);
     expect(scored[0]!.chunkId).toBe(ids[0]);
+  });
+});
+
+describe("FileVectorStore scan over many rows (ATO-1648)", () => {
+  it("scores every page, keeps the closest across pages and yields to the event loop between them", async () => {
+    store.addFolder(DOCS, AT);
+    store.upsertSeen(DOCS, pdf, 1, 1, undefined);
+    const texts = Array.from({ length: SCAN_PAGE + 5 }, (_, i) => ({ ord: i, text: `chunk ${i}` }));
+    const ids = store.saveChunks(store.nextPending()!.id, texts, AT)!;
+    // The best match is the last row, on the second page; one wrong-dimension row is skipped.
+    for (const id of ids.slice(0, -2)) vectors.put(id, "m", new Float32Array([0, 1]));
+    vectors.put(ids[ids.length - 2]!, "m", new Float32Array([1, 0, 0]));
+    vectors.put(ids[ids.length - 1]!, "m", new Float32Array([1, 0]));
+    let ticked = false;
+    setImmediate(() => (ticked = true));
+    const scored = await vectors.scan("m", DOCS, 3, [], new Float32Array([1, 0]));
+    // A scan that never yields resolves before the immediate runs.
+    expect(ticked).toBe(true);
+    expect(scored).toHaveLength(3);
+    expect(scored[0]!.chunkId).toBe(ids[ids.length - 1]);
+    expect(scored.map((c) => c.chunkId)).not.toContain(ids[ids.length - 2]);
   });
 });
 

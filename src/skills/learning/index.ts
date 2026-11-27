@@ -42,6 +42,8 @@ export type {
   TurnStep,
 } from "./experience-review.js";
 
+export { isLocalContentTool, localContentSources } from "./local-content-sources.js";
+
 export { isPatchableSkill, patchableSkillNames, takenSkillNames } from "./learn-targets.js";
 export type { LearnTargetInput } from "./learn-targets.js";
 

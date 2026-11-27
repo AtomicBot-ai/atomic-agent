@@ -6,6 +6,7 @@
  */
 
 import { knownSecretsFromEnv, type KnownSecret } from "../error-reporting/secret-detector.js";
+import type { LocalNameDetector } from "./local-name-detector.js";
 import { PrivacyVault } from "./privacy-vault.js";
 
 /** Requests without a session id (one-off sub-calls) share this vault. */
@@ -24,6 +25,8 @@ const MAX_ALIASES = 1024;
 /** The agent's own keys (its `.env` is loaded into `process.env`). */
 let knownSecrets: () => readonly KnownSecret[] = () => knownSecretsFromEnv();
 let shieldEnabled = false;
+/** The local name pass (ATO-2394), installed at startup; `null` means regex only. */
+let nameDetector: LocalNameDetector | null = null;
 
 /**
  * Whether Privacy Shield is on for this process. Read per request by
@@ -37,6 +40,19 @@ export function isPrivacyShieldEnabled(): boolean {
 
 export function setPrivacyShieldEnabled(enabled: boolean): void {
   shieldEnabled = enabled;
+}
+
+/**
+ * The local name pass the cloud providers run before masking
+ * (ATO-2394). The detector itself decides, per request, whether a local
+ * model is there and the feature is on; `null` turns the pass off.
+ */
+export function setPrivacyNameDetector(detector: LocalNameDetector | null): void {
+  nameDetector = detector;
+}
+
+export function privacyNameDetector(): LocalNameDetector | null {
+  return nameDetector;
 }
 
 /** Exact values every new vault treats as secret (the agent's own keys). */
@@ -103,4 +119,5 @@ export function resetPrivacyVaults(): void {
   aliases.clear();
   knownSecrets = () => knownSecretsFromEnv();
   shieldEnabled = false;
+  nameDetector = null;
 }

@@ -174,19 +174,59 @@ const STDIN_INTERPRETER_RE = /^(?:python\d*(?:\.\d+)?|node|ruby|perl|php|osascri
 /** `python3 -c`, `-m`, `node -e` / `-p`, `perl -E`, `php -r`: the code is on the line. */
 const INLINE_CODE_FLAG_RE = /^-[A-Za-z]*[cemrEp]$|^--(?:eval|print)(?:=|$)/;
 
+/** A script path that is really stdin or a pipe: `/dev/stdin`, `/dev/fd/0`, `<(…)`. */
+function isStdinScriptPath(word: string | undefined): boolean {
+  if (word === undefined) return false;
+  return /^(?:\/dev\/stdin|\/dev\/fd\/\d+|\/proc\/self\/fd\/\d+)$/.test(word) || word.startsWith("<(");
+}
+
+/** Text whose meaning is only known when it runs: `$(…)`, a backtick, `$VAR`, xargs' `{}`. */
+const DYNAMIC_SCRIPT_RE = /\$\(|`|\$\{?[A-Za-z_0-9@*#?!-]|\{\}/;
+
 /** Whether this command runs a script read from stdin rather than one on the line. */
 function readsScriptFromStdin(words: readonly string[]): boolean {
   const head = words[0];
   if (head === undefined) return false;
   const name = programName(head);
   const args = words.slice(1);
+  const operand = args.find((a) => a === "-" || !/^[-+]/.test(a));
   if (NESTED_SHELL_PROGRAMS.includes(name)) {
-    return scanNestedShellOptions(args, name).readsStdin;
+    return scanNestedShellOptions(args, name).readsStdin || isStdinScriptPath(operand);
   }
   if (!STDIN_INTERPRETER_RE.test(name)) return false;
   if (args.some((a) => INLINE_CODE_FLAG_RE.test(a))) return false;
-  const operand = args.find((a) => a === "-" || !a.startsWith("-"));
-  return operand === undefined || operand === "-";
+  return operand === undefined || operand === "-" || isStdinScriptPath(operand);
+}
+
+/**
+ * Whether this command runs a line built at run time: `eval "$(…)"`,
+ * `bash -c "$CMD"`, `xargs sh -c {}`, `. "$F"`, `source <(…)`.
+ */
+function runsBuiltScript(words: readonly string[]): boolean {
+  const head = words[0];
+  if (head === undefined) return false;
+  const name = programName(head);
+  const args = words.slice(1);
+  if (name === "eval") return args.some((a) => DYNAMIC_SCRIPT_RE.test(a));
+  if (name === "source" || name === ".") {
+    const operand = args[0];
+    return operand !== undefined && (DYNAMIC_SCRIPT_RE.test(operand) || isStdinScriptPath(operand));
+  }
+  if (NESTED_SHELL_PROGRAMS.includes(name)) {
+    return scanNestedShellOptions(args, name).scripts.some((s) => DYNAMIC_SCRIPT_RE.test(s));
+  }
+  return false;
+}
+
+/** On the raw line: `eval`, `source`, `.` or a `-c` shell next to a substitution, or a runner fed `<(…)`. */
+function lineRunsBuiltScript(line: string): boolean {
+  const runner =
+    /(?:^|[;&|(]\s*)(?:eval|source|\.)\s/.test(line) ||
+    /(?:^|[\s;&|(/])(?:sh|bash|zsh|dash|ksh|fish|csh|tcsh)\s+(?:[-+]\S*\s+)*-[A-Za-z]*c/.test(line);
+  if (runner && /\$\(|`/.test(line)) return true;
+  return /(?:^|[\s;&|(/])(?:\.|source|sh|bash|zsh|dash|ksh|fish|python\d*(?:\.\d+)?|node|ruby|perl|php)\s+(?:-\S+\s+)*<\(/.test(
+    line,
+  );
 }
 
 /**
@@ -194,15 +234,21 @@ function readsScriptFromStdin(words: readonly string[]): boolean {
  * (`ApprovalRequest.commandUnreadable`): a shell or an interpreter with
  * no script of its own, on a subshell line that feeds it through a pipe,
  * a redirect or a heredoc (`printf 'rm -rf x' | sh`, `sh < run.sh`,
- * `curl … | python3`). The command has no stdin otherwise, so a bare
- * `sh` run directly is not one.
+ * `curl … | python3`, `python3 /dev/stdin`, `bash <(…)`). The command
+ * has no stdin otherwise, so a bare `sh` run directly is not one. Also a
+ * line built at run time that `eval`, `source` / `.` or a `-c` shell runs
+ * (`eval "$(… | base64 -d)"`, `bash -c "$CMD"`, `xargs sh -c {}`).
  */
 export function shellRunsUnreadableScript(
   cmd: string,
   execArgs: readonly string[],
   useShell: boolean,
 ): boolean {
+  const segments = shellRuleSegments(cmd, execArgs, useShell);
+  if (segments.some(runsBuiltScript)) return true;
   if (!useShell) return false;
-  if (!/[|<]/.test([cmd, ...execArgs].join(" "))) return false;
-  return shellRuleSegments(cmd, execArgs, useShell).some(readsScriptFromStdin);
+  const line = [cmd, ...execArgs].join(" ");
+  if (lineRunsBuiltScript(line)) return true;
+  if (!/[|<]/.test(line)) return false;
+  return segments.some(readsScriptFromStdin);
 }

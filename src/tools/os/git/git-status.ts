@@ -36,12 +36,14 @@ export const osGitStatusTool: ToolDefinition = {
       runGit({
         repo,
         workingDir: ctx.workingDir,
+        guest: ctx.guest,
         args: ["status", "--porcelain=v1", "-z", "--branch"],
         signal: ctx.signal,
       }),
       runGit({
         repo,
         workingDir: ctx.workingDir,
+        guest: ctx.guest,
         // `symbolic-ref --short HEAD` works even on a repo without any
         // commits yet (detached vs not doesn't matter here — we just
         // want whatever HEAD currently points at, or "(detached)").
@@ -59,6 +61,7 @@ export const osGitStatusTool: ToolDefinition = {
       const headHash = await runGit({
         repo,
         workingDir: ctx.workingDir,
+        guest: ctx.guest,
         args: ["rev-parse", "--short", "HEAD"],
         signal: ctx.signal,
         timeoutMs: 5_000,

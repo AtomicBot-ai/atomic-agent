@@ -1,6 +1,10 @@
 import { ConfigValidationError } from "./config-validation-error.js";
 import { parseBool, parseNonEmptyString } from "./config-primitives.js";
 import { parseNullableString } from "./config-values.js";
+import {
+  parseTelegramAllowedUsers,
+  type TelegramAllowedUser,
+} from "./telegram-allowed-users.js";
 
 /**
  * Telegram parse mode applied to *agent replies* on outbound. Slash
@@ -19,9 +23,11 @@ export type TelegramParseMode = "plain" | "html";
 export type TelegramStreamReplies = "off" | "private";
 
 /**
- * Telegram channel configuration. Single-operator semantics: only
- * messages whose `from.id` matches `ownerUserId` are dispatched into
- * the agent loop. Group chats are dropped unconditionally.
+ * Telegram channel configuration. One owner (`ownerUserId`) drives the
+ * bot from a DM or from a group. In a group the bot answers only when
+ * addressed (an @mention, a reply to it, or `/cmd@bot`). Users listed in
+ * `allowedUsers` may also address it in a group, as guests with
+ * read-only tools (ATO-2221); everyone else is dropped.
  */
 export interface TelegramConfig {
   /** Master kill switch. When `false`, the channel is constructed but never started. */
@@ -57,6 +63,13 @@ export interface TelegramConfig {
    * it for one process.
    */
   streamReplies?: TelegramStreamReplies;
+  /**
+   * Guests besides the owner (ATO-2221). Optional and presence-driven:
+   * absent means no guests, so older files need no migration. Guests are
+   * heard in groups only, mention-gated like the owner, with read-only
+   * tools; their approvals go to the owner's DM.
+   */
+  allowedUsers?: TelegramAllowedUser[];
 }
 
 /**
@@ -355,6 +368,14 @@ export function parseTelegramConfig(
             streamReplies: parseTelegramStreamReplies(
               raw.streamReplies,
               "telegram.streamReplies",
+            ),
+          }
+        : {}),
+      ...(raw.allowedUsers !== undefined
+        ? {
+            allowedUsers: parseTelegramAllowedUsers(
+              raw.allowedUsers,
+              "telegram.allowedUsers",
             ),
           }
         : {}),

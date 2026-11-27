@@ -1,6 +1,6 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { getConfig, resetConfigCache, getStateSecretPaths, getTrustConfigPaths } from "../../config/index.js";
 import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
@@ -11,6 +11,7 @@ import type { BrowserBackend } from "../../tools/browser/browser-backend.js";
 import * as browserTools from "../../tools/browser/index.js";
 import * as osTools from "../../tools/os/index.js";
 import * as fusionTools from "../../tools/fusion/index.js";
+import * as subagentTools from "../../tools/subagent/index.js";
 import * as readScope from "../../tools/read-scope/index.js";
 import * as skillTools from "../../tools/skill/index.js";
 import { ProfileStore } from "../../memory/profile-store.js";
@@ -27,6 +28,7 @@ import { setDynamicResourceClassResolver } from "../../agent/tool-resource-class
 import { createRuntimeToolRegistry, registerRuntimeCoreTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope, runtimeKnownSecrets, isForeignLlamaServer } from "./runtime-tool-catalog.js";
 import { ModelProfileManager } from "../../llm/model-profile-manager.js";
 import { createApiKeyCommandSource, resetCommandIssuedSecrets } from "../../llm/provider/openai/api-key-command.js";
+import { clearProcessSecretsForTests, registerProcessSecret } from "../../error-reporting/process-secrets.js";
 import { CostAccumulator } from "../../llm/provider/cost-accumulator.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../../llm/model-profile.js";
 import { buildGrammar } from "../../llm/grammar/build-grammar.js";
@@ -100,7 +102,7 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       const requests = new Map<string, string>(); const recent = vi.fn(() => []);
       const registration = vi.spyOn(osTools, "registerOsTools");
       const skillRegistration = vi.spyOn(skillTools, "registerSkillTools");
-      registerRuntimeCoreTools({ config, toolRegistry: registry, dangerous, logger, sessionStore: { listRecentWorkingDirs: recent, listSummaryPage: () => [], listChatLines: () => [], searchTranscripts: () => ({ hits: [], pending: 0 }), listSearchableChatLines: () => [] },
+      registerRuntimeCoreTools({ config, toolRegistry: registry, dangerous, logger, sessionStore: { listRecentWorkingDirs: recent, listSummaryPage: () => [], listChatLines: () => [], searchTranscripts: () => ({ hits: [], pending: 0 }), listSearchableChatLines: () => [], load: () => null },
         resolveOriginalRequest: id => requests.get(id), declaredInputs, shellJobs, skillRegistry: new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), profileStore, notesStore });
       const wired = registration.mock.calls[0]?.[1]; if (!wired) throw new Error("OS tools not registered");
       expect(wired.approvals).toBe(approvals); expect(wired.approvalRequired).toBe(true);
@@ -137,7 +139,7 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       const dangerous = { approvals: new ApprovalGate({ emit: () => {}, level: 5 }), approvalRequired: true };
       const registration = vi.spyOn(osTools, "registerOsTools");
       registerRuntimeCoreTools({ config, toolRegistry: createRuntimeToolRegistry(config, backend, dangerous), dangerous, logger,
-        sessionStore: { listRecentWorkingDirs: () => [], listSummaryPage: () => [], listChatLines: () => [], searchTranscripts: () => ({ hits: [], pending: 0 }), listSearchableChatLines: () => [] },
+        sessionStore: { listRecentWorkingDirs: () => [], listSummaryPage: () => [], listChatLines: () => [], searchTranscripts: () => ({ hits: [], pending: 0 }), listSearchableChatLines: () => [], load: () => null },
         resolveOriginalRequest: () => undefined, declaredInputs: new osTools.DeclaredInputsRegistry(), shellJobs,
         skillRegistry: new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), profileStore, notesStore,
         webSearchKeyHelp: "integrations-hub" });
@@ -318,6 +320,41 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
   });
 });
 
+describe("settings subagent profiles reach subagent.run as they reach fusion.delegate (ATO-2002)", () => {
+  it("finds an llm.runMode.agentProfiles entry by name through both loaders", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "catalog-settings-profiles-"));
+    vi.stubEnv("ATOMIC_AGENT_STATE_DIR", directory);
+    resetConfigCache();
+    try {
+      const config = getConfig(); const toolRegistry = new ToolRegistry();
+      // Written after startup: the loaders reread config.json per call.
+      await mkdir(dirname(config.paths.userConfigFile), { recursive: true });
+      await writeFile(config.paths.userConfigFile, JSON.stringify({
+        llm: { runMode: { agentProfiles: { "settings-role": { description: "From the settings", prompt: "Check the settings path." } } } },
+      }));
+      const approvals = new ApprovalGate({ emit: () => {}, level: 5 });
+      const fusionBuilder = vi.spyOn(fusionTools, "buildFusionDelegateTool");
+      const subagentBuilder = vi.spyOn(subagentTools, "buildSubagentRunTool");
+      registerRuntimeFusionAndReadScope({ config, toolRegistry, approvals, dangerous: { approvals, approvalRequired: false }, declaredInputs: new osTools.DeclaredInputsRegistry(),
+        resolveOriginalRequest: () => undefined, runTurn: async () => externalOperation(), createEphemeralSession: () => createEmptySessionState({ id: "worker", workingDir: directory }),
+        prepareLocalLink: async () => {}, emitAgentLoopEventFor: () => {}, resolveCurrentRunMode: () => resolveRunMode(resolveLlmConfig(config)),
+        providerRegistry: { getProvider: () => undefined, modelVariant: async () => undefined }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const },
+        slotManager: { poolSize: () => 2 }, workingDir: directory, logger });
+      const fusionProfiles = fusionBuilder.mock.calls.at(-1)?.[0].resolveAgentProfiles;
+      const subagentProfiles = subagentBuilder.mock.calls.at(-1)?.[0].resolveAgentProfiles;
+      if (!fusionProfiles || !subagentProfiles) throw new Error("profile loader seam missing");
+      const viaSubagent = subagentProfiles(directory).get("settings-role");
+      expect(viaSubagent).toMatchObject({ name: "settings-role", source: "settings", prompt: "Check the settings path." });
+      expect(fusionProfiles(directory).get("settings-role")).toMatchObject({ name: "settings-role", source: "settings" });
+      // One loader, two callers: the same names on both sides.
+      expect(subagentProfiles(directory).profiles.map((p) => p.name)).toEqual(fusionProfiles(directory).profiles.map((p) => p.name));
+    } finally {
+      vi.restoreAllMocks(); vi.unstubAllEnvs(); resetConfigCache();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("fusion escalation calls in the session readout (ATO-1388)", () => {
   it("records an escalation or judge call on the session that delegated, and nothing without one", async () => {
     const directory = await mkdtemp(join(tmpdir(), "catalog-usage-"));
@@ -482,6 +519,17 @@ describe("runtimeKnownSecrets (ATO-1077)", () => {
       ]);
     } finally {
       resetCommandIssuedSecrets();
+    }
+  });
+
+  it("masks the key serve runs with, which no env variable carries (ATO-1705)", () => {
+    registerProcessSecret("serve-api-key", "9f3c2a7e5b1d8c4a6e0f2b9d7c5a3e1f");
+    try {
+      expect(runtimeKnownSecrets({}, {})).toEqual([
+        { label: "serve-api-key", value: "9f3c2a7e5b1d8c4a6e0f2b9d7c5a3e1f" },
+      ]);
+    } finally {
+      clearProcessSecretsForTests();
     }
   });
 });

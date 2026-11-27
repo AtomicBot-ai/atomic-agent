@@ -20,3 +20,13 @@ export {
 } from "./run-toolcall-bench.js";
 export { askManyModels, type AskComplete, type ModelAnswer } from "./ask-many-models.js";
 export { formatAnswers, formatBenchTable } from "./format-bench.js";
+export {
+  COUNCIL_MAX_ANSWER_CHARS,
+  buildCouncilPrompt,
+  councilLabel,
+  councilMembers,
+  formatCouncilSummary,
+  parseCouncilSummary,
+  type CouncilMember,
+  type CouncilSummary,
+} from "./model-council.js";

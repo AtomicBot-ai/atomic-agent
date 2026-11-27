@@ -553,7 +553,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "model",
       description:
-        "open chat model picker · subcommands: pull <id> | use <id> | status | <base-url>",
+        "open chat model picker · subcommands: pull <id> | use <id> | favorite [add|remove] | status | <base-url>",
       aliases: ["models", "local"],
       rank: 27,
     },
@@ -662,6 +662,19 @@ export const MENU: readonly MenuNode[] = [
         "ask a quick side question: `/btw <question>` — the model sees this chat, runs no tools, and nothing is saved to the session",
       // Beside /steer, /queue and /status, the other run-time asides.
       rank: 35.75,
+    },
+  },
+  {
+    kind: "action",
+    id: "run.research",
+    label: "Deep research",
+    group: "run",
+    slash: {
+      name: "research",
+      description:
+        "research a question on the web: `/research <question>` runs research.deep and saves a report with checked quotes in the working folder",
+      // Right after /btw (35.75), before /window (36).
+      rank: 35.8,
     },
   },
   {

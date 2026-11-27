@@ -29,6 +29,13 @@ import {
   serializeScheduleValue,
 } from "./task-schedule.js";
 import { TaskRunLog, type TaskRunRecord } from "./task-run-log.js";
+import { TaskBoard } from "./task-board.js";
+import {
+  buildBoardCards,
+  type BoardCard,
+  type BoardEntry,
+  type BoardPatch,
+} from "./task-board-lanes.js";
 import {
   TASK_LAST_ERROR_MAX_LENGTH,
   TASK_NOTIFY_TARGETS,
@@ -211,6 +218,8 @@ export class TaskStore {
   private readonly resumeStmt: Database.Statement;
   /** One row per run, for the schedule's history (ATO-590). */
   private readonly runLog: TaskRunLog;
+  /** Lane, note and assignee of each card on the task board (ATO-2257). */
+  private readonly board: TaskBoard;
   /**
    * Why this database has no budget columns (see `ensureBudgetColumns`),
    * or `null`. Without them a task asking for a budget is refused.
@@ -250,6 +259,7 @@ export class TaskStore {
     this.ownerProbe = options.ownerProbe ?? currentTurnOwnerProbe();
     this.dbIdentity = databaseIdentity(options.dbFile);
     this.runLog = new TaskRunLog(this.db);
+    this.board = new TaskBoard(this.db);
 
     this.insertStmt = this.db.prepare(
       `INSERT INTO tasks (
@@ -794,6 +804,34 @@ export class TaskStore {
   }
 
   /**
+   * The tasks `list` gives, as cards on the task board (ATO-2257): each
+   * with its lane (set by someone or derived from the status), note and
+   * assignee. The board is a view; it never changes a task's status.
+   */
+  boardCards(options: TaskListOptions = {}): BoardCard[] {
+    return buildBoardCards(this.list(options), this.board.all());
+  }
+
+  /**
+   * Move a card, or change its note or assignee, with a patch checked by
+   * `validateBoardPatch`. Returns the card after the write, or `null`
+   * for an unknown task. The task's status is left as it is.
+   */
+  updateBoardCard(id: string, patch: BoardPatch, now: number = Date.now()): BoardCard | null {
+    const task = this.get(id);
+    if (!task) return null;
+    const entry = this.board.set(id, patch, now);
+    const entries = new Map<string, BoardEntry>();
+    if (entry) entries.set(id, entry);
+    return buildBoardCards([task], entries)[0] ?? null;
+  }
+
+  /** Why this open keeps no task board, or `null` (see `TaskBoard`). */
+  get boardUnavailable(): string | null {
+    return this.board.unavailable;
+  }
+
+  /**
    * Drop every task bound to `sessionId` (ATO-586: an incognito chat
    * being closed). Rows are deleted, prompt and all, so nothing from the
    * chat stays in tasks.sqlite. A row still `running` is only cancelled:
@@ -812,6 +850,8 @@ export class TaskStore {
             WHERE session_id = @sessionId AND status = 'running'`,
         )
         .run({ sessionId, now });
+      // The board's notes on the deleted rows go with them (ATO-2257).
+      this.board.pruneOrphans();
       return deleted;
     });
     return remove();
@@ -819,12 +859,16 @@ export class TaskStore {
 
   /**
    * `removeForSession` for the boot sweep of a chat whose process is gone
-   * (ATO-1547): a `running` row whose run is gone too (the same rule as
-   * `recoverInterrupted`: its recorded owner is dead, or with no owner it
-   * is older than `staleAfterMs`) is deleted as well, prompt and all,
-   * since no runner holds it. A running row a live process still holds
-   * is only cancelled, as `removeForSession` does. Boot only, before this
-   * process claims a task. Returns the number of rows deleted.
+   * (ATO-1547): a `running` row whose run is gone too is deleted as well,
+   * prompt and all, since no runner holds it. A run whose recorded owner
+   * is dead is gone. A run that names no owner is gone at any age
+   * (ATO-1654): the chat promised no trace and its process is gone, so
+   * the age rule of `recoverInterrupted` would only leave a fresh row
+   * behind, `cancelled` with its prompt. Age is still the rule when this
+   * file's owners cannot be read at all, since a live owner would then
+   * look ownerless too. A running row a live process still holds is only
+   * cancelled, as `removeForSession` does. Boot only, before this process
+   * claims a task. Returns the number of rows deleted.
    */
   removeForSessionAtBoot(
     sessionId: string,
@@ -836,7 +880,8 @@ export class TaskStore {
     const isOwnerGone =
       options.isOwnerGone ??
       ((owner: string) => isTurnOwnerGone(owner, probe, dbIdentity));
-    const ownerColumn = this.runOwnersUnavailable === null ? "run_owner" : "NULL AS run_owner";
+    const ownersReadable = this.runOwnersUnavailable === null;
+    const ownerColumn = ownersReadable ? "run_owner" : "NULL AS run_owner";
     const remove = this.db.transaction((): number => {
       const running = this.db
         .prepare(
@@ -851,7 +896,8 @@ export class TaskStore {
           owner !== null && row.started_at !== null && owner.at === row.started_at;
         const gone = ownsThisRun
           ? isOwnerGone(row.run_owner as string)
-          : row.started_at !== null && row.started_at < now - options.staleAfterMs;
+          : ownersReadable ||
+            (row.started_at !== null && row.started_at < now - options.staleAfterMs);
         if (!gone) continue;
         deleted += this.db
           .prepare(`DELETE FROM tasks WHERE id = ? AND status = 'running' AND started_at IS ?`)

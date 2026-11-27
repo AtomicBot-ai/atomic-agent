@@ -184,3 +184,20 @@ describe("cloud message retention", () => {
     expect((await send(buildPrompt(input))).map((m) => m.reasoning_content)).toEqual([""]);
   });
 });
+
+describe("hook context in the cloud journal (ATO-2198)", () => {
+  it("SessionStart text stays active on turn 2; only the per-turn UserPromptSubmit text is retracted", () => {
+    const input = fixture();
+    const first = buildPrompt({ ...input, sessionHookContext: "project: atomic", hookContext: "prompt 1" });
+    expect(first.text).toContain("project: atomic");
+    input.session.cloudContext = first.cloudContext;
+    input.session.turns.push(assistantReplyTurn("done", 2), userTurn("next", 3));
+    const second = buildPrompt({ ...input, sessionHookContext: "project: atomic" });
+    const entries = second.cloudContext!.entries.filter((entry) => entry.key === "hook-session-start");
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.active).toBe(true);
+    expect(second.text).toContain("project: atomic");
+    expect(second.text).not.toMatch(/### hook-session-start\n[^\n]*\n\(no longer active\)/);
+    expect(second.cloudContext!.entries.some((entry) => entry.key === "hook-context" && !entry.active)).toBe(true);
+  });
+});

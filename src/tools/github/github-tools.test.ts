@@ -132,16 +132,21 @@ describe("github.* tools", () => {
     await rm(repo, { recursive: true, force: true });
   }, 30_000);
 
-  it("registers the six tools with the read/write split", () => {
+  it("registers the eight tools with the read/write split", () => {
     const tools = toolsWith(fakeApi());
     expect([...tools.keys()].sort()).toEqual([
       "github.issue.comment",
       "github.issue.create",
       "github.issue.list",
+      "github.pr.autofix",
+      "github.pr.checks",
       "github.pr.create",
       "github.pr.list",
       "github.whoami",
     ]);
+    expect(tools.get("github.pr.checks")?.readonly).toBe(true);
+    expect(tools.get("github.pr.checks")?.untrustedOutput).toBe("GitHub CI logs");
+    expect(tools.get("github.pr.autofix")?.readonly).toBe(false);
     expect(tools.get("github.whoami")?.readonly).toBe(true);
     expect(tools.get("github.pr.list")?.readonly).toBe(true);
     expect(tools.get("github.issue.list")?.readonly).toBe(true);

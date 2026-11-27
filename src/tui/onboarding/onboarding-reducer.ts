@@ -6,6 +6,7 @@ import {
   moveOnboardingCursor,
   type OnboardingCloudReturn,
 } from "./onboarding-state.js";
+import { chooseCursorFor } from "./onboarding-local-servers.js";
 
 /**
  * Folds the first-run actions. Returns `null` when the action is not
@@ -31,7 +32,8 @@ export function reduceOnboardingAction(
           step: action.step,
           // Each list owns its own cursor; carrying the choice screen's
           // row into the model picker would land it on an arbitrary model.
-          cursor: 0,
+          // The choice screen starts on Custom when a server runs here.
+          cursor: action.step === "choose" ? chooseCursorFor(state.onboarding) : 0,
           error: null,
           busy: false,
         },
@@ -199,6 +201,13 @@ export function reduceOnboardingAction(
         ...state,
         onboarding: { ...state.onboarding, busy: false, error: action.error },
       };
+    }
+    case "onboarding_local_servers_detected": {
+      if (!state.onboarding || action.servers.length === 0) return state;
+      const next = { ...state.onboarding, detectedLocal: action.servers };
+      // An untouched choice screen moves to the row the servers lead.
+      if (next.step === "choose" && next.cursor === 0) next.cursor = chooseCursorFor(next);
+      return { ...state, onboarding: next };
     }
     case "onboarding_second_backend_offered": {
       if (!state.onboarding) return state;

@@ -29,6 +29,7 @@ export const osGitDiffTool: ToolDefinition = {
     const result = await runGit({
       repo,
       workingDir: ctx.workingDir,
+      guest: ctx.guest,
       args,
       signal: ctx.signal,
       timeoutMs: 30_000,

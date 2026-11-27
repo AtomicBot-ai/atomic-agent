@@ -244,6 +244,8 @@ describe("formatUsageReport", () => {
     const text = formatUsageReport(undefined, NOW);
     expect(text).toContain("nothing recorded yet");
     expect(text).toContain("limits: no reading yet");
+    // ATO-2352: points at the per-day history.
+    expect(text).toContain("atomic-agent usage --days 7");
   });
 
   it("lists unpriced models and every live window", () => {

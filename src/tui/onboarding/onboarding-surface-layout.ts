@@ -67,6 +67,8 @@ export interface OnboardingBlockInput {
   /** The import screens' rows and report, while the flow is on them. */
   importAgents?: OnboardingUiState["importAgents"];
   importReport?: OnboardingUiState["importReport"];
+  /** Local servers found running here, named on the choice screen. */
+  detectedLocal?: OnboardingUiState["detectedLocal"];
 }
 
 export function layOutOnboardingSurface(
@@ -103,7 +105,7 @@ export function measureOnboardingBlock(input: MeasureInput): number {
 function measureStepBody(input: MeasureInput): number {
   switch (input.step) {
     case "choose":
-      return measureOnboardingChooseStep(input.fit);
+      return measureOnboardingChooseStep(input.fit, input.detectedLocal);
     case "local_pick":
       return measureOnboardingLocalPickStep({
         picks: input.picks,
