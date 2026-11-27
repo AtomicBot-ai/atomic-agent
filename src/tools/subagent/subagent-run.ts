@@ -2,15 +2,9 @@ import {
   compressToolResult,
   type CompressedToolResult,
 } from "../../compressor/result-compressor.js";
-import { DEFAULT_FUSION_CLOUD_WORKERS } from "../../config/llm-run-mode-config.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import type { StructuredLogger } from "../../tracing/index.js";
 import type { AgentProfileSet } from "../../agent-profiles/index.js";
-import type { ApprovalGate } from "../../approval/approval-gate.js";
-import {
-  ApprovalDeniedError,
-  requireApproval,
-} from "../../approval/dangerous-tool.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { costCeilingReached } from "../../agent/turn/turn-spend.js";
 import { estimateUsageCostUsd, formatUsd } from "../../llm/provider/usage-cost.js";
@@ -26,17 +20,14 @@ import {
   type AppliedProfileReport,
 } from "../fusion/task-profiles.js";
 import { treeLimitBreach } from "../fusion/task-tree.js";
-import { resolveFanoutScope } from "../fusion/fanout-paths.js";
-import {
-  describeFanoutPreview,
-  scopeInsideStateDir,
-} from "../fusion/fusion-delegate.js";
+import { askFanoutWrite } from "../fusion/fanout-approval.js";
 import {
   FUSION_WORKER_APPROVAL_MARKER,
   FUSION_WORKER_OPERATOR_ONLY_MARKER,
   workerRefusalFor,
 } from "../fusion/worker-tool-policy.js";
 import { runWorkerTasks, type WorkerRunnerDeps } from "../fusion/worker-runner.js";
+import { coreWorkerOptions, legWorkerWidth } from "../fusion/worker-leg-options.js";
 import type { WorkerRunnerCoreDeps } from "../fusion/worker-runner-core.js";
 import { subagentLocalLegHealth, type SubagentLocalLegDeps } from "./subagent-local-leg.js";
 import {
@@ -206,9 +197,9 @@ function error(
  * that tells the subagent to name the path for its caller.
  *
  * A subagent may write only where a task declared `files`: the person
- * is asked once for the call, as for a Fusion fan-out
- * (`resolveFanoutScope`, `describeFanoutPreview`, category
- * `fusion_fanout`), and a yes is granted to every subagent of the call.
+ * is asked once for the call by the step a Fusion fan-out runs
+ * (`askFanoutWrite`, category `fusion_fanout`), and a yes is granted to
+ * every subagent of the call.
  */
 export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
   const ledger = deps.turnLedger ?? new SubagentTurnLedger();
@@ -346,63 +337,44 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
       // whole call before a subagent starts.
       let writeScope: string[] = [];
       if (tasks.some((t) => (t.files?.length ?? 0) > 0)) {
-        writeScope = resolveFanoutScope(tasks, ctx.workingDir);
-        const intoState = scopeInsideStateDir(writeScope, deps.agentStateDir);
-        if (intoState.length > 0) {
-          return error(
-            `${SUBAGENT_RUN_TOOL} did not run: the tasks would write in the agent's own state directory (${intoState.join(", ")}). ` +
-              "Subagents cannot write there. Name a project directory instead; if the user really wants a change to the agent's own files, tell them.",
-            { reason: "agent-state-dir", scope: intoState },
-          );
-        }
-        // The gate's turn state is keyed by session and cleared at turn
-        // start only for a Fusion turn, so a standing answer is read only
-        // when it is tied to this very turn (ATO-1759): given here, or by
-        // a `fusion.delegate` of the same turn, whose answer and refused
-        // command note then stand instead of being dropped.
-        const scopes = deps.approvals.fanoutScopes;
-        if (
-          ctx.turnId === undefined ||
-          !(scopes?.turnStateIsFrom(ctx.sessionId, ctx.turnId) ?? false)
-        ) {
-          scopes?.clearTurnGrant(ctx.sessionId);
-        }
-        if (ctx.turnId !== undefined) scopes?.enterTurn(ctx.sessionId, ctx.turnId);
-        const declinedInScope =
-          deps.approvals.hasDeclinedUnder?.(ctx.sessionId, writeScope) ?? false;
-        const alreadyApproved =
-          !declinedInScope &&
-          (deps.approvals.fanoutScopes?.turnGrantCovers(ctx.sessionId, writeScope) ??
-            false);
-        try {
-          if (!alreadyApproved) {
-            const models = [...new Set([...legs.values()].map((l) => l.model))];
-            await requireApproval(
-              {
-                approvals: deps.approvals as ApprovalGate,
-                approvalRequired: deps.approvalRequired,
-              },
-              {
-                sessionId: ctx.sessionId,
-                tool: SUBAGENT_RUN_TOOL,
-                category: "fusion_fanout",
-                reason: `${tasks.length} subagent${tasks.length === 1 ? "" : "s"} on ${models.join(", ")} may write in ${writeScope.join(", ")}`,
-                preview: describeFanoutPreview(tasks, writeScope),
-                affectedResources: [...writeScope],
-              },
-              ctx.signal,
+        // The same question `fusion.delegate` asks (`askFanoutWrite`,
+        // ATO-2446). The gate's turn state is keyed by session and cleared
+        // at turn start only for a Fusion turn, so a standing answer is
+        // read only when it is tied to this very turn (ATO-1759): given
+        // here, or by a `fusion.delegate` of the same turn, whose answer
+        // and refused command note then stand instead of being dropped.
+        const models = [...new Set([...legs.values()].map((l) => l.model))];
+        const asked = await askFanoutWrite({
+          tool: SUBAGENT_RUN_TOOL,
+          sessionId: ctx.sessionId,
+          turnId: ctx.turnId,
+          tasks,
+          workingDir: ctx.workingDir,
+          agentStateDir: deps.agentStateDir,
+          approvals: deps.approvals,
+          approvalRequired: deps.approvalRequired,
+          signal: ctx.signal,
+          clearStaleTurnState: true,
+          reason: (scope) =>
+            `${tasks.length} subagent${tasks.length === 1 ? "" : "s"} on ${models.join(", ")} may write in ${scope.join(", ")}`,
+        });
+        if (!asked.ok) {
+          if (asked.kind === "agent-state-dir") {
+            return error(
+              `${SUBAGENT_RUN_TOOL} did not run: the tasks would write in the agent's own state directory (${asked.intoState.join(", ")}). ` +
+                "Subagents cannot write there. Name a project directory instead; if the user really wants a change to the agent's own files, tell them.",
+              { reason: "agent-state-dir", scope: asked.intoState },
             );
           }
-          scopes?.grantForTurn(ctx.sessionId, writeScope);
-        } catch (err) {
-          if (err instanceof ApprovalDeniedError && (err.byUser || err.declinedEarlier)) {
-            return error(err.message, { reason: "writes-denied", deniedByUser: true });
+          if (asked.byUser) {
+            return error(asked.message, { reason: "writes-denied", deniedByUser: true });
           }
           return error(
-            `${SUBAGENT_RUN_TOOL} did not run: the writes were not approved: ${err instanceof Error ? err.message : String(err)}`,
+            `${SUBAGENT_RUN_TOOL} did not run: the writes were not approved: ${asked.message}`,
             { reason: "writes-denied" },
           );
         }
+        writeScope = asked.writeScope;
       }
 
       ledger.record(ctx.sessionId, turnAt, tasks.length);
@@ -459,42 +431,30 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
         // One at a time on a local server, as Fusion runs a fan-out that
         // named no width; a cloud leg takes the cloud worker cap.
         const local = deps.workerSupportsSlotAffinity(group.leg.providerId);
-        const maxWorkers = local
-          ? 1
-          : Math.max(
-              1,
-              Math.min(
-                group.tasks.length,
-                mode.cloudWorkers ?? DEFAULT_FUSION_CLOUD_WORKERS,
-              ),
-            );
         return runWorkerTasks(runnerDeps, {
-          parentSessionId: ctx.sessionId,
-          tasks: group.tasks,
-          maxWorkers,
-          providerId: group.leg.providerId,
-          workerModel: group.leg.model,
-          // A local leg gets what a Fusion local worker gets (ATO-2430,
-          // issue #490): the local floors, the slot probe, and the check
-          // and fresh connections after a cut-off subagent.
-          localLeg: local,
-          ...(group.leg.turnModel === undefined
-            ? {}
-            : { turnModel: group.leg.turnModel }),
-          workerMaxSteps: mode.workerMaxSteps,
-          workerTimeoutMs: mode.workerTimeoutMs,
-          ...(mode.workerReasoning === undefined
-            ? {}
-            : { workerReasoning: mode.workerReasoning }),
-          ...(mode.workerMaxOutputTokens === undefined
-            ? {}
-            : { workerMaxOutputTokens: mode.workerMaxOutputTokens }),
-          ...(originalRequest === undefined ? {} : { originalRequest }),
-          signal: runSignal,
+          // The options a Fusion leg gets too (ATO-2446). A local leg gets
+          // what a Fusion local worker gets (ATO-2430, issue #490): the
+          // local floors, the slot probe, and the check and fresh
+          // connections after a cut-off subagent.
+          ...coreWorkerOptions({
+            parentSessionId: ctx.sessionId,
+            tasks: group.tasks,
+            maxWorkers: legWorkerWidth(local, group.tasks.length, mode.cloudWorkers),
+            leg: {
+              providerId: group.leg.providerId,
+              workerModel: group.leg.model,
+              turnModel: group.leg.turnModel,
+            },
+            localLeg: local,
+            mode,
+            workerMaxOutputTokens: mode.workerMaxOutputTokens,
+            originalRequest,
+            writeScope: writeScope.length === 0 ? undefined : writeScope,
+            signal: runSignal,
+          }),
           ...ceilingOptionsFor(group.leg),
           origin: "subagent",
           depth: childDepth,
-          ...(writeScope.length === 0 ? {} : { writeScope }),
           approvalRefusal: {
             general: SUBAGENT_APPROVAL_REFUSED,
             reasonFor: subagentRefusalFor,
