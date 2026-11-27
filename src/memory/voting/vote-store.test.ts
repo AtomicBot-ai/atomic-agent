@@ -286,17 +286,21 @@ describe("VoteStore", () => {
     // would be infeasible if we round-tripped per row.
     it("decays 1000 rows in bulk SQL within a single transaction (scorecard 7a.D.4)", () => {
       const ids: number[] = [];
-      for (let i = 0; i < 1000; i++) {
-        ids.push(f.seedMemory(`note ${i}`));
-      }
-      for (const id of ids) {
-        f.store.applyVote({
-          kind: "memory",
-          targetId: id,
-          direction: 1,
-          maxVotePerItem: 50,
-        });
-      }
+      // Seeded in one transaction: 2000 separate commits can outlast the
+      // test timeout on a loaded runner. Only the decay below is timed.
+      f.db.transaction(() => {
+        for (let i = 0; i < 1000; i++) {
+          ids.push(f.seedMemory(`note ${i}`));
+        }
+        for (const id of ids) {
+          f.store.applyVote({
+            kind: "memory",
+            targetId: id,
+            direction: 1,
+            maxVotePerItem: 50,
+          });
+        }
+      })();
       const start = Date.now();
       const result = f.store.decayAllScores(0.9);
       const durationMs = Date.now() - start;
