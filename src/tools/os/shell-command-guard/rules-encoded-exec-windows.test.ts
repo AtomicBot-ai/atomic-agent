@@ -50,4 +50,29 @@ describe("dangerous.encoded_exec for PowerShell (ATO-2728)", () => {
     expect(verdict.rule, line).not.toBe("dangerous.encoded_exec");
     expect(verdict.askEveryLevel, line).toBeUndefined();
   });
+
+  // Review round 1 (#1945), F1945.2: each ran unasked in bypass at 6d70e1a.
+  it.each([
+    String.raw`"C:\Program Files\PowerShell\7\pwsh.exe" -enc ZQBjAGgAbwA=`,
+    String.raw`"C:\Program Files\PowerShell\7\pwsh.exe" -NoProfile "-enc" ZQBjAGgAbwA=`,
+    `pwsh "-enc" ZQBjAGgAbwA=`,
+    `pwsh '-EncodedCommand' ZQBjAGgAbwA=`,
+    `pwsh -e^nc ZQBjAGgAbwA=`,
+    `cmd /c p^owershell -e^nc ZQBjAGgAbwA=`,
+    "pwsh \u2013enc ZQBjAGgAbwA=",
+    "powershell \u2014EncodedCommand ZQBjAGgAbwA=",
+    "pwsh \u2015ec ZQBjAGgAbwA=",
+  ])("asks at every level for a quoted, caret-broken or dash look-alike form: %s", (line) => {
+    expect(guardLine(line), line).toMatchObject({
+      rule: "dangerous.encoded_exec",
+      askEveryLevel: true,
+      confidence: 1,
+    });
+  });
+
+  it("still leaves script options after a quoted -File alone", () => {
+    const verdict = guardLine(`pwsh "-File" run.ps1 -e staging`);
+    expect(verdict.rule).not.toBe("dangerous.encoded_exec");
+    expect(verdict.askEveryLevel).toBeUndefined();
+  });
 });

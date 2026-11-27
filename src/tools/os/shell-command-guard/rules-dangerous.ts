@@ -14,6 +14,7 @@ import { matchInlineHomeCode } from "./rules-inline-home-code.js";
 import { nestedCommandLines } from "./nested-command-lines.js";
 import { matchCredentialCommand } from "./rules-credential-commands.js";
 import { matchEncodedExecFile } from "./rules-encoded-exec-file.js";
+import { powershellCommandLines } from "./powershell-command-lines.js";
 
 interface PatternRule {
   id: string;
@@ -216,8 +217,8 @@ const MAX_NESTED_DEPTH = 4;
  * ATO-2728), a whole home folder packed or copied and inline code that
  * builds a credential path (ATO-2730), a command that prints a saved
  * credential and a decoded file that is then run (ATO-2505), and the
- * same again for each line
- * a nested `sh -c` or `eval` runs (ATO-2730).
+ * same again for each line a nested `sh -c` or `eval` (ATO-2730) or a
+ * `powershell -c` runs.
  */
 function argScanFinding(
   input: NormalisedCommand,
@@ -227,7 +228,7 @@ function argScanFinding(
   let best = strongestFinding(
     matchCredentialRead(input, raw),
     matchEncodedExec(input),
-    matchWindowsCredentialRead(input),
+    matchWindowsCredentialRead(input, raw.cwd),
     matchWindowsEncodedExec(input),
     matchHomeArchive(input, raw),
     matchInlineHomeCode(input),
@@ -235,7 +236,8 @@ function argScanFinding(
     matchEncodedExecFile(input),
   );
   if (depth >= MAX_NESTED_DEPTH) return best;
-  for (const inner of nestedCommandLines(input, raw.cwd)) {
+  const inners = [...nestedCommandLines(input, raw.cwd), ...powershellCommandLines(input, raw.cwd)];
+  for (const inner of inners) {
     best = strongestFinding(best, argScanFinding(inner, raw, depth + 1));
   }
   return best;

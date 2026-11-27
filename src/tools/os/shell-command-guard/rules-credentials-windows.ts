@@ -1,6 +1,12 @@
-import { SECRET_HOME_PATHS } from "../../../sandbox/os-sandbox.js";
 import type { NormalisedCommand } from "./guard-types.js";
 import type { ArgScanFinding } from "./arg-scan-finding.js";
+import {
+  HOME_ONLY,
+  HOME_VALUE,
+  RELATIVE_SECRET_PATH,
+  SECRET_PATH,
+  SECRET_PIECE,
+} from "./windows-credential-paths.js";
 
 /**
  * `dangerous.read_credentials` for Windows paths and readers (ATO-2728).
@@ -10,12 +16,9 @@ import type { ArgScanFinding } from "./arg-scan-finding.js";
  * included. This rule reads the joined line as text instead, and takes
  * `\` and `/` alike as a folder separator.
  *
- * Home folder: `%USERPROFILE%`, `%HOMEDRIVE%%HOMEPATH%`, `$env:USERPROFILE`
- * (also `${env:USERPROFILE}`), PowerShell's `$HOME\` and `~\` (with a
- * backslash: the forward-slash forms are the POSIX rule's), `C:\Users\<name>`,
- * Git Bash `/c/Users/<name>` and WSL `/mnt/c/Users/<name>`. `%APPDATA%` and
- * `%LOCALAPPDATA%` (and their `$env:` forms) stand for the AppData folders.
- * The credential folders are `SECRET_HOME_PATHS` plus the Windows ones
+ * The home folder spellings are in `windows-credential-paths.ts`; `~` and
+ * `$HOME` count with `/` too, since PowerShell takes both (review round
+ * 1). The credential folders are `SECRET_HOME_PATHS` plus the Windows ones
  * below (gcloud and GitHub CLI under AppData, the Credential Manager and
  * DPAPI key folders, PowerShell history, browser saved logins).
  *
@@ -23,7 +26,11 @@ import type { ArgScanFinding } from "./arg-scan-finding.js";
  * Git Bash brings, cmd's `type`, `more`, `copy`, `xcopy`, `robocopy`,
  * `findstr`, `certutil`, PowerShell's `Get-Content` / `gc`, `Copy-Item`,
  * `Compress-Archive`, `Select-String`, `[IO.File]::Read*`, or a `cd` /
- * `Set-Location` into the folder. A copy whose only credential path is
+ * `Set-Location` into the folder. A `cd /d %USERPROFILE%` (or a tool
+ * working folder that is the home folder) makes `.ssh\id_rsa` after it a
+ * home path; so does the home folder as a value of its own next to a
+ * credential entry (`Join-Path $env:USERPROFILE .ssh\id_rsa`). cmd's `^`
+ * escape is dropped before reading. A copy whose only credential path is
  * the destination is a write, not a read. `cmdkey /list`, `vaultcmd
  * /listcreds`, `Get-StoredCredential`, the `PasswordVault` class and a
  * `reg save|export` of the SAM / SECURITY hive name saved credentials
@@ -33,48 +40,6 @@ import type { ArgScanFinding } from "./arg-scan-finding.js";
 
 const SECRET_CONFIDENCE = 0.9;
 const LOW_CONFIDENCE = 0.6;
-
-const WINDOWS_SECRET_PATHS: readonly string[] = [
-  "appdata/roaming/gcloud",
-  "appdata/roaming/github cli",
-  "appdata/roaming/microsoft/credentials",
-  "appdata/local/microsoft/credentials",
-  "appdata/roaming/microsoft/protect",
-  "appdata/roaming/microsoft/windows/powershell/psreadline",
-  "appdata/local/google/chrome/user data/default/login data",
-  "appdata/local/microsoft/edge/user data/default/login data",
-];
-
-const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-/** A folder separator: `\` or `/`, doubled or not. */
-const SEP = String.raw`[/\\]+`;
-const NAME = String.raw`[^/\\"'|;&<>\s][^/\\"'|;&<>]*`;
-/** One home-folder spelling, lowercased, up to and with its separator. */
-const HOME = String.raw`(?:(?:%userprofile%|%homedrive%%homepath%|%home%|\$env:userprofile|\$\{env:userprofile\}|\$env:home|[a-z]:${SEP}users${SEP}${NAME}|/[a-z]/users/${NAME}|/mnt/[a-z]/users/${NAME})${SEP}|(?:~|\$home)\\+)`;
-const APPDATA = String.raw`(?:%appdata%|\$env:appdata|\$\{env:appdata\})${SEP}`;
-const LOCALAPPDATA = String.raw`(?:%localappdata%|\$env:localappdata|\$\{env:localappdata\})${SEP}`;
-
-const ALL_SECRETS = [...SECRET_HOME_PATHS.map((p) => p.toLowerCase()), ...WINDOWS_SECRET_PATHS];
-/** Longest first, each `/` read as either separator. */
-const alternation = (paths: readonly string[]): string =>
-  [...paths]
-    .sort((a, b) => b.length - a.length)
-    .map((path) => path.split("/").map(escapeRegex).join(SEP))
-    .join("|");
-const BELOW = alternation(ALL_SECRETS);
-const BELOW_ROAMING = alternation(
-  WINDOWS_SECRET_PATHS.filter((p) => p.startsWith("appdata/roaming/")).map((p) => p.slice(16)),
-);
-const BELOW_LOCAL = alternation(
-  WINDOWS_SECRET_PATHS.filter((p) => p.startsWith("appdata/local/")).map((p) => p.slice(14)),
-);
-/** Group 4 is what is named below the credential entry. */
-const END = String.raw`((?:[/\\][^"'|;&<>\s]*)?)(?=$|["'|;&<>\s),])`;
-const SECRET_PATH = new RegExp(
-  String.raw`(?:^|[\s"'=(,@:])(?:${HOME}(${BELOW})|${APPDATA}(${BELOW_ROAMING})|${LOCALAPPDATA}(${BELOW_LOCAL}))${END}`,
-  "g",
-);
 
 const READERS: ReadonlySet<string> = new Set([
   // POSIX readers, as Git Bash and WSL run them.
@@ -135,19 +100,51 @@ interface SecretHit {
   rest: string;
   /** The path as written on the line. */
   text: string;
+  /** The path is the target of a `<` redirect. */
+  redirected: boolean;
 }
 
-function secretHits(command: string): SecretHit[] {
+function hitsOf(command: string, pattern: RegExp): SecretHit[] {
   const hits: SecretHit[] = [];
-  for (const match of command.matchAll(SECRET_PATH)) {
-    const roaming = match[2] === undefined ? undefined : `appdata/roaming/${match[2]}`;
-    const local = match[3] === undefined ? undefined : `appdata/local/${match[3]}`;
-    const entry = (match[1] ?? roaming ?? local ?? "").replace(/[/\\]+/g, "/");
+  for (const match of command.matchAll(pattern)) {
+    const groups = match.slice(1);
+    const rest = (groups.pop() ?? "").replace(/[/\\]+/g, "/");
+    let entry = groups[0];
+    if (pattern === SECRET_PATH) {
+      if (groups[1] !== undefined) entry = `appdata/roaming/${groups[1]}`;
+      if (groups[2] !== undefined) entry = `appdata/local/${groups[2]}`;
+    }
     const text = match[0]!.replace(/^[\s"'=(,@:]/, "");
-    const rest = (match[4] ?? "").replace(/[/\\]+/g, "/");
-    hits.push({ entry, rest, text });
+    const before = command.slice(0, match.index! + match[0]!.length - text.length);
+    hits.push({
+      entry: (entry ?? "").replace(/[/\\]+/g, "/"),
+      rest,
+      text,
+      redirected: /(?:^|[^<])<\s*["']?$/.test(before),
+    });
   }
   return hits;
+}
+
+/** `gc (Join-Path $env:USERPROFILE '.ssh\id_rsa')`: home and entry as separate values. */
+function pieceHits(command: string, words: readonly string[]): SecretHit[] {
+  if (!HOME_VALUE.test(command)) return [];
+  const hits: SecretHit[] = [];
+  for (const word of words) {
+    const match = SECRET_PIECE.exec(word.replace(/[),]+$/, ""));
+    if (match === null) continue;
+    const entry = match[1]!.replace(/[/\\]+/g, "/");
+    hits.push({ entry, rest: match[2]!.replace(/[/\\]+/g, "/"), text: word, redirected: false });
+  }
+  return hits;
+}
+
+function secretHits(command: string, words: readonly string[], inHome: boolean): SecretHit[] {
+  return [
+    ...hitsOf(command, SECRET_PATH),
+    ...(inHome ? hitsOf(command, RELATIVE_SECRET_PATH) : []),
+    ...pieceHits(command, words),
+  ];
 }
 
 function hitFinding(hit: SecretHit, verb: string): ArgScanFinding | null {
@@ -160,10 +157,10 @@ function hitFinding(hit: SecretHit, verb: string): ArgScanFinding | null {
 
 /** The operands of the copier in `words`, options left out. */
 function copyOperands(words: readonly string[], at: number): string[] {
-  // `/Y`, `-Recurse` are options; `/c/Users/...` and `/mnt/c/...` are paths.
+  // `/Y`, `/R:3`, `-Recurse` are options; `/c/Users/...`, `/tmp/k` are paths.
   return words
     .slice(at + 1)
-    .filter((word) => !/^[-/][a-z]/.test(word) || /^\/(?:mnt\/)?[a-z]\//.test(word));
+    .filter((word) => !/^-[a-z]/.test(word) && !/^\/[a-z0-9?]+(?::[^/\\]*)?$/.test(word));
 }
 
 /** Only the destination of a copy names the credential folder: a write, not a read. */
@@ -185,7 +182,7 @@ function stronger(best: ArgScanFinding | null, hit: ArgScanFinding | null): ArgS
   return best === null || hit.confidence > best.confidence ? hit : best;
 }
 
-function commandFinding(command: string): ArgScanFinding | null {
+function commandFinding(command: string, inHome: boolean): ArgScanFinding | null {
   for (const pattern of SAVED_CREDENTIALS) {
     if (pattern.test(command)) {
       return {
@@ -195,9 +192,9 @@ function commandFinding(command: string): ArgScanFinding | null {
       };
     }
   }
-  const hits = secretHits(command);
-  if (hits.length === 0) return null;
   const words = wordsOf(command);
+  const hits = secretHits(command, words, inHome);
+  if (hits.length === 0) return null;
   const programs = words.map(program);
   if (programs.some((name) => CD.has(name))) {
     let best: ArgScanFinding | null = null;
@@ -207,21 +204,32 @@ function commandFinding(command: string): ArgScanFinding | null {
   const codeRunner = programs.some(
     (name, i) => CODE_RUNNER.test(name) && words.slice(i + 1).some((w) => CODE_FLAG.test(w)),
   );
-  const reads =
-    codeRunner ||
-    DOTNET_READ.test(command) ||
-    programs.some((name) => READERS.has(name)) ||
-    /(?:^|[^<])<\s*\S/.test(command);
-  if (!reads || onlyDestination(words, hits)) return null;
+  const reads = codeRunner || DOTNET_READ.test(command) || programs.some((name) => READERS.has(name));
+  // Without a reader only a `<` redirect of the path itself reads it.
+  const read = reads ? (onlyDestination(words, hits) ? [] : hits) : hits.filter((hit) => hit.redirected);
   let best: ArgScanFinding | null = null;
-  for (const hit of hits) best = stronger(best, hitFinding(hit, "reads a credential file"));
+  for (const hit of read) best = stronger(best, hitFinding(hit, "reads a credential file"));
   return best;
 }
 
-export function matchWindowsCredentialRead(input: NormalisedCommand): ArgScanFinding | null {
+/** Whether the next command runs in the home folder, after `command`. */
+function inHomeAfter(command: string, inHome: boolean): boolean {
+  const words = wordsOf(command);
+  const at = words.findIndex((word) => CD.has(program(word)));
+  if (at === -1) return inHome;
+  // `cd /d X`, `Set-Location -Path X`.
+  const target = words.slice(at + 1).find((word) => !/^(?:\/d|-(?:literal)?path)$/.test(word));
+  return target === undefined ? inHome : HOME_ONLY.test(target);
+}
+
+/** `cwd`: the tool's working folder; the home folder makes relative entries home paths. */
+export function matchWindowsCredentialRead(input: NormalisedCommand, cwd = ""): ArgScanFinding | null {
+  let inHome = HOME_ONLY.test(cwd.toLowerCase());
   let best: ArgScanFinding | null = null;
-  for (const command of commandsOf(input.joinedLower)) {
-    best = stronger(best, commandFinding(command));
+  // cmd drops `^` before the program sees its arguments: `.s^sh` is `.ssh`.
+  for (const command of commandsOf(input.joinedLower.replace(/\^/g, ""))) {
+    best = stronger(best, commandFinding(command, inHome));
+    inHome = inHomeAfter(command, inHome);
   }
   return best;
 }

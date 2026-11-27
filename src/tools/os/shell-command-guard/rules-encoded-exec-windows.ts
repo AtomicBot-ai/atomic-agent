@@ -16,6 +16,11 @@ import type { ArgScanFinding } from "./arg-scan-finding.js";
  *    `iex` / `Invoke-Expression`, `[ScriptBlock]::Create`, `& (...)`,
  *    `.Invoke(`, `Start-Process` / `saps` with `-ArgumentList`, or
  *    `powershell -Command` / `-c`.
+ *
+ * cmd.exe drops `^` and the quotes before PowerShell sees its arguments,
+ * and PowerShell takes en dash, em dash and horizontal bar for `-`, so
+ * `"C:\Program Files\PowerShell\7\pwsh.exe" -enc`, `pwsh "-enc"`, `pwsh
+ * -e^nc` and `pwsh \u2013enc` are read as the plain form (review round 1).
  */
 
 /** A `powershell` / `pwsh` program word; the rest of its command follows. */
@@ -44,8 +49,13 @@ function ownFlags(rest: string): string[] {
   return flags;
 }
 
+/** The line as PowerShell receives it: no `^`, no quotes, dash look-alikes as `-`. */
+function asPowerShellSees(line: string): string {
+  return line.replace(/[\^"']/g, "").replace(/[\u2013\u2014\u2015]/g, "-");
+}
+
 export function matchWindowsEncodedExec(input: NormalisedCommand): ArgScanFinding | null {
-  const line = input.joinedLower;
+  const line = asPowerShellSees(input.joinedLower);
   for (const call of line.matchAll(POWERSHELL)) {
     if (ownFlags(call[1]!).some(isEncodedFlag)) {
       return {
