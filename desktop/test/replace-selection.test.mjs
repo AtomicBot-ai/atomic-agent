@@ -122,7 +122,7 @@ test('which app to bring back: the front-app read, checked, never this app itsel
   }
 });
 
-test('the commands: macOS only, JavaScript for Automation, a pid that is a number', () => {
+test('the macOS commands: JavaScript for Automation, a pid that is a number; Windows and Linux have their own (ATO-2738)', () => {
   const front = R.frontAppCommand('darwin');
   assert.equal(front.file, '/usr/bin/osascript');
   assert.deepEqual(front.args.slice(0, 3), ['-l', 'JavaScript', '-e']);
@@ -135,9 +135,11 @@ test('the commands: macOS only, JavaScript for Automation, a pid that is a numbe
   for (const p of ['win32', 'linux']) {
     assert.equal(R.frontAppCommand(p), null);
     assert.equal(R.activateAppCommand(p, 4242), null);
-    assert.equal(R.replaceAvailable(p), false, p + ': the button is not offered');
+    assert.equal(R.replaceAvailable(p), true, p + ': offered (replace-front-app.ts)');
   }
   assert.equal(R.replaceAvailable('darwin'), true);
+  assert.equal(R.replaceAvailable('freebsd'), false);
+  assert.equal(R.replaceLabel({name: '', pid: 0, wayland: true}), 'Replace', 'Wayland: no app name known');
   assert.equal(R.replaceLabel(SAFARI), 'Replace in Safari');
   assert.equal(R.replaceLabel(null), 'Replace');
 });
@@ -152,7 +154,8 @@ test('the page: the button only under a finished answer to the selection', () =>
   for (const text of ['', '(no reply)', '(stopped)']) assert.equal(S.mcReplaceOffered(Object.assign({}, row, {text}), 'R', false), false, text);
   assert.equal(S.mcReplaceOffered({id: 1, k: 'user', text: 'x', replace: true}, 'R', false), false);
   const html = S.mcReplaceHTML(row, 'Replace in <Ev"il>', false, esc);
-  assert.match(html, /<button type="button" class="mc-act mc-replace" data-replace="7">Replace in &lt;Ev&quot;il>/);
+  // ATO-2738: it opens the preview first (data-replace-ask); the preview's own button is the data-replace one.
+  assert.match(html, /<button type="button" class="mc-act mc-replace" data-replace-ask="7">Replace in &lt;Ev&quot;il>/);
   assert.equal(S.mcReplaceHTML(row, null, false, esc), '');
 });
 
@@ -162,7 +165,7 @@ test('the wiring: main keeps the app, the page marks the answer and asks main', 
   assert.match(qw, /replace: source \? replaceLabel\(source\) : null, selection \}/);
   assert.match(qw, /ipcMain\.handle\("app:quickEntryReplace"/);
   assert.match(qw, /event\.sender !== box\.webContents/, 'only the mini chat that has the selection');
-  assert.match(qw, /replaceInSourceApp\(\{[\s\S]*?paste: pasteIntoFrontApp,[\s\S]*?\}, source, raw\)/);
+  assert.match(qw, /replaceInSourceApp\(\{[\s\S]*?paste: pasteIntoFrontApp,[\s\S]*?\}, source, raw, \{ focusMs: replaceFocusMs\(source\), pasteKey: pasteKeyLabel\(w\.platform\) \}\)/);
   const ipc = src('../main/selected-text-ipc.ts');
   assert.match(ipc, /Promise\.all\(\[readSelectedText\(\), front\]\)/);
   assert.match(ipc, /replaceAvailable\(w\.platform\) \? readFrontApp\(\)/);
@@ -172,4 +175,31 @@ test('the wiring: main keeps the app, the page marks the answer and asks main', 
   assert.match(js, /st\.replaceLabel = typeof opened\.replace === 'string'/);
   assert.match(js, /mcReplaceHTML\(r, st\.replaceLabel, st\.reply === r, mcEsc\)/);
   assert.match(js, /BR\.quickEntryReplace\(row\.text\)/);
+});
+
+/* ATO-2738: Windows and Linux, a tool to install, the model's lead-in. */
+test('a tool to install: the mini chat stays and says which, nothing is hidden or pressed', async () => {
+  const {deps, log} = fakes();
+  const out = await R.replaceInSourceApp(deps, {name: '', pid: 0, blocked: 'Install xdotool.'}, 'Answer');
+  assert.deepEqual(out, {ok: false, hidden: false, error: 'Install xdotool.'});
+  assert.deepEqual(log, []);
+});
+
+test('off macOS the lines say Ctrl+V; a window with no name is "the app"', async () => {
+  const {deps} = fakes();
+  deps.paste = async () => ({pasted: false, reason: 'no-keystroke'});
+  const out = await R.replaceInSourceApp(deps, {name: 'Notepad', pid: 9, hwnd: '1234'}, 'Answer', {pasteKey: 'Ctrl+V'});
+  assert.equal(out.error, 'The answer is on the clipboard: press Ctrl+V in Notepad.');
+  const back = fakes();
+  back.deps.activate = async () => false;
+  const gone = await R.replaceInSourceApp(back.deps, {name: '', pid: 0, wayland: true}, 'Answer', {pasteKey: 'Ctrl+V'});
+  assert.match(gone.error, /Could not switch back to the app\. .*press Ctrl\+V there\./);
+});
+
+test('what is pasted: the model\'s lead-in and a fence around it all are taken off first', async () => {
+  assert.equal(R.replacementText('Sure! Here is the rewritten text:\n\nBetter words.'), 'Better words.');
+  assert.equal(R.replacementText('```\nBetter words.\n```'), 'Better words.');
+  const {deps, log} = fakes();
+  await R.replaceInSourceApp(deps, SAFARI, 'Here is the improved version:\n\n"Better words."');
+  assert.ok(log.includes('paste:Better words.'));
 });

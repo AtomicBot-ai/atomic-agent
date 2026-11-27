@@ -310,6 +310,7 @@ function mcBoot() {
   });
   // A link in a reply opens in the browser, as in the main window; nothing navigates this page.
   $('mc-log').addEventListener('click', (e) => {
+    if (typeof mcRpClick === 'function' && mcRpClick(e, {BR, st, repaint})) return;   // ATO-2738: the preview first (mini-chat-replace-preview.js)
     // ATO-2268: the answer put back in place of the selection; main hides this window when it goes.
     const put = e.target && e.target.closest ? e.target.closest('[data-replace]') : null;
     if (put) {
@@ -448,6 +449,7 @@ function mcBoot() {
     if (bg && bg.usable && mcBgIsChord(e, bg.platform)) { e.preventDefault(); bg.go(); return; }   // ATO-2478: before Enter, which would send it here
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!st.busy) submit(); }
   });
+  document.addEventListener('keydown', (e) => { if (typeof mcRpKey === 'function') mcRpKey(e, repaint); }, true);   // ATO-2738: Esc closes the preview first
   document.addEventListener('keydown', (e) => {
     if (own) return;   // ATO-561: a chat's own window closes with its close button, as any window
     if (e.key === 'Escape' && !e.defaultPrevented) window.close();

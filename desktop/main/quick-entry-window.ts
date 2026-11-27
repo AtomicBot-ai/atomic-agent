@@ -15,7 +15,10 @@ import {
   type QuickEntryPref,
 } from "./quick-entry.js";
 import { MINI_CHAT_SIZE, miniChatPagePath } from "./mini-chat.js";
-import { activateApp, keystrokesAllowed, pasteIntoFrontApp } from "./keystroke-clipboard-host.js";
+import { keystrokesAllowed, pasteIntoFrontApp } from "./keystroke-clipboard-host.js";
+import { activateApp } from "./replace-front-app-host.js";
+import { pasteKeyLabel, replaceFocusMs } from "./replace-front-app.js";
+import { replacePreview } from "./replace-preview.js";
 import { replaceInSourceApp, replaceLabel, type SourceApp } from "./replace-selection.js";
 import type { GrabbedSelection } from "./selected-text-ipc.js";
 
@@ -73,7 +76,7 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
   // ATO-2478: the waiting text goes to a new background chat, not the chat on screen.
   let pendingBackground = false;
   let selection: string | null = null;
-  // ATO-2268: the app the selection came from, for "Replace in …" (macOS; null elsewhere).
+  // ATO-2268: the app the selection came from, for "Replace in …" (ATO-2738: its window on Windows and Linux).
   let source: SourceApp | null = null;
   let opening = false;
   let disposed = false;
@@ -205,7 +208,14 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
       notify: (body) => {
         try { if (Notification.isSupported()) new Notification({ title: "Atomic Agent", body, silent: true }).show(); } catch { /* no notifications */ }
       },
-    }, source, raw);
+    }, source, raw, { focusMs: replaceFocusMs(source), pasteKey: pasteKeyLabel(w.platform) });
+  });
+  /* ATO-2738: before anything is pasted, what the selection was and what
+     the answer will put there (the same text the paste sends, the model's
+     lead-in already off), shown by the mini chat with Replace / Cancel. */
+  ipcMain.handle("app:quickEntryReplacePreview", (event, raw: unknown) => {
+    if (!box || box.isDestroyed() || event.sender !== box.webContents) return { ok: false, error: "This window cannot replace text." };
+    return replacePreview(selection, source, raw);
   });
   ipcMain.handle("app:quickEntrySubmit", (_event, raw: unknown) => {
     const text = quickEntryText(raw);
