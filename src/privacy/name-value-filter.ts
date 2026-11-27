@@ -15,7 +15,10 @@
  *    "Иван" and "Петров", so a name written in two message parts
  *    (`"Call Иван"` + `" Петров"`), or later by its first name alone,
  *    is still masked. The full name stays first and gets the first
- *    placeholder; the vault masks longest first.
+ *    placeholder; the vault masks longest first. A part that is also an
+ *    everyday word ("Hi Anna", "Will Smith", "Max Mustermann", "Роман
+ *    Иванов") is not learned on its own, or "Max 5 results" and
+ *    "Роман прочитан" would be masked everywhere; the full name still is.
  *
  * Only drops or adds whole values; never edits one.
  */
@@ -40,17 +43,48 @@ export const KEEP_WORDS: readonly string[] = [
   "ооо", "ао", "пао", "зао", "ип",
   // Chat roles and the tools themselves.
   "user", "assistant", "system", "пользователь", "ассистент",
-  "atomic agent", "atomic", "claude", "chatgpt", "openai", "anthropic",
+  "atomic agent", "atomic", "chatgpt", "openai", "anthropic",
   "google", "gmail", "microsoft", "apple", "github", "telegram", "discord",
 ];
 
+/**
+ * Tool names that are also a person's given name: kept only when the
+ * model calls them an organisation. A person called Claude is masked.
+ */
+export const KEEP_UNLESS_NAME: readonly string[] = ["claude"];
+
+/**
+ * Words that start a reported name but are everyday words too:
+ * greetings, and given names that are ordinary words. Never learned as
+ * a part on its own (they stay masked inside the full name).
+ */
+export const PART_STOP_WORDS: readonly string[] = [
+  "hi", "hey", "hello", "dear", "thanks", "regards", "cheers",
+  "will", "max", "mark", "bill", "may", "june", "april", "august", "grace",
+  "joy", "hope", "faith", "rose", "lily", "ruby", "amber", "dawn", "eve",
+  "summer", "frank", "rich", "art", "jack", "sue", "pat", "nick", "ray",
+  "sky", "page", "guy", "chase", "miles", "drew", "rob", "penny", "holly",
+  "ivy", "iris", "jade", "pearl", "violet", "star", "angel", "king", "young",
+  "привет", "здравствуйте", "здравствуй", "добрый", "уважаемый", "уважаемая",
+  "дорогой", "дорогая", "спасибо", "роман", "вера", "надежда", "любовь",
+  "лев", "слава", "роза", "лилия", "мир", "злата",
+];
+
 const KEEP = new Set(KEEP_WORDS);
+const KEEP_ORG = new Set(KEEP_UNLESS_NAME);
+const PART_STOP = new Set(PART_STOP_WORDS);
 
-/** One word of a name worth masking on its own: a capital, then letters, `'` or `-`. */
-const NAME_PART = /^\p{Lu}[\p{L}'’-]+$/u;
+/** One word of a name worth masking on its own: a capital, then two or more letters, `'` or `-`. */
+const NAME_PART = /^\p{Lu}[\p{L}'’-]{2,}$/u;
 
-function kept(value: string): boolean {
-  return KEEP.has(value.toLocaleLowerCase());
+function kept(value: string, kind: ModelFoundValue["kind"]): boolean {
+  const lower = value.toLocaleLowerCase();
+  return KEEP.has(lower) || (kind !== "NAME" && KEEP_ORG.has(lower));
+}
+
+/** A word of a multi-word name the vault may learn and mask on its own. */
+function maskablePart(part: string): boolean {
+  return NAME_PART.test(part) && !kept(part, "NAME") && !PART_STOP.has(part.toLocaleLowerCase());
 }
 
 /** An organisation written with no capital letter and no digit: an ordinary word. */
@@ -72,13 +106,13 @@ export function refineFoundValues(found: readonly ModelFoundValue[]): ModelFound
     out.push(entry);
   };
   for (const entry of found) {
-    if (kept(entry.value) || plainWordOrg(entry)) continue;
+    if (kept(entry.value, entry.kind) || plainWordOrg(entry)) continue;
     push(entry);
     if (entry.kind !== "NAME") continue;
     const parts = entry.value.split(/\s+/);
     if (parts.length < 2) continue;
     for (const part of parts) {
-      if (NAME_PART.test(part) && !kept(part)) push({ value: part, kind: "NAME" });
+      if (maskablePart(part)) push({ value: part, kind: "NAME" });
     }
   }
   return out;

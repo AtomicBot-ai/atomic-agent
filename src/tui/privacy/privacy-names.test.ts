@@ -23,6 +23,7 @@ describe("hiding names in the Privacy tab (ATO-2527)", () => {
     expect(of(() => status())).toEqual({ enabled: true, state: "ready", model: "qwen3-4b (lmstudio)" });
     expect(of(() => status({ model: { provider: "local-llama", model: null } }))?.model).toBe("local-llama");
     expect(of(() => status({ state: "no-local-model", model: null }))?.model).toBeNull();
+    expect(of(() => status({ state: "provider-not-shielded" }))?.state).toBe("provider-not-shielded");
     expect(of(() => status({ state: "weird" }))).toBeNull();
     expect(
       of(() => {
@@ -43,5 +44,11 @@ describe("hiding names in the Privacy tab (ATO-2527)", () => {
     );
     expect(namesHintLine({ enabled: false, state: "off", model: "qwen3-4b (lmstudio)" }, true)).toMatch(/^Off\. When on, qwen3-4b/);
     expect(namesHintLine({ enabled: false, state: "off", model: null }, true)).toMatch(/^Off\. Needs a model/);
+  });
+
+  it("does not promise masking for a chat model the shield does not cover", () => {
+    const hint = namesHintLine({ enabled: true, state: "provider-not-shielded", model: "qwen3-4b (lmstudio)" }, true);
+    expect(hint).toMatch(/not covered by Privacy Shield/);
+    expect(hint).not.toMatch(/Read by/);
   });
 });
