@@ -725,6 +725,31 @@ export const MENU: readonly MenuNode[] = [
       rank: 34,
     },
   },
+  // ATO-2437: the agent's background jobs in this chat, and stopping them.
+  {
+    kind: "action",
+    id: "run.ps",
+    label: "Background jobs",
+    group: "run",
+    slash: {
+      name: "ps",
+      description:
+        "background jobs the agent started in this chat: command, state, monitor | `/stop <id>` stops one",
+      // Right after /queue (34), before /steer (35).
+      rank: 34.2,
+    },
+  },
+  {
+    kind: "action",
+    id: "run.stop",
+    label: "Stop background jobs",
+    group: "run",
+    slash: {
+      name: "stop",
+      description: "stop the agent's background jobs in this chat: `/stop` all running | `/stop <id>` one",
+      rank: 34.4,
+    },
+  },
   {
     kind: "action",
     id: "session.window",

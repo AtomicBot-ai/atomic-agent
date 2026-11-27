@@ -27,6 +27,7 @@ import { MODEL_RING_USAGE, parseModelRingCommand, type ModelRingCommand } from "
 import { parseResearchCommand } from "./research-command.js";
 import { formatKeysHelp } from "./keys-help.js";
 import { parseCouncilCommand, type CouncilCommand } from "./council-command.js";
+import { parsePsCommand, parseStopCommand, type BackgroundJobsCommand } from "./ps-command.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -292,6 +293,11 @@ export interface SlashDispatchResult {
    * cut it off (ATO-448). Needs the runtime, so the caller runs it.
    */
   readonly resumeInterruptedTurn?: true;
+  /**
+   * `/ps`, `/stop [id]` (ATO-2437): list or stop the current session's
+   * background jobs. Needs the runtime, so the caller runs it.
+   */
+  readonly backgroundJobsCommand?: BackgroundJobsCommand;
 }
 
 export type FusionWorkerAction =
@@ -409,6 +415,13 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return pureActions([], { triggerStatusSnapshot: true });
     case "why":
       return pureActions([], { triggerWhySnapshot: true });
+    case "ps":
+    case "stop": {
+      const parsedJobs = resolved.name === "ps" ? parsePsCommand(parsed.args) : parseStopCommand(parsed.args);
+      return parsedJobs.ok
+        ? pureActions([], { backgroundJobsCommand: parsedJobs.command })
+        : pureActions([], { systemMessage: parsedJobs.usage });
+    }
     case "steer":
       return dispatchSteerSub(parsed.args);
     case "worker": {

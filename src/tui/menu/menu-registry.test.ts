@@ -224,6 +224,16 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "parked messages: `/queue` list | `/queue <msg>` park one | `/queue next <n>` send it next | `/queue move <n> <place>` | `/queue clear` | `/queue mode` make Enter queue",
   },
+  // ATO-2437: the agent's background jobs, and stopping them.
+  {
+    name: "ps",
+    description:
+      "background jobs the agent started in this chat: command, state, monitor | `/stop <id>` stops one",
+  },
+  {
+    name: "stop",
+    description: "stop the agent's background jobs in this chat: `/stop` all running | `/stop <id>` one",
+  },
   {
     name: "steer",
     description:

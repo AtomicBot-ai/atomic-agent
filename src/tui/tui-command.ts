@@ -100,6 +100,7 @@ import { createMentionFileIndex } from "./file-mentions/index.js";
 import { createMentionSender } from "./file-mentions/mention-sender.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
 import { FUSION_RUNS_EMPTY } from "./run-mode/fusion-intro.js";
+import { runBackgroundJobsCommand } from "./commands/ps-command.js";
 import {
   loadUninstallPreview,
   performUninstall,
@@ -815,6 +816,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
               say(`worker ${taskId}: escalation failed — ${err instanceof Error ? err.message : String(err)}`),
             );
         },
+        // `/ps`, `/stop [id]` (ATO-2437): this chat's background jobs.
+        onBackgroundJobsCommand: (sessionId, command) =>
+          runBackgroundJobsCommand(command, sessionId, runtime.backgroundJobs),
         // `/fusion` and `/fusion discard [id]` (ATO-617): the runs of this
         // session that a restart cut off, from their checkpoints.
         onFusionRunAction: (sessionId, action, runId) => {

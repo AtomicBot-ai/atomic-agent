@@ -737,6 +737,14 @@ export interface TuiAppCallbacks {
     runId: string | undefined,
   ): void;
   /**
+   * `/ps` and `/stop [id]` (ATO-2437): list or stop `sessionId`'s
+   * background jobs; returns the line to show.
+   */
+  onBackgroundJobsCommand?(
+    sessionId: string | null,
+    command: import("./commands/ps-command.js").BackgroundJobsCommand,
+  ): string;
+  /**
    * `/fusion resume [id]`: the message that makes the orchestrator
    * continue an unfinished run of `sessionId`, sent as the person's
    * turn; `null` when there is no such run.
