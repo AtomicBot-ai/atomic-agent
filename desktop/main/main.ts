@@ -345,7 +345,8 @@ import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
 import { filePreviewSave } from "./file-save.js";
-import { PreviewOpenedFiles, previewSaveScope } from "./preview-save-scope.js";
+import { PreviewOpenedFiles, previewSaveScope, type PreviewSaveGuard } from "./preview-save-scope.js";
+import { previewSaveConfirmDialog } from "./preview-save-sensitive.js";
 import { renderSlides, slidesRenderable } from "./slide-render.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 import { buildLocalGgufModelDef, resolveLocalGgufFile } from "./local-gguf.js";
@@ -3200,6 +3201,16 @@ function wireIpc(client: AgentClient): void {
   const previewRoots = (): string[] => previewRootsFor(imageRoots(), client.isRemote ? null : client.status.workingDir);
   const previewOpened = new PreviewOpenedFiles(); // ATO-2533: the files Save may write outside the working folder.
   const previewWorkingDir = (): string | null => (client.isRemote ? null : client.status.workingDir) || null;
+  // ATO-2533 review: outside the folder, or a hidden/startup/state file, Save asks the person here in main.
+  const previewSaveGuard: PreviewSaveGuard = {
+    home: homedir(),
+    stateDirs: [...new Set([DESKTOP_STATE_DIR, TUI_STATE_DIR, LEGACY_DESKTOP_STATE_DIR])],
+    confirm: async (real, sensitive) => {
+      if (!win || win.isDestroyed()) return false;
+      const { response } = await dialog.showMessageBox(win, previewSaveConfirmDialog(real, sensitive, homedir(), process.platform));
+      return response === 0;
+    },
+  };
   ipcMain.handle("app:filePreview", async (_event, p: unknown) => {
     const r = await filePreview(p, previewRoots(), homedir(), process.platform);
     const editable = r.ok && typeof r.text === "string" && r.editable !== false;
@@ -3229,9 +3240,9 @@ function wireIpc(client: AgentClient): void {
      check as the read but narrower roots (ATO-2533), text files only, never
      a new file, and nothing written when the file changed since the panel read it unless `force`. */
   ipcMain.handle("app:filePreviewSave", (_event, p: unknown, text: unknown, stamp: unknown, force: unknown) => {
-    // ATO-2533: only the main window's page, and only the chat's working folder or a file the panel opened.
+    // ATO-2533: only the main window's page, and only the chat's working folder or a file the panel opened and a person said yes to.
     if (!win || _event.sender !== win.webContents) return { ok: false, reason: "outside" };
-    const scope = previewSaveScope(previewWorkingDir(), previewOpened, process.platform);
+    const scope = previewSaveScope(previewWorkingDir(), previewOpened, process.platform, previewSaveGuard);
     return filePreviewSave(p, text, stamp, scope.roots, homedir(), process.platform, { force: force === true, allows: scope.allows });
   });
   ipcMain.handle("app:imageSaveAs", async (event, p: unknown) => {

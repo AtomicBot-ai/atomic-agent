@@ -62,6 +62,8 @@ export async function filePreviewSave(
   try {
     const st = await fh.stat();
     if (st.dev !== target.dev || st.ino !== target.ino) return { ok: false, reason: "outside" };
+    // ATO-2533: a hard link has another name somewhere else (`ln ~/.zshrc notes.txt`); the check saw only this one.
+    if (st.nlink > 1) return { ok: false, reason: "outside" };
     if (!st.isFile()) return { ok: false, reason: "missing" };
     if (st.size > max) return { ok: false, reason: "too-large" };
     // The whole file: its encoding is checked over every byte, not just the head.
