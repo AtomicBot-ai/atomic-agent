@@ -4,6 +4,8 @@ import {
   RUN_MODE_NAMES,
   type RunModeName,
 } from "../../config/index.js";
+import type { FusionRolePin } from "../../config/fusion-role-pin.js";
+import { FUSION_ROLES, type FusionRole } from "../../config/llm-run-mode-config.js";
 
 export interface RunModeCommand {
   /** Bare `/runmode`: open the composer's "Where it runs" switch. */
@@ -16,12 +18,21 @@ export interface RunModeCommand {
   readonly swap?: boolean;
   /** `/runmode workers N`. */
   readonly workers?: number;
+  /**
+   * `/runmode role <role> <provider> [model]` or `/runmode role <role> off`:
+   * set one Fusion role, several roles may share one provider with a
+   * model each. `/runmode roles` lists them (`listRoles`).
+   */
+  readonly role?: { role: FusionRole; pin: FusionRolePin };
+  readonly listRoles?: boolean;
   /** Usage line for anything else. */
   readonly error?: string;
 }
 
 export const RUN_MODE_USAGE =
-  "usage: /runmode (opens the switch) · /runmode local|cloud|fusion · /runmode swap · /runmode workers N · /runmode status";
+  "usage: /runmode (opens the switch) · /runmode local|cloud|fusion · /runmode swap · /runmode workers N · /runmode roles · /runmode role <role> <provider> [model] | off · /runmode status";
+
+const ROLE_USAGE = `usage: /runmode role <${FUSION_ROLES.join("|")}> <provider> [model], or /runmode role <role> off`;
 
 /**
  * Parse the arguments of `/runmode`. Split out of
@@ -35,6 +46,8 @@ export function parseRunModeCommand(rawArgs: string): RunModeCommand {
   if (args.length === 0) return { openSwitch: true };
   if (args === "status") return { openSwitch: false, status: true };
   if (args === "swap") return { openSwitch: false, swap: true };
+  if (args === "roles") return { openSwitch: false, listRoles: true };
+  if (args === "role" || args.startsWith("role ")) return parseRoleArgs(rawArgs.trim());
   const workers = /^workers\s+(\d+)$/.exec(args);
   if (workers) {
     const n = Number(workers[1]);
@@ -52,5 +65,29 @@ export function parseRunModeCommand(rawArgs: string): RunModeCommand {
   return {
     openSwitch: false,
     error: `unknown run mode "${rawArgs.trim()}" — ${RUN_MODE_USAGE}`,
+  };
+}
+
+/**
+ * `role <role> <provider> [model]`, case kept for the provider id and the
+ * model name (`anthropic/claude-opus-5.5` is not `Anthropic/...`). The
+ * model is the rest of the line, so a name with spaces still fits.
+ */
+function parseRoleArgs(raw: string): RunModeCommand {
+  const [, roleWord, providerId, ...modelWords] = raw.split(/\s+/);
+  const role = roleWord?.toLowerCase();
+  if (role === undefined || !FUSION_ROLES.includes(role as FusionRole) || providerId === undefined) {
+    return { openSwitch: false, error: ROLE_USAGE };
+  }
+  if (providerId.toLowerCase() === "off" && modelWords.length === 0) {
+    return { openSwitch: false, role: { role: role as FusionRole, pin: null } };
+  }
+  const model = modelWords.join(" ");
+  return {
+    openSwitch: false,
+    role: {
+      role: role as FusionRole,
+      pin: { providerId, ...(model.length > 0 ? { model } : {}) },
+    },
   };
 }
