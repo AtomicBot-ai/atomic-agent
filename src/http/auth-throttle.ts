@@ -92,3 +92,18 @@ export function throttleAddress(req: Pick<IncomingMessage, "socket" | "headers">
   const value = (Array.isArray(raw) ? raw[0] : raw)?.split(",")[0]?.trim();
   return value && value.length <= 64 ? value : socketAddress;
 }
+
+/**
+ * ATO-2308: whether a request really comes from this machine, for routes
+ * that give something only to a local caller (`/health` process fields,
+ * the saved-keys routes). A loopback socket is not enough: through the
+ * `atag pair --remote` cloudflared tunnel every internet caller arrives
+ * from 127.0.0.1, and cloudflared marks those requests with
+ * `cf-connecting-ip`. Any request carrying that header is treated as
+ * remote, whatever its value; a local program that sends it only loses.
+ */
+export function isLocalRequest(req: Pick<IncomingMessage, "socket" | "headers">): boolean {
+  const socketAddress = req.socket?.remoteAddress;
+  if (!socketAddress || !isLoopbackAddress(socketAddress)) return false;
+  return req.headers["cf-connecting-ip"] === undefined;
+}

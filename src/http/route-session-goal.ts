@@ -19,7 +19,7 @@ import {
   type HandlerContext,
   type HttpHandler,
 } from "./request-context.js";
-import { checkWorkingDir } from "./session-working-dir.js";
+import { checkWorkingDir, refuseDeviceFolder } from "./session-working-dir.js";
 
 /**
  * Goal mode over HTTP (ATO-1040): what the TUI's `/goal`, `/goal pause`,
@@ -184,6 +184,7 @@ export function createSessionGoalActionHandler(): HttpHandler {
       const rawDir = (body as { workingDir?: unknown }).workingDir;
       let workingDir = ctx.runtime.capabilities.workingDir;
       if (rawDir !== undefined && rawDir !== null) {
+        if (refuseDeviceFolder(res, ctx, "workingDir")) return;
         const check = checkWorkingDir(rawDir);
         if (!check.ok) {
           sendError(res, 400, openaiError(check.error, "invalid_request_error", "workingDir"));

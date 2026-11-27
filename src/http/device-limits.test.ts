@@ -139,3 +139,74 @@ describe("paired phone and a chat's folder", () => {
     rmSync(other, { recursive: true, force: true });
   });
 });
+
+describe("paired phone and starting work in another folder", () => {
+  let other: string;
+  beforeEach(() => {
+    other = mkdtempSync(join(tmpdir(), "wd-start-"));
+  });
+  afterEach(() => {
+    rmSync(other, { recursive: true, force: true });
+  });
+
+  const chatBody = (extra: Record<string, unknown> = {}) => ({ model: "m", messages: [{ role: "user", content: "hi" }], ...extra });
+
+  async function newIdeas(): Promise<Array<{ id: string; status: string; sourceTaskId: string | null }>> {
+    const res = await fetch(`${harness.baseUrl}/api/ideas?status=new`, { headers: asKey() });
+    return ((await res.json()) as { ideas: Array<{ id: string; status: string; sourceTaskId: string | null }> }).ideas;
+  }
+
+  it("refuses POST /api/tasks with workingDir from a device cookie, and files no task", async () => {
+    const before = harness.runtime.taskStore.list().length;
+    const out = await post("/api/tasks", { userMessage: "tidy the repo", workingDir: other }, asPhone(phoneSecret()));
+    expect(out).toEqual({ status: 403, code: "device_cannot_change_folder" });
+    expect(harness.runtime.taskStore.list()).toHaveLength(before);
+  });
+
+  it("leaves POST /api/tasks with workingDir and the serve key as it was", async () => {
+    const out = await post("/api/tasks", { userMessage: "tidy the repo", workingDir: other, maxAttempts: 1 }, asKey());
+    expect(out.status).toBe(201);
+  });
+
+  it("refuses working_dir on /v1/chat/completions, /v1/responses and /v1/messages from a device cookie", async () => {
+    const phone = asPhone(phoneSecret());
+    expect(await post("/v1/chat/completions", chatBody({ working_dir: other }), phone))
+      .toEqual({ status: 403, code: "device_cannot_change_folder" });
+    expect(await post("/v1/responses", { model: "m", input: "hi", working_dir: other }, phone))
+      .toEqual({ status: 403, code: "device_cannot_change_folder" });
+    // The Anthropic error body has no `code`; the status is passed through.
+    expect((await post("/v1/messages", { ...chatBody({ working_dir: other }), max_tokens: 16 }, phone)).status).toBe(403);
+  });
+
+  it("still lets a device cookie chat in the default folder", async () => {
+    expect((await post("/v1/chat/completions", chatBody(), asPhone(phoneSecret()))).status).toBe(200);
+  });
+
+  it("leaves working_dir on /v1/chat/completions with the serve key as it was", async () => {
+    expect((await post("/v1/chat/completions", chatBody({ working_dir: other }), asKey())).status).toBe(200);
+  });
+
+  it("refuses a goal that opens a new chat in a given folder from a device cookie", async () => {
+    const out = await post("/api/sessions/goal-phone-1/goal", { action: "set", criteria: ["ship it"], workingDir: other }, asPhone(phoneSecret()));
+    expect(out).toEqual({ status: 403, code: "device_cannot_change_folder" });
+    expect(harness.runtime.sessionStore.load("goal-phone-1")).toBeFalsy();
+  });
+
+  it("refuses a Retry idea that reopens a folder from a device cookie, and puts the idea back", async () => {
+    const session = harness.runtime.createSession({ metadata: { source: "http-task" }, persist: false });
+    harness.runtime.sessionStore.save({ ...session, workingDir: other });
+    const store = harness.runtime.taskStore;
+    const original = store.create({ sessionId: session.id, userMessage: "run the report", origin: "http", maxAttempts: 1 });
+    store.markRunning(original.id);
+    store.markFailed(original.id, { category: "transport", message: "provider timed out" });
+    expect((await post("/api/ideas/refresh", {}, asKey())).status).toBe(200);
+    const idea = (await newIdeas()).find((i) => i.sourceTaskId === original.id);
+    if (!idea) throw new Error("no retry idea offered");
+
+    const out = await post(`/api/ideas/${idea.id}/accept`, {}, asPhone(phoneSecret()));
+    expect(out).toEqual({ status: 403, code: "device_cannot_change_folder" });
+    expect((await newIdeas()).map((i) => i.id)).toContain(idea.id);
+    // The serve key still accepts it, in the original's folder.
+    expect((await post(`/api/ideas/${idea.id}/accept`, {}, asKey())).status).toBe(200);
+  });
+});

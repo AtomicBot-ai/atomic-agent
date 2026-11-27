@@ -69,6 +69,23 @@ describe("GET /api/secrets + PUT /api/secrets/{name}", () => {
     expect(process.env[NAME]).toBeUndefined();
   });
 
+  it("treats a loopback caller from the cloudflared tunnel as remote (ATO-2308)", async () => {
+    const tunnel = { "cf-connecting-ip": "203.0.113.60" };
+    const get = await fetch(`${harness.baseUrl}/api/secrets`, { headers: tunnel });
+    expect(get.status).toBe(403);
+    expect(((await get.json()) as { error: { code: string } }).error.code).toBe("loopback_only");
+    const putRes = await fetch(`${harness.baseUrl}/api/secrets/${NAME}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...tunnel },
+      body: JSON.stringify({ value: "sk-tunnel" }),
+    });
+    expect(putRes.status).toBe(403);
+    expect(existsSync(envPath)).toBe(false);
+    expect(process.env[NAME]).toBeUndefined();
+    // Plain loopback is still served.
+    expect((await fetch(`${harness.baseUrl}/api/secrets`)).status).toBe(200);
+  });
+
   it("refuses names that are not keys, bad values and bad bodies, and writes nothing", async () => {
     expect((await put("NODE_OPTIONS", { value: "--require /tmp/x.js" })).status).toBe(400);
     expect((await put("PATH", { value: "/tmp" })).status).toBe(400);

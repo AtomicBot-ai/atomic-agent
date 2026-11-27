@@ -6,8 +6,10 @@ import {
 } from "../config/index.js";
 
 import { openaiError } from "./openai-errors.js";
+import type { IncomingMessage } from "node:http";
+
+import { isLocalRequest } from "./auth-throttle.js";
 import { readJsonBody, sendError, sendJson, type HttpHandler } from "./request-context.js";
-import { isLoopback } from "./route-health.js";
 
 /**
  * Saved API keys and tokens through the running agent (ATO-1639), for the
@@ -27,11 +29,12 @@ import { isLoopback } from "./route-health.js";
  * (`*_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`) are accepted, so this
  * cannot set `PATH` or `NODE_OPTIONS` for the next start, and only a
  * caller on this machine is served: keys belong to the machine they are
- * saved on, not to a client on the network.
+ * saved on, not to a client on the network (nor through the
+ * `atag pair --remote` tunnel, ATO-2308: isLocalRequest).
  */
 
-function refuseRemote(remoteAddress: string | undefined, res: Parameters<HttpHandler>[1]): boolean {
-  if (isLoopback(remoteAddress)) return false;
+function refuseRemote(req: IncomingMessage, res: Parameters<HttpHandler>[1]): boolean {
+  if (isLocalRequest(req)) return false;
   sendError(
     res,
     403,
@@ -42,7 +45,7 @@ function refuseRemote(remoteAddress: string | undefined, res: Parameters<HttpHan
 
 export function createGetSecretsHandler(): HttpHandler {
   return async (req, res) => {
-    if (refuseRemote(req.socket?.remoteAddress, res)) return;
+    if (refuseRemote(req, res)) return;
     const state = readSecretsStoreState(getConfig().paths.stateDir);
     sendJson(res, 200, { store: state.store, keychainKeys: state.keychainKeys });
   };
@@ -52,7 +55,7 @@ export function createPutSecretHandler(
   env: NodeJS.ProcessEnv = process.env,
 ): HttpHandler {
   return async (req, res, ctx) => {
-    if (refuseRemote(req.socket?.remoteAddress, res)) return;
+    if (refuseRemote(req, res)) return;
     const name = ctx.params.name ?? "";
     let body: unknown;
     try {
