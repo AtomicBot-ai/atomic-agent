@@ -28,6 +28,24 @@ test("voices off (the default): a stopped recording offers it once, linked to Se
   assert.equal(V.meetingVoicesOfferHTML({ offer: true, on: true }, "stopped"), "");
 });
 
+test("Skip stays during Make notes while the download still runs", () => {
+  globalThis.esc = (t) => String(t);
+  globalThis.MTG = { phase: "finishing" };
+  Object.assign(V.MTGV, { download: { fraction: 0.2, totalBytes: 0 }, running: null, failed: false });
+  try {
+    assert.match(V.mtgVoicesHTML(), /data-mtgv="skip"/);
+    globalThis.MTG.phase = "recording";
+    assert.match(V.mtgVoicesHTML(), /data-mtgv="skip"/);
+    V.MTGV.download = null;
+    globalThis.MTG.phase = "finishing";
+    assert.doesNotMatch(V.mtgVoicesHTML(), /data-mtgv="skip"/, "no download, nothing to skip");
+  } finally {
+    V.MTGV.download = null;
+    delete globalThis.MTG;
+    delete globalThis.esc;
+  }
+});
+
 test("wiring: one MeetingVoices shared by the recorder and the routes", () => {
   assert.match(src("../main/meeting-ipc.ts"), /voices: meetingVoicesFor\(emit\),/);
   assert.match(src("../main/main.ts"), /wireMeetingVoicesIpc\(meetingVoicesFor\(\(ev\) => send\("app:meeting", ev\)\)\);/);

@@ -67,6 +67,8 @@ export class MeetingVoices {
   private cached: VoiceStatus | null = null;
   private installing: Promise<{ ok: boolean; error?: string }> | null = null;
   private abort: AbortController | null = null;
+  /** Make notes waiting on a download; Skip lets each go at once. */
+  private readonly waiting = new Set<() => void>();
 
   constructor(private readonly deps: MeetingVoicesDeps) {}
 
@@ -116,8 +118,10 @@ export class MeetingVoices {
     return this.installing;
   }
 
+  /** Skip: stops a running download and lets a Make notes waiting on it go on now. */
   cancel(): void {
     this.abort?.abort();
+    for (const release of [...this.waiting]) release();
   }
 
   async remove(): Promise<{ ok: boolean }> {
@@ -140,10 +144,20 @@ export class MeetingVoices {
     return true;
   }
 
-  /** Who spoke when in a WAV; null when it cannot say. Waits up to `waitMs` for a download still running. */
+  /** Who spoke when in a WAV; null when it cannot say. Waits up to `waitMs` for a download still running, or until Skip. */
   async diarize(wav: string, onProgress: (fraction: number) => void, waitMs = 180_000): Promise<SpeakerSpan[] | null> {
     if (this.installing) {
-      const done = await Promise.race([this.installing, new Promise<null>((r) => setTimeout(() => r(null), waitMs))]);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let release = () => {};
+      const gate = new Promise<null>((r) => {
+        release = () => r(null);
+        timer = setTimeout(release, waitMs);
+      });
+      this.waiting.add(release);
+      const done = await Promise.race([this.installing, gate]).finally(() => {
+        clearTimeout(timer);
+        this.waiting.delete(release);
+      });
       if (!done || !done.ok) return null;
     }
     const st = await this.status(true);
