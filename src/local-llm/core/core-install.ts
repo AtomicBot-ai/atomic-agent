@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { downloadFile, discardPartialDownload, type DownloadFileOptions } from "../downloads/download-file.js";
 import { CoreUnavailableError, isCoreCancellation, toCoreUnavailable } from "./core-errors.js";
+import { coreSpawnReason } from "./core-spawn-reason.js";
 import { activeCoreVersion, CORE_REPO, CORE_VERSION, CORE_VERSIONS, coreBinary, coreRoot, coreVersionDir, readCoreJson, writeCoreJson } from "./core-state.js";
 import { isNewerVersion } from "../../update/compare-semver.js";
 
@@ -110,7 +111,7 @@ export async function installCore(dataDir: string, version = CORE_VERSION, opts:
     if (process.platform !== "win32") chmodSync(stage, 0o755);
     let result: { stdout: string };
     try { result = await promisify(execFile)(stage, ["--version"], { timeout: 15_000, windowsHide: true, maxBuffer: 4096 }); }
-    catch (err) { throw new CoreUnavailableError({ stage: "verify", reasonCode: "spawn", detail: `the downloaded binary would not run (${err instanceof Error ? err.message : String(err)})`, cause: err }); }
+    catch (err) { throw new CoreUnavailableError({ stage: "verify", reasonCode: coreSpawnReason(err), detail: `the downloaded binary would not run (${err instanceof Error ? err.message : String(err)})`, cause: err }); }
     if (result.stdout.trim() !== version) throw new CoreUnavailableError({ stage: "verify", reasonCode: "version", detail: "the binary does not match its release version" });
     opts.signal?.throwIfAborted();
     // Never overwrite a running verified install. Concurrent identical downloads converge here.
