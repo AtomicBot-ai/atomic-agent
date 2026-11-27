@@ -55,7 +55,10 @@ describe("repeatedTruncationError (ATO-1678)", () => {
   it("counts a spent turn budget, but never a full window or another error", () => {
     const turn = createTurnLoopState();
     turn.truncationRetries = 6;
-    expect(repeatedTruncationError(cut(), 5, turn)?.repeatedCut).toBe("cut");
+    const spent = repeatedTruncationError(cut(), 5, turn);
+    expect(spent?.repeatedCut).toBe("cut");
+    // This step never got its own retry: the message does not claim one.
+    expect(spent?.message).toContain("truncation retries were spent");
     expect(repeatedTruncationError(cut({ cause: "context_window" }), 0, retried(cut()))).toBeNull();
     expect(repeatedTruncationError(new ModelError("empty", "empty"), 0, retried(cut()))).toBeNull();
     expect(repeatedTruncationError(new Error("plain"), 0, retried(cut()))).toBeNull();

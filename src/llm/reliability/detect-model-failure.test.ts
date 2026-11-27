@@ -378,6 +378,24 @@ describe("detectModelFailure", () => {
     expect(result?.message).toContain("it spent the reply cap");
   });
 
+  it("places a 32768-token cut inside a prefilled think block as reasoning (ATO-1678)", () => {
+    // qwen-think on grammar: the prompt carries `<think>`, so the raw
+    // completion is the thought itself with no tags.
+    const completion = makeCompletion({
+      content: "The user wants a whole site. Let me think about the layout again. ".repeat(20),
+      truncated: true,
+      stopType: "limit",
+      finishReason: "length",
+      timing: { promptMs: 1, predictedMs: 1, promptTokens: 9_000, predictedTokens: 32_768 },
+    });
+    const result = detectModelFailure(completion, {
+      requestedMaxTokens: 32_768,
+      cutReading: { openReasoning: true, openTag: "<think>", closeTag: "</think>" },
+    });
+    expect(result?.truncation).toMatchObject({ cause: "reply_cap", part: "reasoning" });
+    expect(result?.truncation).not.toHaveProperty("cutTool");
+  });
+
   it("still blames the window for a llama-server overflow at stop_type eos", () => {
     const completion = makeCompletion({
       content: "",

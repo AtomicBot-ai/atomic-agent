@@ -32,21 +32,45 @@ const GRAMMAR_CALL_RE = /"tool"\s*:\s*"([^"\\]{1,64})"/g;
 const THINK_OPEN = "<think>";
 const THINK_CLOSE = "</think>";
 
+/**
+ * How the step reads reasoning in this completion's raw text. A think
+ * prefill profile on grammar (qwen-think, `requiresPromptThinkPrefix`)
+ * carries the opening tag in the PROMPT, so the completion starts mid
+ * thought with no opening tag at all (`completionAssumesOpenReasoning`):
+ * text with no closing tag is then all reasoning. Tags are the profile's
+ * own (Gemma 4: `<|channel>thought` / `<channel|>`); the defaults are
+ * `<think>` / `</think>`.
+ */
+export interface CutReading {
+  openReasoning?: boolean;
+  openTag?: string;
+  closeTag?: string;
+}
+
 export function locateCut(
   completion: Pick<CompletionResult, "content" | "reasoningContent" | "toolCalls">,
+  reading: CutReading = {},
 ): CutLocation | null {
   const calls = completion.toolCalls ?? [];
   if (calls.length > 0) {
     return withTool("tool_call", calls[calls.length - 1]?.function.name);
   }
+  const open = nonEmpty(reading.openTag) ?? THINK_OPEN;
+  const close = nonEmpty(reading.closeTag) ?? THINK_CLOSE;
   const content = typeof completion.content === "string" ? completion.content : "";
-  const closeAt = content.lastIndexOf(THINK_CLOSE);
+  const reasoning =
+    typeof completion.reasoningContent === "string" ? completion.reasoningContent.trim() : "";
+  const closeAt = content.lastIndexOf(close);
   // An opened think block that never closed: the cut came mid-thought.
-  if (closeAt < 0 && content.includes(THINK_OPEN)) return { part: "reasoning" };
-  const body = (closeAt >= 0 ? content.slice(closeAt + THINK_CLOSE.length) : content).trim();
+  if (closeAt < 0 && content.includes(open)) return { part: "reasoning" };
+  // The prompt opened the block and nothing closed it. Unless the server
+  // split the think block into its own channel, in which case `content`
+  // is the body and is read as such below.
+  if (closeAt < 0 && reading.openReasoning === true && reasoning.length === 0) {
+    return content.trim().length > 0 ? { part: "reasoning" } : null;
+  }
+  const body = (closeAt >= 0 ? content.slice(closeAt + close.length) : content).trim();
   if (body.length === 0) {
-    const reasoning =
-      typeof completion.reasoningContent === "string" ? completion.reasoningContent.trim() : "";
     return reasoning.length > 0 ? { part: "reasoning" } : null;
   }
   if (body.startsWith("[") || body.startsWith("{")) {
@@ -63,4 +87,8 @@ export function locateCut(
 function withTool(part: TruncationPart, name: string | undefined): CutLocation {
   if (part === "tool_call" && name === "reply") return { part: "text" };
   return name !== undefined && TOOL_NAME_RE.test(name) ? { part, tool: name } : { part };
+}
+
+function nonEmpty(tag: string | undefined): string | undefined {
+  return tag !== undefined && tag.trim().length > 0 ? tag.trim() : undefined;
 }

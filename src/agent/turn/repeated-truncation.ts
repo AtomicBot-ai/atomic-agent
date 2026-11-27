@@ -43,7 +43,9 @@ export function repeatedTruncationError(
   // logs and surfaces that read the failure keep their wording.
   const message = looped
     ? `${err.message}; the model looped again after it was told it was looping`
-    : `${err.message}; cut again after the agent asked for smaller pieces`;
+    : sameStep
+      ? `${err.message}; cut again after the agent asked for smaller pieces`
+      : `${err.message}; cut again after the turn's truncation retries were spent`;
   return new ModelError("truncated", message, {
     cause: err,
     ...(err.transport !== undefined ? { transport: err.transport } : {}),

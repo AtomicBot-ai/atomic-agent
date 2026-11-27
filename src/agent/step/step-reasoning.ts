@@ -155,3 +155,15 @@ export function getReasoningTagOptions(profile: ModelProfile): {
     closeTag: profile.reasoningCloseTag,
   };
 }
+
+/**
+ * What `detectModelFailure` needs to place a cut inside the think block
+ * (ATO-1678): whether the completion starts mid thought, and the
+ * profile's own tags.
+ */
+export function cutReadingFor(
+  profile: ModelProfile,
+  openReasoning: boolean,
+): { openReasoning: boolean; openTag?: string; closeTag?: string } {
+  return { openReasoning, ...getReasoningTagOptions(profile) };
+}

@@ -6,7 +6,7 @@ import type {
   TruncationDetail,
 } from "./failure-category.js";
 import { hasRepetitiveTail } from "./repetitive-tail.js";
-import { locateCut } from "./truncation-part.js";
+import { locateCut, type CutReading } from "./truncation-part.js";
 
 export interface DetectedModelFailure {
   reason: ModelFailureReason;
@@ -16,6 +16,11 @@ export interface DetectedModelFailure {
 }
 
 export interface DetectModelFailureOptions {
+  /**
+   * How the step reads reasoning in the raw text (prefill, profile tags),
+   * for placing a cut inside the think block (`locateCut`, ATO-1678).
+   */
+  cutReading?: CutReading;
   /**
    * The `max_tokens` / `n_predict` cap the request carried. Without it a
    * truncated reply cannot be told apart from a full context window, so
@@ -77,7 +82,7 @@ export function detectModelFailure(
   if (completion.truncated) {
     // Where the cut landed (ATO-1678): the retry tells a model cut mid
     // thought, mid tool call and mid answer different things.
-    const where = locateCut(completion);
+    const where = locateCut(completion, options.cutReading);
     const classified: TruncationDetail = {
       ...classifyTruncation(
         completion,
