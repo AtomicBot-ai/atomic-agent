@@ -8832,7 +8832,7 @@ document.addEventListener('click', (e) => {
      build without the preview, opens it in its default app straight away. */
   if (fchip && BR && !(e.metaKey || e.ctrlKey) && typeof filePreviewOpen === 'function'
       && filePreviewOpen(fchip.dataset.file, {reply: !!fchip.dataset.reply})) return;
-  if (fchip && BR) { (fchip.dataset.reply ? openReplyPath(fchip.dataset.file) : openFilePath(fchip.dataset.file.replace(/^~/, homeDir() || '~'))).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
+  if (fchip && BR) { (fchip.dataset.reply ? openReplyPath(fchip.dataset.file) : openFilePath(fchip.dataset.file.replace(/^~/, homeDir() || '~'))).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || '', 'bad'); }); return; }
   const mlink = t.closest('[data-url]');
   if (mlink && BR) { e.preventDefault(); BR.openExternal(mlink.dataset.url); return; }
   /* Calm (S4): the approval card's Details is a native <details>; the click
@@ -9527,7 +9527,7 @@ function voiceEvent(o) {
       voiceFail(String(o.message || o.code || 'the speech helper failed'));
       return;
     }
-    else if (o.code === 'whisper') toast('Voice input', String(o.message || 'whisper.cpp failed'));
+    else if (o.code === 'whisper') toast('Voice input', String(o.message || 'whisper.cpp failed'), 'bad');
   }
   else if (t === 'done') { voiceSettle(); }
   else if (t === 'closed') {
@@ -10515,7 +10515,7 @@ async function loadPrefs() {
 function savePrefs() {
   if (!BR || !BR.prefsSet) return;
   BR.prefsSet({pinned:PREFS.pinned.slice(), seen:Object.assign({}, PREFS.seen), archived:PREFS.archived.slice()}).then((res) => {
-    if (res && res.ok === false) toast('Could not save the sidebar state', res.error || '');
+    if (res && res.ok === false) toast('Could not save the sidebar state', res.error || '', 'bad');
   });
 }
 /** Opening a chat is reading it: the dot goes empty and stays empty. */
@@ -17089,7 +17089,7 @@ async function obActivateLocal(id) {
      (restartStopsTurn) — the restart stops them all. */
   if (restartStopsTurn()) {
     DL.deferred = id;
-    toast('Not while a turn is running', id + ' is downloaded — it starts when the turn ends');
+    toast('Not while a turn is running', id + ' is downloaded. It starts when the turn ends.', 'info');
     render();
     return;
   }
@@ -17105,7 +17105,7 @@ async function obActivateLocal(id) {
      re-parks the id rather than dropping the pick. */
   const res = await swxRun('starting ' + id + '…', {backend:'local', model:id},
     () => SWXBR.selectLocalModel(id),
-    () => { DL.deferred = id; toast('Not while a turn is running', id + ' is downloaded — it starts when the turn ends'); render(); });
+    () => { DL.deferred = id; toast('Not while a turn is running', id + ' is downloaded. It starts when the turn ends.', 'info'); render(); });
   if (res && res.superseded) return;
   if (!res || !res.ok) {
     if (res && res.error === 'a turn is running') return;   // re-parked above
@@ -18060,7 +18060,7 @@ async function obSettle() {
     OB.settling = false;
     obDispatch({type:'onboarding_error_set', error: 'could not write the setup stamp: ' + (res.error || 'unknown error')});
     // ATO-820: nobody is on the closing screen to read it.
-    if (OB.leftEarly) toast('Setup was not saved', 'It opens again next launch.');
+    if (OB.leftEarly) toast('Setup was not saved', 'It opens again next launch.', 'bad');
     return;
   }
   obSettleSlowClear();
@@ -19255,7 +19255,7 @@ function restartStopsLine(held) {
 }
 /** The refusal toast every restarting switch shows (Backlog 28). */
 function restartRefusedToast(held) {
-  toast('Not while a turn is running', restartStopsLine(held) || undefined);
+  toast('Not while a turn is running', restartStopsLine(held) || undefined, 'bad');
 }
 /** ATO-435: whether any chat holds queued messages, including a new chat that
  *  has no session id yet (its queue is keyed `turn:` or not keyed at all, and
@@ -19501,7 +19501,7 @@ async function pickProjectModel(providerId, model) {
   if (!folder) return false;
   closeSelector();
   const res = await ProjectModels.set(BR, folder, {providerId, model});
-  if (!res || !res.ok) { toast('Could not select the model', (res && res.error) || ''); render(); return true; }
+  if (!res || !res.ok) { toast('Could not select the model', (res && res.error) || '', 'bad'); render(); return true; }
   S.log.push({id:nid(), k:'system', text: esc('Model for this project (' + workingDirLabel(folder) + '): ' + stampWords(providerId, model) + '. Other projects keep theirs.')});
   render();
   if (typeof refreshContext === 'function') refreshContext();
@@ -19960,7 +19960,7 @@ async function selActivate(row) {
     // ATO-732: a model from another provider's group whose key is missing or
     // refused opens that provider's key window, as picking the provider does.
     if (res && res.needsKey) { bswOpenKey(pid, res.keyInvalid); return; }
-    if (!res || !res.ok) toast('Could not select the model', (res && res.error) || '');
+    if (!res || !res.ok) toast('Could not select the model', (res && res.error) || '', 'bad');
     else bswReport(res, 'Selected chat model ' + pid + '/' + row.id + '.');
     return;
   }
@@ -19989,7 +19989,7 @@ async function selActivate(row) {
     // A composer download lands here (selPull's listener), maybe under a provider setup opened meanwhile.
     closeSelectorUnlessSetup(res.selectorView);
     bswReport(res);
-    if (res.daemon === 'start-failed') toast('Local daemon did not start', daemonFail(res.error).line);
+    if (res.daemon === 'start-failed') toast('Local daemon did not start', daemonFail(res.error).line, 'bad');
     // r5 item 10: the live config is already re-read inside swxRun.
   }
 }
@@ -20966,7 +20966,7 @@ function planHandoffHTML() {
  */
 async function executePlan(mode) {
   if (!PLAN.on || PLAN.busy) return;
-  if (S.busy || S.pending) { toast('Not while a turn is running'); return; }
+  if (S.busy || S.pending) { toast('Not while a turn is running', '', 'bad'); return; }
   ANX.planHandoff(mode === 'bypass' ? 'bypass' : 'auto'); ANX.via('plan_bar');
   PLAN_TRACE.length = 0;
   PLAN.busy = true; render();
@@ -21098,7 +21098,7 @@ function pausedRowHTML(m) {
     + '</div>';
 }
 function continueTurn() {
-  if (S.busy || S.pending) { toast('Not while a turn is running'); return; }
+  if (S.busy || S.pending) { toast('Not while a turn is running', '', 'bad'); return; }
   ANX.messageAction('continue');
   if (VOICE.state === 'recording' || VOICE.state === 'starting' || VOICE.state === 'finishing') {
     toast('The microphone is open', 'finish or cancel the dictation, then continue', 'bad');
@@ -21138,7 +21138,7 @@ async function continueInterruptedTurn() {
   if (RESUME.pending) return;   // a second click while the first is out
   const sid = S.agentSession;
   if (!sid || !(BR && BR.resumeInterruptedTurn)) return;
-  if (S.busy || S.pending) { toast('Not while a turn is running'); return; }
+  if (S.busy || S.pending) { toast('Not while a turn is running', '', 'bad'); return; }
   if (VOICE.state === 'recording' || VOICE.state === 'starting' || VOICE.state === 'finishing') {
     toast('The microphone is open', 'finish or cancel the dictation, then continue', 'bad');
     return;
@@ -21155,7 +21155,7 @@ async function continueInterruptedTurn() {
   catch (err) { r = {ok: false, supported: true, error: String((err && err.message) || err)}; }
   finally { RESUME.pending = false; }
   if (!r || !r.ok || typeof r.text !== 'string') {
-    if (r && r.code === 'turn_in_progress') { toast('Not while a turn is running'); return; }
+    if (r && r.code === 'turn_in_progress') { toast('Not while a turn is running', '', 'bad'); return; }
     dropInterruptedTurnOffer();
     render();
     toast("Couldn't continue", r && r.supported === false
@@ -21278,13 +21278,13 @@ async function selChooseBackend(id) {
     if (res && res.needsProvider) { if (!SEL.open) openSelector('provider'); SEL.kind = 'provider'; act('sel:add'); return res; }
     if (res && res.needsKey) { bswOpenKey(res.providerId, res.keyInvalid); return res; }
     SEL.err = (res && res.error) || 'could not switch to ' + id;
-    toast('Could not switch to ' + id, SEL.err);
+    toast('Could not switch to ' + id, SEL.err, 'bad');
     render();
     await refreshLiveConfig();
     return res;
   }
   bswReport(res);
-  if (res.daemon === 'start-failed') toast('Local daemon did not start', daemonFail(res.error).line);
+  if (res.daemon === 'start-failed') toast('Local daemon did not start', daemonFail(res.error).line, 'bad');
   // r5 item 10: swxRun re-read the live config before it resolved, so the
   // rows below are drawn from the file the switch just wrote.
   if (res.needsModel) {
@@ -22397,7 +22397,7 @@ async function applySessionModelStamp() {
       ? SWXBR.selectCloudModel(stamp.providerId, stamp.chatModel)
       : SWXBR.activateProvider(stamp.providerId)));
   if (swxSaid(res)) return;
-  if (!res || res.ok === false) { toast('Could not switch', (res && res.error) || ''); return; }
+  if (!res || res.ok === false) { toast('Could not switch', (res && res.error) || '', 'bad'); return; }
   bswReport(res);
   CTX055.stamp = null;
   // r5 item 10: swxRun re-read the live config before it resolved.
@@ -22424,7 +22424,7 @@ async function ctxAdjust(spec) {
   if (next === current) return;
   // Write first, then repaint from what the config actually took.
   const res = await BR.configSet(key, String(next));
-  if (res && res.ok === false) { toast('Could not change it', res.error || ''); return; }
+  if (res && res.ok === false) { toast('Could not change it', res.error || '', 'bad'); return; }
   await refreshLiveConfig();
 }
 if (typeof window !== 'undefined') {
@@ -24531,12 +24531,12 @@ function openImageViewer(path) {
     if (what === 'save' && BR && BR.imageSaveAs) {
       Promise.resolve(BR.imageSaveAs(path)).then((r) => {
         if (r && r.ok) toast('Saved', r.path || '');
-        else if (!r || r.reason !== 'canceled') toast('Could not save', (r && r.error) || 'The picture is no longer there.');
+        else if (!r || r.reason !== 'canceled') toast('Could not save', (r && r.error) || 'The picture is no longer there.', 'bad');
       });
       return;
     }
     if (what === 'reveal' && BR && BR.imageReveal) {
-      Promise.resolve(BR.imageReveal(path)).then((r) => { if (!r || !r.ok) toast('Could not show it', 'The picture is no longer there.'); });
+      Promise.resolve(BR.imageReveal(path)).then((r) => { if (!r || !r.ok) toast('Could not show it', 'The picture is no longer there.', 'bad'); });
     }
   });
   el.addEventListener('contextmenu', (e) => e.stopPropagation());

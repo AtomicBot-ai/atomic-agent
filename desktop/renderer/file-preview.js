@@ -454,7 +454,7 @@ function fpBodyHtml(res) {
 /** Open or Reveal from the panel: the same checks the chip's own opener used. */
 function fpOpenOutside(path) {
   const p = path || FP.path;
-  const done = (r) => { if (r && r.ok === false && typeof toast === 'function') toast('Could not open', r.error || (r.reason === 'outside' ? 'It is outside the folders the preview can read.' : '')); };
+  const done = (r) => { if (r && r.ok === false && typeof toast === 'function') toast('Could not open', r.error || (r.reason === 'outside' ? 'It is outside the folders the preview can read.' : ''), 'bad'); };
   // ATO-1256: a file from the chat's list opens through main's preview check, the roots the preview read it from.
   if (FP.listed) { const br = fpBridge(); return br && br.filePreviewAction ? br.filePreviewAction(p, 'open').then(done) : Promise.resolve(); }
   if (FP.reply && typeof openReplyPath === 'function') return openReplyPath(p).then(done);
@@ -466,7 +466,7 @@ function fpReveal() {
   const br = fpBridge();
   const p = FP.data && FP.data.ok ? FP.data.path : FP.path;
   if (br && br.filePreviewAction) br.filePreviewAction(p, 'reveal').then((r) => {
-    if (r && r.ok === false && typeof toast === 'function') toast('Could not show it', r.reason === 'outside' ? 'It is outside the folders the preview can read.' : 'It is no longer there.');
+    if (r && r.ok === false && typeof toast === 'function') toast('Could not show it', r.reason === 'outside' ? 'It is outside the folders the preview can read.' : 'It is no longer there.', 'bad');
   });
 }
 
