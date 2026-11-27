@@ -784,6 +784,7 @@ async function runLocalModelsStartNow(
         parallel: cfg.localModels.managed.parallel,
         localLegRole,
         swaFull: cfg.localModels.managed.swaFull,
+        ...(cfg.localModels.managed.cpuMoe === undefined ? {} : { cpuMoe: cfg.localModels.managed.cpuMoe }),
         ...(loraAdapterForModel(cfg.localModels.managed.loraAdapters, mid)
           ? { loraAdapter: loraAdapterForModel(cfg.localModels.managed.loraAdapters, mid) }
           : {}),
@@ -908,8 +909,11 @@ async function runLocalModelsStartNow(
       result.chat.tokensPerSecond === null
         ? ""
         : `, ~${roundTokensPerSecond(result.chat.tokensPerSecond)} tok/s single stream`;
+    const moeLine = result.chat.cpuMoeLayers
+      ? `, experts of ${result.chat.cpuMoeLayers} layers in system RAM (localModels.managed.cpuMoe)`
+      : "";
     process.stdout.write(
-      `chat: started pid ${result.chat.pid}, healthy on port ${cfg.localModels.managed.port}${visionLine}${speedLine}\n`,
+      `chat: started pid ${result.chat.pid}, healthy on port ${cfg.localModels.managed.port}${visionLine}${moeLine}${speedLine}\n`,
     );
     if (embRunningPid !== null) {
       process.stdout.write(

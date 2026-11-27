@@ -95,6 +95,11 @@ import {
   type SwaFullPreference,
 } from "./swa-full.js";
 import {
+  decideCpuMoeLayers,
+  moeShapeFromMetadata,
+  type CpuMoePreference,
+} from "./cpu-moe.js";
+import {
   getEmbeddingModelDef,
   getLocalModelDef,
   type EmbeddingModelId,
@@ -246,6 +251,17 @@ export interface DaemonStartOptions {
    * `buildLlamaServerArgs` appends `--swa-full` when `true`.
    */
   swaFullFlag?: boolean;
+  /**
+   * `localModels.managed.cpuMoe` (ATO-2380, see `cpu-moe.ts`). Undefined
+   * means `"auto"`, which adds no flag unless the model overflows a GPU
+   * with memory of its own.
+   */
+  cpuMoe?: CpuMoePreference;
+  /**
+   * Resolved by `startDaemon` from `cpuMoe`, the header and the device
+   * budget; internal. A positive value appends `--n-cpu-moe <n>`.
+   */
+  cpuMoeLayers?: number;
   /**
    * Run the throughput probe once the server is healthy (default
    * `true`): one 64-token completion whose `timings.predicted_per_second`
@@ -717,6 +733,9 @@ export function buildLlamaServerArgs(
   if (opts.swaFullFlag === true) {
     args.push("--swa-full");
   }
+  if (opts.device !== "cpu" && opts.cpuMoeLayers !== undefined && opts.cpuMoeLayers > 0) {
+    args.push("--n-cpu-moe", String(opts.cpuMoeLayers));
+  }
   if (opts.mmprojFile) {
     args.push("--mmproj", opts.mmprojFile);
     // Vision-capable models (notably Gemma-4 with `gemma4v` projector and
@@ -804,6 +823,8 @@ export async function resolveEffectiveContextSize(
   autoSlotsCap: number | null;
   kvBudgetBytes: number | null;
   deviceBudgetBytes: number | null;
+  /** The device shares the system's RAM (Apple silicon, integrated GPU). */
+  sharesSystemMemory: boolean;
   note: string | null;
   /** What was set aside beside weights and cache, for the daemon log. */
   reserveNote: string | null;
@@ -950,6 +971,7 @@ export async function resolveEffectiveContextSize(
     autoSlotsCap: gpu ? gpu.maxSlots : null,
     kvBudgetBytes: kvBudgetBytes === null ? null : Math.max(0, kvBudgetBytes),
     deviceBudgetBytes: budgetBytes(false),
+    sharesSystemMemory: systemMemoryMiB !== null,
     note,
     reserveNote,
   };
@@ -1237,6 +1259,8 @@ export interface DaemonStartResult {
    * model without it (its session reports no mmproj), so vision is off.
    */
   projectorDropped?: boolean;
+  /** `--n-cpu-moe` the launch used (`cpu-moe.ts`); 0 / absent: none. */
+  cpuMoeLayers?: number;
 }
 
 /**
@@ -1374,6 +1398,7 @@ async function startDaemonNow(
     autoSlotsCap,
     kvBudgetBytes,
     deviceBudgetBytes,
+    sharesSystemMemory,
     note: contextNote,
     reserveNote,
   } = await resolveEffectiveContextSize(device, model, {
@@ -1430,6 +1455,21 @@ async function startDaemonNow(
           contextSize,
           swaFull: swaFull.enabled,
         }) <= deviceBudgetBytes;
+  // ATO-2380: a mixture-of-experts model that overflows the GPU keeps
+  // some layers' experts in system RAM instead of whole layers.
+  const cpuMoe = decideCpuMoeLayers({
+    preference: opts.cpuMoe ?? "auto",
+    shape: header ? moeShapeFromMetadata(header, model.fileSizeGb * 1e9) : null,
+    device,
+    sharesSystemMemory,
+    deviceBudgetBytes,
+    kvBytes: estimateLaunchKvBytes({
+      kvLayout: kvLayout ? buildKvLayout(kvLayout) : null,
+      modelSizeGb: model.fileSizeGb,
+      contextSize,
+      swaFull: swaFull.enabled,
+    }),
+  });
   // The speed an earlier start measured on this same launch, read before
   // this one clears the record: carried over, it spares the probe
   // (`readReusableThroughput`).
@@ -1452,6 +1492,7 @@ async function startDaemonNow(
       ...opts,
       device,
       swaFullFlag: swaFull.enabled,
+      cpuMoeLayers: cpuMoe.layers,
       ...(completionMaxTokens === undefined ? {} : { completionMaxTokens }),
       ...(autoSlotsCap === null ? {} : { autoSlotsCap }),
     },
@@ -1500,6 +1541,7 @@ async function startDaemonNow(
         ]
       : []),
     `[atomic-agent] launch: ${swaFull.reason}`,
+    `[atomic-agent] launch: ${cpuMoe.reason}`,
     `[atomic-agent] launch: prefix reuse ${effectivePrefixReuse ?? "unknown"}${reuseWhy}`,
     "",
   ].join("\n");
@@ -1551,7 +1593,7 @@ async function startDaemonNow(
     // reports `mmproj_path: null`; an older Core omits the field.
     const projectorDropped = Boolean(opts.mmprojFile) && (session.mmproj_path === null || session.mmproj_path === "");
     return { pid: session.pid, contextSize, swaFull, prefixReuse: effectivePrefixReuse, tokensPerSecond,
-      autoContextCeiling, ...(projectorDropped ? { projectorDropped } : {}) };
+      autoContextCeiling, cpuMoeLayers: cpuMoe.layers, ...(projectorDropped ? { projectorDropped } : {}) };
   }
 
   const logFd = openSync(resolveLogFilePath(opts.dataDir), "a");
@@ -1630,6 +1672,7 @@ async function startDaemonNow(
       swaFull,
       prefixReuse: effectivePrefixReuse,
       autoContextCeiling,
+      cpuMoeLayers: cpuMoe.layers,
     };
   } finally {
     closeSync(logFd);

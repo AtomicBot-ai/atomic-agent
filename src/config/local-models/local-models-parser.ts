@@ -35,6 +35,12 @@ import {
   SWA_FULL_PREFERENCES,
   type SwaFullPreference,
 } from "../../local-llm/server/swa-full.js";
+import {
+  CPU_MOE_DEFAULT,
+  CPU_MOE_MAX_PINNED_LAYERS,
+  isCpuMoePreference,
+  type CpuMoePreference,
+} from "../../local-llm/server/cpu-moe.js";
 
 /** Pre-v41 `autoUpdate: false` was a dead default; force the live default. */
 const MANAGED_AUTO_UPDATE_DEFAULTS_VERSION = 41;
@@ -112,6 +118,17 @@ export function parseSwaFullPreference(
   throw new ConfigValidationError(
     field,
     `expected ${SWA_FULL_PREFERENCES.join("|")}, got ${JSON.stringify(raw)}`,
+  );
+}
+
+/** `localModels.managed.cpuMoe` (ATO-2380); `0` reads as `"off"`. */
+export function parseCpuMoePreference(raw: unknown, field: string): CpuMoePreference {
+  if (raw === undefined || raw === null) return CPU_MOE_DEFAULT;
+  if (raw === 0) return "off";
+  if (isCpuMoePreference(raw)) return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected "auto", "off" or a whole number 1..${CPU_MOE_MAX_PINNED_LAYERS}, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -426,6 +443,7 @@ export function prepareLocalModelsInputs(
       rawManaged.swaFull ?? readDefaults().managed.swaFull,
       "localModels.managed.swaFull",
     ),
+    cpuMoe: parseCpuMoePreference(rawManaged.cpuMoe, "localModels.managed.cpuMoe"),
   };
   const loraAdapters = parseLoraAdapters(rawManaged.loraAdapters, "localModels.managed.loraAdapters");
   if (loraAdapters) managed.loraAdapters = loraAdapters;
