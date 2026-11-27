@@ -71,13 +71,6 @@ export interface ContextUsageState {
    * dial redraws the gauge while the operator is looking at it.
    */
   pairCosts: readonly number[];
-  /**
-   * The reply reserve the prompt budget held back (`BuiltPrompt.replyReserve`,
-   * or the cloud budget's). On a window the fixed part crowds it is the
-   * shared figure, below `effectiveReplyReserve` (ATO-1678). Absent on
-   * snapshots saved before the field existed.
-   */
-  replyReserve?: number;
   /** Per-section breakdown, for the detail view. Empty before the first prompt. */
   sections: readonly ContextUsageSection[];
   /**
@@ -89,6 +82,14 @@ export interface ContextUsageState {
   parts?: readonly ContextUsagePart[];
   /** `tool.search` was in the catalog, so tools already load on demand. */
   toolSearchActive?: boolean;
+  /**
+   * The reply reserve the prompt budget held back on this window
+   * (`BuiltPrompt.replyReserve`, `effectiveReplyReserve` with its
+   * small-window rule; the cloud prompt's `contextBudget.replyReserve`),
+   * so a client draws the agent's figure instead of recomputing it
+   * (ATO-2495). Absent on snapshots saved before the field existed.
+   */
+  replyReserve?: number;
 }
 
 export interface ContextUsageSection {
@@ -186,6 +187,7 @@ export function contextUsageFromPrompt(prompt: BuiltPrompt): ContextUsageState {
       parent: LOADED_TOOLS_SECTION_LABEL,
     })),
   ];
+  const replyReserve = prompt.replyReserve ?? prompt.contextBudget?.replyReserve;
   return {
     tokens: prompt.tokens.total,
     contextWindow: prompt.contextWindow,
@@ -199,17 +201,9 @@ export function contextUsageFromPrompt(prompt: BuiltPrompt): ContextUsageState {
     conversationPairsCap: prompt.conversationPairsCap,
     conversationBoundBy: prompt.conversationBoundBy,
     pairCosts: prompt.pairCosts,
-    ...budgetReplyReserve(prompt),
     sections,
     parts,
     toolSearchActive: prefixOffersToolSearch(prompt.stablePrefix),
+    ...(replyReserve !== undefined ? { replyReserve } : {}),
   };
-}
-
-/** The reserve the prompt's budget held back, when it reports one. */
-function budgetReplyReserve(prompt: BuiltPrompt): { replyReserve?: number } {
-  const reserve = prompt.replyReserve ?? prompt.contextBudget?.replyReserve;
-  return reserve !== undefined && Number.isFinite(reserve) && reserve >= 0
-    ? { replyReserve: reserve }
-    : {};
 }
