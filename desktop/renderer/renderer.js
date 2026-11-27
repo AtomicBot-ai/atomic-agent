@@ -12044,6 +12044,7 @@ function onChatEvent(ev) {
 /** The next queued message, as the next turn of the chat on screen, whose
     queue S.queued is (Backlog 26). */
 function drainQueued() {
+  if (qeditHoldsDrain()) { DRAIN_OWED = true; render(); return; }   // ATO-2132: the head of the queue is being edited; Save or cancel runs it
   if (!S.queued.length) { DRAIN_OWED = false; return; }
   if (swxWaitsForRoute() || S.live.state !== 'connected' || openHoldsComposer()) { DRAIN_OWED = true; return; }
   if (SWX.sendError) { DRAIN_OWED = true; return; }
@@ -12057,7 +12058,7 @@ function drainQueued() {
     render(); return;
   }
   DRAIN_OWED = false;
-  const q = S.queued.shift();
+  const q = S.queued.shift(); qeditShift(0);   // ATO-2132
   if (gate.kind === 'notice') S.log.push({id:nid(), k:'system', text: esc(gate.text)});
   S.log.push({id:nid(), k:'user', text:q}); startLiveTurn(q);
 }
@@ -12204,7 +12205,7 @@ function steerNowShown(text) {
 function steerQueuedNow(at) {
   const text = S.queued[at];
   if (typeof text !== 'string' || !steerNowShown(text)) return;
-  STEER.ahead = steerNowTake(S.queued, at, STEER.ahead);
+  STEER.ahead = steerNowTake(S.queued, at, STEER.ahead);   qeditShift(at);   // ATO-2132
   if (!S.queued.length) DRAIN_OWED = false;
   render();
   return steerOrQueue(text, {sid:S.agentSession, key:queueKey(), card: approvalOpen(S.pending)});
@@ -12212,6 +12213,7 @@ function steerQueuedNow(at) {
 /** Cancel a locally accepted message, including an unsaved chat's last one. */
 function unqueueMessage(at) {
   const gone = S.queued.splice(at, 1)[0]; if (at < STEER.ahead) STEER.ahead -= 1;
+  qeditShift(at);   // ATO-2132: a message being edited behind it keeps its place
   attForgetMessage(gone);   // ATO-405: files only this queued message named
   if (!S.queued.length) {
     DRAIN_OWED = false;

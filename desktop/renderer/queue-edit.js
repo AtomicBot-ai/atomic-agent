@@ -15,7 +15,10 @@
    send it a second time. The messages behind it go on as usual. When it is
    put back into a chat that runs no turn any more (its turn ended while the
    field was open), it runs now, as a refused steer parked after its turn's
-   end does (renderer.js steerOrQueueRun, ATO-183).
+   end does (renderer.js steerOrQueueRun, ATO-183). While the FIRST message
+   is in the field the drain waits for it (qeditHoldsDrain), so the second
+   never runs ahead of it; a message that leaves the queue in front of the
+   one being edited moves it up with the rest (qeditShift).
 
    Files: only the words are edited. A message with an `[attachments]` block
    (attachments.js) keeps that block as it was, byte for byte, so its files
@@ -166,6 +169,20 @@ function qeditFinish(save, quiet) {
   }
   if (!quiet) render();
   return pos;
+}
+
+/** A message left the queue on screen at `removedAt` (drainQueued sent the
+    head, unqueueMessage removed one): the one being edited behind it moves
+    up with the rest, so Save puts it back between the same neighbours. */
+function qeditShift(removedAt) {
+  if (qeditOn() && removedAt < QEDIT.at) QEDIT.at -= 1;
+}
+
+/** Whether the next drain must wait: the message at the head of the queue is
+    in the field, and sending the one behind it would jump the line. Save or
+    cancel puts it back and runs it (qeditFinish, through DRAIN_OWED). */
+function qeditHoldsDrain() {
+  return qeditOn() && QEDIT.at === 0;
 }
 
 /** The field closes without a paint (the chat is being left, or another chip

@@ -181,6 +181,45 @@ test('opening a second chip puts the first back and opens the right one', () => 
   assert.deepEqual([...w.S.queued], ['a2', 'b']);
 });
 
+test('review fix: a message sent from the head while another is edited keeps the edit between the same neighbours', () => {
+  const w = world();
+  w.S.queued.push('a', 'b', 'c', 'd');
+  w.qeditStart(2);                        // c in the field: a, b, d
+  w.S.queued.shift(); w.qeditShift(0);    // the turn ended and drainQueued sent a
+  w.QE.value = "c'";
+  w.qeditFinish(true);
+  assert.deepEqual([...w.S.queued], ['b', "c'", 'd']);
+});
+
+test('review fix: removing a chip in front of the one being edited keeps its place; behind it changes nothing', () => {
+  const w = world();
+  w.S.queued.push('a', 'b', 'c', 'd');
+  w.qeditStart(2);                        // a, b, d
+  w.S.queued.splice(0, 1); w.qeditShift(0);   // x on a (unqueueMessage)
+  w.S.queued.splice(1, 1); w.qeditShift(1);   // x on d, behind it
+  assert.equal(w.QE.at, 1);
+  w.qeditFinish(false);
+  assert.deepEqual([...w.S.queued], ['b', 'c']);
+});
+
+test('review fix: while the first message is edited the drain waits; Save releases it and the edited one runs first', () => {
+  const w = world();
+  w.S.queued.push('a', 'b');
+  w.qeditStart(0);
+  assert.equal(w.qeditHoldsDrain(), true, 'b must not run ahead of a');
+  w.RUNNING = false; w.S.busy = false;   // the turn ended while the field was open
+  w.QE.value = 'a2';
+  w.qeditFinish(true);
+  assert.equal(w.qeditHoldsDrain(), false);
+  assert.deepEqual([...w.S.queued], ['a2', 'b']);
+  assert.equal(w.DRAIN_OWED, true);
+  assert.equal(w.calls.drain, 1, 'released through the DRAIN_OWED path');
+  const v = world();
+  v.S.queued.push('a', 'b');
+  v.qeditStart(1);
+  assert.equal(v.qeditHoldsDrain(), false, 'a message further back holds nothing');
+});
+
 test('wiring: loaded before renderer.js, drawn in the tray, keys, input, clicks, paint and queue moves hooked', () => {
   const html = readFileSync(new URL('../renderer/index.html', import.meta.url), 'utf8');
   assert.ok(html.indexOf('src="queue-edit.js"') > 0 && html.indexOf('src="queue-edit.js"') < html.indexOf('src="renderer.js"'));
@@ -194,6 +233,10 @@ test('wiring: loaded before renderer.js, drawn in the tray, keys, input, clicks,
   assert.match(r, /function stashQueue\(\) \{\n\s*qeditLeave\(\);/);
   assert.match(r, /function forgetQueue\(sid\) \{\n\s*qeditDrop\(sid\);/);
   assert.match(r, /return qeditSnapshot\(out, here\);/);
+  assert.match(r, /function drainQueued\(\) \{\n\s*if \(qeditHoldsDrain\(\)\) \{ DRAIN_OWED = true; render\(\); return; \}/);
+  assert.match(r, /const q = S\.queued\.shift\(\); qeditShift\(0\);/);
+  assert.match(r, /STEER\.ahead = steerNowTake\(S\.queued, at, STEER\.ahead\);\s+qeditShift\(at\);/);
+  assert.match(r, /const gone = S\.queued\.splice\(at, 1\)\[0\];[^\n]*\n\s*qeditShift\(at\);/);
   // The real attachments format round-trips through the edit.
   const c = vm.createContext({});
   vm.runInContext(ATT + '\n' + SRC + '\nglobalThis.out = (() => { const m = attBuildMessage("hi", [{path: "/u/.atomic-agent/inbox/desktop/2026-11-27/101500-a.png", mimeType: "image/png", bytes: 2048}]);'
