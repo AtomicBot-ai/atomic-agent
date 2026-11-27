@@ -1966,7 +1966,8 @@ const PROVIDER_LOGO_KEYS = {
 /** Provider id or label → its mark ('' for custom endpoints; local-llama wears llama.cpp through its kind). */
 function providerLogoKey(p) {
   const s = String(p || '').toLowerCase().trim();
-  return PROVIDER_LOGO_KEYS[s] || PROVIDER_LOGO_KEYS[s.split(' (')[0]] || PROVIDER_LOGO_KEYS[s.split(/[\s(]/)[0]] || '';
+  return PROVIDER_LOGO_KEYS[s] || PROVIDER_LOGO_KEYS[s.split(' (')[0]] || PROVIDER_LOGO_KEYS[s.split(/[\s(]/)[0]]
+    || (typeof subOauthLogoKey === 'function' ? subOauthLogoKey(s, typeof LIVE_CONFIG !== 'undefined' && LIVE_CONFIG ? llmProviders() : []) : '');   // ATO-2511 (subscription-oauth-row.js)
 }
 /** The badge for a mark key; size is '', 'sm', 'xs' or 'lg'. '' when the key has no file.
  *  `fb` names the icon the badge falls back to if its file does not load. */
@@ -2398,6 +2399,7 @@ const TUI_ONLY_PRESET_WORDS = {'foundry-local': 'Foundry Local'};
 function providerWord(id) {
   const s = String(id || '');
   if (s === 'no provider') return 'No provider';
+  const so = typeof subOauthWord === 'function' ? subOauthWord(s, LIVE_CONFIG ? llmProviders() : []) : ''; if (so) return so;   // ATO-2511: "ChatGPT (subscription)", not `chatgpt-sub`
   const p = PRESETS.find((x) => x.id === s) || KIND_ROWS.find((x) => x.id === s && !x.custom);
   return p ? p.word || p.label.split(' (')[0] : TUI_ONLY_PRESET_WORDS[s] || s;
 }
@@ -27784,7 +27786,7 @@ function llmHasKey(p) {
   return llmHasRealKey(p) || llmKeylessLocal(p);
 }
 function llmHasRealKey(p) {
-  if (p.kind === 'subscription-cli') return true;
+  if (p.kind === 'subscription-cli' || p.kind === 'subscription-oauth') return true;   // ATO-2511: the sign-in is its key (agent-cli.ts providerHasKey)
   if (p.apiKey && String(p.apiKey).length) return true;
   const present = llmKeyNamesPresent();
   return llmKeyEnvNames(p).some((n) => present.has(n));
@@ -28147,7 +28149,7 @@ function llmProviderRow(p) {
   const hasKey = !badKey && llmHasKey(p);
   // ATO-1234: a pick on its way shows as the choice already.
   const active = LLMP.choosing ? LLMP.choosing.pid === p.id : p.id === llmActiveTextId();
-  const auth = p.kind === 'subscription-cli' ? 'cli auth' : badKey ? 'invalid key' : llmHasRealKey(p) ? 'key ok' : hasKey ? 'no key needed' : 'missing key';
+  const auth = p.kind === 'subscription-cli' ? 'cli auth' : p.kind === 'subscription-oauth' ? 'sign-in' : badKey ? 'invalid key' : llmHasRealKey(p) ? 'key ok' : hasKey ? 'no key needed' : 'missing key';
   return {kind:'cloudProvider', id:'cloud-provider:' + p.id, provider:p, active, available:hasKey, badKey,
     primaryAction: !hasKey ? 'configure' : active ? 'current' : 'use',
     enterEffect: badKey ? 'Enter: paste the API key for ' + p.id + ' again' : !hasKey ? 'Enter: configure API key for ' + p.id : active ? 'Current provider: ' + p.id : 'Enter: switch ' + (llmIsCustomEntry(p) ? 'chats' : 'cloud route') + ' to ' + p.id,
@@ -28939,6 +28941,7 @@ function llmRowHTML(row, index, cursor) {
   }
   if (row.kind === 'cloudProvider') {
     const p = row.provider;
+    if (subOauthService(p)) return subOauthRowHTML(p, {open, radio, mark: llmProviderMark(p, 'sm'), name: providerWord(p.id), index, effect, rowAct, chip, esc, br: BR, repaint: llmRepaint});   // ATO-2511
     const head = p.id + ' [' + p.kind + '] ';
     const auth = row.text.indexOf(head) === 0 ? row.text.slice(head.length) : '';
     const name = providerWord(p.id);
@@ -30582,6 +30585,7 @@ function llmAct(what) {
   // ATO-1370: the row's Get vision files.
   if (verb === 'visionAt') { LLMP.cursor[LLMP.mode] = +arg; const row = llmRowAt(); if (row && row.kind === 'localTextModel') llmVisionFetch(row.model); return; }
   if (verb === 'edit') { const p = llmProvider(arg); if (p) { llmSetMode(llmProviderTab(p)); llmOpenWizard(p); } return; }
+  if (verb === 'subOauth') { subOauthAct(arg, {br: BR, repaint: llmRepaint}); return; }   // ATO-2511: Sign out / Sign in on the ChatGPT sign-in row
   // ATO-1458: a chat line's Check key: Settings › Models on the provider that refused the key, the caret in its key field.
   if (verb === 'checkKey') {
     act('settings:llm');

@@ -231,6 +231,8 @@ contextBridge.exposeInMainWorld("atomic", {
   chatgptOauthStart: () => ipcRenderer.invoke("chatgptOauth:start"),
   chatgptOauthCancel: () => ipcRenderer.invoke("chatgptOauth:cancel"),
   chatgptOauthStatus: () => ipcRenderer.invoke("chatgptOauth:status"),
+  // ATO-2511: `atag logout chatgpt`. {ok, state: "signed_out" | "failed", hadSignIn?, reason?, detail?}
+  chatgptOauthSignOut: () => ipcRenderer.invoke("chatgptOauth:signOut"),
   removeProvider: (id: string) => ipcRenderer.invoke("cli:removeProvider", id),
   modelsStart: () => ipcRenderer.invoke("cli:modelsStart"),
   traceUsage: (stateDir: string, sessionId: string) =>
