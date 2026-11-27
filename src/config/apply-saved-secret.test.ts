@@ -4,9 +4,14 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { resetResolvedSecretValues } from "../sandbox/resolved-secret-values.js";
-import { applySavedSecretToEnv } from "./apply-saved-secret.js";
+import { applySavedSecretToEnv, applySavedSecretToEnvAsync } from "./apply-saved-secret.js";
 import { listSavedSecretRefs, secretRefSource } from "./saved-secret-refs.js";
-import { resetSecretRefCache, type SecretSpawnOutcome } from "./secret-ref-resolver.js";
+import {
+  resetSecretRefCache,
+  resolveSecretRefSync,
+  type SecretSpawnOutcome,
+} from "./secret-ref-resolver.js";
+import { EMPTY_SECRET_SOURCES } from "./secret-refs.js";
 import type { SecretKeychain } from "./secret-store.js";
 
 // ATO-2530: a key saved mid-session as a reference reaches the running
@@ -49,6 +54,28 @@ describe("applySavedSecretToEnv", () => {
     expect(out.resolved).toBe(false);
     expect(out.error).toMatch(/^OPENROUTER_API_KEY: /);
     expect(env.OPENROUTER_API_KEY).toBeUndefined();
+  });
+
+  // Review round 1 (F2102.4): the key was rotated in 1Password and the same
+  // reference is saved again to pick it up. The save reads it again instead
+  // of the cached old value.
+  it("reads a reference saved again instead of the cached old value", async () => {
+    const REF = "op://Private/OR/credential";
+    const said = (v: string) => (): SecretSpawnOutcome => ({ stdout: `${v}\n`, stderr: "", exitCode: 0, failure: null });
+    expect(resolveSecretRefSync("OPENROUTER_API_KEY", REF, { sources: EMPTY_SECRET_SOURCES, spawn: said("old-key-1") })).toBe(
+      "old-key-1",
+    );
+    const env: NodeJS.ProcessEnv = {};
+    expect(applySavedSecretToEnv(dir, "OPENROUTER_API_KEY", REF, { env, spawn: said("new-key-2") })).toEqual({
+      resolved: true,
+    });
+    expect(env.OPENROUTER_API_KEY).toBe("new-key-2");
+    const asyncEnv: NodeJS.ProcessEnv = {};
+    await applySavedSecretToEnvAsync(dir, "OPENROUTER_API_KEY", REF, {
+      env: asyncEnv,
+      spawn: async () => said("new-key-3")(),
+    });
+    expect(asyncEnv.OPENROUTER_API_KEY).toBe("new-key-3");
   });
 
   it("sets a plain value as it is and removes on null", () => {

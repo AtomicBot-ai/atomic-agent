@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -21,6 +23,15 @@ describe("planSecretRef on Windows and timeouts (ATO-2530)", () => {
     expect(plan.verbatim).toBe(true);
     expect(plan.program).toBe("bw");
     expect(plan.env.BW_SESSION).toBe("s");
+  });
+
+  // Review round 1 (F2102.1 note): cmd.exe looks in its current folder
+  // before PATH, so a bw.cmd planted in the project would run instead.
+  it("starts cmd.exe in the home folder and tells it not to search the current folder", () => {
+    const plan = planSecretRef({ kind: "bw", item: "npm", field: "password" }, EMPTY_SECRET_SOURCES, ENV, "win32");
+    if (typeof plan === "string") throw new Error(plan);
+    expect(plan.cwd).toBe(homedir());
+    expect(plan.env.NoDefaultCurrentDirectoryInExePath).toBe("1");
   });
 
   it("refuses a bw item cmd.exe would read as syntax, instead of escaping it", () => {
