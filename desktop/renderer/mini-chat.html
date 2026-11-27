@@ -25,6 +25,8 @@
     <div id="mc-actions" class="mc-actions" role="group" aria-label="Use the selected text"></div>
     <div id="mc-lang" class="mc-lang" role="menu" aria-label="Translate into" hidden></div>
   </section>
+  <!-- ATO-2736: one line when the selected text did not come, and how to fix it (mini-chat-notice.js). -->
+  <div id="mc-notice" class="mc-notice" role="status" hidden><span id="mc-notice-text"></span><button id="mc-notice-btn" class="btn btn-s sm" type="button" hidden></button></div>
   <footer class="mc-foot">
     <textarea id="mc-input" class="mc-input" rows="2" spellcheck="true" placeholder="Ask Atomic Agent…" aria-label="Message"></textarea>
     <button id="mc-send" class="btn btn-p sm" type="button" disabled>Send</button>
@@ -35,6 +37,7 @@
   <script src="md-render.js"></script>
   <script src="code-highlight.js"></script>
   <script src="mini-chat-selection.js"></script>
+  <script src="mini-chat-notice.js"></script>
   <script src="mini-chat.js"></script>
 </body>
 </html>

@@ -74,8 +74,25 @@ export function selectedTextInUse(pref: SelectedTextPref, platform: NodeJS.Platf
   return platform === "darwin" && trusted;
 }
 
+/* ATO-2736: after an update macOS can keep the old entry switched on while
+   it no longer trusts the new build; only removing and adding it again
+   helps, so the line says so. */
 export const SELECTED_TEXT_ACCESSIBILITY_HINT =
-  "Needs Accessibility: System Settings › Privacy & Security › Accessibility, then turn on Atomic Agent.";
+  "Needs Accessibility: System Settings › Privacy & Security › Accessibility, then turn on Atomic Agent. " +
+  "If Atomic Agent is already on in the list, remove it with − and add it again, then restart the app.";
+
+/**
+ * ATO-2736: why the hotkey will not read the selection, before it tries.
+ * "permission": macOS has not allowed the key press (the switch was not
+ * turned off by the user). "off": turned off, or never on off macOS.
+ * null: it reads.
+ */
+export type SelectedTextSkip = "permission" | "off";
+
+export function selectedTextSkip(pref: SelectedTextPref, platform: NodeJS.Platform | string, trusted: boolean): SelectedTextSkip | null {
+  if (selectedTextInUse(pref, platform, trusted)) return null;
+  return platform === "darwin" && !trusted && pref.use !== false ? "permission" : "off";
+}
 
 export interface SelectedTextInfo {
   ok: true;
@@ -83,6 +100,8 @@ export interface SelectedTextInfo {
   on: boolean;
   /** One line under the row, or null. */
   hint: string | null;
+  /** ATO-2736: the row offers "Open Accessibility settings" (macOS without the permission). */
+  openAccessibility: boolean;
   /** The language Translate used last, for the mini chat's picker. */
   translateTo: string | null;
 }
@@ -95,7 +114,7 @@ export interface SelectedTextInfo {
 export function selectedTextInfo(pref: SelectedTextPref, platform: NodeJS.Platform | string, trusted: boolean): SelectedTextInfo {
   const wanted = pref.use ?? (platform === "darwin" && trusted);
   const hint = platform === "darwin" && !trusted ? SELECTED_TEXT_ACCESSIBILITY_HINT : null;
-  return { ok: true, on: wanted, hint, translateTo: pref.translateTo };
+  return { ok: true, on: wanted, hint, openAccessibility: hint !== null, translateTo: pref.translateTo };
 }
 
 /**

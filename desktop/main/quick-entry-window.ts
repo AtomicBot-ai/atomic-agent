@@ -17,7 +17,7 @@ import {
 import { MINI_CHAT_SIZE, miniChatPagePath } from "./mini-chat.js";
 import { activateApp, keystrokesAllowed, pasteIntoFrontApp } from "./keystroke-clipboard-host.js";
 import { replaceInSourceApp, replaceLabel, type SourceApp } from "./replace-selection.js";
-import type { GrabbedSelection } from "./selected-text-ipc.js";
+import { selectionMissNotice, type SelectionGrab } from "./selected-text-grab.js";
 
 /**
  * The Electron half of ATO-523 (quick-entry.ts holds the rest).
@@ -54,7 +54,7 @@ export interface QuickEntryWiring {
   showMainWindow: () => BrowserWindow | null;
   log: (line: string) => void;
   /** ATO-985: the text selected in the app in front, read before the mini chat window takes the keyboard (selected-text-ipc.ts). */
-  grabSelection?: () => Promise<GrabbedSelection | null>;
+  grabSelection?: () => Promise<SelectionGrab>;
 }
 
 const quickWindows = new WeakSet<BrowserWindow>();
@@ -71,6 +71,8 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
   let selection: string | null = null;
   // ATO-2268: the app the selection came from, for "Replace in …" (macOS; null elsewhere).
   let source: SourceApp | null = null;
+  // ATO-2736: why the hotkey brought no selection, as the mini chat's one line (null: nothing to say).
+  let notice: { text: string; settings: boolean } | null = null;
   let opening = false;
   let disposed = false;
   let pref: QuickEntryPref = readQuickEntryPref(w.userData);
@@ -80,6 +82,7 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
     box = null;
     selection = null;
     source = null;
+    notice = null;
     if (b && !b.isDestroyed()) b.destroy();
   };
 
@@ -94,15 +97,16 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
     /* ATO-985: the copy has to reach the app in front, so it runs before
        the box exists and takes the keyboard. */
     opening = true;
-    void w.grabSelection().catch(() => null).then((sel) => {
+    void w.grabSelection().catch((): SelectionGrab => ({ selection: null, miss: "failed" })).then((grab) => {
       opening = false;
-      if (!disposed) create(sel);
+      if (!disposed) create(grab.selection, selectionMissNotice(grab.miss));
     });
   };
 
-  const create = (sel: GrabbedSelection | null) => {
+  const create = (sel: SelectionGrab["selection"], why: typeof notice = null) => {
     selection = sel ? sel.text : null;
     source = sel ? sel.app : null;
+    notice = why;
     const cursor = screen.getCursorScreenPoint();
     const bounds = quickEntryBounds(cursor, screen.getAllDisplays().map((d) => ({ bounds: d.bounds, workArea: d.workArea })), MINI_CHAT_SIZE);
     const win = new BrowserWindow({
@@ -184,7 +188,19 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
   else if (first.state === "invalid") w.log(`[desktop] quick entry: ${pref.accelerator} cannot be used (${first.error})`);
 
   // The box's own page.
-  ipcMain.handle("app:quickEntryOpened", () => ({ draft, label: acceleratorLabel(pref.accelerator, w.platform), replace: source ? replaceLabel(source) : null, selection }));
+  ipcMain.handle("app:quickEntryOpened", () => ({ draft, label: acceleratorLabel(pref.accelerator, w.platform), replace: source ? replaceLabel(source) : null, selection, notice }));
+  /* ATO-2736: the line's button. Settings › General in the main window,
+     where "Use selected text" and its Accessibility button are. */
+  ipcMain.handle("app:quickEntryOpenSettings", (event) => {
+    if (!box || box.isDestroyed() || event.sender !== box.webContents) return { ok: false };
+    hide();
+    const main = w.showMainWindow();
+    if (!main || main.isDestroyed()) return { ok: false };
+    const go = () => { if (!main.isDestroyed()) main.webContents.send("app:menu", "settings:general"); };
+    if (main.webContents.isLoading()) main.webContents.once("did-finish-load", go);
+    else go();
+    return { ok: true };
+  });
   ipcMain.on("app:quickEntryDraft", (_event, text: unknown) => { draft = typeof text === "string" ? text.slice(0, 20_000) : ""; });
   ipcMain.on("app:quickEntryHide", () => hide());
   /* ATO-2268: an answer put back in place of the selection, in the app it
