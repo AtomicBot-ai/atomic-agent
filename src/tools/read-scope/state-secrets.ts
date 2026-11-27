@@ -8,6 +8,7 @@ import type { ToolContext } from "../tool-registry.js";
 import { canonical } from "./read-scope.js";
 import { shellCommandLine, type ShellScopeEnv } from "./read-scope-shell.js";
 import { READ_TOOL_TARGETS, URL_LIKE } from "./read-scope-targets.js";
+import { secretDirectoryHolding } from "./secret-directories.js";
 
 /**
  * The agent's own secret files, guarded on the way OUT (ATO-877).
@@ -55,6 +56,13 @@ export interface StateSecrets {
    * to be read).
    */
   files: readonly string[];
+  /**
+   * ATO-2496: folders whose every file is a sign-in
+   * (`getStateSecretDirectories`). Unlike a directory entry of `files`,
+   * a read tool targeting anything under one asks too. List them in
+   * `files` as well, so a shell command naming one is caught.
+   */
+  secretDirectories?: readonly string[];
 }
 
 /**
@@ -153,7 +161,8 @@ export function findStateSecretReads(
   secrets: StateSecrets,
 ): string[] {
   const targetsOf = READ_TOOL_TARGETS.get(tool);
-  if (targetsOf === undefined || secrets.files.length === 0) return [];
+  if (targetsOf === undefined) return [];
+  if (secrets.files.length === 0 && (secrets.secretDirectories ?? []).length === 0) return [];
   const known = canonicalSecrets(secrets);
   const hits = new Set<string>();
   for (const target of targetsOf(args)) {
@@ -164,7 +173,9 @@ export function findStateSecretReads(
     } catch {
       continue; // The tool refuses this path itself.
     }
-    const hit = secretNamedBy(path, known, RECURSIVE_READ_TOOLS.has(tool));
+    const hit =
+      secretNamedBy(path, known, RECURSIVE_READ_TOOLS.has(tool)) ??
+      secretDirectoryHolding(path, secrets.secretDirectories ?? []);
     if (hit !== null) hits.add(hit);
   }
   return [...hits];
