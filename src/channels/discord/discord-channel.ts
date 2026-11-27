@@ -34,6 +34,12 @@ import {
   type DiscordMessageEvent,
 } from "./discord-inbound-handler.js";
 import type { DiscordLockfile } from "./discord-lockfile.js";
+import { catchUpDiscordChannels } from "./discord-catch-up.js";
+import {
+  DiscordMessageCursor,
+  RecentMessageIds,
+  cursorPathFor,
+} from "./discord-message-cursor.js";
 import { DiscordSessionPointer } from "./discord-session-pointer.js";
 
 export interface DiscordChannelDeps {
@@ -75,6 +81,12 @@ export class DiscordChannel implements Channel {
   private lockHeld = false;
   private readonly inflight = new Map<string, AbortController>();
   private readonly pointer: DiscordSessionPointer;
+  /** Last processed message per channel, for catch-up (ATO-2248). */
+  private readonly cursor: DiscordMessageCursor;
+  private readonly handled = new RecentMessageIds();
+  private catchingUp: Promise<unknown> | null = null;
+  /** A READY arrived during a run: read the history once more after it. */
+  private catchUpAgain = false;
   private readonly inbox: AttachmentInbox;
   /**
    * `sessionId -> approval binding`. One per channel that is (or recently
@@ -94,6 +106,9 @@ export class DiscordChannel implements Channel {
     this.ownerIds = [...deps.ownerUserIds];
     this.enabled = deps.enabled;
     this.pointer = new DiscordSessionPointer(deps.sessionPointerPath);
+    this.cursor = new DiscordMessageCursor(
+      cursorPathFor(deps.sessionPointerPath),
+    );
     this.inbox = createAttachmentInbox({ dir: deps.inboxDir });
   }
 
@@ -197,6 +212,10 @@ export class DiscordChannel implements Channel {
       await this.bridge?.handleInteraction(data as DiscordInteractionEvent);
       return;
     }
+    if (type === "READY") {
+      this.startCatchUp(api);
+      return;
+    }
     if (type !== "MESSAGE_CREATE" || this.botUserId === null) return;
     // Logged before any drop decision: when a bot "does not answer",
     // the first thing to establish is whether the message reached us at
@@ -210,7 +229,64 @@ export class DiscordChannel implements Channel {
       mentionsBot: msg.mentions?.some((m) => m.id === this.botUserId) === true,
       attachments: msg.attachments?.length ?? 0,
     });
-    await handleDiscordMessage(data as DiscordMessageEvent, {
+    await this.deliver(msg, api);
+  }
+
+  /**
+   * A fresh gateway session (restart, or a drop that could not be
+   * resumed) missed whatever was sent meanwhile: read it back. One run
+   * at a time; a READY during a run is remembered and starts one more
+   * run when this one ends, so the gap before that READY is read too.
+   */
+  private startCatchUp(api: DiscordApi): void {
+    if (this.botUserId === null) return;
+    if (this.catchingUp) {
+      this.catchUpAgain = true;
+      return;
+    }
+    this.catchingUp = catchUpDiscordChannels({
+      api,
+      cursor: this.cursor,
+      logger: this.deps.logger,
+      deliver: (event) => this.deliver(event, api),
+    })
+      .catch((err) => {
+        this.deps.logger.warn("discord: catch-up failed", {
+          error: scrubDiscordError(err),
+        });
+      })
+      .finally(() => {
+        this.catchingUp = null;
+        const again = this.catchUpAgain;
+        this.catchUpAgain = false;
+        if (
+          again &&
+          this.currentState !== "stopping" &&
+          this.currentState !== "disabled"
+        ) {
+          this.startCatchUp(api);
+        }
+      });
+  }
+
+  /** The one inbound path, shared by live events and the catch-up. */
+  private async deliver(
+    msg: DiscordMessageEvent,
+    api: DiscordApi,
+  ): Promise<void> {
+    if (this.botUserId === null) return;
+    // A catch-up still walking its list must not start turns after stop().
+    if (this.currentState === "stopping" || this.currentState === "disabled") {
+      return;
+    }
+    // Seen live and in a backfill, or replayed by the gateway: once.
+    if (typeof msg.id === "string" && !this.handled.claim(msg.id)) return;
+    // A channel the bot already follows moves past every message, so a
+    // later catch-up does not re-read chatter it will drop anyway.
+    if (this.cursor.has(msg.channel_id)) {
+      this.cursor.advance(msg.channel_id, msg.id, msg.guild_id);
+    }
+    await handleDiscordMessage(msg, {
       runtime: this.deps.runtime,
       api,
       sessionPointer: this.pointer,
@@ -219,6 +295,9 @@ export class DiscordChannel implements Channel {
       botUserId: this.botUserId,
       inflight: this.inflight,
       inbox: this.inbox,
+      onAccepted: (event) => {
+        this.cursor.advance(event.channel_id, event.id, event.guild_id);
+      },
       ensureApprovalSession: (sessionId, channelId) => {
         this.bindApprovals(sessionId, channelId);
       },
