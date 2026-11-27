@@ -232,9 +232,12 @@ no agent is running).
   except a `TypeError` whose text is exactly one of V8's templates
   `Cannot read properties of undefined|null (reading '<name>')`,
   `Cannot set properties of undefined|null (setting '<name>')`,
-  `<name> is not a function` or `<name> is not iterable`, with `<name>` a
-  code identifier (ASCII letters, digits, `_`, `$`, dots; at most 64
-  characters; ATO-1731, `TYPE_ERROR_TEMPLATES`); the
+  `<name> is not a function` or `<name> is not iterable` with an
+  identifier-shaped name (ASCII letters, digits, `_`, `$`, dots; at most 64
+  characters). It is sent as that template with the literal placeholder
+  `<name>`: the name itself never leaves (it can be a dynamic key, a token
+  or a person's name), only the template words and `undefined` / `null`
+  (ATO-1731, `TYPE_ERROR_TEMPLATES`); the
   type is kept only when it matches `SomethingError` / `SomethingException`
   or is one of the shell's own names, else `Error`; a renderer value that is
   not an `Error` is `NonError`. The stack's `Name: message` header is cut off

@@ -6,7 +6,8 @@
  *  - the message is dropped unless the error type is on STATIC_MESSAGE_ERRORS
  *    (empty, like the agent's: add a type only after auditing every place
  *    that constructs it), or it is a TypeError on one of V8's fixed
- *    templates naming a code identifier (TYPE_ERROR_TEMPLATES, ATO-1731);
+ *    templates, sent with its name replaced by `<name>` (TYPE_ERROR_TEMPLATES,
+ *    ATO-1731);
  *  - the type name is kept only when it is `SomethingError` /
  *    `SomethingException` or one of the shell's own names (KNOWN_TYPES),
  *    else `Error` — a thrown non-Error's "name" can be anything;
@@ -29,28 +30,30 @@ export interface StackFrame {
 export const STATIC_MESSAGE_ERRORS = new Set<string>([]);
 
 /**
- * ATO-1731: V8's own TypeError texts, kept only when they match one of these
- * templates exactly and the one quoted part is a code identifier: ASCII
- * `[A-Za-z_$][A-Za-z0-9_$]*` segments joined by dots, at most
- * MAX_IDENTIFIER characters. A space, a slash, a colon (so no path or URL),
- * a quote or any non-ASCII letter fails the match and the message is cut as
- * before. Every other TypeError text is still dropped.
+ * ATO-1731: V8's own TypeError texts, kept only as their template. The name
+ * in them is NEVER sent: V8 quotes the dynamic key of `undefined[key]`, which
+ * can be a token or a person's name, so it is replaced by NAME_PLACEHOLDER.
+ * Only the template words and `undefined` / `null` survive. A message matches
+ * only when the name is identifier-shaped (ASCII `[A-Za-z_$][A-Za-z0-9_$]*`
+ * segments joined by dots, at most MAX_IDENTIFIER characters); a path, URL,
+ * sentence or any other TypeError text is still dropped whole.
  */
-export const TYPE_ERROR_TEMPLATES: readonly RegExp[] = [
-  /^Cannot read properties of (?:undefined|null) \(reading '([^']*)'\)$/,
-  /^Cannot set properties of (?:undefined|null) \(setting '([^']*)'\)$/,
-  /^(\S*) is not a function$/,
-  /^(\S*) is not iterable$/,
+export const NAME_PLACEHOLDER = "<name>";
+export const TYPE_ERROR_TEMPLATES: readonly { re: RegExp; fill: (m: RegExpExecArray) => string }[] = [
+  { re: /^Cannot read properties of (undefined|null) \(reading '([^']*)'\)$/, fill: (m) => `Cannot read properties of ${m[1]} (reading '${NAME_PLACEHOLDER}')` },
+  { re: /^Cannot set properties of (undefined|null) \(setting '([^']*)'\)$/, fill: (m) => `Cannot set properties of ${m[1]} (setting '${NAME_PLACEHOLDER}')` },
+  { re: /^()(\S*) is not a function$/, fill: () => `${NAME_PLACEHOLDER} is not a function` },
+  { re: /^()(\S*) is not iterable$/, fill: () => `${NAME_PLACEHOLDER} is not iterable` },
 ];
 export const MAX_IDENTIFIER = 64;
 const IDENTIFIER_RE = /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
 
 function templateTypeError(message: string): string | undefined {
-  for (const re of TYPE_ERROR_TEMPLATES) {
+  for (const { re, fill } of TYPE_ERROR_TEMPLATES) {
     const m = re.exec(message);
     if (!m) continue;
-    const name = m[1] ?? "";
-    return name.length <= MAX_IDENTIFIER && IDENTIFIER_RE.test(name) ? message : undefined;
+    const name = m[2] ?? "";
+    return name.length <= MAX_IDENTIFIER && IDENTIFIER_RE.test(name) ? fill(m) : undefined;
   }
   return undefined;
 }

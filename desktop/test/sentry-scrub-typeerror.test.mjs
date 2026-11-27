@@ -1,6 +1,6 @@
-// ATO-1731: main/sentry/scrub.ts lets a TypeError's text through only on V8's
-// fixed templates naming a code identifier, against the built output
-// (npm run build first). Every text here is made up.
+// ATO-1731: main/sentry/scrub.ts sends a TypeError's text only as one of V8's
+// fixed templates, with the name replaced by `<name>`, against the built
+// output (npm run build first). Every text here is made up.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -8,18 +8,35 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const S = require("../out/main/sentry/scrub.js");
 
-test("the four TypeError templates pass when the name is an identifier from code", () => {
+test("the four TypeError templates are sent with the name replaced by <name>", () => {
   const passing = [
-    "Cannot read properties of undefined (reading 'length')",
-    "Cannot read properties of null (reading 'webContents')",
-    "Cannot set properties of undefined (setting 'innerHTML')",
-    "Cannot set properties of null (setting '$state')",
-    "paint is not a function",
-    "window.api.chat.send is not a function",
-    "_handlers is not iterable",
-    `${"a".repeat(64)} is not a function`,
+    ["Cannot read properties of undefined (reading 'length')", "Cannot read properties of undefined (reading '<name>')"],
+    ["Cannot read properties of null (reading 'webContents')", "Cannot read properties of null (reading '<name>')"],
+    ["Cannot set properties of undefined (setting 'innerHTML')", "Cannot set properties of undefined (setting '<name>')"],
+    ["Cannot set properties of null (setting '$state')", "Cannot set properties of null (setting '<name>')"],
+    ["paint is not a function", "<name> is not a function"],
+    ["window.api.chat.send is not a function", "<name> is not a function"],
+    ["_handlers is not iterable", "<name> is not iterable"],
+    [`${"a".repeat(64)} is not a function`, "<name> is not a function"],
   ];
-  for (const m of passing) assert.equal(S.safeMessage("TypeError", m), m, m);
+  for (const [m, want] of passing) assert.equal(S.safeMessage("TypeError", m), want, m);
+});
+
+test("a token-shaped or personal name never leaves: only the placeholder does", () => {
+  const secrets = ["ghp_abcdefghijklmnopqrstuvwxyz0123456789", "sk_abc123def456ghi789jkl", "alice"];
+  for (const secret of secrets) {
+    const texts = [
+      `Cannot read properties of undefined (reading '${secret}')`,
+      `Cannot set properties of null (setting '${secret}')`,
+      `${secret} is not a function`,
+      `config.${secret} is not iterable`,
+    ];
+    for (const m of texts) {
+      const out = S.safeMessage("TypeError", m);
+      assert.ok(out?.includes("<name>"), m);
+      assert.ok(!out.includes(secret), `${m} leaked ${secret}`);
+    }
+  }
 });
 
 test("anything else stays cut: paths, URLs, spaces, non-ASCII, long names, other texts", () => {
