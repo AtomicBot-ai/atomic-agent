@@ -10332,6 +10332,7 @@ function autoRestartApply(n) {
   if (!n || typeof n !== 'object') return;
   if (n.kind === 'restarted') {
     S.log.push({id:nid(), k:'system', text: esc(AGENT_RESTARTED_LINE)});
+    if (typeof offerResumeAfterRestart === 'function') void offerResumeAfterRestart({S, BR, offerFor: interruptedTurnOffer, render});   // ATO-2768
   } else if (n.kind === 'gave_up') {
     /* ATO-1285: the cause, when the agent's last lines named one (main's lastErrorSentence),
        and Collect logs beside Restart agent, so a crash at start-up has a way out other than relaunching. */
