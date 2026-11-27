@@ -5,7 +5,7 @@ Owner: src/config/
 
 ## Authority
 
-`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 79; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
+`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 80; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
 
 The checked primitive-value snapshots live in [user defaults](user-defaults.md) and [operational/helper defaults](operational-defaults.md). Read only the relevant surface for a defaults change.
 
@@ -65,6 +65,10 @@ Version 78 sets the default `localModels.reasoningBudgetTokens` to `0`, no bound
 ## Outbound HTTP approval migration
 
 Version 79 makes `"writes"` the default `http.approvalMode` again: an `os.http.request` that sends a body (POST) goes through the approval gate, a GET does not. Version 25 had made `"never"` the default, so a model steered by a hostile page or file could send the user's data anywhere without a prompt (ATO-760). Every first run writes the full defaults and the v25 migration rewrote `"writes"` to `"never"`, so a stored `"never"` in a file older than 79 is the schema's value, not a choice: it becomes `"writes"`. `"always"` and `"writes"` are kept and a missing value takes the default. From version 79 an explicit `"never"` is honoured. A GET can still carry data out in its URL. On the approval level ladder a GET asks as `http` (silent from level 3) and, since ATO-1462, a POST asks as `http_write` (silent from level 4); no config value changes for that. [Tool policy config tests](../tool-policy-config.test.ts) cover the migration.
+
+## Model sampling default migration
+
+Version 80 makes `true` the default `localModels.modelSampling` (ATO-2480): a local model runs with the temperature, top-p, top-k, min-p and repeat penalty its authors recommend (GGUF `general.sampling.*`, a sibling `generation_config.json`, or the catalog's card values) instead of the built-in 0.2 / 0.95 / 40. The request's own values and the `ATOMIC_AGENT_LLAMA_*` overrides still win. Every first run writes the full defaults and there was no switch for it outside `config set`, so a stored `false` in a file older than 80 is the schema's value, not a choice: for input versions below 80 the field becomes `true`, stored or missing. A non-boolean still fails validation before the version check. From version 80 an explicit `false` is honoured, and `config set` on an older file writes version 80 first, so a `false` set afterwards sticks. [Local model config tests](../local-models/local-models-config.test.ts) cover the migration.
 
 ## Composio named accounts
 
