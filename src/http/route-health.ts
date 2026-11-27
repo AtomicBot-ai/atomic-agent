@@ -1,6 +1,7 @@
 import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { isLocalRequest } from "./auth-throttle.js";
 import { sendJson, type HttpHandler } from "./request-context.js";
+import type { BusyTurn } from "../runtime/turn-controller.js";
 
 /** `::ffff:127.0.0.1` is how a v4 loopback peer shows up on a v6 socket. */
 export function isLoopback(remoteAddress: string | undefined): boolean {
@@ -49,6 +50,14 @@ export function isLoopback(remoteAddress: string | undefined): boolean {
  * only ever probes 127.0.0.1, so it loses nothing. A loopback request
  * that carries `cf-connecting-ip` came in through a cloudflared tunnel
  * (`atag pair --remote`, ATO-2308) and is treated as remote.
+ *
+ * `busyTurnOrigins` (ATO-2519) says where each of those turns came from,
+ * one entry per turn: `{ origin }` is the channel (`telegram`, `discord`,
+ * `slack`, ...), `http` for the OpenAI-compatible and AG-UI routes (the
+ * desktop's own chats among them), `scheduler` with `wakeReason` for a
+ * task's turn. It is additive: `busyTurns` stays the count the sweep and
+ * older desktops read, taken from the same snapshot. Session ids are left
+ * out on purpose; a caller needs the kinds, not which chats.
  */
 export function createHealthHandler(): HttpHandler {
   return async (req, res, ctx) => {
@@ -66,7 +75,7 @@ export function createHealthHandler(): HttpHandler {
         ? {
             pid: process.pid,
             ppid: process.ppid,
-            busyTurns: ctx.runtime.turnController.busySessionIds().length,
+            ...busyTurnFields(ctx.runtime.turnController.busyTurns()),
           }
         : {}),
       workingDir: ctx.runtime.capabilities.workingDir,
@@ -77,5 +86,16 @@ export function createHealthHandler(): HttpHandler {
         error: llama.error,
       },
     });
+  };
+}
+
+/** ATO-2519: `busyTurns` and `busyTurnOrigins` out of one snapshot, so the count and the list agree. */
+export function busyTurnFields(turns: readonly BusyTurn[]): {
+  busyTurns: number;
+  busyTurnOrigins: Array<{ origin: string; wakeReason?: string }>;
+} {
+  return {
+    busyTurns: turns.length,
+    busyTurnOrigins: turns.map((t) => ({ origin: t.origin, ...(t.wakeReason ? { wakeReason: t.wakeReason } : {}) })),
   };
 }

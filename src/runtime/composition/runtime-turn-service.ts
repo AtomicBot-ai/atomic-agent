@@ -25,7 +25,7 @@ import { providerIdIsLlamaServer } from "../../llm/provider/registry/active-text
 import { perTurnModelRefusal } from "../per-turn-model.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { AgentMetrics } from "../../tracing/agent-metrics.js";
-import type { TurnController, TurnEventHook, TurnOrigin } from "../turn-controller.js";
+import { wakeReasonSource, type TurnController, type TurnEventHook, type TurnOrigin } from "../turn-controller.js";
 import type { SteeringInbox } from "../steering-inbox.js";
 import { TurnsInFlight } from "../turns-in-flight.js";
 import { checkpointState, turnProgressFor, type TurnCheckpointOptions } from "../turn-checkpoints.js";
@@ -908,9 +908,12 @@ export function createRuntimeTurnService(
     // waiting behind whatever is running on the session.
     assertKnownProvider(runOptions.providerId, runOptions.model, runOptions.origin);
     const origin = runOptions.origin ?? "cli";
+    // ATO-2519: why a scheduled turn woke, for /health's busyTurnOrigins.
+    const wakeReason = origin === "scheduler" ? wakeReasonSource(session.metadata) : undefined;
     const submission = {
       sessionId: session.id,
       origin,
+      ...(wakeReason ? { wakeReason } : {}),
       // Re-read the freshest stored session when the queue hands over
       // the lock, not when the caller enqueued: between those moments a
       // turn from another origin (scheduler, HTTP, a TUI thread the

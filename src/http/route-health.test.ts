@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 import { createServer as createTcpServer } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { isLoopback } from "./route-health.js";
+import { busyTurnFields, isLoopback } from "./route-health.js";
 import { startTestHarness, type Harness } from "./test-harness.js";
 
 /** A port that was just bound and released — as closed as a port gets. */
@@ -135,6 +135,7 @@ describe("GET /health", () => {
     expect(tunnelled.pid).toBeUndefined();
     expect(tunnelled.ppid).toBeUndefined();
     expect(tunnelled.busyTurns).toBeUndefined();
+    expect((tunnelled as { busyTurnOrigins?: unknown }).busyTurnOrigins).toBeUndefined();
 
     const local = (await (await fetch(`${harness.baseUrl}/health?llama=0`)).json()) as { pid?: number; busyTurns?: number };
     expect(local.pid).toBe(process.pid);
@@ -157,6 +158,69 @@ describe("GET /health", () => {
     expect(body.status).toBe("ok");
     expect(body.llama.reachable).toBeNull();
     expect(body.busyTurns).toBe(0);
+  });
+});
+
+// ATO-2519: the desktop's quit question names what is running ("a reply in
+// Telegram", "an API request") from where each busy turn came from.
+describe("GET /health busyTurnOrigins (ATO-2519)", () => {
+  let harness: Harness | null = null;
+
+  afterEach(async () => {
+    if (harness) await harness.cleanup();
+    harness = null;
+  });
+
+  it("names the origin of each running turn, next to the same busyTurns count", async () => {
+    harness = await startTestHarness({
+      localModelsUrl: `http://127.0.0.1:${await closedPort()}`,
+    });
+    const idle = (await (await fetch(`${harness.baseUrl}/health?llama=0`)).json()) as {
+      busyTurns?: number;
+      busyTurnOrigins?: unknown;
+    };
+    expect(idle.busyTurns).toBe(0);
+    expect(idle.busyTurnOrigins).toEqual([]);
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolvePromise) => {
+      release = resolvePromise;
+    });
+    let started = 0;
+    const hold = async (): Promise<void> => {
+      started += 1;
+      await gate;
+    };
+    const controller = harness.runtime.turnController;
+    const tg = controller.enqueue({ sessionId: "health-tg", origin: "telegram", run: hold });
+    const task = controller.enqueue({ sessionId: "health-task", origin: "scheduler", wakeReason: "scheduler", run: hold });
+    for (let i = 0; i < 50 && started < 2; i += 1) await Promise.resolve();
+    expect(started).toBe(2);
+
+    const busy = (await (await fetch(`${harness.baseUrl}/health?llama=0`)).json()) as {
+      busyTurns?: number;
+      busyTurnOrigins?: unknown;
+    };
+    expect(busy.busyTurns).toBe(2);
+    expect(busy.busyTurnOrigins).toEqual([
+      { origin: "telegram" },
+      { origin: "scheduler", wakeReason: "scheduler" },
+    ]);
+
+    release();
+    await Promise.all([tg, task]);
+  });
+
+  it("busyTurnFields: the count and the list come from one snapshot, without session ids", () => {
+    expect(busyTurnFields([])).toEqual({ busyTurns: 0, busyTurnOrigins: [] });
+    expect(busyTurnFields([
+      { sessionId: "a", origin: "http" },
+      { sessionId: "b", origin: "discord" },
+      { sessionId: "c", origin: "scheduler", wakeReason: "webhook" },
+    ])).toEqual({
+      busyTurns: 3,
+      busyTurnOrigins: [{ origin: "http" }, { origin: "discord" }, { origin: "scheduler", wakeReason: "webhook" }],
+    });
   });
 });
 
