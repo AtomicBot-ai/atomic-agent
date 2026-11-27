@@ -36,6 +36,7 @@ import {
   WATCH_SENTINEL_SOURCE,
   WINDOWS_GRACEFUL_MS,
 } from "./platform.js";
+import { serveSpawnArgs, serveSpawnEnv } from "./serve-launch.js";
 
 /**
  * Supervises one `atag serve` child process and speaks to it over the
@@ -992,20 +993,12 @@ export class AgentClient extends EventEmitter {
     try {
       child = spawn(
         binary,
-        [
-          "serve",
-          "--host",
-          "127.0.0.1",
-          "--port",
-          String(port),
-          "--api-key",
-          token,
-          ...serveWatchArgs(process.platform, sentinel?.pid),
-        ],
+        // ATO-1705: the key goes in the environment, not on the command line `ps` shows.
+        serveSpawnArgs(port, serveWatchArgs(process.platform, sentinel?.pid)),
         {
           cwd: this.status.workingDir,
           // r5 item 9: `atag serve` runs on the desktop's own state directory.
-          env: agentEnv(),
+          env: serveSpawnEnv(agentEnv(), token),
           stdio: ["ignore", "pipe", "pipe"],
           // Windows: a console child of a GUI app otherwise opens a console window.
           windowsHide: true,
