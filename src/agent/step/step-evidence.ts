@@ -46,6 +46,7 @@ export function prepareStepDispatch(
       stepIndex: ctx.stepIndex,
       textCalls: fabricated.calls,
       textResults: fabricated.results,
+      taggedBlocks: fabricated.taggedBlocks ?? 0,
       suppressedTerminal: suppressedTerminal?.tool ?? null,
       nativeCallsRun: calls.map((call) => call.tool),
       streamAborted: completion.earlyStop?.reason === "fabricated_transcript",
@@ -223,6 +224,9 @@ export type StepDispatchPlan = ReturnType<typeof prepareStepDispatch>;
 export function formatFabricatedTranscriptNotice(
   fabricated: FabricatedToolTranscript,
 ): string {
+  if (fabricated.taggedBlocks !== undefined) {
+    return formatTaggedToolCallNotice(fabricated.taggedBlocks);
+  }
   const count = Math.max(fabricated.calls, fabricated.results);
   const noun = count === 1 ? "tool call" : "tool calls";
   const outcome =
@@ -230,6 +234,22 @@ export function formatFabricatedTranscriptNotice(
       ? "None of them ran and their results were invented."
       : "None of them ran.";
   return `Your last response contained ${count} ${noun} written as plain text. ${outcome} Call tools natively — nothing is done until a real tool result comes back.`;
+}
+
+
+/**
+ * The next-step notice for tagged `<tool_call>` blocks left in the text
+ * (GitHub #999): nothing ran and the user saw none of it, so the model
+ * re-emits the call with a name it was offered.
+ */
+export function formatTaggedToolCallNotice(blocks: number): string {
+  const what = blocks === 1 ? "a <tool_call> block" : `${blocks} <tool_call> blocks`;
+  return (
+    `Your last response wrote ${what} as text that could not be run: ` +
+    "an unknown tool name, arguments that do not parse or match the tool, " +
+    "or a tag that was never closed. Nothing ran and the user did not see it. " +
+    "Call the tool again with the exact name it was offered under and valid arguments."
+  );
 }
 
 
@@ -256,6 +276,17 @@ export function suppressedTerminalRecord(
         : value;
   }
   const count = Math.max(fabricated.calls, fabricated.results);
+  if (fabricated.taggedBlocks !== undefined) {
+    return {
+      call: { ...call, args },
+      result: compressToolResult({
+        tool: call.tool,
+        status: "error",
+        output: `not delivered: the response held ${count === 1 ? "a <tool_call> block" : `${count} <tool_call> blocks`} that could not be run, so it was not shown to the user. Re-emit the call with an offered tool name and valid arguments.`,
+        details: { notDelivered: true, taggedToolCalls: count },
+      }),
+    };
+  }
   return {
     call: { ...call, args },
     result: compressToolResult({

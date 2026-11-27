@@ -88,6 +88,7 @@ export {
   classifyFailure,
   classifyTruncation,
   detectFabricatedToolTranscript,
+  detectTaggedToolCallText,
   detectModelFailure,
   FABRICATED_TRANSCRIPT_MIN_LINES,
   formatTruncatedMessage,

@@ -4,7 +4,7 @@ import { compressToolResult, type CompressedToolResult } from "../../compressor/
 import type { StepContext, StepDependencies } from "./step-contract.js";
 import type { CompletionResult } from "../../llm/llama-server-client.js";
 import type { FabricatedToolTranscript } from "../../llm/index.js";
-import { detectFabricatedToolTranscript } from "../../llm/index.js";
+import { detectFabricatedToolTranscript, detectTaggedToolCallText } from "../../llm/index.js";
 import { completionFreeText } from "./step-reasoning.js";
 import type { ToolCallPayload, ToolCallBatch } from "../../llm/grammar/tool-call-grammar.js";
 import { closingReplyBatch, splitProgressNoteReply } from "../progress-note-reply.js";
@@ -52,14 +52,20 @@ export function createStepBatchPolicy(
   /**
    * Did this completion write tool calls and results out as text? Read
    * before the batch is touched and again once it is final — the same
-   * scan, so the two cannot disagree.
+   * scan, so the two cannot disagree. A tagged `<tool_call>` block the
+   * adapter could not run counts too (GitHub #999): its raw XML is not
+   * an answer to show.
    */
   const fabricationOf = (
     result: CompletionResult,
-  ): FabricatedToolTranscript | null =>
-    detectFabricatedToolTranscript(
-      completionFreeText(result, deps.profile, assumesOpenReasoning(result)),
-    ) ?? fabricationFromEarlyStop(result);
+  ): FabricatedToolTranscript | null => {
+    const text = completionFreeText(result, deps.profile, assumesOpenReasoning(result));
+    return (
+      detectFabricatedToolTranscript(text) ??
+      detectTaggedToolCallText(text) ??
+      fabricationFromEarlyStop(result)
+    );
+  };
 
   // A `reply` batched with work tools is a progress note, not the end of
   // the turn (`progress-note-reply.ts`). Taken out before validation so
