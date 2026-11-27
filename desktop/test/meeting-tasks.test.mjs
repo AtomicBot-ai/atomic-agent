@@ -31,6 +31,24 @@ test("no table, or a table that says None, gives no items (and so no button)", (
   assert.deepEqual(T.meetingActionItems(""), []);
 });
 
+test("the Create tasks button shows under meeting notes with a table, and under nothing else", () => {
+  globalThis.BR = { taskCreate() {} };
+  globalThis.esc = (t) => String(t);
+  globalThis.ic = () => "";
+  try {
+    const reply = (text, more = {}) => ({ k: "assistant", id: "m1", text, ...more });
+    assert.match(T.meetingTasksButtonHTML(reply(NOTES)), /data-mtt-open="m1"/);
+    assert.equal(T.meetingTasksButtonHTML(reply("Just a plain answer.")), "");
+    assert.equal(T.meetingTasksButtonHTML(reply("| # | Task | Owner | Due |\n|---|---|---|---|\n| 1 | None. | | |")), "");
+    assert.equal(T.meetingTasksButtonHTML(reply(NOTES, { placeholder: true })), "", "not while it is still streaming");
+    assert.equal(T.meetingTasksButtonHTML({ k: "user", id: "u1", text: NOTES }), "");
+  } finally {
+    delete globalThis.BR;
+    delete globalThis.esc;
+    delete globalThis.ic;
+  }
+});
+
 test("the date is the due date when it is one, else the next day", () => {
   assert.equal(T.meetingTaskDay("2026-12-03", 0), "2026-12-03");
   const now = new Date(2026, 10, 30, 15, 0).getTime();

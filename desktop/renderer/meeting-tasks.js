@@ -162,5 +162,5 @@ if (typeof document !== 'undefined') {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {meetingActionItems, meetingTaskDay, meetingTaskAt, meetingTaskMessage};
+  module.exports = {meetingActionItems, meetingTaskDay, meetingTaskAt, meetingTaskMessage, meetingTasksButtonHTML};
 }
