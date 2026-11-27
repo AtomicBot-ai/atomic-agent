@@ -151,6 +151,16 @@ describe("routeTurnProvider local-first cascade (ATO-2208)", () => {
     ).toBe("local-llama");
   });
 
+  it("keeps the turn in the cloud while the local model rests after a failure (ATO-2435)", () => {
+    const { providerId, info } = run(localFirstConfig({ localFirst: true }), {
+      ...available,
+      isCoolingDown: (id) => id === "local-llama",
+    });
+    expect(providerId).toBeUndefined();
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(String(info.mock.calls[0]?.[0])).toContain("rests");
+  });
+
   it("checks history against the local allowance, not the whole prompt against the window", () => {
     // 32k window: 12k fixed + 16k history is a 28k prompt, under 0.9 of
     // the window, but the history allowance is about 16k and compaction

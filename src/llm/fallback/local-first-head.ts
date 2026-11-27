@@ -33,7 +33,10 @@ import type { RunModeName } from "../../config/llm-run-mode-config.js";
  *    (`too-long`, ATO-2537): the prompt and compaction are sized to the
  *    turn's head, so a long cloud session started on a small local
  *    window would be compacted down to it, and that cut is written to
- *    the session even when the turn then goes on in the cloud.
+ *    the session even when the turn then goes on in the cloud;
+ *  - nothing while the local link rests after it failed as a turn head
+ *    (`cooling-down`, ATO-2435, `turn-head-cooldown.ts`): a local server
+ *    that hangs until the timeout would cost that wait on every turn.
  *
  * Pure: the caller supplies every fact.
  */
@@ -68,13 +71,15 @@ export interface LocalFirstInput {
    * `runtime/composition/local-first-fit.ts`). Absent: never.
    */
   tooLongFor?: (providerId: string) => boolean;
+  /** Whether this link failed as a turn head recently and still rests. */
+  isCoolingDown?: (providerId: string) => boolean;
 }
 
 export type LocalFirstDecision =
   | { head: string }
   | {
       head: null;
-      reason: "off" | "fusion" | "pinned" | "active-local" | "no-local" | "too-long";
+      reason: "off" | "fusion" | "pinned" | "active-local" | "no-local" | "cooling-down" | "too-long";
     };
 
 export function localFirstTurnHead(input: LocalFirstInput): LocalFirstDecision {
@@ -94,7 +99,9 @@ export function localFirstTurnHead(input: LocalFirstInput): LocalFirstDecision {
       !(input.hasImage && p.supportsVision === false),
   );
   if (usable.length === 0) return { head: null, reason: "no-local" };
-  const local = usable.find((p) => fitsLocalWindow(input, p.id));
+  const rested = usable.filter((p) => input.isCoolingDown?.(p.id) !== true);
+  if (rested.length === 0) return { head: null, reason: "cooling-down" };
+  const local = rested.find((p) => fitsLocalWindow(input, p.id));
   if (local === undefined) return { head: null, reason: "too-long" };
   return { head: local.id };
 }

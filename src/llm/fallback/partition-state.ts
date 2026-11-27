@@ -1,6 +1,7 @@
 import type { FailedAttempt } from "./failed-attempts.js";
 import type { FallbackTiming } from "./fallback-config.js";
 import { isOutageFailure } from "./link-failure-kind.js";
+import type { TurnHeadCooldown } from "./turn-head-cooldown.js";
 
 /**
  * A single provider's circuit-breaker state. All timestamps are epoch
@@ -74,6 +75,11 @@ export interface PartitionState {
    * the turn (ATO-483). Null = the configured chain as it is.
    */
   turnPrimaryId: string | null;
+  /**
+   * Turn heads that failed and rest before they head a turn again
+   * (`turn-head-cooldown.ts`, ATO-2435). Survives `clearOverride`.
+   */
+  readonly headCooldowns: Map<string, TurnHeadCooldown>;
 }
 
 export function freshPartition(): PartitionState {
@@ -86,6 +92,7 @@ export function freshPartition(): PartitionState {
     fallbackServed: false,
     servingId: null,
     turnPrimaryId: null,
+    headCooldowns: new Map(),
   };
 }
 

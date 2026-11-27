@@ -33,6 +33,11 @@ export interface RouteTurnProviderParams {
    * known yet. Absent (tests, embedders): local-first does not check size.
    */
   localContextWindow?: (providerId: string) => number | null;
+  /**
+   * Whether a link failed as this session's turn head recently and still
+   * rests (ATO-2435). Absent: never.
+   */
+  isCoolingDown?: (providerId: string) => boolean;
 }
 
 /**
@@ -104,6 +109,7 @@ function localFirstProvider(params: RouteTurnProviderParams): string | undefined
     hasImage: extractRouteFeatures(params.userMessage).hasImage,
     isRegistered: params.isRegistered,
     isUnavailable: (id) => unavailable(resolved, id),
+    ...(params.isCoolingDown !== undefined ? { isCoolingDown: params.isCoolingDown } : {}),
     ...(tooLongFor !== undefined ? { tooLongFor } : {}),
   });
   if (decision.head === null) {
@@ -113,6 +119,11 @@ function localFirstProvider(params: RouteTurnProviderParams): string | undefined
         sessionId: params.sessionId,
         historyTokens: size?.historyTokens ?? null,
         fixedTokens: size?.fixedTokens ?? null,
+      });
+    }
+    if (decision.reason === "cooling-down") {
+      params.logger.info("local-first cascade: local model failed recently and rests, turn stays in the cloud", {
+        sessionId: params.sessionId,
       });
     }
     return undefined;
