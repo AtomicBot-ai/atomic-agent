@@ -49,6 +49,7 @@ import {
 } from "./local-leg-health.js";
 import { hasSplitProposal, splitSteer } from "./task-tree.js";
 import { WrittenFilesTracker } from "./worker-files-written.js";
+import { passWorkerTaintToParent } from "./worker-taint.js";
 import { estimatedOutputTokens } from "./worker-fit.js";
 import {
   DEFAULT_WORKER_TURN_ORIGIN,
@@ -835,6 +836,8 @@ async function runOneTask(
     if (inputs.length > 0) deps.declaredInputs?.declare(id, inputs);
   };
   const disarmWorkerSession = (id: string): void => {
+    // What the worker read from outside reaches the parent in its result (ATO-2481).
+    passWorkerTaintToParent(deps.approvals, id, options.parentSessionId, options.origin);
     // Always: the gate is process-wide and a stale refusal policy keyed
     // to a dead session is a slow leak, not a visible bug.
     deps.approvals.clearSessionPolicy(id);
