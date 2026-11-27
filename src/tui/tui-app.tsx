@@ -428,6 +428,8 @@ export interface TuiAppCallbacks {
   onPromptEnhanceCancel?(): void;
   /** `/btw <question>`: answer a side question without saving it (ATO-1152). */
   onSideQuestionRequested?(question: string): void;
+  /** `/council …`: run or stop the model council beside the chat (ATO-2432). */
+  onCouncilCommand?(command: import("./commands/council-command.js").CouncilCommand): void;
   /**
    * `/edit` (ATO-655): hand the terminal to `$VISUAL` / `$EDITOR` on
    * `draft` and return what was saved. Synchronous on purpose: the editor

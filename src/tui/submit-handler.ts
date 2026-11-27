@@ -501,6 +501,7 @@ export function runSlashCommand(
   if (result.sideQuestionText !== undefined) {
     callbacks.onSideQuestionRequested?.(result.sideQuestionText);
   }
+  if (result.councilCommand) callbacks.onCouncilCommand?.(result.councilCommand);
   if (result.externalEdit) runExternalEdit(result.externalEdit, state, dispatch, callbacks);
   if (result.triggerNewWindow) callbacks.onNewWindowRequested?.();
   if (result.triggerAbort) callbacks.onAbort();

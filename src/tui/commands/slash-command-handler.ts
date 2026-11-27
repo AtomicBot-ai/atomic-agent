@@ -26,6 +26,7 @@ import { parseSessionsArgs, type SessionsTrashRequest } from "../session-trash/s
 import { MODEL_RING_USAGE, parseModelRingCommand, type ModelRingCommand } from "../model-ring/model-ring-command.js";
 import { parseResearchCommand } from "./research-command.js";
 import { formatKeysHelp } from "./keys-help.js";
+import { parseCouncilCommand, type CouncilCommand } from "./council-command.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -77,6 +78,8 @@ export interface SlashDispatchResult {
    * chat as context. The caller runs it; nothing lands in the session.
    */
   readonly sideQuestionText?: string;
+  /** `/council …` (ATO-2432): run, stop or explain the model council; the caller runs it. */
+  readonly councilCommand?: CouncilCommand;
   /**
    * Bare `/enhance` (typed, from the palette or from the menu): enhance
    * whatever draft the composer holds, if it holds one. Only the caller
@@ -482,6 +485,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
         ? pureActions([], { systemMessage: SIDE_QUESTION_USAGE })
         : pureActions([], { sideQuestionText: question });
     }
+    case "council":
+      return pureActions([], { councilCommand: parseCouncilCommand(parsed.args) });
     case "research": {
       const research = parseResearchCommand(parsed.args);
       return research.kind === "usage"

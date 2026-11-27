@@ -78,6 +78,7 @@ import { createInterviewInviteController } from "./interview-invite/interview-in
 import { detectKittyKeyboard } from "./detect-kitty-keyboard.js";
 import { setShiftEnterNewline } from "./shift-enter-support.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
+import { createTuiCouncil } from "./council-runner.js";
 import { INDEXED_SEARCH_LIMIT } from "./session-rail/session-search.js";
 import { createSessionPickerSearchIndex } from "./session-rail/session-search-index.js";
 import { createHerdrReporter } from "./herdr-reporter.js";
@@ -340,6 +341,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
     llamaUrl: config.localModels.url,
   });
   orchestratorForChannelStatus = orchestrator;
+  // ATO-2432: `/council`, the model council beside the chat (council-runner.ts).
+  const council = createTuiCouncil({
+    emit: (action) => bus.emit(action),
+    config: getConfig,
+    ...(runtime.completePlain ? { completePlain: runtime.completePlain.bind(runtime) } : {}),
+  });
 
   // First signal quits gracefully; a repeat (a wedged shutdown being
   // Ctrl-C'd again, a `kill` after a hang) restores the terminal —
@@ -349,7 +356,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // The graceful quit also unmounts Ink, which is what ends the TUI:
   // `orchestrator.quit()` alone only stops the work (ATO-1614).
   const signalQuit = makeSignalQuit({
-    stopWork: () => orchestrator.quit(),
+    stopWork: () => {
+      council.cancel();
+      orchestrator.quit();
+    },
     announce: () => bus.emit({ type: "quit_requested" }),
   });
   const onSignal = makeEscalatingSignalHandler({
@@ -554,7 +564,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
       ...(herdrReporter ? { herdrReporter } : {}),
       callbacks: {
         onAbort: () => orchestrator.abortCurrentTurn(),
-        onQuit: () => orchestrator.quit(),
+        onQuit: () => {
+          council.cancel();
+          orchestrator.quit();
+        },
         onApprovalDecision: (approvalId, approved, grant) => {
           runtime.approvals.resolve({
             approvalId,
@@ -640,6 +653,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onPromptEnhanceRequested: (draft) => { void orchestrator.enhancePrompt(draft); },
         onPromptEnhanceCancel: () => orchestrator.cancelPromptEnhance(),
         onSideQuestionRequested: (question) => { void orchestrator.askSideQuestion(question); },
+        onCouncilCommand: (command) => { void council.handle(command); },
         onSessionDeleteConfirmed: (sessionId) =>
           orchestrator.deleteSession(sessionId),
         onUninstallPlanRequested: () =>
