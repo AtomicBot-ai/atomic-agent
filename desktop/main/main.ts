@@ -68,6 +68,7 @@ import { wireOvernightIpc } from "./overnight-ipc.js";
 import { wireMyFilesIpc } from "./my-files-ipc.js";
 import { wireImportFactsIpc } from "./import-facts-ipc.js";
 import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
+import { wireChatgptOauthIpc } from "./chatgpt-oauth-ipc.js";
 import { wireAgentHubIpc } from "./agent-hub-ipc.js";
 import { wireFitTestIpc } from "./fit-test-ipc.js";
 import { wireInterviewInviteIpc } from "./interview-invite-ipc.js";
@@ -2570,6 +2571,7 @@ function wireIpc(client: AgentClient): void {
     const status = detectSubscriptionCli(cli);
     return openLoginTerminal(cli, status.binPath);
   });
+  wireChatgptOauthIpc(); // ATO-1741: ChatGPT sign-in through the bundled agent, no terminal
   ipcMain.handle("cli:removeProvider", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
     // ATO-1441: OpenRouter's key leaves Core too once none is left (studio-forget-key.ts), in the background.
