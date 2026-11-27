@@ -7,6 +7,8 @@ import type { IssueReportToggle } from "./issue-report/issue-report-state.js";
 import { handleComposerSwitchKey } from "./composer-switch/composer-switch-key-bindings.js";
 import type { ComposerSwitchRow } from "./composer-switch/composer-switch-rows.js";
 import { handleContextPanelKey } from "./context/context-panel-keys.js";
+import { modelRingKeyDirection } from "./model-ring/model-ring-keys.js";
+import type { ModelRingDirection } from "./model-ring/model-ring.js";
 import type { Key } from "ink";
 import {
   canGrantCategory,
@@ -166,8 +168,8 @@ export interface AppKeyContext {
   onStepPairs?: (delta: number) => void;
   /** Run the row picked in one of the composer's route switches. */
   activateComposerSwitch: (row: ComposerSwitchRow) => void;
-  /** Ctrl+P: switch to the next favorite model (ATO-2169). Optional, like the hand-off chords. */
-  onModelRingCycle?: () => void;
+  /** Ctrl+P: the next favorite model (ATO-2169); alt+p (Option as Meta on a Mac) / ctrl+shift+p (kitty keyboard protocol) the previous one (ATO-2500). Optional, like the hand-off chords. */
+  onModelRingCycle?: (direction: ModelRingDirection) => void;
   /**
    * Carry out the plan on offer under `mode`, for the plan hand-off
    * chords. Optional: a surface that draws no hand-off binds no keys.
@@ -603,19 +605,19 @@ export function handleAppKey(
     return true;
   }
   // Ctrl+P switches to the next favorite model (ATO-2169, pi's
-  // app.model.cycleForward). Free since the menu moved to Esc; the
-  // editor never claims it. Same guards as Ctrl+T.
+  // app.model.cycleForward); alt+p and ctrl+shift+p to the previous one
+  // (ATO-2500, model-ring-keys.ts), where the terminal can send them:
+  // Option as Meta on a Mac, the kitty keyboard protocol. Free since the menu moved to Esc; the
+  // editor never claims them. Same guards as Ctrl+T.
+  const ringStep = modelRingKeyDirection(input, key, ctx.vimClaimsEsc);
   if (
-    key.ctrl &&
-    !key.shift &&
-    !key.meta &&
-    input === "p" &&
+    ringStep !== null &&
     !state.pendingApproval &&
     !state.slashPaletteOpen &&
     !isPanelModalOpen(state) &&
     ctx.onModelRingCycle
   ) {
-    ctx.onModelRingCycle();
+    ctx.onModelRingCycle(ringStep);
     return true;
   }
   // Esc aborts a turn in flight — the binding the hint strip advertises

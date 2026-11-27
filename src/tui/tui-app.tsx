@@ -85,6 +85,8 @@ import { MenuPopup } from "./menu/menu-popup.js";
 import type { MenuNode } from "./menu/menu-registry.js";
 import { ApprovalModal } from "./approval-modal.js";
 import { cycleModelRing } from "./model-ring/model-ring-actions.js";
+import { selectModelRingReadout } from "./model-ring/model-ring.js";
+import { ModelRingReadout } from "./model-ring/model-ring-readout.js";
 import { ChatLog } from "./chat/chat-log.js";
 import {
   ComposerSwitchPopup,
@@ -1844,7 +1846,7 @@ export function TuiApp({
       activateMenuNode,
       onStepPairs: stepConversationPairs,
       activateComposerSwitch,
-      onModelRingCycle: () => cycleModelRing(state, dispatch, callbacks),   // ATO-2169
+      onModelRingCycle: (direction) => cycleModelRing(state, dispatch, callbacks, undefined, direction),   // ATO-2169, ATO-2500
       onPlanExecute: executePlan,
       onPlanDismiss: dismissPlan,
     });
@@ -2491,8 +2493,13 @@ export function TuiApp({
         fusion={promptBackend.kind === "fusion"}
       />
     ) : null;
+  // ATO-2500: `fav 2/3` while the next turn runs on a favorite. Measured by `selectMetaBarFit` too.
+  const ringReadout =
+    selectModelRingReadout(state) !== null ? (
+      <ModelRingReadout state={state} fusion={promptBackend.kind === "fusion"} />
+    ) : null;
   const promptContextSlot =
-    composerContextUsage || usageReadout || stepSpeedReadout || thinkReadout ? (
+    composerContextUsage || usageReadout || stepSpeedReadout || thinkReadout || ringReadout ? (
       <Box flexDirection="row" flexShrink={0}>
         {composerContextUsage ? (
           <ContextChip
@@ -2503,6 +2510,7 @@ export function TuiApp({
         ) : null}
         {stepSpeedReadout}
         {thinkReadout}
+        {ringReadout}
         {usageReadout}
       </Box>
     ) : null;
