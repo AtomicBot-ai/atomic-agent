@@ -32,6 +32,10 @@ export interface FileIndexStatus {
   current?: string;
   lastError?: { path: string; message: string; at: string };
   updatedAt: string;
+  /** Scanned PDF pages read by OCR in the files indexed now (ATO-2501). Always set by the index. */
+  ocrPages?: number;
+  /** Why files were skipped, the most common first (at most 8 reasons). Always set by the index. */
+  skippedReasons?: { reason: string; count: number }[];
 }
 
 /** Why a folder was refused; each is a `400 { error: { code, message } }`. */
@@ -88,4 +92,9 @@ export interface FileIndexApi {
   removeFolder(path: string): Promise<boolean>;
   status(): FileIndexStatus;
   search(options: FileSearchOptions): Promise<FileSearchHit[]>;
+  /**
+   * Read again the skipped files a reader turned on since can now read
+   * (scans, photos, audio; ATO-2501) and start a pass. Returns how many.
+   */
+  retrySkipped(): number;
 }

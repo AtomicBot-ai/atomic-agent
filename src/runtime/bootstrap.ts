@@ -37,6 +37,7 @@ import { connectRuntimeProviders, createRuntimeModelContext, connectRuntimeFallb
 import { modelWantsStrictTools } from "../llm/provider/model-strict-tools.js";
 import { createRuntimeMemoryStores } from "./composition/runtime-memory-stores.js";
 import { createRuntimeFileIndex } from "./composition/runtime-file-index.js";
+import { createLocalVisionSlot } from "./composition/file-index-vision.js";
 import { createMemoryEmbeddingSwitch } from "./composition/runtime-memory-embedding-switch.js";
 import { createRuntimeMemoryServices, createRuntimeMemoryConsolidator } from "./composition/runtime-memory-services.js";
 import { sessionGroundingSource } from "../memory/name-grounding.js";
@@ -387,7 +388,9 @@ export async function createAgentRuntime(
   });
 
   // ATO-1621: "My files", its own SQLite file; embeds with memory's model.
-  const fileIndex = createRuntimeFileIndex({ config, notesStore, logger });
+  // ATO-2501: scans and photos only through a local vision model, attached below.
+  const fileIndexVision = createLocalVisionSlot();
+  const fileIndex = createRuntimeFileIndex({ config, notesStore, logger, readConfig: () => getConfig(), localVision: fileIndexVision.read });
 
   const sessionStore = prepareRuntimeSessionStore(config, logger);
   // The commands `os.shell.run` detached at the default timeout (F47).
@@ -467,6 +470,7 @@ export async function createAgentRuntime(
   const providers = await connectRuntimeProviders(config, logger, localProfile, connectedLocal);
   const { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveActiveModelName, resolveRouteVision } = providers;
   builtProviderIds = () => providerRegistry.listIds();
+  fileIndexVision.attach({ registry: providerRegistry, readLlm: () => resolveLlmConfig(getConfig()), localModelsUrl: () => getConfig().localModels.url });
   // ATO-2394: Privacy Shield's opt-in local name pass (`privacy.shield.localNames`).
   installPrivacyNameDetector({ providerRegistry, sideCallSlotId: () => slotManager.sideCallSlotId(), logger });
 

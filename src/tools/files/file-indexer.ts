@@ -78,6 +78,8 @@ export class FileIndexer {
 
   status(): FileIndexStatus {
     return statusFrom(this.deps.store.counts(), {
+      ocrPages: this.deps.store.ocrPages(),
+      skippedReasons: this.deps.store.skipReasons(SKIP_REASONS_SHOWN),
       running: this.loop !== null,
       ...(this.current !== undefined ? { current: this.current } : {}),
       ...(this.lastError !== undefined ? { lastError: this.lastError } : {}),
@@ -145,7 +147,7 @@ export class FileIndexer {
       const result = await this.deps.extract(file.path, this.controller.signal);
       if (this.stopped) return;
       if (result.status === "ok") {
-        const ids = store.saveChunks(file.id, chunkSegments(result.segments), this.now().toISOString());
+        const ids = store.saveChunks(file.id, chunkSegments(result.segments), this.now().toISOString(), result.ocrPages ?? 0);
         if (ids !== null && ids.length === 0) store.markFile(file.id, "skipped", "no text in the file");
       } else if (result.status === "skipped") {
         store.markFile(file.id, "skipped", result.reason);
@@ -199,10 +201,14 @@ function putIfStillThere(vectors: FileVectorStore, chunkId: number, model: strin
   }
 }
 
+/** Skip reasons the status lists. */
+const SKIP_REASONS_SHOWN = 8;
+
 /** The route's status from store counts and the loop's state. */
 export function statusFrom(
   counts: { found: number; indexed: number; failed: number; skipped: number },
-  state: Pick<FileIndexStatus, "running" | "current" | "lastError" | "updatedAt">,
+  state: Pick<FileIndexStatus, "running" | "current" | "lastError" | "updatedAt"> &
+    Partial<Pick<FileIndexStatus, "ocrPages" | "skippedReasons">>,
 ): FileIndexStatus {
   return {
     running: state.running,
@@ -213,6 +219,8 @@ export function statusFrom(
     ...(state.current !== undefined ? { current: state.current } : {}),
     ...(state.lastError !== undefined ? { lastError: state.lastError } : {}),
     updatedAt: state.updatedAt,
+    ocrPages: state.ocrPages ?? 0,
+    skippedReasons: state.skippedReasons ?? [],
   };
 }
 

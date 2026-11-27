@@ -311,6 +311,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `vision.maxImageBytes` | `number` | `8388608` | Hard upper bound on a single image's decoded byte length. |
 | `vision.maxImagesPerCall` | `number` | `4` | Hard upper bound on the number of images per `vision.describe` call. |
 | `vision.maxAudioBytes` | `number` | `16777216` | Hard upper bound on one `audio.listen` file, in bytes. |
+| `vision.indexFiles` | `boolean` | `false` | Read scanned PDF pages and photos in My files with a vision model on this computer or the local network (Atomic Core, llama-server, LM Studio), and audio with whisper.cpp (ATO-2501). Off by default: each scanned page or photo costs one model call. A cloud model is never used for it. |
 
 ## skills
 

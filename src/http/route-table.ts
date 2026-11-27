@@ -140,7 +140,7 @@ import type { DeviceSessions } from "./device-sessions.js";
 import { createRestoreFileHandler } from "./route-fs-restore.js";
 import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
 import * as importFacts from "./route-import-facts.js";
-import { createAddFileFolderHandler, createFileIndexStatusHandler, createListFileFoldersHandler, createRemoveFileFolderHandler } from "./route-files.js";
+import { createAddFileFolderHandler, createFileIndexStatusHandler, createListFileFoldersHandler, createRemoveFileFolderHandler, createRetrySkippedFilesHandler } from "./route-files.js";
 import { createExpandMentionsHandler, createProblemsHandler } from "./route-mentions.js";
 import {
   createDeleteMemoryNoteHandler,
@@ -483,6 +483,7 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     // ATO-2472: the composer's `@` mentions and `@problems`, shared with the terminal (route-mentions.ts).
     { method: "POST", path: "/api/mentions/expand", handler: createExpandMentionsHandler() },
     { method: "GET", path: "/api/problems", handler: createProblemsHandler() },
+    { method: "POST", path: "/api/files/retry", handler: createRetrySkippedFilesHandler() },
     // ATO-1124: the person's own list / edit / delete of notes and profile facts (route-memory.ts).
     { method: "GET", path: "/api/memory/notes", handler: createListMemoryNotesHandler() },
     { method: "PATCH", path: "/api/memory/notes/{id}", handler: createEditMemoryNoteHandler() },

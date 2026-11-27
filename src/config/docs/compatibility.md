@@ -52,6 +52,10 @@ The desktop app and the terminal share one state dir and one `config.json`, and 
 
 `network.offline` (boolean, ATO-1084) is additive and unversioned: a file without the `network` block reads `false`, which changes nothing. `ATOMIC_AGENT_OFFLINE=1` can only turn it on; `loadConfig` folds it into `config.network.offline`. A non-boolean is a validation error. [Network config tests](../network-config.test.ts) cover it.
 
+## My files reads scans, photos and audio
+
+`vision.indexFiles` (boolean, ATO-2501) is additive and unversioned: a file without it reads `false`, so My files skips scans, photos and audio as before. A non-boolean is a validation error. [Config schema tests](../config-schema.test.ts) cover it.
+
 ## Privacy Shield
 
 `privacy.shield.enabled` (boolean, ATO-599) is additive and unversioned: a file without the `privacy` block reads `false`, which changes nothing. A non-boolean is a validation error. [Privacy config tests](../privacy-config.test.ts) cover it.
