@@ -8249,7 +8249,7 @@ function submit(preparedSkillText, opts) {
   const e = $('#entry');
   const typed = typeof preparedSkillText === 'string' ? preparedSkillText : (e ? e.value : S.draft).trim();
   // ATO-2457: a widget's text left as it was in the box is a message, never a /command or !command (widget-send.js).
-  const widgetPlain = typeof preparedSkillText !== 'string' && typeof widgetTextIsPlain === 'function' && widgetTextIsPlain(typed);
+  const widgetPlain = typeof preparedSkillText !== 'string' && typeof widgetSubmitPlain === 'function' && widgetSubmitPlain(typed, opts, e);
   // ATO-1238: `!command` opens Terminal in the chat's folder with it typed, not run (bang-command.js).
   if (!widgetPlain && typeof preparedSkillText !== 'string' && typeof bangCommandOf === 'function' && bangTerminalOk() && bangCommandOf(typed)) { bangOpen(bangCommandOf(typed), typed, workingDir()); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
   /* ATO-405: files in the composer ride in the message itself, as the

@@ -16,7 +16,14 @@ const W = require("../renderer/widget-send.js");
 
 const toasts = [];
 const sends = [];
-const entry = { value: "", setSelectionRange() {}, style: {} };
+// Like a <textarea>: its value reads CR and CRLF back as LF.
+function textarea(v) {
+  let val = "";
+  const box = { setSelectionRange() {}, style: {}, get value() { return val; }, set value(x) { val = String(x).replace(/\r\n?/g, "\n"); } };
+  box.value = v || "";
+  return box;
+}
+const entry = textarea("");
 globalThis.S = { draft: "" };
 globalThis.$ = (sel) => (sel === "#entry" ? entry : null);
 globalThis.autosize = () => {};
@@ -66,7 +73,7 @@ test("on: a widget's /command or !command goes out as a plain message, chips lef
     assert.equal(W.widgetDeliver(text, "Continue?"), "sent");
     const c = calls.pop();
     assert.equal(c.plain, true, "submit() is told this box text is a widget's message: " + text);
-    assert.deepEqual(c.opts, { plain: true });
+    assert.deepEqual(c.opts, { plain: true, widget: true });
   }
   // Sent, so the mark is gone: the person typing the same words later gets the command.
   assert.equal(W.widgetTextIsPlain("/quit"), false);
@@ -100,9 +107,9 @@ function submitSource() {
   assert.ok(at >= 0, "submit is a top-level function in renderer.js");
   return rendererSrc.slice(at + 1, rendererSrc.indexOf("\n}\n", at) + 2);
 }
-function runRealSubmit(boxText) {
+function runRealSubmit(boxText, opts) {
   const did = [];
-  const box = { value: boxText };
+  const box = textarea(boxText);
   const c = vm.createContext({
     VOICE: { state: "" }, voiceStop() {}, $: (sel) => (sel === "#entry" ? box : null),
     S: { draft: boxText, slash: false, busy: false, pending: false, live: { state: "starting" }, log: [], queued: [] },
@@ -113,10 +120,10 @@ function runRealSubmit(boxText) {
     BSW: { gating: false }, SK: { workingDir: "/w" }, SLASH: [["quit"], ["runmode"]],
     submitSkillCommand: (t) => did.push("skill:" + t), runSlash: (a) => did.push("slash:" + a.join(" ")),
     openHoldsComposer: () => false, OPENING: {}, swxWaitsForRoute: () => false, DRAIN_OWED: false, SWX: {},
-    toast: (t) => did.push("toast:" + t), widgetTextIsPlain: W.widgetTextIsPlain,
+    toast: (t) => did.push("toast:" + t), widgetSubmitPlain: W.widgetSubmitPlain,
   });
   vm.runInContext(submitSource() + "globalThis.submit = submit;", c);
-  c.submit();
+  c.submit(undefined, opts);
   return did;
 }
 
@@ -129,6 +136,38 @@ test("renderer submit(): a widget's /command or !command left in the box is sent
   W.WIDGET_SEND.plain = "";
   assert.deepEqual(runRealSubmit("/runmode cloud"), ["slash:runmode cloud"]);
   assert.deepEqual(runRealSubmit("!ls"), ["bang:ls"]);
+});
+
+test("renderer submit(): a widget's text with CR or CRLF line ends is still a message (textarea makes them LF)", () => {
+  // Send now: the widget says so outright, whatever the box reads back.
+  W.widgetSendNowSet(true);
+  let did = null;
+  globalThis.submit = (prepared, opts) => { did = runRealSubmit(entry.value, opts); };
+  assert.equal(W.widgetDeliver("/runmode\r\ncloud", "Continue?"), "filled");
+  assert.equal(entry.value, "/runmode\ncloud");
+  assert.deepEqual(did, ["toast:The agent is still starting"], "runSlash is not called");
+  // Fill only: the box's LF text still matches the widget's CR text.
+  W.widgetSendNowSet(false);
+  entry.value = ""; B.AB.lastFill = ""; W.WIDGET_SEND.plain = "";
+  for (const text of ["/analytics\ron", "/runmode\r\ncloud", "!ls\r\n-la"]) {
+    entry.value = ""; B.AB.lastFill = "";
+    assert.equal(W.widgetDeliver(text, "Continue?"), "filled");
+    assert.deepEqual(runRealSubmit(entry.value), ["toast:The agent is still starting"], JSON.stringify(text));
+  }
+});
+
+test("once a send empties the box the widget's mark is dropped: the person's own /command later runs", async () => {
+  assert.equal(W.widgetDeliver("/runmode cloud", "Continue?"), "filled");
+  // Held (the box keeps the text): still the widget's message.
+  assert.equal(W.widgetSubmitPlain(entry.value, undefined, entry), true);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(W.widgetTextIsPlain("/runmode cloud"), true);
+  // Sent (the box is emptied): the mark goes.
+  assert.equal(W.widgetSubmitPlain(entry.value, undefined, entry), true);
+  entry.value = "";
+  await new Promise((r) => setImmediate(r));
+  assert.equal(W.WIDGET_SEND.plain, "");
+  assert.deepEqual(runRealSubmit("/runmode cloud"), ["slash:runmode cloud"]);
 });
 
 test("the Settings row names the switch and its act", () => {
