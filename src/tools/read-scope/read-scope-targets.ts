@@ -154,6 +154,19 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
         .filter((path): path is string => path !== undefined),
   ],
   [
+    // ATO-2807: not a read, but a way out: a channel uploads every
+    // attached file to the chat. Scoped like a read, so the agent's own
+    // secret files ask as `state_secret`, a file outside the scope asks
+    // and a guest attaches nothing a guest could not read. `reply` also
+    // takes one path as a plain string (small models flatten the array),
+    // and trims each path before use, so the check trims too.
+    "reply",
+    (args) =>
+      (Array.isArray(args.attachments) ? args.attachments : [args.attachments])
+        .map((item: unknown) => nonEmpty(typeof item === "string" ? item.trim() : undefined))
+        .filter((path): path is string => path !== undefined),
+  ],
+  [
     // A syntax check reads every file it is handed.
     "verify.syntax",
     (args) =>

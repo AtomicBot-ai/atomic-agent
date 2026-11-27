@@ -59,6 +59,9 @@ export const replyTool: ToolDefinition = {
  * can fix the path (or drop the attachment) and reply again. The
  * ordinary checks are cheap — one `stat` per path — and a directory
  * is rejected because no channel can post one.
+ * The read scope, the agent's secret files and a guest's limits are
+ * checked before this runs, at dispatch, like a read (ATO-2807,
+ * `read-scope-targets.ts`).
  *
  * Accepted shapes: `string[]` (canonical), a single `string` (small
  * models flatten one-element arrays), `undefined` / `null` / `[]`
