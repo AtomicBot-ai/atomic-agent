@@ -115,6 +115,12 @@ describe("applyMcpToolNameRule", () => {
     expect(applyMcpToolNameRule(g, dyn, true)).toMatch(/\| mcp-native-tool \| mcp-server-tool\n/);
   });
 
+  it("still puts mcp-native-tool at the end when no built-in anchor group is on the line", () => {
+    expect(applyMcpToolNameRule('tool-name ::= browser-tool | "\\"reply\\""', null, true)).toBe(
+      'tool-name ::= browser-tool | "\\"reply\\"" | mcp-native-tool',
+    );
+  });
+
   it("replaces the static placeholder with the dynamic rule", () => {
     const dyn = 'mcp-server-tool ::= "\\"mcp.github.create_issue\\""';
     const out = applyMcpToolNameRule(baseGrammar, dyn);
