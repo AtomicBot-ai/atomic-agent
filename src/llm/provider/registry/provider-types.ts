@@ -134,6 +134,12 @@ export type LlmFallbackConfig = {
    * failure (ATO-2208, `local-first-head.ts`). Default false.
    */
   localFirst?: boolean;
+  /** Hand a weak local answer to the cloud mid-turn (ATO-2434). Default true. */
+  localFirstEscalate?: boolean;
+  /** Cloud spend ceiling of one local-first turn, USD (ATO-2434). */
+  localFirstMaxTurnUsd?: number;
+  /** Day's spend past which local-first keeps turns local, USD (ATO-2434). */
+  localFirstMaxDayUsd?: number;
   /** Consecutive advance-worthy failures before switching (non-immediate signals). */
   failureThreshold?: number;
   /** Escalating cooldown ladder in ms; the last entry is the cap. */

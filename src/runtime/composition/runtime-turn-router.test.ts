@@ -155,6 +155,16 @@ describe("routeTurnProvider local-first cascade (ATO-2208)", () => {
     expect(String(info.mock.calls[0]?.[0])).toContain("rests");
   });
 
+  it("tells the caller when the local-first cascade heads the turn, not a router rule (ATO-2434)", () => {
+    const onLocalFirstHead = vi.fn();
+    run(localFirstConfig({ localFirst: true }), { ...available, onLocalFirstHead });
+    expect(onLocalFirstHead).toHaveBeenCalledWith("local-llama");
+    onLocalFirstHead.mockClear();
+    const ruled = localFirstConfig({ localFirst: true }, { enabled: true, rules: [{ provider: "groq" }] });
+    run(ruled, { ...available, onLocalFirstHead });
+    expect(onLocalFirstHead).not.toHaveBeenCalled();
+  });
+
   it("a matching router rule wins over the local-first head", () => {
     const config = localFirstConfig({ localFirst: true }, { enabled: true, rules: [{ provider: "groq" }] });
     expect(run(config, available).providerId).toBe("groq");

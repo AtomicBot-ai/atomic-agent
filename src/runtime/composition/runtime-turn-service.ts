@@ -39,6 +39,7 @@ import { createRuntimeGoalRunner } from "./runtime-goal.js";
 import { createNextStepSuggester } from "./runtime-next-step.js";
 import type { createExperienceReviewer } from "./runtime-experience-review.js";
 import { routeTurnProvider, sessionPromptEstimate } from "./runtime-turn-router.js";
+import { localFirstTurnPolicy, type LocalFirstEscalation, type LocalFirstTurnPolicy } from "./local-first-escalation.js";
 import { continueOnStopHooks, startTurnHooks } from "./runtime-session-hooks.js";
 import type { SessionHookEngine } from "../../hooks/session-hook-engine.js";
 import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
@@ -114,6 +115,15 @@ export interface RuntimeTurnDependencies {
      * check is skipped.
      */
     resolveLocalContextWindow?: (providerId: string) => number | null;
+    /**
+     * The cloud part of a local-first turn (ATO-2434): weak-answer
+     * escalation and its spend ceilings. Omitted (tests, embedders): none.
+     */
+    localFirst?: {
+      escalation: Pick<LocalFirstEscalation, "begin" | "end">;
+      /** Today's spend so far, USD (`DailySpendStore.peek`). */
+      todaySpendUsd: () => number;
+    };
   };
   traces: Pick<RuntimeTraces, "ensureRecorder" | "pinSession" | "readContextUsage" | "clearContextUsage" | "releaseSession">;
   telemetry: {
@@ -562,6 +572,11 @@ export function createRuntimeTurnService(
     // the local run mode, Fusion or a turn that is already pinned. Set
     // every turn (null when nothing routed), so a turn that threw before
     // its `finally` cannot leave its head on the next one.
+    // ATO-2434: a local-first head gets the cloud allowance below and a
+    // weak-answer watch; a stale watch from a turn that threw is dropped.
+    const localFirst = deps.inference.localFirst;
+    localFirst?.escalation.end(session.id);
+    let localFirstPolicy: LocalFirstTurnPolicy | null = null;
     const routedProviderId = routeTurnProvider({
       config: getConfig(),
       userMessage,
@@ -579,6 +594,14 @@ export function createRuntimeTurnService(
         ? { localContextWindow: deps.inference.resolveLocalContextWindow }
         : {}),
       isCoolingDown: (id) => fallbackChain.turnHeadCoolingDown?.(session.id, id) ?? false,
+      onLocalFirstHead: (headId) => {
+        localFirstPolicy = localFirstTurnPolicy({
+          fallback: getConfig().llm?.fallback,
+          todayUsd: localFirst?.todaySpendUsd(),
+          taskMaxCostUsd: runOptions.taskMaxCostUsd ?? getConfig().agent.task.maxCostUsd,
+        });
+        if (localFirstPolicy.escalate) localFirst?.escalation.begin(session.id, headId);
+      },
     });
     if (runOptions.providerId === undefined) {
       fallbackChain.setTurnPrimary(session.id, routedProviderId ?? null);
@@ -719,6 +742,7 @@ export function createRuntimeTurnService(
           ...buildLoopTurnBudget({
             ...runOptions,
             ...(toolFilter !== undefined ? { toolFilter } : {}),
+            ...localFirstCostCeiling(localFirstPolicy),
           }),
           onStepCheckpoint: (stepState, step) =>
             checkpointStep(stepState, progress.atStep(step)),
@@ -805,6 +829,7 @@ export function createRuntimeTurnService(
         turnPreviousReplies?.delete(session.id);
         turnsWithoutQuestions?.delete(session.id);
         traces.releaseSession(session.id);
+        localFirst?.escalation.end(session.id);
         if (routedProviderId !== undefined) {
           fallbackChain.setTurnPrimary(session.id, null);
         }
@@ -1045,4 +1070,9 @@ export function resolveTurnLocalEngine(config: AtomicAgentConfig, providerId: st
   if (!providerIdIsLlamaServer(resolveLlmConfig(config), providerId)) return undefined;
   if (providerId !== "local-llama" || config.localModels.mode !== "managed") return "external";
   return config.localModels.managed.engine === "llama-server" ? "llama-server" : "atomic-core";
+}
+
+/** A local-first turn's cloud ceiling as a loop budget field (ATO-2434). */
+function localFirstCostCeiling(policy: LocalFirstTurnPolicy | null): { taskMaxCostUsd?: number } {
+  return policy?.maxCostUsd !== undefined ? { taskMaxCostUsd: policy.maxCostUsd } : {};
 }

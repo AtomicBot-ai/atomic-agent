@@ -34,6 +34,8 @@ export interface RouteTurnProviderParams {
    * rests (ATO-2435). Absent: never.
    */
   isCoolingDown?: (providerId: string) => boolean;
+  /** Told when the local-first cascade (not a router rule) heads the turn (ATO-2434). */
+  onLocalFirstHead?: (providerId: string) => void;
 }
 
 /**
@@ -131,6 +133,7 @@ function localFirstProvider(params: RouteTurnProviderParams): string | undefined
     sessionId: params.sessionId,
     providerId: decision.head,
   });
+  params.onLocalFirstHead?.(decision.head);
   return decision.head;
 }
 

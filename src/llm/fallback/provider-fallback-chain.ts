@@ -282,6 +282,36 @@ export class ProviderFallbackChain {
     return p !== undefined && turnHeadResting(p.headCooldowns, providerId, this.now());
   }
 
+  /**
+   * Move `partitionKey` off its turn head for the rest of the turn though
+   * the head answered: its answer was weak (ATO-2434,
+   * `local-first-weak-answer.ts`). The next link becomes the sticky
+   * override, announced like a fallover with `reason`, and the head is
+   * not probed again within the turn (its probe clock is set, its failure
+   * count and the head rest are left alone: it is not down). The next
+   * turn starts on its head again.
+   * Returns the link the turn goes on on, or null when there is no turn
+   * head, the turn already left it, or nothing follows it.
+   */
+  escalateTurnHead(partitionKey: string, reason: string): string | null {
+    const p = this.partitions.get(partitionKey);
+    if (p === undefined || p.turnPrimaryId === null || p.overrideId !== null) return null;
+    const [head, next] = this.chainFor(p);
+    if (head === undefined || next === undefined) return null;
+    const now = this.now();
+    const b = this.breaker(p, head);
+    b.lastProbeAt = now;
+    b.cooldownUntil = Math.max(b.cooldownUntil, now + this.resolve().timing.probeThrottleMs);
+    p.overrideId = next;
+    p.overrideCause = null;
+    p.overrideServed = false;
+    p.fallbackServed = false;
+    p.servingId = null;
+    p.announcedOverride = true;
+    this.emit({ direction: "away", from: head, to: next, reason });
+    return next;
+  }
+
   /** Whether a fallback has served `partitionKey` since it left the primary. */
   hasFallbackServed(partitionKey = DEFAULT_PARTITION): boolean {
     return this.partitions.get(partitionKey)?.fallbackServed ?? false;
