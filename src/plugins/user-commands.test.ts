@@ -39,7 +39,11 @@ describe("listUserCommands", () => {
     put(join(opts.stateDir, "commands", "commit.md"), "Commit\n");
     put(join(opts.workingDir, ".atomic-agent", "commands", "review.md"), "Review\n");
     const none = { ...opts, isProjectCommandTrusted: () => false };
-    expect(listUserCommands(none).commands.map(c => c.name)).toEqual(["commit"]);
+    const listed = listUserCommands(none);
+    expect(listed.commands.map(c => c.name)).toEqual(["commit"]);
+    expect(listed.problems).toEqual([
+      { file: join(opts.workingDir, ".atomic-agent", "commands", "review.md"), reason: "not trusted yet", skipped: true },
+    ]);
     expect(renderUserCommand(none, "review", "")).toBeNull();
   });
 

@@ -97,7 +97,10 @@ export function listUserCommands(options: UserCommandOptions): {
       try {
         const { parsed, content } = readCommandFile(file);
         const trustKey = source === "project" ? projectCommandKey(options.workingDir, file, content) : undefined;
-        if (trustKey !== undefined && !options.isProjectCommandTrusted(trustKey)) continue;
+        if (trustKey !== undefined && !options.isProjectCommandTrusted(trustKey)) {
+          problems.push({ file, reason: "not trusted yet", skipped: true });
+          continue;
+        }
         seen.add(name);
         const metaProblem = frontMatterProblem(content);
         if (metaProblem !== null) {
