@@ -7,7 +7,7 @@ import {
   type HttpHandler,
 } from "./request-context.js";
 import type { ServerResponse } from "node:http";
-import type { ShellJobHostControls } from "../tools/os/shell/shell-job-host.js";
+import { secretInputMasked, type ShellJobHostControls } from "../tools/os/shell/shell-job-host.js";
 
 /**
  * The agent's kept shell jobs, for hosts that show them (ATO-2485, the
@@ -16,15 +16,18 @@ import type { ShellJobHostControls } from "../tools/os/shell/shell-job-host.js";
  *
  *   GET  /api/sessions/{id}/shell-jobs                     the jobs, oldest first
  *   GET  /api/sessions/{id}/shell-jobs/{jobId}/output?since=N  output from N
- *   POST /api/sessions/{id}/shell-jobs/{jobId}/input  {text, eof?}
+ *   POST /api/sessions/{id}/shell-jobs/{jobId}/input  {text, eof?, secret?}
  *   POST /api/sessions/{id}/shell-jobs/{jobId}/resize {cols, rows}
  *   POST /api/sessions/{id}/shell-jobs/{jobId}/stop
  *
  * The input is the person's: it goes to the job's stdin and nowhere else
  * (not the session, not the transcript, not a log; this file never logs a
- * body). A paired phone cannot type into a job. An agent without these
- * routes answers 404; a runtime without `shellJobs` answers 404 too, so a
- * host feature-detects with the list.
+ * body). `secret: true` (the host's Hide typing) also masks it in every
+ * later tool result and trace, and the answer's `masked` says whether
+ * the value could be masked (a short or plain-word one cannot). A paired
+ * phone cannot type into a job. An agent without these routes answers
+ * 404; a runtime without `shellJobs` answers 404 too, so a host
+ * feature-detects with the list.
  */
 
 const RESIZE_MIN = 2;
@@ -108,16 +111,20 @@ export function createShellJobInputHandler(): HttpHandler {
     if (!controls) return;
     const body = await bodyOf(req, res);
     if (!body) return;
-    const { text, eof } = body;
-    if (typeof text !== "string" || (eof !== undefined && typeof eof !== "boolean")) {
-      sendError(res, 400, openaiError("text must be a string and eof, when given, true or false"));
+    const { text, eof, secret } = body;
+    if (
+      typeof text !== "string" ||
+      (eof !== undefined && typeof eof !== "boolean") ||
+      (secret !== undefined && typeof secret !== "boolean")
+    ) {
+      sendError(res, 400, openaiError("text must be a string, and eof and secret, when given, true or false"));
       return;
     }
     if (text.length === 0 && eof !== true) {
       sendError(res, 400, openaiError("nothing to type: text is empty and eof is not set"));
       return;
     }
-    const outcome = controls.write(a.sessionId, a.jobId, text, eof === true);
+    const outcome = controls.write(a.sessionId, a.jobId, text, eof === true, { secret: secret === true });
     if (outcome === "not_found") return notFound(res, a);
     if (outcome === "too_long") {
       sendError(res, 413, openaiError("that is too much to type in one go"));
@@ -127,7 +134,12 @@ export function createShellJobInputHandler(): HttpHandler {
       sendError(res, 409, openaiError(`job ${a.jobId} does not take input: it has ended or was not started as a terminal`));
       return;
     }
-    sendJson(res, 200, { written: true, sessionId: a.sessionId, jobId: a.jobId });
+    sendJson(res, 200, {
+      written: true,
+      sessionId: a.sessionId,
+      jobId: a.jobId,
+      ...(secret === true ? { masked: secretInputMasked(text) } : {}),
+    });
   };
 }
 

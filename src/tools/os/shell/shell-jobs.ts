@@ -30,13 +30,13 @@ export type ShellJobState = "running" | "exited" | "killed";
 
 export type ShellJobStopReason =
   | "kill"
-  /** The person stopped it from a host's terminal tab (ATO-2485). */
-  | "person"
   | "turn_end"
   | "session_end"
   | "evicted"
   | "ceiling"
-  | "shutdown";
+  | "shutdown"
+  /** The person, from the TUI's `/stop` (ATO-2437). */
+  | "user";
 
 export interface ShellJobRecord {
   /** Per session, from 1 — what the model quotes back. */

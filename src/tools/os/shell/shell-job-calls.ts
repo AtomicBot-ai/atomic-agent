@@ -139,12 +139,12 @@ export function headOfCommand(commandLine: string, max = 60): string {
 
 const STOP_WORDING: Record<ShellJobStopReason, string> = {
   kill: "on request",
-  person: "by the user",
   turn_end: "at the turn's end",
   session_end: "at the session's end",
   evicted: "to stay within the job limit",
   ceiling: "at the job ceiling",
   shutdown: "at shutdown",
+  user: "by the user",
 };
 
 export interface ShellDetachRender {
