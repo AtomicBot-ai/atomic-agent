@@ -24,6 +24,7 @@ import type { ApprovalHandler } from "../approval/approval-router.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import type { FileIndexApi } from "../tools/files/index.js";
+import type { ShellJobHostControls } from "../tools/os/shell/shell-job-host.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 import type { ProviderRegistry } from "../llm/provider/index.js";
 import type { ReasoningEffort } from "../llm/provider/completion-types.js";
@@ -327,6 +328,13 @@ export interface AgentRuntime {
     escalate(parentSessionId: string, taskId: string): Promise<string | null>;
     steer(parentSessionId: string, taskId: string, text: string): boolean;
   };
+  /**
+   * The agent's kept `os.shell.run` jobs as the person sees them
+   * (ATO-2485): list, read output, type into an interactive one, resize,
+   * stop. What is typed here never enters the session or the transcript.
+   * Optional so embedders and test runtimes need not provide it.
+   */
+  readonly shellJobs?: ShellJobHostControls;
   /**
    * Fusion runs cut off by a crash, a quit or an update (ATO-617), read
    * from their checkpoints. `listResumable` names the runs nobody is

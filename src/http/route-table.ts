@@ -57,6 +57,13 @@ import { createRenameSessionHandler } from "./route-session-title.js";
 import { createGetSessionGoalHandler, createSessionGoalActionHandler } from "./route-session-goal.js";
 import { createExportSessionHandler } from "./route-session-export.js";
 import { createSetSessionArchivedHandler } from "./route-session-archived.js";
+import {
+  createListShellJobsHandler,
+  createShellJobInputHandler,
+  createShellJobOutputHandler,
+  createShellJobResizeHandler,
+  createStopShellJobHandler,
+} from "./route-shell-jobs.js";
 import { createSetSessionTrashedHandler } from "./route-session-trashed.js";
 import {
   createEscalateFusionWorkerHandler,
@@ -394,6 +401,13 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "POST", path: "/api/sessions/{id}/fusion/workers/{taskId}/stop", handler: createStopFusionWorkerHandler() },
     { method: "POST", path: "/api/sessions/{id}/fusion/workers/{taskId}/steer", handler: createSteerFusionWorkerHandler() },
     { method: "POST", path: "/api/sessions/{id}/fusion/workers/{taskId}/escalate", handler: createEscalateFusionWorkerHandler() },
+    // ATO-2485: the agent's kept shell jobs in the desktop's terminal tab;
+    // the person's input goes to the job only (route-shell-jobs.ts).
+    { method: "GET", path: "/api/sessions/{id}/shell-jobs", handler: createListShellJobsHandler() },
+    { method: "GET", path: "/api/sessions/{id}/shell-jobs/{jobId}/output", handler: createShellJobOutputHandler() },
+    { method: "POST", path: "/api/sessions/{id}/shell-jobs/{jobId}/input", handler: createShellJobInputHandler() },
+    { method: "POST", path: "/api/sessions/{id}/shell-jobs/{jobId}/resize", handler: createShellJobResizeHandler() },
+    { method: "POST", path: "/api/sessions/{id}/shell-jobs/{jobId}/stop", handler: createStopShellJobHandler() },
     {
       method: "POST",
       path: "/api/approval/resolve",
