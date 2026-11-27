@@ -161,18 +161,20 @@ export async function readJsonBody<T = unknown>(
 }
 
 /**
- * Read the exact request bytes, capped at `MAX_JSON_BODY_BYTES`. Routes
- * that verify a signature over the body (signed webhooks) read it this
- * way first and parse it with `parseJsonBody` afterwards.
+ * Read the exact request bytes, capped at `maxBytes` (`MAX_JSON_BODY_BYTES`
+ * unless a route passes its own). Routes that verify a signature over the
+ * body (signed webhooks) read it this way first and parse it with
+ * `parseJsonBody` afterwards. ATO-2483: only the shared model route passes
+ * a larger cap, and only after its key check.
  */
-export async function readRawBody(req: IncomingMessage): Promise<Buffer> {
+export async function readRawBody(req: IncomingMessage, maxBytes: number = MAX_JSON_BODY_BYTES): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
     const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
     total += buf.length;
-    if (total > MAX_JSON_BODY_BYTES) {
-      throw new BodyTooLargeError(total);
+    if (total > maxBytes) {
+      throw new BodyTooLargeError(total, maxBytes);
     }
     chunks.push(buf);
   }
@@ -191,8 +193,11 @@ export function parseJsonBody<T = unknown>(raw: Buffer): T {
 }
 
 export class BodyTooLargeError extends Error {
-  constructor(public readonly bytes: number) {
-    super(`request body exceeds ${MAX_JSON_BODY_BYTES} bytes (got ${bytes})`);
+  constructor(
+    public readonly bytes: number,
+    public readonly limit: number = MAX_JSON_BODY_BYTES,
+  ) {
+    super(`request body exceeds ${limit} bytes (got ${bytes})`);
     this.name = "BodyTooLargeError";
   }
 }
