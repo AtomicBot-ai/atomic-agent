@@ -50,6 +50,7 @@ import { registerTaskTools } from "./tasks/index.js";
 import { registerSessionTools } from "./sessions/index.js";
 import { registerVisionTools } from "./vision/index.js";
 import { registerLogbookTools } from "./logbook/index.js";
+import { registerAppTools } from "./app/index.js";
 import { registerAudioListenTools } from "./audio/index.js";
 import { registerImageTools } from "./image/index.js";
 import { registerVideoTools } from "./video/index.js";
@@ -326,6 +327,7 @@ beforeAll(() => {
   registerSessionTools(registry, sessionOptions(true));
   registerVisionTools(registry, { enabled: true, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
   registerLogbookTools(registry, { ...dangerous, stateDir: directory, notesStayLocal: () => true });
+  registerAppTools(registry, { ...dangerous, stateDir: directory });
   registerAudioListenTools(registry, { enabled: true, provider: () => undefined, maxAudioBytes: 1024 });
   registerImageTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });
   registerVideoTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });

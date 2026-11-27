@@ -104,6 +104,7 @@ const V = {
   focused: ["Focused", "Focusing", "focus"],
   used: ["Used", "Using", "use"],
   transcribed: ["Transcribed", "Transcribing", "transcribe"],
+  removed: ["Removed", "Removing", "remove"],
 } as const satisfies Record<string, Verb>;
 
 // ---------------------------------------------------------------------------
@@ -240,6 +241,11 @@ const FIXED: Readonly<Record<string, Phrase>> = {
   "tasks.list": P(V.listed, "tasks"),
   "tasks.show": P(V.lookedAt, "a task"),
   "tasks.cancel": P(V.cancelled, "a task"),
+  // ATO-2459: My apps.
+  "app.save": P(V.created, "an app in My apps"),
+  "app.update": P(V.edited, "an app in My apps"),
+  "app.delete": P(V.removed, "an app from My apps"),
+  "app.list": P(V.lookedAt, "My apps"),
   "sessions.list": P(V.listed, "chats"),
   "sessions.read": P(V.read, "another chat"),
   "sessions.send": P(V.sent, "a request to another chat"),

@@ -31,6 +31,13 @@ describe("describeToolCall (ATO-962)", () => {
     });
   });
 
+  it("says the My apps calls in plain words (ATO-2459)", () => {
+    expect(line("app.save", { name: "Converter" }, true)).toBe("Created an app in My apps");
+    expect(line("app.update", { id: "converter-a1b2c3" })).toBe("Editing an app in My apps");
+    expect(line("app.delete", { id: "converter-a1b2c3" }, true)).toBe("Removed an app from My apps");
+    expect(line("app.list", {}, true)).toBe("Looked at My apps");
+  });
+
   it("keeps the past tense for a command that ran and failed", () => {
     expect(line("os.shell.run", { cmd: "npm", args: ["test"] }, false)).toBe("Ran npm test \u00b7 failed");
     expect(line("os.shell.run", { cmd: "npm", args: ["test"] }, true)).toBe("Ran npm test");

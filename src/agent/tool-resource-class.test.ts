@@ -93,6 +93,16 @@ describe("gated-call approval categories", () => {
     expect(gatedCallRunsUnattended("logbook.query", { level: 5 })).toBe(true);
   });
 
+  it("runs the My apps writes solo, asked like a file under the state dir (ATO-2459)", () => {
+    expect(resourceClassFor("app.list")).toBe("pure_read");
+    for (const name of ["app.save", "app.update", "app.delete"]) {
+      expect(resourceClassFor(name), name).toBe("approval_gated");
+      expect(gatedCallRunsUnattended(name, { level: 1 }), name).toBe(false);
+    }
+    expect(approvalCategoriesFor("app.save")).toContain("fs_write_home");
+    expect(approvalCategoriesFor("app.delete")).toContain("fs_trash");
+  });
+
   it("honours a session category grant, but never for a non-grantable category", () => {
     expect(
       gatedCallRunsUnattended("os.screen.click", {
