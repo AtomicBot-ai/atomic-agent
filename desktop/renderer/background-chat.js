@@ -19,6 +19,13 @@
    palette, and Claude desktop's quick entry, which opens a new chat with
    what was typed.
 
+   ATO-2478: the same from the global quick entry window (the mini chat,
+   ⌘⇧Space): ⌘↩ there (Ctrl+Enter on Windows and Linux) hands its text to
+   this window (main/quick-entry-window.ts app:quickEntryBackground, then
+   quick-entry-settings.js quickEntryDeliver) and bgChatFromQuickEntry
+   starts it here without bringing this window up. The end toast has an
+   "Open" button (toast-actions.js) that opens the chat.
+
    ATO-2751: the palette stays open until the chat has started, so a start
    that fails keeps the typed task where it was. Its row then says why in
    plain words and becomes Retry (⌘↩ again does the same), as Cursor's
@@ -29,6 +36,7 @@
 const BGCHAT = {turns: new Map(), starting: false, text: '', error: ''};
 const BGCHAT_MAX = 20000;
 const BGCHAT_LINE = 'Started in the background from the command palette.';
+const BGCHAT_QUICK_LINE = 'Started in the background from the quick entry window.';
 
 /** The text a background chat starts with: trimmed, capped; null for nothing. */
 function bgChatText(raw) {
@@ -105,10 +113,17 @@ function bgChatFromPalette() {
   return true;
 }
 
+/** ATO-2478: the quick entry window's ⌘↩: the same start, with its own line in the chat. */
+function bgChatFromQuickEntry(raw) {
+  const text = bgChatText(raw);
+  return text ? bgChatStart(text, BGCHAT_QUICK_LINE) : Promise.resolve(false);
+}
+
 /** Start the turn in a new chat and take it over as a background turn. */
-async function bgChatStart(text) {
+async function bgChatStart(text, line) {
   if (BGCHAT.starting || typeof BR === 'undefined' || !BR || typeof BR.chat !== 'function') return false;
   BGCHAT.starting = true; BGCHAT.text = text; BGCHAT.error = '';
+  const fromPalette = S.overlay === 'palette';   // the quick entry window (ATO-2478) starts with no palette open
   bgChatRepaint();
   const title = typeof chatTitle === 'function' ? chatTitle(text) : text.slice(0, 72);
   let res = null;
@@ -128,7 +143,7 @@ async function bgChatStart(text) {
     // The task is kept: in the palette if it is still open, else the palette comes back with it.
     if (!S.overlay && !S.settings) { S.overlay = 'palette'; S.q = text; if (typeof render === 'function') render(); }
     else bgChatRepaint();
-    if (S.overlay !== 'palette') toast('Couldn’t start the background chat', BGCHAT.error, 'bad');
+    if (!fromPalette || S.overlay !== 'palette') toast('Couldn’t start the background chat', BGCHAT.error, 'bad');
     return false;
   }
   BGCHAT.text = '';
@@ -141,7 +156,7 @@ async function bgChatStart(text) {
     const rec = typeof LIVE_TURNS !== 'undefined' ? LIVE_TURNS.get(res.turnId) : null;
     const note = rec && rec.log ? rec.log.find((r) => r.k === 'system') : null;
     // adoptLiveTurns' line is for a window opened mid-turn; this one was started from here.
-    if (note) note.text = BGCHAT_LINE;
+    if (note) note.text = line || BGCHAT_LINE;
   }
   if (typeof renderSidebar === 'function') renderSidebar();
   toast('Background chat started', '“' + title + '” runs while you stay here.');
@@ -155,8 +170,11 @@ function bgChatTurnEnded(turnId, sid, kind) {
   BGCHAT.turns.delete(turnId);
   const onScreen = !!sid && S.sessionId === sid && S.room === 'chat';
   const msg = bgChatEndToast(kind, title, onScreen);
-  if (msg) toast(msg.t, msg.s, msg.kind);
+  if (!msg) return;
+  // ATO-2478: "Open" goes to the chat, as its row in the list does (act ses:).
+  if (sid && typeof toastWithAction === 'function') toastWithAction(msg.t, msg.s, msg.kind, {label: 'Open', run: () => act('ses:' + sid)});
+  else toast(msg.t, msg.s, msg.kind);
 }
 
-if (typeof module !== 'undefined') module.exports = {BGCHAT, BGCHAT_LINE, bgChatText, bgChatEndToast, bgChatPaletteRow, bgChatEmptyRowHTML,
+if (typeof module !== 'undefined') module.exports = {BGCHAT, BGCHAT_LINE, BGCHAT_QUICK_LINE, bgChatFromQuickEntry, bgChatText, bgChatEndToast, bgChatPaletteRow, bgChatEmptyRowHTML,
   bgChatErrorLine, bgChatFromPalette, bgChatStart, bgChatTurnEnded};
