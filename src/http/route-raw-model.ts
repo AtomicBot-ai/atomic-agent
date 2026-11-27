@@ -7,10 +7,10 @@ import { readModelShareKey } from "./model-share-key.js";
 import { readModelShareSettings } from "./model-share-settings.js";
 import { openaiError } from "./openai-errors.js";
 import { createInFlightLimit, type InFlightLimit } from "./raw-model-limit.js";
+import { forwardToModel, upstreamV1Url } from "./model-forward.js";
 import {
   getBearerToken,
   getHeader,
-  onClientGone,
   readRawBody,
   sendAuthThrottled,
   sendError,
@@ -116,14 +116,8 @@ export function defaultRawModelShareDeps(): RawModelShareDeps {
   };
 }
 
-/** `http://h:p`, `http://h:p/`, `http://h:p/v1` all give `http://h:p/v1`. */
-export function upstreamV1Url(baseUrl: string, path: string): string {
-  const root = baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
-  return `${root}/v1${path}`;
-}
-
-/** Headers of the model's answer that the caller sees; nothing else is copied. */
-const PASSED_RESPONSE_HEADERS = ["content-type", "cache-control"];
+/** Kept here for the callers that import it from this module. */
+export { upstreamV1Url };
 
 export interface RawModelHandlers {
   models: HttpHandler;
@@ -161,7 +155,19 @@ export function createRawModelHandlers(deps: RawModelShareDeps = defaultRawModel
         return;
       }
       const target = deps.upstream();
-      await forward(req, res, { method, url: upstreamV1Url(target.baseUrl, path), upstreamKey: target.apiKey, body, doFetch });
+      await forwardToModel(req, res, {
+        method,
+        url: upstreamV1Url(target.baseUrl, path),
+        upstreamKey: target.apiKey,
+        body,
+        doFetch,
+        unreachable: openaiError(
+          "The local model is not running; start it in Atomic Agent and try again",
+          "server_error",
+          null,
+          "model_unreachable",
+        ),
+      });
     } finally {
       release();
     }
@@ -214,67 +220,4 @@ function admit(req: IncomingMessage, res: ServerResponse, deps: RawModelShareDep
   }
   throttle.succeeded(address);
   return true;
-}
-
-interface ForwardInput {
-  method: "GET" | "POST";
-  url: string;
-  /** Sent to the model server only; never written to the caller. */
-  upstreamKey: string | null;
-  body: Buffer | undefined;
-  doFetch: typeof fetch;
-}
-
-async function forward(req: IncomingMessage, res: ServerResponse, input: ForwardInput): Promise<void> {
-  const abort = new AbortController();
-  onClientGone(res, () => abort.abort());
-  const headers: Record<string, string> = { accept: getHeader(req, "accept") ?? "application/json" };
-  if (input.body !== undefined) headers["content-type"] = "application/json";
-  if (input.upstreamKey) headers.authorization = `Bearer ${input.upstreamKey}`;
-
-  let upstream: Response;
-  try {
-    upstream = await input.doFetch(input.url, {
-      method: input.method,
-      headers,
-      ...(input.body !== undefined ? { body: new Uint8Array(input.body) } : {}),
-      signal: abort.signal,
-    });
-  } catch {
-    if (abort.signal.aborted) return;
-    sendError(
-      res,
-      502,
-      openaiError("The local model is not running; start it in Atomic Agent and try again", "server_error", null, "model_unreachable"),
-    );
-    return;
-  }
-
-  const outHeaders: Record<string, string> = {};
-  for (const name of PASSED_RESPONSE_HEADERS) {
-    const value = upstream.headers.get(name);
-    if (value) outHeaders[name] = value;
-  }
-  if ((outHeaders["content-type"] ?? "").startsWith("text/event-stream")) {
-    outHeaders["cache-control"] = "no-cache, no-transform";
-    outHeaders["x-accel-buffering"] = "no";
-  }
-  res.writeHead(upstream.status, outHeaders);
-  res.flushHeaders?.();
-  if (!upstream.body) {
-    res.end();
-    return;
-  }
-  try {
-    for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
-      if (res.destroyed) break;
-      res.write(chunk);
-    }
-  } catch {
-    // The model or the caller went away mid-answer; nothing more to send.
-  } finally {
-    // A caller that left stops the model's generation too.
-    if (res.destroyed && !abort.signal.aborted) abort.abort();
-    if (!res.writableEnded) res.end();
-  }
 }

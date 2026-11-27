@@ -17,6 +17,7 @@ This area owns http and openai-compatible ingress. Read [AGENTS.md](AGENTS.md) b
 - [openai-completions-cancel.ts](openai-completions-cancel.ts)
 - [route-raw-model.ts](route-raw-model.ts): `GET /raw/v1/models` and `POST /raw/v1/chat/completions`, the shared local model (below)
 - [route-model-share.ts](route-model-share.ts): `GET`/`POST /api/model-share`, where the shared model listens and its key (below)
+- [route-local-model.ts](route-local-model.ts): `/local/v1/{models,chat/completions,responses,messages,messages/count_tokens}`, the bare local model for `atag launch` (below); [model-forward.ts](model-forward.ts) is the pass-through both share
 
 ## Shared local model (`/raw/v1`)
 
@@ -29,6 +30,10 @@ ATO-2336, after LM Studio's "Serve on Local Network", Jan's Local API Server and
 - `GET` / `POST /api/model-share` ([route-model-share.ts](route-model-share.ts), admin scope because the answer carries the key): `{ mode, port, key, urls: { local, lan }, listener }`; POST takes `{ mode, rotate? }`, writes the file, makes or rotates the key and moves the listener. The desktop's Settings › Models "Share this model" card uses it.
 - Only a wrong key counts toward the auth throttle; a request with no key (the desktop's Find on my network) guesses nothing and never locks the real app out.
 - A body is capped at 32 MiB (`RAW_MODEL_MAX_BODY_BYTES`, ATO-2483), read only after the key check, so a chat with inline photos is not refused with 413; every other route keeps 1 MiB.
+
+## Bare local model for launched CLIs (`/local/v1`)
+
+ATO-2447, after `ollama launch claude` and LM Studio's `/v1/messages`. `atag launch` points Claude Code, Codex or OpenCode here by default ([launch guide](../cli/README.md#launch-another-coding-cli)). Like `/raw/v1`, the request (the CLI's `tools` included) goes unchanged to `localModels.url` with that server's key added, and the answer streams back, so `tool_use` / `tool_calls` reach the CLI and it runs its own tools; llama-server answers chat completions, Responses and Anthropic Messages itself. Unlike `/raw/v1`: always on, behind the serve key and named tokens (`chat` scope), no one-at-a-time limit (a CLI sends titles and token counts beside the main request; the model server queues them), and a 64 MiB body cap, since a CLI resends its whole conversation every turn. A model server that cannot be reached is 502 with how to start it, an engine without the route is 404 `endpoint_unsupported`, each in the route's own error shape (Anthropic on `/messages`).
 
 ## Ownership and dependencies
 

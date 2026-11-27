@@ -55,6 +55,12 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /v1/messages": "chat",
   "POST /v1/messages/count_tokens": "chat",
   "POST /v1/responses": "chat",
+  // ATO-2447: the bare local model for `atag launch` (route-local-model.ts).
+  "GET /local/v1/models": "chat",
+  "POST /local/v1/chat/completions": "chat",
+  "POST /local/v1/responses": "chat",
+  "POST /local/v1/messages": "chat",
+  "POST /local/v1/messages/count_tokens": "chat",
   // ATO-1152: the side question.
   "POST /api/btw": "chat",
   "POST /api/ag-ui": "chat",

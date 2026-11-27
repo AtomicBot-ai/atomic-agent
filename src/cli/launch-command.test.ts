@@ -32,6 +32,7 @@ async function run(args: string[], over: LaunchCommandDeps = {}) {
     resolveKey: () => ({ key: "the-serve-key" }),
     findServe: async () => SERVE,
     checkKey: async () => true,
+    probeLocal: async () => ({ ok: true, modelId: "qwen-local" }),
     ...over,
   };
   const code = await launchCommand(args, deps);
@@ -63,7 +64,7 @@ describe("atag launch (ATO-2172)", () => {
     const startServe = vi.fn();
     const r = await run(["claude", "--print-env"], { spawn, startServe });
     expect(r.code).toBe(0);
-    expect(r.out).toContain("export ANTHROPIC_BASE_URL=http://127.0.0.1:41234");
+    expect(r.out).toContain("export ANTHROPIC_BASE_URL=http://127.0.0.1:41234/local\n");
     expect(r.out).toContain(`export ANTHROPIC_AUTH_TOKEN='${MASKED}'`);
     expect(r.out).not.toContain("the-serve-key");
     expect(r.err).not.toContain("the-serve-key");
@@ -87,8 +88,9 @@ describe("atag launch (ATO-2172)", () => {
     expect(calls[0]?.args).toEqual(["--continue"]);
     expect(calls[0]?.env).toMatchObject({
       PATH: "/bin",
-      ANTHROPIC_BASE_URL: "http://127.0.0.1:41234",
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:41234/local",
       ANTHROPIC_AUTH_TOKEN: "the-serve-key",
+      ANTHROPIC_MODEL: "qwen-local",
     });
     expect(r.err).not.toContain("the-serve-key");
   });
@@ -121,7 +123,10 @@ describe("atag launch (ATO-2172)", () => {
 
   it("a serve that refuses the key exits 1 before the CLI runs", async () => {
     const { spawn, calls } = fakeSpawn(0);
-    const r = await run(["claude"], { spawn, checkKey: async () => false });
+    const local = await run(["claude"], { spawn, probeLocal: async () => ({ ok: false, reason: "auth" }) });
+    expect(local.code).toBe(1);
+    expect(local.err).toContain("does not accept the key");
+    const r = await run(["claude", "--agent"], { spawn, checkKey: async () => false });
     expect(r.code).toBe(1);
     expect(r.err).toContain("does not accept the key");
     expect(calls).toHaveLength(0);
@@ -163,5 +168,48 @@ describe("atag launch (ATO-2172)", () => {
     expect(started).toContain("http://127.0.0.1:8787/panel");
     expect(started).not.toContain("<port>");
     expect(launchApprovalNote({ baseUrl: "http://127.0.0.1:41234", started: false })).toContain("http://127.0.0.1:41234/panel");
+  });
+
+  it("points the CLI at the bare local model by default: /local, the loaded model's name, any folder (ATO-2447)", async () => {
+    const { spawn, calls } = fakeSpawn(0);
+    const findServe = vi.fn(async () => SERVE);
+    const r = await run(["codex"], { spawn, findServe });
+    expect(r.code).toBe(0);
+    expect(findServe).toHaveBeenCalledWith("/state", null);
+    const args = calls[0]?.args ?? [];
+    expect(args).toContain('model_providers.atomic.base_url="http://127.0.0.1:41234/local/v1"');
+    expect(args.slice(args.indexOf("-m"), args.indexOf("-m") + 2)).toEqual(["-m", "qwen-local"]);
+    expect(r.err).toContain("on the local model qwen-local");
+    expect(r.err).not.toContain("approval");
+  });
+
+  it("--model wins over the loaded model's name (ATO-2447)", async () => {
+    const { spawn, calls } = fakeSpawn(0);
+    await run(["claude", "--model", "mine"], { spawn });
+    expect(calls[0]?.env).toMatchObject({ ANTHROPIC_MODEL: "mine" });
+  });
+
+  it("--agent keeps the Atomic Agent turn path: serve root, this folder, approval note (ATO-2447)", async () => {
+    const { spawn, calls } = fakeSpawn(0);
+    const findServe = vi.fn(async () => SERVE);
+    const probeLocal = vi.fn();
+    const r = await run(["claude", "--agent"], { spawn, findServe, probeLocal });
+    expect(r.code).toBe(0);
+    expect(findServe).toHaveBeenCalledWith("/state", "/work");
+    expect(probeLocal).not.toHaveBeenCalled();
+    expect(calls[0]?.env).toMatchObject({ ANTHROPIC_BASE_URL: "http://127.0.0.1:41234" });
+    expect(calls[0]?.env?.ANTHROPIC_MODEL).toBeUndefined();
+    expect(r.err).toContain("http://127.0.0.1:41234/panel");
+  });
+
+  it("a local model that is not running, or a serve without /local, stops before the CLI with what to do (ATO-2447)", async () => {
+    const { spawn, calls } = fakeSpawn(0);
+    const down = await run(["claude"], { spawn, probeLocal: async () => ({ ok: false, reason: "not_running" }) });
+    expect(down.code).toBe(1);
+    expect(down.err).toContain("atag models start");
+    const old = await run(["claude"], { spawn, probeLocal: async () => ({ ok: false, reason: "no_route" }) });
+    expect(old.code).toBe(1);
+    expect(old.err).toContain("--agent");
+    expect(calls).toHaveLength(0);
   });
 });

@@ -206,7 +206,7 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "launch",
-    summary: "Start Claude Code, Codex or OpenCode on Atomic Agent through atag serve (launch <claude|codex|opencode>)",
+    summary: "Start Claude Code, Codex or OpenCode on the local model through atag serve (launch [claude|codex|opencode], --agent for Atomic Agent)",
     run: (args) => launchCommand(args),
   },
   {
