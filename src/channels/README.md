@@ -14,6 +14,7 @@ This area owns remote chat adapters. Read [AGENTS.md](AGENTS.md) before changing
 - [model-switch.ts](model-switch.ts)
 - [chat-session-map.ts](chat-session-map.ts)
 - [channel-fork.ts](channel-fork.ts): `/fork`, the session copy shared by the Telegram and Slack commands (ATO-2235)
+- [approval-session-grants.ts](approval-session-grants.ts): the "Allow ... this session" offer shared by the Telegram, Discord, Slack and Teams approval prompts (ATO-2509)
 - [reconnect-backoff.ts](reconnect-backoff.ts)
 - [telegram-channel.ts](telegram/telegram-channel.ts)
 - [discord-channel.ts](discord/discord-channel.ts)
