@@ -34,6 +34,19 @@ const NATIVE_KINDS: Record<string, { envVar: string; origin: string }> = {
 };
 const OPENAI_ORIGIN = "https://api.openai.com";
 
+/**
+ * Kinds whose key resolution falls back to a built-in variable with no
+ * key field on the entry (`resolve-llm-api-key.ts`: OPENROUTER_API_KEY,
+ * AIMLAPI_API_KEY, GEMINI_API_KEY), with the origin of their default
+ * endpoint. An entry of such a kind pointed at any other origin would
+ * send this computer's key for that kind there, so the `baseUrl` goes.
+ */
+const DEFAULT_KEY_KIND_ORIGINS: Record<string, string> = {
+  openrouter: "https://openrouter.ai",
+  aimlapi: "https://api.aimlapi.com",
+  gemini: "https://generativelanguage.googleapis.com",
+};
+
 function originOf(url: unknown): string | undefined {
   if (typeof url !== "string" || !url) return undefined;
   try {
@@ -63,10 +76,19 @@ export function knownProviderEnvVar(entry: Record<string, unknown>): string | un
  * entry (mutated in place): `apiKeyCommand` always, `apiKeyEnvVar` unless
  * it is the known name for the entry's endpoint, and each
  * `extraApiKeyEnvVars` item unless it is that name or a numbered spare of
- * it (`GROQ_API_KEY_2`). Returns the dropped field names.
+ * it (`GROQ_API_KEY_2`). For a kind with a built-in default key
+ * (OpenRouter, AI/ML API, Gemini), a `baseUrl` that is not the kind's own
+ * origin goes too, so the entry falls back to the real endpoint instead
+ * of receiving that key elsewhere. Returns the dropped field names.
  */
 export function stripUnknownKeySources(entry: Record<string, unknown>): string[] {
   const dropped: string[] = [];
+  const kind = typeof entry.kind === "string" ? entry.kind : "";
+  const ownOrigin = Object.hasOwn(DEFAULT_KEY_KIND_ORIGINS, kind) ? DEFAULT_KEY_KIND_ORIGINS[kind] : undefined;
+  if (ownOrigin !== undefined && "baseUrl" in entry && originOf(entry.baseUrl) !== ownOrigin) {
+    delete entry.baseUrl;
+    dropped.push("baseUrl");
+  }
   if ("apiKeyCommand" in entry) {
     delete entry.apiKeyCommand;
     dropped.push("apiKeyCommand");

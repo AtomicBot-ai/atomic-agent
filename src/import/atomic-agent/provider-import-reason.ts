@@ -13,7 +13,10 @@
  * runs every provider through the shared setup import's filter
  * (`setup-share/known-provider-env.ts` `stripUnknownKeySources`): the
  * command always goes, a key variable name stays only when it is the
- * known one for the entry's endpoint (`GROQ_API_KEY` at api.groq.com).
+ * known one for the entry's endpoint (`GROQ_API_KEY` at api.groq.com),
+ * and a kind with a built-in default key (OpenRouter, AI/ML API, Gemini)
+ * loses a `baseUrl` that is not its own endpoint, since with no key
+ * field at all it would still send that kind's key there.
  * This holds whatever the secrets option says, and the report says how
  * to put the dropped fields back after the person has looked at them.
  *
@@ -42,7 +45,13 @@ export function providerImportReason(
   if (dropped.droppedKeySources.includes("apiKeyCommand")) {
     parts.push(`without its apiKeyCommand, a program the agent would run: ${howToAdd}`);
   }
-  const names = dropped.droppedKeySources.filter((f) => f !== "apiKeyCommand");
+  if (dropped.droppedKeySources.includes("baseUrl")) {
+    parts.push(
+      "without its baseUrl: it is not this kind's own endpoint and would receive this computer's key for the kind, " +
+        `so the provider uses the built-in endpoint; ${howToAdd}`,
+    );
+  }
+  const names = dropped.droppedKeySources.filter((f) => f !== "apiKeyCommand" && f !== "baseUrl");
   if (names.length > 0) {
     parts.push(
       `without ${names.join(", ")}: the key variable named there is not the known one for this baseUrl, ` +
