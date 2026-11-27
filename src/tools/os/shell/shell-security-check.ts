@@ -1,12 +1,9 @@
 import type { SecurityFinding } from "../../../approval/approval-ledger.js";
 import type { GuardVerdict } from "../shell-command-guard/index.js";
-import {
-  mentionsSensitiveHomeEntry,
-  sensitiveWriteReason,
-  sensitiveWriteTargets,
-} from "../fs/sensitive-write-targets.js";
-import { lexShellLine, type ShellDialect } from "../shell-command-guard/shell-line-lexer.js";
+import { sensitiveWriteReason, sensitiveWriteTargets } from "../fs/sensitive-write-targets.js";
+import type { ShellDialect } from "../shell-command-guard/shell-line-lexer.js";
 import { basenameCommand } from "../shell-command-guard/normalise.js";
+import { sensitiveExecWrites, sensitiveLineWrites } from "./shell-line-sensitive-writes.js";
 
 /**
  * What the argument checks say about one shell call (ATO-2505), for the
@@ -15,8 +12,12 @@ import { basenameCommand } from "../shell-command-guard/normalise.js";
  * a shell startup file, the SSH folder or a credential file in home
  * (`sensitive-write-targets.ts`, the same list `os.fs.write` uses).
  *
- * A line whose targets cannot be read and that names one of those files
- * counts as such a write: the check fails closed.
+ * The check fails closed (review rounds 1 and 2): a write target only
+ * known when the line runs that could be one of those files counts
+ * (`shell-line-sensitive-writes.ts`), and so does a line that cannot be
+ * read at all and names one (with its own reason, not a write claim).
+ * A plainly read-only line (`ls ~/.ssh/id_*`, `cat ~/.ssh/*.pub`) is not
+ * a write; a credential read is the guard's finding.
  *
  * Such a write sends the call to the gate even when the guard deems the
  * command safe (`echo key >> ~/.ssh/authorized_keys`), withholds grants
@@ -36,15 +37,10 @@ const FINDING_RULES: ReadonlySet<string> = new Set([
   "dangerous.encoded_exec",
 ]);
 
-/**
- * Whether `shellWriteTargets` may have missed a target of `line`: the
- * lexer cannot read it (`$(…)`, backticks, `${…}`, an open quote), or a
- * word is only known when it runs (`$USER`, `%APPDATA%`, a glob).
- */
-function targetsUnreadable(line: string, dialect: ShellDialect): boolean {
-  const tokens = lexShellLine(line, dialect);
-  return tokens === null || tokens.some((token) => token.kind === "word" && token.dynamic);
-}
+/** The rule of a line that cannot be read and names a sensitive home entry. */
+export const UNREADABLE_SENSITIVE_RULE = "dangerous.sensitive_line_unreadable";
+const UNREADABLE_REASON =
+  "names a startup, SSH or credential file in your home folder in a form that cannot be read before it runs; asks in every mode";
 
 const POSIX_SHELLS: ReadonlySet<string> = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash", "mksh"]);
 
@@ -61,11 +57,8 @@ export function execShellScript(cmd: string, args: readonly string[]): string | 
 
 /**
  * `commandLine` is the line the OS shell runs (for a direct exec, the
- * script of `bash -c`, `execShellScript`). When its targets cannot
- * be read and it names a sensitive home entry, that counts as a
- * sensitive write (review round 1 of ATO-2505): `echo k >>
- * ~/.ssh/authorized_keys; : $(true)` named no target at all, so the
- * check failed open.
+ * script of `bash -c`, `execShellScript`); `exec` is a direct exec of
+ * anything else (`{cmd:"tar", args:["xf","p.tar","-C","~"]}`).
  */
 export function shellSecurityCheck(
   verdict: GuardVerdict,
@@ -73,15 +66,25 @@ export function shellSecurityCheck(
   cwd: string,
   commandLine?: string,
   dialect: ShellDialect = process.platform === "win32" ? "cmd" : "posix",
+  exec?: { cmd: string; args: readonly string[] },
 ): ShellSecurityCheck {
   const sensitive = sensitiveWriteTargets(targetPaths, cwd);
-  if (
-    sensitive.length === 0 &&
-    commandLine !== undefined &&
-    mentionsSensitiveHomeEntry(commandLine) &&
-    targetsUnreadable(commandLine, dialect)
-  ) {
-    sensitive.push("a home file the command line builds when it runs");
+  let unreadable = false;
+  if (commandLine !== undefined) {
+    const line = sensitiveLineWrites(commandLine, cwd, dialect);
+    sensitive.push(...line.writes.filter((write) => !sensitive.includes(write)));
+    unreadable = line.unreadable;
+  } else if (exec !== undefined) {
+    sensitive.push(...sensitiveExecWrites(exec.cmd, exec.args, cwd).filter((write) => !sensitive.includes(write)));
+  }
+  // The guard's own sure finding (a credential read) names it better.
+  const guardAsks = FINDING_RULES.has(verdict.rule) && verdict.askEveryLevel === true;
+  if (sensitive.length === 0 && unreadable && !guardAsks) {
+    return {
+      forcesGate: true,
+      askEveryLevel: true,
+      finding: { rule: UNREADABLE_SENSITIVE_RULE, reason: UNREADABLE_REASON, confidence: 1 },
+    };
   }
   if (sensitive.length > 0) {
     return {

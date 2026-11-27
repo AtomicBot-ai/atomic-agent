@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  mayNameSensitiveHomeEntry,
   mentionsSensitiveHomeEntry,
+  sensitiveTreeTargets,
   sensitiveWriteReason,
   sensitiveWriteTargets,
 } from "./sensitive-write-targets.js";
@@ -23,6 +25,12 @@ describe("sensitiveWriteTargets (ATO-2505)", () => {
     "/home/nadia/Documents/PowerShell/Microsoft.PowerShell_profile.ps1",
     "/home/nadia/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/run.bat",
     "/home/nadia/.BASHRC",
+    // Review round 2: editor, tmux, oh-my-zsh, pip and the agent's own config.
+    "/home/nadia/.vimrc",
+    "/home/nadia/.tmux.conf",
+    "/home/nadia/.oh-my-zsh/custom/plugins/x.zsh",
+    "/home/nadia/.config/pip/pip.conf",
+    "/home/nadia/.atomic-agent/config.json",
     // Review round 1: home itself, the destination of `cp x/.bashrc ~/`.
     "/home/nadia",
     "/home/nadia/",
@@ -67,4 +75,41 @@ describe("sensitiveWriteTargets (ATO-2505)", () => {
       expect(mentionsSensitiveHomeEntry(line)).toBe(false);
     },
   );
+
+  // Review round 2 (F2069-R2.1): a glob or brace hid the name, so the
+  // fail-closed path still let these through.
+  it.each([
+    "~/.zsh?c",
+    "~/.{zsh,bash}rc",
+    "~/.zsh[r]c",
+    "~/.s?h/authorized_k?ys",
+    "~/Library/Launch?gents/",
+    "/home/nadia/.b*",
+    "/home/$USER/.profile",
+    "/home/$USER/x",
+    "%USERPROFILE%/x",
+    "$ZDOTDIR/x",
+    "~/$X",
+    "../.zsh*",
+  ])("may name a sensitive home entry: %s", (word) => {
+    expect(mayNameSensitiveHomeEntry(word, "/home/nadia/project", false, HOME)).toBe(true);
+  });
+
+  it.each(["~/notes-$N.txt", "out-*.log", "/tmp/$X", "$OUT", "~/project/*.md"])("cannot name one: %s", (word) => {
+    expect(mayNameSensitiveHomeEntry(word, "/home/nadia/project", false, HOME)).toBe(false);
+  });
+
+  it("takes any variable as home on a line that names an entry, and an unknown folder as home", () => {
+    expect(mayNameSensitiveHomeEntry("$F", "/home/nadia/project", true, HOME)).toBe(true);
+    expect(mayNameSensitiveHomeEntry(".z*", undefined, false, HOME)).toBe(true);
+  });
+
+  it("counts an extract into home, above an entry or inside one, and not elsewhere", () => {
+    expect(
+      sensitiveTreeTargets(
+        ["/home/nadia", "/home/nadia/.config", "/home/nadia/Library", "/home/nadia/.ssh/x", "/home/nadia/project", "/tmp"],
+        HOME,
+      ),
+    ).toEqual(["/home/nadia", "/home/nadia/.config", "/home/nadia/Library", "/home/nadia/.ssh/x"]);
+  });
 });
