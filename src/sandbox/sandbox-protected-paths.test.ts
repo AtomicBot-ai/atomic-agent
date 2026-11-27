@@ -67,6 +67,11 @@ describe("Seatbelt protected-write patterns", () => {
       // Review F1991.3: git's XDG config.
       "/w/.config/git/config",
       "/w/dotfiles/.config/git/ignore",
+      // Review R2-1991.B: a rebase todo takes `exec <command>` lines.
+      "/w/.git/rebase-merge/git-rebase-todo",
+      "/w/.git/rebase-merge/done",
+      "/w/.git/rebase-merge",
+      "/w/.git/rebase-apply/patch",
     ]) {
       expect(protectedOnMac(path), path).toBe(true);
     }
@@ -86,11 +91,16 @@ describe("Seatbelt protected-write patterns", () => {
       "/w/.git/packed-refs.lock",
       "/w/.git/logs/HEAD",
       "/w/.git/refs/stash",
-      "/w/.git/rebase-merge/done",
       "/w/.git/worktrees/wt/HEAD",
       "/w/.git/worktrees/wt/index",
       "/w/.git/modules/sub/refs/heads/main",
       "/w/.git/modules/a/b/objects/pack/p.pack",
+      // Review round 2: data git writes that were blocked by mistake.
+      "/w/.git/ADD_EDIT.patch",
+      "/w/.git/MERGE_AUTOSTASH",
+      "/w/.git/MERGE_AUTOSTASH.lock",
+      "/w/.git/reftable/tables.list",
+      "/w/.git/gitk.cache",
       "/w/.gitignore",
       "/w/.config/gitk",
       "/w/.github/workflows/ci.yml",

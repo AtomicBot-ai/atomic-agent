@@ -589,8 +589,8 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       // ATO-2471: these run code later, outside the sandbox.
       const gitPart =
         process.platform === "linux"
-          ? "`.git` (git commands that write the repo fail here; use the os.git.* tools)"
-          : "`.git` apart from git's own data (no `git init`, `git clone` or `git config` here; use the os.git.* tools)";
+          ? "`.git` and any other git folder (git commands that write the repo fail here; use the os.git.* tools)"
+          : "`.git` and any other git folder apart from git's own data (no `git init`, `git clone`, `git config` or `git rebase` here; use the os.git.* tools)";
       sandboxNotice += ` Even in the working folder these are read-only: ${gitPart}, hook folders (\`.husky\`, \`.githooks\`, the \`core.hooksPath\` folder), shell rc files, \`.envrc\`, git's and fish's config and editor settings (\`.vscode\`, \`.idea\`).`;
       if (policy.narrowedRoots !== undefined) {
         sandboxNotice +=

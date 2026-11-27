@@ -31,10 +31,15 @@
  *   covered on Linux (bwrap would have to create it on the user's disk
  *   as a mount point).
  * - Both: the folder `core.hooksPath` names and the files the git
- *   config includes (`git-hooks-path.ts`) are protected too.
+ *   config includes (`git-hooks-path.ts`) are protected too, and so is
+ *   a git folder with another name (a `.git` file's `gitdir:`, its
+ *   `commondir`, a bare repo; `git-dirs.ts`): on macOS like a `.git`, on
+ *   Linux read-only whole.
  */
 import { existsSync, lstatSync, readdirSync, type Stats } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
+
+import { GIT_DATA_DIRS } from "./git-dirs.js";
 
 /** Protected file names, wherever they are. */
 export const PROTECTED_FILE_NAMES: readonly string[] = [
@@ -88,31 +93,34 @@ export const SEATBELT_GIT_PATTERN = "/\\.git(/.*)?$";
 /** A git folder: the repo's, a submodule's or a linked worktree's. */
 const GIT_PREFIX = "/\\.git/(modules/.+/|worktrees/[^/]+/)?";
 
-/** Folders in a git folder that hold only git's data. */
-const GIT_DATA_DIRS = [
-  "objects", "refs", "logs", "lfs", "rr-cache", "rebase-merge", "rebase-apply",
-  "sequencer", "fsmonitor--daemon", "NOTES_MERGE_PARTIAL", "NOTES_MERGE_WORKTREE",
-];
-
 /** State files git writes in a git folder (each with its `.lock`). */
 const GIT_STATE_FILES = [
   "HEAD", "ORIG_HEAD", "FETCH_HEAD", "MERGE_HEAD", "MERGE_MSG", "MERGE_MODE",
   "MERGE_RR", "AUTO_MERGE", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD",
   "BISECT_[A-Z_]+", "NOTES_MERGE_REF", "COMMIT_EDITMSG", "TAG_EDITMSG",
   "SQUASH_MSG", "NOTES_EDITMSG", "packed-refs", "shallow", "gc\\.pid", "gc\\.log",
+  // Review round 2 (false blocks): `git add -e`'s patch, `merge --autostash`,
+  // gitk's cache. Data, never a program.
+  "ADD_EDIT\\.patch", "MERGE_AUTOSTASH", "gitk\\.cache",
 ];
 
 /** The index and its temporary and split copies. */
 const GIT_INDEX_FILES = ["index(\\.[^/]*)?", "sharedindex\\.[0-9a-f]+", "next-index-[0-9]+\\.lock"];
 
+/** The name of a file git writes in a git folder, at the end of a path. */
+export const SEATBELT_GIT_STATE_FILE_PATTERN = `/(${GIT_INDEX_FILES.join("|")}|(${GIT_STATE_FILES.join("|")})(\\.lock)?)$`;
+
 /**
  * Inside a `.git`, what git itself writes, and only that: data that
  * never names a program. `config`, `config.worktree`, `commondir`,
- * `gitdir`, `hooks`, `info` and anything new stay read-only.
+ * `gitdir`, `hooks`, `info` and anything new stay read-only, and so do
+ * `rebase-merge` and `rebase-apply` (review R2-1991.B: their todo list
+ * takes `exec <command>` lines, which `git rebase --continue` runs
+ * outside the sandbox; `git rebase` fails inside it instead).
  */
 export const SEATBELT_GIT_WRITABLE_PATTERNS: readonly string[] = [
   `${GIT_PREFIX}(${GIT_DATA_DIRS.join("|")})(/.*)?$`,
-  `${GIT_PREFIX}(${GIT_INDEX_FILES.join("|")}|(${GIT_STATE_FILES.join("|")})(\\.lock)?)$`,
+  `${GIT_PREFIX}${SEATBELT_GIT_STATE_FILE_PATTERN.slice(1)}`,
 ];
 
 /**
@@ -128,6 +136,30 @@ export function seatbeltProtectedWriteRule(extraParams: readonly string[] = []):
     `(deny file-write* ${regexes.join(" ")}${extra})`,
     `(deny file-write* (require-all (regex #"${SEATBELT_GIT_PATTERN}") (require-not (require-any ${gitData.join(" ")}))))`,
   ].join("\n");
+}
+
+/** The `-D` parameter names of one git folder not named `.git` (`git-dirs.ts`). */
+export interface SeatbeltGitDirParams {
+  /** The git folder. */
+  dir: string;
+  /** Its data folders (and its worktrees' and submodules'). */
+  data: readonly string[];
+}
+
+/**
+ * The rules for git folders not named `.git` (review R2-1991.A), one per
+ * folder: the same as for a `.git`, writes inside it only to its data
+ * folders and to a file git writes (`HEAD`, the index, ...). Paths come
+ * as parameters; the one regex is fixed and only matches the last name.
+ */
+export function seatbeltGitDirRules(dirs: readonly SeatbeltGitDirParams[]): string[] {
+  return dirs.map(({ dir, data }) => {
+    const keep = [
+      `(regex #"${SEATBELT_GIT_STATE_FILE_PATTERN}")`,
+      ...data.map((name) => `(subpath (param "${name}"))`),
+    ];
+    return `(deny file-write* (require-all (subpath (param "${dir}")) (require-not (require-any ${keep.join(" ")}))))`;
+  });
 }
 
 export interface ProtectedScanLimits {

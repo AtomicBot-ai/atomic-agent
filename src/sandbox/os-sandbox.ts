@@ -18,7 +18,8 @@
  *   config, tokens); a working folder inside one is opened by itself;
  * - for a process that keeps its network (an MCP server), the
  *   ssh-agent socket can be hidden too (`hideSshAgent`);
- * - no writes to `.git` (but git's own data on macOS), hook folders
+ * - no writes to `.git` or a git folder with another name (but git's
+ *   own data on macOS), hook folders
  *   (`core.hooksPath` too), shell rc files, `.envrc`, git's config or
  *   editor configs (`.vscode`, `.idea`) even inside the working folder:
  *   they run code later, outside the sandbox (`sandbox-protected-paths.ts`,
@@ -54,10 +55,12 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
+import { findGitDirs, gitDataDirs, inDotGit } from "./git-dirs.js";
 import { gitHookTargets } from "./git-hooks-path.js";
 import {
   bwrapProtectedArgs,
   findProtectedPaths,
+  seatbeltGitDirRules,
   seatbeltProtectedWriteRule,
 } from "./sandbox-protected-paths.js";
 import {
@@ -121,6 +124,12 @@ export interface OsSandboxPolicy {
    * config includes (`git-hooks-path.ts`, ATO-2471). Resolved paths.
    */
   protectedPaths?: readonly string[];
+  /**
+   * Git folders inside the writable roots that the `.git` name does not
+   * cover (a `.git` file's `gitdir:`, its `commondir`, a bare repo), with
+   * their data folders (`git-dirs.ts`, review R2-1991.A). Resolved paths.
+   */
+  gitDirs?: readonly { dir: string; data: readonly string[] }[];
   /**
    * Folders and files the command may not read (credential stores,
    * agent state). Each one is listed both as named and, when it is a
@@ -369,11 +378,16 @@ export function buildOsSandboxPolicy(
   const protectedPaths = gitHookTargets({ workRoots: work, home }).filter((p) =>
     writableRoots.some((root) => isInside(p, root)),
   );
+  // Git folders with another name (`.bare`, `--separate-git-dir`).
+  const gitDirs = findGitDirs(work)
+    .filter((dir) => writableRoots.some((root) => isInside(dir, root)))
+    .map((dir) => ({ dir, data: gitDataDirs(dir) }));
   return {
     writableRoots,
     ...(narrowedRoots.length > 0 ? { narrowedRoots } : {}),
     workRoots: work,
     ...(protectedPaths.length > 0 ? { protectedPaths } : {}),
+    ...(gitDirs.length > 0 ? { gitDirs } : {}),
     denyRead,
     reopen,
     network: input.network,
@@ -501,6 +515,7 @@ export function buildSeatbeltProfile(policy: OsSandboxPolicy): string {
   // stay read-only inside the writable roots (ATO-2471). After every
   // rule that allows a write (the reopened folders included).
   lines.push(seatbeltProtectedWriteRule((policy.protectedPaths ?? []).map((_, i) => `P${i}`)));
+  lines.push(...seatbeltGitDirRules(seatbeltGitDirs(policy).map((g) => g.names)));
   const sockets = policy.denySockets ?? [];
   if (policy.hideSshAgent === true || sockets.length > 0) {
     // After the reopen rules, so nothing reopens them. Fixed patterns,
@@ -525,6 +540,19 @@ export function buildSeatbeltProfile(policy: OsSandboxPolicy): string {
   return lines.join("\n");
 }
 
+/**
+ * The git folders the macOS rule names, as `-D` names and paths: those
+ * not inside a `.git` (the fixed `.git` rule covers those already).
+ */
+function seatbeltGitDirs(policy: OsSandboxPolicy) {
+  return (policy.gitDirs ?? [])
+    .filter((g) => !inDotGit(g.dir))
+    .map((g, n) => ({
+      names: { dir: `G${n}`, data: g.data.map((_, i) => `G${n}D${i}`) },
+      paths: g,
+    }));
+}
+
 function seatbeltArgs(
   policy: OsSandboxPolicy,
   command: string,
@@ -537,6 +565,10 @@ function seatbeltArgs(
   reopenAncestors(policy).forEach((dir, i) => params.push("-D", `A${i}=${dir}`));
   (policy.denySockets ?? []).forEach((path, i) => params.push("-D", `S${i}=${path}`));
   (policy.protectedPaths ?? []).forEach((path, i) => params.push("-D", `P${i}=${path}`));
+  for (const { names, paths } of seatbeltGitDirs(policy)) {
+    params.push("-D", `${names.dir}=${paths.dir}`);
+    names.data.forEach((name, i) => params.push("-D", `${name}=${paths.data[i]}`));
+  }
   return [...params, "-p", buildSeatbeltProfile(policy), command, ...args];
 }
 
@@ -591,7 +623,12 @@ function bwrapArgs(
   // writable and reopened binds so nothing re-opens them (ATO-2471).
   out.push(
     ...bwrapProtectedArgs(
-      [...findProtectedPaths(policy.workRoots ?? []), ...(policy.protectedPaths ?? [])],
+      [
+        ...findProtectedPaths(policy.workRoots ?? []),
+        ...(policy.protectedPaths ?? []),
+        // Review R2-1991.A: a git folder with another name, whole.
+        ...(policy.gitDirs ?? []).map((g) => g.dir),
+      ],
       policy.workRoots ?? [],
       policy.denyRead,
       policy.reopen.map((entry) => entry.path),
