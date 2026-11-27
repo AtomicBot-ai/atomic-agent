@@ -20,7 +20,8 @@ import {
  * We deliberately skip font rendering and graphics — text is what the LLM
  * needs. Pages without a text layer (scans, photos) are detected and
  * reported via `textLayer` plus a plain notice with next steps (ATO-681);
- * recognising them is the job of an optional `OcrEngine`, none ships yet.
+ * recognising them is the job of an optional `OcrEngine` (the file index
+ * plugs in `media-text/vision-ocr-engine.ts`, ATO-2205).
  */
 export interface PdfExtractorOptions {
   /** Optional OCR engine for pages without a text layer. Default: none. */
@@ -160,7 +161,8 @@ function clampPageRange(
  */
 let pdfJsPromise:
   Promise<typeof import("pdfjs-dist/legacy/build/pdf.mjs")> | undefined;
-function loadPdfJs(): Promise<
+/** Shared with `pdf-page-images.ts` (ATO-2205), so both use one import. */
+export function loadPdfJs(): Promise<
   typeof import("pdfjs-dist/legacy/build/pdf.mjs")
 > {
   // Memoize the *promise*, not the resolved module. Two concurrent

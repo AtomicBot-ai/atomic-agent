@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { EmbeddingUnavailableError, type EmbeddingClient } from "../../memory/embeddings/embedding-client.js";
-import type { Extractor } from "../os/read-document/index.js";
+import type { Extractor, OcrEngine } from "../os/read-document/index.js";
+import { buildTestPdf } from "../os/read-document/extractors/scan-pdf-test-helpers.js";
 import { FileIndex, type FileIndexOptions } from "./file-index.js";
 import { FolderRejectedError } from "./file-index-types.js";
 import type { Reranker } from "./file-rerank.js";
@@ -302,6 +303,60 @@ describe("FileIndex fallbacks (ATO-1052)", () => {
     await failing.addFolder(docs);
     await failing.idle();
     expect(await failing.search({ query: "cat", topK: 2 })).toEqual(expected);
+  });
+});
+
+describe("FileIndex: scanned PDFs (ATO-2205)", () => {
+  function scanFolder(): string {
+    const scans = join(root, "scans");
+    mkdirSync(scans);
+    writeFileSync(
+      join(scans, "lease-scan.pdf"),
+      buildTestPdf([{ image: { width: 200, height: 260 } }, { image: { width: 200, height: 260 } }]),
+    );
+    return scans;
+  }
+
+  const ocrEngine: OcrEngine = {
+    id: "fake-ocr",
+    unavailableReason: async () => undefined,
+    recognizePdfPages: async (request) => ({
+      pages: request.pages.map((page) => ({
+        page,
+        text: page === 2 ? "Аренда прекращается через тридцать дней после уведомления." : "Договор аренды квартиры, первая страница.",
+      })),
+      warnings: [],
+    }),
+  };
+
+  function openReal(extra: Partial<FileIndexOptions>): FileIndex {
+    index = new FileIndex({
+      dbFile: join(root, "state", "files-index.sqlite"),
+      validation: { systemDirs: [], home: join(root, "home") },
+      ...extra,
+    });
+    return index;
+  }
+
+  it("indexes the recognised text and finds it with its page number", async () => {
+    const scans = scanFolder();
+    const fileIndex = openReal({ ocr: { engine: ocrEngine } });
+    await fileIndex.addFolder(scans);
+    await fileIndex.idle();
+    expect(fileIndex.status()).toMatchObject({ found: 1, indexed: 1, skipped: 0, failed: 0 });
+    const hits = await fileIndex.search({ query: "тридцать дней" });
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({ path: join(scans, "lease-scan.pdf"), page: 2 });
+    expect(hits[0]!.cite).toBe(`[lease-scan.pdf, p. 2](file://${join(scans, "lease-scan.pdf")}#page=2)`);
+  });
+
+  it("without an engine counts the scan as skipped, and finds nothing in it", async () => {
+    const scans = scanFolder();
+    const fileIndex = openReal({});
+    await fileIndex.addFolder(scans);
+    await fileIndex.idle();
+    expect(fileIndex.status()).toMatchObject({ found: 1, indexed: 0, skipped: 1, failed: 0 });
+    expect(await fileIndex.search({ query: "тридцать дней" })).toEqual([]);
   });
 });
 
