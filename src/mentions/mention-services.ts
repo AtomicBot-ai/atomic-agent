@@ -38,6 +38,11 @@ export interface MentionServicesOptions {
   lspPool: () => LspServerPool | null;
   /** `getStateSecretPaths(config.paths)`: never inlined. Entries ending in a separator are folders of code and are not refused. */
   protectedFiles: readonly string[];
+  /**
+   * ATO-2496: `getStateSecretDirectories(stateDir)`, the sign-in folders
+   * (`auth/`, `mcp-oauth/`, `whatsapp-auth/`). No file inside one is inlined.
+   */
+  protectedFolders?: readonly string[];
   deps?: Partial<ContextMentionDeps>;
   platform?: NodeJS.Platform;
 }
@@ -54,14 +59,23 @@ function canonicalOf(path: string): string {
 }
 
 /**
- * A check against the protected files, by real path. Case is folded on
- * Windows and macOS, whose default volumes ignore it: refusing a distinct
- * `.ENV` on a case-sensitive Mac volume is the safe side.
+ * A check against the protected files, by real path, and against every
+ * file inside one of `folders`. Case is folded on Windows and macOS, whose
+ * default volumes ignore it: refusing a distinct `.ENV` on a
+ * case-sensitive Mac volume is the safe side.
  */
-export function protectedPathCheck(files: readonly string[], platform: NodeJS.Platform = process.platform): IsProtectedPath {
+export function protectedPathCheck(
+  files: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+  folders: readonly string[] = [],
+): IsProtectedPath {
   const fold = (p: string): string => (platform === "win32" || platform === "darwin" ? p.toLowerCase() : p);
   const set = new Set(files.filter((f) => !f.endsWith(sep) && !f.endsWith("/")).map((f) => fold(canonicalOf(f))));
-  return (real) => set.has(fold(canonicalOf(real)));
+  const prefixes = folders.map((f) => fold(canonicalOf(f.replace(/[\\/]+$/, ""))) + sep);
+  return (real) => {
+    const path = fold(canonicalOf(real));
+    return set.has(path) || prefixes.some((prefix) => path.startsWith(prefix));
+  };
 }
 
 /** Tracked changes and untracked files under `dir`, relative to it. */
@@ -75,7 +89,7 @@ export async function changedFilesUnder(git: RunGit, dir: string): Promise<strin
 
 export function createMentionServices(options: MentionServicesOptions): MentionServices {
   const base: ContextMentionDeps = { ...DEFAULT_CONTEXT_DEPS, ...options.deps };
-  const isProtected = protectedPathCheck(options.protectedFiles, options.platform);
+  const isProtected = protectedPathCheck(options.protectedFiles, options.platform, options.protectedFolders);
   const problems = (workingDir: string): Promise<WorkspaceProblems> =>
     collectWorkspaceProblems({
       pool: options.lspPool(),

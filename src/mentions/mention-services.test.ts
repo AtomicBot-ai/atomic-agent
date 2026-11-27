@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -51,6 +51,29 @@ describe("protectedPathCheck", () => {
     expect(check(join(root, ".env"))).toBe(true);
     expect(check(join(root, "skills"))).toBe(false);
     expect(protectedPathCheck(["C:\\State\\.env"], "win32")("c:\\state\\.ENV")).toBe(true);
+  });
+});
+
+describe("sign-in folders (ATO-2496)", () => {
+  // The working folder is the state folder: `@auth/chatgpt.json` must not
+  // reach the model, though the folder entry ends in a separator.
+  it("never inlines a file inside a protected folder", async () => {
+    mkdirSync(join(root, "auth"));
+    writeFileSync(join(root, "auth", "chatgpt.json"), '{"accessToken":"at-secret"}\n');
+    const services = createMentionServices({
+      lspPool: () => null,
+      protectedFiles: [join(root, ".env"), `${join(root, "auth")}/`],
+      protectedFolders: [`${join(root, "auth")}/`],
+    });
+    expect(services.expandNow("look @auth/chatgpt.json", root)).not.toContain("at-secret");
+    expect(await services.expand("look @auth/chatgpt.json:1-1 @diff", root)).not.toContain("at-secret");
+  });
+
+  it("refuses inside the folder only, without case on macOS", () => {
+    const check = protectedPathCheck([], "darwin", [`${join(root, "auth")}/`]);
+    expect(check(join(root, "AUTH", "copilot.json"))).toBe(true);
+    expect(check(join(root, "auth-notes.md"))).toBe(false);
+    expect(check(join(root, "a.ts"))).toBe(false);
   });
 });
 
