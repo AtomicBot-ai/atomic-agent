@@ -88,6 +88,30 @@ describe("os.code.search for a guest (ATO-2703)", () => {
     expect(JSON.stringify(result)).not.toContain("guest-must-not-see");
   });
 
+  // Only the canonical branch of `isGuestSecretHit` catches these: the
+  // file name `prod.yaml` is not a secret, and lexically the hit lies
+  // outside the working directory, so it would be judged by name alone.
+  it("drops a secrets/ hit only the real paths place under the working directory", async () => {
+    const onlyFolderHits = (root: string): Array<[string, string]> => [
+      [join(root, "secrets", "prod.yaml"), "db_password: hunter2-guest-must-not-see"],
+      [join(root, "config", "app.yaml"), "port: 8080"],
+    ];
+    // ast-grep prints real paths under a symlinked working directory.
+    const viaAlias = await buildOsCodeSearchTool(deps(onlyFolderHits)).run(
+      { pattern: "$K: $V", lang: "yaml" },
+      ctx(alias, true),
+    );
+    expect(JSON.stringify(viaAlias)).not.toContain("hunter2");
+    expect(viaAlias.details.totals).toEqual({ files: 1, matches: 1 });
+    // And the other way round: alias paths under the real working directory.
+    const viaReal = await buildOsCodeSearchTool(deps(() => onlyFolderHits(alias))).run(
+      { pattern: "$K: $V", lang: "yaml" },
+      ctx(work, true),
+    );
+    expect(JSON.stringify(viaReal)).not.toContain("hunter2");
+    expect(viaReal.details.totals).toEqual({ files: 1, matches: 1 });
+  });
+
   it("shows the owner every match", async () => {
     const tool = buildOsCodeSearchTool(deps(HITS));
     const result = await tool.run({ pattern: "$K: $V", lang: "yaml" }, ctx(work, false));

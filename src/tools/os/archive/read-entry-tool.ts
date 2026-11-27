@@ -1,4 +1,9 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
+import {
+  hasArchiveName,
+  isArchiveBytes,
+} from "../../read-scope/guest-archives.js";
+import { isGuestSecretRelPath } from "../../read-scope/guest-secret-files.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import {
   parseFormatOverride,
@@ -57,6 +62,12 @@ export function buildOsFsArchiveReadEntryTool(
           "os.fs.archive.read_entry: `entry` must be a non-empty string",
         );
       }
+      // The guest check at dispatch judges the archive's `path` only; the
+      // entry name is judged here, by the same rule a guest's walk uses
+      // (ATO-2805, `guest-secret-files.ts`).
+      if (ctx.guest === true && isGuestSecretRelPath(entry)) {
+        return guestEntryRefusal(entry, "is a secrets file or folder", "guest-secret-entry");
+      }
       const as = parseAs(rawArgs.as);
       const maxBytes = parseMaxBytes(rawArgs.maxBytes);
       const formatOverride = parseFormatOverride(rawArgs.format);
@@ -68,6 +79,11 @@ export function buildOsFsArchiveReadEntryTool(
         options.backends,
       );
       const body = await resolved.backend.readEntry(resolved.data, entry);
+      // A nested archive's names were never judged: a guest gets no
+      // archive entry, by its name or by its bytes (ATO-2805).
+      if (ctx.guest === true && (hasArchiveName(entry) || isArchiveBytes(body))) {
+        return guestEntryRefusal(entry, "is itself an archive", "guest-nested-archive");
+      }
       const truncated = body.length > maxBytes;
       const trimmed = truncated ? body.subarray(0, maxBytes) : body;
 
@@ -96,6 +112,15 @@ export function buildOsFsArchiveReadEntryTool(
       );
     },
   };
+}
+
+function guestEntryRefusal(entry: string, why: string, reason: string) {
+  return compressToolResult({
+    tool: "os.fs.archive.read_entry",
+    status: "error",
+    output: `os.fs.archive.read_entry: ${entry} ${why}; a guest cannot read it`,
+    details: { reason, entry },
+  });
 }
 
 function parseAs(raw: unknown): "utf8" | "base64" {
