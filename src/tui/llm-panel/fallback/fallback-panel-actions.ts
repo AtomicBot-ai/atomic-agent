@@ -20,6 +20,7 @@ export type FallbackPanelAction =
       links: readonly FallbackLinkRow[];
       addableProviderIds: readonly string[];
       appendLocal: boolean;
+      localFirst: boolean;
     }
   /** Open the add-link picker (no-op when nothing is addable). */
   | { type: "fallback_add_picker_opened" }
