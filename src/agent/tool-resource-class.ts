@@ -472,7 +472,9 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "github.pr.autofix": ["publish", "git_remote"],
     "os.proc.kill": ["proc_kill"],
     // A GET asks as `http`, a POST as `http_write` (level 4, ATO-1462).
-    "os.http.request": ["http", "http_write"],
+    // A `{{secret:NAME}}` header asks as `shell_secret` (ATO-2530), which
+    // only level 5 silences, so below it the call is a barrier like os.shell.run.
+    "os.http.request": ["http", "http_write", "shell_secret"],
     "os.email.send": ["email"],
     // A screenshot asks below level 3 (`screen_capture`).
     "os.screen.capture": ["screen_capture"],
@@ -482,7 +484,8 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     // Reading a window's controls asks like a window snapshot; pressing one like a click.
     "os.screen.elements": ["screen_capture"],
     "os.screen.press": ["screen_control"],
-    "skill.run_script": ["script"],
+    // `{{secret:NAME}}` in args or env asks as `shell_secret` (ATO-2530).
+    "skill.run_script": ["script", "shell_secret"],
     // A local generation asks nothing; the cloud one is `paid_generation`.
     "image.generate": ["paid_generation"],
     // Always cloud, always billed per second.

@@ -1,6 +1,7 @@
 import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import type { ShellGuardPolicy } from "../os/shell-command-guard/index.js";
+import type { ToolSecretSource } from "../../config/tool-secrets.js";
 import type { ToolRegistry } from "../tool-registry.js";
 import { buildVerifyRunTool } from "./verify-run.js";
 import { verifySyntaxTool } from "./verify-syntax.js";
@@ -101,6 +102,8 @@ export interface RegisterVerifyToolsOptions extends DangerousToolOptions {
   config: Pick<AtomicAgentConfig, "browser">;
   /** The shell guard's operator policy, shared with `os.shell.run`. */
   shellPolicy?: ShellGuardPolicy;
+  /** Tool secrets for `{{secret:NAME}}` in a `verify.run` command or env (ATO-2530). */
+  secrets?: ToolSecretSource;
 }
 
 /**
@@ -119,6 +122,7 @@ export function registerVerifyTools(
       approvalRequired: options.approvalRequired,
       config: options.config,
       ...(options.shellPolicy === undefined ? {} : { shellPolicy: options.shellPolicy }),
+      ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
     }),
   );
 }

@@ -325,6 +325,11 @@ export function registerOsTools(
       approvals: options.approvals,
       approvalRequired: options.approvalRequired,
       config: options.config,
+      // `{{secret:NAME}}` in a header value (ATO-2530), from the same
+      // `toolSecrets` as the shell's.
+      ...(options.stateDir === undefined
+        ? {}
+        : { secrets: createToolSecretSource(options.stateDir) }),
     }),
   );
   registry.register(
