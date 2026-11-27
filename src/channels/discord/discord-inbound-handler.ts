@@ -27,6 +27,7 @@ import { runModelCommand } from "../model-command.js";
 import { withSenderIdentity, type SenderIdentity } from "../sender-identity.js";
 import type { DiscordApi } from "./discord-api.js";
 import { scrubDiscordError } from "./discord-channel-types.js";
+import { runDiscordFork } from "./discord-fork-command.js";
 import {
   formatDiscordAttachmentFailure,
   sendDiscordAttachments,
@@ -127,6 +128,7 @@ const HELP_TEXT = [
   "  `/sessions` — every channel this bot has a session for",
   "  `/switch <session-id>` — point this channel at an existing session",
   "  `/new` — rotate this channel to a fresh session (current one is archived)",
+  "  `/fork`: copy this channel's session into a new thread (in a DM, continue the copy here); `/fork <n>` copies it up to question n",
   "  `/model` — show the provider and model in use; `/model <provider> [model-id]` switches",
   "  `/cancel` — abort this channel's current turn if one is running",
   "",
@@ -335,8 +337,7 @@ async function handleSlashCommand(
       return;
     }
     case "/fork":
-      // ATO-2235: the Discord API client cannot open threads yet.
-      await send(ctx, ref.channelId, "Fork is not available on Discord yet. Use `/new` to start a fresh session.");
+      for (const m of await runDiscordFork(ref, ctx, rest.join(" "))) await send(ctx, m.channelId, m.text);
       return;
     case "/cancel": {
       const controller = ctx.inflight.get(ref.channelId);

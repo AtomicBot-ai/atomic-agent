@@ -173,6 +173,33 @@ describe("/fork on Telegram", () => {
     expect(sent.at(-1)?.text).toContain(`forked from ${source.id}`);
   });
 
+  it("/fork 1 copies the chat up to the first question (ATO-2456)", async () => {
+    const source = sourceSession("s-src");
+    const { runtime, saved } = makeRuntime([source]);
+    const { api } = makeApi();
+    pointer.setCurrent(String(DM), source.id, "DM");
+
+    await handleInboundText(dmUpdate("/fork 1"), ctxFor(runtime, api));
+
+    expect(saved).toHaveLength(1);
+    expect(saved[0]!.turns).toEqual(source.turns.slice(0, 2));
+    expect(pointer.get(String(DM)).current).toBe(saved[0]!.id);
+  });
+
+  it("/fork with a bad number lists the questions and saves nothing", async () => {
+    const source = sourceSession("s-src");
+    const { runtime, saved } = makeRuntime([source]);
+    const { api, sent } = makeApi();
+    pointer.setCurrent(String(DM), source.id, "DM");
+
+    await handleInboundText(dmUpdate("/fork 3"), ctxFor(runtime, api));
+
+    expect(saved).toHaveLength(0);
+    expect(pointer.get(String(DM)).current).toBe(source.id);
+    expect(sent.at(-1)?.text).toContain("1. plan the trip");
+    expect(sent.at(-1)?.text).toContain("2. make it cheaper");
+  });
+
   it("refuses while a turn runs on the session and saves nothing", async () => {
     const source = sourceSession("s-src");
     const { runtime, saved, busy } = makeRuntime([source]);

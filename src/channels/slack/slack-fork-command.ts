@@ -10,12 +10,18 @@ import { scrubSlackError, type SlackTarget } from "./slack-types.js";
  * message's thread is mapped to the copy, the same `channel:thread_ts`
  * key every Slack thread already uses. In a DM (one conversation per
  * DM) or when the post fails, this conversation moves to the copy and
- * the source stays in its history. The source session is not changed.
+ * the source stays in its history, one `!switch <id>` away (ATO-2456).
+ * The source session is not changed.
  *
  * Precedent: OpenClaw v2026.11.10 conversation-fork.
  */
-export async function runSlackFork(ref: SlackRef, ctx: SlackInboundContext): Promise<string> {
-  const fork = planChannelFork(ctx.runtime, ctx.sessions.get(ref.key).current);
+export async function runSlackFork(
+  ref: SlackRef,
+  ctx: SlackInboundContext,
+  /** The text after `!fork`: empty for the last question, else its number (ATO-2456). */
+  at = "",
+): Promise<string> {
+  const fork = planChannelFork(ctx.runtime, ctx.sessions.get(ref.key).current, { at, command: "!fork" });
   if (!fork.ok) return fork.message;
   const { source, title } = fork;
 
@@ -33,7 +39,7 @@ export async function runSlackFork(ref: SlackRef, ctx: SlackInboundContext): Pro
   ctx.sessions.setCurrent(ref.key, state.id, ref.label);
   // The source is not running (planChannelFork refuses then).
   ctx.releaseApprovalSession?.(source.id);
-  return `Forked: this conversation now continues "${title}" (session \`${state.id}\`), forked from \`${source.id}\`. The original is unchanged.`;
+  return `Forked: this conversation now continues "${title}" (session \`${state.id}\`), forked from \`${source.id}\`. The original is unchanged; \`!switch ${source.id}\` goes back to it.`;
 }
 
 /** The new thread's root `ts`, or null when it could not be posted. */
