@@ -32,8 +32,9 @@ import {
   type ContractProbeSkipReason,
 } from "./contract-probe-target.js";
 import { describeContractProbeOutcome } from "./describe-contract-probe.js";
-import { providerLabelForWizard } from "./providers-wizard-target.js";
+import { envHintForWizard, providerLabelForWizard } from "./providers-wizard-target.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
+import { readWizardKeyReference, type WizardSecretRefDeps } from "./wizard-secret-ref.js";
 
 export interface WizardContractProbeOutcome {
   /**
@@ -64,7 +65,7 @@ export interface WizardContractProbeOutcome {
 
 export async function probeWizardContract(
   wizard: ProvidersWizardState,
-  opts: { signal?: AbortSignal; timeoutMs?: number } = {},
+  opts: { signal?: AbortSignal; timeoutMs?: number; secretRefs?: WizardSecretRefDeps } = {},
 ): Promise<WizardContractProbeOutcome> {
   const resolved = contractProbeTargetForWizard(wizard);
   if (resolved.kind === "skipped") {
@@ -82,7 +83,23 @@ export async function probeWizardContract(
       result: null,
     };
   }
-  const target = resolved.target;
+  // ATO-2530: a key typed as a reference goes out as its value. The key
+  // gate already read it (and refused the save if it could not), so this
+  // is a cache hit. One that cannot be read is never sent as the key:
+  // no request goes out, and the reason is the warning.
+  const typed = wizard.apiKeyBuffer.trim();
+  const read = await readWizardKeyReference(
+    typed,
+    envHintForWizard(wizard) || "API_KEY",
+    opts.secretRefs,
+  );
+  if (read && !read.ok) {
+    return { proven: false, warning: read.error, summary: read.error, skipped: "no_api_key", result: null };
+  }
+  const target =
+    read && read.ok && resolved.target.apiKey === typed
+      ? { ...resolved.target, apiKey: read.value }
+      : resolved.target;
 
   // No budget of its own: `PROVIDER_CONTRACT_PROBE_TIMEOUT_MS` is
   // already sized for an operator watching a wizard screen, and this is

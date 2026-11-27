@@ -4,6 +4,7 @@ import { rememberResolvedSecret } from "../sandbox/resolved-secret-values.js";
 import {
   parseSecretRef,
   planSecretRef,
+  type SecretRef,
   type SecretRefPlan,
   type SecretSources,
 } from "./secret-refs.js";
@@ -49,6 +50,8 @@ export interface SecretSpawnOptions {
   maxBytes: number;
   /** Windows `cmd.exe /c` line passed as written (`SecretRefPlan.verbatim`, ATO-2530). */
   verbatim?: boolean;
+  /** The folder to start in (`SecretRefPlan.cwd`); unset means this process's. */
+  cwd?: string;
 }
 
 /** A Vault request runner (ATO-2530); tests pass a fake, production uses `fetch`. */
@@ -73,6 +76,22 @@ export function resetSecretRefCache(): void {
   cache.clear();
 }
 
+function cacheKeyOf(ref: SecretRef, value: string): string {
+  return ref.kind === "command" ? `cmd\0${ref.key}` : value.trim();
+}
+
+/**
+ * Forget the cached value of `value` (a reference saved under `name`), so
+ * the next resolve reads it again. A key saved again after a rotation in
+ * 1Password, Bitwarden or Vault keeps the same reference text; without
+ * this the old value would come back until a restart (review F2102.4).
+ */
+export function forgetSecretRef(name: string, value: string): void {
+  const ref = parseSecretRef(value, name);
+  if (ref === null || typeof ref === "string") return;
+  cache.delete(cacheKeyOf(ref, value));
+}
+
 type Prepared =
   | { cached: string }
   | { cacheKey: string; plan: SecretRefPlan }
@@ -82,7 +101,7 @@ function prepare(name: string, value: string, sources: SecretSources, env: NodeJ
   const ref = parseSecretRef(value, name);
   if (ref === null) throw new SecretRefError(`${name} is not a secret reference`);
   if (typeof ref === "string") throw new SecretRefError(`${name}: ${ref}`);
-  const cacheKey = ref.kind === "command" ? `cmd\0${ref.key}` : value.trim();
+  const cacheKey = cacheKeyOf(ref, value);
   const hit = cache.get(cacheKey);
   if (hit !== undefined) {
     rememberResolvedSecret(name, hit);
@@ -115,6 +134,7 @@ function spawnOptions(plan: SecretRefPlan): SecretSpawnOptions {
     timeoutMs: plan.timeoutMs,
     maxBytes: SECRET_REF_MAX_OUTPUT_BYTES,
     ...(plan.verbatim === true ? { verbatim: true } : {}),
+    ...(plan.cwd === undefined ? {} : { cwd: plan.cwd }),
   };
 }
 
@@ -204,6 +224,7 @@ function failureOf(err: unknown): SecretSpawnOutcome["failure"] {
 export const spawnSecretSync: SyncSecretSpawner = (argv, options) => {
   const r = spawnSync(argv[0]!, argv.slice(1), {
     env: options.env,
+    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
     timeout: options.timeoutMs,
     maxBuffer: options.maxBytes,
     encoding: "utf8",
@@ -224,6 +245,7 @@ export const spawnSecret: SecretSpawner = (argv, options) =>
       argv.slice(1),
       {
         env: options.env,
+        ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
         timeout: options.timeoutMs,
         maxBuffer: options.maxBytes,
         encoding: "utf8",
