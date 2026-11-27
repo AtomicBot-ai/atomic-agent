@@ -6,6 +6,9 @@ import type { MemoryStore } from "../../memory/memory-store.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import { FileIndex, rerankerFromEnv } from "../../tools/files/index.js";
 import type { MediaTextOptions, VisionModel } from "../../tools/os/media-text/media-text.js";
+import { createFallbackOcrEngine } from "../../tools/os/media-text/fallback-ocr-engine.js";
+import { tesseractDataDir } from "../../tools/os/media-text/tesseract-data.js";
+import { createTesseractOcrEngine } from "../../tools/os/media-text/tesseract-ocr-engine.js";
 import { createVisionOcrEngine } from "../../tools/os/media-text/vision-ocr-engine.js";
 import type { OcrEngine } from "../../tools/os/read-document/extractors/ocr-engine.js";
 
@@ -22,7 +25,9 @@ const FILE_INDEX_START_DELAY_MS = 15_000;
  * Without it, search is FTS5 only. Scanned PDF pages, photos and audio
  * are read only while `vision.indexFiles` is on (ATO-2501, read live):
  * scans and photos by a vision model served on this machine
- * (`file-index-vision.ts`, never a cloud one), audio by whisper.cpp with
+ * (`file-index-vision.ts`, never a cloud one), with tesseract.js as the
+ * offline fallback for scans when it is installed and its language data
+ * is on disk (ATO-2502), audio by whisper.cpp with
  * a speech model already on disk (nothing is downloaded from here). When
  * the setting is on at boot, files skipped earlier for want of a reader
  * are queued again. Vector candidates
@@ -89,10 +94,16 @@ export function fileIndexReaders(deps: {
   // `vision.enabled: false` is the master switch: no image goes to any
   // model then, so photos and scans stay skipped. Audio needs no vision
   // model, but it is the same setting, so it follows it too.
-  const engine = createVisionOcrEngine({
-    vision: deps.localVision,
-    maxImageBytes: deps.readConfig().vision.maxImageBytes,
-  });
+  // Scans: the local vision model first (unchanged), tesseract.js when
+  // no vision model is ready (ATO-2502). Which one leads when both are
+  // there waits for the Russian-scan measurement.
+  const engine = createFallbackOcrEngine([
+    createVisionOcrEngine({
+      vision: deps.localVision,
+      maxImageBytes: deps.readConfig().vision.maxImageBytes,
+    }),
+    createTesseractOcrEngine({ dataDir: () => tesseractDataDir(deps.readConfig().paths.localModelsDataDir) }),
+  ]);
   return {
     enabled,
     media: () => {

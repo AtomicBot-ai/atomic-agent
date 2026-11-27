@@ -36,7 +36,7 @@ describe("fileIndexReaders", () => {
     const media = readers.media();
     expect(media).toMatchObject({ enabled: true, maxImageBytes: 1024, localModelsDataDir: "/models", allowModelDownload: false });
     expect(typeof media?.vision === "function" ? media.vision() : media?.vision).toBe(localModel);
-    expect(readers.ocr()?.id).toBe("vision-model");
+    expect(readers.ocr()?.id).toBe("vision-model or tesseract-js");
   });
 
   it("stays off while vision itself is switched off", () => {
@@ -47,7 +47,9 @@ describe("fileIndexReaders", () => {
 
   it("says why a scan stays unread when nothing local reads images", async () => {
     const readers = fileIndexReaders({ readConfig: () => readerConfig({ indexFiles: true }), localVision: () => undefined });
-    expect(await readers.ocr()?.unavailableReason(["rus", "eng"])).toBe("no vision model is configured");
+    // tesseract.js is the fallback (ATO-2502); with no data folder on disk it is not ready either.
+    const reason = await readers.ocr()?.unavailableReason(["rus", "eng"]);
+    expect(reason).toMatch(/^no vision model is configured; tesseract/);
   });
 });
 
