@@ -21,6 +21,13 @@ import { describeAlwaysRule } from "../../approval/approval-rules.js";
 import { formatRiskLine } from "../../approval/risk-review.js";
 import { formatEgressLine } from "../../approval/egress-scan.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
+import {
+  sessionGrantLabels,
+  sessionGrantOffer,
+  sessionGrantScope,
+  sessionGrantSummary,
+  type SessionGrantOffer,
+} from "../approval-session-grants.js";
 import type { DiscordApi, DiscordComponentRow } from "./discord-api.js";
 import { scrubDiscordError } from "./discord-channel-types.js";
 
@@ -61,6 +68,8 @@ interface Pending {
   messageId: string | null;
   /** The "Allow always" label, when that button was posted (ATO-1142). */
   alwaysLabel?: string;
+  /** The session grants whose buttons were posted (ATO-2509). */
+  sessionGrants?: SessionGrantOffer;
 }
 
 export class DiscordApprovalBridge {
@@ -91,16 +100,19 @@ export class DiscordApprovalBridge {
       this.deps.approvals.canGrantAlways?.(request) === true
         ? describeAlwaysRule(request)
         : undefined;
+    // The same "this session" grants Telegram and the TUI offer (ATO-2509).
+    const sessionGrants = request.question ? null : sessionGrantOffer(request);
     const messageId = await this.deps.api.sendMessage(
       channelId,
       formatPrompt(request),
-      buttonsFor(request.approvalId, alwaysLabel),
+      buttonsFor(request.approvalId, alwaysLabel, sessionGrants),
     );
     this.pending.set(request.approvalId, {
       approvalId: request.approvalId,
       channelId,
       messageId,
       ...(alwaysLabel !== undefined ? { alwaysLabel } : {}),
+      ...(sessionGrants !== null ? { sessionGrants } : {}),
     });
   }
 
@@ -140,13 +152,22 @@ export class DiscordApprovalBridge {
       await this.ack(event, "This request already expired or was answered elsewhere.");
       return true;
     }
-    const approved = verb === "yes" || always;
+    // A session grant likewise counts only where its button was posted.
+    const grantKind = verb === "session" ? "s" : verb === "shape" ? "a" : null;
+    const sessionGrant =
+      grantKind === null ? null : sessionGrantScope(grantKind, posted?.sessionGrants);
+    if (grantKind !== null && sessionGrant === null) {
+      await this.ack(event, "This request already expired or was answered elsewhere.");
+      return true;
+    }
+    const approved = verb === "yes" || always || sessionGrant !== null;
     const settled = this.deps.approvals.resolve({
       approvalId: approvalId ?? "",
       approved,
       // A button carries no words of the user's, so a deny has no reason.
       ...(approved ? { reason: "approved from Discord" } : {}),
       ...(always ? { grant: "always" as const } : {}),
+      ...(sessionGrant !== null ? { grant: sessionGrant } : {}),
     });
     this.pending.delete(approvalId ?? "");
     await this.ack(
@@ -154,9 +175,11 @@ export class DiscordApprovalBridge {
       settled
         ? always
           ? `✅ Approved. Saved: ${posted?.alwaysLabel}.`
-          : approved
-            ? "✅ Approved."
-            : "🚫 Denied."
+          : sessionGrant !== null && posted?.sessionGrants
+            ? `✅ Approved for this session: ${escapeDiscordText(sessionGrantSummary(sessionGrant, posted.sessionGrants))}.`
+            : approved
+              ? "✅ Approved."
+              : "🚫 Denied."
         : // The gate already settled -- timeout, cancel, or a decision
           // taken on another surface. Say so rather than implying the
           // click did something.
@@ -186,11 +209,14 @@ export class DiscordApprovalBridge {
 
 /**
  * Two buttons, plus "Allow always" when `alwaysLabel` is given; ids
- * namespaced so foreign components never match.
+ * namespaced so foreign components never match. Offered session grants
+ * get a second row, with Telegram's labels: `session` for the kind,
+ * `shape` for the command shape (ATO-2509).
  */
 export function buttonsFor(
   approvalId: string,
   alwaysLabel?: string,
+  sessionGrants: SessionGrantOffer | null = null,
 ): DiscordComponentRow[] {
   const components: Array<DiscordComponentRow["components"][number]> = [
     {
@@ -217,7 +243,22 @@ export function buttonsFor(
       custom_id: `${CUSTOM_ID_PREFIX}always:${approvalId}`,
     });
   }
-  return [{ type: 1, components }];
+  const rows: DiscordComponentRow[] = [{ type: 1, components }];
+  const labels = sessionGrantLabels(sessionGrants);
+  const offered: Array<[string, string | undefined]> = [
+    ["session", labels.category],
+    ["shape", labels.shape],
+  ];
+  const grants = offered
+    .filter((entry): entry is [string, string] => entry[1] !== undefined)
+    .map(([verb, label]) => ({
+      type: 2 as const,
+      style: STYLE_PRIMARY,
+      label,
+      custom_id: `${CUSTOM_ID_PREFIX}${verb}:${approvalId}`,
+    }));
+  if (grants.length > 0) rows.push({ type: 1, components: grants });
+  return rows;
 }
 
 export function formatPrompt(request: ApprovalRequest): string {

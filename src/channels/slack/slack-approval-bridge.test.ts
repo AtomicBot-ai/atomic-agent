@@ -55,9 +55,11 @@ describe("SlackApprovalBridge", () => {
     const [target, , blocks] = api.postMessage.mock.calls[0] as unknown as [unknown, string, Array<Record<string, unknown>>];
     expect(target).toEqual({ channel: "C1", threadTs: "99.0" });
     const actions = blocks.find((b) => b.type === "actions") as { elements: Array<{ action_id: string }> };
+    // A plain shell request is grantable for the session (ATO-2509).
     expect(actions.elements.map((e) => e.action_id)).toEqual([
       `${ACTION_ID_PREFIX}yes:ap-1`,
       `${ACTION_ID_PREFIX}no:ap-1`,
+      `${ACTION_ID_PREFIX}session:ap-1`,
     ]);
   });
 

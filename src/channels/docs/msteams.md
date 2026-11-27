@@ -71,6 +71,6 @@ Upload it with **Apps, Manage your apps, Upload an app** (your tenant may requir
 
 ## Using it
 
-Chat with the bot directly, or @mention it in a channel or group chat. Each personal chat is one session; each channel thread is its own. Commands: `/help`, `/status`, `/new`, `/model`, `/cancel`. Approvals arrive as a card with Approve and Deny (and "Allow always" when it is offered); only an owner's click counts, and the card is replaced with the decision. Typing `yes <code>` or `no <code>` works too. Replies are split at 4000 characters. Lock `<stateDir>/msteams.lock`, sessions `<stateDir>/msteams-session.json`.
+Chat with the bot directly, or @mention it in a channel or group chat. Each personal chat is one session; each channel thread is its own. Commands: `/help`, `/status`, `/new`, `/model`, `/cancel`. Approvals arrive as a card with Approve and Deny, "Allow ... this session" when the request may be granted for the session, and "Allow always" when it is offered; only an owner's click counts, and the card is replaced with the decision. Typing `yes <code>` or `no <code>` works too, and `session <code>` / `all <code>` for the session grants the card shows. Replies are split at 4000 characters. Lock `<stateDir>/msteams.lock`, sessions `<stateDir>/msteams-session.json`.
 
 Not yet: files in either direction, proactive messages (task reports, digests), a settings screen in the desktop app and TUI.

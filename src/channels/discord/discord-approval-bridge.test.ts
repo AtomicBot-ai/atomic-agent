@@ -303,12 +303,11 @@ describe("DiscordApprovalBridge and a dangerous shell command (ATO-1224)", () =>
       "atomic:approve:no:ap-rm",
     ]);
 
-    // A forged grant verb is not a yes.
+    // A forged grant verb is not a yes: no grant was offered, so it
+    // settles nothing and the prompt stays open (ATO-2509).
     await bridge.handleInteraction(click("session", OWNER, "ap-rm"));
-    expect(approvals.resolve).toHaveBeenLastCalledWith({
-      approvalId: "ap-rm",
-      approved: false,
-    });
+    await bridge.handleInteraction(click("shape", OWNER, "ap-rm"));
+    expect(approvals.resolve).not.toHaveBeenCalled();
     await bridge.handleInteraction(click("yes", OWNER, "ap-rm"));
     expect(approvals.resolve).toHaveBeenLastCalledWith({
       approvalId: "ap-rm",
