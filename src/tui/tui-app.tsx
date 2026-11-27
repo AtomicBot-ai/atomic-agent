@@ -2754,6 +2754,7 @@ export function TuiApp({
                       reservedForReply={state.session.completionMaxTokens}
                       pairsDraft={state.contextPanelPairsDraft}
                       onStepPairs={stepConversationPairs}
+                      detail={state.contextPanelDetail}
                     />
                   ) : null}
                   <ComposerSwitchPopup
