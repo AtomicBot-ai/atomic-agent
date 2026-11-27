@@ -355,13 +355,15 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     // literal thinking-tag strings (`<think>`/`</think>` and variants)
     // that appear inside message content, silently dropping or mangling
     // them (ollama/ollama#17248, #17617). atomic-agent injects no
-    // reasoning prefill into chat-transport prompts, and for this host
-    // (`ollama.com`) it rewrites `<think>`, `</think>`, `<thinking>` and
-    // `</thinking>` in outgoing message content and tool-call arguments
-    // to visible `[think]`, `[/think]`, `[thinking]`, `[/thinking]`
-    // (`openai/think-tag-safe.ts`; reasoning fields untouched). Local
-    // Ollama and every other provider are sent byte-identical. Drop the
-    // rewrite once the upstream bugs are fixed.
+    // reasoning prefill into chat-transport prompts, and for Ollama cloud
+    // models wherever they are reached (this host, or a `:cloud` /
+    // `-cloud` model on a local Ollama daemon, ATO-2771) it rewrites
+    // `<think>`, `</think>`, `<thinking>` and `</thinking>` in outgoing
+    // message content and tool-call arguments to visible `[think]`,
+    // `[/think]`, `[thinking]`, `[/thinking]` (`openai/think-tag-safe.ts`;
+    // reasoning fields untouched). Local models on local Ollama and every
+    // other provider are sent byte-identical. Drop the rewrite once the
+    // upstream bugs are fixed.
     note: "hosted Ollama, models listed without a key",
   },
   {
