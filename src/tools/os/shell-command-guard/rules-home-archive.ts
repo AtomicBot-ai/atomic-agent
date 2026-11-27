@@ -13,14 +13,17 @@ import { ShellPathTracker } from "./shell-path-tracker.js";
  * names one, so the credential rule did not see it.
  *
  * A source operand counts when it is the home folder itself (`~`, `~/`,
- * `$HOME`, `/Users/<name>`, `.` after a `cd` there) or every entry of it
- * (`~/*`, `~/.*`, `*` in it). A destination does not: `cp -r x ~`,
+ * `$HOME`, `/Users/<name>`, `.` after a `cd` there), a folder above it
+ * (`/Users`, `/home`, `/`), or every entry of one of those (`~/*`, `~/.*`,
+ * `*` in it). A destination does not: `cp -r x ~`,
  * `tar xzf x.tgz -C ~` (extracting is not reading). `tar -C <dir>` moves
  * the folder the members after it are read from.
  */
 
 const SECRET_CONFIDENCE = 0.9;
 const HOME_DIR = /^(?:\/users\/[^/]+|\/home\/[^/]+|\/root)$/;
+/** The folders every home folder sits in, and the root. */
+const HOMES_PARENT = /^(?:\/|\/users|\/home)$/;
 const WHOLE_FOLDER = /^(?:\*|\.\*|\.\[!.\]\*|\.\?\*|\{\*,\.\*\}|\{\.\*,\*\})$/;
 /** Copy programs: every operand but the last is a source. */
 const COPIERS: ReadonlySet<string> = new Set(["cp", "scp", "rsync", "ditto", "rclone"]);
@@ -32,20 +35,30 @@ function stripSlashes(path: string): string {
   return path.length > 1 ? path.replace(/\/+$/, "") : path;
 }
 
-/** The path is the home folder, or a glob of all its entries. */
+/**
+ * The home folder or a folder that holds it (`/`, `/Users`, `/home`, the
+ * parents of the real home; review round 1): their archive has `~/.ssh`
+ * in it too.
+ */
+function holdsHome(lower: string, home: string): boolean {
+  if (lower === home || HOME_DIR.test(lower) || HOMES_PARENT.test(lower)) return true;
+  return home.startsWith(`${lower}/`);
+}
+
+/** The path is the home folder (or above it), or a glob of all its entries. */
 function namesWholeHome(path: string, home: string): boolean {
   const clean = stripSlashes(posix.normalize(path));
   const lower = clean.toLowerCase();
-  if (lower === home || HOME_DIR.test(lower)) return true;
+  if (holdsHome(lower, home)) return true;
   const dir = posix.dirname(clean).toLowerCase();
   const base = posix.basename(clean);
-  return (dir === home || HOME_DIR.test(dir)) && WHOLE_FOLDER.test(base);
+  return holdsHome(dir, home) && WHOLE_FOLDER.test(base);
 }
 
 function finding(word: string): ArgScanFinding {
   return {
     id: "dangerous.read_credentials",
-    reason: `packs or copies the whole home folder, credential folders included (${word})`,
+    reason: `packs or copies the whole home folder or a folder above it, credential folders included (${word})`,
     confidence: SECRET_CONFIDENCE,
   };
 }

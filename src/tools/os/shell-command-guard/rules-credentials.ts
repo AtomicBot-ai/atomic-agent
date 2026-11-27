@@ -6,6 +6,7 @@ import type { ArgScanFinding } from "./arg-scan-finding.js";
 import { PREFIX_COMMANDS, programName, splitCommandSegments } from "./command-segments.js";
 import { ShellPathTracker, type CdStep } from "./shell-path-tracker.js";
 import { secretPathUnderGlob } from "./secret-path-glob.js";
+import { runsInlineCodeAt } from "./inline-code-flags.js";
 
 /**
  * `dangerous.read_credentials` (ATO-2126): a command that reads, copies,
@@ -79,13 +80,6 @@ const ARGUMENT_READERS: ReadonlySet<string> = new Set([
   "ln",
   "find",
 ]);
-/** Interpreters and the flag that hands them inline code. */
-const CODE_FLAG: readonly (readonly [RegExp, RegExp])[] = [
-  [/^python[0-9.]*$/, /^-[a-z]*c$/i],
-  [/^node$/, /^(?:-[a-z]*[ep]|--eval|--print)$/],
-  [/^perl$/, /^-[a-z]*e$/i],
-  [/^ruby$/, /^-[a-z]*e$/],
-];
 /** A path below the home folder; group 1 is the part below it. */
 const UNDER_HOME = new RegExp(String.raw`^${HOME_PREFIX}(/\S*)$`);
 const UNKNOWN_VARIABLE = /\$(?:\{|[a-z_])/;
@@ -197,10 +191,9 @@ function readsThroughOwnArguments(words: readonly string[]): boolean {
   return words.some((word, index) => {
     // The program word only: `grep foo .` is not `.` (source).
     if (!words.slice(0, index).every(isPrefixWord)) return false;
-    const program = programName(word);
-    if (ARGUMENT_READERS.has(program)) return true;
-    const flag = CODE_FLAG.find(([name]) => name.test(program))?.[1];
-    return flag !== undefined && words.slice(index + 1).some((arg) => flag.test(arg));
+    if (ARGUMENT_READERS.has(programName(word))) return true;
+    // `-c "code"` and `-c"code"` alike (`inline-code-flags.ts`).
+    return runsInlineCodeAt(words, index);
   });
 }
 
