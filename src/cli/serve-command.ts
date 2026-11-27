@@ -76,6 +76,9 @@ export async function serveCommand(args: string[]): Promise<number> {
   // Read once, then out of the environment: every child serve starts
   // (hooks, llama-server, a browser, cloudflared, a CLI provider) would
   // otherwise inherit it, not only the shell tool that already drops it.
+  // This stops inheritance only: the launch environment itself stays
+  // readable by the same user (/proc/<pid>/environ on Linux, `ps eww` on
+  // macOS), since unsetenv does not touch the original env block.
   delete process.env.ATOMIC_AGENT_API_KEY;
 
   // ATO-625: refuse the tunnel before anything boots, so a missing
