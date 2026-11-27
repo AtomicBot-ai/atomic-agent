@@ -241,7 +241,10 @@ export function createLspServerPool(options: LspServerPoolOptions = {}): LspServ
       if (entry.state === "failed") return { ok: false, reason: "failed", spec };
       const client = await withTimeout(entry.ready, startupWaitMs);
       if (client === null) {
-        return { ok: false, reason: entry.state === "failed" ? "failed" : "starting", spec };
+        // Read the state again: it may have turned "failed" during the
+        // wait, but TS keeps it narrowed by the early return above.
+        const state: ServerEntry["state"] = (entry as ServerEntry).state;
+        return { ok: false, reason: state === "failed" ? "failed" : "starting", spec };
       }
       if (!client.alive) return { ok: false, reason: "failed", spec };
       const run = entry.queue.then(() => job({ client, spec, root }));
