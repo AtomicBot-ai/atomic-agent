@@ -13,6 +13,7 @@ import { maskSecrets } from "./secret-detector.js";
 import { extractAnswerFailureTags } from "./answer-failure-tag.js";
 import { extractSubscriptionCliFailureTags } from "./subscription-cli-failure-tag.js";
 import { extractUpstreamErrorDetail } from "./upstream-error-detail.js";
+import { classifyFailureOwner, requestHostIsLocal } from "./failure-owner.js";
 
 /** Neutral, transport-agnostic shape of a scrubbed error report. */
 export interface ScrubbedErrorEvent {
@@ -131,6 +132,12 @@ export interface ScrubbedErrorEvent {
   upstreamErrorParam?: string;
   /** `error.code` of the provider body, bounded enum shape. */
   upstreamErrorCode?: string;
+  /**
+   * Who acts on a provider's HTTP refusal (`failure-owner.ts`, ATO-2419):
+   * `person`, `ours`, `provider` or `unknown`. Only on `llm_failure`
+   * events that carry a status and are not a tool's failure.
+   */
+  failureOwner?: string;
   /**
    * `llm_failure` turn context as ready-made tags (`provider_id`,
    * `local_engine`, `outage_waited_ms`, `outage_attempts`,
@@ -551,6 +558,10 @@ export function scrubError(
   }
   if (detail.upstreamErrorCode !== undefined) {
     event.upstreamErrorCode = detail.upstreamErrorCode;
+  }
+  if (opts.source === "llm_failure" && category !== "tool") {
+    const owner = classifyFailureOwner(httpStatus, detail.upstreamReason, requestHostIsLocal(err));
+    if (owner !== undefined) event.failureOwner = owner;
   }
   const llmFailureTags = sanitizeLlmFailureTags(opts.llmFailure);
   if (llmFailureTags !== undefined) event.llmFailureTags = llmFailureTags;

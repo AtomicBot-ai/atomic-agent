@@ -86,6 +86,8 @@ export function buildEnvelope(
   if (ev.upstreamReason) tags.upstream_reason = ev.upstreamReason;
   if (ev.upstreamErrorParam) tags.upstream_error_param = ev.upstreamErrorParam;
   if (ev.upstreamErrorCode) tags.upstream_error_code = ev.upstreamErrorCode;
+  // ATO-2419: person / ours / provider / unknown. Tag only.
+  if (ev.failureOwner) tags.failure_owner = ev.failureOwner;
   // Context tags never re-group issues: they stay out of the fingerprint.
   if (ev.llmFailureTags) Object.assign(tags, ev.llmFailureTags);
   if (ev.cliFailureTags) Object.assign(tags, ev.cliFailureTags);
