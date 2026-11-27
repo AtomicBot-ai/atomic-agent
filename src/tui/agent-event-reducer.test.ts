@@ -2003,6 +2003,26 @@ describe("tool disabled (ATO-1417)", () => {
     });
     expect(next.messages).toEqual(initial.messages);
   });
+
+  it("tells the chat that the subscription CLI is out of date and how to update it (ATO-2523)", () => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const next = reduceTuiState(initial, {
+      type: "agent_event",
+      sessionId: "s1",
+      event: {
+        type: "cli_outdated",
+        stepIndex: 0,
+        cli: "claude",
+        productName: "Claude Code",
+        version: "2.1.0",
+        minimum: "2.1.22",
+        updateCommands: ["claude update"],
+      },
+    });
+    const last = next.messages.at(-1);
+    expect(last?.role).toBe("system");
+    expect(last?.text).toBe("Claude Code 2.1.0 is out of date: run `claude update` (Atomic Agent needs 2.1.22 or newer).");
+  });
 });
 
 describe("empty-completion recovery", () => {
