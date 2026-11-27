@@ -4,6 +4,7 @@ import type {
   ToolDescriptor,
 } from "../prompt/stable-prefix.js";
 import { buildStablePrefix } from "../prompt/stable-prefix.js";
+import { capabilitiesForServedModel } from "../prompt/machine-line.js";
 import type { ModelProfile } from "../llm/model-profile.js";
 import type { ToolCallTransport } from "../llm/provider/completion-types.js";
 import { hashPrefix } from "../llm/slot-manager.js";
@@ -120,10 +121,11 @@ export async function replaySession(options: {
     transport: ToolCallTransport,
     compact: boolean,
     toolSearch: boolean,
+    withMachine: boolean,
   ): string =>
     buildStablePrefix({
       toolDescriptors: applyToolSearch(context.toolDescriptors, toolSearch),
-      capabilities: context.capabilities,
+      capabilities: capabilitiesForServedModel(context.capabilities, withMachine),
       skillCatalog: context.skillCatalog,
       ...(context.skillCatalogDropped !== undefined
         ? { skillCatalogDropped: context.skillCatalogDropped }
@@ -147,14 +149,19 @@ export async function replaySession(options: {
     context.compact !== undefined ? [context.compact] : [false, true];
   const toolSearchVariants: readonly boolean[] =
     context.toolSearch !== undefined ? [context.toolSearch] : [false, true];
-  const candidates = toolSearchVariants.flatMap((toolSearch) =>
-    compactVariants.flatMap((compact) =>
-      transports.map((transport) => ({
-        transport,
-        compact,
-        toolSearch,
-        hash: hashPrefix(prefixFor(transport, compact, toolSearch)),
-      })),
+  // ATO-1721: the `machine:` line rides only on prompts for a model
+  // served on this machine, so a cloud step was recorded without it.
+  const machineVariants: readonly boolean[] = context.capabilities.machine ? [true, false] : [false];
+  const candidates = machineVariants.flatMap((withMachine) =>
+    toolSearchVariants.flatMap((toolSearch) =>
+      compactVariants.flatMap((compact) =>
+        transports.map((transport) => ({
+          transport,
+          compact,
+          toolSearch,
+          hash: hashPrefix(prefixFor(transport, compact, toolSearch, withMachine)),
+        })),
+      ),
     ),
   );
 

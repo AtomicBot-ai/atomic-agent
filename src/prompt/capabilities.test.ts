@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildCapabilities,
   probeClipboard,
   probeNotifications,
   probeWmctrl,
@@ -70,5 +71,28 @@ describe("the agent's own e-mail address", () => {
     expect(formatCapabilities(withInbox)).toContain(
       "email: atag-1@atomicmail.ai (os.email.inbox / os.email.send)",
     );
+  });
+});
+
+/** ATO-1721: the machine line is probed once with the other capabilities. */
+describe("buildCapabilities machine line", () => {
+  const base = { workingDir: "/w", browserChannel: "chrome" };
+  const probeInput = { dataDir: "/models", platform: "win32" as const, cpuModel: "Intel Core i5-8250U", osName: "Windows 10" };
+
+  it("carries the probed line", async () => {
+    const caps = await buildCapabilities({
+      ...base,
+      machineProbe: { ...probeInput, probe: async () => ({ ramGb: 16, gpuBudgetGb: null, freeDiskGb: 50, cpuOnly: true }) },
+    });
+    expect(caps.machine).toBe("16 GB RAM, Intel Core i5-8250U, no GPU, Windows 10");
+  });
+
+  it("has no machine field without a probe or when the probe fails", async () => {
+    expect(await buildCapabilities(base)).not.toHaveProperty("machine");
+    const failed = await buildCapabilities({
+      ...base,
+      machineProbe: { ...probeInput, probe: async () => { throw new Error("no engine"); } },
+    });
+    expect(failed).not.toHaveProperty("machine");
   });
 });

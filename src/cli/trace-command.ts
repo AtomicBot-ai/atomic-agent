@@ -156,6 +156,12 @@ async function handleReplay(args: string[]): Promise<number> {
   const capabilities = await buildCapabilities({
     workingDir,
     browserChannel: config.browser.channel,
+    // ATO-1721: the same machine line the runtime put in local prompts.
+    machineProbe: {
+      dataDir: config.paths.localModelsDataDir,
+      engine: config.localModels.managed.engine,
+      configuredDevice: config.localModels.managed.device,
+    },
   });
 
   // The full catalog, `tool.search` included: the replay derives the

@@ -301,6 +301,12 @@ export async function createAgentRuntime(
     browserChannel: config.browser.channel,
     // Only an inbox this machine holds the key for is the agent's to use.
     emailAddress: readAtomicMailApiKey() ? config.atomicMail.address : null,
+    // ATO-1721: RAM / CPU / GPU / OS once per runtime, for local models.
+    machineProbe: {
+      dataDir: config.paths.localModelsDataDir,
+      engine: config.localModels.managed.engine,
+      configuredDevice: config.localModels.managed.device,
+    },
   });
 
   // Memory-v2 phase 7a — fail-fast clamp/decay validation. The
