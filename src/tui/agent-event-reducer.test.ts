@@ -3262,6 +3262,17 @@ describe("a cloud provider's refusal reads as the refusal it is", () => {
     expect(key).toContain("/report");
   });
 
+  it("says a cloud model can't use tools, not that the provider lacks it", () => {
+    const said = failed(
+      onCloud(),
+      '"openrouter" says this model can\'t use tools (404), and the agent needs them to work. Pick a model that supports tool calling.',
+      "model_not_found",
+    );
+    const first = said.split("\n")[0] ?? "";
+    expect(first).not.toContain("doesn't have this model");
+    expect(first).toBe("Turn failed: This model can't use tools. Pick one that supports tool calling with /model.");
+  });
+
   it("leaves a local route to its own hints", () => {
     const said = failed(createInitialTuiState(fakeSession()), "llama-server returned http 404: not found", "model_not_found");
     expect(said.startsWith("Turn failed: couldn't get a reply from the provider.")).toBe(true);

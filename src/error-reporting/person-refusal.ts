@@ -35,9 +35,10 @@ export function isPersonRefusal(err: unknown, event: ScrubbedErrorEvent): boolea
 
 /**
  * Default ports of the local servers a person starts and loads models in
- * themselves: Ollama, LM Studio, Atomic Chat's Local API Server. The
- * same port rule as `localServerProgram` in `openai-http.ts`, kept here
- * so this module takes no import from the LLM layer.
+ * themselves: Ollama, LM Studio, Atomic Chat's Local API Server. Read by
+ * default port, like `localServerProgram` in `openai-http.ts` (which
+ * names only 1337 and 11434); kept here so this module takes no import
+ * from the LLM layer.
  */
 const PERSON_RUN_PORTS: ReadonlySet<string> = new Set(["11434", "1234", "1337"]);
 
