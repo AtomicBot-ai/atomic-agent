@@ -1140,7 +1140,7 @@ Honestly degraded, and labelled as such in the UI:
   behind a small `TranscribeEngine` interface so a Windows whisper.cpp engine
   (ATO-1076) can plug in without touching the IPC or the renderer.
 - **Record a meeting (ATO-2333).** `+` → `Record meeting` or File →
-  `Record a Meeting…` opens the microphone (audio only, through the same
+  `Record Meeting` opens the microphone (audio only, through the same
   permission gate as voice input: `voicePermissionVerdict` reads
   `meeting.armed`). A red `Recording` pill with a clock and `Stop` stays at
   the top of the window while anything is heard; the panel under it shows the
@@ -1156,7 +1156,14 @@ Honestly degraded, and labelled as such in the UI:
   folder to My files, deletes the meeting's audio, and opens a new chat that
   sends the transcript to the `meeting-notes` skill (summary, decisions,
   action items with owners, and a question before anything is scheduled).
-  `Delete recording` removes the folder. A recording a crash or a closed
+  `Delete recording` asks first, then removes the folder; a delete that
+  failed says so in a red toast and the recording is offered again
+  (ATO-2749). A microphone that was refused shows a card with the
+  platform's own path (`System Settings › Privacy & Security › Microphone`,
+  Windows `Settings › Privacy & security › Microphone`, plain words on
+  Linux) and `Open Settings` on macOS and Windows (`app:openMicSettings`,
+  `main/mic-settings.ts`). Quitting while a meeting is recorded is named in
+  the quit question (`main/quit-question.ts`). A recording a crash or a closed
   window cut short is offered again at the next start. Not yet: system audio
   (ScreenCaptureKit) and real speaker recognition.
 - **Voice input: what is and is not possible.** `SpeechAnalyzer` is macOS
