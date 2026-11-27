@@ -4532,7 +4532,7 @@ function composer() {
     + (typeof fmMenuHTML === 'function' ? fmMenuHTML() : '')   // ATO-1596: the @ file list (file-mentions.js)
     // ATO-404: the "+" menu hangs here for the same reason (attachments.js).
     + attMenuHTML()
-    + (typeof cmodeMenuHTML === 'function' ? cmodeMenuHTML({esc, ic}) : '')
+    + (typeof cmodeMenuHTML === 'function' ? cmodeMenuHTML({esc, ic, kbdText}) : '')
     + '<div class="composer' + (running ? ' running' : '') + loaderClass() + '" id="composer">'
       + loaderHTML()
       + attStripHTML()
@@ -8644,7 +8644,7 @@ function runSlash(parts) {
     S.log.push({id:nid(), k:'system', text: statusSnapshotHTML(snap, esc)}); render(); return;
   }
   if (nav[name]) { act(nav[name]); return; }
-  S.log.push({id:nid(), k:'system', text:'unknown command /' + esc(name) + ' — ⌘K lists everything'});
+  S.log.push({id:nid(), k:'system', text:'Unknown command /' + esc(name) + '. ' + kbd('⌘K') + ' lists every command.'});
   render();
 }
 

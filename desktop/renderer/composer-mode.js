@@ -90,7 +90,8 @@ function cmodePickChipHTML(deps) {
 }
 /** The menu: a titled list of rows, each with its one-line hint under the label. */
 function cmodeMenuHTML(deps) {
-  const {esc, ic} = deps;
+  // ATO-2790: the Voice row's chord is written the Mac way; off macOS it reads Ctrl Shift J.
+  const {esc, ic, kbdText = (t) => t} = deps;
   const st = cmodeState();
   const cur = cmodeCurrent(st);
   return '<div class="cmodemenu" id="cmodemenu" role="menu" aria-label="Mode"' + (CMODE.open ? '' : ' hidden') + '>'
@@ -98,7 +99,7 @@ function cmodeMenuHTML(deps) {
       '<button class="cmoderow' + (r.id === cur ? ' on' : '') + '" role="menuitemradio" aria-checked="' + (r.id === cur ? 'true' : 'false') + '"'
         + ' data-cmode="' + r.id + '" data-conv="1">'
         + '<span class="cmodeic">' + ic(r.icon) + '</span>'
-        + '<span class="col"><span class="ml">' + esc(r.word) + '</span><span class="cap">' + esc(r.hint) + '</span></span>'
+        + '<span class="col"><span class="ml">' + esc(r.word) + '</span><span class="cap">' + esc(kbdText(r.hint)) + '</span></span>'
         + '<span class="cmodeck">' + (r.id === cur ? ic('check') : '') + '</span></button>').join('')
     + '</div>';
 }
