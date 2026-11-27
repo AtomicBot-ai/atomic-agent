@@ -51,7 +51,7 @@ export interface ShellJobHostControls {
 }
 
 /** A backend that can resize its terminal; the `script(1)` one cannot. */
-type ResizableJob = CommandJob & { resize(cols: number, rows: number): void };
+type ResizableJob = CommandJob & { resize(cols: number, rows: number): boolean | void };
 
 function isResizable(job: CommandJob): job is ResizableJob {
   return typeof (job as Partial<ResizableJob>).resize === "function";
@@ -104,8 +104,8 @@ export function createShellJobHostControls(
       const record = registry.get(sessionId, id);
       if (!record) return "not_found";
       if (record.state !== "running" || !isResizable(record.job)) return "not_supported";
-      record.job.resize(cols, rows);
-      return "resized";
+      // The native pty answers `false` when the terminal is already gone.
+      return record.job.resize(cols, rows) === false ? "not_supported" : "resized";
     },
     stop(sessionId, id) {
       const record = registry.get(sessionId, id);
