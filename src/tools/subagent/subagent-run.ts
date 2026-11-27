@@ -37,6 +37,7 @@ import {
   workerRefusalFor,
 } from "../fusion/worker-tool-policy.js";
 import { runWorkerTasksCore } from "../fusion/worker-runner.js";
+import { LocalLegHealth } from "../fusion/local-leg-health.js";
 import type { WorkerRunnerCoreDeps } from "../fusion/worker-runner-core.js";
 import {
   delegateOutcome,
@@ -211,6 +212,10 @@ function error(
  */
 export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
   const ledger = deps.turnLedger ?? new SubagentTurnLedger();
+  // One per tool, as `fusion.delegate` keeps its own (ATO-917): a local
+  // server left wedged by one call's cut-off subagent is still wedged for
+  // the next call, which is asked about it before it is sent (ATO-2430).
+  const localLegHealth = deps.localLegHealth ?? new LocalLegHealth();
   return {
     name: SUBAGENT_RUN_TOOL,
     description:
@@ -407,6 +412,7 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
       const originalRequest = deps.resolveOriginalRequest?.(ctx.sessionId);
       const runnerDeps: WorkerRunnerCoreDeps = {
         ...deps,
+        localLegHealth,
         workingDir: ctx.workingDir,
         ...(ctx.modelMode === "cloud" ? { inheritWorkspace: true } : {}),
       };
@@ -470,6 +476,10 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
           maxWorkers,
           providerId: group.leg.providerId,
           workerModel: group.leg.model,
+          // A local leg gets what a Fusion local worker gets (ATO-2430,
+          // issue #490): the local floors, the slot probe, and the check
+          // and fresh connections after a cut-off subagent.
+          localLeg: local,
           ...(group.leg.turnModel === undefined
             ? {}
             : { turnModel: group.leg.turnModel }),
