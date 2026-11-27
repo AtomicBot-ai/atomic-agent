@@ -1597,6 +1597,19 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("agent:projectTrust", async (_event, sessionId: unknown) => {
     try { return await client.projectTrust(skillSession(sessionId)); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
   });
+  // ATO-2441: your own slash commands in the / menu (renderer/own-commands.js).
+  ipcMain.handle("agent:commandList", async (_event, sessionId: unknown) => {
+    try { return await client.commandList(skillSession(sessionId)); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
+  ipcMain.handle("agent:commandRender", async (_event, raw: unknown) => {
+    const body = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+    if (typeof body.name !== "string" || !body.name || body.name.length > 200) return { ok: false, error: "invalid command name" };
+    if (body.args !== undefined && (typeof body.args !== "string" || body.args.length > 100_000)) return { ok: false, error: "invalid arguments" };
+    try {
+      const sessionId = skillSession(body.sessionId);
+      return await client.commandRender({ name: body.name, ...(body.args ? { args: body.args } : {}), ...(sessionId ? { sessionId } : {}) });
+    } catch (err) { return { ok: false, error: String(err) }; }
+  });
   ipcMain.handle("agent:projectTrustAnswer", async (_event, raw: unknown) => {
     const body = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
     if (body.answer !== "trust" && body.answer !== "decline") return { ok: false, error: "answer must be trust or decline" };
