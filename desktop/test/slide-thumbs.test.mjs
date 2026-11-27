@@ -43,6 +43,21 @@ test('the card keeps each slide by index and draws a strip of them, escaped', ()
   assert.equal(T.slideThumbsHTML(card, esc), '', 'a failed or denied deck shows no strip');
 });
 
+test('a comparison draws both columns: split at its second heading, or at the middle when the frame has none', () => {
+  const cols = (bullets) => {
+    const card = {k: 'tool', name: 'os.fs.write_pptx', ok: null};
+    T.slideThumbsAdd(card, frame({...base, layout: 'comparison', bullets}));
+    const m = /<div class="st-row st-cols"><div>(.*?)<\/div><div>(.*?)<\/div><\/div>/.exec(T.slideThumbsHTML(card, esc));
+    return m && [m[1], m[2]];
+  };
+  const [l1, r1] = cols(['Before', '  a', '  b', 'After', '  f']);
+  assert.match(l1, /Before/);
+  assert.match(r1, /After/);
+  const [l2, r2] = cols(['Before', '  a', '  b', '  c', '  d', '  e']);
+  assert.match(l2, /Before/);
+  assert.notEqual(r2, '', 'the second column is not empty');
+});
+
 test('the renderer keeps a tool_update\'s slide and draws the strip on the card; the page loads it first', () => {
   const src = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
   const update = src.slice(src.indexOf("if (ev.kind === 'tool_update') {"), src.indexOf("if (ev.kind === 'delta') {"));

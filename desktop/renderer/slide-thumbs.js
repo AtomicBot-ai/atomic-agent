@@ -88,7 +88,8 @@ function slideThumbBody(s, esc) {
     case 'two-column':
     case 'comparison': {
       const second = s.layout === 'comparison' ? s.bullets.findIndex((b, i) => i > 0 && !/^ {2,}/.test(b)) : Math.ceil(s.bullets.length / 2);
-      const at = second > 0 ? second : s.bullets.length;
+      // A comparison clipped before its second heading (an agent that sent only the first lines) splits at the middle, never one empty side.
+      const at = second > 0 ? second : Math.ceil(s.bullets.length / 2);
       const col = (part) => '<div>' + slideThumbBullets(part, esc, 'st-b') + '</div>';
       return t + '<i class="st-rule"></i>' + sub + '<div class="st-row st-cols">' + col(s.bullets.slice(0, at)) + col(s.bullets.slice(at)) + '</div>';
     }
