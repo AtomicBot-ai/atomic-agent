@@ -6157,6 +6157,8 @@ function shortcutsSheet() {
     ['Expand all cards','⌥ ⌘ E',''],['Collapse all cards','⌥ ⌘ K',''],
     ['Allow the approval on screen once','⌘ ↩','Ctrl ↩'],['Deny the approval on screen','⌘ .','Ctrl .'],
     ['Settings','⌘ ,','Ctrl ,'],['Shortcuts','⌘ /',''],
+    // ATO-2500: favorite models (model-favorites-keys.js).
+    ['Next favorite model','⌘ P','Ctrl P'],['Previous favorite model','⇧ ⌘ P','Ctrl ⇧ P'],['Star the model row in focus','⌘ D','Ctrl D'],
   ];
   return sheet('Keyboard shortcuts',
     '<div class="kbgrid">' + rows.map(([t, k]) => '<div class="row kbrow">'
@@ -7665,7 +7667,7 @@ function act(a) {
   // ATO-1372: the picker's Get vision files chip.
   if (a.startsWith('sel:vision:')) { selVisionFetch(a.slice('sel:vision:'.length)); return; }
   // ATO-2169: a model row's star (model-favorites.js); the picker stays open.
-  if (a.startsWith('sel:fav:')) { if (typeof modelFavToggle === 'function') modelFavToggle(a.slice('sel:fav:'.length)); render(); return; }
+  if (a.startsWith('sel:fav:')) { if (typeof modelFavToggle === 'function') modelFavToggle(a.slice('sel:fav:'.length), render); render(); return; }
   if (a === 'wiz:subRecheck') { wizSubRecheck(WIZ.row); return; }
   if (a === 'wiz:subLogin') { wizSubLogin(WIZ.row); return; }
   if (a === 'wiz:subCopy') { wizSubCopy(WIZ.row); return; }
@@ -9993,6 +9995,7 @@ document.addEventListener('keydown', (e) => {
   const inText = e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT';
   // Item 7: the TUI's ctrl+g menu chords, live everywhere as in the TUI.
   if (chordKey(e, sk)) return;
+  if (typeof modelFavKeydown === 'function' && modelFavKeydown(e, sk)) return;   // ATO-2500: ⌘P / ⇧⌘P favorites, ⌘D star (model-favorites-keys.js)
 
   // Item 2 (voice input): Escape cancels a live recording BEFORE anything
   // else looks at it. Five later Escape branches return first — a pending
@@ -19520,6 +19523,7 @@ function openSelector(kind) {
   SEL.open = true; SEL.kind = selHasKind(want) ? want : 'backend'; SEL.cursor = 0; SEL.filter = ''; SEL.err = null;
   render();
   if (SEL.kind === 'model' || SEL.kind === 'workers') selEnterModelPane();
+  if (typeof modelFavSync === 'function') modelFavSync((changed) => { if (changed && SEL.open) render(); });   // ATO-2500: a star set in the terminal
   if (SEL.kind === 'backend' && selBackend() !== 'cloud' && !SEL.local.length) selLoadLocal();
   // ATO-507: a fresh free-space reading for the model list's Download chips.
   if (SEL.kind === 'model' && selBackend() !== 'cloud') diskSpaceRefresh(BR, true);
@@ -20148,8 +20152,11 @@ function selectorHTML() {
           + (r.unverified ? '<span class="ann caution">Unverified</span>' : '')
           + (groups && typeof modelFavStarHTML === 'function' ? modelFavStarHTML(r, {esc, ic}) : '');   // ATO-2169
         const name = selRowName(r);
-        return (r.type === 'action' && i > 0 ? '<div class="tk-sep selsep"></div>' : '')
-          + '<button class="modelrow' + (r.active ? ' on' : '') + (r.type === 'localBusy' || r.disabled ? ' off" aria-disabled="true' : '') + '" data-sel-row="' + i + '" data-id="' + esc(r.id) + '">'
+        /* ATO-2500: the Download row leads its group, not the list, once Favorites is drawn above it. */
+        const leads = r.type === 'action' && (i === 0 || (groups && rows[i - 1] && rows[i - 1].group !== r.group));
+        return (r.type === 'action' && !leads ? '<div class="tk-sep selsep"></div>' : '')
+          /* ATO-2500: a Favorites copy carries data-fav-id, so data-id stays one row's (the drivers read it). */
+          + '<button class="modelrow' + (r.active ? ' on' : '') + (r.type === 'localBusy' || r.disabled ? ' off" aria-disabled="true' : '') + '" data-sel-row="' + i + '" ' + (r.favCopy ? 'data-fav-id' : 'data-id') + '="' + esc(r.id) + '">'
           + selRowLead(r)
           + '<span class="col"><span class="nm">'
           + (model ? selHilite(name, SEL.filter) : esc(name)) + '</span><span class="cap">' + esc(r.detail || '') + '</span>'
@@ -20159,7 +20166,7 @@ function selectorHTML() {
           + (right ? '<span class="selr">' + right + '</span>' : '')
           + '</button>'
           // ATO-167: a leading action row (Download more models…) is set off from the models under it.
-          + (r.type === 'action' && i === 0 && rows.length > 1 ? '<div class="tk-sep selsep"></div>' : '');
+          + (leads && i + 1 < rows.length ? '<div class="tk-sep selsep"></div>' : '');
       };
   /* ATO-730: grouped, each group carries its own heading and its own loading
      or error line; ungrouped, the one list keeps its lines on top. */

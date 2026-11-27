@@ -70,6 +70,8 @@ test('favourites are copied into a Favorites group at the top, in the order star
   const favs = pin.rows.filter((r) => r.group === 'favorites');
   assert.deepEqual(favs.map((r) => r.provider || 'local-llama'), ['local-llama', 'openrouter']);
   assert.deepEqual(favs.map((r) => r.id), ['qwen3-8b', 'gpt-5']);
+  // ATO-2500: a copy names whose model it is, from its own group's heading.
+  assert.deepEqual(favs.map((r) => r.favFrom), ['On this computer', 'OpenRouter']);
   // Copies first, then every original row still in its own group.
   assert.equal(pin.rows.length, rows.length + 2);
   assert.deepEqual(pin.rows.slice(2), rows);
@@ -109,7 +111,88 @@ test('the page loads model-favorites.js before renderer.js, and the picker uses 
   assert.match(r, /SEL\.groups = pin\.groups;/);
   assert.match(r, /return pin\.rows;/);
   assert.match(r, /modelFavStarHTML\(r, \{esc, ic\}\)/);
-  assert.match(r, /if \(a\.startsWith\('sel:fav:'\)\) \{ if \(typeof modelFavToggle === 'function'\) modelFavToggle\(a\.slice\('sel:fav:'\.length\)\); render\(\); return; \}/);
+  assert.match(r, /if \(a\.startsWith\('sel:fav:'\)\) \{ if \(typeof modelFavToggle === 'function'\) modelFavToggle\(a\.slice\('sel:fav:'\.length\), render\); render\(\); return; \}/);
   // The route's own group keeps the first group's lines under a Favorites group.
   assert.match(r, /const gi = gAt - favLead;/);
+});
+
+/* ---------------- ATO-2500 ---------------- */
+
+const tick = () => new Promise((r) => setImmediate(r));
+
+function fakeBridge(file) {
+  const calls = [];
+  return {
+    calls,
+    modelFavLoad: async (legacy) => { calls.push(['load', legacy]); for (const k of legacy || []) if (!file.includes(k)) file.push(k); return {ok: true, keys: [...file], saved: true}; },
+    modelFavToggle: async (key) => { calls.push(['toggle', key]); const at = file.indexOf(key); if (at >= 0) file.splice(at, 1); else file.push(key); return {ok: true, keys: [...file], on: at < 0}; },
+  };
+}
+
+function withWindow(br, storage, fn) {
+  const had = {window: globalThis.window, localStorage: globalThis.localStorage};
+  globalThis.window = {atomic: br};
+  globalThis.localStorage = storage;
+  return Promise.resolve(fn()).finally(() => {
+    globalThis.window = had.window; globalThis.localStorage = had.localStorage;
+    F.MODEL_FAV.shared = false;
+  });
+}
+
+function memStorage(init) {
+  const m = new Map(Object.entries(init || {}));
+  return {getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), has: (k) => m.has(k)};
+}
+
+test('ATO-2500: the old per-window list moves into the shared file once, then localStorage is dropped', async () => {
+  const file = ['openai|gpt-5'];
+  const br = fakeBridge(file);
+  const store = memStorage({[F.MODEL_FAV_KEY]: JSON.stringify(['local-llama|qwen3-8b', 'openai|gpt-5'])});
+  await withWindow(br, store, async () => {
+    let changed = null;
+    await F.modelFavSync((c) => { changed = c; });
+    assert.deepEqual(br.calls[0], ['load', ['local-llama|qwen3-8b', 'openai|gpt-5']]);
+    assert.deepEqual(F.MODEL_FAV.keys, ['openai|gpt-5', 'local-llama|qwen3-8b']);
+    assert.equal(changed, true);
+    assert.equal(F.MODEL_FAV.shared, true);
+    assert.equal(store.has(F.MODEL_FAV_KEY), false);
+    // The next open hands main nothing old to merge.
+    await F.modelFavSync();
+    assert.deepEqual(br.calls[1], ['load', []]);
+  });
+});
+
+test('ATO-2500: a star goes to the shared file (not localStorage) and its answer is the list drawn', async () => {
+  const file = ['anthropic|claude-opus'];   // starred in the terminal
+  const br = fakeBridge(file);
+  const store = memStorage();
+  await withWindow(br, store, async () => {
+    await F.modelFavSync();
+    let repainted = 0;
+    assert.equal(F.modelFavToggle('openai|gpt-5', () => { repainted++; }), true);
+    await tick();
+    assert.deepEqual(br.calls.at(-1), ['toggle', 'openai|gpt-5']);
+    assert.deepEqual(F.MODEL_FAV.keys, ['anthropic|claude-opus', 'openai|gpt-5']);
+    assert.equal(repainted, 1);
+    assert.equal(store.has(F.MODEL_FAV_KEY), false);
+  });
+});
+
+test('ATO-2500: without the bridge the stars stay in localStorage, as before', async () => {
+  const store = memStorage();
+  await withWindow(null, store, async () => {
+    assert.equal(F.modelFavBridge(), null);
+    assert.equal(await F.modelFavSync(), false);
+    F.modelFavToggle('openai|gpt-5');
+    assert.equal(store.getItem(F.MODEL_FAV_KEY), JSON.stringify(['openai|gpt-5']));
+  });
+});
+
+test('ATO-2500: picker rows: one data-id per model, the Download row leads its own group, the picker re-reads on open', () => {
+  const r = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
+  assert.match(r, /\(r\.favCopy \? 'data-fav-id' : 'data-id'\)/);
+  assert.match(r, /const leads = r\.type === 'action' && \(i === 0 \|\| \(groups && rows\[i - 1\] && rows\[i - 1\]\.group !== r\.group\)\);/);
+  assert.match(r, /\(r\.type === 'action' && !leads \? '<div class="tk-sep selsep"><\/div>' : ''\)/);
+  assert.match(r, /\(leads && i \+ 1 < rows\.length \? '<div class="tk-sep selsep"><\/div>' : ''\)/);
+  assert.match(r, /if \(typeof modelFavSync === 'function'\) modelFavSync\(\(changed\) => \{ if \(changed && SEL\.open\) render\(\); \}\);/);
 });

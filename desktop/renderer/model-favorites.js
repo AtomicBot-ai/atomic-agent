@@ -10,10 +10,17 @@
    OpenRouter keeps a favourites list in its model picker.
 
    A favourite is "<provider>|<model id>" (local models under local-llama),
-   so the same model id under two providers is two favourites. The list is
-   kept per viewer in localStorage, like the side panel's order switch
-   (insp-order.js): a display preference, nothing the agent reads. With no
-   star set the picker is exactly as before.
+   so the same model id under two providers is two favourites.
+
+   ATO-2500: one list with the terminal. The list lives in the agent's state
+   dir, `model-favorites.json`, the file the terminal's `/model favorite` and
+   ctrl+p use; main reads and writes it (main/model-favorites-ipc.ts) and
+   spells a key `provider/model` there. The list ATO-2169 kept per window in
+   localStorage is moved into that file once (modelFavSync) and then dropped.
+   Without the bridge (the unit tests, an old preload) the list stays in
+   localStorage as before. The picker reads the file again each time it
+   opens, so a star set in the terminal shows. With no star set the picker
+   is exactly as before.
 
    The pure part is exported for test/model-favorites.test.mjs. */
 
@@ -35,12 +42,48 @@ function modelFavClean(raw) {
   return out;
 }
 
-const MODEL_FAV = {keys: (() => {
+/* The window's own list (ATO-2169), drawn until the shared file answers and moved into it once. */
+function modelFavLegacy() {
   try { return typeof localStorage === 'undefined' ? [] : modelFavClean(JSON.parse(localStorage.getItem(MODEL_FAV_KEY) || '[]')); } catch (e) { return []; }
-})()};
+}
+/* `shared`: the list is the terminal's file now, so nothing goes to localStorage. */
+const MODEL_FAV = {keys: modelFavLegacy(), shared: false};
+
+/* The preload's favourites routes, or null (unit tests, an old preload). */
+function modelFavBridge() {
+  const br = typeof window !== 'undefined' ? window.atomic : null;
+  return br && typeof br.modelFavLoad === 'function' && typeof br.modelFavToggle === 'function' ? br : null;
+}
 
 function modelFavSave() {
+  if (MODEL_FAV.shared) return;
   try { if (typeof localStorage !== 'undefined') localStorage.setItem(MODEL_FAV_KEY, JSON.stringify(MODEL_FAV.keys)); } catch (e) { /* no storage: the stars last this launch */ }
+}
+
+function modelFavSame(a, b) { return a.length === b.length && a.every((k, i) => k === b[i]); }
+
+/**
+ * ATO-2500: read the shared file and take its list. The first call hands
+ * main the old localStorage list to merge in; once main has written it,
+ * the old key is removed so it is never merged twice. `after(changed)`
+ * runs once the answer is in. Without the bridge nothing happens.
+ */
+function modelFavSync(after) {
+  const br = modelFavBridge();
+  if (!br) return Promise.resolve(false);
+  const legacy = MODEL_FAV.shared ? [] : modelFavLegacy();
+  return Promise.resolve(br.modelFavLoad(legacy)).then((res) => {
+    if (!res || !res.ok || !Array.isArray(res.keys)) return false;
+    if (res.saved !== false) {
+      MODEL_FAV.shared = true;
+      try { if (legacy.length && typeof localStorage !== 'undefined') localStorage.removeItem(MODEL_FAV_KEY); } catch (e) { /* kept: merged again next time, no repeats */ }
+    }
+    const next = modelFavClean(res.keys);
+    const changed = !modelFavSame(next, MODEL_FAV.keys);
+    MODEL_FAV.keys = next;
+    if (typeof after === 'function') after(changed);
+    return changed;
+  }).catch(() => false);
 }
 
 /** The favourite key a picker row stands for, or '' when the row cannot be one. */
@@ -54,8 +97,13 @@ function modelFavKey(r) {
 
 function modelFavIs(key) { return !!key && MODEL_FAV.keys.indexOf(key) >= 0; }
 
-/** Star or unstar `key`; true when it is a favourite afterwards. */
-function modelFavToggle(key) {
+/**
+ * Star or unstar `key`; true when it is a favourite afterwards. Drawn at
+ * once; with the bridge, main then changes the shared file (read again
+ * first, so a star set in the terminal meanwhile is kept) and its list
+ * replaces this one, and `after()` repaints.
+ */
+function modelFavToggle(key, after) {
   if (!modelFavClean([key]).length) return false;
   const at = MODEL_FAV.keys.indexOf(key);
   if (at >= 0) MODEL_FAV.keys.splice(at, 1);
@@ -63,7 +111,14 @@ function modelFavToggle(key) {
     if (MODEL_FAV.keys.length >= MODEL_FAV_MAX) MODEL_FAV.keys.shift();
     MODEL_FAV.keys.push(key);
   }
-  modelFavSave();
+  const br = modelFavBridge();
+  if (br && MODEL_FAV.shared) {
+    Promise.resolve(br.modelFavToggle(key)).then((res) => {
+      if (!res || !Array.isArray(res.keys)) return;
+      MODEL_FAV.keys = modelFavClean(res.keys);
+      if (typeof after === 'function') after();
+    }).catch(() => { /* the star drawn stays until the next sync */ });
+  } else modelFavSave();
   return at < 0;
 }
 
@@ -82,8 +137,16 @@ function modelFavPin(groups, rows) {
     const k = modelFavKey(r);
     if (k && modelFavIs(k) && !byKey.has(k)) byKey.set(k, r);
   }
+  /* ATO-2500: a copy says whose model it is ("OpenAI · 200K context"), as
+     the row in its own group sits under that heading and the copy does not. */
+  const titleOf = new Map(all.map((g) => [g.id, g.title]));
   const pinned = MODEL_FAV.keys.filter((k) => byKey.has(k))
-    .map((k) => Object.assign({}, byKey.get(k), {group: MODEL_FAV_GROUP, favCopy: true}));
+    .map((k) => {
+      const r = byKey.get(k);
+      const from = titleOf.get(r.group) || r.provider || '';
+      return Object.assign({}, r, {group: MODEL_FAV_GROUP, favCopy: true, favFrom: from,
+        detail: [from, r.detail || ''].filter(Boolean).join(' \u00b7 ')});
+    });
   if (!pinned.length) return {groups: all, rows: list};
   return {
     groups: [{id: MODEL_FAV_GROUP, title: 'Favorites', busy: false, err: null, fav: true}].concat(all),
@@ -105,5 +168,9 @@ function modelFavStarHTML(r, deps) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {MODEL_FAV_KEY, MODEL_FAV_GROUP, MODEL_FAV_MAX, MODEL_FAV, modelFavClean, modelFavKey, modelFavIs, modelFavToggle, modelFavPin, modelFavStarHTML};
+  module.exports = {MODEL_FAV_KEY, MODEL_FAV_GROUP, MODEL_FAV_MAX, MODEL_FAV, modelFavClean, modelFavKey, modelFavIs, modelFavToggle, modelFavPin, modelFavStarHTML, modelFavSync, modelFavBridge};
 }
+
+/* ATO-2500: take the shared list as soon as the window is up (the stars
+   show only in the picker, which opens later and syncs again). */
+if (typeof window !== 'undefined' && modelFavBridge()) modelFavSync();
