@@ -6,8 +6,10 @@
  * so 'free' is always 0." `localModels.completionMaxTokens` was raised to
  * 96000 for long agent runs; the popover drew that cap verbatim as the
  * reservation, its reserve band filled the meter and "free" sat at zero. The
- * row now shows what the window can honour (ctxReplyReserve, the port of the
- * agent's effectiveReplyReserve / the TUI panel's replyReserveShown): the cap,
+ * row now shows what the window can honour (ctxReplyReserve in
+ * ctx-reply-reserve.js: the agent's own usage.replyReserve when it sends one,
+ * else the port of effectiveReplyReserve with its small-window rule,
+ * ATO-2495; the TUI panel's replyReserveShown): the cap,
  * held to half a window it does not fit in and never more than the prompt
  * left, with the full cap named in the row's tooltip. The share is pinned
  * to the agent's REPLY_RESERVE_MAX_WINDOW_SHARE, and the last check holds
@@ -61,7 +63,7 @@ export async function checks63(js: Js, check: Check): Promise<void> {
         localModels: Object.assign({}, (keep.cfg && keep.cfg.localModels) || {}, {completionMaxTokens: cap}),
       });
       Object.assign(CTX, {tokens: 9000, source: 'built', stablePrefix: 6000, tail: 3000, cacheHitTokens: null,
-        modelId: null, baseline: null, sections, pairsCap: 20, reserved: 0, replyCap: 0,
+        modelId: null, baseline: null, sections, pairsCap: 20, reserved: 0, replyCap: 0, agentReserve: null,
         window: 32768, windowLabel: 'prompt window'}, over);
       return read();
     };
@@ -71,6 +73,11 @@ export async function checks63(js: Js, check: Check): Promise<void> {
         builtOld: stage({reserved: 96000, replyCap: 0}, 96000),
         measured: stage({source: 'measured', reserved: 0}, 96000),
         fits: stage({source: 'measured', window: 131072}, 4096),
+        // ATO-2495: a 16k window holds back what the agent's small-window
+        // rule leaves the reply: 4.1k, not half the window.
+        smallPorted: stage({source: 'measured', window: 16384}, 16384),
+        smallAgent: stage({source: 'measured', window: 16384, agentReserve: 4096}, 16384),
+        agentWins: stage({source: 'built', reserved: 8192, replyCap: 16384, agentReserve: 5000}, 16384),
       };
     } finally {
       for (const k of Object.keys(CTX)) if (!(k in keep.ctx)) delete CTX[k];
@@ -105,6 +112,18 @@ export async function checks63(js: Js, check: Check): Promise<void> {
     show(f),
   );
 
+  const sp = r["smallPorted"], sa = r["smallAgent"], aw = r["agentWins"];
+  check(
+    "T63 (ATO-2495): on a 16k window the row follows the agent's small-window rule (4.1k), ported or sent by the agent",
+    !!sp && sp.rows["reserved for reply"] === "4.1k" && !!sa && sa.rows["reserved for reply"] === "4.1k",
+    show({ smallPorted: sp?.rows, smallAgent: sa?.rows }),
+  );
+  check(
+    "T63 (ATO-2495): the agent's own usage.replyReserve wins over any recomputation",
+    !!aw && aw.rows["reserved for reply"] === "5.0k",
+    show(aw?.rows),
+  );
+
   // The renderer's share against the agent's own answer: the built preview
   // reports the configured cap (replyCap), the window and the reservation
   // the budget holds on it. An agent without the route (or without
@@ -116,11 +135,13 @@ export async function checks63(js: Js, check: Check): Promise<void> {
     if (typeof r.replyCap !== 'number' || !(r.contextWindow > 0)) return {skip: 'no replyCap or window', r: {replyCap: r.replyCap, contextWindow: r.contextWindow}};
     return {replyCap: r.replyCap, contextWindow: r.contextWindow, reservedForReply: r.reservedForReply,
       share: REPLY_RESERVE_MAX_WINDOW_SHARE,
-      ours: r.replyCap > 0 ? Math.min(r.replyCap, Math.floor(r.contextWindow * REPLY_RESERVE_MAX_WINDOW_SHARE)) : 0};
+      ours: ctxPortedReplyReserve(r.replyCap, r.contextWindow),
+      usageReserve: r.usage && typeof r.usage.replyReserve === 'number' ? r.usage.replyReserve : null};
   })()`);
   check(
     "T63: the popover's reply share matches the reservation the agent's own context preview reports",
-    a["skip"] !== undefined || (a["share"] === 0.5 && a["ours"] === a["reservedForReply"]),
+    a["skip"] !== undefined || (a["share"] === 0.5 && a["ours"] === a["reservedForReply"]
+      && (a["usageReserve"] === null || a["usageReserve"] === a["reservedForReply"])),
     show(a),
   );
 }

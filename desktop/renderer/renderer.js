@@ -5997,25 +5997,7 @@ function ctxBoundLine() {
   if (u.droppedPairs > 0) text += ' · ' + u.droppedPairs + ' dropped so far';
   return '<p class="cap ctxbound">' + ic('alert') + '<span>' + esc(text) + '</span></p>';
 }
-/**
- * Item 63 \u2014 the reply reservation this window can actually honour. Port of
- * src/tui/components/context-panel.tsx replyReserveShown over
- * src/prompt/token-budget.ts effectiveReplyReserve: the configured reply cap
- * (localModels.completionMaxTokens), held to half a window it does not fit
- * in (REPLY_RESERVE_MAX_WINDOW_SHARE \u2014 the share the agent's prompt budget
- * holds back), and never more than the prompt left of the window. The QA
- * case: a 96k cap on a 32.8k model drew "reserved for reply 96k", the
- * meter's reserve band filled the bar and "free" sat at 0 for good.
- */
-/* Pinned to src/prompt/token-budget.ts REPLY_RESERVE_MAX_WINDOW_SHARE — the
-   agent's budget holds the reply to this share of the window. Change both
-   together; smoke t63 compares it with the built preview's own
-   reservedForReply / contextWindow when the agent answers that route. */
-const REPLY_RESERVE_MAX_WINDOW_SHARE = 0.5;
-function ctxReplyReserve(cap, win, tokens) {
-  if (!(cap > 0) || !(win > 0)) return 0;
-  return Math.min(cap, Math.floor(win * REPLY_RESERVE_MAX_WINDOW_SHARE), Math.max(0, win - (tokens || 0)));
-}
+/* Item 63, ATO-2495: the reply reserve row (ctxReplyReserve) lives in ctx-reply-reserve.js. */
 function contextHTML() {
   const agent = (LIVE_CONFIG && LIVE_CONFIG.agent) || {};
   const pairs = agent.conversationMaxPairs || PAIRS_DEFAULT;
@@ -6024,7 +6006,7 @@ function contextHTML() {
   // src/tui/components/context-panel.tsx: title(), buildRows() (the
   // "reserved for reply" row starts from config.localModels.completionMaxTokens,
   // which tui-command.ts hands the panel as session.completionMaxTokens, and
-  // is drawn as replyReserveShown \u2014 ctxReplyReserve above; "free" is
+  // is drawn as replyReserveShown \u2014 ctxReplyReserve (ctx-reply-reserve.js); "free" is
   // window \u2212 tokens \u2212 reserved, floored at 0), and the pre-measurement
   // screen verbatim. The projected state is the desktop's own: the TUI has
   // no figure before prompt_built.
@@ -6036,7 +6018,7 @@ function contextHTML() {
   const replyCap = CTX.source === 'built' && (CTX.replyCap || CTX.reserved)
     ? (CTX.replyCap || CTX.reserved)
     : cfgCap;
-  const reserved = ctxReplyReserve(replyCap, win, CTX.tokens);
+  const reserved = ctxReplyReserve(replyCap, win, CTX.tokens, ctxAgentReplyReserve(CTX));
   // The cap is bounded by the window, not by "the model", and a cloud route
   // does not send it at all; the reply can also run into "free".
   const reserveTip = replyCap > reserved
@@ -20455,6 +20437,7 @@ async function refreshContext(stateDirOverride) {
         tail: typeof u.conversationTokens === 'number' ? u.conversationTokens : sec('conversation'),
         cacheHitTokens:null, modelId:null, baseline:null, sections:u.sections || [],
         pairsCap: u.conversationPairsCap || 0, reserved:0, replyCap:0,
+        agentReserve: typeof u.replyReserve === 'number' ? u.replyReserve : null,
         builtWindow: u.contextWindow > 0 ? u.contextWindow : null};
     }
   }
@@ -20471,6 +20454,7 @@ async function refreshContext(stateDirOverride) {
       usage = {tokens:r.usage.tokens, source:'built', stablePrefix:sec('prompt scaffold'), tail:sec('conversation'),
         cacheHitTokens:null, modelId:null, baseline:null, sections:r.usage.sections || [],
         pairsCap:r.pairsCap || r.usage.conversationPairsCap || 0, reserved:r.reservedForReply || 0, replyCap:r.replyCap || 0,
+        agentReserve: typeof r.usage.replyReserve === 'number' ? r.usage.replyReserve : null,
         builtWindow:r.contextWindow > 0 ? r.contextWindow : null};
     }
   }
@@ -20499,10 +20483,10 @@ async function refreshContext(stateDirOverride) {
   if (!usage) {
     // Nothing measured and no trace to project from: the TUI's own
     // "not measured yet" state — chip hidden, never a zero.
-    Object.assign(CTX, {tokens:0, source:null, stablePrefix:0, tail:0, cacheHitTokens:null, modelId:null, baseline:null, sections:null, pairsCap:0, reserved:0, replyCap:0});
+    Object.assign(CTX, {tokens:0, source:null, stablePrefix:0, tail:0, cacheHitTokens:null, modelId:null, baseline:null, sections:null, pairsCap:0, reserved:0, replyCap:0, agentReserve:null});
   } else {
     const builtWindow = usage.builtWindow; delete usage.builtWindow;
-    Object.assign(CTX, usage);
+    Object.assign(CTX, {agentReserve:null}, usage); // ATO-2495: never a stale agent reserve
     if (builtWindow) { CTX.window = builtWindow; CTX.windowLabel = 'prompt window'; }
   }
   // The window resolves off the critical path: a cached catalogue answer
