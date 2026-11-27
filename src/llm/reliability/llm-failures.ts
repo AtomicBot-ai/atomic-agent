@@ -1,5 +1,6 @@
 import type { ToolCallTransport } from "../provider/completion-types.js";
 import type {
+  GrammarFailurePath,
   LlmFailureCategory,
   ModelFailureReason,
   ModelFailureStage,
@@ -90,15 +91,31 @@ export class TransportError extends LlmFailure {
  */
 export class GrammarError extends LlmFailure {
   readonly category = "grammar" as const;
+  /** Which path raised it (ATO-2422); absent for older throw sites. */
+  readonly path?: GrammarFailurePath;
+  /** The tool-call transport the failed reply was parsed under. */
+  readonly transport?: ToolCallTransport;
+  /** The failed reply was served without the grammar (ATO-1675). */
+  readonly grammarSkipped?: true;
 
   constructor(
     message: string,
     readonly rawPreview: string,
-    options?: LlmFailureOptions,
+    options?: GrammarErrorOptions,
   ) {
     super(message, options);
     this.name = "GrammarError";
+    if (options?.path !== undefined) this.path = options.path;
+    if (options?.transport !== undefined) this.transport = options.transport;
+    if (options?.grammarSkipped === true) this.grammarSkipped = true;
   }
+}
+
+/** `GrammarError` extras: the fixed facts its report tags carry (ATO-2422). */
+export interface GrammarErrorOptions extends LlmFailureOptions {
+  path?: GrammarFailurePath;
+  transport?: ToolCallTransport;
+  grammarSkipped?: boolean;
 }
 
 /**

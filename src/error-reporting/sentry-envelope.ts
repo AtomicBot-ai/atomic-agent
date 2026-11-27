@@ -93,6 +93,7 @@ export function buildEnvelope(
   if (ev.llmFailureTags) Object.assign(tags, ev.llmFailureTags);
   if (ev.cliFailureTags) Object.assign(tags, ev.cliFailureTags);
   if (ev.socketTags) Object.assign(tags, ev.socketTags);
+  if (ev.grammarFailureTags) Object.assign(tags, ev.grammarFailureTags);
 
   const event = {
     event_id: eventId,

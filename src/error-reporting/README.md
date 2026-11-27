@@ -9,4 +9,6 @@ Entry point: [error-scrubber.ts](error-scrubber.ts). [Secret detector](secret-de
 
 [Failure owner](failure-owner.ts) adds `failure_owner` to an `llm_failure` with an HTTP error status: `person` (cloud 401/403, 402, 404, 413, 429, or `key_refused`, `out_of_credit`, `model_not_found`, `request_too_large`), `ours` (a reason naming a part of the request we built), `provider` (5xx, 408) or `unknown` (anything else, and a 401/403 from a local server); read from the status and `upstream_reason` on the machine, a tag only, nothing stops being reported (ATO-2419).
 
+[Grammar failure tags](grammar-failure-tag.ts) add `grammar_path` (`server_refused_grammar`, `server_refused_request`, `parse_failed`, `repair_failed`) to a `GrammarError` and, for `repair_failed`, `grammar_skipped` (`yes` / `no`), outside the fingerprint (ATO-2422).
+
 Checks: `npx vitest run src/error-reporting` when tests are present; `npm run lint`; `npm run docs:check`.

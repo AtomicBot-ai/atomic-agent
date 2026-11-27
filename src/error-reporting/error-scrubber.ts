@@ -12,6 +12,7 @@ import { sanitizeLlmFailureTags, type LlmFailureContext } from "./llm-failure-ta
 import { maskSecrets } from "./secret-detector.js";
 import { extractAnswerFailureTags } from "./answer-failure-tag.js";
 import { extractSubscriptionCliFailureTags } from "./subscription-cli-failure-tag.js";
+import { extractGrammarFailureTags } from "./grammar-failure-tag.js";
 import { extractUpstreamErrorDetail } from "./upstream-error-detail.js";
 import { classifyFailureOwner, requestHostIsLocal } from "./failure-owner.js";
 
@@ -164,6 +165,8 @@ export interface ScrubbedErrorEvent {
    * socket failure (`socket-error.ts`, ATO-1735). Context only.
    */
   socketTags?: Record<string, string>;
+  /** `grammar_path` / `grammar_skipped` (`grammar-failure-tag.ts`, ATO-2422). */
+  grammarFailureTags?: Record<string, string>;
   /** Path-stripped stack frames (basenames only — no home dir / username). */
   frames: SentryStackFrame[];
 }
@@ -592,5 +595,7 @@ export function scrubError(
   if (cliFailureTags !== undefined) {
     event.cliFailureTags = cliFailureTags;
   }
+  const grammarFailureTags = extractGrammarFailureTags(err);
+  if (grammarFailureTags !== undefined) event.grammarFailureTags = grammarFailureTags;
   return event;
 }
