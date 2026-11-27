@@ -30,7 +30,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `localModels.managed.autoRestart` (default `true`).
 - `localModels.managed.promptDiskCache` (default `false`).
 - `localModels.managed.share` (default `false`; `true` opens serve's `/raw/v1` model routes to callers with the share key, ATO-2336).
-- `localModels.managed.shareNetwork` (default absent, read as `false`: the shared model listens on `127.0.0.1` only; `true` listens on `0.0.0.0`, the `/raw/v1` routes only, plain http, ATO-2483; read only while `share` is on and removed by any write that turns sharing off).
+- `localModels.managed.shareNetwork` (default absent, read as `false`: the shared model listens on `127.0.0.1` only; `true` listens on `0.0.0.0`, the `/raw/v1` routes only, plain http, ATO-2483; read only while `share` is on, removed by any write that turns sharing off, and by a raw write that turns it on from off).
 - `localModels.managed.sharePort` (default absent, read as `8787`: the shared model's own listener; a serve already on that port answers `/raw/v1` itself, ATO-2483).
 - `localModels.managed.device` (default `"auto"`).
 - `localModels.managed.backendVariant` (default `"auto"`).

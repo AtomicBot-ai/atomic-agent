@@ -281,7 +281,14 @@ export function writeRawUserConfigFileSync(
   tree: Record<string, unknown>,
 ): void {
   mkdirSync(dirname(path), { recursive: true });
-  const payload = JSON.stringify(withoutStaleShareNetwork(tree), null, 2) + "\n";
+  let disk: Record<string, unknown> | null = null;
+  try {
+    disk = readRawConfigTree(path);
+  } catch {
+    // An unreadable file reads as off: turning sharing on then is this computer only.
+    disk = {};
+  }
+  const payload = JSON.stringify(withoutStaleShareNetwork(tree, disk), null, 2) + "\n";
   writeOwnerOnlyFileAtomicSync(path, payload);
 }
 

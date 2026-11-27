@@ -7,6 +7,7 @@ import { getConfig, resetConfigCache } from "../config/index.js";
 import { readModelShareSettings, writeModelShareMode, writeModelSharePort } from "../http/model-share-settings.js";
 import { configCommand } from "./config-command.js";
 import { runModelsShare, setModelShareEnabled } from "./models-share-command.js";
+import { modelShareNotice } from "./serve-model-share-notice.js";
 
 /**
  * ATO-2483: `atomic-agent models share` against a real state dir.
@@ -75,6 +76,24 @@ describe("models share, run", () => {
     expect(readModelShareSettings(configPath()).mode).toBe("local");
   });
 
+  it("config set ...share true over a stale {share:false, shareNetwork:true} file is local", async () => {
+    // An older build (v0.10.0 carries the key forward) or a hand edit.
+    writeModelShareMode(configPath(), "off");
+    const raw = JSON.parse(readFileSync(configPath(), "utf8")) as { localModels: { managed: Record<string, unknown> } };
+    raw.localModels.managed.shareNetwork = true;
+    writeFileSync(configPath(), JSON.stringify(raw));
+    resetConfigCache();
+    expect(await configCommand(["set", "localModels.managed.share", "true"])).toBe(0);
+    expect(readModelShareSettings(configPath()).mode).toBe("local");
+    expect(readFileSync(configPath(), "utf8")).not.toContain("shareNetwork");
+  });
+
+  it("network chosen with models share --network survives an unrelated config set", async () => {
+    expect(await runModelsShare(["--network", "--json"])).toBe(0);
+    expect(await configCommand(["set", "agent.maxSteps", "30"])).toBe(0);
+    expect(readModelShareSettings(configPath()).mode).toBe("network");
+  });
+
   it("plain models share after an off that left shareNetwork in the file is local", async () => {
     // An older build or a hand edit can leave the key behind an off.
     writeModelShareMode(configPath(), "off");
@@ -93,5 +112,14 @@ describe("models share, run", () => {
     expect(readFileSync(configPath(), "utf8")).not.toContain("shareNetwork");
     setModelShareEnabled(configPath(), true);
     expect(readModelShareSettings(configPath()).mode).toBe("local");
+  });
+
+  it("serve on the network in local mode says at start that other devices get 404, and how to let them in", () => {
+    const text = modelShareNotice(true, false, "local");
+    expect(text).toContain("this computer only");
+    expect(text).toContain("atomic-agent models share --network");
+    expect(text).not.toContain("plain http");
+    expect(modelShareNotice(true, false, "network")).toContain("plain http");
+    expect(modelShareNotice(true, true, "local")).not.toContain("this computer only");
   });
 });

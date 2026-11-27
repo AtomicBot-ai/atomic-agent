@@ -16,6 +16,7 @@ import {
   parseArgs,
 } from "./serve-args.js";
 import { modelShareNotice } from "./serve-model-share-notice.js";
+import { readModelShareSettings } from "../http/model-share-settings.js";
 import { createServeModelShare, type ServeModelShare } from "./serve-model-share.js";
 import { resolveServeApiKey, serveApiKeyNotice } from "./serve-api-key.js";
 import {
@@ -223,7 +224,7 @@ export async function serveCommand(args: string[]): Promise<number> {
     for (const url of lanUrls(parsed.host, handle.port)) {
       process.stderr.write(`[atomic-agent] serve reachable at ${url}\n`);
     }
-    process.stderr.write(modelShareNotice(isModelShareEnabled(), isLoopbackListenHost(parsed.host)));
+    process.stderr.write(modelShareNotice(isModelShareEnabled(), isLoopbackListenHost(parsed.host), readModelShareSettings().mode));
     await modelShare.attach({ host: handle.host, port: handle.port });
     if (parsed.tunnel && tunnelCheck) {
       tunnel = await startWebhookTunnel({
