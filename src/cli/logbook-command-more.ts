@@ -1,4 +1,4 @@
-import { isStandupClock, readLogbookSettings, writeLogbookSettings } from "../logbook/index.js";
+import { isStandupClock, MAX_EXCLUDED_APPS, readLogbookSettings, writeLogbookSettings } from "../logbook/index.js";
 
 /**
  * ATO-2526: the logbook's newer switches, beside `logbook-command.ts`:
@@ -19,6 +19,7 @@ export const MORE_HELP_LINES = [
 interface MoreEnv {
   stateDir: string;
   write: (text: string) => void;
+  writeErr?: (text: string) => void;
 }
 
 export function titleOnlyCommand(env: MoreEnv, args: readonly string[]): number {
@@ -34,6 +35,14 @@ export function titleOnlyCommand(env: MoreEnv, args: readonly string[]): number 
     return 2;
   }
   const others = settings.titleOnlyApps.filter((item) => item.toLowerCase() !== app.toLowerCase());
+  // settings.json keeps the first MAX_EXCLUDED_APPS names only, so a 51st
+  // would be dropped on write: refuse it, as PUT /api/logbook does.
+  if (verb === "add" && others.length >= MAX_EXCLUDED_APPS) {
+    (env.writeErr ?? env.write)(
+      `title-only can hold at most ${MAX_EXCLUDED_APPS} apps. Remove one first: atomic-agent logbook title-only remove <app>\n`,
+    );
+    return 2;
+  }
   writeLogbookSettings(env.stateDir, { ...settings, titleOnlyApps: verb === "add" ? [...others, app] : others });
   env.write(
     verb === "add"

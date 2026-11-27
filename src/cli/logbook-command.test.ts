@@ -112,6 +112,20 @@ describe("atomic-agent logbook", () => {
     expect(await h.run("title-only", "rename", "x")).toBe(2);
   });
 
+  it("refuses a 51st title-only app instead of dropping it while saying it was added", async () => {
+    const h = harness();
+    for (let i = 1; i <= 50; i += 1) expect(await h.run("title-only", "add", `App ${i}`)).toBe(0);
+    h.reset();
+    expect(await h.run("title-only", "add", "Foo")).toBe(2);
+    expect(h.err()).toMatch(/at most 50/);
+    expect(h.out()).not.toMatch(/Foo will be noted/);
+    const apps = readLogbookSettings(h.stateDir).titleOnlyApps;
+    expect(apps).toHaveLength(50);
+    expect(apps).not.toContain("Foo");
+    // Adding one already on the full list again is not a 51st.
+    expect(await h.run("title-only", "add", "app 7")).toBe(0);
+  });
+
   it("schedules the morning standup and turns it off (ATO-2526)", async () => {
     const h = harness();
     expect(await h.run("standup", "--every-morning", "09:15")).toBe(0);
