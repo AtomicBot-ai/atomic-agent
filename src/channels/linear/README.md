@@ -5,7 +5,7 @@ Owner: src/channels/linear/
 
 Mention the agent in a Linear issue comment, or assign it the issue, and it starts working and answers as a comment in the same thread (ATO-2324). Each issue is one conversation: later mentions on the same issue continue the same session (`<stateDir>/linear-session.json`). The channel never edits an issue on its own; changing a status is a tool call, which goes through the approval gate, and the approval prompt arrives as a comment you answer with `yes <code>` or `no <code>`.
 
-Linear talks to a small endpoint on your machine through a webhook. Atomic Agent runs no relay. The channel is off by default and only answers the Linear users you list as owners. Same design as the Cline CLI Linear connector (Apache-2.0): signed webhook in, GraphQL `commentCreate` out.
+Linear reaches the agent in one of two ways, and Atomic Agent runs no relay in either: a signed webhook to a small endpoint on your machine (instant, needs a tunnel), or polling the Linear API once a minute (no public address, no tunnel; see "Without a public address" below). The channel is off by default and only answers the Linear users you list as owners. Same design as the Cline CLI Linear connector (Apache-2.0): signed webhook in, GraphQL `commentCreate` out.
 
 ## 1. Create an API key and a webhook in Linear
 
@@ -49,6 +49,14 @@ Linear must reach `http://127.0.0.1:3979/linear/webhook` over public HTTPS, for 
 
 Every request is checked before its body is read: `Linear-Signature` must be the HMAC-SHA256 of the exact body with your signing secret, and `webhookTimestamp` must be within one minute of now. Anything else gets a 401. A repeated `Linear-Delivery` id runs once. A quick tunnel URL changes on every restart; update the webhook URL when it does.
 
+## Without a public address: polling (ATO-2464)
+
+Skip the webhook and the tunnel: save only `LINEAR_API_KEY` and leave `LINEAR_WEBHOOK_SECRET` out. With no signing secret the channel polls instead (`options.mode` forces either: `"poll"` or `"webhook"`). Every `options.pollSeconds` (default 60, 15 to 3600) it reads the comments created since the last poll and, when assignment triggers are on, the issues newly assigned to the key's user, and treats each exactly like a webhook delivery: same owners, mentions, loop guard and approvals. Answers come up to one interval later than with a webhook.
+
+- The cursor is `<stateDir>/linear-poll-cursor.json`. The first start answers nothing written before it; after a stop the channel catches up on at most the last 24 hours, and an event already answered is never answered again ([linear-poller.ts](linear-poller.ts), [linear-poll-queries.ts](linear-poll-queries.ts)).
+- One poll is one or two GraphQL requests, far below Linear's API key rate limit.
+- A refused key turns the channel down with "Linear refused the API key"; a network error is retried at the next interval.
+
 ## 4. Try it
 
 1. Start the agent (`atag serve`, the TUI, or the desktop app) with the channel enabled.
@@ -64,13 +72,13 @@ Every request is checked before its body is read: `Linear-Signature` must be the
 
 ## Not yet supported
 
-Linear Agent sessions (`AgentSessionEvent`, the "agent" app actor) and polling without a public URL.
+Linear Agent sessions (`AgentSessionEvent`, the "agent" app actor).
 
 ## Files
 
 - [index.ts](index.ts): the catalog entry and exports.
 - [linear-channel.ts](linear-channel.ts): lifecycle, lock, loop guard and approval routing.
-- [linear-server.ts](linear-server.ts) and [linear-signature.ts](linear-signature.ts): the signed endpoint.
+- [linear-server.ts](linear-server.ts) and [linear-signature.ts](linear-signature.ts): the signed endpoint; [linear-endpoint.ts](linear-endpoint.ts) picks it or the poller.
 - [linear-inbound-handler.ts](linear-inbound-handler.ts) and [linear-mention.ts](linear-mention.ts): what starts a turn.
 - [linear-api.ts](linear-api.ts): `viewer` and `commentCreate`.
 - [linear-approval-bridge.ts](linear-approval-bridge.ts): approvals as comments.

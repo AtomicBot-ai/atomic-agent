@@ -8,8 +8,11 @@
  * every other messenger. Modelled on the Teams channel: Linear calls us,
  * so "up" means the endpoint listens on 127.0.0.1 and the API key was
  * not refused. A port that cannot be bound is retried with the shared
- * backoff on one unref'd timer.
+ * backoff on one unref'd timer. With no webhook secret (or `mode: "poll"`)
+ * the poller runs instead; "up" means its first poll was not refused.
  */
+
+import { dirname, resolve } from "node:path";
 
 import type { ApprovalGate } from "../../approval/approval-gate.js";
 import type { ApprovalRouter } from "../../approval/approval-router.js";
@@ -21,16 +24,21 @@ import type { Channel } from "../channel.js";
 import { ChatSessionMap } from "../chat-session-map.js";
 import { backoffMs } from "../reconnect-backoff.js";
 import { LinearApi, LinearApiError, fitCommentBody } from "./linear-api.js";
+import { LinearApprovalBindings } from "./linear-approval-bindings.js";
 import { LinearApprovalBridge } from "./linear-approval-bridge.js";
 import { downloadLinearUpload } from "./linear-attachments.js";
 import { handleLinearEvent } from "./linear-inbound-handler.js";
 import { LinearOwnComments } from "./linear-own-comments.js";
-import { LinearServer, type LinearServerDeps } from "./linear-server.js";
+import { createLinearEndpoint, type LinearEndpoint } from "./linear-endpoint.js";
+import { LINEAR_KEY_REFUSED, type LinearPollerDeps } from "./linear-poller.js";
+import type { LinearServerDeps } from "./linear-server.js";
 import { LinearTurnQueue } from "./linear-turn-queue.js";
 import {
   LINEAR_API_KEY_KEY,
   LINEAR_WEBHOOK_SECRET_KEY,
+  resolveLinearMode,
   resolveLinearSecret,
+  type LinearMode,
   scrubLinearError,
   type LinearTarget,
   type LinearWebhookPayload,
@@ -40,10 +48,7 @@ const DELIVERY_CAP = 500;
 /** Issue pointers older than this are forgotten (the sessions stay on disk). */
 const SESSION_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
-export interface LinearEndpoint {
-  listen(): Promise<void>;
-  close(): Promise<void>;
-}
+export type { LinearEndpoint } from "./linear-endpoint.js";
 
 export interface LinearChannelDeps {
   runtime: AgentRuntime;
@@ -53,6 +58,11 @@ export interface LinearChannelDeps {
   enabled: boolean;
   ownerIds: readonly string[];
   port: number;
+  /** `options.mode`; `null` means webhook when its secret is saved, else polling. */
+  mode?: LinearMode | null;
+  /** Polling mode: interval in ms, and `<stateDir>/linear-poll-cursor.json`. */
+  pollMs?: number;
+  pollCursorPath?: string;
   handles: readonly string[];
   /** `options.onAssign`; `null` means "on unless the API key is an owner's own". */
   onAssign: boolean | null;
@@ -67,6 +77,8 @@ export interface LinearChannelDeps {
   fetchImpl?: typeof fetch;
   /** Test seam: replaces the real `node:http` endpoint. */
   createEndpoint?: (deps: LinearServerDeps) => LinearEndpoint;
+  /** Test seam: replaces the real poller. */
+  createPoller?: (deps: LinearPollerDeps) => LinearEndpoint;
 }
 
 export class LinearChannel implements Channel {
@@ -87,11 +99,12 @@ export class LinearChannel implements Channel {
   private readonly deliveries = new Set<string>();
   private readonly own = new LinearOwnComments();
   private readonly sessions: ChatSessionMap;
-  private readonly approvalBindings = new Map<string, { key: string; unsubscribe: () => void }>();
+  private readonly approvalBindings: LinearApprovalBindings;
 
   constructor(private readonly deps: LinearChannelDeps) {
     this.ownerIds = [...deps.ownerIds];
     this.sessions = new ChatSessionMap(deps.sessionMapPath, { prune: { maxAgeMs: SESSION_MAX_AGE_MS, maxEntries: 1000 } });
+    this.approvalBindings = new LinearApprovalBindings(deps.approvalRouter, () => this.bridge);
   }
 
   state(): ChannelStatus["state"] {
@@ -108,11 +121,12 @@ export class LinearChannel implements Channel {
     if (this.endpoint !== null || this.lockHeld || this.retryTimer !== null) await this.stop();
     const apiKey = resolveLinearSecret(LINEAR_API_KEY_KEY, this.deps.apiKey);
     const secret = resolveLinearSecret(LINEAR_WEBHOOK_SECRET_KEY, this.deps.webhookSecret);
-    if (!this.deps.enabled || apiKey === null || secret === null) {
+    const mode = resolveLinearMode(this.deps.mode ?? null, secret !== null);
+    if (!this.deps.enabled || apiKey === null || (mode === "webhook" && secret === null)) {
       this.setState("disabled");
       return;
     }
-    this.secrets = [apiKey, secret];
+    this.secrets = secret === null ? [apiKey] : [apiKey, secret];
     if (this.ownerIds.length === 0) {
       this.deps.logger.warn("linear: no ownerIds configured; every mention will be refused");
     }
@@ -130,7 +144,7 @@ export class LinearChannel implements Channel {
     } catch (err) {
       if (err instanceof LinearApiError && err.code === "auth") {
         this.releaseLock();
-        this.fail(`Linear refused the API key. Check ${LINEAR_API_KEY_KEY}.`);
+        this.fail(LINEAR_KEY_REFUSED);
         return;
       }
       // Offline at boot is not fatal; without a viewer id assignment triggers stay off.
@@ -144,13 +158,19 @@ export class LinearChannel implements Channel {
       approvals: this.deps.approvals,
       logger: this.deps.logger,
     });
-    const serverDeps: LinearServerDeps = {
+    this.endpoint = createLinearEndpoint({
+      secret: mode === "poll" ? null : secret,
+      api,
       port: this.deps.port,
-      secret,
+      ...(this.deps.pollMs === undefined ? {} : { pollMs: this.deps.pollMs }),
+      cursorPath: this.deps.pollCursorPath ?? resolve(dirname(this.deps.sessionMapPath), "linear-poll-cursor.json"),
       onEvent: (payload, delivery) => this.onEvent(payload, delivery),
-      logger: { warn: (m, c) => this.deps.logger.warn(m, c) },
-    };
-    this.endpoint = this.deps.createEndpoint?.(serverDeps) ?? new LinearServer(serverDeps);
+      assignee: () => (this.assignOn() ? this.viewerId : null),
+      onFatal: (message) => this.fail(message),
+      logger: this.deps.logger,
+      ...(this.deps.createEndpoint ? { createEndpoint: this.deps.createEndpoint } : {}),
+      ...(this.deps.createPoller ? { createPoller: this.deps.createPoller } : {}),
+    });
     await this.listen(0);
   }
 
@@ -162,6 +182,13 @@ export class LinearChannel implements Channel {
       if (this.endpoint === endpoint) this.setState("up");
     } catch (err) {
       if (this.endpoint !== endpoint) return;
+      if (err instanceof Error && err.message === LINEAR_KEY_REFUSED) {
+        // Retrying a refused key changes nothing; a new key needs a restart anyway.
+        this.endpoint = null;
+        this.releaseLock();
+        this.fail(LINEAR_KEY_REFUSED);
+        return;
+      }
       const code = (err as NodeJS.ErrnoException).code;
       this.fail(
         code === "EADDRINUSE"
@@ -202,7 +229,6 @@ export class LinearChannel implements Channel {
     if (this.api === null) return;
     const apiKey = this.secrets[0];
     const inbox = this.inbox;
-    const viewerIsOwner = this.viewerId !== null && this.ownerIds.includes(this.viewerId);
     void handleLinearEvent(payload, {
       runtime: this.deps.runtime,
       post: (target, body) => this.post(target, body),
@@ -211,8 +237,7 @@ export class LinearChannel implements Channel {
       ownerIds: this.ownerIds,
       handles: this.deps.handles,
       viewerId: this.viewerId,
-      // With a personal key, assigning yourself an issue would start the agent: off unless asked for.
-      onAssign: this.deps.onAssign ?? !viewerIsOwner,
+      onAssign: this.assignOn(),
       own: this.own,
       bridge: this.bridge,
       turns: this.turns,
@@ -225,28 +250,15 @@ export class LinearChannel implements Channel {
           }
         : {}),
       seen: this.seen,
-      ensureApprovalSession: (sessionId, target) => this.bindApprovals(sessionId, target),
-      releaseApprovalSession: (sessionId) => this.releaseApprovals(sessionId),
+      ensureApprovalSession: (sessionId, target) => this.approvalBindings.bind(sessionId, target),
+      releaseApprovalSession: (sessionId) => this.approvalBindings.release(sessionId),
     });
   }
 
-  /** Point approval prompts for `sessionId` at `target`. Idempotent. */
-  private bindApprovals(sessionId: string, target: LinearTarget): void {
-    const key = `${target.issueId}:${target.parentId ?? ""}`;
-    const existing = this.approvalBindings.get(sessionId);
-    if (existing?.key === key) return;
-    existing?.unsubscribe();
-    this.approvalBindings.delete(sessionId);
-    if (!this.bridge) return;
-    const unsubscribe = this.deps.approvalRouter.setForSession(sessionId, this.bridge.handlerFor(target));
-    this.approvalBindings.set(sessionId, { key, unsubscribe });
-  }
-
-  private releaseApprovals(sessionId: string): void {
-    const existing = this.approvalBindings.get(sessionId);
-    if (!existing) return;
-    existing.unsubscribe();
-    this.approvalBindings.delete(sessionId);
+  /** With a personal key, assigning yourself an issue would start the agent: off unless asked for. */
+  private assignOn(): boolean {
+    const viewerIsOwner = this.viewerId !== null && this.ownerIds.includes(this.viewerId);
+    return this.deps.onAssign ?? !viewerIsOwner;
   }
 
   /** Stop listening, abort in-flight turns, release the lock. Idempotent. */
@@ -256,7 +268,6 @@ export class LinearChannel implements Channel {
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     this.retryTimer = null;
     this.turns.cancelAll();
-    for (const binding of this.approvalBindings.values()) binding.unsubscribe();
     this.approvalBindings.clear();
     this.bridge?.clear();
     this.bridge = null;

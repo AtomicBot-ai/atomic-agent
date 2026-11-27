@@ -87,6 +87,30 @@ export function readLinearOnAssign(options: Options): boolean | null {
   return typeof options.onAssign === "boolean" ? options.onAssign : null;
 }
 
+/** How Linear reaches the agent: a signed webhook, or polling the API (ATO-2464). */
+export type LinearMode = "webhook" | "poll";
+
+export const LINEAR_DEFAULT_POLL_SECONDS = 60;
+export const LINEAR_MIN_POLL_SECONDS = 15;
+export const LINEAR_MAX_POLL_SECONDS = 3600;
+
+/** `options.mode` when set to `webhook` or `poll`, else `null` (decided at start by the webhook secret). */
+export function readLinearMode(options: Options): LinearMode | null {
+  return options.mode === "webhook" || options.mode === "poll" ? options.mode : null;
+}
+
+/** No explicit mode: webhook when its signing secret is saved, polling otherwise. */
+export function resolveLinearMode(explicit: LinearMode | null, hasWebhookSecret: boolean): LinearMode {
+  return explicit ?? (hasWebhookSecret ? "webhook" : "poll");
+}
+
+/** `options.pollSeconds` clamped to 15..3600, default 60; returned in ms. */
+export function readLinearPollMs(options: Options): number {
+  const raw = Number(options.pollSeconds);
+  const seconds = Number.isFinite(raw) && raw > 0 ? raw : LINEAR_DEFAULT_POLL_SECONDS;
+  return Math.round(Math.min(LINEAR_MAX_POLL_SECONDS, Math.max(LINEAR_MIN_POLL_SECONDS, seconds)) * 1000);
+}
+
 /** A Linear user or app as webhooks carry it. */
 export interface LinearActor {
   id?: string;
