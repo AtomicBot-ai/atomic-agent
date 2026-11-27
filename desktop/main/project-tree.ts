@@ -114,9 +114,12 @@ export async function listTreeDir(
   if (asGit && prefix !== null && git && entries.length) {
     // A folder goes with a trailing slash, so a `build/` pattern matches it.
     // A link goes without one: git takes a link as a file, and `link/` is a
-    // path beyond a link, which fails the whole check-ignore call.
-    const ignored = await gitIgnored(git, base, entries.map((e) => (e.dir && !links.has(e.rel) ? e.rel + "/" : e.rel)));
-    shown = entries.filter((e) => !ignored.has(e.rel));
+    // path beyond a link, which fails the whole check-ignore call. It runs in
+    // the folder itself with bare names: from the top, a path inside a
+    // submodule dies "Pathspec ... is in submodule"; from inside, the
+    // submodule's own .gitignore answers.
+    const ignored = await gitIgnored(git, realDir, entries.map((e) => (e.dir && !links.has(e.rel) ? e.name + "/" : e.name)));
+    shown = entries.filter((e) => !ignored.has(e.name));
     const marks = await gitStatus(git, base, prefix, rel ? `:(literal)${rel}` : ".");
     for (const e of shown) {
       if (!e.dir) { const m = marks.get(e.rel); if (m) e.mark = m; continue; }

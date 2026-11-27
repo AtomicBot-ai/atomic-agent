@@ -62,18 +62,27 @@ export async function gitPrefix(git: Git, cwd: string): Promise<string | null> {
 }
 
 /**
+ * check-ignore reads stdin paths as pathspecs: a name that starts with `:`
+ * (`:!x`, `:^y`, `:(x)`) is pathspec magic and kills the whole call (exit
+ * 128), and check-ignore refuses `--literal-pathspecs`. `./` in front makes
+ * it a plain path; it is taken off the answer again.
+ */
+const asPath = (rel: string): string => (rel.startsWith(":") ? "./" + rel : rel);
+
+/**
  * Which of `rels` (paths under `cwd`, `/`-separated) .gitignore leaves out.
- * A path git cannot take (one beyond a symbolic link) fails its whole
- * chunk, so the caller sends links without a trailing slash.
+ * A path git cannot take (one beyond a symbolic link, one inside a
+ * submodule) fails its whole chunk, so the caller sends links without a
+ * trailing slash and runs it in the folder itself.
  */
 export async function gitIgnored(git: Git, cwd: string, rels: readonly string[]): Promise<Set<string>> {
   const out = new Set<string>();
   for (let i = 0; i < rels.length; i += 200) {
     const chunk = rels.slice(i, i + 200);
     try {
-      const r = await git(cwd, ["check-ignore", "--stdin", "-z"], chunk.join("\0") + "\0");
+      const r = await git(cwd, ["check-ignore", "--stdin", "-z"], chunk.map(asPath).join("\0") + "\0");
       if (r.code !== 0 && r.code !== 1) continue;
-      for (const p of r.out.split("\0")) if (p) out.add(p.replace(/\\/g, "/").replace(/\/$/, ""));
+      for (const p of r.out.split("\0")) if (p) out.add(p.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, ""));
     } catch {
       return out;
     }

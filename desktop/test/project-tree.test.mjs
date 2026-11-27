@@ -62,6 +62,45 @@ test("check-ignore gets its paths on stdin, NUL-separated (git refuses -z withou
   assert.deepEqual([...real].sort(), ["build", "debug.log", "node_modules"], "the real git answers through stdin");
 });
 
+test("a name that starts with ':' is sent as ./name, so check-ignore does not read it as pathspec magic", async () => {
+  const calls = [];
+  const stub = async (cwd, args, input) => { calls.push(input); return { code: 0, out: "./:!x\0build/\0" }; };
+  assert.deepEqual([...(await gitIgnored(stub, repo, [":!x", "build/", "README.md"]))].sort(), [":!x", "build"]);
+  assert.deepEqual(calls, ["./:!x\0build/\0README.md\0"]);
+});
+
+test("a folder holding ':!x', ':^y' and ':(x)' still has its .gitignore'd entries left out", { skip: P === "win32" }, async () => {
+  const colon = join(home, "colon");
+  mkdirSync(join(colon, "build"), { recursive: true });
+  writeFileSync(join(colon, ".gitignore"), "build/\n*.log\n");
+  for (const n of [":!x", ":^y", ":(x)", "debug.log"]) writeFileSync(join(colon, n), "n\n");
+  execFileSync("git", ["init", "-q"], { cwd: colon, stdio: "pipe" });
+  const r = await listTreeDir(colon, "", [home], P);
+  assert.equal(r.git, true);
+  assert.deepEqual(r.entries.map((e) => e.name).sort(), [".gitignore", ":!x", ":(x)", ":^y"], "build/ and debug.log stay hidden");
+});
+
+test("a submodule's folder: its own .gitignore applies (check-ignore from the top dies 'is in submodule')", async () => {
+  const sub = join(home, "sub-src");
+  mkdirSync(sub, { recursive: true });
+  writeFileSync(join(sub, ".gitignore"), "node_modules/\n");
+  writeFileSync(join(sub, "keep.txt"), "k\n");
+  const id = ["-c", "user.email=t@t", "-c", "user.name=t"];
+  const g = (cwd, ...a) => execFileSync("git", a, { cwd, stdio: "pipe" });
+  g(sub, "init", "-q"); g(sub, "add", "."); g(sub, ...id, "commit", "-q", "-m", "s");
+  const sup = join(home, "super");
+  mkdirSync(sup, { recursive: true });
+  writeFileSync(join(sup, "top.txt"), "t\n");
+  g(sup, "init", "-q"); g(sup, "add", "."); g(sup, ...id, "commit", "-q", "-m", "t");
+  g(sup, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "lib");
+  g(sup, ...id, "commit", "-q", "-m", "lib");
+  mkdirSync(join(sup, "lib", "node_modules", "x"), { recursive: true });
+  const lib = await listTreeDir(sup, "lib", [home], P);
+  assert.equal(lib.ok, true);
+  assert.equal(lib.git, true);
+  assert.deepEqual(lib.entries.map((e) => e.name).sort(), [".gitignore", "keep.txt"], "node_modules/ is left out; the .git file never shows");
+});
+
 test("a link to a folder in the checkout does not stop .gitignore from applying", { skip: P === "win32" }, async () => {
   symlinkSync(join(repo, "src"), join(repo, "srclink"));
   const top = await listTreeDir(repo, "", [home], P);
