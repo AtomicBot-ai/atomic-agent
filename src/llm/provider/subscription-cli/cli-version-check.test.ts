@@ -56,9 +56,9 @@ describe("versions (ATO-1685)", () => {
     expect(compareCliVersions("0.130.1", "0.122.0")).toBeGreaterThan(0);
   });
 
-  it("asks more of Claude Code on Windows, where older builds need Git for Windows", () => {
+  it("asks the same of Claude Code on Windows: a missing Git is the exit hint's job, not the version check's", () => {
     expect(minimumCliVersion("claude", "darwin")).toBe("2.1.22");
-    expect(minimumCliVersion("claude", "win32")).toBe("2.1.120");
+    expect(minimumCliVersion("claude", "win32")).toBe("2.1.22");
     expect(minimumCliVersion("codex", "win32")).toBe("0.122.0");
     expect(minimumCliVersion("codex", "linux")).toBe("0.122.0");
   });

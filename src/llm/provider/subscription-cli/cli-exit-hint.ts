@@ -42,7 +42,7 @@ export const CODEX_UPDATE = "`npm install -g @openai/codex@latest` or `brew upgr
  */
 export function exitHint(binary: string, text: string): string {
   if (GIT_BASH_PATTERNS.some((re) => re.test(text))) {
-    return " Claude Code on Windows needs Git for Windows (git-bash). Install it from https://git-scm.com/downloads/win or set CLAUDE_CODE_GIT_BASH_PATH to your bash.exe, then restart Atomic Agent.";
+    return " Claude Code on Windows needs Git for Windows (git-bash). Install it from https://git-scm.com/downloads/win or set CLAUDE_CODE_GIT_BASH_PATH to your bash.exe, or update Claude Code to 2.1.120 or newer (`claude update`), which no longer needs it. Then restart Atomic Agent.";
   }
   if (UNKNOWN_OPTION_PATTERNS.some((re) => re.test(text))) {
     const cli = knownCli(binary);

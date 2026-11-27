@@ -26,12 +26,13 @@ import { SubscriptionCliInvocationError } from "./subscription-cli-errors.js";
  *    for `--no-session-persistence`, `--strict-mcp-config` or
  *    `--json-schema`; `--tools` was there by 2.1.0 and 2.1.22 fixed
  *    structured output in `-p` mode, which `--json-schema` relies on.
- *  - Claude Code on Windows 2.1.120: before it Claude Code exits at
- *    start without Git for Windows (changelog 2.1.120, "Git Bash is no
- *    longer required").
+ *  - No separate Windows minimum. Claude Code before 2.1.120 needs Git
+ *    for Windows, but with Git it runs our flags fine; a missing Git is
+ *    told by the `git_bash_missing` exit hint (cli-exit-hint.ts), which
+ *    also says that 2.1.120 or newer no longer needs it.
  */
 const MINIMUM_VERSIONS: Readonly<Record<SubscriptionCliName, { default: string; win32?: string }>> = {
-  claude: { default: "2.1.22", win32: "2.1.120" },
+  claude: { default: "2.1.22" },
   codex: { default: "0.122.0" },
 };
 
