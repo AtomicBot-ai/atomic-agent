@@ -1,6 +1,7 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import { refuseOptionLike } from "./git-arg-guard.js";
+import { GUEST_SECRET_EXCLUDES, guestCommitRevision } from "./git-guest-pathspec.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
 export const osGitDiffTool: ToolDefinition = {
@@ -22,10 +23,14 @@ export const osGitDiffTool: ToolDefinition = {
 
     const args: string[] = ["diff", `--unified=${context}`];
     if (staged) args.push("--cached");
-    if (revisionRange) args.push(revisionRange);
-    if (paths.length > 0) {
+    // A guest's diff leaves out `.env` and credential files, and a
+    // guest's range must name commits (ATO-2732, git-guest-pathspec.ts).
+    const guest = ctx.guest === true;
+    if (revisionRange) args.push(guest ? guestCommitRevision(revisionRange) : revisionRange);
+    if (paths.length > 0 || guest) {
       args.push("--");
       args.push(...paths);
+      if (guest) args.push(...GUEST_SECRET_EXCLUDES);
     }
 
     const result = await runGit({

@@ -7,4 +7,6 @@ Git read and remote-mutation operations have different resource/approval classes
 
 A model-supplied revision, range, remote, branch or URL that starts with `-` is refused before git runs ([git-arg-guard.ts](git-arg-guard.ts)); paths always go after `--`. Git would otherwise read the value as an option, such as `--output=<file>` on a read-only `show`.
 
+For a channel guest, `show` and `diff` append exclude pathspecs for `.env` files and credential folders and peel each revision to a commit ([git-guest-pathspec.ts](git-guest-pathspec.ts)), so a whole-commit patch or a blob id cannot print a secret; owner calls are unchanged.
+
 Read [tool instructions](../../AGENTS.md), [Git API helpers](../../../github/README.md), [git registry](index.ts), and adjacent git tests. Remote fetch/pull/push/clone behavior must be checked separately from read-only status/diff/log.
