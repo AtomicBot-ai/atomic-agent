@@ -588,6 +588,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         expandFileMentions: (text) => expandFileMentions(text, runtime.capabilities.workingDir),
         onLastTurnRollbackRequested: (expect) => orchestrator.rollbackLastTurn(expect),
         onQueueClearRequested: () => orchestrator.clearQueue(),
+        onQueueMoveRequested: (from, to) => orchestrator.moveQueued(from, to),
         onMessageSteered: (text) => orchestrator.steerMessage(text),
         onWhileBusyModePersistRequested: (mode) =>
           persistWhileBusyMode(mode, bus),
