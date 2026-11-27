@@ -40,7 +40,7 @@ export class ProjectTrustOrchestrator {
     this.shown = null;
     try {
       const status = answerProjectTrust(this.deps.config(), this.deps.workingDir(), answer, shown.questionId);
-      const count = shown.pending.skills.length + shown.pending.instructions.length;
+      const count = shown.pending.skills.length + shown.pending.instructions.length + shown.pending.commands.length;
       this.deps.emit({ type: "runtime_info", line: answer === "trust"
         ? `[trust] trusted ${count} project item${count === 1 ? "" : "s"} in ${status.workingDir}`
         : `[trust] not loading ${count} project item${count === 1 ? "" : "s"} in ${status.workingDir}; trust later with ${status.hint}` });
