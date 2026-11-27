@@ -49,7 +49,7 @@ function makeFactory(): {
         getMe: vi.fn(async () => ({ id: 1, username: "test_bot" })),
         setMyCommands: vi.fn(async () => undefined),
       },
-      setTextHandler(handler) {
+      setTextHandler(handler: (u: unknown) => void | Promise<void>) {
         state.textHandler = handler;
       },
       setCallbackHandler() {},
@@ -129,7 +129,7 @@ describe("TelegramChannel guest approvals (ATO-2221)", () => {
   it("routes a guest group turn's approvals to the owner's DM without evicting the DM session", async () => {
     const { factory, state } = makeFactory();
     const unsubscribes: Array<ReturnType<typeof vi.fn>> = [];
-    const setHandler = vi.fn(() => {
+    const setHandler = vi.fn((_sessionId: string, _handler: (r: ApprovalRequest) => void) => {
       const u = vi.fn();
       unsubscribes.push(u);
       return u;
