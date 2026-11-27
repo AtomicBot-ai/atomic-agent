@@ -40,3 +40,8 @@
 .mtgbusy{color:var(--ink-2)}
 .mtgrecover{top:16px;padding-top:12px}
 .mtgrecover p{margin:0;padding:0 14px}
+
+/* ATO-2514: Me / Them on a live line, and the line about the call's sound. */
+.mtgwho{display:inline-block;margin-right:6px;font-weight:600;color:var(--ink-2)}
+.mtgsys{margin:0;padding:6px 14px;color:var(--ink-2);border-top:1px solid var(--bd);display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.mtgsys-off{color:var(--ink-2)}

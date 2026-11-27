@@ -716,6 +716,11 @@ contextBridge.exposeInMainWorld("atomic", {
   meetingRecoverable: () => ipcRenderer.invoke("meeting:recoverable"),
   meetingReveal: (path: string) => ipcRenderer.invoke("meeting:reveal", path),
   onMeeting: (cb: (payload: unknown) => void) => on("app:meeting", cb),
+  /** ATO-2514: the other side of the call (main/meeting-system-ipc.ts). `meetingSystemAudio` is a send. */
+  meetingSystemStart: () => ipcRenderer.invoke("meeting:system-start"),
+  meetingSystemAudio: (chunk: Uint8Array, peak: number) => ipcRenderer.send("meeting:system-audio", chunk, peak),
+  meetingSystemStop: () => ipcRenderer.invoke("meeting:system-stop"),
+  meetingOpenScreenSettings: () => ipcRenderer.invoke("meeting:open-screen-settings"),
   /** ATO-1167: the neural reading voice through Atomic Core (main/core-speech.ts). */
   ttsCoreStatus: (model: string) => ipcRenderer.invoke("tts:coreStatus", model),
   ttsCorePrepare: (model: string) => ipcRenderer.invoke("tts:corePrepare", model),

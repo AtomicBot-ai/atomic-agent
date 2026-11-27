@@ -93,7 +93,7 @@ test("live: a chunk is cut at a pause, transcribed from its WAV, shown on the me
   await settle();
   assert.deepEqual(engine.calls.map((c) => [c.name, c.wavThere, c.locale]), [["chunk-0000", true, "en-US"]]);
   const seg = events.find((e) => e.type === "segments");
-  assert.deepEqual(seg, { type: "segments", id, index: 0, segments: [{ start: 1, end: 2, text: "heard chunk-0000" }] });
+  assert.deepEqual(seg, { type: "segments", id, index: 0, segments: [{ start: 1, end: 2, text: "heard chunk-0000" }], channel: "me" });
   assert.equal(existsSync(store.wavPath(id, 0)), false, "the WAV is gone once its text is kept");
   // The second chunk's times start where the first one ended (20.5 s).
   oneChunk(rec);

@@ -169,6 +169,11 @@ const config = {
         "from": "out/native/atomic-fn-key",
         "to": "native/atomic-fn-key"
       },
+      /* ATO-2514: the other side of a call for Record a meeting (ScreenCaptureKit). */
+      {
+        "from": "out/native/atomic-system-audio",
+        "to": "native/atomic-system-audio"
+      },
       /* Atomic Chat Core, fetched and checked against the release's
          SHA256SUMS by scripts/fetch-core.mjs. Per arch, like the app: one
          build per arch (arm64, x64), never universal. Under Resources, so the
