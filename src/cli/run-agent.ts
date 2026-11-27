@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
@@ -47,8 +47,24 @@ import {
   createStdinLineQueue,
   type StdinLineQueue,
 } from "./stdin-line-queue.js";
+import {
+  emptyHeadlessArgs,
+  headlessArgsConflict,
+  readHeadlessFlag,
+  type RunHeadlessArgs,
+} from "./run-headless-args.js";
+import { resolveRunModel, type RunModelPin } from "./run-model-pin.js";
+import { loadResumeSession } from "./run-resume-session.js";
+import {
+  createRunJsonCursor,
+  runFatalResultEvent,
+  runJsonEvent,
+  runResultEvent,
+  runStartEvent,
+  type RunJsonEvent,
+} from "./run-json-events.js";
 
-interface RunArgs {
+interface RunArgs extends RunHeadlessArgs {
   workingDir: string;
   maxSteps: number | null;
   noApproval: boolean;
@@ -64,6 +80,7 @@ const HELP =
     "  atomic-agent run [options]           interactive: one message per line",
     '  echo "<goal>" | atomic-agent run     one-shot: answer on stdout, logs on stderr',
     "                                       (each piped line is a separate turn)",
+    '  atomic-agent run [options] "<goal>"  one turn with this message; stdin only answers approvals',
     "",
     "Options:",
     "  --cwd <dir>          Working directory for OS tools (default: current directory)",
@@ -71,6 +88,12 @@ const HELP =
     "  --max-steps <n>      Hard step ceiling for one task (default: agent.task.maxSteps)",
     "  --no-approval        Force approval level 5: auto-approve every dangerous tool call",
     "  --incognito          Incognito chat: nothing is saved to memory, the chat is deleted when the run ends",
+    "  --output-format <f>  text (default) | json (one result object) | stream-json (JSONL events)",
+    "  --json               Alias for --output-format stream-json",
+    "  -m, --model <m>      Model for every turn: <model> on the active provider, <provider> or <provider>:<model>",
+    "  --resume <id>        Continue a saved chat (an id or a unique id prefix)",
+    "  -c, --continue       Continue the newest saved chat in this folder",
+    "  -o, --output-last-message <file>  Write the last reply to this file",
     "",
     "In-session:  /quit exits · /abort cancels the current turn",
     "Exit codes:  0 replied · 1 failed · 2 usage error",
@@ -83,6 +106,7 @@ export function parseRunArgs(
   let maxSteps: number | null = null;
   let noApproval = false;
   let incognito = false;
+  const headless = emptyHeadlessArgs();
   for (let i = 0; i < args.length; i += 1) {
     const flag = args[i];
     switch (flag) {
@@ -124,15 +148,22 @@ export function parseRunArgs(
       case "--incognito":
         incognito = true;
         break;
-      default:
-        return { error: `unknown flag: ${flag}` };
+      default: {
+        const read = readHeadlessFlag(args, i, headless);
+        if (read === null) return { error: `unknown flag: ${flag}` };
+        if (typeof read === "object") return read;
+        i = read;
+      }
     }
   }
+  const conflict = headlessArgsConflict(headless, incognito);
+  if (conflict !== null) return { error: conflict };
   return {
     workingDir: workingDir ?? process.cwd(),
     maxSteps,
     noApproval,
     incognito,
+    ...headless,
   };
 }
 
@@ -403,6 +434,16 @@ interface ChatLoopOptions {
   controller: AbortController;
   /** Stdin lines, shared with the approval prompt. */
   lines: StdinLineQueue;
+  /** The prompt argument (ATO-2307): one turn with it, no message read from stdin. */
+  prompt?: string;
+  /** `--model`: the provider (and model) every turn is pinned to. */
+  modelPin?: RunModelPin;
+  /** Sees every event of each turn (the JSON stream). */
+  eventHook?: (event: AgentLoopEvent) => void;
+  /** Gets each turn's closing reply, null when the turn ended without one. */
+  onReply?: (reply: string | null) => void;
+  /** False in the JSON formats: stdout carries JSON only, not the reply lines. */
+  textOutput: boolean;
   /**
    * Stdin is piped, not a terminal. A piped multi-line prompt still runs
    * one turn per line, so the first time a second line becomes its own
@@ -454,10 +495,16 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
       ...(opts.maxSteps === undefined ? {} : { maxSteps: opts.maxSteps }),
       signal: opts.controller.signal,
       origin: "cli",
-      eventHook: collector.onEvent,
+      ...(opts.modelPin ?? {}),
+      eventHook: (event) => {
+        collector.onEvent(event);
+        opts.eventHook?.(event);
+      },
     });
     session = result.session;
     const reply = collector.getReply();
+    opts.onReply?.(reply);
+    if (!opts.textOutput) return;
     if (reply !== null) {
       // Collapse embedded newlines into spaces so the "exactly one
       // stdout line per turn" invariant holds even when the model
@@ -483,6 +530,10 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
 
   let turnsStarted = 0;
   try {
+    if (opts.prompt !== undefined) {
+      await driveTurn(opts.prompt);
+      return session;
+    }
     while (true) {
       if (opts.controller.signal.aborted) break;
       if (session.status === "completed") break;
@@ -527,6 +578,21 @@ export async function runAgentCommand(args: string[]): Promise<number> {
     parsed.noApproval,
     config.agent.approvalLevel,
   );
+  let modelPin: RunModelPin | undefined;
+  if (parsed.model !== null) {
+    const pin = resolveRunModel(parsed.model, resolveLlmConfig(config));
+    if ("error" in pin) {
+      process.stderr.write(`${pin.error}\n`);
+      return 2;
+    }
+    modelPin = pin;
+  }
+  // ATO-2307: in the JSON formats stdout carries JSON lines only.
+  const json = parsed.outputFormat !== "text";
+  const writeJson = (event: RunJsonEvent): void => {
+    process.stdout.write(`${JSON.stringify(event)}\n`);
+  };
+  const startedAt = Date.now();
 
   let approvalChain: Promise<unknown> = Promise.resolve();
   // Created once the runtime is up (a failed boot must not leave stdin
@@ -626,9 +692,19 @@ export async function runAgentCommand(args: string[]): Promise<number> {
   let exitCode = 0;
   let incognitoSessionId: string | null = null;
   try {
-    const session = runtime.createSession(
-      parsed.incognito ? { incognito: true } : undefined,
-    );
+    const resumed =
+      parsed.resume === null
+        ? null
+        : loadResumeSession(runtime.sessionStore, parsed.resume, parsed.workingDir);
+    if (resumed !== null && "error" in resumed) throw new Error(resumed.error);
+    const session =
+      resumed ??
+      runtime.createSession(parsed.incognito ? { incognito: true } : undefined);
+    if (parsed.outputFormat === "stream-json") {
+      writeJson(runStartEvent({ session, resumed: resumed !== null, ...modelPin }));
+    }
+    const cursor = createRunJsonCursor();
+    let lastReply: string | null = null;
     incognitoSessionId = parsed.incognito ? session.id : null;
     stdinLines = createStdinLineQueue({
       input: process.stdin,
@@ -644,8 +720,25 @@ export async function runAgentCommand(args: string[]): Promise<number> {
       controller,
       lines: stdinLines,
       piped: process.stdin.isTTY !== true,
+      ...(parsed.prompt === null ? {} : { prompt: parsed.prompt }),
+      ...(modelPin === undefined ? {} : { modelPin }),
+      ...(parsed.outputFormat === "stream-json"
+        ? {
+            eventHook: (event: AgentLoopEvent) => {
+              const line = runJsonEvent(event, cursor);
+              if (line !== null) writeJson(line);
+            },
+          }
+        : {}),
+      onReply: (reply) => {
+        if (reply !== null) lastReply = reply;
+      },
+      textOutput: !json,
     });
     if (!parsed.incognito) runtime.sessionStore.save(finalSession);
+    if (parsed.outputLastMessage !== null) {
+      writeFileSync(resolve(parsed.outputLastMessage), lastReply ?? "", "utf8");
+    }
     process.stderr.write(
       `${JSON.stringify(
         {
@@ -666,9 +759,20 @@ export async function runAgentCommand(args: string[]): Promise<number> {
     if (isFailedSessionStatus(finalSession.status)) {
       exitCode = 1;
     }
+    if (json) {
+      writeJson(
+        runResultEvent({
+          session: finalSession,
+          reply: lastReply,
+          durationMs: Date.now() - startedAt,
+          isError: exitCode !== 0,
+        }),
+      );
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`fatal: ${msg}\n`);
+    if (json) writeJson(runFatalResultEvent(msg, Date.now() - startedAt));
     exitCode = 1;
   } finally {
     stdinLines?.close();
