@@ -134,7 +134,7 @@ const FORMS: Record<string, CompactToolForm> = {
     tier: RARE,
   },
   "os.fs.write_pptx": {
-    summary: "Create an editable .pptx deck: per slide title, bullets, an image, table or chart, notes (may require approval).",
+    summary: "Create an editable .pptx deck: per slide title, bullets, an image, table or chart, notes, optional layout (auto-picked; overflow goes to notes). Numbers and quotes only from the user's sources (may require approval).",
     tier: RARE,
   },
   "os.git.status": { summary: "Git status and current branch." },

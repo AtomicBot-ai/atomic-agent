@@ -15,6 +15,7 @@ import {
   slideMasterXml,
 } from "./pptx-parts.js";
 import type { PptxImageInfo } from "./pptx-image.js";
+import { layoutSlide, type PptxLayout } from "./pptx-layout.js";
 import { isTitleSlide, notesSlideXml, slideXml, type PlacedImage } from "./pptx-slide.js";
 import type { PptxDeckSpec } from "./pptx-spec.js";
 import { resolvePalette, themeXml } from "./pptx-theme.js";
@@ -50,6 +51,8 @@ export interface BuildPptxResult {
   imageCount: number;
   tableCount: number;
   chartCount: number;
+  /** Per slide, in order: the layout it was drawn with and how many bullets moved to its notes. */
+  layouts: { layout: PptxLayout; moved: number }[];
 }
 
 const EXTENSION: Record<PptxImageInfo["kind"], string> = { png: "png", jpeg: "jpeg", gif: "gif" };
@@ -108,8 +111,14 @@ export async function buildPptx(input: BuildPptxInput): Promise<BuildPptxResult>
   let imageCount = 0;
   let chartCount = 0;
   let tableCount = 0;
-  for (const [index, slide] of spec.slides.entries()) {
+  const layouts: BuildPptxResult["layouts"] = [];
+  for (const [index, asked] of spec.slides.entries()) {
     const n = index + 1;
+    // Layout picked (or the model's kept), and bullets the layout cannot
+    // hold moved to the speaker notes, before anything is written.
+    const laid = layoutSlide(asked);
+    const slide = laid.slide;
+    layouts.push({ layout: laid.layout, moved: laid.moved });
     const rels = [{ id: "rId1", type: "slideLayout", target: "../slideLayouts/slideLayout1.xml" }];
     if (slide.notes !== undefined) {
       notesSlides.push(n);
@@ -163,5 +172,5 @@ export async function buildPptx(input: BuildPptxInput): Promise<BuildPptxResult>
   zip.file("[Content_Types].xml", contentTypesXml(slideCount, notesSlides, chartCount));
 
   const data = await packZip(zip);
-  return { data, slideCount, notesCount: notesSlides.length, imageCount, tableCount, chartCount };
+  return { data, slideCount, notesCount: notesSlides.length, imageCount, tableCount, chartCount, layouts };
 }

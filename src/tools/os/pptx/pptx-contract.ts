@@ -12,15 +12,15 @@ const NAME = "os.fs.write_pptx";
 export const OS_FS_WRITE_PPTX_CONTRACT = {
   name: NAME,
   description:
-    "Create an editable PowerPoint (.pptx) deck from a list of slides: a title, bullet points, an optional picture from disk, table or chart (column, bar, line, pie) and speaker notes per slide, with a simple colour theme. An existing file is replaced only with overwrite: true, never a deck the request hands in as an input. Dangerous — always requires approval.",
+    "Create an editable PowerPoint (.pptx) deck from a list of slides: a title, bullet points, an optional picture from disk, table or chart (column, bar, line, pie) and speaker notes per slide, with a simple colour theme. Each slide gets a layout (title, bullets, two-column, quote, big-number, image-full, chart) picked from its content unless you name one; bullets a layout cannot hold move to the speaker notes instead of overflowing. Put numbers, statistics and quotes on slides only when they come from the user or from sources the user gave; never invent them. An existing file is replaced only with overwrite: true, never a deck the request hands in as an input. Dangerous — always requires approval.",
   readonly: false,
   resourceClass: "approval_gated",
   descriptor: {
     name: NAME,
     summary:
-      "Create an editable PowerPoint .pptx deck (may require approval): per slide a title, bullets, at most one of a png/jpg/gif image path, a table (rows, first row = header) or a chart (column, bar, line, pie), and speaker notes. A slide with only title + subtitle is a title slide. Use it instead of scripts or pandoc for presentations.",
+      "Create an editable PowerPoint .pptx deck (may require approval): per slide a title, bullets, at most one of a png/jpg/gif image path, a table (rows, first row = header) or a chart (column, bar, line, pie), and speaker notes. Layout is picked from content (a title that is one figure like '42%' becomes a big number, a quoted title a quote, 7+ bullets two columns, a lone image full width); extra bullets move to the notes. Numbers and quotes only from the user's own sources, never invented. Use it instead of scripts or pandoc for presentations.",
     argsSchema:
-      '{ path: string /* ends in .pptx */, slides: { title: string, subtitle?: string, bullets?: string[] /* indent with two spaces per level */, image?: string, table?: (string | number)[][] /* first row is the header */, chart?: { type: "column" | "bar" | "line" | "pie", title?: string, categories: string[], series: { name: string, values: number[] }[] }, notes?: string }[], title?: string, author?: string, theme?: "light" | "dark" | "blue" | "warm", accentColor?: string /* hex like 2F6FEB */, font?: string, overwrite?: boolean }',
+      '{ path: string /* ends in .pptx */, slides: { title: string, subtitle?: string, bullets?: string[] /* indent with two spaces per level */, image?: string, table?: (string | number)[][] /* first row is the header */, chart?: { type: "column" | "bar" | "line" | "pie", title?: string, categories: string[], series: { name: string, values: number[] }[] }, notes?: string, layout?: "title" | "bullets" | "two-column" | "quote" | "big-number" | "image-full" | "chart" /* omit to auto-pick */ }[], title?: string, author?: string, theme?: "light" | "dark" | "blue" | "warm", accentColor?: string /* hex like 2F6FEB */, font?: string, overwrite?: boolean }',
     tier: "rare",
   },
   argsJsonSchema: {
@@ -66,6 +66,11 @@ export const OS_FS_WRITE_PPTX_CONTRACT = {
               additionalProperties: false,
             },
             notes: { type: "string" },
+            // Kept in step with PPTX_LAYOUTS (pptx-layout.ts); a test checks it.
+            layout: {
+              type: "string",
+              enum: ["title", "bullets", "two-column", "quote", "big-number", "image-full", "chart"],
+            },
           },
           required: ["title"],
           additionalProperties: false,
