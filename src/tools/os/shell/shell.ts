@@ -586,6 +586,9 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         : "Safe Mode sandbox: writes outside the working folder and temp, reads of credential folders, internet and local-socket connections, DNS and opening URLs are blocked; loopback (127.0.0.1) stays open. An `Operation not permitted` or name-resolution error comes from that, not from the command.";
       sandboxNotice +=
         " Package caches (npm, npx, pip, Go, cargo, Maven, Gradle and similar) use a private sandbox cache under temp, not the shared ones in the home folder.";
+      // ATO-2471: these run code later, outside the sandbox.
+      sandboxNotice +=
+        " Git hooks and `.git/config` (on macOS also creating `.git`, so `git init` fails there), shell rc files, `.envrc` and editor settings (`.vscode`, `.idea`) are read-only even in the working folder.";
       if (policy.narrowedRoots !== undefined) {
         sandboxNotice +=
           " The working folder is the home folder or above it, so it is not writable inside the sandbox; only temp is. Start the session in a project folder to write files there.";
