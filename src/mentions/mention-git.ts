@@ -20,8 +20,10 @@
  *    commit): `git log` never runs `gpg.program`;
  *  - `protocol.ext.allow=never`: no `ext::` remote helper command.
  * `--no-ext-diff --no-textconv` stop the configured external diff and
- * textconv programs. The environment is the command environment of the
- * shell tool (no provider keys) without an inherited GIT_DIR.
+ * textconv programs; `--submodule=short` keeps git from diffing inside a
+ * submodule, whose own config those flags do not reach. The environment
+ * is the command environment of the shell tool (no provider keys)
+ * without an inherited GIT_DIR.
  */
 
 import { execFile } from "node:child_process";
@@ -62,7 +64,10 @@ export interface GitOutput {
 /** Runs git with `args` (the subcommand on); GIT_SAFE_PREFIX is put in front. */
 export type RunGit = (cwd: string, args: readonly string[]) => Promise<GitOutput>;
 
-const DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-textconv", "--relative"];
+// `--submodule=short`: with a repo's `diff.submodule=diff` git runs a child
+// diff inside each changed submodule, which reads that submodule's own
+// `diff.external` (the -c prefix reaches it, --no-ext-diff does not).
+const DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-textconv", "--submodule=short", "--relative"];
 
 /** `git diff HEAD`: staged and unstaged changes to tracked files under the folder. */
 export function diffArgs(): string[] {
