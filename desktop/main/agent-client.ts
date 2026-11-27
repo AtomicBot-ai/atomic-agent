@@ -36,7 +36,7 @@ import {
   WATCH_SENTINEL_SOURCE,
   WINDOWS_GRACEFUL_MS,
 } from "./platform.js";
-import { sendServeKey, serveSpawnArgs, serveSpawnEnv, SERVE_STDIO } from "./serve-launch.js";
+import { sendServeKey, serveSpawnArgs, serveSpawnOptions } from "./serve-launch.js";
 
 /**
  * Supervises one `atag serve` child process and speaks to it over the
@@ -998,10 +998,8 @@ export class AgentClient extends EventEmitter {
         {
           cwd: this.status.workingDir,
           // r5 item 9: `atag serve` runs on the desktop's own state directory.
-          env: serveSpawnEnv(agentEnv()),
-          stdio: SERVE_STDIO,
-          // Windows: a console child of a GUI app otherwise opens a console window.
-          windowsHide: true,
+          // Env without a key, stdin piped for it, no console window (serve-launch.ts).
+          ...serveSpawnOptions(agentEnv()),
         },
       );
     } catch (err) {

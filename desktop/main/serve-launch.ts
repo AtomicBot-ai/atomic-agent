@@ -41,6 +41,20 @@ export function serveSpawnEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 /**
+ * The options agent-client.ts spawns `atag serve` with, all but `cwd`: the
+ * environment from `base` without a key, stdin a pipe for the key, and no
+ * console window on Windows. The test starts its stand-in child with these
+ * same options, so a key added back here fails it.
+ */
+export function serveSpawnOptions(base: NodeJS.ProcessEnv): {
+  env: NodeJS.ProcessEnv;
+  stdio: ["pipe", "pipe", "pipe"];
+  windowsHide: boolean;
+} {
+  return { env: serveSpawnEnv(base), stdio: SERVE_STDIO, windowsHide: true };
+}
+
+/**
  * Hand `token` to the child: one line on its stdin, then end the pipe so
  * nothing else can be read from it. A child that already died leaves an
  * EPIPE here; that is swallowed, its exit is reported on its own.

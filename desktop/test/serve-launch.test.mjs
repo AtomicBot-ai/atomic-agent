@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
 const L = require("../out/main/serve-launch.js");
@@ -46,9 +47,7 @@ test("a child started this way gets the key on stdin and has it nowhere else", a
     "});",
   ].join("\n");
   const child = spawn(process.execPath, ["-e", script, "--", ...L.serveSpawnArgs(5000, [])], {
-    env: L.serveSpawnEnv({ ...process.env, ATOMIC_AGENT_API_KEY: "inherited-key-123" }),
-    stdio: L.SERVE_STDIO,
-    windowsHide: true,
+    ...L.serveSpawnOptions({ ...process.env, ATOMIC_AGENT_API_KEY: "inherited-key-123" }),
   });
   L.sendServeKey(child.stdin, token);
   let out = "";
@@ -61,6 +60,30 @@ test("a child started this way gets the key on stdin and has it nowhere else", a
   assert.equal(seen.envVar, null, "no ATOMIC_AGENT_API_KEY in the child environment");
   assert.equal(seen.envHasKey, false, "the key is in no variable at all");
   assert.ok(!seen.argv.some((a) => a.includes(token)), "the key is on no command line");
+});
+
+test("the spawn options: no key in the env, stdin piped for it, no console window", () => {
+  const opts = L.serveSpawnOptions({ PATH: "/usr/bin", ATOMIC_AGENT_API_KEY: "inherited-key-123" });
+  assert.deepEqual(Object.keys(opts).sort(), ["env", "stdio", "windowsHide"]);
+  assert.ok(!("ATOMIC_AGENT_API_KEY" in opts.env));
+  assert.equal(opts.env.PATH, "/usr/bin");
+  assert.deepEqual(opts.stdio, ["pipe", "pipe", "pipe"]);
+  assert.equal(opts.windowsHide, true);
+});
+
+/* Review F2014.1: the test above only holds if agent-client.ts spawns serve
+   with these same options. Its spawn takes them whole and sets no env or
+   stdio of its own, and no key variable is named anywhere in that file. */
+test("agent-client.ts spawns serve with serveSpawnOptions and adds no env or stdio", () => {
+  const src = readFileSync(new URL("../main/agent-client.ts", import.meta.url), "utf8");
+  const start = src.indexOf("child = spawn(");
+  const end = src.indexOf("sendServeKey(child.stdin, token);", start);
+  assert.ok(start >= 0 && end > start, "the serve spawn and the key hand-off are found");
+  const call = src.slice(start, end);
+  assert.match(call, /\.\.\.serveSpawnOptions\(agentEnv\(\)\)/);
+  assert.doesNotMatch(call, /\benv\s*:/, "no env of its own");
+  assert.doesNotMatch(call, /\bstdio\s*:/, "no stdio of its own");
+  assert.doesNotMatch(src, /ATOMIC_AGENT_API_KEY|SERVE_API_KEY_ENV/);
 });
 
 test("sending the key to a child without stdin, or one already gone, does not throw", async () => {
