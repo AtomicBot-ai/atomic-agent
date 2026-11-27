@@ -30917,6 +30917,7 @@ async function tgRefreshOnce() {
   if (dotenv && dotenv.ok === false) TG.lastError = 'Could not read the saved token: ' + (dotenv.error || 'unknown error');
   if (eff && eff.ok && eff.value && typeof eff.value === 'object') TG.cfg = eff.value;
   TG.keysKnown = true;
+  if (TG.channel && TG.channel.state === 'starting' && telegramVisible() && !TG.startingTimer) TG.startingTimer = setTimeout(() => { TG.startingTimer = null; tgRefresh(); }, TG_STARTING_RECHECK_MS);   // ATO-2520: catch the bot's name once getMe lands
   tgRepaint();
 }
 /* Д36: until a token is in, the tab is the Connect Telegram card and nothing
@@ -30963,7 +30964,7 @@ function tgConnected(enabled, owner) { return tgHasToken() === true && owner !==
 function tgStatusHTML(enabled, owner) {
   // ATO-758: the settings say connected, but another poller holds the live channel off.
   const on = tgConnected(enabled, owner) && !tgOtherPollerHTML(TG.channel);
-  const line = on ? 'Message your bot in Telegram to talk to Atomic Agent. Send /help there for its commands.'
+  const line = on ? tgConnectedLine(TG.channel)   // ATO-2520: "Connected as @my_bot." from the live channel
     : owner === null ? 'Almost there: confirm your Telegram account below.'
     : enabled !== true ? 'Turned off: the bot does not answer until you turn it on below.'
     : 'Waiting for a restart: the agent loads the token and these settings when it starts. Press Restart agent below; the app stays open.';
@@ -30984,7 +30985,7 @@ function tgRowsHTML(enabled, owner) {
   return '<div class="tk-card sd-rows">'
     + row('Answer in Telegram', 'When this is off, the bot ignores every message.',
       '<button class="tk-switch" role="switch" aria-checked="' + (enabled === true) + '" aria-label="Answer in Telegram" data-act="telegram:enable"' + (busy || enabled === null ? ' disabled' : '') + '></button>')
-    + row('Bot token', 'Saved on this computer.' + (TG.bot ? ' Telegram knows it as ' + esc(TG.bot) + '.' : ''),   // ATO-426 U-77: the bot the last check confirmed
+    + row('Bot token', 'Saved on this computer.' + (tgBotName(TG.bot, TG.channel, tgRestartOwed()) ? ' Telegram knows it as ' + esc(tgBotName(TG.bot, TG.channel, tgRestartOwed())) + '.' : ''),   // ATO-426 U-77 + ATO-2520: the last check's bot, or the running agent's
       '<button class="btn btn-s sm" data-act="telegram:token">Change token</button>'
       + '<button class="btn btn-danger sm" data-act="telegram:clearToken"' + (busy ? ' disabled' : '') + '>' + (TG.confirm === 'clearToken' ? 'Click again to remove' : 'Remove token') + '</button>')
     + (owner !== null ? row('Owner', 'Only this Telegram account can talk to the bot.',

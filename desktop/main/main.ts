@@ -4096,7 +4096,9 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("telegram:checkToken", async (_event, payload: unknown) => {
     const { value } = (payload ?? {}) as { value?: unknown };
     if (typeof value !== "string" || !value) return { ok: false, rejected: true, status: 0, error: "token required" };
-    return checkTelegramToken({ token: value });
+    const res = await checkTelegramToken({ token: value });
+    A.telegramTokenChecked(res);   // ATO-2520: ok / rejected / unchecked, never the token
+    return res;
   });
 
   /* ---- Item 2 (voice input) --------------------------------------------
