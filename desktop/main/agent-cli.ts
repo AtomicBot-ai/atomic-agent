@@ -41,6 +41,7 @@ import {
 } from "./keychain-keys.js";
 import { defaultProviderModelMode, type ModelMode } from "./provider-model-mode.js";
 import { SUBSCRIPTION_CLI_KIND, subscriptionCliModels } from "./subscription-cli-models.js";
+import { linearSecretValueError } from "./linear-key-check.js";   // ATO-2464
 
 const run = promisify(execFile);
 
@@ -4418,7 +4419,8 @@ export async function desktopSecretSet(
    default EXA_API_KEY; the agent has no config.json field for it, so its
    environment, loaded from this file at start, is the only way in). */
 // ATO-516: DISCORD_BOT_TOKEN for Settings › Connections › Discord (the TUI's discord-settings.ts writeDiscordToken).
-export const DESKTOP_DOTENV_KEYS: readonly string[] = ["TELEGRAM_BOT_TOKEN", "EXA_API_KEY", "DISCORD_BOT_TOKEN"];
+// ATO-2464: LINEAR_API_KEY and LINEAR_WEBHOOK_SECRET for Settings › Connections › Linear (src/channels/linear/linear-setup.ts saveLinearSecret).
+export const DESKTOP_DOTENV_KEYS: readonly string[] = ["TELEGRAM_BOT_TOKEN", "EXA_API_KEY", "DISCORD_BOT_TOKEN", "LINEAR_API_KEY", "LINEAR_WEBHOOK_SECRET"];
 
 /* Why an Exa key cannot be written as given, or null. One line of printable
    ASCII with no spaces, 8 to 256 characters: the renderer's exaKeyClean rule
@@ -4443,6 +4445,7 @@ export function desktopDotenvError(key: unknown, value: unknown): string | null 
   if (value !== null && /[\r\n\0]/.test(value)) return "value must be one line";
   if (key === "EXA_API_KEY" && value !== null) return exaKeyValueError(value);
   if (key === "DISCORD_BOT_TOKEN" && value !== null) return discordTokenValueError(value);
+  if ((key === "LINEAR_API_KEY" || key === "LINEAR_WEBHOOK_SECRET") && value !== null) return linearSecretValueError(key, value);
   return null;
 }
 

@@ -1250,6 +1250,9 @@ const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP server
                        ['tasks','Cron jobs'],['webhooks','Webhooks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
 SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'memory') + 1, 0, ['myfiles','My files']);   // ATO-1626
 SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'myfiles') + 1, 0, ['myapps','My apps']);   // ATO-2383
+// ATO-2464: Settings › Connections › Linear (linear-settings.js, linear-pane.js), after Discord.
+SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'discord') + 1, 0, ['linear','Linear']);
+(function (c) { c.splice(c.indexOf('discord') + 1, 0, 'linear'); })(SETTINGS_SECTIONS.find((sec) => sec[0] === 'connections')[3]);
 /* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
    one shown, per viewer, like atag.theme; General the first time. */
 /* Calm (S5): which Settings disclosures are open, so a repaint keeps them. */
@@ -2122,6 +2125,7 @@ const PAL = [
     ['plug','MCP servers','Settings · Connections','/mcp','settings:mcp'],
     ['send','Telegram','Settings · Connections','/telegram','settings:telegram'],
     ['chat','Discord','Settings · Connections','','settings:discord'],
+    ['link','Linear','Settings · Connections','','settings:linear'],   // ATO-2464
     ['bell','Phone push','Settings · Connections','','settings:push'],
     ['link','Composio','Settings · Connections','','settings:composio'],
     ['link','Monid','Settings · Connections','','settings:monid'],
@@ -6376,7 +6380,7 @@ function settingsNavHTML(current) {
 /* A section with more than one pane (Connections) switches between them
    with a segmented control beside its title. */
 /* ATO-1634: the brand a Connections pane is named after (LOGO_FILES key); Phone push sends through ntfy. */
-const SETTINGS_PANE_LOGOS = {telegram:'telegram', discord:'discord', push:'ntfy', composio:'composio', monid:'monid'};
+const SETTINGS_PANE_LOGOS = {telegram:'telegram', discord:'discord', linear:'linear', push:'ntfy', composio:'composio', monid:'monid'};
 function settingsSubnavHTML(sec, cur) {
   if (sec[3].length < 2) return '';
   return '<span class="tk-seg set-subseg" role="tablist" aria-label="' + esc(sec[1]) + '">'
@@ -6758,6 +6762,7 @@ function settingsPaneEntered(opened) {
   else if (pane === 'llm') llmTabEntered();
   else if (pane === 'telegram') telegramTabEntered();
   else if (pane === 'discord') discordTabEntered();
+  else if (pane === 'linear') linearTabEntered();   // ATO-2464
   else if (pane === 'push') phonePushTabEntered();   // ATO-1129 (phone-push.js)
   else if (pane === 'composio') composioTabEntered();
   else if (pane === 'monid') monidTabEntered();   // ATO-1630 (monid.js)
@@ -6788,6 +6793,7 @@ function settingsPane() {
   if (p === 'llm') return llmTab();
   if (p === 'telegram') return telegramTab();
   if (p === 'discord') return discordTab();
+  if (p === 'linear') return linearTab();   // ATO-2464
   if (p === 'push') return pushTab();
   if (p === 'composio') return composioTab();
   if (p === 'monid') return monidTab();
@@ -7884,6 +7890,7 @@ function act(a) {
   if (k === 'llm') { close(); llmAct(a.slice(4)); return; }
   if (k === 'telegram') { close(); telegramAct(a.slice(9)); return; }
   if (k === 'discord') { close(); discordAct(a.slice(8)); return; }
+  if (k === 'linear') { close(); linearAct(a.slice(7)); return; }   // ATO-2464
   if (k === 'push') { close(); phonePushAct(a.slice(5)); return; }
   if (k === 'composio') { close(); composioAct(a.slice(9)); return; }
   if (k === 'monid') { close(); monidAct(a.slice(6)); return; }
@@ -9041,6 +9048,9 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'tg-token') { if (TG.token.error) { TG.token.error = null; } return; }
   // ATO-516: the Discord owner id field keeps its draft so a repaint does not wipe it; the token field keeps nothing.
   if (e.target.id === 'dc-owner') { DC.setDraftId(e.target.value); return; }
+  // ATO-2464: the Linear owner id and handle fields keep their drafts; the key fields keep nothing.
+  if (e.target.id === 'ln-owner') { LN.setDraftId(e.target.value); return; }
+  if (e.target.id === 'ln-mention') { LN.setDraftMention(e.target.value); return; }
   // Composio: the key field keeps its draft in memory only (composioKeyRestore puts it back after a repaint).
   if (e.target.id === 'cmp-key') { CMP.draft = e.target.value; if (CMP.keyError) CMP.keyError = null; return; }
   // ATO-328: the Exa key fields keep their draft in memory only (exaKeyRestore puts it back after a repaint).
@@ -25670,6 +25680,7 @@ function settingsKey(e, k, inText) {
   if (pane === 'llm' && llmKey(e, k, inText)) return true;
   if (pane === 'telegram' && telegramKey(e, k, inText)) return true;
   if (pane === 'discord' && discordKey(e, k, inText)) return true;
+  if (pane === 'linear' && linearKey(e, k, inText)) return true;   // ATO-2464
   if (pane === 'composio' && composioKey(e, k, inText)) return true;
   if (pane === 'import' && importKey(e, k, inText)) return true;
   if (k === 'Escape') { e.preventDefault(); S.settings = null; render(); return true; }

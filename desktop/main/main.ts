@@ -303,6 +303,7 @@ import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js
 import { checkSavedComposioKey, removeComposioKey, saveComposioKey, type ComposioDeps, type ComposioKeyResult } from "./composio-key.js";
 import { registerComposioAccountsIpc } from "./composio-accounts-ipc.js";
 import { checkTelegramToken } from "./telegram-token-check.js";   // ATO-426: a bot token checked with Telegram before it is saved
+import { checkLinearKey } from "./linear-key-check.js";   // ATO-2464: a Linear key checked before it is saved
 // Item 2 (voice input): the on-device speech helper's supervisor.
 import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 // ATO-1074: an audio file transcribed on this machine, with timestamps.
@@ -4098,6 +4099,9 @@ function wireIpc(client: AgentClient): void {
     if (typeof value !== "string" || !value) return { ok: false, rejected: true, status: 0, error: "token required" };
     return checkTelegramToken({ token: value });
   });
+  /* ATO-2464 (linear-key-check.ts): the Linear tab's key, checked with one `viewer` query before `app:dotenvSet`
+     writes it. The answer is a verdict and the key's user, never the key or Linear's own words. */
+  ipcMain.handle("linear:checkKey", (_event, payload: unknown) => checkLinearKey({ key: ((payload ?? {}) as { value?: unknown }).value }));
 
   /* ---- Item 2 (voice input) --------------------------------------------
      Nothing here touches the agent: 0.5.5 has no audio route, no
@@ -6779,15 +6783,15 @@ async function settingsTest(
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
   // Calm (S5): the window's own panes and nav sections, in nav order.
   // ATO-1129 (#1533): Phone push sits in Connections, after Discord. ATO-1630: Monid after Composio.
-  const PANES = ["general", "llm", "mcp", "telegram", "discord", "push", "composio", "monid", "memory", "myfiles", "myapps", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
+  const PANES = ["general", "llm", "mcp", "telegram", "discord", "linear", "push", "composio", "monid", "memory", "myfiles", "myapps", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
   const LABELS = ["General", "Models", "Connections", "Memory", "My files", "My apps", "Cron jobs", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];   // W2: Tasks reads "Cron jobs"
-  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", push: "connections", composio: "connections", monid: "connections", memory: "memory", myfiles: "myfiles", myapps: "myapps",
+  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", linear: "connections", push: "connections", composio: "connections", monid: "connections", memory: "memory", myfiles: "myfiles", myapps: "myapps",
     tasks: "tasks", webhooks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
 
   const groups = await js<string[]>("window.__menuGroups()");
   check("settings: menu groups are the TUI's minus Go and Observe", same(groups, GROUPS), JSON.stringify(groups));
   const tabs = await js<string[]>("window.__settingsTabs()");
-  check("settings: the panes are General, Models, Connections (MCP, Telegram, Discord, Phone push, Composio, Monid) … Diagnostics", same(tabs, PANES), JSON.stringify(tabs));
+  check("settings: the panes are General, Models, Connections (MCP, Telegram, Discord, Linear, Phone push, Composio, Monid) … Diagnostics", same(tabs, PANES), JSON.stringify(tabs));
 
   // Every node of the menu tree, verbatim label and ctrl+g chord, in registry
   // order (src/tui/menu/menu-registry.ts:107-675) — except that Go, Observe and
