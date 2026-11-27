@@ -51,7 +51,7 @@ describe("atag launch (ATO-2172)", () => {
   it("a missing binary exits 1 with the install hint and starts no serve", async () => {
     const startServe = vi.fn();
     const findServe = vi.fn();
-    const r = await run(["claude"], { findBinary: () => null, startServe, findServe });
+    const r = await run(["claude"], { findBinary: () => null, startServe, findServe, isTTY: () => false });
     expect(r.code).toBe(1);
     expect(r.err).toContain("Claude Code is not installed");
     expect(r.err).toContain("npm install -g @anthropic-ai/claude-code");
@@ -262,5 +262,19 @@ describe("atag launch (ATO-2172)", () => {
     const r = await run(["cline", "--print-env"]);
     expect(r.out).toContain("/usr/local/bin/cline auth -p openai -k");
     expect(r.out).not.toContain("the-serve-key");
+  });
+
+  it("a missing CLI in a terminal is installed after a yes and then started (ATO-2450)", async () => {
+    let installed = false;
+    const { spawn, calls } = fakeSpawn(0);
+    const r = await run(["codex"], {
+      spawn,
+      isTTY: () => true,
+      ask: async () => { installed = true; return "y"; },
+      findBinary: (b) => (b === "npm" ? "/usr/bin/npm" : installed && calls.length > 0 ? `/usr/local/bin/${b}` : null),
+    });
+    expect(r.code).toBe(0);
+    expect(calls.map((c) => c.cmd)).toEqual(["/usr/bin/npm", "/usr/local/bin/codex"]);
+    expect(calls[0]?.args).toEqual(["install", "-g", "@openai/codex"]);
   });
 });

@@ -20,12 +20,12 @@
 import { spawn as nodeSpawn } from "node:child_process";
 
 import { resolveStateDir } from "../config/index.js";
-import { findOnPath } from "./cloudflared.js";
 import { LAUNCH_HELP, parseLaunchArgs, type LaunchArgs } from "./launch-args.js";
 import { runChild } from "./launch-child.js";
 import type { LaunchConfigFs } from "./launch-config.js";
 import { runLaunchConfig } from "./launch-config-command.js";
 import { DEFAULT_LAUNCH_MODEL, type LaunchIntegration, type LaunchPlan } from "./launch-integrations.js";
+import { findLaunchBinary, offerInstall } from "./launch-install.js";
 import { localModelProbeMessage, probeLocalModel, type LocalModelProbe } from "./launch-local-model.js";
 import { launchChoices, pickLaunchIntegration } from "./launch-picker.js";
 import {
@@ -126,20 +126,26 @@ export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}
     write(`${found.key}\n`);
     return 0;
   }
-  const findBinary = deps.findBinary ?? ((b: string) => findOnPath(b, env));
+  const findBinary = deps.findBinary ?? ((b: string) => findLaunchBinary(b, env));
   let integration = parsed.integration;
   if (integration === null) {
     const picked = await pickLaunchIntegration(launchChoices(findBinary), { write, writeErr, isTTY: deps.isTTY, ask: deps.ask });
     if (picked.kind === "done") return picked.code;
     integration = picked.integration;
   }
-  const binaryPath = findBinary(integration.binary);
+  let binaryPath = findBinary(integration.binary);
   if (!binaryPath && !parsed.printEnv && !parsed.config && !parsed.revert) {
-    writeErr(
-      `launch: ${integration.displayName} is not installed (no \`${integration.binary}\` on PATH).\n` +
-        `Install it with: ${integration.installHint}\n`,
-    );
-    return 1;
+    // ATO-2450: in a terminal, offer to install it (shows the command, asks first).
+    const installed = await offerInstall(integration, {
+      isTTY: deps.isTTY,
+      ask: deps.ask,
+      findBinary,
+      spawn: deps.spawn ?? nodeSpawn,
+      env,
+      writeErr,
+    });
+    if ("code" in installed) return installed.code;
+    binaryPath = installed.path;
   }
 
   const stateDir = (deps.stateDir ?? resolveStateDir)();
