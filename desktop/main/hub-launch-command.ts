@@ -42,9 +42,15 @@ export function posixQuote(arg: string): string {
   return "'" + arg.replace(/'/g, "'\\''") + "'";
 }
 
-/** One argument for PowerShell: single-quoted (no `$` or backtick expansion), `'` doubled. */
+/**
+ * One argument for PowerShell: single-quoted (no `$` or backtick expansion).
+ * PowerShell also ends a single-quoted string at the typographic quotes
+ * U+2018, U+2019, U+201A and U+201B (a Windows account named "D’Angelo"),
+ * so each of those is doubled like `'`, as PowerShell's own
+ * CodeGeneration.EscapeSingleQuotedStringContent does.
+ */
 export function powershellQuote(arg: string): string {
-  return "'" + arg.replace(/'/g, "''") + "'";
+  return "'" + arg.replace(/['\u2018\u2019\u201A\u201B]/g, "$&$&") + "'";
 }
 
 /**

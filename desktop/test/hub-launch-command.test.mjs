@@ -117,3 +117,11 @@ test("wiring: preload, the hub IPC route, and act() goes through hubOpenLocal", 
   const hub = readFileSync(new URL("../renderer/agent-hub.js", import.meta.url), "utf8");
   assert.match(hub, /if \(v\.indexOf\('local:'\) === 0\) \{ const row = hubFind\(v\.slice\(6\)\); if \(row\) hubOpenLocal\(row\); return; \}/);
 });
+
+test("PowerShell quoting doubles the typographic single quotes too (U+2018/2019/201A/201B)", () => {
+  assert.equal(L.powershellQuote("C:\\Users\\D\u2019Angelo\\atag.exe"), "'C:\\Users\\D\u2019\u2019Angelo\\atag.exe'");
+  for (const q of ["\u2018", "\u2019", "\u201A", "\u201B"]) {
+    assert.equal(L.powershellQuote("a" + q + "b"), "'a" + q + q + "b'");
+  }
+  assert.equal(L.bundledLaunchCommand("codex", "win32", "C:\\Users\\D\u2019Angelo\\a.exe"), "& 'C:\\Users\\D\u2019\u2019Angelo\\a.exe' launch codex");
+});
