@@ -23,7 +23,8 @@ import { pageSegments, type TextSegment } from "./file-chunker.js";
  * is `failed`.
  */
 export type FileTextResult =
-  | { status: "ok"; segments: TextSegment[] }
+  /** `ocrPages`: scanned pages the OCR engine read text from (ATO-2501), when any. */
+  | { status: "ok"; segments: TextSegment[]; ocrPages?: number }
   | { status: "skipped"; reason: string }
   | { status: "failed"; error: string };
 
@@ -81,7 +82,7 @@ export async function extractFileText(path: string, options: FileTextOptions = {
 
 async function documentText(path: string, options: FileTextOptions): Promise<FileTextResult> {
   const format = detectDocumentFormat(path, undefined);
-  const ocr: ReadyOcr = format === "pdf" ? await readyOcr(options) : { engine: undefined, unavailable: undefined };
+  const ocr: ReadyOcr = format === "pdf" ? await readyOcr(options) : { engine: undefined, unavailable: undefined, recognised: NO_OCR_PAGES };
   const extractors = ocr.engine && !options.extractors?.pdf
     ? { ...options.extractors, pdf: createPdfExtractor({ ocrEngine: ocr.engine, ocrLanguages: ocrLanguages(options) }) }
     : options.extractors;
@@ -100,7 +101,8 @@ async function documentText(path: string, options: FileTextOptions): Promise<Fil
   // their slide/chapter dividers as plain text.
   const segments = format === "pdf" ? pageSegments(result.text) : nonEmpty(result.text);
   if (segments.length === 0) return { status: "skipped", reason: "no text in the file" };
-  return { status: "ok", segments };
+  const ocrPages = ocr.recognised();
+  return ocrPages > 0 ? { status: "ok", segments, ocrPages } : { status: "ok", segments };
 }
 
 async function mediaText(path: string, options: FileTextOptions): Promise<FileTextResult> {
@@ -124,7 +126,11 @@ interface ReadyOcr {
   engine: OcrEngine | undefined;
   /** Why scans cannot be read right now. */
   unavailable: string | undefined;
+  /** Pages the engine returned text for so far. */
+  recognised: () => number;
 }
+
+const NO_OCR_PAGES = (): number => 0;
 
 /**
  * The engine, checked once per PDF (a cheap local check), so a scan that
@@ -132,19 +138,29 @@ interface ReadyOcr {
  */
 async function readyOcr(options: FileTextOptions): Promise<ReadyOcr> {
   const raw = typeof options.ocr?.engine === "function" ? options.ocr.engine() : options.ocr?.engine;
-  if (raw === undefined) return { engine: undefined, unavailable: "no OCR engine is set up for the file index" };
+  if (raw === undefined) return { engine: undefined, unavailable: "no OCR engine is set up for the file index", recognised: NO_OCR_PAGES };
   let unavailable: string | undefined;
   try {
     unavailable = await raw.unavailableReason(ocrLanguages(options));
   } catch (error) {
     unavailable = error instanceof Error ? error.message : String(error);
   }
-  if (unavailable !== undefined) return { engine: undefined, unavailable };
-  const engine = boundOcrEngine(raw, {
+  if (unavailable !== undefined) return { engine: undefined, unavailable, recognised: NO_OCR_PAGES };
+  const bounded = boundOcrEngine(raw, {
     maxPages: options.ocr?.maxPages ?? DEFAULT_MAX_OCR_PAGES,
     ...(options.signal ? { signal: options.signal } : {}),
   });
-  return { engine, unavailable: undefined };
+  let recognised = 0;
+  const engine: OcrEngine = {
+    id: bounded.id,
+    unavailableReason: (languages) => bounded.unavailableReason(languages),
+    async recognizePdfPages(request) {
+      const run = await bounded.recognizePdfPages(request);
+      recognised += run.pages.filter((page) => page.text.trim().length > 0).length;
+      return run;
+    },
+  };
+  return { engine, unavailable: undefined, recognised: () => recognised };
 }
 
 function ocrLanguages(options: FileTextOptions): readonly string[] {
@@ -163,6 +179,23 @@ function scanSkipReason(warnings: readonly string[], ocr: ReadyOcr): string {
   if (unavailable !== undefined) return `scan: OCR not available (${unavailable.slice(unavailablePrefix.length)})`;
   return "scan: OCR found no text";
 }
+
+/**
+ * Skip reasons that a later run can turn into text once the reader is
+ * there (ATO-2501): a scan whose OCR engine was missing or failed, a photo
+ * or audio file skipped because media reading was off or its model,
+ * whisper.cpp or ffmpeg was missing. Not retried: wrong type, too large,
+ * no text, OCR that ran and found none.
+ */
+export function isRetryableSkip(reason: string): boolean {
+  if (reason.startsWith("scan: OCR not available") || reason.startsWith("scan: OCR failed")) return true;
+  const media = reason.split(":", 1)[0] ?? "";
+  return RETRYABLE_MEDIA_SKIPS.has(media);
+}
+
+const RETRYABLE_MEDIA_SKIPS: ReadonlySet<string> = new Set([
+  "disabled", "no-vision-model", "no-engine", "needs-model-download", "no-model", "needs-ffmpeg",
+]);
 
 function nonEmpty(text: string): TextSegment[] {
   return text.trim().length > 0 ? [{ text }] : [];

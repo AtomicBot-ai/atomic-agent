@@ -241,6 +241,10 @@ export interface RuntimeVisionConfig {
   audioInput?: boolean;
   /** Hard upper bound on one `audio.listen` file, in bytes. */
   maxAudioBytes?: number;
+  /**
+   * Read scanned PDF pages and photos in My files with a vision model on this computer or the local network (Atomic Core, llama-server, LM Studio), and audio with whisper.cpp (ATO-2501). Unset reads as off. A cloud model is never used for it.
+   */
+  indexFiles?: boolean;
 }
 
 export interface UserVisionConfig {
@@ -251,6 +255,10 @@ export interface UserVisionConfig {
   /** Unset = auto (local model that reports audio only); see RuntimeVisionConfig. */
   audioInput?: boolean;
   maxAudioBytes?: number;
+  /**
+   * Read scanned PDF pages and photos in My files with a vision model on this computer or the local network (Atomic Core, llama-server, LM Studio), and audio with whisper.cpp (ATO-2501). Off by default: each scanned page or photo costs one model call. A cloud model is never used for it.
+   */
+  indexFiles: boolean;
 }
 
 /** `vision.maxAudioBytes` when nothing sets it. */
@@ -265,6 +273,8 @@ export function createVisionDefaults(): UserVisionConfig {
     // `audioInput` is left unset: auto (decision 62).
     // OpenAI caps a request body near 25 MB and base64 adds a third.
     maxAudioBytes: DEFAULT_MAX_AUDIO_BYTES,
+    // ATO-2501: My files reads no scans, photos or audio until this is on.
+    indexFiles: false,
   };
 }
 
@@ -302,5 +312,6 @@ export function parseVisionConfig(
       raw.maxAudioBytes ?? readDefaults().maxAudioBytes ?? DEFAULT_MAX_AUDIO_BYTES,
       "vision.maxAudioBytes",
     ),
+    indexFiles: parseBool(raw.indexFiles ?? readDefaults().indexFiles ?? false, "vision.indexFiles"),
   };
 }

@@ -779,6 +779,7 @@ export function loadConfig(): AtomicAgentConfig {
       // Unset = auto (ATO-497 decision 62): local model that reports audio only.
       ...(user.vision.audioInput === undefined ? {} : { audioInput: user.vision.audioInput }),
       maxAudioBytes: user.vision.maxAudioBytes ?? DEFAULT_MAX_AUDIO_BYTES,
+      indexFiles: user.vision.indexFiles,
     },
     tui: {
       theme: user.tui.theme,
