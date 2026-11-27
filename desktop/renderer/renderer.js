@@ -2140,6 +2140,7 @@ const PAL = [
     ['logo:claudecode','Continue from Claude Code / Codex…','','','handoff:open'],   // ATO-1156; ATO-1633: wears the Claude Code mark
     ['arrowR','Hand off to Claude Code / Codex…','','','houtopen'],   // ATO-1014 (handoff-out.js)
     ['chat','Agents: who is waiting for you','','','hub:open'],   // ATO-1157 (agent-hub.js)
+    ['tasks','Task board','','','board:open'],   // ATO-2257 (workboard.js)
     ['star','Recipes…','','','recipe:gallery'],   // ATO-1072 (chat-recipe.js)
     ['x','Clear transcript','','','clear'],
     ['gauge','Context window','','','context'],
@@ -2471,6 +2472,7 @@ function roomTitle() {
     return ses && ses.t ? ses.t : '';
   }
   if (S.room === 'tasks')  return 'Cron jobs';   // W2: the Tasks feature's visible name
+  if (S.room === 'board')  return 'Task board';   // ATO-2257 (workboard.js)
   if (S.room === 'skills') return 'Skills';
   return '';
 }
@@ -3042,6 +3044,7 @@ function renderContent() {
     afterChat(keep, hadFocus, caret); return;
   }
   if (S.room === 'tasks')  { c.innerHTML = tasksView(); return; }
+  if (S.room === 'board')  { c.innerHTML = workboardView(); return; }   // ATO-2257 (workboard.js)
   c.innerHTML = skillsView();
 }
 
@@ -7636,6 +7639,7 @@ function act(a) {
   if (k === 'handoff') { if (v === 'open') { close(); S.settings = null; } handoffAct(v || ''); render(); return; }
   if (k === 'houtopen' || k === 'hout') { if (k === 'houtopen') { close(); S.settings = null; } handoffOutAct(k, v || ''); render(); return; }   // ATO-1014 (handoff-out.js)
   if (k === 'hub') { if (v === 'open') { close(); S.settings = null; } hubAct(v || ''); render(); return; }   // ATO-1157 (agent-hub.js)
+  if (k === 'board') { if (v === 'open') close(); boardAct(v || ''); return; }   // ATO-2257 (workboard.js)
   // ATO-556: the atomicagent:// link card's Install (deeplink.js); Cancel is `close`.
   if (k === 'dlink') { deeplinkAct(v || ''); return; }
   // ATO-1492: an MCP server's question (mcp-elicitation.js); closing the sheet is `close`.

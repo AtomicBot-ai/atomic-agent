@@ -1393,6 +1393,12 @@ export class AgentClient extends EventEmitter {
   /** `{runs:[{id, attempt, sessionId, startedAt, endedAt, outcome, error, errorCategory}], available}`, newest first. */
   taskRuns = (id: string, limit = 50) =>
     this.request<unknown>("GET", `/api/tasks/${encodeURIComponent(id)}/runs?limit=${encodeURIComponent(String(limit))}`);
+  /* ATO-2257: the task board (workboard-ipc.ts): `{lanes, cards, counts, available}`, and a card's
+     lane / note / assignee. An agent from before these routes answers 404 "no route". */
+  taskBoard = (limit = 200) =>
+    this.request<unknown>("GET", `/api/task-board?limit=${encodeURIComponent(String(limit))}`);
+  moveTaskCard = (id: string, body: Record<string, unknown>) =>
+    this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/board`, body);
   /* ATO-458 — suggested tasks (ideas-ipc.ts): rebuilt from failed tasks and
      stopped goals, then accepted (filed as a task) or dismissed for good.
      404 "no route" on an agent from before them, 404 when tasks are off. */

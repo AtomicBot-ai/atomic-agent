@@ -454,6 +454,9 @@ contextBridge.exposeInMainWorld("atomic", {
   pauseTask: (id: string) => ipcRenderer.invoke("agent:pauseTask", id),
   resumeTask: (id: string) => ipcRenderer.invoke("agent:resumeTask", id),
   taskRuns: (id: string) => ipcRenderer.invoke("agent:taskRuns", id),
+  /** ATO-2257: the task board, cards in lanes, and a card's lane / note / assignee (main/workboard-ipc.ts). */
+  taskBoard: () => ipcRenderer.invoke("agent:taskBoard"),
+  moveTaskCard: (id: string, patch: unknown) => ipcRenderer.invoke("agent:moveTaskCard", id, patch),
   /** ATO-458: suggested tasks for the empty chat screen (main/ideas-ipc.ts). */
   ideasRefresh: () => ipcRenderer.invoke("agent:ideasRefresh"),
   ideaAccept: (id: string) => ipcRenderer.invoke("agent:ideaAccept", id),

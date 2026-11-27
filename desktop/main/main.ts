@@ -57,6 +57,7 @@ import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
 import { wireFusionReasoningIpc } from "./fusion-reasoning-ipc.js";
 import { wireLanDiscoveryIpc } from "./lan-discovery-ipc.js";
 import { wireTaskControlsIpc } from "./task-controls-ipc.js";
+import { wireWorkboardIpc } from "./workboard-ipc.js";
 import { wireIdeasIpc } from "./ideas-ipc.js";
 import { wireSessionGoalIpc } from "./session-goal-ipc.js";
 import { wireSideQuestionIpc } from "./side-question-ipc.js";
@@ -3371,6 +3372,8 @@ function wireIpc(client: AgentClient): void {
   wireAgentHubIpc({ isRemote: () => client.isRemote });
   // ATO-590: the Tasks tab's Pause / Resume and a task's past runs.
   wireTaskControlsIpc({ client });
+  // ATO-2257: the task board's cards and moves (renderer/workboard.js).
+  wireWorkboardIpc({ client });
   // ATO-458: suggested tasks on the empty chat screen (ideas-ipc.ts, renderer/suggestion-cards.js).
   wireIdeasIpc({ client });
   // ATO-1091: Settings › Models › "Find the best model for my tasks" (`atag models fit-test`).
@@ -4237,7 +4240,7 @@ function sidebarHeadersExpected(sb: { pinnedRows?: number; folders?: number; tas
 /** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js, studio/shell.js).
     W2: Studio's one row, then Cron jobs (the Tasks tab), Skills and Plugins; New project is on the Projects header.
     ATO-1072: Recipes last (the saved recipes sheet). */
-const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Studio", "Cron jobs", "Skills", "Plugins", "Recipes"]);
+const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Studio", "Cron jobs", "Task board", "Skills", "Plugins", "Recipes"]);   // ATO-2257: Task board
 type Sb = {
   headers: string[];
   pinnedRows?: number;
