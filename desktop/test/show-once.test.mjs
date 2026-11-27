@@ -189,8 +189,8 @@ test("the draft lands in the agent's Pending review folder, whole, with an id th
 
 test("the probe's answer is read defensively; a password field never carries a label", () => {
   const p = P.parseShowOnceProbe(JSON.stringify({ app: numbers, window: { x: 1, y: 2, width: 3, height: 4 }, element: { role: "AXSecureTextField", label: "hunter2" } }));
-  assert.deepEqual(p, { app: numbers, window: { x: 1, y: 2, width: 3, height: 4 }, element: { role: "AXSecureTextField", label: "" }, focused: null });
-  assert.deepEqual(P.parseShowOnceProbe("execution error"), { app: null, window: null, element: null, focused: null });
+  assert.deepEqual(p, { app: numbers, window: { x: 1, y: 2, width: 3, height: 4 }, element: { role: "AXSecureTextField", label: "" }, focused: null, windowTitle: null });
+  assert.deepEqual(P.parseShowOnceProbe("execution error"), { app: null, window: null, element: null, focused: null, windowTitle: null });
   assert.deepEqual(P.parseShowOnceProbe(JSON.stringify({ app: { pid: 3 }, window: { x: 0, y: 0, width: 0, height: 9 } })).app, null);
   assert.deepEqual(P.showOnceProbeArgs("click", 10.4, 20.6).slice(-3), ["click", "10", "21"]);
   assert.equal(P.showOnceProbeArgs("key").at(-1), "key");

@@ -1,9 +1,11 @@
+import { join } from "node:path";
 import { BrowserWindow, Menu, Tray, app, ipcMain, nativeImage, shell, systemPreferences } from "electron";
 
 import { loadUiohook } from "./hold-key-uiohook.js";
 import { pendingDraftsRoot, saveShowOnceDraft } from "./show-once-draft.js";
-import { SHOW_ONCE_LIMITS, ShowOnceLog, type ShowOnceEvent } from "./show-once-log.js";
-import { runShowOnceProbe, type ShowOnceProbe } from "./show-once-probe.js";
+import type { ShowOnceHelperPush } from "./show-once-helper.js";
+import { SHOW_ONCE_LIMITS, ShowOnceLog, isShowOnceAction, type ShowOnceEvent } from "./show-once-log.js";
+import { openShowOnceProber, type ShowOnceProber } from "./show-once-prober.js";
 import { compileShowOnceSkill } from "./show-once-skill.js";
 import { startShowOnceCapture } from "./show-once-start.js";
 
@@ -33,6 +35,9 @@ import { startShowOnceCapture } from "./show-once-start.js";
  *
  * The listener is uiohook-napi (the module the Windows hold key already
  * uses), here on macOS, which needs Accessibility for Atomic Agent.
+ * ATO-2499: what was under each event comes from show-once-prober.ts (the
+ * Accessibility helper, or osascript per event without it), and the
+ * helper's window and menu events go into the log in the same order.
  */
 
 type Deps = { stateDir: string; isRemote: () => boolean; log: (line: string) => void };
@@ -64,8 +69,6 @@ export interface ShowOnceState {
   draftsDir: string;
 }
 
-const KEY_PROBE_FRESH_MS = 1500;
-
 export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
   let hook: ShowOnceHook | null = null;
   let tray: Tray | null = null;
@@ -75,7 +78,8 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
   let last: ShowOnceLast | null = null;
   let timer: NodeJS.Timeout | null = null;
   let chain: Promise<void> = Promise.resolve();
-  let keyProbe: { at: number; probe: ShowOnceProbe } | null = null;
+  let prober: ShowOnceProber | null = null;
+  const nativeDir = () => (app.isPackaged ? join(process.resourcesPath, "native") : join(__dirname, "..", "native"));
 
   const state = (): ShowOnceState => ({
     available: process.platform === "darwin" && !deps.isRemote(),
@@ -108,10 +112,11 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
     const at = Date.now();
     const button: "left" | "right" | null = e.button === 1 ? "left" : e.button === 2 ? "right" : null;
     if (!button) return;
-    keyProbe = null; // the focus may move with the click
     chain = chain.then(async () => {
-      const p = await runShowOnceProbe("click", e.x, e.y);
-      feed({ kind: "click", at, x: e.x, y: e.y, button, clicks: e.clicks || 1, app: p.app, window: p.window, element: p.element });
+      const pr = prober;
+      if (!pr) return;
+      const p = await pr.click(e.x, e.y);
+      feed({ kind: "click", at, x: e.x, y: e.y, button, clicks: e.clicks || 1, app: p.app, window: p.window, element: p.element, windowTitle: p.windowTitle });
     }).catch(() => {});
   };
   const onKey = (e: HookKey) => {
@@ -120,11 +125,20 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
     // Only the key code and the modifiers go further: the log keeps no character.
     const k = { keycode: e.keycode, meta: !!e.metaKey, ctrl: !!e.ctrlKey, alt: !!e.altKey, shift: !!e.shiftKey };
     chain = chain.then(async () => {
-      if (!keyProbe || at - keyProbe.at > KEY_PROBE_FRESH_MS) keyProbe = { at, probe: await runShowOnceProbe("key") };
-      const p = keyProbe.probe;
-      feed({ kind: "key", at, ...k, app: p.app, focused: p.focused });
+      const pr = prober;
+      if (!pr) return;
+      const p = await pr.key(at);
+      feed({ kind: "key", at, ...k, app: p.app, focused: p.focused, windowTitle: p.windowTitle });
       // Tab and return move the focus: the next key asks again.
-      if (k.keycode === 15 || k.keycode === 28) keyProbe = null;
+      if (k.keycode === 15 || k.keycode === 28) pr.forgetKey();
+    }).catch(() => {});
+  };
+  // The helper's window and menu events, in line behind the clicks heard before them.
+  const onPush = (push: ShowOnceHelperPush) => {
+    if (!hook) return;
+    const at = Date.now();
+    chain = chain.then(() => {
+      feed(push.kind === "menu" ? { kind: "menu", at, app: push.app, path: push.path } : { kind: "window", at, app: push.app, title: push.title });
     }).catch(() => {});
   };
 
@@ -141,7 +155,14 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
       try { tray.destroy(); } catch { /* gone */ }
       tray = null;
     }
-    keyProbe = null;
+    // The events already heard still ask their question; then the helper goes.
+    const p = prober;
+    const done = () => {
+      if (!p) return;
+      p.stop();
+      if (prober === p) prober = null;
+    };
+    void chain.then(done, done);
   };
 
   const start = (): { ok: true } | { ok: false; reason: string; error: string } => {
@@ -200,7 +221,11 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
     log = new ShowOnceLog(process.pid);
     startedAt = Date.now();
     last = null;
-    chain = Promise.resolve();
+    chain = openShowOnceProber({ nativeDir: nativeDir(), platform: process.platform, onPush, log: deps.log })
+      .then((p) => {
+        if (hook) prober = p;
+        else p.stop(); // stopped while the helper was starting
+      }, () => {});
     timer = setTimeout(() => void finish(true), SHOW_ONCE_LIMITS.maxDurationMs);
     broadcast();
     return { ok: true };
@@ -226,7 +251,7 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
       if (!skill) {
         last = { kind: "empty" };
       } else {
-        const count = steps.filter((s) => s.kind === "click" || s.kind === "keys" || s.kind === "text").length;
+        const count = steps.filter(isShowOnceAction).length;
         const saved = await saveShowOnceDraft(deps.stateDir, { name: skill.name, reason: skill.description, content: skill.content });
         last = { kind: "saved", id: saved.id, name: skill.name, steps: count };
       }
