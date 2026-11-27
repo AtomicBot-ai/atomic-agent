@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import { resolve } from "node:path";
 
+import { agentEmailAddress } from "../atomic-mail/agent-email-address.js";
 import { getConfig } from "../config/index.js";
 import { buildCapabilities } from "../prompt/capabilities.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
@@ -156,6 +157,9 @@ async function handleReplay(args: string[]): Promise<number> {
   const capabilities = await buildCapabilities({
     workingDir,
     browserChannel: config.browser.channel,
+    // ATO-2491: the runtime's `email:` line, or every step of a session
+    // with an Atomic Mail inbox replays as drift.
+    emailAddress: agentEmailAddress(config.atomicMail),
     // ATO-1721: the same machine line the runtime put in local prompts.
     machineProbe: {
       dataDir: config.paths.localModelsDataDir,
