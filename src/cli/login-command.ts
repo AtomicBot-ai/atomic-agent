@@ -3,9 +3,7 @@ import { SUBSCRIPTION_OAUTH_KIND } from "../config/provider-auth-mode.js";
 import { setProviderDefaultChatModelInConfig, upsertLlmProvider } from "../config/llm-provider-commands.js";
 import { offerActivation, type ActivationDeps } from "./login-activation.js";
 import {
-  ChatgptNoAccountError,
   codexDefaultModel,
-  OAuthFlowError,
   chatgptAccountId,
   chatgptCredentialStore,
   chatgptPlanType,
@@ -21,6 +19,9 @@ import {
   type OAuthTokens,
 } from "../llm/provider/subscription-oauth/index.js";
 import { copilotLoginStatus, loginCopilot, logoutCopilot, type CopilotLoginDeps } from "./login-copilot.js";
+import { createLoginOutput, expiryLine } from "./login-chatgpt-output.js";
+
+export { describeLoginFailure } from "./login-chatgpt-output.js";
 
 /**
  * ATO-1454 — `atag login chatgpt` / `atag logout chatgpt` /
@@ -34,6 +35,9 @@ import { copilotLoginStatus, loginCopilot, logoutCopilot, type CopilotLoginDeps 
  * entry is added to config.json if there is none. Nothing printed here
  * ever contains a token.
  *
+ * `--json` (ATO-2510) prints one JSON object per line instead of the
+ * sentences, for the desktop app; see login-chatgpt-output.ts.
+ *
  * Nadya's answers (18.11):
  *  - The entry's model is Codex's current default, read from the same
  *    catalog Codex reads (`codexDefaultModel`), not a name pinned here.
@@ -43,7 +47,7 @@ import { copilotLoginStatus, loginCopilot, logoutCopilot, type CopilotLoginDeps 
  */
 
 const LOGIN_HELP = [
-  "Usage: atomic-agent login chatgpt [--device] [--no-browser]",
+  "Usage: atomic-agent login chatgpt [--device] [--no-browser] [--json]",
   "       atomic-agent login copilot",
   "       atomic-agent login status [copilot] [--json]",
   "",
@@ -53,7 +57,8 @@ const LOGIN_HELP = [
   "",
   "  --device       Sign in on another device with a link and a code (for SSH)",
   "  --no-browser   Print the sign-in link instead of opening the browser",
-  "  --json         (status) Print the sign-in state as JSON",
+  "  --json         (chatgpt) Print progress as one JSON object per line",
+  "                 (status) Print the sign-in state as JSON",
   "",
   "EXPERIMENTAL: `login copilot` signs in with your GitHub Copilot plan",
   "(a link and a code on github.com). It may stop working if GitHub changes",
@@ -121,40 +126,6 @@ function defaultEnsureProviderEntry(model: string): { id: string; added: boolean
   return { id, added: true };
 }
 
-/** One sentence per failure, never the server's own text or a token. */
-export function describeLoginFailure(err: unknown): string {
-  if (err instanceof ChatgptNoAccountError) return err.message;
-  if (err instanceof OAuthFlowError) {
-    switch (err.code) {
-      case "cancelled":
-        return "Sign-in cancelled.";
-      case "callback_timeout":
-        return "Sign-in timed out: the browser never came back. Try again, or use --device.";
-      case "callback_port_unavailable":
-        return "Ports 1455 and 1457 are both in use (another sign-in still open?). Close it and try again, or use --device.";
-      case "device_code_expired":
-        return "The code expired before it was entered. Run the command again for a new one.";
-      case "state_mismatch":
-        return "Sign-in refused: the browser answer did not belong to this attempt.";
-      case "authorization_denied":
-        return "Sign-in was not approved in the browser.";
-      case "network_error":
-        return "Cannot reach auth.openai.com. Check the connection and try again.";
-      default:
-        if (err.oauthError === "device_login_not_enabled") {
-          return "Device sign-in is not enabled for this account. Use the browser sign-in instead.";
-        }
-        return `Sign-in failed (${err.code}${err.status ? `, ${err.status}` : ""}).`;
-    }
-  }
-  return "Sign-in failed.";
-}
-
-function expiryLine(tokens: OAuthTokens): string {
-  if (tokens.expiresAt === undefined) return "";
-  return ` Access token valid until ${new Date(tokens.expiresAt).toISOString()} (renewed automatically).`;
-}
-
 export async function loginCommand(args: string[], deps: LoginCommandDeps = {}): Promise<number> {
   const write = deps.write ?? ((t: string) => { process.stdout.write(t); });
   const [target, ...rest] = args;
@@ -173,20 +144,21 @@ export async function loginCommand(args: string[], deps: LoginCommandDeps = {}):
   }
   let device = false;
   let openBrowser = true;
+  const out = createLoginOutput(rest.includes("--json"), write);
   for (const a of rest) {
     if (a === "--device" || a === "--device-auth") device = true;
     else if (a === "--no-browser") openBrowser = false;
-    else {
-      write(`unknown option "${a}"\n\n${LOGIN_HELP}\n`);
+    else if (a !== "--json") {
+      out.usageError(`unknown option "${a}"`, LOGIN_HELP);
       return 2;
     }
   }
 
-  const store = deps.store ?? chatgptCredentialStore(deps.stateDir ?? resolveStateDir(), (m) => write(`${m}\n`));
+  const store = deps.store ?? chatgptCredentialStore(deps.stateDir ?? resolveStateDir(), (m) => out.notice(m));
   const abort = new AbortController();
   const onSigint = (): void => abort.abort();
   process.once("SIGINT", onSigint);
-  write("ChatGPT sign-in (experimental; the Codex CLI provider stays the recommended way).\n");
+  out.start();
   try {
     let tokens: OAuthTokens;
     if (device) {
@@ -195,17 +167,7 @@ export async function loginCommand(args: string[], deps: LoginCommandDeps = {}):
         deps.completeDevice ??
         ((code, signal) => completeChatgptDeviceLogin({ fetch: jsonFetch, formFetch: globalFormFetch, signal }, code));
       const code = await requestDevice(abort.signal);
-      write(
-        [
-          "",
-          `1. Open ${code.verificationUrl} on any device and sign in.`,
-          `2. Enter this code (expires in 15 minutes): ${code.userCode}`,
-          "",
-          "Only continue if you started this sign-in. If someone else gave you this code, stop.",
-          "Waiting for approval... (Ctrl+C to cancel)",
-          "",
-        ].join("\n"),
-      );
+      out.deviceCode(code);
       tokens = await completeDevice(code, abort.signal);
     } else {
       const startBrowser =
@@ -213,27 +175,21 @@ export async function loginCommand(args: string[], deps: LoginCommandDeps = {}):
         ((signal) => startChatgptBrowserLogin({ fetch: globalFormFetch, timeoutMs: BROWSER_TIMEOUT_MS, signal }));
       const login = await startBrowser(abort.signal);
       const opened = openBrowser && deps.openUrl ? await deps.openUrl(login.authorizationUrl) : { ok: false };
-      write(
-        opened.ok
-          ? "Opened the sign-in page in your browser. Waiting... (Ctrl+C to cancel)\n"
-          : `Open this link in a browser on this computer to sign in:\n\n${login.authorizationUrl}\n\nWaiting... (Ctrl+C to cancel; on another machine use --device)\n`,
-      );
+      out.authorizationUrl(login.authorizationUrl, opened.ok);
       tokens = await login.tokens;
     }
     await store.save(tokens);
     const picked = await (deps.defaultModel ?? ((t) => codexDefaultModel({ tokens: t, signal: abort.signal })))(tokens);
     const entry = (deps.ensureProviderEntry ?? defaultEnsureProviderEntry)(picked.model);
-    const plan = chatgptPlanType(tokens);
-    write(
-      `Signed in${plan ? ` (ChatGPT ${plan})` : ""}.${expiryLine(tokens)}\n` +
-        (entry.added
-          ? `Added provider "${entry.id}" (ChatGPT subscription, experimental), model ${picked.model} (${picked.source === "backend" ? "Codex's current default" : "Codex's default; the live list could not be read"}).\n`
-          : `Provider "${entry.id}" now uses this sign-in.\n`),
+    out.signedIn(
+      { providerId: entry.id, providerAdded: entry.added, model: picked.model, modelSource: picked.source, plan: chatgptPlanType(tokens) },
+      tokens,
     );
-    await offerActivation(entry.id, deps, write);
+    // A JSON reader is a program: no y/n question on its stdout.
+    await offerActivation(entry.id, out.json ? { ...deps, ask: null } : deps, (t) => out.notice(t));
     return 0;
   } catch (err) {
-    write(`${describeLoginFailure(err)}\n`);
+    out.failure(err);
     return 1;
   } finally {
     process.off("SIGINT", onSigint);
