@@ -908,6 +908,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.localModels.cancelHuggingFaceLookup(),
         onLocalModelsHfAddRequested: (repo, cursor) =>
           void orchestrator.localModels.addHuggingFaceChoice(repo, cursor),
+        onLocalModelsDirLoadRequested: () => void orchestrator.localModels.modelsDir.load(),
+        onLocalModelsDirMoveRequested: (target) => void orchestrator.localModels.modelsDir.move(target),
+        onLocalModelsDirCancelRequested: () => orchestrator.localModels.modelsDir.cancel(),
         onLocalModelsDeviceCycleRequested: () =>
           void orchestrator.localModels.cycleManagedDevice(),
         onLocalModelsAutoUpdateToggleRequested: () =>

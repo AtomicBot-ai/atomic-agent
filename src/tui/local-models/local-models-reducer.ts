@@ -6,6 +6,7 @@ import {
   totalRowCount,
   type LocalModelsPanelState,
 } from "./local-models-panel-state.js";
+import { isModelsDirAction, reduceModelsDir } from "./models-dir-state.js";
 
 function clampCursor(cursor: number, len: number): number {
   if (len <= 0) return 0;
@@ -22,6 +23,12 @@ export function reduceLocalModelsAction(
 ): TuiState | null {
   if (!isLocalModelsAction(action)) return null;
   const p = state.localModelsPanel;
+  // ATO-2504: the models folder screen keeps its own slice.
+  if (isModelsDirAction(action)) {
+    const { next, open } = reduceModelsDir(p.modelsDir, action);
+    const mode = open === true ? "modelsDir" : open === false && p.mode === "modelsDir" ? "list" : p.mode;
+    return { ...state, localModelsPanel: { ...p, modelsDir: next, mode } };
+  }
   switch (action.type) {
     case "local_models_refresh_started":
       return {
