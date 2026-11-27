@@ -20,17 +20,19 @@ import {
 import { buildPptx, type BuildPptxResult, type PptxImageInput } from "./pptx-build.js";
 import { OS_FS_WRITE_PPTX_CONTRACT } from "./pptx-contract.js";
 import { MAX_IMAGE_BYTES, sniffImage } from "./pptx-image.js";
+import { slideReporter, type PptxProgressUpdate } from "./pptx-slide-progress.js";
 import { parseDeckSpec, type PptxDeckSpec } from "./pptx-spec.js";
 
 const TOOL = OS_FS_WRITE_PPTX_CONTRACT.name;
 
 /**
- * The same option bag `os.fs.write` gets (`fsMutation` in
- * `registerOsTools`): the restore store, the turn's request and the
- * fan-out's declared inputs decide whether an existing deck may be
- * replaced and keep a copy of it when it is.
+ * The option bag `os.fs.write` gets (`fsMutation` in `registerOsTools`),
+ * plus ATO-2444's `onProgress`: each slide as it is laid out, before the
+ * approval prompt, sent by the runtime as the agent's `tool_progress`.
  */
-export type OsFsWritePptxOptions = FsDangerousToolOptions;
+export type OsFsWritePptxOptions = FsDangerousToolOptions & {
+  onProgress?: (sessionId: string, update: PptxProgressUpdate) => void;
+};
 
 /**
  * `os.fs.write_pptx`: a deck from a slide list, written in-process
@@ -46,6 +48,7 @@ export function buildOsFsWritePptxTool(options: OsFsWritePptxOptions): ToolDefin
     readonly: OS_FS_WRITE_PPTX_CONTRACT.readonly,
     async run(rawArgs, ctx) {
       const spec = parseDeckSpec(rawArgs);
+      const onSlide = slideReporter(options.onProgress, ctx.sessionId, spec, Date.now());
       const absolute = resolveUserPath(spec.path, ctx.workingDir);
       const exists = await targetExists(absolute);
       if (exists && !spec.overwrite) {
@@ -75,7 +78,7 @@ export function buildOsFsWritePptxTool(options: OsFsWritePptxOptions): ToolDefin
         if (refused !== null) return refuseInputReplacement(TOOL, refused);
       }
       const images = await loadImages(spec, ctx.workingDir);
-      const built = await buildPptx({ spec, images });
+      const built = await buildPptx({ spec, images, ...(onSlide === undefined ? {} : { onSlide }) });
 
       await requireFsApproval(
         options,

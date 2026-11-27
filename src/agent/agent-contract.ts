@@ -992,6 +992,12 @@ export type AgentLoopEvent =
       fraction: number;
       elapsedMs: number;
       label: string;
+      /**
+       * ATO-2444: one slide `os.fs.write_pptx` has laid out, for a host
+       * to draw as a thumbnail while the deck is built (and while its
+       * approval card is open). Absent for every other tool.
+       */
+      slide?: ToolProgressSlide;
     }
   | {
       /**
@@ -1301,4 +1307,27 @@ export interface RunTurnResult {
    * ordinary turn and when the operator cleared the goal mid-run.
    */
   goal?: import("./goal/goal-types.js").GoalState;
+}
+
+/**
+ * ATO-2444: a slide of the deck `os.fs.write_pptx` is building, as a
+ * host draws it small: its place, the layout it got, and its text
+ * already clipped for a thumbnail (`pptx-slide-progress.ts`).
+ */
+export interface ToolProgressSlide {
+  /** 0-based. */
+  index: number;
+  count: number;
+  layout: string;
+  title: string;
+  subtitle?: string;
+  /** The first bullets kept on the slide, clipped; sub-points start with two spaces per level. */
+  bullets: string[];
+  /** The slide's picture, table or chart, when it has one. */
+  visual?: "image" | "table" | "chart";
+  /** Bullets moved to the speaker notes to fit. */
+  moved: number;
+  theme: string;
+  /** Six hex digits, when the deck names an accent colour. */
+  accent?: string;
 }
