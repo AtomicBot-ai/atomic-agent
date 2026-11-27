@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
-<title>Ask Atomic Agent</title>
+<title>Mini Chat</title>
 <!-- ATO-1063: the mini window's chat. The theme and the reply's markdown are the main window's; the rest is its own. -->
 <link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="styles.css">
@@ -15,7 +15,7 @@
 <body class="mini-chat">
   <header class="mc-head">
     <span id="mc-title" class="mc-title">New chat</span>
-    <button id="mc-open" class="btn btn-s sm" type="button" disabled>Open in big window</button>
+    <button id="mc-open" class="btn btn-s sm" type="button" disabled>Open in main window</button>
   </header>
   <main id="mc-log" class="mc-log" aria-live="polite"></main>
   <div id="mc-wait" class="mc-wait" role="status" hidden><span class="mc-dot" aria-hidden="true"></span><span id="mc-wait-text"></span></div>

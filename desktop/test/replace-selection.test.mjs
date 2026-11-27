@@ -24,6 +24,9 @@ function fakes() {
   const deps = {
     allowed: (prompt) => { log.push('allowed:' + prompt); return true; },
     hide: () => { log.push('hide'); },
+    // ATO-2750: false = the mini chat is gone, as before; the tests that bring it back say so.
+    bringBack: () => { log.push('back'); return false; },
+    close: () => { log.push('close'); },
     activate: async (app) => { log.push('activate:' + app.pid); return true; },
     sleep: async (ms) => { log.push('sleep:' + ms); },
     paste: async (text) => { log.push('paste:' + text); return {pasted: true, restored: true}; },
@@ -38,7 +41,7 @@ test('the steps in order: check, hide the mini chat, bring the app back, wait, p
   const {deps, log} = fakes();
   const out = await R.replaceInSourceApp(deps, SAFARI, '  Better words.\r\nSecond line. ');
   assert.deepEqual(out, {ok: true, restored: true});
-  assert.deepEqual(log, ['allowed:false', 'hide', 'activate:4242', 'sleep:150', 'paste:Better words.\nSecond line.']);
+  assert.deepEqual(log, ['allowed:false', 'hide', 'activate:4242', 'sleep:150', 'paste:Better words.\nSecond line.', 'close']);
 });
 
 test('the paste is the clipboard-keeping one: a real ClipboardHost fake sees save, write, put back', async () => {
@@ -80,7 +83,7 @@ test('the app could not be brought back: no key pressed, the answer left on the 
   assert.equal(out.ok, false);
   assert.equal(out.hidden, true);
   assert.match(out.error, /Safari/);
-  assert.deepEqual(log, ['allowed:false', 'hide', 'activate', 'copy:Answer', 'notify']);
+  assert.deepEqual(log, ['allowed:false', 'hide', 'activate', 'copy:Answer', 'back', 'notify']);
   assert.ok(!log.some((l) => l.startsWith('paste')));
   const threw = fakes();
   threw.deps.activate = async () => { throw new Error('osascript'); };
@@ -175,4 +178,58 @@ test('the wiring: main keeps the app, the page marks the answer and asks main', 
   assert.match(js, /st\.replaceLabel = typeof opened\.replace === 'string'/);
   assert.match(js, /mcReplaceHTML\(r, st\.replaceLabel, st\.reply === r, mcEsc\)/);
   assert.match(js, /BR\.quickEntryReplace\(row\.text\)/);
+});
+
+/* ---------- ATO-2750: a failed Replace comes back to the mini chat ---------- */
+
+test('ATO-2750: a failure brings the mini chat back with the line and Copy answer; no notification', async () => {
+  const cases = [
+    {name: 'not back', set: (d, log) => { d.activate = async () => { log.push('activate'); return false; }; }, line: /Could not switch back to Safari/},
+    {name: 'no keystroke', set: (d) => { d.paste = async () => ({pasted: false, reason: 'no-keystroke'}); }, line: /press ⌘V in Safari/},
+    {name: 'failed', set: (d) => { d.paste = async () => ({pasted: false, reason: 'failed'}); }, line: /could not be pasted into Safari\. Copy it and paste it by hand\./},
+    {name: 'threw', set: (d) => { d.paste = async () => { throw new Error('x'); }; }, line: /could not be pasted into Safari/},
+  ];
+  for (const c of cases) {
+    const {deps, log} = fakes();
+    deps.bringBack = () => { log.push('back'); return true; };
+    c.set(deps, log);
+    const out = await R.replaceInSourceApp(deps, SAFARI, 'Answer');
+    assert.equal(out.ok, false, c.name);
+    assert.equal(out.hidden, false, c.name + ': the page shows it');
+    assert.equal(out.copy, true, c.name + ': with Copy answer');
+    assert.match(out.error, c.line, c.name);
+    assert.deepEqual(deps.lines, [], c.name + ': no notification');
+    assert.ok(log.includes('back') && !log.includes('close'), c.name + ': brought back, not closed');
+  }
+});
+
+test('ATO-2750: the window cannot come back: the notification as before, the main-window line for a failed paste', async () => {
+  const {deps, log} = fakes();
+  deps.bringBack = () => { log.push('back'); throw new Error('destroyed'); };
+  deps.paste = async () => ({pasted: false, reason: 'failed'});
+  const out = await R.replaceInSourceApp(deps, SAFARI, 'Answer');
+  assert.deepEqual(out, {ok: false, hidden: true, error: 'The answer could not be pasted. It is kept in the chat in the main window.'});
+  assert.deepEqual(deps.lines, [out.error]);
+});
+
+test('ATO-2750: the wiring: hidden, not destroyed, during the paste; Copy answer through main; the page draws the line', () => {
+  const qw = src('../main/quick-entry-window.ts');
+  assert.match(qw, /hide: \(\) => \{ if \(box && !box\.isDestroyed\(\)\) box\.hide\(\); \},/);
+  assert.match(qw, /bringBack: \(\) => \{[\s\S]*?box\.show\(\);[\s\S]*?return true;/);
+  assert.match(qw, /close: hide,/);
+  assert.match(qw, /ipcMain\.handle\("app:quickEntryCopy"[\s\S]*?event\.sender !== box\.webContents[\s\S]*?clipboard\.writeText\(text\)/);
+  assert.match(src('../preload/preload.ts'), /quickEntryCopy: \(text: string\) => ipcRenderer\.invoke\("app:quickEntryCopy", text\)/);
+  assert.match(src('../renderer/mini-chat.js'), /if \(res && res\.copy && typeof mcReplaceFailed === 'function'\) \{ put\.disabled = false; mcReplaceFailed\(res\.error, row\.text, BR\); return; \}/);
+  const N = require('../renderer/mini-chat-notice.js');
+  assert.deepEqual(N.mcReplaceFailedView('Could not switch back to Safari.'), {text: 'Could not switch back to Safari.', tone: 'bad', button: 'Copy answer', act: 'copy'});
+  assert.equal(N.mcReplaceFailedView('').text, 'The text could not be replaced.');
+});
+
+test('ATO-2750: one name for the window: Mini Chat, and Open in main window', () => {
+  const html = src('../renderer/mini-chat.html');
+  assert.match(html, /<title>Mini Chat<\/title>/);
+  assert.match(html, /id="mc-open"[^>]*>Open in main window</);
+  assert.doesNotMatch(html, /big window/);
+  assert.match(src('../main/quick-entry-window.ts'), /title: "Mini Chat",/);
+  assert.doesNotMatch(src('../renderer/mini-chat.js'), /Open the big window/);
 });

@@ -14,6 +14,14 @@ import {
   type DictatePref,
 } from "./dictate-anywhere.js";
 import {
+  DICTATE_FAILURE_MS,
+  DICTATE_FAILURE_PILL_SIZE,
+  dictateFailureView,
+  dictateFixUrl,
+  type DictateFailure,
+  type DictateFailureView,
+} from "./dictate-errors.js";
+import {
   HoldMachine,
   dictatePrivacyUrl,
   holdKeyCommand,
@@ -91,9 +99,13 @@ export function wireDictateAnywhere(w: DictateWiring): { dispose: () => void } {
   let escHeld = false;
   /** The hold key came up while the take was still starting: finish it as soon as it listens. */
   let finishOnListen = false;
+  /* ATO-2750: a failure the pill shows (dictate-errors.ts), and the timer
+     that puts it away. The system notification is only for when the pill
+     cannot be shown. */
+  let failure: DictateFailureView | null = null;
+  let failTimer: NodeJS.Timeout | null = null;
 
   const notify = (body: string) => {
-    w.log(`[desktop] dictate anywhere: ${body}`);
     try { if (Notification.isSupported()) new Notification({ title: "Dictation", body, silent: true }).show(); } catch { /* no notifications */ }
   };
   const tell = (payload: Record<string, unknown>) => {
@@ -117,6 +129,8 @@ export function wireDictateAnywhere(w: DictateWiring): { dispose: () => void } {
   const closePill = () => {
     releaseEsc();
     if (finishTimer) { clearTimeout(finishTimer); finishTimer = null; }
+    if (failTimer) { clearTimeout(failTimer); failTimer = null; }
+    failure = null;
     const p = pill;
     pill = null;
     if (p && !p.isDestroyed()) p.destroy();
@@ -124,7 +138,7 @@ export function wireDictateAnywhere(w: DictateWiring): { dispose: () => void } {
   const reset = () => { closePill(); take = null; phase = "idle"; finishOnListen = false; };
 
   const cancel = () => {
-    if (phase === "idle") return;
+    if (phase === "idle") { if (failure) closePill(); return; }   // ATO-2750: × on a failure
     voice.cancel();
     reset();
   };
@@ -133,13 +147,9 @@ export function wireDictateAnywhere(w: DictateWiring): { dispose: () => void } {
   const deliver = async (t: DictateTake | null) => {
     reset();
     const text = t?.text() ?? "";
-    if (!text) { if (t?.error) notify(t.error); return; }
+    if (!text) { if (t?.error) fail({ kind: "take-failed" }, t.error); return; }
     const out = await pasteIntoFrontApp(text);
-    if (!out.pasted) {
-      notify(w.platform === "darwin" && !keystrokesAllowed(false)
-        ? "The text is on the clipboard: press ⌘V. " + MAC_HINT
-        : "The text is on the clipboard: paste it where you want it.");
-    }
+    if (!out.pasted) fail({ kind: "paste", accessibility: w.platform === "darwin" && !keystrokesAllowed(false) }, out.reason);
   };
 
   const onEvent = (payload: Record<string, unknown>) => {
@@ -147,14 +157,17 @@ export function wireDictateAnywhere(w: DictateWiring): { dispose: () => void } {
     const out = take.apply(payload);
     if (out === "continue") { if (phase === "listening") tell({ phase, text: take.live() }); return; }
     if (out === "cancelled") { reset(); return; }
-    if (out === "failed") { const err = take.error; voice.cancel(); reset(); if (err) notify(err); return; }
+    if (out === "failed") { const err = take.error; voice.cancel(); reset(); if (err) fail({ kind: "take-failed" }, err); return; }
     void deliver(take);
   };
 
-  const showPill = () => {
+  /** The pill for a take, or (`forFailure`) for a failure line; false when it could not be made. */
+  const showPill = (forFailure = false): boolean => {
     const cursor = screen.getCursorScreenPoint();
-    const bounds = dictatePillBounds(cursor, screen.getAllDisplays().map((d) => ({ bounds: d.bounds, workArea: d.workArea })));
-    const win = new BrowserWindow({
+    const displays = screen.getAllDisplays().map((d) => ({ bounds: d.bounds, workArea: d.workArea }));
+    const bounds = forFailure ? dictatePillBounds(cursor, displays, DICTATE_FAILURE_PILL_SIZE) : dictatePillBounds(cursor, displays);
+    let win: BrowserWindow;
+    try { win = new BrowserWindow({
       ...bounds,
       show: false, frame: false, resizable: false, movable: false, minimizable: false, maximizable: false,
       fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, focusable: false, hasShadow: true,
@@ -166,7 +179,7 @@ export function wireDictateAnywhere(w: DictateWiring): { dispose: () => void } {
         contextIsolation: true, nodeIntegration: false, sandbox: true,
         autoplayPolicy: "no-user-gesture-required",
       },
-    });
+    }); } catch { return false; }
     pill = win;
     pills.add(win);
     win.setAlwaysOnTop(true, quickEntryWindowLevel(w.platform));
@@ -177,26 +190,38 @@ export function wireDictateAnywhere(w: DictateWiring): { dispose: () => void } {
     win.once("ready-to-show", () => { if (!win.isDestroyed()) win.showInactive(); });
     void win.loadFile(join(__dirname, "..", "renderer", "dictate-anywhere.html")).catch(() => {});
     // Esc throws the take away, as long as nothing else of ours holds it (the marks overlay).
-    if (!globalShortcut.isRegistered("Escape")) {
+    if (!forFailure && !globalShortcut.isRegistered("Escape")) {
       try { escHeld = globalShortcut.register("Escape", cancel); } catch { escHeld = false; }
     }
+    return true;
+  };
+
+  /** ATO-2750: a failure in the pill, the raw detail in the log; a notification only when the pill cannot show. */
+  const fail = (f: DictateFailure, detail?: string | null) => {
+    const view = dictateFailureView(f, w.platform);
+    w.log(`[desktop] dictate anywhere: ${view.line}${detail ? ` (${detail})` : ""}`);
+    reset();
+    failure = view;
+    if (!showPill(true)) { failure = null; notify(view.line); return; }
+    failTimer = setTimeout(closePill, DICTATE_FAILURE_MS);
   };
 
   const start = async () => {
+    if (failure) closePill();   // ATO-2750: a new take replaces the failure line
     phase = "starting";
     const probe = await voice.probe();
     const why = dictateUnavailableReason(probe);
-    if (why) { phase = "idle"; notify(why); return; }
+    if (why) { fail({ kind: "unavailable", reason: why }); return; }
     if (w.platform === "darwin" && systemPreferences.getMediaAccessStatus("microphone") !== "granted") {
       const granted = await systemPreferences.askForMediaAccess("microphone").catch(() => false);
-      if (!granted) { phase = "idle"; notify("Microphone access is turned off for Atomic Agent."); return; }
+      if (!granted) { fail({ kind: "mic-off" }); return; }
     }
     if (phase !== "starting") return;   // disposed meanwhile
     take = new DictateTake();
     const locales = pickDictateLocales(w.locales(), probe.installed, app.getLocale());
     const res = await voice.start(locales, onEvent);
     if (phase !== "starting") { if (res.ok) voice.cancel(); return; }   // cancelled while it started
-    if (!res.ok) { reset(); notify("Dictation could not start" + (res.error ? ` (${res.error}).` : ".")); return; }
+    if (!res.ok) { fail({ kind: "start-failed" }, res.error); return; }
     phase = "listening";
     showPill();
     if (finishOnListen) { finishOnListen = false; finish(); }
@@ -292,7 +317,8 @@ export function wireDictateAnywhere(w: DictateWiring): { dispose: () => void } {
       holdNote: holdKeyNote(w.platform),
       holdState: watcher.state,
       holdError: holdOn ? holdWatchLine(watcher.state, w.platform, comboWanted(pref) && st.state === "registered" ? label : "", watcher.detail) : null,
-      canOpenPrivacy: holdOn && watcher.state === "untrusted" && !!dictatePrivacyUrl(w.platform),
+      // ATO-2750: the shortcut mode too, when the paste needs Accessibility (the hint below says so).
+      canOpenPrivacy: !!dictatePrivacyUrl(w.platform) && ((holdOn && watcher.state === "untrusted") || (pref.enabled && !keystrokesAllowed(false))),
       state: st.state,
       error: comboWanted(pref) || st.state === "skipped" ? quickEntryStateLine(st) : null,
       available: !why,
@@ -308,15 +334,28 @@ export function wireDictateAnywhere(w: DictateWiring): { dispose: () => void } {
   ipcMain.handle("app:dictateOpened", () => {
     const holding = hold.state === "held";
     const label = holding ? holdKeyLabel(w.platform) ?? "" : acceleratorLabel(pref.accelerator, w.platform);
-    return { label, hint: holding ? `let go of ${label} to type it · esc` : `${label} types it · esc`, phase, text: take?.live() ?? "" };
+    // ATO-2750: a failure pill draws its line and button instead of opening the microphone.
+    const failed = failure ? { line: failure.line, fixLabel: failure.fixLabel } : null;
+    return { label, hint: holding ? `let go of ${label} to type it · esc` : `${label} types it · esc`, phase, text: take?.live() ?? "", failure: failed };
   });
   ipcMain.on("dictate:audio", (event, chunk: unknown) => { if (pill && event.sender === pill.webContents) voice.audio(chunk); });
   ipcMain.on("app:dictateStop", (event) => { if (pill && event.sender === pill.webContents && phase === "listening") finish(); });
   ipcMain.on("app:dictateCancel", () => cancel());
   ipcMain.on("app:dictateMicFailed", (event, why: unknown) => {
-    if (!pill || event.sender !== pill.webContents) return;
+    if (!pill || event.sender !== pill.webContents || failure) return;
+    const r = why && typeof why === "object" ? (why as { denied?: unknown; detail?: unknown }) : {};
     cancel();
-    notify(typeof why === "string" && why ? why.slice(0, 200) : "The microphone could not be opened.");
+    fail(r.denied === true ? { kind: "mic-off" } : { kind: "mic-failed" }, typeof r.detail === "string" ? r.detail.slice(0, 200) : null);
+  });
+  // ATO-2750: the failure pill's button: the pane it names (microphone or Accessibility), then the pill goes.
+  ipcMain.handle("app:dictateFix", async (event) => {
+    if (!pill || event.sender !== pill.webContents || !failure || !failure.fix) return { ok: false };
+    const fix = failure.fix;
+    closePill();
+    if (fix === "accessibility") keystrokesAllowed(true);   // puts Atomic Agent in the Accessibility list
+    const url = dictateFixUrl(fix, w.platform);
+    if (url) await shell.openExternal(url).catch(() => {});
+    return { ok: !!url };
   });
 
   // Settings › General.
