@@ -194,6 +194,7 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /api/files/folders": "admin",
   "DELETE /api/files/folders": "admin",
   "GET /api/files/status": "read",
+  "POST /api/files/retry": "admin",
   // MCP clients over HTTP (ATO-549): read-only tools only (memory recall,
   // profile and skills), so a read token is enough.
   "POST /mcp": "read",
