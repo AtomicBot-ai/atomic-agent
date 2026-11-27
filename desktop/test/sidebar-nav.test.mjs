@@ -178,7 +178,7 @@ test('the sidebar wires the projects module: loaded before renderer.js, drawn ab
   assert.match(r, /k === 'pnew' \|\| k === 'ptoggle' \|\| k === 'pdelask' \|\| k === 'pdel' \|\| k === 'pedit' \|\| k === 'psave'/);
   // A new chat New project opened sends its project with the first turn (ATO-42: main files it before the turn).
   assert.match(r, /const forProject = session \? undefined : projectForNewTurn\(\);/);
-  assert.match(r, /BR\.chat\(\[\{role:'user', content:text\}\], session, forProject, reasoningTurnLevel\(session\), projectTurnModel\(session\)\)/);
+  assert.match(r, /BR\.chat\(\[\{role:'user', content:text\}\], session, forProject, reasoningTurnLevel\(session\), projectTurnModel\(session, forProject\)\)/);
   assert.match(r, /S\.overlay === 'pedit'\) html \+= projectEditHTML\(\)/);
 });
 
