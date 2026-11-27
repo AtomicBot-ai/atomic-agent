@@ -5,6 +5,7 @@ import { pendingDraftsRoot, saveShowOnceDraft } from "./show-once-draft.js";
 import { SHOW_ONCE_LIMITS, ShowOnceLog, type ShowOnceEvent } from "./show-once-log.js";
 import { runShowOnceProbe, type ShowOnceProbe } from "./show-once-probe.js";
 import { compileShowOnceSkill } from "./show-once-skill.js";
+import { startShowOnceCapture } from "./show-once-start.js";
 
 /**
  * ATO-2401 "Show once" (Settings › Skills): Record, do a routine once in a
@@ -19,7 +20,8 @@ import { compileShowOnceSkill } from "./show-once-skill.js";
  *   "showOnce:state" is also pushed to every window on each change.
  *
  * Opt-in and visible: nothing listens until Record is clicked, and while it
- * records a menu bar item says so ("● Recording steps"). One click on it
+ * records a menu bar item says so ("● Recording steps"); when that item
+ * cannot be shown, nothing records (show-once-start.ts). One click on it
  * stops and saves; its right-click menu also offers Discard. The recording
  * stops on its own after SHOW_ONCE_LIMITS.maxDurationMs or maxSteps, and
  * when the app quits (keeping nothing).
@@ -153,38 +155,52 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
       broadcast();
       return { ok: false, reason: "permission", error };
     }
-    let h: ShowOnceHook;
-    try {
-      h = loadUiohook() as unknown as ShowOnceHook;
-      h.on("mousedown", onMouse);
-      h.on("keydown", onKey);
-      h.start();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message.split(/\r?\n/)[0] : String(err);
-      deps.log(`[desktop] show once: could not start the listener: ${String(msg).slice(0, 200)}`);
+    // The menu bar item first, the listener second: recording never runs unseen.
+    const started = startShowOnceCapture<ShowOnceHook, Tray>({
+      showIndicator: () => {
+        const t = new Tray(nativeImage.createEmpty());
+        try {
+          t.setTitle(" ● Recording steps");
+          t.on("click", () => void finish(true));
+          t.on("right-click", () => {
+            t.popUpContextMenu(Menu.buildFromTemplate([
+              { label: "Stop and save as a skill draft", click: () => void finish(true) },
+              { label: "Discard this recording", click: () => void finish(false) },
+            ]));
+          });
+        } catch (err) {
+          try { t.destroy(); } catch { /* gone */ }
+          throw err;
+        }
+        return t;
+      },
+      startListener: () => {
+        const h = loadUiohook() as unknown as ShowOnceHook;
+        h.on("mousedown", onMouse);
+        h.on("keydown", onKey);
+        try {
+          h.start();
+        } catch (err) {
+          try { h.removeListener("mousedown", onMouse as (e: never) => void); h.removeListener("keydown", onKey as (e: never) => void); } catch { /* gone */ }
+          throw err;
+        }
+        return h;
+      },
+    });
+    if (!started.ok) {
+      const what = started.stage === "indicator" ? "could not show the menu bar item" : "could not start the listener";
+      deps.log(`[desktop] show once: ${what}: ${started.message}`);
       const error = "Could not start recording on this Mac.";
       last = { kind: "error", error };
       broadcast();
       return { ok: false, reason: "failed", error };
     }
-    hook = h;
+    hook = started.hook;
+    tray = started.indicator;
     log = new ShowOnceLog(process.pid);
     startedAt = Date.now();
     last = null;
     chain = Promise.resolve();
-    try {
-      tray = new Tray(nativeImage.createEmpty());
-      tray.setTitle(" ● Recording steps");
-      tray.on("click", () => void finish(true));
-      tray.on("right-click", () => {
-        tray?.popUpContextMenu(Menu.buildFromTemplate([
-          { label: "Stop and save as a skill draft", click: () => void finish(true) },
-          { label: "Discard this recording", click: () => void finish(false) },
-        ]));
-      });
-    } catch (err) {
-      deps.log(`[desktop] show once: no menu bar indicator: ${err instanceof Error ? err.message : String(err)}`);
-    }
     timer = setTimeout(() => void finish(true), SHOW_ONCE_LIMITS.maxDurationMs);
     broadcast();
     return { ok: true };
