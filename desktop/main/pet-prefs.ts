@@ -5,7 +5,8 @@
  * The choice lives in userData (pet.json), like voice.json and
  * background.json: it is about this app on this computer, not the agent,
  * so the agent's config and its schema version are untouched. Off by
- * default; View › Desktop Pet turns it on.
+ * default; View › Desktop Pet, Settings › General or the palette turns it
+ * on (ATO-2741).
  *
  *   enabled  the pet window shows
  *   dnd      do not disturb: no bubble, no done / error flashes

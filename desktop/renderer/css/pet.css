@@ -1,6 +1,6 @@
 /* ATO-2391: the desktop pet (pet.html). A transparent window: the sprite
    at the bottom, the approval bubble above it. Colours are fixed for the
-   sprite (it sits over any app) and follow the system theme for the bubble.
+   sprite (it sits over any app) and follow the app's theme for the bubble (the system's under System).
    Atomic blue is the app's own (styles.css --p-accent / --i-accent). */
 
 :root {
@@ -17,14 +17,23 @@
   /* The app's type scale (styles.css --fs-*, ATO-1025): pet.html does not load styles.css. */
   --fs-micro:11px; --fs-label:12px; --fs-cap:13px; --fs-lead:15px;
 }
+/* ATO-2741: the app's forced theme wins over the system's (pet.js sets
+   data-theme from the main window's choice, as styles.css reads it). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --pet-ink: #EDEFF1;
     --pet-ink-2: #A6ACB2;
     --pet-paper: #17191B;
     --pet-line: #2A2E32;
     --pet-btn: #1E2124;
   }
+}
+:root[data-theme="dark"] {
+  --pet-ink: #EDEFF1;
+  --pet-ink-2: #A6ACB2;
+  --pet-paper: #17191B;
+  --pet-line: #2A2E32;
+  --pet-btn: #1E2124;
 }
 
 html, body {

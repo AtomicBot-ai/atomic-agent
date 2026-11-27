@@ -188,6 +188,11 @@ contextBridge.exposeInMainWorld("atomic", {
   },
   onPetRelay: (cb: (payload: unknown) => void) => on("pet:relayAnswer", cb),
   petRelayResult: (reqId: string, handled: boolean) => ipcRenderer.send("pet:relayResult", { reqId, handled: handled === true }),
+  /* ATO-2741: Settings › General's Desktop pet switch and the palette row (renderer/pet-settings.js);
+     the same show / hide as View › Desktop Pet, and every change from either side comes back here. */
+  petPrefs: () => ipcRenderer.invoke("pet:prefsGet"),
+  petSetEnabled: (on: boolean) => ipcRenderer.invoke("pet:setEnabled", on === true),
+  onPetPrefs: (cb: (payload: unknown) => void) => on("pet:prefsChanged", cb),
 
   /** Setup wizard: real config writes and the real model catalogue. */
   configGet: () => ipcRenderer.invoke("cli:configGet"),

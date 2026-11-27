@@ -2165,6 +2165,7 @@ const PAL = [
   ['Setup', [
     ['gear','Theme…','','','scope:theme'],
     ['sidebar','Hide or show the sidebar','','⌘ \\','toggle:sidebar'],
+    ['atom','Show desktop pet','View · Desktop Pet','','petset:toggle'],   // ATO-2741: the title follows the pet (pet-settings.js)
     ['files','Files in this chat','','⌥ ⌘ F','toggle:files'],
     ['skills','Enable or disable a skill…','','','settings:skills'],
     ['tasks','Create, cancel or run a task…','','','settings:tasks'],
@@ -4298,23 +4299,7 @@ function apprHomePaths(t) {
   return home ? String(t).split(home + (IS_WIN ? '\\' : '/')).join('~' + (IS_WIN ? '\\' : '/')) : String(t);
 }
 function apprCode(s) { return '<code>' + esc(clipWords(s, 90)) + '</code>'; }
-const APPR_FALLBACK = {
-  fs_write_workspace:'change a file in this folder', fs_write_home:'change a file outside this folder',
-  fs_trash:'move files to the Trash', http:'send a web request', shell:'run a command', shell_dangerous:'run a dangerous command',
-  script:'run a skill script', proc_kill:'stop a process', browser_nonweb:'open a non-web address',
-  trust_config:'change its own settings', fusion_fanout:'hand work to its workers', publish:'publish to GitHub',
-  git_remote:'talk to a git remote', email:'send an e-mail', fs_read_outside:'read outside this folder',
-  paid_generation:'make a paid image in the cloud',
-  // ATO-1393
-  browser_commit:'submit, publish or delete something on a website', browser_secret:'enter a password or payment details on a website',
-  browser_offsite:'open a site outside the allowed list', state_secret:'touch its own secret files',
-  screen_control:'click and type on your screen', screen_capture:'take a screenshot of your screen',
-  local_model_restart:'restart the local model', hook_ask:'take a step one of your hooks asked about',
-  http_write:'send data in a web request', browser_site_tool:'use a website\u2019s own tool',
-  user_question:'ask you a question', session_cross:'read or write in another chat',
-  browser_take_over:'hand you the browser to finish a step',
-  logbook_cloud:'send your logbook notes to a cloud model',
-};
+// APPR_FALLBACK, the words per category, lives in approval-words.js (ATO-2741: the desktop pet uses it too).
 /** ATO-473: whether the card offers "Allow in this chat". The agent grants
     the request's command shape (the binary, `git`) for the rest of the chat;
     it names one only for a command it can see into (never `bash -c`), and an
@@ -6773,6 +6758,7 @@ function settingsPaneEntered(opened) {
   // ATO-328: General's Exa key row says whether a key is saved; read the names on every entry.
   if (pane === 'general') { exaKeyRefresh(); quickEntryRefresh(); }   // ATO-523: and the quick entry shortcut's state
   if (pane === 'general') dictateAnywhereRefresh();   // ATO-1064 (dictate-anywhere-settings.js)
+  if (pane === 'general') petSettingsRefresh();   // ATO-2741 (pet-settings.js)
 }
 
 function settingsPane() {
@@ -6854,6 +6840,7 @@ function generalPane() {
       // ATO-523: the global hotkey's box and its combo (quick-entry-settings.js).
       + quickEntryRowHTML(QE, {esc, setSwitchHTML})
       + dictateAnywhereRowHTML(DA, {esc, setSwitchHTML})   // ATO-1064 (dictate-anywhere-settings.js)
+      + petSettingsRowHTML(PETSET, {esc, setSwitchHTML})   // ATO-2741 (pet-settings.js)
       // ATO-464: finished turns fold their steps into one line unless this is on.
       + '<div class="tk-setrow">'
         + '<div class="body"><div class="t">Always show steps</div>'
@@ -7853,6 +7840,7 @@ function act(a) {
   // ATO-464: Settings › General › Always show steps (turn-summary.js).
   if (a.startsWith('quickentry:')) { quickEntryAct(a.slice('quickentry:'.length)); return; }   // ATO-523 (quick-entry-settings.js)
   if (a.startsWith('dictate:')) { dictateAnywhereAct(a.slice('dictate:'.length)); return; }   // ATO-1064 (dictate-anywhere-settings.js)
+  if (a.startsWith('petset:')) { close(); petSettingsAct(a.slice('petset:'.length)); return; }   // ATO-2741 (pet-settings.js)
   if (a === 'steps:always') { close(); stepsAlwaysSet(!STEPS.always); render(); return; }
   if (a === 'privacy:refresh') { close(); privacyRefresh(); return; }
   if (a.startsWith('privacy:readscope:')) { close(); readScopeSet(a.slice(18)); return; }
@@ -12968,6 +12956,7 @@ if (BR) {
   });
   // ATO-523: a text from the global hotkey's box starts a new chat (quick-entry-settings.js).
   quickEntryBoot();
+  petSettingsBoot();   // ATO-2741: the desktop pet's switch and palette row (pet-settings.js)
   BR.onLog((entry) => {
     if (!entry || !entry.line) return;
     /* ATO-121: one of the agent's structured lines comes with its own level
