@@ -34,3 +34,4 @@ Fallback completions and chunks carry servedTransport. Parsing and live reasonin
 - [Breaker](../fallback/provider-fallback-chain.ts), [advance policy](../fallback/should-advance.ts), [config](../fallback/fallback-config.ts).
 - [Runtime seam](../../runtime/llm-fallback-seam.ts), [stream implementation](../provider/openai/openai-provider.ts), [stream retry tests](../provider/openai/openai-stream-retry.test.ts).
 - [Fallback seam tests](../../runtime/llm-fallback-seam.test.ts), [fallback integration](../fallback/fallback-e2e.integration.test.ts).
+- The local-first cascade is switched in the terminal from the LLM panel's Fallback pane (`o`, or `/llm fallback local-first on|off`; [panel guide](../../tui/llm-panel/README.md)).

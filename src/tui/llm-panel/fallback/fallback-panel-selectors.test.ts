@@ -48,6 +48,19 @@ describe("buildFallbackChainView", () => {
     expect(view.links[0]!.isActive).toBe(true);
   });
 
+  it("reads localFirst from the stored block, false when unset (ATO-2434)", () => {
+    expect(buildFallbackChainView(resolved()).localFirst).toBe(false);
+    expect(
+      buildFallbackChainView(
+        resolved({ fallback: { chain: ["cloud-a"], localFirst: true } }),
+      ).localFirst,
+    ).toBe(true);
+    expect(
+      buildFallbackChainView(resolved({ fallback: { localFirst: false } }))
+        .localFirst,
+    ).toBe(false);
+  });
+
   it("marks the auto-appended local last resort", () => {
     const view = buildFallbackChainView(
       resolved({ fallback: { chain: ["cloud-a"], appendLocal: true } }),

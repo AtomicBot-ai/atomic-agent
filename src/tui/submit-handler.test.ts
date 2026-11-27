@@ -667,6 +667,40 @@ describe("slash commands that only an orchestrator can carry out", () => {
     },
   );
 
+  it.each([
+    ["/llm fallback local-first on", true],
+    ["/llm fallback local-first off", false],
+  ] as const)(
+    "%s sets localFirst through the callback and opens the pane (ATO-2434)",
+    (input, on) => {
+      const onSet = vi.fn();
+      const onRefresh = vi.fn();
+      const { dispatched } = run(input, {
+        onFallbackLocalFirstSetRequested: onSet,
+        onProvidersTabRefresh: onRefresh,
+      });
+      expect(onSet).toHaveBeenCalledTimes(1);
+      expect(onSet).toHaveBeenCalledWith(on);
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+      expect(dispatched).toContainEqual({ type: "llm_mode_set", mode: "fallback" });
+    },
+  );
+
+  it("/llm fallback local-first with no verb writes nothing and shows the usage", () => {
+    const onSet = vi.fn();
+    const { dispatched } = run("/llm fallback local-first", {
+      onFallbackLocalFirstSetRequested: onSet,
+    });
+    expect(onSet).not.toHaveBeenCalled();
+    expect(
+      dispatched.some(
+        (a) =>
+          a.type === "system_message" &&
+          a.text?.startsWith("usage: /llm fallback local-first on|off"),
+      ),
+    ).toBe(true);
+  });
+
   it("/memory reloads the list through the callback", () => {
     const onMemoryRefresh = vi.fn();
     const { dispatched } = run("/memory", {

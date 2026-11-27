@@ -234,6 +234,13 @@ export interface SlashDispatchResult {
    */
   readonly vimVerb?: "on" | "off" | "toggle";
   /**
+   * `/llm fallback local-first on|off` (ATO-2434): the caller writes
+   * `llm.fallback.localFirst` through `onFallbackLocalFirstSetRequested`.
+   * The `actions` open the Fallback pane, which shows the new value or
+   * the reason the write was refused.
+   */
+  readonly fallbackLocalFirst?: boolean;
+  /**
    * `/uninstall`: measure the install and feed the result back as
    * `uninstall_plan_loaded`. Nothing is removed on this path — the
    * dialog it opens is what eventually asks for that.
@@ -1230,12 +1237,18 @@ function dispatchLlmSub(rawArgs: string): SlashDispatchResult {
   // mirror shows whatever the last refresh produced (stale if config
   // changed externally mid-session).
   if (/^fallback$/i.test(argPart)) {
-    return pureActions([
-      { type: "ui_mode_set", mode: "debug" },
-      { type: "tab_changed", tab: "llm" },
-      { type: "llm_mode_set", mode: "fallback" },
-      { type: "providers_refresh_requested" },
-    ]);
+    return pureActions(FALLBACK_PANE_ACTIONS);
+  }
+  // `/llm fallback local-first on|off` (ATO-2434): the same switch as `o`
+  // in the Fallback pane. It opens the pane too, so the result (or why
+  // the write was refused) is on screen rather than only in the feed.
+  const localFirstMatch = argPart.match(/^fallback\s+local-first(?:\s+(\S+))?\s*$/i);
+  if (localFirstMatch) {
+    const verb = localFirstMatch[1]?.toLowerCase();
+    if (verb === "on" || verb === "off") {
+      return pureActions(FALLBACK_PANE_ACTIONS, { fallbackLocalFirst: verb === "on" });
+    }
+    return pureActions([], { systemMessage: LOCAL_FIRST_USAGE });
   }
   // `/llm check` exercises the real turn contract against the active
   // provider — streaming, tools payload, a forced native tool call —
@@ -1264,9 +1277,20 @@ function dispatchLlmSub(rawArgs: string): SlashDispatchResult {
   }
   return pureActions([], {
     systemMessage:
-      "usage: /llm | /llm provider <id> | /llm model-mode [local|cloud|inherit] [provider-id] [model-id] | /llm check | /llm fallback | /llm restart",
+      "usage: /llm | /llm provider <id> | /llm model-mode [local|cloud|inherit] [provider-id] [model-id] | /llm check | /llm fallback | /llm fallback local-first on|off | /llm restart",
   });
 }
+
+/** What `/llm fallback` dispatches: open the Fallback pane on fresh data. */
+const FALLBACK_PANE_ACTIONS: readonly TuiAction[] = [
+  { type: "ui_mode_set", mode: "debug" },
+  { type: "tab_changed", tab: "llm" },
+  { type: "llm_mode_set", mode: "fallback" },
+  { type: "providers_refresh_requested" },
+];
+
+const LOCAL_FIRST_USAGE =
+  "usage: /llm fallback local-first on|off (start each turn on the local model, cloud when it fails)";
 
 /**
  * `/tools` answers "what can this agent actually do" without touching a

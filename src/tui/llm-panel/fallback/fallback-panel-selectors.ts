@@ -12,6 +12,8 @@ export interface FallbackChainView {
   links: readonly FallbackLinkRow[];
   addableProviderIds: readonly string[];
   appendLocal: boolean;
+  /** Stored `llm.fallback.localFirst`; false when unset (ATO-2208). */
+  localFirst: boolean;
 }
 
 /**
@@ -68,5 +70,6 @@ export function buildFallbackChainView(
     .map((p) => p.id)
     .filter((id) => !inChain.has(id));
 
-  return { links, addableProviderIds, appendLocal };
+  const localFirst = resolved.fallback?.localFirst === true;
+  return { links, addableProviderIds, appendLocal, localFirst };
 }

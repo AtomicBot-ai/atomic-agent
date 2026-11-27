@@ -430,6 +430,38 @@ describe("dispatchSlashCommand", () => {
     ]);
   });
 
+  it("/llm fallback local-first on|off opens the pane and carries the value (ATO-2434)", () => {
+    const pane = [
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "llm" },
+      { type: "llm_mode_set", mode: "fallback" },
+      { type: "providers_refresh_requested" },
+    ];
+    const on = dispatchSlashCommand("/llm fallback local-first on");
+    expect(on.actions).toEqual(pane);
+    expect(on.fallbackLocalFirst).toBe(true);
+    const off = dispatchSlashCommand("/llm fallback LOCAL-FIRST Off");
+    expect(off.actions).toEqual(pane);
+    expect(off.fallbackLocalFirst).toBe(false);
+    // Bare `/llm fallback` still only opens the pane.
+    expect(dispatchSlashCommand("/llm fallback").fallbackLocalFirst).toBeUndefined();
+  });
+
+  it("/llm fallback local-first without on/off answers with its usage", () => {
+    for (const input of ["/llm fallback local-first", "/llm fallback local-first maybe"]) {
+      const result = dispatchSlashCommand(input);
+      expect(result.actions).toEqual([]);
+      expect(result.fallbackLocalFirst).toBeUndefined();
+      expect(result.systemMessage).toMatch(/^usage: \/llm fallback local-first on\|off/);
+    }
+  });
+
+  it("lists local-first in the /llm usage line", () => {
+    expect(dispatchSlashCommand("/llm nonsense").systemMessage).toContain(
+      "/llm fallback local-first on|off",
+    );
+  });
+
   it("asks for a contract probe of the active provider on /llm check", () => {
     const result = dispatchSlashCommand("/llm check");
     expect(result.actions).toEqual([

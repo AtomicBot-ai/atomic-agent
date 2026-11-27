@@ -65,6 +65,12 @@ export interface FallbackPanelState {
   addableProviderIds: readonly string[];
   /** Stored `llm.fallback.appendLocal` (default false when unset, ATO-349). */
   appendLocal: boolean;
+  /**
+   * Stored `llm.fallback.localFirst` (default false, ATO-2208): each chat
+   * turn starts on the local model and goes on to the cloud when the local
+   * answer fails. Flipped from the pane by `o` (ATO-2434).
+   */
+  localFirst: boolean;
   /** Last observed cross-provider switch, or null. */
   lastSwitch: FallbackLastSwitch | null;
   /** Non-null while the add-link picker owns the keyboard. */
@@ -87,6 +93,7 @@ export function createInitialFallbackPanelState(): FallbackPanelState {
     links: [],
     addableProviderIds: [],
     appendLocal: true,
+    localFirst: false,
     lastSwitch: null,
     addPicker: null,
     statusLine: null,

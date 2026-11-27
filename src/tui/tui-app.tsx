@@ -804,6 +804,10 @@ export interface TuiAppCallbacks {
   onFallbackRemoveRequested?(providerId: string): void;
   /** Fallback pane: flip `llm.fallback.appendLocal`. */
   onFallbackAppendLocalToggleRequested?(): void;
+  /** Fallback pane `o`: flip `llm.fallback.localFirst` (ATO-2434). */
+  onFallbackLocalFirstToggleRequested?(): void;
+  /** `/llm fallback local-first on|off`: set `llm.fallback.localFirst`. */
+  onFallbackLocalFirstSetRequested?(on: boolean): void;
   /** MCP tab: open detail view for a server by name. */
   onMcpDetailRequested?(serverName: string): void;
   /**
