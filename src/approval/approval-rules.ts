@@ -178,7 +178,7 @@ export function parseApprovalRule(entry: unknown): ApprovalRule | string {
     ) {
       return "commandPrefix must be a non-empty array of non-empty strings";
     }
-    // `shell` and its sibling shell categories (`shell_dangerous`).
+    // `shell` and its sibling shell categories (`shell_dangerous`, `shell_secret`).
     if (rule.category !== undefined && !rule.category.startsWith("shell")) {
       return "commandPrefix applies to shell commands only";
     }
@@ -339,7 +339,7 @@ export function ruleMatches(
   if (
     rule.category !== undefined &&
     rule.category !== request.category &&
-    !(tightens && rule.category === "shell" && request.category === "shell_dangerous") &&
+    !(tightens && rule.category === "shell" && (request.category === "shell_dangerous" || request.category === "shell_secret")) &&
     // A deny or ask on `http` stands for a POST too; an allow does not
     // (ATO-1462): a saved "always" for a GET never silences a POST.
     !(rule.decision !== "allow" && rule.category === "http" && request.category === "http_write")

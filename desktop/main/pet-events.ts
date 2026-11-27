@@ -50,6 +50,8 @@ export interface PetApproval {
 /** Requests the bubble never allows: the full card, with its details, decides them. */
 export const PET_WINDOW_ONLY_CATEGORIES: readonly string[] = [
   "shell_dangerous",
+  // A command, web request or skill script handed a saved secret (ATO-2530): the full card shows which.
+  "shell_secret",
   "trust_config",
   "browser_secret",
   "state_secret",

@@ -40,6 +40,7 @@ import {
   type SecretsRoute,
 } from "./keychain-keys.js";
 import { defaultProviderModelMode, type ModelMode } from "./provider-model-mode.js";
+import { secretSources, type SecretSourceLabel } from "./secret-source-labels.js";
 import { SUBSCRIPTION_CLI_KIND, subscriptionCliModels } from "./subscription-cli-models.js";
 
 const run = promisify(execFile);
@@ -4288,14 +4289,25 @@ export function removeStaleTmpFiles(stateDir: string, now: number = Date.now(), 
 const DOTENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 const SECRET_FILE_MODE = 0o600;
 
-/** Names of the keys `<stateDir>/.env` carries (load-dotenv.ts parseLine: trimmed, `#` comments, `KEY=…`). Never values. */
-export function dotenvKeys(stateDir: string): { ok: boolean; keys: string[]; exists: boolean; error?: string } {
+/**
+ * Names of the keys `<stateDir>/.env` carries (load-dotenv.ts parseLine: trimmed, `#` comments, `KEY=…`). Never values.
+ * `sources` (ATO-2530): for a key saved as a reference or in the keychain, where it comes from (secret-source-labels.ts).
+ */
+export function dotenvKeys(stateDir: string): {
+  ok: boolean;
+  keys: string[];
+  exists: boolean;
+  error?: string;
+  sources?: Record<string, SecretSourceLabel>;
+} {
   const path = join(stateDir, ".env");
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { ok: true, keys: withKeychainNames(stateDir, []), exists: false };
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return { ok: true, keys: withKeychainNames(stateDir, []), exists: false, sources: secretSources("", keychainHeldNames(stateDir)) };
+    }
     return { ok: false, keys: [], exists: true, error: err instanceof Error ? err.message : String(err) };
   }
   const keys: string[] = [];
@@ -4307,7 +4319,7 @@ export function dotenvKeys(stateDir: string): { ok: boolean; keys: string[]; exi
     const key = trimmed.slice(0, eq).trim();
     if (DOTENV_KEY_PATTERN.test(key) && !keys.includes(key)) keys.push(key);
   }
-  return { ok: true, keys: withKeychainNames(stateDir, keys), exists: true };
+  return { ok: true, keys: withKeychainNames(stateDir, keys), exists: true, sources: secretSources(raw, keychainHeldNames(stateDir)) };
 }
 
 /** ATO-1639: the names the agent keeps in the OS keychain count as saved keys too (names only). */

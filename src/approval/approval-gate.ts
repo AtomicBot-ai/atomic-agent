@@ -1552,11 +1552,12 @@ export function canGrantShape(request: ApprovalRequest): boolean {
 }
 
 /**
- * A shell command, ordinary or dangerous (`shell_dangerous`, ATO-1220):
- * the same-turn denial rule treats both alike.
+ * A shell command, ordinary, dangerous (`shell_dangerous`, ATO-1220) or
+ * handed a secret (`shell_secret`, ATO-2530): the same-turn denial rule
+ * treats them alike.
  */
 function isShellCommandCategory(category: ApprovalCategory): boolean {
-  return category === "shell" || category === "shell_dangerous";
+  return category === "shell" || category === "shell_dangerous" || category === "shell_secret";
 }
 
 /**
