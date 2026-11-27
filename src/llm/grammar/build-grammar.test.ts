@@ -1016,6 +1016,8 @@ describe("the base grammar's vocabulary", () => {
     "github.issue.comment",
     "github.issue.create",
     "github.issue.list",
+    "github.pr.autofix",
+    "github.pr.checks",
     "github.pr.create",
     "github.pr.list",
     "github.whoami",

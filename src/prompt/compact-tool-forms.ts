@@ -158,6 +158,8 @@ const FORMS: Record<string, CompactToolForm> = {
   "github.issue.list": { summary: "List issues.", tier: RARE },
   "github.issue.create": { summary: "File an issue.", tier: RARE },
   "github.issue.comment": { summary: "Comment on an issue or PR.", tier: RARE },
+  "github.pr.checks": { summary: "CI status and failing job logs of a PR.", tier: RARE },
+  "github.pr.autofix": { summary: "Opt-in CI autofix: enable, prepare, push.", tier: RARE },
   "os.proc.list": { summary: "List processes.", tier: RARE },
   "os.proc.kill": { summary: "Signal a process (may require approval).", tier: RARE },
   "os.http.request": {

@@ -39,3 +39,34 @@ export type {
   GithubPullRequest,
   GithubRepo,
 } from "./github-api.js";
+export {
+  fetchChecks,
+  fetchJobLogTail,
+  fetchPullRequestHead,
+} from "./github-checks-api.js";
+export {
+  parseCheckRuns,
+  parseCommitStatuses,
+  parsePullRequestHead,
+  summarizeChecks,
+} from "./github-checks.js";
+export type {
+  CheckItem,
+  CheckVerdict,
+  ChecksState,
+  ChecksSummary,
+  PullRequestHead,
+} from "./github-checks.js";
+export { extractLogTail, readBodyTail } from "./github-log-tail.js";
+export type { LogTail } from "./github-log-tail.js";
+export {
+  AUTOFIX_MAX_ATTEMPTS_CEILING,
+  DEFAULT_AUTOFIX_MAX_ATTEMPTS,
+  checkAutofixPushTarget,
+  clampMaxAttempts,
+  decideAttempt,
+  enableAutofix,
+  recordAutofixPush,
+} from "./pr-autofix-guard.js";
+export type { AttemptDecision, AutofixState } from "./pr-autofix-guard.js";
+export { AutofixStore, autofixKey, autofixWorktreeDir } from "./pr-autofix-store.js";

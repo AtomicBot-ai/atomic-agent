@@ -194,10 +194,29 @@ export class GithubApi {
     };
   }
 
+  /**
+   * A read-only GET whose JSON body the caller narrows itself: the
+   * checks helpers in `github-checks-api.ts` (ATO-2331) use it so this
+   * file keeps one transport instead of growing an endpoint per shape.
+   */
+  async getJson(path: string): Promise<unknown> {
+    return (await this.request("GET", path)).body;
+  }
+
+  /**
+   * A read-only GET that hands back the unread `Response` (Actions job
+   * logs are plain text behind a redirect, read as a bounded tail by
+   * `github-log-tail.ts`). Errors are mapped exactly as for JSON calls.
+   */
+  async getResponse(path: string): Promise<Response> {
+    return (await this.request("GET", path, undefined, true)).body as Response;
+  }
+
   private async request(
     method: string,
     path: string,
     payload?: unknown,
+    raw = false,
   ): Promise<{ body: unknown; headers: Headers }> {
     let res: Response;
     try {
@@ -254,6 +273,7 @@ export class GithubApi {
         res.status,
       );
     }
+    if (raw) return { body: res, headers: res.headers };
     if (res.status === 204) return { body: undefined, headers: res.headers };
     try {
       return { body: await res.json(), headers: res.headers };

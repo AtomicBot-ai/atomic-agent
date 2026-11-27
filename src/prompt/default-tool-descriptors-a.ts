@@ -267,6 +267,21 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    name: "github.pr.checks",
+    summary:
+      "CI verdict of a pull request's head: failing and pending checks plus the log tail of failing GitHub Actions jobs. Read-only.",
+    argsSchema:
+      "{ number: number, repo?: string /* owner/name */, logs?: boolean }",
+    tier: "rare",
+  },
+  {
+    name: "github.pr.autofix",
+    summary:
+      "Opt-in CI autofix for one PR: `enable` (asks the user), `prepare` (worktree of the PR branch), `push` (that worktree's commit to the PR head only, never forced, stops after maxAttempts), `status`, `disable`. May require approval.",
+    argsSchema: `{ action: "status" | "enable" | "disable" | "prepare" | "push", number: number, repo?: string /* owner/name */, maxAttempts?: number }`,
+    tier: "rare",
+  },
+  {
     name: "os.git.remote",
     summary:
       "List, add, re-point or remove remotes. add/set-url need Remote sync on and approval; URLs with embedded credentials are refused.",
