@@ -78,12 +78,13 @@ const config = {
     "!out/native/**",
     "package.json",
     "LICENSE",
-    /* ATO-1064: uiohook-napi (the Windows hold key watcher, loaded only on
-       Windows) ships its prebuilt .node files and nothing to build them:
-       not the C sources, not the macOS and Linux prebuilds. */
+    /* ATO-1064: uiohook-napi (the Windows hold key watcher) ships its
+       prebuilt .node files and nothing to build them: not the C sources,
+       not the Linux prebuilds. ATO-2401: the macOS ones ship too, for
+       Show once (main/show-once-ipc.ts), loaded only when Record is clicked. */
     "!node_modules/uiohook-napi/{libuiohook,src}/**",
     "!node_modules/uiohook-napi/binding.gyp",
-    "!node_modules/uiohook-napi/prebuilds/{darwin,linux}-*/**"
+    "!node_modules/uiohook-napi/prebuilds/linux-*/**"
   ],
   /* A .node file cannot be loaded from inside the asar archive: the
      Windows ones go to app.asar.unpacked, where Electron finds them. */

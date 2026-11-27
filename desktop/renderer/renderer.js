@@ -1390,6 +1390,8 @@ const SKP = {
 const SKE = {probeName:null, probe:null, seq:0, runningName:null, cancelling:false, outcomes:{}};
 /* ATO-67: learned skills waiting for review, the "Pending review" group (workspace-skills.js, main/skill-drafts-ipc.ts). */
 const SKD = createSkillDraftsController({api: () => BR, paint: () => { if (skillsVisible() && !skpTyping()) render(); }, changed: () => skpReloadRows()});
+/* ATO-2401: Show once, the Record card above Pending review (show-once.js, main/show-once-ipc.ts). */
+const SHOW_ONCE = createShowOnceController({api: () => BR, paint: () => { if (skillsVisible() && !skpTyping()) render(); }, changed: () => SKD.refresh(true)});
 const SKP_FILTERS = ['all','enabled','disabled']; // skills-filter.ts FILTER_ORDER
 const SKP_FILTER_LABELS = {all:'All', enabled:'Enabled', disabled:'Disabled'}; // Д43: the tabs, each with its count
 const SKP_MAX_ROWS = 14, SKP_HUB_ROWS = 12, SKP_DETAIL_LINES = 32; // skills-panel.tsx / skills-hub-list.tsx / skills-detail.tsx
@@ -25924,7 +25926,7 @@ function skillsTab() {
       + (SKP.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SKP.lastError) + '</span></div>' : '')
       + (SK.err && !tools ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SK.err) + '</span></div>' : '')
       + skpMessages()
-      + (tools ? skpToolsHTML(groups) : SKP.mode === 'detail' ? skpDetailHTML() : SKD.state.open ? SKD.detailHTML(esc) : tpSkillsOmittedHTML() + SKD.listHTML(esc) + skpListHTML(visible));
+      + (tools ? skpToolsHTML(groups) : SKP.mode === 'detail' ? skpDetailHTML() : SKD.state.open ? SKD.detailHTML(esc) : tpSkillsOmittedHTML() + SHOW_ONCE.cardHTML(esc) + SKD.listHTML(esc) + skpListHTML(visible));
   }
   return '<div class="set-pane set-skills">' + view + overlay + '</div>';
 }
@@ -26517,6 +26519,7 @@ function skillsAct(what) {
   if (verb === 'test') { const name = sel(); if (name) skeRun(name); return; } // ATO-1102
   if (verb === 'testCancel') { skeCancel(); return; }
   if (verb === 'draft') { SKD.act(arg); return; } // ATO-67: Pending review
+  if (verb === 'showOnce') { SHOW_ONCE.act(arg); return; } // ATO-2401: Show once
   if (verb === 'refresh') {
     if (SKP.mode === 'list' && SKP.view === 'tools') { skpToolsRefresh(); render(); return; } // Item 09: the list on screen is the agent's tools
     if (SKP.mode === 'detail' && SKP.detailName) { refreshSkillList(); skpOpenDetail(SKP.detailName); return; }

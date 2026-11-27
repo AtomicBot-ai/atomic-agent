@@ -537,6 +537,13 @@ contextBridge.exposeInMainWorld("atomic", {
   skillDraftShow: (id: string) => ipcRenderer.invoke("cli:skillDraftShow", id),
   skillDraftApprove: (id: string) => ipcRenderer.invoke("cli:skillDraftApprove", id),
   skillDraftDiscard: (id: string) => ipcRenderer.invoke("cli:skillDraftDiscard", id),
+  /** ATO-2401: Show once, a routine recorded once and saved as a skill draft (main/show-once-ipc.ts). */
+  showOnceState: () => ipcRenderer.invoke("showOnce:state"),
+  showOnceStart: () => ipcRenderer.invoke("showOnce:start"),
+  showOnceStop: () => ipcRenderer.invoke("showOnce:stop"),
+  showOnceCancel: () => ipcRenderer.invoke("showOnce:cancel"),
+  showOnceOpenAccessibility: () => ipcRenderer.invoke("showOnce:openAccessibility"),
+  onShowOnceState: (cb: (payload: unknown) => void) => on("showOnce:state", cb),
   /** ATO-954: Settings › Plugins (main/plugins-ipc.ts). */
   pluginList: () => ipcRenderer.invoke("cli:pluginList"),
   /** ATO-1129: Settings › Connections › Phone push (main/push-ipc.ts). */

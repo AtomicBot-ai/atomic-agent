@@ -49,6 +49,7 @@ import { wireAgentLiveIpc } from "./agent-live.js";
 import { wirePluginsIpc } from "./plugins-ipc.js";
 import { wireSkillEvalIpc } from "./skill-eval-ipc.js";
 import { wireSkillDraftsIpc } from "./skill-drafts-ipc.js";
+import { wireShowOnceIpc } from "./show-once-ipc.js";
 import { pushTurnNote, wirePushIpc } from "./push-ipc.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { wireFileMentionsIpc } from "./file-mentions-ipc.js";
@@ -3324,6 +3325,8 @@ function wireIpc(client: AgentClient): void {
   wireSkillEvalIpc({ cwd: () => client.status.workingDir });
   // ATO-67: Settings › Skills › Pending review, through `atag skill learned` (skill-drafts-ipc.ts).
   wireSkillDraftsIpc({ cwd: () => client.status.workingDir, isRemote: () => client.isRemote });
+  // ATO-2401: Show once, record a routine in a Mac app as a skill draft (show-once-ipc.ts).
+  wireShowOnceIpc({ stateDir: DESKTOP_STATE_DIR, isRemote: () => client.isRemote, log: (line) => console.log(line) });
   // ATO-1129: Settings › Connections › Phone push, through `atag push` (push-ipc.ts).
   wirePushIpc();
   // ATO-404/405: the composer's attachments, saved into <stateDir>/inbox/desktop.
