@@ -742,6 +742,15 @@ describe("/enhance", () => {
     expect(dispatchSlashCommand("/steps").forwardAsMessage).toBe(false);
   });
 
+  it("/pet toggles the terminal pet, on and off set it (ATO-2513)", () => {
+    expect(dispatchSlashCommand("/pet").petVerb).toBe("toggle");
+    expect(dispatchSlashCommand("/pet on").petVerb).toBe("on");
+    expect(dispatchSlashCommand("/pet OFF").petVerb).toBe("off");
+    const bad = dispatchSlashCommand("/pet cat");
+    expect(bad.petVerb).toBeUndefined();
+    expect(bad.systemMessage).toContain("usage: /pet [on|off]");
+  });
+
   it("/verbose toggles the step notes, on and off set them (ATO-34)", () => {
     expect(dispatchSlashCommand("/verbose").verboseStepsVerb).toBe("toggle");
     expect(dispatchSlashCommand("/verbose on").verboseStepsVerb).toBe("on");
