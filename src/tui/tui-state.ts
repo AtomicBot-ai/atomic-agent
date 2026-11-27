@@ -73,6 +73,7 @@ import {
 } from "./integrations/integrations-panel-state.js";
 import type { IssueReportState } from "./issue-report/issue-report-state.js";
 import type { RewindPoint } from "../session/session-rewind.js";
+import type { RewindScope } from "../runtime/session-rewind-service.js";
 import {
   createInitialPluginsPanelState,
   type PluginsPanelState,
@@ -415,6 +416,34 @@ export interface SessionDeleteConfirm {
 export interface RewindPickerState {
   readonly points: readonly RewindPoint[];
   /** Highlighted row in `points`. */
+  readonly cursor: number;
+  /**
+   * ATO-2467: after a point is picked, what to take back ("Chat and
+   * files", "Chat only", "Files only"). Absent while the list shows.
+   */
+  readonly choice?: RewindChoiceState | null;
+}
+
+/** What a rewind to the picked point would touch (ATO-2467). */
+export interface RewindChoiceFacts {
+  /** Files the agent changed after the point that would be put back or removed. */
+  readonly fileCount: number;
+  /** Files changed without a saved copy: they stay as they are. */
+  readonly notRestorableCount: number;
+  /** Some older copies were dropped to stay in bounds. */
+  readonly incomplete: boolean;
+  /** Shell, git, archive, subagent or Fusion calls whose file changes stay. */
+  readonly uncoveredCount: number;
+}
+
+/** The "what to take back" step of `/rewind` (ATO-2467). */
+export interface RewindChoiceState {
+  readonly point: RewindPoint;
+  /** Null while the orchestrator works out which files would change. */
+  readonly facts: RewindChoiceFacts | null;
+  /** The choices offered, in order; file choices only when files would change. */
+  readonly options: readonly RewindScope[];
+  /** Highlighted row in `options`. */
   readonly cursor: number;
 }
 

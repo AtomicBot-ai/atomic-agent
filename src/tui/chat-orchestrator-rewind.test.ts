@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ConversationTurn } from "../session/conversation-turn.js";
 import type { TuiAction } from "./tui-action.js";
@@ -13,13 +16,28 @@ import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { makeTuiEventBus } from "./make-event-bus.js";
 import type { LocalTurnGateFacts } from "./local-turn-gate.js";
+import { FileCheckpointStore, fileCheckpointsRoot } from "../tools/os/fs/fs-checkpoint-store.js";
 
 /**
  * `/rewind` (ATO-1057): the orchestrator lists the chat's earlier
  * questions, and on a pick takes that question and everything after it
  * out of the session it holds and the store, rebuilds the transcript and
  * puts the question back in the composer. Refused while anything runs.
+ * ATO-2467: a pick first checks which files would change and offers
+ * "Chat and files / Chat only / Files only"; the files are put back by
+ * the same shared rewind the HTTP routes use.
  */
+
+let stateDir = "";
+let work = "";
+beforeEach(() => {
+  stateDir = mkdtempSync(join(tmpdir(), "aa-tui-rw-state-"));
+  work = mkdtempSync(join(tmpdir(), "aa-tui-rw-work-"));
+});
+afterEach(() => {
+  rmSync(stateDir, { recursive: true, force: true });
+  rmSync(work, { recursive: true, force: true });
+});
 
 const cloudGateFacts = (): LocalTurnGateFacts => ({
   activeProviderIsLocal: false,
@@ -93,6 +111,7 @@ function makeHarness(opts: { busy?: boolean; initial?: SessionState } = {}) {
     config: {
       update: { checkOnStartup: false, repo: "x/y" },
       tracing: { trace: { dir: "/tmp", enabled: false } },
+      paths: { stateDir },
     },
     profileStore: { list: () => [] },
     skillCatalog: [],
@@ -141,10 +160,53 @@ describe("ChatOrchestrator /rewind", () => {
     expect(h.actions.some((a) => a.type === "system_message" && a.text.startsWith("Can't rewind while"))).toBe(true);
   });
 
-  it("cuts back to before the picked question, saves, rebuilds and refills the composer", async () => {
+  /** The agent wrote a.txt during the second question (at 3): v0 before it, v1 now. */
+  async function agentChangedFile(): Promise<string> {
+    const a = join(work, "a.txt");
+    writeFileSync(a, "v0");
+    const store = new FileCheckpointStore(fileCheckpointsRoot(stateDir), () => 3);
+    await store.capture("s-a", a, "os.fs.write");
+    writeFileSync(a, "v1");
+    return a;
+  }
+
+  const lastNote = (actions: TuiAction[]): string => {
+    const notes = actions.filter((a) => a.type === "system_message");
+    const last = notes[notes.length - 1];
+    return last?.type === "system_message" ? last.text : "";
+  };
+
+  it("offers the file choices with the count of files that would change", async () => {
+    await agentChangedFile();
+    const h = makeHarness();
+    await h.orchestrator.openRewindChoice(2, "second question");
+    expect(h.actions).toContainEqual({
+      type: "rewind_choice_ready",
+      turnIndex: 2,
+      facts: { fileCount: 1, notRestorableCount: 0, incomplete: false, uncoveredCount: 0 },
+    });
+    expect(h.save).not.toHaveBeenCalled();
+  });
+
+  it("offers no file change for a point the agent changed nothing after", async () => {
+    const h = makeHarness();
+    await h.orchestrator.openRewindChoice(0, "first question");
+    const ready = h.actions.find((a) => a.type === "rewind_choice_ready");
+    expect(ready?.type === "rewind_choice_ready" && ready.facts.fileCount).toBe(0);
+  });
+
+  it("closes the box and says why when the pick no longer matches the chat", async () => {
+    const h = makeHarness();
+    await h.orchestrator.openRewindChoice(2, "a question never asked");
+    expect(h.actions.map((a) => a.type)).toEqual(["rewind_picker_closed", "system_message"]);
+    expect(lastNote(h.actions)).toBe("The chat changed since the list was opened. Run /rewind again.");
+  });
+
+  it("chat only: cuts back to before the picked question, saves, rebuilds and refills the composer", async () => {
+    const a = await agentChangedFile();
     const h = makeHarness();
     h.actions.length = 0;
-    h.orchestrator.rewindTo(0, "first question");
+    await h.orchestrator.rewindTo(0, "first question", "conversation");
     expect(h.cancelSessionCompaction).toHaveBeenCalledWith("s-a");
     expect(h.clearTurnProgress).toHaveBeenCalledWith("s-a");
     expect(h.stored.get("s-a")!.turns).toEqual([]);
@@ -154,9 +216,8 @@ describe("ChatOrchestrator /rewind", () => {
     expect(switched?.type === "session_switched" && switched.sessionId).toBe("s-a");
     expect(switched?.type === "session_switched" && switched.messages).toEqual([]);
     expect(h.actions).toContainEqual({ type: "input_changed", value: "first question" });
-    expect(
-      h.actions.some((a) => a.type === "system_message" && a.text.includes("Files the agent changed were not restored")),
-    ).toBe(true);
+    expect(lastNote(h.actions)).toContain("Files the agent changed were not restored");
+    expect(readFileSync(a, "utf8")).toBe("v1");
 
     // The next message runs on the cut session.
     h.orchestrator.sendMessage("first question, edited");
@@ -165,22 +226,62 @@ describe("ChatOrchestrator /rewind", () => {
     await settle();
   });
 
-  it("keeps the turns before the picked question", () => {
+  it("chat and files: puts the file back, then cuts the chat", async () => {
+    const a = await agentChangedFile();
     const h = makeHarness();
-    h.orchestrator.rewindTo(2, "second question");
+    await h.orchestrator.rewindTo(2, "second question", "all");
+    expect(readFileSync(a, "utf8")).toBe("v0");
+    expect(texts(h.stored.get("s-a")!)).toEqual(["first question", "first answer"]);
+    expect(h.actions).toContainEqual({ type: "input_changed", value: "second question" });
+    expect(lastNote(h.actions)).toContain("1 file the agent changed was put back");
+  });
+
+  it("files only: puts the file back and leaves the chat as it is", async () => {
+    const a = await agentChangedFile();
+    const h = makeHarness();
+    await h.orchestrator.rewindTo(2, "second question", "files");
+    expect(readFileSync(a, "utf8")).toBe("v0");
+    expect(h.save).not.toHaveBeenCalled();
+    expect(h.actions.some((a2) => a2.type === "session_switched" || a2.type === "input_changed")).toBe(false);
+    expect(lastNote(h.actions)).toBe("Put back 1 file to how it was before that message. The chat stays as it is.");
+  });
+
+  it("says in plain words which file it could not put back", async () => {
+    // The agent edited sub/a.txt; since then the folder `sub` became a file,
+    // so the saved copy cannot be written back.
+    const sub = join(work, "sub");
+    const a = join(sub, "a.txt");
+    mkdirSync(sub);
+    writeFileSync(a, "v0");
+    await new FileCheckpointStore(fileCheckpointsRoot(stateDir), () => 3).capture("s-a", a, "os.fs.edit");
+    rmSync(sub, { recursive: true });
+    writeFileSync(sub, "not a folder");
+    const h = makeHarness();
+    await h.orchestrator.rewindTo(2, "second question", "files");
+    expect(lastNote(h.actions)).toBe(
+      "The chat stays as it is. Couldn't put back 1 file (a.txt): it was left as it is. Check that it isn't open or read-only, then try /rewind again.",
+    );
+    expect(lastNote(h.actions)).not.toContain(work);
+  });
+
+  it("keeps the turns before the picked question", async () => {
+    const h = makeHarness();
+    await h.orchestrator.rewindTo(2, "second question", "conversation");
     expect(texts(h.stored.get("s-a")!)).toEqual(["first question", "first answer"]);
   });
 
-  it("refuses a pick that no longer matches the chat and changes nothing", () => {
+  it("refuses a pick that no longer matches the chat and changes nothing", async () => {
     const h = makeHarness();
-    h.orchestrator.rewindTo(2, "a question never asked");
+    await h.orchestrator.rewindTo(2, "a question never asked", "all");
     expect(h.save).not.toHaveBeenCalled();
     expect(h.actions.some((a) => a.type === "input_changed")).toBe(false);
   });
 
-  it("refuses while another origin runs a turn on the chat", () => {
+  it("refuses while another origin runs a turn on the chat", async () => {
     const h = makeHarness({ busy: true });
-    h.orchestrator.rewindTo(0, "first question");
+    await h.orchestrator.rewindTo(0, "first question", "all");
+    await h.orchestrator.openRewindChoice(0, "first question");
     expect(h.save).not.toHaveBeenCalled();
+    expect(h.actions.some((a) => a.type === "rewind_choice_ready")).toBe(false);
   });
 });

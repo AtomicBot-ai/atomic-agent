@@ -231,10 +231,12 @@ function handleSessionPickerSubmit(
 }
 
 /**
- * Enter on the `/rewind` picker (ATO-1057). The orchestrator does the
- * cut, rebuilds the transcript and puts the question back in the
- * composer, or says in the chat why it could not; either way the picker
- * closes here.
+ * Enter on the `/rewind` picker (ATO-1057). On the list it picks the
+ * highlighted question and asks the orchestrator what a rewind there
+ * would touch; the box then offers "Chat and files / Chat only / Files
+ * only" (ATO-2467). Enter on a choice closes the box and hands it to
+ * the orchestrator, which does it or says in the chat why it could not.
+ * Enter while the files are still being checked does nothing.
  */
 function handleRewindPickerSubmit(
   state: TuiState,
@@ -242,11 +244,24 @@ function handleRewindPickerSubmit(
   callbacks: TuiAppCallbacks,
 ): void {
   const picker = state.rewindPicker;
-  const point = picker ? picker.points[picker.cursor] : undefined;
-  dispatch({ type: "rewind_picker_closed" });
-  if (point && callbacks.onRewindRequested) {
-    callbacks.onRewindRequested(point.turnIndex, point.text);
+  if (!picker) return;
+  const choice = picker.choice;
+  if (choice) {
+    if (choice.facts === null) return;
+    const scope = choice.options[choice.cursor];
+    dispatch({ type: "rewind_picker_closed" });
+    if (scope !== undefined) {
+      callbacks.onRewindScopeChosen?.(choice.point.turnIndex, choice.point.text, scope);
+    }
+    return;
   }
+  const point = picker.points[picker.cursor];
+  if (!point || !callbacks.onRewindRequested) {
+    dispatch({ type: "rewind_picker_closed" });
+    return;
+  }
+  dispatch({ type: "rewind_choice_requested", point });
+  callbacks.onRewindRequested(point.turnIndex, point.text);
 }
 
 /**
