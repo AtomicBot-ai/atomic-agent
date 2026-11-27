@@ -81,6 +81,7 @@ function press(input: string, key: Key, state: TuiState) {
     onFallbackRemoveRequested: (providerId) =>
       calls.push(["remove", providerId]),
     onFallbackAppendLocalToggleRequested: () => calls.push(["toggleLocal"]),
+    onFallbackLocalFirstToggleRequested: () => calls.push(["toggleLocalFirst"]),
   };
   const handled = handleLlmPanelKey(input, key, {
     state,
@@ -116,6 +117,21 @@ describe("fallback pane key routing", () => {
   it("toggles appendLocal with l", () => {
     const { calls } = press("l", emptyKey(), fallbackState());
     expect(calls).toEqual([["toggleLocal"]]);
+  });
+
+  it("toggles localFirst with o via the callback, not dispatch (ATO-2434)", () => {
+    const { handled, dispatched, calls } = press("o", emptyKey(), fallbackState());
+    expect(handled).toBe(true);
+    expect(calls).toEqual([["toggleLocalFirst"]]);
+    expect(dispatched).toEqual([]);
+  });
+
+  it("does not toggle localFirst while the add-link picker owns the keyboard", () => {
+    const state = fallbackState({
+      fallbackPanel: { ...fallbackState().fallbackPanel, addPicker: { cursor: 0 } },
+    });
+    const { calls } = press("o", emptyKey(), state);
+    expect(calls).toEqual([]);
   });
 
   it("opens the add-link picker with a (pure UI, dispatched)", () => {

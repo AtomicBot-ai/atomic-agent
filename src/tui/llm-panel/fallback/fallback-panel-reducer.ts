@@ -38,6 +38,7 @@ export function reduceFallbackPanelAction(
           links: action.links,
           addableProviderIds: action.addableProviderIds,
           appendLocal: action.appendLocal,
+          localFirst: action.localFirst,
           addPicker,
         },
       };

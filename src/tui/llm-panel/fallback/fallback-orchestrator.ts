@@ -2,6 +2,7 @@ import { getConfig } from "../../../config/index.js";
 import { resolveLlmConfig } from "../../../llm/provider/registry/index.js";
 import {
   setFallbackChainInConfig,
+  setFallbackLocalFirstInConfig,
   wrapLlmConfigError,
 } from "../../../config/llm-provider-commands.js";
 import type { TuiEventBus } from "../../tui-app.js";
@@ -16,8 +17,9 @@ import { rememberAppendLocalChosen } from "../../../runtime/append-local-questio
 
 /**
  * The only TUI module that writes `llm.fallback.chain` /
- * `llm.fallback.appendLocal`. Mirrors `ProvidersOrchestrator`: the edit
- * methods (`move`/`add`/`remove`/`toggleAppendLocal`) are called through
+ * `llm.fallback.appendLocal` / `llm.fallback.localFirst`. Mirrors
+ * `ProvidersOrchestrator`: the edit methods (`move`/`add`/`remove`/
+ * `toggleAppendLocal`/`toggleLocalFirst`/`setLocalFirst`) are called through
  * the `TuiAppCallbacks.onFallback*` callbacks wired in `tui-command.ts` —
  * NOT via dispatched reducer actions, which never reach this class (the
  * bus→dispatch bridge is one-way; that trap is why the pane's edits were
@@ -55,6 +57,7 @@ export class FallbackOrchestrator {
       links: view.links,
       addableProviderIds: view.addableProviderIds,
       appendLocal: view.appendLocal,
+      localFirst: view.localFirst,
     });
   }
 
@@ -85,6 +88,35 @@ export class FallbackOrchestrator {
     // Turned on by hand in this version: that is the answer to the
     // one-time last-resort question (ATO-1461), so it is never asked.
     if (!view.appendLocal) rememberAppendLocalChosen(getConfig().paths.stateDir);
+  }
+
+  /**
+   * Flip `llm.fallback.localFirst` (ATO-2434, the pane's `o` key) and
+   * persist. Reads the live config, not the pane mirror, so a stale
+   * mirror can never write the same value back.
+   */
+  toggleLocalFirst(): void {
+    const view = buildFallbackChainView(resolveLlmConfig(getConfig()));
+    this.setLocalFirst(!view.localFirst);
+  }
+
+  /**
+   * Set `llm.fallback.localFirst` (`/llm fallback local-first on|off`)
+   * and persist only that field; the chain and `appendLocal` stay as
+   * stored. A refused write lands on the pane's status line, the same
+   * way a refused chain edit does.
+   */
+  setLocalFirst(on: boolean): void {
+    try {
+      setFallbackLocalFirstInConfig(on);
+      this.bus.emit({ type: "fallback_status", line: null });
+      this.refresh();
+    } catch (err) {
+      this.bus.emit({
+        type: "fallback_status",
+        line: wrapLlmConfigError(err),
+      });
+    }
   }
 
   private currentLinks() {

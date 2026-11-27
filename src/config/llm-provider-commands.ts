@@ -474,6 +474,31 @@ export function setFallbackAppendLocalInConfig(
   resetConfigCache();
 }
 
+/**
+ * Persist `llm.fallback.localFirst` alone (ATO-2434: the switch in the
+ * TUI Fallback pane and `/llm fallback local-first on|off`), keeping the
+ * declared chain, `appendLocal` and every timing knob as they are. A file
+ * with no `llm` block gets the same default block the chain edits write
+ * (`readLlmBlockOrDefault`), so the switch never silently does nothing.
+ */
+export function setFallbackLocalFirstInConfig(
+  localFirst: boolean,
+  path: string = getConfig().paths.userConfigFile,
+): void {
+  const file = ensureUserConfigFileSync(path);
+  const llm = readLlmBlockOrDefault(file);
+  const validated = parseLlmFallbackConfig(
+    { ...llm.fallback, localFirst },
+    new Set(llm.providers.map((p) => p.id)),
+    "llm.fallback",
+  );
+  writeUserConfigFileSync(path, {
+    ...file,
+    llm: { ...llm, fallback: validated },
+  });
+  resetConfigCache();
+}
+
 export function wrapLlmConfigError(err: unknown): string {
   if (
     err instanceof LlmAddProviderError ||

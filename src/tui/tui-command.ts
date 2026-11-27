@@ -836,6 +836,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.fallback.remove(providerId),
         onFallbackAppendLocalToggleRequested: () =>
           orchestrator.fallback.toggleAppendLocal(),
+        onFallbackLocalFirstToggleRequested: () =>
+          orchestrator.fallback.toggleLocalFirst(),
+        onFallbackLocalFirstSetRequested: (on) =>
+          orchestrator.fallback.setLocalFirst(on),
         onOnboardingStep: (step, outcome) => {
           runtime.reportOnboardingStep(step, outcome);
         },

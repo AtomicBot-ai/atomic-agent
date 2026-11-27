@@ -571,6 +571,11 @@ export function runSlashCommand(
     dispatch({ type: "vim_mode_set", on });
     callbacks.onVimModePersistRequested?.(on);
   }
+  // `/llm fallback local-first on|off` (ATO-2434): the write is the
+  // Fallback orchestrator's; the pane the actions opened shows the result.
+  if (result.fallbackLocalFirst !== undefined) {
+    callbacks.onFallbackLocalFirstSetRequested?.(result.fallbackLocalFirst);
+  }
 }
 
 /**

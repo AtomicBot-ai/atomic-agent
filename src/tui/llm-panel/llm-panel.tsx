@@ -230,7 +230,7 @@ const MODE_LABELS: Record<LlmPanelMode, string> = {
 function footerHint(mode: LlmPanelMode, useFull: boolean): string {
   if (mode === "fallback") {
     return useFull
-      ? "j/k move · < > reorder · a add link · d remove · l toggle local · ←/→ switch pane · r refresh"
+      ? "j/k move · < > reorder · a add link · d remove · l toggle local · o start on local · ←/→ switch pane · r refresh"
       : "j/k · < > reorder · a add · d remove · l local · ←/→ pane";
   }
   if (mode === "local") {
