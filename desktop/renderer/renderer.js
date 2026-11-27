@@ -15812,6 +15812,8 @@ function obUrlHTML(kind) {
       + esc(chat ? OB.chatUrl : OB.embeddingUrl) + '"' + (OB.busy ? ' disabled' : '') + '>'
       + (OB.busy ? '<span class="tk-spin" aria-hidden="true"></span>' : '') + '</div>'
     + obInlineErrHTML()
+    // ATO-2012: a server with no model is accepted, with this note first (llama-model-warning.js).
+    + (OB.urlWarned && OB.urlWarned.step === OB.step && !OB.error && !OB.busy ? '<div class="ob-warn ob-note is-amber">' + ic('alert') + '<span>' + esc(OB.urlWarned.text + ' ' + LLAMA_WARN_CONTINUE) + '</span></div>' : '')
     + '<div class="ob-explain ob-help">' + esc(chat ? OB_COPY.urlChatPortNote : OB_COPY.urlEmbeddingNote) + '</div>'
     + (OB.busy ? '<div class="ob-explain ob-help">' + esc(OB_COPY.urlProbing) + '</div>' : '');
 }
@@ -17602,10 +17604,15 @@ async function obUrlSubmit() {
   const probe = res && res.probe;
   if (!res || !res.ok || !probe || !probe.reachable) {
     // describeLlamaHealthFailure's own sentence, from main.
+    OB.urlWarned = null;
     obDispatch({type:'onboarding_error_set',
       error: (probe && probe.message) || (res && res.error) || 'that URL did not answer GET /health'});
     return;
   }
+  // ATO-2012: no model in the server: say so on this Enter, go on with the next one on the same address.
+  const warn = llamaModelWarning(probe, res.url || value);
+  if (warn && !llamaWarnAcknowledged(OB.urlWarned, from, value)) { OB.urlWarned = {step: from, url: value, text: warn}; render(); return; }
+  OB.urlWarned = null;
   if (chat) { obDispatch({type:'onboarding_step_set', step:'custom_embedding_url'}); return; }
   obWriteCustomEndpoint(OB.chatUrl, value);
 }
@@ -18056,7 +18063,7 @@ async function openOnboarding(at) {
   const first = at === 'choose' ? 'choose' : 'intro';
   Object.assign(OB, {
     open: true, step: first, offer: null, resumeAfterCloud: null, localModelId: null,
-    outcome: null, skipSecondOffer: false, handOver: false, cursor: 0, embeddingUrl: '', busy: false, error: null,
+    outcome: null, skipSecondOffer: false, handOver: false, cursor: 0, embeddingUrl: '', busy: false, error: null, urlWarned: null,
     hfReference: '', hfRepo: null, importAgents: [], importOptions: [], importReport: null,
     introTyped: false, settling: false, testClose: false, pendingMmproj: null, restarted: false, leftEarly: false,
     localStart: null,
@@ -30257,6 +30264,8 @@ async function llmExternalSave() {
   // llm.providers[local-llama].url together. The two leaf `config set` calls
   // this replaces never re-synced the provider url, so the runtime (which
   // takes the file's llm block verbatim) kept calling the old address.
+  // ATO-2012 / ATO-1760: a server with no model is saved, and the status line says why chats will wait.
+  const noModel = llamaModelWarning(p, res.url);
   const w = await BR.setExternalLlamaUrl(res.url);
   if (!w || w.ok === false) { llmReport(llmFail('local-llm URL write failed', w), 'external'); llmRepaint(); return; }
   await refreshLiveConfig();
@@ -30264,12 +30273,12 @@ async function llmExternalSave() {
   if (llmActiveTextId() !== 'local-llama') {
     if (!(await llmSwitchProvider('local-llama'))) return;
     // ATO-711: plain words in the pane, no `local-llm` / `local-llama` ids.
-    llmReport('Server address saved (' + p.latencyMs + ' ms)', 'external');
+    llmReport('Server address saved (' + p.latencyMs + ' ms)' + (noModel ? '. ' + noModel : ''), 'external');
     LLMP.msg = {text:'Server address saved: ' + res.url + '. Chats now run on your server; the agent was restarted.'};
     llmRefreshStatus();
     return;
   }
-  llmReport('Server address saved (' + p.latencyMs + ' ms)', 'external');
+  llmReport('Server address saved (' + p.latencyMs + ' ms)' + (noModel ? '. ' + noModel : ''), 'external');
   // The TUI rebuilds the registered provider in-process (runtime.reloadLlmProvider); the serve process needs the restart.
   llmRestartMsg('Server address saved: ' + res.url);
   llmRefreshStatus();
