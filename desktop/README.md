@@ -1003,6 +1003,17 @@ Honestly degraded, and labelled as such in the UI:
   refuses a provider key, or the agent is older than these commands, the
   key stays in config.json as before. With the default `.env` store none of
   this runs.
+- **Where a key comes from** (ATO-2530). A provider row with "Key saved"
+  adds "from 1Password", "from Bitwarden", "from Vault", "from your
+  command" for a key saved as a reference (`op://`, `bw://`, `vault://`,
+  `cmd://`), or "in Keychain" / "in Credential Manager" / "in the system
+  keyring" for one the agent keeps in the OS keychain. Main reads only the
+  scheme from `.env` and the keychain NAMES from `secrets-store.json`
+  ([secret-source-labels.ts](main/secret-source-labels.ts), `sources` on
+  `app:dotenvKeys`); the renderer words are in
+  [secret-source.js](renderer/secret-source.js). A plain `.env` key gets no
+  label. A command that uses a tool secret asks as `shell_secret`
+  ("command · uses a secret"), shown in the full card like `shell_dangerous`.
 - **Import** is the TUI's Hermes/OpenClaw form over `atag import <source>
   … --dry-run` (preview) and `… --yes` (apply) — always exactly one of the
   two, never a bare run (which exits 0 on a non-TTY having written nothing).

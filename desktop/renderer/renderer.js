@@ -338,7 +338,7 @@ const LIVE_ELSEWHERE_LINE = 'Still answering your last message. The reply will a
    pending card's Details. */
 const CATEGORY_PLAIN = {
   fs_write_workspace:'edit files in this folder', fs_write_home:'edit files in your home folder',
-  fs_trash:'move files to the Trash', http:'make a web request', shell:'run a terminal command', shell_dangerous:'run a dangerous command',
+  fs_trash:'move files to the Trash', http:'make a web request', shell:'run a terminal command', shell_dangerous:'run a dangerous command', shell_secret:'run a command that uses a saved secret',
   script:'run a skill\u2019s script', proc_kill:'stop a running program', browser_nonweb:'open a non-web link',
   trust_config:'change the agent\u2019s trust settings', fusion_fanout:'split the work across helper models',
   other:'take this step', publish:'publish to GitHub', git_remote:'sync with a git remote', email:'send an email',
@@ -4294,7 +4294,7 @@ function apprHomePaths(t) {
 function apprCode(s) { return '<code>' + esc(clipWords(s, 90)) + '</code>'; }
 const APPR_FALLBACK = {
   fs_write_workspace:'change a file in this folder', fs_write_home:'change a file outside this folder',
-  fs_trash:'move files to the Trash', http:'send a web request', shell:'run a command', shell_dangerous:'run a dangerous command',
+  fs_trash:'move files to the Trash', http:'send a web request', shell:'run a command', shell_dangerous:'run a dangerous command', shell_secret:'run a command with a saved secret',
   script:'run a skill script', proc_kill:'stop a process', browser_nonweb:'open a non-web address',
   trust_config:'change its own settings', fusion_fanout:'hand work to its workers', publish:'publish to GitHub',
   git_remote:'talk to a git remote', email:'send an e-mail', fs_read_outside:'read outside this folder',
@@ -12734,7 +12734,7 @@ function summariseArgs(args) {
 
 const CATEGORY_LABEL = {
   fs_write_workspace:'file write · workspace', fs_write_home:'file write · home',
-  fs_trash:'move to Trash', http:'HTTP request', shell:'shell command', shell_dangerous:'dangerous shell command',
+  fs_trash:'move to Trash', http:'HTTP request', shell:'shell command', shell_dangerous:'dangerous shell command', shell_secret:'command · uses a secret',
   script:'skill script', proc_kill:'process kill', browser_nonweb:'browser · non-web URL',
   trust_config:'agent trust config', fusion_fanout:'fusion · fan-out', other:'uncategorised',
   // agent 0.6.0 / 0.6.3 (approval-level.ts APPROVAL_CATEGORY_LABELS, verbatim)
@@ -27896,7 +27896,9 @@ function llmRefreshKeyNames() {
     if (!r || !r.ok || !Array.isArray(r.keys)) return;
     const was = (LLMP.dotenvKeys || []).join('\n');
     LLMP.dotenvKeys = r.keys;
-    if (r.keys.join('\n') !== was) llmRepaint();
+    const srcWas = JSON.stringify(LLMP.dotenvSources || {});
+    LLMP.dotenvSources = r.sources || {};   // ATO-2530: "from 1Password" (secret-source.js)
+    if (r.keys.join('\n') !== was || JSON.stringify(LLMP.dotenvSources) !== srcWas) llmRepaint();
   }).catch(() => {});
 }
 async function llmRefresh() {
@@ -27945,6 +27947,7 @@ async function llmRefreshRun() {
   LLMP.health = health && health.ok && health.data && health.data.llama ? health.data.llama : null;
   LLMP.envKeys = Array.isArray(env) ? env : [];
   LLMP.dotenvKeys = dotenv && dotenv.ok ? dotenv.keys : [];
+  LLMP.dotenvSources = dotenv && dotenv.ok && dotenv.sources ? dotenv.sources : {};
   llmClampCursors();
   llmRepaint();
   llmEnsureModels();
@@ -28943,6 +28946,8 @@ function llmRowHTML(row, index, cursor) {
     const t = '<span class="llm-name">' + esc(name) + '</span>'
       + (name !== p.id ? ' <span class="llm-id mono">' + esc(p.id) + '</span>' : '')
       + ' ' + chip(tone, esc(AUTH[auth] || auth))
+      // ATO-2530: where the saved key comes from (1Password, Bitwarden, Vault, the keychain).
+      + (auth === 'key ok' && typeof secretSourceChip === 'function' ? secretSourceChip(llmKeyEnvNames(p), LLMP.dotenvSources, PLATFORM, chip, esc) : '')
       // Saved without a key check (the wizard's Save unchecked) — the same flag the composer's provider list shows.
       + (UNVERIFIED.indexOf(p.id) >= 0 ? ' ' + chip('amber', 'Unverified') : '');
     return open + radio + llmProviderMark(p, 'sm') + '<span class="body"><span class="t">' + t + '</span>'
