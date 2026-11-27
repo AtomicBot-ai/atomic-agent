@@ -1078,6 +1078,26 @@ Honestly degraded, and labelled as such in the UI:
   language downloaded yet) and off macOS nothing changes. The engine sits
   behind a small `TranscribeEngine` interface so a Windows whisper.cpp engine
   (ATO-1076) can plug in without touching the IPC or the renderer.
+- **Record a meeting (ATO-2333).** `+` → `Record meeting` or File →
+  `Record a Meeting…` opens the microphone (audio only, through the same
+  permission gate as voice input: `voicePermissionVerdict` reads
+  `meeting.armed`). A red `Recording` pill with a clock and `Stop` stays at
+  the top of the window while anything is heard; the panel under it shows the
+  transcript as it comes. The renderer sends 100 ms frames
+  (`voice-worklet.js`) on `meeting:audio`; main (`main/meeting-recorder.ts`)
+  appends each to `<userData>/meetings/<id>/chunk-NNNN.pcm` at once, closes a
+  chunk at the first half-second pause after 20 s (at 40 s at the latest,
+  `meeting-plan.ts`), seals it into a WAV and runs it through the same
+  `TranscribeEngine` as the composer's Transcribe, one chunk at a time; the
+  chunk's WAV is deleted as soon as its text is kept. `Make notes` saves
+  `Meeting <date> transcript.txt` (speaker turns guessed from pauses,
+  `meeting-transcript.ts`) into `Documents/Atomic Agent/Meetings`, adds that
+  folder to My files, deletes the meeting's audio, and opens a new chat that
+  sends the transcript to the `meeting-notes` skill (summary, decisions,
+  action items with owners, and a question before anything is scheduled).
+  `Delete recording` removes the folder. A recording a crash or a closed
+  window cut short is offered again at the next start. Not yet: system audio
+  (ScreenCaptureKit) and real speaker recognition.
 - **Voice input: what is and is not possible.** `SpeechAnalyzer` is macOS
   26+, so on anything older the button is disabled and says
   `Voice input needs macOS 26 or later`; the app itself runs from

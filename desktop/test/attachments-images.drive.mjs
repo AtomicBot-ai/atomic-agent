@@ -128,7 +128,8 @@ try {
   await app.clickSel('#composer .attbtn');
   await app.waitFor(`!document.getElementById('attmenu').hidden`, 'the + menu');
   // W2: "+" holds attachments only (Run overnight moved to the mode chip).
-  check('picker: + opens the Images / Files / Window menu', (await ev(`[...document.querySelectorAll('#attmenu .attmenurow')].map((b) => b.textContent.trim()).join(',')`)) === 'Images,Files,Window');
+  // ATO-2333: "Record meeting" follows Window where the speech engine exists.
+  check('picker: + opens the Images / Files / Window menu', /^Images,Files,Window(,Record meeting)?$/.test(await ev(`[...document.querySelectorAll('#attmenu .attmenurow')].map((b) => b.textContent.trim()).join(',')`)));
   await app.clickSel('#attmenu [data-att-pick="images"]');
   await app.waitFor(`document.querySelectorAll('#attstrip .attchip').length === 1 && ${settled}`, 'the image chip', { timeout: 15000 });
   await app.clickSel('#composer .attbtn');

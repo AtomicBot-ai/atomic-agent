@@ -1,0 +1,42 @@
+/* ============================================================
+   ATO-2333: Record a meeting (renderer/meeting-panel.js).
+   The red Recording pill sits over everything at the top of the window
+   for as long as the microphone is open; the transcript panel hangs under
+   it on the right. Drawn into #mtg-root, outside what render() redraws.
+   Colours come from tokens only; the red is the critical token.
+   ============================================================ */
+
+#mtg-root{position:fixed;top:0;left:0;width:0;height:0;z-index:2147483000}
+
+.mtgpill{position:fixed;top:10px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:8px;
+  height:32px;padding:0 6px 0 12px;border-radius:999px;background:var(--lift);box-shadow:var(--sh-pop);
+  border:1px solid var(--critical);font:500 var(--fs-cap)/1 var(--font-ui);color:var(--ink);-webkit-app-region:no-drag}
+.mtgdot{width:10px;height:10px;border-radius:50%;background:var(--critical);animation:mtgpulse 1.6s ease-in-out infinite}
+@keyframes mtgpulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.mtgdot{animation:none}}
+.mtgrec{color:var(--critical);font-weight:600}
+.mtgclock{font-variant-numeric:tabular-nums;color:var(--ink-2);min-width:38px}
+.mtgpillbtn{height:24px;padding:0 10px;border-radius:999px;background:transparent;color:var(--ink-2);font:inherit}
+.mtgpillbtn:hover{background:var(--hover);color:var(--ink)}
+.mtgstop{background:var(--critical);color:var(--paper)}
+.mtgstop:hover{background:var(--critical);color:var(--paper);opacity:.9}
+.mtgstop[disabled]{opacity:.5}
+
+.mtgpanel{position:fixed;top:52px;right:16px;width:360px;max-width:calc(100vw - 32px);max-height:calc(100vh - 80px);
+  display:flex;flex-direction:column;overflow:hidden;background:var(--lift);border-radius:var(--r-sheet);
+  box-shadow:var(--sh-pop);border:1px solid var(--bd);font:400 var(--fs-cap)/1.45 var(--font-ui);color:var(--ink);-webkit-app-region:no-drag}
+.mtghead{flex:none;display:flex;align-items:center;justify-content:space-between;padding:10px 10px 8px 14px;
+  border-bottom:1px solid var(--bd);font-weight:600}
+.mtgx{width:26px;height:26px;display:grid;place-items:center;border-radius:50%;background:transparent;color:var(--ink-2)}
+.mtgx:hover{background:var(--hover);color:var(--ink)}
+.mtgx svg{width:14px;height:14px}
+.mtgbody{flex:1;min-height:80px;overflow-y:auto;padding:10px 14px}
+.mtgline{margin:0 0 6px}
+.mtgat{display:inline-block;min-width:44px;margin-right:6px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.mtgempty{margin:0;color:var(--ink-2)}
+.mtgwarn{margin:0;padding:6px 14px;color:var(--critical)}
+.mtgnote{margin:0;padding:6px 14px;color:var(--ink-3);border-top:1px solid var(--bd)}
+.mtgfoot{flex:none;display:flex;flex-wrap:wrap;gap:8px;padding:10px 14px 12px}
+.mtgbusy{color:var(--ink-2)}
+.mtgrecover{top:16px;padding-top:12px}
+.mtgrecover p{margin:0;padding:0 14px}
