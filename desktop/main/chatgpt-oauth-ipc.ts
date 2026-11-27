@@ -8,6 +8,10 @@
  *   chatgptOauth:signOut → { ok, state: "signed_out" | "failed", hadSignIn?, reason?, detail? }
  *     (ATO-2511, chatgpt-oauth-signout.ts; `detail` is shown only behind "Details")
  *
+ * ATO-2512: on an agent on another computer, start and signOut answer
+ * `reason: "remote"` and status `remote: true`, and nothing is run here
+ * (chatgpt-oauth-remote.ts says why).
+ *
  * Nothing else crosses to the window: not the sign-in link, not the agent's
  * output, not a token. The sign-in is stopped when the window that started
  * it goes away and when the app quits.
@@ -19,10 +23,16 @@ import { app, ipcMain, shell } from "electron";
 import { resolveBinary } from "./agent-client.js";
 import { atagRun } from "./agent-cli.js";
 import { createChatgptOauth, type OauthChild } from "./chatgpt-oauth-login.js";
+import { remoteRefusal, remoteStatus, unlessRemote } from "./chatgpt-oauth-remote.js";
 import { chatgptSignOut } from "./chatgpt-oauth-signout.js";
 import { agentEnv } from "./state-dir.js";
 
-export function wireChatgptOauthIpc(): void {
+export interface ChatgptOauthIpcDeps {
+  /** The app drives an agent on another computer (AgentClient.isRemote). */
+  isRemote?: () => boolean;
+}
+
+export function wireChatgptOauthIpc(deps: ChatgptOauthIpcDeps = {}): void {
   const oauth = createChatgptOauth({
     binary: resolveBinary,
     // An argv array, no shell; stdout is read for the link and never logged.
@@ -36,15 +46,17 @@ export function wireChatgptOauthIpc(): void {
   app.on("before-quit", () => { oauth.cancel(); });
 
   ipcMain.handle("chatgptOauth:start", (event) => {
+    if (deps.isRemote?.() === true) return remoteRefusal();
     // The window that asked is gone (closed, reloaded): the sign-in stops with it.
     const onGone = (): void => { oauth.cancel(); };
     event.sender.once("destroyed", onGone);
     return oauth.start().finally(() => { event.sender.off("destroyed", onGone); });
   });
   ipcMain.handle("chatgptOauth:cancel", () => ({ ok: true, state: oauth.cancel() ? "cancelled" : "idle" }));
-  ipcMain.handle("chatgptOauth:status", () => oauth.status());
+  ipcMain.handle("chatgptOauth:status", () => unlessRemote(deps.isRemote, remoteStatus, () => oauth.status()));
   // ATO-2511: a sign-in still waiting on the browser is stopped first, so it cannot write tokens back after the sign-out.
   ipcMain.handle("chatgptOauth:signOut", () => {
+    if (deps.isRemote?.() === true) return remoteRefusal();
     oauth.cancel();
     return chatgptSignOut({ run: (args, timeoutMs) => atagRun(args, timeoutMs) });
   });
