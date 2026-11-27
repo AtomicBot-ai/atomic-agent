@@ -90,6 +90,8 @@ export function createRewindHandler(preview: boolean): HttpHandler {
         notRestorable,
         incomplete: files.incomplete,
         uncovered: uncoveredToolCalls(removed),
+        // This agent takes `conversation: false` (ATO-2112); an older one would cut the chat.
+        filesOnly: true,
       });
       return;
     }
