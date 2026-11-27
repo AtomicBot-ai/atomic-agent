@@ -1,7 +1,8 @@
 // ATO-2005 (GitHub #828): only the loop guard's canned stop collapses into the
 // yellow warning row. A real answer the model writes after the stop (ATO-2004
 // gives it that last step) is a normal message, with a dim "Stopped by the
-// loop guard" line over it when it still opens with the guard's parenthesis.
+// loop guard" line over it when the turn's `loop_stopped` frame marked it or
+// it still opens with the guard's parenthesis (an older agent).
 // The templates below are the ones src/agent/progress/loop-notices.ts
 // formatForcedLoopReply produces. No deps, no build.
 // Run: npm run test:unit
@@ -56,6 +57,36 @@ test("a real answer after the stop is a message, with the dim note over it", () 
   const direct = asst("(stopped: `os.web.fetch` hit the limit on different arguments within recent tool calls \u2014 12, counting the last call, which was not run). " + ANSWER);
   assert.equal(R.stoppedSentence(direct), "");
   assert.equal(R.stoppedReplyBody(direct), ANSWER);
+});
+
+test("the loop_stopped frame drives the note for the model's own summary (ATO-2004 replies open with the answer)", () => {
+  // Since ATO-2004 the summary step's reply is the model's text, with no "(stopped: ..." opening.
+  const unmarked = asst(ANSWER);
+  assert.equal(R.stoppedNoteHTML(unmarked, esc), "", "no frame, no note");
+  const m = asst(ANSWER);
+  assert.equal(R.markLoopStopped(m, { tool: "os.web.fetch", detector: "wandering" }), true);
+  assert.equal(m.loopStopped, true);
+  const note = R.stoppedNoteHTML(m, esc);
+  assert.match(note, />Stopped by the loop guard</);
+  assert.ok(note.includes("os.web.fetch"), "the tooltip names what the guard stopped");
+  assert.equal(R.stoppedReplyBody(m), ANSWER, "the answer is drawn unchanged");
+  assert.equal(R.stoppedSentence(m), "", "a marked answer is still a message, not the warning row");
+  // A marked reply that is only the canned fallback stays the warning row, without a second note.
+  const fallback = asst(WANDERING);
+  R.markLoopStopped(fallback, {});
+  assert.notEqual(R.stoppedSentence(fallback), "");
+  assert.equal(R.stoppedNoteHTML(fallback, esc), "");
+  // An empty or placeholder reply gets no note; only an assistant row is marked.
+  assert.equal(R.stoppedNoteHTML(asst("", { loopStopped: true }), esc), "");
+  assert.equal(R.stoppedNoteHTML(asst(ANSWER, { loopStopped: true, placeholder: true }), esc), "");
+  assert.equal(R.markLoopStopped({ k: "user", text: "hi" }, {}), false);
+  assert.equal(R.markLoopStopped(undefined, {}), false);
+});
+
+test("renderer.js marks the streaming reply on the loop_stopped frame", () => {
+  const renderer = src("../renderer/renderer.js");
+  assert.match(renderer, /if \(ev\.kind === 'loop_stopped'\) \{ if \(markLoopStopped\(item, ev\.payload\)\) render\(\); return; \}/);
+  assert.match(renderer, /const LIVE_DRAWS = new Set\(\[[^\]]*'loop_stopped'/, "kept for a chat the person left mid-turn");
 });
 
 test("placeholders and other rows are never a stop", () => {
