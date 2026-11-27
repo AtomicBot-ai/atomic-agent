@@ -18,6 +18,7 @@ import {
   type PartitionState,
 } from "./partition-state.js";
 import { shouldAdvance } from "./should-advance.js";
+import { armTurnHeadCooldown, turnHeadResting } from "./turn-head-cooldown.js";
 
 /** Emitted once per state transition; wired to an `AgentLoopEvent` by bootstrap. */
 export interface ProviderSwitchNotice {
@@ -167,6 +168,8 @@ export class ProviderFallbackChain {
       decision.immediate,
       timing,
     );
+    // The turn's head failed: it rests before heading a turn again (ATO-2435).
+    if (fromId === p.turnPrimaryId) armTurnHeadCooldown(p.headCooldowns, fromId, this.now());
 
     const idx = chain.indexOf(fromId);
     // Next healthy link after `fromId`. When `fromId` is not in the chain
@@ -202,6 +205,7 @@ export class ProviderFallbackChain {
     b.cooldownUntil = 0;
     b.cooldownStep = 0;
     b.lastFailureAt = 0;
+    p.headCooldowns.delete(id);
     if (id === p.overrideId) {
       p.overrideServed = true;
       p.fallbackServed = true;
@@ -266,6 +270,16 @@ export class ProviderFallbackChain {
     if (p.turnPrimaryId === providerId) return;
     p.turnPrimaryId = providerId;
     clearOverride(p);
+  }
+
+  /**
+   * Whether `providerId` failed as `partitionKey`'s turn head recently and
+   * still rests (`turn-head-cooldown.ts`, ATO-2435): the local-first
+   * cascade does not put it first then.
+   */
+  turnHeadCoolingDown(partitionKey: string, providerId: string): boolean {
+    const p = this.partitions.get(partitionKey);
+    return p !== undefined && turnHeadResting(p.headCooldowns, providerId, this.now());
   }
 
   /** Whether a fallback has served `partitionKey` since it left the primary. */

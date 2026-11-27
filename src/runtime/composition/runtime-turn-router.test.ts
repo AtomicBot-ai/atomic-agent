@@ -145,6 +145,16 @@ describe("routeTurnProvider local-first cascade (ATO-2208)", () => {
     ).toBe("local-llama");
   });
 
+  it("keeps the turn in the cloud while the local model rests after a failure (ATO-2435)", () => {
+    const { providerId, info } = run(localFirstConfig({ localFirst: true }), {
+      ...available,
+      isCoolingDown: (id) => id === "local-llama",
+    });
+    expect(providerId).toBeUndefined();
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(String(info.mock.calls[0]?.[0])).toContain("rests");
+  });
+
   it("a matching router rule wins over the local-first head", () => {
     const config = localFirstConfig({ localFirst: true }, { enabled: true, rules: [{ provider: "groq" }] });
     expect(run(config, available).providerId).toBe("groq");

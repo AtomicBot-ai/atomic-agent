@@ -274,6 +274,19 @@ describe("runtime turn ownership recipes", () => {
     expect(route.mock.calls.at(-1)?.[0].sessionPromptTokens).toBeNull();
   });
 
+  it("asks the session's chain whether a turn head rests (ATO-2435)", async () => {
+    const route = vi.mocked(routeTurnProvider);
+    route.mockClear();
+    const turnHeadCoolingDown = vi.fn((sessionId: string, id: string) => sessionId === "s-cool" && id === "local");
+    fixture.deps.inference.fallbackChain = { ...fixture.deps.inference.fallbackChain, turnHeadCoolingDown };
+    const service = createRuntimeTurnService(fixture.config, fixture.deps);
+    await service.executeTurn(session("s-cool"), "request");
+    const isCoolingDown = route.mock.calls.at(-1)?.[0].isCoolingDown;
+    expect(isCoolingDown?.("local")).toBe(true);
+    expect(isCoolingDown?.("other")).toBe(false);
+    expect(turnHeadCoolingDown).toHaveBeenCalledWith("s-cool", "local");
+  });
+
   it("unknown pins reject before enqueue and before recorder/all other turn work", async () => {
     const enqueue = vi.spyOn(fixture.turnController, "enqueue");
     await expect(fixture.service.runTurn(session(), "request", { providerId: "unknown" }))

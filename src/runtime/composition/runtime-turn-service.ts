@@ -106,7 +106,8 @@ export interface RuntimeTurnDependencies {
     resolveCurrentRunMode: RuntimeProviders["resolveCurrentRunMode"];
     resolveRouteVision: RuntimeProviders["resolveRouteVision"];
     resolveActiveModelName: RuntimeProviders["resolveActiveModelName"];
-    fallbackChain: Pick<ProviderFallbackChain, "standingOverrideFor" | "setTurnPrimary">;
+    fallbackChain: Pick<ProviderFallbackChain, "standingOverrideFor" | "setTurnPrimary">
+      & Partial<Pick<ProviderFallbackChain, "turnHeadCoolingDown">>;
     /**
      * The window a local link builds its prompt against, for the
      * local-first size check (ATO-2537). Omitted (tests, embedders): the
@@ -577,6 +578,7 @@ export function createRuntimeTurnService(
       ...(deps.inference.resolveLocalContextWindow !== undefined
         ? { localContextWindow: deps.inference.resolveLocalContextWindow }
         : {}),
+      isCoolingDown: (id) => fallbackChain.turnHeadCoolingDown?.(session.id, id) ?? false,
     });
     if (runOptions.providerId === undefined) {
       fallbackChain.setTurnPrimary(session.id, routedProviderId ?? null);

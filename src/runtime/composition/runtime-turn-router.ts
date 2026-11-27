@@ -29,6 +29,11 @@ export interface RouteTurnProviderParams {
   sessionPromptTokens?: number | null;
   /** The window a local link builds its prompt against. Absent: unknown. */
   localContextWindow?: (providerId: string) => number | null;
+  /**
+   * Whether a link failed as this session's turn head recently and still
+   * rests (ATO-2435). Absent: never.
+   */
+  isCoolingDown?: (providerId: string) => boolean;
 }
 
 /**
@@ -101,6 +106,7 @@ function localFirstProvider(params: RouteTurnProviderParams): string | undefined
     ...(params.localContextWindow !== undefined
       ? { localContextWindow: params.localContextWindow }
       : {}),
+    ...(params.isCoolingDown !== undefined ? { isCoolingDown: params.isCoolingDown } : {}),
     ...(params.config.agent?.compaction?.triggerRatio !== undefined
       ? { fitRatio: params.config.agent.compaction.triggerRatio }
       : {}),
@@ -111,6 +117,11 @@ function localFirstProvider(params: RouteTurnProviderParams): string | undefined
       params.logger.info("local-first cascade: session too long for the local window, turn stays in the cloud", {
         sessionId: params.sessionId,
         promptTokens: params.sessionPromptTokens ?? null,
+      });
+    }
+    if (decision.reason === "cooling-down") {
+      params.logger.info("local-first cascade: local model failed recently and rests, turn stays in the cloud", {
+        sessionId: params.sessionId,
       });
     }
     return undefined;
