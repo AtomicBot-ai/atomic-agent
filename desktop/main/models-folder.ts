@@ -105,12 +105,12 @@ export function parseModelsMoveBytes(line: string): ModelsMoveBytes | null {
  * bytes twice a second, so ten quiet minutes is no slow disk.
  */
 export const MOVE_QUIET_LIMIT_MS = 10 * 60_000;
-/** After SIGTERM (the agent then puts every model back), how long before SIGKILL. */
+/** After the stop (the agent then puts every model back), how long before the agent is killed. */
 export const MOVE_KILL_GRACE_MS = 30_000;
 
 export const MOVE_HUNG_WORDS =
   "The move stopped answering for 10 minutes, so it was stopped. Your models are still in the old folder. " +
-  "If the new folder has a partly copied model in it, delete that before you try again.";
+  "Models already copied may be left in the new folder: delete them there before you try again.";
 
 /** `models folder: <path>`, the last line of a move that worked. */
 export function movedToFromStdout(stdout: string): string | null {

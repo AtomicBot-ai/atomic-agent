@@ -165,3 +165,20 @@ test("Cancel asks main once and shows Stopping", async () => {
     delete globalThis.BR;
   }
 });
+
+test("Cancel the agent did not take gives the button back (ATO-2503)", async () => {
+  globalThis.BR = { modelsFolderInfo: async () => ({ ok: true }), modelsFolderCancel: async () => ({ ok: false, error: "No move is under way." }) };
+  try {
+    R.MDIR.phase = "moving";
+    R.MDIR.cancelling = false;
+    await R.mdirCancel();
+    assert.equal(R.MDIR.cancelling, false);
+    R.MDIR.info = { dir: "/x", custom: false };
+    const html = R.mdirCardHTML(R.MDIR, h);
+    assert.match(html, /data-mdir="cancel">Cancel</);
+  } finally {
+    R.MDIR.phase = "idle";
+    R.MDIR.cancelling = false;
+    delete globalThis.BR;
+  }
+});

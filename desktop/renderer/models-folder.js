@@ -120,7 +120,9 @@ async function mdirCancel() {
   const br = mdirBridge();
   if (!br || !br.modelsFolderCancel || MDIR.phase !== 'moving' || MDIR.cancelling) return;
   MDIR.cancelling = true; mdirRepaint();
-  await br.modelsFolderCancel().catch(() => null);
+  const res = await br.modelsFolderCancel().catch(() => null);
+  // Not taken (the move just ended, or the app did not hear it): give the button back.
+  if (!res || !res.ok) { MDIR.cancelling = false; mdirRepaint(); }
 }
 
 async function mdirChange() {
