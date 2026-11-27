@@ -9,31 +9,33 @@ const page = (body: string, type = "text/html; charset=utf-8", status = 200): ty
 
 afterEach(() => resetOfflineNetworkForTests());
 
+/** Every host checks out as public, so no test here asks real DNS. */
+const opts = { vetHost: async () => ["93.184.216.34"] };
+
 describe("createFetchUrl", () => {
   it("returns an HTML page as its words", async () => {
-    const got = await createFetchUrl(page("<html><head><style>x{}</style></head><body><h1>Hi &amp; bye</h1><script>evil()</script><p>Two</p></body></html>"))("https://example.com/");
+    const got = await createFetchUrl(page("<html><head><style>x{}</style></head><body><h1>Hi &amp; bye</h1><script>evil()</script><p>Two</p></body></html>"), opts)("https://example.com/");
     expect(got).toEqual({ text: "Hi & bye\nTwo", cut: false });
   });
 
   it("refuses an error status, a binary answer and a non-http link with a plain reason", async () => {
-    await expect(createFetchUrl(page("nope", "text/plain", 404))("https://x.example/")).rejects.toThrow("page not found");
-    await expect(createFetchUrl(page("PNG", "image/png"))("https://x.example/a.png")).rejects.toThrow(/not a text page/);
-    await expect(createFetchUrl(page("x"))("file:///etc/hosts")).rejects.toBeInstanceOf(UrlSkip);
+    await expect(createFetchUrl(page("nope", "text/plain", 404), opts)("https://x.example/")).rejects.toThrow("page not found");
+    await expect(createFetchUrl(page("PNG", "image/png"), opts)("https://x.example/a.png")).rejects.toThrow(/not a text page/);
+    await expect(createFetchUrl(page("x"), opts)("file:///etc/hosts")).rejects.toBeInstanceOf(UrlSkip);
   });
 
-  it("refuses a public link that lands on a local address", async () => {
-    const landed = (async () => ({
-      ok: true, status: 200, url: "http://169.254.169.254/latest/",
-      headers: new Headers({ "content-type": "text/plain" }), body: new Response("inside").body,
-    })) as unknown as typeof fetch;
-    await expect(createFetchUrl(landed)("https://public.example/go")).rejects.toThrow("redirected to a local address");
+  it("asks for each redirect by hand instead of letting fetch follow it (ATO-2797)", async () => {
+    let seen: RequestInit | undefined;
+    const spy = (async (_url: string, init: RequestInit) => { seen = init; return new Response("ok", { headers: { "content-type": "text/plain" } }); }) as unknown as typeof fetch;
+    await createFetchUrl(spy, opts)("https://public.example/go");
+    expect(seen?.redirect).toBe("manual");
   });
 
   it("says offline mode is on instead of asking the network", async () => {
     setOfflineNetwork(true);
     let called = false;
     const spy = (async () => { called = true; return new Response("x"); }) as typeof fetch;
-    await expect(createFetchUrl(spy)("https://example.com/")).rejects.toThrow("offline mode is on");
+    await expect(createFetchUrl(spy, opts)("https://example.com/")).rejects.toThrow("offline mode is on");
     expect(called).toBe(false);
   });
 });
