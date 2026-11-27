@@ -181,3 +181,36 @@ test('the page loads changed-files.js before renderer.js, and the renderer draws
   assert.match(r, /body = resultsPaneHTML\(S\.log, \{esc, ic\}\)/);
   assert.match(r, /concat\(changedFilesPaths\(m\.changed\)\)/);
 });
+
+// ATO-2753: two files of the same name from different folders look the same without their folder.
+test('same-named files show the folder that tells them apart; a unique name shows none', () => {
+  const dirs = C.changedFilesDirs(['/w/app/src/index.ts', '/w/app/test/index.ts', '/w/app/README.md']);
+  assert.equal(dirs.get('/w/app/src/index.ts'), 'src');
+  assert.equal(dirs.get('/w/app/test/index.ts'), 'test');
+  assert.equal(dirs.has('/w/app/README.md'), false);
+  // The same parent folder name: more of the path, until it differs.
+  const deep = C.changedFilesDirs(['/w/a/src/index.ts', '/w/b/src/index.ts']);
+  assert.equal(deep.get('/w/a/src/index.ts'), 'a/src');
+  assert.equal(deep.get('/w/b/src/index.ts'), 'b/src');
+  // A Windows path keeps its own separator.
+  const win = C.changedFilesDirs(['C:\\w\\a\\src\\x.ts', 'C:\\w\\b\\src\\x.ts']);
+  assert.equal(win.get('C:\\w\\a\\src\\x.ts'), 'a\\src');
+  assert.equal(C.changedFilesDirs([]).size, 0);
+  assert.equal(C.changedFilesDirs(undefined).size, 0);
+});
+
+test('the card and the Results tab draw the folder, dimmed, after a same-named file', () => {
+  const list = [
+    {path: '/w/app/src/index.ts', added: 2, removed: 0, edits: 1},
+    {path: '/w/app/test/index.ts', added: 1, removed: 1, edits: 1},
+    {path: '/w/app/notes.md', added: 1, removed: 0, edits: 1},
+  ];
+  const html = C.changedFilesCardHTML(list, deps);
+  assert.match(html, /<span class="cf-name">index\.ts<\/span><span class="cf-dir">src<\/span>/);
+  assert.match(html, /<span class="cf-name">index\.ts<\/span><span class="cf-dir">test<\/span>/);
+  assert.match(html, /<span class="cf-name">notes\.md<\/span><span class="cf-counts/);
+  const pane = C.resultsPaneHTML([{k: 'assistant', changed: list}], deps);
+  assert.match(pane, /<span class="cf-dir">test<\/span>/);
+  const css = readFileSync(new URL('../renderer/css/chat.css', import.meta.url), 'utf8');
+  assert.match(css, /\.cf-row \.cf-dir\{[^}]*color:var\(--ink-3\)/);
+});

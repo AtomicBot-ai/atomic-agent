@@ -522,6 +522,9 @@
 .cf-list{display:flex;flex-direction:column;gap:4px;min-width:0}
 .cf-row{display:flex;align-items:center;gap:6px;max-width:100%;min-width:0;text-align:left}
 .cf-row .cf-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* ATO-2753: two files of the same name show their folder, dimmed, right after the name (VS Code's tabs). */
+.cf-row .cf-name:has(+ .cf-dir){flex:0 1 auto}
+.cf-row .cf-dir{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-3);font-size:var(--fs-label)}
 .cf-counts{flex:none;font-size:var(--fs-label)}
 .cf-add{color:var(--success)}
 .cf-del{color:var(--critical)}

@@ -407,7 +407,7 @@ function fpTableHtml(text, delim) {
   const th = (i) => {
     const on = sort && sort.col === i;
     const aria = on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
-    return '<th class="fp-sortable' + (on ? ' on' : '') + '" data-fp="sort" data-fp-col="' + i + '" aria-sort="' + aria + '" title="Sort by this column">'
+    return '<th class="fp-sortable' + (on ? ' on' : '') + '" data-fp="sort" data-fp-col="' + i + '" aria-sort="' + aria + '" tabindex="0" title="Sort by this column">'
       + fpEsc(head[i] == null ? '' : head[i]) + (on ? '<span class="fp-sort-ic" aria-hidden="true">' + (sort.dir === 'asc' ? '▲' : '▼') + '</span>' : '') + '</th>';
   };
   return (cut ? '<div class="fp-note">Showing the first ' + FP_TABLE_ROWS + ' rows' + (sort ? ', sorted among themselves' : '') + '.</div>' : '')
@@ -502,8 +502,12 @@ if (typeof document !== 'undefined') {
       else if (what === 'reveal') fpReveal();
       else if (what === 'view') { FP.view = FP.view === 'source' ? 'render' : 'source'; fpPaintHead(); fpPaintBody(fpBodyHtml(FP.data)); }
       else if (what === 'sort' && typeof tsNextSort === 'function') {   // ATO-2347
-        FP.sort = tsNextSort(FP.sort, parseInt(b.dataset.fpCol || '', 10));
+        const col = parseInt(b.dataset.fpCol || '', 10);
+        FP.sort = tsNextSort(FP.sort, col);
         fpPaintBody(fpBodyHtml(FP.data));
+        // ATO-2753: the header sorted by keeps the focus after the table is drawn again (Enter again reverses).
+        const th = fpEl() && fpEl().querySelector('th[data-fp="sort"][data-fp-col="' + col + '"]');
+        if (th) th.focus();
       }
       else if (typeof fpEditClick === 'function') fpEditClick(what);   // ATO-2347: Edit, Save, Done and the editor's bars
     };
@@ -513,6 +517,9 @@ if (typeof document !== 'undefined') {
     act();
   }, true);
   document.addEventListener('keydown', (e) => {
+    // ATO-2753: a column header sorts with Enter or Space too, as a button does.
+    const th = (e.key === 'Enter' || e.key === ' ') && e.target && e.target.closest ? e.target.closest('#fpreview th[data-fp="sort"]') : null;
+    if (th && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); e.stopImmediatePropagation(); th.click(); return; }
     /* Capture phase and stopImmediatePropagation: renderer.js's own Esc chain
        would otherwise also run — aborting a streaming turn, or opening Settings. */
     if (e.key === 'Escape' && FP.open && e.target && e.target.closest && e.target.closest('#fpreview')) {
