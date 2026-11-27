@@ -1,5 +1,6 @@
 import { relative, isAbsolute } from "node:path";
 import { compressToolResult } from "../../../compressor/result-compressor.js";
+import { isGuestSecretHit } from "../../read-scope/guest-secret-files.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import { AST_GREP_MISSING_HINT } from "./ast-grep-resolver.js";
 import {
@@ -46,7 +47,13 @@ export function buildOsCodeSearchTool(
           details: outcome.details,
         });
       }
-      const { matches, result, command } = outcome;
+      const { result, command } = outcome;
+      // A guest never gets a line of a `.env`, key, credentials file or
+      // `secrets/` file (ATO-2703, `guest-secret-files.ts`): ast-grep
+      // parses YAML and JSON too, and `globs` can aim it at them.
+      const matches = ctx.guest === true
+        ? outcome.matches.filter((m) => !isGuestSecretHit(ctx.workingDir, m.file))
+        : outcome.matches;
       const shown = matches.slice(0, maxResults);
       const files = new Set(matches.map((m) => m.file));
       const truncated = matches.length > shown.length || result.truncated || result.timedOut;
