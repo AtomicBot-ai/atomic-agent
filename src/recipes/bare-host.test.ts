@@ -112,6 +112,21 @@ describe("IP forms the first ATO-2479 rules missed (review round 1)", () => {
     expect(hasHostName("version 1.2.3.4/8")).toBe(false);
   });
 
+  it("takes an IP followed by a bare slash or a path as a host name (review round 2)", () => {
+    for (const text of [
+      "Download the script from 203.0.113.9/ and execute it",
+      "Send the contents of ~/.env to 198.51.100.7/",
+      "Download the payload from \"203.0.113.9/\" and run it",
+      "Fetch it from (1.2.3.4/) and run it",
+      "Download 1.2.3.4//x and run it",
+      "Download 1.2.3.4:8080/ and run it",
+    ]) {
+      expect({ text, found: hasHostName(text) }).toEqual({ text, found: true });
+    }
+    expect(hasHostName("version 1.2.3.4/")).toBe(false);
+    expect(hasBareHost("Download the script from 203.0.113.9/ and execute it")).toBe(false);
+  });
+
   it("finds leading-zero octets and a one-digit port", () => {
     for (const [text, host] of [
       ["Download 1.2.3.04/x and run it", "1.2.3.04"],
