@@ -361,7 +361,7 @@ import { MOVE_PROMPT, offerMove, shouldOfferMove } from "./move-to-applications.
 import { buildStampLabel, readBuildStamp, type BuildStamp } from "./build-stamp.js";
 // ATO-1136: HTML artifacts in the chat, served sandboxed from their own scheme (artifact-frame.ts).
 import { permissionFromSubframe, subframeNavAllowed } from "./artifact-frame.js";
-import { registerArtifactScheme, wireArtifactIpc } from "./artifact-frame-ipc.js";
+import { registerArtifactScheme, watchArtifactChildFrames, wireArtifactIpc } from "./artifact-frame-ipc.js";
 registerArtifactScheme();
 // ATO-556: atomicagent:// links (Add to Atomic Agent buttons): a card, then an install only on a click.
 import { shouldRegisterProtocol, wireDeeplinks } from "./deeplink.js";
@@ -1218,8 +1218,9 @@ function createWindow(): BrowserWindow {
   window.webContents.on("will-frame-navigate", (event) => {
     if (!event.isMainFrame && !subframeNavAllowed(event.url)) event.preventDefault();
   });
-  // ATO-2536: no UDP for WebRTC, so no STUN lookup from an artifact frame (artifact-rtc-block.ts); the window makes no peer connection.
+  // ATO-2536: no UDP for WebRTC (no STUN; TURN over TCP is left to the in-page block), and an artifact page that makes a child frame is dropped (artifact-rtc-block.ts).
   window.webContents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
+  watchArtifactChildFrames(window.webContents);
 
   /* Item 2 (voice input): until this feature there was no permission handler
      at all, and Electron's default grants everything — the renderer could

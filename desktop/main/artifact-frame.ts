@@ -43,7 +43,7 @@
 
 import { randomBytes } from "node:crypto";
 
-import { ARTIFACT_RTC_BLOCK_SCRIPT, ARTIFACT_TRUSTED_TYPES_CSP, stripChildFrames } from "./artifact-rtc-block.js";
+import { ARTIFACT_PAGE_EXTRA_CSP, ARTIFACT_RTC_BLOCK_SCRIPT, stripChildFrames } from "./artifact-rtc-block.js";
 
 export const ARTIFACT_SCHEME = "atomic-art";
 
@@ -67,10 +67,10 @@ export const ARTIFACT_CSP = [
 /**
  * What an artifact page is served under: ARTIFACT_CSP plus Trusted Types, so
  * every HTML string the page writes goes through the frame-stripping default
- * policy (artifact-rtc-block.ts). ARTIFACT_CSP itself stays as it was for
+ * policy (artifact-rtc-block.ts), plus `webrtc 'block'` where Chromium knows it. ARTIFACT_CSP itself stays as it was for
  * My Apps (my-apps-store.ts), whose pages do not get that script.
  */
-export const ARTIFACT_PAGE_CSP = `${ARTIFACT_CSP}; ${ARTIFACT_TRUSTED_TYPES_CSP}`;
+export const ARTIFACT_PAGE_CSP = `${ARTIFACT_CSP}; ${ARTIFACT_PAGE_EXTRA_CSP}`;
 
 /** Nothing a page could ask the browser for. */
 export const ARTIFACT_PERMISSIONS_POLICY = [
@@ -222,4 +222,19 @@ export function permissionFromSubframe(details: { isMainFrame?: boolean; request
   if (!details) return false;
   if (details.isMainFrame === false) return true;
   return typeof details.requestingUrl === "string" && details.requestingUrl.toLowerCase().startsWith(`${ARTIFACT_SCHEME}:`);
+}
+
+/** The part of a frame (Electron's WebFrameMain) the child-frame watch reads. */
+export type FrameNode = { url: string; parent: FrameNode | null };
+
+/**
+ * ATO-2536: the nearest artifact page above a frame, or null. An artifact
+ * page never has a child frame (artifact-rtc-block.ts), so one that does got
+ * past the in-page block, and main drops it (artifact-frame-ipc.ts).
+ */
+export function artifactFrameAbove<T extends FrameNode>(frame: T | null | undefined): T | null {
+  for (let p = frame ? (frame.parent as T | null) : null; p; p = p.parent as T | null) {
+    if (artifactToken(p.url) !== null) return p;
+  }
+  return null;
 }
