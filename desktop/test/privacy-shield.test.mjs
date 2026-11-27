@@ -133,7 +133,7 @@ test('client: read, switch, a bad body, and an agent from before the route', asy
   });
   try {
     const got = await s.client.privacyShield();
-    assert.deepEqual(got, {supported: true, ok: true, data: {enabled: false, masked: 3}});
+    assert.deepEqual(got, {supported: true, ok: true, data: {enabled: false, masked: 3, localNames: null}});
     assert.equal(s.seen[0].method, 'GET');
     assert.equal(s.seen[0].url, '/api/privacy-shield');
     const set = await s.client.privacyShield(true);

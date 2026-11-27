@@ -20,25 +20,39 @@ function shieldCounterLine(masked) {
   return 'Masked ' + masked + (masked === 1 ? ' value' : ' values') + ' before they went to a cloud model, since the agent started.';
 }
 
-/* `api.read()`       → {supported:false} | {supported:true, ok:true, data:{enabled, masked}} | {supported:true, ok:false, error}
+/* privacy-names.js's checker: a global in the renderer (loaded first), required in Node. */
+function shieldNamesReader() {
+  if (typeof readNamesStatus === 'function') return readNamesStatus;
+  if (typeof module !== 'undefined' && typeof require === 'function') return require('./privacy-names.js').readNamesStatus;
+  return null;
+}
+
+/* `api.read()`       → {supported:false} | {supported:true, ok:true, data:{enabled, masked, localNames}} | {supported:true, ok:false, error}
    `api.set(enabled)` → the same, after the agent switched.
+   `api.setNames(on)` → the same, after the agent switched the names pass (ATO-2527).
+   `localNames` is the agent's names status, or null for an agent without it;
+   `state.names` is undefined until the first read, then that value
+   (privacy-names.js words and draws it).
    `hooks` (renderer only): {render, toast, shown, gen} — repaint, a toast,
    whether Privacy is on screen, and the agent generation (a new agent resets). */
 function createPrivacyShield(api, hooks) {
   const h = hooks || {};
-  const st = {supported: null, loading: false, busy: false, error: null, enabled: null, masked: null, serial: 0};
+  const st = {supported: null, loading: false, busy: false, error: null, enabled: null, masked: null, serial: 0,
+    names: undefined, namesBusy: false, namesError: null};
   let gen = null;
   let timer = null;
   const take = (res) => {
-    if (!res || res.supported === false) { st.supported = false; st.enabled = null; st.masked = null; st.error = null; return false; }
+    if (!res || res.supported === false) { st.supported = false; st.enabled = null; st.masked = null; st.error = null; st.names = undefined; return false; }
     st.supported = true;
     if (!res.ok || !res.data || typeof res.data.enabled !== 'boolean') { st.error = (res && res.error) || 'could not read Privacy Shield'; return false; }
     st.error = null;
     st.enabled = res.data.enabled;
     st.masked = shieldCount(res.data.masked);
+    const readNames = shieldNamesReader();
+    st.names = readNames ? readNames(res.data.localNames) : null;
     return true;
   };
-  const key = () => JSON.stringify([st.supported, st.enabled, st.masked, st.error, st.busy]);
+  const key = () => JSON.stringify([st.supported, st.enabled, st.masked, st.error, st.busy, st.names, st.namesBusy, st.namesError]);
   const self = {
     state: st,
     /* Read again. A late answer for an older read, or one that lands during a switch, is dropped. */
@@ -54,6 +68,7 @@ function createPrivacyShield(api, hooks) {
     /* Another agent is on the wire: it may have the route the last one lacked. */
     reset() {
       st.supported = null; st.serial++; st.loading = false; st.busy = false; st.error = null; st.enabled = null; st.masked = null;
+      st.names = undefined; st.namesBusy = false; st.namesError = null;
     },
     /* Flip the switch through the agent. Only when the agent said it has one and what it is now. */
     async toggle() {
@@ -67,6 +82,22 @@ function createPrivacyShield(api, hooks) {
       if (take(res)) return {ok: true, enabled: st.enabled};
       if (st.supported === false) return {ok: false, unsupported: true};
       st.error = 'Couldn’t switch Privacy Shield: ' + ((res && res.error) || 'unknown error');
+      return {ok: false};
+    },
+    /* ATO-2527: flip the names pass. Only when the agent reported it and no switch is in flight. */
+    async toggleNames() {
+      if (st.busy || st.namesBusy || !st.names || !api.setNames) return {ok: false};
+      const next = !st.names.enabled;
+      st.namesBusy = true;
+      st.namesError = null;
+      st.serial++;
+      const res = await Promise.resolve().then(() => api.setNames(next)).catch((error) => ({supported: true, ok: false, error: String(error)}));
+      st.namesBusy = false;
+      st.loading = false;
+      if (take(res) && st.names) return {ok: true, enabled: st.names.enabled};
+      if (st.supported === false) return {ok: false, unsupported: true};
+      st.error = null;
+      st.namesError = 'Couldn’t switch hiding names: ' + ((res && res.error) || 'unknown error');
       return {ok: false};
     },
     /* Renderer: read on entry to Privacy, then every 5 s while it is open; repaint only on a change. */
@@ -83,7 +114,18 @@ function createPrivacyShield(api, hooks) {
     },
     /* Renderer: `data-act="shield:<v>"`. */
     async act(v) {
-      if (v === 'reload') { self.refresh(); return; }
+      if (v === 'reload') { st.namesError = null; self.refresh(); return; }
+      if (v === 'names') {
+        const pendingNames = self.toggleNames();
+        if (h.render) h.render();
+        const res = await pendingNames;
+        if (h.render) h.render();
+        if (res && res.ok && h.toast) {
+          h.toast(res.enabled ? 'Hiding names on' : 'Hiding names off',
+            res.enabled ? 'A model on this computer hides names, addresses and organisations' : 'Names go to cloud models as written');
+        }
+        return;
+      }
       if (v !== 'toggle') return;
       const pending = self.toggle();
       if (h.render) h.render();

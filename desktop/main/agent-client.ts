@@ -288,6 +288,13 @@ export interface OfflineModeStatus {
 export interface PrivacyShieldStatus {
   enabled: boolean;
   masked: number | null;
+  /**
+   * ATO-2527: names, addresses and organisations found by a local model:
+   * `{ enabled, state: "off" | "ready" | "no-local-model", model }` as the
+   * agent sent it (renderer/privacy-names.js checks the shape), or null
+   * from an agent without the names switch.
+   */
+  localNames: unknown;
 }
 
 /** The `error.message` of an agent's JSON error body, else the HTTP status. */
@@ -2042,22 +2049,27 @@ export class AgentClient extends EventEmitter {
    * switches it (the agent persists `privacy.shield.enabled` and applies it
    * to the next cloud request). An agent from before the route answers
    * "No route for", reported as unsupported. Never throws.
+   * ATO-2527: `localNames` posts `{ localNames }` (alone when `enabled` is
+   * undefined) to switch the names pass.
    */
-  async privacyShield(enabled?: boolean): Promise<{ supported: false } | { supported: true; ok: true; data: PrivacyShieldStatus } | { supported: true; ok: false; error: string }> {
+  async privacyShield(enabled?: boolean, localNames?: boolean): Promise<{ supported: false } | { supported: true; ok: true; data: PrivacyShieldStatus } | { supported: true; ok: false; error: string }> {
     try {
       const res = await fetch(`${this.base()}/api/privacy-shield`, {
-        method: enabled === undefined ? "GET" : "POST",
+        method: enabled === undefined && localNames === undefined ? "GET" : "POST",
         headers: this.headers(),
-        ...(enabled === undefined ? {} : { body: JSON.stringify({ enabled }) }),
+        ...(enabled === undefined && localNames === undefined ? {} : {
+          body: JSON.stringify({ ...(enabled === undefined ? {} : { enabled }), ...(localNames === undefined ? {} : { localNames }) }),
+        }),
         signal: AbortSignal.timeout(10_000),
       });
       const text = await res.text();
       if (res.status === 404 && /No route for/.test(text)) return { supported: false };
       if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
-      const body = JSON.parse(text) as { enabled?: unknown; masked?: unknown };
+      const body = JSON.parse(text) as { enabled?: unknown; masked?: unknown; localNames?: unknown };
       if (typeof body.enabled !== "boolean") return { supported: true, ok: false, error: "the agent sent no Privacy Shield state" };
       const masked = typeof body.masked === "number" && Number.isFinite(body.masked) && body.masked >= 0 ? Math.floor(body.masked) : null;
-      return { supported: true, ok: true, data: { enabled: body.enabled, masked } };
+      const names = body.localNames !== null && typeof body.localNames === "object" ? body.localNames : null;
+      return { supported: true, ok: true, data: { enabled: body.enabled, masked, localNames: names } };
     } catch (err) {
       return { supported: true, ok: false, error: requestErrorText(err) };
     }

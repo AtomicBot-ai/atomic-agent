@@ -102,6 +102,8 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1082: GET/POST /api/privacy-shield — {supported:false} against an agent without the route. */
   privacyShield: () => ipcRenderer.invoke("agent:privacyShield"),
   privacyShieldSet: (enabled: boolean) => ipcRenderer.invoke("agent:privacyShieldSet", enabled),
+  /** ATO-2527: POST { localNames } to /api/privacy-shield: hide names with a local model. */
+  privacyShieldNamesSet: (enabled: boolean) => ipcRenderer.invoke("agent:privacyShieldNamesSet", enabled),
   /** ATO-445: the agent's webhook routes: list, add (the reply holds the secret once), remove. */
   webhooks: () => ipcRenderer.invoke("agent:webhooks"),
   webhookCreate: (body: unknown) => ipcRenderer.invoke("agent:webhookCreate", body),
