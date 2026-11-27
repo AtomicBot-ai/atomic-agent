@@ -155,3 +155,25 @@ describe("launch --revert without a setting", () => {
     expect(files.get(CLAUDE)).toBe("{}");
   });
 });
+
+describe("launch --config for Qwen Code (ATO-2449)", () => {
+  const QWEN = join("/home/u", ".qwen", "settings.json");
+
+  it("puts our provider first, keeps the person's others, and --revert restores them", () => {
+    const before = { modelProviders: { openai: [{ id: "gpt", baseUrl: "https://api.openai.com/v1", envKey: "OPENAI_API_KEY" }] }, theme: "x" };
+    const { fs, files } = memoryFs({ [QWEN]: JSON.stringify(before) });
+    const r = applyLaunchConfig("/state", "qwen", spec("qwen"), fs);
+    expect(r.ok && r.lines.join("\n")).toContain("export ATOMIC_AGENT_TOKEN=");
+    const written = JSON.parse(files.get(QWEN) ?? "{}");
+    expect(written.modelProviders.openai.map((p: { id: string }) => p.id)).toEqual(["qwen-local", "gpt"]);
+    expect(written.modelProviders.openai[0]).toMatchObject({ baseUrl: "http://127.0.0.1:8787/local/v1", envKey: "ATOMIC_AGENT_TOKEN" });
+    expect(written.security.auth.selectedType).toBe("openai");
+    expect(written.model.name).toBe("qwen-local");
+    revertLaunchConfig("/state", "qwen", fs);
+    expect(JSON.parse(files.get(QWEN) ?? "{}")).toEqual(before);
+  });
+
+  it("cline has no lasting setting here (its own `cline auth` keeps one)", () => {
+    expect(persistSpecFor("cline", input())).toBeNull();
+  });
+});

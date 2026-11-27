@@ -245,4 +245,22 @@ describe("atag launch (ATO-2172)", () => {
   it("--config and --print-env together are a usage error (ATO-2448)", async () => {
     expect((await run(["claude", "--config", "--print-env"])).code).toBe(2);
   });
+
+  it("cline runs its auth step, then the CLI; a failed step stops it (ATO-2449)", async () => {
+    const { spawn, calls } = fakeSpawn(0);
+    const r = await run(["cline"], { spawn });
+    expect(r.code).toBe(0);
+    expect(calls.map((c) => c.args[0])).toEqual(["auth", "-P"]);
+    const failing = fakeSpawn(3);
+    const bad = await run(["cline"], { spawn: failing.spawn });
+    expect(bad.code).toBe(3);
+    expect(failing.calls).toHaveLength(1);
+    expect(bad.err).toContain("Cline setup (auth) failed");
+  });
+
+  it("--print-env masks the key inside cline's auth step (ATO-2449)", async () => {
+    const r = await run(["cline", "--print-env"]);
+    expect(r.out).toContain("/usr/local/bin/cline auth -p openai -k");
+    expect(r.out).not.toContain("the-serve-key");
+  });
 });

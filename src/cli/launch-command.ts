@@ -60,13 +60,16 @@ export function launchApprovalNote(serve: { baseUrl: string; started: boolean })
     : `launch: approval prompts from this serve wait in ${serve.baseUrl}/panel (or the desktop app)\n`;
 }
 
-/** Shell-style lines for `--print-env`, secrets masked. */
+/** Shell-style lines for `--print-env`, secrets masked (by name in env, by value in args). */
 export function formatPrintEnv(binary: string, plan: LaunchPlan): string {
   const quote = (v: string): string => (/^[\w@%+=:,./-]*$/.test(v) && v !== "" ? v : `'${v.replace(/'/g, `'\\''`)}'`);
+  const secrets = new Set(plan.secretArgs ?? []);
+  const arg = (v: string): string => quote(secrets.has(v) ? MASKED : v);
   const lines = Object.entries(plan.env).map(([name, value]) =>
     plan.secretEnv.includes(name) ? `export ${name}=${quote(MASKED)}` : `export ${name}=${quote(value)}`,
   );
-  lines.push([binary, ...plan.args].map(quote).join(" "));
+  for (const step of plan.setup ?? []) lines.push([binary, ...step].map(arg).join(" "));
+  lines.push([binary, ...plan.args].map(arg).join(" "));
   return `${lines.join("\n")}\n`;
 }
 
@@ -211,7 +214,16 @@ export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}
     writeErr(`launch: ${integration.displayName} on Atomic Agent at ${serve.baseUrl}\n`);
     writeErr(launchApprovalNote(serve));
   }
-  return runChild(binaryPath as string, plan, env, deps.spawn ?? nodeSpawn, writeErr);
+  const spawn = deps.spawn ?? nodeSpawn;
+  for (const step of plan.setup ?? []) {
+    // ATO-2449: e.g. `cline auth ...`; its output is the CLI's own.
+    const code = await runChild(binaryPath as string, { env: plan.env, args: step }, env, spawn, writeErr);
+    if (code !== 0) {
+      writeErr(`launch: ${integration.displayName} setup (${step[0] ?? ""}) failed with exit code ${code}; not starting it.\n`);
+      return code;
+    }
+  }
+  return runChild(binaryPath as string, plan, env, spawn, writeErr);
 }
 
 /**

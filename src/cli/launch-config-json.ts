@@ -10,6 +10,8 @@ export interface JsonEdit {
   /** Key path from the top, e.g. `["env", "ANTHROPIC_BASE_URL"]`. */
   readonly path: readonly string[];
   readonly value: unknown;
+  /** ATO-2449: build the value from what is there now (a list to merge into), instead of `value`. */
+  readonly merge?: (current: unknown) => unknown;
 }
 
 /** What one edit replaced: `had: false` when the key did not exist. */
@@ -86,8 +88,9 @@ export function applyJsonEdits(root: JsonObject, edits: readonly JsonEdit[]): { 
   const undo: JsonUndo[] = [];
   for (const edit of edits) {
     const was = lookup(next, edit.path);
-    undo.push(was.had ? { path: edit.path, had: true, before: was.value, written: edit.value } : { path: edit.path, had: false, written: edit.value });
-    place(next, edit.path, edit.value);
+    const value = edit.merge ? edit.merge(was.had ? structuredClone(was.value) : undefined) : edit.value;
+    undo.push(was.had ? { path: edit.path, had: true, before: was.value, written: value } : { path: edit.path, had: false, written: value });
+    place(next, edit.path, value);
   }
   return { root: next, undo };
 }
