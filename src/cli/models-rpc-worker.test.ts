@@ -63,7 +63,7 @@ describe("runModelsRpcWorker", () => {
     await runModelsRpcWorker(["--lan"], {
       spawn: spawn as never, binary: "/b/rpc-server", addresses: ["192.168.1.7"], stdout: (s) => out.push(s), stderr: (s) => err.push(s),
     });
-    expect(spawn.mock.calls[0]![1]).toEqual(["--host", "0.0.0.0", "--port", "50052"]);
+    expect((spawn.mock.calls[0] as unknown[])[1]).toEqual(["--host", "0.0.0.0", "--port", "50052"]);
     expect(err.join("")).toContain(RPC_LAN_WARNING);
     expect(out.join("")).toContain(`rpcServers '["192.168.1.7:50052"]'`);
   });
