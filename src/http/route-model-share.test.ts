@@ -9,6 +9,7 @@ import { ROUTE_SCOPES } from "./http-scopes.js";
 import type { ModelShareListener, ShareListenerState } from "./model-share-listener.js";
 import type { ModelShareSettings } from "./model-share-settings.js";
 import { readModelShareKey } from "./model-share-key.js";
+import { answerOf } from "./route-model-share.js";
 import { buildRouteTable } from "./route-table.js";
 
 /** ATO-2483: GET / POST /api/model-share, what Settings › Models "Share this model" reads and sets. */
@@ -114,5 +115,14 @@ describe("/api/model-share", () => {
   it("needs the admin scope both ways, since the answer carries the key", () => {
     expect(ROUTE_SCOPES["GET /api/model-share"]).toBe("admin");
     expect(ROUTE_SCOPES["POST /api/model-share"]).toBe("admin");
+  });
+});
+
+describe("answerOf (ATO-2483)", () => {
+  const lan = (port: number): string[] => [`http://192.168.1.5:${port}`];
+  it("lists no LAN address in local mode, even when serve itself listens on the network on the share port", () => {
+    const main: ShareListenerState = { state: "main", port: 8787, network: true };
+    expect(answerOf("local", 8787, "k", main, lan).urls.lan).toEqual([]);
+    expect(answerOf("network", 8787, "k", main, lan).urls.lan).toEqual(["http://192.168.1.5:8787/raw/v1"]);
   });
 });

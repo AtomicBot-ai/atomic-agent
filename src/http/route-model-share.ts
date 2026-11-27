@@ -43,14 +43,19 @@ export interface ModelShareAnswer {
   listener: ShareListenerState | null;
 }
 
-function answerOf(mode: ModelShareMode, port: number, key: string | null, listener: ShareListenerState | null, lanOrigins: (port: number) => string[]): ModelShareAnswer {
+/**
+ * Exported for tests. Other devices are listed only in network mode: in
+ * local mode the raw routes answer 404 to them on every listener
+ * (route-raw-model.ts), also on a serve whose own listener is on 0.0.0.0.
+ */
+export function answerOf(mode: ModelShareMode, port: number, key: string | null, listener: ShareListenerState | null, lanOrigins: (port: number) => string[]): ModelShareAnswer {
   const livePort = listener?.state === "listening" || listener?.state === "main" ? listener.port : port;
   const reachable =
     listener === null
       ? mode === "network"
       : listener.state === "listening"
         ? listener.host === "0.0.0.0"
-        : listener.state === "main" && listener.network;
+        : listener.state === "main" && listener.network && mode === "network";
   return {
     mode,
     port: livePort,

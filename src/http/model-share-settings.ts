@@ -12,9 +12,12 @@ import type { UserManagedLocalLlmConfig } from "../config/local-models/local-mod
  *   local    on, the share listener on 127.0.0.1 (other apps on this computer).
  *   network  on, the share listener on 0.0.0.0 (other devices too, plain http).
  *
- * Network is never the default and never kept across an off: turning
- * sharing off removes `shareNetwork`, so every network exposure is an
- * explicit choice made that time.
+ * Network is never the default and never kept across an off, whatever
+ * path made the off: `writeModelShareMode("off")` removes `shareNetwork`,
+ * the parser reads it only while `share` is on, and a raw config write
+ * (`config set`, the settings editor) drops it behind an off
+ * (config/local-models/share-network-on-disk.ts). So every network
+ * exposure is an explicit choice made that time.
  */
 
 export type ModelShareMode = "off" | "local" | "network";
@@ -67,6 +70,16 @@ export function writeModelShareMode(path: string, mode: ModelShareMode): void {
   const managed = managedWithShareMode(user.localModels.managed, mode);
   const now = user.localModels.managed;
   if (now.share === managed.share && now.shareNetwork === managed.shareNetwork) return;
+  const next: UserConfigFile = { ...user, localModels: { ...user.localModels, managed } };
+  writeUserConfigFileSync(path, next);
+  resetConfigCache();
+}
+
+/** ATO-2483: write `localModels.managed.sharePort` (`models share --port`); nothing is written when it already holds it. */
+export function writeModelSharePort(path: string, port: number): void {
+  const user = ensureUserConfigFileSync(path);
+  if (user.localModels.managed.sharePort === port) return;
+  const managed = { ...user.localModels.managed, sharePort: port };
   const next: UserConfigFile = { ...user, localModels: { ...user.localModels, managed } };
   writeUserConfigFileSync(path, next);
   resetConfigCache();

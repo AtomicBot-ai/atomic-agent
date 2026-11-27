@@ -216,8 +216,9 @@ export interface UserManagedLocalLlmConfig {
   /**
    * ATO-2483: with `share` on, also listen for the shared model on the
    * local network (`0.0.0.0`), not only on this computer (`127.0.0.1`).
-   * Absent or `false` (default): this computer only. Turning sharing off
-   * removes the key, so the network is always an explicit choice. Only the
+   * Absent or `false` (default): this computer only. Read only while
+   * `share` is on, and any off removes it, so the network is always an
+   * explicit choice. Only the
    * `/raw/v1` routes are on that listener. Additive and unversioned.
    */
   shareNetwork?: boolean;
