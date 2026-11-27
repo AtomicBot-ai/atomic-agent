@@ -5,10 +5,13 @@ import {
   PLAIN_COMPLETE_DEFAULT_SYSTEM,
   PLAIN_COMPLETE_MAX_PROMPT_CHARS,
   PLAIN_COMPLETE_MAX_TOKENS_CAP,
+  PLAIN_COMPLETE_MAX_TIMEOUT_MS,
   PLAIN_COMPLETE_PARTITION,
+  PLAIN_COMPLETE_TIMEOUT_MS,
   completePlain,
   extractPlainCompleteText,
   plainCompleteMaxTokens,
+  plainCompleteTimeoutMs,
   validatePlainCompleteInput,
   type PlainCompleteDeps,
 } from "./plain-complete.js";
@@ -168,5 +171,27 @@ describe("completePlain", () => {
       { complete, slotId: () => 0 },
     );
     expect(result).toEqual({ ok: false, reason: "cancelled", kind: "cancelled" });
+  });
+});
+
+describe("completePlain temperature and deadline (ATO-2432)", () => {
+  it("sends the caller's temperature on both link shapes, and none when absent", async () => {
+    const local = vi.fn<Complete>(async () => ({ content: "ok" }));
+    await completePlain({ prompt: "q", temperature: 0.7 }, { complete: local, slotId: () => 0 });
+    expect(local.mock.calls[0]?.[0].temperature).toBe(0.7);
+    const cloud = vi.fn<Complete>(async () => ({ content: "ok" }));
+    await completePlain({ prompt: "q", temperature: 1 }, { complete: cloud, slotId: () => 0, toolTransport: "native_tools" });
+    expect(cloud.mock.calls[0]?.[0].temperature).toBe(1);
+    const plain = vi.fn<Complete>(async () => ({ content: "ok" }));
+    await completePlain({ prompt: "q" }, { complete: plain, slotId: () => 0 });
+    expect("temperature" in (plain.mock.calls[0]?.[0] ?? {})).toBe(false);
+  });
+
+  it("takes the caller's deadline, clamped, over the host's", () => {
+    expect(plainCompleteTimeoutMs(undefined, undefined)).toBe(PLAIN_COMPLETE_TIMEOUT_MS);
+    expect(plainCompleteTimeoutMs(undefined, 5_000)).toBe(5_000);
+    expect(plainCompleteTimeoutMs(120_000, 5_000)).toBe(120_000);
+    expect(plainCompleteTimeoutMs(10 * PLAIN_COMPLETE_MAX_TIMEOUT_MS, undefined)).toBe(PLAIN_COMPLETE_MAX_TIMEOUT_MS);
+    expect(plainCompleteTimeoutMs(-1, undefined)).toBe(PLAIN_COMPLETE_TIMEOUT_MS);
   });
 });
