@@ -5,6 +5,8 @@ import {
 } from "../config/config-file.js";
 import { removeCustomModel } from "../config/custom-models-store.js";
 import type { UserConfigFile } from "../config/config-schema.js";
+import type { LocalModelDef, LocalModelId } from "../local-llm/catalog/models-catalog.js";
+import { draftToPullAfter } from "./models-pull-draft.js";
 import {
   checkForBackendUpdate,
   describeServerFault,
@@ -256,6 +258,10 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
     return followDownloadJob(dataDir, live.id);
   }
   if (flags.has("--background")) {
+    const draftId = pullDraftFor(m, flags, dataDir);
+    if (draftId) {
+      process.stderr.write(`its draft model downloads separately: atomic-agent models pull ${draftId} --background\n`);
+    }
     return startBackgroundPull({ kind: "chat", modelId: m.id, mode, notify });
   }
 
@@ -334,6 +340,12 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
         );
       }
     }
+    // ATO-2424: the draft model speculative decoding uses, next to it.
+    const draftId = pullDraftFor(m, flags, dataDir);
+    if (draftId) {
+      process.stderr.write(`downloading draft model ${draftId} for speculative decoding (localModels.managed.draftModel)\n`);
+      return await runLocalModelsPull([draftId]);
+    }
     return 0;
   } catch (e) {
     if (tty) process.stderr.write(`\n`);
@@ -345,6 +357,15 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
     }
     return 1;
   }
+}
+
+/** `draftToPullAfter` for one pull, from the config's `draftModel`. */
+function pullDraftFor(m: LocalModelDef, flags: ReadonlySet<string>, dataDir: string): LocalModelId | null {
+  return draftToPullAfter(m, {
+    draftFlag: flags.has("--draft"),
+    preference: getConfig().localModels.managed.draftModel ?? "off",
+    isDownloaded: (id) => isModelDownloaded(dataDir, getLocalModelDef(id)),
+  });
 }
 
 /**
@@ -912,8 +933,11 @@ async function runLocalModelsStartNow(
     const moeLine = result.chat.cpuMoeLayers
       ? `, experts of ${result.chat.cpuMoeLayers} layers in system RAM (localModels.managed.cpuMoe)`
       : "";
+    const draftLine = result.chat.draftModel
+      ? `, drafting with ${result.chat.draftModel} (localModels.managed.draftModel)`
+      : "";
     process.stdout.write(
-      `chat: started pid ${result.chat.pid}, healthy on port ${cfg.localModels.managed.port}${visionLine}${moeLine}${speedLine}\n`,
+      `chat: started pid ${result.chat.pid}, healthy on port ${cfg.localModels.managed.port}${visionLine}${moeLine}${draftLine}${speedLine}\n`,
     );
     if (embRunningPid !== null) {
       process.stdout.write(

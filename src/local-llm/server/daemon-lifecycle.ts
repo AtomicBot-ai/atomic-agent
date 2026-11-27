@@ -102,6 +102,8 @@ import {
   type CpuMoePreference,
 } from "./cpu-moe.js";
 import { assertRpcLaunchable, rpcServerArgs } from "./rpc-peers.js";
+import { DRAFT_RETRY_NOTE, draftRetryOptions, type DraftModelPreference } from "./draft-model.js";
+import { resolveDraftLaunch } from "./draft-model-launch.js";
 import {
   getEmbeddingModelDef,
   getLocalModelDef,
@@ -271,6 +273,13 @@ export interface DaemonStartOptions {
    * build without RPC. Empty / undefined keeps the launch byte-identical.
    */
   rpcServers?: readonly string[];
+  /**
+   * `localModels.managed.draftModel` (ATO-2424, `draft-model.ts`):
+   * `--model-draft` speculative decoding, only in what the fitted window
+   * leaves. `startDaemon` reads it from config when omitted; `"off"` (the
+   * default) keeps the launch byte-identical.
+   */
+  draftModel?: DraftModelPreference;
   /**
    * Run the throughput probe once the server is healthy (default
    * `true`): one 64-token completion whose `timings.predicted_per_second`
@@ -1046,6 +1055,15 @@ function readConfiguredCompletionMaxTokens(): number | undefined {
   }
 }
 
+/** `localModels.managed.draftModel`; `"off"` when config cannot be read. */
+function readConfiguredDraftModel(): DraftModelPreference {
+  try {
+    return getConfig().localModels.managed.draftModel ?? "off";
+  } catch {
+    return "off";
+  }
+}
+
 /** `localModels.managed.promptDiskCache`; off when config cannot be read. */
 function readConfiguredPromptDiskCache(): boolean {
   try {
@@ -1274,6 +1292,8 @@ export interface DaemonStartResult {
   projectorDropped?: boolean;
   /** `--n-cpu-moe` the launch used (`cpu-moe.ts`); 0 / absent: none. */
   cpuMoeLayers?: number;
+  /** The draft model the launch decodes with (`draft-model.ts`); absent: none. */
+  draftModel?: string;
 }
 
 /**
@@ -1487,12 +1507,36 @@ async function startDaemonNow(
       swaFull: swaFull.enabled,
     }),
   });
+  // ATO-2424: a draft model only takes what the fitted window left; under
+  // Atomic Core, on the CPU or with no room it stays off and says why.
+  const draft = resolveDraftLaunch({
+    dataDir: opts.dataDir,
+    preference: opts.draftModel ?? readConfiguredDraftModel(),
+    model,
+    engine: opts.engine ?? "llama-server",
+    device,
+    binPath,
+    targetHeader: header,
+    contextSize,
+    swaFull: swaFull.enabled,
+    kvBudgetBytes,
+    mainKvBytes: estimateLaunchKvBytes({
+      kvLayout: kvLayout ? buildKvLayout(kvLayout) : null,
+      modelSizeGb: model.fileSizeGb,
+      contextSize,
+      swaFull: swaFull.enabled,
+    }),
+    // The same rule `buildLlamaServerArgs` pins `--device` by.
+    pinnedDevice:
+      device && device !== "cpu" && (opts.rpcServers?.length ?? 0) === 0 ? device : null,
+  });
+  const draftArgs = draft?.args ?? [];
   // The speed an earlier start measured on this same launch, read before
   // this one clears the record: carried over, it spares the probe
-  // (`readReusableThroughput`).
+  // (`readReusableThroughput`). A draft decodes at another speed.
   const speedBasis = throughputBasis(
     opts.dataDir,
-    model.id,
+    draft?.draft ? `${model.id}+draft:${draft.draft}` : model.id,
     device,
     { contextSize, fitsDevice },
     opts.engine,
@@ -1517,6 +1561,9 @@ async function startDaemonNow(
     model.id,
     contextSize,
   );
+  // Before the fingerprint: a cache saved without the draft is not
+  // restored into a launch with one, nor the other way round.
+  args.push(...draftArgs);
   // ATO-456: off by default. The fingerprint is taken before the save
   // path is added, which is not part of what a saved cache depends on.
   const promptCacheFp = readConfiguredPromptDiskCache()
@@ -1559,6 +1606,7 @@ async function startDaemonNow(
       : []),
     `[atomic-agent] launch: ${swaFull.reason}`,
     `[atomic-agent] launch: ${cpuMoe.reason}`,
+    ...(draft ? [`[atomic-agent] launch: ${draft.reason}`] : []),
     `[atomic-agent] launch: prefix reuse ${effectivePrefixReuse ?? "unknown"}${reuseWhy}`,
     "",
   ].join("\n");
@@ -1654,9 +1702,10 @@ async function startDaemonNow(
       });
     } catch (err) {
       abandonChild(child.pid, pidPath);
-      const retry = cpuMoeRetryOptions(opts, cpuMoe.layers, err);
+      const moeRetry = cpuMoeRetryOptions(opts, cpuMoe.layers, err);
+      const retry = moeRetry ?? draftRetryOptions(opts, draftArgs, err);
       if (!retry) throw err;
-      writeSync(logFd, CPU_MOE_RETRY_NOTE);
+      writeSync(logFd, moeRetry ? CPU_MOE_RETRY_NOTE : DRAFT_RETRY_NOTE);
       return await startDaemon(retry);
     }
     // ATO-868: llama.cpp's fit left part of the model on the CPU under an
@@ -1701,6 +1750,7 @@ async function startDaemonNow(
       prefixReuse: effectivePrefixReuse,
       autoContextCeiling,
       cpuMoeLayers: cpuMoe.layers,
+      ...(draft?.draft ? { draftModel: draft.draft } : {}),
     };
   } finally {
     closeSync(logFd);
