@@ -108,7 +108,7 @@ test('the menu, submit, main and preload are wired to the agent routes', () => {
   assert.match(renderer, /ownCommandResolve\(ownSlashRows\(\), [^\n]*\{ submitOwnCommand\(text\); return; \}/);
   assert.match(renderer, /if \(!wasSlash\) refreshOwnCommands\(\);/);
   // A rendered command that starts with `/` is a message, not a built-in run by accident.
-  assert.match(renderer, /if \(text\.startsWith\('\/'\) && typeof preparedSkillText !== 'string'\) \{ runSlash/);
+  assert.match(renderer, /if \(!widgetPlain && text\.startsWith\('\/'\) && typeof preparedSkillText !== 'string'\) \{ runSlash/);
   assert.match(preload, /commandList: \(sessionId\?: string \| null\) => ipcRenderer\.invoke\("agent:commandList", sessionId\)/);
   assert.match(preload, /commandRender: \(body[^\n]*ipcRenderer\.invoke\("agent:commandRender", body\)/);
   assert.match(main, /ipcMain\.handle\("agent:commandList"/);
