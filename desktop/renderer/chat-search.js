@@ -129,7 +129,7 @@ function chatArchive(id, on) {
     row.archived = wasRow;
     if (wasPrefs) { PREFS.archived = archiveSet(PREFS.archived, id, true); savePrefs(); }
     render(); nameVisibleSessions();
-    toast(on ? 'Could not archive the chat' : 'Could not unarchive the chat', (res && res.error) || '');
+    toast(on ? 'Could not archive the chat' : 'Could not unarchive the chat', (res && res.error) || '', 'bad');
   });
   return true;
 }

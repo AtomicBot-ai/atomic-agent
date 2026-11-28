@@ -30,7 +30,8 @@ export function rewindRequestBody(
   expectText: unknown,
   files?: unknown,
   conversation?: unknown,
-): { priorQuestions: number; expectText: string; files?: boolean; conversation?: boolean } | null {
+  keepBranch?: unknown,
+): { priorQuestions: number; expectText: string; files?: boolean; conversation?: boolean; keepBranch?: true } | null {
   if (typeof priorQuestions !== "number" || !Number.isInteger(priorQuestions) || priorQuestions < 0) return null;
   if (typeof expectText !== "string" || !expectText.trim()) return null;
   return {
@@ -38,6 +39,7 @@ export function rewindRequestBody(
     expectText,
     ...(typeof files === "boolean" ? { files } : {}),
     ...(typeof conversation === "boolean" ? { conversation } : {}),
+    ...(keepBranch === true ? { keepBranch: true as const } : {}),
   };
 }
 

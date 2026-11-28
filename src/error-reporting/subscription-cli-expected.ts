@@ -12,13 +12,22 @@
  * the failures that are ours. Same pattern as Atomic Chat not running
  * (ATO-1278) and a fusion stop (ATO-1677).
  *
+ * A CLI that is not installed (`SubscriptionCliNotInstalledError`,
+ * ATO-1679) is the person's setup too: spawn found no binary on PATH
+ * (the agent's PATH already widened with the usual install folders) and
+ * no `binPath` that exists, and the turn ends on the platform's install
+ * command. It reached Sentry as CLI-HP, eleven events from Windows.
+ *
  * Matched by name and by the fixed `failureKind` word anywhere in the
  * `cause` chain (the step hands the report a wrapper), so this module
  * takes no import from the LLM layer. Every other CLI failure (an exit
- * with an unknown reason, a timeout, a spawn failure, not installed)
- * still reports.
+ * with an unknown reason or exit 127, a timeout, a spawn failure) still
+ * reports.
  */
-const AUTH_ERROR_NAME = "SubscriptionCliAuthError";
+const SETUP_ERROR_NAMES: ReadonlySet<string> = new Set([
+  "SubscriptionCliAuthError",
+  "SubscriptionCliNotInstalledError",
+]);
 const INVOCATION_ERROR_NAME = "SubscriptionCliInvocationError";
 
 /** Mirror of the account-state kinds of `SubscriptionCliFailureKind`. */
@@ -30,13 +39,13 @@ const ACCOUNT_STATE_KINDS: ReadonlySet<string> = new Set([
 /** Depth cap on the `cause` walk: a longer chain is a cycle. */
 const MAX_CAUSE_DEPTH = 5;
 
-/** True when `err` or its `cause` chain is an account state of a subscription CLI. */
+/** True when `err` or its `cause` chain is an account state or a missing install of a subscription CLI. */
 export function isExpectedSubscriptionCliFailure(err: unknown): boolean {
   let current: unknown = err;
   for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth += 1) {
     if (typeof current !== "object" || current === null) return false;
     const { name, failureKind } = current as { name?: unknown; failureKind?: unknown };
-    if (name === AUTH_ERROR_NAME) return true;
+    if (typeof name === "string" && SETUP_ERROR_NAMES.has(name)) return true;
     if (name === INVOCATION_ERROR_NAME) {
       return typeof failureKind === "string" && ACCOUNT_STATE_KINDS.has(failureKind);
     }

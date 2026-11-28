@@ -24,6 +24,9 @@ function fakes() {
   const deps = {
     allowed: (prompt) => { log.push('allowed:' + prompt); return true; },
     hide: () => { log.push('hide'); },
+    // ATO-2750: false = the mini chat is gone, as before; the tests that bring it back say so.
+    bringBack: () => { log.push('back'); return false; },
+    close: () => { log.push('close'); },
     activate: async (app) => { log.push('activate:' + app.pid); return true; },
     sleep: async (ms) => { log.push('sleep:' + ms); },
     paste: async (text) => { log.push('paste:' + text); return {pasted: true, restored: true}; },
@@ -38,7 +41,7 @@ test('the steps in order: check, hide the mini chat, bring the app back, wait, p
   const {deps, log} = fakes();
   const out = await R.replaceInSourceApp(deps, SAFARI, '  Better words.\r\nSecond line. ');
   assert.deepEqual(out, {ok: true, restored: true});
-  assert.deepEqual(log, ['allowed:false', 'hide', 'activate:4242', 'sleep:150', 'paste:Better words.\nSecond line.']);
+  assert.deepEqual(log, ['allowed:false', 'hide', 'activate:4242', 'sleep:150', 'paste:Better words.\nSecond line.', 'close']);
 });
 
 test('the paste is the clipboard-keeping one: a real ClipboardHost fake sees save, write, put back', async () => {
@@ -80,7 +83,7 @@ test('the app could not be brought back: no key pressed, the answer left on the 
   assert.equal(out.ok, false);
   assert.equal(out.hidden, true);
   assert.match(out.error, /Safari/);
-  assert.deepEqual(log, ['allowed:false', 'hide', 'activate', 'copy:Answer', 'notify']);
+  assert.deepEqual(log, ['allowed:false', 'hide', 'activate', 'copy:Answer', 'back', 'notify']);
   assert.ok(!log.some((l) => l.startsWith('paste')));
   const threw = fakes();
   threw.deps.activate = async () => { throw new Error('osascript'); };
@@ -122,7 +125,7 @@ test('which app to bring back: the front-app read, checked, never this app itsel
   }
 });
 
-test('the commands: macOS only, JavaScript for Automation, a pid that is a number', () => {
+test('the macOS commands: JavaScript for Automation, a pid that is a number; Windows and Linux have their own (ATO-2738)', () => {
   const front = R.frontAppCommand('darwin');
   assert.equal(front.file, '/usr/bin/osascript');
   assert.deepEqual(front.args.slice(0, 3), ['-l', 'JavaScript', '-e']);
@@ -135,9 +138,11 @@ test('the commands: macOS only, JavaScript for Automation, a pid that is a numbe
   for (const p of ['win32', 'linux']) {
     assert.equal(R.frontAppCommand(p), null);
     assert.equal(R.activateAppCommand(p, 4242), null);
-    assert.equal(R.replaceAvailable(p), false, p + ': the button is not offered');
+    assert.equal(R.replaceAvailable(p), true, p + ': offered (replace-front-app.ts)');
   }
   assert.equal(R.replaceAvailable('darwin'), true);
+  assert.equal(R.replaceAvailable('freebsd'), false);
+  assert.equal(R.replaceLabel({name: '', pid: 0, wayland: true}), 'Replace', 'Wayland: no app name known');
   assert.equal(R.replaceLabel(SAFARI), 'Replace in Safari');
   assert.equal(R.replaceLabel(null), 'Replace');
 });
@@ -152,24 +157,123 @@ test('the page: the button only under a finished answer to the selection', () =>
   for (const text of ['', '(no reply)', '(stopped)']) assert.equal(S.mcReplaceOffered(Object.assign({}, row, {text}), 'R', false), false, text);
   assert.equal(S.mcReplaceOffered({id: 1, k: 'user', text: 'x', replace: true}, 'R', false), false);
   const html = S.mcReplaceHTML(row, 'Replace in <Ev"il>', false, esc);
-  assert.match(html, /<button type="button" class="mc-act mc-replace" data-replace="7">Replace in &lt;Ev&quot;il>/);
+  // ATO-2738: it opens the preview first (data-replace-ask); the preview's own button is the data-replace one.
+  assert.match(html, /<button type="button" class="mc-act mc-replace" data-replace-ask="7">Replace in &lt;Ev&quot;il>/);
   assert.equal(S.mcReplaceHTML(row, null, false, esc), '');
 });
 
 test('the wiring: main keeps the app, the page marks the answer and asks main', () => {
   const qw = src('../main/quick-entry-window.ts');
   assert.match(qw, /source = sel \? sel\.app : null;/);
-  assert.match(qw, /replace: source \? replaceLabel\(source\) : null, selection \}/);
+  assert.match(qw, /replace: source \? replaceLabel\(source\) : null, selection, notice \}/);
   assert.match(qw, /ipcMain\.handle\("app:quickEntryReplace"/);
   assert.match(qw, /event\.sender !== box\.webContents/, 'only the mini chat that has the selection');
-  assert.match(qw, /replaceInSourceApp\(\{[\s\S]*?paste: pasteIntoFrontApp,[\s\S]*?\}, source, raw\)/);
+  assert.match(qw, /replaceInSourceApp\(\{[\s\S]*?paste: pasteIntoFrontApp,[\s\S]*?\}, source, raw, \{ focusMs: replaceFocusMs\(source\), pasteKey: pasteKeyLabel\(w\.platform\), selection \}\)/, 'the selection goes along, so its own first line is kept');
+  // ATO-2736: the read itself moved to selected-text-grab.ts; the Electron half passes the reads in.
   const ipc = src('../main/selected-text-ipc.ts');
-  assert.match(ipc, /Promise\.all\(\[readSelectedText\(\), front\]\)/);
-  assert.match(ipc, /replaceAvailable\(w\.platform\) \? readFrontApp\(\)/);
+  assert.match(ipc, /withFrontApp: replaceAvailable\(w\.platform\),[\s\S]*?readText: readSelectedText,[\s\S]*?readFrontApp,/);
+  const grab = src('../main/selected-text-grab.ts');
+  assert.match(grab, /Promise\.all\(\[d\.readText\(\), front\]\)/);
+  assert.match(grab, /d\.withFrontApp \? d\.readFrontApp\(\)/);
   assert.match(src('../preload/preload.ts'), /quickEntryReplace: \(text: string\) => ipcRenderer\.invoke\("app:quickEntryReplace", text\)/);
   const js = src('../renderer/mini-chat.js');
   assert.match(js, /if \(withSelection && st\.reply\) st\.reply\.replace = true;/);
   assert.match(js, /st\.replaceLabel = typeof opened\.replace === 'string'/);
   assert.match(js, /mcReplaceHTML\(r, st\.replaceLabel, st\.reply === r, mcEsc\)/);
   assert.match(js, /BR\.quickEntryReplace\(row\.text\)/);
+});
+
+/* ---------- ATO-2750: a failed Replace comes back to the mini chat ---------- */
+
+test('ATO-2750: a failure brings the mini chat back with the line and Copy answer; no notification', async () => {
+  const cases = [
+    {name: 'not back', set: (d, log) => { d.activate = async () => { log.push('activate'); return false; }; }, line: /Could not switch back to Safari/},
+    {name: 'no keystroke', set: (d) => { d.paste = async () => ({pasted: false, reason: 'no-keystroke'}); }, line: /press ⌘V in Safari/},
+    {name: 'failed', set: (d) => { d.paste = async () => ({pasted: false, reason: 'failed'}); }, line: /could not be pasted into Safari\. Copy it and paste it by hand\./},
+    {name: 'threw', set: (d) => { d.paste = async () => { throw new Error('x'); }; }, line: /could not be pasted into Safari/},
+  ];
+  for (const c of cases) {
+    const {deps, log} = fakes();
+    deps.bringBack = () => { log.push('back'); return true; };
+    c.set(deps, log);
+    const out = await R.replaceInSourceApp(deps, SAFARI, 'Answer');
+    assert.equal(out.ok, false, c.name);
+    assert.equal(out.hidden, false, c.name + ': the page shows it');
+    assert.equal(out.copy, true, c.name + ': with Copy answer');
+    assert.match(out.error, c.line, c.name);
+    assert.deepEqual(deps.lines, [], c.name + ': no notification');
+    assert.ok(log.includes('back') && !log.includes('close'), c.name + ': brought back, not closed');
+  }
+});
+
+test('ATO-2750: the window cannot come back: the notification as before, the main-window line for a failed paste', async () => {
+  const {deps, log} = fakes();
+  deps.bringBack = () => { log.push('back'); throw new Error('destroyed'); };
+  deps.paste = async () => ({pasted: false, reason: 'failed'});
+  const out = await R.replaceInSourceApp(deps, SAFARI, 'Answer');
+  assert.deepEqual(out, {ok: false, hidden: true, error: 'The answer could not be pasted. It is kept in the chat in the main window.'});
+  assert.deepEqual(deps.lines, [out.error]);
+});
+
+test('ATO-2750: the wiring: hidden, not destroyed, during the paste; Copy answer through main; the page draws the line', () => {
+  const qw = src('../main/quick-entry-window.ts');
+  assert.match(qw, /hide: \(\) => \{ replacing = true; if \(box && !box\.isDestroyed\(\)\) box\.hide\(\); \},/);
+  assert.match(qw, /bringBack: \(\) => \{\s*replacing = false;[\s\S]*?box\.show\(\);[\s\S]*?return true;/);
+  // Bringing the source app to the front blurs the box: the blur must not destroy it mid-Replace.
+  assert.match(qw, /win\.on\("blur", \(\) => \{ if \(box === win && !replacing\) hide\(\); \}\);/);
+  assert.match(qw, /\}, source, raw, \{[^}]*\}\)\.finally\(\(\) => \{ replacing = false; \}\);/, 'cleared once Replace is over');
+  const hideAt = qw.indexOf('const hide = () => {');
+  assert.match(qw.slice(hideAt, qw.indexOf('\n  };', hideAt)), /replacing = false;/, 'and when the box goes');
+  assert.match(qw, /close: hide,/);
+  assert.match(qw, /ipcMain\.handle\("app:quickEntryCopy"[\s\S]*?event\.sender !== box\.webContents[\s\S]*?clipboard\.writeText\(text\)/);
+  assert.match(src('../preload/preload.ts'), /quickEntryCopy: \(text: string\) => ipcRenderer\.invoke\("app:quickEntryCopy", text\)/);
+  assert.match(src('../renderer/mini-chat.js'), /if \(res && res\.copy && typeof mcReplaceFailed === 'function'\) \{ put\.disabled = false; mcReplaceFailed\(res\.error, row\.text, BR\); return; \}/);
+  const N = require('../renderer/mini-chat-notice.js');
+  assert.deepEqual(N.mcReplaceFailedView('Could not switch back to Safari.'), {text: 'Could not switch back to Safari.', tone: 'bad', button: 'Copy answer', act: 'copy'});
+  assert.equal(N.mcReplaceFailedView('').text, 'The text could not be replaced.');
+});
+
+test('ATO-2750: one name for the window: Mini Chat, and Open in main window', () => {
+  const html = src('../renderer/mini-chat.html');
+  assert.match(html, /<title>Mini Chat<\/title>/);
+  assert.match(html, /id="mc-open"[^>]*>Open in main window</);
+  assert.doesNotMatch(html, /big window/);
+  assert.match(src('../main/quick-entry-window.ts'), /title: "Mini Chat",/);
+  assert.doesNotMatch(src('../renderer/mini-chat.js'), /Open the big window/);
+});
+
+/* ATO-2738: Windows and Linux, a tool to install, the model's lead-in. */
+test('a tool to install: the mini chat stays and says which, nothing is hidden or pressed', async () => {
+  const {deps, log} = fakes();
+  const out = await R.replaceInSourceApp(deps, {name: '', pid: 0, blocked: 'Install xdotool.'}, 'Answer');
+  assert.deepEqual(out, {ok: false, hidden: false, error: 'Install xdotool.'});
+  assert.deepEqual(log, []);
+});
+
+test('off macOS the lines say Ctrl+V; a window with no name is "the app"', async () => {
+  const {deps} = fakes();
+  deps.paste = async () => ({pasted: false, reason: 'no-keystroke'});
+  const out = await R.replaceInSourceApp(deps, {name: 'Notepad', pid: 9, hwnd: '1234'}, 'Answer', {pasteKey: 'Ctrl+V'});
+  assert.equal(out.error, 'The answer is on the clipboard: press Ctrl+V in Notepad.');
+  const back = fakes();
+  back.deps.activate = async () => false;
+  const gone = await R.replaceInSourceApp(back.deps, {name: '', pid: 0, wayland: true}, 'Answer', {pasteKey: 'Ctrl+V'});
+  assert.match(gone.error, /Could not switch back to the app\. .*press Ctrl\+V there\./);
+});
+
+test('what is pasted: the model\'s lead-in and a fence around it all are taken off first', async () => {
+  assert.equal(R.replacementText('Sure! Here is the rewritten text:\n\nBetter words.'), 'Better words.');
+  assert.equal(R.replacementText('```\nBetter words.\n```'), 'Better words.');
+  const {deps, log} = fakes();
+  await R.replaceInSourceApp(deps, SAFARI, 'Here is the improved version:\n\n"Better words."');
+  assert.ok(log.includes('paste:Better words.'));
+});
+
+test('what is pasted: a lead-in that is the selection\'s own first line stays', async () => {
+  const email = 'Here is the updated schedule for next week:\nMon 9am';
+  assert.equal(R.replacementText(email, 'Here is the updated schedule for next week:\nMon 9 am'), email);
+  assert.equal(R.replacementText(email), 'Mon 9am', 'without the selection it reads as a lead-in');
+  const {deps, log} = fakes();
+  await R.replaceInSourceApp(deps, SAFARI, email, {selection: 'Here is the updated schedule for next week:\r\nMon 9 am'});
+  assert.ok(log.includes('paste:' + email), log.join('|'));
 });

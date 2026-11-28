@@ -31,7 +31,7 @@ describe("ProjectTrustOrchestrator", () => {
     expect(asked?.prompt.question).toBe("This folder has 1 project skill and AGENTS.md. Trust them?");
     await o.answer("trust");
     expect(refresh).toHaveBeenCalledOnce();
-    expect(inspectProjectTrust(getConfig(), repo).trusted).toEqual({ skills: ["alpha"], instructions: ["AGENTS.md"] });
+    expect(inspectProjectTrust(getConfig(), repo).trusted).toEqual({ skills: ["alpha"], instructions: ["AGENTS.md"], commands: [] });
     actions.length = 0; orchestrator().check();
     expect(actions.some(a => a.type === "project_trust_asked")).toBe(false);
   });

@@ -3,11 +3,11 @@
 Status: current
 Owner: src/config/
 
-Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79. Environment overrides and migrations can change an installed value. This is the documented default surface checked by the defaults test; the parser and [schema](../config-schema.ts) remain the implementation authority. Objects and array contents are not flattened into invented config keys. Read [compatibility](compatibility.md) for migration and precedence.
+Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 80. Environment overrides and migrations can change an installed value. This is the documented default surface checked by the defaults test; the parser and [schema](../config-schema.ts) remain the implementation authority. Objects and array contents are not flattened into invented config keys. Read [compatibility](compatibility.md) for migration and precedence.
 
 ## version
 
-- `version` (default `79`).
+- `version` (default `80`).
 
 ## localModels
 
@@ -19,7 +19,8 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `localModels.thinking` (default `"auto"`).
 - `localModels.reasoningBudgetTokens` (default `0`, no bound; a positive value is enforced in full; until ATO-607 llama.cpp's repeat limit capped it at 499, see #600).
 - `localModels.drySampler` (default `false`; `true` sends llama.cpp's DRY anti-repeat sampler, looking at the last 256 tokens of prompt plus reply, with every `/completion` request to Atomic Core, managed or External llama-server, never to Ollama or cloud providers).
-- `localModels.modelSampling` (default `false`; `true` uses the loaded model's own recommended temperature, top-p, top-k, min-p and repeat penalty from its GGUF `general.sampling.*` keys or a sibling `generation_config.json`, under the request's own values and the `ATOMIC_AGENT_LLAMA_*` overrides, ATO-2202).
+- `localModels.modelSampling` (default `true` since v80, ATO-2480, where an older file's `false` migrates to `true`; `true` uses the loaded model's own recommended temperature, top-p, top-k, min-p and repeat penalty from its GGUF `general.sampling.*` keys or a sibling `generation_config.json`, under the request's own values and the `ATOMIC_AGENT_LLAMA_*` overrides, ATO-2202; a curated model's catalog `sampling`, one set per thinking mode, sits over the header under the same switch, ATO-2482).
+- `localModels.modelSamplingOverrides` (absent by default; `{ "<model id>": { temperature, topP, topK, minP, presencePenalty, repeatPenalty, repeatLastN, thinking?, noThinking? } }`, the person's own sampling per model, applied whether `modelSampling` is on or not; an added model keeps its set on `customModels[].sampling` instead. Written by `atomic-agent models sampling` and the desktop's Sampling row. Unversioned and additive, ATO-2482).
 - `localModels.strictToolArgs` (default `false`; `true` holds a local model's tool arguments to each tool's JSON Schema in the request grammar, so an unknown key or a missing required one cannot be sampled; a tool whose schema does not convert keeps the any-object rule, ATO-633).
 - `localModels.managed.engine` (default `"atomic-core"`).
 - `localModels.managed.modelId` (default `null`).
@@ -30,6 +31,8 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `localModels.managed.autoRestart` (default `true`).
 - `localModels.managed.promptDiskCache` (default `false`).
 - `localModels.managed.share` (default `false`; `true` opens serve's `/raw/v1` model routes to callers with the share key, ATO-2336).
+- `localModels.managed.shareNetwork` (default absent, read as `false`: the shared model listens on `127.0.0.1` only; `true` listens on `0.0.0.0`, the `/raw/v1` routes only, plain http, ATO-2483; read only while `share` is on, removed by any write that turns sharing off, and by a raw write that turns it on from off).
+- `localModels.managed.sharePort` (default absent, read as `8787`: the shared model's own listener; a serve already on that port answers `/raw/v1` itself, ATO-2483).
 - `localModels.managed.device` (default `"auto"`).
 - `localModels.managed.backendVariant` (default `"auto"`).
 - `localModels.managed.coreBackendVariant` (default `"auto"`).
@@ -37,7 +40,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `localModels.managed.parallel` (default `"auto"`).
 - `localModels.managed.swaFull` (default `"auto"`).
 - `localModels.managed.loraAdapters` (default absent: no adapters; `{ "<modelId>": { "path": "/abs/adapter.gguf", "scale"?: number } }` launches that model with `--lora`, or `--lora-scaled` when `scale` is not 1).
-- `localModels.managed.modelsDirOverride` (default absent: models stay in `<dataDir>/models`; a folder path, `~` allowed, keeps the downloaded models there, for example on an external disk. Written by `atomic-agent models dir <folder>`, which needs an empty folder and moves only model folders (a GGUF inside), leaving any other file where it is; removed by `models dir --reset`).
+- `localModels.managed.modelsDirOverride` (default absent: models stay in `<dataDir>/models`; a folder path, `~` allowed, keeps the downloaded models there, for example on an external disk. Written by `atomic-agent models dir <folder>`, which needs an empty folder and moves only model folders (a GGUF inside), leaving any other file where it is; removed by `models dir --reset`. While it runs, model starts and downloads are refused; across disks it prints `copied <done> of <total> bytes (<model>)`, and Ctrl+C puts every model back. `config set` with this key only points at a folder, moving nothing. A running TUI or desktop sidecar picks up a change on its next read of the folder. When the folder is not there (its disk unplugged), starts and pulls say so instead of "not downloaded", and `models dir --reset` points back at the default folder without moving anything. `data backup --with-models` takes the moved folder too).
 - `localModels.embeddings.enabled` (default `false`).
 - `localModels.embeddings.modelId` (default `null`).
 - `localModels.embeddings.port` (default `19092`).
@@ -254,6 +257,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `vision.maxImagesPerCall` (default `4`).
 - `vision.audioInput` (unset by default, which means auto): `audio.listen` sends a WAV/MP3 file to a chat model that takes audio input. Auto offers it only while a local model that reports audio is loaded; `true` also allows cloud models (the file is uploaded); `false` turns it off.
 - `vision.maxAudioBytes` (default `16777216`).
+- `vision.indexFiles` (default `false`): My files reads scanned PDF pages and photos with a vision model served on this computer or the local network, and audio with whisper.cpp. Cloud models are never used for it.
 
 ## skills
 
@@ -275,6 +279,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `tui.vimMode` (default `false`).
 - `tui.language` (default `"auto"`).
 - `tui.verboseSteps` (default `false`).
+- `tui.pet` (default `false`).
 - `tui.notify.enabled` (default `true`).
 - `tui.notify.minDurationMs` (default `30000`).
 - `tui.onboarding.completedAt` (default `null`).

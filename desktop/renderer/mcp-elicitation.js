@@ -235,7 +235,7 @@ async function mcpElicitAnswer(action) {
   if (res.ok || res.status === 404) {
     mcpElicitForget();
     if (S.overlay === 'mcpelicit') S.overlay = null;
-    if (!res.ok) toast('The MCP server no longer waits for this', 'Its question was already closed.');
+    if (!res.ok) toast('The MCP server no longer waits for this', 'Its question was already closed.', 'bad');
     render();
     return;
   }

@@ -4,11 +4,21 @@
  * icon fields.
  */
 
+import {
+  GEMMA_4_SAMPLING,
+  MUSE_GLIMMER_SAMPLING,
+  NEMOTRON_35_SAMPLING,
+  QWEN_35_SMALL_SAMPLING,
+  QWEN_SAMPLING,
+} from "./catalog-sampling.js";
+import type { LocalModelSampling } from "./model-sampling-sets.js";
+
 export type CuratedLocalModelId =
   | "qwen-3.5-2b"
   | "qwen-3.5-4b"
   | "qwen-3.5-9b"
   | "qwen-3.5-35b"
+  | "qwen-3-next-80b-a3b"
   | "qwen-3.6-27b"
   | "qwen-3.6-35b-a3b"
   | "qwen-3.8-27b"
@@ -125,12 +135,31 @@ export interface LocalModelDef {
    * `vision.describe` tool registration. Required when `mmprojUrl` is set.
    */
   supportsVision: boolean;
+  /**
+   * The sampling the model card recommends (ATO-2482,
+   * `catalog-sampling.ts`), with an optional set per thinking mode. On a
+   * curated entry it sits over the GGUF header's `general.sampling.*` and
+   * is used only when `localModels.modelSampling` is on. On an added
+   * model (`localModels.customModels[].sampling`) it is the person's own
+   * choice and is always used, like `localModels.modelSamplingOverrides`.
+   */
+  sampling?: LocalModelSampling;
   /** HTTP URL of the mmproj GGUF projector file. Set iff `supportsVision`. */
   mmprojUrl?: string;
   /** On-disk filename for the projector. Set iff `supportsVision`. */
   mmprojFilename?: string;
   /** Approximate projector size in GB, surfaced in the TUI for download UX. */
   mmprojFileSizeGb?: number;
+  /**
+   * A smaller catalog model with the same tokenizer that can draft for
+   * this one (`--model-draft`, ATO-2424). Used only when
+   * `localModels.managed.draftModel` is `"auto"`, and only when it fits
+   * beside the fitted context (`server/draft-model.ts`). Paired only on
+   * dense models without a recurrent state: speculative decoding cannot
+   * take back rejected tokens from a hybrid's state (Qwen 3.5 and later,
+   * Nemotron), and a mixture-of-experts model gains little from it.
+   */
+  draftModelId?: LocalModelId;
 }
 
 export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
@@ -149,6 +178,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 6,
     recommendedRamGb: 8,
     family: "gemma",
+    sampling: GEMMA_4_SAMPLING,
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/mmproj-BF16.gguf",
@@ -170,6 +200,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 8,
     recommendedRamGb: 12,
     family: "gemma",
+    sampling: GEMMA_4_SAMPLING,
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/gemma-4-12B-it-qat-GGUF/resolve/main/mmproj-BF16.gguf",
@@ -191,6 +222,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 16,
     recommendedRamGb: 20,
     family: "gemma",
+    sampling: GEMMA_4_SAMPLING,
     tag: "High Performance",
     supportsVision: true,
     mmprojUrl:
@@ -213,12 +245,16 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 20,
     recommendedRamGb: 24,
     family: "gemma",
+    sampling: GEMMA_4_SAMPLING,
     tag: "High Performance",
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/gemma-4-31B-it-qat-GGUF/resolve/main/mmproj-BF16.gguf",
     mmprojFilename: "mmproj-BF16.gguf",
     mmprojFileSizeGb: 1.2,
+    // Gemma 4 family, a quarter of the weights; the launch still checks
+    // the two tokenizers match before using it (ATO-2424).
+    draftModelId: "gemma-4-e4b",
   },
   {
     id: "qwen-3.8-27b",
@@ -235,6 +271,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 20,
     recommendedRamGb: 28,
     family: "qwen",
+    sampling: QWEN_SAMPLING,
     tag: "New",
     supportsVision: true,
     mmprojUrl:
@@ -257,6 +294,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 20,
     recommendedRamGb: 28,
     family: "qwen",
+    sampling: QWEN_SAMPLING,
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/mmproj-F16.gguf",
@@ -278,6 +316,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 24,
     recommendedRamGb: 36,
     family: "qwen",
+    sampling: QWEN_SAMPLING,
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf",
@@ -302,6 +341,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 4,
     recommendedRamGb: 6,
     family: "qwen",
+    sampling: QWEN_35_SMALL_SAMPLING,
     supportsVision: false,
   },
   {
@@ -319,6 +359,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 6,
     recommendedRamGb: 8,
     family: "qwen",
+    sampling: QWEN_SAMPLING,
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/mmproj-F16.gguf",
@@ -340,6 +381,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 10,
     recommendedRamGb: 16,
     family: "qwen",
+    sampling: QWEN_SAMPLING,
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/mmproj-F16.gguf",
@@ -361,12 +403,35 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 24,
     recommendedRamGb: 36,
     family: "qwen",
+    sampling: QWEN_SAMPLING,
     tag: "High Performance",
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf",
     mmprojFilename: "mmproj-F16.gguf",
     mmprojFileSizeGb: 0.9,
+  },
+  /* ATO-2455: the biggest mixture-of-experts Qwen, for a GPU with memory
+     of its own plus plenty of RAM (experts in RAM, `--n-cpu-moe`) or a
+     64 GB machine. Unranked: offered, never auto-recommended. The
+     Instruct build's template has no `<think>`, so it runs as a plain
+     instruct model with the generic tool grammar. The UD-Q4_K_XL file is
+     one GGUF (46,067,137,312 bytes on Hugging Face, 28.11.2026). */
+  {
+    id: "qwen-3-next-80b-a3b",
+    name: "Qwen3-Next 80B-A3B GGUF",
+    filename: "Qwen3-Next-80B-A3B-Instruct-UD-Q4_K_XL.gguf",
+    huggingFaceUrl:
+      "https://huggingface.co/unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF/resolve/main/Qwen3-Next-80B-A3B-Instruct-UD-Q4_K_XL.gguf",
+    fileSizeGb: 46.07,
+    sizeLabel: "46.1 GB",
+    description: "Biggest Qwen, text only, for 64 GB machines and up",
+    maxContextLength: 262_144,
+    contextLabel: "256K",
+    minRamGb: 48,
+    recommendedRamGb: 64,
+    family: "qwen",
+    supportsVision: false,
   },
   {
     id: "nemotron-3.5-30b-a3b",
@@ -382,6 +447,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 24,
     recommendedRamGb: 32,
     family: "nemotron",
+    sampling: NEMOTRON_35_SAMPLING,
     tag: "New",
     supportsVision: false,
   },
@@ -406,6 +472,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 20,
     recommendedRamGb: 32,
     family: "muse",
+    sampling: MUSE_GLIMMER_SAMPLING,
     tag: "New",
     supportsVision: true,
     mmprojUrl:
@@ -439,6 +506,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 20,
     recommendedRamGb: 32,
     family: "qwen",
+    sampling: QWEN_SAMPLING,
     tag: "Use at your own risk",
     uncensored: true,
     supportsVision: true,

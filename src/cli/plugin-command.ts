@@ -140,6 +140,7 @@ function show(stateDir: string, name: string | undefined): number {
   section("MCP servers", Object.keys(bundle.mcpServers));
   section("Subagents", bundle.agents.map(a => a.name));
   if (bundle.hooksFile || bundle.manifest.hooksInline) section("Hooks", ["hooks.json"]);
+  section("Monitors", bundle.monitors.map(m => `${m.name}: ${m.description} (${m.command})`));
   section("Notes", bundle.notes);
   return 0;
 }
@@ -384,6 +385,7 @@ export function summary(b: PluginBundle): string {
     [b.commands.length, "command"],
     [Object.keys(b.mcpServers).length, "MCP server"],
     [b.agents.length, "subagent"],
+    [b.monitors.length, "monitor"],
   ] as const;
   const text = parts.filter(([n]) => n > 0).map(([n, w]) => `${n} ${w}${n === 1 ? "" : "s"}`);
   if (b.hooksFile || b.manifest.hooksInline) text.push("hooks");

@@ -43,6 +43,14 @@ export const HANDOFF_OUT_REMOTE =
   "This app is connected to an agent on another computer. Hand the chat off there with atag handoff --to.";
 /** Said by an agent from before `atag handoff --to`. */
 export const HANDOFF_OUT_TOO_OLD = "This agent version cannot hand a chat to Claude Code or Codex. Update Atomic Agent.";
+/* ATO-2744: what the sheet says when the brief could not be made; the raw words go in `detail`, under Details. */
+export const HANDOFF_OUT_FAILED = "Couldn't write the brief. Try again.";
+export const HANDOFF_OUT_NO_CHAT = "Atomic Agent couldn't find this chat. It may not be saved yet.";
+export const HANDOFF_OUT_BAD_CHAT = "This chat can't be handed off.";
+export const HANDOFF_OUT_BAD_TARGET = "Choose Claude Code or Codex.";
+export const HANDOFF_OUT_NO_FOLDER = "Couldn't make the folder for the brief.";
+export const HANDOFF_OUT_EMPTY = "The agent finished but wrote no brief. Try again.";
+export const HANDOFF_OUT_GONE = "That brief is no longer there. Hand the chat off again.";
 
 /** The same id rule as handoff.ts: no leading dash, no spaces, no quotes. */
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
@@ -52,7 +60,8 @@ export const TERMINAL_BRIEF_MAX_BYTES = 200 * 1024;
 const BRIEF_MAX_BYTES = 4 * 1024 * 1024;
 const PREVIEW_CHARS = 1200;
 
-type Failure = { ok: false; error: string };
+/** `error` is the sentence shown; `detail` the raw words, shown only under Details. */
+type Failure = { ok: false; error: string; detail?: string };
 
 export function isHandoffOutTarget(value: unknown): value is HandoffOutTarget {
   return typeof value === "string" && (HANDOFF_OUT_TARGETS as readonly string[]).includes(value);
@@ -68,10 +77,10 @@ export function handoffOutFile(dir: string, to: HandoffOutTarget, sessionId: str
 }
 
 export function handoffOutArgs(to: unknown, sessionId: unknown, outFile: unknown): { ok: true; args: string[] } | Failure {
-  if (!isHandoffOutTarget(to)) return { ok: false, error: "target must be claude or codex" };
-  if (!isHandoffChatId(sessionId)) return { ok: false, error: "chat id is not valid" };
+  if (!isHandoffOutTarget(to)) return { ok: false, error: HANDOFF_OUT_BAD_TARGET, detail: "target must be claude or codex" };
+  if (!isHandoffChatId(sessionId)) return { ok: false, error: HANDOFF_OUT_BAD_CHAT, detail: "chat id is not valid" };
   if (typeof outFile !== "string" || !isAbsolute(outFile) || /[\n\r\0]/.test(outFile)) {
-    return { ok: false, error: "the brief file path is not valid" };
+    return { ok: false, error: HANDOFF_OUT_FAILED, detail: "the brief file path is not valid" };
   }
   return { ok: true, args: ["handoff", "--to", to, "--session", sessionId, "--out", outFile] };
 }
@@ -119,11 +128,11 @@ export function parseHandoffOut(
 ): HandoffOutDone | Failure {
   if (tooOld(res)) return { ok: false, error: HANDOFF_OUT_TOO_OLD };
   if (!res.ok) {
-    const said = res.stderr.trim().split("\n").filter(Boolean).at(-1);
-    return { ok: false, error: said || res.error || "the handoff failed" };
+    const raw = [res.stderr.trim(), res.error ?? ""].filter(Boolean).join("\n").trim() || "the handoff gave no reason";
+    return { ok: false, error: /No Atomic Agent chat with id/i.test(raw) ? HANDOFF_OUT_NO_CHAT : HANDOFF_OUT_FAILED, detail: raw };
   }
   const brief = input.brief;
-  if (brief === null || brief.trim() === "") return { ok: false, error: "the agent did not write the brief" };
+  if (brief === null || brief.trim() === "") return { ok: false, error: HANDOFF_OUT_EMPTY, detail: `the agent did not write the brief: ${input.path}` };
   const folder = briefFolder(brief);
   const fits = Buffer.byteLength(brief, "utf8") <= TERMINAL_BRIEF_MAX_BYTES;
   return {
@@ -166,8 +175,8 @@ const written = new Set<string>();
 
 export async function handoffOut(deps: HandoffOutDeps, to: unknown, sessionId: unknown): Promise<HandoffOutDone | Failure> {
   if (deps.remote()) return { ok: false, error: HANDOFF_OUT_REMOTE };
-  if (!isHandoffOutTarget(to)) return { ok: false, error: "target must be claude or codex" };
-  if (!isHandoffChatId(sessionId)) return { ok: false, error: "chat id is not valid" };
+  if (!isHandoffOutTarget(to)) return { ok: false, error: HANDOFF_OUT_BAD_TARGET, detail: "target must be claude or codex" };
+  if (!isHandoffChatId(sessionId)) return { ok: false, error: HANDOFF_OUT_BAD_CHAT, detail: "chat id is not valid" };
   const dir = deps.dir();
   const path = handoffOutFile(dir, to, sessionId);
   const built = handoffOutArgs(to, sessionId, path);
@@ -175,7 +184,7 @@ export async function handoffOut(deps: HandoffOutDeps, to: unknown, sessionId: u
   try {
     (deps.mkdir ?? ((p: string) => void mkdirSync(p, { recursive: true, mode: 0o700 })))(dir);
   } catch (err) {
-    return { ok: false, error: `could not make the handoff folder: ${err instanceof Error ? err.message : String(err)}` };
+    return { ok: false, error: HANDOFF_OUT_NO_FOLDER, detail: err instanceof Error ? err.message : String(err) };
   }
   const res = await deps.run(built.args, 60_000);
   const brief = res.ok ? (deps.readFile ?? readBrief)(path) : null;
@@ -186,7 +195,7 @@ export async function handoffOut(deps: HandoffOutDeps, to: unknown, sessionId: u
 
 /** Reveal a brief in Finder / Explorer: only a file this app wrote. */
 export function handoffReveal(reveal: (p: string) => void, p: unknown): { ok: true } | Failure {
-  if (typeof p !== "string" || !written.has(p)) return { ok: false, error: "no such handoff file" };
+  if (typeof p !== "string" || !written.has(p)) return { ok: false, error: HANDOFF_OUT_GONE, detail: "no such handoff file" };
   reveal(p);
   return { ok: true };
 }

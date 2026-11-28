@@ -11,6 +11,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const W = require("../out/main/project-workers.js");
 const St = require("../out/main/project-workers-store.js");
+const S = require("../out/main/git-safe-args.js");
 
 const dirs = [];
 after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -67,9 +68,14 @@ test("a folder in git gets a detached worktree of HEAD, by execFile argv (no she
   assert.equal(r.root, root);
   assert.equal(r.dir, root);
   assert.deepEqual(calls.map((c) => [c.file, c.args]), [
-    ["git", ["-C", project, "rev-parse", "--show-toplevel"]],
-    ["git", ["-C", project, "worktree", "add", "--detach", root, "HEAD"]],
+    ["git", [...S.gitSafeArgs("darwin"), "-C", project, "rev-parse", "--show-toplevel"]],
+    ["git", [...S.gitSafeArgs("darwin"), "-C", project, "worktree", "add", "--detach", root, "HEAD"]],
   ]);
+  // ATO-2532: the project's own hooks and fsmonitor never run.
+  for (const c of calls) {
+    assert.ok(c.args.includes("core.hooksPath=/dev/null"));
+    assert.ok(c.args.includes("core.fsmonitor=false"));
+  }
   for (const c of calls) {
     assert.ok(Array.isArray(c.args), "argv, never a command line");
     assert.equal(c.opts?.shell, undefined);
@@ -85,7 +91,8 @@ test("a project on a subfolder of a repo works in the same subfolder of its work
   const r = await W.makeWorkerDir(sub, state, "pweb-1-1", exec, "linux");
   assert.equal(r.ok, true);
   assert.equal(r.dir, join(state, "worktrees", "pweb-1-1", "apps", "web"));
-  assert.deepEqual(calls[1].args.slice(0, 2), ["-C", top]);
+  const safe = S.gitSafeArgs("linux").length;
+  assert.deepEqual(calls[1].args.slice(safe, safe + 2), ["-C", top]);
 });
 
 test("a failed git worktree add is an error, not a copy", async () => {
@@ -96,7 +103,23 @@ test("a failed git worktree add is an error, not a copy", async () => {
   });
   const r = await W.makeWorkerDir(project, tmp("state"), "p-1-1", exec, "linux");
   assert.equal(r.ok, false);
-  assert.match(r.error, /git worktree add failed: fatal: invalid reference: HEAD$/);
+  // ATO-2744: a sentence for the sheet; git's words whole under Details, and why, for the window's wording.
+  assert.equal(r.error, "Couldn't make a worker copy of this folder with git.");
+  assert.equal(r.detail, "fatal: invalid reference: HEAD\nmore");
+  assert.equal(r.reason, "git");
+});
+
+test("ATO-2744: git's stderr is what Details keeps, not execFile's \"Command failed\" line", async () => {
+  const project = tmp("repo2");
+  const { exec } = stubExec((file, args) => {
+    if (args.includes("rev-parse")) return project;
+    throw Object.assign(new Error("Command failed: git -C " + project + " worktree add --detach /s HEAD\nfatal: invalid reference: HEAD\n"),
+      { stderr: "fatal: invalid reference: HEAD\n" });
+  });
+  const r = await W.makeWorkerDir(project, tmp("state"), "p-2-1", exec, "linux");
+  assert.equal(r.ok, false);
+  assert.equal(r.detail, "fatal: invalid reference: HEAD");
+  assert.ok(!r.error.includes(project), "no path in the sentence");
 });
 
 test("on macOS a folder without git is cloned with cp -c -R", async () => {

@@ -101,7 +101,10 @@ import {
   moeShapeFromMetadata,
   type CpuMoePreference,
 } from "./cpu-moe.js";
+import { cpuMoeContextRefit } from "./cpu-moe-context.js";
 import { assertRpcLaunchable, rpcServerArgs } from "./rpc-peers.js";
+import { DRAFT_RETRY_NOTE, draftRetryOptions, type DraftModelPreference } from "./draft-model.js";
+import { resolveDraftLaunch } from "./draft-model-launch.js";
 import {
   getEmbeddingModelDef,
   getLocalModelDef,
@@ -111,6 +114,8 @@ import {
 import { resolvePlatformAsset } from "../backend/platform-assets.js";
 import { assertBackendRunsOnThisMac } from "../backend/macos-min-version.js";
 import { assertPortFree, waitForOwnDaemon } from "./daemon-launch-guard.js";
+import { assertNoModelsDirMove } from "../models-dir-move-lock.js";
+import { missingModelError } from "../models-dir-guard.js";
 import {
   loraAdapterArgs,
   loraAdapterFileProblem,
@@ -119,6 +124,7 @@ import {
   type LoraAdapter,
 } from "./lora-adapter.js";
 import { noteReleaseTimeout, waitForProcessRelease } from "./process-release.js";
+import { dropNonEnginePid } from "./engine-pid-identity.js";
 import {
   buildDaemonEnv,
   resolveManagedServerApiKey,
@@ -271,6 +277,13 @@ export interface DaemonStartOptions {
    * build without RPC. Empty / undefined keeps the launch byte-identical.
    */
   rpcServers?: readonly string[];
+  /**
+   * `localModels.managed.draftModel` (ATO-2424, `draft-model.ts`):
+   * `--model-draft` speculative decoding, only in what the fitted window
+   * leaves. `startDaemon` reads it from config when omitted; `"off"` (the
+   * default) keeps the launch byte-identical.
+   */
+  draftModel?: DraftModelPreference;
   /**
    * Run the throughput probe once the server is healthy (default
    * `true`): one 64-token completion whose `timings.predicted_per_second`
@@ -1046,6 +1059,15 @@ function readConfiguredCompletionMaxTokens(): number | undefined {
   }
 }
 
+/** `localModels.managed.draftModel`; `"off"` when config cannot be read. */
+function readConfiguredDraftModel(): DraftModelPreference {
+  try {
+    return getConfig().localModels.managed.draftModel ?? "off";
+  } catch {
+    return "off";
+  }
+}
+
 /** `localModels.managed.promptDiskCache`; off when config cannot be read. */
 function readConfiguredPromptDiskCache(): boolean {
   try {
@@ -1274,6 +1296,8 @@ export interface DaemonStartResult {
   projectorDropped?: boolean;
   /** `--n-cpu-moe` the launch used (`cpu-moe.ts`); 0 / absent: none. */
   cpuMoeLayers?: number;
+  /** The draft model the launch decodes with (`draft-model.ts`); absent: none. */
+  draftModel?: string;
 }
 
 /**
@@ -1347,6 +1371,8 @@ export async function startDaemon(
 async function startDaemonNow(
   opts: DaemonStartOptions,
 ): Promise<DaemonStartResult> {
+  // ATO-2503: never while another process moves the models folder.
+  assertNoModelsDirMove(opts.dataDir);
   // A crashed Core may have left its model running on our pid mirror and
   // port: a new Core reaps it before this start reads either.
   await recoverOrphanedCoreSessions(opts.dataDir);
@@ -1372,11 +1398,9 @@ async function startDaemonNow(
   // own file; everything else from the managed per-model directory.
   const modelPath = resolveChatModelWeightsPath(opts.dataDir, model);
   if (!existsSync(modelPath)) {
-    throw new Error(
-      model.localPath
-        ? `model ${opts.modelId} file not found: ${model.localPath}`
-        : `model ${opts.modelId} not downloaded; run 'atomic-agent models pull ${opts.modelId}'`,
-    );
+    if (model.localPath) throw new Error(`model ${opts.modelId} file not found: ${model.localPath}`);
+    // ATO-2503: a models folder on an unplugged disk says so.
+    throw missingModelError(`model ${opts.modelId} not downloaded; run 'atomic-agent models pull ${opts.modelId}'`);
   }
   if (opts.loraAdapter) {
     const problem =
@@ -1408,16 +1432,7 @@ async function startDaemonNow(
   const prefixReuse = header ? classifyPrefixReuse(header) : null;
   const completionMaxTokens =
     opts.completionMaxTokens ?? readConfiguredCompletionMaxTokens();
-  const {
-    contextSize,
-    autoContextCeiling,
-    autoSlotsCap,
-    kvBudgetBytes,
-    deviceBudgetBytes,
-    sharesSystemMemory,
-    note: contextNote,
-    reserveNote,
-  } = await resolveEffectiveContextSize(device, model, {
+  const contextFitOpts = {
     configured: opts.contextSize ?? 0,
     hasMmproj: Boolean(opts.mmprojFile),
     kvLayout,
@@ -1434,7 +1449,49 @@ async function startDaemonNow(
       ...(completionMaxTokens === undefined ? {} : { completionMaxTokens }),
     },
     ...(opts.offloadShrink ? { autoContextAtMost: opts.offloadShrink.to } : {}),
+  };
+  const firstFit = await resolveEffectiveContextSize(device, model, contextFitOpts);
+  // ATO-2455: experts that `"auto"` moves to RAM free GPU memory for the
+  // window, so it is fitted again with them off the GPU
+  // (`cpu-moe-context.ts`). The free figures, the swa-full budget and the
+  // experts decision below keep the first fit's whole-model view.
+  const moeShape = header ? moeShapeFromMetadata(header, model.fileSizeGb * 1e9) : null;
+  const cpuMoeRefit = cpuMoeContextRefit({
+    preference: opts.cpuMoe ?? "auto",
+    shape: moeShape,
+    firstPassLayers: decideCpuMoeLayers({
+      preference: opts.cpuMoe ?? "auto",
+      rpcPeers: (opts.rpcServers?.length ?? 0) > 0,
+      shape: moeShape,
+      device,
+      sharesSystemMemory: firstFit.sharesSystemMemory,
+      deviceBudgetBytes: firstFit.deviceBudgetBytes,
+      kvBytes: estimateLaunchKvBytes({
+        kvLayout: kvLayout ? buildKvLayout(kvLayout) : null,
+        modelSizeGb: model.fileSizeGb,
+        contextSize: firstFit.contextSize,
+        swaFull: false,
+      }),
+    }).layers,
+    configuredContext: opts.contextSize ?? 0,
+    contextSize: firstFit.contextSize,
   });
+  const refit = cpuMoeRefit
+    ? await resolveEffectiveContextSize(
+        device,
+        { ...model, fileSizeGb: Math.max(0, model.fileSizeGb - cpuMoeRefit.offDeviceGb) },
+        {
+          ...contextFitOpts,
+          autoContextAtMost: Math.min(cpuMoeRefit.atMost, opts.offloadShrink?.to ?? cpuMoeRefit.atMost),
+        },
+      )
+    : null;
+  const { kvBudgetBytes, deviceBudgetBytes, sharesSystemMemory } = firstFit;
+  const { contextSize, autoContextCeiling, autoSlotsCap, reserveNote } = refit ?? firstFit;
+  const contextNote =
+    refit && cpuMoeRefit
+      ? `fitted with experts in RAM (cpu-moe), at most ${cpuMoeRefit.atMost}` + (refit.note ? `, ${refit.note}` : "")
+      : firstFit.note;
   const swaFull =
     opts.swaFullFlag !== undefined
       ? {
@@ -1476,7 +1533,7 @@ async function startDaemonNow(
   const cpuMoe = decideCpuMoeLayers({
     preference: opts.cpuMoe ?? "auto",
     rpcPeers: (opts.rpcServers?.length ?? 0) > 0,
-    shape: header ? moeShapeFromMetadata(header, model.fileSizeGb * 1e9) : null,
+    shape: moeShape,
     device,
     sharesSystemMemory,
     deviceBudgetBytes,
@@ -1487,12 +1544,36 @@ async function startDaemonNow(
       swaFull: swaFull.enabled,
     }),
   });
+  // ATO-2424: a draft model only takes what the fitted window left; under
+  // Atomic Core, on the CPU or with no room it stays off and says why.
+  const draft = resolveDraftLaunch({
+    dataDir: opts.dataDir,
+    preference: opts.draftModel ?? readConfiguredDraftModel(),
+    model,
+    engine: opts.engine ?? "llama-server",
+    device,
+    binPath,
+    targetHeader: header,
+    contextSize,
+    swaFull: swaFull.enabled,
+    kvBudgetBytes,
+    mainKvBytes: estimateLaunchKvBytes({
+      kvLayout: kvLayout ? buildKvLayout(kvLayout) : null,
+      modelSizeGb: model.fileSizeGb,
+      contextSize,
+      swaFull: swaFull.enabled,
+    }),
+    // The same rule `buildLlamaServerArgs` pins `--device` by.
+    pinnedDevice:
+      device && device !== "cpu" && (opts.rpcServers?.length ?? 0) === 0 ? device : null,
+  });
+  const draftArgs = draft?.args ?? [];
   // The speed an earlier start measured on this same launch, read before
   // this one clears the record: carried over, it spares the probe
-  // (`readReusableThroughput`).
+  // (`readReusableThroughput`). A draft decodes at another speed.
   const speedBasis = throughputBasis(
     opts.dataDir,
-    model.id,
+    draft?.draft ? `${model.id}+draft:${draft.draft}` : model.id,
     device,
     { contextSize, fitsDevice },
     opts.engine,
@@ -1517,6 +1598,9 @@ async function startDaemonNow(
     model.id,
     contextSize,
   );
+  // Before the fingerprint: a cache saved without the draft is not
+  // restored into a launch with one, nor the other way round.
+  args.push(...draftArgs);
   // ATO-456: off by default. The fingerprint is taken before the save
   // path is added, which is not part of what a saved cache depends on.
   const promptCacheFp = readConfiguredPromptDiskCache()
@@ -1559,6 +1643,7 @@ async function startDaemonNow(
       : []),
     `[atomic-agent] launch: ${swaFull.reason}`,
     `[atomic-agent] launch: ${cpuMoe.reason}`,
+    ...(draft ? [`[atomic-agent] launch: ${draft.reason}`] : []),
     `[atomic-agent] launch: prefix reuse ${effectivePrefixReuse ?? "unknown"}${reuseWhy}`,
     "",
   ].join("\n");
@@ -1654,9 +1739,10 @@ async function startDaemonNow(
       });
     } catch (err) {
       abandonChild(child.pid, pidPath);
-      const retry = cpuMoeRetryOptions(opts, cpuMoe.layers, err);
+      const moeRetry = cpuMoeRetryOptions(opts, cpuMoe.layers, err);
+      const retry = moeRetry ?? draftRetryOptions(opts, draftArgs, err);
       if (!retry) throw err;
-      writeSync(logFd, CPU_MOE_RETRY_NOTE);
+      writeSync(logFd, moeRetry ? CPU_MOE_RETRY_NOTE : DRAFT_RETRY_NOTE);
       return await startDaemon(retry);
     }
     // ATO-868: llama.cpp's fit left part of the model on the CPU under an
@@ -1701,6 +1787,7 @@ async function startDaemonNow(
       prefixReuse: effectivePrefixReuse,
       autoContextCeiling,
       cpuMoeLayers: cpuMoe.layers,
+      ...(draft?.draft ? { draftModel: draft.draft } : {}),
     };
   } finally {
     closeSync(logFd);
@@ -1823,6 +1910,8 @@ export async function stopDaemon(
     throw new ForeignDaemonError(pid);
   }
 
+  // A reused pid is not ours to signal (ATO-2766).
+  if (await dropNonEnginePid(pid, pidPath, resolveLogFilePath(dataDir))) return;
   const timeoutMs = opts?.timeoutMs ?? 3000;
   if (process.platform === "win32") {
     try {
@@ -1979,6 +2068,7 @@ export function buildEmbeddingServerArgs(
 export async function startEmbeddingDaemon(
   opts: EmbeddingDaemonStartOptions,
 ): Promise<{ pid: number; port?: number }> {
+  assertNoModelsDirMove(opts.dataDir); // ATO-2503
   if (getEmbeddingModelDef(opts.modelId).requiresCoreEmbeddingModule) {
     return startCoreModuleEmbedding(opts);
   }
@@ -2009,7 +2099,7 @@ export async function startEmbeddingDaemon(
     model.filename,
   );
   if (!existsSync(modelPath)) {
-    throw new Error(
+    throw missingModelError(
       `embedding model ${opts.modelId} not downloaded; run 'atomic-agent models pull-embedding ${opts.modelId}'`,
     );
   }
@@ -2086,7 +2176,7 @@ async function startCoreModuleEmbedding(
   }
   const modelPath = resolveModelFilePath(opts.dataDir, model.id, model.filename);
   if (!existsSync(modelPath)) {
-    throw new Error(
+    throw missingModelError(
       `embedding model ${opts.modelId} not downloaded; run 'atomic-agent models pull-embedding ${opts.modelId}'`,
     );
   }
@@ -2162,6 +2252,7 @@ export async function stopEmbeddingDaemon(
     throw new ForeignDaemonError(pid);
   }
 
+  if (await dropNonEnginePid(pid, pidPath, resolveEmbeddingLogFilePath(dataDir))) return;
   const timeoutMs = opts?.timeoutMs ?? 3000;
   if (process.platform === "win32") {
     try {

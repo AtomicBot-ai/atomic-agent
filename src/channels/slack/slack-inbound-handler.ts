@@ -22,6 +22,7 @@ import type { ChatSessionMap } from "../chat-session-map.js";
 import { runModelCommand } from "../model-command.js";
 import type { SlackApi } from "./slack-api.js";
 import { runSlackFork } from "./slack-fork-command.js";
+import { runSlackSwitch } from "./slack-switch-command.js";
 import { markdownToSlack } from "./slack-format.js";
 import { scrubSlackError, type SlackMessageEvent, type SlackTarget } from "./slack-types.js";
 
@@ -30,7 +31,7 @@ export interface SlackInboundContext {
   /** `postMessage` lets `!fork` open a thread; without it the fork stays here. */
   api: Pick<SlackApi, "postText"> & Partial<Pick<SlackApi, "postMessage">>;
   sessions: Pick<ChatSessionMap, "get" | "setCurrent" | "rotate"> &
-    Partial<Pick<ChatSessionMap, "touch">>;
+    Partial<Pick<ChatSessionMap, "touch" | "entries">>;
   logger: StructuredLogger;
   /** Slack member ids allowed to drive the agent. Empty refuses everyone. */
   ownerIds: readonly string[];
@@ -55,7 +56,8 @@ const HELP_TEXT = [
   "Commands: `/atomic <command>`, or type them with `!` in a message or thread:",
   "• `!status`: this conversation's session id",
   "• `!new`: start a fresh session here (the current one is archived)",
-  "• `!fork`: copy this conversation's session into a new thread (in a DM, continue the copy here)",
+  "• `!fork`: copy this conversation's session into a new thread (in a DM, continue the copy here); `!fork <n>` copies it up to question n",
+  "• `!switch <session-id>`: point this conversation at another session (back to the original after a fork)",
   "• `!model`: show the provider and model; `!model <provider> [model-id]` switches",
   "• `!cancel`: stop the turn running here",
 ].join("\n");
@@ -132,13 +134,21 @@ export function stripMention(text: string, botUserId: string): string {
   return text.replace(new RegExp(`^\\s*<@${botUserId}(\\|[^>]*)?>`), "");
 }
 
+/** Remove every `<@U…>` / `<@U…|name>` naming the bot, anywhere in `text`. */
+export function stripBotMentions(text: string, botUserId: string): string {
+  return text.replace(new RegExp(`<@${botUserId}(\\|[^>]*)?>`, "g"), "").trim();
+}
+
 /** Returns false for an unknown verb, so it goes to the agent as text. */
 export async function handleCommand(
   verb: string,
-  args: string,
+  rawArgs: string,
   ref: SlackRef,
   ctx: SlackInboundContext,
 ): Promise<boolean> {
+  // In a channel the bot is @mentioned to be heard, often after the
+  // command (`!fork 2 <@BOT>`): the mention is not an argument.
+  const args = stripBotMentions(rawArgs, ctx.botUserId);
   switch (verb) {
     case "help":
     case "start":
@@ -159,7 +169,10 @@ export async function handleCommand(
       return true;
     }
     case "fork":
-      await post(ctx, ref, await runSlackFork(ref, ctx));
+      await post(ctx, ref, await runSlackFork(ref, ctx, args));
+      return true;
+    case "switch":
+      await post(ctx, ref, runSlackSwitch(args, ref, ctx));
       return true;
     case "model":
       // Owner-gated already: `route` drops non-owners before this runs.

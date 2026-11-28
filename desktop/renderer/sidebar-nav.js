@@ -2,7 +2,7 @@
  * glyphs and the narrow-window drawer, as pure functions (no DOM, no renderer
  * state) so they can be unit-tested (test/sidebar-nav.test.mjs).
  *
- * ATO-457 (U-24, owner's decision B): Tasks (now "Cron jobs") and Skills are
+ * ATO-457 (U-24, owner's decision B): Tasks (now "Scheduled tasks") and Skills are
  * standing rows under New chat, so the places ⌘ 2 and ⌘ 3 lead to have a home in the sidebar. Both
  * still open their Settings tab (renderer.js act('room:…')); the row is lit
  * while that tab is the one on screen.
@@ -14,28 +14,37 @@
  * by the window width, the sidebar toggle (and ⌘ \) opens the full sidebar as a
  * drawer over the content instead of refusing. */
 
+/* ATO-2743: the one visible name of the Tasks feature (ids, acts and `atag cron`
+   stay). The sidebar row reads it; the View menu (main/menu.ts), the palette,
+   the Settings section and the sidebar list header spell the same words, held
+   equal by test/scheduled-tasks-name.test.mjs. ChatGPT and Claude both call
+   this "Scheduled tasks"; "Task board" stays the board's own name. */
+const SCHEDULED_TASKS_LABEL = 'Scheduled tasks';
+
 /** The standing section rows under the Studio row, top to bottom. `pane` is
     the open Settings tab (null while Settings is closed).
 
-    W2 (sidebar like Claude desktop): the Tasks row is labelled "Cron jobs"
+    W2 (sidebar like Claude desktop): the Tasks row is labelled "Scheduled tasks"
     (ids, verbs and ⌘ 2 are unchanged), Skills stays, and a Plugins row opens
     Settings › Plugins. "New project" left these rows: it is the small button
     on the Projects header now (chat-projects.js). A second argument
     (the old `{projects}` option) is ignored. */
 function sidebarNavItems(pane) {
   return [
-    {id: 'tasks', label: 'Cron jobs', icon: 'timer', act: 'room:tasks', chord: '⌘ 2', on: pane === 'tasks'},
+    {id: 'tasks', label: SCHEDULED_TASKS_LABEL, icon: 'timer', act: 'room:tasks', chord: '⌘ 2', on: pane === 'tasks'},
     // ATO-2257: the task board, a room of its own (workboard.js); it is never a Settings tab.
     {id: 'board', label: 'Task board', icon: 'kanban', act: 'board:open', chord: '', on: false},
     {id: 'skills', label: 'Skills', icon: 'bookOpen', act: 'room:skills', chord: '⌘ 3', on: pane === 'skills'},
     {id: 'plugins', label: 'Plugins', icon: 'puzzle', act: 'settings:plugins', chord: '', on: pane === 'plugins'},
     // ATO-1072: the saved recipes, an overlay sheet (chat-recipe.js), never a Settings tab.
     {id: 'recipes', label: 'Recipes', icon: 'scrollText', act: 'recipe:gallery', chord: '', on: false},
+    // ATO-2459: My apps (Settings › My apps), the pages kept as apps, like ChatGPT's GPTs row.
+    {id: 'apps', label: 'Apps', icon: 'appWindow', act: 'settings:myapps', chord: '', on: pane === 'myapps'},
   ];
 }
 
 /* W2: the sidebar's top rows draw Lucide glyphs (24px grid, 1.5 stroke) at
-   16px, so New chat, Studio, Cron jobs, Skills, Plugins and the Projects
+   16px, so New chat, Studio, Scheduled tasks, Skills, Plugins and the Projects
    button read as one thin set. Lucide is ISC licensed. */
 const LUCIDE = {
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
@@ -47,6 +56,7 @@ const LUCIDE = {
   image: '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
   video: '<path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
   scrollText: '<path d="M15 12h-5"/><path d="M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/>',
+  appWindow: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>',
   folderPlus: '<path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
 };
 /** A Lucide glyph as a 16px inline SVG; '' for a name not in the set. */
@@ -100,4 +110,4 @@ function sidebarToggleView(st) {
   return {open, label: open ? 'Hide sidebar (⌘ \\)' : 'Show sidebar (⌘ \\)'};
 }
 
-if (typeof module !== 'undefined') module.exports = {sidebarNavItems, railGlyph, toggleSidebar, sidebarToggleView, lucideIcon, studioMenuItems, LUCIDE};
+if (typeof module !== 'undefined') module.exports = {SCHEDULED_TASKS_LABEL, sidebarNavItems, railGlyph, toggleSidebar, sidebarToggleView, lucideIcon, studioMenuItems, LUCIDE};

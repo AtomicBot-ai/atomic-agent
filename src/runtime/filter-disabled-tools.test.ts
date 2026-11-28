@@ -58,6 +58,19 @@ describe("filterToolDescriptorsByConfig", () => {
     expect(GATED_TOOL_NAMES.logbook).toEqual(["logbook.query"]);
   });
 
+  it("keeps research.deep with web search off only while My files can be searched (ATO-2507)", () => {
+    const has = (gates: ToolGateConfig, name: string) => nameSet(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, gates)).has(name);
+    const webOff = { ...ALL_OPEN, web: { search: { enabled: false } } };
+    expect(has(webOff, "os.web.search")).toBe(false);
+    expect(has(webOff, "research.deep")).toBe(false);
+    expect(has({ ...webOff, research: { documents: false } }, "research.deep")).toBe(false);
+    expect(has({ ...webOff, research: { documents: true } }, "research.deep")).toBe(true);
+    expect(has({ ...webOff, research: { documents: true } }, "os.web.search")).toBe(false);
+    expect(has(ALL_OPEN, "research.deep")).toBe(true);
+    expect(GATED_TOOL_NAMES.research).toEqual(["research.deep"]);
+    expect(GATED_TOOL_NAMES.webSearch).toEqual(["os.web.search"]);
+  });
+
   it("drops every browser.* descriptor when the browser is disabled", () => {
     const filtered = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
       ...ALL_OPEN,
@@ -247,6 +260,7 @@ describe("filterToolDescriptorsByConfig", () => {
     const allGated = [
       ...GATED_TOOL_NAMES.browser,
       ...GATED_TOOL_NAMES.webSearch,
+      ...GATED_TOOL_NAMES.research,
       ...GATED_TOOL_NAMES.vision,
       ...GATED_TOOL_NAMES.memoryProfile,
       ...GATED_TOOL_NAMES.memoryNotes,
@@ -294,6 +308,7 @@ describe("filterToolDescriptorsByConfig", () => {
     const allGated = [
       ...GATED_TOOL_NAMES.browser,
       ...GATED_TOOL_NAMES.webSearch,
+      ...GATED_TOOL_NAMES.research,
       ...GATED_TOOL_NAMES.vision,
       ...GATED_TOOL_NAMES.memoryProfile,
       ...GATED_TOOL_NAMES.memoryNotes,

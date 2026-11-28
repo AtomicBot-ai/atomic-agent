@@ -58,8 +58,13 @@ export interface TelegramForkMessage {
 export async function runTelegramFork(
   ref: TelegramForkRef,
   deps: TelegramForkDeps,
+  /** The text after `/fork`: empty for the last question, else its number (ATO-2456). */
+  at = "",
 ): Promise<TelegramForkMessage[]> {
-  const fork = planChannelFork(deps.runtime, deps.sessionPointer.get(ref.key).current);
+  const fork = planChannelFork(deps.runtime, deps.sessionPointer.get(ref.key).current, {
+    at,
+    command: "/fork",
+  });
   if (!fork.ok) return [{ target: ref.target, text: fork.message }];
   const { source, title } = fork;
 
@@ -104,15 +109,23 @@ export async function runTelegramFork(
     sourceSessionId: source.id,
     sessionId: state.id,
   });
+  const here = ref.target.threadId === undefined ? "this chat" : "this topic";
   return [
     {
       target: ref.target,
       text:
-        `Forked: this chat now continues "${title}" (session ${state.id}), forked from ${source.id}. ` +
-        `The original is unchanged; /switch ${source.id} goes back to it.`,
+        `Forked: ${here} now continues "${title}" (session ${state.id}), forked from ${source.id}. ` +
+        `The original is unchanged; /switch ${source.id} goes back to it.` +
+        // A forum where the topic could not be opened: say so, and how to
+        // get a new topic next time, rather than fork in place silently (ATO-2757).
+        (ref.isForum === true ? ` ${NO_TOPIC_HINT}` : ""),
     },
   ];
 }
+
+/** Why a forum fork stayed in this topic, and the one setting that fixes it. */
+const NO_TOPIC_HINT =
+  'I could not open a new topic for the fork, so it continues here. To fork into a new topic, make the bot an admin with the "Manage topics" right.';
 
 /** The fork, stamped with the chat it now lives in. */
 function withChat(state: SessionState, chat: Record<string, unknown>): SessionState {

@@ -64,9 +64,14 @@ describe("gated-call approval categories", () => {
     // verify.run starts commands too: a dangerous one waits for level 5 (ATO-1266).
     expect(gatedCallRunsUnattended("verify.run", { level: 4 })).toBe(false);
     expect(gatedCallRunsUnattended("verify.run", { level: 5 })).toBe(true);
-    // A POST asks as http_write until level 4 (ATO-1462).
+    // A POST asks as http_write until level 4 (ATO-1462), and a header with
+    // {{secret:NAME}} as shell_secret until level 5 (ATO-2530, review F2072.1):
+    // a denied secret call must not leave later calls of the batch running.
     expect(gatedCallRunsUnattended("os.http.request", { level: 3 })).toBe(false);
-    expect(gatedCallRunsUnattended("os.http.request", { level: 4 })).toBe(true);
+    expect(gatedCallRunsUnattended("os.http.request", { level: 4 })).toBe(false);
+    expect(gatedCallRunsUnattended("os.http.request", { level: 5 })).toBe(true);
+    expect(gatedCallRunsUnattended("skill.run_script", { level: 4 })).toBe(false);
+    expect(gatedCallRunsUnattended("skill.run_script", { level: 5 })).toBe(true);
     expect(gatedCallRunsUnattended("os.email.send", { level: 4 })).toBe(false);
   });
 
@@ -91,6 +96,16 @@ describe("gated-call approval categories", () => {
     expect(approvalCategoriesFor("logbook.query")).toEqual(["logbook_cloud"]);
     expect(gatedCallRunsUnattended("logbook.query", { level: 4 })).toBe(false);
     expect(gatedCallRunsUnattended("logbook.query", { level: 5 })).toBe(true);
+  });
+
+  it("runs the My apps writes solo, asked like a file under the state dir (ATO-2459)", () => {
+    expect(resourceClassFor("app.list")).toBe("pure_read");
+    for (const name of ["app.save", "app.update", "app.delete"]) {
+      expect(resourceClassFor(name), name).toBe("approval_gated");
+      expect(gatedCallRunsUnattended(name, { level: 1 }), name).toBe(false);
+    }
+    expect(approvalCategoriesFor("app.save")).toContain("fs_write_home");
+    expect(approvalCategoriesFor("app.delete")).toContain("fs_trash");
   });
 
   it("honours a session category grant, but never for a non-grantable category", () => {

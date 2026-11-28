@@ -31,6 +31,10 @@ describe("worker tool policy", () => {
   it("hides exactly the delegation, subagent, session-ending, scheduling, memory-writing and screen tools", () => {
     expect([...WORKER_EXCLUDED_TOOLS].sort()).toEqual(
       [
+        // ATO-2459: My apps writes stay with the orchestrator's turn.
+        "app.delete",
+        "app.save",
+        "app.update",
         "canvas.render",
         "ask_user",
         // ATO-2363: screen notes never reach a cloud orchestrator unasked.
@@ -56,6 +60,12 @@ describe("worker tool policy", () => {
         "tasks.cancel",
         "tasks.cron",
         "tasks.schedule",
+        // ATO-2497: a worker runs no board card.
+        "tasks.request_review",
+        "tasks.block",
+        "tasks.comment",
+        // ATO-2457: a card only the orchestrator's chat could draw.
+        "ui.render",
       ].sort(),
     );
   });
@@ -75,6 +85,7 @@ describe("worker tool policy", () => {
       "memory.profile.history",
       "memory.lessons.recall",
       "mcp.resource.read",
+      "app.list",
     ]) {
       expect(isWorkerVisibleTool(name), name).toBe(true);
     }

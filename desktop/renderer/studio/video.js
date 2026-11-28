@@ -191,6 +191,14 @@
     return p ? 'Generate · ' + p : 'Generate';
   }
 
+  /** ATO-2742: the Generate chord on the button as the app spells it (renderer.js kbd):
+      "⌘ ↵" on macOS and with no bridge, "Ctrl ↵" on Windows and Linux. */
+  function goKey() {
+    if (typeof g.kbd === 'function') return g.kbd('⌘ ↵');
+    const a = g.atomic;
+    return a && a.platform && a.platform !== 'darwin' ? 'Ctrl ↵' : '⌘ ↵';
+  }
+
   /** "~40 s", "~4–7 min", "~1–2 h" for a span of seconds. */
   function spanText(low, high) {
     const lo = Math.max(0, Number(low) || 0), hi = Math.max(lo, Number(high) || lo);
@@ -394,7 +402,7 @@
   const helpers = {
     needsPoster, needsChatPoster, posterTime,
     durationOptions, pickDuration, aspectOptions, pickAspect, resolutionOptions, pickResolution,
-    supportsImageStart, localDims, buildRequest, blockReason, localHint, priceParams, priceLabel, generateLabel,
+    supportsImageStart, localDims, buildRequest, blockReason, localHint, priceParams, priceLabel, generateLabel, goKey,
     spanText, estimateVerdict, fitChip, gbText, modelLabels, phaseList, etaText, stepText, tookText,
     clockText, formFromItem, machine, modelGroups, placeOf, followLine, pickModel, fitFormToModel, errorText, escHtml,
   };
@@ -1337,7 +1345,7 @@
       const label = generateLabel({ price: currentPrice(), local, armed: S.armed });
       const disabled = S.busy || running() || !!why;
       h += '<button class="studio-go' + (S.armed ? ' armed' : '') + '" data-vact="generate"' + (disabled ? ' disabled' : '') + (why ? ' title="' + escHtml(why) + '"' : '') + '>'
-        + (running() ? 'Working…' : S.busy ? 'Starting…' : escHtml(label)) + (disabled ? '' : ' <kbd>⌘ ↵</kbd>') + '</button>';
+        + (running() ? 'Working…' : S.busy ? 'Starting…' : escHtml(label)) + (disabled ? '' : ' <kbd>' + escHtml(goKey()) + '</kbd>') + '</button>';
       return h;
     }
 

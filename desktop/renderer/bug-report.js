@@ -185,12 +185,8 @@ async function bugRepSend() {
       BR.bugReportSaveLog().then((r) => { if (r && r.ok) toast('Log tail saved', r.path); }).catch(() => {});
     }
   }
-  // As before ATO-1466: the support report is saved beside the issue (and counted).
-  if (BR && BR.debugBundle) {
-    BR.debugBundle('report').then((res) => {
-      if (res && res.ok) toast('Report saved', res.path + ' — attach it if you want to');
-    }).catch(() => {});
-  }
+  // As before ATO-1466: the support report is saved beside the issue (and counted). ATO-2745: the one save (support-report.js).
+  if (typeof saveSupportReport === 'function') saveSupportReport('report');
   if (BR && BR.openExternal) BR.openExternal(plan.url);
   BUGREP.sending = false;
   if (S.overlay === 'bugrep') { S.overlay = null; render(); }

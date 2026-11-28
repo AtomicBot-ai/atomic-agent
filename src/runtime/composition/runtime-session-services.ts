@@ -109,6 +109,8 @@ export function installRuntimeSessionDelete(
   shellJobs: Pick<ShellJobRegistry, "endSession">,
   outputSpill?: Pick<ToolOutputSpill, "removeSession">,
   fileCheckpoints?: Pick<FileCheckpointStore, "removeSession">,
+  /** SessionEnd hooks (ATO-2462); called with the id, must not throw. */
+  onDeleted?: (id: string) => void,
 ) {
   // Drop a session's trace recorder — and stop its detached shell jobs,
   // kept ones included — when the session itself is deleted, so the map
@@ -134,6 +136,7 @@ export function installRuntimeSessionDelete(
     deleteSession(id);
     // Its Privacy Shield placeholders (ATO-1083), memory only.
     forgetPrivacyVault(id);
+    onDeleted?.(id);
   };
 }
 

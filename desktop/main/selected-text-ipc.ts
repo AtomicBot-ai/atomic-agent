@@ -1,12 +1,13 @@
 import { ipcMain } from "electron";
 
-import { keystrokesAllowed, readFrontApp, readSelectedText } from "./keystroke-clipboard-host.js";
-import { replaceAvailable, type SourceApp } from "./replace-selection.js";
+import { keystrokesAllowed, readSelectedText } from "./keystroke-clipboard-host.js";
+import { readFrontApp } from "./replace-front-app-host.js";   // ATO-2738: the window in front on Windows and Linux too
+import { replaceAvailable } from "./replace-selection.js";
+import { grabSelectionWith, type SelectionGrab } from "./selected-text-grab.js";
 import {
   mergeSelectedTextPref,
   readSelectedTextPref,
   selectedTextInfo,
-  selectedTextInUse,
   writeSelectedTextPref,
   type SelectedTextPref,
 } from "./selected-text.js";
@@ -18,13 +19,9 @@ import {
  * for before the mini chat window opens (quick-entry-window.ts
  * `grabSelection`).
  */
-/** The selection the hotkey read, and (ATO-2268, macOS) the app it came from, for "Replace in …". */
-export interface GrabbedSelection {
-  text: string;
-  app: SourceApp | null;
-}
+export type { GrabbedSelection, SelectionGrab } from "./selected-text-grab.js";
 
-export function wireSelectedText(w: { userData: string; platform: NodeJS.Platform }): { grabSelection: () => Promise<GrabbedSelection | null> } {
+export function wireSelectedText(w: { userData: string; platform: NodeJS.Platform }): { grabSelection: () => Promise<SelectionGrab> } {
   let pref: SelectedTextPref = readSelectedTextPref(w.userData);
   const describe = () => selectedTextInfo(pref, w.platform, keystrokesAllowed(false));
 
@@ -41,18 +38,16 @@ export function wireSelectedText(w: { userData: string; platform: NodeJS.Platfor
   });
 
   return {
-    grabSelection: async () => {
-      if (!selectedTextInUse(pref, w.platform, keystrokesAllowed(false))) return null;
-      try {
-        /* ATO-2268: the app in front is read beside the copy (the copy does
-           not change which app is in front), so "Replace in …" knows where
-           to put the answer back. It never holds the selection back. */
-        const front = replaceAvailable(w.platform) ? readFrontApp().catch(() => null) : Promise.resolve(null);
-        const [text, app] = await Promise.all([readSelectedText(), front]);
-        return text ? { text, app } : null;
-      } catch {
-        return null;   // not permitted, no tool, a timeout: the mini chat opens without it
-      }
-    },
+    /* ATO-2736: with the reason when nothing was read, for the mini chat's
+       line (selected-text-grab.ts). Trust is asked each time, so a
+       permission given since takes effect without a restart. */
+    grabSelection: () => grabSelectionWith({
+      pref,
+      platform: w.platform,
+      trusted: keystrokesAllowed(false),
+      withFrontApp: replaceAvailable(w.platform),
+      readText: readSelectedText,
+      readFrontApp,
+    }),
   };
 }

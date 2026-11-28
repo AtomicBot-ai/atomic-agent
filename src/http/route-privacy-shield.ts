@@ -14,9 +14,18 @@ import type { PrivacyShieldControl } from "../runtime/runtime-contract.js";
  * for that chat. POST takes `{ enabled: boolean }`, persists
  * `privacy.shield.enabled`, applies it to the next cloud request and
  * answers the same shape.
+ *
+ * ATO-2527: with a runtime that has the names switch, both answers carry
+ * `localNames: { enabled, state, model }` (see
+ * `runtime-privacy-names-status.ts`), and POST also takes
+ * `{ localNames: boolean }`, alone or beside `enabled`.
  */
 function snapshot(control: PrivacyShieldControl, sessionId: string | null) {
-  return { enabled: control.isEnabled(), ...control.stats(sessionId ?? undefined) };
+  return {
+    enabled: control.isEnabled(),
+    ...control.stats(sessionId ?? undefined),
+    ...(control.localNames ? { localNames: control.localNames.status() } : {}),
+  };
 }
 
 function sessionIdOf(url: string | undefined): string | null {
@@ -42,20 +51,27 @@ export function createSetPrivacyShieldHandler(): HttpHandler {
       sendError(res, 501, openaiError("privacy shield is not available in this runtime"));
       return;
     }
-    let body: { enabled?: unknown };
+    let body: { enabled?: unknown; localNames?: unknown };
     try {
-      body = await readJsonBody<{ enabled?: unknown }>(req);
+      body = await readJsonBody<{ enabled?: unknown; localNames?: unknown }>(req);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       sendError(res, 400, openaiError(`Invalid JSON: ${message}`));
       return;
     }
-    if (typeof body.enabled !== "boolean") {
+    const hasNames = body.localNames !== undefined;
+    if (hasNames && (typeof body.localNames !== "boolean" || !control.localNames)) {
+      const message = control.localNames ? "localNames must be a boolean" : "this runtime has no names switch";
+      sendError(res, 400, openaiError(message, "invalid_request_error", "localNames"));
+      return;
+    }
+    if (typeof body.enabled !== "boolean" && (body.enabled !== undefined || !hasNames)) {
       sendError(res, 400, openaiError("enabled must be a boolean", "invalid_request_error", "enabled"));
       return;
     }
     try {
-      await control.setEnabled(body.enabled);
+      if (typeof body.enabled === "boolean") await control.setEnabled(body.enabled);
+      if (typeof body.localNames === "boolean") await control.localNames?.setEnabled(body.localNames);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       sendError(res, 500, openaiError(`could not switch privacy shield: ${message}`, "server_error"));

@@ -9,6 +9,15 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const K = require("../out/main/keystroke-clipboard.js");
 
+/* ATO-2804: the C# that Add-Type compiles, the -MemberDefinition
+   single-quoted string as PowerShell reads it ('' is one '). C# takes
+   '...' as one char, so DllImport('user32.dll') does not compile (CS1012). */
+function memberDefinition(script) {
+  const m = /-MemberDefinition '((?:[^']|'')*)'/.exec(script);
+  assert.ok(m, "an Add-Type -MemberDefinition '...'");
+  return m[1].replace(/''/g, "'");
+}
+
 /** A fake clipboard; `onPress` plays the app in front. */
 function fakeHost(initial = "mine") {
   const log = [];
@@ -50,7 +59,9 @@ test("Windows: a copy is never pressed into a console or terminal, a paste still
   assert.match(copy, new RegExp(`exit ${K.WIN_CONSOLE_SKIP_EXIT}`));
   for (const name of K.WINDOWS_CONSOLE_PROCESSES) assert.ok(copy.includes(`'${name}'`), `${name} in the guard`);
   assert.ok(copy.indexOf("GetForegroundWindow") < copy.indexOf("SendWait('^c')"), "the check runs before the key press");
-  assert.ok(!copy.includes('"'), "no double quotes on the PowerShell command line");
+  const cs = memberDefinition(copy);
+  assert.ok(cs.includes('[DllImport("user32.dll")]'), cs);
+  assert.doesNotMatch(cs, /'[^']{2,}'/, "no multi-character char literal in the C#: it must compile");
 
   const paste = K.keystrokeCommands("paste", { platform: "win32", env: {} })[0].args.at(-1);
   assert.doesNotMatch(paste, /GetForegroundWindow/, "a paste interrupts nothing, so no guard");

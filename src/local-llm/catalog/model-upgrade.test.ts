@@ -4,10 +4,11 @@ import {
   CPU_ONLY_MAX_MODEL_GB,
   decideModelUpgrade,
   modelsThisMachineCarries,
+  moeSplitOf,
   recommendModelTiers,
   type MachineForModels,
 } from "./model-upgrade.js";
-import { STARTER_LOCAL_MODEL_ID } from "./models-catalog.js";
+import { getLocalModelDef, STARTER_LOCAL_MODEL_ID } from "./models-catalog.js";
 
 function mac(ramGb: number, freeDiskGb: number | null = 500): MachineForModels {
   return { ramGb, gpuBudgetGb: ramGb * 0.75, freeDiskGb, cpuOnly: false };
@@ -128,5 +129,44 @@ describe("decideModelUpgrade", () => {
     expect(
       decideModelUpgrade({ ...base, machine: mac(2), activeModelId: STARTER_LOCAL_MODEL_ID }),
     ).toEqual({ action: "none", why: "nothing_fits" });
+  });
+});
+
+describe("experts in RAM (ATO-2455)", () => {
+  /** 32 GB of RAM and an 8 GB RTX 4060, probed. */
+  const pc: MachineForModels = {
+    ramGb: 32,
+    gpuBudgetGb: 8,
+    freeDiskGb: 500,
+    cpuOnly: false,
+    bandwidth: { gpuGbPerSec: 272, ramGbPerSec: 50, unified: false },
+  };
+
+  it("names the 35B-A3B for an 8 GB card when the tiers may keep experts in RAM", () => {
+    expect(moeSplitOf(getLocalModelDef("qwen-3.6-35b-a3b"), pc)?.comfortable).toBe(true);
+    expect(recommendModelTiers(pc, { expertsInRam: true }).quality?.id).toBe("qwen-3.6-35b-a3b");
+  });
+
+  it("keeps the GPU-only pick without the option", () => {
+    const q = recommendModelTiers(pc).quality!;
+    expect(q.fileSizeGb).toBeLessThanOrEqual(8 * 0.85);
+  });
+
+  it("never splits dense models or with cpuMoe off", () => {
+    expect(moeSplitOf(getLocalModelDef("qwen-3.6-27b"), pc)).toBeNull();
+    const off = recommendModelTiers({ ...pc, cpuMoe: "off" }, { expertsInRam: true }).quality!;
+    expect(off.fileSizeGb).toBeLessThanOrEqual(8 * 0.85);
+  });
+
+  it("leaves the background upgrade on the GPU-only pick", () => {
+    const d = decideModelUpgrade({
+      machine: pc,
+      activeModelId: STARTER_LOCAL_MODEL_ID,
+      downloadedIds: [STARTER_LOCAL_MODEL_ID],
+      managed: true,
+      cloudActive: false,
+    });
+    expect(d.action).toBe("download");
+    if (d.action === "download") expect(d.model.fileSizeGb).toBeLessThanOrEqual(8 * 0.85);
   });
 });

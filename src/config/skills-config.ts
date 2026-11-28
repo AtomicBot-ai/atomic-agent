@@ -26,6 +26,15 @@ export interface ProjectTrustRecord {
   /** Workspace-relative paths with forward slashes, e.g. `AGENTS.md`, `pkg/CLAUDE.md`. */
   trustedInstructions: string[];
   declinedInstructions: string[];
+  /**
+   * Project slash command files (ATO-2531), each as `<path>#<hash>`: the
+   * workspace-relative path and the first 16 hex digits of the SHA-256 of
+   * its text (`isProjectCommandTrustKey`). Unlike a skill or an
+   * instruction file, a command is trusted for that exact text: an edited
+   * file is pending again. Absent (older configs): none answered.
+   */
+  trustedCommands?: string[];
+  declinedCommands?: string[];
 }
 
 /**
@@ -358,6 +367,9 @@ function parseProjectTrust(raw: unknown): ProjectTrustRecord[] {
       declinedSkills: parseSkillNameArray(value.declinedSkills, `${field}.declinedSkills`),
       trustedInstructions: parseInstructionPathArray(value.trustedInstructions, `${field}.trustedInstructions`),
       declinedInstructions: parseInstructionPathArray(value.declinedInstructions, `${field}.declinedInstructions`),
+      // Additive (ATO-2531): kept off a record that never answered a command.
+      ...(value.trustedCommands == null ? {} : { trustedCommands: parseCommandKeyArray(value.trustedCommands, `${field}.trustedCommands`) }),
+      ...(value.declinedCommands == null ? {} : { declinedCommands: parseCommandKeyArray(value.declinedCommands, `${field}.declinedCommands`) }),
     };
   });
 }
@@ -381,6 +393,26 @@ function parseInstructionPathArray(raw: unknown, field: string): string[] {
     result.push(entry);
   });
   return result;
+}
+
+/** Project command trust keys (`<path>#<16 hex>`), deduplicated; anything else is refused. */
+function parseCommandKeyArray(raw: unknown, field: string): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new ConfigValidationError(field, `expected string[], got ${JSON.stringify(raw)}`);
+  const result = new Set<string>();
+  raw.forEach((entry, i) => {
+    if (typeof entry !== "string" || !isProjectCommandTrustKey(entry)) {
+      throw new ConfigValidationError(`${field}[${i}]`, `expected "<workspace-relative path>#<16 hex digits>", got ${JSON.stringify(entry)}`);
+    }
+    result.add(entry);
+  });
+  return [...result];
+}
+
+/** `.claude/commands/deploy.md#0123456789abcdef`: a relative path, `#`, 16 lowercase hex digits. */
+export function isProjectCommandTrustKey(key: string): boolean {
+  const m = /^(.+)#[0-9a-f]{16}$/.exec(key);
+  return m !== null && isRelativeInstructionPath(m[1]!);
 }
 
 export function isRelativeInstructionPath(path: string): boolean {

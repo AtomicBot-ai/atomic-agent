@@ -1,5 +1,6 @@
 import type { AtomicAgentConfig } from "../../config/index.js";
-import { DEFAULT_MAX_AUDIO_BYTES, getConfig, getStateSecretPaths, getTrustConfigPaths } from "../../config/index.js";
+import type { ToolProgressSlide } from "../../agent/agent-contract.js";
+import { DEFAULT_MAX_AUDIO_BYTES, getConfig, getStateSecretDirectories, getStateSecretPaths, getTrustConfigPaths } from "../../config/index.js";
 import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
@@ -26,12 +27,13 @@ import { commandIssuedSecrets } from "../../llm/provider/openai/api-key-command.
 import { processSecrets } from "../../error-reporting/process-secrets.js";
 import { isSecretEnvName } from "../../sandbox/command-env.js";
 import { resolveExtraApiKeys } from "../../config/resolve-llm-api-key.js";
+import { createToolSecretSource } from "../../config/tool-secrets.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
 import { finishTool } from "../../tools/finish.js";
 import { buildAskUserTool, replyTool } from "../../tools/conversation/index.js";
 import { browserScenarioDir, buildBrowserPageRenderer, buildBrowserTools, UserSiteApprovals, type BrowserExtractModelRef } from "../../tools/browser/index.js";
 import type { BrowserBackend } from "../../tools/browser/browser-backend.js";
-import { registerOsScreenTools, registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry, type WebSearchKeyHelp } from "../../tools/os/index.js";
+import { registerOsScreenTools, registerOsTools, type DeclaredInputsRegistry, type LspPoolRef, type ShellJobRegistry, type WebSearchKeyHelp } from "../../tools/os/index.js";
 import { registerVerifyTools, runChecks } from "../../tools/verify/index.js";
 import { registerGithubTools } from "../../tools/github/index.js";
 import { resolveGithubToken } from "../../github/index.js";
@@ -41,11 +43,13 @@ import { isProjectFolderTrusted } from "../../skills/project-trust.js";
 import { buildToolViewTool } from "../../tools/tool-view/index.js";
 import { planUpdateTool } from "../../tools/plan/index.js";
 import { buildCanvasRenderTool } from "../../tools/canvas/index.js";
+import { uiRenderTool } from "../../tools/ui/index.js";
 import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActive } from "../../tools/tool-search/index.js";
 import { buildConversationHistoryTool, buildSessionsSearchTool, registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
 import { buildFilesSearchTool, type FileIndexApi } from "../../tools/files/index.js";
 import { buildResearchDeepTool } from "../../tools/research/index.js";
 import { registerLogbookTools } from "../../tools/logbook/index.js";
+import { registerAppTools } from "../../tools/app/index.js";
 import { logbookNotesStayLocal, logbookToolOffered } from "../../logbook/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type VisionDescribeProviderSource, type VisionProviderSource } from "../../tools/vision/index.js";
@@ -63,12 +67,12 @@ import type { McpServerConfig } from "../../mcp/mcp-types.js";
 import { mcpAppsUiFromEnv } from "../../mcp/mcp-apps.js";
 import { loadPluginMcpServers } from "../../plugins/plugin-mcp.js";
 import { createPluginMcpLiveStop } from "../../plugins/plugin-mcp-live.js";
-import { listPluginSubagents } from "../../plugins/plugin-subagents.js";
-import { loadAgentProfiles, normaliseProfileName, readSettingsAgentProfiles, type AgentProfile } from "../../agent-profiles/index.js";
+import { loadRuntimeAgentProfiles } from "../agent-profile-sources.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { filterToolDescriptorsByConfig } from "../filter-disabled-tools.js";
 import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
-import { resolveComposioServerConfig } from "../../composio/index.js";
+import { COMPOSIO_SERVER_NAME, resolveComposioServerConfig } from "../../composio/index.js";
+import { ownMcpServerCheck } from "./own-mcp-servers.js";
 import { activePolicy, mcpServerPolicy } from "../../policy/index.js";
 import { isForeignLlamaServer } from "../../llm/run-mode/foreign-llama-server.js";
 
@@ -128,28 +132,6 @@ export function runtimeKnownSecrets(
   return out;
 }
 
-/**
- * Enabled plugins' `agents/*.md` as subagent profiles, named
- * `plugin:agent`; a name that does not normalise is skipped.
- */
-function pluginAgentProfiles(stateDir: string): AgentProfile[] {
-  const out: AgentProfile[] = [];
-  for (const p of listPluginSubagents(stateDir).profiles) {
-    const [plugin, agent] = [normaliseProfileName(p.plugin), normaliseProfileName(p.name.slice(p.plugin.length + 1))];
-    if (plugin === null || agent === null || p.prompt.trim().length === 0) continue;
-    out.push({
-      name: `${plugin}:${agent}`,
-      description: p.description,
-      prompt: p.prompt.trim(),
-      ...(p.model === undefined ? {} : { model: p.model }),
-      ...(p.tools.length === 0 ? {} : { tools: p.tools }),
-      source: "plugin",
-      file: p.file,
-    });
-  }
-  return out;
-}
-
 export function createRuntimeToolRegistry(
   config: AtomicAgentConfig,
   browserBackend: BrowserBackend,
@@ -157,6 +139,8 @@ export function createRuntimeToolRegistry(
   outputSpill?: ToolOutputSpill,
   /** The model `browser.extract` calls; bootstrap fills it in once the completer exists. */
   browserExtract: BrowserExtractModelRef = {},
+  /** "My files" (ATO-2507): `research.deep` reads the text of its `files.search` hits here. */
+  fileIndex?: FileIndexApi,
 ) {
 
 
@@ -196,11 +180,22 @@ export function createRuntimeToolRegistry(
   // os.web.fetch (registered later; looked up per call), on the same
   // side-call model as browser.extract. The report goes through the fs
   // write funnel like canvas.render.
+  // ATO-2507: or over My files through files.search (registered later),
+  // reading each hit's indexed text; web search is read live per call.
+  const myFiles = fileIndex;
+  const researchDocuments = myFiles !== undefined && myFiles.passageText !== undefined
+    ? {
+        passageText: (path: string, page?: number) => myFiles.passageText?.(path, page) ?? null,
+        listFolders: () => myFiles.listFolders(),
+      }
+    : undefined;
   toolRegistry.register(buildResearchDeepTool({
     ...dangerous,
     trustConfigPaths: getTrustConfigPaths(config.paths),
     tools: toolRegistry,
     model: browserExtract,
+    ...(researchDocuments !== undefined ? { documents: researchDocuments } : {}),
+    webSearchEnabled: () => getConfig().web.search.enabled,
   }));
   return toolRegistry;
 }
@@ -244,10 +239,14 @@ export function registerRuntimeCoreTools(input: {
   browserBackend?: BrowserBackend;
   /** "My files" (ATO-1621): `files.search` is registered when there is an index. */
   fileIndex?: FileIndexApi;
+  /** Gets the language-server pool, for `@problems` (ATO-2472). */
+  lspPoolRef?: LspPoolRef;
+  /** ATO-2444: the session's event stream, for the slides `os.fs.write_pptx` lays out. Omitted: none. */
+  emitAgentLoopEventFor?: FusionDelegateDeps["emitEvent"];
 } & Pick<RegisterMemoryToolsOptions, "profileStore" | "notesStore" | "lessonStore" | "procedureStore">): void {
   const { config, toolRegistry, dangerous, sessionStore, resolveOriginalRequest, resolvePreviousReply, declaredInputs,
     shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, logger,
-    webSearchKeyHelp, canAskUser, fileIndex } = input;
+    webSearchKeyHelp, canAskUser, fileIndex, emitAgentLoopEventFor } = input;
 
   registerOsTools(toolRegistry, {
     ...dangerous,
@@ -277,6 +276,9 @@ export function registerRuntimeCoreTools(input: {
     // restart. The guard never reads config itself.
     shellPolicy: {
       isGitRemoteSyncEnabled: () => getConfig().git.remoteSync,
+      // ATO-2505: how sure an argument finding must be to ask in bypass.
+      // Unset reads as NaN, which the guard takes as its default 0.7.
+      argScanThreshold: () => getConfig().agent.security?.argScanThreshold ?? Number.NaN,
     },
     shellJobs,
     ...(webSearchKeyHelp === undefined ? {} : { webSearchKeyHelp }),
@@ -285,6 +287,12 @@ export function registerRuntimeCoreTools(input: {
     // file said yes to) starts language servers without a question
     // (ATO-503). Read live, like the skill gate.
     isTrustedProject: (dir) => isProjectFolderTrusted(config.paths.userConfigFile, config.skills.projectTrust, dir),
+    ...(input.lspPoolRef === undefined ? {} : { lspPoolRef: input.lspPoolRef }),
+    // ATO-2444: a deck's slides reach the session's UIs as `tool_progress`, one per slide.
+    ...(emitAgentLoopEventFor === undefined ? {} : {
+      onPptxProgress: (sessionId: string, update: { fraction: number; elapsedMs: number; label: string; slide: ToolProgressSlide }) =>
+        emitAgentLoopEventFor(sessionId, { type: "tool_progress", tool: "os.fs.write_pptx", ...update }),
+    }),
   });
   // Computer use (ATO-525): screenshot, click, type, key — macOS, and
   // the screenshot alone on Windows and Linux (ATO-527); opt-in
@@ -308,7 +316,12 @@ export function registerRuntimeCoreTools(input: {
     // verify.run obeys the remote-sync switch too (ATO-1266).
     shellPolicy: {
       isGitRemoteSyncEnabled: () => getConfig().git.remoteSync,
+      // ATO-2505: how sure an argument finding must be to ask in bypass.
+      // Unset reads as NaN, which the guard takes as its default 0.7.
+      argScanThreshold: () => getConfig().agent.security?.argScanThreshold ?? Number.NaN,
     },
+    // `{{secret:NAME}}` (ATO-2530), the same `toolSecrets` as the shell's.
+    secrets: createToolSecretSource(config.paths.stateDir),
   });
   // Always registered; each call resolves `GITHUB_TOKEN` afresh so a
   // token saved in the Integrations hub works on the next turn. The
@@ -345,6 +358,8 @@ export function registerRuntimeCoreTools(input: {
       if (name === null) return;
       void skillHistory.recordUse(name).catch((err: unknown) => reportSkillHistoryError(err, "skill usage"));
     },
+    // `{{secret:NAME}}` in a script's args and env (ATO-2530).
+    createToolSecretSource(config.paths.stateDir),
   );
   trackSkillEdits(toolRegistry, { recorder: skillHistory, onError: reportSkillHistoryError });
   // `tool.view` is registered with `tool.search` in the MCP catalog phase:
@@ -358,6 +373,9 @@ export function registerRuntimeCoreTools(input: {
     ...dangerous,
     trustConfigPaths: getTrustConfigPaths(config.paths),
   }));
+  // ATO-2457: a ready card (decision, form, cards) the host draws itself;
+  // pure, always on, no approval. The terminal prints its text form.
+  toolRegistry.register(uiRenderTool);
   // Clarifying questions with ready answers (ATO-489): through the
   // approval gate, so the turn waits like an approval and only the
   // person answers. Registered for the whole process, but each turn
@@ -419,6 +437,17 @@ export function registerRuntimeCoreTools(input: {
         localModelsUrl: live.localModels.url,
       });
     },
+  });
+  // ATO-2459: My apps (<stateDir>/apps, shared with the desktop). Each
+  // change asks first; incognito chats keep nothing.
+  registerAppTools(toolRegistry, {
+    ...dangerous,
+    stateDir: config.paths.stateDir,
+    trustConfigPaths: getTrustConfigPaths(config.paths),
+    localStepChars: () => getConfig().agent.batchToolResultCharCap,
+    ...(sessionStore.isIncognito
+      ? { isIncognitoSession: (sessionId: string) => sessionStore.isIncognito!(sessionId) }
+      : {}),
   });
 }
 
@@ -654,6 +683,21 @@ export async function connectRuntimeMcpCatalog(input: {
       : {}),
     // Browser sign-ins of remote servers live in `<stateDir>/mcp-oauth/`.
     oauthStateDir: config.paths.stateDir,
+    // `{{secret:NAME}}` in a stdio server's `env`, filled in at spawn
+    // (ATO-2530); only for the person's own servers, never a plugin's.
+    toolSecrets: createToolSecretSource(config.paths.stateDir),
+    // Decided from the live config, so a server added mid-session counts (F2072.2).
+    mayUseToolSecrets: ownMcpServerCheck({
+      liveServers: () => {
+        try {
+          return getConfig().mcp?.servers ?? [];
+        } catch {
+          return config.mcp?.servers ?? []; // config.json unreadable now: the list at start
+        }
+      },
+      alwaysOwn: new Set([COMPOSIO_SERVER_NAME]),
+      pluginServerNames: new Set(pluginMcp.servers.map((s) => s.name)),
+    }),
     // ATO-1135: a host that renders MCP Apps pages (the desktop app) says so
     // with ATOMIC_AGENT_MCP_APPS_UI; only then do clients advertise the
     // extension and read a tool's `ui://` page after a call.
@@ -737,6 +781,8 @@ export async function connectRuntimeMcpCatalog(input: {
     const base = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
       browser: { enabled: config.browser.enabled },
       web: { search: { enabled: config.web.search.enabled } },
+      // ATO-2507: research.deep also works over My files with web search off.
+      research: { documents: toolRegistry.has("files.search") },
       // Live, like the fusion gate: offered while some leg of the
       // current route can see (see `visionRouteAvailable`).
       vision: {
@@ -1137,15 +1183,7 @@ export function registerRuntimeFusionAndReadScope(input: {
       // new file or a trust answer applies without a restart. Project
       // files load only once the folder trusted them.
       resolveAgentProfiles: (dir) =>
-        loadAgentProfiles({
-          workingDir: dir,
-          stateDir: config.paths.stateDir,
-          configFile: config.paths.userConfigFile,
-          startupTrust: config.skills.projectTrust,
-          settingsProfiles: () =>
-            readSettingsAgentProfiles(config.paths.userConfigFile, () => getConfig().llm?.runMode?.agentProfiles),
-          pluginProfiles: () => pluginAgentProfiles(config.paths.stateDir),
-        }),
+        loadRuntimeAgentProfiles(config, dir),
       outputCharCap: config.agent.batchToolResultCharCap,
       // A contract's declared `checks` run through the verify family,
       // each on a throwaway copy of the workspace, so a fan-out is judged
@@ -1207,15 +1245,7 @@ export function registerRuntimeFusionAndReadScope(input: {
       // The same profile loader fusion.delegate is given, settings
       // profiles included (ATO-2002).
       resolveAgentProfiles: (dir) =>
-        loadAgentProfiles({
-          workingDir: dir,
-          stateDir: config.paths.stateDir,
-          configFile: config.paths.userConfigFile,
-          startupTrust: config.skills.projectTrust,
-          settingsProfiles: () =>
-            readSettingsAgentProfiles(config.paths.userConfigFile, () => getConfig().llm?.runMode?.agentProfiles),
-          pluginProfiles: () => pluginAgentProfiles(config.paths.stateDir),
-        }),
+        loadRuntimeAgentProfiles(config, dir),
       outputCharCap: config.agent.batchToolResultCharCap,
       logger,
     }),
@@ -1241,6 +1271,7 @@ export function registerRuntimeFusionAndReadScope(input: {
     stateSecrets: {
       stateDir: config.paths.stateDir,
       files: getStateSecretPaths(config.paths),
+      secretDirectories: getStateSecretDirectories(config.paths.stateDir),
     },
   });
 }

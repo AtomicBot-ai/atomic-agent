@@ -199,7 +199,8 @@ async function telegram(js: Js, check: Check): Promise<void> {
     });
   check(
     "T49 (Д36): a token the write refuses is said once, under the field, not twice",
-    why === null && !failed.err && failed.ok === false && /^Could not save the token: smoke t49 stand-in/.test(failed.tokenError ?? "")
+    // ATO-2745: a plain line; the write's own words are behind Details, not in the line.
+    why === null && !failed.err && failed.ok === false && failed.tokenError === "Could not save the token."
       && failed.lastError === null && failed.shown === 1,
     why ?? failed.err ?? show(failed),
   );

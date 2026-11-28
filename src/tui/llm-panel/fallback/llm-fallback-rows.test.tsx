@@ -200,6 +200,30 @@ describe("FallbackRows", () => {
       "append local as last resort: off",
     );
   });
+
+  it("shows the local-first switch with its key and what it does (ATO-2434)", () => {
+    const off = render(
+      <LlmModeRows
+        rows={[]}
+        state={fallbackState({ links: [link("cloud-a", { isActive: true })] })}
+        maxRows={20}
+      />,
+    );
+    const offOut = strip(off.lastFrame() ?? "");
+    expect(offOut).toContain("Start on the local model: off · o to toggle");
+    expect(offOut).toContain("goes to the cloud");
+    const on = render(
+      <LlmModeRows
+        rows={[]}
+        state={fallbackState({
+          links: [link("cloud-a", { isActive: true })],
+          localFirst: true,
+        })}
+        maxRows={20}
+      />,
+    );
+    expect(strip(on.lastFrame() ?? "")).toContain("Start on the local model: on");
+  });
 });
 
 /**

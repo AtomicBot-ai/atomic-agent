@@ -22,8 +22,11 @@ import type { ApprovalGate } from "../approval/approval-gate.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
 import type { ApprovalHandler } from "../approval/approval-router.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
+import type { BackgroundJobsControl } from "../tools/os/index.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import type { FileIndexApi } from "../tools/files/index.js";
+import type { ShellJobHostControls } from "../tools/os/shell/shell-job-host.js";
+import type { MentionServices } from "../mentions/index.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 import type { ProviderRegistry } from "../llm/provider/index.js";
 import type { ReasoningEffort } from "../llm/provider/completion-types.js";
@@ -51,7 +54,7 @@ import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { TraceSink } from "../tracing/trace/index.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { AnalyticsDisabledVia, AnalyticsSurface, UiActionVia, UpdateCheckedContext } from "../analytics/index.js";
-import type { BrokenPipePolicy } from "../error-reporting/index.js";
+import type { BrokenPipePolicy, LoopbackResetPolicy } from "../error-reporting/index.js";
 
 
 export interface RuntimeEventHandlers {
@@ -147,6 +150,13 @@ export interface CreateAgentRuntimeOptions {
    */
   brokenPipe?: BrokenPipePolicy;
   /**
+   * What an uncaught reset of a socket to this machine does (see
+   * `LoopbackResetPolicy`). Default `exit`; `serve` passes `survive`, so
+   * a local model server restarting does not end the desktop's agent
+   * (ATO-2767). Process-wide and first-come, as `brokenPipe`.
+   */
+  loopbackReset?: LoopbackResetPolicy;
+  /**
    * Analytics `surface` of the entry point (the TUI passes `tui`).
    * Headless entry points leave it unset so `ATOMIC_AGENT_SURFACE` from
    * the desktop app applies, else `cli`.
@@ -233,6 +243,25 @@ export interface PrivacyShieldControl {
    * `lastRequest`, how many its latest cloud request carried).
    */
   stats(sessionId?: string): PrivacyShieldStats;
+  /**
+   * Names, addresses and organisations found by a local model
+   * (ATO-2527, `privacy.shield.localNames`). `setEnabled` persists the
+   * key; the pass reads it per request.
+   */
+  readonly localNames?: PrivacyNamesControl;
+}
+
+export interface PrivacyNamesControl {
+  status(): PrivacyNamesStatus;
+  setEnabled(enabled: boolean): Promise<void>;
+}
+
+/** See `runtime-privacy-names-status.ts`. */
+export interface PrivacyNamesStatus {
+  enabled: boolean;
+  state: "off" | "ready" | "no-local-model" | "provider-not-shielded";
+  /** The local provider the pass would use, or `null` for none. */
+  model: { provider: string; model: string | null } | null;
 }
 
 export interface PrivacyShieldStats {
@@ -282,6 +311,13 @@ export interface AgentRuntime {
    */
   steer(sessionId: string, text: string): boolean;
   /**
+   * The sessions' background shell jobs (ATO-2436): a frontend that
+   * shows a session takes that session's monitor notices here, so the
+   * person sees the turn they start. Optional for hosts and test fakes
+   * built without one.
+   */
+  readonly backgroundJobs?: BackgroundJobsControl;
+  /**
    * The running fusion workers of `parentSessionId`'s fan-out, by task
    * id, and the person's two actions on one (ATO-66, ATO-942): `stop`
    * cancels that worker alone (`false` when it is not running);
@@ -301,6 +337,13 @@ export interface AgentRuntime {
     escalate(parentSessionId: string, taskId: string): Promise<string | null>;
     steer(parentSessionId: string, taskId: string, text: string): boolean;
   };
+  /**
+   * The agent's kept `os.shell.run` jobs as the person sees them
+   * (ATO-2485): list, read output, type into an interactive one, resize,
+   * stop. What is typed here never enters the session or the transcript.
+   * Optional so embedders and test runtimes need not provide it.
+   */
+  readonly shellJobs?: ShellJobHostControls;
   /**
    * Fusion runs cut off by a crash, a quit or an update (ATO-617), read
    * from their checkpoints. `listResumable` names the runs nobody is
@@ -720,6 +763,15 @@ export interface AgentRuntime {
     input: import("./plain-complete.js").PlainCompleteInput,
   ): Promise<import("./plain-complete.js").PlainCompleteResult>;
   /**
+   * `run --output-schema` (ATO-2440): put a finished answer into a JSON
+   * Schema with one side call, grammar-constrained on a local link and
+   * structured output on a cloud one (`structured-answer.ts`). No turn,
+   * no tools, nothing written to the session. Optional like `enhancePrompt`.
+   */
+  shapeStructuredAnswer?(
+    input: import("./structured-answer.js").StructuredAnswerInput,
+  ): Promise<import("./structured-answer.js").StructuredAnswerResult>;
+  /**
    * Build — never run, never persist — the prompt the next turn would
    * open with, for a composer's context readout before any message is
    * sent (the desktop's `POST /api/context-preview`). `sessionId` null
@@ -778,6 +830,13 @@ export interface AgentRuntime {
    * have one; the routes answer 501 without it.
    */
   fileIndex?: FileIndexApi;
+  /**
+   * `@` mentions (ATO-2472): the expansion every surface sends with a
+   * message (`@file`, `@diff`, `@git:N`, ranges, folders, links,
+   * `@problems`) and the problems behind `GET /api/problems`. Optional
+   * so test doubles and older hosts need not have it.
+   */
+  mentions?: MentionServices;
   /**
    * Register `handler` as the approval sink for `sessionId`. Every
    * `ApprovalRequest` whose `sessionId` matches will be routed to

@@ -42,6 +42,7 @@ import {
   workerToolFilterFor,
   workerRefusalFor,
 } from "./worker-tool-policy.js";
+import { withParentToolFilter } from "./worker-parent-filter.js";
 import { fingerprintToolOutcome } from "../../agent/progress/loop-fingerprints.js";
 import {
   LOCAL_LEG_UNRESPONSIVE_ERROR,
@@ -49,6 +50,7 @@ import {
 } from "./local-leg-health.js";
 import { hasSplitProposal, splitSteer } from "./task-tree.js";
 import { WrittenFilesTracker } from "./worker-files-written.js";
+import { passWorkerTaintToParent } from "./worker-taint.js";
 import { estimatedOutputTokens } from "./worker-fit.js";
 import {
   DEFAULT_WORKER_TURN_ORIGIN,
@@ -835,6 +837,8 @@ async function runOneTask(
     if (inputs.length > 0) deps.declaredInputs?.declare(id, inputs);
   };
   const disarmWorkerSession = (id: string): void => {
+    // What the worker read from outside reaches the parent in its result (ATO-2481).
+    passWorkerTaintToParent(deps.approvals, id, options.parentSessionId, options.origin);
     // Always: the gate is process-wide and a stale refusal policy keyed
     // to a dead session is a slow leak, not a visible bug.
     deps.approvals.clearSessionPolicy(id);
@@ -1262,7 +1266,7 @@ async function runOneTask(
       ...(options.turnModel === undefined ? {} : { model: options.turnModel }),
       maxSteps: stepBudget.value,
       taskMaxDurationMs: timeoutMs + queueBudgetMs,
-      toolFilter: workerToolFilterFor(task.agentProfile?.tools),
+      toolFilter: withParentToolFilter(workerToolFilterFor(task.agentProfile?.tools), options.parentToolFilter),
       toolRole: WORKER_TOOL_ROLE,
       ...(options.workerReasoning === undefined
         ? {}
@@ -1523,7 +1527,7 @@ async function runOneTask(
           ...(target.turnModel === undefined ? {} : { model: target.turnModel }),
           maxSteps: stepBudget.value,
           taskMaxDurationMs: timeoutMs,
-          toolFilter: workerToolFilterFor(task.agentProfile?.tools),
+          toolFilter: withParentToolFilter(workerToolFilterFor(task.agentProfile?.tools), options.parentToolFilter),
           toolRole: WORKER_TOOL_ROLE,
           signal: AbortSignal.any([
             options.signal,

@@ -84,7 +84,7 @@ test('an Office writer\'s call is a "created" or "updated" row; the badge surviv
 test('the renderer puts an ok Office call on the card and under "Saved to", and chips a bare name the chat wrote (ATO-2409)', () => {
   const src = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
   // tool_result: the row is made from the call's path, only for an ok call.
-  assert.match(src, /const officeWrite = item && card\.ok === true && typeof cfOfficeWrite === 'function' \? cfOfficeWrite\(card\.name, toolArgsObj\(card\.args\)\) : null;/);
+  assert.match(src, /const officeWrite = item && !officeFrame && card\.ok === true && typeof cfOfficeWrite === 'function' \? cfOfficeWrite\(card\.name, toolArgsObj\(card\.args\)\) : null;/);
   assert.match(src, /if \(officeWrite\) item\.changed = changedFilesAdd\(item\.changed, changedFileOfOfficeWrite\(officeWrite, cfAbsolute\(officeWrite\.path, workingDir\(\), homeDir\(\)\)\)\);/);
   // "Saved to": the strip's path collector knows the Office writers.
   const written = src.slice(src.indexOf('\nfunction cardWrittenPaths('), src.indexOf('\nfunction cardTrashedPaths('));
@@ -180,4 +180,60 @@ test('the page loads changed-files.js before renderer.js, and the renderer draws
   assert.match(r, /\['results','Results'\]/);
   assert.match(r, /body = resultsPaneHTML\(S\.log, \{esc, ic\}\)/);
   assert.match(r, /concat\(changedFilesPaths\(m\.changed\)\)/);
+});
+
+// ATO-2518: the agent names an Office write's file on the frame; the clipped label is only the fallback.
+test('a frame\'s office_file is the row, checked, with the agent\'s own created or updated', () => {
+  assert.deepEqual(C.officeFileOfFrame({office_file: {path: '/w/decks/plan.pptx', change: 'updated'}}), {path: '/w/decks/plan.pptx', change: 'updated'});
+  assert.deepEqual(C.changedFileOfOfficeFrame({office_file: {path: 'C:\\w\\a.docx', change: 'created'}}), {path: 'C:\\w\\a.docx', added: 0, removed: 0, office: 'created'});
+  assert.equal(C.officeFileOfFrame({}), null, 'an older agent sends none');
+  assert.equal(C.officeFileOfFrame(null), null);
+  assert.equal(C.officeFileOfFrame({office_file: {path: '', change: 'created'}}), null);
+  assert.equal(C.officeFileOfFrame({office_file: {path: '/w/a.docx', change: 'replaced'}}), null);
+  assert.equal(C.officeFileOfFrame({office_file: {path: '/w/a\n.docx', change: 'created'}}), null);
+  assert.equal(C.officeFileOfFrame({office_file: '/w/a.docx'}), null);
+});
+
+test('the renderer reads office_file before the label, and keeps it on the card for "Saved to" and the chat\'s files', () => {
+  const src = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
+  const handler = src.slice(src.indexOf("if (ev.kind === 'tool_result') {"), src.indexOf("if (ev.kind === 'tool_update') {"));
+  assert.match(handler, /const officeFrame = card\.ok === true \? changedFileOfOfficeFrame\(p\) : null;/);
+  assert.match(handler, /if \(officeFrame\) card\.officeFile = \{path: officeFrame\.path, change: officeFrame\.office\};/);
+  assert.match(handler, /if \(item && officeFrame\) item\.changed = changedFilesAdd\(item\.changed, officeFrame\);/);
+  assert.ok(handler.indexOf('changedFileOfOfficeFrame(p)') < handler.indexOf('cfOfficeWrite(card.name'), 'the frame is read first');
+  const written = src.slice(src.indexOf('\nfunction cardWrittenPaths('), src.indexOf('\nfunction cardTrashedPaths('));
+  assert.match(written, /\(m\.officeFile \|\| cfOfficeWrite\(m\.name, cardArgs\(m\) \|\| \{\}\)\)/);
+});
+
+// ATO-2753: two files of the same name from different folders look the same without their folder.
+test('same-named files show the folder that tells them apart; a unique name shows none', () => {
+  const dirs = C.changedFilesDirs(['/w/app/src/index.ts', '/w/app/test/index.ts', '/w/app/README.md']);
+  assert.equal(dirs.get('/w/app/src/index.ts'), 'src');
+  assert.equal(dirs.get('/w/app/test/index.ts'), 'test');
+  assert.equal(dirs.has('/w/app/README.md'), false);
+  // The same parent folder name: more of the path, until it differs.
+  const deep = C.changedFilesDirs(['/w/a/src/index.ts', '/w/b/src/index.ts']);
+  assert.equal(deep.get('/w/a/src/index.ts'), 'a/src');
+  assert.equal(deep.get('/w/b/src/index.ts'), 'b/src');
+  // A Windows path keeps its own separator.
+  const win = C.changedFilesDirs(['C:\\w\\a\\src\\x.ts', 'C:\\w\\b\\src\\x.ts']);
+  assert.equal(win.get('C:\\w\\a\\src\\x.ts'), 'a\\src');
+  assert.equal(C.changedFilesDirs([]).size, 0);
+  assert.equal(C.changedFilesDirs(undefined).size, 0);
+});
+
+test('the card and the Results tab draw the folder, dimmed, after a same-named file', () => {
+  const list = [
+    {path: '/w/app/src/index.ts', added: 2, removed: 0, edits: 1},
+    {path: '/w/app/test/index.ts', added: 1, removed: 1, edits: 1},
+    {path: '/w/app/notes.md', added: 1, removed: 0, edits: 1},
+  ];
+  const html = C.changedFilesCardHTML(list, deps);
+  assert.match(html, /<span class="cf-name">index\.ts<\/span><span class="cf-dir">src<\/span>/);
+  assert.match(html, /<span class="cf-name">index\.ts<\/span><span class="cf-dir">test<\/span>/);
+  assert.match(html, /<span class="cf-name">notes\.md<\/span><span class="cf-counts/);
+  const pane = C.resultsPaneHTML([{k: 'assistant', changed: list}], deps);
+  assert.match(pane, /<span class="cf-dir">test<\/span>/);
+  const css = readFileSync(new URL('../renderer/css/chat.css', import.meta.url), 'utf8');
+  assert.match(css, /\.cf-row \.cf-dir\{[^}]*color:var\(--ink-3\)/);
 });

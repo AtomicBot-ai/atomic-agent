@@ -48,6 +48,12 @@ export interface MenuSlash {
   readonly description: string;
   readonly aliases?: readonly string[];
   /**
+   * Extra words the palette search matches, ranked below every name and
+   * alias match. Unlike aliases they never dispatch: `/fusion` is its own
+   * command, yet typing it should still surface `/runmode` (ATO-2772).
+   */
+  readonly keywords?: readonly string[];
+  /**
    * Position in the slash palette listing. Kept explicit because the
    * palette order is user-visible (empty query lists the registry in
    * order, and ties in a fuzzy search break by index) and is not the
@@ -339,7 +345,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "llm",
       description:
-        "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm model-mode [local|cloud|inherit] [provider-id] [model-id]` select context policy · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain · `/llm restart` bounce the local model server",
+        "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm model-mode [local|cloud|inherit] [provider-id] [model-id]` select context policy · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain · `/llm fallback local-first on|off` start each turn on the local model · `/llm restart` bounce the local model server",
       rank: 24,
     },
     section: "manage",
@@ -442,7 +448,7 @@ export const MENU: readonly MenuNode[] = [
     chord: "u",
     slash: {
       name: "sessions",
-      description: "open session picker to switch threads",
+      description: "open session picker to switch threads · `/sessions --deleted` lists chats in Trash · `/sessions --restore <n>` brings one back",
       rank: 19,
     },
   },
@@ -463,7 +469,7 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action", id: "session.rewind", label: "Rewind to a message…", group: "session",
-    slash: { name: "rewind", description: "take the chat back to an earlier message of yours and edit it; files the agent changed stay as they are", rank: 45.5 },
+    slash: { name: "rewind", description: "take the chat back to an earlier message of yours; choose chat and files, chat only or files only", rank: 45.5 },
   },
   {
     // ATO-1054: like Claude Code's `/export <file>`; after /rewind, before /plugins.
@@ -517,7 +523,8 @@ export const MENU: readonly MenuNode[] = [
     group: "session",
     slash: {
       name: "context",
-      description: "show where this session's context window went",
+      description:
+        "show where this session's context window went · `/context detail` also lists each MCP server's tools",
       rank: 38,
     },
   },
@@ -528,7 +535,7 @@ export const MENU: readonly MenuNode[] = [
     group: "session",
     slash: {
       name: "usage",
-      description: "show this session's cost and the account's rate limits",
+      description: "show this session's cost and limits, and tokens per day over every chat",
       aliases: ["cost"],
       rank: 38.5,
     },
@@ -553,9 +560,22 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "model",
       description:
-        "open chat model picker · subcommands: pull <id> | use <id> | favorite [add|remove] | status | <base-url>",
+        "open chat model picker · subcommands: pull <id> | use <id> | favorite [add|remove] | status | <base-url> · ctrl+p switches to the next favorite",
       aliases: ["models", "local"],
       rank: 27,
+    },
+  },
+  // ATO-2490: Ollama / LM Studio / the Llama app running here, and their actions.
+  {
+    kind: "action",
+    id: "model.servers",
+    label: "Model servers running here",
+    group: "model",
+    slash: {
+      name: "servers",
+      description:
+        "Ollama, LM Studio and the Llama app running here · start | load | unload | pull | rm | adopt <ollama|lmstudio> [model]",
+      rank: 27.2,
     },
   },
   {
@@ -577,6 +597,9 @@ export const MENU: readonly MenuNode[] = [
       name: "runmode",
       description:
         "where the chat runs: `/runmode` opens the switch · `/runmode local|cloud|fusion` sets one · `/runmode status`",
+      // `fusion` and `mode` are other commands' names, so these only
+      // help the search find the switch (ATO-1640, ATO-2772).
+      keywords: ["fusion", "local", "cloud"],
       // 40 is /swarm and 41 is /report on this branch.
       rank: 42,
     },
@@ -666,13 +689,26 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.council",
+    label: "Model council",
+    group: "run",
+    slash: {
+      name: "council",
+      description:
+        "ask several models at once: `/council <question>`. They answer, rank each other with the names hidden, and a chairman writes the final answer; nothing is saved to the chat",
+      // Between /btw (35.75) and /research (35.8), the other asides.
+      rank: 35.77,
+    },
+  },
+  {
+    kind: "action",
     id: "run.research",
     label: "Deep research",
     group: "run",
     slash: {
       name: "research",
       description:
-        "research a question on the web: `/research <question>` runs research.deep and saves a report with checked quotes in the working folder",
+        "research a question: `/research <question>` runs research.deep on the web (`--docs` for your My files documents only, `--both` for both) and saves a report with checked quotes in the working folder",
       // Right after /btw (35.75), before /window (36).
       rank: 35.8,
     },
@@ -698,8 +734,33 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "queue",
       description:
-        "parked messages: `/queue` list | `/queue <msg>` park one | `/queue clear` | `/queue mode` make Enter queue",
+        "parked messages: `/queue` list | `/queue <msg>` park one | `/queue next <n>` send it next | `/queue move <n> <place>` | `/queue clear` | `/queue mode` make Enter queue",
       rank: 34,
+    },
+  },
+  // ATO-2437: the agent's background jobs in this chat, and stopping them.
+  {
+    kind: "action",
+    id: "run.ps",
+    label: "Background jobs",
+    group: "run",
+    slash: {
+      name: "ps",
+      description:
+        "background jobs the agent started in this chat: command, state, monitor | `/stop <id>` stops one",
+      // Right after /queue (34), before /steer (35).
+      rank: 34.2,
+    },
+  },
+  {
+    kind: "action",
+    id: "run.stop",
+    label: "Stop background jobs",
+    group: "run",
+    slash: {
+      name: "stop",
+      description: "stop the agent's background jobs in this chat: `/stop` all running | `/stop <id>` one",
+      rank: 34.4,
     },
   },
   {
@@ -746,7 +807,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "fusion",
       description:
-        "a fusion run cut off by a restart: `/fusion` lists them · `/fusion resume [id]` continues from the unfinished wave · `/fusion discard [id]` drops it",
+        "a fusion run cut off by a restart: `/fusion` lists them · `/fusion resume [id]` continues from the unfinished wave · `/fusion discard [id]` drops it · to turn Fusion on, use `/runmode fusion`",
       rank: 47,
     },
   },
@@ -811,6 +872,19 @@ export const MENU: readonly MenuNode[] = [
         "one plain note per step under its tool card: `/verbose` toggles | `/verbose on` | `/verbose off`",
       // Beside /steps (17.5): both change how much of a turn the chat shows.
       rank: 17.75,
+    },
+  },
+  {
+    kind: "action",
+    id: "run.pet",
+    label: "Terminal pet on/off",
+    group: "run",
+    slash: {
+      name: "pet",
+      description:
+        "a small face in the top bar that shows what the agent is doing: `/pet` toggles | `/pet on` | `/pet off`",
+      // After /verbose (17.75): another display switch.
+      rank: 17.8,
     },
   },
   {

@@ -185,6 +185,19 @@ export type UserLlmFusionConfig = {
    */
   roles?: FusionRoleProviders;
   /**
+   * The model each role asks its provider for, beside `roles` the way
+   * `orchestratorModel` sits beside `orchestratorProvider`. One provider
+   * entry (an OpenRouter key, a cloud API, LM Studio) can then serve
+   * several roles with a different model each, instead of one entry per
+   * model. A role without one here runs the model its entry would give
+   * it, as before; a name here for a role with no `roles` pin is unused.
+   * A `llama-server` entry serves the model it loaded, so there the name
+   * is not used at all. A separate key, not an object inside `roles`, so
+   * an older build that reads this file still starts: it does not know
+   * the key and runs each role on its entry's model.
+   */
+  roleModels?: FusionRoleModelPins;
+  /**
    * This machine can serve a second local model next to the session's
    * own (ATO-943). Without it, a role whose provider is another
    * llama-server entry is not used while the session already holds a
@@ -233,6 +246,8 @@ export const FUSION_ROLES: readonly FusionRole[] = [
 ];
 /** `llm.runMode.fusion.roles`: role → configured provider id. */
 export type FusionRoleProviders = Partial<Record<FusionRole, string>>;
+/** `llm.runMode.fusion.roleModels`: role → model name on that role's provider. */
+export type FusionRoleModelPins = Partial<Record<FusionRole, string>>;
 
 export type FusionIsolationMode = "off" | "worktree";
 export const FUSION_ISOLATION_MODES: readonly FusionIsolationMode[] = [
@@ -630,6 +645,9 @@ function parseFusion(
   if (obj.roles !== undefined) {
     out.roles = parseRoles(obj.roles, providers, `${field}.roles`);
   }
+  if (obj.roleModels !== undefined) {
+    out.roleModels = parseRoleModels(obj.roleModels, `${field}.roleModels`);
+  }
   if (obj.mixLocalModels !== undefined) {
     if (typeof obj.mixLocalModels !== "boolean") {
       throw new ConfigValidationError(
@@ -676,6 +694,24 @@ function parseRoles(
       providers,
       `${field}.${key}`,
     );
+  }
+  return out;
+}
+
+function parseRoleModels(raw: unknown, field: string): FusionRoleModelPins {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  const out: FusionRoleModelPins = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!FUSION_ROLES.includes(key as FusionRole)) {
+      // Same as an unknown key in `roles` (ATO-1241): skipped, kept on a write.
+      emitConfigNoticeOnce(
+        `[atomic-agent] ${field}.${key} is a role this build does not know (a newer app may have written it); it is not used here. Update atomic-agent to use it.`,
+      );
+      continue;
+    }
+    out[key as FusionRole] = parseOptionalLabel(value, `${field}.${key}`);
   }
   return out;
 }
@@ -771,6 +807,7 @@ export function scrubRunModeProviderPins(
     workerProvider,
     workerModel,
     roles,
+    roleModels,
     escalationProvider,
     judgeProvider,
     ...rest
@@ -788,6 +825,15 @@ export function scrubRunModeProviderPins(
   const rolesChanged =
     roles !== undefined &&
     Object.keys(keptRoles ?? {}).length !== Object.keys(roles).length;
+  // A role's model goes with its provider pin, as a leg's model does.
+  const keptRoleModels =
+    roleModels === undefined
+      ? undefined
+      : (Object.fromEntries(
+          Object.entries(roleModels).filter(
+            ([role]) => roles?.[role as FusionRole] !== removedId,
+          ),
+        ) as FusionRoleModelPins);
   const keepEscalation = escalationProvider !== removedId;
   const keepJudge = judgeProvider !== removedId;
   if (
@@ -805,6 +851,9 @@ export function scrubRunModeProviderPins(
       ...rest,
       ...(keptRoles !== undefined && Object.keys(keptRoles).length > 0
         ? { roles: keptRoles }
+        : {}),
+      ...(keptRoleModels !== undefined && Object.keys(keptRoleModels).length > 0
+        ? { roleModels: keptRoleModels }
         : {}),
       ...(escalationProvider && keepEscalation ? { escalationProvider } : {}),
       ...(judgeProvider && keepJudge ? { judgeProvider } : {}),

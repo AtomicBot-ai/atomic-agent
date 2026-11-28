@@ -157,6 +157,12 @@ export function composeEmptyCompletionNotice(
 /**
  * The failure the turn ends with when the retry came back empty too.
  *
+ * Since ATO-1676 this shape is not sent to Sentry at all
+ * (`error-reporting/repeated-empty-answer.ts`): the person is told in
+ * chat and the model answered nothing to two requests. The grouping
+ * notes below still describe how it would group, and the single-empty
+ * side still reports.
+ *
  * `detectModelFailure`'s own message describes one empty completion, and
  * an operator reading it after a silent retry would reasonably conclude
  * the runtime never tried. Say the count instead — and only ever about

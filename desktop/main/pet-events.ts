@@ -34,6 +34,8 @@ export interface PetApproval {
   approvalId: string;
   sessionId: string | null;
   tool: string;
+  /** ATO-2741: the gate's category ("shell", "http"), for the bubble's question in the main window's words; "" when none. */
+  category: string;
   /** What is asked: the preview's first line (the command), clipped; the reason when there is no preview. */
   text: string;
   /** The gate's reason, a second line under `text`, or "". */
@@ -50,6 +52,8 @@ export interface PetApproval {
 /** Requests the bubble never allows: the full card, with its details, decides them. */
 export const PET_WINDOW_ONLY_CATEGORIES: readonly string[] = [
   "shell_dangerous",
+  // A command, web request or skill script handed a saved secret (ATO-2530): the full card shows which.
+  "shell_secret",
   "trust_config",
   "browser_secret",
   "state_secret",
@@ -138,6 +142,7 @@ export function petApprovalFrom(raw: unknown, now: number): PetApproval | null {
     approvalId: p.approvalId,
     sessionId: typeof p.sessionId === "string" && p.sessionId ? p.sessionId : null,
     tool: petClean(p.tool, 60) || "a tool",
+    category: typeof p.category === "string" && /^[a-z_]{1,40}$/.test(p.category) ? p.category : "",
     text,
     detail,
     risk: petRiskLine(p),
@@ -178,6 +183,8 @@ export class PetTracker {
   private readonly turns = new Map<string, TurnRec>();
   private readonly approvals = new Map<string, PetApproval>();
   private readonly closed = new Set<string>();
+  /** ATO-2513: when this window's last turn in a session ended, so pet-outside.ts skips that session. */
+  private readonly ownEnded = new Map<string, number>();
 
   /** One `chat` event. Returns how the turn ended, when this frame ended it. */
   observeChat(raw: unknown, now: number): PetEnding | null {
@@ -213,9 +220,25 @@ export class PetTracker {
     else if (kind === "done") ending = t.heldError && !t.workAfterError ? "error" : "done";
     if (!ending) return null;
     this.turns.delete(ev.turnId);
-    // A request of a turn that is over waits for nothing any more.
-    if (t.sessionId) for (const a of [...this.approvals.values()]) if (a.sessionId === t.sessionId) this.drop(a.approvalId);
+    if (t.sessionId) {
+      this.sessionEnded(t.sessionId);
+      this.ownEnded.set(t.sessionId, now);
+      if (this.ownEnded.size > CLOSED_MAX) this.ownEnded.delete(this.ownEnded.keys().next().value as string);
+    }
     return ending;
+  }
+
+  /** A turn in that session is over (this window's, or an outside one): its requests wait for nothing any more. */
+  sessionEnded(sessionId: string): boolean {
+    let dropped = false;
+    for (const a of [...this.approvals.values()]) if (a.sessionId === sessionId) { this.drop(a.approvalId); dropped = true; }
+    return dropped;
+  }
+
+  /** ATO-2513: this window's turn runs in that session, or one ended there at or after `since`. */
+  ownSession(sessionId: string, since: number): boolean {
+    for (const t of this.turns.values()) if (t.sessionId === sessionId) return true;
+    return (this.ownEnded.get(sessionId) ?? -1) >= since;
   }
 
   /** One `approval` event. True when it is a new request for the bubble. */

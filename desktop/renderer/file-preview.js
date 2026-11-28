@@ -133,6 +133,7 @@ function filePreviewOpen(path, opts) {
   FP.open = true; FP.path = path; FP.reply = !!(opts && opts.reply); FP.listed = !!(opts && opts.listed);
   FP.cite = !!(opts && opts.cite); FP.frag = frag;
   if (!same) { FP.data = null; FP.view = 'render'; FP.edit = null; FP.sort = null; }
+  if (typeof fpLineSet === 'function') fpLineSet(opts);   // ATO-2445: opened on a line (file-preview-line.js)
   el.hidden = false;
   fpApplyWidth();
   fpPaintHead();
@@ -189,7 +190,7 @@ function fpSyncButton() {
 }
 function fpRevoke() { if (FP.blobUrl) { try { URL.revokeObjectURL(FP.blobUrl); } catch (e) { /* gone */ } FP.blobUrl = ''; } }
 
-async function fpLoad(keepScroll) {
+async function fpLoad(keepScroll, retry) {
   const br = fpBridge();
   const seq = ++FP.seq;
   const path = FP.path;
@@ -213,7 +214,8 @@ async function fpLoad(keepScroll) {
   fpPaintBody(fpBodyHtml(res));
   const after = fpEl() && fpEl().querySelector('.fp-body');
   if (after && top) after.scrollTop = top;
-  fpLoadSlides(seq, path, res);
+  if (typeof fpLineGo === 'function') fpLineGo();   // ATO-2445
+  fpLoadSlides(seq, path, res, retry === true);
 }
 
 /* ATO-2410: the second step for a deck. main converts it (seconds, cached per
@@ -221,17 +223,19 @@ async function fpLoad(keepScroll) {
    kept on the preview itself (`office.render`), so a repaint (Source/Preview,
    a resize) draws the pictures again without asking. A newer open, a closed
    panel or a reloaded file drops a late answer. */
-function fpLoadSlides(seq, path, res) {
+function fpLoadSlides(seq, path, res, retry) {
   const br = fpBridge();
   const o = res && res.ok && res.kind === 'office' ? res.office : null;
   if (!o || o.type !== 'pptx' || !o.renderable || !br || !br.filePreviewSlides) return;
   (async () => {
     let r = null;
-    try { r = await br.filePreviewSlides(path); } catch (e) { r = null; }
+    try { r = await br.filePreviewSlides(path, retry === true); } catch (e) { r = null; }
     if (seq !== FP.seq || !FP.open || FP.path !== path || FP.data !== res) return;
-    if (r && r.ok && (r.kind === 'pdf' || r.kind === 'html')) o.render = r; else o.renderFailed = true;
+    if (r && r.ok && (r.kind === 'pdf' || r.kind === 'html')) o.render = r;
+    else o.renderFailed = r && r.reason === 'links-out' ? 'links-out' : true;   // ATO-2517: refused on purpose, Reload will not help
     const body = fpEl() && fpEl().querySelector('.fp-body');
     const top = body ? body.scrollTop : 0;
+    fpPaintHead();   // ATO-2517: Show text appears with the pictures
     fpPaintBody(fpBodyHtml(res));
     const after = fpEl() && fpEl().querySelector('.fp-body');
     if (after && top && !o.render) after.scrollTop = top;
@@ -298,10 +302,11 @@ function fpPaintHead() {
   }
   fpPaintTabs();
   if (!FP.path) {
-    // ATO-1256: the list of the chat's files.
+    // ATO-1256: the list of the chat's files. ATO-2445: or the project tree's folder (project-tree.js).
+    const tree = typeof ptHead === 'function' ? ptHead() : null;
     el.querySelector('.fp-head').innerHTML = '<span class="fp-ic">' + fpIcon('files') + '</span>'
-      + '<span class="fp-title"><span class="fp-name">Files in this chat</span>'
-      + '<span class="fp-meta">' + (FP.files.length ? FP.files.length + (FP.files.length === 1 ? ' file' : ' files') : 'None yet') + '</span></span>'
+      + '<span class="fp-title"><span class="fp-name">' + (tree ? fpEsc(tree.name) : 'Files in this chat') + '</span>'
+      + '<span class="fp-meta">' + (tree ? fpEsc(tree.meta) : FP.files.length ? FP.files.length + (FP.files.length === 1 ? ' file' : ' files') : 'None yet') + '</span></span>'
       + '<button class="fp-btn fp-x" data-fp="close" title="Close the panel" aria-label="Close the panel">✕</button>';
     return;
   }
@@ -315,9 +320,11 @@ function fpPaintHead() {
     + (meta ? '<span class="fp-meta">' + fpEsc(meta) + '</span>' : '') + '</span>'
     + (editing ? fpEditHeadHtml() : (typeof fpEditable === 'function' && fpEditable(d) ? '<button class="fp-btn" data-fp="edit" title="Edit this file here">Edit</button>' : '')
     + (togglable ? '<button class="fp-btn fp-tog" data-fp="view" title="' + (FP.view === 'source' ? 'Show it rendered' : 'Show the source') + '">' + (FP.view === 'source' ? 'Preview' : 'Source') + '</button>' : '')
+    + (!togglable && typeof ofViewButton === 'function' ? ofViewButton(d, FP.view) : '')   // ATO-2517: a deck's Show text
     + '<button class="fp-btn" data-fp="refresh" title="Reload the file" aria-label="Reload">↻</button>'
     + '<button class="fp-btn" data-fp="open" title="Open in its default app">Open</button>'
     + '<button class="fp-btn" data-fp="reveal" title="' + fpEsc(fpRevealLabel()) + '" aria-label="' + fpEsc(fpRevealLabel()) + '">' + fpIcon('folder') + '</button>')
+    + (typeof fpEditorButtonHtml === 'function' ? fpEditorButtonHtml(d) : '')   // ATO-2445: Open in VS Code / Cursor / Zed
     + '<button class="fp-btn fp-x" data-fp="close" title="Close the preview" aria-label="Close the preview">✕</button>';
 }
 /** ATO-1256: the row of the chat's files over a previewed file (none over the list itself). */
@@ -338,7 +345,8 @@ function fpPaintTabs() {
 }
 function fpListHtml() {
   if (typeof chatFilesListHTML !== 'function') return '';
-  return chatFilesListHTML(FP.files, {esc: fpEsc, icon: fpIcon, home: typeof homeDir === 'function' ? homeDir() : ''});
+  const chat = chatFilesListHTML(FP.files, {esc: fpEsc, icon: fpIcon, home: typeof homeDir === 'function' ? homeDir() : ''});
+  return typeof ptListHtml === 'function' ? ptListHtml(chat) : chat;   // ATO-2445: This chat / Project (project-tree.js)
 }
 function fpRevealLabel() {
   const p = typeof navigator !== 'undefined' ? String(navigator.platform || '') : '';
@@ -407,7 +415,7 @@ function fpTableHtml(text, delim) {
   const th = (i) => {
     const on = sort && sort.col === i;
     const aria = on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
-    return '<th class="fp-sortable' + (on ? ' on' : '') + '" data-fp="sort" data-fp-col="' + i + '" aria-sort="' + aria + '" title="Sort by this column">'
+    return '<th class="fp-sortable' + (on ? ' on' : '') + '" data-fp="sort" data-fp-col="' + i + '" aria-sort="' + aria + '" tabindex="0" title="Sort by this column">'
       + fpEsc(head[i] == null ? '' : head[i]) + (on ? '<span class="fp-sort-ic" aria-hidden="true">' + (sort.dir === 'asc' ? '▲' : '▼') + '</span>' : '') + '</th>';
   };
   return (cut ? '<div class="fp-note">Showing the first ' + FP_TABLE_ROWS + ' rows' + (sort ? ', sorted among themselves' : '') + '.</div>' : '')
@@ -438,8 +446,10 @@ function fpBodyHtml(res) {
   const text = typeof d.text === 'string' ? d.text : '';
   if (d.kind === 'image') return '<div class="fp-img"><img alt="' + fpEsc(d.name) + '" src="' + fpEsc(d.dataUrl || '') + '"></div>';
   if (d.kind === 'pdf') return '<iframe class="fp-frame fp-pdf" data-fp-pdf="1" title="' + fpEsc(d.name) + '"></iframe>';
-  if (d.kind === 'office' && typeof fpOfficeHtml === 'function') return fpOfficeHtml(d);   // ATO-981: office-preview.js
-  if (d.kind === 'other') return fpOtherHtml(d, d.note === 'too-large' ? 'too large to preview' : d.note === 'binary' ? 'no preview for this kind of file' : '');
+  if (d.kind === 'office' && typeof fpOfficeHtml === 'function') return fpOfficeHtml(d, FP.view);   // ATO-981: office-preview.js
+  if (d.kind === 'parquet' && typeof fpParquetHtml === 'function') return fpParquetHtml(d);   // ATO-2445: parquet-table.js
+  if (d.kind === 'other') return fpOtherHtml(d, d.note === 'too-large' ? 'too large to preview' : d.note === 'binary' ? 'no preview for this kind of file'
+    : d.note === 'unsupported' ? 'its compression cannot be read here' : '');
   if (!text) return fpTruncNote(d) + '<div class="fp-msg">The file is empty.</div>';
   const source = FP.view === 'source';
   if (d.kind === 'html' && !source) {
@@ -454,7 +464,7 @@ function fpBodyHtml(res) {
 /** Open or Reveal from the panel: the same checks the chip's own opener used. */
 function fpOpenOutside(path) {
   const p = path || FP.path;
-  const done = (r) => { if (r && r.ok === false && typeof toast === 'function') toast('Could not open', r.error || (r.reason === 'outside' ? 'It is outside the folders the preview can read.' : '')); };
+  const done = (r) => { if (r && r.ok === false && typeof toast === 'function') toast('Could not open', r.error || (r.reason === 'outside' ? 'It is outside the folders the preview can read.' : ''), 'bad'); };
   // ATO-1256: a file from the chat's list opens through main's preview check, the roots the preview read it from.
   if (FP.listed) { const br = fpBridge(); return br && br.filePreviewAction ? br.filePreviewAction(p, 'open').then(done) : Promise.resolve(); }
   if (FP.reply && typeof openReplyPath === 'function') return openReplyPath(p).then(done);
@@ -466,7 +476,7 @@ function fpReveal() {
   const br = fpBridge();
   const p = FP.data && FP.data.ok ? FP.data.path : FP.path;
   if (br && br.filePreviewAction) br.filePreviewAction(p, 'reveal').then((r) => {
-    if (r && r.ok === false && typeof toast === 'function') toast('Could not show it', r.reason === 'outside' ? 'It is outside the folders the preview can read.' : 'It is no longer there.');
+    if (r && r.ok === false && typeof toast === 'function') toast('Could not show it', r.reason === 'outside' ? 'It is outside the folders the preview can read.' : 'It is no longer there.', 'bad');
   });
 }
 
@@ -497,13 +507,17 @@ if (typeof document !== 'undefined') {
       if (what === 'close') filePreviewClose();
       else if (what === 'list') filePreviewShowList();
       else if (what === 'pick') { if (pickPath) filePreviewOpen(pickPath, {listed: true}); }
-      else if (what === 'refresh') { if (FP.open) fpLoad(true); }
+      else if (what === 'refresh') { if (FP.open) fpLoad(true, true); }   // ATO-2517: and a deck's failed drawing again
       else if (what === 'open') fpOpenOutside();
       else if (what === 'reveal') fpReveal();
       else if (what === 'view') { FP.view = FP.view === 'source' ? 'render' : 'source'; fpPaintHead(); fpPaintBody(fpBodyHtml(FP.data)); }
       else if (what === 'sort' && typeof tsNextSort === 'function') {   // ATO-2347
-        FP.sort = tsNextSort(FP.sort, parseInt(b.dataset.fpCol || '', 10));
+        const col = parseInt(b.dataset.fpCol || '', 10);
+        FP.sort = tsNextSort(FP.sort, col);
         fpPaintBody(fpBodyHtml(FP.data));
+        // ATO-2753: the header sorted by keeps the focus after the table is drawn again (Enter again reverses).
+        const th = fpEl() && fpEl().querySelector('th[data-fp="sort"][data-fp-col="' + col + '"]');
+        if (th) th.focus();
       }
       else if (typeof fpEditClick === 'function') fpEditClick(what);   // ATO-2347: Edit, Save, Done and the editor's bars
     };
@@ -513,6 +527,9 @@ if (typeof document !== 'undefined') {
     act();
   }, true);
   document.addEventListener('keydown', (e) => {
+    // ATO-2753: a column header sorts with Enter or Space too, as a button does.
+    const th = (e.key === 'Enter' || e.key === ' ') && e.target && e.target.closest ? e.target.closest('#fpreview th[data-fp="sort"]') : null;
+    if (th && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); e.stopImmediatePropagation(); th.click(); return; }
     /* Capture phase and stopImmediatePropagation: renderer.js's own Esc chain
        would otherwise also run — aborting a streaming turn, or opening Settings. */
     if (e.key === 'Escape' && FP.open && e.target && e.target.closest && e.target.closest('#fpreview')) {

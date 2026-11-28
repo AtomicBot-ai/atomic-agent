@@ -328,7 +328,12 @@ export function resolveFusionMachineFacts(
     const entry =
       id === undefined ? undefined : providers.find((p) => p.id === id);
     if (entry === undefined) continue;
+    // A role's own model on a shared entry (`roleModels`), as the
+    // resolver reads it: never on a llama-server entry.
+    const ownModel =
+      entry.kind === LOCAL_PROVIDER_KIND ? null : nonEmpty(fusion?.roleModels?.[role]);
     const model =
+      ownModel ??
       (entry.id === workerEntry?.id ? workerModel : null) ??
       (entry.kind === LOCAL_PROVIDER_KIND
         ? (nonEmpty(entry.model) ?? nonEmpty(entry.defaultChatModel))

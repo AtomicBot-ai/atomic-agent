@@ -55,9 +55,10 @@ export function electronClipboardHost(): ClipboardHost<Saved> {
   };
 }
 
-type RunOutcome = { ran: true; stdout: string } | { ran: false; missing: boolean };
+export type RunOutcome = { ran: true; stdout: string } | { ran: false; missing: boolean };
 
-function run(cmd: KeystrokeCommand, timeoutMs: number): Promise<RunOutcome> {
+/** One command with a timeout; also replace-front-app-host.ts's (ATO-2738). */
+export function run(cmd: KeystrokeCommand, timeoutMs: number): Promise<RunOutcome> {
   return new Promise((resolve) => {
     try {
       execFile(cmd.file, cmd.args, { timeout: timeoutMs, windowsHide: true, encoding: "utf8", maxBuffer: 1024 * 1024 }, (err, stdout) => {

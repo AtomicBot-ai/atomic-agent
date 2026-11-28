@@ -63,4 +63,20 @@ describe("atomic-agent --help", () => {
     expect(entry).toContain("Not needed with Atomic Core");
     expect(entry).not.toContain("\u2014");
   }, 60_000);
+
+  it("says the logbook is macOS only and that export writes PDF (ATO-2770)", async () => {
+    const chunks: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      chunks.push(String(chunk));
+      return true;
+    });
+    vi.resetModules();
+    await import("./index.js");
+    await vi.waitFor(() => {
+      expect(chunks.join("")).toContain("Day journal from screenshots");
+    });
+    const lines = chunks.join("").split("\n");
+    expect(lines.find((l) => l.includes("Day journal from screenshots"))).toContain("macOS only");
+    expect(lines.find((l) => l.includes("Save one chat as"))).toContain("Word or PDF");
+  }, 60_000);
 });

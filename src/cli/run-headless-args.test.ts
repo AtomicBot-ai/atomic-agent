@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseRunArgs } from "./run-agent.js";
+import { parseRunArgs, RUN_HELP } from "./run-agent.js";
 
 /** ATO-2307: the headless flags of `atomic-agent run`. */
 describe("run headless flags", () => {
@@ -51,7 +51,7 @@ describe("run headless flags", () => {
       error: "--output-format must be text, json or stream-json",
     });
     expect(parseRunArgs(["--model"])).toEqual({
-      error: "--model needs a model id or <provider>:<model>",
+      error: "--model needs a model id or <provider>/<model>",
     });
     expect(parseRunArgs(["--resume", "--json"])).toEqual({ error: "--resume needs a chat id" });
     expect(parseRunArgs(["-o"])).toEqual({ error: "-o needs a file path" });
@@ -63,5 +63,57 @@ describe("run headless flags", () => {
       error: "--incognito starts a new chat, so it cannot run with --resume or --continue",
     });
     expect(parseRunArgs(["  "])).toEqual({ error: "the prompt argument is empty" });
+  });
+});
+
+/** ATO-2770: `--json` stays the JSONL stream; the help says so and names the one-object form. */
+describe("run help on --json", () => {
+  it("says --json is one event per line and points at --output-format json for one object", () => {
+    const at = RUN_HELP.indexOf("  --json ");
+    expect(at).toBeGreaterThan(-1);
+    const entry = RUN_HELP.slice(at, RUN_HELP.indexOf("\n  -m,", at));
+    expect(entry).toContain("one JSON event per line");
+    expect(entry).toContain("--output-format json");
+  });
+});
+
+/** ATO-2440: the flags of the second slice. */
+describe("run headless flags, second slice", () => {
+  it("reads --output-schema, both tool lists and --ephemeral", () => {
+    expect(
+      parseRunArgs([
+        "--output-schema", "schema.json",
+        "--allowed-tools", "os.fs.read, os.fs.*",
+        "--allowedTools", "Bash",
+        "--disallowed-tools", "os.fs.write",
+        "--ephemeral",
+      ]),
+    ).toMatchObject({
+      outputSchema: "schema.json",
+      allowedTools: ["os.fs.read", "os.fs.*", "Bash"],
+      disallowedTools: ["os.fs.write"],
+      ephemeral: true,
+    });
+  });
+
+  it("defaults to no schema, no narrowing and a kept chat", () => {
+    expect(parseRunArgs([])).toMatchObject({
+      outputSchema: null,
+      allowedTools: [],
+      disallowedTools: [],
+      ephemeral: false,
+    });
+  });
+
+  it("refuses an empty tool list, a missing schema and --ephemeral with --continue", () => {
+    expect(parseRunArgs(["--allowed-tools"])).toEqual({
+      error: "--allowed-tools needs tool names, e.g. os.fs.read,os.fs.*",
+    });
+    expect(parseRunArgs(["--output-schema"])).toEqual({
+      error: "--output-schema needs a JSON Schema file (or the schema as JSON)",
+    });
+    expect(parseRunArgs(["--ephemeral", "-c"])).toEqual({
+      error: "--ephemeral deletes the chat when the run ends, so it cannot run with --resume or --continue",
+    });
   });
 });

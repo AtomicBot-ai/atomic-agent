@@ -109,8 +109,11 @@ describe("os.http.request approval category (ATO-1462)", () => {
     expect(asked[0]!.category).toBe("http_write");
   });
 
-  it("runs a POST without asking at level 4", async () => {
+  it("runs a POST to a known host without asking at level 4", async () => {
     const { gate, asked } = recordingGate(4);
+    // Since ATO-2528 a POST carries its host as egress: an unknown host
+    // is held once per session, like `curl -d` in the shell.
+    gate.setEgressKnownHosts(() => ["example.com"]);
     const result = await buildTool(gate).run(post, makeCtx());
     expect(result.status).toBe("ok");
     expect(asked).toHaveLength(0);
@@ -157,5 +160,27 @@ describe("os.http.request approval category (ATO-1462)", () => {
     });
     expect(asked).toHaveLength(2);
     expect(asked[1]!.category).toBe("http_write");
+  });
+});
+
+describe("os.http.request names where it sends data (ATO-2528)", () => {
+  it("holds a POST to an unknown host in bypass, with the host on the card", async () => {
+    const { gate, asked } = recordingGate(5);
+    await expect(buildTool(gate).run(post, makeCtx())).rejects.toMatchObject({
+      name: "ApprovalDeniedError",
+    });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.egress).toEqual([
+      { kind: "url", host: "example.com", direction: "outbound", label: "example.com", unapproved: true },
+    ]);
+  });
+
+  it("an origin grant for the chat ends the hold for that host", async () => {
+    const { gate, asked } = recordingGate(5, (req, g) =>
+      g.resolve({ approvalId: req.approvalId, approved: true, grant: "category" }),
+    );
+    expect((await buildTool(gate).run(post, makeCtx())).status).toBe("ok");
+    expect((await buildTool(gate).run(post, makeCtx())).status).toBe("ok");
+    expect(asked).toHaveLength(1);
   });
 });

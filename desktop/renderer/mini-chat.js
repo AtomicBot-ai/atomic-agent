@@ -227,8 +227,8 @@ function mcApproval(st, payload) {
 
 const mcTitle = (st) => st.title || (st.rows.find((r) => r.k === 'user') || {}).text || '';   // the chat's title, or its first message
 function mcApprovalLine(a) {
-  if (a.question) return 'The agent is asking you a question. Open the big window to answer it.';
-  return 'The agent is asking to use ' + a.tool + '. Open the big window to approve or deny it.';
+  if (a.question) return 'The agent is asking you a question. Open the main window to answer it.';
+  return 'The agent is asking to use ' + a.tool + '. Open the main window to approve or deny it.';
 }
 
 /* ---------- markup ---------- */
@@ -272,6 +272,7 @@ function mcBoot() {
   const st = mcState();
   let painting = false;
   let stick = true, told = null;   // told: the chat id given to main (mini:session), the big window keeps its approvals for it
+  let bg = null;   // ATO-2478: the Background button and ⌘↩ (mini-chat-background.js)
   // ATO-561: a stored chat's own window (main loads it with ?window=chat): nothing is sent before its chat is in.
   const own = mcPopout(location.search);
   if (own) st.loading = true;
@@ -290,6 +291,7 @@ function mcBoot() {
     send.textContent = st.busy ? 'Stop' : 'Send';
     send.classList.toggle('stop', st.busy);
     send.disabled = st.busy ? !st.turnId : (st.loading || st.locked || !$('mc-input').value.trim());
+    if (bg) bg.paint();
     if (own) {
       const name = mcTitle(st) || 'Chat';
       $('mc-title').textContent = name;
@@ -308,6 +310,7 @@ function mcBoot() {
   });
   // A link in a reply opens in the browser, as in the main window; nothing navigates this page.
   $('mc-log').addEventListener('click', (e) => {
+    if (typeof mcRpClick === 'function' && mcRpClick(e, {BR, st, repaint})) return;   // ATO-2738: the preview first (mini-chat-replace-preview.js)
     // ATO-2268: the answer put back in place of the selection; main hides this window when it goes.
     const put = e.target && e.target.closest ? e.target.closest('[data-replace]') : null;
     if (put) {
@@ -316,6 +319,7 @@ function mcBoot() {
       put.disabled = true;
       BR.quickEntryReplace(row.text).then((res) => {
         if (res && (res.ok || res.hidden)) return;
+        if (res && res.copy && typeof mcReplaceFailed === 'function') { put.disabled = false; mcReplaceFailed(res.error, row.text, BR); return; }   // ATO-2750
         st.rows.push({id: ++st.seq, k: 'note', tone: 'bad', text: (res && res.error) || 'The text could not be replaced.'});
         repaint();
       }, () => { put.disabled = false; });
@@ -434,6 +438,7 @@ function mcBoot() {
     }, (err) => { mcStartFailed(st, err && err.message); repaint(); });
   };
   const stop = () => { if (st.busy && st.turnId) BR.cancel(st.turnId); };
+  if (typeof mcBgWire === 'function') bg = mcBgWire({BR, $, st, own, selection: () => selection, note: (text) => { st.rows.push({id: ++st.seq, k: 'note', tone: 'bad', text}); repaint(); }});
 
   $('mc-send').addEventListener('click', () => (st.busy ? stop() : submit()));
   $('mc-input').addEventListener('input', () => {
@@ -442,8 +447,10 @@ function mcBoot() {
     repaint();
   });
   $('mc-input').addEventListener('keydown', (e) => {
+    if (bg && bg.usable && mcBgIsChord(e, bg.platform)) { e.preventDefault(); bg.go(); return; }   // ATO-2478: before Enter, which would send it here
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!st.busy) submit(); }
   });
+  document.addEventListener('keydown', (e) => { if (typeof mcRpKey === 'function') mcRpKey(e, repaint); }, true);   // ATO-2738: Esc closes the preview first
   document.addEventListener('keydown', (e) => {
     if (own) return;   // ATO-561: a chat's own window closes with its close button, as any window
     if (e.key === 'Escape' && !e.defaultPrevented) window.close();
@@ -465,6 +472,7 @@ function mcBoot() {
   if (BR.quickEntryOpened) BR.quickEntryOpened().then((opened) => {
     const input = $('mc-input');
     if (!opened || st.rows.length) return;
+    if (typeof mcSelectionNotice === 'function') mcSelectionNotice(opened.notice, BR);   // ATO-2736 (mini-chat-notice.js)
     if (typeof opened.draft === 'string' && opened.draft && !input.value) {
       input.value = opened.draft;
       input.setSelectionRange(input.value.length, input.value.length);

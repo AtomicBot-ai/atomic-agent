@@ -15,16 +15,20 @@ import { sendJson, type HttpHandler } from "./request-context.js";
  * bot is polled from somewhere else. The desktop's Telegram tab said
  * nothing of either; this is what it reads to say so.
  *
- * Answers `{ available, state, lastError, otherPoller }`: `otherPoller` is
- * `{ where: "this_computer", pid }` for the lock, `{ where: "elsewhere" }`
- * for Telegram's 409, `null` otherwise. `available: false` on an agent
- * without the channel. Bearer auth like every `/api` route.
+ * Answers `{ available, state, lastError, bot, otherPoller }`: `bot` is
+ * `{ id, username }` from the channel's last successful `getMe` (null
+ * before one, and after a stop or a token change), so the desktop can
+ * name the bot after a restart, as `GET /api/discord/channel` does
+ * (ATO-2520). `otherPoller` is `{ where: "this_computer", pid }` for the
+ * lock, `{ where: "elsewhere" }` for Telegram's 409, `null` otherwise.
+ * `available: false` on an agent without the channel. The token is never
+ * in the answer. Bearer auth like every `/api` route.
  */
 export function createTelegramChannelHandler(): HttpHandler {
   return async (_req, res, ctx) => {
     const channel = ctx.runtime.telegramChannel ?? null;
     if (!channel) {
-      sendJson(res, 200, { available: false, state: null, lastError: null, otherPoller: null });
+      sendJson(res, 200, { available: false, state: null, lastError: null, bot: null, otherPoller: null });
       return;
     }
     const lastError = channel.lastError();
@@ -32,9 +36,17 @@ export function createTelegramChannelHandler(): HttpHandler {
       available: true,
       state: channel.state(),
       lastError,
+      bot: botOf(channel.getBotIdentity()),
       otherPoller: otherPollerOf(lastError),
     });
   };
+}
+
+/** Only the id and the @username: the rest of `getMe` is not the desktop's business. */
+function botOf(
+  identity: { id: number; username: string | null } | null,
+): { id: number; username: string | null } | null {
+  return identity ? { id: identity.id, username: identity.username } : null;
 }
 
 /** Who else polls the bot, read from the channel's last error. */

@@ -96,6 +96,35 @@ describe("Telegram session grant buttons (GitHub #230)", () => {
     }
   });
 
+  it("keeps the scope words on the buttons for a long address (ATO-2757)", async () => {
+    const origin = `https://${"very-long-subdomain-".repeat(4)}api.example.com`;
+    const h = harness({
+      approvals: { resolve: vi.fn(() => true), canGrantAlways: () => true },
+    });
+    await h.bridge.dispatch(
+      {
+        approvalId: "long",
+        sessionId: "s-1",
+        tool: "http.request",
+        category: "http",
+        reason: "post a report",
+        preview: `POST ${origin}/v1/reports`,
+        grantKey: origin,
+        workdir: "/work/project",
+      },
+      7,
+    );
+    const rows = h.keyboard().inline_keyboard;
+    const session = rows.find((r) => r[0]!.callback_data === "appr:long:s")![0]!;
+    const always = rows.find((r) => r[0]!.callback_data === "appr:long:w")![0]!;
+    // Cut from the end, both would have lost their scope.
+    expect(session.text.endsWith("example.com this session")).toBe(true);
+    expect(session.text.startsWith("Allow ")).toBe(true);
+    expect(always.text.endsWith("example.com in this project")).toBe(true);
+    expect(always.text.startsWith("Always allow ")).toBe(true);
+    for (const b of rows.flat()) expect(Array.from(b.text).length).toBeLessThanOrEqual(60);
+  });
+
   it("offers no grant for a category that is never granted, and a forged one is dropped", async () => {
     const h = harness();
     await h.bridge.dispatch(

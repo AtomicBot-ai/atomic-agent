@@ -27,7 +27,7 @@ export function createLocalModelsDefaults(): UserLocalModelsConfig {
     thinking: "auto",
     reasoningBudgetTokens: 0,
     drySampler: false,
-    modelSampling: false,
+    modelSampling: true,
     strictToolArgs: false,
     managed: {
       engine: "atomic-core",
@@ -48,6 +48,7 @@ export function createLocalModelsDefaults(): UserLocalModelsConfig {
       swaFull: "auto",
       cpuMoe: "auto",
       rpcServers: [],
+      draftModel: "off",
     },
     embeddings: {
       enabled: false,

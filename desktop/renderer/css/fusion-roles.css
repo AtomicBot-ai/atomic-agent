@@ -1,0 +1,19 @@
+/* ============================================================
+   Fusion models by role (ATO-1754): the rows under the worker reasoning row
+   in Settings › Models › Fusion. fusion-roles.js draws them; colours come
+   from tokens only.
+   ============================================================ */
+
+.llm-pane .fzrole{display:flex;flex-direction:column;gap:10px;padding:10px 0 0}
+.llm-pane .fzrole-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;padding:8px 12px;border-radius:var(--r-block);
+  background:var(--lift);box-shadow:inset 0 0 0 1px var(--bd)}
+.llm-pane .fzrole-body{display:flex;flex-direction:column;gap:2px;flex:1;min-width:220px}
+.llm-pane .fzrole-t{display:flex;align-items:center;gap:6px;font-weight:600;font-size:var(--fs-ui);color:var(--ink)}
+.llm-pane .fzrole-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.llm-pane .fzrole-sel{min-width:180px;max-width:280px}
+.llm-pane .fzrole-fixed{font-size:var(--fs-label);color:var(--ink-2);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.llm-pane .fzrole-line{display:flex;flex-wrap:wrap;align-items:center;gap:6px;flex-basis:100%;font-size:var(--fs-label);color:var(--ink-2)}
+.llm-pane .fzrole-line--err{color:var(--critical)}
+.llm-pane .fzrole-more{flex-basis:100%;font-size:var(--fs-label);color:var(--ink-2)}
+.llm-pane .fzrole-more > summary{width:max-content;cursor:pointer}
+.llm-pane .fzrole-more > span{display:block;margin-top:4px;overflow-wrap:anywhere}

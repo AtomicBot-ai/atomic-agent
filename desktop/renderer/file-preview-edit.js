@@ -16,9 +16,9 @@
    nothing typed the editor just takes the new text; with unsaved text the
    same bar shows at once.
 
-   Leaving the editor, or the file, with unsaved text asks Discard / Keep
-   editing first. When the panel closes on its own (another chat on screen),
-   the unsaved text is kept in memory by the file's real path, and the editor
+   Leaving the editor, or the file, with unsaved text asks first: Save /
+   Don't save / Cancel, as VS Code and TextEdit ask (ATO-2753). When the
+   panel closes on its own (another chat on screen), the unsaved text is kept in memory by the file's real path, and the editor
    comes back with it when that file opens again in this window, as VS Code
    keeps a dirty buffer; Save then still checks the file against the version
    the text was begun on. A file written with CRLF line ends is saved with them.
@@ -68,7 +68,7 @@ function fpEditStop() {
   fpPaintHead();
   fpPaintBody(fpBodyHtml(FP.data));
 }
-/** Before `then` leaves the editor: unsaved text asks Discard / Keep editing and returns true (not done yet). */
+/** Before `then` leaves the editor: unsaved text asks Save / Don't save / Cancel and returns true (not done yet). */
 function fpEditGuard(then) {
   const ed = FP.edit;
   if (!ed) return false;
@@ -137,6 +137,27 @@ function fpEditWhy(reason) {
     : reason === 'too-large' ? 'The text is too long to save from here.'
     : 'It could not be saved.';
 }
+/** ATO-2753: Save in the leaving question: saved, the editor leaves and `then` runs;
+    not saved (changed on disk, or an error), the editor stays and its bar says why. */
+async function fpEditSaveAndLeave() {
+  const ed = FP.edit;
+  if (!ed) return null;
+  const then = ed.ask;
+  ed.ask = null;
+  const r = await fpEditSave(false);
+  if (r && r.ok && FP.edit === ed) { fpEditStop(); if (then) then(); }
+  return r;
+}
+/** ATO-2753: the text area changed. A save error was about the text before it, so typing clears it. */
+function fpEditTyped(value) {
+  const ed = FP.edit;
+  if (!ed) return;
+  const was = fpEditDirty(ed);
+  ed.draft = String(value).replace(/\r\n?/g, '\n');
+  if (ed.error) { ed.error = ''; fpEditPaintBar(); return; }
+  if (was !== fpEditDirty(ed) && !ed.ask && !ed.conflict) fpEditPaintBar();
+  else if (ed.compare && ed.conflict && !ed.ask) fpEditPaintBar();   // ATO-2445: Compare follows the typing
+}
 /** Reload from disk: the editor takes the file as it is now. */
 async function fpEditReload() {
   const path = FP.path;
@@ -149,13 +170,17 @@ async function fpEditDiskChanged(f) {
   const ed = FP.edit;
   if (!ed || ed.saving) return;
   if (!fpEditDirty(ed)) { await fpEditReload(); return; }
-  if (!ed.conflict) { ed.conflict = {size: f.size, mtimeMs: f.mtimeMs}; fpEditPaintBar(); }
+  // Each newer version moves the conflict on, so Compare's diff against an older one is dropped.
+  const c = ed.conflict;
+  if (!c || c.size !== f.size || c.mtimeMs !== f.mtimeMs) { ed.conflict = {size: f.size, mtimeMs: f.mtimeMs}; fpEditPaintBar(); }
 }
 
 /** The head's buttons while editing. */
 function fpEditHeadHtml() {
   const ed = FP.edit;
-  return '<button class="fp-btn fp-primary" data-fp="edit-save" title="Save (⌘S)"' + (ed && ed.saving ? ' disabled' : '') + '>Save</button>'
+  // ATO-2753: Ctrl+S off the Mac (renderer.js's kbdText, there by the time the head paints).
+  const tip = typeof kbdText === 'function' ? kbdText('Save (⌘S)') : 'Save (⌘S)';
+  return '<button class="fp-btn fp-primary" data-fp="edit-save" title="' + fpEsc(tip) + '"' + (ed && ed.saving ? ' disabled' : '') + '>Save</button>'
     + '<button class="fp-btn" data-fp="edit-done" title="Back to the preview">Done</button>';
 }
 /** The body while editing: a bar for questions and errors, then the text (filled in by fpEditFill). */
@@ -171,9 +196,12 @@ function fpEditFill(body) {
 function fpEditBarHtml(ed) {
   if (!ed) return '';
   const btn = (act, label, primary) => '<button class="fp-btn' + (primary ? ' fp-primary' : '') + '" data-fp="' + act + '">' + label + '</button>';
-  if (ed.ask) return '<div class="fp-note fp-editnote"><span>Discard your unsaved changes?</span>' + btn('edit-discard', 'Discard', true) + btn('edit-keep', 'Keep editing') + '</div>';
+  if (ed.ask) return '<div class="fp-note fp-editnote"><span>' + fpEsc('Save your changes to ' + (FP.data && FP.data.name || 'this file') + '?') + '</span>'
+    + btn('edit-ask-save', 'Save', true) + btn('edit-discard', 'Don\u2019t save') + btn('edit-keep', 'Cancel') + '</div>';
   if (ed.conflict) return '<div class="fp-note fp-editnote"><span>This file changed on disk since you opened it.</span>'
-    + btn('edit-reload', 'Reload from disk') + btn('edit-overwrite', 'Overwrite', true) + '</div>';
+    + (typeof fpCompareToggle === 'function' ? btn('edit-compare', fpCompareLabel(ed)) : '')   // ATO-2445: file-preview-compare.js
+    + btn('edit-reload', 'Reload from disk') + btn('edit-overwrite', 'Overwrite', true) + '</div>'
+    + (typeof fpCompareHtml === 'function' ? fpCompareHtml(ed) : '');
   if (ed.error) return '<div class="fp-note fp-editnote"><span>' + fpEsc(ed.error) + '</span></div>';
   if (ed.saving) return '<div class="fp-editstat">Saving…</div>';
   return '<div class="fp-editstat">' + (fpEditDirty(ed) ? 'Edited' : 'Saved') + '</div>';
@@ -193,7 +221,9 @@ function fpEditClick(what) {
   else if (what === 'edit-save') fpEditSave(false);
   else if (what === 'edit-overwrite') fpEditSave(true);
   else if (what === 'edit-reload') fpEditReload();
+  else if (what === 'edit-compare' && typeof fpCompareToggle === 'function') fpCompareToggle();   // ATO-2445
   else if (what === 'edit-done') fpEditLeave();
+  else if (what === 'edit-ask-save') fpEditSaveAndLeave();
   else if (what === 'edit-keep') { ed.ask = null; fpEditPaintBar(); }
   else if (what === 'edit-discard') { const then = ed.ask; fpEditStop(); if (then) then(); }
 }
@@ -202,9 +232,7 @@ if (typeof document !== 'undefined') {
   document.addEventListener('input', (e) => {
     const ta = e.target;
     if (!FP.edit || !ta || !ta.matches || !ta.matches('#fpreview textarea.fp-editor')) return;
-    const was = fpEditDirty(FP.edit);
-    FP.edit.draft = String(ta.value).replace(/\r\n?/g, '\n');
-    if (was !== fpEditDirty(FP.edit) && !FP.edit.ask && !FP.edit.conflict && !FP.edit.error) fpEditPaintBar();
+    fpEditTyped(ta.value);
   });
   document.addEventListener('keydown', (e) => {
     if (!FP.edit || !(e.metaKey || e.ctrlKey) || e.altKey || String(e.key).toLowerCase() !== 's') return;

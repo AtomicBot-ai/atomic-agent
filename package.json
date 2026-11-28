@@ -29,6 +29,8 @@
     "smoke:e2e": "node scripts/smoke-e2e.mjs",
     "eval": "vitest run --config eval/vitest.config.ts",
     "eval:judge": "tsx eval/scripts/judge-from-jsonl.ts",
+    "eval:guard-false-blocks": "tsx eval/scripts/guard-false-blocks.ts",
+    "eval:privacy-names": "tsx eval/scripts/run-privacy-names.ts",
     "eval:lint": "tsc -p eval/tsconfig.json --noEmit",
     "eval:stub": "node eval/scripts/stub-llama-server.mjs",
     "eval:with-stub": "node eval/scripts/run-with-stub.mjs",
@@ -37,6 +39,7 @@
     "eval:summary": "node eval/scripts/summarize-run.mjs",
     "eval:exam": "tsx eval/exam/run-exam.ts",
     "eval:exam:compare": "node eval/exam/compare-exam.mjs",
+    "eval:ocr": "tsx eval/scripts/ocr-bench.ts",
     "eval:promptfoo": "PROMPTFOO_DISABLE_TELEMETRY=1 npx --yes promptfoo@0.125.1 eval -c eval/promptfoo/promptfooconfig.yaml --no-cache",
     "eval:redteam": "export PROMPTFOO_DISABLE_TELEMETRY=1 PROMPTFOO_DISABLE_REMOTE_GENERATION=true && npx --yes promptfoo@0.125.1 redteam generate -c eval/promptfoo/redteam.yaml -o eval/promptfoo/redteam-generated.yaml && npx --yes promptfoo@0.125.1 eval -c eval/promptfoo/redteam-generated.yaml --no-cache",
     "eval:attacks": "node eval/scripts/run-attacks.mjs",
@@ -182,5 +185,8 @@
   },
   "volta": {
     "node": "25.7.0"
+  },
+  "optionalDependencies": {
+    "@lydell/node-pty": "1.1.0"
   }
 }

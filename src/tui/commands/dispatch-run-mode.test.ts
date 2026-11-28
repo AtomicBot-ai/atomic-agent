@@ -63,3 +63,29 @@ describe("parseRunModeCommand", () => {
     });
   });
 });
+
+describe("parseRunModeCommand: fusion roles", () => {
+  it("parses a role on a shared provider with its own model, keeping case", () => {
+    expect(parseRunModeCommand("role review openrouter deepseek/DeepSeek-v4.1")).toEqual({
+      openSwitch: false,
+      role: { role: "review", pin: { providerId: "openrouter", model: "deepseek/DeepSeek-v4.1" } },
+    });
+    expect(parseRunModeCommand("ROLE Build or-coder")).toEqual({
+      openSwitch: false,
+      role: { role: "build", pin: { providerId: "or-coder" } },
+    });
+  });
+
+  it("clears a role and lists the roles", () => {
+    expect(parseRunModeCommand("role plan off")).toEqual({
+      openSwitch: false,
+      role: { role: "plan", pin: null },
+    });
+    expect(parseRunModeCommand("roles")).toEqual({ openSwitch: false, listRoles: true });
+  });
+
+  it("answers an unknown role or a missing provider with the role usage", () => {
+    expect(parseRunModeCommand("role coder openrouter").error).toMatch(/^usage: \/runmode role/);
+    expect(parseRunModeCommand("role review").error).toMatch(/^usage: \/runmode role/);
+  });
+});

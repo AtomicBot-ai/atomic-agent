@@ -60,9 +60,31 @@ describe("isExpectedSubscriptionCliFailure (ATO-2417)", () => {
     expect(isExpectedSubscriptionCliFailure(failure("error: unknown option '--ignore-user-config'"))).toBe(false);
     expect(isExpectedSubscriptionCliFailure(failure(""))).toBe(false);
     expect(isExpectedSubscriptionCliFailure(new SubscriptionCliInvocationError('"claude" timed out', null, "timeout"))).toBe(false);
-    expect(isExpectedSubscriptionCliFailure(new SubscriptionCliNotInstalledError("claude"))).toBe(false);
     expect(isExpectedSubscriptionCliFailure(new Error("You've hit your usage limit."))).toBe(false);
+    // Exit 127 still reports: part of it was our own PATH (ATO-1679).
+    expect(
+      isExpectedSubscriptionCliFailure(
+        new SubscriptionCliInvocationError('"claude" exited with code 127: env: node: No such file or directory', 127),
+      ),
+    ).toBe(false);
     expect(isExpectedSubscriptionCliFailure("not an error")).toBe(false);
+  });
+});
+
+describe("a subscription CLI that is not installed (ATO-1679)", () => {
+  it("is the person's setup, bare and wrapped as the step hands it over (CLI-HP)", () => {
+    const missing = new SubscriptionCliNotInstalledError("claude", "Install it in PowerShell.", "Claude Code");
+    expect(isExpectedSubscriptionCliFailure(missing)).toBe(true);
+    expect(isExpectedSubscriptionCliFailure(wrap(missing))).toBe(true);
+  });
+
+  it("is not reported", () => {
+    const { client, captured } = fakeClient();
+    captureError(client, wrap(new SubscriptionCliNotInstalledError("claude.cmd", "Install it in PowerShell.")), {
+      source: "llm_failure",
+      category: "transport",
+    });
+    expect(captured).toHaveLength(0);
   });
 });
 

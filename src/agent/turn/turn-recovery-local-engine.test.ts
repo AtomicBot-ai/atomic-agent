@@ -302,6 +302,19 @@ describe("turn recovery: a 401 on the managed port with our engine gone", () => 
     expect(events.at(-1)).toMatchObject({ type: "loop_failed", failure: { cause: "local_port_taken" } });
   });
 
+  it("our Core's record claims the port (core_session): no pid, yet the refused-key words stay (ATO-2460)", () => {
+    const refusal = keyRefusedError(new LlamaServerError("llama-server returned http 401", 401, URL), true, "core_session");
+    const err = new TransportError(refusal.message, 401, URL, { cause: refusal });
+    attachFailingLink(err, "local-llama");
+    const decision = recoverTurnStep(err, context(), { localEngineState: engine("dead") }, createTurnLoopState());
+    expect(decision.kind).toBe("failure");
+    if (decision.kind !== "failure") return;
+    expect(decision.runError).not.toBeInstanceOf(LocalPortTakenError);
+    expect(decision.runError).toBe(err);
+    expect(decision.runError.message).toContain("refused the agent's key");
+    expect(decision.runError.message).not.toContain("Another program");
+  });
+
   it("with our engine alive the refused-key words stay", () => {
     const err = unauthorized("local-llama");
     const decision = recoverTurnStep(err, context(), { localEngineState: engine("alive") }, createTurnLoopState());

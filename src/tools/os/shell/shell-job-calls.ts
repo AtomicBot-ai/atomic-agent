@@ -56,7 +56,12 @@ export type ShellCallForm =
   | { kind: "wait"; id: number }
   | { kind: "kill"; id: number }
   | { kind: "write"; id: number }
+  | { kind: "monitor"; id: number }
   | { kind: "invalid"; message: string };
+
+/** The forms that name a job by id. */
+const JOB_ID_FORMS = ["wait", "kill", "write", "monitor"] as const;
+type JobIdForm = (typeof JOB_ID_FORMS)[number];
 
 /**
  * Whether a form field was really passed. Some models fill every
@@ -69,7 +74,7 @@ export type ShellCallForm =
 function isPresent(key: string, value: unknown): boolean {
   if (value === undefined || value === null || value === false) return false;
   if (typeof value === "string" && value.trim() === "") return false;
-  if ((key === "wait" || key === "kill" || key === "write") && isZeroId(value)) return false;
+  if ((JOB_ID_FORMS as readonly string[]).includes(key) && isZeroId(value)) return false;
   return true;
 }
 
@@ -77,8 +82,13 @@ function isZeroId(value: unknown): boolean {
   return value === 0 || (typeof value === "string" && value.trim() === "0");
 }
 
-function jobIdHint(kind: "wait" | "kill" | "write"): string {
-  const example = kind === "write" ? `{"write": 3, "text": "y\\n"}` : `{"${kind}": 3}`;
+function jobIdHint(kind: JobIdForm): string {
+  const example =
+    kind === "write"
+      ? `{"write": 3, "text": "y\\n"}`
+      : kind === "monitor"
+        ? `{"monitor": 3, "until": "ready|error"}`
+        : `{"${kind}": 3}`;
   return `os.shell.run: ${kind} must be a job id (a positive integer), e.g. ${example}; {"jobs": true} lists them`;
 }
 
@@ -92,21 +102,21 @@ function parseJobId(raw: unknown): number | null {
   return Number.isInteger(value) && value > 0 ? value : null;
 }
 
-/** Which form a call is; exactly one of `cmd` / `wait` / `kill` / `jobs` / `write` (ATO-2277). */
+/** Which form a call is; exactly one of `cmd` / `wait` / `kill` / `jobs` / `write` (ATO-2277) / `monitor` (ATO-2436). */
 export function classifyShellCall(
   rawArgs: Record<string, unknown>,
 ): ShellCallForm {
-  const present = ["cmd", "wait", "kill", "jobs", "write"].filter((key) =>
+  const present = ["cmd", "wait", "kill", "jobs", "write", "monitor"].filter((key) =>
     isPresent(key, rawArgs[key]),
   );
   if (present.length > 1) {
     return {
       kind: "invalid",
-      message: `os.shell.run: pass one of cmd, wait, kill, jobs, write (got ${present.join(", ")})`,
+      message: `os.shell.run: pass one of cmd, wait, kill, jobs, write, monitor (got ${present.join(", ")})`,
     };
   }
   if (isPresent("jobs", rawArgs.jobs)) return { kind: "jobs" };
-  for (const kind of ["wait", "kill", "write"] as const) {
+  for (const kind of JOB_ID_FORMS) {
     if (!isPresent(kind, rawArgs[kind])) continue;
     const id = parseJobId(rawArgs[kind]);
     if (id === null) return { kind: "invalid", message: jobIdHint(kind) };
@@ -115,7 +125,7 @@ export function classifyShellCall(
   // No form at all, but a zero job id: the model meant a job form, so
   // say what an id is rather than that `cmd` is missing.
   if (present.length === 0) {
-    for (const kind of ["wait", "kill", "write"] as const) {
+    for (const kind of JOB_ID_FORMS) {
       if (isZeroId(rawArgs[kind])) return { kind: "invalid", message: jobIdHint(kind) };
     }
   }
@@ -144,6 +154,8 @@ const STOP_WORDING: Record<ShellJobStopReason, string> = {
   evicted: "to stay within the job limit",
   ceiling: "at the job ceiling",
   shutdown: "at shutdown",
+  user: "by the user",
+  plugin_off: "because its plugin was turned off or may no longer run code",
 };
 
 export interface ShellDetachRender {

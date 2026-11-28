@@ -77,18 +77,24 @@ function answerVersionsSwitchHTML(view, busy) {
     + '</span>';
 }
 
-/** The words for the agent refusing a swap (its 409 code). */
-function answerVersionsRefusalText(r) {
+/* rewind-error.js: a global in the window, required in the Node checks (looked up at call time). */
+function answerVersionsErr() { return typeof rewindErrorView === 'function' ? {rewindErrorView} : require('./rewind-error.js'); }
+
+/** The words for the agent refusing a swap (its 409 code); null for any other failure. */
+function answerVersionsCodeText(r) {
   const code = r && r.code;
   if (code === 'turn_in_progress') return 'The agent is still answering. Wait for it to finish, then try again.';
   if (code === 'turn_has_tools') return 'The answer on screen used tools, so it cannot be swapped for another one.';
   if (code === 'turn_steered') return 'You added to the answer on screen while it ran, so it cannot be swapped.';
   if (code === 'turn_stopped') return 'The answer on screen was stopped, so it cannot be swapped.';
   if (code === 'turn_compacted') return 'This part of the chat was summarized, so its answer cannot be swapped.';
-  if (code === 'no_previous_reply' || code === 'bad_index') return 'That answer is no longer kept. The chat is drawn again.';
+  if (code === 'no_previous_reply' || code === 'bad_index') return 'That earlier answer is gone, so the chat was reloaded.';
   if (code === 'session_not_found') return 'This chat is not saved yet.';
-  return (r && r.error) || 'The agent gave no reason. Nothing was changed.';
+  return null;
 }
+
+/** ATO-2752: the toast's sentence; a failure the agent names no code for is one plain line, its raw reason in the log. */
+function answerVersionsRefusalText(r) { return answerVersionsErr().rewindErrorView(r, answerVersionsCodeText).text; }
 
 /* ---- the window part ---- */
 
@@ -97,6 +103,8 @@ function answerVersionsRefusalText(r) {
 const AVER = {supported: true, key: null, sid: null, data: null, view: null, busy: false};
 
 function answerVersionsHTML(m) {
+  // ATO-2470: an agent with versions of every message gets the switchers from message-versions.js instead.
+  if (typeof messageVersionsActive === 'function' && messageVersionsActive()) return '';
   if (!AVER.supported || typeof BR === 'undefined' || !BR || !BR.previousReplies) return '';
   if (!m || m.k !== 'assistant' || m.placeholder || S.busy || S.pending || !S.agentSession) return '';
   if (!isLastReply(m)) return '';
@@ -150,4 +158,4 @@ if (typeof document !== 'undefined') {
 }
 
 if (typeof module !== 'undefined') module.exports = {answerVersionsQuestion, answerVersionsOrder, answerVersionsView, answerVersionsStep,
-  answerVersionsSwitchHTML, answerVersionsRefusalText, AVER, answerVersionsHTML, answerVersionsGo};
+  answerVersionsSwitchHTML, answerVersionsRefusalText, answerVersionsCodeText, AVER, answerVersionsHTML, answerVersionsGo};

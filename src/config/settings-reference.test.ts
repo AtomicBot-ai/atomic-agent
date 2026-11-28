@@ -21,7 +21,7 @@ describe("buildSettingsReference", () => {
   const leaves = [
     { key: "agent.maxSteps", defaultValue: 25, isArray: false },
     { key: "projects.roots", defaultValue: [], isArray: true },
-    { key: "version", defaultValue: 79, isArray: false },
+    { key: "version", defaultValue: 80, isArray: false },
     { key: "browser.cdpUrl", defaultValue: null, isArray: false },
   ];
   const env: EnvSetting[] = [

@@ -83,6 +83,8 @@ function qeSelectionRowHTML(sel, busy, h) {
       + '<div class="d">When the shortcut opens the mini chat, the text selected in the app in front comes with it, with Rewrite, Translate, Explain and Summarize. Atomic Agent copies it and puts your clipboard back.</div>'
       + (warn ? '<div class="tk-help tk-help--warn" role="status">' + h.esc(warn) + '</div>' : '')
     + '</div>'
+    // ATO-2736: macOS's Accessibility pane, the one Show once opens (main/show-once-ipc.ts).
+    + (sel && sel.openAccessibility ? '<button class="btn btn-s sm" data-act="quickentry:accessibility">Open Accessibility settings</button>' : '')
     + h.setSwitchHTML({on, busy, disabled: !sel || busy, act: 'quickentry:selection',
       label: 'Use selected text', title: 'Turn selected text ' + (on ? 'off' : 'on')})
   + '</div>';
@@ -137,6 +139,7 @@ function qeOnKey(e) {
 function quickEntryAct(v) {
   if (!BR || !BR.quickEntrySet) return;
   if (v === 'cancel') { qeCancel(); return; }
+  if (v === 'accessibility') { if (BR.showOnceOpenAccessibility) BR.showOnceOpenAccessibility().catch(() => {}); return; }
   if (v === 'selection') {
     if (!QE.sel || QE.selBusy || !BR.selectedTextSet) return;
     QE.selBusy = true; render();
@@ -169,6 +172,8 @@ async function quickEntryDeliver() {
   const got = await BR.quickEntryTake().catch(() => null);
   const text = got && typeof got.text === 'string' ? got.text.trim() : '';
   if (!text) return;
+  // ATO-2478: ⌘↩ in the quick entry window: a new chat in the background; the chat on screen stays (background-chat.js).
+  if (got.background === true && typeof bgChatFromQuickEntry === 'function') { void bgChatFromQuickEntry(text); return; }
   act('session:new');
   S.draft = text;
   const e = $('#entry');
@@ -179,11 +184,29 @@ async function quickEntryDeliver() {
   submit(undefined, {plain: true});
 }
 
+/**
+ * ATO-2736: the window came back to the front (from System Settings, say):
+ * main asks macOS again, so the Accessibility hint goes away without a
+ * restart once the permission is given. Only while the row is on screen.
+ */
+function qeRecheckTrust(br, onScreen, apply) {
+  if (!br || !br.selectedTextGet || !QE.sel || !onScreen()) return false;
+  br.selectedTextGet().then((r) => {
+    if (!r || typeof r !== 'object') return;
+    const changed = !QE.sel || r.hint !== QE.sel.hint || r.on !== QE.sel.on;
+    QE.sel = r;
+    if (changed) apply();
+  }).catch(() => {});
+  return true;
+}
+
 /** Called once at boot (renderer.js, beside BR.onMenu). */
 function quickEntryBoot() {
-  if (typeof BR === 'undefined' || !BR || !BR.onQuickEntry) return;
+  if (typeof BR === 'undefined' || !BR) return;
+  window.addEventListener('focus', () => qeRecheckTrust(BR, () => !!(S.settings && settingsPaneId(S.settingsPane) === 'general'), render));
+  if (!BR.onQuickEntry) return;
   BR.onQuickEntry(() => { void quickEntryDeliver(); });
   void quickEntryDeliver();
 }
 
-if (typeof module !== 'undefined') module.exports = {QE_CODE_KEYS, qeAcceleratorFromKey, quickEntryRowHTML, qeSelectionRowHTML};
+if (typeof module !== 'undefined') module.exports = {QE, QE_CODE_KEYS, qeAcceleratorFromKey, quickEntryRowHTML, qeSelectionRowHTML, qeRecheckTrust};

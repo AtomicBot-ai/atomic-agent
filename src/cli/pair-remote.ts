@@ -1,5 +1,5 @@
 import {
-  CLOUDFLARED_INSTALL_HINT,
+  cloudflaredInstallHint,
   findOnPath,
   startCloudflared,
   type CloudflaredHandle,
@@ -29,6 +29,8 @@ export const REMOTE_WARNING = [
 export interface RemoteTunnelDeps {
   findBinary?: (name: string) => string | null;
   start?: (options: StartCloudflaredOptions) => CloudflaredHandle;
+  /** Picks the install hint (ATO-2758). */
+  platform?: NodeJS.Platform;
 }
 
 export type RemoteTunnel =
@@ -38,7 +40,10 @@ export type RemoteTunnel =
 /** Start the quick tunnel to `originUrl` and wait for its public address. */
 export async function openRemoteTunnel(originUrl: string, deps: RemoteTunnelDeps = {}): Promise<RemoteTunnel> {
   const binary = (deps.findBinary ?? ((name: string) => findOnPath(name)))("cloudflared");
-  if (!binary) return { ok: false, error: `--remote needs cloudflared. ${CLOUDFLARED_INSTALL_HINT}` };
+  if (!binary) {
+    const hint = cloudflaredInstallHint("atag pair --remote", deps.platform);
+    return { ok: false, error: `--remote needs cloudflared, and it is not on PATH. ${hint}` };
+  }
   const handle = (deps.start ?? startCloudflared)({ binary, request: { mode: "quick" }, originUrl });
   const publicUrl = await handle.publicUrl;
   if (!publicUrl) {

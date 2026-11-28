@@ -4,8 +4,8 @@
  * The window never touches the disk. It hands main a path (a reply's file
  * chip, an attachment) and gets back what it may show: the start of a text
  * file, a picture as a `data:` URL, a PDF's bytes, the text of a Word,
- * PowerPoint or Excel file (ATO-981, office-preview.ts), or only the name and
- * size.
+ * PowerPoint or Excel file (ATO-981, office-preview.ts), the first rows of a
+ * Parquet table (ATO-2445, parquet-preview.ts), or only the name and size.
  * The path is checked exactly as a reply's picture is (image-data-url.ts
  * imageTarget): written `~/…` or absolute, never a URL, `..` and symlinks
  * resolved, and only inside the allowed roots — the home folder, the agent's
@@ -29,12 +29,13 @@ import { open, stat } from "node:fs/promises";
 import { isUtf8 } from "./file-save-check.js";
 import { IMAGE_DATA_URL_MAX_BYTES, imageTarget, sniffImageMime } from "./image-data-url.js";
 import { OFFICE_MAX_FILE_BYTES, looksZip, officePreview, officeTypeFor, type OfficePreview } from "./office-preview.js";
+import { looksParquet, parquetPreview, type ParquetTable } from "./parquet-preview.js";
 import { expandHome, isAbsoluteOn, isUnder, pathFor, type Platform } from "./platform.js";
 
 export const PREVIEW_TEXT_MAX_BYTES = 512 * 1024;
 export const PREVIEW_PDF_MAX_BYTES = 32 * 1024 * 1024;
 
-export type PreviewKind = "text" | "code" | "markdown" | "csv" | "tsv" | "html" | "image" | "pdf" | "office" | "other";
+export type PreviewKind = "text" | "code" | "markdown" | "csv" | "tsv" | "html" | "image" | "pdf" | "office" | "parquet" | "other";
 
 export type FilePreview =
   | {
@@ -58,8 +59,10 @@ export type FilePreview =
       base64?: string;
       /** office (ATO-981): the text of a .pptx, .docx or .xlsx (office-preview.ts). */
       office?: OfficePreview;
-      /** other: why there is no preview ("binary", "too-large"). */
-      note?: "binary" | "too-large";
+      /** parquet (ATO-2445): the start of the table (parquet-preview.ts). */
+      table?: ParquetTable;
+      /** other: why there is no preview ("binary", "too-large", "unsupported": a Parquet codec it cannot unpack). */
+      note?: "binary" | "too-large" | "unsupported";
     }
   | { ok: false; reason: "missing" | "outside" | "dir" };
 
@@ -178,6 +181,11 @@ export async function filePreview(
       if (st.size > pdfMax) return { ...base, kind: "other", note: "too-large" };
       const bytes = await read(pdfMax);
       return { ...base, kind: "pdf", base64: bytes.toString("base64") };
+    }
+    // ATO-2445: a Parquet file is a table; only its footer and first row groups are read.
+    if (ext === ".parquet" || looksParquet(head)) {
+      const pq = await parquetPreview(fh, st.size);
+      return pq.ok ? { ...base, kind: "parquet", table: pq.table } : { ...base, kind: "other", note: pq.note };
     }
     // ATO-981: a Word, PowerPoint or Excel file is a ZIP; its text is shown, not "binary".
     const office = officeTypeFor(ext);

@@ -268,7 +268,23 @@ through those two tools is blocked before it leaves; only a shell
 command (`curl`) reaches the mock. Use `tool_args_not_match` to catch
 the blocked attempt.
 
-## Interpreting results
+## Privacy Shield names benchmark (ATO-2527)
+
+`npm run eval:privacy-names -- --url http://127.0.0.1:8080/v1 --model <name>`
+runs the local name pass of Privacy Shield over 50 made-up letters
+(`fixtures/privacy-names/en.json`, `ru.json`; a fifth of them have nothing
+private, to count false positives) with the agent's own prompt, grammar,
+chunking and filter. It first checks that the server accepts the GBNF
+grammar and its bounded repeats (`--mode schema` sends the JSON schema as
+`response_format` instead, for LM Studio, Ollama or vLLM), then prints
+recall (expected spans still readable after masking), precision (values
+masked that match nothing) and p50/p95 latency per language, and writes
+every leak and false positive to `reports/privacy-names-*.json`. Tune with
+`--timeout` (default 8000 ms, the agent's budget), `--chunk` (4000
+characters) and `--calls` (4). Scoring is pure and tested in
+`harness/privacy-names/score.test.ts`.
+
+
 
 A case **passes** iff every expectation matched, the subprocess exited
 0, and it did not time out. A failed expectation is not the end of the

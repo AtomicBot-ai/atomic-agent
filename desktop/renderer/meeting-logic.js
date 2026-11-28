@@ -16,26 +16,76 @@ function meetingClock(seconds) {
   return h ? h + ':' + two(m) + ':' + two(sec) : two(m) + ':' + two(sec);
 }
 
-/** The lines so far plus a chunk's segments: in time order, blanks dropped, a repeat not added twice. */
-function meetingMergeLines(lines, segments) {
+/** The lines so far plus a chunk's segments: in time order, blanks dropped, a repeat not added twice.
+    ATO-2514: `who` ("Me", "Them" or '') labels the chunk's lines. */
+function meetingMergeLines(lines, segments, who) {
   const out = Array.isArray(lines) ? lines.slice() : [];
-  const seen = new Set(out.map((l) => l.start + '|' + l.text));
+  const label = typeof who === 'string' ? who : '';
+  const seen = new Set(out.map((l) => (l.who || '') + '|' + l.start + '|' + l.text));
   for (const s of Array.isArray(segments) ? segments : []) {
     if (!s || typeof s.start !== 'number') continue;
     const text = String(s.text || '').replace(/\s+/g, ' ').trim();
     if (!text) continue;
-    const key = s.start + '|' + text;
+    const key = label + '|' + s.start + '|' + text;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({start: s.start, end: typeof s.end === 'number' ? s.end : s.start, text});
+    const line = {start: s.start, end: typeof s.end === 'number' ? s.end : s.start, text};
+    if (label) line.who = label;
+    out.push(line);
   }
   return out.sort((a, b) => a.start - b.start);
 }
 
+/* ATO-2749: the microphone refused, said for the computer it is on. The
+   Settings path is spelled as elsewhere in the app (System Settings ›
+   Privacy & Security › …, dictate-hold.ts); Windows names its own pane;
+   Linux has no one place, so it gets plain words and no button. */
+function meetingMicDeniedText(platform) {
+  if (platform === 'win32') return 'Microphone access is turned off for Atomic Agent. Turn it on in Settings › Privacy & security › Microphone, then try again.';
+  if (platform === 'linux') return 'Atomic Agent could not use the microphone. Check that one is connected and that your sound settings let apps use it, then try again.';
+  return 'Microphone access is turned off for Atomic Agent. Turn it on in System Settings › Privacy & Security › Microphone, then try again.';
+}
+
+/** Whether the mic-denied card offers Open Settings (main's app:openMicSettings opens the pane). */
+function meetingCanOpenMicSettings(platform) {
+  return platform === 'darwin' || platform === 'win32';
+}
+
+/* The mic-denied card: it stays until it is closed (a 6-second toast was
+   gone before the path could be read), with Open Settings where the OS has
+   one pane for it, as voice input does. `canOpen`: the bridge can open it. */
+function meetingDeniedCardHTML(platform, canOpen, esc) {
+  const open = canOpen && meetingCanOpenMicSettings(platform) ? '<button class="btn btn-p sm" data-mtg="micsettings">Open Settings</button>' : '';
+  return '<div class="mtgpanel mtgrecover mtgdenied" role="alert" aria-label="Microphone is off">'
+    + '<p>' + esc(meetingMicDeniedText(platform)) + '</p>'
+    + '<div class="mtgfoot">' + open + '<button class="btn sm" data-mtg="retry">Try again</button>'
+    + '<button class="btn sm" data-mtg="deniedx">Close</button></div></div>';
+}
+
+/** True for a start that failed because the microphone was refused (main's answer or getUserMedia's error). */
+function meetingMicDenied(code) {
+  return code === 'mic-denied' || code === 'NotAllowedError' || code === 'SecurityError';
+}
+
+/* ATO-2749: Delete recording asks first, in place, as My files' Remove
+   does (a second click on a red button; Keep goes back). In place, because
+   the panel floats above the app's dialogs. */
+function meetingDeleteConfirmHTML(id, esc) {
+  return '<span class="mtgask">Delete this recording? Its audio and transcript are removed. This cannot be undone.</span>'
+    + '<button class="btn btn-s sm" data-mtg="delno">Keep</button>'
+    + '<button class="btn btn-df sm" data-mtg="delyes" data-mtg-id="' + esc(id) + '">Delete recording</button>';
+}
+
+/** The toast after a delete: only a delete that happened says so. */
+function meetingDiscardToast(res) {
+  if (res && res.ok) return {t: 'Recording deleted', s: 'Its audio and transcript are gone from this computer.', kind: ''};
+  return {t: 'Could not delete the recording', s: 'It may still be on this computer. The app offers it again, so you can try once more.', kind: 'bad'};
+}
+
 /** Why a recording could not start or finish, in the person's words. */
-function meetingErrorText(code) {
+function meetingErrorText(code, platform) {
   switch (code) {
-    case 'mic-denied': return 'Microphone access is turned off for Atomic Agent. Turn it on in System Settings, Privacy and Security, Microphone';
+    case 'mic-denied': return meetingMicDeniedText(platform || 'darwin');
     case 'mic-failed': return 'The microphone could not be opened';
     case 'busy': return 'A meeting is already being recorded or finished';
     case 'disk': return 'The recording could not be written to disk';
@@ -80,5 +130,6 @@ function meetingReadyToSend(items) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {meetingClock, meetingMergeLines, meetingErrorText, meetingWhen, meetingLength, meetingRecoverText, meetingReadyToSend};
+  module.exports = {meetingClock, meetingMergeLines, meetingErrorText, meetingWhen, meetingLength, meetingRecoverText, meetingReadyToSend,
+    meetingMicDeniedText, meetingCanOpenMicSettings, meetingDeniedCardHTML, meetingMicDenied, meetingDeleteConfirmHTML, meetingDiscardToast};
 }

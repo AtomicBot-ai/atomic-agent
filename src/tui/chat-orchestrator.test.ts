@@ -159,6 +159,40 @@ describe("ChatOrchestrator message queue", () => {
     // must not happen is a non-empty snapshot or an "aborted:" notice.
     expect(queueSnapshots(actions).every((q) => q.length === 0)).toBe(true);
   });
+
+  it("moveQueued reorders the parked messages and the next turn runs the moved one (ATO-2476)", async () => {
+    const first = deferred("s1");
+    const seen: string[] = [];
+    const runTurn = vi.fn((text: string) => {
+      seen.push(text);
+      return seen.length === 1 ? first.promise : new Promise<never>(() => undefined);
+    });
+    const bus = makeTuiEventBus();
+    const actions: TuiAction[] = [];
+    bus.subscribe((a) => actions.push(a));
+    const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
+      maxSteps: 5,
+      llamaUrl: "http://127.0.0.1:8080",
+      readGateFacts: cloudGateFacts,
+    });
+
+    orchestrator.sendMessage("running");
+    orchestrator.sendMessage("parked-a");
+    orchestrator.sendMessage("parked-b");
+    orchestrator.sendMessage("parked-c");
+    expect(orchestrator.moveQueued(2, 0)).toBe(true);
+    expect(queueSnapshots(actions).at(-1)).toEqual(["parked-c", "parked-a", "parked-b"]);
+    const published = queueSnapshots(actions).length;
+    expect(orchestrator.moveQueued(0, 0)).toBe(false);
+    expect(orchestrator.moveQueued(5, 0)).toBe(false);
+    expect(queueSnapshots(actions).length).toBe(published);
+
+    first.resolve();
+    await first.promise;
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(seen).toEqual(["running", "parked-c"]);
+  });
 });
 
 describe("ChatOrchestrator abort", () => {

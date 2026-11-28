@@ -15,7 +15,11 @@
  * cache, so the panel's poll and a reopen do not convert again. LibreOffice
  * is skipped for a deck whose parts link outside the file (a picture, video or
  * object with TargetMode="External"), so it is never asked to fetch one; such
- * a deck goes to Quick Look on a Mac, or keeps its text cards.
+ * a deck goes to Quick Look on a Mac, or keeps its text cards (and the panel
+ * is told why: "links-out"). PowerPoint on Windows (ATO-2517) follows
+ * LibreOffice under the same rule; a PowerPoint run that fails or times out
+ * is cleaned up (afterPowerPoint). A failed conversion is cached too, until
+ * the panel's Reload asks to try again.
  *
  * Pure but for the file system and the child process, both injectable: no
  * Electron import, so the unit suite loads it from `out/main` with a stub
@@ -33,10 +37,14 @@ import { sniffImageMime } from "./image-data-url.js";
 import { looksZip, OFFICE_LIMITS, OFFICE_MAX_FILE_BYTES, openZip } from "./office-preview.js";
 import type { Platform } from "./platform.js";
 import {
-  converterPlans, deckLinksOut, findSoffice, inlineAttachments, isAttachmentName, pickOutput, quickLookWidth,
+  converterPlans, deckHasCharts, deckLinksOut, findSoffice, inlineAttachments, isAttachmentName, pickOutput, quickLookWidth,
   SLIDES_HTML_MAX_BYTES, SLIDES_IMAGE_MAX_BYTES, SLIDES_IMAGES_TOTAL_MAX_BYTES, SLIDES_PDF_MAX_BYTES,
   slidesRenderableWith, sofficeCandidates, type SlideConverter, type SlideRender,
 } from "./slide-render-plan.js";
+import {
+  POWERPOINT_COPY_NAME, POWERPOINT_PDF_NAME, POWERPOINT_STATE_NAME, powerPointCandidates, powerPointCleanupPlan, powerPointKillPlan,
+  powerPointPlan, powerPointState, powerShellPath, type PowerPointPaths,
+} from "./slide-render-powerpoint.js";
 
 export type RunResult = { ok: boolean };
 export type SlideRenderDeps = {
@@ -67,10 +75,19 @@ function sofficeFor(platform: Platform, d: SlideRenderDeps): string | null {
   return findSoffice(sofficeCandidates(platform, d.env, d.home), d.exists);
 }
 
+/** ATO-2517: PowerShell and PowerPoint on Windows, when both are there; null elsewhere. */
+function powerPointFor(platform: Platform, d: SlideRenderDeps): { powershell: string; app: string } | null {
+  if (platform !== "win32") return null;
+  const powershell = powerShellPath(d.env);
+  const app = findSoffice(powerPointCandidates(d.env), d.exists);   // the same "first that exists"
+  if (!app) return null;
+  try { return d.exists(powershell) ? { powershell, app } : null; } catch { return null; }
+}
+
 /** Whether a deck previewed on this machine can be drawn at all (the panel asks for the pictures only then). */
 export function slidesRenderable(platform: Platform, deps: Partial<SlideRenderDeps> = {}): boolean {
   const d = { ...DEFAULT_DEPS, ...deps };
-  return slidesRenderableWith(platform, sofficeFor(platform, d), d.exists);
+  return slidesRenderableWith(platform, sofficeFor(platform, d), d.exists, powerPointFor(platform, d) !== null);
 }
 
 /** A file whose size is known and under `max`, read whole; null otherwise. */
@@ -104,12 +121,14 @@ async function collectQuickLook(outDir: string, name: string): Promise<SlideRend
   return { kind: "html", html: inlineAttachments(page.toString("utf8"), pictures), width: quickLookWidth(plist ? plist.toString("utf8") : "") };
 }
 
-async function tryPlan(plan: SlideConverter, outDir: string, d: SlideRenderDeps): Promise<SlideRender | null> {
+async function tryPlan(plan: SlideConverter, outDir: string, d: SlideRenderDeps, charts: boolean): Promise<SlideRender | null> {
   const ran = await d.run(plan.command, plan.args, plan.timeoutMs);
   if (!ran.ok) return null;
   const out = pickOutput(plan.kind, await readdir(outDir).catch(() => [] as string[]));
   if (!out) return null;
-  return plan.kind === "soffice" ? collectPdf(outDir, out) : collectQuickLook(outDir, out);
+  if (plan.kind !== "quicklook") return collectPdf(outDir, out);
+  const page = await collectQuickLook(outDir, out);
+  return page && page.kind === "html" && charts ? { ...page, charts: true } : page;
 }
 
 async function isDeck(real: string): Promise<boolean> {
@@ -127,22 +146,56 @@ async function isDeck(real: string): Promise<boolean> {
   }
 }
 
-/** Whether the deck at `real` links outside itself (or cannot be read to tell): then LibreOffice is not asked. */
-async function linksOut(real: string): Promise<boolean> {
+/**
+ * Whether the deck at `real` links outside itself (or cannot be read to
+ * tell): then neither LibreOffice nor PowerPoint is asked. And whether it has
+ * charts (Quick Look leaves them out).
+ */
+async function deckFacts(real: string): Promise<{ linksOut: boolean; charts: boolean }> {
   const bytes = await readCapped(real, OFFICE_MAX_FILE_BYTES);
-  return !bytes || deckLinksOut(openZip(bytes), OFFICE_LIMITS.entries);
+  const zip = bytes ? openZip(bytes) : null;
+  return { linksOut: !bytes || deckLinksOut(zip, OFFICE_LIMITS.entries), charts: deckHasCharts(zip) };
 }
 
-async function convert(real: string, platform: Platform, d: SlideRenderDeps): Promise<SlideRender | null> {
+/**
+ * ATO-2517: after a PowerPoint run that gave nothing (failed, or ended by its
+ * time limit with PowerPoint still holding the copy): the cleanup script, and
+ * when that does not finish either, the kill of the PowerPoint that run
+ * started (slide-render-powerpoint.ts says which one that may be).
+ */
+async function afterPowerPoint(powershell: string, paths: PowerPointPaths, d: SlideRenderDeps): Promise<void> {
+  const cleanup = powerPointCleanupPlan(powershell, paths);
+  if (cleanup && (await d.run(cleanup.command, cleanup.args, cleanup.timeoutMs)).ok) return;
+  const state = powerPointState(await readFile(paths.state, "latin1").catch(() => null));
+  const kill = powerPointKillPlan(powershell, state);
+  if (kill) await d.run(kill.command, kill.args, kill.timeoutMs);
+}
+
+/** What one conversion gave: the slides, nothing, or "links-out" when the deck was refused on purpose (ATO-2517). */
+export type SlideOutcome = SlideRender | "links-out" | null;
+
+async function convert(real: string, platform: Platform, d: SlideRenderDeps): Promise<SlideOutcome> {
   if (!(await isDeck(real))) return null;
-  const soffice = (await linksOut(real)) ? null : sofficeFor(platform, d);
+  const facts = await deckFacts(real);
+  // Off a Mac nothing else can draw it: say why, so the panel does not promise that Reload helps.
+  if (facts.linksOut && platform !== "darwin") return "links-out";
+  const soffice = facts.linksOut ? null : sofficeFor(platform, d);
+  const powerpoint = facts.linksOut ? null : powerPointFor(platform, d);
   const profile = join(d.tmp, "atomic-agent-soffice-profile");   // kept between runs: a fresh one costs LibreOffice seconds
   const outDir = await mkdtemp(join(d.tmp, "atomic-agent-slides-")).catch(() => null);
   if (!outDir) return null;
   try {
-    for (const plan of converterPlans(platform, real, outDir, pathToFileURL(profile).href, soffice)) {
-      const got = await tryPlan(plan, outDir, d).catch(() => null);
+    const plans = converterPlans(platform, real, outDir, pathToFileURL(profile).href, soffice);
+    // ATO-2517: PowerPoint after LibreOffice on Windows.
+    const ppPaths: PowerPointPaths = {
+      deck: real, copy: join(outDir, POWERPOINT_COPY_NAME), pdf: join(outDir, POWERPOINT_PDF_NAME), state: join(outDir, POWERPOINT_STATE_NAME),
+    };
+    const pp = powerpoint ? powerPointPlan(powerpoint.powershell, ppPaths) : null;
+    if (pp) plans.push(pp);
+    for (const plan of plans) {
+      const got = await tryPlan(plan, outDir, d, facts.charts).catch(() => null);
       if (got) return got;
+      if (plan === pp && powerpoint) await afterPowerPoint(powerpoint.powershell, ppPaths, d).catch(() => undefined);
       // The next converter gets an empty folder, so its output is not mistaken for the first one's.
       for (const n of await readdir(outDir).catch(() => [] as string[])) await rm(join(outDir, n), { recursive: true, force: true }).catch(() => undefined);
     }
@@ -153,29 +206,51 @@ async function convert(real: string, platform: Platform, d: SlideRenderDeps): Pr
 }
 
 const CACHE_MAX = 8;
-const cache = new Map<string, Promise<SlideRender | null>>();
+const cache = new Map<string, Promise<SlideOutcome>>();
+/** ATO-2517: the cached versions whose conversion gave nothing; a retry converts those again. */
+const failed = new Set<string>();
 let queue: Promise<unknown> = Promise.resolve();
 
 /**
  * The slides of the deck at `real` (a path the preview's root check passed),
  * or null when nothing on this machine can draw them, the conversion failed
- * or its output is over a cap. One version of a file is converted once.
+ * or its output is over a cap. One version of a file is converted once; a
+ * failed one again only when `retry` says so (the panel's Reload, ATO-2517),
+ * so the poll and a reopen never start a slow converter over and over.
  */
-export function renderSlides(real: string, platform: Platform, deps: Partial<SlideRenderDeps> = {}): Promise<SlideRender | null> {
+export function renderSlides(
+  real: string,
+  platform: Platform,
+  deps: Partial<SlideRenderDeps> = {},
+  opts: { retry?: boolean } = {},
+): Promise<SlideRender | null> {
+  return slideOutcome(real, platform, deps, opts).then((r) => (typeof r === "string" ? null : r));
+}
+
+/** renderSlides, but a deck refused because it links outside its file says so ("links-out", ATO-2517). */
+export function slideOutcome(
+  real: string,
+  platform: Platform,
+  deps: Partial<SlideRenderDeps> = {},
+  opts: { retry?: boolean } = {},
+): Promise<SlideOutcome> {
   const d = { ...DEFAULT_DEPS, ...deps };
   return stat(real).then((st) => {
     if (!st.isFile()) return null;
     const key = `${real}\0${st.size}\0${st.mtimeMs}`;
+    if (opts.retry === true && failed.delete(key)) cache.delete(key);
     const hit = cache.get(key);
     if (hit) return hit;
     // One converter at a time, failures included: the next waits for this one whatever happens.
     const job = queue.then(() => convert(real, platform, d), () => convert(real, platform, d)).catch(() => null);
     queue = job;
     cache.set(key, job);
+    void job.then((r) => { if (r === null && cache.get(key) === job) failed.add(key); });
     while (cache.size > CACHE_MAX) {
       const oldest = cache.keys().next().value;
       if (oldest === undefined) break;
       cache.delete(oldest);
+      failed.delete(oldest);
     }
     return job;
   }, () => null);

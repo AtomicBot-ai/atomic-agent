@@ -34,13 +34,16 @@ import {
   keychainHeldNames,
   keychainProviderEnvVar,
   keychainStoreOn,
+  KEY_ONE_LINE,
   readKeychainValue,
   saveSecretThroughAgent,
   type KeychainDeps,
   type SecretsRoute,
 } from "./keychain-keys.js";
 import { defaultProviderModelMode, type ModelMode } from "./provider-model-mode.js";
-import { SUBSCRIPTION_CLI_KIND, subscriptionCliModels } from "./subscription-cli-models.js";
+import { secretSources, type SecretSourceLabel } from "./secret-source-labels.js";
+import { SUBSCRIPTION_CLI_KIND, SUBSCRIPTION_OAUTH_KIND, subscriptionCliModels, subscriptionOauthModels } from "./subscription-cli-models.js";
+import { linearSecretValueError } from "./linear-key-check.js";   // ATO-2464
 
 const run = promisify(execFile);
 
@@ -65,6 +68,8 @@ export interface CliResult {
   error?: string;
   /** The process's exit code when it exited non-zero (ATO-416: 3 is "config changed since it was read"). */
   exitCode?: number;
+  /** ATO-2745 (upsertProvider): the OS keychain store is on, but the key was kept in config.json. */
+  keychainFallback?: boolean;
 }
 
 /**
@@ -528,6 +533,8 @@ export interface CatalogModel {
   purpose?: string;
   /** ATO-492: mixture of experts (catalogue `moe`). */
   moe?: boolean;
+  /** ATO-2455: fits this machine with experts in RAM (moe-fit.ts, from the agent). */
+  expertsInRam?: { tier: "fits" | "tight"; speed: string | null };
   tag?: string;
   uncensored?: boolean;
   /** A launch's model: the chat's "New: <name>" card (catalogue `spotlight`). */
@@ -1003,14 +1010,22 @@ async function upsertProviderNow(entry: ProviderEntry): Promise<CliResult> {
      the agent is older than these commands, the key stays in the entry as
      before. Never for an agent on another computer: its config is not here. */
   let keychainName: string | null = null;
+  // ATO-2745: the keychain is on but the key stays in config.json; the window says so (keychainFallback).
+  let keychainFallback = false;
   if (typeof entry.apiKey === "string" && entry.apiKey.length > 0 && !remoteModelsActive() && keychainStoreOn(stateDirPath())) {
     const hinted = (configFileHint()?.llm?.providers ?? []).find((p) => p?.id === entry.id) as ProviderEntry | undefined;
     const name = keychainProviderEnvVar({ id: entry.id, apiKeyEnvVar: hinted?.apiKeyEnvVar ?? entry.apiKeyEnvVar });
     const saved = await saveSecretThroughAgent(keychainDeps(), name, entry.apiKey);
     if (saved.ok && saved.store === "keychain") keychainName = name;
     else if (saved.ok) await saveSecretThroughAgent(keychainDeps(), name, null); // landed in .env: take it back out
-    else if (!saved.unsupported) console.error(`[desktop] the agent could not save the key in the OS keychain (${saved.error}); it stays in config.json`);
+    else if (!saved.unsupported) console.error(`[desktop] the agent could not save the key in the OS keychain (${saved.detail ?? saved.error}); it stays in config.json`);
+    keychainFallback = keychainName === null;
   }
+  const res = await upsertProviderWrite(entry, keychainName);
+  return res.ok && keychainFallback ? { ...res, keychainFallback: true } : res;
+}
+
+async function upsertProviderWrite(entry: ProviderEntry, keychainName: string | null): Promise<CliResult> {
   const current = await configGet();
   if (!current.ok || !current.config) {
     return { ok: false, stdout: "", stderr: "", error: current.error ?? "could not read the config" };
@@ -1514,6 +1529,13 @@ export async function providerModels(
     const entry = read?.config?.llm?.providers?.find((p) => p.id === providerId);
     if (!entry) return { ok: false, error: `provider "${providerId}" is not configured` };
     return { ok: true, models: subscriptionCliModels(entry) };
+  }
+  // ATO-2511: nor does a ChatGPT / Copilot sign-in; `models search` would answer "no searchable cloud models".
+  if (kind === SUBSCRIPTION_OAUTH_KIND) {
+    const read = await readWholeConfig().catch(() => null);
+    const entry = read?.config?.llm?.providers?.find((p) => p.id === providerId);
+    if (!entry) return { ok: false, error: `provider "${providerId}" is not configured` };
+    return { ok: true, models: subscriptionOauthModels(entry) };
   }
   const bundled = kind === "openrouter" || kind === "aimlapi";
   const live = opts.live === true;
@@ -2712,13 +2734,14 @@ const CHAT_ONLY_STOP_KEPT = /^stopped chat model; embedding model kept/m;
  * wants embeddings and the model is on disk. `embeddingKept` says it did. An
  * older agent ignores the flag and stops both, printing `stopped`: then
  * `embeddingKept` is false and the caller goes on as after `models stop`.
- * Told as a stop on purpose, as modelsStop is.
+ * Told as a stop on purpose, as modelsStop is, unless `repair` (ATO-2461:
+ * Studio's pause, which the app brings back itself).
  */
-export async function modelsStopChatOnly(): Promise<CliResult & { embeddingKept: boolean }> {
+export async function modelsStopChatOnly(opts: { repair?: boolean } = {}): Promise<CliResult & { embeddingKept: boolean }> {
   const h = cliStandIns.getStore();
   if (h) h.stops++;
   else stopsAskedFor++;
-  tell("stopping");
+  if (!opts.repair) tell("stopping");
   const res = await cli(["models", "stop", "--chat-only"], 30_000);
   return { ...res, embeddingKept: res.ok && CHAT_ONLY_STOP_KEPT.test(res.stdout) };
 }
@@ -4288,14 +4311,25 @@ export function removeStaleTmpFiles(stateDir: string, now: number = Date.now(), 
 const DOTENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 const SECRET_FILE_MODE = 0o600;
 
-/** Names of the keys `<stateDir>/.env` carries (load-dotenv.ts parseLine: trimmed, `#` comments, `KEY=…`). Never values. */
-export function dotenvKeys(stateDir: string): { ok: boolean; keys: string[]; exists: boolean; error?: string } {
+/**
+ * Names of the keys `<stateDir>/.env` carries (load-dotenv.ts parseLine: trimmed, `#` comments, `KEY=…`). Never values.
+ * `sources` (ATO-2530): for a key saved as a reference or in the keychain, where it comes from (secret-source-labels.ts).
+ */
+export function dotenvKeys(stateDir: string): {
+  ok: boolean;
+  keys: string[];
+  exists: boolean;
+  error?: string;
+  sources?: Record<string, SecretSourceLabel>;
+} {
   const path = join(stateDir, ".env");
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { ok: true, keys: withKeychainNames(stateDir, []), exists: false };
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return { ok: true, keys: withKeychainNames(stateDir, []), exists: false, sources: secretSources("", keychainHeldNames(stateDir)) };
+    }
     return { ok: false, keys: [], exists: true, error: err instanceof Error ? err.message : String(err) };
   }
   const keys: string[] = [];
@@ -4307,7 +4341,7 @@ export function dotenvKeys(stateDir: string): { ok: boolean; keys: string[]; exi
     const key = trimmed.slice(0, eq).trim();
     if (DOTENV_KEY_PATTERN.test(key) && !keys.includes(key)) keys.push(key);
   }
-  return { ok: true, keys: withKeychainNames(stateDir, keys), exists: true };
+  return { ok: true, keys: withKeychainNames(stateDir, keys), exists: true, sources: secretSources(raw, keychainHeldNames(stateDir)) };
 }
 
 /** ATO-1639: the names the agent keeps in the OS keychain count as saved keys too (names only). */
@@ -4400,16 +4434,39 @@ export async function desktopSecretSet(
   stateDir: string,
   key: string,
   value: string | null,
-): Promise<{ ok: boolean; path: string; preexisting: boolean; changed: boolean; error?: string }> {
+): Promise<DesktopSecretResult> {
   const path = join(stateDir, ".env");
+  const keychainOn = keychainStoreOn(stateDir);
   const viaAgent = stateDir === stateDirPath() && !remoteModelsActive() && isKeychainSecretName(key)
-    && (keychainStoreOn(stateDir) || keychainHeldNames(stateDir).includes(key));
+    && (keychainOn || keychainHeldNames(stateDir).includes(key));
   if (viaAgent) {
     const saved = await saveSecretThroughAgent(keychainDeps(), key, value);
-    if (saved.ok) return { ok: true, path, preexisting: existsSync(path), changed: true };
-    if (!saved.unsupported) return { ok: false, path, preexisting: false, changed: false, error: saved.error };
+    if (saved.ok) {
+      return { ok: true, path, preexisting: existsSync(path), changed: true, ...storedWhere(value, saved.store === "keychain", keychainOn) };
+    }
+    if (!saved.unsupported) {
+      return { ok: false, path, preexisting: false, changed: false, error: saved.error, ...(saved.detail ? { detail: saved.detail } : {}) };
+    }
   }
-  return dotenvSet(stateDir, key, value);
+  const res = dotenvSet(stateDir, key, value);
+  if (!res.ok) return { ...res, error: SECRET_FILE_FAILED, ...(res.error ? { detail: res.error } : {}) };
+  return { ...res, ...storedWhere(value, false, keychainOn && viaAgent) };
+}
+
+/* ATO-2745: where a saved key really went, so the window says it (Settings ›
+   Telegram said "a file only your user account can read" with the keychain
+   on). `keychainFallback`: the keychain store is on, yet the key is in the
+   private .env file (the agent fell back, or is older than the keychain
+   commands). Nothing for a removal. The storage itself is unchanged. */
+export type DesktopSecretResult = {
+  ok: boolean; path: string; preexisting: boolean; changed: boolean;
+  error?: string; detail?: string;
+  storedIn?: "keychain" | "file"; keychainFallback?: boolean;
+};
+export const SECRET_FILE_FAILED = "The key could not be written to the app's private settings file.";
+function storedWhere(value: string | null, inKeychain: boolean, keychainWanted: boolean): Pick<DesktopSecretResult, "storedIn" | "keychainFallback"> {
+  if (value === null) return {};
+  return inKeychain ? { storedIn: "keychain" } : { storedIn: "file", ...(keychainWanted ? { keychainFallback: true } : {}) };
 }
 
 /* The .env keys the window may write through `app:dotenvSet`, and nothing
@@ -4418,7 +4475,8 @@ export async function desktopSecretSet(
    default EXA_API_KEY; the agent has no config.json field for it, so its
    environment, loaded from this file at start, is the only way in). */
 // ATO-516: DISCORD_BOT_TOKEN for Settings › Connections › Discord (the TUI's discord-settings.ts writeDiscordToken).
-export const DESKTOP_DOTENV_KEYS: readonly string[] = ["TELEGRAM_BOT_TOKEN", "EXA_API_KEY", "DISCORD_BOT_TOKEN"];
+// ATO-2464: LINEAR_API_KEY and LINEAR_WEBHOOK_SECRET for Settings › Connections › Linear (src/channels/linear/linear-setup.ts saveLinearSecret).
+export const DESKTOP_DOTENV_KEYS: readonly string[] = ["TELEGRAM_BOT_TOKEN", "EXA_API_KEY", "DISCORD_BOT_TOKEN", "LINEAR_API_KEY", "LINEAR_WEBHOOK_SECRET"];
 
 /* Why an Exa key cannot be written as given, or null. One line of printable
    ASCII with no spaces, 8 to 256 characters: the renderer's exaKeyClean rule
@@ -4440,9 +4498,10 @@ export function desktopDotenvError(key: unknown, value: unknown): string | null 
     return `only ${DESKTOP_DOTENV_KEYS.join(", ")} may be written from the desktop`;
   }
   if (value !== null && typeof value !== "string") return "value must be a string or null";
-  if (value !== null && /[\r\n\0]/.test(value)) return "value must be one line";
+  if (value !== null && /[\r\n\0]/.test(value)) return KEY_ONE_LINE;
   if (key === "EXA_API_KEY" && value !== null) return exaKeyValueError(value);
   if (key === "DISCORD_BOT_TOKEN" && value !== null) return discordTokenValueError(value);
+  if ((key === "LINEAR_API_KEY" || key === "LINEAR_WEBHOOK_SECRET") && value !== null) return linearSecretValueError(key, value);
   return null;
 }
 

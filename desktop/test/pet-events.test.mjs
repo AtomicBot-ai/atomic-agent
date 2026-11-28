@@ -157,3 +157,13 @@ test("a preview the bubble cannot show whole: no Allow, the full card decides", 
   assert.equal(a.canAllow, false);
   assert.ok("error" in petDecision({ approvalId: "ap-1", decision: "allow" }, a));
 });
+
+// ATO-2741: the bubble asks in the main window's words, which go by the
+// request's category; the category reaches the page, and only as an id.
+test("the bubble's request carries the gate's category, checked", () => {
+  assert.equal(petApprovalFrom(ask(), 0).category, "shell");
+  assert.equal(petApprovalFrom(ask({ category: "fs_write_workspace" }), 0).category, "fs_write_workspace");
+  assert.equal(petApprovalFrom(ask({ category: undefined }), 0).category, "");
+  assert.equal(petApprovalFrom(ask({ category: "<b>x</b>" }), 0).category, "", "not an id: dropped");
+  assert.equal(petApprovalFrom(ask({ category: 7 }), 0).category, "");
+});

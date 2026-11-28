@@ -1,6 +1,7 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import { listingResultCaps } from "../../../compressor/listing-caps.js";
 import type { ToolDefinition } from "../../tool-registry.js";
+import { refuseOptionLike } from "./git-arg-guard.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
 /**
@@ -45,6 +46,7 @@ export const osGitLogTool: ToolDefinition = {
     const limit = parseLimit(rawArgs.limit, 20);
     const revisionRange = parseOptionalString(rawArgs.revisionRange);
     const filterPath = parseOptionalString(rawArgs.path);
+    refuseOptionLike("os.git.log", "revisionRange", revisionRange);
 
     const args: string[] = [
       "log",

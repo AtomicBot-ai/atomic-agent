@@ -6,6 +6,7 @@ import {
   scanNestedShellOptions,
   splitCommandSegments,
 } from "../shell-command-guard/command-segments.js";
+import { nestedScriptBuiltAtRunTime } from "./nested-script-built.js";
 
 /**
  * Characters after which a whitespace split of a subshell line is no
@@ -213,7 +214,8 @@ function runsBuiltScript(words: readonly string[]): boolean {
     return operand !== undefined && (DYNAMIC_SCRIPT_RE.test(operand) || isStdinScriptPath(operand));
   }
   if (NESTED_SHELL_PROGRAMS.includes(name)) {
-    return scanNestedShellOptions(args, name).scripts.some((s) => DYNAMIC_SCRIPT_RE.test(s));
+    // Only a variable where a program goes builds code (ATO-2528).
+    return scanNestedShellOptions(args, name).scripts.some(nestedScriptBuiltAtRunTime);
   }
   return false;
 }
@@ -237,7 +239,9 @@ function lineRunsBuiltScript(line: string): boolean {
  * `curl … | python3`, `python3 /dev/stdin`, `bash <(…)`). The command
  * has no stdin otherwise, so a bare `sh` run directly is not one. Also a
  * line built at run time that `eval`, `source` / `.` or a `-c` shell runs
- * (`eval "$(… | base64 -d)"`, `bash -c "$CMD"`, `xargs sh -c {}`).
+ * (`eval "$(… | base64 -d)"`, `bash -c "$CMD"`, `xargs sh -c {}`). A
+ * `-c` script with a variable only in an argument (`sh -c 'cd "$D" &&
+ * make'`) stays readable (`nested-script-built.ts`).
  */
 export function shellRunsUnreadableScript(
   cmd: string,

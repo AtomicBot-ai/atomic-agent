@@ -43,6 +43,13 @@ export interface ModelErrorOptions extends LlmFailureOptions {
    */
   repeatedOnCloud?: boolean;
   /**
+   * For `reason === "truncated"`: the step already spent its truncation
+   * retry, with a notice telling the model why, and was cut again
+   * (`repeatedTruncationError`, ATO-1678). `loop`: both cuts were the
+   * model repeating one block of text; `cut`: anything else.
+   */
+  repeatedCut?: RepeatedCut;
+  /**
    * The defective completion's shape (ATO-2421): finish reason, whether
    * reasoning came back, the server's token counts. Report-only.
    */
@@ -180,6 +187,9 @@ export class ModelError extends LlmFailure {
   /** See `ModelErrorOptions.repeatedOnCloud`. */
   readonly repeatedOnCloud?: boolean;
 
+  /** See `ModelErrorOptions.repeatedCut`. */
+  readonly repeatedCut?: RepeatedCut;
+
   /** See `ModelErrorOptions.completion`. */
   readonly completion?: ModelCompletionFacts;
 
@@ -202,11 +212,17 @@ export class ModelError extends LlmFailure {
     if (options?.repeatedOnCloud === true) {
       this.repeatedOnCloud = true;
     }
+    if (options?.repeatedCut !== undefined) {
+      this.repeatedCut = options.repeatedCut;
+    }
     if (options?.completion !== undefined) {
       this.completion = options.completion;
     }
   }
 }
+
+/** See `ModelErrorOptions.repeatedCut`. */
+export type RepeatedCut = "loop" | "cut";
 
 /**
  * Which kind of tool failure a `ToolExecutionError` is, when it is a

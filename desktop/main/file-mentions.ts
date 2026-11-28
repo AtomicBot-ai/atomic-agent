@@ -19,7 +19,9 @@
  *             folder is read and appended under the message in a
  *             `<mentioned-files>` block. Nothing outside the folder is ever
  *             read: the check runs on the path as written and again on the
- *             real path after symlinks.
+ *             real path after symlinks. The agent's own key and trust
+ *             files are named but never inlined (mention-state-secrets.ts,
+ *             ATO-2796), as in core.
  */
 
 import { execFile } from "node:child_process";
@@ -28,6 +30,8 @@ import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import fuzzysort from "fuzzysort";
+import { gitSafeArgs } from "./git-safe-args.js";
+import { isAgentStateSecret, type IsProtectedPath } from "./mention-state-secrets.js";
 
 // ---------------------------------------------------------------- listing
 
@@ -61,7 +65,8 @@ export function listGitFiles(root: string, limits: FileIndexLimits): Promise<str
   return new Promise((done, fail) => {
     execFile(
       "git",
-      ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+      // The folder's own config must not run a program (ATO-2532).
+      [...gitSafeArgs(), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
       // Git gets more than the walk's budget: in a big checkout it is
       // still the faster and more correct of the two.
       { cwd: root, timeout: limits.budgetMs * 10, maxBuffer: 64 * 1024 * 1024, windowsHide: true },
@@ -363,8 +368,9 @@ export function expandFileMentions(
   text: string,
   workingDir: string,
   limits: MentionLimits = DEFAULT_MENTION_LIMITS,
+  isProtected: IsProtectedPath = isAgentStateSecret,
 ): string {
-  return appendMentionBlock(text, mentionedFiles(text, workingDir, limits));
+  return appendMentionBlock(text, mentionedFiles(text, workingDir, limits, isProtected));
 }
 
 /** The files `text` mentions, read within `limits` (expandFileMentions without the block). */
@@ -372,6 +378,7 @@ export function mentionedFiles(
   text: string,
   workingDir: string,
   limits: MentionLimits = DEFAULT_MENTION_LIMITS,
+  isProtected: IsProtectedPath = isAgentStateSecret,
 ): MentionedFile[] {
   const tokens = mentionTokens(text);
   if (tokens.length === 0) return [];
@@ -391,6 +398,11 @@ export function mentionedFiles(
     const real = token.length > 0 ? resolveMentionedFile(root, token) : null;
     if (!real || done.has(real)) continue;
     done.add(real);
+    if (isProtected(real)) {
+      // Same words as core (src/mentions/expand-file-mentions.ts).
+      files.push({ path: token, bytes: 0, content: "", skipped: "the agent's own settings file is never inlined" });
+      continue;
+    }
     try {
       const file = readMentioned(token, real, budget, limits);
       budget -= Buffer.byteLength(file.content, "utf8");
@@ -412,11 +424,12 @@ export function expandLastUserMessage<T extends { role: string; content: string 
   messages: readonly T[],
   folder: string | null,
   limits: MentionLimits = DEFAULT_MENTION_LIMITS,
+  isProtected: IsProtectedPath = isAgentStateSecret,
 ): T[] {
   const out = [...messages];
   const last = out[out.length - 1];
   if (!folder || !last || last.role !== "user") return out;
-  const content = expandFileMentions(last.content, folder, limits);
+  const content = expandFileMentions(last.content, folder, limits, isProtected);
   if (content !== last.content) out[out.length - 1] = { ...last, content };
   return out;
 }

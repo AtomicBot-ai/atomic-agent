@@ -7,8 +7,10 @@ const MAX_TEXT_CHARS = 2_000;
 export interface SessionHookVerdict {
   /**
    * UserPromptSubmit: the prompt is refused with this reason.
-   * Stop: the agent keeps working, with this reason as its instruction.
-   * Never set for SessionStart or PreCompact, which cannot block.
+   * Stop / SubagentStop: the agent keeps working, with this reason as its instruction.
+   * PermissionRequest: the request is refused without asking the person.
+   * Never set for the events that only observe (SessionStart, PreCompact,
+   * SessionEnd, FileChanged, Notification).
    */
   block?: string;
   /** SessionStart / UserPromptSubmit: text the model reads with this turn. */
@@ -31,17 +33,17 @@ function stdoutIsContext(event: SessionHookEvent): boolean {
   return event === "SessionStart" || event === "UserPromptSubmit";
 }
 
-/** Events that may block: refuse the prompt, or make the agent go on. */
+/** Events that may block: refuse the prompt or the request, or make the agent go on. */
 function canBlock(event: SessionHookEvent): boolean {
-  return event === "UserPromptSubmit" || event === "Stop";
+  return event === "UserPromptSubmit" || event === "Stop" || event === "SubagentStop" || event === "PermissionRequest";
 }
 
 /**
  * One session-event hook run, read the way Claude Code reads it:
  *
- * - exit 2: UserPromptSubmit refuses the prompt, Stop makes the agent go
- *   on; stderr is the reason. SessionStart / PreCompact cannot block, so
- *   their stderr is only logged.
+ * - exit 2: UserPromptSubmit refuses the prompt, Stop / SubagentStop make
+ *   the agent go on, PermissionRequest refuses the request; stderr is the
+ *   reason. The other events cannot block, so their stderr is only logged.
  * - exit 0: SessionStart / UserPromptSubmit plain stdout is context; JSON
  *   may carry `decision: "block"` + `reason`, `continue: false` +
  *   `stopReason`, and `hookSpecificOutput.additionalContext`.
@@ -80,16 +82,35 @@ export function sessionVerdictFromJson(event: SessionHookEvent, json: Record<str
   const hso = specific !== null && typeof specific === "object" && !Array.isArray(specific) ? (specific as Record<string, unknown>) : {};
   const context = stdoutIsContext(event) ? str(hso.additionalContext) : undefined;
   const withContext = context !== undefined ? { context } : {};
-  if (event === "Stop") {
+  if (event === "PermissionRequest") return permissionVerdict(json, hso);
+  if (event === "Stop" || event === "SubagentStop") {
     // `continue: false` means "stop for good", which is what a Stop already does.
     if (json.continue === false) return {};
-    return json.decision === "block" ? { block: str(json.reason) ?? "a Stop hook asked to keep working" } : {};
+    return json.decision === "block" ? { block: str(json.reason) ?? `a ${event} hook asked to keep working` } : {};
   }
   if (event === "UserPromptSubmit") {
     if (json.continue === false) return { block: str(json.stopReason) ?? str(json.reason) ?? "a hook stopped this prompt" };
     if (json.decision === "block") return { block: str(json.reason) ?? "blocked by hook" };
   }
   return withContext;
+}
+
+/**
+ * PermissionRequest JSON, in Claude Code's shape:
+ * `hookSpecificOutput.decision.behavior: "deny"` + `message` refuses, and
+ * so do `permissionDecision: "deny"`, `decision: "block"` and
+ * `continue: false`. An `allow` is not honoured: hooks only tighten, so
+ * the person is still asked (Claude Code would approve here).
+ */
+function permissionVerdict(json: Record<string, unknown>, hso: Record<string, unknown>): SessionHookVerdict {
+  const fallback = "denied by a PermissionRequest hook";
+  const decision = hso.decision;
+  const d = decision !== null && typeof decision === "object" && !Array.isArray(decision) ? (decision as Record<string, unknown>) : {};
+  if (d.behavior === "deny") return { block: str(d.message) ?? fallback };
+  if (hso.permissionDecision === "deny") return { block: str(hso.permissionDecisionReason) ?? fallback };
+  if (json.decision === "block") return { block: str(json.reason) ?? fallback };
+  if (json.continue === false) return { block: str(json.stopReason) ?? str(json.reason) ?? fallback };
+  return {};
 }
 
 /** Hooks of one event ran in parallel: any block wins; contexts and errors are all kept. */

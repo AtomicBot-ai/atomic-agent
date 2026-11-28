@@ -12,6 +12,7 @@ import {
 import { buildPrompt, PROJECT_SECTION_MAX_TOKENS } from "../prompt/build-prompt.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
 import { estimateTokens } from "../prompt/token-budget.js";
+import { PROJECT_INSTRUCTIONS_SECTION_LABEL, contextUsageFromPrompt } from "./context-usage.js";
 
 const CAPS = { platform: "darwin", arch: "arm64", browserChannel: "chrome", workingDir: "/work",
   hasClipboard: false, hasWmctrl: false, hasNotifications: false } as const;
@@ -119,6 +120,31 @@ describe("project instructions in the prompt", () => {
     expect(cut.name).toBeNull();
     expect(cut.tokens).toBeGreaterThan(PROJECT_SECTION_MAX_TOKENS);
     expect(buildPrompt(input()).project).toBeUndefined();
+  });
+
+  it("local: the block is counted in tokens.total and gets its own /context row (ATO-2452)", () => {
+    const plain = buildPrompt(input());
+    expect(plain.tokens.project).toBeUndefined();
+    const i = input();
+    applySessionProject(i.session, { name: "Docs", instructions: "Answer in French. ".repeat(40) });
+    const withProject = buildPrompt(i);
+    expect(withProject.tokens.project).toBeGreaterThan(0);
+    // Same session otherwise, so the whole difference is the block.
+    expect(withProject.tokens.total - plain.tokens.total).toBe(withProject.tokens.project);
+    const row = contextUsageFromPrompt(withProject).sections.find((s) => s.label === PROJECT_INSTRUCTIONS_SECTION_LABEL);
+    expect(row?.tokens).toBe(withProject.tokens.project);
+    expect(contextUsageFromPrompt(plain).sections.some((s) => s.label === PROJECT_INSTRUCTIONS_SECTION_LABEL)).toBe(false);
+  });
+
+  it("cloud: the project section is reported on tokens and as a /context row (ATO-2452)", () => {
+    const i = input("cloud");
+    applySessionProject(i.session, { name: "Docs", instructions: "Answer in French." });
+    const prompt = buildPrompt(i);
+    expect(prompt.tokens.project).toBeGreaterThan(0);
+    expect(contextUsageFromPrompt(prompt).sections).toContainEqual({
+      label: PROJECT_INSTRUCTIONS_SECTION_LABEL, tokens: prompt.tokens.project,
+    });
+    expect(buildPrompt(input("cloud")).tokens.project).toBeUndefined();
   });
 
   it("cloud: the full text as a project section", () => {

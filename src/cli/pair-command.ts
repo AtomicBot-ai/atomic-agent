@@ -1,5 +1,7 @@
 import { resolveStateDir } from "../config/index.js";
+import { formatPairingCode } from "../http/device-code.js";
 import { createPairing, PAIRING_TTL_MS, readDevices, revokeDevice } from "../http/device-store.js";
+import { formatDeviceLine } from "./pair-list-format.js";
 import { openRemoteTunnel, REMOTE_WARNING, type RemoteTunnelDeps } from "./pair-remote.js";
 import { resolvePairTarget } from "./pair-target.js";
 import { isAlive } from "./serve-orphan-guard.js";
@@ -21,7 +23,9 @@ export const PAIR_HELP = [
   "Show a QR code that connects a phone to the panel of the running atag serve, without",
   "typing the API key. The link in it works once, for 5 minutes. A paired phone can chat and",
   "answer the agent's questions and approvals one at a time. It cannot change settings, save",
-  "an Always allow rule, or move a chat to another folder.",
+  "an Always allow rule, or move a chat to another folder. It is signed out after 30 days",
+  "without use. The short code printed under the QR does the same as the link, typed at",
+  "<address>/panel/pair (for an app added to the iPhone home screen, which keeps its own sign-in).",
   "",
   "  (no option)        Same Wi-Fi: needs atag serve --host 0.0.0.0",
   "  --remote           Through a Cloudflare quick tunnel (needs cloudflared); stays open until Ctrl+C",
@@ -75,6 +79,8 @@ export interface PairCommandDeps {
   tunnel?: RemoteTunnelDeps;
   /** Resolves when the person presses Ctrl+C (closes the `--remote` tunnel). */
   waitForStop?: () => Promise<void>;
+  /** The clock for `--list` ages (ATO-2758). */
+  now?: () => Date;
 }
 
 async function renderTerminalQr(text: string): Promise<string> {
@@ -121,9 +127,8 @@ export async function pairCommand(args: string[], deps: PairCommandDeps = {}): P
       write("No paired devices. Pair a phone with: atag pair\n");
       return 0;
     }
-    for (const d of read.data.devices) {
-      write(`${d.id}  ${d.name.padEnd(16)} paired ${d.createdAt}  last seen ${d.lastSeenAt}\n`);
-    }
+    const now = (deps.now ?? (() => new Date()))();
+    for (const d of read.data.devices) write(`${formatDeviceLine(d, now)}\n`);
     return 0;
   }
 
@@ -176,6 +181,8 @@ export async function pairCommand(args: string[], deps: PairCommandDeps = {}): P
     const link = `${baseUrl}/pair/${pairing.token}`;
     write(`${await (deps.renderQr ?? renderTerminalQr)(link)}\n`);
     write(`Scan this with your phone's camera, or open: ${link}\n`);
+    // ATO-2494: an iPhone home-screen app has its own cookies; it types this at <address>/panel/pair.
+    write(`Or type this code at ${baseUrl}/panel/pair (an app on the iPhone home screen): ${formatPairingCode(pairing.code)}\n`);
     write(`The link works once, for ${Math.round(PAIRING_TTL_MS / 60_000)} minutes. See devices with: atag pair --list\n`);
     if (target.kind === "lan" && target.others.length > 0) {
       write(`If the phone cannot open it, this computer also answers at: ${target.others.join(", ")} (atag pair --url <address>)\n`);

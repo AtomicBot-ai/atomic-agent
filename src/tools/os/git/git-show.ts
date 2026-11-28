@@ -1,5 +1,7 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../../tool-registry.js";
+import { refuseOptionLike } from "./git-arg-guard.js";
+import { GUEST_DIFF_FLAGS, GUEST_SECRET_EXCLUDES, guestCommitRevision } from "./git-guest-pathspec.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
 
 export interface GitShowFileChange {
@@ -21,7 +23,14 @@ export const osGitShowTool: ToolDefinition = {
       typeof rawArgs.revision === "string" && rawArgs.revision.length > 0
         ? rawArgs.revision
         : "HEAD";
+    refuseOptionLike("os.git.show", "revision", revision);
     const includePatch = rawArgs.patch !== false;
+    // A guest's patch leaves out `.env` and credential files, and a
+    // guest's revision must be a commit (ATO-2732, git-guest-pathspec.ts).
+    const guest = ctx.guest === true;
+    const rev = guest ? guestCommitRevision(revision) : revision;
+    const pathspec = guest ? ["--", ...GUEST_SECRET_EXCLUDES] : [];
+    const diffFlags = guest ? GUEST_DIFF_FLAGS : [];
 
     // Grab metadata via a structured `show --format` call with no patch,
     // and — when requested — a second call for the patch itself. This
@@ -32,14 +41,14 @@ export const osGitShowTool: ToolDefinition = {
         repo,
         workingDir: ctx.workingDir,
         guest: ctx.guest,
-        args: ["show", "--no-patch", `--format=${metaFormat}`, revision],
+        args: ["show", "--no-patch", `--format=${metaFormat}`, rev],
         signal: ctx.signal,
       }),
       runGit({
         repo,
         workingDir: ctx.workingDir,
         guest: ctx.guest,
-        args: ["show", "--numstat", "--format=", revision],
+        args: ["show", "--numstat", "--format=", ...diffFlags, rev, ...pathspec],
         signal: ctx.signal,
       }),
       includePatch
@@ -47,7 +56,7 @@ export const osGitShowTool: ToolDefinition = {
             repo,
             workingDir: ctx.workingDir,
             guest: ctx.guest,
-            args: ["show", "--format=", "--unified=3", revision],
+            args: ["show", "--format=", "--unified=3", ...diffFlags, rev, ...pathspec],
             signal: ctx.signal,
             maxOutputBytes: 2 * 1024 * 1024,
           })

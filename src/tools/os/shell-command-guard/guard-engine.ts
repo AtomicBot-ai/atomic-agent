@@ -7,7 +7,7 @@ import type {
 import { normaliseCommand } from "./normalise.js";
 import { hardlineRule } from "./rules-hardline.js";
 import { buildGitRemotePolicyRule } from "./rules-policy.js";
-import { dangerousRule } from "./rules-dangerous.js";
+import { buildDangerousRule, dangerousRule } from "./rules-dangerous.js";
 import { gogReadOnlyRule } from "./rules-trusted/gog.js";
 import { ghReadOnlyRule } from "./rules-trusted/gh.js";
 import { icalBuddyReadOnlyRule } from "./rules-trusted/ical-buddy.js";
@@ -34,8 +34,14 @@ export function checkShellCommandGuard(
   input: GuardInput,
   policy?: ShellGuardPolicy,
 ): GuardVerdict {
+  // The policy also carries the live argument-check threshold (ATO-2505).
   const rules = policy
-    ? [hardlineRule, buildGitRemotePolicyRule(policy), ...RULES_AFTER_HARDLINE]
+    ? [
+        hardlineRule,
+        buildGitRemotePolicyRule(policy),
+        buildDangerousRule(policy.argScanThreshold),
+        ...RULES_AFTER_HARDLINE.filter((rule) => rule !== dangerousRule),
+      ]
     : DEFAULT_RULES;
   return checkShellCommandGuardWithRules(input, rules);
 }

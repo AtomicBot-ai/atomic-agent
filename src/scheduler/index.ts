@@ -21,6 +21,14 @@ export {
 } from "./file-trigger-manager.js";
 export type { FileTriggerManagerOptions } from "./file-trigger-manager.js";
 export {
+  createFileTriggerClaims,
+  FILE_TRIGGER_CLAIMS_DIR,
+} from "./file-trigger-claims.js";
+export type {
+  FileTriggerClaims,
+  FileTriggerClaimsOptions,
+} from "./file-trigger-claims.js";
+export {
   chokidarWatcherFactory,
   nodeFileTriggerFs,
   realFileTriggerClock,

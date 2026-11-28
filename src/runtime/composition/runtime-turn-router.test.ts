@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { routeTurnProvider } from "./runtime-turn-router.js";
+import { createCompactionDefaults } from "../../config/agent/compaction-config.js";
+import { EMPTY_CONTEXT_USAGE } from "../../session/context-usage.js";
+import { localFirstSessionSize } from "./local-first-fit.js";
+import { createLocalFirstWindowResolver } from "../local-first-window.js";
 
 function configWith(router: unknown): AtomicAgentConfig {
   return {
@@ -86,6 +90,9 @@ function localFirstConfig(fallback: unknown, router?: unknown): AtomicAgentConfi
       ...(fallback === undefined ? {} : { fallback }),
       ...(router === undefined ? {} : { router }),
     },
+    agent: { compaction: createCompactionDefaults(), conversationMaxTokens: 0 },
+    localModels: { completionMaxTokens: 4096, thinking: "off", reasoningBudgetTokens: 0, mode: "external", managed: { contextSize: 0 } },
+    paths: { localModelsDataDir: "/nonexistent/models" },
   } as unknown as AtomicAgentConfig;
 }
 
@@ -119,6 +126,98 @@ describe("routeTurnProvider local-first cascade (ATO-2208)", () => {
       run(config, { ...available, runMode: { stored: "fusion", effective: "fusion" } }).providerId,
     ).toBeUndefined();
     expect(run(config, { ...available, pinnedProviderId: "openrouter" }).providerId).toBeUndefined();
+  });
+
+  it("keeps a session too long for the local window in the cloud, and says why (ATO-2537)", () => {
+    const { providerId, info } = run(localFirstConfig({ localFirst: true }), {
+      ...available,
+      userMessage: "a secret question",
+      sessionSize: { historyTokens: 90_000, fixedTokens: 10_000 },
+      localContextWindow: () => 16_384,
+    });
+    expect(providerId).toBeUndefined();
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(info.mock.calls[0]?.[1]).toMatchObject({ historyTokens: 90_000, fixedTokens: 10_000 });
+    expect(JSON.stringify(info.mock.calls)).not.toContain("secret");
+  });
+
+  it("a session that fits the local window still starts on it", () => {
+    expect(
+      run(localFirstConfig({ localFirst: true }), {
+        ...available,
+        sessionSize: { historyTokens: 2_000, fixedTokens: 2_000 },
+        localContextWindow: () => 16_384,
+      }).providerId,
+    ).toBe("local-llama");
+  });
+
+  it("keeps the turn in the cloud while the local model rests after a failure (ATO-2435)", () => {
+    const { providerId, info } = run(localFirstConfig({ localFirst: true }), {
+      ...available,
+      isCoolingDown: (id) => id === "local-llama",
+    });
+    expect(providerId).toBeUndefined();
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(String(info.mock.calls[0]?.[0])).toContain("rests");
+  });
+
+  it("tells the caller when the local-first cascade heads the turn, not a router rule (ATO-2434)", () => {
+    const onLocalFirstHead = vi.fn();
+    run(localFirstConfig({ localFirst: true }), { ...available, onLocalFirstHead });
+    expect(onLocalFirstHead).toHaveBeenCalledWith("local-llama");
+    onLocalFirstHead.mockClear();
+    const ruled = localFirstConfig({ localFirst: true }, { enabled: true, rules: [{ provider: "groq" }] });
+    run(ruled, { ...available, onLocalFirstHead });
+    expect(onLocalFirstHead).not.toHaveBeenCalled();
+  });
+
+  it("checks history against the local allowance, not the whole prompt against the window", () => {
+    // 32k window: 12k fixed + 16k history is a 28k prompt, under 0.9 of
+    // the window, but the history allowance is about 16k and compaction
+    // fires at 0.9 of that.
+    expect(
+      run(localFirstConfig({ localFirst: true }), {
+        ...available,
+        sessionSize: { historyTokens: 16_000, fixedTokens: 12_000 },
+        localContextWindow: () => 32_768,
+      }).providerId,
+    ).toBeUndefined();
+  });
+
+  it("right after a restart (no live window, no catalogue window) a long resumed session stays in the cloud", () => {
+    const config = localFirstConfig({ localFirst: true });
+    // Wired as bootstrap wires it: the live profile is not read yet and
+    // a llama-server link has no catalogue entry.
+    const localContextWindow = createLocalFirstWindowResolver({
+      liveWindow: () => undefined,
+      catalogWindow: () => null,
+      readConfig: () => config,
+    });
+    const usage = {
+      ...EMPTY_CONTEXT_USAGE,
+      tokens: 100_000,
+      conversationTokens: 88_000,
+      sections: [
+        { label: "prompt scaffold", tokens: 12_000 },
+        { label: "conversation", tokens: 88_000 },
+      ],
+    };
+    const resumed = run(config, {
+      ...available,
+      sessionSize: localFirstSessionSize(usage, "next question"),
+      localContextWindow,
+    });
+    expect(resumed.providerId).toBeUndefined();
+    // A short session still starts local with the window unknown.
+    const short = run(config, {
+      ...available,
+      sessionSize: localFirstSessionSize(
+        { ...usage, tokens: 6_000, conversationTokens: 2_000, sections: [{ label: "prompt scaffold", tokens: 4_000 }, { label: "conversation", tokens: 2_000 }] },
+        "hi",
+      ),
+      localContextWindow,
+    });
+    expect(short.providerId).toBe("local-llama");
   });
 
   it("a matching router rule wins over the local-first head", () => {

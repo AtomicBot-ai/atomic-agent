@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { claudeCliAdapter } from "./claude-cli-adapter.js";
-import { cliChildEnv, withBinaryDirOnPath } from "./cli-child-env.js";
+import { cliChildEnv, cliSpawnEnv, withBinaryDirOnPath, withToolchainPath } from "./cli-child-env.js";
 import { codexCliAdapter } from "./codex-cli-adapter.js";
 
 describe("cliChildEnv", () => {
@@ -80,5 +80,52 @@ describe("withBinaryDirOnPath (ATO-756)", () => {
     expect(
       withBinaryDirOnPath({ Path: "C:\\Windows" }, "C:\\Users\\n\\AppData\\Roaming\\npm\\codex.cmd", "win32"),
     ).toEqual({ Path: "C:\\Windows;C:\\Users\\n\\AppData\\Roaming\\npm" });
+  });
+});
+
+describe("withToolchainPath (ATO-1679)", () => {
+  // A Dock-launched app's PATH on a Mac with Homebrew and Volta.
+  const DOCK_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
+  const onDisk = new Set(["/opt/homebrew/bin", "/Users/n/.volta/bin"]);
+  const seams = { home: "/Users/n", systemPaths: [], exists: (p: string) => onDisk.has(p) };
+
+  it("appends the toolchain folders an agent shell command gets, so `env node` finds node", () => {
+    const env = { PATH: DOCK_PATH, HOME: "/Users/n" };
+    const out = withToolchainPath(env, "darwin", seams);
+    const dirs = (out.PATH ?? "").split(":");
+    expect(dirs.slice(0, 4)).toEqual(DOCK_PATH.split(":"));
+    expect(dirs).toContain("/opt/homebrew/bin");
+    expect(dirs).toContain("/Users/n/.volta/bin");
+    expect(env.PATH).toBe(DOCK_PATH);
+  });
+
+  it("adds no other variable", () => {
+    const out = withToolchainPath({ PATH: DOCK_PATH, HOME: "/Users/n" }, "darwin", seams);
+    expect(Object.keys(out).sort()).toEqual(["HOME", "PATH"]);
+  });
+
+  it("hands the environment back when nothing is missing, and leaves Windows alone", () => {
+    const full = { PATH: `${DOCK_PATH}:/opt/homebrew/bin:/Users/n/.volta/bin` };
+    expect(withToolchainPath(full, "darwin", seams)).toBe(full);
+    const win = { Path: "C:\\Windows" };
+    expect(withToolchainPath(win, "win32", seams)).toBe(win);
+  });
+});
+
+describe("cliSpawnEnv (ATO-1679)", () => {
+  it("strips billing keys and puts the pathed CLI's folder right after the inherited PATH", () => {
+    const saved = { PATH: process.env.PATH, KEY: process.env.ANTHROPIC_API_KEY };
+    try {
+      process.env.PATH = "/usr/bin:/bin";
+      process.env.ANTHROPIC_API_KEY = "sk-ant-agent";
+      const out = cliSpawnEnv(["ANTHROPIC_API_KEY"], "/Users/n/.npm-global/bin/claude", "darwin");
+      expect(out.ANTHROPIC_API_KEY).toBeUndefined();
+      expect((out.PATH ?? "").split(":").slice(0, 3)).toEqual(["/usr/bin", "/bin", "/Users/n/.npm-global/bin"]);
+      expect(process.env.PATH).toBe("/usr/bin:/bin");
+    } finally {
+      process.env.PATH = saved.PATH;
+      if (saved.KEY === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = saved.KEY;
+    }
   });
 });

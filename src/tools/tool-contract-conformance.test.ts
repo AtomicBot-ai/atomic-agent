@@ -41,6 +41,7 @@ import { registerSkillTools } from "./skill/index.js";
 import { buildToolViewTool } from "./tool-view/index.js";
 import { planUpdateTool } from "./plan/index.js";
 import { buildCanvasRenderTool } from "./canvas/index.js";
+import { uiRenderTool } from "./ui/index.js";
 import { buildAskUserTool } from "./conversation/index.js";
 import { buildToolSearchTool } from "./tool-search/index.js";
 import { buildConversationHistoryTool, buildSessionsSearchTool, registerMemoryTools } from "./memory/index.js";
@@ -50,6 +51,7 @@ import { registerTaskTools } from "./tasks/index.js";
 import { registerSessionTools } from "./sessions/index.js";
 import { registerVisionTools } from "./vision/index.js";
 import { registerLogbookTools } from "./logbook/index.js";
+import { registerAppTools } from "./app/index.js";
 import { registerAudioListenTools } from "./audio/index.js";
 import { registerImageTools } from "./image/index.js";
 import { registerVideoTools } from "./video/index.js";
@@ -310,6 +312,7 @@ beforeAll(() => {
   registry.register(buildToolViewTool());
   registry.register(planUpdateTool);
   registry.register(buildCanvasRenderTool(dangerous));
+  registry.register(uiRenderTool);
   registry.register(buildAskUserTool({ approvals: dangerous.approvals }));
   // Runtime registers it beside the live descriptor list (runtime-tool-catalog).
   registry.register(buildToolSearchTool({ catalog: () => ({ descriptors: DEFAULT_TOOL_DESCRIPTORS, deferred: new Set() }) }));
@@ -326,6 +329,7 @@ beforeAll(() => {
   registerSessionTools(registry, sessionOptions(true));
   registerVisionTools(registry, { enabled: true, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
   registerLogbookTools(registry, { ...dangerous, stateDir: directory, notesStayLocal: () => true });
+  registerAppTools(registry, { ...dangerous, stateDir: directory });
   registerAudioListenTools(registry, { enabled: true, provider: () => undefined, maxAudioBytes: 1024 });
   registerImageTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });
   registerVideoTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });
@@ -366,7 +370,7 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(129);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(137);
     expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(DEFAULT_TOOL_DESCRIPTORS.length);
     expect(registry.list()).toHaveLength(registry.registrations.length);
     for (const definition of registry.registrations) {

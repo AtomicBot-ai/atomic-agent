@@ -65,6 +65,25 @@ test('tool_update goes to the newest running card of that tool in that turn', ()
   assert.equal(M.toolUpdateTarget(null, { tool: 'video.generate' }, 't1'), null);
 });
 
+test('tool_update in a batch goes to the call at work: the first running card of the newest step (ATO-2444)', () => {
+  // One step, two decks: both cards drawn before either runs; the first runs first.
+  const log = [
+    { k: 'tool', name: 'os.fs.write_pptx', ok: true, turn: 't1', callId: '1:0', id: 1 },
+    { k: 'tool', name: 'os.fs.write_pptx', ok: null, turn: 't1', callId: '3:0', id: 2 },
+    { k: 'tool', name: 'os.fs.write_pptx', ok: null, turn: 't1', callId: '3:1', id: 3 },
+  ];
+  const frame = { tool: 'os.fs.write_pptx', slide: { index: 0, count: 5, title: 'EU' } };
+  assert.equal(M.toolUpdateTarget(log, frame, 't1').id, 2);
+  log[1].ok = true;   // the first deck's tool_result
+  assert.equal(M.toolUpdateTarget(log, frame, 't1').id, 3);
+  // A card of an earlier step left running loses to the newest step's.
+  const stale = [
+    { k: 'tool', name: 'video.generate', ok: null, turn: 't1', callId: '0:0', id: 1 },
+    { k: 'tool', name: 'video.generate', ok: null, turn: 't1', callId: '2:0', id: 2 },
+  ];
+  assert.equal(M.toolUpdateTarget(stale, { tool: 'video.generate' }, 't1').id, 2);
+});
+
 test('tool_update folds into the card: clamped, never backwards, elapsed kept', () => {
   const card = { k: 'tool', name: 'video.generate', ok: null };
   M.toolUpdateApply(card, { tool: 'video.generate', fraction: 0, elapsed_ms: 1200, label: 'sent to google/veo-3.1-fast on OpenRouter' }, 10);
@@ -163,7 +182,14 @@ test('Save As… says where the copy went, keeps quiet on cancel, and explains a
   assert.equal(M.chatVideoActionNote('save', { ok: false, reason: 'canceled' }), null);
   assert.equal(M.chatVideoActionNote('save', { ok: false, reason: 'missing' }).title, 'Could not save it');
   assert.match(M.chatVideoActionNote('save', { ok: false, reason: 'outside' }).sub, /home folder/);
-  assert.equal(M.chatVideoActionNote('save', { ok: false, reason: 'failed', error: 'EACCES' }).sub, 'EACCES');
+  // ATO-2793: never the bare system error.
+  assert.match(M.chatVideoActionNote('save', { ok: false, reason: 'failed', error: 'EACCES: permission denied, copyfile' }).sub, /no permission to write/);
+  assert.match(M.chatVideoActionNote('save', { ok: false, reason: 'failed', error: 'ENOSPC: no space left on device' }).sub, /disk is full/);
+  assert.match(M.chatVideoActionNote('reveal', { ok: false, reason: 'failed', error: 'EPERM' }).sub, /no permission to open/);
+  for (const error of ['EACCES', 'ENOSPC', 'EIO: i/o error, /Users/n/x.mp4']) {
+    const sub = M.chatVideoActionNote('save', { ok: false, reason: 'failed', error }).sub;
+    assert.doesNotMatch(sub, /E[A-Z]{2,}|\/Users\//, sub);
+  }
   assert.equal(M.chatVideoActionNote('reveal', { ok: true }), null);
   assert.equal(M.chatVideoActionNote('reveal', { ok: false, reason: 'missing' }).title, 'Could not show it');
   assert.equal(M.chatVideoActionNote('save', null).title, 'Could not save it');

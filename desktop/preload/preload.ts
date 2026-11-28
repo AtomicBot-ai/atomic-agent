@@ -90,6 +90,9 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1250: GET/POST /api/project-trust — {supported:false} against an agent without the route. */
   projectTrust: (sessionId?: string | null) => ipcRenderer.invoke("agent:projectTrust", sessionId),
   projectTrustAnswer: (body: unknown) => ipcRenderer.invoke("agent:projectTrustAnswer", body),
+  /** ATO-2441: GET /api/commands and POST /api/commands/render; {supported:false} from the list against an agent without the route. */
+  commandList: (sessionId?: string | null) => ipcRenderer.invoke("agent:commandList", sessionId),
+  commandRender: (body: { name: string; args?: string; sessionId?: string | null }) => ipcRenderer.invoke("agent:commandRender", body),
   /** ATO-1461: GET/POST /api/fallback/local-question — {supported:false} against an agent without the route. */
   appendLocalQuestion: () => ipcRenderer.invoke("agent:appendLocalQuestion"),
   appendLocalQuestionAnswer: (answer: "keep" | "off") => ipcRenderer.invoke("agent:appendLocalQuestionAnswer", answer),
@@ -102,6 +105,8 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1082: GET/POST /api/privacy-shield — {supported:false} against an agent without the route. */
   privacyShield: () => ipcRenderer.invoke("agent:privacyShield"),
   privacyShieldSet: (enabled: boolean) => ipcRenderer.invoke("agent:privacyShieldSet", enabled),
+  /** ATO-2527: POST { localNames } to /api/privacy-shield: hide names with a local model. */
+  privacyShieldNamesSet: (enabled: boolean) => ipcRenderer.invoke("agent:privacyShieldNamesSet", enabled),
   /** ATO-445: the agent's webhook routes: list, add (the reply holds the secret once), remove. */
   webhooks: () => ipcRenderer.invoke("agent:webhooks"),
   webhookCreate: (body: unknown) => ipcRenderer.invoke("agent:webhookCreate", body),
@@ -145,6 +150,12 @@ contextBridge.exposeInMainWorld("atomic", {
 
   /** Approvals raised by gated tools. */
   onApproval: (cb: (payload: unknown) => void) => on("agent:approval", cb),
+  /* ATO-2755: a card drawn or kept for its chat, told to main for the "needs your OK"
+     notification (main/approval-notify-ipc.ts); a click on it opens that chat here. */
+  approvalNotify: (payload: unknown) => ipcRenderer.send("approvalNotify:describe", payload),
+  approvalNotifyTake: () => ipcRenderer.invoke("approvalNotify:take"),
+  approvalNotifyPending: (ids: string[]) => ipcRenderer.send("approvalNotify:pending", ids),
+  onApprovalNotifyOpen: (cb: (payload: unknown) => void) => on("approvalNotify:open", cb),
   approve: (approvalId: string, decision: "allow-once" | "allow-in-chat" | "allow-always" | "deny", reason?: string) =>
     ipcRenderer.invoke("agent:approve", { approvalId, decision, reason }),
   /** ATO-1502: answer an ask_user question (POST /api/question/answer). */
@@ -185,9 +196,24 @@ contextBridge.exposeInMainWorld("atomic", {
     answer: (approvalId: string, decision: "allow" | "deny") => ipcRenderer.invoke("pet:answer", { approvalId, decision }),
     open: () => ipcRenderer.send("pet:open"),
     menu: () => ipcRenderer.send("pet:menu"),
+    /* ATO-2513: the bubble takes the keyboard after a click on it, and gives it back. */
+    focus: (on: boolean) => ipcRenderer.send("pet:focus", on === true),
+    /* ATO-2513: the made pet that shows (main/pet-skins-ipc.ts), and the main window's "Make your own pet". */
+    skin: () => ipcRenderer.invoke("pet:skinGet"),
+    onSkin: (cb: (payload: unknown) => void) => on("pet:skin", cb),
+    skins: () => ipcRenderer.invoke("pet:skins"),
+    saveSkin: (name: string, frames: Record<string, string>) => ipcRenderer.invoke("pet:saveSkin", { name, frames }),
+    useSkin: (id: string) => ipcRenderer.invoke("pet:useSkin", id),
+    deleteSkin: (id: string) => ipcRenderer.invoke("pet:deleteSkin", id),
+    onOpenMaker: (cb: () => void) => on("pet:openMaker", () => cb()),
   },
   onPetRelay: (cb: (payload: unknown) => void) => on("pet:relayAnswer", cb),
   petRelayResult: (reqId: string, handled: boolean) => ipcRenderer.send("pet:relayResult", { reqId, handled: handled === true }),
+  /* ATO-2741: Settings › General's Desktop pet switch and the palette row (renderer/pet-settings.js);
+     the same show / hide as View › Desktop Pet, and every change from either side comes back here. */
+  petPrefs: () => ipcRenderer.invoke("pet:prefsGet"),
+  petSetEnabled: (on: boolean) => ipcRenderer.invoke("pet:setEnabled", on === true),
+  onPetPrefs: (cb: (payload: unknown) => void) => on("pet:prefsChanged", cb),
 
   /** Setup wizard: real config writes and the real model catalogue. */
   configGet: () => ipcRenderer.invoke("cli:configGet"),
@@ -231,6 +257,8 @@ contextBridge.exposeInMainWorld("atomic", {
   chatgptOauthStart: () => ipcRenderer.invoke("chatgptOauth:start"),
   chatgptOauthCancel: () => ipcRenderer.invoke("chatgptOauth:cancel"),
   chatgptOauthStatus: () => ipcRenderer.invoke("chatgptOauth:status"),
+  // ATO-2511: `atag logout chatgpt`. {ok, state: "signed_out" | "failed", hadSignIn?, reason?, detail?}
+  chatgptOauthSignOut: () => ipcRenderer.invoke("chatgptOauth:signOut"),
   removeProvider: (id: string) => ipcRenderer.invoke("cli:removeProvider", id),
   modelsStart: () => ipcRenderer.invoke("cli:modelsStart"),
   traceUsage: (stateDir: string, sessionId: string) =>
@@ -261,10 +289,13 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-731: the chat on screen moves to the folder picked (sessionId), without restarting the agent.
   chooseWorkspace: (sessionId?: string | null) => ipcRenderer.invoke("app:chooseWorkspace", sessionId ?? null),
   openPath: (path: string) => ipcRenderer.invoke("app:openPath", path),
+  // ATO-2529: <stateDir>/guard.md, its state and Create / Open (main/guard-rules-ipc.ts).
+  guardRules: () => ipcRenderer.invoke("app:guardRules"),
+  guardRulesOpen: () => ipcRenderer.invoke("app:guardRulesOpen"),
   // ATO-1424 (macOS): a new Terminal window in `cwd` (home if missing) with `command` typed, not run.
   // → {ok:true, cwd, usedHome} | {ok:false, error:"unsupported"|"invalid-request"|"empty-command"|
   //   "command-too-long"|"control-characters"|"open-failed", message}
-  terminalOpenWithCommand: (req: { command: string; cwd?: string | null }) => ipcRenderer.invoke("terminal:openWithCommand", req),
+  terminalOpenWithCommand: (req: { command: string; cwd?: string | null; shell?: "powershell" }) => ipcRenderer.invoke("terminal:openWithCommand", req),
   // Chat review Д23: `fromReply` for a chip from a reply's text, which main checks again.
   fileMenu: (path: string, fromReply?: boolean) => ipcRenderer.invoke("app:fileMenu", path, fromReply === true),
   // item 5: existence check for the files a turn wrote (fs.stat only)
@@ -280,10 +311,20 @@ contextBridge.exposeInMainWorld("atomic", {
   filePreviewSave: (path: string, text: string, stamp: { size: number; mtimeMs: number }, force?: boolean) =>
     ipcRenderer.invoke("app:filePreviewSave", path, text, stamp, force === true),
   // ATO-2410: a deck's slides as pictures; {ok:true, kind:'pdf', base64} | {ok:true, kind:'html', html, width} | {ok:false, reason}.
-  filePreviewSlides: (path: string) => ipcRenderer.invoke("app:filePreviewSlides", path),
+  filePreviewSlides: (path: string, retry?: boolean) => ipcRenderer.invoke("app:filePreviewSlides", path, retry === true),
+  // ATO-2445: where a reply's `path:line` chip points; {ok:true, path} | {ok:false, reason:'missing'|'remote'|'bad-path'}.
+  resolveLinePath: (sessionId: string | null, path: string) => ipcRenderer.invoke("app:resolveLinePath", { sessionId, path }),
+  // ATO-2445: the editors found ([{id, name}]) and opening a previewed file in one at a line; {ok:true} | {ok:false, reason}.
+  editors: () => ipcRenderer.invoke("app:editors"),
+  openInEditor: (path: string, id: string, line?: number, col?: number) => ipcRenderer.invoke("app:openInEditor", path, id, line, col),
+  // ATO-2445: one folder of the chat's project tree; {ok:true, root, name, rel, entries:[{name, rel, dir, mark?, changed?}], cut, git} | {ok:false, reason}.
+  filesTree: (sessionId: string | null, rel: string) => ipcRenderer.invoke("files:tree", { sessionId, rel }),
   // ATO-1136: an HTML artifact kept in main and served sandboxed; answers {ok:true, url:'atomic-art://…/'} | {ok:false, reason}.
   artifactPut: (html: string) => ipcRenderer.invoke("app:artifactPut", html),
   artifactDrop: (url: string) => ipcRenderer.invoke("app:artifactDrop", url),
+  // ATO-2457: a card's box on screen saved as a PNG; {ok:true, path} | {ok:false, reason:'canceled'|'bad-rect'|'failed'}.
+  artifactPng: (rect: { x: number; y: number; width: number; height: number }, title: string) =>
+    ipcRenderer.invoke("app:artifactPng", rect, title),
   // Studio's "From chat" clip: Show in Finder / Save As… for a reply's file in the home folder.
   // {ok:true[, path]} | {ok:false, reason:'missing'|'outside'|'not-a-file'|'canceled'|'failed'}
   replyReveal: (path: string) => ipcRenderer.invoke("app:replyReveal", path),
@@ -357,15 +398,24 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1067: model servers on the local network, and a check of one address (main/lan-discovery-ipc.ts). View-only. */
   lanFind: () => ipcRenderer.invoke("lan:find"),
   lanCheck: (url: string) => ipcRenderer.invoke("lan:check", url),
+  // ATO-2483: Settings › Models › "Share this model" (main/model-share-ipc.ts).
+  modelShare: () => ipcRenderer.invoke("modelShare:get"),
+  modelShareSet: (mode: string, rotate?: boolean) => ipcRenderer.invoke("modelShare:set", { mode, rotate: rotate === true }),
   /** ATO-1152: `/btw`, a side question the agent answers without saving it (main/side-question-ipc.ts). */
   askSideQuestion: (question: string, sessionId?: string) =>
     ipcRenderer.invoke("agent:btw", { question, ...(sessionId ? { sessionId } : {}) }),
+  /** ATO-2432: `/council`, the model council (main/council-ipc.ts); frames arrive on onCouncilFrame. */
+  council: (request: unknown) => ipcRenderer.invoke("agent:council", request),
+  councilStop: (id: string) => ipcRenderer.invoke("agent:council-stop", { id }),
+  onCouncilFrame: (cb: (frame: unknown) => void): Unsubscribe => on("agent:council-frame", cb),
   /** ATO-586: a new incognito chat's id, and closing one (deleted on the agent); main/incognito-chats-ipc.ts. */
   incognitoOpen: () => ipcRenderer.invoke("incognito:open"),
   incognitoClose: (id: string) => ipcRenderer.invoke("incognito:close", { id }),
   /** ATO-2332: the chat Trash: list (purges past 30 days), put, restore, delete forever, empty (main/chat-trash-ipc.ts). */
   chatTrashList: () => ipcRenderer.invoke("chatTrash:list"),
-  chatTrashPut: (id: string, title: string) => ipcRenderer.invoke("chatTrash:put", { id, title }),
+  // ATO-2747: `place` is where the chat sat (pinned, archived, its chat folder), for Restore.
+  chatTrashPut: (id: string, title: string, place?: { pinned?: boolean; archived?: boolean; folder?: string }) =>
+    ipcRenderer.invoke("chatTrash:put", { ...(place || {}), id, title }),
   chatTrashRestore: (id: string) => ipcRenderer.invoke("chatTrash:restore", { id }),
   chatTrashForget: (id: string) => ipcRenderer.invoke("chatTrash:forget", { id }),
   chatTrashEmpty: () => ipcRenderer.invoke("chatTrash:empty"),
@@ -425,6 +475,8 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("recipes:save", recipe),
   recipesDelete: (id: string) => ipcRenderer.invoke("recipes:delete", id),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
+  /** ATO-2754: `{on}` while a quit waits for the agent's answer about running work (main/quit-checking.ts). */
+  onQuitChecking: (cb: (payload: unknown) => void) => on("app:quitChecking", cb),
   /* ATO-523: the global hotkey's one-line box (main/quick-entry-window.ts).
      The box's page: what it opened with, the draft kept while it is away,
      Esc, Enter. The main window: "a text is waiting" and taking it once.
@@ -433,7 +485,13 @@ contextBridge.exposeInMainWorld("atomic", {
   quickEntryDraft: (text: string) => ipcRenderer.send("app:quickEntryDraft", text),
   quickEntryHide: () => ipcRenderer.send("app:quickEntryHide"),
   quickEntryReplace: (text: string) => ipcRenderer.invoke("app:quickEntryReplace", text),
+  quickEntryOpenSettings: () => ipcRenderer.invoke("app:quickEntryOpenSettings"),   // ATO-2736
+  quickEntryCopy: (text: string) => ipcRenderer.invoke("app:quickEntryCopy", text),   // ATO-2750
+  // ATO-2738: what was selected and what the answer will put there, before Replace.
+  quickEntryReplacePreview: (text: string) => ipcRenderer.invoke("app:quickEntryReplacePreview", text),
   quickEntrySubmit: (text: string) => ipcRenderer.invoke("app:quickEntrySubmit", text),
+  // ATO-2478: the mini chat's ⌘↩ (Ctrl+Enter): a new chat in the background in the main window.
+  quickEntryBackground: (text: string) => ipcRenderer.invoke("app:quickEntryBackground", text),
   onQuickEntry: (cb: (payload: unknown) => void) => on("app:quickEntry", cb),
   quickEntryTake: () => ipcRenderer.invoke("app:quickEntryTake"),
   quickEntryGet: () => ipcRenderer.invoke("app:quickEntryGet"),
@@ -450,7 +508,8 @@ contextBridge.exposeInMainWorld("atomic", {
   dictateAudio: (chunk: Uint8Array) => ipcRenderer.send("dictate:audio", chunk),
   dictateStop: () => ipcRenderer.send("app:dictateStop"),
   dictateCancel: () => ipcRenderer.send("app:dictateCancel"),
-  dictateMicFailed: (why: string) => ipcRenderer.send("app:dictateMicFailed", why),
+  dictateMicFailed: (why: { denied: boolean; detail?: string }) => ipcRenderer.send("app:dictateMicFailed", why),
+  dictateFix: () => ipcRenderer.invoke("app:dictateFix"),   // ATO-2750: the failure pill's button
   onDictate: (cb: (payload: unknown) => void) => on("app:dictate", cb),
   dictateGet: () => ipcRenderer.invoke("app:dictateGet"),
   dictateSet: (patch: { enabled?: boolean; mode?: "hold" | "toggle"; accelerator?: string }) => ipcRenderer.invoke("app:dictateSet", patch),
@@ -478,6 +537,10 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-2257: the task board, cards in lanes, and a card's lane / note / assignee (main/workboard-ipc.ts). */
   taskBoard: () => ipcRenderer.invoke("agent:taskBoard"),
   moveTaskCard: (id: string, patch: unknown) => ipcRenderer.invoke("agent:moveTaskCard", id, patch),
+  /** ATO-2498: a card's comment thread and the profile picker (main/workboard-ipc.ts). */
+  boardComments: (id: string) => ipcRenderer.invoke("agent:boardComments", id),
+  addBoardComment: (id: string, text: string) => ipcRenderer.invoke("agent:addBoardComment", id, text),
+  boardProfiles: (taskId?: string) => ipcRenderer.invoke("agent:boardProfiles", taskId),
   /** ATO-458: suggested tasks for the empty chat screen (main/ideas-ipc.ts). */
   ideasRefresh: () => ipcRenderer.invoke("agent:ideasRefresh"),
   ideaAccept: (id: string) => ipcRenderer.invoke("agent:ideaAccept", id),
@@ -501,6 +564,8 @@ contextBridge.exposeInMainWorld("atomic", {
   telegramCheckToken: (value: string) => ipcRenderer.invoke("telegram:checkToken", { value }),
   // ATO-516: the Discord bot's live state (GET /api/discord/channel).
   discordChannel: () => ipcRenderer.invoke("agent:discordChannel"),
+  /** ATO-2464 (main/linear-key-check.ts): one `viewer` query before a Linear key is saved; the answer never carries the key. */
+  linearCheckKey: (value: string) => ipcRenderer.invoke("linear:checkKey", { value }),
   /** ATO-1094: the next-step suggestion stored after a chat's last turn (`{supported, text}`). */
   nextStep: (sessionId: string) => ipcRenderer.invoke("agent:nextStep", sessionId),
   taskCreate: (input: { message: string; kind: string; expression: string; tz?: string }) =>
@@ -508,6 +573,9 @@ contextBridge.exposeInMainWorld("atomic", {
   taskPreview: (form: Record<string, string>, now?: number) =>
     ipcRenderer.invoke("app:taskPreview", { form, now }),
   /** ATO-1113: "Run overnight": pick its folder (the chat's own does not change), then start the task. */
+  /** ATO-2500: the model picker's favourites, in the file the terminal uses (main/model-favorites-ipc.ts). */
+  modelFavLoad: (legacy?: string[]) => ipcRenderer.invoke("modelFav:load", legacy),
+  modelFavSet: (key: string, on: boolean) => ipcRenderer.invoke("modelFav:set", key, on),
   /** ATO-1467: the interview invite (main/interview-invite-ipc.ts). */
   interviewCheck: (input: { busy: boolean; onboarding: boolean; error: boolean }) => ipcRenderer.invoke("interview:check", input),
   interviewShown: (input: { busy: boolean; onboarding: boolean; error: boolean }) => ipcRenderer.invoke("interview:shown", input),
@@ -522,21 +590,34 @@ contextBridge.exposeInMainWorld("atomic", {
   filesRemoveFolder: (path: string) => ipcRenderer.invoke("files:removeFolder", path),
   filesListFolders: () => ipcRenderer.invoke("files:listFolders"),
   filesStatus: () => ipcRenderer.invoke("files:status"),
+  /** ATO-2501: read the skipped scans, photos and audio again. `{ok, requeued}`. */
+  filesRetry: () => ipcRenderer.invoke("files:retry"),
   /** ATO-2383: My apps (main/my-apps-ipc.ts), artifact pages kept in <stateDir>/apps and opened in their own window. */
   appsSave: (input: { name: string; html: string; chatId?: string }) => ipcRenderer.invoke("apps:save", input),
   appsList: () => ipcRenderer.invoke("apps:list"),
   appsRename: (id: string, name: string) => ipcRenderer.invoke("apps:rename", id, name),
   appsDelete: (id: string) => ipcRenderer.invoke("apps:delete", id),
   appsOpen: (id: string) => ipcRenderer.invoke("apps:open", id),
+  // ATO-2459: versions with restore, and an OS launcher per app.
+  appsVersions: (id: string) => ipcRenderer.invoke("apps:versions", id),
+  appsRestore: (id: string, version: number) => ipcRenderer.invoke("apps:restore", id, version),
+  appsInstall: (id: string) => ipcRenderer.invoke("apps:install", id),
+  appsUninstall: (id: string) => ipcRenderer.invoke("apps:uninstall", id),
+  /** ATO-2442: Settings › Usage (main/usage-ipc.ts): `{ok, data}` or `{ok:false, error, detail, unsupported}`. */
+  usageReport: (query: { days: number | "all"; compare?: string | null }) => ipcRenderer.invoke("usage:report", query),
   /** ATO-1629 / ATO-1061: facts about the person from a Claude or ChatGPT export (main/import-facts-ipc.ts). */
   importFactsInfo: () => ipcRenderer.invoke("importFacts:info"),
-  importFactsPick: (source: "claude" | "chatgpt") => ipcRenderer.invoke("importFacts:pick", source),
+  /** ATO-2740: `kind` on Windows and Linux, whose dialog picks a file or a folder, not both; macOS sends none. */
+  importFactsPick: (source: "claude" | "chatgpt", kind?: "file" | "folder") => ipcRenderer.invoke("importFacts:pick", source, kind),
   importFactsStart: (input: { source: "claude" | "chatgpt"; path: string; cloud?: { provider: string; consent: boolean } }) =>
     ipcRenderer.invoke("importFacts:start", input),
   importFactsJob: (id: string) => ipcRenderer.invoke("importFacts:job", id),
   importFactsStop: (id: string) => ipcRenderer.invoke("importFacts:stop", id),
   importFactsForget: (id: string) => ipcRenderer.invoke("importFacts:forget", id),
   importFactsSave: (id: string, approvedIds: string[]) => ipcRenderer.invoke("importFacts:save", id, approvedIds),
+  /** ATO-2482: one local model's sampling, model default or the person's own (model-sampling-ipc.ts). */
+  modelSamplingGet: (id: string) => ipcRenderer.invoke("modelSampling:get", id),
+  modelSamplingSet: (id: string, set: Record<string, unknown> | null) => ipcRenderer.invoke("modelSampling:set", id, set),
   /** ATO-1091: `atag models fit-test` from Settings › Models (fit-test-ipc.ts). */
   fitTestSupported: () => ipcRenderer.invoke("fitTest:supported"),
   fitTestJudges: () => ipcRenderer.invoke("fitTest:judges"),
@@ -547,7 +628,14 @@ contextBridge.exposeInMainWorld("atomic", {
   modelsFolderInfo: () => ipcRenderer.invoke("modelsFolder:info"),
   modelsFolderChoose: () => ipcRenderer.invoke("modelsFolder:choose"),
   modelsFolderMove: (opts: { path?: string; reset?: boolean }) => ipcRenderer.invoke("modelsFolder:move", opts),
+  modelsFolderCancel: () => ipcRenderer.invoke("modelsFolder:cancel"),
   onModelsFolderProgress: (cb: (payload: unknown) => void) => on("modelsFolder:progress", cb),
+  /** ATO-2489: model servers already running here, `atag local-servers --json` (local-servers-ipc.ts). */
+  localServersDetect: () => ipcRenderer.invoke("localServers:detect"),
+  // ATO-2490: start / load / unload / pull / rm / adopt on Ollama and LM Studio.
+  localServersAct: (input: unknown) => ipcRenderer.invoke("localServers:act", input),
+  localServersCancel: () => ipcRenderer.invoke("localServers:cancel"),
+  onLocalServersProgress: (cb: (payload: unknown) => void) => on("localServers:progress", cb),
   quit: () => ipcRenderer.invoke("app:quit"),
   skillList: (sessionId?: string | null) => ipcRenderer.invoke("cli:skillList", sessionId),
   configGetKey: (key: string) => ipcRenderer.invoke("cli:configGetKey", key),
@@ -572,12 +660,24 @@ contextBridge.exposeInMainWorld("atomic", {
   showOnceStop: () => ipcRenderer.invoke("showOnce:stop"),
   showOnceCancel: () => ipcRenderer.invoke("showOnce:cancel"),
   showOnceOpenAccessibility: () => ipcRenderer.invoke("showOnce:openAccessibility"),
+  /** ATO-2744: one whitelisted macOS Privacy pane (main/privacy-pane.ts); refused off macOS. */
+  privacyOpen: (pane: "fullDiskAccess" | "inputMonitoring") => ipcRenderer.invoke("privacy:open", pane),
   onShowOnceState: (cb: (payload: unknown) => void) => on("showOnce:state", cb),
+  // ATO-2499: the Record card's switches, a draft's step pictures, the Screen Recording pane.
+  showOnceSetOption: (key: string, value: boolean) => ipcRenderer.invoke("showOnce:setOption", key, value),
+  showOnceDraftSnapshots: (id: string) => ipcRenderer.invoke("showOnce:draftSnapshots", id),
+  showOnceOpenScreenRecording: () => ipcRenderer.invoke("showOnce:openScreenRecording"),
   /** ATO-954: Settings › Plugins (main/plugins-ipc.ts). */
   pluginList: () => ipcRenderer.invoke("cli:pluginList"),
   /** ATO-1129: Settings › Connections › Phone push (main/push-ipc.ts). */
   pushStatus: () => ipcRenderer.invoke("cli:pushStatus"),
   pushSet: (op: "on" | "off" | "test" | "newTopic") => ipcRenderer.invoke("cli:pushSet", op),
+  /** ATO-2493: Settings › Connections › Connect phone (main/phone-ipc.ts). */
+  phoneStatus: () => ipcRenderer.invoke("phone:status"),
+  phoneSetEnabled: (enabled: boolean) => ipcRenderer.invoke("phone:setEnabled", { enabled }),
+  phonePair: () => ipcRenderer.invoke("phone:pair"),
+  phoneDevices: () => ipcRenderer.invoke("phone:devices"),
+  phoneRevoke: (id: string) => ipcRenderer.invoke("phone:revoke", { id }),
   pluginSet: (name: string, op: "enable" | "disable" | "allow-code" | "deny-code", part?: string) =>
     ipcRenderer.invoke("cli:pluginSet", { name, op, part }),
   pluginRemove: (name: string) => ipcRenderer.invoke("cli:pluginRemove", name),
@@ -649,6 +749,8 @@ contextBridge.exposeInMainWorld("atomic", {
   handoffReveal: (path: string) => ipcRenderer.invoke("cli:handoffReveal", path),
   // ATO-1157: the Agents sheet's list of Claude Code / Codex sessions (main/agent-hub-ipc.ts).
   hubScan: () => ipcRenderer.invoke("hub:scan"),
+  // ATO-2737: the line "Open on local model" types, naming the app's own agent by full path.
+  hubLaunchCommand: (agent: string) => ipcRenderer.invoke("hub:launchCommand", agent),
   // ATO-556: atomicagent:// links — main keeps what came in until the window takes it; `deeplink:new` says there is more.
   deeplinkTake: () => ipcRenderer.invoke("app:deeplinkTake"),
   onDeeplink: (cb: () => void) => on("deeplink:new", () => cb()),
@@ -716,6 +818,35 @@ contextBridge.exposeInMainWorld("atomic", {
   meetingRecoverable: () => ipcRenderer.invoke("meeting:recoverable"),
   meetingReveal: (path: string) => ipcRenderer.invoke("meeting:reveal", path),
   onMeeting: (cb: (payload: unknown) => void) => on("app:meeting", cb),
+  /** ATO-2534: the logbook's ● chip (main/logbook-ipc.ts). `logbookChipVisible` is a send, repeated every 15 s. */
+  logbookStatus: () => ipcRenderer.invoke("logbook:status"),
+  logbookAct: (action: "pause" | "resume" | "stop", minutes?: number) => ipcRenderer.invoke("logbook:act", action, minutes),
+  logbookChipVisible: (visible: boolean) => ipcRenderer.send("logbook:chipVisible", visible),
+  onLogbook: (cb: (payload: unknown) => void) => on("app:logbook", cb),
+  /** ATO-2514: the other side of the call (main/meeting-system-ipc.ts). `meetingSystemAudio` is a send. */
+  meetingSystemStart: () => ipcRenderer.invoke("meeting:system-start"),
+  meetingSystemAudio: (chunk: Uint8Array, peak: number) => ipcRenderer.send("meeting:system-audio", chunk, peak),
+  meetingSystemStop: () => ipcRenderer.invoke("meeting:system-stop"),
+  meetingOpenScreenSettings: () => ipcRenderer.invoke("meeting:open-screen-settings"),
+  /** ATO-2514: speakers told apart by voice (main/meeting-voices-ipc.ts). */
+  meetingVoicesStatus: () => ipcRenderer.invoke("meeting:voices-status"),
+  meetingVoicesInstall: () => ipcRenderer.invoke("meeting:voices-install"),
+  meetingVoicesCancel: () => ipcRenderer.invoke("meeting:voices-cancel"),
+  meetingVoicesRemove: () => ipcRenderer.invoke("meeting:voices-remove"),
+  // ATO-2514: Settings, Meetings (main/meeting-library-ipc.ts).
+  meetingSettingsGet: () => ipcRenderer.invoke("meeting:settings-get"),
+  meetingSettingsSet: (patch: { systemAudio?: boolean; voices?: boolean; folder?: null }) => ipcRenderer.invoke("meeting:settings-set", patch),
+  meetingChooseFolder: () => ipcRenderer.invoke("meeting:choose-folder"),
+  meetingList: () => ipcRenderer.invoke("meeting:list"),
+  meetingOpen: (name: string, which?: "notes") => ipcRenderer.invoke("meeting:open", name, which),
+  meetingShow: (name: string) => ipcRenderer.invoke("meeting:show", name),
+  meetingTrash: (name: string) => ipcRenderer.invoke("meeting:trash", name),
+  /** ATO-2526: Settings › Logbook and the day timeline (main/logbook-timeline-ipc.ts). */
+  logbookRefresh: () => ipcRenderer.invoke("logbook:refresh"),
+  logbookSave: (input: Record<string, unknown>) => ipcRenderer.invoke("logbook:save", input),
+  logbookDay: (day: string) => ipcRenderer.invoke("logbook:day", day),
+  logbookDelete: (input: { day: string; at?: string[]; all?: boolean }) => ipcRenderer.invoke("logbook:delete", input),
+  onLogbookTimeline: (cb: (payload: unknown) => void) => on("app:logbookTimeline", cb),
   /** ATO-1167: the neural reading voice through Atomic Core (main/core-speech.ts). */
   ttsCoreStatus: (model: string) => ipcRenderer.invoke("tts:coreStatus", model),
   ttsCorePrepare: (model: string) => ipcRenderer.invoke("tts:corePrepare", model),
@@ -741,6 +872,8 @@ contextBridge.exposeInMainWorld("atomic", {
   fusionWorkers: (workers: number) => ipcRenderer.invoke("cli:fusionWorkers", workers),
   /** ATO-606: llm.runMode.fusion.workerReasoning, "default" removing it (main/fusion-reasoning-ipc.ts). */
   fusionWorkerReasoning: (level: string) => ipcRenderer.invoke("cli:fusionWorkerReasoning", level),
+  /** ATO-1754: one Fusion role's provider and model, providerId null clearing it (main/fusion-roles-ipc.ts). */
+  fusionRole: (req: { role: string; providerId: string | null; model?: string }) => ipcRenderer.invoke("cli:fusionRole", req),
   composerEngine: (engine: string, leg?: string) => ipcRenderer.invoke("cli:composerEngine", engine, leg),
   fusionModel: (leg: string, model: string) => ipcRenderer.invoke("cli:fusionModel", leg, model),
   fusionWorkerModel: (id: string) => ipcRenderer.invoke("cli:fusionWorkerModel", id),
@@ -769,14 +902,18 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1056/1058: roll a chat back to a question (files first), preview it, or fork it there (chat-rewind-ipc.ts). */
   rewindPreview: (sessionId: string, priorQuestions: number, expectText: string) =>
     ipcRenderer.invoke("agent:rewindPreview", { sessionId, priorQuestions, expectText }),
-  rewind: (sessionId: string, priorQuestions: number, expectText: string, files?: boolean, conversation?: boolean) =>
-    ipcRenderer.invoke("agent:rewind", { sessionId, priorQuestions, expectText, files, conversation }),
+  rewind: (sessionId: string, priorQuestions: number, expectText: string, files?: boolean, conversation?: boolean, keepBranch?: boolean) =>
+    ipcRenderer.invoke("agent:rewind", { sessionId, priorQuestions, expectText, files, conversation, keepBranch }),
   forkSession: (sessionId: string, priorQuestions: number, expectText: string) =>
     ipcRenderer.invoke("agent:forkSession", { sessionId, priorQuestions, expectText }),
   /** ATO-2114: the earlier answers kept for the last question, and putting one back (answer-versions-ipc.ts). */
   previousReplies: (sessionId: string) => ipcRenderer.invoke("agent:previousReplies", { sessionId }),
   restorePreviousReply: (sessionId: string, index: number) =>
     ipcRenderer.invoke("agent:restorePreviousReply", { sessionId, index }),
+  /** ATO-2470: every version of every question (edits, earlier answers), and switching to one (answer-versions-ipc.ts). */
+  messageVersions: (sessionId: string) => ipcRenderer.invoke("agent:messageVersions", { sessionId }),
+  switchMessageVersion: (sessionId: string, priorQuestions: number, expectText: string | undefined, ref: string) =>
+    ipcRenderer.invoke("agent:switchVersion", { sessionId, priorQuestions, expectText, ref }),
   /** ATO-448: continue a reply a restart cut off (POST /api/sessions/{id}/resume); `release` gives it back. */
   resumeInterruptedTurn: (sessionId: string, release?: boolean) =>
     ipcRenderer.invoke("agent:resumeInterruptedTurn", { sessionId, release: release === true }),
@@ -834,6 +971,18 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("agent:fusionWorkerStop", { sessionId, taskId }),
   fusionWorkerSteer: (sessionId: string, taskId: string, text: string) =>
     ipcRenderer.invoke("agent:fusionWorkerSteer", { sessionId, taskId, text }),
+  /** ATO-2485 — the agent's shell jobs in the terminal panel; the typed text goes to the job only. */
+  agentJobsList: (sessionId: string) => ipcRenderer.invoke("agentJobs:list", sessionId),
+  agentJobOutput: (sessionId: string, jobId: number, since: number) =>
+    ipcRenderer.invoke("agentJobs:output", { sessionId, jobId, since }),
+  agentJobInput: (sessionId: string, jobId: number, text: string, eof: boolean, secret?: boolean) =>
+    ipcRenderer.invoke("agentJobs:input", { sessionId, jobId, text, eof, secret: secret === true }),
+  /** ATO-2486: a job's password the agent asked for (shell_secret_input), or a skip. */
+  answerShellSecret: (req: { approvalId: string; value?: string; skip?: boolean }) =>
+    ipcRenderer.invoke("agentJobs:secret", req),
+  agentJobStop: (sessionId: string, jobId: number) => ipcRenderer.invoke("agentJobs:stop", { sessionId, jobId }),
+  agentJobResize: (sessionId: string, jobId: number, cols: number, rows: number) =>
+    ipcRenderer.invoke("agentJobs:resize", { sessionId, jobId, cols, rows }),
 
   /** ATO-229 — app updates (main/updater.ts). Nothing downloads or installs
    *  except through updateDownload / updateInstall, each a click. Every call

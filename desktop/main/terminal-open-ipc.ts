@@ -2,11 +2,13 @@
  * ATO-1424 — the `terminal:openWithCommand` route (terminal-open.ts does the
  * work and says why it is built this way).
  *
- *   terminal:openWithCommand({ command, cwd })
+ *   terminal:openWithCommand({ command, cwd, shell? })
  *     → { ok: true, cwd, usedHome, terminal?, hint? } | { ok: false, error, message }
  *
  * macOS: terminal-open.ts. Windows and Linux (ATO-1430): terminal-open-other.ts,
  * with the hint for the app window. Elsewhere { ok: false, error: "unsupported" }.
+ * `shell: "powershell"` (ATO-2782, the Agents sheet): on Windows, Windows
+ * Terminal opens a PowerShell tab, not its default profile.
  */
 
 import { execFile, spawn } from "node:child_process";

@@ -19,6 +19,7 @@ import {
 import { parseUrl } from "../config-values.js";
 import { parseCustomLocalModels } from "../custom-models-schema.js";
 import { parseLoraAdapters } from "./lora-adapters-parser.js";
+import { parseModelSamplingOverrides } from "./model-sampling-config.js";
 import { isKnownLocalModelId, type LocalModelDef } from "../../local-llm/catalog/models-catalog.js";
 import {
   BACKEND_VARIANT_PREFERENCES,
@@ -42,6 +43,7 @@ import {
   type CpuMoePreference,
 } from "../../local-llm/server/cpu-moe.js";
 import { rpcPeerProblem } from "../../local-llm/server/rpc-peers.js";
+import { DRAFT_MODEL_DEFAULT, draftModelPreferenceProblem } from "../../local-llm/server/draft-model.js";
 
 /** Pre-v41 `autoUpdate: false` was a dead default; force the live default. */
 const MANAGED_AUTO_UPDATE_DEFAULTS_VERSION = 41;
@@ -69,6 +71,15 @@ const UNBOUNDED_REASONING_DEFAULT_VERSION = 78;
 
 /** The reasoning budget the schema wrote before v78, never an operator's choice. */
 const UNCHOSEN_REASONING_BUDGET_TOKENS = 1500;
+/**
+ * v80 turns `localModels.modelSampling` on by default (ATO-2480): a local
+ * model runs with the temperature / top-p / top-k its authors recommend
+ * instead of the built-in 0.2 / 0.95 / 40. Every file since ATO-2202 holds
+ * the schema's `false` (first run writes the defaults, and there was no
+ * switch for it outside `config set`), so an older file's `false` is not
+ * a choice and moves to `true`. From v80 an explicit `false` is honoured.
+ */
+const MODEL_SAMPLING_DEFAULT_VERSION = 80;
 
 export function parseLocalTemplateSetting(
   raw: unknown,
@@ -135,9 +146,22 @@ export function parseRpcServers(raw: unknown, field: string): string[] {
   });
 }
 
-/** `localModels.managed.cpuMoe` (ATO-2380); `0` reads as `"off"`. */
-export function parseCpuMoePreference(raw: unknown, field: string): CpuMoePreference {
-  if (raw === undefined || raw === null) return CPU_MOE_DEFAULT;
+/** `localModels.managed.draftModel` (ATO-2424): `"off"`, `"auto"`, a model id or an absolute `.gguf` path. */
+export function parseDraftModelPreference(raw: unknown, field: string): string {
+  if (raw === undefined || raw === null) return DRAFT_MODEL_DEFAULT;
+  const problem = draftModelPreferenceProblem(raw);
+  if (problem) throw new ConfigValidationError(field, problem);
+  return raw as string;
+}
+
+/**
+ * `localModels.managed.cpuMoe` (ATO-2380); `0` reads as `"off"`. A string
+ * of digits is the count `config set localModels.managed.cpuMoe 16` hands
+ * over (ATO-2455: the desktop's Experts on CPU row writes it that way).
+ */
+export function parseCpuMoePreference(input: unknown, field: string): CpuMoePreference {
+  if (input === undefined || input === null) return CPU_MOE_DEFAULT;
+  const raw = typeof input === "string" && /^\d+$/.test(input.trim()) ? Number(input.trim()) : input;
   if (raw === 0) return "off";
   if (isCpuMoePreference(raw)) return raw;
   throw new ConfigValidationError(
@@ -279,6 +303,16 @@ function parseOptionalManagedModelId(
     return null;
   }
   return s;
+}
+
+function resolveModelSampling(
+  inputVersion: number,
+  raw: unknown,
+  readDefaults: () => UserLocalModelsConfig,
+): boolean {
+  const value = parseBool(raw ?? readDefaults().modelSampling, "localModels.modelSampling");
+  if (inputVersion < MODEL_SAMPLING_DEFAULT_VERSION) return true;
+  return value;
 }
 
 /**
@@ -464,9 +498,20 @@ export function prepareLocalModelsInputs(
     ),
     cpuMoe: parseCpuMoePreference(rawManaged.cpuMoe, "localModels.managed.cpuMoe"),
     rpcServers: parseRpcServers(rawManaged.rpcServers, "localModels.managed.rpcServers"),
+    draftModel: parseDraftModelPreference(rawManaged.draftModel, "localModels.managed.draftModel"),
   };
   const loraAdapters = parseLoraAdapters(rawManaged.loraAdapters, "localModels.managed.loraAdapters");
   if (loraAdapters) managed.loraAdapters = loraAdapters;
+  // ATO-2483: the shared model's listener; absent keeps it on this computer, port 8787.
+  // The network choice is read only while sharing is on: an off made by any
+  // path (`config set`, an older build, a hand edit) forgets it.
+  if (rawManaged.shareNetwork !== undefined && rawManaged.shareNetwork !== null) {
+    const shareNetwork = parseBool(rawManaged.shareNetwork, "localModels.managed.shareNetwork");
+    if (managed.share) managed.shareNetwork = shareNetwork;
+  }
+  if (rawManaged.sharePort !== undefined && rawManaged.sharePort !== null) {
+    managed.sharePort = parseBoundedPositiveInt(rawManaged.sharePort, "localModels.managed.sharePort", 1, 65535);
+  }
   if (rawManaged.modelsDirOverride !== undefined && rawManaged.modelsDirOverride !== null) {
     managed.modelsDirOverride = parseNonEmptyString(rawManaged.modelsDirOverride, "localModels.managed.modelsDirOverride");
   }
@@ -572,10 +617,8 @@ export function parseUserLocalModelsConfig(
       localModels.drySampler ?? readDefaults().drySampler,
       "localModels.drySampler",
     ),
-    modelSampling: parseBool(
-      localModels.modelSampling ?? readDefaults().modelSampling,
-      "localModels.modelSampling",
-    ),
+    modelSampling: resolveModelSampling(inputVersion, localModels.modelSampling, readDefaults),
+    ...samplingOverridesField(localModels.modelSamplingOverrides),
     strictToolArgs: parseBool(
       localModels.strictToolArgs ?? readDefaults().strictToolArgs,
       "localModels.strictToolArgs",
@@ -585,4 +628,15 @@ export function parseUserLocalModelsConfig(
     download,
     customModels,
   };
+}
+
+/** ATO-2482: the key only when the file names at least one set. */
+function samplingOverridesField(
+  raw: unknown,
+): Pick<UserLocalModelsConfig, "modelSamplingOverrides"> {
+  const overrides = parseModelSamplingOverrides(
+    raw,
+    "localModels.modelSamplingOverrides",
+  );
+  return overrides ? { modelSamplingOverrides: overrides } : {};
 }

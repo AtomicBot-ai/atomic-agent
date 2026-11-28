@@ -5,6 +5,8 @@ import { resolve as resolvePath } from "node:path";
 import {
   currentApprovalLedger,
   recordAutoApproval,
+  recordGuardBlock,
+  type SecurityFinding,
   type ToolApprovalRecord,
 } from "./approval-ledger.js";
 import {
@@ -49,7 +51,8 @@ import {
   UntrustedTaint,
 } from "./untrusted-taint.js";
 import type { UserQuestion, UserQuestionAnswer } from "./user-question.js";
-import { EgressSessionHosts, unknownOutbound } from "./egress-hold.js";
+import type { ShellSecretPrompt } from "./shell-secret.js";
+import { durableHostsToKeep, EgressSessionHosts, unknownOutbound } from "./egress-hold.js";
 import { withUnreadableScript, type EgressDestination } from "./egress-scan.js";
 import {
   GUARD_ASK_PERSON,
@@ -120,7 +123,7 @@ export interface ApprovalRequest {
   commandUnreadable?: boolean;
   /**
    * Where the call sends data (`egress-scan.ts`, ATO-2116), set by the
-   * shell tool. Surfaces show the outbound entries as `sends data to ->
+   * shell tool. Surfaces show the outbound entries as `sends data to →
    * host` (`formatEgressLine`), the risk reviewer reads them, and an
    * outbound host nobody approved holds the call for a person
    * (`egress-hold.ts`). Absent means none was found.
@@ -161,6 +164,13 @@ export interface ApprovalRequest {
    */
   askEveryLevel?: true;
   /**
+   * The argument check behind a request (ATO-2505): the shell guard's
+   * `dangerous.*` finding with its confidence, a write to a startup or
+   * SSH file, a secret in an HTTP body. The card shows it, and the
+   * ledger keeps it with the answer for the turn summary.
+   */
+  securityFinding?: SecurityFinding;
+  /**
    * Set by the gate, never by a caller: what the smart-approval risk
    * review (`risk-review.ts`) said about a request it did not let
    * through, e.g. `risk check: medium (installs a package)`. A surface
@@ -182,6 +192,12 @@ export interface ApprovalRequest {
    * shows `reason` (the question) and `preview` (the numbered options).
    */
   question?: UserQuestion;
+  /**
+   * Set only on a `shell_secret_input` request (ATO-2486, `shell-secret.ts`):
+   * which job asks for what. A surface that knows it draws a masked
+   * field and answers with `ApprovalDecision.secret`.
+   */
+  secretInput?: ShellSecretPrompt;
 }
 
 /**
@@ -239,9 +255,25 @@ export interface ApprovalDecision {
    * untouched; `ask_user` checks it again. Ignored when denied.
    */
   answer?: UserQuestionAnswer;
+  /**
+   * What the person typed for a `shell_secret_input` request (ATO-2486). It
+   * goes into the job's input and nowhere else: the gate records only
+   * the verdict, and no caller may log or echo it. Ignored when denied.
+   */
+  secret?: string;
 }
 
 export type ApprovalEmitter = (request: ApprovalRequest) => void;
+
+/**
+ * Hooks around a prompt to a person (`src/hooks/permission-hooks.ts`):
+ * `beforePrompt` may return a reason to refuse instead of asking, never
+ * an approval; `onPrompt` hears that the prompt went out.
+ */
+export interface ApprovalPromptHooks {
+  beforePrompt(request: ApprovalRequest, signal?: AbortSignal): Promise<string | undefined>;
+  onPrompt(request: ApprovalRequest): void;
+}
 
 /**
  * What the gate does for a session's request that would otherwise
@@ -443,12 +475,18 @@ export class ApprovalGate {
   private egressAllowlist: () => readonly string[] | null = () => null;
   /** Hosts each session approved data going to (`egress-hold.ts`, ATO-2116). */
   private readonly egressHosts = new EgressSessionHosts();
+  /** `agent.security.knownHosts`, read live (`setEgressKnownHosts`, ATO-2528). */
+  private egressKnownHosts: () => readonly string[] = () => [];
+  /** Keeps hosts for good when a held call is answered "allow always"; unset = not kept. */
+  private keepKnownHosts: ((hosts: string[]) => void) | undefined;
   /** Plain-text security rules (`guard-check.ts`, ATO-2111); unset = off. */
   private guard: SecurityGuard | undefined;
   /** Approval ids re-entering `request` after the guard allowed them (or failed). */
   private readonly guardChecked = new Set<string>();
   /** Approval ids whose guard review failed under `onFailure: ask`: a person decides. */
   private readonly guardHeld = new Set<string>();
+  /** PermissionRequest / Notification hooks (ATO-2462); unset = none. */
+  private promptHooks: ApprovalPromptHooks | undefined;
 
   constructor(options: { emit: ApprovalEmitter; level?: ApprovalLevel }) {
     this.emitter = options.emit;
@@ -525,6 +563,18 @@ export class ApprovalGate {
   }
 
   /**
+   * The durable known hosts for the egress hold (ATO-2528): `read` gives
+   * `agent.security.knownHosts` live, `keep` adds hosts to it when the
+   * person answers a call that sends data with "allow always". Like ssh
+   * `known_hosts`, separate from `http.hostAllowlist`, which also limits
+   * `os.http.request`.
+   */
+  setEgressKnownHosts(read: () => readonly string[], keep?: (hosts: string[]) => void): void {
+    this.egressKnownHosts = read;
+    this.keepKnownHosts = keep;
+  }
+
+  /**
    * The outbound destinations of `egress` no one approved for `sessionId`
    * (`egress-hold.ts`). Non-empty means the call is put to a person
    * whatever the level, a grant or an allow rule says; a caller that
@@ -542,9 +592,16 @@ export class ApprovalGate {
     } catch {
       allowlist = null;
     }
+    let durableHosts: readonly string[] = [];
+    try {
+      durableHosts = this.egressKnownHosts();
+    } catch {
+      durableHosts = [];
+    }
     return unknownOutbound(egress, {
       allowlist,
       sessionHosts: this.egressHosts.known(sessionId, this.grantsBySession.get(sessionId)),
+      durableHosts,
     });
   }
 
@@ -591,9 +648,16 @@ export class ApprovalGate {
     ) {
       return GUARD_ASK_PERSON;
     }
-    return outcome.kind === "block"
-      ? guardBlockReason(outcome.reason)
-      : "Blocked by your security rules: the rules reviewer gave no answer, and nobody can be asked here";
+    const refusal =
+      outcome.kind === "block"
+        ? guardBlockReason(outcome.reason)
+        : "Blocked by your security rules: the rules reviewer gave no answer, and nobody can be asked here";
+    // Logged for the turn summary and the trace (ATO-2529).
+    recordGuardBlock(
+      request.category,
+      outcome.kind === "block" ? { decision: "block", reason: outcome.reason } : { decision: "no-answer", reason: refusal },
+    );
+    return refusal;
   }
 
   /** The folder the project guard file is read from: a worker's parent project, else the request's. */
@@ -622,6 +686,13 @@ export class ApprovalGate {
       throw new ApprovalGateError("approval aborted before a decision was made", request.approvalId);
     }
     if (outcome.kind === "block" || (outcome.kind === "failed" && outcome.onFailure === "block")) {
+      // Logged for the turn summary and the trace (ATO-2529).
+      recordGuardBlock(
+        request.category,
+        outcome.kind === "block"
+          ? { decision: "block", reason: outcome.reason }
+          : { decision: "no-answer", reason: GUARD_FAILURE_BLOCK_REASON },
+      );
       return {
         approvalId: request.approvalId,
         approved: false,
@@ -857,6 +928,50 @@ export class ApprovalGate {
         automatic: true,
       });
     }
+    // PermissionRequest hooks may refuse before the person is asked (ATO-2462).
+    if (this.promptHooks !== undefined) return this.requestAfterPromptHooks(request, this.promptHooks, signal);
+    return this.promptPerson(request, signal);
+  }
+
+  /** Install (or with `undefined`, remove) the PermissionRequest / Notification hooks. */
+  setPromptHooks(hooks: ApprovalPromptHooks | undefined): void {
+    this.promptHooks = hooks;
+  }
+
+  /**
+   * The PermissionRequest hooks run on a request about to prompt. A
+   * reason refuses it (`automatic`, the person is never asked); anything
+   * else, a hook that throws included, prompts as before. They can never
+   * approve: hooks only tighten.
+   */
+  private async requestAfterPromptHooks(
+    request: ApprovalRequest,
+    hooks: ApprovalPromptHooks,
+    signal: AbortSignal | undefined,
+  ): Promise<ApprovalDecision> {
+    let refusal: string | undefined;
+    try {
+      refusal = await hooks.beforePrompt(request, signal);
+    } catch {
+      refusal = undefined;
+    }
+    if (signal?.aborted) {
+      throw new ApprovalGateError("approval aborted before a decision was made", request.approvalId);
+    }
+    if (refusal !== undefined) {
+      return {
+        approvalId: request.approvalId,
+        approved: false,
+        reason: `Blocked by a PermissionRequest hook: ${refusal}`,
+        automatic: true,
+      };
+    }
+    return this.promptPerson(request, signal);
+  }
+
+  /** Park `request` for a person's decision and send it to the surfaces. */
+  private promptPerson(request: ApprovalRequest, signal: AbortSignal | undefined): Promise<ApprovalDecision> {
+    const { approvalId } = request;
     return new Promise<ApprovalDecision>((resolve, reject) => {
       const onAbort = (): void => {
         this.pending.delete(approvalId);
@@ -884,6 +999,12 @@ export class ApprovalGate {
       }
       signal?.addEventListener("abort", onAbort, { once: true });
       this.emitter(request);
+      // Notification hooks: the person is being asked (ATO-2462).
+      try {
+        this.promptHooks?.onPrompt(request);
+      } catch {
+        // A hook seam never takes the prompt down.
+      }
     });
   }
 
@@ -1313,6 +1434,9 @@ export class ApprovalGate {
       verdict: decision.approved ? "approved" : "denied",
       category: entry.request.category,
       at: Date.now(),
+      ...(entry.request.securityFinding !== undefined
+        ? { finding: { ...entry.request.securityFinding } }
+        : {}),
     });
     if (decision.approved && decision.grant) {
       this.recordGrant(entry.request, decision.grant);
@@ -1324,6 +1448,17 @@ export class ApprovalGate {
     }
     entry.resolve(decision);
     return true;
+  }
+
+  /** "Allow always" keeps the call's outbound hosts as known hosts (ATO-2528). */
+  private keepEgressHosts(request: ApprovalRequest): void {
+    const hosts = durableHostsToKeep(request.egress);
+    if (hosts.length === 0 || this.keepKnownHosts === undefined) return;
+    try {
+      this.keepKnownHosts(hosts);
+    } catch {
+      // A config that cannot be written keeps the session grant only.
+    }
   }
 
   /**
@@ -1344,6 +1479,7 @@ export class ApprovalGate {
     this.egressHosts.remember(request.sessionId, request.egress);
     if (scope === "always") {
       this.saveAlwaysRule(request);
+      this.keepEgressHosts(request);
       return;
     }
     if (scope === "category" && isSiteScopedCategory(request.category)) {
@@ -1552,11 +1688,12 @@ export function canGrantShape(request: ApprovalRequest): boolean {
 }
 
 /**
- * A shell command, ordinary or dangerous (`shell_dangerous`, ATO-1220):
- * the same-turn denial rule treats both alike.
+ * A shell command, ordinary, dangerous (`shell_dangerous`, ATO-1220) or
+ * handed a secret (`shell_secret`, ATO-2530): the same-turn denial rule
+ * treats them alike.
  */
 function isShellCommandCategory(category: ApprovalCategory): boolean {
-  return category === "shell" || category === "shell_dangerous";
+  return category === "shell" || category === "shell_dangerous" || category === "shell_secret";
 }
 
 /**

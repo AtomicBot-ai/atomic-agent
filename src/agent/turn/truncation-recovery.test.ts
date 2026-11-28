@@ -327,6 +327,27 @@ describe("truncation notice", () => {
     expect(notice).not.toContain("\u2014");
   });
 
+  it("names the tool call the cut landed in, so the model knows what never ran (ATO-1678)", () => {
+    const notice = formatTruncationNotice(
+      { ...detail, part: "tool_call", cutTool: "os.fs.write" },
+      { kind: "raise_cap", maxTokens: 16_384 },
+    );
+    expect(notice).toContain("cut off after 8192 tokens in the middle of a os.fs.write call, so that call never ran");
+    expect(notice).toContain("smaller pieces");
+    expect(notice).toContain("write it in parts");
+    expect(notice).not.toContain("\u2014");
+  });
+
+  it("tells a model cut mid thought to stop re-thinking and call the next tool (ATO-1678)", () => {
+    const notice = formatTruncationNotice(
+      { ...detail, part: "reasoning" },
+      { kind: "same_cap", maxTokens: 8_192 },
+    );
+    expect(notice).toContain("while you were still thinking, before any tool call");
+    expect(notice).toContain("decide the next single step");
+    expect(notice).not.toContain("in the middle of");
+  });
+
   it("names the loop when the held cap follows a repetitive reply", () => {
     const notice = formatTruncationNotice(
       { ...detail, repetitive: true },

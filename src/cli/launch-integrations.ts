@@ -1,12 +1,14 @@
 /**
  * ATO-2172: one descriptor per coding CLI that `atag launch` can start
- * against `atag serve`. Pure: each descriptor turns the serve address, the
+ * against `atag serve` (ATO-2449 added Qwen Code and Cline). Pure: each descriptor turns the serve address, the
  * key and the model label into the environment and arguments the CLI is
  * spawned with. Modelled on Ollama's `cmd/launch` package (one file per
  * integration: binary, env, args), e.g. `cmd/launch/claude.go`.
  *
- * The key always travels in an environment variable, never in an argument,
- * so it does not show up in `ps` and `--print-env` can mask it by name.
+ * The key travels in an environment variable, not an argument, so it does
+ * not show up in `ps` and `--print-env` can mask it by name. The one
+ * exception is Cline's short `cline auth` setup run (no env form exists);
+ * `--print-env` masks it there by value.
  */
 
 /** What every integration is built from. */
@@ -29,6 +31,14 @@ export interface LaunchPlan {
   readonly args: readonly string[];
   /** Names in `env` whose values are secrets: masked by `--print-env`. */
   readonly secretEnv: readonly string[];
+  /**
+   * ATO-2449: runs of the same binary before the CLI itself, each with
+   * the same env, stopping at the first that fails (Cline saves its
+   * provider with `cline auth` first).
+   */
+  readonly setup?: readonly (readonly string[])[];
+  /** Argument values that are secrets (in `setup`): masked by `--print-env`. */
+  readonly secretArgs?: readonly string[];
 }
 
 export interface LaunchIntegration {
@@ -38,9 +48,17 @@ export interface LaunchIntegration {
   readonly displayName: string;
   /** Executable looked up on PATH. */
   readonly binary: string;
-  /** Printed when the binary is missing. */
+  /** Printed when the binary is missing: the `install` command as one line. */
   readonly installHint: string;
+  /** ATO-2450: what `atag launch` runs, after a yes, to install it. */
+  readonly install: { readonly command: string; readonly args: readonly string[] };
   build(target: LaunchTarget): LaunchPlan;
+}
+
+/** An npm global install, the way each of these CLIs documents its own. */
+function npmGlobal(pkg: string): Pick<LaunchIntegration, "install" | "installHint"> {
+  const install = { command: "npm", args: ["install", "-g", pkg] };
+  return { install, installHint: ["npm", ...install.args].join(" ") };
 }
 
 /** Name of the variable that carries the key for Codex and OpenCode. */
@@ -54,7 +72,7 @@ const claude: LaunchIntegration = {
   aliases: ["claude-code"],
   displayName: "Claude Code",
   binary: "claude",
-  installHint: "npm install -g @anthropic-ai/claude-code",
+  ...npmGlobal("@anthropic-ai/claude-code"),
   build(target) {
     // Same variables as `ollama launch claude`: the base URL without /v1
     // (Claude Code appends /v1/messages), the key as a bearer token, and
@@ -83,7 +101,7 @@ const codex: LaunchIntegration = {
   aliases: [],
   displayName: "Codex",
   binary: "codex",
-  installHint: "npm install -g @openai/codex",
+  ...npmGlobal("@openai/codex"),
   build(target) {
     // A custom model provider through `-c` overrides, so nothing is written
     // to ~/.codex/config.toml. `wire_api = "responses"`: serve answers
@@ -122,7 +140,7 @@ const opencode: LaunchIntegration = {
   aliases: [],
   displayName: "OpenCode",
   binary: "opencode",
-  installHint: "npm install -g opencode-ai",
+  ...npmGlobal("opencode-ai"),
   build(target) {
     // OPENCODE_CONFIG_CONTENT is merged over the person's own config for
     // this run only; the key stays in ATOMIC_AGENT_TOKEN via `{env:...}`.
@@ -134,7 +152,59 @@ const opencode: LaunchIntegration = {
   },
 };
 
-export const LAUNCH_INTEGRATIONS: readonly LaunchIntegration[] = [claude, codex, opencode];
+/** Whether the person already passed one of these flags after `--`. */
+function hasFlag(args: readonly string[], ...names: string[]): boolean {
+  return args.some((arg) => names.some((name) => arg === name || arg.startsWith(`${name}=`)));
+}
+
+const qwen: LaunchIntegration = {
+  id: "qwen",
+  aliases: ["qwen-code"],
+  displayName: "Qwen Code",
+  binary: "qwen",
+  ...npmGlobal("@qwen-code/qwen-code"),
+  build(target) {
+    // Same as `ollama launch qwen`: the OpenAI-compatible auth type and
+    // the OPENAI_* variables, `--model` and `--auth-type` unless the
+    // person passed their own after `--`.
+    const own = target.extraArgs;
+    const args = [
+      ...(hasFlag(own, "--model", "-m") ? [] : ["--model", target.model]),
+      ...(hasFlag(own, "--auth-type") ? [] : ["--auth-type", "openai"]),
+      ...own,
+    ];
+    return {
+      env: { OPENAI_BASE_URL: `${target.baseUrl}/v1`, OPENAI_API_KEY: target.token, OPENAI_MODEL: target.model },
+      args,
+      secretEnv: ["OPENAI_API_KEY"],
+    };
+  },
+};
+
+const cline: LaunchIntegration = {
+  id: "cline",
+  aliases: ["cline-cli"],
+  displayName: "Cline",
+  binary: "cline",
+  ...npmGlobal("cline"),
+  build(target) {
+    // The Cline CLI takes no base URL on a run; its OpenAI-compatible
+    // provider (`openai`) is saved first with `cline auth`, which keeps
+    // it in ~/.cline like Ollama's cline.go does, then the run selects
+    // it with `-P openai`. Cline has no way to read that key from the
+    // environment, so the key is an argument of the short `auth` run.
+    const auth = ["auth", "-p", "openai", "-k", target.token, "-b", `${target.baseUrl}/v1`, "-m", target.model];
+    const own = target.extraArgs;
+    const args = [
+      ...(hasFlag(own, "-P", "--provider") ? [] : ["-P", "openai"]),
+      ...(hasFlag(own, "-m", "--model") ? [] : ["-m", target.model]),
+      ...own,
+    ];
+    return { env: {}, args, secretEnv: [], setup: [auth], secretArgs: [target.token] };
+  },
+};
+
+export const LAUNCH_INTEGRATIONS: readonly LaunchIntegration[] = [claude, codex, opencode, qwen, cline];
 
 export function findLaunchIntegration(name: string): LaunchIntegration | null {
   const key = name.trim().toLowerCase();

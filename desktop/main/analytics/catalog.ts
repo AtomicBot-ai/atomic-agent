@@ -314,7 +314,7 @@ export const EVENTS: Record<string, EventSpec> = {
   },
   message_action: {
     owner: "ui",
-    props: { action: en(["copy", "resend", "retry", "continue", "steer", "unqueue", "stop", "copy_reply", "regenerate"]) },
+    props: { action: en(["copy", "resend", "retry", "continue", "steer", "unqueue", "stop", "copy_reply", "regenerate", "edit_queued", "reorder_queued", "send_next"]) },
   },
   approval_answered: {
     owner: "ui",
@@ -416,8 +416,9 @@ export const EVENTS: Record<string, EventSpec> = {
   telegram_setup: {
     owner: "main",
     props: {
-      step: en(["enable", "token_saved", "token_cleared", "owner_cleared"]),
-      result: en(["ok", "error"]),
+      step: en(["enable", "token_saved", "token_cleared", "owner_cleared", "token_checked"]),
+      // ATO-2520: rejected / unchecked only on token_checked (Telegram refused it / could not be reached).
+      result: en(["ok", "error", "rejected", "unchecked"]),
     },
   },
   composio_setup: {

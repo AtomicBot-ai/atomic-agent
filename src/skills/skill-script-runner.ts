@@ -22,6 +22,11 @@ export interface RunSkillScriptParams {
    * ATO-347). Omitted means none.
    */
   envPassthrough?: readonly string[];
+  /**
+   * Values for the skill's own `env_keys` for this run (the caller
+   * checks the names), set over the inherited ones (ATO-2530).
+   */
+  env?: Readonly<Record<string, string>>;
 }
 
 const AGENT_CREDENTIALS = new Set(KNOWN_SECRET_ENV_VARS.map((name) => name.toUpperCase()));
@@ -147,10 +152,13 @@ export async function runSkillScript(
       // filtered the same way.
       // plus the names this skill declared in `env_keys`, for its own
       // scripts only (never another skill's, never `os.shell.run`).
-      env: buildCommandEnv(process.env, [
-        ...(params.envPassthrough ?? []),
-        ...skillEnvKeys(skill),
-      ]),
+      env: {
+        ...buildCommandEnv(process.env, [
+          ...(params.envPassthrough ?? []),
+          ...skillEnvKeys(skill),
+        ]),
+        ...(params.env ?? {}),
+      },
       timeoutMs: params.timeoutMs ?? 30_000,
       ...(params.signal ? { signal: params.signal } : {}),
       ...(windowsVerbatimArguments ? { windowsVerbatimArguments } : {}),

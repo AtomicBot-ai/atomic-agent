@@ -12,6 +12,7 @@ import { atomicMailIntegration } from "./atomic-mail-integration.js";
 import { discordIntegration } from "./discord-integration.js";
 import { exaIntegration } from "./exa-integration.js";
 import { githubIntegration } from "./github-integration.js";
+import { linearIntegration } from "./linear-integration.js";
 import { monidIntegration } from "./monid-integration.js";
 import { telegramIntegration } from "./telegram-integration.js";
 import type { IntegrationDescriptor } from "./integration-descriptor.js";
@@ -25,6 +26,8 @@ export function listIntegrations(): readonly IntegrationDescriptor[] {
     githubIntegration,
     telegramIntegration,
     discordIntegration,
+    // ATO-2464: the Linear channel, after the other chat channels.
+    linearIntegration,
     atomicMailIntegration,
     exaIntegration,
   ];

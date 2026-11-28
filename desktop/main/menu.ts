@@ -80,7 +80,8 @@ export function menuTemplate(
         // ATO-532: the composer's window picker (renderer/window-snapshot.js); no chord.
         item("Attach App Window…", "attach:window"),
         // ATO-2333: the live meeting recorder (renderer/meeting-panel.js); no chord.
-        item("Record a Meeting…", "meeting:open"),
+        // ATO-2749: the same words as the "+" menu's "Record meeting"; no "…", it starts at once.
+        item("Record Meeting", "meeting:open"),
         sep,
         item("Open Workspace…", "workspace:choose", "Shift+CommandOrControl+O"),
         sep,
@@ -109,7 +110,7 @@ export function menuTemplate(
       label: "View",
       submenu: [
         item("Chat", "room:chat", "CommandOrControl+1"),
-        item("Cron jobs", "room:tasks", "CommandOrControl+2"),   // W2: the Tasks feature's visible name, as in the sidebar
+        item("Scheduled tasks", "room:tasks", "CommandOrControl+2"),   // W2, ATO-2743: the Tasks feature's visible name, as in the sidebar
         item("Skills", "room:skills", "CommandOrControl+3"),
         item("Memory", "settings:memory", "CommandOrControl+4"),
         sep,
@@ -141,6 +142,9 @@ export function menuTemplate(
         { label: "Desktop Pet", submenu: [
           { label: "Show Pet", type: "checkbox", checked: toggles.pet?.enabled === true, click: () => send("pet:toggle") },
           { label: "Do Not Disturb", type: "checkbox", checked: toggles.pet?.dnd === true, click: () => send("pet:dnd") },
+          // ATO-2513: Studio makes its pictures (renderer/pet-maker.js).
+          { type: "separator" },
+          { label: "Make Your Own Pet…", click: () => send("pet:maker") },
         ] },
         sep,
         { label: "Appearance", submenu: [

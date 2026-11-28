@@ -40,3 +40,25 @@
 .mtgbusy{color:var(--ink-2)}
 .mtgrecover{top:16px;padding-top:12px}
 .mtgrecover p{margin:0;padding:0 14px}
+/* ATO-2749: the mic-denied card sits where the unfinished-meeting card does; that one waits until it is closed. */
+.mtgdenied ~ .mtgrecover{display:none}
+.mtgask{flex:1 1 100%;color:var(--ink-2)}
+
+/* ATO-2514: Me / Them on a live line, and the line about the call's sound. */
+.mtgwho{display:inline-block;margin-right:6px;font-weight:600;color:var(--ink-2)}
+.mtgsys{margin:0;padding:6px 14px;color:var(--ink-2);border-top:1px solid var(--bd);display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.mtgsys-off{color:var(--ink-2)}
+
+/* ATO-2514: Create tasks under meeting notes (renderer/meeting-tasks.js). */
+.msgact.mttbtn{width:auto;gap:4px;padding:0 6px;font-size:12px;color:var(--ink-2)}
+.mttintro{margin:0 0 10px;color:var(--ink-2)}
+.mttrow{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--bd)}
+.mttmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.mtttask{color:var(--ink);overflow-wrap:anywhere}
+.mttowner{font-size:12px;color:var(--ink-3)}
+.mttday{flex:none}
+.mtterr{margin:10px 0 0;color:var(--critical)}
+
+/* ATO-2514: Settings, Meetings (renderer/settings-meetings.js). */
+.ms-vacts{display:flex;justify-content:flex-end;gap:6px;margin:-4px 0 10px}
+.ms-pane .set-path{overflow-wrap:anywhere}

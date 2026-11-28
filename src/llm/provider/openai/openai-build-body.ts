@@ -404,7 +404,7 @@ function assembleOpenAiChatBody(
   return merged;
 }
 
-/** The flat prompt as it goes out: tags neutralized for Ollama Cloud only. */
+/** The flat prompt as it goes out: tags neutralized for Ollama cloud models only. */
 function flatContent(text: string, options: OpenAiBodyOptions): string {
   return options.thinkTagSafe ? neutralizeThinkTags(text) : text;
 }

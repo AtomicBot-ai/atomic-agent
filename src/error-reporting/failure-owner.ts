@@ -6,12 +6,17 @@ import { classifyTransportHost } from "./classify-transport-host.js";
  * things under one `TransportError`: the person's own honest 4xx (a bad
  * or missing key, no credit, a rate limit, a model id the provider does
  * not serve) and refusals of a request WE built wrong (tool results out
- * of order, a schema, roles, a parameter, empty content). Both are still
- * reported; this tag only says which pile an event belongs to.
+ * of order, a schema, roles, a parameter, empty content). The tag says
+ * which pile an event belongs to; `captureError` leaves most `person`
+ * refusals out of Sentry altogether (ATO-1673, `person-refusal.ts`).
  *
  *  - `person`: the account or the setup is the fix (401/403 from a cloud
  *    host, 402, 404, 413, 429, or a reason that says so: `key_refused`,
- *    `out_of_credit`, `model_not_found`, `request_too_large`).
+ *    `out_of_credit`, `model_not_found`, `request_too_large`), and a
+ *    cloud model the person picked that takes no tools
+ *    (`tools_unsupported`, ATO-1673). From a server on this machine that
+ *    reason stays `unknown`: the managed engine started without tool
+ *    support would be ours.
  *  - `ours`: the provider read the request and named a part of it we
  *    built (`tool_result_missing`, `roles_must_alternate`, ...).
  *  - `provider`: the provider's own trouble (5xx, 529 overloaded, 408).
@@ -73,6 +78,7 @@ export function classifyFailureOwner(
   if (httpStatus === undefined || httpStatus < 400) return undefined;
   if (httpStatus >= 500 || httpStatus === 408) return "provider";
   if ((httpStatus === 401 || httpStatus === 403) && hostIsLocal) return "unknown";
+  if (upstreamReason === "tools_unsupported") return hostIsLocal ? "unknown" : "person";
   if (upstreamReason !== undefined && PERSON_REASONS.has(upstreamReason)) return "person";
   if (PERSON_STATUSES.has(httpStatus)) return "person";
   if (upstreamReason !== undefined && OUR_REASONS.has(upstreamReason)) return "ours";
@@ -85,17 +91,25 @@ export function classifyFailureOwner(
  * leaves this function.
  */
 export function requestHostIsLocal(err: unknown): boolean {
+  const url = requestUrlOf(err);
+  if (url === undefined) return false;
+  const host = classifyTransportHost(url);
+  return host === "localhost" || host === "private";
+}
+
+/**
+ * The first non-empty `.url` on the error's `cause` chain, for reading
+ * on this machine only: it is never put on an event.
+ */
+export function requestUrlOf(err: unknown): string | undefined {
   let current: unknown = err;
   for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth += 1) {
-    if (typeof current !== "object" || current === null) return false;
+    if (typeof current !== "object" || current === null) return undefined;
     const url = (current as { url?: unknown }).url;
-    if (typeof url === "string" && url.length > 0) {
-      const host = classifyTransportHost(url);
-      return host === "localhost" || host === "private";
-    }
+    if (typeof url === "string" && url.length > 0) return url;
     const next = (current as { cause?: unknown }).cause;
-    if (next === current) return false;
+    if (next === current) return undefined;
     current = next;
   }
-  return false;
+  return undefined;
 }

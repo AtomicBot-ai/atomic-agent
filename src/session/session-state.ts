@@ -183,6 +183,13 @@ export interface SessionState {
    */
   previousReplies?: import("./session-previous-replies.js").PreviousReplies;
   /**
+   * Earlier versions of sent messages (ATO-2470): the conversation tails
+   * an edit cut off, kept so the person can switch back to one. Never part
+   * of the prompt. See `session-message-branches.ts`. Absent until an edit
+   * kept one.
+   */
+  messageBranches?: import("./session-message-branches.js").MessageBranch[];
+  /**
    * Steps since the model last re-planned (ATO-609): counted by the
    * agent loop only while `agent.task.replanEveryNSteps` is on, reset by
    * a successful `plan.update`, a re-plan notice or a new user message

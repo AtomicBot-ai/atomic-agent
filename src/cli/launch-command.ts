@@ -1,31 +1,41 @@
 /**
- * ATO-2172: `atag launch <claude|codex|opencode> [--model <id>] [--print-env] [-- args]`.
+ * ATO-2172: `atag launch [claude|codex|opencode] [--agent] [--model <id>] [--print-env] [-- args]`.
  *
- * Starts another coding CLI pointed at this machine's `atag serve`, the way
- * `ollama launch claude` points Claude Code at Ollama: find the binary on
- * PATH, reuse or start a serve (launch-serve.ts), take the serve API key
- * the same way serve does (`ATOMIC_AGENT_API_KEY`, else
- * `<stateDir>/serve-api.key`), build the CLI's env and args
- * (launch-integrations.ts), run it with the terminal attached and exit
- * with its exit code. Nothing is written to the CLI's own config files.
+ * Starts another coding CLI on this machine's model, the way `ollama
+ * launch claude` points Claude Code at Ollama: find the binary on PATH,
+ * reuse or start a serve (launch-serve.ts), build the CLI's env and args
+ * (launch-plan.ts), run it with the terminal attached and exit with its
+ * exit code. Nothing is written to the CLI's own config files.
+ *
+ * ATO-2451: the CLI never gets the serve key (admin). Each run gets its
+ * own `member` token (launch-token.ts), removed when the CLI exits;
+ * `--print-env`, `--print-key` and `--config` use one lasting `member`
+ * token. The serve key itself is only used to find out whether serve is
+ * up, and as the fallback when the token store cannot be written.
+ *
+ * ATO-2447: by default the CLI gets the bare local model through serve's
+ * `/local/v1` routes and runs its own tools; `--agent` keeps the first
+ * slice, an Atomic Agent turn behind `/v1`.
  *
  * The key is never printed: `--print-env` shows every variable but the
  * secret ones, which it masks.
  */
 
-import { spawn as nodeSpawn, type SpawnOptions } from "node:child_process";
-import { constants as osConstants } from "node:os";
+import { spawn as nodeSpawn } from "node:child_process";
 
 import { resolveStateDir } from "../config/index.js";
-import { findOnPath } from "./cloudflared.js";
+import { LAUNCH_HELP, parseLaunchArgs, type LaunchArgs } from "./launch-args.js";
+import { runChild } from "./launch-child.js";
+import type { LaunchConfigFs } from "./launch-config.js";
+import { runLaunchConfig } from "./launch-config-command.js";
+import type { LaunchIntegration } from "./launch-integrations.js";
+import { findLaunchBinary, offerInstall } from "./launch-install.js";
+import { localModelProbeMessage, probeLocalModel, type LocalModelProbe } from "./launch-local-model.js";
+import { buildPlan, formatPrintEnv, LOCAL_MODEL_FALLBACK_NAME } from "./launch-plan.js";
+import { launchChoices, pickLaunchIntegration } from "./launch-picker.js";
+import { issueRunToken, lastingToken, type IssuedToken } from "./launch-token.js";
 import {
-  DEFAULT_LAUNCH_MODEL,
-  findLaunchIntegration,
-  LAUNCH_INTEGRATIONS,
-  type LaunchIntegration,
-  type LaunchPlan,
-} from "./launch-integrations.js";
-import {
+  DEFAULT_SERVE_PORT,
   findReusableServe,
   loopbackBaseUrl,
   serveAcceptsKey,
@@ -33,89 +43,24 @@ import {
   type LaunchServe,
   type LaunchServeDeps,
 } from "./launch-serve.js";
+import { defaultPrintEnvShell } from "./print-env-format.js";
 import { resolveServeApiKey } from "./serve-api-key.js";
 
-export const LAUNCH_HELP = [
-  "Usage: atomic-agent launch <agent> [--model <id>] [--print-env] [-- <agent args>]",
-  "",
-  "Start another coding CLI on Atomic Agent: it talks to `atag serve` on this machine",
-  "(reused when one already runs in this folder, else started for this run and stopped after).",
-  "",
-  "Agents:",
-  ...LAUNCH_INTEGRATIONS.map((i) => `  ${i.id.padEnd(9)} ${i.displayName} (${i.installHint})`),
-  "",
-  "Options:",
-  "  --model <id>   Model name the CLI sends (default atomic-agent). The model active in",
-  "                 Atomic Agent answers whatever the name is.",
-  "  --print-env    Print the environment and command instead of running it (keys masked)",
-  "  -- <args>      Passed to the agent unchanged, e.g. atag launch codex -- exec \"fix the tests\"",
-  "",
-  "Answers come from the Atomic Agent turn path (/v1/messages, /v1/responses, /v1/chat/completions):",
-  "the agent runs its own tools; the launched CLI's own tool calls are not offered to the model.",
-  "",
-  "Approvals: a serve started here refuses every approval prompt at once (the CLI cannot show one),",
-  "so the turn answers in text; a reused serve asks in http://127.0.0.1:<port>/panel.",
-].join("\n");
-
-export const MASKED = "<hidden: atag serve --print-api-key>";
+export { LAUNCH_HELP, parseLaunchArgs, type LaunchArgs } from "./launch-args.js";
+export { runChild } from "./launch-child.js";
+export { buildPlan, formatPrintEnv, LOCAL_MODEL_FALLBACK_NAME, MASKED } from "./launch-plan.js";
 
 /**
  * Where approvals go (ATO-2172 review): the launched CLI never shows
  * one. A serve started here refuses them at once; a reused one asks in
- * its /panel page.
+ * its /panel page. Only the `--agent` mode has approvals at all.
  */
 export function launchApprovalNote(serve: { baseUrl: string; started: boolean }): string {
+  // ATO-2737: the real address, not a `<port>` placeholder. A serve the
+  // person starts themselves listens on the default port.
   return serve.started
-    ? `launch: approvals are refused on this serve (the CLI cannot show them); what needs one comes back as text. To approve instead, run \`atag serve\` yourself and open http://127.0.0.1:<port>/panel\n`
+    ? `launch: approvals are refused on this serve (the CLI cannot show them); what needs one comes back as text. To approve instead, run \`atag serve --cwd .\` in another terminal and open ${loopbackBaseUrl(DEFAULT_SERVE_PORT)}/panel\n`
     : `launch: approval prompts from this serve wait in ${serve.baseUrl}/panel (or the desktop app)\n`;
-}
-
-export interface LaunchArgs {
-  readonly integration: LaunchIntegration;
-  readonly model: string | null;
-  readonly printEnv: boolean;
-  readonly extraArgs: readonly string[];
-}
-
-export function parseLaunchArgs(args: readonly string[]): LaunchArgs | { error: string } | "help" {
-  const dash = args.indexOf("--");
-  const own = dash === -1 ? args : args.slice(0, dash);
-  const extraArgs = dash === -1 ? [] : args.slice(dash + 1);
-  let name: string | undefined;
-  let model: string | null = null;
-  let printEnv = false;
-  for (let i = 0; i < own.length; i++) {
-    const arg = own[i] as string;
-    if (arg === "-h" || arg === "--help") return "help";
-    if (arg === "--print-env") printEnv = true;
-    else if (arg === "--model") {
-      const value = own[i + 1];
-      if (!value || value.startsWith("-")) return { error: "--model expects a model id" };
-      model = value;
-      i++;
-    } else if (arg.startsWith("--model=")) {
-      model = arg.slice("--model=".length);
-      if (!model) return { error: "--model expects a model id" };
-    } else if (arg.startsWith("-")) return { error: `unknown option ${arg}` };
-    else if (name === undefined) name = arg;
-    else return { error: `unexpected argument ${arg} (put the agent's own arguments after --)` };
-  }
-  if (!name) return { error: "missing agent name" };
-  const integration = findLaunchIntegration(name);
-  if (!integration) {
-    return { error: `unknown agent ${name} (one of: ${LAUNCH_INTEGRATIONS.map((i) => i.id).join(", ")})` };
-  }
-  return { integration, model, printEnv, extraArgs };
-}
-
-/** Shell-style lines for `--print-env`, secrets masked. */
-export function formatPrintEnv(binary: string, plan: LaunchPlan): string {
-  const quote = (v: string): string => (/^[\w@%+=:,./-]*$/.test(v) && v !== "" ? v : `'${v.replace(/'/g, `'\\''`)}'`);
-  const lines = Object.entries(plan.env).map(([name, value]) =>
-    plan.secretEnv.includes(name) ? `export ${name}=${quote(MASKED)}` : `export ${name}=${quote(value)}`,
-  );
-  lines.push([binary, ...plan.args].map(quote).join(" "));
-  return `${lines.join("\n")}\n`;
 }
 
 export interface LaunchCommandDeps {
@@ -125,12 +70,32 @@ export interface LaunchCommandDeps {
   readonly cwd?: () => string;
   readonly env?: NodeJS.ProcessEnv;
   readonly findBinary?: (binary: string) => string | null;
-  readonly findServe?: (stateDir: string, cwd: string) => Promise<LaunchServe | null>;
+  /** `cwd` null: a serve in any folder will do (the bare local model). */
+  readonly findServe?: (stateDir: string, cwd: string | null) => Promise<LaunchServe | null>;
   readonly startServe?: (stateDir: string, cwd: string) => Promise<LaunchServe | { readonly error: string }>;
   readonly checkKey?: (baseUrl: string, token: string) => Promise<boolean>;
+  /** ATO-2447: is the local model up behind this serve, and what is it called. */
+  readonly probeLocal?: (baseUrl: string, token: string) => Promise<LocalModelProbe>;
   readonly resolveKey?: (given: string | null, stateDir: string) => { key: string } | { error: string };
   readonly spawn?: typeof nodeSpawn;
   readonly serveDeps?: LaunchServeDeps;
+  /** ATO-2737: the picker of bare `atag launch`; defaults to stdin and stdout being a TTY. */
+  readonly isTTY?: () => boolean;
+  readonly ask?: (prompt: string) => Promise<string>;
+  /** ATO-2448: `--config` / `--revert` file access and paths; tests pass their own. */
+  readonly configFs?: LaunchConfigFs;
+  readonly home?: string;
+  readonly keyCommand?: string;
+  /** ATO-2451: the per-run token (launch-token.ts); tests pass their own. */
+  readonly issueToken?: (stateDir: string, cliId: string) => IssuedToken;
+  readonly lastingToken?: (stateDir: string) => { readonly token: string } | { readonly error: string };
+  /** Picks the `--print-env` syntax when `--shell` is not given (ATO-2758). */
+  readonly platform?: NodeJS.Platform;
+}
+
+/** The operator's own key from the environment, as serve takes it. */
+function givenKey(env: NodeJS.ProcessEnv): string | null {
+  return env.ATOMIC_AGENT_API_KEY?.trim() ? env.ATOMIC_AGENT_API_KEY.trim() : null;
 }
 
 export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}): Promise<number> {
@@ -145,34 +110,86 @@ export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}
     writeErr(`launch: ${parsed.error}\n\n${LAUNCH_HELP}\n`);
     return 2;
   }
-  const { integration } = parsed;
   const env = deps.env ?? process.env;
-  const binaryPath = (deps.findBinary ?? ((b: string) => findOnPath(b, env)))(integration.binary);
-  if (!binaryPath && !parsed.printEnv) {
-    writeErr(
-      `launch: ${integration.displayName} is not installed (no \`${integration.binary}\` on PATH).\n` +
-        `Install it with: ${integration.installHint}\n`,
-    );
-    return 1;
+  if (parsed.printKey) {
+    // Claude Code's apiKeyHelper (ATO-2448): the lasting member token
+    // alone on stdout, never the admin serve key (ATO-2451).
+    const found = (deps.lastingToken ?? lastingToken)((deps.stateDir ?? resolveStateDir)());
+    if ("error" in found) {
+      writeErr("launch: could not save the launch key in the Atomic Agent folder; see atag http tokens list.\n");
+      return 1;
+    }
+    write(`${found.token}\n`);
+    return 0;
+  }
+  const findBinary = deps.findBinary ?? ((b: string) => findLaunchBinary(b, env));
+  let integration = parsed.integration;
+  if (integration === null) {
+    const picked = await pickLaunchIntegration(launchChoices(findBinary), { write, writeErr, isTTY: deps.isTTY, ask: deps.ask });
+    if (picked.kind === "done") return picked.code;
+    integration = picked.integration;
+  }
+  let binaryPath = findBinary(integration.binary);
+  if (!binaryPath && !parsed.printEnv && !parsed.config && !parsed.revert) {
+    // ATO-2450: in a terminal, offer to install it (shows the command, asks first).
+    const installed = await offerInstall(integration, {
+      isTTY: deps.isTTY,
+      ask: deps.ask,
+      findBinary,
+      spawn: deps.spawn ?? nodeSpawn,
+      env,
+      writeErr,
+    });
+    if ("code" in installed) return installed.code;
+    binaryPath = installed.path;
   }
 
   const stateDir = (deps.stateDir ?? resolveStateDir)();
   const cwd = (deps.cwd ?? (() => process.cwd()))();
-  const given = env.ATOMIC_AGENT_API_KEY?.trim() ? env.ATOMIC_AGENT_API_KEY.trim() : null;
+  const given = givenKey(env);
   const key = (deps.resolveKey ?? resolveServeApiKey)(given, stateDir);
   if ("error" in key) {
     writeErr(`launch: ${key.error}\n`);
     return 1;
   }
 
-  const findServe = deps.findServe ?? ((s: string, c: string) => findReusableServe(s, c, deps.serveDeps));
-  let serve = await findServe(stateDir, cwd);
+  const local = parsed.mode === "local";
+  const probe = deps.probeLocal ?? ((b: string, t: string) => probeLocalModel(b, t));
+  const findServe = deps.findServe ?? ((s: string, c: string | null) => findReusableServe(s, c, deps.serveDeps));
+  if (parsed.config || parsed.revert) {
+    return runLaunchConfig(integration, parsed, {
+      stateDir,
+      env,
+      home: deps.home,
+      fs: deps.configFs,
+      keyCommand: deps.keyCommand,
+      findServe,
+      probeLocal: probe,
+      cwd,
+      key: key.key,
+      lastingToken: deps.lastingToken,
+      write,
+      writeErr,
+    });
+  }
+  // The agent behind /v1 runs its tools in the serve's folder; the bare model has none.
+  let serve = await findServe(stateDir, local ? null : cwd);
   if (parsed.printEnv) {
     // Printing starts nothing: a serve started here would stop as soon as
     // this process exits.
-    const baseUrl = serve?.baseUrl ?? loopbackBaseUrl(8787);
-    if (!serve) writeErr(`launch: no atag serve runs in ${cwd}; start one with: atag serve --cwd .\n`);
-    write(formatPrintEnv(binaryPath ?? integration.binary, buildPlan(parsed, baseUrl, key.key)));
+    if (!serve) writeErr(`launch: no atag serve runs${local ? "" : ` in ${cwd}`}; start one with: atag serve --cwd .\n`);
+    const serveUrl = serve?.baseUrl ?? loopbackBaseUrl(DEFAULT_SERVE_PORT);
+    // ATO-2451: what is printed outlives this process, so it is the
+    // lasting member token of --config, never the admin serve key.
+    const lasting = (deps.lastingToken ?? lastingToken)(stateDir);
+    if ("error" in lasting) {
+      writeErr("launch: could not save the launch key in the Atomic Agent folder; see atag http tokens list.\n");
+      return 1;
+    }
+    const found = local && serve ? await probe(serve.baseUrl, lasting.token) : null;
+    const modelId = found?.ok ? found.modelId : null;
+    const shell = parsed.shell ?? defaultPrintEnvShell(deps.platform ?? process.platform);
+    write(formatPrintEnv(binaryPath ?? integration.binary, buildPlan(integration, parsed, serveUrl, lasting.token, modelId), shell));
     return 0;
   }
   if (!serve) {
@@ -184,82 +201,70 @@ export async function launchCommand(args: string[], deps: LaunchCommandDeps = {}
     }
     serve = started;
   }
-  if (!(await (deps.checkKey ?? serveAcceptsKey)(serve.baseUrl, key.key))) {
-    writeErr(
-      `launch: the atag serve on port ${serve.port} does not accept the key from ATOMIC_AGENT_API_KEY or ` +
-        "<stateDir>/serve-api.key (it was started with another --api-key). Set ATOMIC_AGENT_API_KEY to that key.\n",
-    );
+
+  // ATO-2451: the CLI gets a `member` token of its own for this run, not
+  // the admin serve key; it is removed when the CLI exits. If the token
+  // store cannot be written, fall back to the serve key, with a warning.
+  const issued = (deps.issueToken ?? issueRunToken)(stateDir, integration.id);
+  let runKey = key.key;
+  let revoke = (): void => {};
+  if ("error" in issued) {
+    writeErr(`launch: could not make a separate key for ${integration.displayName}; it gets the serve key this time.\n`);
+  } else {
+    runKey = issued.token;
+    revoke = issued.revoke;
+  }
+  try {
+    return await runWithKey(integration, parsed, serve, runKey, binaryPath as string, { ...deps, env, writeErr, probe });
+  } finally {
+    revoke();
+  }
+}
+
+async function runWithKey(
+  integration: LaunchIntegration,
+  parsed: LaunchArgs,
+  serve: LaunchServe,
+  runKey: string,
+  binaryPath: string,
+  deps: LaunchCommandDeps & {
+    readonly env: NodeJS.ProcessEnv;
+    readonly writeErr: (s: string) => void;
+    readonly probe: NonNullable<LaunchCommandDeps["probeLocal"]>;
+  },
+): Promise<number> {
+  const { env, writeErr, probe } = deps;
+  const local = parsed.mode === "local";
+  let modelId: string | null = null;
+  if (local) {
+    const found = await probe(serve.baseUrl, runKey);
+    if (!found.ok) {
+      writeErr(localModelProbeMessage(found.reason, serve.port));
+      return 1;
+    }
+    modelId = found.modelId;
+  } else if (!(await (deps.checkKey ?? serveAcceptsKey)(serve.baseUrl, runKey))) {
+    writeErr(localModelProbeMessage("auth", serve.port));
     return 1;
   }
 
-  const plan = buildPlan(parsed, serve.baseUrl, key.key);
-  writeErr(`launch: ${integration.displayName} on Atomic Agent at ${serve.baseUrl}\n`);
-  writeErr(launchApprovalNote(serve));
-  return runChild(binaryPath as string, plan, env, deps.spawn ?? nodeSpawn, writeErr);
-}
-
-function buildPlan(parsed: LaunchArgs, baseUrl: string, token: string): LaunchPlan {
-  return parsed.integration.build({
-    baseUrl,
-    token,
-    model: parsed.model ?? DEFAULT_LAUNCH_MODEL,
-    modelGiven: parsed.model !== null,
-    extraArgs: parsed.extraArgs,
-  });
-}
-
-/** cmd.exe quoting for a Windows `.cmd` / `.bat` shim, which only runs through a shell. */
-function winQuote(arg: string): string {
-  return /^[\w@%+=:,./\\-]+$/.test(arg) ? arg : `"${arg.replace(/"/g, '""')}"`;
-}
-
-/**
- * Run the CLI with this terminal and forward its exit code. While it runs,
- * Ctrl+C belongs to the CLI (it is in the same process group and gets the
- * signal itself), so this process ignores SIGINT and passes SIGTERM and
- * SIGHUP on.
- */
-export function runChild(
-  binaryPath: string,
-  plan: LaunchPlan,
-  baseEnv: NodeJS.ProcessEnv,
-  spawn: typeof nodeSpawn,
-  writeErr: (text: string) => void,
-): Promise<number> {
-  const viaShell = process.platform === "win32" && /\.(cmd|bat)$/i.test(binaryPath);
-  const options: SpawnOptions = { stdio: "inherit", env: { ...baseEnv, ...plan.env }, ...(viaShell ? { shell: true } : {}) };
-  const child = viaShell
-    ? spawn(winQuote(binaryPath), plan.args.map(winQuote), options)
-    : spawn(binaryPath, [...plan.args], options);
-  const ignore = (): void => undefined;
-  const forward = (sig: NodeJS.Signals) => (): void => {
-    try {
-      child.kill(sig);
-    } catch {
-      // Already gone.
+  const plan = buildPlan(integration, parsed, serve.baseUrl, runKey, modelId);
+  if (local) {
+    const name = parsed.model ?? modelId ?? LOCAL_MODEL_FALLBACK_NAME;
+    writeErr(`launch: ${integration.displayName} on the local model ${name}, through ${serve.baseUrl}/local\n`);
+    writeErr(`launch: ${integration.displayName} runs its own tools here; for Atomic Agent's tools and memory use --agent\n`);
+  } else {
+    writeErr(`launch: ${integration.displayName} on Atomic Agent at ${serve.baseUrl}\n`);
+    writeErr(launchApprovalNote(serve));
+  }
+  const spawn = deps.spawn ?? nodeSpawn;
+  for (const step of plan.setup ?? []) {
+    // ATO-2449: e.g. `cline auth ...`; its output is the CLI's own.
+    const code = await runChild(binaryPath, { env: plan.env, args: step }, env, spawn, writeErr);
+    if (code !== 0) {
+      writeErr(`launch: ${integration.displayName} setup (${step[0] ?? ""}) failed with exit code ${code}; not starting it.\n`);
+      return code;
     }
-  };
-  const onTerm = forward("SIGTERM");
-  const onHup = forward("SIGHUP");
-  process.on("SIGINT", ignore);
-  process.on("SIGTERM", onTerm);
-  process.on("SIGHUP", onHup);
-  const cleanup = (): void => {
-    process.off("SIGINT", ignore);
-    process.off("SIGTERM", onTerm);
-    process.off("SIGHUP", onHup);
-  };
-  return new Promise((resolveCode) => {
-    child.once("error", (err) => {
-      cleanup();
-      writeErr(`launch: could not run ${binaryPath}: ${err.message}\n`);
-      resolveCode(1);
-    });
-    child.once("exit", (code, signal) => {
-      cleanup();
-      if (code !== null) return resolveCode(code);
-      const num = signal ? (osConstants.signals as Record<string, number>)[signal] : undefined;
-      resolveCode(num ? 128 + num : 1);
-    });
-  });
+  }
+  return runChild(binaryPath, plan, env, spawn, writeErr);
 }

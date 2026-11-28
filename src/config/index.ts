@@ -50,6 +50,7 @@ export {
   getDotenvPath,
   getStateSecretPaths,
   getTrustConfigPaths,
+  getStateSecretDirectories,
   getUserConfigPath,
   readUserConfigFileSync,
   writeUserConfigFileSync,
@@ -117,6 +118,17 @@ export {
   type SavedSecret,
   type SavedSecretRead,
 } from "./secret-access.js";
+export {
+  applySavedSecretToEnv,
+  applySavedSecretToEnvAsync,
+  type AppliedSecret,
+} from "./apply-saved-secret.js";
+export {
+  listSavedSecretRefs,
+  secretRefSource,
+  type SavedSecretRefEntry,
+  type SecretRefSource,
+} from "./saved-secret-refs.js";
 export {
   moveSecretsToEnv,
   moveSecretsToKeychain,

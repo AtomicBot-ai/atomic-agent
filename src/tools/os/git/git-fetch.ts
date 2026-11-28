@@ -14,6 +14,7 @@ import {
   type GitRemoteToolOptions,
 } from "./git-remote-policy.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
+import { refuseOptionLike } from "./git-arg-guard.js";
 
 const TOOL = "os.git.fetch";
 const NETWORK_TIMEOUT_MS = 120_000;
@@ -32,6 +33,7 @@ export function buildOsGitFetchTool(
       const remote = optionalString(rawArgs.remote) ?? "origin";
       const all = rawArgs.all === true;
       const prune = rawArgs.prune === true;
+      refuseOptionLike(TOOL, "remote", remote);
       const refused = refuseWhenRemoteSyncOff(TOOL, options, { remote, all });
       if (refused) return refused;
 

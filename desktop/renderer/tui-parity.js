@@ -59,7 +59,7 @@ function tpNotifyRowHTML() {
   const pending = !known && (TP_NOTIFY.loading || !TP_NOTIFY.loaded);
   return '<div class="tk-setrow">'
     + '<div class="body"><div class="t">Notify when a turn ends</div>'
-      + '<div class="d">While the window is in the background. Always on failure; on success after '
+      + '<div class="d">While the window is in the background. Always on failure and when a chat waits for your OK; on success after '
         + esc(tpSeconds(TP_NOTIFY.minMs)) + ' or more.</div>'
       + (TP_NOTIFY.error ? '<div class="tk-help tk-help--warn">' + esc(TP_NOTIFY.error) + '</div>' : '')
     + '</div>'

@@ -5,17 +5,18 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
-<title>Ask Atomic Agent</title>
+<title>Mini Chat</title>
 <!-- ATO-1063: the mini window's chat. The theme and the reply's markdown are the main window's; the rest is its own. -->
 <link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="css/chat.css">
+<link rel="stylesheet" href="css/diff-lines.css">
 <link rel="stylesheet" href="css/mini-chat.css">
 </head>
 <body class="mini-chat">
   <header class="mc-head">
     <span id="mc-title" class="mc-title">New chat</span>
-    <button id="mc-open" class="btn btn-s sm" type="button" disabled>Open in big window</button>
+    <button id="mc-open" class="btn btn-s sm" type="button" disabled>Open in main window</button>
   </header>
   <main id="mc-log" class="mc-log" aria-live="polite"></main>
   <div id="mc-wait" class="mc-wait" role="status" hidden><span class="mc-dot" aria-hidden="true"></span><span id="mc-wait-text"></span></div>
@@ -25,8 +26,12 @@
     <div id="mc-actions" class="mc-actions" role="group" aria-label="Use the selected text"></div>
     <div id="mc-lang" class="mc-lang" role="menu" aria-label="Translate into" hidden></div>
   </section>
+  <!-- ATO-2736: one line when the selected text did not come, and how to fix it (mini-chat-notice.js). -->
+  <div id="mc-notice" class="mc-notice" role="status" hidden><span id="mc-notice-text"></span><button id="mc-notice-btn" class="btn btn-s sm" type="button" hidden></button></div>
   <footer class="mc-foot">
     <textarea id="mc-input" class="mc-input" rows="2" spellcheck="true" placeholder="Ask Atomic Agent…" aria-label="Message"></textarea>
+    <!-- ATO-2478: a new chat that runs in the background in the main window (mini-chat-background.js). -->
+    <button id="mc-bg" class="btn btn-s sm" type="button" disabled hidden>Background</button>
     <button id="mc-send" class="btn btn-p sm" type="button" disabled>Send</button>
   </footer>
   <!-- The reply's markdown, as in the main window (vendored marked and DOMPurify, md-render.js). -->
@@ -34,7 +39,12 @@
   <script src="vendor/purify.js"></script>
   <script src="md-render.js"></script>
   <script src="code-highlight.js"></script>
+  <!-- ATO-2738: what Replace will change, shown first (diff-lines.js draws the lines). -->
+  <script src="diff-lines.js"></script>
+  <script src="mini-chat-replace-preview.js"></script>
   <script src="mini-chat-selection.js"></script>
+  <script src="mini-chat-notice.js"></script>
+  <script src="mini-chat-background.js"></script>
   <script src="mini-chat.js"></script>
 </body>
 </html>

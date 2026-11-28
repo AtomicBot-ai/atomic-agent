@@ -140,12 +140,14 @@ test('the watcher command: the Mac helper; no process at all on Windows or Linux
   assert.equal(H.holdKeyCommand('linux', '/x'), null);
   assert.equal(H.holdKeyCommand('win32', 'C:\\x'), null, 'Windows starts no PowerShell (ATO-1064 review)');
   assert.equal(H.WINDOWS_HOLD_KEY_SCRIPT, undefined, 'the PowerShell hook is gone');
-  for (const f of ['main/dictate-hold.ts', 'main/hold-key-uiohook.ts', 'main/dictate-anywhere-window.ts']) {
+  for (const f of ['main/dictate-hold.ts', 'main/hold-key-uiohook.ts', 'main/dictate-anywhere-window.ts', 'main/dictate-hold-watch.ts']) {
     const src = readFileSync(new URL('../' + f, import.meta.url), 'utf8');
     assert.doesNotMatch(src, /powershell\.exe|-EncodedCommand|ExecutionPolicy/i, f + ': no PowerShell');
   }
-  const wiring = readFileSync(new URL('../main/dictate-anywhere-window.ts', import.meta.url), 'utf8');
-  assert.match(wiring, /w\.platform === "win32"\s*\?\s*new UiohookHoldWatcher\(/, 'Windows uses the in-process watcher');
+  // ATO-2750: the watcher's wiring moved to dictate-hold-watch.ts.
+  const wiring = readFileSync(new URL('../main/dictate-hold-watch.ts', import.meta.url), 'utf8');
+  assert.match(wiring, /platform === "win32"\s*\?\s*new UiohookHoldWatcher\(/, 'Windows uses the in-process watcher');
+  assert.match(readFileSync(new URL('../main/dictate-anywhere-window.ts', import.meta.url), 'utf8'), /holdKeyWatch\(w\.platform, w\.log, onHold,/);
 });
 
 /** A fake uIOhook: `emit` plays a key, `fail` makes start() throw. */

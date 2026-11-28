@@ -74,6 +74,7 @@ const KIND_LABEL: Record<PluginPartOverview["kind"], string> = {
   hook: "hook",
   command: "command",
   agent: "subagent",
+  monitor: "monitor",
 };
 
 export function pluginPartKindLabel(kind: PluginPartOverview["kind"]): string {

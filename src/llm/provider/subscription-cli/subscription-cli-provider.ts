@@ -20,9 +20,12 @@ import type { CliAdapterDescriptor } from "./cli-adapter-descriptor.js";
 import { resolveCliBinary } from "./resolve-cli-binary.js";
 import { offlineRefusalFor } from "../../offline-network.js";
 import { runCliCommand, type CliRunner } from "./run-cli-completion.js";
+import { noResultEnvelopeError } from "./cli-no-result-error.js";
 import {
   checkCliVersionOnce,
+  cliOutdatedMark,
   noteOutdatedCli,
+  withCliOutdated,
   noteOutdatedOnThrow,
   type CliVersionCheck,
   type CliVersionVerdict,
@@ -162,7 +165,11 @@ export class SubscriptionCliProvider implements LlmProvider {
         this.argsInput(request, staged.path),
       );
       const outcome = await this.runCli(this.runOptions(args, request));
-      return this.descriptor.parseResult(outcome.stdout, this.model);
+      // ATO-2523: a successful turn on an outdated CLI says so in the chat.
+      return withCliOutdated(
+        this.descriptor.parseResult(outcome.stdout, this.model),
+        this.outdatedMark(verdict),
+      );
     } catch (err) {
       throw noteOutdatedCli(err, verdict);
     } finally {
@@ -237,7 +244,8 @@ export class SubscriptionCliProvider implements LlmProvider {
     }
 
     if (final === null) {
-      throw new Error(`${this.binary} stream ended without a result envelope`);
+      // A typed failure with a fixed kind and a next step (ATO-2522).
+      throw noteOutdatedCli(noResultEnvelopeError(this.binary, this.descriptor.productName), verdict);
     }
     let parsed: CompletionResult;
     try {
@@ -245,10 +253,12 @@ export class SubscriptionCliProvider implements LlmProvider {
     } catch (err) {
       throw noteOutdatedCli(err, verdict);
     }
-    const result: CompletionResult =
+    const result: CompletionResult = withCliOutdated(
       rateLimits === undefined
         ? parsed
-        : { ...parsed, rateLimits: mergeWindows(parsed.rateLimits, rateLimits) };
+        : { ...parsed, rateLimits: mergeWindows(parsed.rateLimits, rateLimits) },
+      this.outdatedMark(verdict),
+    );
     // Safety net for a stream schema we do not control: if no delta was
     // recognised, emit the authoritative text once so a mismatch
     // degrades to buffered behaviour instead of an empty turn.
@@ -285,6 +295,11 @@ export class SubscriptionCliProvider implements LlmProvider {
       () => null,
     );
     return this.versionVerdict;
+  }
+
+  /** ATO-2523: the completion's `cliOutdated` mark for this verdict, or null. */
+  private outdatedMark(verdict: CliVersionVerdict | null): ReturnType<typeof cliOutdatedMark> {
+    return cliOutdatedMark(verdict, this.descriptor.cli, this.descriptor.productName);
   }
 
   /**

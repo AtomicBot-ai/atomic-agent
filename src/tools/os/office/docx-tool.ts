@@ -207,7 +207,13 @@ export function buildOsFsDocxTool(options: FsDangerousToolOptions): ToolDefiniti
         preview,
         replacesWhole: args.op === "create" && existing !== null,
       });
-      const details: Record<string, unknown> = { path: absolute, op: args.op, ...edit.details };
+      // ATO-2518: whether the file is new, for the chat's "Changed files" row (`office_file` on the frame).
+      const details: Record<string, unknown> = {
+        path: absolute,
+        op: args.op,
+        change: result.existed ? "updated" : "created",
+        ...edit.details,
+      };
       if (result.rebuilt) details.rebuiltAfterApproval = true;
       const done = edit.done;
       const data = result.data;

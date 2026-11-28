@@ -274,9 +274,9 @@ test("Change folder… saves the new folder, keeps the project's chats, and save
   await vm.runInContext("pexPickFolder(PROJECTS.edit)", c);
   const html = vm.runInContext("projectEditHTML()", c);
   assert.match(html, /title="\/src\/new">\/src\/new</);
-  assert.match(html, /New chats open there; chats you already have keep their folder\./);
+  assert.match(html, /After you save, new chats open there\. Chats you already have keep their folder\./);
   assert.match(html, /The new folder’s AGENTS\.md is read once you save\./);
-  assert.match(html, /data-pex="folderundo">Keep the old one</);
+  assert.match(html, /data-pex="folderundo">Undo change</, "ATO-2745: one name in both rows");
   vm.runInContext(`PROJECTS.edit.x.model = pexModelValue({providerId: 'openrouter', model: 'x/y'});`, c);
   await vm.runInContext("projectEditSave()", c);
   await tick();

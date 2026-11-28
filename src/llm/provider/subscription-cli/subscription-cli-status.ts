@@ -4,6 +4,7 @@ import { posix, win32 } from "node:path";
 
 import type { SubscriptionCliName } from "../../../config/llm-config.js";
 import type { CliAdapterDescriptor } from "./cli-adapter-descriptor.js";
+import { subscriptionInstallCommand } from "./cli-install-hint.js";
 import { compareCliVersions, minimumCliVersion, outdatedCliMessage } from "./cli-version-check.js";
 import { resolveCliBinary } from "./resolve-cli-binary.js";
 import { runCliCommand, type CliRunner } from "./run-cli-completion.js";
@@ -89,15 +90,8 @@ export function subscriptionLoginCommand(cli: SubscriptionCliName): string {
   return cli === "codex" ? "codex login" : "claude   (then /login)";
 }
 
-/** The install command for this platform, as the desktop's step shows it. */
-export function subscriptionInstallCommand(cli: SubscriptionCliName, platform: NodeJS.Platform): string {
-  if (cli === "claude") {
-    return platform === "win32"
-      ? "irm https://claude.ai/install.ps1 | iex"
-      : "curl -fsSL https://claude.ai/install.sh | bash";
-  }
-  return "npm install -g @openai/codex";
-}
+// Moved beside the not-installed hint that words it the same way (ATO-1679).
+export { subscriptionInstallCommand };
 
 function readJson(path: string, readText: (p: string) => string | null): Record<string, unknown> | null {
   const text = readText(path);

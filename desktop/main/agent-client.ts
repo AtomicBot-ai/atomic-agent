@@ -24,6 +24,7 @@ import {
   type TelegramPairingOp,
   type TelegramPairingResult,
 } from "./telegram-pairing.js";
+import { readPhoneAccess, serveHostFor, servePortFor, withServeHost } from "./phone-access.js";
 import {
   agentBinaryCandidates,
   bundledAgentFileName,
@@ -36,7 +37,7 @@ import {
   WATCH_SENTINEL_SOURCE,
   WINDOWS_GRACEFUL_MS,
 } from "./platform.js";
-import { serveSpawnArgs, serveSpawnEnv } from "./serve-launch.js";
+import { serveSpawnArgs, startServe } from "./serve-launch.js";
 
 /**
  * Supervises one `atag serve` child process and speaks to it over the
@@ -239,6 +240,13 @@ export interface ProjectTrustStatus {
   hasEarlierAnswer: boolean;
   hint: string;
 }
+/** ATO-2441: the agent's `GET /api/commands` answer (src/http/route-commands.ts). */
+export interface CommandListing {
+  workingDir: string;
+  commands: Array<{ name: string; command: string; description: string; argumentHint?: string; source: string; model?: string; runsShell?: boolean }>;
+  hiddenProjectCommands: number;
+  errors: string[];
+}
 export interface ProjectTrustAnswerBody {
   sessionId?: string;
   workingDir?: string;
@@ -288,6 +296,13 @@ export interface OfflineModeStatus {
 export interface PrivacyShieldStatus {
   enabled: boolean;
   masked: number | null;
+  /**
+   * ATO-2527: names, addresses and organisations found by a local model:
+   * `{ enabled, state: "off" | "ready" | "no-local-model" | "provider-not-shielded", model }` as the
+   * agent sent it (renderer/privacy-names.js checks the shape), or null
+   * from an agent without the names switch.
+   */
+  localNames: unknown;
 }
 
 /** The `error.message` of an agent's JSON error body, else the HTTP status. */
@@ -813,6 +828,32 @@ export class AgentClient extends EventEmitter {
     }
   }
 
+  /** ATO-2493: the host the last spawned `atag serve` listens on (phone-access.ts); loopback by default. */
+  listenHost = "127.0.0.1";
+
+  /**
+   * ATO-2493: one of the agent's paired-phone routes (`/api/devices/*`,
+   * src/http/route-devices.ts), answered as the status and the parsed JSON
+   * body (null when there is none); phone-devices.ts words the answer. A
+   * request that never got one throws.
+   */
+  async devicesRoute(method: "GET" | "POST" | "DELETE", path: string): Promise<{ status: number; body: unknown }> {
+    const res = await fetch(`${this.base()}/api/devices${path}`, {
+      method,
+      headers: this.headers(),
+      ...(method === "POST" ? { body: "{}" } : {}),
+      signal: AbortSignal.timeout(10_000),
+    });
+    let parsed: unknown = null;
+    try {
+      const raw = await res.text();
+      parsed = raw ? JSON.parse(raw) : null;
+    } catch {
+      /* not JSON */
+    }
+    return { status: res.status, body: parsed };
+  }
+
   /** The bearer token: the remote agent's, or the one this client gave its own `atag serve`. */
   private authToken(): string {
     return this.remote ? this.remote.token : this.token;
@@ -976,11 +1017,14 @@ export class AgentClient extends EventEmitter {
       this.emit("orphan-reaped");
     }
     const token = randomBytes(24).toString("hex");
-    const port = await freePort();
+    // ATO-2493: Settings › Connect phone's "Allow phones on this Wi-Fi" (phone-access.ts): 0.0.0.0 on a fixed port.
+    const phones = readPhoneAccess();
+    const port = await servePortFor(phones, freePort);
     // Backlog 41: a stop came while the port was found. Nothing was spawned, and there is nothing to say.
     if (superseded()) return gaveWay();
     this.token = token;
     this.port = port;
+    this.listenHost = serveHostFor(phones);
     this.setStatus({ state: "starting", binary, port, error: null });
     /* A "status" listener runs inside that call, and one that stopped the
        client has already looked for a child to end and found none: nothing
@@ -991,17 +1035,16 @@ export class AgentClient extends EventEmitter {
     const sentinel = process.platform === "win32" ? spawnWatchSentinel() : null;
     let child: ChildProcess;
     try {
-      child = spawn(
+      child = startServe(
         binary,
-        // ATO-1705: the key goes in the environment, not on the command line `ps` shows.
-        serveSpawnArgs(port, serveWatchArgs(process.platform, sentinel?.pid)),
+        // ATO-2538: the key goes on stdin, in neither the command line nor the environment.
+        withServeHost(serveSpawnArgs(port, serveWatchArgs(process.platform, sentinel?.pid)), serveHostFor(phones)),
         {
           cwd: this.status.workingDir,
           // r5 item 9: `atag serve` runs on the desktop's own state directory.
-          env: serveSpawnEnv(agentEnv(), token),
-          stdio: ["ignore", "pipe", "pipe"],
-          // Windows: a console child of a GUI app otherwise opens a console window.
-          windowsHide: true,
+          // startServe drops any key from it and sends this launch's key on stdin (serve-launch.ts).
+          env: agentEnv(),
+          token,
         },
       );
     } catch (err) {
@@ -1265,6 +1308,8 @@ export class AgentClient extends EventEmitter {
   config = () => this.json<unknown>("/api/config");
   /** ATO-32: Cheap / Balanced / Best picks per provider (agent presets/model-tiers.ts). 404 on an older core. */
   modelTiers = () => this.json<unknown>("/api/model-tiers");
+  /** ATO-2442: tokens and cost per day, tools, projects, saved by local (usage-ipc.ts). 404 on an older core. */
+  usageReport = (query: string) => this.json<unknown>(`/api/usage${query}`);
   skills = (sessionId?: string | null) => this.json<unknown>(`/api/skills${this.workspaceQuery(sessionId)}`);
   // Item 7 (settings surface): the TUI lists with DEFAULT_LIST_LIMIT = 200
   // (tasks-orchestrator.ts:25); route-tasks.ts defaults to 50 and caps at 500.
@@ -1280,6 +1325,8 @@ export class AgentClient extends EventEmitter {
   // the TUI's own scan window (chat-orchestrator.ts RAIL_SCAN_LIMIT).
   // ATO-731: chats keep their own folders; an agent from before `scope` lists this folder's, as before.
   sessions = () => this.json<unknown>("/api/sessions?limit=1000&scope=all");
+  /** ATO-2513: the newest `limit` rows of every folder; the pet reads them for turns the desktop did not start (main/pet-outside-poll.ts). */
+  recentSessions = (limit: number) => this.json<unknown>(`/api/sessions?limit=${encodeURIComponent(String(limit))}&scope=all`);
   /** GET /api/sessions/search (ATO-1149): words in past chats, every folder. */
   searchSessions = (q: string) => this.json<unknown>(`/api/sessions/search?q=${encodeURIComponent(q)}&limit=25&scope=all`);
   models = () => this.json<unknown>("/v1/models");
@@ -1372,6 +1419,42 @@ export class AgentClient extends EventEmitter {
       { text },
     );
 
+  /* ATO-2485: the agent's kept shell jobs in the terminal panel
+     (agent-jobs-ipc.ts). An agent from before these routes answers 404
+     "No route"; the panel then never shows. The person's text in
+     `shellJobInput` goes to the job only and is never logged here. */
+  shellJobs = (sessionId: string) =>
+    this.request<unknown>("GET", `/api/sessions/${encodeURIComponent(sessionId)}/shell-jobs`);
+  shellJobOutput = (sessionId: string, jobId: number, since: number) =>
+    this.request<unknown>(
+      "GET",
+      `/api/sessions/${encodeURIComponent(sessionId)}/shell-jobs/${jobId}/output?since=${since}`,
+    );
+  /** `secret`: Hide typing is on; the agent masks the value for the model and answers `masked`. */
+  shellJobInput = (sessionId: string, jobId: number, text: string, eof: boolean, secret = false) =>
+    this.request<unknown>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/shell-jobs/${jobId}/input`, {
+      text,
+      eof,
+      ...(secret ? { secret: true } : {}),
+    });
+  /** `{resized:false}` when the job's terminal has a fixed size. */
+  resizeShellJob = (sessionId: string, jobId: number, cols: number, rows: number) =>
+    this.request<unknown>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/shell-jobs/${jobId}/resize`, { cols, rows });
+  stopShellJob = (sessionId: string, jobId: number) =>
+    this.request<unknown>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/shell-jobs/${jobId}/stop`, {});
+  /* ATO-2486: a job's password the agent asked for (`shell_secret_input`), as
+     answerQuestion does: 400 keeps the request open, the body comes back
+     as is. The value is never logged here. */
+  answerShellSecret = async (approvalId: string, answer: { value: string } | { skip: true }): Promise<unknown> => {
+    const res = await fetch(`${this.base()}/api/shell/secret`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ approvalId, ...answer }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    return res.json();
+  };
+
   /* ATO-1040: the chat's goal, read and set / paused / resumed / cleared
      (session-goal-ipc.ts). An agent from before the routes answers 404. */
   sessionGoal = (sessionId: string) =>
@@ -1399,6 +1482,13 @@ export class AgentClient extends EventEmitter {
     this.request<unknown>("GET", `/api/task-board?limit=${encodeURIComponent(String(limit))}`);
   moveTaskCard = (id: string, body: Record<string, unknown>) =>
     this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/board`, body);
+  /* ATO-2498: a card's comment thread and the profiles it can be assigned to. */
+  boardComments = (id: string) =>
+    this.request<unknown>("GET", `/api/tasks/${encodeURIComponent(id)}/board/comments?limit=100`);
+  addBoardComment = (id: string, text: string) =>
+    this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/board/comments`, { text });
+  boardProfiles = (taskId?: string) =>
+    this.request<unknown>("GET", `/api/task-board/profiles${taskId ? `?taskId=${encodeURIComponent(taskId)}` : ""}`);
   /* ATO-458 — suggested tasks (ideas-ipc.ts): rebuilt from failed tasks and
      stopped goals, then accepted (filed as a task) or dismissed for good.
      404 "no route" on an agent from before them, 404 when tasks are off. */
@@ -1656,11 +1746,13 @@ export class AgentClient extends EventEmitter {
 
   /**
    * ATO-758: `/api/telegram/channel` — the channel's state, and another poller
-   * of the same bot when that is what holds it off. Null on an agent without
-   * the route, or one that is not up; never throws.
+   * of the same bot when that is what holds it off, and (ATO-2520) the bot's
+   * id and @username from the agent's getMe; an older agent sends no `bot`.
+   * Null on an agent without the route, or one that is not up; never throws.
    */
   async telegramChannel(): Promise<{
     available: boolean; state: string | null; lastError: string | null;
+    bot?: { id: number; username: string | null } | null;
     otherPoller: { where: "this_computer"; pid: number | null } | { where: "elsewhere" } | null;
   } | null> {
     try {
@@ -1863,6 +1955,28 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-2472: `POST /api/mentions/expand`, the message's `@` mentions read
+   * by the agent in `workingDir` (the terminal's own expansion). `null` on
+   * an agent from before the route, a refusal or no answer in 20 s, so the
+   * caller falls back to the plain file mentions. Never throws.
+   */
+  async expandMentions(text: string, workingDir: string, timeoutMs = 20_000): Promise<string | null> {
+    try {
+      const res = await fetch(`${this.base()}/api/mentions/expand`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({ text, workingDir }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!res.ok) return null;
+      const parsed = (await res.json()) as { text?: unknown };
+      return typeof parsed.text === "string" ? parsed.text : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * ATO-1152: `POST /api/btw` — a side question beside the chat (`/btw`),
    * answered with the chat as read-only context, no tools, nothing saved.
    * The agent's own deadline is 90 s; ten more cover the queue. `supported:
@@ -1917,6 +2031,52 @@ export class AgentClient extends EventEmitter {
       return { supported: true, ok: true, status: JSON.parse(text) as ProjectTrustStatus };
     } catch (err) {
       return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-2441: `GET /api/commands`, your own slash commands and plugin
+   * commands for the chat's folder (renderer/own-commands.js). An agent
+   * from before the route is reported as unsupported. Never throws.
+   */
+  async commandList(sessionId?: string | null): Promise<{ supported: false } | { supported: true; ok: true; data: CommandListing } | { supported: true; ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/commands${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ""}`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
+      return { supported: true, ok: true, data: JSON.parse(text) as CommandListing };
+    } catch (err) {
+      return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-2441: `POST /api/commands/render`, the message `/name args` sends.
+   * Shell lines run in the agent and ask through the normal approval
+   * stream, so this waits as long as they do (at most 10 lines of 60 s).
+   * A line that was not allowed answers `code: "command_refused"`.
+   */
+  async commandRender(body: { name: string; args?: string; sessionId?: string }): Promise<{ ok: true; data: { text: string; source: string; model?: string } } | { ok: false; code?: string; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/commands/render`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(11 * 60_000),
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        let code: string | undefined;
+        try { code = (JSON.parse(text) as { error?: { code?: string } }).error?.code; } catch { /* not JSON */ }
+        return { ok: false, ...(typeof code === "string" ? { code } : {}), error: errorMessage(text, res.status) };
+      }
+      return { ok: true, data: JSON.parse(text) as { text: string; source: string; model?: string } };
+    } catch (err) {
+      return { ok: false, error: requestErrorText(err) };
     }
   }
 
@@ -2042,22 +2202,27 @@ export class AgentClient extends EventEmitter {
    * switches it (the agent persists `privacy.shield.enabled` and applies it
    * to the next cloud request). An agent from before the route answers
    * "No route for", reported as unsupported. Never throws.
+   * ATO-2527: `localNames` posts `{ localNames }` (alone when `enabled` is
+   * undefined) to switch the names pass.
    */
-  async privacyShield(enabled?: boolean): Promise<{ supported: false } | { supported: true; ok: true; data: PrivacyShieldStatus } | { supported: true; ok: false; error: string }> {
+  async privacyShield(enabled?: boolean, localNames?: boolean): Promise<{ supported: false } | { supported: true; ok: true; data: PrivacyShieldStatus } | { supported: true; ok: false; error: string }> {
     try {
       const res = await fetch(`${this.base()}/api/privacy-shield`, {
-        method: enabled === undefined ? "GET" : "POST",
+        method: enabled === undefined && localNames === undefined ? "GET" : "POST",
         headers: this.headers(),
-        ...(enabled === undefined ? {} : { body: JSON.stringify({ enabled }) }),
+        ...(enabled === undefined && localNames === undefined ? {} : {
+          body: JSON.stringify({ ...(enabled === undefined ? {} : { enabled }), ...(localNames === undefined ? {} : { localNames }) }),
+        }),
         signal: AbortSignal.timeout(10_000),
       });
       const text = await res.text();
       if (res.status === 404 && /No route for/.test(text)) return { supported: false };
       if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
-      const body = JSON.parse(text) as { enabled?: unknown; masked?: unknown };
+      const body = JSON.parse(text) as { enabled?: unknown; masked?: unknown; localNames?: unknown };
       if (typeof body.enabled !== "boolean") return { supported: true, ok: false, error: "the agent sent no Privacy Shield state" };
       const masked = typeof body.masked === "number" && Number.isFinite(body.masked) && body.masked >= 0 ? Math.floor(body.masked) : null;
-      return { supported: true, ok: true, data: { enabled: body.enabled, masked } };
+      const names = body.localNames !== null && typeof body.localNames === "object" ? body.localNames : null;
+      return { supported: true, ok: true, data: { enabled: body.enabled, masked, localNames: names } };
     } catch (err) {
       return { supported: true, ok: false, error: requestErrorText(err) };
     }
@@ -2077,6 +2242,30 @@ export class AgentClient extends EventEmitter {
       const body = JSON.parse(text) as { enabled?: unknown; egress?: unknown };
       if (typeof body.enabled !== "boolean") return { supported: true, ok: false, error: "the agent sent no offline mode state" };
       return { supported: true, ok: true, data: { enabled: body.enabled, egress: (body.egress ?? null) as OfflineModeStatus["egress"] } };
+    } catch (err) {
+      return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-2483: `GET /api/model-share`, or with `body` a `POST` that sets
+   * where the shared model listens (off / local / network) and, with
+   * `rotate`, makes a new key. The answer carries the share key; it goes to
+   * the window for Copy and is never logged. An agent from before the route
+   * answers "No route for", reported as unsupported. Never throws.
+   */
+  async modelShare(body?: { mode: string; rotate?: boolean }): Promise<{ supported: false } | { supported: true; ok: true; data: unknown } | { supported: true; ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/model-share`, {
+        method: body === undefined ? "GET" : "POST",
+        headers: this.headers(),
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
+      return { supported: true, ok: true, data: JSON.parse(text) as unknown };
     } catch (err) {
       return { supported: true, ok: false, error: requestErrorText(err) };
     }
@@ -2189,7 +2378,11 @@ export class AgentClient extends EventEmitter {
   async contextPreview(sessionId: string | null, message: string): Promise<{
     ok: boolean; supported: boolean; basis?: "built";
     usage?: { tokens: number; contextWindow: number | null; conversationTokens: number; conversationPairs: number;
-      droppedPairs: number; conversationPairsCap: number; sections: Array<{ label: string; tokens: number }> };
+      droppedPairs: number; conversationPairsCap: number; sections: Array<{ label: string; tokens: number }>;
+      /** ATO-2453: what each row is made of (agent 0.10.1+); read by renderer/context-parts.js. */
+      parts?: Array<{ label: string; tokens: number; parent: string; mcpServer?: string;
+        tools?: Array<{ label: string; tokens: number }> }>;
+      toolSearchActive?: boolean };
     contextWindow?: number | null; reservedForReply?: number; replyCap?: number; pairsCap?: number; error?: string;
   }> {
     try {

@@ -15,9 +15,12 @@ import {
   type QuickEntryPref,
 } from "./quick-entry.js";
 import { MINI_CHAT_SIZE, miniChatPagePath } from "./mini-chat.js";
-import { activateApp, keystrokesAllowed, pasteIntoFrontApp } from "./keystroke-clipboard-host.js";
-import { replaceInSourceApp, replaceLabel, type SourceApp } from "./replace-selection.js";
-import type { GrabbedSelection } from "./selected-text-ipc.js";
+import { keystrokesAllowed, pasteIntoFrontApp } from "./keystroke-clipboard-host.js";
+import { activateApp } from "./replace-front-app-host.js";
+import { pasteKeyLabel, replaceFocusMs } from "./replace-front-app.js";
+import { replacePreview } from "./replace-preview.js";
+import { replaceInSourceApp, replaceLabel, replacementText, type SourceApp } from "./replace-selection.js";
+import { selectionMissNotice, type SelectionGrab } from "./selected-text-grab.js";
 
 /**
  * The Electron half of ATO-523 (quick-entry.ts holds the rest).
@@ -52,9 +55,11 @@ export interface QuickEntryWiring {
   modelsTest: boolean;
   /** Shows and focuses the main window, creating it again when it was closed. */
   showMainWindow: () => BrowserWindow | null;
+  /** ATO-2478: the main window as it is, not brought up; null when it is closed. */
+  mainWindow?: () => BrowserWindow | null;
   log: (line: string) => void;
   /** ATO-985: the text selected in the app in front, read before the mini chat window takes the keyboard (selected-text-ipc.ts). */
-  grabSelection?: () => Promise<GrabbedSelection | null>;
+  grabSelection?: () => Promise<SelectionGrab>;
 }
 
 const quickWindows = new WeakSet<BrowserWindow>();
@@ -68,10 +73,18 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
   let box: BrowserWindow | null = null;
   let draft = "";
   let pending: string | null = null;
+  // ATO-2478: the waiting text goes to a new background chat, not the chat on screen.
+  let pendingBackground = false;
   let selection: string | null = null;
-  // ATO-2268: the app the selection came from, for "Replace in …" (macOS; null elsewhere).
+  // ATO-2268: the app the selection came from, for "Replace in …" (ATO-2738: its window on Windows and Linux).
   let source: SourceApp | null = null;
+  // ATO-2736: why the hotkey brought no selection, as the mini chat's one line (null: nothing to say).
+  let notice: { text: string; settings: boolean } | null = null;
   let opening = false;
+  /* ATO-2750: true while Replace has the box out of sight and the source
+     app in front. That switch blurs the box; the blur must not destroy it,
+     or a failed paste has no window to come back to. */
+  let replacing = false;
   let disposed = false;
   let pref: QuickEntryPref = readQuickEntryPref(w.userData);
 
@@ -80,6 +93,8 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
     box = null;
     selection = null;
     source = null;
+    notice = null;
+    replacing = false;
     if (b && !b.isDestroyed()) b.destroy();
   };
 
@@ -94,15 +109,16 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
     /* ATO-985: the copy has to reach the app in front, so it runs before
        the box exists and takes the keyboard. */
     opening = true;
-    void w.grabSelection().catch(() => null).then((sel) => {
+    void w.grabSelection().catch((): SelectionGrab => ({ selection: null, miss: "failed" })).then((grab) => {
       opening = false;
-      if (!disposed) create(sel);
+      if (!disposed) create(grab.selection, selectionMissNotice(grab.miss));
     });
   };
 
-  const create = (sel: GrabbedSelection | null) => {
+  const create = (sel: SelectionGrab["selection"], why: typeof notice = null) => {
     selection = sel ? sel.text : null;
     source = sel ? sel.app : null;
+    notice = why;
     const cursor = screen.getCursorScreenPoint();
     const bounds = quickEntryBounds(cursor, screen.getAllDisplays().map((d) => ({ bounds: d.bounds, workArea: d.workArea })), MINI_CHAT_SIZE);
     const win = new BrowserWindow({
@@ -117,7 +133,7 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
       skipTaskbar: true,
       alwaysOnTop: true,
       backgroundColor: "#191C21",
-      title: "Ask Atomic Agent",
+      title: "Mini Chat",   // ATO-2750: the name the menu and the tray use (New Mini Chat)
       /* macOS: a panel takes the keyboard without bringing the app (and its
          main window) to the front, over full-screen apps too. */
       ...(w.platform === "darwin" ? { type: "panel" as const } : {}),
@@ -136,7 +152,7 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
     win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     win.webContents.on("will-navigate", (event) => event.preventDefault());
     // Clicking another app puts the box away; the typed text waits for next time.
-    win.on("blur", () => { if (box === win) hide(); });
+    win.on("blur", () => { if (box === win && !replacing) hide(); });
     win.on("closed", () => { if (box === win) box = null; });
     win.once("ready-to-show", () => {
       if (win.isDestroyed()) return;
@@ -184,7 +200,19 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
   else if (first.state === "invalid") w.log(`[desktop] quick entry: ${pref.accelerator} cannot be used (${first.error})`);
 
   // The box's own page.
-  ipcMain.handle("app:quickEntryOpened", () => ({ draft, label: acceleratorLabel(pref.accelerator, w.platform), replace: source ? replaceLabel(source) : null, selection }));
+  ipcMain.handle("app:quickEntryOpened", () => ({ draft, label: acceleratorLabel(pref.accelerator, w.platform), replace: source ? replaceLabel(source) : null, selection, notice }));
+  /* ATO-2736: the line's button. Settings › General in the main window,
+     where "Use selected text" and its Accessibility button are. */
+  ipcMain.handle("app:quickEntryOpenSettings", (event) => {
+    if (!box || box.isDestroyed() || event.sender !== box.webContents) return { ok: false };
+    hide();
+    const main = w.showMainWindow();
+    if (!main || main.isDestroyed()) return { ok: false };
+    const go = () => { if (!main.isDestroyed()) main.webContents.send("app:menu", "settings:general"); };
+    if (main.webContents.isLoading()) main.webContents.once("did-finish-load", go);
+    else go();
+    return { ok: true };
+  });
   ipcMain.on("app:quickEntryDraft", (_event, text: unknown) => { draft = typeof text === "string" ? text.slice(0, 20_000) : ""; });
   ipcMain.on("app:quickEntryHide", () => hide());
   /* ATO-2268: an answer put back in place of the selection, in the app it
@@ -193,7 +221,17 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
     if (!box || box.isDestroyed() || event.sender !== box.webContents) return { ok: false, hidden: false, error: "This window cannot replace text." };
     return replaceInSourceApp({
       allowed: (prompt) => keystrokesAllowed(prompt),
-      hide,
+      /* ATO-2750: out of sight while the paste runs, not destroyed, so a
+         failed paste brings it back with the line and "Copy answer". */
+      hide: () => { replacing = true; if (box && !box.isDestroyed()) box.hide(); },
+      bringBack: () => {
+        replacing = false;
+        if (!box || box.isDestroyed()) return false;
+        box.show();
+        box.focus();
+        return true;
+      },
+      close: hide,
       activate: activateApp,
       sleep: (ms) => new Promise<void>((r) => setTimeout(r, ms)),
       paste: pasteIntoFrontApp,
@@ -201,13 +239,29 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
       notify: (body) => {
         try { if (Notification.isSupported()) new Notification({ title: "Atomic Agent", body, silent: true }).show(); } catch { /* no notifications */ }
       },
-    }, source, raw);
+    }, source, raw, { focusMs: replaceFocusMs(source), pasteKey: pasteKeyLabel(w.platform), selection }).finally(() => { replacing = false; });
+  });
+  // ATO-2750: "Copy answer" beside a failed Replace. Only from the mini chat.
+  ipcMain.handle("app:quickEntryCopy", (event, raw: unknown) => {
+    if (!box || box.isDestroyed() || event.sender !== box.webContents) return { ok: false };
+    const text = replacementText(raw, selection);   // ATO-2738: the same text Replace pastes
+    if (!text) return { ok: false };
+    clipboard.writeText(text);
+    return { ok: true };
+  });
+  /* ATO-2738: before anything is pasted, what the selection was and what
+     the answer will put there (the same text the paste sends, the model's
+     lead-in already off), shown by the mini chat with Replace / Cancel. */
+  ipcMain.handle("app:quickEntryReplacePreview", (event, raw: unknown) => {
+    if (!box || box.isDestroyed() || event.sender !== box.webContents) return { ok: false, error: "This window cannot replace text." };
+    return replacePreview(selection, source, raw);
   });
   ipcMain.handle("app:quickEntrySubmit", (_event, raw: unknown) => {
     const text = quickEntryText(raw);
     if (!text) return { ok: false };
     draft = "";
     pending = text;
+    pendingBackground = false;
     hide();
     const main = w.showMainWindow();
     if (!main || main.isDestroyed()) return { ok: false };
@@ -215,11 +269,31 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
     if (!main.webContents.isLoading()) main.webContents.send("app:quickEntry");
     return { ok: true };
   });
+  /* ATO-2478: ⌘↩ in the mini chat. The text starts a new chat in the
+     background in the main window (renderer/background-chat.js), which is
+     not brought up: the person stays in the app they were in. Only a main
+     window that is closed is opened again, since the chat runs there. */
+  ipcMain.handle("app:quickEntryBackground", (event, raw: unknown) => {
+    if (!box || box.isDestroyed() || event.sender !== box.webContents) return { ok: false };
+    const text = quickEntryText(raw);
+    if (!text) return { ok: false };
+    draft = "";
+    pending = text;
+    pendingBackground = true;
+    hide();
+    const have = w.mainWindow ? w.mainWindow() : null;
+    const main = have && !have.isDestroyed() ? have : w.showMainWindow();
+    if (!main || main.isDestroyed()) return { ok: false };
+    if (!main.webContents.isLoading()) main.webContents.send("app:quickEntry");
+    return { ok: true };
+  });
   // The main window's page: the text waiting, once.
   ipcMain.handle("app:quickEntryTake", () => {
     const text = pending;
+    const background = pendingBackground;
     pending = null;
-    return text ? { text } : null;
+    pendingBackground = false;
+    return text ? { text, background } : null;
   });
 
   // Settings › General.

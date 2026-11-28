@@ -1,10 +1,13 @@
 /**
- * ATO-2241: the `@` words that are not plain file paths, told apart.
- * Pure parsing, no file system: context-mentions.ts decides what each one
- * reads, and file-mentions.ts still owns `@path` for a real file.
+ * ATO-2241: the `@` words that are not plain file paths, told apart, for
+ * the palette only. Since ATO-2472 the agent expands them on send
+ * (src/mentions/ in core, through `POST /api/mentions/expand`,
+ * mention-core.ts); this copy mirrors src/mentions/mention-kinds.ts so the
+ * palette offers the same words the agent reads.
  *
  *   @diff                  uncommitted changes (Cursor's @Git "diff of working state")
  *   @git:N                 the last N commits, 1 to MAX_GIT_COMMITS
+ *   @problems              the language servers' errors and warnings (Continue's @Problems)
  *   @src/a.ts:10-40        lines 10 to 40 of a file (also `:10`, `#L10-40`, `#L10-L40`,
  *                          `#L10`: Claude Code's @file#L10-40)
  *   @https://host/page     a web page, http(s) only (Cursor's @Web / @Link)
@@ -17,8 +20,12 @@ export const MAX_GIT_COMMITS = 20;
 export type MentionKind =
   | { kind: "diff" }
   | { kind: "git"; count: number }
+  | { kind: "problems" }
   | { kind: "range"; path: string; start: number; end: number }
   | { kind: "url"; url: string };
+
+/** The keywords the palette offers above the files, in this order. */
+export const MENTION_KEYWORDS: readonly string[] = ["diff", "git:5", "problems"];
 
 const GIT = /^git:(\d{1,4})$/;
 const COLON_RANGE = /^(.+?):(\d{1,7})(?:-(\d{1,7}))?$/;
@@ -28,6 +35,7 @@ const URL_START = /^https?:\/\//i;
 /** What `token` (an `@word` without the `@`, punctuation already cut) asks for, or `null`. */
 export function parseMentionKind(token: string): MentionKind | null {
   if (token === "diff") return { kind: "diff" };
+  if (token === "problems") return { kind: "problems" };
   const git = GIT.exec(token);
   if (git) {
     const n = Number(git[1]);
@@ -62,7 +70,27 @@ export function contextSuggestions(query: string): string[] {
   const kind = parseMentionKind(q);
   // A typed range, URL or `git:N` stays as typed: picking the row must not
   // swap it for a bare file path.
-  if (kind && kind.kind !== "diff") return [kind.kind === "git" ? `git:${kind.count}` : q];
+  if (kind && kind.kind !== "diff" && kind.kind !== "problems") return [kind.kind === "git" ? `git:${kind.count}` : q];
   if (q.length > 1 && q.endsWith("/")) return [q];
-  return ["diff", "git:5"].filter((word) => word.startsWith(q.toLowerCase()));
+  const lower = q.toLowerCase();
+  return MENTION_KEYWORDS.filter((word) => word.startsWith(lower));
+}
+
+/**
+ * ATO-2472: the folders of a file list, each once with a trailing `/`, for
+ * the palette (Claude Code lists `src/` next to `src/app.ts`). Parents come
+ * from the paths themselves; at most `max`, shallow ones first.
+ */
+export function foldersOf(files: readonly string[], max = 2000): string[] {
+  const seen = new Set<string>();
+  for (const file of files) {
+    let at = file.indexOf("/");
+    while (at > 0) {
+      seen.add(`${file.slice(0, at)}/`);
+      at = file.indexOf("/", at + 1);
+    }
+    if (seen.size >= max * 4) break;
+  }
+  const depth = (p: string): number => p.split("/").length;
+  return [...seen].sort((a, b) => depth(a) - depth(b) || a.localeCompare(b)).slice(0, max);
 }

@@ -14,7 +14,8 @@
  *  - `cli_exit_code`: the CLI's exit code, a bounded integer;
  *  - `cli_reason`: for a run that failed with the CLI's own words
  *    (`exited`, `input_truncated`, `reported_error`, `turn_failed`),
- *    what those words say, as one fixed word from `CLI_REASONS`. The
+ *    what those words say (or, for an exit 127 they do not explain,
+ *    `command_not_found`), as one fixed word from `CLI_REASONS`. The
  *    message is matched here, on the machine, and only the word leaves;
  *  - `cli_version_outdated`: `true` when the CLI was older than the
  *    version we support (ATO-1685).
@@ -36,6 +37,7 @@ const KNOWN_INVOCATION_KINDS: ReadonlySet<string> = new Set([
   "not_json",
   "reported_error",
   "turn_failed",
+  "no_result_envelope",
 ]);
 
 /** The CLI error classes that need no field to say what happened. */
@@ -78,8 +80,17 @@ export const CLI_REASONS = [
   "context_overflow",
   "vendor_unavailable",
   "no_output",
+  "command_not_found",
   "other",
 ] as const;
+
+/**
+ * POSIX shells and `env` exit 127 when a command they were asked to run
+ * is not on PATH: a launcher script's interpreter (`node`, `bun`) or the
+ * program a version manager's shim points at (CLI-E4, ATO-1679). Read
+ * from the exit code when the text names nothing more precise.
+ */
+const EXIT_COMMAND_NOT_FOUND = 127;
 
 export type CliReason = (typeof CLI_REASONS)[number];
 
@@ -95,10 +106,13 @@ const REASON_PATTERNS: ReadonlyArray<readonly [CliReason, readonly RegExp[]]> = 
   // Claude Code on Windows without Git for Windows.
   ["git_bash_missing", [/\brequires git-bash\b/i, /\bCLAUDE_CODE_GIT_BASH_PATH\b/]],
   // A `#!/usr/bin/env node` shim or a cmd shim with no Node to run it.
+  // GNU `env` in a UTF-8 locale quotes the name with curly quotes
+  // ("/usr/bin/env: ‘node’: ...", CLI-E4). Mirror of
+  // `NODE_MISSING_PATTERNS` in cli-exit-hint.ts.
   [
     "node_missing",
     [
-      /\benv: ['"]?node['"]?: No such file or directory/i,
+      /\benv: ['"‘’]?node['"‘’]?: No such file or directory/i,
       /'node' is not recognized as an internal or external command/i,
       /\bnode: (?:command )?not found\b/i,
       /\bcommand not found: node\b/i,
@@ -125,12 +139,15 @@ const REASON_PATTERNS: ReadonlyArray<readonly [CliReason, readonly RegExp[]]> = 
   ["no_output", [/:\s*no output\s*$/i]],
 ];
 
-/** One word for what a CLI failure message says. Never any of the text itself. */
-export function classifyCliReason(message: string): CliReason {
+/**
+ * One word for what a CLI failure message says, with the exit code for
+ * an exit 127 the text does not explain. Never any of the text itself.
+ */
+export function classifyCliReason(message: string, exitCode: unknown = null): CliReason {
   for (const [reason, patterns] of REASON_PATTERNS) {
     if (patterns.some((re) => re.test(message))) return reason;
   }
-  return "other";
+  return exitCode === EXIT_COMMAND_NOT_FOUND ? "command_not_found" : "other";
 }
 
 /** Depth cap on the `cause` walk — longer is a cycle. */
@@ -176,7 +193,7 @@ function tagsOf(e: Record<string, unknown>): SubscriptionCliFailureTags | undefi
     }
     if (typeof kind === "string" && KINDS_WITH_REASON.has(kind)) {
       const message = e.message;
-      tags.cli_reason = typeof message === "string" ? classifyCliReason(message) : "other";
+      tags.cli_reason = typeof message === "string" ? classifyCliReason(message, exitCode) : "other";
     }
     // The CLI was below the version we support when it failed (ATO-1685,
     // `noteOutdatedCli` in cli-version-check.ts).

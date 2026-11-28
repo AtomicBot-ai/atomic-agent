@@ -100,6 +100,70 @@ describe("localFirstTurnHead (ATO-2208)", () => {
     ).toEqual({ head: "local-b" });
   });
 
+  it("keeps a session too long for the local window in the cloud (ATO-2537)", () => {
+    expect(localFirstTurnHead(input({ tooLongFor: () => true })))
+      .toEqual({ head: null, reason: "too-long" });
+    expect(localFirstTurnHead(input({ tooLongFor: () => false })))
+      .toEqual({ head: "local-llama" });
+  });
+
+  it("no size check keeps the local head", () => {
+    expect(localFirstTurnHead(input())).toEqual({ head: "local-llama" });
+  });
+
+  it("takes a later local link whose window fits", () => {
+    expect(
+      localFirstTurnHead(
+        input({
+          providers: [
+            { id: "openrouter" },
+            { id: "local-small", local: true },
+            { id: "local-big", local: true },
+          ],
+          tooLongFor: (id) => id === "local-small",
+        }),
+      ),
+    ).toEqual({ head: "local-big" });
+  });
+
+  it("keeps the turn in the cloud while the local link rests after a failure (ATO-2435)", () => {
+    expect(localFirstTurnHead(input({ isCoolingDown: (id) => id === "local-llama" })))
+      .toEqual({ head: null, reason: "cooling-down" });
+    expect(
+      localFirstTurnHead(
+        input({
+          providers: [
+            { id: "openrouter" },
+            { id: "local-a", local: true },
+            { id: "local-b", local: true },
+          ],
+          isCoolingDown: (id) => id === "local-a",
+        }),
+      ),
+    ).toEqual({ head: "local-b" });
+    expect(localFirstTurnHead(input({ isCoolingDown: () => false }))).toEqual({ head: "local-llama" });
+  });
+
+  it("a failed local head is skipped on the next turn, then tried again after its rest", () => {
+    const clock = { now: 1_000 };
+    const chain = new ProviderFallbackChain({
+      resolve: () => ({ chain: ["openrouter"], timing: DEFAULT_FALLBACK_TIMING }),
+      now: () => clock.now,
+    });
+    const cooling = (id: string) => chain.turnHeadCoolingDown("s1", id);
+    chain.setTurnPrimary("s1", localFirstTurnHead(input({ isCoolingDown: cooling })).head);
+    const down = new OpenAiHttpError("down", 503, "http://127.0.0.1:8080", false, null, "local-llama");
+    expect(chain.advanceFrom("local-llama", down, "s1")).toBe("openrouter");
+    chain.setTurnPrimary("s1", null);
+
+    expect(localFirstTurnHead(input({ isCoolingDown: cooling }))).toEqual({
+      head: null,
+      reason: "cooling-down",
+    });
+    clock.now += 60_000;
+    expect(localFirstTurnHead(input({ isCoolingDown: cooling }))).toEqual({ head: "local-llama" });
+  });
+
   it("with the head set on the chain, a failed local turn goes on in the cloud and says so", () => {
     const notices: ProviderSwitchNotice[] = [];
     const chain = new ProviderFallbackChain({

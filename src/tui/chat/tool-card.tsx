@@ -14,6 +14,7 @@ import {
   toolCardsAnnotationParts,
 } from "./tool-cards-annotation.js";
 import { ToolCardStepNote } from "./tool-card-step-note.js";
+import { isUiRenderCard, ToolCardUiText } from "./tool-card-ui-text.js";
 
 interface ToolCardProps {
   card: ToolCardEntry | StreamingToolCall;
@@ -109,7 +110,10 @@ export function ToolCard({
       <Box flexDirection="column" marginBottom={1}>
         {header}
         {verbose && isFinalised ? <ToolCardStepNote card={card} /> : null}
-        {isFinalised ? (
+        {/* ATO-2457: a ui.render card prints its whole text form; the person answers by typing. */}
+        {isFinalised && isUiRenderCard(card) ? (
+          <ToolCardUiText summary={card.summary} color={color} />
+        ) : isFinalised ? (
           <SummaryLine
             summary={card.summary}
             color={color}

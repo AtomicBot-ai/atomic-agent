@@ -86,3 +86,11 @@ export type {
   UserQuestionAnswer,
   UserQuestionOption,
 } from "./user-question.js";
+export {
+  checkShellSecretValue,
+  describeShellSecretPrompt,
+  normalizeShellSecretLabel,
+  SHELL_SECRET_CATEGORY,
+  SHELL_SECRET_MAX_CHARS,
+} from "./shell-secret.js";
+export type { ShellSecretPrompt } from "./shell-secret.js";

@@ -145,10 +145,12 @@ test('a failed write says so and changes nothing; a bad id is not written', asyn
   assert.match(dc.state.idError, /15 to 25 digits/);
   assert.ok(!calls.some((c) => c[0] === 'write'));
   await dc.addOwner(ID);
-  assert.match(dc.state.lastError, /Could not save the owners: config locked/);
+  assert.equal(dc.state.lastError, 'Could not save the owners.');
+  assert.equal(dc.state.lastErrorDetail, 'config locked', 'ATO-2745: the raw answer goes behind Details');
+  assert.match(D.discordPaneHTML(dc.state, {}, h), /<details class="set-errmore"><summary>Details<\/summary><span>config locked<\/span><\/details>/);
   assert.deepEqual(s.cfg.ownerUserIds, []);
   await dc.setEnabled(true);
-  assert.match(dc.state.lastError, /Could not turn Discord on: config locked/);
+  assert.equal(dc.state.lastError, 'Could not turn Discord on.');
 });
 
 test('turning off, removing the token, and a second click that is not a double-click', async () => {
@@ -178,7 +180,7 @@ test('the restart: refused while a reply runs, then the result says what is stil
   await dc.restart();
   assert.equal(dc.state.restart.phase, 'done');
   assert.match(dc.state.restart.text, /Add your Discord user id/);
-  assert.equal(D.dcRestartResult({state:'error', error:'port busy.'}, {}).text, 'The agent did not start again: port busy. Press Restart agent to try again.');
+  assert.deepEqual(D.dcRestartResult({state:'error', error:'port busy.'}, {}), {phase:'failed', text:'The agent did not start again. Press Restart agent to try again.', detail:'port busy.'});
   assert.match(D.dcRestartResult({state:'connected'}, {hasToken:true, ownerUserIds:[ID], enabled:true}).text, /bot is connected/);
 });
 
@@ -212,7 +214,7 @@ test('the pane: Connect card first, then status, owners, the rows, and the resta
 test('renderer wiring: the helper loads before renderer.js; the pane, verbs, keys and the token key are wired', () => {
   const helper = index.indexOf('<script src="discord-settings.js">');
   assert.ok(helper > 0 && helper < index.indexOf('<script src="renderer.js">'));
-  assert.match(source, /\['connections','Connections','plug',\['mcp','telegram','discord','push','composio','monid'\]\]/);   // with Phone push (ATO-1129)
+  assert.match(source, /\['connections','Connections','plug',\['mcp','telegram','discord','push','phone','composio','monid'\]\]/);   // with Phone push (ATO-1129)
   assert.ok(source.includes("['discord','Discord']"));
   assert.ok(source.includes("['chat','Discord','Settings · Connections','','settings:discord']"));
   for (const hook of ["pane === 'discord') discordTabEntered()", "p === 'discord') return discordTab()",
@@ -244,10 +246,17 @@ test('live status: connected as the bot, connecting, a failure in words, another
   await dc.pollChannel();
   s = D.dcStatus(dc.state, false);
   assert.equal(s.chip, 'not-connected');
-  assert.match(s.line, /could not connect: Discord gateway closed \(4004: Authentication failed\)\. Check the token/);
+  // ATO-2745: the library's own words are the Details, not the line.
+  assert.equal(s.line, 'The bot could not connect to Discord. Check the token, then press Restart agent below.');
+  assert.equal(s.detail, 'Discord gateway closed (4004: Authentication failed).');
+  assert.ok(!s.line.includes('4004'));
   live = Object.assign({}, live, {otherPoller:{where:'this_computer', pid:4242}});
   await dc.pollChannel();
-  assert.match(D.dcStatus(dc.state, false).line, /Another Atomic Agent on this computer \(process 4242\)/);
+  const other = D.dcStatus(dc.state, false);
+  assert.match(other.line, /^Another Atomic Agent on this computer is running this bot/);
+  assert.ok(!other.line.includes('4242'), 'ATO-2745: no process id in the line');
+  assert.equal(other.detail, 'Process id: 4242');
+  assert.match(D.discordPaneHTML(dc.state, {}, h), /<summary>Details<\/summary><span>Process id: 4242<\/span>/);
   live = Object.assign({}, live, {state:'disabled', otherPoller:null, lastError:null});
   await dc.pollChannel();
   assert.match(D.dcStatus(dc.state, false).line, /has not started the bot/);
@@ -300,4 +309,24 @@ test('renderer wiring (ATO-516): the live call reaches the agent and the tab sta
   assert.ok(live.includes('ipcMain.handle("agent:discordChannel", () => client.discordChannel())'));
   const client = readFileSync(new URL('../main/agent-client.ts', import.meta.url), 'utf8');
   assert.ok(client.includes('/api/discord/channel'));
+});
+
+// ATO-2745: the token line says where the token really went, and a failed save keeps the raw answer behind Details.
+test('token save: keychain or private file as main answers; a failure is a plain line plus Details', async () => {
+  const {api} = fakeApi();
+  api.setToken = async () => ({ok:true, storedIn:'keychain'});
+  const dc = D.createDiscordSettings(api);
+  await dc.entered();
+  await dc.saveToken(TOKEN);
+  assert.equal(dc.state.message, 'Token saved in your system keychain.');
+  api.setToken = async () => ({ok:true, storedIn:'file', keychainFallback:true});
+  await dc.saveToken(TOKEN);
+  assert.equal(dc.state.message, 'Token saved in a private file because the system keychain was not available.');
+  api.setToken = async () => ({ok:false, error:'The key could not be saved in the system keychain.', detail:'keychain locked'});
+  dc.openToken();
+  await dc.saveToken(TOKEN);
+  assert.equal(dc.state.tokenError, 'Could not save the token.');
+  const html = D.discordPaneHTML(dc.state, {}, h);
+  assert.match(html, /<summary>Details<\/summary><span>The key could not be saved in the system keychain\.\nkeychain locked<\/span>/);
+  assert.ok(!html.includes('a file only your user account can read'), 'the prompt no longer claims a file before the save');
 });

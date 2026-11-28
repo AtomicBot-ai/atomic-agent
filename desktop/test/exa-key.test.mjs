@@ -246,7 +246,27 @@ test('a refused write says so under the field and never quotes the key back', as
   const {c} = fixture({BR:{dotenvSet:async () => ({ok:false, error:'EACCES: permission denied'})}});
   c.EXA.draft.settings = KEY;
   await c.exaKeySave('settings');
-  assert.equal(c.EXA.error.settings, 'Could not save the key: EACCES: permission denied');
+  assert.equal(c.EXA.error.settings, 'Could not save the key.');
+  assert.equal(c.EXA.detail.settings, 'EACCES: permission denied', 'ATO-2745: the raw answer goes behind Details');
+  assert.equal(c.exaKeyState('settings').errorDetail, 'EACCES: permission denied');
   assert.equal(c.EXA.draft.settings, KEY, 'the draft stays for another try');
   assert.equal(c.EXA.savedGen, null);
+});
+
+// ATO-2745: the Exa field gets the Show / Hide eye the Telegram token field has, and a failed save's raw answer behind Details.
+test('the Exa field has a Show / Hide eye, and a failed save keeps the raw answer behind Details', () => {
+  const req = {reason:'missing', getKeyUrl:X.EXA_KEY_URL};
+  const hidden = X.exaKeyCardHTML(req, {has:false}, h);
+  assert.match(hidden, /<input type="password" data-exa-key="chat"/);
+  assert.match(hidden, /data-act="exakey:reveal:chat" aria-pressed="false" title="Show the key" aria-label="Show the key"><i:eye><\/button>/);
+  const shown = X.exaKeySettingsRowHTML({has:true, shown:true}, h);
+  assert.match(shown, /<input type="text" data-exa-key="settings"/);
+  assert.match(shown, /data-act="exakey:reveal:settings" aria-pressed="true" title="Hide the key"[^>]*><i:eyeOff>/);
+  assert.doesNotMatch(shown, /value=/, 'the field is still emitted empty when shown');
+  const failed = X.exaKeySettingsRowHTML({has:false, error:'Could not save the key.', errorDetail:'EACCES: permission denied'}, h);
+  assert.match(failed, /tk-help--err">Could not save the key\.</);
+  assert.match(failed, /<details class="set-errmore"><summary>Details<\/summary><span>EACCES: permission denied<\/span><\/details>/);
+  assert.doesNotMatch(X.exaKeySettingsRowHTML({has:false, errorDetail:'stale'}, h), /Details/, 'no Details without an error line');
+  const src = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
+  assert.match(src, /if \(verb === 'reveal' && \(place === 'chat' \|\| place === 'settings'\)\)/);
 });

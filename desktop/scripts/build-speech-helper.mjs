@@ -25,19 +25,30 @@
  * down and let go (main/dictate-hold.ts). It needs no macOS 26 API, so its
  * target is the app's own floor, macOS 14. Same rules: skipped with the
  * speech helper, and a compile error fails the build.
+ *
+ * ATO-2499: native/atomic-show-once.swift (Show once's Accessibility
+ * helper) is compiled the same way into out/native/atomic-show-once. The
+ * list and the targets are smallHelpers in speech-helper-plan.mjs. Without
+ * it (ATOMIC_SKIP_SPEECH_HELPER=1, no swiftc) Show once still records,
+ * asking osascript once per event.
+ *
+ * ATO-2514: and native/atomic-system-audio.swift into
+ * out/native/atomic-system-audio, the ScreenCaptureKit tap that records
+ * the other side of a call for "Record a meeting" (main/meeting-system-audio.ts).
+ * macOS 14 target on this Mac's arch (systemAudioTarget); same rules.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileFailureMessage, speechHelperPlan, speechHelperTarget } from "./speech-helper-plan.mjs";
+import { compileFailureMessage, smallHelpers, speechHelperPlan, speechHelperTarget, systemAudioTarget } from "./speech-helper-plan.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = join(here, "..", "native", "atomic-speech.swift");
 const outDir = join(here, "..", "out", "native");
 const out = join(outDir, "atomic-speech");
-const fnKeySrc = join(here, "..", "native", "atomic-fn-key.swift");
-const fnKeyOut = join(outDir, "atomic-fn-key");
+const systemAudioSrc = join(here, "..", "native", "atomic-system-audio.swift");
+const systemAudioOut = join(outDir, "atomic-system-audio");
 
 const plan = speechHelperPlan({
   platform: process.platform,
@@ -75,17 +86,34 @@ try {
   process.exit(1);
 }
 
-if (existsSync(fnKeySrc)) {
+for (const helper of smallHelpers()) {
+  const from = join(here, "..", "native", helper.source);
+  if (!existsSync(from)) continue;
   try {
     execFileSync(
       "xcrun",
-      ["swiftc", "-O", "-swift-version", "5", "-target", "arm64-apple-macos14.0", fnKeySrc, "-o", fnKeyOut],
+      ["swiftc", "-O", "-swift-version", "5", "-target", helper.target, from, "-o", join(outDir, helper.name)],
       { stdio: ["ignore", "inherit", "inherit"] },
     );
-    console.log(`fn key helper → ${fnKeyOut}`);
+    console.log(`${helper.name} → ${join(outDir, helper.name)}`);
   } catch (err) {
     const first = err instanceof Error ? err.message.split("\n")[0] : String(err);
-    console.error(`fn key helper: swiftc failed (${first}).\nThe compiler output is above. Without this helper, holding Fn to dictate into any app falls back to the key combination.`);
+    console.error(`${helper.name}: swiftc failed (${first}).\nThe compiler output is above. ${helper.without}`);
+    process.exit(1);
+  }
+}
+
+if (existsSync(systemAudioSrc)) {
+  try {
+    execFileSync(
+      "xcrun",
+      ["swiftc", "-O", "-swift-version", "5", "-target", systemAudioTarget(), systemAudioSrc, "-o", systemAudioOut],
+      { stdio: ["ignore", "inherit", "inherit"] },
+    );
+    console.log(`system audio helper → ${systemAudioOut}`);
+  } catch (err) {
+    const first = err instanceof Error ? err.message.split("\n")[0] : String(err);
+    console.error(`system audio helper: swiftc failed (${first}).\nThe compiler output is above. Without this helper a meeting records only the microphone, not the other side of the call.`);
     process.exit(1);
   }
 }

@@ -10,6 +10,7 @@ import {
   formatLogbookEntries,
   listLogbookDays,
   logbookDir,
+  logbookPlatformSupport,
   parseClock,
   parseDaySpec,
   readLogbookDay,
@@ -20,6 +21,8 @@ import {
   type LogbookSettings,
 } from "../logbook/index.js";
 import { recipeToLink, renderRecipePrompt, STANDUP_RECIPE } from "../recipes/index.js";
+import { MORE_HELP_LINES, standupScheduleCommand, titleOnlyCommand } from "./logbook-command-more.js";
+import { askYesNo, confirmClearAll } from "./logbook-clear-confirm.js";
 
 /**
  * `atomic-agent logbook ...` (ATO-2363): the switch and the reader for
@@ -32,13 +35,13 @@ import { recipeToLink, renderRecipePrompt, STANDUP_RECIPE } from "../recipes/ind
 const HELP = [
   "atomic-agent logbook: a day journal from screenshots, described by a local model",
   "",
-  "While it is on and the Atomic Agent terminal app is open (its top bar shows it),",
+  "While it is on and the Atomic Agent terminal or desktop app is open (it shows ● logbook),",
   "it takes a screenshot every few minutes,",
   "has a vision model on THIS computer write one or two sentences about it, and",
   "deletes the picture right away. Only the sentences are kept, in",
   "<stateDir>/logbook/<day>.jsonl. Password managers, login prompts, system settings",
   "and Atomic Agent itself are never captured. No local vision model, no capture:",
-  "screenshots never go to a cloud model. macOS only for now. Off by default.",
+  "screenshots never go to a cloud model. macOS, Windows and Linux (X11). Off by default.",
   "",
   "Subcommands:",
   "  start [--every <minutes>] [--keep <days>]   Turn it on (default every 5 min, kept 14 days)",
@@ -48,10 +51,11 @@ const HELP = [
   "  status [--json]                             On or off, last capture, what is kept",
   "  today | show <day> [--part morning|afternoon|evening] [--from HH:MM] [--to HH:MM] [--contains <words>]",
   "                                              Print the notes of a day",
-  "  clear --all | --day <day> [--from HH:MM --to HH:MM] | --before <day>",
-  "                                              Delete notes",
+  "  clear --all [--yes] | --day <day> [--from HH:MM --to HH:MM] | --before <day>",
+  "                                              Delete notes (--all asks first; --yes skips the question)",
   "  exclude add|remove <app> | exclude list     Apps never captured (name or bundle id)",
   "  standup [--day <day>]                       Print the standup recipe and its link",
+  ...MORE_HELP_LINES,
   "",
   "<day> is today, yesterday or YYYY-MM-DD.",
 ].join("\n");
@@ -62,6 +66,10 @@ export interface LogbookCommandDeps {
   platform?: NodeJS.Platform;
   write?: (text: string) => void;
   writeErr?: (text: string) => void;
+  /** Whether a person can answer a question (stdin and stdout are a terminal). */
+  isTty?: boolean;
+  /** Ask a yes/no question; resolves true on "y" or "yes". */
+  confirm?: (prompt: string) => Promise<boolean>;
 }
 
 class UsageError extends Error {}
@@ -79,6 +87,9 @@ export async function logbookCommand(args: string[], deps: LogbookCommandDeps = 
     now: deps.now ?? (() => new Date()),
     platform: deps.platform ?? process.platform,
     write,
+    writeErr,
+    isTty: deps.isTty ?? (process.stdin.isTTY === true && process.stdout.isTTY === true),
+    confirm: deps.confirm ?? askYesNo,
   };
   try {
     switch (sub) {
@@ -102,11 +113,13 @@ export async function logbookCommand(args: string[], deps: LogbookCommandDeps = 
       case "show":
         return show(env, rest);
       case "clear":
-        return clear(env, rest);
+        return await clear(env, rest);
       case "exclude":
         return exclude(env, rest);
       case "standup":
         return standup(env, rest);
+      case "title-only":
+        return titleOnlyCommand(env, rest);
       default:
         throw new UsageError(`unknown subcommand: ${sub}`);
     }
@@ -120,7 +133,15 @@ export async function logbookCommand(args: string[], deps: LogbookCommandDeps = 
   }
 }
 
-type Env = { stateDir: string; now: () => Date; platform: NodeJS.Platform; write: (text: string) => void };
+type Env = {
+  stateDir: string;
+  now: () => Date;
+  platform: NodeJS.Platform;
+  write: (text: string) => void;
+  writeErr: (text: string) => void;
+  isTty: boolean;
+  confirm: (prompt: string) => Promise<boolean>;
+};
 
 function option(args: readonly string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -137,8 +158,9 @@ function update(env: Env, change: (s: LogbookSettings) => LogbookSettings, messa
 }
 
 function start(env: Env, args: readonly string[]): number {
-  if (env.platform !== "darwin") {
-    env.write("The logbook works on macOS only for now: it needs the front-app check that keeps password and login windows out.\n");
+  const support = logbookPlatformSupport(env.platform);
+  if (!support.supported) {
+    env.write(`${support.reason}\n`);
     return 1;
   }
   const every = option(args, "--every");
@@ -154,7 +176,7 @@ function start(env: Env, args: readonly string[]): number {
   writeLogbookSettings(env.stateDir, next);
   env.write(
     [
-      `Logbook on: a screenshot every ${next.intervalMinutes} min while the Atomic Agent terminal app is open (its top bar shows ● logbook).`,
+      `Logbook on: a screenshot every ${next.intervalMinutes} min while the Atomic Agent terminal or desktop app is open (it shows ● logbook).`,
       "Each one is described by a local vision model and deleted right after; screenshots never go to a cloud model.",
       `Notes are kept ${next.retentionDays} days in ${logbookDir(env.stateDir)}.`,
       "It needs a local model that can see images; `atomic-agent logbook status` says if one was found.",
@@ -184,7 +206,7 @@ function status(env: Env, json: boolean): number {
     const when = new Date(last.lastAttemptAt).toLocaleString();
     lines.push(`Last try: ${when}, ${last.lastOutcome ?? "unknown"}${last.lastReason ? `: ${last.lastReason}` : ""}${last.provider ? ` (model on ${last.provider})` : ""}`);
   } else if (settings.enabled) {
-    lines.push("No capture yet: it runs only while the Atomic Agent terminal app is open, where the top bar shows it. The desktop app and `serve` do not capture.");
+    lines.push("No capture yet: it runs only while the Atomic Agent terminal or desktop app is open and shows ● logbook. A bare `serve` does not capture.");
   }
   if (settings.excludeApps.length > 0) lines.push(`Never captured, by you: ${settings.excludeApps.join(", ")}`);
   env.write(`${lines.join("\n")}\n`);
@@ -203,7 +225,7 @@ function show(env: Env, args: readonly string[]): number {
   return 0;
 }
 
-function clear(env: Env, args: readonly string[]): number {
+async function clear(env: Env, args: readonly string[]): Promise<number> {
   const day = option(args, "--day");
   const before = option(args, "--before");
   const all = args.includes("--all");
@@ -217,6 +239,10 @@ function clear(env: Env, args: readonly string[]): number {
     const removed = clearLogbookRange(env.stateDir, key, from ? parseClock(from, "from") : 0, to ? parseClock(to, "to") : 24 * 60);
     env.write(`Deleted ${removed} note${removed === 1 ? "" : "s"} from ${key}.\n`);
     return 0;
+  }
+  if (all && !args.includes("--yes")) {
+    const stop = await confirmClearAll(env);
+    if (stop !== null) return stop;
   }
   const days = all
     ? clearLogbookDays(env.stateDir, { all: true })
@@ -242,6 +268,8 @@ function exclude(env: Env, args: readonly string[]): number {
 }
 
 function standup(env: Env, args: readonly string[]): number {
+  const scheduled = standupScheduleCommand(env, args);
+  if (scheduled !== null) return scheduled;
   const day = option(args, "--day") ?? "yesterday";
   const link = recipeToLink(STANDUP_RECIPE);
   env.write(`${renderRecipePrompt(STANDUP_RECIPE, { day })}\n\n`);

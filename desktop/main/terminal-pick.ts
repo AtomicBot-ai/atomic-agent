@@ -12,6 +12,14 @@
  * Order, after VS Code's terminal.external.windowsExec / linuxExec and
  * GitHub Desktop's "Open in terminal":
  *   Windows: Windows Terminal (`wt.exe -d .`), else Windows PowerShell.
+ *            ATO-2782: a caller whose command is PowerShell syntax (the
+ *            Agents sheet's `& '<path>' launch claude`) asks for
+ *            `powershell`, and Windows Terminal then opens a PowerShell tab
+ *            (`wt.exe new-tab -d . powershell.exe -NoLogo -NoExit`) instead
+ *            of its default profile, which may be cmd.exe. The argv is
+ *            still constant: no command, no folder. Like VS Code's "Open in
+ *            integrated terminal" and GitHub Desktop's "Open in PowerShell",
+ *            which name the shell rather than trust the default.
  *   Linux:   x-terminal-emulator (Debian/Ubuntu's chosen default),
  *            gnome-terminal, konsole, xterm.
  */
@@ -32,12 +40,22 @@ export interface TerminalChoice {
 /** Finds a program on PATH: its absolute path, or null. */
 export type Which = (name: string) => string | null;
 
+/** ATO-2782: what the command needs from the terminal. `powershell`: the command is PowerShell syntax (Windows only). */
+export interface TerminalWant {
+  powershell?: boolean;
+}
+
+/** Windows Terminal's argv: its own folder (the spawn's cwd), and PowerShell by name when the command needs it. */
+export function windowsTerminalArgs(want?: TerminalWant): string[] {
+  return want?.powershell ? ["new-tab", "-d", ".", "powershell.exe", "-NoLogo", "-NoExit"] : ["-d", "."];
+}
+
 /**
  * Every terminal this platform could use, in order, that `which` finds.
  * `launcher` is the Linux launcher's path (each terminal runs it); unused on
  * Windows. An empty list means no terminal was found.
  */
-export function terminalChoices(platform: NodeJS.Platform, which: Which, launcher?: string): TerminalChoice[] {
+export function terminalChoices(platform: NodeJS.Platform, which: Which, launcher?: string, want?: TerminalWant): TerminalChoice[] {
   const out: TerminalChoice[] = [];
   const add = (terminal: OtherTerminalName, name: string, args: string[], newConsole?: boolean) => {
     const file = which(name);
@@ -45,7 +63,7 @@ export function terminalChoices(platform: NodeJS.Platform, which: Which, launche
   };
   if (platform === "win32") {
     // `-d .`: Windows Terminal's own folder, which is the spawn's cwd.
-    add("windows-terminal", "wt.exe", ["-d", "."]);
+    add("windows-terminal", "wt.exe", windowsTerminalArgs(want));
     add("powershell", "powershell.exe", ["-NoLogo", "-NoExit"], true);
     return out;
   }
@@ -74,8 +92,9 @@ export function shellIsZsh(shell?: string | null): boolean {
 
 /** The message when nothing on the list is installed. */
 export function noTerminalMessage(platform: NodeJS.Platform): string {
-  if (platform === "win32") return "No terminal was found: neither Windows Terminal (wt.exe) nor PowerShell is on PATH. The command is on your clipboard.";
-  return "No terminal was found: install x-terminal-emulator, gnome-terminal, konsole or xterm. The command is on your clipboard.";
+  // ATO-2742: plain words; which programs were looked for is in the header comment, not the toast.
+  if (platform === "win32") return "No terminal was found on this computer: Windows Terminal and PowerShell are both missing. The command is on your clipboard, so you can paste it into any terminal.";
+  return "No terminal was found on this computer. Install one, such as GNOME Terminal, Konsole or xterm. The command is on your clipboard.";
 }
 
 export interface WhichEnv {

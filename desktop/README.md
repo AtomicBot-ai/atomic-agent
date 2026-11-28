@@ -19,14 +19,32 @@ npm start
 One child process, one transport. The main process spawns
 
 ```
-ATOMIC_AGENT_API_KEY=<random per launch> atag serve --host 127.0.0.1 --port <ephemeral>
+atag serve --host 127.0.0.1 --port <ephemeral> --api-key-stdin   # stdin: <random per launch key>
 ```
 
 with `cwd` set to the chosen workspace, waits for `/health`, and speaks HTTP to
 it. The port is ephemeral, the bind is loopback-only, and the bearer token is
 generated per launch, so nothing outside this app can reach the agent. The
-token goes in the child's environment, not on its command line, which any
-program can read with `ps` (ATO-1705, [serve-launch.ts](main/serve-launch.ts)).
+token goes to the child as one line on its stdin, then the pipe is closed: it
+is neither on its command line, which any program can read with `ps`
+(ATO-1705), nor in its environment, which any program of the same user can
+read with `ps eww` or `/proc/<pid>/environ` (ATO-2538,
+[serve-launch.ts](main/serve-launch.ts)).
+
+**Connect phone (ATO-2493).** Settings › Connections › Connect phone opens
+the agent's web panel on a phone without typing the key. Off by default, as
+above. Its switch "Allow phones on this Wi-Fi" (like LM Studio's "Serve on
+Local Network") restarts the agent on `--host 0.0.0.0` and the fixed port
+19193 while it is on (a free port when 19193 is taken), so a phone's saved
+address keeps working; the per-launch key still guards every route, and a
+phone gets in only with a one-time QR link or short code made on this card
+(`POST /api/devices/pairing`), as a member that cannot change settings. The
+card lists paired phones with when each was last seen (`GET /api/devices`)
+and signs one out (`DELETE /api/devices/{id}`). The setting is
+`desktop-phone-access.json` in the state directory
+([phone-access.ts](main/phone-access.ts), [phone-ipc.ts](main/phone-ipc.ts),
+[renderer/phone-connect.js](renderer/phone-connect.js)). Reaching the phone
+away from this network (a tunnel) is not part of it yet.
 
 **Folder trust (ATO-1250).** A folder's own skills and instruction files
 (`AGENTS.md`, `.atomic-agent/skills`, …) load only after the person trusts
@@ -63,10 +81,12 @@ window shows "Not while a turn is running".
 | What a turn accepted but never read | `GET` / `DELETE /api/sessions/{id}/steer` |
 | Compacting a chat's context now | `POST /api/sessions/{id}/compact` |
 | `/btw`, a side question answered in a card and never saved to the chat (ATO-1152; an agent without the route says to update) | `POST /api/btw` |
-| An incognito chat (ATO-586): `incognito: true` on every turn, deleted when it is left | `POST /v1/chat/completions`, `DELETE /api/sessions/{id}` |
+| `/council`, the model council in a card: final answer on top, agree / disagree, peer ranking, the answers side by side; cost forecast and stage while it runs, Stop aborts it; never saved to the chat (ATO-2432; an agent without the route says to update) | `POST /api/council` (SSE) |
+| An incognito chat (ATO-586): `incognito: true` on every turn, deleted when it is left (once it has a sent message, leaving asks first: ATO-2748) | `POST /v1/chat/completions`, `DELETE /api/sessions/{id}` |
 | "Trust this folder?" and Settings › Skills' folder-trust switch (ATO-1250) | `GET` / `POST /api/project-trust` |
 | "Local model is set as your last-resort fallback. Keep it?", asked once (ATO-1461; hidden on an agent without the route) | `GET` / `POST /api/fallback/local-question` |
 | The grey next-step suggestion in the empty composer, Tab takes it (ATO-1094; only while Settings › General › Suggest a next step, `tui.nextStepSuggestions`, is on; hidden on an agent without the route) | `GET /api/sessions/{id}/next-step` |
+| The agent's shell jobs under the chat (ATO-2485): a tab per job, its output, Take over to type into an interactive one (a password prompt hides the typing by itself, and never takes the caret from the composer: the chip asks), Stop job, and a native terminal follows the panel's size; the typed text goes to the job only, never to the chat, and with Hide typing on it is sent as `secret`, so the agent masks an echo of it for the model (a toast says when the value is too short or plain to mask); a password the agent itself asks for (`shell_secret_input`, ATO-2486) gets a chat card whose Type it opens the job's tab, and Send there answers the request; hidden on an agent without the routes (`renderer/agent-jobs.js`, `renderer/shell-secret-card.js`, `main/agent-jobs-ipc.ts`) | `GET /api/sessions/{id}/shell-jobs`, `GET …/{jobId}/output`, `POST …/{jobId}/input` (`secret`), `POST …/{jobId}/resize`, `POST …/{jobId}/stop`, `POST /api/shell/secret` |
 
 The turn stream is sent with `X-Atomic-Extensions: 1`, which upgrades it from
 plain OpenAI chunks to atomic's named frames — `session_id`,
@@ -140,6 +160,16 @@ a local model, so main sends it over `node:http` and not `fetch`: Node's fetch
 gives up on headers after 300 s with a bare `fetch failed`, and the dropped
 request cancels the compaction on the agent's side.
 
+**What each context row is made of (ATO-2453).** The context popover lists
+the agent's own `parts` under each row (prompt scaffold sections, built-in
+tools, one row per MCP server, the native tool schemas by server), read from
+the session row's `contextUsage` or the `/api/context-preview` reply. A click
+on an MCP server's row lists its tools, biggest first (8 shown, the rest in one
+"+N more" row). On a window of 64k or less, a server (or the built-in tools
+while tool search is off) over 10% of it gets one tip, the same rule as the
+terminal's `/context`. Layout and words:
+[context-parts.js](renderer/context-parts.js).
+
 **The session's model stamp.** The same row carries `metadata.llm` — the
 provider and model that session last ran on. It is reported and never applied:
 `atag serve` pins its provider at boot, so switching costs a config write plus
@@ -185,6 +215,56 @@ held after outside content (its note shows in the risk line), one with no
 preview or a preview the bubble cannot show whole (more than one line, or clipped),
 or the categories kept for the full card (`PET_WINDOW_ONLY_CATEGORIES`): those offer
 Review. Do Not Disturb hides the bubble and the done / failed flashes.
+Settings › General › Desktop pet and the palette's Show / Hide desktop pet
+row (ATO-2741, [pet-settings.js](renderer/pet-settings.js)) use the same
+toggle as the menu (`pet:setEnabled`), and main sends every change back
+(`pet:prefsChanged`), so the switch, the row and the menu checkbox agree;
+Windows may have no menu bar. The bubble asks in the card's words ("Allow it
+to run a command?", [approval-words.js](renderer/approval-words.js)) and
+follows the theme picked in the app, not only the system's.
+
+**"Needs your OK" notifications (ATO-2755).** A chat that stops on an
+approval card (or an ask_user question) raises a native notification,
+"Atomic Agent needs your OK", with the chat's title and the card's own
+question in plain text, and the same words go to the phone push when
+Settings › Connections › Phone push is on. One per request id however often
+the events stream replays it, none for a request that came while the window
+was focused on its chat, and it closes when the request is answered here.
+The page describes the card it drew ([approval-notify.js](renderer/approval-notify.js));
+main decides ([approval-notify.ts](main/approval-notify.ts),
+[approval-notify-ipc.ts](main/approval-notify-ipc.ts)). With no main window
+(closed to the tray or the Dock) main words it from the request itself. A
+click brings the window up and opens that chat on its card. The switch is
+the turn-end one, `tui.notify.enabled`; there is no key of its own.
+
+**Desktop pet, part 2 (ATO-2513).** Turns the desktop did not start (a cron
+task, a Telegram message, the terminal on the same agent) show too: while the
+pet is up it reads the 25 newest session rows every 5 s (`GET /api/sessions`:
+`running` while a turn is in flight, then the status it ended on), skipping
+the sessions this window's own turns run in
+([pet-outside.ts](main/pet-outside.ts), [pet-outside-poll.ts](main/pet-outside-poll.ts)).
+A click on the bubble lets the pet take the keyboard: Tab between the
+buttons, Enter is Allow once, Esc is Deny (Hide for a question), with a ring
+on the focused button and the keys named under them; it gives the keyboard
+back when focus leaves or the bubble goes ([pet-window.ts](main/pet-window.ts)
+`keyboard`). Keys answer only the request that was shown when the person
+clicked, after it has been on screen half a second, never from a held key;
+mouse clicks on Allow and Deny follow the same rule, and the second click of
+a double-click never answers;
+when the shown request changes the keyboard is dropped and the next one needs
+its own click, and main refuses an answer for any request but the one its last
+view showed (`petKeyArmed` in renderer/pet.js, `shownId` in main/pet-ipc.ts). View › Desktop Pet › Make Your Own Pet… (also in the pet's
+right-click menu, under Pet) makes four pictures from a description with
+Studio's image generation, the same Core jobs `image.generate` runs: a
+downloaded local model is free, a cloud one shows its price on the Make
+button before anything runs ([pet-maker.js](renderer/pet-maker.js),
+[pet-maker-logic.js](renderer/pet-maker-logic.js)). They are kept in
+`<userData>/pets/<id>/`, the one that shows in `<userData>/pets/selected.json`
+([pet-skins.ts](main/pet-skins.ts), [pet-skins-ipc.ts](main/pet-skins-ipc.ts));
+Pet in the right-click menu and the dialog switch between them, Delete moves
+one to the Trash. The state machine is kept in step with the terminal's
+(`src/tui/pet/pet-machine.ts`, `/pet`) by one shared table of cases
+(`src/tui/pet/pet-machine.fixture.json`, [pet-fixture.test.mjs](test/pet-fixture.test.mjs)).
 
 **Why not the NDJSON sidecar.** `dist/sidecar/main.js` exists only in a source
 checkout, and the shipped single-file binary has no `sidecar` subcommand. A
@@ -209,7 +289,10 @@ start two task schedulers against the same cron jobs.
   The count is forgotten after ten minutes of normal running. A deliberate
   stop (quit, folder change, model switch, Restart Agent Runtime) cancels a
   waiting attempt. A restart that brought it back adds "The agent stopped
-  unexpectedly and was restarted." to the chat; after the third failure the
+  unexpectedly and was restarted." to the chat, and the chat on screen is read
+  again: when the agent recorded its last turn as cut off, the ATO-448 Continue
+  row goes under it (`renderer/resume-after-restart.js`, ATO-2768; a click, never
+  sent by itself). After the third failure the
   chat offers a Restart agent button. Analytics `agent_restarted` with
   `trigger: auto`; the next exit report carries `auto_restart_attempt`. Off in
   a smoke run; `--smoke --smoke-task=767` arms it and kills the agent four times.
@@ -243,6 +326,23 @@ start two task schedulers against the same cron jobs.
 Real, driven by the running agent:
 
 - connection state and working directory
+- the file preview panel beside the chat (`renderer/file-preview.js`, main reads every byte in
+  `main/file-preview.ts` inside the preview roots). ATO-2445 added: a Parquet file as a sortable
+  table of its first 1,000 rows (`main/parquet-preview.ts`, hyparquet; `renderer/parquet-table.js`);
+  `src/api.py:42`, `path:42:7`, `path#L42` and `C:\x\y.ts:10` in a reply open the panel on that line
+  (`renderer/reply-line-links.js`, `main/line-path.ts`: absolute, `~/`, relative to the chat's folder,
+  or the shallowest file in its @-mention listing ending so; `renderer/file-preview-line.js`); **Open in
+  VS Code / Cursor / Zed** at that line when one is installed (`main/editor-detect.ts`: PATH, the app
+  bundles on macOS, `%LOCALAPPDATA%\Programs` and `%ProgramFiles%` on Windows, the package folders on
+  Linux; `-g file:line` for VS Code and Cursor, `file:line` for Zed; `renderer/file-preview-editor.js`);
+  and **Compare** next to Reload from disk / Overwrite when the file changed on disk while it was
+  edited (`renderer/line-diff.js` makes the diff, `diff-lines.js` draws it;
+  `renderer/file-preview-compare.js`). The Files list has **This chat / Project**: Project is the
+  tree of the chat's working folder, one folder read when it is opened (`files:tree`,
+  `main/project-tree.ts`), without what .gitignore leaves out (`git check-ignore`) or, outside a
+  checkout, the mention walk's skipped folders; git marks M / A / R / U / C on files and a dot on
+  folders with changes (`main/project-tree-git.ts`); only inside the preview roots, never out of
+  the folder by `..` or a link (`renderer/project-tree.js`).
 - the transcript: your message in a bubble on the right — text-width, capped
   at 480px, with the outgoing-tail corner, the way a chat app draws your own
   side — then the streamed reply, reasoning, and tool cards on the left with no
@@ -311,7 +411,10 @@ Real, driven by the running agent:
   with `apply: true`, `os.fs.archive.extract`, and the Office writers
   `os.fs.docx`, `os.fs.xlsx` (not `op: read`), `os.fs.write_pptx` (ATO-2409:
   the `path` of the call; they also get a "created"/"updated" row on the
-  "Changed files" card, and a bare `sales.docx` in a reply is their chip) —
+  "Changed files" card, and a bare `sales.docx` in a reply is their chip;
+  ATO-2518: an agent that sends `office_file: {path, change}` on the
+  `tool_result` frame names the file and the badge itself, and the call's
+  clipped label is only the fallback for an older agent) —
   are attached under the reply as a `Saved to <path>` line per file plus a
   chip. The paths come from the
   session store: the call's own args and the tool's own result line (`wrote N
@@ -331,6 +434,11 @@ Real, driven by the running agent:
   attaches; `memory.*` writes the agent's own store, and `os.git.*` on this
   agent is blame/branch/diff/log/show/status only — those four are the whole
   list of file-producing tools.)
+- a deck being built (ATO-2444): each slide `os.fs.write_pptx` lays out
+  arrives as a `tool_update` with `slide`, and the running card draws it as a
+  small 16:9 sketch in the deck's theme (title, bullets, the layout's shape,
+  a box where the picture, table or chart goes), before the approval card;
+  `renderer/slide-thumbs.js`. An older agent sends none and the card reads as before
 - approval prompts, resolved over `/api/approval/resolve`
 - installed skills, durable tasks, and sessions — named by their first
   message and opened in full from the sidebar
@@ -370,10 +478,20 @@ Real, driven by the running agent:
   **Trash** section at the bottom of the sidebar, with Restore, Delete forever and Empty Trash.
   Delete forever is the real `DELETE /api/sessions/{id}`; main runs it on its own only for a chat
   that has been in Trash for 30 days. Deleting the open chat leaves an empty new one.
+  The Trash entry keeps where the chat sat (pinned, archived, its chat folder), and Restore, or
+  **Undo** on the "Moved to Trash" toast, puts it back there (ATO-2747; a folder deleted
+  meanwhile is skipped). Empty Trash says "Deleted 7 of 9 chats" when the agent took only some;
+  Trash errors are plain words, with the agent's message logged by main.
+  The agent owns the mark (ATO-2474, `main/chat-trash-sync.ts`, `renderer/chat-trash-view.js`):
+  its lists, the terminal included, leave a chat in Trash out, and `GET /api/sessions` says
+  `trashed` on each row, so a chat restored in the terminal (`/sessions --restore`) leaves this
+  Trash on the next refresh. On the first start with this, every chat already in
+  `chat-trash.json` is stamped on the agent (`userData/chat-trash-agent.json` records the run).
+  A chat's title in the Trash section opens it read only: the composer is one line with Restore.
   Each list header carries a **+** on its own line: the one on Chats starts a
-  new chat, the one on Tasks opens Settings › Tasks on a new task,
-  and on the Tasks header `N running` sits to the left of it. The head row —
-  the lockup and the workspace chip — carries no plus at all; the user asked
+  new chat, the one on Scheduled tasks opens Settings › Scheduled tasks on a new task,
+  and on the Scheduled tasks header `N running` sits to the left of it. The head row,
+  the lockup and the workspace chip, carries no plus at all; the user asked
   for it there and nowhere else. The dot on a row is a 6px ring seated on the
   label's optical centre rather than on its line box.
   Pinning and the read stamps live in Electron's `userData/prefs.json` — per
@@ -381,10 +499,10 @@ Real, driven by the running agent:
   either, and its `config.json` is the operator's file. On a machine that has
   never run this window every historical chat is therefore unread until it is
   opened; that is honest, not a bug. Under New chat stand two section rows,
-  **Tasks** and **Skills** (ATO-457, the owner's call on U-24): the places
+  **Scheduled tasks** and **Skills** (ATO-457, the owner's call on U-24): the places
   ⌘ 2 and ⌘ 3 lead to, drawn whether or not any task exists. They open
-  Settings › Tasks and Settings › Skills, the same verbs as the chords, the
-  palette and View › Tasks / Skills, and the row whose tab is open is lit
+  Settings › Scheduled tasks and Settings › Skills, the same verbs as the chords, the
+  palette and View › Scheduled tasks / Skills, and the row whose tab is open is lit
   (`renderer/sidebar-nav.js`, unit-tested in `test/sidebar-nav.test.mjs`).
   Collapsed — Setup › Hide or show the sidebar, or a window narrower
   than 1000px — the two lists stay as a column of small discs, each holding
@@ -481,6 +599,23 @@ Real, driven by the running agent:
   same provider step (`cloud`); Back from the URL step returns to the Custom
   list. A click scenario that wants Ollama clicks **Custom**, not
   **Cloud models**. The terminal's own wizard is unchanged.
+- model servers already running here (ATO-2489, `renderer/local-servers.js`
+  for Settings, `renderer/local-servers-setup.js` for the setup step,
+  `main/local-servers-ipc.ts`): the app runs `atag local-servers --json`, the
+  core's own probe (Ollama on 11434, LM Studio on 1234, the Llama app or a
+  llama-server on 9931, 800 ms each). When one answers, the Custom card says
+  `Found running here: Llama app, Ollama.`, the cursor starts on it, and
+  Custom opens the `found_server` step: every server found (a choice when
+  several run) with its models and what is loaded, then **Something else**
+  for the full Custom list. A pick goes the usual way: Ollama and LM Studio
+  open their preset row on the Custom list and check it at once (no key),
+  the Llama app opens the llama.cpp address step with its address filled in.
+  The closing line then says `Ollama connected`. Settings › Local lists the
+  same servers under **Running on this Mac** with Use / Switch to it / In
+  use and Check again. An agent without the command, or an app connected to
+  an agent on another computer, shows nothing.
+  Manage on an Ollama or LM Studio row (ATO-2490): see "Ollama and LM
+  Studio models, managed and used here" below.
 - the add-provider wizard: the TUI's kind list (nothing preselected) → key /
   base URL → verification by listing the provider's models under that key →
   saved, activated, and a default model picked
@@ -607,6 +742,10 @@ Honestly degraded, and labelled as such in the UI:
   for the rest of the chat, and is drawn only when `/api/capabilities` lists
   it in `agent.approvalDecisions`. An agent that answers it with a 400 gets
   `allow-once` instead, and the card says the chat part did not happen.
+- **An outdated Claude Code / Codex CLI is said in the chat.** The agent
+  sends `event: cli_outdated` once per session when the CLI is older than it
+  supports (core ATO-2523); `renderer/cli-outdated-line.js` puts one line
+  before the reply with the update command as code (no Homebrew on Windows).
 - **Subscription-CLI providers** (`claude-cli`, `codex-cli`) are in Add
   provider with the TUI's labels. They have no key screen: the step says the
   signed-in CLI runs on the user's plan, warns when `ANTHROPIC_API_KEY` /
@@ -621,6 +760,11 @@ Honestly degraded, and labelled as such in the UI:
   `codex login status`, and one tiny one-turn `claude -p` only for a Claude
   Code too old to have the status command. A dead login shows the Sign in
   step right away; a check that fails or hangs never blocks the step.
+  Switching the chat to a saved one in the composer's model menu asks the
+  same kept check (`renderer/subscription-switch-check.js`, ATO-2463): a dead
+  login opens the same step in the menu (Sign in, the command with Copy),
+  or a toast with the command when the menu has closed. Signing in there
+  closes the step without rewriting the saved entry.
 - **The palette search forgives.** ⌘ K ranks commands, Settings sections,
   chats, tasks and skills with `renderer/fuzzy-match.js` (ATO-669): exact,
   prefix, word prefix or slash alias, substring and context matches keep
@@ -664,7 +808,16 @@ Honestly degraded, and labelled as such in the UI:
   does not have; the tool counters come from the open session's store rows.
   The Privacy tab shows the effective `analytics.enabled` (the schema default
   when `config.json` has no key, read with `atag config get`), as the TUI does.
-- **Tasks** start in plain words (ATO-519): New task asks one sentence, such
+  Under Privacy Shield, a names row (ATO-2527,
+  [privacy-names.js](renderer/privacy-names.js)) switches
+  `privacy.shield.localNames` through `POST /api/privacy-shield` and says which
+  model on this computer reads the text; with none set up it says only emails,
+  phones, cards and keys are hidden and links to Models › Local models. An
+  agent without the switch gets a disabled row that asks for an update.
+- **Scheduled tasks** (one name in Settings, the sidebar, the View menu, the
+  palette and Import, ATO-2743; the palette still finds it by "cron", "jobs",
+  "schedule", "automation" and "webhook", and has a Webhooks row for the
+  section's Webhooks pane) start in plain words (ATO-519): New task asks one sentence, such
   as "every weekday at 9, send me a summary", and sends it as the first message
   of a new chat, where the agent schedules it with its own `tasks.cron` /
   `tasks.schedule` tools ([task-ask.js](renderer/task-ask.js)). **Set up
@@ -692,7 +845,7 @@ Honestly degraded, and labelled as such in the UI:
   directory shown in the detail. Global uninstall and Skills Hub behavior
   retain their existing HTTP/CLI paths.
 - **Show once** (ATO-2401, macOS, local agent only) is the Record card above
-  Pending review. Nothing listens until Record is clicked; while it records,
+  To review (the learned-drafts group, called Pending review before ATO-2499). Nothing listens until Record is clicked; while it records,
   the card turns red and a menu bar item says "● Recording steps" (one click
   stops and saves, its right-click menu also discards). It stops on its own
   after 10 minutes or 200 steps, and on quit without saving. Clicks (the
@@ -700,12 +853,53 @@ Honestly degraded, and labelled as such in the UI:
   action keys are kept; typed characters never are (a run of typing is one
   "type the text here" step), nor anything in protected apps (the agent's
   screen guard list plus password managers by name), nor control labels in
-  browsers. No screenshots. Stop compiles the steps into a SKILL.md
+  browsers. No screenshots unless switched on (below). Stop compiles the steps into a SKILL.md
   (`main/show-once-skill.ts`, replayed with the os.screen tools) and saves it
   as a learned-skill draft in `<stateDir>/skills-pending/<id>/`, where
-  Pending review shows, approves or discards (deletes) it through the
+  To review shows, approves or discards (deletes) it through the
   agent's own `atag skill learned`. Needs Accessibility for Atomic Agent;
-  the listener is uiohook-napi, whose macOS prebuilds ship for this.
+  the listener is uiohook-napi, whose macOS prebuilds ship for this. The
+  saved note offers Show in Finder for the draft's folder (its path only on
+  hover); an empty recording points at Privacy & Security › Input
+  Monitoring (ATO-2744).
+  ATO-2499: what was under each click and key comes from one resident
+  Accessibility helper, `native/atomic-show-once.swift` (built with the Fn
+  watcher by `scripts/build-speech-helper.mjs`, skipped with the speech
+  helper under `ATOMIC_SKIP_SPEECH_HELPER=1`; `Resources/native` when
+  packaged). Its AXObserver on the frontmost app adds menu commands
+  (File > Export To > PDF, replacing the clicks that opened the menu) and
+  window titles (where a step happened, what came to the front after it;
+  never in browsers). Without the helper each event asks osascript once,
+  as before, with no menu commands or titles.
+  Two switches under Record (`userData/show-once.json`): **Tidy the draft**
+  (on) sends the step lines as text to the chat model through the agent's
+  `POST /api/complete` once after Stop (`main/show-once-tidy.ts`,
+  `show-once-finish.ts`); it writes the title, description, a summary and
+  what to ask the user for, never the steps, and on any failure the draft
+  stays as recorded. **Save a picture of the window after each step** (off)
+  takes a `screencapture` of the window by its window id, never a screen
+  rectangle, so only with the helper (Screen Recording needed; never
+  browsers or protected apps) into the draft's `snapshots/`, shown in its
+  preview under To review and deleted with the draft
+  (`main/show-once-snapshots.ts`, `renderer/show-once-draft.js`).
+  Replay check: each step of the SKILL.md ends with a "Check:" line (the
+  window that should be in front after it, from the recorded titles), and
+  the replay rules stop at the first step that does not match and say
+  "Replay stopped at step N of M: expected ..., saw ...". **Test skill** in a
+  recorded draft's preview opens a new chat whose first message is a dry run
+  of the draft (it is not installed yet, so its text goes along).
+  Windows and Linux (ATO-2499): the same uiohook-napi listener (its Linux
+  prebuilds now ship), and the tray icon instead of the menu bar item.
+  Windows asks one resident Windows PowerShell (`main/show-once-win.ts`,
+  same line protocol as the helper) for the window under a click or in
+  front (user32), its title, and the UI Automation control there (type,
+  name, password or not; never its value). Linux on X11 asks `xdotool`
+  per event (`main/show-once-linux.ts`) for the window in front, its title
+  and process, with no control names. Wayland, or no `xdotool`, shows why
+  in place of the Record button (`main/show-once-platform.ts`). No step
+  pictures off macOS. Off macOS the os.screen tools only capture, so the
+  SKILL.md tells the agent to walk the user through each step and check a
+  capture after it.
 - **Memory** reads `<stateDir>/memory.sqlite` read-only (`sqlite3`, falling
   back to `node:sqlite`) with the stores' own statements, named and
   parameterised in the main process — the agent has no memory route.
@@ -742,6 +936,20 @@ Honestly degraded, and labelled as such in the UI:
   did not go through, and Engine not ready with Download again when the local
   engine failed. The mapping is [memory-model-card.js](renderer/memory-model-card.js);
   after a step the list is read again for up to 30 s while the server loads.
+- **Start on the local model** (Settings › Models › Cloud › Advanced ›
+  Fallback chain, under "Use local models as the last resort"; ATO-2434)
+  is `llm.fallback.localFirst` (default off; the agent side is
+  `src/llm/docs/fallback.md`). On, a chat turn whose active provider is a
+  cloud one starts on the local model and goes to the cloud only when the
+  local one fails. It writes the whole `llm.fallback` object through the
+  same `config set` as the chain, so the chain and the last-resort switch are
+  kept, and says the change applies after Restart Agent Runtime (serve keeps
+  the config it booted with). It is off and disabled, with the reason under
+  it, when no local model is set up (no `llama-server` provider, or a managed
+  engine with no model chosen) or no cloud provider is configured; a switch
+  that is already on can always be turned off. A failed write says "Could not
+  save this setting" with the agent's words behind Details
+  ([local-first-switch.js](renderer/local-first-switch.js)).
 - **The local-model recommendation** ranks that catalogue against the machine
   it is running on, in the first-run picker and in Settings › LLM › Local, off
   the same two functions (`fitFor` / `orderModelsByFit` in `renderer.js`) so
@@ -830,6 +1038,16 @@ Honestly degraded, and labelled as such in the UI:
   see the GPU, so the fit goes by RAM and no speed is shown), and the pick:
   the most precise 4-bit-or-more quant that fits and answers at 20 tok/s or
   more, moved to the front so both pick lists open on it as "Recommended".
+  **Experts in RAM (ATO-2455).** The agent sees the GPU, so main reads its
+  `models recommend --json` once in the background (`main/moe-fit.ts`, never
+  on a Mac): a mixture-of-experts model that overflows a GPU with memory of
+  its own gets "Fits, experts in RAM" on its Local models row (with the
+  agent's speed estimate in the tooltip) and on its Hugging Face quants
+  (`withDedicatedGpu`, the agent's rule copied). Advanced › Engine has
+  "Experts on CPU: Auto / Off / 8 / 16 / 32" (`renderer/local-cpu-moe.js`,
+  `localModels.managed.cpuMoe`), shown for a mixture-of-experts model or a
+  setting that is not Auto; a change restarts a running model server, and Off
+  takes the badges away.
   The pick list follows the TUI's `MouseListRow` contract rather than the
   Local pane's model rows: the first click on a file selects it, a second
   click on the selected one starts the download — the rows above it activate
@@ -844,19 +1062,24 @@ Honestly degraded, and labelled as such in the UI:
   the agent reads it, from this app's environment or else `<stateDir>/.env`
   (main/hf-token.ts, ATO-853), so a repo that downloads with `atag models
   pull` also lists here.
-- **Ollama is a provider here, never a download source.** atomic-agent has
-  no Ollama download path of any kind — no registry client, nothing reading
-  `~/.ollama`, no converter; the only Ollama code in the agent is two
-  provider presets, a health-failure hint and a steer modal, with zero hits
-  under `src/local-llm`. Offering "download from Ollama" would be a
-  capability this window invented, so the Local pane carries one
-  non-interactive line pointing at the thing that does work: `Cloud › n add
-  provider › Ollama (local)`, `http://localhost:11434`. Importing a model
-  Ollama already pulled is technically possible (its blobs are real GGUF)
-  and deliberately not built: `ollama rm` would dangle the link, Ollama keeps
-  the chat template in a separate manifest layer so an imported GGUF can be
-  served under the wrong one, and the schema's mandatory `huggingFaceUrl`
-  would have to be a placeholder. Cloud rows read `llm.providers` and show `key ok` /
+- **Ollama and LM Studio models, managed and used here (ATO-2490).** The
+  agent drives them through `atag local-servers <action>` (core
+  `src/local-llm/external-servers/`): Ollama through its own API, LM Studio
+  through its `lms` tool. Settings › Local's **Manage** on a running Ollama
+  or LM Studio row (`renderer/local-servers-manage.js`) lists its models
+  with Load / Unload (Ollama's `keep_alive: 0`; which models are loaded
+  comes from Ollama's `/api/ps` and LM Studio's `/api/v0/models`),
+  **Free memory**, a Download field with progress and
+  Stop, Delete (Ollama only, asked twice) and **Use here**; the section
+  offers **Start Ollama** / **Start LM Studio** for an app that did not
+  answer. Use here adds the model's file to the local models with no new
+  download and switches to it through the usual model pick. The three
+  reasons this used to be refused are handled in the core: Ollama's blob is
+  hard-linked (a link that `ollama rm` does not break, no second copy), a
+  GGUF without a chat template inside is refused in words, and the entry is
+  the same `file://` local entry "Use a .gguf file I already have" writes.
+  A blob that is not GGUF is refused too. Errors are a sentence, the app's
+  own words behind Details. Cloud rows read `llm.providers` and show `key ok` /
   `missing key` from the key NAMES present in this process's env ∪
   `<stateDir>/.env` (never values); the text-model list is the provider's
   `atag models search --json` (no pricing in it, so the `price:` facet stays
@@ -921,6 +1144,23 @@ Honestly degraded, and labelled as such in the UI:
   too. Every change owes a restart; the tab's Restart agent works as on the
   Telegram tab (an `agent_restarted` `manual` trigger). The token never
   reaches state, markup or a message.
+- **Linear** (Settings › Connections, after Discord; ATO-2464,
+  `renderer/linear-settings.js` for the state, `linear-pane.js` for the
+  markup, `linear-tab.js` for the glue, loaded after `renderer.js`) does what
+  `atag connect linear` does for the agent's Linear channel
+  (`src/channels/linear`). The API key is checked first with one `viewer`
+  query from main (`linear:checkKey`, `main/linear-key-check.ts`); a key
+  Linear refuses or that could not be checked is not saved. A good key goes
+  to the key store as `LINEAR_API_KEY` through `app:dotenvSet`, and the
+  whole `channels.linear` block (`enabled`, `ownerIds`, `options.mode`,
+  `options.mention`, other options kept) goes in one `configSetPath`. The
+  key's own user becomes the owner when there is none, and the mode defaults
+  to polling, so no tunnel is needed. Webhook asks for
+  `LINEAR_WEBHOOK_SECRET` first and switches once it is saved; removing the
+  secret goes back to polling. Installing the agent as a Linear app (OAuth)
+  stays in the CLI (`atag connect linear --app`). Every change owes a
+  restart, as on the Discord tab. Errors are the tab's own words: no key,
+  secret or server text reaches state, markup or a message.
 - **Composio** (Settings › Connections, beside MCP servers and Telegram; the
   palette's Composio row) is the TUI Integrations tab's Composio row
   (`src/integrations/composio-integration.ts`, its setup walkthrough and
@@ -1003,6 +1243,19 @@ Honestly degraded, and labelled as such in the UI:
   refuses a provider key, or the agent is older than these commands, the
   key stays in config.json as before. With the default `.env` store none of
   this runs.
+- **Where a key comes from** (ATO-2530). A provider row with "Key saved"
+  adds "from 1Password", "from Bitwarden", "from Vault", "from your
+  command" for a key saved as a reference (`op://`, `bw://`, `vault://`,
+  `cmd://`), or "in Keychain" / "in Credential Manager" / "in the system
+  keyring" for one the agent keeps in the OS keychain. Main reads only the
+  scheme from `.env` and the keychain NAMES from `secrets-store.json`
+  ([secret-source-labels.ts](main/secret-source-labels.ts), `sources` on
+  `app:dotenvKeys`); the renderer words are in
+  [secret-source.js](renderer/secret-source.js). A plain `.env` key gets no
+  label. A command, web request (`os.http.request`) or skill script that
+  uses a tool secret asks as `shell_secret` ("command · uses a secret"),
+  shown in the full card like `shell_dangerous`; the plain words say "use a
+  saved secret in a command, web request or script".
 - **Import** is the TUI's Hermes/OpenClaw form over `atag import <source>
   … --dry-run` (preview) and `… --yes` (apply) — always exactly one of the
   two, never a bare run (which exits 0 on a non-TTY having written nothing).
@@ -1140,7 +1393,7 @@ Honestly degraded, and labelled as such in the UI:
   behind a small `TranscribeEngine` interface so a Windows whisper.cpp engine
   (ATO-1076) can plug in without touching the IPC or the renderer.
 - **Record a meeting (ATO-2333).** `+` → `Record meeting` or File →
-  `Record a Meeting…` opens the microphone (audio only, through the same
+  `Record Meeting` opens the microphone (audio only, through the same
   permission gate as voice input: `voicePermissionVerdict` reads
   `meeting.armed`). A red `Recording` pill with a clock and `Stop` stays at
   the top of the window while anything is heard; the panel under it shows the
@@ -1156,9 +1409,91 @@ Honestly degraded, and labelled as such in the UI:
   folder to My files, deletes the meeting's audio, and opens a new chat that
   sends the transcript to the `meeting-notes` skill (summary, decisions,
   action items with owners, and a question before anything is scheduled).
-  `Delete recording` removes the folder. A recording a crash or a closed
-  window cut short is offered again at the next start. Not yet: system audio
-  (ScreenCaptureKit) and real speaker recognition.
+  `Delete recording` asks first, then removes the folder; a delete that
+  failed says so in a red toast and the recording is offered again
+  (ATO-2749). A microphone that was refused shows a card with the
+  platform's own path (`System Settings › Privacy & Security › Microphone`,
+  Windows `Settings › Privacy & security › Microphone`, plain words on
+  Linux) and `Open Settings` on macOS and Windows (`app:openMicSettings`,
+  `main/mic-settings.ts`). Quitting while a meeting is recorded is named in
+  the quit question (`main/quit-question.ts`). A recording a crash or a closed
+  window cut short is offered again at the next start.
+- **Me and Them (ATO-2514).** Once the microphone is open the call's sound
+  on this computer is recorded as a second channel, so the transcript reads
+  `Me` / `Them` like Granola's. macOS: `native/atomic-system-audio.swift`
+  (ScreenCaptureKit, 16 kHz mono, the app's own sound excluded by bundle id;
+  compiled by `build-speech-helper.mjs` for macOS 14 and shipped beside
+  `atomic-speech`), run by `main/meeting-system-ipc.ts`; its stdout is cut
+  into the microphone's 100 ms frames (`meeting-system-audio.ts`). Without
+  the Screen and System Audio Recording permission the panel says
+  `Microphone only` with `Open Settings`. Windows: the page asks
+  `getDisplayMedia`, main answers with the screen and WASAPI `loopback` audio
+  only while a meeting records (`display-capture` is allowed only then), and
+  the video track is stopped at once. Linux: the PulseAudio / PipeWire
+  `Monitor of …` input when it is listed; otherwise microphone only. The
+  recorder keeps the call's chunks in `<id>/them/`, its clock starting
+  `themLead` seconds in (meta.json); `meeting-speakers.ts` puts both
+  channels on one clock and drops microphone lines that are the call heard
+  through the speakers.
+- **Speakers by voice (ATO-2514).** With `Tell speakers apart by voice` on
+  (Settings, Meetings; off by default, opt-in) the recorder also keeps each channel
+  whole as `full.wav` until Make notes, then runs the agent's
+  `atomic-agent diarize run` (sherpa-onnx v1.13.8, Apache-2.0; pyannote
+  segmentation-3.0, MIT; 3D-Speaker CAM++, Apache-2.0) on the other side of
+  the call (Them 1, Them 2 in a group call) or, without system audio, on the
+  microphone (Speaker 1, Speaker 2). Nothing is bundled: the first meeting
+  starts `diarize install`, about 56 to 64 MB once, with progress and Skip in
+  the panel (`main/meeting-voices.ts`, `meeting-voices-ipc.ts`,
+  `renderer/meeting-voices.js`). An older agent, an OS without a prebuilt
+  engine, a failed download or the switch off falls back to Me / Them or the
+  pause guess, and the saved file says which was used. When it is off, a
+  stopped recording shows one line, `Tell voices apart: Download (60 MB)`,
+  that opens Settings, Meetings.
+- **Create tasks (ATO-2514).** A reply that holds the meeting-notes
+  `| # | Task | Owner | Due |` table gets `Create tasks` in its action row
+  (`renderer/meeting-tasks.js`). It lists the items, all ticked, with a date
+  each (the due date when it is a real date, else tomorrow) and creates one
+  reminder per ticked item at 9:00 local through `BR.taskCreate` (kind `at`),
+  the same `task create` the Cron jobs pane uses. Nothing is created
+  without the click.
+- **Settings, Meetings (ATO-2514).** `renderer/settings-meetings.js` with
+  the routes in `main/meeting-library-ipc.ts`: the transcript folder
+  (Change picks one, Use default goes back to Documents/Atomic Agent/
+  Meetings; kept in userData/meetings.json, `meeting-prefs.ts`, and read by
+  `meetingSaveDir` for every Make notes), the switches for the call's sound
+  and for speakers by voice (with the model's size and licences, Download
+  now and Remove), and the meetings saved in that folder: Open, Notes, Show
+  in folder and Delete, which asks first and moves the transcript and its
+  `.notes.md` to the Trash. Only files named like the recorder's own
+  (`meeting-library.ts`) can be opened or deleted from the page.
+- **Logbook chip and menu bar icon (ATO-2534).** While the logbook is on or
+  paused (`atomic-agent logbook start`, shared `~/.atomic-agent/logbook/settings.json`),
+  the toolbar shows `● Logbook` (`renderer/logbook-chip.js`) and the menu bar
+  (tray on Windows and Linux) has its own icon (`main/logbook-tray.ts`, apart
+  from Keep Running's). Both open the same menu: what it is doing, Pause for
+  30 minutes or 1 hour, Resume, Stop. Main polls `GET /api/logbook` every 10 s
+  and changes it with `PATCH /api/logbook/settings` (`main/logbook-ipc.ts`).
+  The runtime behind `serve` captures only while this app says its mark is on
+  screen: main posts `POST /api/logbook/indicator {visible:true}` every 15 s
+  while the icon is up or the window reports the chip visible (the window
+  reports on every change and every 15 s; a hidden or minimized window says
+  no), and `{visible:false}` once when neither is. A report holds 45 s, so a
+  crashed or quit app stops the capture by itself. A remote agent gets none
+  of this. Pure half: `main/logbook-mark.ts`.
+- **Settings › Logbook and the day timeline (ATO-2526).** Settings has a
+  Logbook section (`renderer/logbook-settings.js`): Turn on / Turn off, how
+  often, how many days notes are kept, apps never captured, apps noted by
+  window title only (no screenshot, no model), and an opt-in morning standup
+  time (a cron task the runtime files, see the logbook README). Save writes
+  `PATCH /api/logbook/settings`. Open the timeline (also in the chip's and
+  the menu bar's menus) shows one day's notes newest first
+  (`renderer/logbook-timeline.js`, `GET /api/logbook/day`); a note or the
+  whole day is deleted after a confirm (`DELETE /api/logbook/entries`).
+  Main: `main/logbook-timeline-ipc.ts`, pure half `main/logbook-prefs.ts`.
+  While the screen is locked, the computer sleeps or there was no input for
+  5 minutes (`main/logbook-away.ts`, Electron `powerMonitor`), the mark
+  carries `away: true` and the runtime skips without a screenshot; a lock
+  tells the runtime at once.
 - **Voice input: what is and is not possible.** `SpeechAnalyzer` is macOS
   26+, so on anything older the button is disabled and says
   `Voice input needs macOS 26 or later`; the app itself runs from
@@ -1220,11 +1555,11 @@ Honestly degraded, and labelled as such in the UI:
   unchanged. There is no auto-detection beyond this, and no analyzer takes
   more than one locale.
 
-- **Tasks and Skills are the settings tabs.** ⌘2/⌘3, the palette hits and
-  View › Tasks/Skills all open the settings window on that tab — one
+- **Scheduled tasks and Skills are the settings tabs.** ⌘2/⌘3, the palette hits and
+  View › Scheduled tasks/Skills all open the settings window on that tab: one
   implementation, as the TUI's Manage tabs are. ⌘1 closes it and returns to
-  the transcript. The sidebar's own Tasks list (above) is the summary; a row
-  clicked there opens that task in the Tasks tab.
+  the transcript. The sidebar's own Scheduled tasks list (above) is the summary; a row
+  clicked there opens that task in the Scheduled tasks tab.
 
 ## Verification
 
@@ -1707,6 +2042,21 @@ through an env var.
 - The window says which directory it owns: the diagnostics line under
   Settings carries a `state <dir>` segment beside `agent <bin>`.
 
+### My apps (`apps/`)
+
+Pages kept as apps (ATO-2383, ATO-2459) live in `<stateDir>/apps/<id>/`:
+`index.html`, `app.json`, `versions/<n>-<savedAtMs>.html` (the page before
+each edit, newest 20) and, once installed, `install.json` naming the OS
+launcher. The desktop (`main/my-apps-*.ts`) and the agent's `app.save` /
+`app.update` / `app.delete` / `app.list` tools (`src/tools/app/`) write the
+same layout, so an app made from a chat shows up under Apps in the sidebar.
+Install writes a launcher that opens `atomicagent://app/open?id=<id>`
+(`main/my-apps-deeplink.ts`; main opens the app window itself, no card):
+a small `.app` in `~/Applications/Atomic Apps` on a Mac, a Start menu `.lnk`
+on Windows (`shell.writeShortcutLink`), a `.desktop` entry in
+`~/.local/share/applications` on Linux. Only a packaged build installs,
+since only it registers the link handler.
+
 ## Building a testable .dmg
 
 **The app already installed at `/Applications/Atomic Agent.app` has none of
@@ -1871,7 +2221,9 @@ without a click.
   published, each stable release needs a `beta*` copy too, or beta readers
   wait for the next beta. ATO-2414: no betas are published yet, so the row is
   hidden (`BETA_CHANNEL_SHIPPED` in `main/updater.ts`); a saved "on" keeps the
-  fallback above and still gets stable updates. Flip the flag with the first beta.
+  fallback above and still gets stable updates. ATO-2745: while it is on, the row
+  is shown anyway, so it can be turned off; once off it is hidden again (VS Code
+  and Chrome keep the channel visible to people on it). Flip the flag with the first beta.
 - The person's choices are in Electron userData `updates.json` (auto-check, beta,
   skipped version, last Not now, and the install in flight, which the new
   version reads once to send `update_installed`). Never in the agent's
@@ -2114,13 +2466,14 @@ desktop/
   main/backend-switch.ts the TUI's backend/provider/model decisions, main-side
   main/main.ts           lifecycle, window, IPC, the smoke harness
   main/menu.ts           the native menu bar
-  main/pet-*.ts          the desktop pet: frames to states, the window, its routes (ATO-2391)
+  main/pet-*.ts          the desktop pet: frames to states, the window, its routes (ATO-2391), outside turns and made pets (ATO-2513)
   main/edit-context-menu.ts  the right-click edit menu and spellcheck switch
   main/speech.ts         the one voice-input child: probe, start/stop, audio, install
   main/updater.ts        app updates (electron-updater), only ever on a click
   electron-builder.cjs   the packaging config, and the update feed (ATAG_UPDATE_FEED_URL)
   native/atomic-speech.swift  on-device transcription (SpeechAnalyzer), NDJSON on stdout (live, and --file for an audio file)
   native/atomic-fn-key.swift  hold Fn to dictate into any app: a listen-only event tap, down/up lines on stdout
+  native/atomic-system-audio.swift  ATO-2514: the call's sound for Record a meeting (ScreenCaptureKit), raw PCM on stdout
   main/hold-key-uiohook.ts  hold Ctrl+Win to dictate into any app on Windows (uiohook-napi, in process)
   preload/preload.ts     the window.atomic bridge
   renderer/              index.html · styles.css · renderer.js · voice-worklet.js
@@ -2173,7 +2526,7 @@ Atomic Chat Core is the default local engine. The agent's config migration write
 
 Settings → Models → Advanced → Engine shows the running engine's install and update rows. Its **Engine choice** row appears only on llama.cpp (reachable only through that CLI command), with **Use Atomic Chat engine** as the quiet way back to Core; stop local models before switching. Model files are shared across engines. Core installation and model ownership are delegated to the agent's `models` commands; the desktop uses the same session credentials for native health/context probes and never force-kills Core-owned model processes. On Core, Update now runs the streamed `models update` (Core when it is missing, then the llama.cpp build Core picks) and draws it as a progress bar in the download banner. The first-run setup's runtime phase is the same `models update`, so it installs whichever engine the config names.
 
-**When Core is not ready.** With Core selected, a failed Core download, verification or start leaves no local engine: the agent has no automatic fallback and ends every such failure with `Retry with: atomic-agent models update`. `main/engine-failure.ts` reads that hint (older agents' llama.cpp hints are still accepted), the agent's stage sentences ("The Atomic Chat engine could not be downloaded" / "did not pass verification" / "could not install its inference backend" / "could not start") or a line naming Atomic Core in every start, install and switch answer and turns it into one plain sentence (download, verify, backend, blocked or start). Main keeps it, sends it to the window (`engine:failure`) and clears it on the next success. The window shows a toast once, a strip over the composer while the route needs the local engine, and a card in Settings → Models (and in the setup's runtime row on first run), each titled "The local engine isn't ready" with one action, **Download again** (the engine install, or the setup's own retry). There is no llama.cpp button. The setup's runtime row is labelled **Local engine** whichever engine it installs.
+**When Core is not ready.** With Core selected, a failed Core download, verification or start leaves no local engine: the agent has no automatic fallback and ends every such failure with `Retry with: atomic-agent models update`. `main/engine-failure.ts` reads that hint (older agents' llama.cpp hints are still accepted), the agent's stage sentences ("The Atomic Chat engine could not be downloaded" / "did not pass verification" / "could not install its inference backend" / "could not start") or a line naming Atomic Core in every start, install and switch answer and turns it into one plain sentence (download, verify, backend, blocked or start). Main keeps it, sends it to the window (`engine:failure`) and clears it on the next success. The window shows a toast once, a strip over the composer while the route needs the local engine, and a card in Settings → Models (and in the setup's runtime row on first run), each titled "The local engine isn't ready" with one action, **Download again** (the engine install, or the setup's own retry). A failure that is the model, not the engine, carries its own title (`renderer/engine-failure-title.js`, ATO-2515): a damaged or missing model file reads "The model file needs to be downloaded again" (with **Download model again**), a model the engine is too old for reads "Update Atomic Agent to run this model" (the body says why). There is no llama.cpp button. The setup's runtime row is labelled **Local engine** whichever engine it installs.
 
 **After a failed launch install.** When the launch installs Core's backend before starting the model and that install fails, nothing is started on top of it. The next engine install that succeeds (the download card's Retry, Settings' install, Download again) starts the model as the launch would have, once, when the route still needs it and the model is still on disk (`startAfterEngineInstall`, via `update`, so the window hears how it went). Every failed engine install, and how a background model start ended, is written to `agent.log` as well as the terminal and the console drawer (`sayDesktop`).
 
@@ -2195,3 +2548,7 @@ The installer carries Atomic Chat Core, so the first local model needs no Core d
 ### Composer inference engines
 
 Local mode shows the backend and model controls only; the engine is not named or chosen there. Fusion shows an engine/provider and model pair for each role (a local seat reads **Local models**, never an engine name, so it is not confused with the Atomic Chat (local) provider preset), separated by the swap control. Model catalogs and model pins follow their own role; changing a worker does not activate it as the orchestrator. The managed runtime has one local slot, which can move between roles with swap. A loaded local model must be stopped before its engine changes. Route changes keep the existing busy-turn and Stop guards.
+
+### Fusion models by role (ATO-1754)
+
+Settings › Models › Fusion lists the five task roles the planner hands out (plan, build, review, explore, utility) under the worker reasoning row, one row each ([renderer/fusion-roles.js](renderer/fusion-roles.js)). A row picks a provider (**Workers' model (default)** first, then every configured provider) and, for a cloud or OpenAI-compatible provider, a model from the same `providerModels` list the Cloud tab uses, with its deadline and session cache ([renderer/llm-model-list.js](renderer/llm-model-list.js)). The first model choice, **Default**, names the model the agent runs for a role with no model of its own: the workers' model on the workers' provider, the planner's model on the planner's provider, otherwise the entry's default; the saved line names it the same way. A llama-server entry shows **Loaded on the server** instead of a list, since it serves the model it loaded. A second local entry, while the planner or the workers already hold a local model and `mixLocalModels` is not set, says it runs on the workers' model, as the agent does. Each change is one compare-and-swap write of `llm.runMode.fusion.roles` and `roleModels` through `cli:fusionRole` ([main/fusion-roles-ipc.ts](main/fusion-roles-ipc.ts)); the plan in [main/fusion-roles.ts](main/fusion-roles.ts) follows the agent's `withFusionRolePin` (a new provider without a model drops the old model, clearing removes both, no empty map is written, unknown roles stay). It applies after Restart Agent Runtime. The terminal has the same through `/runmode roles` and `/runmode role <role> <provider> [model] | off`.

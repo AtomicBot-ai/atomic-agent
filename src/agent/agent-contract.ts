@@ -30,6 +30,7 @@ import type { ProfileClippedEvent } from "./profile-clip-warning.js";
 import type { PrefixDriftEvent, PrefixInvalidationLedger } from "./prefix-drift-warning.js";
 import type { HistoryTrimmedEvent } from "./history-trim-warning.js";
 import type { ToolDisabledEvent } from "./tool-disabled-notice.js";
+import type { CliOutdatedEvent } from "./cli-outdated-notice.js";
 import type { ReviewStallSignal } from "./review-stall.js";
 
 /**
@@ -114,6 +115,8 @@ export interface LocalOutOfMemoryPort {
 
 export interface AgentLoopDependencies {
   prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal, options?: import("../session/workspace-context.js").WorkspacePrepareOptions) => import("../session/workspace-context.js").SessionWorkspace;
+  /** Trusted path-scoped project rules of the session folder, for local steps (ATO-2443). */
+  preparePathRules?: (session: SessionState, signal?: AbortSignal) => readonly import("../session/workspace-context.js").PathRule[];
   /** Save model-visible cloud messages before inference, under the turn owner. */
   persistContext?: (state: SessionState) => void;
   compaction?: ContextCompactionControl;
@@ -989,6 +992,12 @@ export type AgentLoopEvent =
       fraction: number;
       elapsedMs: number;
       label: string;
+      /**
+       * ATO-2444: one slide `os.fs.write_pptx` has laid out, for a host
+       * to draw as a thumbnail while the deck is built (and while its
+       * approval card is open). Absent for every other tool.
+       */
+      slide?: ToolProgressSlide;
     }
   | {
       /**
@@ -1118,6 +1127,11 @@ export type AgentLoopEvent =
    * JSON schema (ATO-1417). Once per tool per turn.
    */
   | ToolDisabledEvent
+  /**
+   * The subscription CLI that answered is older than Atomic Agent
+   * supports (ATO-2523). Once per session and CLI.
+   */
+  | CliOutdatedEvent
   | { type: "step_started"; stepIndex: number }
   | {
       type: "step_finished";
@@ -1293,4 +1307,27 @@ export interface RunTurnResult {
    * ordinary turn and when the operator cleared the goal mid-run.
    */
   goal?: import("./goal/goal-types.js").GoalState;
+}
+
+/**
+ * ATO-2444: a slide of the deck `os.fs.write_pptx` is building, as a
+ * host draws it small: its place, the layout it got, and its text
+ * already clipped for a thumbnail (`pptx-slide-progress.ts`).
+ */
+export interface ToolProgressSlide {
+  /** 0-based. */
+  index: number;
+  count: number;
+  layout: string;
+  title: string;
+  subtitle?: string;
+  /** The first bullets kept on the slide, clipped; sub-points start with two spaces per level. */
+  bullets: string[];
+  /** The slide's picture, table or chart, when it has one. */
+  visual?: "image" | "table" | "chart";
+  /** Bullets moved to the speaker notes to fit. */
+  moved: number;
+  theme: string;
+  /** Six hex digits, when the deck names an accent colour. */
+  accent?: string;
 }

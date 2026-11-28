@@ -1,0 +1,6 @@
+/* ATO-2470: "‹ 2/3 ›" on an edited message and under the answer to any question
+   (renderer/message-versions.js). It wears answer-versions.css's .ansver look. A row
+   that carries one stays shown, as the last reply's does (chat.css .msgacts-last),
+   so a version is never hidden behind a hover. */
+.msgacts:has(.mver-edit),.msgacts:has(.mver-answer){opacity:1;pointer-events:auto}
+.sys-acts .ansver{margin-left:6px;vertical-align:middle}

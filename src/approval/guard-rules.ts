@@ -171,7 +171,17 @@ export class GuardRulesSource {
   constructor(
     private readonly stateDir: string,
     private readonly onWarning?: (message: string) => void,
+    /** `agent.security.guardOnFailure`, read per load (ATO-2529); the stricter of it and the files wins. */
+    private readonly configOnFailure?: () => GuardFailurePolicy,
   ) {}
+
+  private configuredOnFailure(): GuardFailurePolicy {
+    try {
+      return this.configOnFailure?.() === "block" ? "block" : "ask";
+    } catch {
+      return "ask";
+    }
+  }
 
   private read(path: string): GuardFile | null {
     let stat: Stats;
@@ -212,7 +222,9 @@ export class GuardRulesSource {
     const tools = new Set<string>(user?.tools ?? (user === null ? [] : DEFAULT_GUARD_TOOLS));
     if (project !== null) for (const tool of project.tools ?? DEFAULT_GUARD_TOOLS) tools.add(tool);
     const onFailure: GuardFailurePolicy =
-      user?.onFailure === "block" || project?.onFailure === "block" ? "block" : "ask";
+      user?.onFailure === "block" || project?.onFailure === "block" || this.configuredOnFailure() === "block"
+        ? "block"
+        : "ask";
     const sets: GuardRuleSet[] = [];
     if (user !== null) sets.push({ source: "user", rules: clip(user.rules) });
     if (project !== null) sets.push({ source: "project", rules: clip(project.rules) });

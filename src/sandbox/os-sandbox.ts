@@ -18,6 +18,12 @@
  *   config, tokens); a working folder inside one is opened by itself;
  * - for a process that keeps its network (an MCP server), the
  *   ssh-agent socket can be hidden too (`hideSshAgent`);
+ * - no writes to `.git` or a git folder with another name (but git's
+ *   own data on macOS), hook folders
+ *   (`core.hooksPath` too), shell rc files, `.envrc`, git's config or
+ *   editor configs (`.vscode`, `.idea`) even inside the working folder:
+ *   they run code later, outside the sandbox (`sandbox-protected-paths.ts`,
+ *   `git-hooks-path.ts`, ATO-2471);
  * - with `network: false`, no outbound IP connection except to loopback
  *   IP, no DNS lookups and no URL opening; local sockets are all denied
  *   on macOS, and on Linux the known socket places are covered (a list:
@@ -35,7 +41,9 @@
  *   folders are covered with an empty tmpfs (files with `/dev/null`),
  *   `--unshare-net` drops the network; without network the known local
  *   socket places are covered too (`os-sandbox-sockets.ts`), because a
- *   socket bound to a file path outlives the network namespace.
+ *   socket bound to a file path outlives the network namespace, and a
+ *   seccomp filter refuses `socket(AF_UNIX)` and a datagram
+ *   `socketpair(AF_UNIX)` (`seccomp-unix-block.ts`).
  * - Windows, or Linux without `bwrap`: no sandbox is available. The
  *   caller refuses the command (Jan's rule: no sandbox, no shell) and
  *   says how to turn the mode off.
@@ -49,11 +57,20 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
+import { findGitDirs, gitDataDirs, inDotGit } from "./git-dirs.js";
+import { gitHookTargets } from "./git-hooks-path.js";
+import {
+  bwrapProtectedArgs,
+  findProtectedPaths,
+  seatbeltGitDirRules,
+  seatbeltProtectedWriteRule,
+} from "./sandbox-protected-paths.js";
 import {
   bwrapSocketMaskArgs,
   linuxLocalSocketMasks,
   type OsSandboxSocketMask,
 } from "./os-sandbox-sockets.js";
+import { SECCOMP_PROGRAM_FD, unixSocketBlockProgram } from "./seccomp-unix-block.js";
 
 export type OsSandboxMode = "off" | "workspace";
 
@@ -98,6 +115,24 @@ export interface OsSandboxPolicy {
    * Set only when one was left out, so the caller can say so.
    */
   narrowedRoots?: readonly string[];
+  /**
+   * The working folders among `writableRoots` (temp left out). On Linux
+   * they are searched for the paths that stay read-only inside them
+   * (`sandbox-protected-paths.ts`, ATO-2471).
+   */
+  workRoots?: readonly string[];
+  /**
+   * More folders and files that stay read-only inside the writable
+   * roots: the folder `core.hooksPath` names and the files the git
+   * config includes (`git-hooks-path.ts`, ATO-2471). Resolved paths.
+   */
+  protectedPaths?: readonly string[];
+  /**
+   * Git folders inside the writable roots that the `.git` name does not
+   * cover (a `.git` file's `gitdir:`, its `commondir`, a bare repo), with
+   * their data folders (`git-dirs.ts`, review R2-1991.A). Resolved paths.
+   */
+  gitDirs?: readonly { dir: string; data: readonly string[] }[];
   /**
    * Folders and files the command may not read (credential stores,
    * agent state). Each one is listed both as named and, when it is a
@@ -341,9 +376,21 @@ export function buildOsSandboxPolicy(
   }
   const denySockets = unique(sockets);
   const localSocketMasks = input.network ? [] : networkOffSocketMasks(input, home, tmp);
+  // The hook folder git really uses and the config files it includes,
+  // where the command could write them (ATO-2471).
+  const protectedPaths = gitHookTargets({ workRoots: work, home }).filter((p) =>
+    writableRoots.some((root) => isInside(p, root)),
+  );
+  // Git folders with another name (`.bare`, `--separate-git-dir`).
+  const gitDirs = findGitDirs(work)
+    .filter((dir) => writableRoots.some((root) => isInside(dir, root)))
+    .map((dir) => ({ dir, data: gitDataDirs(dir) }));
   return {
     writableRoots,
     ...(narrowedRoots.length > 0 ? { narrowedRoots } : {}),
+    workRoots: work,
+    ...(protectedPaths.length > 0 ? { protectedPaths } : {}),
+    ...(gitDirs.length > 0 ? { gitDirs } : {}),
     denyRead,
     reopen,
     network: input.network,
@@ -384,7 +431,18 @@ function networkOffSocketMasks(
 }
 
 export type OsSandboxWrap =
-  | { ok: true; command: string; args: string[] }
+  | {
+      ok: true;
+      command: string;
+      args: string[];
+      /**
+       * Bytes the spawn must hand the child on fd 3 (a pipe, closed after
+       * them): the Linux seccomp program for `bwrap --seccomp 3` when the
+       * network is off (ATO-2469). Without it bwrap cannot read fd 3 and
+       * refuses to start, so a caller that drops it fails closed.
+       */
+      fd3Input?: Buffer;
+    }
   | { ok: false; reason: string };
 
 /** Where `sandbox-exec` lives; a test can point elsewhere. */
@@ -467,6 +525,11 @@ export function buildSeatbeltProfile(policy: OsSandboxPolicy): string {
     const literals = ancestors.map((_, i) => `(literal (param "A${i}"))`);
     lines.push(`(allow file-read-metadata ${literals.join(" ")})`);
   }
+  // Git hooks and config, shell rc files, `.envrc` and editor configs
+  // stay read-only inside the writable roots (ATO-2471). After every
+  // rule that allows a write (the reopened folders included).
+  lines.push(seatbeltProtectedWriteRule((policy.protectedPaths ?? []).map((_, i) => `P${i}`)));
+  lines.push(...seatbeltGitDirRules(seatbeltGitDirs(policy).map((g) => g.names)));
   const sockets = policy.denySockets ?? [];
   if (policy.hideSshAgent === true || sockets.length > 0) {
     // After the reopen rules, so nothing reopens them. Fixed patterns,
@@ -491,6 +554,19 @@ export function buildSeatbeltProfile(policy: OsSandboxPolicy): string {
   return lines.join("\n");
 }
 
+/**
+ * The git folders the macOS rule names, as `-D` names and paths: those
+ * not inside a `.git` (the fixed `.git` rule covers those already).
+ */
+function seatbeltGitDirs(policy: OsSandboxPolicy) {
+  return (policy.gitDirs ?? [])
+    .filter((g) => !inDotGit(g.dir))
+    .map((g, n) => ({
+      names: { dir: `G${n}`, data: g.data.map((_, i) => `G${n}D${i}`) },
+      paths: g,
+    }));
+}
+
 function seatbeltArgs(
   policy: OsSandboxPolicy,
   command: string,
@@ -502,6 +578,11 @@ function seatbeltArgs(
   policy.reopen.forEach((entry, i) => params.push("-D", `O${i}=${entry.path}`));
   reopenAncestors(policy).forEach((dir, i) => params.push("-D", `A${i}=${dir}`));
   (policy.denySockets ?? []).forEach((path, i) => params.push("-D", `S${i}=${path}`));
+  (policy.protectedPaths ?? []).forEach((path, i) => params.push("-D", `P${i}=${path}`));
+  for (const { names, paths } of seatbeltGitDirs(policy)) {
+    params.push("-D", `${names.dir}=${paths.dir}`);
+    names.data.forEach((name, i) => params.push("-D", `${name}=${paths.data[i]}`));
+  }
   return [...params, "-p", buildSeatbeltProfile(policy), command, ...args];
 }
 
@@ -534,6 +615,7 @@ function bwrapArgs(
   policy: OsSandboxPolicy,
   command: string,
   args: readonly string[],
+  seccomp: boolean,
 ): string[] {
   // A private pid namespace: `/proc` shows only the sandbox's own
   // processes, so `/proc/<host pid>/root` cannot reach the hidden paths.
@@ -551,6 +633,22 @@ function bwrapArgs(
     if (!existsSync(entry.path)) continue;
     out.push(entry.write ? "--bind" : "--ro-bind", entry.path, entry.path);
   }
+  // Git hooks and config, shell rc files, `.envrc` and editor configs
+  // found in the working folders bound back read-only, after the
+  // writable and reopened binds so nothing re-opens them (ATO-2471).
+  out.push(
+    ...bwrapProtectedArgs(
+      [
+        ...findProtectedPaths(policy.workRoots ?? []),
+        ...(policy.protectedPaths ?? []),
+        // Review R2-1991.A: a git folder with another name, whole.
+        ...(policy.gitDirs ?? []).map((g) => g.dir),
+      ],
+      policy.workRoots ?? [],
+      policy.denyRead,
+      policy.reopen.map((entry) => entry.path),
+    ),
+  );
   // The denied sockets (`SSH_AUTH_SOCK`, Docker) covered with `/dev/null`,
   // so a connect to them fails; the folder around each stays as it is.
   for (const path of policy.denySockets ?? []) {
@@ -566,6 +664,9 @@ function bwrapArgs(
     ]),
   );
   if (!policy.network) out.push("--unshare-net");
+  // No `AF_UNIX` socket that could reach a socket file can be created
+  // (ATO-2469): closes the ones the path masks above do not know about.
+  if (seccomp) out.push("--seccomp", String(SECCOMP_PROGRAM_FD));
   out.push("--die-with-parent", "--new-session", "--", command, ...args);
   return out;
 }
@@ -576,6 +677,8 @@ export interface WrapOptions {
   bwrap?: string | null;
   /** Whether `sandbox-exec` exists; checked when omitted. */
   seatbeltAvailable?: boolean;
+  /** Linux host CPU for the seccomp program; `process.arch` when omitted. */
+  arch?: string;
 }
 
 /**
@@ -604,7 +707,16 @@ export function wrapWithOsSandbox(
         reason: "bubblewrap (`bwrap`) is not installed; install it with your package manager (for example `sudo apt install bubblewrap`)",
       };
     }
-    return { ok: true, command: bwrap, args: bwrapArgs(policy, command, args) };
+    // Without network, the seccomp filter that refuses `socket(AF_UNIX)`
+    // (ATO-2469). On a host with no program (not x64 or arm64) the path
+    // masks are the only cover, as before.
+    const seccomp = policy.network ? null : unixSocketBlockProgram(options.arch);
+    return {
+      ok: true,
+      command: bwrap,
+      args: bwrapArgs(policy, command, args, seccomp !== null),
+      ...(seccomp === null ? {} : { fd3Input: seccomp }),
+    };
   }
   return {
     ok: false,

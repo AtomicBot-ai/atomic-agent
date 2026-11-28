@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
-import { cp, lstat, mkdir, readdir, realpath, rename, rm, stat, statfs } from "node:fs/promises";
+import { lstat, mkdir, readdir, realpath, rename, rm, stat, statfs } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+
+import { copyTreeWithProgress } from "./models-dir-copy.js";
 
 /**
  * Move every downloaded model from one models folder to another
@@ -9,7 +11,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
  * Only folders we own move: a model folder is a non-hidden directory
  * with a `.gguf` (or a `.gguf.part` download) directly inside it. Any
  * other entry of the current folder stays where it is, and the new folder
- * must be empty (a `.DS_Store` aside), so pointing the models folder at
+ * must be empty (a `.DS_Store`, `desktop.ini` and the like aside), so pointing the models folder at
  * ~/Documents can never pull the user's own files along later.
  *
  * Each model folder is renamed when both folders are on the same disk. Across disks a rename
@@ -18,6 +20,10 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
  * `commit` (the caller's config write) has succeeded. A failure before
  * that puts every entry back where it was, so the models are never left
  * split between two folders with the config pointing at one of them.
+ *
+ * ATO-2503: a copy across disks reports its bytes (`onBytes`), and an
+ * aborted `signal` (the CLI on Ctrl+C or the desktop's SIGTERM) stops
+ * between two chunks and undoes the move the same way.
  */
 
 export class ModelsDirMoveError extends Error {
@@ -35,10 +41,23 @@ export interface ModelsDirMoveProgress {
   total: number;
 }
 
+/** Bytes of the copy across disks so far (ATO-2503). */
+export interface ModelsDirMoveBytes {
+  entry: string;
+  /** Bytes copied so far, over every model of this move. */
+  done: number;
+  /** Bytes of every model of this move. */
+  total: number;
+}
+
 export interface ModelsDirMoveOptions {
   /** Runs once every entry is in the new folder; a throw undoes the move. */
   commit?: () => void | Promise<void>;
   onProgress?: (p: ModelsDirMoveProgress) => void;
+  /** Across disks only: the byte count, at most twice a second. */
+  onBytes?: (p: ModelsDirMoveBytes) => void;
+  /** Aborted: stop, undo what moved, throw. */
+  signal?: AbortSignal;
   /** Test seam: `fs.promises.rename`. */
   rename?: (from: string, to: string) => Promise<void>;
   /** Test seam: free bytes at a path (`statfs`). */
@@ -101,8 +120,20 @@ function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Names an OS drops into any folder; they do not make a folder "not empty". */
-const IGNORED_IN_TARGET = new Set([".DS_Store"]);
+/**
+ * Names an OS or a file manager drops into any folder; they do not make a
+ * folder "not empty" (ATO-2742). macOS: `.DS_Store`, and `._.DS_Store` on a
+ * FAT or exFAT disk. Windows Explorer: `desktop.ini`, `Thumbs.db`,
+ * `ehthumbs.db`. KDE Dolphin: `.directory`. Windows and macOS disks ignore
+ * case, so the match does too. The desktop's folder check
+ * (desktop/main/models-folder.ts folderListingIsEmpty) keeps the same list.
+ */
+const IGNORED_IN_TARGET = new Set([".ds_store", "._.ds_store", "desktop.ini", "thumbs.db", "ehthumbs.db", ".directory"]);
+
+/** True for a file the OS or a file manager put there, not the person. */
+export function isFolderJunk(name: string): boolean {
+  return IGNORED_IN_TARGET.has(name.toLowerCase());
+}
 
 /** A model folder we wrote: non-hidden directory with a GGUF (or GGUF download) in it. */
 export async function isOwnedModelEntry(dir: string, name: string): Promise<boolean> {
@@ -140,7 +171,7 @@ export async function moveModelsDir(
   }
 
   if (existsSync(dst)) {
-    const present = (await readdir(dst)).filter((e) => !IGNORED_IN_TARGET.has(e));
+    const present = (await readdir(dst)).filter((e) => !isFolderJunk(e));
     if (present.length > 0) {
       throw new ModelsDirMoveError(`the new folder ${dst} is not empty; pick an empty folder or a new one`);
     }
@@ -150,14 +181,15 @@ export async function moveModelsDir(
   const skipped: string[] = [];
   for (const e of all) {
     if (await isOwnedModelEntry(src, e)) entries.push(e);
-    else if (!IGNORED_IN_TARGET.has(e)) skipped.push(e);
+    else if (!isFolderJunk(e)) skipped.push(e);
   }
   await mkdir(dst, { recursive: true });
 
   // Across disks every byte is copied before any source is deleted, so the
   // new disk needs room for all of it.
-  if (entries.length > 0 && (await stat(src)).dev !== (await stat(dst)).dev) {
-    let need = 0;
+  const crossDisk = entries.length > 0 && (await stat(src)).dev !== (await stat(dst)).dev;
+  let need = 0;
+  if (crossDisk) {
     for (const e of entries) need += await treeBytes(join(src, e));
     const free = await (opts.freeBytes ?? defaultFreeBytes)(dst);
     if (free < need) {
@@ -179,7 +211,12 @@ export async function moveModelsDir(
     }
   };
 
+  let copiedBefore = 0;
   for (const [i, entry] of entries.entries()) {
+    if (opts.signal?.aborted) {
+      await rollBack();
+      throw new ModelsDirMoveError("the move was stopped; every model is back in the old folder");
+    }
     opts.onProgress?.({ entry, index: i + 1, total: entries.length });
     const a = join(src, entry);
     const b = join(dst, entry);
@@ -194,13 +231,21 @@ export async function moveModelsDir(
       }
     }
     try {
-      await cp(a, b, { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true });
+      // `stat` saw one disk but the rename still said EXDEV (a bind mount): size it now.
+      if (need === 0) for (const e of entries) need += await treeBytes(join(src, e));
+      const base = copiedBefore;
+      await copyTreeWithProgress(a, b, {
+        signal: opts.signal,
+        onBytes: (n) => opts.onBytes?.({ entry, done: base + n, total: need }),
+      });
       const [want, got] = [await treeBytes(a), await treeBytes(b)];
       if (want !== got) throw new Error(`copy has ${got} bytes, expected ${want}`);
+      copiedBefore += want;
       done.push({ entry, how: "copied" });
     } catch (err) {
       await rm(b, { recursive: true, force: true }).catch(() => {});
       await rollBack();
+      if (opts.signal?.aborted) throw new ModelsDirMoveError("the move was stopped; every model is back in the old folder");
       throw new ModelsDirMoveError(`could not copy ${entry}: ${message(err)}`);
     }
   }

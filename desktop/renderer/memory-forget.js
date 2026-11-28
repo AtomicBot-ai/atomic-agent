@@ -31,6 +31,15 @@ function memForgetDateOk(v) {
   return d.getFullYear() === +m[1] && d.getMonth() === +m[2] - 1 && d.getDate() === +m[3];
 }
 
+/* ATO-2754: the day as the person's own locale writes it ("November 1, 2026",
+   "1 ноября 2026 г."), as macOS and ChatGPT show dates; the field and the
+   agent keep YYYY-MM-DD. `locale` is for the tests; the app passes none. */
+function memForgetDateText(date, locale) {
+  if (!memForgetDateOk(date)) return String(date || '');
+  const [y, m, d] = date.split('-').map(Number);
+  try { return new Date(y, m - 1, d).toLocaleDateString(locale, {year: 'numeric', month: 'long', day: 'numeric'}); } catch (e) { return date; }
+}
+
 function memForgetPlural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
 
 /* What the counts say, in a line: "12 notes and 3 lessons". */
@@ -39,10 +48,10 @@ function memForgetCountsLine(c) {
 }
 
 /* The confirm for counts `c` before `date`, as {title, msg, ok}, or null when nothing would go. */
-function memForgetConfirm(c, date) {
+function memForgetConfirm(c, date, locale) {
   if (!c || (c.notes === 0 && c.lessons === 0)) return null;
   return {
-    title: 'Clear memory from before ' + date + '?',
+    title: 'Clear memory from before ' + memForgetDateText(date, locale) + '?',
     msg: memForgetCountsLine(c) + ' made before that day leave what chats recall: the notes are deleted, the lessons set aside. '
       + 'What you told it about yourself (Profile) stays. This cannot be undone.',
     ok: 'Clear ' + memForgetCountsLine(c),
@@ -64,7 +73,7 @@ function memForgetHTML(st, h) {
       + '<button class="btn btn-g sm" data-act="memory:forgetNo">Cancel</button>'
       + '<button class="btn btn-danger sm" data-act="memory:forgetGo">' + esc(ask.ok) + '</button></div>';
   }
-  else if (st.phase === 'empty') said = '<p class="sd-cap" data-memf-empty>Nothing in memory was made before ' + esc(st.date) + '.</p>';
+  else if (st.phase === 'empty') said = '<p class="sd-cap" data-memf-empty>Nothing in memory was made before ' + esc(memForgetDateText(st.date)) + '.</p>';
   else if (st.phase === 'done' && st.counts) said = '<div class="tk-notice tk-notice--green" data-memf-done>' + ic('check') + '<span class="grow">Cleared '
     + esc(memForgetCountsLine(st.counts)) + '.</span></div>';
   return '<div class="tk-card pad sd-memforget" data-memf>'
@@ -141,5 +150,5 @@ if (typeof document !== 'undefined') {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {MEMF, memForgetToday, memForgetDateOk, memForgetCountsLine, memForgetConfirm, memForgetHTML, memForgetButtonHTML, memForgetAct};
+  module.exports = {MEMF, memForgetToday, memForgetDateOk, memForgetDateText, memForgetCountsLine, memForgetConfirm, memForgetHTML, memForgetButtonHTML, memForgetAct};
 }

@@ -17,6 +17,12 @@ export type {
   CommandJobOutput,
   CommandJobWait,
 } from "./command-job.js";
+export {
+  DEFAULT_PTY_COLS,
+  DEFAULT_PTY_ROWS,
+  startPtyCommandJob,
+} from "./pty-command-job.js";
+export type { PtyCommandJob, PtyCommandJobOptions } from "./pty-command-job.js";
 export { CappedOutput } from "./capped-output.js";
 export type { CappedOutputSnapshot } from "./capped-output.js";
 export { killProcessTree } from "./kill-process-tree.js";

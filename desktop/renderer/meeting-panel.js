@@ -1,11 +1,12 @@
 /* ATO-2333: Record a meeting. One click starts the microphone (the "+"
-   menu's Meeting row, or File, Record a Meeting); a red Recording pill with
+   menu's Record meeting row, or File, Record Meeting); a red Recording pill with
    a running clock and a Stop button stays at the top of the window the
    whole time anything is heard; the panel under it shows the transcript as
    each chunk is heard on this computer. Make notes saves the transcript into
    Documents/Atomic Agent/Meetings (and adds that folder to My files), then
    opens a new chat that sends it to the meeting-notes skill. The audio is
-   deleted once the transcript is saved; Delete removes everything.
+   deleted once the transcript is saved; Delete removes everything, after a
+   confirm (ATO-2749).
 
    A recording a crash or a closed window cut short is offered again at the
    next start (the card under the pill), from what main kept on disk.
@@ -18,7 +19,12 @@
    run time. */
 
 const MTG = {phase: 'idle', id: null, startedAt: 0, lines: [], failed: 0, open: true,
-  recover: [], stream: null, ac: null, node: null, tick: null, listening: false};
+  recover: [], stream: null, ac: null, node: null, tick: null, listening: false, denied: false, confirm: null};
+
+/** The platform renderer.js read from the bridge (darwin when it cannot say). */
+function mtgPlatform() {
+  return typeof PLATFORM !== 'undefined' ? PLATFORM : 'darwin';
+}
 
 function meetingOffer() {
   return !!(typeof BR !== 'undefined' && BR && BR.voiceSupported && BR.meetingStart);
@@ -48,7 +54,8 @@ function mtgLinesHTML() {
       ? 'Listening. The first lines show up about half a minute after people start talking.'
       : 'No speech was heard yet.') + '</p>';
   }
-  return MTG.lines.map((l) => '<p class="mtgline"><span class="mtgat">' + esc(meetingClock(l.start)) + '</span>' + esc(l.text) + '</p>').join('');
+  return MTG.lines.map((l) => '<p class="mtgline"><span class="mtgat">' + esc(meetingClock(l.start)) + '</span>'
+    + (l.who ? '<span class="mtgwho">' + esc(l.who) + '</span>' : '') + esc(l.text) + '</p>').join('');   // ATO-2514: Me / Them
 }
 
 function mtgPanelHTML() {
@@ -59,12 +66,15 @@ function mtgPanelHTML() {
     ? '<button class="btn btn-p sm" data-mtg="done">Stop and make notes</button>'
     : MTG.phase === 'finishing'
       ? '<span class="mtgbusy">Transcribing the last part…</span>'
-      : '<button class="btn btn-p sm" data-mtg="done">Make notes</button><button class="btn sm" data-mtg="discard">Delete recording</button>';
+      : MTG.confirm && MTG.confirm === MTG.id ? meetingDeleteConfirmHTML(MTG.id, esc)   // ATO-2749
+        : '<button class="btn btn-p sm" data-mtg="done">Make notes</button><button class="btn sm" data-mtg="discard">Delete recording</button>';
   return '<div class="mtgpanel" role="region" aria-label="Meeting transcript">'
     + '<div class="mtghead"><span>' + esc(title) + '</span><button class="mtgx" data-mtg="toggle" aria-label="Hide">' + ic('x') + '</button></div>'
     + '<div class="mtgbody" id="mtg-body">' + mtgLinesHTML() + '</div>'
     + (MTG.failed ? '<p class="mtgwarn">' + MTG.failed + ' part' + (MTG.failed === 1 ? '' : 's') + ' could not be transcribed yet; tried again on Make notes.</p>' : '')
-    + '<p class="mtgnote">Heard and transcribed on this computer. Speakers are guessed from pauses. The audio is deleted once the transcript is saved.</p>'
+    + (typeof mtgSystemHTML === 'function' ? mtgSystemHTML() : '')   // ATO-2514: the other side of the call (meeting-system.js)
+    + (typeof mtgVoicesHTML === 'function' ? mtgVoicesHTML() : '')   // ATO-2514: speakers by voice (meeting-voices.js)
+    + '<p class="mtgnote">Heard and transcribed on this computer. ' + esc(typeof mtgSpeakersNote === 'function' ? mtgSpeakersNote() : 'Speakers are guessed from pauses.') + ' The audio is deleted once the transcript is saved.</p>'
     + '<div class="mtgfoot">' + foot + '</div></div>';
 }
 
@@ -73,16 +83,22 @@ function mtgRecoverHTML() {
   const id = MTG.recover[0].id;
   return '<div class="mtgpanel mtgrecover" role="region" aria-label="Unfinished meeting">'
     + '<p>' + esc(meetingRecoverText(MTG.recover)) + '</p>'
-    + '<div class="mtgfoot"><button class="btn btn-p sm" data-mtg="recover" data-mtg-id="' + esc(id) + '">Make notes</button>'
-    + '<button class="btn sm" data-mtg="drop" data-mtg-id="' + esc(id) + '">Delete recording</button>'
-    + '<button class="btn sm" data-mtg="later">Later</button></div></div>';
+    + '<div class="mtgfoot">' + (MTG.confirm === id ? meetingDeleteConfirmHTML(id, esc)   // ATO-2749
+      : '<button class="btn btn-p sm" data-mtg="recover" data-mtg-id="' + esc(id) + '">Make notes</button>'
+      + '<button class="btn sm" data-mtg="drop" data-mtg-id="' + esc(id) + '">Delete recording</button>'
+      + '<button class="btn sm" data-mtg="later">Later</button>') + '</div></div>';
+}
+
+/* ATO-2749: the microphone was refused: a card that stays until closed (meeting-logic.js). */
+function mtgDeniedHTML() {
+  return MTG.denied && MTG.phase === 'idle' ? meetingDeniedCardHTML(mtgPlatform(), !!(BR && BR.openMicSettings), esc) : '';
 }
 
 function mtgPaint() {
   if (typeof document === 'undefined') return;
   const body = document.getElementById('mtg-body');
   const atBottom = !body || body.scrollTop + body.clientHeight >= body.scrollHeight - 8;
-  mtgRoot().innerHTML = mtgPillHTML() + mtgPanelHTML() + mtgRecoverHTML();
+  mtgRoot().innerHTML = mtgPillHTML() + mtgPanelHTML() + mtgDeniedHTML() + mtgRecoverHTML();
   const fresh = document.getElementById('mtg-body');
   if (fresh && atBottom) fresh.scrollTop = fresh.scrollHeight;
 }
@@ -92,7 +108,7 @@ function mtgListen() {
   MTG.listening = true;
   BR.onMeeting((ev) => {
     if (!ev || ev.id !== MTG.id) return;
-    if (ev.type === 'segments') { MTG.lines = meetingMergeLines(MTG.lines, ev.segments); mtgPaint(); }
+    if (ev.type === 'segments') { MTG.lines = meetingMergeLines(MTG.lines, ev.segments, typeof meetingWho === 'function' ? meetingWho(ev.channel, MTGS.state === 'on') : ''); mtgPaint(); }
     else if (ev.type === 'chunk-failed') { MTG.failed++; mtgPaint(); }
     else if (ev.type === 'stopped' && MTG.phase === 'recording') {
       // Main closed it (the disk refused): the microphone goes too.
@@ -123,6 +139,7 @@ async function mtgOpenMic() {
 }
 
 function mtgReleaseMic() {
+  if (typeof mtgSystemStop === 'function') mtgSystemStop();   // ATO-2514
   if (MTG.tick) { clearInterval(MTG.tick); MTG.tick = null; }
   try { if (MTG.node) MTG.node.port.onmessage = null; } catch (e) { /* gone */ }
   try { if (MTG.stream) MTG.stream.getTracks().forEach((t) => t.stop()); } catch (e) { /* gone */ }
@@ -134,11 +151,16 @@ async function meetingStart() {
   if (!meetingOffer()) { toast('Meeting recording is not available here', meetingErrorText('voice-not-macos'), 'bad'); return; }
   if (MTG.phase !== 'idle') { MTG.open = true; mtgPaint(); return; }
   mtgListen();
-  MTG.phase = 'starting'; MTG.lines = []; MTG.failed = 0; MTG.open = true;
+  MTG.phase = 'starting'; MTG.lines = []; MTG.failed = 0; MTG.open = true; MTG.denied = false;
+  if (typeof mtgSystemReset === 'function') mtgSystemReset();   // ATO-2514
   mtgPaint();
   let r = null;
   try { r = await BR.meetingStart(); } catch (e) { r = null; }
-  if (!r || !r.ok) { MTG.phase = 'idle'; mtgPaint(); toast('Could not start recording', meetingErrorText(r && r.error), 'bad'); return; }
+  if (!r || !r.ok) {
+    MTG.phase = 'idle';
+    if (meetingMicDenied(r && r.error)) { MTG.denied = true; mtgPaint(); return; }   // ATO-2749
+    mtgPaint(); toast('Could not start recording', meetingErrorText(r && r.error, mtgPlatform()), 'bad'); return;
+  }
   MTG.id = r.id; MTG.startedAt = Date.now();
   MTG.phase = 'recording';
   try {
@@ -147,13 +169,15 @@ async function meetingStart() {
     mtgReleaseMic();
     MTG.phase = 'idle';
     try { await BR.meetingDiscard(r.id); } catch (e) { /* nothing was kept */ }
-    mtgPaint();
     const name = (err && err.name) || '';
-    toast('Could not start recording', meetingErrorText(name === 'NotAllowedError' || name === 'SecurityError' ? 'mic-denied' : 'mic-failed'), 'bad');
+    if (meetingMicDenied(name)) { MTG.denied = true; mtgPaint(); return; }   // ATO-2749
+    mtgPaint();
+    toast('Could not start recording', meetingErrorText('mic-failed'), 'bad');
     return;
   }
   MTG.tick = setInterval(() => { const c = document.getElementById('mtg-clock'); if (c) c.textContent = meetingClock((Date.now() - MTG.startedAt) / 1000); }, 1000);
   mtgPaint();
+  if (typeof mtgSystemStart === 'function') mtgSystemStart();   // ATO-2514: the other side of the call, as a second channel
 }
 
 async function meetingStop() {
@@ -219,8 +243,13 @@ async function meetingDiscard(id) {
   if (MTG.id === target) { mtgReleaseMic(); MTG.phase = 'idle'; MTG.id = null; MTG.lines = []; }
   MTG.recover = MTG.recover.filter((m) => m.id !== target);
   mtgPaint();
-  try { await BR.meetingDiscard(target); } catch (e) { /* the folder stays; offered again next start */ }
-  toast('Recording deleted', 'Its audio and transcript are gone from this computer.');
+  let res = null;
+  try { res = await BR.meetingDiscard(target); } catch (e) { res = null; }
+  const say = meetingDiscardToast(res);
+  toast(say.t, say.s, say.kind);
+  if (res && res.ok) return;
+  // ATO-2749: it was not deleted, so the card that offers it comes back.
+  try { const list = await BR.meetingRecoverable(); if (Array.isArray(list) && MTG.phase === 'idle') { MTG.recover = list; mtgPaint(); } } catch (e) { /* offered again next start */ }
 }
 
 /** renderer.js act('meeting:…'): the File menu and anything else that names a verb. */
@@ -259,7 +288,12 @@ if (typeof document !== 'undefined') {
     else if (verb === 'toggle') { MTG.open = !MTG.open; mtgPaint(); }
     else if (verb === 'done') meetingDone();
     else if (verb === 'recover') meetingDone(id);
-    else if (verb === 'discard' || verb === 'drop') meetingDiscard(id);
+    else if (verb === 'discard' || verb === 'drop') { MTG.confirm = id || MTG.id; mtgPaint(); }   // ATO-2749: asks first
+    else if (verb === 'delno') { MTG.confirm = null; mtgPaint(); }
+    else if (verb === 'delyes') { MTG.confirm = null; meetingDiscard(id); }
+    else if (verb === 'micsettings') { if (BR && BR.openMicSettings) BR.openMicSettings(); }
+    else if (verb === 'retry') meetingStart();
+    else if (verb === 'deniedx') { MTG.denied = false; mtgPaint(); }
     else if (verb === 'later') { MTG.recover = []; mtgPaint(); }
   });
   window.addEventListener('load', () => setTimeout(meetingBoot, 1500));

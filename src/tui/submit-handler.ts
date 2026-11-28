@@ -7,6 +7,7 @@ import { runRunModeVerb } from "./commands/run-mode-verb.js";
 import { runModelModeCommand } from "./commands/model-mode-command.js";
 import { runModelRingCommand } from "./model-ring/model-ring-actions.js";
 import { runPersonaCommand } from "./commands/persona-command.js";
+import { queueMoveLine } from "./commands/queue-move-command.js";
 import { describeThinkLevel } from "./commands/think-command.js";
 import {
   parseSlashCommand,
@@ -20,6 +21,7 @@ import {
 import type { TuiAction } from "./tui-action.js";
 import { formatTuiStatus } from "./status-snapshot-tui.js";
 import { formatWhy } from "./why-snapshot-tui.js";
+import { runUsageHistoryCommand } from "./commands/usage-history-command.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
 import { NOTHING_TO_RESUME } from "./interrupted-turn-notice.js";
 import {
@@ -41,6 +43,9 @@ import {
   type TuiState,
 } from "./tui-state.js";
 import { pickerQuery, visiblePickerSessions } from "./session-rail/session-search.js";
+import { approvalSessionOnScreen } from "./commands/command-shell-session.js";
+import { submitWhenShellDone } from "./commands/command-shell-submit.js";
+import { isShellSecretRequest } from "./secret-input/secret-input-keys.js";
 
 type Dispatch = (action: TuiAction) => void;
 
@@ -114,6 +119,12 @@ export function handleEditorSubmit(
     return;
   }
 
+  // A secret a shell job asks for (ATO-2486) is typed into its masked
+  // field, never here: composer text must not become a steer or a deny
+  // reason while one is up (the composer is unfocused then; this keeps
+  // a stray submit honest).
+  if (isShellSecretRequest(state.pendingApproval)) return;
+
   // An `ask_user` question (ATO-489): what was typed is the answer, a
   // number, several, or the person's own words. One that does not fit
   // keeps the question open and says why.
@@ -177,10 +188,14 @@ export function handleEditorSubmit(
   }
   dispatch({ type: "message_submitted" });
   // `@path` mentions of files in the working directory are inlined here
-  // (file-mentions/). Only on this idle path: a steer or a queued
+  // (src/mentions/; a promise while `@diff`, `@git:N`, a link or
+  // `@problems` are read, sent in order by the host). Only on this idle path: a steer or a queued
   // message is matched back to its pending strip entry by its text, so
   // those keep their `@path` as words the model can read itself.
-  callbacks.onMessageSubmitted(callbacks.expandFileMentions?.(trimmed) ?? trimmed);
+  const expanded = callbacks.expandFileMentions?.(trimmed) ?? trimmed;
+  if (typeof expanded === "string") callbacks.onMessageSubmitted(expanded);
+  else if (callbacks.onMessageSubmittedLater) callbacks.onMessageSubmittedLater(expanded);
+  else void expanded.then((text) => callbacks.onMessageSubmitted(text), () => callbacks.onMessageSubmitted(trimmed));
 }
 
 /**
@@ -231,10 +246,12 @@ function handleSessionPickerSubmit(
 }
 
 /**
- * Enter on the `/rewind` picker (ATO-1057). The orchestrator does the
- * cut, rebuilds the transcript and puts the question back in the
- * composer, or says in the chat why it could not; either way the picker
- * closes here.
+ * Enter on the `/rewind` picker (ATO-1057). On the list it picks the
+ * highlighted question and asks the orchestrator what a rewind there
+ * would touch; the box then offers "Chat and files / Chat only / Files
+ * only" (ATO-2467). Enter on a choice closes the box and hands it to
+ * the orchestrator, which does it or says in the chat why it could not.
+ * Enter while the files are still being checked does nothing.
  */
 function handleRewindPickerSubmit(
   state: TuiState,
@@ -242,11 +259,24 @@ function handleRewindPickerSubmit(
   callbacks: TuiAppCallbacks,
 ): void {
   const picker = state.rewindPicker;
-  const point = picker ? picker.points[picker.cursor] : undefined;
-  dispatch({ type: "rewind_picker_closed" });
-  if (point && callbacks.onRewindRequested) {
-    callbacks.onRewindRequested(point.turnIndex, point.text);
+  if (!picker) return;
+  const choice = picker.choice;
+  if (choice) {
+    if (choice.facts === null) return;
+    const scope = choice.options[choice.cursor];
+    dispatch({ type: "rewind_picker_closed" });
+    if (scope !== undefined) {
+      callbacks.onRewindScopeChosen?.(choice.point.turnIndex, choice.point.text, scope);
+    }
+    return;
   }
+  const point = picker.points[picker.cursor];
+  if (!point || !callbacks.onRewindRequested) {
+    dispatch({ type: "rewind_picker_closed" });
+    return;
+  }
+  dispatch({ type: "rewind_choice_requested", point });
+  callbacks.onRewindRequested(point.turnIndex, point.text);
 }
 
 /**
@@ -278,7 +308,7 @@ function runEnhanceCurrentDraft(
  * rendered from its template (`$ARGUMENTS`, `$1`..`$9`) and then sent
  * exactly as if the user had typed it.
  */
-function prepareInvocationText(result: SlashDispatchResult, callbacks: TuiAppCallbacks): string {
+function prepareInvocationText(result: SlashDispatchResult, callbacks: TuiAppCallbacks, state: TuiState): string | Promise<string> {
   if (result.messageText !== undefined) return result.messageText;
   if (result.skillInvocation) {
     if (!callbacks.prepareSkillInvocation) throw new Error("Skill invocation is unavailable");
@@ -287,7 +317,9 @@ function prepareInvocationText(result: SlashDispatchResult, callbacks: TuiAppCal
   }
   if (!result.pluginCommandInvocation || !callbacks.preparePluginCommand) throw new Error("Plugin commands are unavailable");
   const { name, args } = result.pluginCommandInvocation;
-  const text = callbacks.preparePluginCommand(name, args);
+  // An own command with shell lines (ATO-2441) comes back as a promise; they ask in the chat on screen.
+  const text = callbacks.preparePluginCommand(name, args, approvalSessionOnScreen(state));
+  if (typeof text !== "string") return text;
   if (text.trim().length === 0) throw new Error(`plugin command /${name} rendered an empty message`);
   return text;
 }
@@ -329,9 +361,11 @@ export function runSlashCommand(
   if (result.skillInvocation || result.pluginCommandInvocation || result.messageText !== undefined) {
     if (!canTypeMessage(state)) return;
     try {
-      const text = prepareInvocationText(result, callbacks);
+      const text = prepareInvocationText(result, callbacks, state);
       dispatch({ type: "slash_palette_closed" });
-      if (canAcceptMessage(state)) {
+      if (typeof text !== "string") {
+        submitWhenShellDone(text, result.pluginCommandInvocation?.name ?? "command", state, dispatch, callbacks, submitWhileBusy);
+      } else if (canAcceptMessage(state)) {
         dispatch({ type: "message_submitted" });
         callbacks.onMessageSubmitted(text);
       } else {
@@ -409,6 +443,13 @@ export function runSlashCommand(
   }
   if (result.queueVerb)
     runQueueVerb(result.queueVerb, state, dispatch, callbacks);
+  if (result.queueMove) {
+    // ATO-2476: `/queue next` / `/queue move` reorder what is parked.
+    const line = queueMoveLine(result.queueMove, state.queuedMessages, (from, to) =>
+      callbacks.onQueueMoveRequested?.(from, to) ?? false);
+    dispatch({ type: "runtime_info", line });
+    dispatch({ type: "system_message", text: line });
+  }
   if (result.triggerStatusSnapshot) {
     const text = formatTuiStatus(state, Date.now());
     dispatch({ type: "runtime_info", line: text.split("\n")[0] ?? text });
@@ -417,6 +458,7 @@ export function runSlashCommand(
   if (result.triggerWhySnapshot) {
     dispatch({ type: "system_message", text: formatWhy(state) });
   }
+  if (result.usageHistoryArgs !== undefined) runUsageHistoryCommand(result.usageHistoryArgs, dispatch);   // ATO-2442
   if (result.runModeVerb)
     runRunModeVerb(result.runModeVerb, state, dispatch, callbacks);
   if (result.modelModeCommand) {
@@ -453,9 +495,20 @@ export function runSlashCommand(
   if (result.resumeInterruptedTurn) {
     runResumeInterruptedTurn(state, dispatch, callbacks);
   }
+  if (result.backgroundJobsCommand !== undefined) {
+    // ATO-2437: `/ps`, `/stop`; the runtime answers with the line to show.
+    const text =
+      callbacks.onBackgroundJobsCommand?.(state.session.sessionId, result.backgroundJobsCommand) ??
+      "no background jobs in this chat";
+    dispatch({ type: "system_message", text });
+  }
   if (result.runModeWorkers !== undefined) {
     callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
   }
+  if (result.runModeRole !== undefined) {
+    callbacks.onFusionRoleChangeRequested?.(result.runModeRole.role, result.runModeRole.pin);
+  }
+  if (result.runModeListRoles) callbacks.onFusionRolesListRequested?.();
   if (result.compactionVerb) callbacks.onCompactionRequested?.(result.compactionVerb, result.compactionInstructions);
   if (result.mcpAuthVerb) {
     callbacks.onMcpAuthRequested?.(result.mcpAuthVerb.name, result.mcpAuthVerb.action);
@@ -468,6 +521,7 @@ export function runSlashCommand(
   if (result.sideQuestionText !== undefined) {
     callbacks.onSideQuestionRequested?.(result.sideQuestionText);
   }
+  if (result.councilCommand) callbacks.onCouncilCommand?.(result.councilCommand);
   if (result.externalEdit) runExternalEdit(result.externalEdit, state, dispatch, callbacks);
   if (result.triggerNewWindow) callbacks.onNewWindowRequested?.();
   if (result.triggerAbort) callbacks.onAbort();
@@ -476,12 +530,14 @@ export function runSlashCommand(
     callbacks.onQuit();
   }
   if (result.triggerSessionPicker) callbacks.onSessionPickerRequested?.();
+  if (result.sessionsTrash) callbacks.onSessionsTrashRequested?.(result.sessionsTrash);
   if (result.triggerSessionNew) {
     if (result.sessionNewWorktree) callbacks.onSessionNewRequested?.({ worktree: true });
     else callbacks.onSessionNewRequested?.();
   }
   if (result.triggerRewindPicker) callbacks.onRewindPickerRequested?.();
   if (result.chatExport) callbacks.onChatExportRequested?.(result.chatExport);
+  if (result.localServersArgs) callbacks.onLocalServersRequested?.(result.localServersArgs);
   if (result.triggerIncognitoSession === true) callbacks.onIncognitoSessionRequested?.();
   if (result.triggerMemoryDump) callbacks.onMemoryDumpRequested?.();
   if (result.triggerSkillCatalogDump) callbacks.onSkillCatalogRequested?.();
@@ -564,12 +620,29 @@ export function runSlashCommand(
         : "verbose steps off",
     });
   }
+  // `/pet` (ATO-2513): same shape as `/verbose`, written to `tui.pet`.
+  if (result.petVerb) {
+    const on = result.petVerb === "toggle" ? !state.pet : result.petVerb === "on";
+    dispatch({ type: "pet_set", on });
+    callbacks.onPetPersistRequested?.(on);
+    dispatch({
+      type: "system_message",
+      text: on
+        ? "pet on: it sits in the top bar and shows what the agent is doing (/pet off to hide)"
+        : "pet off",
+    });
+  }
   // `/vim`: same shape as `/steps`, written to `tui.vimMode` (ATO-662).
   if (result.vimVerb) {
     const on =
       result.vimVerb === "toggle" ? !state.vimMode : result.vimVerb === "on";
     dispatch({ type: "vim_mode_set", on });
     callbacks.onVimModePersistRequested?.(on);
+  }
+  // `/llm fallback local-first on|off` (ATO-2434): the write is the
+  // Fallback orchestrator's; the pane the actions opened shows the result.
+  if (result.fallbackLocalFirst !== undefined) {
+    callbacks.onFallbackLocalFirstSetRequested?.(result.fallbackLocalFirst);
   }
 }
 
@@ -808,7 +881,9 @@ export function formatQueueListing(queued: readonly string[]): string {
   const lines = queued.map(
     (text, i) => `  ${i + 1}. ${text.replace(/\s+/g, " ").trim()}`,
   );
-  return [header, ...lines].join("\n");
+  // ATO-2476: the numbers above are the ones the reorder verbs take.
+  const hint = queued.length > 1 ? ["  reorder: /queue next <n> | /queue move <n> <place>"] : [];
+  return [header, ...lines, ...hint].join("\n");
 }
 
 function runTelegramVerb(

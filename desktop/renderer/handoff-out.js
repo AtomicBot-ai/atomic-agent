@@ -6,7 +6,8 @@
    The way back from handoff.js: this chat, written up as a Markdown brief
    (`atag handoff --to claude|codex`, main/handoff-out.ts) that Claude Code or
    Codex can start from. The sheet shows where the file went and its first
-   lines, and offers Copy brief, Reveal file and, on macOS, Open in Terminal:
+   lines, and offers Copy brief, Show in Finder / Explorer / Folder and, on
+   macOS, Open in Terminal:
    a new Terminal window in the chat's folder with `claude "$(cat '<file>')"`
    typed in and not run (terminal-open.ts), so the person sees it and presses
    Enter themselves.
@@ -26,11 +27,23 @@ function houtLabel(to) {
   return row ? row[1] : 'Claude Code';
 }
 
-/** The result block: where the file is and its first lines. Every chat-made string is escaped. */
+/** The file's name, POSIX or Windows path. */
+function houtFileName(path) {
+  const parts = String(path || '').split(/[\\/]+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : String(path || '');
+}
+
+/** The result block: the file's name (the full path on hover) and its first lines. Every chat-made string is escaped. */
 function houtResultHTML(res) {
   if (!res || !res.ok) return '';
-  return '<div class="hout-file"><span class="s">Brief</span> <code>' + houtEsc(res.path) + '</code></div>'
+  return '<div class="hout-file"><span class="s">Brief</span> <code title="' + houtEsc(res.path) + '">' + houtEsc(houtFileName(res.path)) + '</code></div>'
     + '<pre class="hout-preview">' + houtEsc(res.preview) + '</pre>';
+}
+
+/** ATO-2744: a failed run as {text, detail} for the notice: main's sentence, its raw words under Details. */
+function houtErrorOf(res, thrown) {
+  if (thrown !== undefined) return {text: "Couldn't write the brief. Try again.", detail: String((thrown && thrown.message) || thrown || '')};
+  return {text: (res && res.error) || "Couldn't write the brief. Try again.", detail: (res && res.detail) || ''};
 }
 
 /** What the caption under the switch says for `to`. */
@@ -54,10 +67,11 @@ async function houtRun() {
   const seq = ++HOUT.seq;
   HOUT.loading = true; HOUT.error = null; HOUT.res = null;
   render();
-  const res = await Promise.resolve(BR.handoffTo(HOUT.to, HOUT.id)).catch((e) => ({ok: false, error: String(e)}));
+  let thrown;
+  const res = await Promise.resolve(BR.handoffTo(HOUT.to, HOUT.id)).catch((e) => { thrown = e; return null; });
   if (seq !== HOUT.seq) return;   // the person switched the target meanwhile
   HOUT.loading = false;
-  if (!res || !res.ok) { HOUT.error = (res && res.error) || 'Could not write the brief.'; render(); return; }
+  if (!res || !res.ok) { HOUT.error = houtErrorOf(res, thrown); render(); return; }
   HOUT.res = res;
   render();
 }
@@ -67,7 +81,7 @@ function handoffOutSheetHTML() {
   const term = houtTerminalOk(res, BR);
   let body = segControl(HOUT_TARGET_ROWS, HOUT.to, 'hout:to:')
     + '<p class="sd-cap">' + esc(houtCaption(HOUT.to, term)) + '</p>';
-  if (HOUT.error) body += '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(HOUT.error) + '</span></div>';
+  if (HOUT.error) body += herrNoticeHTML(HOUT.error, {icon: ic('alert')});
   if (HOUT.loading) body += '<div class="tk-empty"><span class="tk-spin"></span><p>Writing the brief…</p></div>';
   else body += houtResultHTML(res);
   const ready = !!(res && res.ok) && !HOUT.loading;
@@ -75,7 +89,7 @@ function handoffOutSheetHTML() {
   return sheet('Hand off to ' + houtLabel(HOUT.to),
     body,
     '<button class="btn btn-g sm" data-act="hout:copy"' + dis + '>' + ic('copy') + 'Copy brief</button>'
-    + '<button class="btn btn-g sm" data-act="hout:reveal"' + dis + '>' + ic('folder') + 'Reveal file</button>'
+    + '<button class="btn btn-g sm" data-act="hout:reveal"' + dis + '>' + ic('folder') + esc(fileManagerName()) + '</button>'
     + (term ? '<button class="btn btn-p sm" data-act="hout:term"' + dis + '>' + ic('term') + 'Open in Terminal</button>' : '')
     + '<span class="grow"></span><button class="btn btn-s sm" data-act="close">Close</button>',
     'sheet-hout');
@@ -83,7 +97,8 @@ function handoffOutSheetHTML() {
 
 function houtTerminal() {
   const res = HOUT.res;
-  const fail = (why) => toast("Couldn't open Terminal", typeof why === 'string' ? why : '', 'bad');
+  // A toast has no Details: only the first sentence of terminal-open's words, never the raw tail.
+  const fail = (why) => toast("Couldn't open Terminal", (typeof herrSentence === 'function' ? herrSentence(why) : '') || 'Copy the brief and paste it into ' + houtLabel(HOUT.to) + '.', 'bad');
   if (!houtTerminalOk(res, BR)) { fail(); return; }
   // ATO-1424 answers {ok:true, cwd, usedHome} or {ok:false, error, message}.
   Promise.resolve().then(() => BR.terminalOpenWithCommand({command: res.terminal.command, cwd: res.terminal.cwd || null}))
@@ -115,12 +130,13 @@ function handoffOutAct(k, v) {
   if (v === 'copy') { copyText(res.brief, 'Brief copied', 'Paste it into ' + res.label + '.'); return; }
   if (v === 'reveal') {
     if (!BR || !BR.handoffReveal) return;
+    // A toast has no Details: the sentence only, the raw words stay out of it.
     Promise.resolve(BR.handoffReveal(res.path)).then((r) => {
-      if (!r || !r.ok) toast('Could not show the file', (r && r.error) || '', 'bad');
-    }, (e) => toast('Could not show the file', String(e), 'bad'));
+      if (!r || !r.ok) toast("Couldn't show the brief", (r && r.error) || 'Hand the chat off again.', 'bad');
+    }, () => toast("Couldn't show the brief", 'Hand the chat off again.', 'bad'));
     return;
   }
   if (v === 'term') { houtTerminal(); return; }
 }
 
-if (typeof module !== 'undefined') module.exports = {HOUT_TARGET_ROWS, houtEsc, houtLabel, houtResultHTML, houtCaption, houtTerminalOk};
+if (typeof module !== 'undefined') module.exports = {HOUT_TARGET_ROWS, houtEsc, houtLabel, houtFileName, houtResultHTML, houtErrorOf, houtCaption, houtTerminalOk};

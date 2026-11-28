@@ -93,10 +93,14 @@ const MAC_COPY_SCRIPT = [
 /**
  * The PowerShell that runs before the Windows copy: the process of the
  * window in front, and an exit with WIN_CONSOLE_SKIP_EXIT (no key pressed)
- * when it is a console. Single quotes only, so it survives the command line.
+ * when it is a console. The C# for Add-Type is in a PowerShell single-quoted
+ * string, where '' is one ', so DllImport(''user32.dll'') reached C# as
+ * DllImport('user32.dll'): a char literal, error CS1012, no type, and the
+ * guard did nothing (ATO-2804). A " is literal there, and Node's execFile
+ * quotes it for the command line.
  */
 const WIN_CONSOLE_GUARD = [
-  "Add-Type -Namespace AtomicAgent -Name Fg -MemberDefinition '[DllImport(''user32.dll'')] public static extern System.IntPtr GetForegroundWindow(); [DllImport(''user32.dll'')] public static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint pid); [DllImport(''user32.dll'')] public static extern short GetAsyncKeyState(int vKey);';",
+  "Add-Type -Namespace AtomicAgent -Name Fg -MemberDefinition '[DllImport(\"user32.dll\")] public static extern System.IntPtr GetForegroundWindow(); [DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint pid); [DllImport(\"user32.dll\")] public static extern short GetAsyncKeyState(int vKey);';",
   "$fgPid = [uint32]0; [void][AtomicAgent.Fg]::GetWindowThreadProcessId([AtomicAgent.Fg]::GetForegroundWindow(), [ref]$fgPid);",
   "$fgName = ''; try { $fgName = (Get-Process -Id $fgPid -ErrorAction Stop).ProcessName.ToLower() } catch {}",
   `if (@(${WINDOWS_CONSOLE_PROCESSES.map((n) => `'${n}'`).join(",")}) -contains $fgName) { exit ${WIN_CONSOLE_SKIP_EXIT} };`,

@@ -13,35 +13,29 @@
  *                        write here is. Progress goes to the window as
  *                        `modelsFolder:progress` {entry, index, total}.
  *
+ *   modelsFolder:cancel  stops a move under way, or one still waiting for its
+ *                        turn; {ok}. The agent gets a "stop" line and puts
+ *                        every model back, on Windows too
+ *                        (models-folder-move.ts).
+ *
  * The agent refuses while a local model runs or a background download goes;
  * a pull this window runs is refused here (`pulling`), since its partial
  * file sits in the folder being moved.
+ *
+ * ATO-2503: the move runs in the daemon's turn and under the config lock,
+ * with a quiet-time limit and a cooperative Cancel: models-folder-move.ts.
  */
 
-import { spawn } from "node:child_process";
 import { readdir } from "node:fs/promises";
 
 import { dialog, ipcMain, type BrowserWindow } from "electron";
 
 import { resolveBinary } from "./agent-client.js";
-import { atagRun, plainCliError, withConfigLock } from "./agent-cli.js";
-import {
-  folderListingIsEmpty,
-  leftoversFromStdout,
-  movedToFromStdout,
-  moveErrorWords,
-  NOT_EMPTY_WORDS,
-  parseModelsFolderInfo,
-  parseModelsMoveLine,
-} from "./models-folder.js";
-import { agentEnv } from "./state-dir.js";
+import { atagRun } from "./agent-cli.js";
+import { folderListingIsEmpty, moveErrorWords, notEmptyWords, parseModelsFolderInfo } from "./models-folder.js";
+import { createModelsFolderMover, type ModelsFolderMoveAnswer } from "./models-folder-move.js";
 
-export interface ModelsFolderMoveAnswer {
-  ok: boolean;
-  dir?: string;
-  leftovers?: string[];
-  error?: string;
-}
+export type { ModelsFolderMoveAnswer, ModelsFolderProgress } from "./models-folder-move.js";
 
 export interface ModelsFolderIpcDeps {
   window: () => BrowserWindow | null;
@@ -53,7 +47,9 @@ export interface ModelsFolderIpcDeps {
 const REMOTE = "This app is connected to an agent on another computer: its models folder is set there.";
 
 export function wireModelsFolderIpc(deps: ModelsFolderIpcDeps): void {
-  let moving = false;
+  const mover = createModelsFolderMover({
+    send: (p) => deps.window()?.webContents.send("modelsFolder:progress", p),
+  });
 
   ipcMain.handle("modelsFolder:info", async () => {
     if (deps.isRemote()) return { ok: false, error: REMOTE };
@@ -76,13 +72,13 @@ export function wireModelsFolderIpc(deps: ModelsFolderIpcDeps): void {
     // The agent refuses a non-empty folder as well; saying so here keeps the
     // person in the dialog flow instead of after a failed move.
     const names = await readdir(path).catch(() => [] as string[]);
-    if (!folderListingIsEmpty(names)) return { ok: false, error: NOT_EMPTY_WORDS };
+    if (!folderListingIsEmpty(names)) return { ok: false, error: notEmptyWords() };
     return { ok: true, path };
   });
 
   ipcMain.handle("modelsFolder:move", async (_event, input: unknown): Promise<ModelsFolderMoveAnswer> => {
     if (deps.isRemote()) return { ok: false, error: REMOTE };
-    if (moving) return { ok: false, error: "The models are already being moved." };
+    if (mover.moving) return { ok: false, error: "The models are already being moved." };
     if (deps.pulling()) return { ok: false, error: "Wait for the model download to finish, then move the models." };
     const o = input && typeof input === "object" ? (input as { path?: unknown; reset?: unknown }) : {};
     const reset = o.reset === true;
@@ -90,41 +86,8 @@ export function wireModelsFolderIpc(deps: ModelsFolderIpcDeps): void {
     if (!reset && !path) return { ok: false, error: "Choose a folder first." };
     const binary = resolveBinary();
     if (!binary) return { ok: false, error: "The agent is not installed." };
-    moving = true;
-    try {
-      return await withConfigLock(() => runMove(binary, reset ? ["models", "dir", "--reset"] : ["models", "dir", path], deps));
-    } finally {
-      moving = false;
-    }
+    return mover.move(binary, reset ? ["models", "dir", "--reset"] : ["models", "dir", path]);
   });
-}
 
-function runMove(binary: string, args: string[], deps: ModelsFolderIpcDeps): Promise<ModelsFolderMoveAnswer> {
-  const child = spawn(binary, args, { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-  let stdout = "";
-  let stderr = "";
-  let partial = "";
-  child.stdout?.on("data", (chunk: Buffer) => {
-    const text = chunk.toString("utf8");
-    stdout += text;
-    const lines = (partial + text).split(/\r?\n/);
-    partial = lines.pop() ?? "";
-    for (const line of lines) {
-      const p = parseModelsMoveLine(line);
-      if (p) deps.window()?.webContents.send("modelsFolder:progress", p);
-    }
-  });
-  child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (code: number | null, err?: Error) => {
-      if (settled) return;
-      settled = true;
-      const dir = code === 0 && !err ? movedToFromStdout(stdout) : null;
-      if (dir) { resolve({ ok: true, dir, leftovers: leftoversFromStdout(stdout) }); return; }
-      resolve({ ok: false, error: err ? err.message : moveErrorWords(plainCliError(stderr), code) });
-    };
-    child.on("close", (code) => finish(code));
-    child.on("error", (err) => finish(null, err));
-  });
+  ipcMain.handle("modelsFolder:cancel", async () => mover.cancel());
 }

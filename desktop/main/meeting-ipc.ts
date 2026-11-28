@@ -26,12 +26,19 @@ import { app, ipcMain, shell, systemPreferences } from "electron";
 import { join, relative, resolve, isAbsolute } from "node:path";
 
 import { MeetingRecorder, type MeetingEvent } from "./meeting-recorder.js";
+import { readMeetingPrefs } from "./meeting-prefs.js";
 import { MeetingStore } from "./meeting-store.js";
+import { meetingVoicesFor } from "./meeting-voices-ipc.js";
 import type { TranscribeEngine } from "./transcribe-file.js";
 
-/** Where finished transcripts are saved: a plain folder the person can open, add to My files, or delete. */
-export function meetingSaveDir(): string {
+/** The default folder for finished transcripts: a plain folder the person can open, add to My files, or delete. */
+export function meetingDefaultDir(): string {
   return join(app.getPath("documents"), "Atomic Agent", "Meetings");
+}
+
+/** Where finished transcripts are saved: the folder chosen in Settings, Meetings (ATO-2514), else the default. */
+export function meetingSaveDir(): string {
+  return readMeetingPrefs(app.getPath("userData")).folder ?? meetingDefaultDir();
 }
 
 /** The recorder main.ts keeps beside `voice`: its `armed` is read by the microphone gate. */
@@ -41,6 +48,7 @@ export function meetingRecorderFor(engine: TranscribeEngine, emit: (ev: MeetingE
     engine,
     saveDir: meetingSaveDir,
     emit,
+    voices: meetingVoicesFor(emit),   // ATO-2514: speakers told apart by voice
   });
 }
 

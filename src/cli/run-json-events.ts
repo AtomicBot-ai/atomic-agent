@@ -109,12 +109,53 @@ export function runJsonEvent(
   }
 }
 
+/** Prompt and completion tokens the run's turns reported, summed (ATO-2440). */
+export interface RunTokenTotals {
+  promptTokens: number;
+  completionTokens: number;
+}
+
+/** Add one turn's `RunTurnResult.usage`; a turn that reported none adds nothing. */
+export function addTurnTokens(
+  totals: RunTokenTotals | null,
+  usage: { promptTokens: number; completionTokens: number } | undefined,
+): RunTokenTotals | null {
+  if (usage === undefined) return totals;
+  return {
+    promptTokens: (totals?.promptTokens ?? 0) + usage.promptTokens,
+    completionTokens: (totals?.completionTokens ?? 0) + usage.completionTokens,
+  };
+}
+
+/**
+ * The result's `usage`: the session's spend counters (`sessionUsage`)
+ * with the run's tokens beside them. A figure no turn reported is null,
+ * never 0; with neither, `usage` is null as before.
+ */
+export function runUsage(
+  session: SessionState,
+  tokens: RunTokenTotals | null,
+): Record<string, unknown> | null {
+  const spend = session.sessionUsage;
+  if (spend === undefined && tokens === null) return null;
+  return {
+    ...(spend ?? {}),
+    promptTokens: tokens?.promptTokens ?? null,
+    completionTokens: tokens?.completionTokens ?? null,
+  };
+}
+
 /** The last line of a stream, and the whole output of `--output-format json`. */
 export function runResultEvent(input: {
   session: SessionState;
   reply: string | null;
   durationMs: number;
   isError: boolean;
+  tokens?: RunTokenTotals | null;
+  /** `--output-schema`: the answer as validated JSON, when it matched. */
+  structuredOutput?: unknown;
+  /** `--output-schema`: why the answer did not match. */
+  schemaError?: string;
 }): RunJsonEvent {
   const { session } = input;
   return {
@@ -127,7 +168,9 @@ export function runResultEvent(input: {
     steps: session.stepCount,
     durationMs: input.durationMs,
     lastError: session.lastError,
-    usage: session.sessionUsage ?? null,
+    usage: runUsage(session, input.tokens ?? null),
+    ...(input.structuredOutput === undefined ? {} : { structuredOutput: input.structuredOutput }),
+    ...(input.schemaError === undefined ? {} : { schemaError: input.schemaError }),
   };
 }
 

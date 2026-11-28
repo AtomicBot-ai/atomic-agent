@@ -5,6 +5,7 @@ import {
   type ApprovalLevel,
 } from "../approval/approval-level.js";
 import type { CodingMode } from "./coding-mode/coding-mode.js";
+import type { ModelRingState } from "./model-ring/model-ring.js";
 import type { ReasoningLevel } from "../llm/reasoning-levels.js";
 import type { ProviderWaitCause } from "../llm/reliability/provider-wait-cause.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
@@ -73,6 +74,7 @@ import {
 } from "./integrations/integrations-panel-state.js";
 import type { IssueReportState } from "./issue-report/issue-report-state.js";
 import type { RewindPoint } from "../session/session-rewind.js";
+import type { RewindScope } from "../runtime/session-rewind-service.js";
 import {
   createInitialPluginsPanelState,
   type PluginsPanelState,
@@ -416,6 +418,34 @@ export interface RewindPickerState {
   readonly points: readonly RewindPoint[];
   /** Highlighted row in `points`. */
   readonly cursor: number;
+  /**
+   * ATO-2467: after a point is picked, what to take back ("Chat and
+   * files", "Chat only", "Files only"). Absent while the list shows.
+   */
+  readonly choice?: RewindChoiceState | null;
+}
+
+/** What a rewind to the picked point would touch (ATO-2467). */
+export interface RewindChoiceFacts {
+  /** Files the agent changed after the point that would be put back or removed. */
+  readonly fileCount: number;
+  /** Files changed without a saved copy: they stay as they are. */
+  readonly notRestorableCount: number;
+  /** Some older copies were dropped to stay in bounds. */
+  readonly incomplete: boolean;
+  /** Shell, git, archive, subagent or Fusion calls whose file changes stay. */
+  readonly uncoveredCount: number;
+}
+
+/** The "what to take back" step of `/rewind` (ATO-2467). */
+export interface RewindChoiceState {
+  readonly point: RewindPoint;
+  /** Null while the orchestrator works out which files would change. */
+  readonly facts: RewindChoiceFacts | null;
+  /** The choices offered, in order; file choices only when files would change. */
+  readonly options: readonly RewindScope[];
+  /** Highlighted row in `options`. */
+  readonly cursor: number;
 }
 
 export interface TuiState {
@@ -484,6 +514,13 @@ export interface TuiState {
    * page left over from an earlier prompt can never apply to a new one.
    */
   approvalPreviewPage: { approvalId: string; page: number } | null;
+  /**
+   * The `approvalId` whose "allow always" chord was pressed once, or
+   * `null` (ATO-2759). The rule is saved for the project and outlives
+   * the app, so the chord asks to be pressed a second time; keyed by
+   * `approvalId` so an arm left on one prompt never saves on the next.
+   */
+  approvalAlwaysArmed: string | null;
   /**
    * Whether the composer currently holds a text selection. Lifted out of
    * the editor for exactly one reason: Ctrl+C means "copy" while text is
@@ -651,6 +688,11 @@ export interface TuiState {
   /** The composer's context detail panel floats over the chat. */
   contextPanelOpen: boolean;
   /**
+   * The open panel lists each MCP server's tools under its row
+   * (ATO-2453). Every open through `/context` or the chip starts folded.
+   */
+  contextPanelDetail: boolean;
+  /**
    * Task count the operator is trying out in the open panel, before
    * committing it. `null` means the panel is reporting what the last
    * prompt actually did.
@@ -699,6 +741,12 @@ export interface TuiState {
    * `/verbose` (persisted).
    */
   verboseSteps: boolean;
+  /**
+   * The terminal pet in the top bar (ATO-2513, `pet/pet-chip.tsx`).
+   * Seeded from `tui.pet` and flipped with `/pet` (persisted). Off by
+   * default.
+   */
+  pet: boolean;
   /**
    * Spend of each step of the running turn (ATO-34, `/why`), keyed by
    * step index, from the `usage_updated` readings that arrive while it
@@ -957,6 +1005,12 @@ export interface TuiState {
    */
   reasoningLevel?: ReasoningLevel;
   /**
+   * ATO-2500: the favorite models (`/model favorite`, ctrl+p) as last
+   * read, for the composer bar's `fav 2/3`. Optional so states built by
+   * tests need not carry it; absent reads as no favorites.
+   */
+  modelRing?: ModelRingState;
+  /**
    * `/rewind` (ATO-1057): the chat's earlier questions, newest first,
    * or `null`/absent when the picker is closed. Enter takes the chat
    * back to just before the highlighted one.
@@ -1018,6 +1072,8 @@ export interface InitialTuiLayoutOptions {
   vimMode?: boolean;
   /** Seeds {@link TuiState.verboseSteps} from `tui.verboseSteps`. */
   verboseSteps?: boolean;
+  /** Seeds {@link TuiState.pet} from `tui.pet` (ATO-2513). */
+  pet?: boolean;
   /**
    * Seeds the local-models slice's config-derived facts (mode + chosen
    * model), so the composer's route controls are right on the home
@@ -1057,6 +1113,7 @@ export function createInitialTuiState(
     pendingApproval: null,
     approvalPathDraft: null,
     approvalPreviewPage: null,
+    approvalAlwaysArmed: null,
     composerHasSelection: false,
     composerNotice: null,
     nextStepSuggestion: null,
@@ -1102,6 +1159,7 @@ export function createInitialTuiState(
     slashPaletteCursor: 0,
     menuOpen: false,
     contextPanelOpen: false,
+    contextPanelDetail: false,
     contextPanelPairsDraft: null,
     composerSwitch: null,
     contextMenu: null,
@@ -1112,6 +1170,7 @@ export function createInitialTuiState(
     turnsExpandedById: {},
     showSteps: layout?.showSteps ?? false,
     verboseSteps: layout?.verboseSteps ?? false,
+    pet: layout?.pet ?? false,
     stepSpend: {},
     vimMode: layout?.vimMode ?? false,
     sessionPickerOpen: false,

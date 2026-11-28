@@ -7,6 +7,8 @@ import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
+// ATO-2744: the renderer loads human-error.js first; its functions are globals there.
+Object.assign(globalThis, require('../renderer/human-error.js'));
 const {SHIELD_OLD_AGENT, SHIELD_NO_COUNTER, shieldCounterLine, createPrivacyShield, privacyShieldHTML} =
   require('../renderer/privacy-shield.js');
 const { AgentClient } = require('../out/main/agent-client.js');
@@ -67,8 +69,11 @@ test('a failed switch keeps the old state and offers a retry', async () => {
   await shield.load();
   assert.deepEqual(await shield.toggle(), {ok: false});
   assert.equal(shield.state.enabled, false);
-  assert.equal(shield.state.error, 'Couldn’t switch Privacy Shield: config is read-only');
-  assert.match(privacyShieldHTML(shield.state, {esc}), /data-act="shield:reload"/);
+  // ATO-2744: a sentence; the agent's words only under Details.
+  assert.deepEqual(shield.state.error, {text: "Couldn't switch Privacy Shield. Try again.", detail: 'config is read-only'});
+  const html = privacyShieldHTML(shield.state, {esc});
+  assert.match(html, /data-act="shield:reload"/);
+  assert.match(html, /<span class="herr-t">Couldn&#39;t switch Privacy Shield\. Try again\.<\/span><details class="herr-det"><summary>Details<\/summary><pre class="herr-raw">config is read-only<\/pre>/);
 });
 
 test('a read that lands after a switch does not undo it', async () => {
@@ -133,7 +138,7 @@ test('client: read, switch, a bad body, and an agent from before the route', asy
   });
   try {
     const got = await s.client.privacyShield();
-    assert.deepEqual(got, {supported: true, ok: true, data: {enabled: false, masked: 3}});
+    assert.deepEqual(got, {supported: true, ok: true, data: {enabled: false, masked: 3, localNames: null}});
     assert.equal(s.seen[0].method, 'GET');
     assert.equal(s.seen[0].url, '/api/privacy-shield');
     const set = await s.client.privacyShield(true);
@@ -153,4 +158,19 @@ test('client: read, switch, a bad body, and an agent from before the route', asy
     assert.deepEqual(await old.client.privacyShield(), {supported: false});
     assert.deepEqual(await old.client.privacyShield(true), {supported: false});
   } finally { await old.close(); }
+});
+
+test('ATO-2744: a failed read says so in a sentence, never "Error: ..." or a lowercase phrase', async () => {
+  const shield = createPrivacyShield({read: async () => { throw new Error('connect ECONNREFUSED 127.0.0.1:7777'); }, set: async () => null});
+  await shield.load();
+  assert.equal(shield.state.error.text, "Couldn't read Privacy Shield from the agent.");
+  assert.match(shield.state.error.detail, /ECONNREFUSED/);
+  const html = privacyShieldHTML(shield.state, {esc});
+  const shown = html.slice(0, html.indexOf('<details'));
+  assert.doesNotMatch(shown, /ECONNREFUSED|Error:|could not read Privacy Shield|unknown error/);
+  assert.match(html, /<summary>Details<\/summary><pre class="herr-raw">Error: connect ECONNREFUSED 127\.0\.0\.1:7777<\/pre>/);
+  const empty = createPrivacyShield(fakeApi([{supported: true, ok: false}]));
+  await empty.load();
+  assert.deepEqual(empty.state.error, {text: "Couldn't read Privacy Shield from the agent.", detail: ''});
+  assert.doesNotMatch(privacyShieldHTML(empty.state, {esc}), /<details/);
 });

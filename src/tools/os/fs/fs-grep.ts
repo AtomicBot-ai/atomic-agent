@@ -13,9 +13,13 @@ import {
   type SearchTarget,
 } from "./fs-grep-args.js";
 import { formatGrepResult } from "./fs-grep-format.js";
-import { parseRipgrepJson } from "./fs-grep-ripgrep-json.js";
+import { parseRipgrepJson, type RgFileRecord } from "./fs-grep-ripgrep-json.js";
 import { withTimeoutNote } from "./fs-grep-timeout.js";
 import { isMissingPathError, missingPathResult } from "./fs-missing-path.js";
+import {
+  GUEST_SECRET_RG_EXCLUDES,
+  isGuestSecretRelPath,
+} from "../../read-scope/guest-secret-files.js";
 
 export type { GrepOutputMode } from "./fs-grep-args.js";
 export { parseRipgrepJson } from "./fs-grep-ripgrep-json.js";
@@ -78,7 +82,16 @@ export function buildOsFsGrepTool(
         });
       }
 
-      const rgArgs = buildRgArgs(args, target.searchTarget);
+      // A guest's grep never reaches a nested `.env`, key or `secrets/`
+      // file (ATO-2703): ripgrep skips them, and `visible` drops any
+      // that still come back.
+      const rgArgs = buildRgArgs(
+        args,
+        target.searchTarget,
+        ctx.guest === true ? GUEST_SECRET_RG_EXCLUDES : [],
+      );
+      const visible = (files: RgFileRecord[]): RgFileRecord[] =>
+        ctx.guest === true ? files.filter((f) => !isGuestSecretRelPath(f.path)) : files;
       // The runner only listens for an abort that happens after spawn.
       ctx.signal.throwIfAborted();
       const result = await runCommand(rgPath, rgArgs, {
@@ -93,7 +106,7 @@ export function buildOsFsGrepTool(
       // Checked before the exit code: a killed ripgrep reports `null`,
       // and the matches it already printed are still worth returning.
       if (result.timedOut) {
-        const files = parseRipgrepJson(result.stdout);
+        const files = visible(parseRipgrepJson(result.stdout));
         return withTimeoutNote(
           formatGrepResult(args, files, rgPath, rgArgs, result),
           { elapsedMs: result.durationMs },
@@ -136,7 +149,7 @@ export function buildOsFsGrepTool(
         });
       }
 
-      const files = parseRipgrepJson(result.stdout);
+      const files = visible(parseRipgrepJson(result.stdout));
       return formatGrepResult(args, files, rgPath, rgArgs, result);
     },
   };

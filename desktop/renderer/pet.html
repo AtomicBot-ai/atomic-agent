@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+      content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
 <title>Atomic Agent Pet</title>
 <!-- ATO-2391: the desktop pet (main/pet-window.ts, main/pet-ipc.ts). Transparent; only the sprite and the bubble take clicks. -->
 <link rel="stylesheet" href="fonts.css">
@@ -23,6 +23,8 @@
       <button id="b-open" class="b-btn b-quiet" type="button">Open</button>
     </div>
     <div id="b-more" class="b-more" hidden></div>
+    <!-- ATO-2513: shown while the bubble has the keyboard (pet.js petKeysLine). -->
+    <div id="b-keys" class="b-keys"></div>
   </section>
   <div id="pet" class="sprite hit" role="img" aria-label="Atomic Agent is idle" title="Atomic Agent is idle">
     <svg viewBox="0 0 100 100" aria-hidden="true">
@@ -40,8 +42,12 @@
         <path class="mouth" d="M45.5 56 q4.5 3.5 9 0"/>
       </g>
     </svg>
+    <!-- ATO-2513: a pet the person made (main/pet-skins.ts); data: pictures only. -->
+    <img id="skin" class="skin" alt="" hidden>
     <span id="badge" class="badge" aria-hidden="true"></span>
   </div>
+  <!-- ATO-2741: the main window's words for what a request does. -->
+  <script src="approval-words.js"></script>
   <script src="pet.js"></script>
 </body>
 </html>

@@ -22,7 +22,7 @@ import type { RecentSessionDir } from "./fs/fs-locate-project-sources.js";
 import { buildOsFsGrepTool } from "./fs/fs-grep.js";
 import { buildOsFsEditTool } from "./fs/fs-edit.js";
 import { buildOsFsReadDocumentTool } from "./read-document/index.js";
-import { buildOsFsWritePptxTool } from "./pptx/index.js";
+import { buildOsFsWritePptxTool, type OsFsWritePptxOptions } from "./pptx/index.js";
 import { buildOsFsDocxTool, buildOsFsXlsxTool } from "./office/index.js";
 import {
   buildOsFsArchiveListTool,
@@ -44,7 +44,7 @@ import { buildOsFsPatchTool } from "./fs/fs-patch.js";
 import { buildOsFsRestoreTool } from "./fs/fs-restore.js";
 import { buildOsFsMoveTool } from "./fs/fs-move.js";
 import { FileRestoreStore } from "./fs/fs-restore-store.js";
-import { createLspDiagnostics, createLspServerPool } from "./fs/lsp/index.js";
+import { createLspDiagnostics, createLspServerPool, type LspServerPool } from "./fs/lsp/index.js";
 import { askToStartLspThroughApprovals } from "./fs/lsp/lsp-start-question.js";
 import type { DeclaredInputsRegistry } from "./fs/fs-declared-inputs.js";
 import { osFsWatchTool } from "./fs/fs-watch.js";
@@ -153,6 +153,19 @@ export type {
   ShellJobState,
   ShellJobStopReason,
 } from "./shell/shell-jobs.js";
+export { createShellJobHostControls, SHELL_JOB_INPUT_MAX_CHARS } from "./shell/shell-job-host.js";
+export type {
+  ShellJobHostControls,
+  ShellJobResizeOutcome,
+  ShellJobStopOutcome,
+  ShellJobView,
+  ShellJobWriteOutcome,
+} from "./shell/shell-job-host.js";
+export { createBackgroundJobsControl } from "./shell/background-jobs-control.js";
+export type { BackgroundJobsControl, BackgroundJobView } from "./shell/background-jobs-control.js";
+export type { MonitorWake, MonitorWakeHandler } from "./shell/shell-monitor-wake.js";
+export { startDeclaredMonitor } from "./shell/shell-declared-monitor.js";
+export type { DeclaredMonitorSpec, DeclaredMonitorStart } from "./shell/shell-declared-monitor.js";
 
 export interface RegisterOsToolsOptions extends DangerousToolOptions {
   config: Pick<AtomicAgentConfig, "http" | "web" | "projects" | "tools">;
@@ -225,6 +238,18 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    * first start asks once. Omitted: no folder is trusted.
    */
   isTrustedProject?: (dir: string) => boolean;
+  /**
+   * Filled with the language-server pool when `tools.lsp.enabled` built
+   * one, so `@problems` (ATO-2472) reads the same servers as the tools.
+   */
+  lspPoolRef?: LspPoolRef;
+  /** ATO-2444: each slide `os.fs.write_pptx` lays out, for the session's UIs. Omitted: none. */
+  onPptxProgress?: OsFsWritePptxOptions["onProgress"];
+}
+
+/** Where registerOsTools leaves its language-server pool (ATO-2472). */
+export interface LspPoolRef {
+  pool?: LspServerPool;
 }
 
 export function registerOsTools(
@@ -267,6 +292,7 @@ export function registerOsTools(
             : { isTrustedProject: options.isTrustedProject }),
         })
       : null;
+  if (lspPool !== null && options.lspPoolRef !== undefined) options.lspPoolRef.pool = lspPool;
   // One option bag for every tool that replaces file content, so the
   // write, the edit, the patch and the restore share the store that
   // remembers what each session created and what was replaced in each
@@ -308,7 +334,12 @@ export function registerOsTools(
   registry.register(buildOsFsReadDocumentTool());
   // The same bag as os.fs.write: an input deck is refused, a replaced
   // one keeps a restore copy.
-  registry.register(buildOsFsWritePptxTool(fsMutation));
+  registry.register(
+    buildOsFsWritePptxTool({
+      ...fsMutation,
+      ...(options.onPptxProgress === undefined ? {} : { onProgress: options.onPptxProgress }),
+    }),
+  );
   registry.register(buildOsFsDocxTool(fsMutation));
   registry.register(buildOsFsXlsxTool(fsMutation));
   registry.register(buildOsFsArchiveListTool());
@@ -325,6 +356,15 @@ export function registerOsTools(
       approvals: options.approvals,
       approvalRequired: options.approvalRequired,
       config: options.config,
+      // The same live threshold the shell guard reads (ATO-2505).
+      ...(options.shellPolicy?.argScanThreshold === undefined
+        ? {}
+        : { argScanThreshold: options.shellPolicy.argScanThreshold }),
+      // `{{secret:NAME}}` in a header value (ATO-2530), from the same
+      // `toolSecrets` as the shell's.
+      ...(options.stateDir === undefined
+        ? {}
+        : { secrets: createToolSecretSource(options.stateDir) }),
     }),
   );
   registry.register(

@@ -7,7 +7,7 @@
 import "./stdio-guard.js";
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, powerSaveBlocker, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, powerSaveBlocker, safeStorage, screen, shell, systemPreferences, Tray, webFrameMain } from "electron";
 import { registerDoctorDataIpc } from "./doctor-data.js";
 import { printHtmlToPdf, registerChatExportIpc } from "./chat-export.js";
 import { ghRunner, registerChatShareIpc } from "./chat-share.js";
@@ -28,7 +28,8 @@ import { newChatSessionId } from "./chat-session.js";
 import { ChatWorktrees, gitExecWith, registerChatWorktreeIpc } from "./chat-worktree-ipc.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
-import { backgroundQuitWork, busyTurnsOf, quitQuestion, sampleAgentBusy, workingChatCount, type AgentBusySample } from "./quit-question.js";
+import { backgroundQuitWork, quitQuestion, sampleAgentBusy, workingChatCount, type AgentBusySample } from "./quit-question.js";
+import { noticeWhileChecking } from "./quit-checking.js";
 import { busyPorts, modelPortsOf, onSmokeStopSignal, portsHeldByRun, runSmokeGuarded, signalExitCode, smokeMayStopModels, smokeOwnsItsState, smokeScreenshot } from "./smoke-exit.js";
 import { randomUUID } from "node:crypto";
 import { freemem, homedir, tmpdir, totalmem } from "node:os";
@@ -51,34 +52,50 @@ import { wireSkillEvalIpc } from "./skill-eval-ipc.js";
 import { wireSkillDraftsIpc } from "./skill-drafts-ipc.js";
 import { wireShowOnceIpc } from "./show-once-ipc.js";
 import { pushTurnNote, wirePushIpc } from "./push-ipc.js";
+import { wirePhoneIpc } from "./phone-ipc.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { wireFileMentionsIpc } from "./file-mentions-ipc.js";
+import { wireLinePathIpc } from "./line-path-ipc.js";
+import { wireProjectTreeIpc } from "./project-tree-ipc.js";
 import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
 import { wireFusionReasoningIpc } from "./fusion-reasoning-ipc.js";
+import { wireFusionRolesIpc } from "./fusion-roles-ipc.js";
 import { wireLanDiscoveryIpc } from "./lan-discovery-ipc.js";
 import { wireTaskControlsIpc } from "./task-controls-ipc.js";
 import { wireWorkboardIpc } from "./workboard-ipc.js";
 import { wireIdeasIpc } from "./ideas-ipc.js";
+import { wireUsageIpc } from "./usage-ipc.js";
+import { wireLogbookIpc } from "./logbook-ipc.js";
+import { createLogbookTray } from "./logbook-tray.js";
+import { watchLogbookAway } from "./logbook-away.js";
+import { showLogbookTimeline, wireLogbookTimelineIpc } from "./logbook-timeline-ipc.js";
 import { wireSessionGoalIpc } from "./session-goal-ipc.js";
+import { wireAgentJobsIpc } from "./agent-jobs-ipc.js";
 import { wireSideQuestionIpc } from "./side-question-ipc.js";
+import { wireCouncilIpc } from "./council-ipc.js";
 import { wireIncognitoChatsIpc } from "./incognito-chats-ipc.js";
 import { wireChatTrashIpc } from "./chat-trash-ipc.js";
 import { wireMiniChatIpc } from "./mini-chat-ipc.js";
 import { chatPopoutTurnRefused, isChatPopout, wireChatPopoutIpc } from "./chat-popout-ipc.js";
 import { wireChatRewindIpc } from "./chat-rewind-ipc.js";
 import { wireAnswerVersionsIpc } from "./answer-versions-ipc.js";
+import { wireGuardRulesIpc } from "./guard-rules-ipc.js";
 import { wireTraceTreeIpc } from "./trace-tree-ipc.js";
 import { wireProjectWorkersIpc } from "./project-workers-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
 import { wireMyFilesIpc } from "./my-files-ipc.js";
-import { wireMyAppsIpc } from "./my-apps-ipc.js";
+import { openAppFromDeeplink, wireMyAppsIpc } from "./my-apps-ipc.js";
 import { wireImportFactsIpc } from "./import-facts-ipc.js";
 import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
 import { wireChatgptOauthIpc } from "./chatgpt-oauth-ipc.js";
 import { wireAgentHubIpc } from "./agent-hub-ipc.js";
 import { wireFitTestIpc } from "./fit-test-ipc.js";
+import { wireModelSamplingIpc } from "./model-sampling-ipc.js";
 import { wireModelsFolderIpc } from "./models-folder-ipc.js";
+import { wireLocalServersIpc } from "./local-servers-ipc.js";
+import { wireModelShareIpc } from "./model-share-ipc.js";
 import { wireInterviewInviteIpc } from "./interview-invite-ipc.js";
+import { wireModelFavoritesIpc } from "./model-favorites-ipc.js";
 import { wireRecipesIpc } from "./recipes-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
 import { wireStudioIpc } from "./studio-ipc.js";
@@ -167,7 +184,8 @@ import {
   type HuggingFaceRepoChoices,
 } from "./huggingface.js";
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
-import { quantMachine, rateRepoChoices } from "./quant-fit.js";   // ATO-450: a badge, a speed estimate and the pick per quant
+import { quantMachine, rateRepoChoices, withDedicatedGpu } from "./quant-fit.js";   // ATO-450: a badge, a speed estimate and the pick per quant
+import { forgetMoeFitFacts, moeFitFactsNow, withExpertsInRam } from "./moe-fit.js";   // ATO-2455: fits with experts in RAM
 import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";
 import { LOCAL_MODEL_SHARED_NOTE, moveProjectModel, readProjectModels, turnModelFor, writeProjectModel, type ProjectModelPick } from "./project-model.js";
 import { instructionsFileFor } from "./project-instructions-file.js";
@@ -303,12 +321,17 @@ import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js
 import { checkSavedComposioKey, removeComposioKey, saveComposioKey, type ComposioDeps, type ComposioKeyResult } from "./composio-key.js";
 import { registerComposioAccountsIpc } from "./composio-accounts-ipc.js";
 import { checkTelegramToken } from "./telegram-token-check.js";   // ATO-426: a bot token checked with Telegram before it is saved
+import { checkLinearKey } from "./linear-key-check.js";   // ATO-2464: a Linear key checked before it is saved
 // Item 2 (voice input): the on-device speech helper's supervisor.
 import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 // ATO-1074: an audio file transcribed on this machine, with timestamps.
 import { FileTranscriber, appleSpeechEngine, findOnPath, whisperFileEngine } from "./transcribe-file.js";
 // ATO-2333: Record a meeting, transcribed live in chunks on this machine.
 import { meetingRecorderFor, wireMeetingIpc } from "./meeting-ipc.js";
+import { micSettingsUrl } from "./mic-settings.js";   // ATO-2749
+import { displayCaptureAllowed, wireMeetingLoopback, wireMeetingSystemIpc } from "./meeting-system-ipc.js";   // ATO-2514: the other side of the call
+import { meetingVoicesFor, wireMeetingVoicesIpc } from "./meeting-voices-ipc.js";   // ATO-2514: speakers by voice
+import { wireMeetingLibraryIpc } from "./meeting-library-ipc.js";   // ATO-2514: Settings, Meetings
 // Item 7 part B (Skills / Memory / MCP tabs)
 import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
@@ -339,13 +362,17 @@ import { wireSelectedText } from "./selected-text-ipc.js";
 import { readQuickEntryPref } from "./quick-entry.js";
 import { isDictatePill, wireDictateAnywhere } from "./dictate-anywhere-window.js";
 import { wirePetIpc, type PetHub } from "./pet-ipc.js";
+import { wireApprovalNotify } from "./approval-notify-ipc.js";
 import { readPetPrefs } from "./pet-prefs.js";
 import { isPetWindow } from "./pet-window.js";
 import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
 import { filePreviewSave } from "./file-save.js";
-import { renderSlides, slidesRenderable } from "./slide-render.js";
+import { wireEditorOpenIpc } from "./editor-open-ipc.js";
+import { PreviewOpenedFiles, previewSaveScope, type PreviewSaveGuard } from "./preview-save-scope.js";
+import { previewSaveConfirmDialog } from "./preview-save-sensitive.js";
+import { slideOutcome, slidesRenderable } from "./slide-render.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 import { buildLocalGgufModelDef, resolveLocalGgufFile } from "./local-gguf.js";
 import { discoverLocalModels, registerDiscoveredModel } from "./local-models-found.js";
@@ -360,8 +387,9 @@ import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.
 import { MOVE_PROMPT, offerMove, shouldOfferMove } from "./move-to-applications.js";
 import { buildStampLabel, readBuildStamp, type BuildStamp } from "./build-stamp.js";
 // ATO-1136: HTML artifacts in the chat, served sandboxed from their own scheme (artifact-frame.ts).
-import { permissionFromSubframe, subframeNavAllowed } from "./artifact-frame.js";
-import { registerArtifactScheme, wireArtifactIpc } from "./artifact-frame-ipc.js";
+import { permissionFromSubframe } from "./artifact-frame.js";
+import { watchArtifactNavigation, type NavContents, type NavFrame } from "./artifact-nav-guard.js";
+import { registerArtifactScheme, watchArtifactChildFrames, wireArtifactIpc } from "./artifact-frame-ipc.js";
 registerArtifactScheme();
 // ATO-556: atomicagent:// links (Add to Atomic Agent buttons): a card, then an install only on a click.
 import { shouldRegisterProtocol, wireDeeplinks } from "./deeplink.js";
@@ -475,6 +503,7 @@ const deeplinks = wireDeeplinks({
   showWindow: () => openWindowAgain(),
   notify: () => send("deeplink:new"),
   log: (line) => console.error(line),
+  direct: (request) => app.isReady() && openAppFromDeeplink(request),   // ATO-2459: an installed My apps launcher opens just its app
 });
 {
   const testLink = process.argv.find((a) => a.startsWith("--deeplink-test="));
@@ -1215,9 +1244,15 @@ function createWindow(): BrowserWindow {
   });
   window.webContents.on("will-navigate", (event) => event.preventDefault());
   // ATO-1136: a frame in the window (an artifact, the file preview's) never goes to the web or the disk.
-  window.webContents.on("will-frame-navigate", (event) => {
-    if (!event.isMainFrame && !subframeNavAllowed(event.url)) event.preventDefault();
+  // ATO-2536 (review round 2): an artifact frame goes only to another artifact page (no blob:, data:,
+  // javascript: document of its own), a document that commits there anyway gets the guard and is sent
+  // to "Not found", and no window is ever created (artifact-nav-guard.ts).
+  watchArtifactNavigation(window.webContents as unknown as NavContents, {
+    frameFromId: (processId, routingId) => (webFrameMain.fromId(processId, routingId) ?? null) as unknown as NavFrame | null,
   });
+  // ATO-2536: no UDP for WebRTC (no STUN; TURN over TCP is left to the in-page block), and an artifact page that makes a child frame is dropped (artifact-rtc-block.ts).
+  window.webContents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
+  watchArtifactChildFrames(window.webContents);
 
   /* Item 2 (voice input): until this feature there was no permission handler
      at all, and Electron's default grants everything — the renderer could
@@ -1242,6 +1277,8 @@ function createWindow(): BrowserWindow {
     !permissionFromSubframe(details as unknown as { isMainFrame?: boolean; requestingUrl?: string })
       && voicePermissionVerdict(permission, details as unknown as { mediaTypes?: string[] } | undefined),
   );
+
+  wireMeetingLoopback(window.webContents.session, () => meeting.armed);   // ATO-2514: Windows loopback for a meeting
 
   void window.loadFile(join(__dirname, "..", "renderer", "index.html"));
   return window;
@@ -1270,6 +1307,7 @@ function voicePermissionVerdict(
   details: { mediaTypes?: string[] } | undefined,
 ): boolean {
   if (permission === "clipboard-sanitized-write" || permission === "clipboard-read") return true;
+  if (permission === "display-capture") return displayCaptureAllowed(meeting.armed);   // ATO-2514: Windows loopback only
   if (permission !== "media" || !(voice.armed || meeting.armed)) return false;
   const types = details?.mediaTypes ?? [];
   return types.length > 0 && types.every((t) => t === "audio");
@@ -1597,6 +1635,19 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("agent:projectTrust", async (_event, sessionId: unknown) => {
     try { return await client.projectTrust(skillSession(sessionId)); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
   });
+  // ATO-2441: your own slash commands in the / menu (renderer/own-commands.js).
+  ipcMain.handle("agent:commandList", async (_event, sessionId: unknown) => {
+    try { return await client.commandList(skillSession(sessionId)); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
+  ipcMain.handle("agent:commandRender", async (_event, raw: unknown) => {
+    const body = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+    if (typeof body.name !== "string" || !body.name || body.name.length > 200) return { ok: false, error: "invalid command name" };
+    if (body.args !== undefined && (typeof body.args !== "string" || body.args.length > 100_000)) return { ok: false, error: "invalid arguments" };
+    try {
+      const sessionId = skillSession(body.sessionId);
+      return await client.commandRender({ name: body.name, ...(body.args ? { args: body.args } : {}), ...(sessionId ? { sessionId } : {}) });
+    } catch (err) { return { ok: false, error: String(err) }; }
+  });
   ipcMain.handle("agent:projectTrustAnswer", async (_event, raw: unknown) => {
     const body = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
     if (body.answer !== "trust" && body.answer !== "decline") return { ok: false, error: "answer must be trust or decline" };
@@ -1628,6 +1679,11 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("agent:privacyShieldSet", async (_event, enabled: unknown) => {
     if (typeof enabled !== "boolean") return { supported: true, ok: false, error: "enabled must be true or false" };
     try { return await client.privacyShield(enabled); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
+  // ATO-2527: the names row under Privacy Shield (renderer/privacy-names.js).
+  ipcMain.handle("agent:privacyShieldNamesSet", async (_event, enabled: unknown) => {
+    if (typeof enabled !== "boolean") return { supported: true, ok: false, error: "enabled must be true or false" };
+    try { return await client.privacyShield(undefined, enabled); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
   });
   ipcMain.handle("agent:offlineModeSet", async (_event, enabled: unknown) => {
     if (typeof enabled !== "boolean") return { supported: true, ok: false, error: "enabled must be true or false" };
@@ -1950,6 +2006,8 @@ function wireIpc(client: AgentClient): void {
     }
   });
 
+  // ATO-2755: a notification (and the phone push) when a chat waits for your OK (approval-notify-ipc.ts).
+  const approvalNote = wireApprovalNotify(client, { mainWindow: () => win, showMainWindow: openWindowAgain, quiet: SMOKE || FIRST_RUN_PROBE });
   /* ATO-2391: the desktop pet answers through this same function when no window card takes its click. */
   const approveFromUi = async (payload: unknown) => {
     const { approvalId, decision, reason } = payload as {
@@ -1966,6 +2024,7 @@ function wireIpc(client: AgentClient): void {
       const data = await client.resolveApproval(approvalId, known, reason);
       chatTurns.approvalAnswered({ approvalId, decision: known });   // ATO-1026: the turn leaves "approval"
       petHub?.approvalAnswered(approvalId);   // ATO-2391: the pet's bubble goes
+      approvalNote.answered(approvalId);   // ATO-2755: and its notification
       return { ok: true, data };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -1995,6 +2054,7 @@ function wireIpc(client: AgentClient): void {
       const data = await client.answerQuestion(p.approvalId, answer);
       chatTurns.approvalAnswered({ approvalId: p.approvalId, decision: answer.skip ? "deny" : "allow-once" });   // ATO-1026: the turn leaves "approval"
       petHub?.approvalAnswered(p.approvalId);   // ATO-2391
+      approvalNote.answered(p.approvalId);   // ATO-2755
       return { ok: true, data };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -2080,14 +2140,15 @@ function wireIpc(client: AgentClient): void {
     const res = await A.analyticsConfigWrite(key, value, via, () => configSet(key, value));
     A.telegramConfigWrite(key, value, res);
     A.composioConfigWrite(key, value, res);
+    if (key === "localModels.managed.cpuMoe") forgetMoeFitFacts();   // ATO-2455
     return res;
   });
   // The window's lists only: while a pull runs the weights are on disk before the projector is (ATO-1331).
   const listedNow = <R extends Parameters<typeof withoutLivePullGap>[0]>(list: R): R => withoutLivePullGap(list, downloadRunning()?.id ?? null);
-  ipcMain.handle("cli:modelsList", () => modelsList().then(listedNow));
+  ipcMain.handle("cli:modelsList", () => modelsList().then(listedNow).then((r) => withExpertsInRam(r, moeFitFactsNow(modelsRecommend))));
   // Review fix (item 5): the chat route's half of the catalogue, subtracted
   // by the CLI's own embedding catalogue instead of by a guess at names.
-  ipcMain.handle("cli:chatModelsList", () => chatModelsList().then(listedNow));
+  ipcMain.handle("cli:chatModelsList", () => chatModelsList().then(listedNow).then((r) => withExpertsInRam(r, moeFitFactsNow(modelsRecommend))));
   ipcMain.handle("cli:modelsUse", (_event, id: unknown) =>
     typeof id === "string" ? modelsUse(id) : { ok: false, error: "model id required" },
   );
@@ -2374,7 +2435,7 @@ function wireIpc(client: AgentClient): void {
       const listed = await resolveHuggingFaceGgufChoices(ref, { signal: controller.signal });
       if (hfLookup !== controller) return { ok: false, cancelled: true, error: "cancelled" };
       // ATO-450: rated for this machine, the pick first (the list opens on it).
-      const repo = rateRepoChoices(listed, quantMachine(process.platform, FAKE_RAM_GB ? FAKE_RAM_GB * 1024 ** 3 : totalmem()));
+      const repo = rateRepoChoices(listed, withDedicatedGpu(quantMachine(process.platform, FAKE_RAM_GB ? FAKE_RAM_GB * 1024 ** 3 : totalmem()), moeFitFactsNow(modelsRecommend)));
       hfLookup = null;
       A.hfLookupDone({ choices: repo.choices.length });
       return { ok: true, repo };
@@ -2632,7 +2693,7 @@ function wireIpc(client: AgentClient): void {
     const status = detectSubscriptionCli(cli);
     return openLoginTerminal(cli, status.binPath);
   });
-  wireChatgptOauthIpc(); // ATO-1741: ChatGPT sign-in through the bundled agent, no terminal
+  wireChatgptOauthIpc({ isRemote: () => client.isRemote }); // ATO-1741: ChatGPT sign-in through the bundled agent, no terminal; ATO-2512: not for a remote agent
   ipcMain.handle("cli:removeProvider", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
     // ATO-1441: OpenRouter's key leaves Core too once none is left (studio-forget-key.ts), in the background.
@@ -3078,6 +3139,7 @@ function wireIpc(client: AgentClient): void {
     if (!path) return { ok: false, error: "not a path" };
     return openWithoutRunning(path);
   });
+  wireGuardRulesIpc(openWithoutRunning);   // ATO-2529: Settings › Privacy › Security rules (guard-rules-ipc.ts)
   // Item 5 (file attachments): read-only existence check for the paths a turn's
   // write tools reported. fs.stat and nothing else — never open, never create.
   // Cap: 64 paths per call; the renderer chunks longer lists so a 65th written
@@ -3197,8 +3259,22 @@ function wireIpc(client: AgentClient): void {
      capped, nothing run. Open and Reveal go through the same check, and Open
      still never runs a file (openWithoutRunning). */
   const previewRoots = (): string[] => previewRootsFor(imageRoots(), client.isRemote ? null : client.status.workingDir);
+  const previewOpened = new PreviewOpenedFiles(); // ATO-2533: the files Save may write outside the working folder.
+  const previewWorkingDir = (): string | null => (client.isRemote ? null : client.status.workingDir) || null;
+  // ATO-2533 review: outside the folder, or a hidden/startup/state file, Save asks the person here in main.
+  const previewSaveGuard: PreviewSaveGuard = {
+    home: homedir(),
+    stateDirs: [...new Set([DESKTOP_STATE_DIR, TUI_STATE_DIR, LEGACY_DESKTOP_STATE_DIR])],
+    confirm: async (real, sensitive) => {
+      if (!win || win.isDestroyed()) return false;
+      const { response } = await dialog.showMessageBox(win, previewSaveConfirmDialog(real, sensitive, homedir(), process.platform));
+      return response === 0;
+    },
+  };
   ipcMain.handle("app:filePreview", async (_event, p: unknown) => {
     const r = await filePreview(p, previewRoots(), homedir(), process.platform);
+    const editable = r.ok && typeof r.text === "string" && r.editable !== false;
+    if (r.ok && editable && _event.sender === win?.webContents) await previewOpened.remember(r.path, previewWorkingDir());
     // ATO-2410: a deck says whether this machine can draw its slides; the window then asks app:filePreviewSlides.
     if (r.ok && r.kind === "office" && r.office && r.office.type === "pptx") r.office.renderable = slidesRenderable(process.platform);
     return r;
@@ -3207,11 +3283,11 @@ function wireIpc(client: AgentClient): void {
      PDF when it is installed, Quick Look's page on macOS, else nothing and the
      text cards stay. The same root check as the preview; the file itself is
      only read, the converter writes into a temporary folder of its own. */
-  ipcMain.handle("app:filePreviewSlides", async (_event, p: unknown) => {
+  ipcMain.handle("app:filePreviewSlides", async (_event, p: unknown, retry: unknown) => {
     const t = await previewTarget(p, previewRoots(), homedir(), process.platform);
     if (!t.ok) return { ok: false, reason: t.reason };
-    const r = await renderSlides(t.real, process.platform);
-    return r ? { ok: true, ...r } : { ok: false, reason: "no-render" };
+    const r = await slideOutcome(t.real, process.platform, {}, { retry: retry === true });   // ATO-2517: Reload retries a failed one
+    return r && typeof r === "object" ? { ok: true, ...r } : { ok: false, reason: r ?? "no-render" };
   });
   ipcMain.handle("app:filePreviewAction", async (_event, p: unknown, action: unknown) => {
     const t = await previewTarget(p, previewRoots(), homedir(), process.platform);
@@ -3220,11 +3296,17 @@ function wireIpc(client: AgentClient): void {
     if (action === "open") return openWithoutRunning(t.real);
     return { ok: false, reason: "unknown" };
   });
-  /* ATO-2347: Save from the panel's editor (file-save.ts): the same roots and
-     path check as the read, text files only, never a new file, and nothing
-     written when the file changed since the panel read it unless `force`. */
-  ipcMain.handle("app:filePreviewSave", (_event, p: unknown, text: unknown, stamp: unknown, force: unknown) =>
-    filePreviewSave(p, text, stamp, previewRoots(), homedir(), process.platform, { force: force === true }));
+  /* ATO-2347: Save from the panel's editor (file-save.ts): the same path
+     check as the read but narrower roots (ATO-2533), text files only, never
+     a new file, and nothing written when the file changed since the panel read it unless `force`. */
+  ipcMain.handle("app:filePreviewSave", (_event, p: unknown, text: unknown, stamp: unknown, force: unknown) => {
+    // ATO-2533: only the main window's page, and only the chat's working folder or a file the panel opened and a person said yes to.
+    if (!win || _event.sender !== win.webContents) return { ok: false, reason: "outside" };
+    const scope = previewSaveScope(previewWorkingDir(), previewOpened, process.platform, previewSaveGuard);
+    return filePreviewSave(p, text, stamp, scope.roots, homedir(), process.platform, { force: force === true, allows: scope.allows });
+  });
+  // ATO-2445: the panel's "Open in editor": VS Code, Cursor or Zed, on a file the preview may read (editor-open-ipc.ts).
+  wireEditorOpenIpc({ previewRoots });
   ipcMain.handle("app:imageSaveAs", async (event, p: unknown) => {
     const opened = await openImage(p, imageRoots(), homedir(), process.platform);
     if (!opened.ok) return { ok: false, reason: opened.reason };
@@ -3304,8 +3386,9 @@ function wireIpc(client: AgentClient): void {
     }
   });
   ipcMain.handle("app:openMicSettings", () => {
-    if (process.platform !== "darwin") return { ok: false, error: "macOS only" };
-    void shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
+    const url = micSettingsUrl(process.platform);   // ATO-2749: Windows has its own pane too (mic-settings.ts)
+    if (!url) return { ok: false, error: "no settings pane on this platform" };
+    void shell.openExternal(url);
     return { ok: true };
   });
   ipcMain.handle("app:openExternal", (_event, url: unknown) => {
@@ -3388,25 +3471,40 @@ function wireIpc(client: AgentClient): void {
   // ATO-67: Settings › Skills › Pending review, through `atag skill learned` (skill-drafts-ipc.ts).
   wireSkillDraftsIpc({ cwd: () => client.status.workingDir, isRemote: () => client.isRemote });
   // ATO-2401: Show once, record a routine in a Mac app as a skill draft (show-once-ipc.ts).
-  wireShowOnceIpc({ stateDir: DESKTOP_STATE_DIR, isRemote: () => client.isRemote, log: (line) => console.log(line) });
+  wireShowOnceIpc({ stateDir: DESKTOP_STATE_DIR, isRemote: () => client.isRemote, log: (line) => console.log(line),
+    complete: (body) => client.plainComplete(body) }); // ATO-2499: the tidy pass, on the chat model
   // ATO-1129: Settings › Connections › Phone push, through `atag push` (push-ipc.ts).
   wirePushIpc();
+  wirePhoneIpc(client);   // ATO-2493: Settings › Connections › Connect phone (phone-ipc.ts)
   // ATO-404/405: the composer's attachments, saved into <stateDir>/inbox/desktop.
   wireAttachmentIpc({ window: () => win, stateDir: DESKTOP_STATE_DIR });
   // ATO-1593/1595: the composer's @file palette and the mentions inlined on send (file-mentions-ipc.ts).
   const fileMentions = wireFileMentionsIpc({ isRemote: () => client.isRemote, defaultDir: () => client.status.workingDir,
+    sessionDir: async (s) => ((await client.skills(s)) as { workingDir?: string }).workingDir,
+    expandInCore: (text, dir) => client.expandMentions(text, dir) });   // ATO-2472
+  // ATO-2445: a reply's `path:line` chip, found in the chat's folder (line-path-ipc.ts).
+  wireLinePathIpc({ isRemote: () => client.isRemote, defaultDir: () => client.status.workingDir,
+    sessionDir: async (s) => ((await client.skills(s)) as { workingDir?: string }).workingDir });
+  // ATO-2445: the Files panel's project tree of the chat's folder, with git marks (project-tree-ipc.ts).
+  wireProjectTreeIpc({ isRemote: () => client.isRemote, defaultDir: () => client.status.workingDir, previewRoots,
     sessionDir: async (s) => ((await client.skills(s)) as { workingDir?: string }).workingDir });
   // ATO-532: a snapshot of another app's window, attached like a pasted image (view-only).
   wireWindowSnapshotIpc();
   // ATO-606: the Fusion workers' reasoning level (Settings › Models, `/runmode reasoning`).
   wireFusionReasoningIpc();
+  wireFusionRolesIpc();   // ATO-1754: Settings › Models › Fusion › Models by role
   // ATO-1684: the subscription step's live sign-in check (subscription-cli-live-check-ipc.ts).
   wireSubscriptionLiveCheckIpc();
   // ATO-1067: "Find on my network", model servers on other PCs of this network (view-only).
   wireLanDiscoveryIpc();
   // ATO-1040: the chat's goal (the TUI's /goal), read and controlled through the agent.
   wireSessionGoalIpc(client);
+  wireAgentJobsIpc(client, (approvalId, skipped) => {   // ATO-2485: the agent's shell jobs in the terminal panel
+    chatTurns.approvalAnswered({ approvalId, decision: skipped ? "deny" : "allow-once" });   // ATO-2486: a job's password answered
+    petHub?.approvalAnswered(approvalId);
+  });
   wireSideQuestionIpc(client);   // ATO-1152: /btw
+  wireCouncilIpc(client);   // ATO-2432: /council
   wireIncognitoChatsIpc(client);   // ATO-586: incognito chats
   wireChatTrashIpc(client);   // ATO-2332: Delete… moves a chat to Trash, purged after 30 days
   // ATO-1136: HTML artifacts in the chat, sandboxed (artifact-frame-ipc.ts).
@@ -3415,6 +3513,9 @@ function wireIpc(client: AgentClient): void {
   // ATO-1063: the mini chat page (mini-chat-ipc.ts): its frames, and "Open in big window".
   wireMiniChatIpc(client, { mainWindow: () => win, showMainWindow: () => (openWindowAgain(), win) });
   wireMeetingIpc(meeting);   // ATO-2333: Record a meeting (meeting-ipc.ts)
+  wireMeetingSystemIpc(meeting, { emit: (ev) => send("app:meeting", ev) });   // ATO-2514: Me and Them
+  wireMeetingVoicesIpc(meetingVoicesFor((ev) => send("app:meeting", ev)));   // ATO-2514: speakers by voice (the recorder's own MeetingVoices)
+  wireMeetingLibraryIpc();   // ATO-2514: Settings, Meetings (folder, switches, saved meetings)
   // ATO-561: "Open in new window" on a chat row (chat-popout-ipc.ts); a chat being written is not popped out.
   wireChatPopoutIpc({ mainWindow: () => win, liveSessionIds: () => [...liveTurns.values()].map((t) => t.sessionId) });
   // ATO-1056/1058: Roll back here, Edit and Fork from here on a message (chat-rewind-ipc.ts).
@@ -3438,6 +3539,14 @@ function wireIpc(client: AgentClient): void {
   wireWorkboardIpc({ client });
   // ATO-458: suggested tasks on the empty chat screen (ideas-ipc.ts, renderer/suggestion-cards.js).
   wireIdeasIpc({ client });
+  wireUsageIpc({ client });   // ATO-2442: Settings › Usage (usage-ipc.ts, renderer/usage-tab.js)
+  // ATO-2482: Settings › Models › Sampling (`atag models sampling`).
+  wireModelSamplingIpc();
+  // ATO-2534: the logbook's ● chip and menu bar icon; the runtime captures only while one is shown (logbook-ipc.ts).
+  // ATO-2526: away on lock or idle (logbook-away.ts), Settings › Logbook and the day timeline (logbook-timeline-ipc.ts).
+  const logbookAway = watchLogbookAway(() => void logbook.beat());
+  const logbook = wireLogbookIpc({ client, window: () => win, away: logbookAway, tray: createLogbookTray({ act: (a, m) => void logbook.act(a, m), openWindow: () => openWindowAgain(), openTimeline: () => { openWindowAgain(); showLogbookTimeline(win); } }) });
+  wireLogbookTimelineIpc(logbook, () => client.isRemote);
   // ATO-1091: Settings › Models › "Find the best model for my tasks" (`atag models fit-test`).
   wireFitTestIpc({
     window: () => win,
@@ -3459,7 +3568,10 @@ function wireIpc(client: AgentClient): void {
   });
   // ATO-2106: Settings › Models › "Models folder" (`atag models dir`).
   wireModelsFolderIpc({ window: () => win, isRemote: () => client.isRemote, pulling: () => pull !== null });
+  wireLocalServersIpc({ isRemote: () => client.isRemote, window: () => win });   // ATO-2489: Ollama / LM Studio / Llama app running here
+  wireModelShareIpc({ client });   // ATO-2483: Settings › Models › "Share this model" and its mDNS announcement
   wireInterviewInviteIpc({ stateDir: TUI_STATE_DIR });   // ATO-1467
+  wireModelFavoritesIpc({ stateDir: DESKTOP_STATE_DIR });   // ATO-2500: one favourites list with the terminal
   wireRecipesIpc({ dir: () => app.getPath("userData") });   // ATO-1072: saved recipes (recipes-ipc.ts)
   /* Studio (Images + Video): Core's media API for the Studio pages
      (renderer/studio/CONTRACT.md). Same Core as the agent's image tool; the
@@ -4096,8 +4208,13 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("telegram:checkToken", async (_event, payload: unknown) => {
     const { value } = (payload ?? {}) as { value?: unknown };
     if (typeof value !== "string" || !value) return { ok: false, rejected: true, status: 0, error: "token required" };
-    return checkTelegramToken({ token: value });
+    const res = await checkTelegramToken({ token: value });
+    A.telegramTokenChecked(res);   // ATO-2520: ok / rejected / unchecked, never the token
+    return res;
   });
+  /* ATO-2464 (linear-key-check.ts): the Linear tab's key, checked with one `viewer` query before `app:dotenvSet`
+     writes it. The answer is a verdict and the key's user, never the key or Linear's own words. */
+  ipcMain.handle("linear:checkKey", (_event, payload: unknown) => checkLinearKey({ key: ((payload ?? {}) as { value?: unknown }).value }));
 
   /* ---- Item 2 (voice input) --------------------------------------------
      Nothing here touches the agent: 0.5.5 has no audio route, no
@@ -4299,12 +4416,12 @@ function wireIpc(client: AgentClient): void {
    New project now), which the app's bridge always is. */
 function sidebarHeadersExpected(sb: { pinnedRows?: number; folders?: number; tasks: unknown[] }): string {
   // W2 QA (16.11): ATO-1034's chat folders are listed under Projects; there is no "Folders" section.
-  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Projects", "Chats", ...(sb.tasks.length > 0 ? ["Cron jobs"] : [])]);
+  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Projects", "Chats", ...(sb.tasks.length > 0 ? ["Scheduled tasks"] : [])]);
 }
 /** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js, studio/shell.js).
     W2: Studio's one row, then Cron jobs (the Tasks tab), Skills and Plugins; New project is on the Projects header.
     ATO-1072: Recipes last (the saved recipes sheet). */
-const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Studio", "Cron jobs", "Task board", "Skills", "Plugins", "Recipes"]);   // ATO-2257: Task board
+const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Studio", "Scheduled tasks", "Task board", "Skills", "Plugins", "Recipes", "Apps"]);   // ATO-2257: Task board; ATO-2459: Apps
 type Sb = {
   headers: string[];
   pinnedRows?: number;
@@ -6622,7 +6739,7 @@ async function sidebarTest(
     );
     if (apiTasks.length === 0) {
       // Calm (S1): no tasks, no Tasks section — the list's absence is the empty state.
-      check("an empty tasks list is not drawn", !sb.headers.includes("Cron jobs") && sb.tasksEmpty === "", JSON.stringify(sb.headers));
+      check("an empty tasks list is not drawn", !sb.headers.includes("Scheduled tasks") && sb.tasksEmpty === "", JSON.stringify(sb.headers));
     } else {
       const first = sb.tasks[0];
       const src = apiTasks.find((t) => t.id === first.id);
@@ -6779,15 +6896,15 @@ async function settingsTest(
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
   // Calm (S5): the window's own panes and nav sections, in nav order.
   // ATO-1129 (#1533): Phone push sits in Connections, after Discord. ATO-1630: Monid after Composio.
-  const PANES = ["general", "llm", "mcp", "telegram", "discord", "push", "composio", "monid", "memory", "myfiles", "myapps", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
-  const LABELS = ["General", "Models", "Connections", "Memory", "My files", "My apps", "Cron jobs", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];   // W2: Tasks reads "Cron jobs"
-  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", push: "connections", composio: "connections", monid: "connections", memory: "memory", myfiles: "myfiles", myapps: "myapps",
+  const PANES = ["general", "llm", "mcp", "telegram", "discord", "linear", "push", "composio", "monid", "memory", "myfiles", "myapps", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
+  const LABELS = ["General", "Models", "Connections", "Memory", "My files", "My apps", "Scheduled tasks", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];   // W2, ATO-2743: Tasks reads "Scheduled tasks"
+  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", linear: "connections", push: "connections", composio: "connections", monid: "connections", memory: "memory", myfiles: "myfiles", myapps: "myapps",
     tasks: "tasks", webhooks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
 
   const groups = await js<string[]>("window.__menuGroups()");
   check("settings: menu groups are the TUI's minus Go and Observe", same(groups, GROUPS), JSON.stringify(groups));
   const tabs = await js<string[]>("window.__settingsTabs()");
-  check("settings: the panes are General, Models, Connections (MCP, Telegram, Discord, Phone push, Composio, Monid) … Diagnostics", same(tabs, PANES), JSON.stringify(tabs));
+  check("settings: the panes are General, Models, Connections (MCP, Telegram, Discord, Linear, Phone push, Composio, Monid) … Diagnostics", same(tabs, PANES), JSON.stringify(tabs));
 
   // Every node of the menu tree, verbatim label and ctrl+g chord, in registry
   // order (src/tui/menu/menu-registry.ts:107-675) — except that Go, Observe and
@@ -9202,7 +9319,7 @@ async function settingsTestPartC(
   // ATO-531: Overwrite carries an amber "Can replace your data" tag and says what it replaces.
   const impDrawn = impView.title === "Hermes → Atomic Agent"
     // ATO-1034 (folders): the folders switch sits before Overwrite. W2: the rows in plain words.
-    && same(impView.labels, ["Source", "Source folder", "Chats", "Scheduled jobs", "API keys", "Keep chats in their projects", "Overwrite Can replace your data", "Chats to import"])
+    && same(impView.labels, ["Source", "Source folder", "Chats", "Scheduled tasks", "API keys", "Keep chats in their projects", "Overwrite Can replace your data", "Chats to import"])
     && same(impView.source, ["Hermes"]) && impView.dir === imp.form.sourceDir && impView.limit === imp.form.limit
     && same(impView.switches, { sessions: imp.form.sessions, cron: imp.form.cron, secrets: imp.form.secrets, overwrite: imp.form.overwrite });
   check(
@@ -11370,6 +11487,8 @@ if (LINUX_SANDBOX.noSandbox) {
   app.commandLine.appendSwitch("no-sandbox");
   console.error(`[desktop] running without the Chromium sandbox: ${LINUX_SANDBOX.reason}`);
 }
+/* ATO-2742: Chromium on Linux lists speech-dispatcher's voices for Read Aloud only with this switch. */
+if (process.platform === "linux") app.commandLine.appendSwitch("enable-speech-dispatcher");
 
 /* ATO-1030: a GPU process that crashed twice in a short while turned hardware
    acceleration off for the launches after it (gpu-fallback.ts). Electron only
@@ -11493,6 +11612,7 @@ void app.whenReady().then(async () => {
       if (process.platform === "darwin") app.focus({ steal: true });
       return win;
     },
+    mainWindow: () => win,   // ATO-2478: a background chat from the mini chat runs there without bringing it up
     log: (line) => console.error(line),
     // ATO-985: the text selected in the app in front, when Settings allows it.
     grabSelection: wireSelectedText({ userData: app.getPath("userData"), platform: process.platform }).grabSelection,
@@ -11634,6 +11754,7 @@ function rebuildMenu(): void {
     if (command === "mini:open") { showMiniChat?.(); return; }
     if (command === "pet:toggle") { petHub?.toggle(); return; }
     if (command === "pet:dnd") { petHub?.toggleDnd(); return; }
+    if (command === "pet:maker") { petHub?.openMaker(); return; }   // ATO-2513
     if (command.startsWith("awake:")) {
       const mode = command.slice("awake:".length) as KeepAwakeMode;
       if (KEEP_AWAKE_MODES.includes(mode)) { writeKeepAwakeMode(userData, mode); void syncKeepAwake(); }
@@ -11761,7 +11882,7 @@ let queuedQuitAsked = false;
    scheduled task, a Telegram reply), asked of the agent once per quit before
    the question: before-quit is synchronous, so the first one asks and quits
    again with the answer (as VS Code's lifecycle does its async quit vetoes). */
-let quitAgentWork: { tasks: number; background: number } | null = null;
+let quitAgentWork: ReturnType<typeof backgroundQuitWork> | null = null;
 let quitAgentProbe: Promise<void> | null = null;
 
 // Never leave the agent running after the app is gone.
@@ -11784,12 +11905,14 @@ app.on("before-quit", (event) => {
       const client = agent;
       /* A remote agent's turns run on its own computer; a quit stops none of them. */
       const probe: Promise<AgentBusySample> = client && !client.isRemote && client.status.state === "connected"
-        ? sampleAgentBusy({ tasks: () => client.runningTaskCount(), busyTurns: () => client.turnsHealth().then(busyTurnsOf) })
+        ? sampleAgentBusy({ tasks: () => client.runningTaskCount(), health: () => client.turnsHealth() })
         : Promise.resolve({ tasks: null, busyTurns: null });
       quitAgentProbe = probe.then((sample) => { quitAgentWork = backgroundQuitWork(workingChatCount(liveTurnRecords()), sample); app.quit(); });
+      // ATO-2754: a slow answer says "Checking running chats…" in the window (quit-checking.ts).
+      noticeWhileChecking(quitAgentProbe, (on) => { if (win && !win.isDestroyed()) win.webContents.send("app:quitChecking", { on }); });
       return;
     }
-    const ask = quitQuestion({ queued: queuedMessageCount(), working: workingChatCount(liveTurnRecords()), ...quitAgentWork });
+    const ask = quitQuestion({ queued: queuedMessageCount(), working: workingChatCount(liveTurnRecords()), ...quitAgentWork, recording: meeting.status().recording });   // ATO-2749: a meeting being recorded
     quitAgentWork = null;
     quitAgentProbe = null;
     if (ask) {

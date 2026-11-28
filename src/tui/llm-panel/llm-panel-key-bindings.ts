@@ -11,6 +11,7 @@ import { clampLlmCursor, selectLlmRowAt } from "./llm-panel-selectors.js";
 import { cursorFieldFor } from "./llm-panel-state.js";
 import { handleFallbackPaneKey } from "./fallback/fallback-key-bindings.js";
 import { handleLocalModelsHfKey } from "../local-models/local-models-hf-keys.js";
+import { handleModelsDirKey, openModelsDir } from "../local-models/models-dir-keys.js";
 import { handleLlmLocalPaneKey } from "./llm-panel-local-keys.js";
 import {
   activateProviderEmbedding,
@@ -44,6 +45,9 @@ export function handleLlmPanelKey(
   // below would otherwise fire on the repo name being typed.
   const hfHandled = handleLocalModelsHfKey(input, key, ctx);
   if (hfHandled !== null) return hfHandled;
+  // ATO-2504: the models folder screen owns its keys the same way.
+  const dirHandled = handleModelsDirKey(input, key, ctx);
+  if (dirHandled !== null) return dirHandled;
 
   const localHandled = handleLlmLocalPaneKey(input, key, ctx);
   if (localHandled !== null) return localHandled;
@@ -168,6 +172,12 @@ export function handleLlmPanelKey(
   if (input === "a") {
     dispatch({ type: "llm_mode_set", mode: "local" });
     dispatch({ type: "local_models_hf_opened" });
+    return true;
+  }
+  // `F`: the models folder (ATO-2504), from any pane like `a`.
+  if (input === "F") {
+    dispatch({ type: "llm_mode_set", mode: "local" });
+    openModelsDir(ctx);
     return true;
   }
   if (input === "B") {

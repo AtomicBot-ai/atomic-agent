@@ -24,6 +24,7 @@ import { loadExternalCatalog } from "../local-llm/catalog/external-catalog.js";
 import { setDefaultDownloadConnections } from "../local-llm/downloads/download-settings.js";
 import { setDefaultHuggingFaceEndpoint } from "../local-llm/catalog/huggingface-endpoint.js";
 import { setModelsDirOverride } from "../local-llm/models-dir-override.js";
+import { readModelsDirOverrideFromFile } from "./models-dir-override-file.js";
 import {
   setConfiguredBackendVariant,
   setConfiguredCoreBackendVariant,
@@ -36,6 +37,7 @@ import { emitConfigNoticeOnce } from "./config-primitives.js";
 import { cloneExtraChannelsConfig } from "./extra-channel-config.js";
 import { OFFLINE_ENV, parseProxyUrl, PROXY_ENV } from "./network-config.js";
 import { DEFAULT_MAX_AUDIO_BYTES } from "./tool-config.js";
+import { createAgentSecurityDefaults } from "./agent/security-config.js";
 import type {
   LocalModelsValueSource,
   LocalModelsValueSources,
@@ -257,7 +259,11 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
     setDefaultHuggingFaceEndpoint(user.localModels.download.hfEndpoint);
     // ATO-2106: where the downloaded models live, read by `resolveModelsDir`.
     const modelsDirOverride = user.localModels.managed.modelsDirOverride;
-    setModelsDirOverride(modelsDirOverride === undefined ? null : resolvePath(modelsDirOverride, modelsDirOverride));
+    // ATO-2503: and follows the file, so a move another process makes reaches a long-lived one.
+    setModelsDirOverride(modelsDirOverride === undefined ? null : resolvePath(modelsDirOverride, modelsDirOverride), {
+      file: userConfigFile,
+      read: () => readModelsDirOverrideFromFile(userConfigFile),
+    });
   }
   const grammarsDir = resolveAssetDir("ATOMIC_AGENT_GRAMMARS_DIR", "grammars");
 
@@ -348,6 +354,9 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
       reasoningBudgetTokens: user.localModels.reasoningBudgetTokens,
       drySampler: user.localModels.drySampler,
       modelSampling: user.localModels.modelSampling,
+      ...(user.localModels.modelSamplingOverrides
+        ? { modelSamplingOverrides: user.localModels.modelSamplingOverrides }
+        : {}),
       strictToolArgs: user.localModels.strictToolArgs,
       valueSources: localModelsValueSources(user.localModels),
       managed: { ...user.localModels.managed },
@@ -379,6 +388,7 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
       smartApproval: user.agent.smartApproval,
       smartApprovalModel: user.agent.smartApprovalModel,
       taintReview: user.agent.taintReview,
+      security: user.agent.security ?? createAgentSecurityDefaults(),
       stablePrefixHashSalt:
         readEnv("ATOMIC_AGENT_STABLE_PREFIX_SALT") ??
         ENV_DEFAULTS.STABLE_PREFIX_SALT,
@@ -804,6 +814,7 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
       // Unset = auto (ATO-497 decision 62): local model that reports audio only.
       ...(user.vision.audioInput === undefined ? {} : { audioInput: user.vision.audioInput }),
       maxAudioBytes: user.vision.maxAudioBytes ?? DEFAULT_MAX_AUDIO_BYTES,
+      indexFiles: user.vision.indexFiles,
     },
     tui: {
       theme: user.tui.theme,
@@ -814,6 +825,7 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
       vimMode: user.tui.vimMode,
       language: user.tui.language,
       verboseSteps: user.tui.verboseSteps,
+      pet: user.tui.pet,
       notify: { ...user.tui.notify },
       onboarding: { ...user.tui.onboarding },
       sessionRail: {

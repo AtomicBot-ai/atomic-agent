@@ -397,10 +397,11 @@ export class LlamaServerError extends Error {
      * that both surface as `status === null`.
      */
     public readonly code: string | undefined = undefined,
-    options?: { cause?: unknown; body?: LlamaErrorBody; midStream?: boolean },
+    options?: { cause?: unknown; body?: LlamaErrorBody; midStream?: boolean; ownEngine?: OwnEngineState },
   ) {
     super(message);
     this.name = "LlamaServerError";
+    if (options?.ownEngine !== undefined) this.ownEngine = options.ownEngine;
     if (options?.cause !== undefined) {
       (this as { cause?: unknown }).cause = options.cause;
     }
@@ -416,6 +417,13 @@ export class LlamaServerError extends Error {
    * retries such a step once on a managed model that is still alive.
    */
   readonly midStream: boolean;
+
+  /**
+   * On a 401 that a fresh key did not cure (`keyRefusedError`): whether our
+   * own model stood behind the address. The turn reads `core_session` to
+   * keep Core's own refusal from being called a taken port (ATO-2460).
+   */
+  readonly ownEngine?: OwnEngineState;
 
   /**
    * The reason code out of an HTTP error body, when llama.cpp sent one
@@ -2340,7 +2348,8 @@ function isUnauthorized(err: unknown): err is LlamaServerError {
  * `ownEngine` `gone` is the managed chat port answering 401 while our own
  * model process is not there (ATO-1732): another program holds the port,
  * so neither a restart nor a key would help. The error stays a 401
- * `LlamaServerError`; only the words change.
+ * `LlamaServerError`; only the words change. `core_session` (our Core's
+ * record claims the port, ATO-2460) keeps the refused-key words.
  */
 export function keyRefusedError(
   err: LlamaServerError,
@@ -2362,7 +2371,7 @@ export function keyRefusedError(
     false,
     err.code,
     // Keep the server's reason code for the upstream_error_type tag.
-    { cause: err, ...(err.body !== undefined ? { body: err.body } : {}) },
+    { cause: err, ownEngine, ...(err.body !== undefined ? { body: err.body } : {}) },
   );
 }
 

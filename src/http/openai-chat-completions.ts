@@ -50,12 +50,16 @@ import { deriveChatSessionId } from "./openai-session-id.js";
 import { maintenanceFrame } from "./stream-maintenance-frames.js";
 import { PROJECT_SECTION_MAX_TOKENS } from "../prompt/build-prompt.js";
 import { toolDisabledNotice } from "../agent/tool-disabled-notice.js";
+import { cliOutdatedNotice } from "../agent/cli-outdated-notice.js";
 import { describeToolCall } from "../tools/describe-tool-call.js";
 import { canvasRecordOf, type CanvasRecord } from "../tools/canvas/index.js";
+import { uiSpecOf } from "../tools/ui/index.js";
 import { createTurnPhaseTracker } from "./stream-turn-phase.js";
 import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
 import { claimScreenOverlay } from "../tools/os/screen/screen-overlay-hosts.js";
 import { buildSlowFirstTokenHint } from "./slow-first-token-hint.js";
+import { officeFileFrame } from "./office-file-frame.js";
+import { researchFrame } from "./research-frame.js";
 import type { UndeliveredSteer } from "./undelivered-steers.js";
 import {
   buildFinalAssistantPayload,
@@ -554,6 +558,9 @@ async function handleStream(
  *    file it wrote, for the chat to show (extensions opt-in only, ATO-1137)
  *  - `plan_updated` → `event: plan_updated` with the whole checklist
  *    (extensions opt-in only, ATO-486)
+ *  - `path_rule_attached` → `event: path_rule_attached` {path, patterns}:
+ *    a path-scoped project rule joined the prompt (extensions opt-in
+ *    only, ATO-2443)
  *  - compaction lifecycle and `history_trimmed` → named frames of the
  *    same names (extensions opt-in only, `stream-maintenance-frames.ts`)
  *  - `tool_disabled` → `event: tool_disabled` with the chat sentence
@@ -713,11 +720,17 @@ export function buildStreamEventHook(
           ...screenMarksFrame(inner.result),
           // ATO-1137: the canvas an ok `canvas.render` wrote, for the chat to show.
           ...canvasFrame(inner.result),
+          // ATO-2457: the card an ok `ui.render` showed, for the chat to draw.
+          ...uiFrame(inner.result),
           ...diffstatFrame(inner.result),
           // ATO-1701: the files a fusion fan-out's workers changed.
           ...diffstatsFrame(inner.result),
+          // ATO-2518: the file an ok Office writer made or changed.
+          ...officeFileFrame(inner.result),
           // ATO-1135: an MCP App's page for this call, for the chat to render.
           ...mcpAppFrame(inner.result),
+          // ATO-2507: an ok research.deep call's counts and report, for the report card.
+          ...researchFrame(inner.result),
           // ATO-1145: the call's approval records, as the transcript keeps
           // them (`tool_result.approvals`), so a live turn summary can list
           // what was auto-approved (`verdict: "auto-approved"`, `via`,
@@ -760,6 +773,21 @@ export function buildStreamEventHook(
             items: inner.plan.items.map((item) => ({ step: item.step, status: item.status })),
             updatedAt: inner.plan.updatedAt,
           },
+        });
+      } else if (inner.type === "path_rule_attached") {
+        /* ATO-2443: a file tool touched a file a path-scoped rule covers,
+           so the rule is in the prompt from the next step. A host shows
+           one line in the transcript. Extensions-only. */
+        if (!env.request.extensionsEnabled) return;
+        sse.writeEvent("path_rule_attached", {
+          id: env.completionId,
+          object: "chat.completion.path_rule_attached",
+          created: env.created,
+          model: env.request.model,
+          session_id: env.session.id,
+          step_index: inner.stepIndex,
+          path: inner.path,
+          patterns: [...inner.patterns],
         });
       } else if (inner.type === "assistant_delta") {
         if (inner.text.length === 0) return;
@@ -923,6 +951,25 @@ export function buildStreamEventHook(
       }
       return;
     }
+    /* ATO-2523: the Claude Code / Codex CLI that answered is older than
+       Atomic Agent supports. Once per session, with the update commands
+       for this platform and the chat sentence. Extensions-only, like
+       tool_disabled. */
+    if (event.type === "cli_outdated") {
+      if (env.request.extensionsEnabled) {
+        sse.writeEvent("cli_outdated", {
+          object: "atomic.cli_outdated",
+          session_id: env.session.id,
+          step_index: event.stepIndex,
+          cli: event.cli,
+          version: event.version,
+          minimum: event.minimum,
+          update_commands: [...event.updateCommands],
+          notice: cliOutdatedNotice(event),
+        });
+      }
+      return;
+    }
     /* ATO-2004/2005: the loop guard stopped the turn (`level: "breaker"`).
        The reply that follows is the model's summary step (or the canned
        fallback), so a host can mark it as written after a stop without
@@ -1031,6 +1078,8 @@ export function buildStreamEventHook(
           fraction: Number.isFinite(event.fraction) ? Math.min(Math.max(event.fraction, 0), 1) : 0,
           elapsed_ms: Number.isFinite(event.elapsedMs) ? Math.max(0, Math.round(event.elapsedMs)) : 0,
           label: event.label,
+          // ATO-2444: a slide os.fs.write_pptx laid out, for the chat to draw small.
+          ...(event.slide === undefined ? {} : { slide: event.slide }),
         });
       }
       return;
@@ -1193,6 +1242,16 @@ function screenMarksFrame(
 function canvasFrame(result: CompressedToolResult): { canvas?: CanvasRecord } {
   const canvas = canvasRecordOf(result);
   return canvas === undefined ? {} : { canvas };
+}
+
+/**
+ * `ui` on a `tool_result` frame (ATO-2457): the checked spec of an ok
+ * `ui.render` call (decision, form or cards), so a host can draw the card
+ * itself. The frame is the only live path: the store keeps no `details`.
+ */
+function uiFrame(result: CompressedToolResult): { ui?: ReturnType<typeof uiSpecOf> } {
+  const ui = uiSpecOf(result);
+  return ui === undefined ? {} : { ui };
 }
 
 /** Tools whose ok result carries `details.diffstat` (ATO-1187). */

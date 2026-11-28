@@ -66,11 +66,43 @@ test("output: reads the brief, the folder from it, Terminal only on macOS", () =
 test("output: failures in words; an agent without --to is told to update", () => {
   const missing = M.parseHandoffOut({ ok: false, stdout: "", stderr: "No Atomic Agent chat with id zz.\n", error: "exit 1" },
     { to: "claude", path: "/s/a.md", brief: null, platform: "darwin" });
-  assert.deepEqual(missing, { ok: false, error: "No Atomic Agent chat with id zz." });
+  // ATO-2744: a sentence for the sheet, the CLI's own words under Details.
+  assert.deepEqual(missing, { ok: false, error: M.HANDOFF_OUT_NO_CHAT, detail: "No Atomic Agent chat with id zz.\nexit 1" });
   for (const stderr of ["unknown flag: --to\n", "unknown command: handoff\n"]) {
     const old = M.parseHandoffOut({ ok: false, stdout: "", stderr, error: "exit 2" }, { to: "claude", path: "/s/a.md", brief: null, platform: "darwin" });
     assert.deepEqual(old, { ok: false, error: M.HANDOFF_OUT_TOO_OLD });
   }
+});
+
+test("ATO-2744: every failure is a sentence; the raw words are only in detail", async () => {
+  const other = M.parseHandoffOut({ ok: false, stdout: "", stderr: "warn: x\nTypeError: Cannot read properties of undefined (reading 'id')\n", error: "exit 1" },
+    { to: "claude", path: "/s/a.md", brief: null, platform: "darwin" });
+  assert.equal(other.error, M.HANDOFF_OUT_FAILED);
+  assert.match(other.detail, /TypeError: Cannot read properties/);
+  const empty = M.parseHandoffOut({ ok: true, stdout: "", stderr: "" }, { to: "claude", path: "/s/a.md", brief: "  ", platform: "darwin" });
+  assert.equal(empty.error, M.HANDOFF_OUT_EMPTY);
+  assert.equal(M.handoffOutArgs("opencode", "abc", "/s/x.md").error, M.HANDOFF_OUT_BAD_TARGET);
+  const deps = { run: async () => ({ ok: true, stdout: "", stderr: "" }), remote: () => false, dir: () => "/s/handoffs", platform: "darwin",
+    mkdir: () => { throw new Error("EACCES: permission denied, mkdir '/s/handoffs'"); }, readFile: () => BRIEF };
+  const folder = await M.handoffOut(deps, "claude", "abc");
+  assert.deepEqual(folder, { ok: false, error: M.HANDOFF_OUT_NO_FOLDER, detail: "EACCES: permission denied, mkdir '/s/handoffs'" });
+  assert.equal(M.handoffReveal(() => {}, "/nope.md").error, M.HANDOFF_OUT_GONE);
+  for (const said of [M.HANDOFF_OUT_FAILED, M.HANDOFF_OUT_NO_CHAT, M.HANDOFF_OUT_BAD_CHAT, M.HANDOFF_OUT_BAD_TARGET, M.HANDOFF_OUT_NO_FOLDER, M.HANDOFF_OUT_EMPTY, M.HANDOFF_OUT_GONE]) {
+    assert.match(said, /^[A-Z][^/\n]*[.]$/, said);
+    assert.ok(!said.includes("\u2014"), said);
+  }
+});
+
+test("ATO-2744 renderer: the file's name is shown (its path on hover), errors fold under Details, Show in Finder/Explorer", () => {
+  const html = R.houtResultHTML({ ok: true, path: "/Users/me/Library/Application Support/Atomic Agent/handoffs/abc-claude.md", preview: "x" });
+  assert.match(html, /<code title="\/Users\/me\/Library\/Application Support\/Atomic Agent\/handoffs\/abc-claude\.md">abc-claude\.md<\/code>/);
+  assert.equal(R.houtFileName("C:\\Users\\me\\AppData\\Roaming\\Atomic Agent\\handoffs\\abc-codex.md"), "abc-codex.md");
+  assert.deepEqual(R.houtErrorOf({ ok: false, error: "Couldn't write the brief. Try again.", detail: "boom" }), { text: "Couldn't write the brief. Try again.", detail: "boom" });
+  assert.deepEqual(R.houtErrorOf(null, new Error("IPC gone")), { text: "Couldn't write the brief. Try again.", detail: "IPC gone" });
+  const src = readFileSync(new URL("../renderer/handoff-out.js", import.meta.url), "utf8");
+  assert.ok(!src.includes("Reveal file"));
+  assert.match(src, /data-act="hout:reveal"' \+ dis \+ '>' \+ ic\('folder'\) \+ esc\(fileManagerName\(\)\)/);
+  assert.match(src, /if \(HOUT\.error\) body \+= herrNoticeHTML\(HOUT\.error, \{icon: ic\('alert'\)\}\);/);
 });
 
 test("run: refused on a remote agent, writes into the handoffs folder, Reveal only what it wrote", async () => {

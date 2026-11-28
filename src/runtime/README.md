@@ -13,6 +13,7 @@ This area owns runtime assembly and ownership. Read [AGENTS.md](AGENTS.md) befor
 - [turn-controller.ts](turn-controller.ts)
 - [steering-inbox.ts](steering-inbox.ts)
 - [turn-checkpoints.ts](turn-checkpoints.ts)
+- [session-rewind-service.ts](session-rewind-service.ts): taking a chat back to a question with its files (chat and files, chat only, files only), shared by the HTTP rewind routes and the terminal's `/rewind` (ATO-2467).
 - [llm-fallback-seam.ts](llm-fallback-seam.ts)
 - [session-workspace.ts](session-workspace.ts): per-session cloud preparation; [workspace contract](docs/cloud-workspace.md).
 
@@ -35,3 +36,5 @@ Read docs/lifecycle.md before changing ownership, shutdown or steering; ../llm/d
 `npx vitest run src/runtime`; `npm run lint`; `npm run docs:check`. The production typecheck excludes tests; see [development checks](../../docs/development.md).
 
 Context compaction is owned by [context-compaction.ts](context-compaction.ts) and [its runner](context-compaction-runner.ts), which chooses between [the bounded model summary](context-compaction-model.ts) and [the extractive builder](compaction-extractive.ts), or uses [a rolling summary](compaction-rolling.ts) that [the background scheduler](compaction-background.ts) extends between turns. Both summaries share [the note for a request still handled after the cut](compaction-open-request.ts). With `agent.compaction.memoryFlush` on, [the memory flush](compaction-memory-flush.ts) first stores dated observations about the compacted records as a memory note (ATO-676). Read the [compaction contract](docs/compaction.md) for control requests, checkpoints, budgets and cancellation.
+
+The model council (ATO-2432) is [council-service.ts](council-service.ts), used by the TUI's `/council` and `POST /api/council`: a seat naming the active provider with its own chat model goes through `completePlain` (the chat's own route, so a local model sits for free), every other seat is built from the config; [council-pricing.ts](council-pricing.ts) prices the forecast. Nothing is written to any session.

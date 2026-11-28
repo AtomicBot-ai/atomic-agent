@@ -189,8 +189,8 @@ test("the draft lands in the agent's Pending review folder, whole, with an id th
 
 test("the probe's answer is read defensively; a password field never carries a label", () => {
   const p = P.parseShowOnceProbe(JSON.stringify({ app: numbers, window: { x: 1, y: 2, width: 3, height: 4 }, element: { role: "AXSecureTextField", label: "hunter2" } }));
-  assert.deepEqual(p, { app: numbers, window: { x: 1, y: 2, width: 3, height: 4 }, element: { role: "AXSecureTextField", label: "" }, focused: null });
-  assert.deepEqual(P.parseShowOnceProbe("execution error"), { app: null, window: null, element: null, focused: null });
+  assert.deepEqual(p, { app: numbers, window: { x: 1, y: 2, width: 3, height: 4 }, element: { role: "AXSecureTextField", label: "" }, focused: null, windowTitle: null });
+  assert.deepEqual(P.parseShowOnceProbe("execution error"), { app: null, window: null, element: null, focused: null, windowTitle: null });
   assert.deepEqual(P.parseShowOnceProbe(JSON.stringify({ app: { pid: 3 }, window: { x: 0, y: 0, width: 0, height: 9 } })).app, null);
   assert.deepEqual(P.showOnceProbeArgs("click", 10.4, 20.6).slice(-3), ["click", "10", "21"]);
   assert.equal(P.showOnceProbeArgs("key").at(-1), "key");
@@ -210,13 +210,16 @@ test("the card: Record when idle, a red recording line with Stop while recording
   assert.ok(rec.includes('data-act="skills:showOnce:stop"') && rec.includes('data-act="skills:showOnce:cancel"'));
   assert.ok(!rec.includes("showOnce:start"));
   const saved = R.showOnceCardHTML({ ...base, last: { kind: "saved", id: "deadbeef", name: "show-once-numbers-20261127-0905", steps: 1 } }, esc);
-  assert.ok(saved.includes("Saved show-once-numbers-20261127-0905 (1 step) as a draft under Pending review"));
-  assert.ok(saved.includes("/u/.atomic-agent/skills-pending/deadbeef"));
+  assert.ok(saved.includes("Saved show-once-numbers-20261127-0905 (1 step) under To review."));
+  // ATO-2744: the drafts folder is a Show in Finder button (its path only on hover), not the note's text.
+  assert.ok(saved.includes('<button class="btn btn-s sm" data-act="skills:showOnce:reveal" title="/u/.atomic-agent/skills-pending/deadbeef">Show in Finder</button>'));
+  assert.ok(!saved.replace(/title="[^"]*"/g, "").includes("/u/.atomic-agent"), "no path in the visible text");
+  assert.ok(!saved.includes("Files:"));
   const denied = R.showOnceCardHTML({ ...base, last: { kind: "error", error: "Allow it", permission: true } }, esc);
   assert.ok(denied.includes('data-act="skills:showOnce:accessibility"'));
 });
 
-test("the controller follows the pushed state and reloads Pending review once per saved draft", async () => {
+test("the controller follows the pushed state and reloads To review once per saved draft", async () => {
   let push = null, changed = 0, paints = 0, started = 0;
   const br = {
     showOnceState: async () => base,
@@ -237,4 +240,41 @@ test("the controller follows the pushed state and reloads Pending review once pe
   assert.equal(changed, 1);
   assert.ok(paints >= 3);
   await c.act("nope");
+});
+
+test("ATO-2744: an empty recording points at Input Monitoring on macOS; Show in Finder opens the draft's folder", async () => {
+  const empty = R.showOnceCardHTML({ ...base, last: { kind: "empty" } }, esc);
+  assert.ok(empty.includes("Nothing was saved: no clicks or keys were recorded outside Atomic Agent."));
+  assert.ok(empty.includes("Privacy &amp; Security › Input Monitoring"));
+  const other = R.showOnceCardHTML({ ...base, last: { kind: "empty" } }, esc, { platform: "win32" });
+  assert.ok(!other.includes("Input Monitoring"), "the macOS pane is not named elsewhere");
+  const label = R.showOnceCardHTML({ ...base, last: { kind: "saved", id: "d1", name: "n", steps: 2 } }, esc, { reveal: "Show in Explorer" });
+  assert.ok(label.includes(">Show in Explorer</button>"));
+  assert.equal(R.showOnceDraftPath({ ...base, last: { kind: "saved", id: "d1" } }), "/u/.atomic-agent/skills-pending/d1");
+  assert.equal(R.showOnceDraftPath({ ...base, draftsDir: "C:\\s\\skills-pending", last: { kind: "saved", id: "d1" } }), "C:\\s\\skills-pending\\d1");
+  assert.equal(R.showOnceDraftPath({ ...base, last: { kind: "empty" } }), "");
+  const opened = [];
+  const saved = { ...base, last: { kind: "saved", id: "d1", name: "n", steps: 2 } };
+  const br = { showOnceState: async () => saved, onShowOnceState: () => () => {}, openPath: async (p) => { opened.push(p); return { ok: true }; } };
+  const c = R.createShowOnceController({ api: () => br, paint: () => {} });
+  c.cardHTML(esc);
+  await new Promise((r) => setTimeout(r, 0));
+  await c.act("reveal");
+  assert.deepEqual(opened, ["/u/.atomic-agent/skills-pending/d1"]);
+});
+
+test("ATO-2744: Open Input Monitoring settings under an empty recording, on macOS with the bridge only", async () => {
+  const empty = { ...base, last: { kind: "empty" } };
+  const btn = 'data-act="skills:showOnce:inputMonitoring">Open Input Monitoring settings</button>';
+  assert.ok(R.showOnceCardHTML(empty, esc, { platform: "darwin", privacy: true }).includes(btn));
+  assert.ok(!R.showOnceCardHTML(empty, esc, { platform: "darwin", privacy: false }).includes(btn));
+  assert.ok(!R.showOnceCardHTML(empty, esc, { platform: "win32", privacy: true }).includes(btn));
+  const asked = [];
+  const br = { showOnceState: async () => empty, onShowOnceState: () => () => {}, privacyOpen: async (p) => { asked.push(p); return { ok: true }; } };
+  const c = R.createShowOnceController({ api: () => br, paint: () => {} });
+  c.cardHTML(esc);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(c.cardHTML(esc).includes(btn), "the controller passes the bridge's privacy:open in");
+  await c.act("inputMonitoring");
+  assert.deepEqual(asked, ["inputMonitoring"]);
 });

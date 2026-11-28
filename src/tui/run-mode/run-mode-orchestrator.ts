@@ -23,6 +23,10 @@ import {
   setRunModeInConfig,
   type RunModeChangeOptions,
 } from "../persist-run-mode.js";
+import { setFusionRoleInConfig } from "../persist-fusion-role.js";
+import type { FusionRolePin } from "../../config/fusion-role-pin.js";
+import type { FusionRole } from "../../config/llm-run-mode-config.js";
+import { describeFusionRole, describeFusionRoles } from "./fusion-roles-lines.js";
 import type { ProvidersOrchestrator } from "../providers/providers-orchestrator.js";
 import type { TuiAction } from "../tui-action.js";
 import { describeFusionIntro } from "./fusion-intro.js";
@@ -299,6 +303,26 @@ export class RunModeOrchestrator {
       type: "runtime_info",
       line: `fusion: ${workers} worker${workers === 1 ? "" : "s"}${applyHint}`,
     });
+  }
+
+  /** `/runmode role ...`: one Fusion role, written without touching the mode. */
+  setRole(role: FusionRole, pin: FusionRolePin): void {
+    try {
+      setFusionRoleInConfig(role, pin);
+    } catch (err) {
+      this.refuse(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    this.deps.providers.refresh();
+    this.deps.bus.emit({
+      type: "runtime_info",
+      line: `fusion role ${describeFusionRole(this.current(), role)}`,
+    });
+  }
+
+  /** `/runmode roles`: every role and the model it runs. */
+  listRoles(): void {
+    this.deps.bus.emit({ type: "system_message", text: describeFusionRoles(this.current()) });
   }
 
   /**

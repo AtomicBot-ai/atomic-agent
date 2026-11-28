@@ -259,7 +259,7 @@ function simgvFoot(IM) {
   const btn = live
     ? '<button class="st-go stop" ' + SIMGV_A('stop') + '>' + ic('x') + 'Stop</button>'
     : '<button class="st-go" ' + SIMGV_A('generate') + (IM.starting || !model || simgNotDownloaded(model) ? ' disabled' : '') + '>' + ic('wand')
-      + esc(IM.starting ? 'Starting…' : simgGenerateLabel(IM.price)) + '<kbd>⌘ ↵</kbd></button>';
+      + esc(IM.starting ? 'Starting…' : simgGenerateLabel(IM.price)) + '<kbd>' + esc(simgGoKey()) + '</kbd></button>';
   return lines.join('') + btn;
 }
 

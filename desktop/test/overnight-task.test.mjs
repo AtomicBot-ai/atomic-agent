@@ -61,12 +61,15 @@ test("a remote agent gets its own folder, never the one from this computer", () 
   assert.match(O.overnightTaskBody({ ...base, message: " " }, "/srv/agent").error, /what the agent should do/);
 });
 
-test("the remote folder comes from the agent's health answer", () => {
-  assert.equal(O.remoteAgentFolder({ workingDir: " /srv/agent " }), "/srv/agent");
-  assert.equal(O.remoteAgentFolder({ workingDir: "" }), null);
-  assert.equal(O.remoteAgentFolder({ workingDir: 42 }), null);
+test("the remote folder comes from the agent's signed-in capabilities answer", () => {
+  assert.equal(O.remoteAgentFolder({ capabilities: { workingDir: " /srv/agent " } }), "/srv/agent");
+  assert.equal(O.remoteAgentFolder({ capabilities: { workingDir: "" } }), null);
+  assert.equal(O.remoteAgentFolder({ capabilities: { workingDir: 42 } }), null);
+  assert.equal(O.remoteAgentFolder({ capabilities: null }), null);
   assert.equal(O.remoteAgentFolder({}), null);
   assert.equal(O.remoteAgentFolder(null), null);
+  // /health keeps the folder to the agent's own computer (#2037), so its shape is not read.
+  assert.equal(O.remoteAgentFolder({ workingDir: "/srv/agent" }), null);
 });
 
 test("a remote agent without the workingDir route is named as the problem", () => {
@@ -79,7 +82,8 @@ test("a remote agent without the workingDir route is named as the problem", () =
 test("overnight:start reads the remote agent's folder before building the body", () => {
   const ipc = readFileSync(new URL("../main/overnight-ipc.ts", import.meta.url), "utf8");
   assert.match(ipc, /if \(deps\.client\.isRemote\)/);
-  assert.match(ipc, /remoteAgentFolder\(await deps\.client\.turnsHealth\(\)/);
+  assert.match(ipc, /remoteAgentFolder\(await deps\.client\.capabilities\(\)/);
+  assert.doesNotMatch(ipc, /turnsHealth/);
   assert.match(ipc, /overnightTaskBody\(input, remoteFolder\)/);
 });
 

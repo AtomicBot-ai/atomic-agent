@@ -289,7 +289,11 @@ export function buildOsWebFetchTool(
           timeoutMs: args.timeoutMs,
           cwd: ctx.workingDir,
           signal: ctx.signal,
-          renderWithBrowser: fetchCfg.renderWithBrowser ?? true,
+          // Never for a channel guest (ATO-2703): the browser resolves the
+          // host itself (no `--resolve` pin, so DNS rebinding works) and
+          // runs the page's scripts, which can call the owner's local
+          // services; only its final URL is checked.
+          renderWithBrowser: (fetchCfg.renderWithBrowser ?? true) && ctx.guest !== true,
           readers: {
             jinaReader: fetchCfg.jinaReader ?? false,
             jinaApiKeyEnv: fetchCfg.jinaApiKeyEnv ?? "JINA_API_KEY",

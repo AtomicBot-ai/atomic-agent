@@ -18,6 +18,8 @@ const posix = process.platform !== "win32";
 const home = mkdtempSync(join(tmpdir(), "ato328-home-"));
 process.env.ATOMIC_AGENT_STATE_DIR = home;
 const cli = createRequire(import.meta.url)("../out/main/agent-cli.js");
+// ATO-2745: the line-break refusal is a sentence a person can act on (was "value must be one line").
+const ONE_LINE = "The key has a line break in it. Copy it again as one line and paste it.";
 
 const dirs = [home];
 after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -28,8 +30,8 @@ function freshDir() {
 }
 const KEY = "exa-dummy-0123456789abcdef";
 
-test("the window may write EXA_API_KEY, TELEGRAM_BOT_TOKEN and DISCORD_BOT_TOKEN to .env, and no other name", () => {
-  assert.deepEqual([...cli.DESKTOP_DOTENV_KEYS], ["TELEGRAM_BOT_TOKEN", "EXA_API_KEY", "DISCORD_BOT_TOKEN"]);
+test("the window may write EXA_API_KEY, TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN and the two Linear secrets to .env, and no other name", () => {
+  assert.deepEqual([...cli.DESKTOP_DOTENV_KEYS], ["TELEGRAM_BOT_TOKEN", "EXA_API_KEY", "DISCORD_BOT_TOKEN", "LINEAR_API_KEY", "LINEAR_WEBHOOK_SECRET"]);
   assert.equal(cli.desktopDotenvError("EXA_API_KEY", KEY), null);
   assert.equal(cli.desktopDotenvError("EXA_API_KEY", null), null, "null removes the key");
   assert.equal(cli.desktopDotenvError("TELEGRAM_BOT_TOKEN", "123:abc"), null);
@@ -45,7 +47,7 @@ test("an Exa key that is not one line of printable characters is refused, and ne
     assert.equal(err, "That does not look like an Exa API key.", JSON.stringify(bad));
   }
   // A line break is refused before that, with the guard every key shares.
-  assert.equal(cli.desktopDotenvError("EXA_API_KEY", KEY + "\nPATH=/tmp/evil"), "value must be one line");
+  assert.equal(cli.desktopDotenvError("EXA_API_KEY", KEY + "\nPATH=/tmp/evil"), ONE_LINE);
   assert.equal(cli.exaKeyValueError(KEY), null);
   assert.equal(cli.exaKeyValueError("k".repeat(256)), null);
 });
@@ -53,7 +55,7 @@ test("an Exa key that is not one line of printable characters is refused, and ne
 test("a line break or NUL is refused for every key the window may write, so no second variable gets into .env", () => {
   for (const name of cli.DESKTOP_DOTENV_KEYS) {
     for (const bad of ["123:abc\nOPENAI_API_KEY=x", "123:abc\rOPENAI_API_KEY=x", "123:abc\r\n", "123:abc\u0000x"]) {
-      assert.equal(cli.desktopDotenvError(name, bad), "value must be one line", `${name} ${JSON.stringify(bad)}`);
+      assert.equal(cli.desktopDotenvError(name, bad), ONE_LINE, `${name} ${JSON.stringify(bad)}`);
     }
   }
   assert.equal(cli.desktopDotenvError("TELEGRAM_BOT_TOKEN", "123:abc"), null);
@@ -67,7 +69,7 @@ test("ATO-516: a Discord bot token is one run of printable characters, 20 to 200
   for (const bad of ["two words in a token here", "short", "", "k".repeat(201)]) {
     assert.equal(cli.desktopDotenvError("DISCORD_BOT_TOKEN", bad), "That does not look like a Discord bot token.", JSON.stringify(bad));
   }
-  assert.equal(cli.desktopDotenvError("DISCORD_BOT_TOKEN", TOKEN + "\nPATH=/tmp/evil"), "value must be one line");
+  assert.equal(cli.desktopDotenvError("DISCORD_BOT_TOKEN", TOKEN + "\nPATH=/tmp/evil"), ONE_LINE);
 });
 
 test("the key lands in .env as EXA_API_KEY, owner-only, other keys and comments kept", { skip: !posix }, () => {

@@ -16,7 +16,7 @@ import {
 import { FileIndexer } from "./file-indexer.js";
 import type { Reranker } from "./file-rerank.js";
 import { searchFileIndex } from "./file-search.js";
-import { extractFileText, type FileTextOptions, type FileTextResult } from "./file-text.js";
+import { extractFileText, isRetryableSkip, type FileTextOptions, type FileTextResult } from "./file-text.js";
 import { loadSqliteVec, type VecExtensionLoader } from "./file-vec-extension.js";
 import { FileVecIndex } from "./file-vec-index.js";
 import { FileVectorStore } from "./file-vector-store.js";
@@ -29,6 +29,8 @@ const DEFAULT_MAX_FILE_BYTES = 50 * 1024 * 1024;
 const DEFAULT_MAX_FILES_PER_FOLDER = 20_000;
 /** Closest vector candidates one search keeps; every stored vector is still looked at. */
 const DEFAULT_SCAN_LIMIT = 2_000;
+/** Most characters of one file's text `passageText` returns. */
+export const PASSAGE_TEXT_MAX = 400_000;
 
 export interface FileIndexOptions {
   /** `<stateDir>/files-index.sqlite`, or `:memory:` in tests. */
@@ -43,8 +45,11 @@ export interface FileIndexOptions {
   fts5Weight?: number;
   vectorWeight?: number;
   minCosine?: number;
-  /** Photos and audio; off unless `enabled: true` (they cost model time). */
-  media?: MediaTextOptions;
+  /**
+   * Photos and audio; off unless `enabled: true` (they cost model time).
+   * A function is read per file, so a setting turned on later applies.
+   */
+  media?: MediaTextOptions | (() => MediaTextOptions | undefined);
   /** Scanned PDF pages (ATO-2205); without an engine scans are skipped with the reason. */
   ocr?: FileTextOptions["ocr"];
   maxFileBytes?: number;
@@ -83,15 +88,19 @@ export class FileIndex implements FileIndexApi {
     this.store = new FileIndexStore(this.db);
     this.vectors = new FileVectorStore(this.db);
     this.vecIndex = this.attachVecIndex(options.vectorExtension ?? loadSqliteVec);
+    const mediaNow = (): MediaTextOptions | undefined =>
+      typeof options.media === "function" ? options.media() : options.media;
     const extract =
       options.extract ??
-      ((path: string, signal: AbortSignal) =>
-        extractFileText(path, {
+      ((path: string, signal: AbortSignal) => {
+        const media = mediaNow();
+        return extractFileText(path, {
           signal,
-          ...(options.media ? { media: options.media } : {}),
+          ...(media ? { media } : {}),
           ...(options.ocr ? { ocr: options.ocr } : {}),
           ...(options.extractors ? { extractors: options.extractors } : {}),
-        }));
+        });
+      });
     this.indexer = new FileIndexer({
       store: this.store,
       vectors: this.vectors,
@@ -157,6 +166,20 @@ export class FileIndex implements FileIndexApi {
     return this.indexer.status();
   }
 
+  retrySkipped(): number {
+    const requeued = this.requeueSkipped();
+    if (requeued > 0) this.indexer.requestPass();
+    return requeued;
+  }
+
+  /**
+   * {@link retrySkipped} without starting a pass: the files wait for the
+   * next one (the runtime's delayed {@link startAfter} at boot).
+   */
+  requeueSkipped(): number {
+    return this.closed ? 0 : this.store.requeueSkipped(isRetryableSkip);
+  }
+
   async search(options: FileSearchOptions): Promise<FileSearchHit[]> {
     const topK = Math.min(Math.max(1, Math.trunc(options.topK ?? FILES_SEARCH_DEFAULT_TOP_K)), FILES_SEARCH_MAX_TOP_K);
     const under = options.folder === undefined ? null : this.folderScope(options.folder);
@@ -175,6 +198,12 @@ export class FileIndex implements FileIndexApi {
       },
       { query: options.query, under, topK, ...(options.signal ? { signal: options.signal } : {}) },
     );
+  }
+
+  /** ATO-2507: the indexed text of a file or one PDF page, at most {@link PASSAGE_TEXT_MAX} characters. */
+  passageText(path: string, page?: number): string | null {
+    if (this.closed) return null;
+    return this.store.fileText(path, page !== undefined && Number.isInteger(page) && page > 0 ? page : null, PASSAGE_TEXT_MAX);
   }
 
   /** Whether vector candidates come from `sqlite-vec` (true) or a scan. */

@@ -5,6 +5,8 @@ import {
 } from "../config/config-file.js";
 import { removeCustomModel } from "../config/custom-models-store.js";
 import type { UserConfigFile } from "../config/config-schema.js";
+import type { LocalModelDef, LocalModelId } from "../local-llm/catalog/models-catalog.js";
+import { draftToPullAfter } from "./models-pull-draft.js";
 import {
   checkForBackendUpdate,
   describeServerFault,
@@ -78,6 +80,8 @@ import {
   type DownloadJobKind,
   type DownloadJobMode,
   type DownloadNotifyChannel,
+  modelsDirUnreachableMessage,
+  unreachableModelsDir,
 } from "../local-llm/index.js";
 import { CORE_FALLBACK_LINE, CoreUnavailableError, shouldFallBackFromCore, type CoreFailureInfo } from "../local-llm/core/core-errors.js";
 import { retireIdleCore } from "../local-llm/core/core-sessions.js";
@@ -85,6 +89,7 @@ import { isCoreOperationBusy } from "../local-llm/core/core-operation.js";
 import { activeCoreVersion, CORE_VERSION } from "../local-llm/core/core-state.js";
 import { selectManagedEngine } from "../local-llm/engine-selection.js";
 import { persistManagedEngine } from "./models-engine.js";
+import { clearChatPortForStart, clearEmbeddingPortForStart } from "./models-start-port-clearance.js";
 import { reportLocalEngineFailed } from "../analytics/index.js";
 import { getAppVersion } from "../version.js";
 
@@ -184,6 +189,9 @@ import {
 export async function runLocalModelsList(write: (text: string) => void = (t) => { process.stdout.write(t); }): Promise<number> {
   const cfg = getConfig();
   const dataDir = cfg.paths.localModelsDataDir;
+  // ATO-2503: models on an unplugged disk are not "not downloaded".
+  const offDisk = unreachableModelsDir();
+  if (offDisk !== null) process.stderr.write(`note: ${modelsDirUnreachableMessage(offDisk)}\n`);
   write(
     "ID                   | FAMILY   | SIZE   | CONTEXT | DL  | ACTIVE\n",
   );
@@ -191,7 +199,7 @@ export async function runLocalModelsList(write: (text: string) => void = (t) => 
   // a model added on first run must show up (and be markable active)
   // in the same list as the curated ones.
   for (const m of listLocalModels()) {
-    const dl = isModelDownloaded(dataDir, m) ? "yes" : "no";
+    const dl = isModelDownloaded(dataDir, m) ? "yes" : offDisk !== null && !m.localPath ? "?" : "no";
     const active =
       cfg.localModels.managed.modelId === m.id &&
       cfg.localModels.mode === "managed"
@@ -256,6 +264,10 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
     return followDownloadJob(dataDir, live.id);
   }
   if (flags.has("--background")) {
+    const draftId = pullDraftFor(m, flags, dataDir);
+    if (draftId) {
+      process.stderr.write(`its draft model downloads separately: atomic-agent models pull ${draftId} --background\n`);
+    }
     return startBackgroundPull({ kind: "chat", modelId: m.id, mode, notify });
   }
 
@@ -334,6 +346,12 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
         );
       }
     }
+    // ATO-2424: the draft model speculative decoding uses, next to it.
+    const draftId = pullDraftFor(m, flags, dataDir);
+    if (draftId) {
+      process.stderr.write(`downloading draft model ${draftId} for speculative decoding (localModels.managed.draftModel)\n`);
+      return await runLocalModelsPull([draftId]);
+    }
     return 0;
   } catch (e) {
     if (tty) process.stderr.write(`\n`);
@@ -345,6 +363,15 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
     }
     return 1;
   }
+}
+
+/** `draftToPullAfter` for one pull, from the config's `draftModel`. */
+function pullDraftFor(m: LocalModelDef, flags: ReadonlySet<string>, dataDir: string): LocalModelId | null {
+  return draftToPullAfter(m, {
+    draftFlag: flags.has("--draft"),
+    preference: getConfig().localModels.managed.draftModel ?? "off",
+    isDownloaded: (id) => isModelDownloaded(dataDir, getLocalModelDef(id)),
+  });
 }
 
 /**
@@ -514,7 +541,8 @@ export async function runLocalModelsStatus(write: (text: string) => void = (t) =
   if (mid && isKnownLocalModelId(mid)) {
     const m = getLocalModelDef(mid);
     const ok = isModelDownloaded(dataDir, m);
-    modelLine = `${mid}  ${ok ? "✓ downloaded" : "✗ not downloaded"}`;
+    const offDisk = ok || m.localPath ? null : unreachableModelsDir();
+    modelLine = `${mid}  ${ok ? "✓ downloaded" : offDisk !== null ? "✗ models folder not connected" : "✗ not downloaded"}`;
   }
   const st = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
   const health = st.healthy ? "ok" : st.authMismatch ? "key rejected" : st.loading ? "loading" : "down";
@@ -683,6 +711,18 @@ async function runLocalModelsStartNow(
     return 1;
   }
 
+  // ATO-2458: our own stale or wedged server on the port is adopted or stopped; the port is never moved.
+  // A one-start `--ctx-size` (the desktop's restart after running out of memory) must launch, never adopt.
+  const adoptedChatPid = opts.contextSize === undefined ? await clearChatPortForStart(cfg, mid) : null;
+  if (adoptedChatPid !== null) {
+    // Same shape as a fresh start: the desktop reads its ready line from it (backend-switch readyLine).
+    process.stdout.write(
+      `chat: started pid ${adoptedChatPid}, healthy on port ${cfg.localModels.managed.port} (our server was already running)\n`,
+    );
+    await runLocalModelsStartEmbedding(signal);
+    return 0;
+  }
+
   const m = getLocalModelDef(mid);
   const tpl = resolveChatTemplatePath(m) ?? undefined;
   const mmprojFile =
@@ -716,6 +756,7 @@ async function runLocalModelsStartNow(
     } else {
       const emb = await getEmbeddingDaemonStatus(dataDir, embCfg.port);
       if (emb.running) embRunningPid = emb.pid;
+      else embRunningPid = await clearEmbeddingPortForStart(cfg, embCfg.modelId as string);
     }
   }
 
@@ -912,8 +953,11 @@ async function runLocalModelsStartNow(
     const moeLine = result.chat.cpuMoeLayers
       ? `, experts of ${result.chat.cpuMoeLayers} layers in system RAM (localModels.managed.cpuMoe)`
       : "";
+    const draftLine = result.chat.draftModel
+      ? `, drafting with ${result.chat.draftModel} (localModels.managed.draftModel)`
+      : "";
     process.stdout.write(
-      `chat: started pid ${result.chat.pid}, healthy on port ${cfg.localModels.managed.port}${visionLine}${moeLine}${speedLine}\n`,
+      `chat: started pid ${result.chat.pid}, healthy on port ${cfg.localModels.managed.port}${visionLine}${moeLine}${draftLine}${speedLine}\n`,
     );
     if (embRunningPid !== null) {
       process.stdout.write(
@@ -988,6 +1032,11 @@ export async function runLocalModelsStartEmbedding(signal?: AbortSignal): Promis
     // Core's module may be starting or restarting, with no process yet.
     const what = now.pid !== null ? `running pid ${now.pid}` : now.loading ? "starting" : "running";
     process.stdout.write(`embedding: already ${what} on port ${now.port} (${modelId})\n`);
+    return 0;
+  }
+  const adoptedPid = await clearEmbeddingPortForStart(cfg, modelId);
+  if (adoptedPid !== null) {
+    process.stdout.write(`embedding: already running pid ${adoptedPid} on port ${emb.port} (${modelId})\n`);
     return 0;
   }
   // ATO-379: the desktop reaches this on its own, so it is an automatic start too.

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ApprovalGate } from "../../../approval/approval-gate.js";
+import { ApprovalGate, type ApprovalRequest } from "../../../approval/approval-gate.js";
 import { buildOsGitPushTool, buildPushInvocation } from "./git-push.js";
 import {
   makeCtx,
@@ -91,6 +91,73 @@ describe("os.git.push", () => {
     expect(upstream.stdout.trim()).toBe("");
   });
 
+  it("names the remote host as egress, and the hold asks for it in bypass (ATO-2528)", async () => {
+    await runGitRaw(repo, ["remote", "add", "gh", "https://github.com/example/repo.git"]);
+    const asked: ApprovalRequest[] = [];
+    const gate: ApprovalGate = new ApprovalGate({
+      level: 5,
+      emit: (req) => {
+        asked.push(req);
+        gate.reject(req.approvalId, "no");
+      },
+    });
+    const tool = buildOsGitPushTool({ ...SYNC_ON, approvals: gate, approvalRequired: true });
+    await expect(tool.run({ remote: "gh" }, makeCtx(repo))).rejects.toThrow(/declined/);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.egress).toEqual([
+      { kind: "git_remote", host: "github.com", direction: "outbound", label: "github.com", unapproved: true },
+    ]);
+  });
+
+  // Review round 1 (F2105.1): `get-url --push` printed only the first
+  // pushurl, so a second one to an unknown host went out unheld.
+  it("holds a push whose remote has a second push URL to an unknown host (ATO-2528)", async () => {
+    await runGitRaw(repo, ["remote", "add", "gh", "https://github.com/example/repo.git"]);
+    await runGitRaw(repo, ["remote", "set-url", "--add", "--push", "gh", "https://github.com/example/repo.git"]);
+    await runGitRaw(repo, ["remote", "set-url", "--add", "--push", "gh", "https://evil.example/x.git"]);
+    const asked: ApprovalRequest[] = [];
+    const gate: ApprovalGate = new ApprovalGate({
+      level: 5,
+      emit: (req) => {
+        asked.push(req);
+        gate.reject(req.approvalId, "no");
+      },
+    });
+    gate.setEgressKnownHosts(() => ["github.com"]);
+    const tool = buildOsGitPushTool({ ...SYNC_ON, approvals: gate, approvalRequired: true });
+    await expect(tool.run({ remote: "gh" }, makeCtx(repo))).rejects.toThrow(/declined/);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.egress).toContainEqual(
+      expect.objectContaining({ host: "evil.example", unapproved: true }),
+    );
+    expect(asked[0]!.preview).toContain("https://evil.example/x.git");
+  });
+
+  it("holds a push whose remote has two url lines and no pushurl (ATO-2528)", async () => {
+    await runGitRaw(repo, ["remote", "add", "gh", "https://github.com/example/repo.git"]);
+    await runGitRaw(repo, ["config", "--add", "remote.gh.url", "https://evil.example/x.git"]);
+    const asked: ApprovalRequest[] = [];
+    const gate: ApprovalGate = new ApprovalGate({
+      level: 5,
+      emit: (req) => {
+        asked.push(req);
+        gate.reject(req.approvalId, "no");
+      },
+    });
+    gate.setEgressKnownHosts(() => ["github.com"]);
+    const tool = buildOsGitPushTool({ ...SYNC_ON, approvals: gate, approvalRequired: true });
+    await expect(tool.run({ remote: "gh" }, makeCtx(repo))).rejects.toThrow(/declined/);
+    expect(asked[0]!.egress).toContainEqual(expect.objectContaining({ host: "evil.example" }));
+  });
+
+  it("a push to a local remote names no egress and runs in bypass (ATO-2528)", async () => {
+    const asked: ApprovalRequest[] = [];
+    const gate = new ApprovalGate({ level: 5, emit: (req) => asked.push(req) });
+    const tool = buildOsGitPushTool({ ...SYNC_ON, approvals: gate, approvalRequired: true });
+    expect((await tool.run({}, makeCtx(repo))).status).toBe("ok");
+    expect(asked).toHaveLength(0);
+  });
+
   it("previews the command and the remote before asking", async () => {
     let preview: string | undefined;
     const gate = new ApprovalGate({
@@ -105,7 +172,7 @@ describe("os.git.push", () => {
       approvalRequired: true,
     });
     await tool.run({}, makeCtx(repo));
-    expect(preview).toContain("git push -u origin main:main");
+    expect(preview).toContain("git push --recurse-submodules=no -u origin main:main");
     expect(preview).toContain(`remote: ${bare}`);
     expect(preview).not.toContain("auth:");
   });
@@ -188,7 +255,7 @@ describe("buildPushInvocation", () => {
       token: TOKEN,
     });
     expect(inv.authenticated).toBe(true);
-    expect(inv.args).toEqual(["push", "-u", "origin", "feat/x:feat/x"]);
+    expect(inv.args).toEqual(["push", "--recurse-submodules=no", "-u", "origin", "feat/x:feat/x"]);
     expect(inv.args.join(" ")).not.toContain(TOKEN);
     expect(inv.env.GIT_CONFIG_KEY_0).toBe(
       "http.https://github.com/.extraheader",
@@ -212,8 +279,24 @@ describe("buildPushInvocation", () => {
       });
       expect(inv.authenticated).toBe(false);
       expect(inv.env).toEqual({});
-      expect(inv.args).toEqual(["push", "origin", "main:main"]);
+      expect(inv.args).toEqual(["push", "--recurse-submodules=no", "origin", "main:main"]);
     }
+  });
+
+  // Review round 2 (F2105-R2.1): with `push.recurseSubmodules=on-demand`
+  // set by an earlier unasked shell call, the push also sent a submodule
+  // commit to the submodule's own (rewritten) remote, which the card did
+  // not show. The flag on the command line wins over that config.
+  it("never pushes submodules along, whatever the config says", () => {
+    const inv = buildPushInvocation({
+      remote: "origin",
+      branch: "main",
+      setUpstream: false,
+      remoteUrl: "https://github.com/acme/widgets.git",
+      token: null,
+    });
+    expect(inv.args.slice(0, 2)).toEqual(["push", "--recurse-submodules=no"]);
+    expect(inv.args.filter((arg) => arg.startsWith("--recurse-submodules"))).toEqual(["--recurse-submodules=no"]);
   });
 
   it("does nothing special without a token", () => {

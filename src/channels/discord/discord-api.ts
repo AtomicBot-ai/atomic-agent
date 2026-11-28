@@ -144,6 +144,22 @@ export class DiscordApi {
   }
 
   /**
+   * Acknowledge a button press and leave its message as it is
+   * (interaction callback type 6 = DEFERRED_UPDATE_MESSAGE), for a click
+   * the bot refuses while the question is still open (ATO-2778).
+   */
+  async acknowledgeInteraction(
+    interactionId: string,
+    interactionToken: string,
+  ): Promise<void> {
+    await this.request(
+      "POST",
+      `/interactions/${interactionId}/${interactionToken}/callback`,
+      { type: 6 },
+    );
+  }
+
+  /**
    * Upload one local file to a channel as its own message. Multipart
    * on the same messages endpoint: `payload_json` names the attachment
    * slot, `files[0]` carries the bytes. Returns the message id.
@@ -188,6 +204,24 @@ export class DiscordApi {
             m !== null && typeof m === "object",
         )
       : [];
+  }
+
+  /**
+   * Open a public thread in a guild text channel, not attached to any
+   * message (type 11 = PUBLIC_THREAD; it archives after a day without
+   * messages). Returns the thread's channel id. Discord refuses in a DM
+   * and inside a thread, and without "Create Public Threads" (ATO-2456).
+   */
+  async createThread(channelId: string, name: string): Promise<string> {
+    const body = (await this.request("POST", `/channels/${channelId}/threads`, {
+      name: name.slice(0, 100),
+      type: 11,
+      auto_archive_duration: 1440,
+    })) as { id?: unknown } | undefined;
+    if (typeof body?.id !== "string") {
+      throw new DiscordApiError("Discord returned no thread id.", 0);
+    }
+    return body.id;
   }
 
   /** Open (or reuse) the DM channel with a user. */

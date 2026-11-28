@@ -42,6 +42,7 @@ import {
   isGuestCommandAllowed,
   resolveSenderRole,
 } from "./guest-access.js";
+import { rotateGuestSession } from "./guest-session-reset.js";
 import {
   formatAttachmentFailure,
   sendAttachments,
@@ -323,7 +324,7 @@ function helpText(ctx: InboundContext): string {
     "  /sessions — every chat this bot has a session for\n" +
     "  /switch <session-id> — point this chat at an existing session\n" +
     "  /new — rotate this chat to a fresh session (current one is archived)\n" +
-    "  /fork: copy this chat's session into a new topic (in a forum) or continue the copy here\n" +
+    "  /fork: copy this chat's session into a new topic (in a forum) or continue the copy here; /fork <n> copies it up to question n\n" +
     "  /model — show the provider and model in use; /model <provider> [model-id] switches\n" +
     "  /cron — list scheduled tasks; /cron add <cron> <task>, /cron pause|resume|delete <id> (/cron help)\n" +
     "  /cancel — abort this chat's current turn if one is running"
@@ -824,21 +825,25 @@ async function handleSlashCommand(
       if (previous && !ctx.inflight.has(ref.key)) {
         ctx.releaseApprovalSession?.(previous);
       }
+      // ATO-2703: in a group the guests' conversation starts over too.
+      const previousGuest = ref.isPrivate ? undefined : rotateGuestSession(ref.key, ctx);
       ctx.logger.info("telegram: rotated session", {
         chatKey: ref.key,
         previousSessionId: previous,
+        ...(previousGuest ? { previousGuestSessionId: previousGuest } : {}),
       });
       await sendText(
         ctx,
         ref.target,
-        previous
+        (previous
           ? `Started a new session for this chat. Previous session ${previous} archived.`
-          : "Started a new session for this chat.",
+          : "Started a new session for this chat.") +
+          (previousGuest ? " The guests' conversation starts over too." : ""),
       );
       return;
     }
     case "/fork":
-      for (const m of await runTelegramFork(ref, ctx)) await sendText(ctx, m.target, m.text);
+      for (const m of await runTelegramFork(ref, ctx, rest.join(" "))) await sendText(ctx, m.target, m.text);
       return;
     case "/cancel": {
       // The owner's turn here, else the guests' one (ATO-2221): guests

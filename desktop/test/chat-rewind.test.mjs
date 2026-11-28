@@ -16,6 +16,9 @@ const src = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
 
 test("the window may send only a whole non-negative position and a question's text", () => {
   assert.deepEqual(M.rewindRequestBody(2, "fix it"), { priorQuestions: 2, expectText: "fix it" });
+  // ATO-2470: keepBranch goes on only when it is true.
+  assert.deepEqual(M.rewindRequestBody(2, "fix it", false, undefined, true), { priorQuestions: 2, expectText: "fix it", files: false, keepBranch: true });
+  assert.deepEqual(M.rewindRequestBody(2, "fix it", undefined, undefined, "yes"), { priorQuestions: 2, expectText: "fix it" });
   assert.equal(M.rewindRequestBody(-1, "x"), null);
   assert.equal(M.rewindRequestBody(1.5, "x"), null);
   assert.equal(M.rewindRequestBody("1", "x"), null);
@@ -78,10 +81,12 @@ test("an empty preview still says what goes and that shell changes stay", () => 
   assert.equal(s.warnings.length, 1);
 });
 
-test("refusals are worded, unknown ones keep the agent's message", () => {
+test("refusals are worded; an unknown one is one plain line, never the raw reason (ATO-2752)", () => {
   assert.match(R.rewindRefusalText({ code: "turn_in_progress" }), /still working/);
-  assert.match(R.rewindRefusalText({ code: "point_mismatch" }), /changed on the agent side/);
-  assert.equal(R.rewindRefusalText({ error: "disk full" }), "disk full");
+  assert.equal(R.rewindRefusalText({ code: "point_mismatch" }), "This chat changed since it was opened. Open the chat again, then retry.");
+  assert.equal(R.rewindRefusalText({ error: "disk full" }), "Something went wrong on the agent’s side. Try again.");
+  assert.equal(R.rewindRefusalText({ error: "Error: Error invoking remote method 'agent:rewind': Error: boom" }),
+    "Something went wrong on the agent’s side. Try again.");
 });
 
 /* ---------- Edit: the same confirmation, files and conversation or the conversation only ---------- */
@@ -129,18 +134,20 @@ test("Edit on a message with changed files lists them and offers both ways", () 
   assert.match(html, /id="rw-edit"/);
   assert.match(html, /Put back as they were/);
   assert.match(html, /src\/a\.ts/);
-  assert.match(html, /Removed \(the agent created them\)/);
+  assert.match(html, /Deleted \(the agent created them\)/);
+  assert.match(html, /Chat only keeps the files as they are now\.<\/p>/, "Edit explains its names too, without Files only");
   assert.match(html, /new\.txt/);
+  // ATO-2752: the same short names as Roll back.
   assert.deepEqual(footActs(html), [
-    ["rewind:go-chat", "Conversation only"],
-    ["rewind:go", "Roll back files and conversation, then resend"],
+    ["rewind:go-chat", "Chat only"],
+    ["rewind:go", "Chat and files"],
   ]);
 });
 
 test("while a rewind runs the spinner sits on the button that was clicked, not on the last one", () => {
   fakeWindow([]);
   startEdit(FILES_PREVIEW);
-  for (const [act, spun] of [["rewind:go-chat", "Conversation only"], ["rewind:go", "Roll back files and conversation, then resend"]]) {
+  for (const [act, spun] of [["rewind:go-chat", "Chat only"], ["rewind:go", "Chat and files"]]) {
     Object.assign(R.REWIND, { busy: true, busyAct: act });
     const foot = R.rewindSheetHTML().split("<f>")[1];
     const spinning = [...foot.matchAll(/<button[^>]*>(<span class="tk-spin"><\/span>)?([^<]*)</g)].filter((m) => m[1]).map((m) => m[2]);
@@ -155,7 +162,8 @@ for (const [act, files] of [["go", true], ["go-chat", false]]) {
     fakeWindow(calls);
     startEdit(FILES_PREVIEW);
     await R.rewindAct(act);
-    assert.deepEqual(calls, [["rewind", "s-1", 1, "old text", files], ["open", "s-1"], ["submit", "fixed text"]]);
+    // ATO-2470: an Edit asks the agent to keep the old message as a version (keepBranch, the last argument).
+    assert.deepEqual(calls, [["rewind", "s-1", 1, "old text", files, undefined, true], ["open", "s-1"], ["submit", "fixed text"]]);
   });
 }
 
@@ -164,11 +172,11 @@ test("Edit with no file changes has no file section and one button, conversation
   fakeWindow(calls);
   startEdit(NO_FILES_PREVIEW);
   const html = R.rewindSheetHTML();
-  assert.doesNotMatch(html, /Put back as they were|Removed \(the agent|Cannot be put back|No files will change|file tools/);
+  assert.doesNotMatch(html, /Put back as they were|Deleted \(the agent|Cannot be put back|No files will change|file tools/);
   assert.match(html, /1 message of yours and 1 reply will be removed/);
   assert.deepEqual(footActs(html), [["rewind:go-chat", "Send edited message"]]);
   await R.rewindAct("go-chat");
-  assert.deepEqual(calls[0], ["rewind", "s-1", 1, "old text", false]);
+  assert.deepEqual(calls[0], ["rewind", "s-1", 1, "old text", false, undefined, true]);
   assert.deepEqual(calls.at(-1), ["submit", "fixed text"]);
 });
 
@@ -179,7 +187,7 @@ test("Roll back here with no file changes keeps one button and leaves the files 
   R.REWIND.mode = "back";
   assert.deepEqual(footActs(R.rewindSheetHTML()), [["rewind:go", "Roll back"]]);
   await R.rewindAct("go");
-  assert.deepEqual(calls, [["rewind", "s-1", 1, "old text", undefined], ["open", "s-1"]]);
+  assert.deepEqual(calls, [["rewind", "s-1", 1, "old text", undefined, undefined, false], ["open", "s-1"]]);
 });
 
 test("only a rollback passes the files flag on to the agent", () => {
@@ -187,7 +195,8 @@ test("only a rollback passes the files flag on to the agent", () => {
   assert.deepEqual(M.rewindRequestBody(0, "x", true), { priorQuestions: 0, expectText: "x", files: true });
   assert.deepEqual(M.rewindRequestBody(0, "x", "no"), { priorQuestions: 0, expectText: "x" });
   assert.match(src("../main/chat-rewind-ipc.ts"), /rollback \? files : undefined/);
-  assert.match(src("../preload/preload.ts"), /"agent:rewind", \{ sessionId, priorQuestions, expectText, files, conversation \}/);
+  assert.match(src("../preload/preload.ts"), /"agent:rewind", \{ sessionId, priorQuestions, expectText, files, conversation, keepBranch \}/);
+  assert.match(src("../main/chat-rewind-ipc.ts"), /rollback \? keepBranch : undefined/);
 });
 
 /* ---------- wiring ---------- */

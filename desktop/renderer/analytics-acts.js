@@ -73,6 +73,8 @@ const ANX_ACTS = (() => {
       privacy:{analytics:L, refresh:L, readscope:set(readScopes)}, notify:{toggle:L}, names:{toggle:L}, nextstep:{toggle:L},
       // ATO-523: the quick entry shortcut row (quick-entry-settings.js)
       quickentry:{toggle:L, record:L, cancel:L},
+      // ATO-2741: the desktop pet's switch and palette row (pet-settings.js)
+      petset:{toggle:L},
       // ATO-229: the update toast and General's update rows
       appupd:{update:L, notnow:L, skip:L, cancel:L, install:L, later:L, check:L, auto:L},
       // the Manage panes' own verbs (renderer.js mcpAct / skillsAct / memoryAct / tasksAct / llmAct / telegramAct / composioAct / importAct)
@@ -86,7 +88,7 @@ const ANX_ACTS = (() => {
       plugins:{refresh:L, expand:L, toggle:L, part:L, code:L, codeConfirm:L, codeCancel:L, remove:L, removeConfirm:L, removeCancel:L,
         install:L, installAnyway:L, installDismiss:L},
       // ATO-1626: Settings › My files (renderer/my-files.js); the folder index is cut off.
-      myfiles:{refresh:L, add:L, remove:L, removeConfirm:L, removeCancel:L},
+      myfiles:{refresh:L, add:L, remove:L, removeConfirm:L, removeCancel:L, ocr:L},
       memory:{auto:L, back:L, ch:set(memChannels), cycle:L, expand:L, filter:set(memFilters), jump:L,
         neighbor:L, open:L, page:UPDOWN, refresh:L},
       tasks:{auto:L, back:L, cancel:L, cancelConfirm:L, cancelKeep:L, clearSearch:L, detail:L,

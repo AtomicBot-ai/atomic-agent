@@ -1,0 +1,13 @@
+/* ============================================================
+   Share this model (ATO-2483): the card on Settings › Models › Local models.
+   model-share.js draws it; the card and rows reuse fit-test.css and the tune
+   card's look, colours come from tokens only.
+   ============================================================ */
+
+.llm-pane .msh-card .msh-row .llm-tune-body{min-width:0}
+.llm-pane .msh-val{display:block;font-family:var(--font-mono);font-size:var(--fs-label);line-height:18px;color:var(--ink);
+  overflow-wrap:anywhere;user-select:all}
+.llm-pane .msh-warn{padding:8px 10px;border-radius:var(--r-block);background:var(--warn-wash);
+  box-shadow:inset 0 0 0 1px var(--warn-border);color:var(--warn)}
+.llm-pane .msh-detail summary{cursor:pointer;font-size:var(--fs-label);color:var(--ink-3)}
+.llm-pane .msh-detail code{display:block;margin-top:4px;font-family:var(--font-mono);font-size:var(--fs-label);overflow-wrap:anywhere}

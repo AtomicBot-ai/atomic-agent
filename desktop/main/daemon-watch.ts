@@ -1,7 +1,7 @@
 import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync, type Dirent } from "node:fs";
 import { join } from "node:path";
 
-import { backendInstalled, localDaemonRunning, managedEngineNow, modelsStop, onDaemonLifecycle, portAnswer, startsInFlight } from "./agent-cli.js";
+import { backendInstalled, localDaemonRunning, managedEngineNow, modelsStopChatOnly, onDaemonLifecycle, portAnswer, startsInFlight } from "./agent-cli.js";
 import type { AgentLogLevel } from "./agent-output.js";
 import { localBackendCrashed, readServerFaultWith } from "./analytics/index.js";
 import {
@@ -488,6 +488,11 @@ function chatModelFileBytes(cfg: WatchConfig | null): number | null {
  * way is ended first (it would bring the model back mid-generation); the stop
  * runs in the daemon's turn like every other, so it queues behind a start or
  * an update. Never a stop on purpose: the server stays the app's.
+ * ATO-2461: only the chat model goes (`models stop --chat-only`, the Cloud
+ * switch's and the TUI's stopChatForCloudSelection): the small embedding model
+ * stays, so memory search keeps working, and the resume's `models start`
+ * finds it already running and starts only the chat model. An agent without
+ * the flag stops both, and the resume starts both, as before.
  */
 export async function yieldChatToStudio(): Promise<StudioYield> {
   const owned = daemonWatch.state().owned;
@@ -497,10 +502,10 @@ export async function yieldChatToStudio(): Promise<StudioYield> {
   const stopped = await inDaemonTurn(async () => {
     if (stopsMark() !== mark) return false;
     if (!(await localDaemonRunning({ reapWedged: false }))) return false;
-    const res = await modelsStop({ repair: true });
+    const res = await modelsStopChatOnly({ repair: true });
     host.say(
       res.ok
-        ? "[desktop] local-llm: the chat model is paused while Studio generates locally (memory) — it starts again when Studio is done"
+        ? `[desktop] local-llm: the chat model is paused while Studio generates locally (memory)${res.embeddingKept ? ", memory search stays on" : ""}, it starts again when Studio is done`
         : `[desktop] local-llm: could not pause the chat model for Studio: ${res.error ?? "unknown error"}`,
     );
     return res.ok;

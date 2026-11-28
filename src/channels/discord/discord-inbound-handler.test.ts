@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { attachFailedAttempts } from "../../llm/fallback/failed-attempts.js";
+import { createEmptySessionState } from "../../session/index.js";
 import { createAttachmentInbox } from "../attachments/inbox.js";
 import {
   DISCORD_ATTACHMENT_DOWNLOAD_LIMIT_BYTES,
@@ -468,12 +469,57 @@ describe("handleDiscordMessage — per-channel sessions", () => {
     expect(ctx.sent[0]).toContain("s-old");
   });
 
-  it("/fork says it is not available yet and leaves the session alone", async () => {
+  it("/fork in a DM moves the channel to a copy and names the way back (ATO-2456)", async () => {
     const pointer = fakePointer({ c1: { current: "s-old" } });
+    const source = createEmptySessionState({
+      id: "s-old",
+      workingDir: "/tmp/test",
+      metadata: { discordChannel: true },
+    });
+    source.turns = [
+      { kind: "user", text: "plan it", at: 1 },
+      { kind: "assistant_reply", text: "Plan.", at: 2 },
+    ];
+    source.turnCount = 1;
+    source.macroTurnStarts = [2];
+    const save = vi.fn();
     const ctx = makeCtx({ sessionPointer: pointer as never });
+    Object.assign(ctx.runtime, {
+      sessionStore: { load: (id: string) => (id === "s-old" ? source : null), save },
+    });
     await handleDiscordMessage(msg({ content: "/fork" }), ctx);
-    expect(pointer.get("c1").current).toBe("s-old");
-    expect(ctx.sent[0]).toContain("Fork is not available on Discord yet");
+    expect(save).toHaveBeenCalledTimes(1);
+    const fork = save.mock.calls[0]![0] as { id: string };
+    expect(pointer.get("c1")).toMatchObject({ current: fork.id, history: ["s-old"] });
+    expect(ctx.sent[0]).toContain("/switch s-old");
+    expect(ctx.sent[0]).not.toContain("not available");
+  });
+
+  it("/fork with the @mention after the command still forks, at the question named (review #2023)", async () => {
+    const source = createEmptySessionState({
+      id: "s-old",
+      workingDir: "/tmp/test",
+      metadata: { discordChannel: true },
+    });
+    source.turns = [
+      { kind: "user", text: "first", at: 1 },
+      { kind: "assistant_reply", text: "One.", at: 2 },
+      { kind: "user", text: "second", at: 3 },
+      { kind: "assistant_reply", text: "Two.", at: 4 },
+    ];
+    source.turnCount = 2;
+    source.macroTurnStarts = [2, 4];
+    for (const content of [`/fork <@${BOT}>`, `/fork 2 <@!${BOT}>`]) {
+      const pointer = fakePointer({ c1: { current: "s-old" } });
+      const save = vi.fn();
+      const ctx = makeCtx({ sessionPointer: pointer as never });
+      Object.assign(ctx.runtime, {
+        sessionStore: { load: (id: string) => (id === "s-old" ? source : null), save },
+      });
+      await handleDiscordMessage(msg({ guild_id: "g1", mentions: [{ id: BOT }], content }), ctx);
+      expect(save, content).toHaveBeenCalledTimes(1);
+      expect(ctx.sent.join("\n"), content).not.toContain("This chat has");
+    }
   });
 
   it("/status reports this channel's session", async () => {

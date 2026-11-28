@@ -211,6 +211,9 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // ATO-1137: writes one new file in the working folder through the fs
   // approval funnel, so it is gated like `os.fs.write`.
   "canvas.render": "approval_gated",
+  // ATO-2457: returns a spec for the host to draw and writes nothing, so
+  // it batches with anything, like `plan.update`.
+  "ui.render": "pure_read",
   // ATO-489: waits for the person like an approval, so it runs alone.
   ask_user: "approval_gated",
   "tool.search": "pure_read",
@@ -232,6 +235,12 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "logbook.query": "approval_gated",
   "memory.profile.set": "memory_write",
   "memory.profile.remove": "memory_write",
+  // ATO-2459: My apps. app.list reads <stateDir>/apps; the writes ask
+  // first through the fs ladder (app-tool-shared.ts), so they run solo.
+  "app.list": "pure_read",
+  "app.save": "approval_gated",
+  "app.update": "approval_gated",
+  "app.delete": "approval_gated",
   "memory.notes.store": "memory_write",
   "memory.notes.forget": "memory_write",
 
@@ -241,6 +250,10 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "tasks.schedule": "tasks_write",
   "tasks.cron": "tasks_write",
   "tasks.cancel": "tasks_write",
+  // ATO-2497: the running task's board card (lane, comments); no status change.
+  "tasks.request_review": "tasks_write",
+  "tasks.block": "tasks_write",
+  "tasks.comment": "tasks_write",
 
   // sessions.* (ATO-570) — a listing of chat names and the status of a
   // message this chat sent are plain reads; reading another chat or
@@ -430,10 +443,10 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     // A command the guard's dangerous layer matched asks as
     // `shell_dangerous`, which only full trust silences and no grant
     // reaches (ATO-1220): below level 5 a shell batch is not unattended.
-    "os.shell.run": ["shell", "shell_dangerous"],
+    "os.shell.run": ["shell", "shell_dangerous", "shell_secret"],
     // Same rung as a shell command: it runs one, in a copy, and a
     // dangerous one asks as `shell_dangerous` too (ATO-1266).
-    "verify.run": ["shell", "shell_dangerous"],
+    "verify.run": ["shell", "shell_dangerous", "shell_secret"],
     "os.fs.write": FS_WRITE_CATEGORIES,
     // ATO-1137: the same funnel (`requireFsApproval`, kind `write`).
     "canvas.render": FS_WRITE_CATEGORIES,
@@ -472,7 +485,9 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "github.pr.autofix": ["publish", "git_remote"],
     "os.proc.kill": ["proc_kill"],
     // A GET asks as `http`, a POST as `http_write` (level 4, ATO-1462).
-    "os.http.request": ["http", "http_write"],
+    // A `{{secret:NAME}}` header asks as `shell_secret` (ATO-2530), which
+    // only level 5 silences, so below it the call is a barrier like os.shell.run.
+    "os.http.request": ["http", "http_write", "shell_secret"],
     "os.email.send": ["email"],
     // A screenshot asks below level 3 (`screen_capture`).
     "os.screen.capture": ["screen_capture"],
@@ -482,7 +497,8 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     // Reading a window's controls asks like a window snapshot; pressing one like a click.
     "os.screen.elements": ["screen_capture"],
     "os.screen.press": ["screen_control"],
-    "skill.run_script": ["script"],
+    // `{{secret:NAME}}` in args or env asks as `shell_secret` (ATO-2530).
+    "skill.run_script": ["script", "shell_secret"],
     // A local generation asks nothing; the cloud one is `paid_generation`.
     "image.generate": ["paid_generation"],
     // Always cloud, always billed per second.
@@ -494,6 +510,10 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "sessions.send": ["session_cross"],
     // Screen notes into a cloud model's context; a loopback model never asks.
     "logbook.query": ["logbook_cloud"],
+    // ATO-2459: an app is a file under the state dir, asked like one.
+    "app.save": FS_WRITE_CATEGORIES,
+    "app.update": FS_WRITE_CATEGORIES,
+    "app.delete": ["fs_trash", "trust_config", "other"],
     // Asks like a file write onto its output (`categorizeFsMutation`).
     "video.render_html": FS_WRITE_CATEGORIES,
   };

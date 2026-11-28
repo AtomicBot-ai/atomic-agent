@@ -9,6 +9,7 @@ import {
   type GitRemoteToolOptions,
 } from "./git-remote-policy.js";
 import { requireGitSuccess, runGit } from "./git-runner.js";
+import { refuseOptionLike } from "./git-arg-guard.js";
 
 const TOOL = "os.git.remote";
 type RemoteAction = "list" | "add" | "remove" | "set-url";
@@ -50,16 +51,17 @@ export function buildOsGitRemoteTool(
       if (action === "list") return listRemotes(repo, ctx);
 
       const name = optionalString(rawArgs.name);
-      if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) {
+      if (!name || !/^[A-Za-z0-9._][A-Za-z0-9._-]*$/.test(name)) {
         return compressToolResult({
           tool: TOOL,
           status: "error",
-          output: `${TOOL}: \`name\` must be a plain remote name (letters, digits, . _ -)`,
+          output: `${TOOL}: \`name\` must be a plain remote name (letters, digits, . _ -, not starting with -)`,
           details: { action, name: name ?? null },
         });
       }
       const url = action === "remove" ? undefined : optionalString(rawArgs.url);
       if (action !== "remove") {
+        refuseOptionLike(TOOL, "url", url);
         if (!url) {
           return compressToolResult({
             tool: TOOL,

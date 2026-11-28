@@ -1,12 +1,11 @@
 /**
  * Pluggable OCR seam for the PDF extractor (ATO-681).
  *
- * The engine that ships is the vision model the agent already has
- * (`media-text/vision-ocr-engine.ts`, ATO-2205), used by the file index.
- * A dedicated OCR engine (pure-JS tesseract.js vs an on-demand native
- * parser) is still to be picked by a measurement on real Russian scans;
- * it implements this same interface and drops in without touching the
- * extractor again.
+ * The file index passes the vision model the agent already has
+ * (`media-text/vision-ocr-engine.ts`, ATO-2205), with tesseract.js
+ * (`media-text/tesseract-ocr-engine.ts`, ATO-2502, an optional package)
+ * as the fallback. Which one ships and leads is decided by a measurement
+ * on real Russian scans (`docs/plans/ocr-russian-scans-benchmark.md`).
  *
  * Contract for implementations:
  * - Run fully locally. Language data (at least `rus` and `eng`) must already

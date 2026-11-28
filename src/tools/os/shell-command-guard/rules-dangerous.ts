@@ -1,8 +1,20 @@
-import type { GuardVerdict, Rule } from "./guard-types.js";
-import { argScanVerdict, type ArgScanFinding } from "./arg-scan-finding.js";
+import type { GuardInput, GuardVerdict, NormalisedCommand, Rule } from "./guard-types.js";
+import {
+  ASK_EVERY_LEVEL_CONFIDENCE,
+  argScanVerdict,
+  type ArgScanFinding,
+} from "./arg-scan-finding.js";
 import { matchDangerousArgv } from "./rules-dangerous-argv.js";
 import { matchCredentialRead } from "./rules-credentials.js";
 import { matchEncodedExec } from "./rules-encoded-exec.js";
+import { matchWindowsCredentialRead } from "./rules-credentials-windows.js";
+import { matchWindowsEncodedExec } from "./rules-encoded-exec-windows.js";
+import { matchHomeArchive } from "./rules-home-archive.js";
+import { matchInlineHomeCode } from "./rules-inline-home-code.js";
+import { nestedCommandLines } from "./nested-command-lines.js";
+import { matchCredentialCommand } from "./rules-credential-commands.js";
+import { matchEncodedExecFile } from "./rules-encoded-exec-file.js";
+import { powershellCommandLines } from "./powershell-command-lines.js";
 
 interface PatternRule {
   id: string;
@@ -143,29 +155,93 @@ const DANGEROUS_PATTERNS: readonly PatternRule[] = [
   },
 ];
 
-export const dangerousRule: Rule = {
-  id: "dangerous",
-  layer: "dangerous",
-  match(input, raw) {
-    // Credential reads and encoded commands first: they carry a
-    // confidence and, above the threshold, ask at every level (ATO-2126),
-    // so a `sudo` or `eval` on the same line must not shadow them.
-    const finding = strongestFinding(matchCredentialRead(input, raw), matchEncodedExec(input));
-    if (finding !== null) return argScanVerdict(finding);
-    for (const pattern of DANGEROUS_PATTERNS) {
-      const line = pattern.caseSensitive ? input.joined : input.joinedLower;
-      if (pattern.regex.test(line)) {
-        return {
-          action: "approval_required",
-          rule: pattern.id,
-          reason: pattern.reason,
-          confidence: 1,
-        };
-      }
+/**
+ * The dangerous layer. `threshold` is the live
+ * `agent.security.argScanThreshold` (ATO-2505); absent, or a value that
+ * is not a number in 0.5..1, reads as `ASK_EVERY_LEVEL_CONFIDENCE`, and
+ * so does a value above it.
+ */
+export function buildDangerousRule(threshold?: () => number): Rule {
+  return {
+    id: "dangerous",
+    layer: "dangerous",
+    match: (input, raw) => matchDangerous(input, raw, readThreshold(threshold)),
+  };
+}
+
+export const dangerousRule: Rule = buildDangerousRule();
+
+function readThreshold(threshold: (() => number) | undefined): number {
+  if (threshold === undefined) return ASK_EVERY_LEVEL_CONFIDENCE;
+  try {
+    const value = threshold();
+    const valid = Number.isFinite(value) && value >= 0.5 && value <= 1;
+    // Above the default it reads as the default: the setting only makes
+    // the check stricter (review round 1 of ATO-2505).
+    return valid ? Math.min(value, ASK_EVERY_LEVEL_CONFIDENCE) : ASK_EVERY_LEVEL_CONFIDENCE;
+  } catch {
+    return ASK_EVERY_LEVEL_CONFIDENCE;
+  }
+}
+
+function matchDangerous(
+  input: NormalisedCommand,
+  raw: GuardInput,
+  threshold: number,
+): GuardVerdict | null {
+  // Credential reads and encoded commands first: they carry a
+  // confidence and, above the threshold, ask at every level (ATO-2126),
+  // so a `sudo` or `eval` on the same line must not shadow them.
+  const finding = argScanFinding(input, raw, 0);
+  if (finding !== null) return argScanVerdict(finding, threshold);
+  for (const pattern of DANGEROUS_PATTERNS) {
+    const line = pattern.caseSensitive ? input.joined : input.joinedLower;
+    if (pattern.regex.test(line)) {
+      return {
+        action: "approval_required",
+        rule: pattern.id,
+        reason: pattern.reason,
+        confidence: 1,
+      };
     }
-    return withFullConfidence(matchDangerousArgv(input));
-  },
-};
+  }
+  return withFullConfidence(matchDangerousArgv(input));
+}
+
+/** How deep `sh -c "bash -c '...'"` is read. */
+const MAX_NESTED_DEPTH = 4;
+
+/**
+ * Every argument-pattern finding of the line, the strongest first:
+ * POSIX and Windows credential reads and encoded commands (ATO-2126,
+ * ATO-2728), a whole home folder packed or copied and inline code that
+ * builds a credential path (ATO-2730), a command that prints a saved
+ * credential and a decoded file that is then run (ATO-2505), and the
+ * same again for each line a nested `sh -c` or `eval` (ATO-2730) or a
+ * `powershell -c` runs.
+ */
+function argScanFinding(
+  input: NormalisedCommand,
+  raw: GuardInput,
+  depth: number,
+): ArgScanFinding | null {
+  let best = strongestFinding(
+    matchCredentialRead(input, raw),
+    matchEncodedExec(input),
+    matchWindowsCredentialRead(input, raw.cwd),
+    matchWindowsEncodedExec(input),
+    matchHomeArchive(input, raw),
+    matchInlineHomeCode(input),
+    matchCredentialCommand(input),
+    matchEncodedExecFile(input),
+  );
+  if (depth >= MAX_NESTED_DEPTH) return best;
+  const inners = [...nestedCommandLines(input, raw.cwd), ...powershellCommandLines(input, raw.cwd)];
+  for (const inner of inners) {
+    best = strongestFinding(best, argScanFinding(inner, raw, depth + 1));
+  }
+  return best;
+}
 
 function strongestFinding(
   ...findings: (ArgScanFinding | null)[]

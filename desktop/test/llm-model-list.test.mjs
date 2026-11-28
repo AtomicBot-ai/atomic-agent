@@ -48,10 +48,12 @@ test('a bridge that throws or rejects reads as an error, so the busy flag can cl
   const t = fakeTimers();
   const rejected = await L.llmListAsk(() => Promise.reject(new Error('ipc gone')), 'OpenRouter', 30000, t);
   assert.equal(rejected.ok, false);
-  assert.match(rejected.error, /ipc gone/);
+  assert.equal(rejected.error, L.LLM_LIST_ASK_FAILED);
+  assert.equal(rejected.detail, 'ipc gone');
   const thrown = await L.llmListAsk(() => { throw new Error('no bridge'); }, 'OpenRouter', 30000, t);
   assert.equal(thrown.ok, false);
-  assert.match(thrown.error, /no bridge/);
+  assert.equal(thrown.error, L.LLM_LIST_ASK_FAILED);
+  assert.equal(thrown.detail, 'no bridge');
   const empty = await L.llmListAsk(() => Promise.resolve(null), 'OpenRouter', 30000, t);
   assert.equal(empty.ok, false);
 });

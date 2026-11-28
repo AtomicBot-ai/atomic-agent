@@ -15,9 +15,14 @@
  * What is left of that count after this window's chats and the tasks is a
  * reply in a channel (or an API call). The question names each kind, as VS
  * Code's "a task is still running" quit prompt does.
+ *
+ * ATO-2749: a meeting being recorded is named too (as Zoom and QuickTime
+ * ask before quitting mid-recording). The quit stops it; what was recorded
+ * is kept on disk and offered again at the next start.
  */
 
 import { settleWithin } from "./quit-shutdown.js";
+import { busyOriginsOf, namedBackgroundWork, type BusyOrigin, type NamedQuitWork } from "./quit-busy-origins.js";
 
 export interface QuitWork {
   /** Messages queued in the chats, waiting for their chat's turn to end (ATO-135). */
@@ -28,6 +33,10 @@ export interface QuitWork {
   tasks?: number;
   /** ATO-1758: the agent's other busy turns, none of them this window's: a Telegram or Discord reply, an API call. */
   background?: number;
+  /** ATO-2519: the same work named by kind (an agent that lists busyTurnOrigins); used instead of `background`. */
+  named?: NamedQuitWork[];
+  /** ATO-2749: a meeting is being recorded now (main's MeetingRecorder status). */
+  recording?: boolean;
 }
 
 export interface QuitQuestion {
@@ -35,12 +44,16 @@ export interface QuitQuestion {
   detail: string;
 }
 
-type Kind = "chats" | "tasks" | "background";
+type Kind = "chats" | "tasks" | "background" | "meeting" | NamedQuitWork;
+
+/** ATO-2749: what happens to a meeting being recorded when the app quits. */
+export const MEETING_KEPT = "What was recorded so far is kept, and you can make notes from it when you open the app again.";
 
 /** The dialog's text, or null when the quit should go without asking. */
 export function quitQuestion(work: QuitWork): QuitQuestion | null {
   const queued = count(work.queued);
-  const kinds: Array<[Kind, number]> = [["chats", count(work.working)], ["tasks", count(work.tasks ?? 0)], ["background", count(work.background ?? 0)]];
+  const background: Array<[Kind, number]> = work.named ? work.named.map((w): [Kind, number] => [w, count(w.n)]) : [["background", count(work.background ?? 0)]];
+  const kinds: Array<[Kind, number]> = [["chats", count(work.working)], ["tasks", count(work.tasks ?? 0)], ...background, ["meeting", work.recording ? 1 : 0]];
   const running = kinds.filter(([, n]) => n > 0);
   if (queued === 0 && running.length === 0) return null;
   if (running.length === 0) {
@@ -57,19 +70,24 @@ export function quitQuestion(work: QuitWork): QuitQuestion | null {
     return { message: one.message, detail: `${one.stops}${drops}` };
   }
   const list = running.map(([kind, n]) => named(kind, n));
+  const kept = work.recording ? ` ${MEETING_KEPT}` : "";
   return {
     message: "Atomic Agent is still working",
-    detail: `Still running: ${joinWords(list)}. Quitting now stops all of it before it is done.${drops}`,
+    detail: `Still running: ${joinWords(list)}. Quitting now stops all of it before it is done.${kept}${drops}`,
   };
 }
 
 /** One kind of work on its own: the ATO-1696 words for chats, the ATO-1758 ones for the rest. */
 function single(kind: Kind, n: number): { message: string; stops: string } {
+  if (typeof kind === "object") return { message: kind.message, stops: kind.stops };
   if (kind === "chats") {
     return {
       message: n === 1 ? "A chat is still working" : `${n} chats are still working`,
       stops: n === 1 ? "Quitting now stops its reply before it is done." : "Quitting now stops their replies before they are done.",
     };
+  }
+  if (kind === "meeting") {
+    return { message: "A meeting is still being recorded", stops: `Quitting now stops the recording. ${MEETING_KEPT}` };
   }
   if (kind === "tasks") {
     return {
@@ -85,8 +103,10 @@ function single(kind: Kind, n: number): { message: string; stops: string } {
 
 /** One kind of work as an item of the "Still running:" list. */
 function named(kind: Kind, n: number): string {
+  if (typeof kind === "object") return kind.item;
   if (kind === "chats") return n === 1 ? "a chat" : `${n} chats`;
   if (kind === "tasks") return n === 1 ? "a scheduled task" : `${n} scheduled tasks`;
+  if (kind === "meeting") return "a meeting recording";
   return n === 1 ? "a reply in Telegram or another channel" : `${n} replies in Telegram or other channels`;
 }
 
@@ -110,12 +130,17 @@ export interface AgentBusySample {
   tasks: number | null;
   /** `/health` busyTurns: every session with a turn in flight, this window's included. */
   busyTurns: number | null;
+  /** ATO-2519: `/health` busyTurnOrigins, the origin of each of those turns; null or absent from an older agent. */
+  origins?: BusyOrigin[] | null;
 }
 
 /** The two asks main makes, each answering a count or null. */
 export interface AgentBusyProbe {
   tasks: () => Promise<number | null>;
-  busyTurns: () => Promise<number | null>;
+  /** The busy count alone. Unused when `health` is given. */
+  busyTurns?: () => Promise<number | null>;
+  /** ATO-2519: the /health body, read once for busyTurns and busyTurnOrigins. */
+  health?: () => Promise<unknown>;
 }
 
 /** How long a quit waits for the agent's answer. Both routes answer in milliseconds; a stall must not hold the quit. */
@@ -133,8 +158,13 @@ export function busyTurnsOf(health: unknown): number | null {
  * agent must not make every quit ask about work that is not there.
  */
 export async function sampleAgentBusy(probe: AgentBusyProbe, ms: number = QUIT_PROBE_MS): Promise<AgentBusySample> {
-  const ask = (run: () => Promise<number | null>) => settleWithin(Promise.resolve().then(run), ms, null);
-  const [tasks, busyTurns] = await Promise.all([ask(probe.tasks), ask(probe.busyTurns)]);
+  const ask = <T>(run: () => Promise<T>) => settleWithin(Promise.resolve().then(run), ms, null);
+  const health = probe.health;
+  if (health) {
+    const [tasks, body] = await Promise.all([ask(probe.tasks), ask(health)]);
+    return { tasks, busyTurns: busyTurnsOf(body), origins: busyOriginsOf(body) };
+  }
+  const [tasks, busyTurns] = await Promise.all([ask(probe.tasks), ask(probe.busyTurns ?? (async () => null))]);
   return { tasks, busyTurns };
 }
 
@@ -146,7 +176,15 @@ export async function sampleAgentBusy(probe: AgentBusyProbe, ms: number = QUIT_P
  * began, or a window turn whose session the agent already closed, must not
  * invent background work.
  */
-export function backgroundQuitWork(windowChats: number, sample: AgentBusySample): { tasks: number; background: number } {
+export function backgroundQuitWork(windowChats: number, sample: AgentBusySample): { tasks: number; background: number; named?: NamedQuitWork[] } {
+  if (sample.origins) {
+    // ATO-2519: the agent named each turn; no arithmetic, no guessing the channel.
+    // Scheduler turns are counted as tasks from /api/tasks; when that probe gave no
+    // answer, they are counted here instead, so a running task still asks.
+    const tasks = sample.tasks === null ? sample.origins.filter((b) => b.origin === "scheduler").length : count(sample.tasks);
+    const named = namedBackgroundWork(count(windowChats), sample.origins);
+    return { tasks, background: named.reduce((sum, w) => sum + w.n, 0), named };
+  }
   const tasks = count(sample.tasks ?? 0);
   const busy = count(sample.busyTurns ?? 0);
   return { tasks, background: Math.max(0, busy - count(windowChats) - tasks) };

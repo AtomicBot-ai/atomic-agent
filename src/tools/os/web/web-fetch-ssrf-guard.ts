@@ -124,35 +124,57 @@ function parseIpv6ToBigInt(value: string): bigint | null {
 const BLOCKED_IPV6: ReadonlyArray<readonly [string, number]> = [
   ["::1", 128], // loopback
   ["::", 128], // unspecified
+  ["100::", 64], // discard-only
+  ["64:ff9b:1::", 48], // NAT64 local-use: operator-private translators
   ["fc00::", 7], // unique-local
   ["fe80::", 10], // link-local
+  ["fec0::", 10], // site-local (deprecated, still routed by some stacks)
   ["ff00::", 8], // multicast
   ["2001:db8::", 32], // documentation
 ];
 
+/**
+ * IPv6 ranges that carry an IPv4 address, as `[network, prefix, where]`:
+ * the embedded IPv4 is re-checked (ATO-2703), so `[::127.0.0.1]` or
+ * `[64:ff9b::a9fe:a9fe]` cannot reach loopback or the cloud metadata
+ * address through a translator. `where` is the bit offset of the IPv4
+ * from the right: the low 32 bits for the mapped, translated,
+ * compatible and NAT64 (`64:ff9b::/96`) forms, bits 80..111 for 6to4
+ * (`2002:AABB:CCDD::`). A public IPv4 inside stays allowed, so a NAT64
+ * network still reaches ordinary sites.
+ */
+const EMBEDDED_IPV4_IPV6: ReadonlyArray<readonly [string, number, bigint]> = [
+  ["::ffff:0:0", 96, 0n], // IPv4-mapped
+  ["::ffff:0:0:0", 96, 0n], // IPv4-translated (SIIT)
+  ["::", 96, 0n], // IPv4-compatible (deprecated)
+  ["64:ff9b::", 96, 0n], // NAT64 well-known prefix
+  ["2002::", 16, 80n], // 6to4
+];
+
+function ipv4FromInt(value: number): string {
+  return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff].join(".");
+}
+
+function ipv6Mask(prefix: number): bigint {
+  return prefix === 0 ? 0n : ((1n << 128n) - 1n) ^ ((1n << BigInt(128 - prefix)) - 1n);
+}
+
 function isBlockedIpv6(value: string): boolean {
   const ip = parseIpv6ToBigInt(value);
   if (ip === null) return false;
-  // IPv4-mapped (::ffff:0:0/96) → re-check the embedded IPv4.
-  const mappedMask = (1n << 128n) - (1n << 32n);
-  const mappedNet = 0xffffn << 32n;
-  if ((ip & mappedMask) === mappedNet) {
-    const embedded = Number(ip & 0xffffffffn) >>> 0;
-    const dotted = [
-      (embedded >>> 24) & 0xff,
-      (embedded >>> 16) & 0xff,
-      (embedded >>> 8) & 0xff,
-      embedded & 0xff,
-    ].join(".");
-    if (isBlockedIpv4(dotted)) return true;
+  // An IPv6 form that carries an IPv4 → re-check the embedded IPv4.
+  for (const [network, prefix, shift] of EMBEDDED_IPV4_IPV6) {
+    const net = parseIpv6ToBigInt(network);
+    if (net === null) continue;
+    const mask = ipv6Mask(prefix);
+    if ((ip & mask) !== (net & mask)) continue;
+    const embedded = Number((ip >> shift) & 0xffffffffn) >>> 0;
+    if (isBlockedIpv4(ipv4FromInt(embedded))) return true;
   }
   for (const [network, prefix] of BLOCKED_IPV6) {
     const net = parseIpv6ToBigInt(network);
     if (net === null) continue;
-    const mask =
-      prefix === 0
-        ? 0n
-        : ((1n << 128n) - 1n) ^ ((1n << BigInt(128 - prefix)) - 1n);
+    const mask = ipv6Mask(prefix);
     if ((ip & mask) === (net & mask)) return true;
   }
   return false;

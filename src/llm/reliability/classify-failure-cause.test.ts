@@ -198,6 +198,12 @@ const SAMPLES: ReadonlyArray<Sample> = [
     "switch-model",
   ],
   ["a 401 for a bad key", stepFailure(http(401, "Invalid API key")), "auth_rejected", "fix-key"],
+  [
+    "OpenRouter's 404 for a model without tools (ATO-1673)",
+    stepFailure(http(404, "No endpoints found that support tool use.", '{"error":{"message":"No endpoints found that support tool use.","code":404}}')),
+    "request_rejected",
+    "switch-model",
+  ],
   ["a 404 for a model the provider lacks", stepFailure(http(404, "no such model")), "model_not_found", "switch-model"],
   ["a 422 the provider refused", stepFailure(http(422, "bad tool schema")), "request_rejected", "switch-model"],
   ["a 503 from the provider", stepFailure(http(503, "busy")), "provider_trouble", "retry"],
@@ -240,6 +246,15 @@ const SAMPLES: ReadonlyArray<Sample> = [
     "retry",
   ],
   ["a cut-off reply", truncated("reply_cap"), "reply_cut_off", "retry"],
+  [
+    "a reply cut again after the agent's retry (ATO-1678)",
+    new ModelError("truncated", "cut again", {
+      truncation: { cause: "reply_cap", completionTokens: 16_384, promptTokens: 28_000 },
+      repeatedCut: "cut",
+    }),
+    "reply_cut_off_repeated",
+    "switch-model",
+  ],
   ["a reply with no stop token", new ModelError("no_stop", "no stop token"), "unfinished_reply", "retry"],
   [
     "a reply that looped on one block of text",

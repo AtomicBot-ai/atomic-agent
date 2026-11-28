@@ -82,7 +82,7 @@ describe("buildPluginOverview", () => {
     });
     const bundle = readPluginBundle(root);
     const o = buildPluginOverview(RECORD, bundle, { env: {}, hookEvents: readPluginHookEvents(bundle) });
-    expect(o.counts).toEqual({ skills: 2, mcpServers: 2, hooks: 1, commands: 2, agents: 1 });
+    expect(o.counts).toEqual({ skills: 2, mcpServers: 2, hooks: 1, commands: 2, agents: 1, monitors: 0 });
     expect(o.parts.map(p => p.id)).toEqual([
       "skill:review", "skill:tidy", "mcp:gh", "mcp:docs", "hook:PreToolUse", "command:commit", "command:git:push", "agent:reviewer",
     ]);

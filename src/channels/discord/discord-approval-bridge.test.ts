@@ -24,6 +24,7 @@ function makeBridge(owners: readonly string[] = [OWNER]) {
   const api = {
     sendMessage: vi.fn(async () => "msg-1"),
     updateInteraction: vi.fn(async () => undefined),
+    acknowledgeInteraction: vi.fn(async () => undefined),
     editMessage: vi.fn(async () => undefined),
   };
   const approvals = { resolve: vi.fn(() => true) };
@@ -116,6 +117,7 @@ describe("Allow always from Discord (ATO-1142)", () => {
     const api = {
       sendMessage: vi.fn(async () => "msg-1"),
       updateInteraction: vi.fn(async () => undefined),
+      acknowledgeInteraction: vi.fn(async () => undefined),
       editMessage: vi.fn(async () => undefined),
     };
     const approvals = { resolve: vi.fn(() => true), canGrantAlways: () => canGrantAlways };
@@ -166,8 +168,7 @@ describe("Allow always from Discord (ATO-1142)", () => {
     await new Promise((r) => setImmediate(r));
     await bridge.handleInteraction(click("always", OWNER));
     expect(approvals.resolve).not.toHaveBeenCalled();
-  });
-});
+  });});
 
 describe("DiscordApprovalBridge", () => {
   it("posts the prompt with buttons into the originating channel", async () => {
@@ -207,11 +208,9 @@ describe("DiscordApprovalBridge", () => {
     const { bridge, approvals, api } = makeBridge();
     await bridge.handleInteraction(click("yes", "stranger"));
     expect(approvals.resolve).not.toHaveBeenCalled();
-    expect(api.updateInteraction).toHaveBeenCalledWith(
-      "i1",
-      "itok",
-      expect.stringContaining("Only a paired operator"),
-    );
+    // The prompt stays for the owner: acknowledged, message untouched (ATO-2778).
+    expect(api.acknowledgeInteraction).toHaveBeenCalledWith("i1", "itok");
+    expect(api.updateInteraction).not.toHaveBeenCalled();
   });
 
   it("ignores every click while unpaired", async () => {
@@ -303,12 +302,11 @@ describe("DiscordApprovalBridge and a dangerous shell command (ATO-1224)", () =>
       "atomic:approve:no:ap-rm",
     ]);
 
-    // A forged grant verb is not a yes.
+    // A forged grant verb is not a yes: no grant was offered, so it
+    // settles nothing and the prompt stays open (ATO-2509).
     await bridge.handleInteraction(click("session", OWNER, "ap-rm"));
-    expect(approvals.resolve).toHaveBeenLastCalledWith({
-      approvalId: "ap-rm",
-      approved: false,
-    });
+    await bridge.handleInteraction(click("shape", OWNER, "ap-rm"));
+    expect(approvals.resolve).not.toHaveBeenCalled();
     await bridge.handleInteraction(click("yes", OWNER, "ap-rm"));
     expect(approvals.resolve).toHaveBeenLastCalledWith({
       approvalId: "ap-rm",

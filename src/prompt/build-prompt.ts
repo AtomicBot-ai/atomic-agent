@@ -16,10 +16,8 @@ import {
 } from "../memory/notes-renderer.js";
 import { renderLessonsSection } from "../memory/lessons/lessons-renderer.js";
 import { renderProceduresSection } from "../memory/procedures/procedures-renderer.js";
-import {
-  packConversation,
-  pairTokenCosts,
-} from "../session/conversation-turn.js";
+import { pairTokenCosts } from "../session/conversation-turn.js";
+import { packConversationToFit } from "./fit-pinned-conversation.js";
 import type { PromptMessages } from "../llm/provider/completion-types.js";
 import {
   packedConversationTurns,
@@ -47,16 +45,16 @@ import { partitionByRole } from "../tools/tool-roles.js";
 import { renderTaskPolicy } from "./render-task-policy.js";
 import {
   checkBudget,
-  computeEffectiveConversationCap,
   CONVERSATION_CAP_AUTO,
   CONVERSATION_CAP_AUTO_FALLBACK,
   defaultBudget,
-  effectiveReplyReserve,
+  effectiveConversationBudget,
   estimateTokens,
   SESSION_SECTIONS_CAP_AUTO,
   truncateToTokens,
 } from "./token-budget.js";
 import { readSessionProject, renderSessionProjectBody } from "../session/session-project.js";
+import { clipLocalPathRules, localPathRulesBudget, renderLocalPathRules } from "./path-rule-sections.js";
 
 /**
  * ATO-42: the most the `### project` block takes in the local prompt. The
@@ -293,6 +291,12 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const project =
     projectFull !== null ? truncateToTokens(projectFull, PROJECT_SECTION_MAX_TOKENS) : null;
   const projectTokens = project !== null ? estimateTokens(project) : 0;
+  // ATO-2443: path rules a file tool attached; after the conversation, capped for a small window.
+  const projectRulesFull = renderLocalPathRules(input.pathRules ?? input.workspace?.pathRules ?? [], input.session.turns,
+    input.workspace ? [input.session.workingDir, input.workspace.workingDir] : [input.session.workingDir]);
+  const projectRules =
+    projectRulesFull !== null ? clipLocalPathRules(projectRulesFull, localPathRulesBudget(contextWindow)) : null;
+  const projectRulesTokens = projectRules !== null ? estimateTokens(projectRules) : 0;
   const projectReport =
     projectFull !== null && project !== null
       ? {
@@ -418,13 +422,15 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
 
   // `contextWindow` was resolved above, before the stable prefix.
   const sessionTokenEstimate =
-    estimateTokens(sessionPartsForBudget) + loadedToolsTokens + projectTokens;
+    estimateTokens(sessionPartsForBudget) + loadedToolsTokens + projectTokens + projectRulesTokens;
   // A `native_tools` link sends the tool schemas beside the text; the
   // window holds them too (ATO-1678). The cloud prompt always counted
   // them; a local one (Ollama, LM Studio, a Fusion worker leg) did not,
   // so the transcript was packed into room the schemas already took.
   const toolSchemaTokens = Math.max(0, input.toolSchemaTokens ?? 0);
-  const conversationCapEffective = computeEffectiveConversationCap({
+  // On a window the fixed part crowds, the reply reserve shares what is
+  // left with the transcript (ATO-1678); `replyReserve` reports it.
+  const { cap: conversationCapEffective, replyReserve } = effectiveConversationBudget({
     configuredCap: limits.conversation,
     ...(conversationCapAuto ? { autoFill: true } : {}),
     contextWindow: contextWindow ?? undefined,
@@ -461,10 +467,14 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       ? { packStart: projection.packStart }
       : {}),
   };
-  let packed = packConversation(
+  // On a known window the pinned task is packed to really fit the cap
+  // (ATO-1678): the pins alone used to run past it.
+  const windowKnown = contextWindow !== null && contextWindow > 0;
+  let packed = packConversationToFit(
     projection.turns,
     suffixCap,
     packOptions,
+    windowKnown,
   );
   // The operator's request, pinned only once the packer has dropped the
   // turn that carried it. It then takes its room out of the conversation
@@ -479,10 +489,11 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   if (requestSection !== null) {
     const requestTokens = estimateTokens(requestSection);
     if (requestTokens < suffixCap) {
-      packed = packConversation(
+      packed = packConversationToFit(
         projection.turns,
         suffixCap - requestTokens,
         packOptions,
+        windowKnown,
       );
     }
   }
@@ -553,6 +564,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   }
   if (loadedToolsRendered.body !== null) {
     tailAfter.push("### loaded-tools", loadedToolsRendered.body, ``);
+  }
+  if (projectRules !== null) {
+    tailAfter.push(`### project-rules`, projectRules, ``);
   }
   if (taskPolicy !== null) {
     tailAfter.push(`### task-policy`, taskPolicy.body, ``);
@@ -666,6 +680,8 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       recalled: recalledTokens,
       memoryIndex: memoryIndexTokens,
       taskPolicy: taskPolicyTokens,
+      ...(projectTokens > 0 ? { project: projectTokens } : {}),
+      ...(projectRulesTokens > 0 ? { projectRules: projectRulesTokens } : {}),
       ...(compactionTokens ? { compaction: compactionTokens } : {}),
       ...(toolSchemaTokens > 0 ? { toolSchema: toolSchemaTokens } : {}),
       total:
@@ -674,13 +690,11 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
         profileTokens +
         recalledTokens +
         memoryIndexTokens +
+        projectTokens +
+        projectRulesTokens +
         taskPolicyTokens + compactionTokens + toolSchemaTokens,
     },
-    replyReserve: effectiveReplyReserve(
-      completionMaxTokens,
-      contextWindow,
-      reasoningBudgetTokens,
-    ),
+    replyReserve,
     limits,
     truncated:
       truncation.loadedSkills ||
@@ -696,6 +710,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       ? { profileClip: profileSection.clip }
       : {}),
     ...(projectReport !== null ? { project: projectReport } : {}),
+    ...(toolSchemaTokens > 0 && input.toolSchemaParts
+      ? { toolSchemaParts: input.toolSchemaParts }
+      : {}),
     contextWindow,
     conversationCapEffective,
     conversationCapAuto,

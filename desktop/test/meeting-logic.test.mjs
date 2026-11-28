@@ -53,3 +53,48 @@ test("the notes are asked for only once the transcript chip is ready", () => {
   assert.equal(L.meetingReadyToSend([{ status: "ready" }, { status: "preparing" }]), false);
   assert.equal(L.meetingReadyToSend([{ status: "ready" }, { status: "error" }]), true);
 });
+
+// ATO-2749: the meeting UI/UX fixes.
+test("mic denied: the path of the computer it is on, spelled as elsewhere, as a sentence", () => {
+  const mac = L.meetingMicDeniedText("darwin");
+  assert.match(mac, /System Settings › Privacy & Security › Microphone/);
+  assert.doesNotMatch(mac, /Privacy and Security/);
+  const win = L.meetingMicDeniedText("win32");
+  assert.match(win, /Settings › Privacy & security › Microphone/);
+  assert.doesNotMatch(win, /System Settings/);
+  const linux = L.meetingMicDeniedText("linux");
+  assert.doesNotMatch(linux, /System Settings|Privacy/);
+  for (const s of [mac, win, linux]) { assert.match(s, /\.$/); assert.doesNotMatch(s, /\u2014/); }
+  assert.equal(L.meetingErrorText("mic-denied"), mac);
+  assert.equal(L.meetingErrorText("mic-denied", "win32"), win);
+});
+
+test("mic denied: Open Settings only where the OS has one pane, and only with the bridge", () => {
+  const esc = (s) => String(s);
+  assert.equal(L.meetingCanOpenMicSettings("darwin"), true);
+  assert.equal(L.meetingCanOpenMicSettings("win32"), true);
+  assert.equal(L.meetingCanOpenMicSettings("linux"), false);
+  assert.match(L.meetingDeniedCardHTML("darwin", true, esc), /data-mtg="micsettings">Open Settings</);
+  assert.match(L.meetingDeniedCardHTML("win32", true, esc), /Open Settings/);
+  assert.doesNotMatch(L.meetingDeniedCardHTML("linux", true, esc), /Open Settings/);
+  assert.doesNotMatch(L.meetingDeniedCardHTML("darwin", false, esc), /Open Settings/);
+  assert.match(L.meetingDeniedCardHTML("linux", false, esc), /data-mtg="retry"/);
+  assert.match(L.meetingDeniedCardHTML("linux", false, esc), /data-mtg="deniedx"/);
+  for (const code of ["mic-denied", "NotAllowedError", "SecurityError"]) assert.equal(L.meetingMicDenied(code), true, code);
+  for (const code of ["mic-failed", "busy", "", undefined, "NotFoundError"]) assert.equal(L.meetingMicDenied(code), false, String(code));
+});
+
+test("Delete recording asks first; the toast says deleted only when it was", () => {
+  const c = L.meetingDeleteConfirmHTML("m-1", (s) => String(s));
+  assert.match(c, /Delete this recording\?/);
+  assert.match(c, /cannot be undone/);
+  assert.match(c, /data-mtg="delno">Keep</);
+  assert.match(c, /class="btn btn-df sm" data-mtg="delyes" data-mtg-id="m-1">Delete recording</);
+  assert.deepEqual(L.meetingDiscardToast({ ok: true }), { t: "Recording deleted", s: "Its audio and transcript are gone from this computer.", kind: "" });
+  for (const res of [{ ok: false }, null, undefined]) {
+    const t = L.meetingDiscardToast(res);
+    assert.equal(t.kind, "bad");
+    assert.equal(t.t, "Could not delete the recording");
+    assert.doesNotMatch(t.t + t.s, /Recording deleted|gone/);
+  }
+});

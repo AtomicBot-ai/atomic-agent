@@ -204,6 +204,23 @@ describe("llm-config", () => {
     );
   });
 
+  it("parses the local-first escalation switch and ceilings (ATO-2434)", () => {
+    const parsed = parseUserConfigFile(
+      baseLlm({ localFirst: true, localFirstEscalate: false, localFirstMaxTurnUsd: 0.5, localFirstMaxDayUsd: 3 }),
+    );
+    expect(parsed.llm?.fallback).toMatchObject({
+      localFirstEscalate: false,
+      localFirstMaxTurnUsd: 0.5,
+      localFirstMaxDayUsd: 3,
+    });
+  });
+
+  it("rejects a bad local-first escalation switch or ceiling", () => {
+    expect(() => parseUserConfigFile(baseLlm({ localFirstEscalate: "no" }))).toThrow(/localFirstEscalate/);
+    expect(() => parseUserConfigFile(baseLlm({ localFirstMaxTurnUsd: 0 }))).toThrow(/localFirstMaxTurnUsd/);
+    expect(() => parseUserConfigFile(baseLlm({ localFirstMaxDayUsd: "5" }))).toThrow(/localFirstMaxDayUsd/);
+  });
+
   it("rejects a non-boolean appendLocal", () => {
     expect(() =>
       parseUserConfigFile(

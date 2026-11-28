@@ -49,6 +49,8 @@ export interface ModelsFolderInfo {
   dir: string;
   defaultDir: string;
   custom: boolean;
+  /** ATO-2503: false when the folder is not there (its disk unplugged). An older agent never says, read as true. */
+  reachable: boolean;
 }
 
 export function parseModelsFolderInfo(stdout: string): ModelsFolderInfo | null {
@@ -58,7 +60,7 @@ export function parseModelsFolderInfo(stdout: string): ModelsFolderInfo | null {
     try {
       const v = JSON.parse(text) as Partial<ModelsFolderInfo>;
       if (typeof v.dir === "string" && v.dir && typeof v.defaultDir === "string") {
-        return { dir: v.dir, defaultDir: v.defaultDir, custom: v.custom === true };
+        return { dir: v.dir, defaultDir: v.defaultDir, custom: v.custom === true, reachable: v.reachable !== false };
       }
     } catch {
       /* not this line */
@@ -82,6 +84,34 @@ export function parseModelsMoveLine(line: string): ModelsMoveProgress | null {
   return index >= 1 && total >= index ? { entry: m[1]!, index, total } : null;
 }
 
+/** ATO-2503: one `copied <done> of <total> bytes (<model>)` line of a move across disks. */
+export interface ModelsMoveBytes {
+  entry: string;
+  done: number;
+  size: number;
+}
+
+export function parseModelsMoveBytes(line: string): ModelsMoveBytes | null {
+  const m = /^copied (\d+) of (\d+) bytes \((.+)\)\s*$/.exec(line.trim());
+  if (!m) return null;
+  const done = Number(m[1]);
+  const size = Number(m[2]);
+  return Number.isFinite(done) && Number.isFinite(size) && size > 0 && done <= size ? { entry: m[3]!, done, size } : null;
+}
+
+/**
+ * ATO-2503: how long a move may go without a line before it counts as hung
+ * (a disk that stopped answering mid-copy). A copy across disks prints its
+ * bytes twice a second, so ten quiet minutes is no slow disk.
+ */
+export const MOVE_QUIET_LIMIT_MS = 10 * 60_000;
+/** After the stop (the agent then puts every model back), how long before the agent is killed. */
+export const MOVE_KILL_GRACE_MS = 30_000;
+
+export const MOVE_HUNG_WORDS =
+  "The move stopped answering for 10 minutes, so it was stopped. Your models are still in the old folder. " +
+  "Models already copied may be left in the new folder: delete them there before you try again.";
+
 /** `models folder: <path>`, the last line of a move that worked. */
 export function movedToFromStdout(stdout: string): string | null {
   const m = /^models folder: (.+)$/m.exec(stdout);
@@ -93,20 +123,40 @@ export function leftoversFromStdout(stdout: string): string[] {
   return [...stdout.matchAll(/^could not delete the old copy at (.+); delete it by hand$/gm)].map((m) => m[1]!.trim());
 }
 
-/**
- * The agent's refusal in words for the pane. Its line is `models dir: <why>`;
- * an agent without the subcommand says `unknown subcommand: dir`.
- */
-/** Said when the picked folder already holds something (the agent refuses it too). */
-export const NOT_EMPTY_WORDS = "That folder is not empty. Pick an empty folder, or make a new one with New Folder.";
-
-/** True when a folder listing counts as empty: nothing, or only `.DS_Store`. */
-export function folderListingIsEmpty(names: readonly string[]): boolean {
-  return names.every((n) => n === ".DS_Store");
+/** Said when the picked folder already holds something (the agent refuses it too). The folder dialog's own button name. */
+export function notEmptyWords(platform: NodeJS.Platform = process.platform): string {
+  const make = platform === "darwin" ? "make a new one with New Folder"
+    : platform === "win32" ? "make a new one with New folder"
+      : "make a new one with Create Folder";
+  return `That folder is not empty. Pick an empty folder, or ${make}.`;
 }
 
-export function moveErrorWords(stderr: string, code: number | null): string {
-  if (/is not empty/.test(stderr)) return NOT_EMPTY_WORDS;
+/**
+ * ATO-2742: files an OS or a file manager drops into any folder, matched
+ * without case. macOS `.DS_Store` (and `._.DS_Store` on a FAT or exFAT disk),
+ * Windows Explorer `desktop.ini`, `Thumbs.db`, `ehthumbs.db`, KDE Dolphin
+ * `.directory`. The agent's own check keeps the same list
+ * (src/local-llm/models-dir-move.ts isFolderJunk), so a folder this says is
+ * empty is one the agent moves into.
+ */
+const FOLDER_JUNK = new Set([".ds_store", "._.ds_store", "desktop.ini", "thumbs.db", "ehthumbs.db", ".directory"]);
+
+/** True when a folder listing counts as empty: nothing, or only the files above. */
+export function folderListingIsEmpty(names: readonly string[]): boolean {
+  return names.every((n) => FOLDER_JUNK.has(n.toLowerCase()));
+}
+
+/** Said when a move failed for a reason the agent did not put in words. */
+export const MOVE_FAILED_WORDS = "The models were not moved. Try again.";
+
+/**
+ * The agent's refusal in words for the pane. Its line is `models dir: <why>`
+ * (written for people, shown as it is); an agent without the subcommand says
+ * `unknown subcommand: dir`. Anything else is not shown: the pane says
+ * MOVE_FAILED_WORDS and the raw text goes behind Details (moveErrorDetail).
+ */
+export function moveErrorWords(stderr: string, _code: number | null, platform: NodeJS.Platform = process.platform): string {
+  if (/is not empty/.test(stderr)) return notEmptyWords(platform);
   if (/unknown subcommand: dir\b/.test(stderr)) {
     return "This version of the agent cannot move models yet. Update the agent, then try again.";
   }
@@ -116,7 +166,27 @@ export function moveErrorWords(stderr: string, code: number | null): string {
   if (/a model download is running/.test(stderr)) {
     return "Wait for the model download to finish, or pause it, then move the models.";
   }
-  const said = stderr.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop();
-  if (said) return said.replace(/^models dir: /, "").replace(/^./, (c) => c.toUpperCase());
-  return `The models were not moved (exit code ${code ?? "none"}).`;
+  // ATO-2503: the agent's words for an unplugged disk, a move under way, a stopped move, a starting model.
+  if (/is its disk connected\?/.test(stderr)) {
+    return "The disk with your models folder is not connected. Connect it and try again, or use the default folder.";
+  }
+  if (/already being moved|being moved to another folder/.test(stderr)) return "The models are already being moved. Wait for that to finish.";
+  if (/the move was stopped/.test(stderr)) return "The move was stopped. Your models are back in the old folder.";
+  if (/a local model is starting/.test(stderr)) return "A local model is starting. Wait for it, stop it, then move the models.";
+  const said = lastLine(stderr);
+  if (said && /^models dir: /.test(said)) return said.replace(/^models dir: /, "").replace(/^./, (c) => c.toUpperCase());
+  return MOVE_FAILED_WORDS;
+}
+
+/** The raw text behind Details when moveErrorWords had no words of its own, else "". */
+export function moveErrorDetail(stderr: string, code: number | null): string {
+  const said = lastLine(stderr);
+  if (said && /^models dir: |unknown subcommand: dir\b/.test(said)) return "";
+  if (/is not empty|a local model is running|a model download is running/.test(stderr)) return "";
+  if (/is its disk connected\?|already being moved|being moved to another folder|the move was stopped|a local model is starting/.test(stderr)) return "";
+  return said || `exit code ${code ?? "none"}`;
+}
+
+function lastLine(text: string): string {
+  return text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop() ?? "";
 }

@@ -5,6 +5,7 @@ import type {
   CliArgsInput,
   CliStreamEvent,
 } from "./cli-adapter-descriptor.js";
+import { cliInstallHint } from "./cli-install-hint.js";
 import {
   SubscriptionCliAuthError,
   SubscriptionCliInvocationError,
@@ -212,8 +213,8 @@ export const codexCliAdapter: CliAdapterDescriptor = {
   // rather than a limitation we could paper over.
   streamMode: "none",
   systemPrompt: CODEX_CLI_SYSTEM_PROMPT,
-  installHint:
-    "Install the Codex CLI (`npm i -g @openai/codex`) and run `codex login`, or set llm.providers[].subscriptionCli.binPath to the binary's absolute path.",
+  // The platform's own install words and file name (ATO-1679).
+  installHint: cliInstallHint("codex", process.platform),
   authHint:
     "Run `codex login` and sign in with your ChatGPT account, then retry.",
   // The `openai` provider's key from `.env` would otherwise reach

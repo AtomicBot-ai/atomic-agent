@@ -159,8 +159,12 @@ function deeplinkArmed() {
 }
 
 async function deeplinkPull() {
-  const list = await BR.deeplinkTake().catch(() => []);
+  let list = await BR.deeplinkTake().catch(() => []);
   if (!Array.isArray(list) || !list.length) return;
+  // ATO-2459: an installed My apps launcher, taken here when it started the app; it opens the app, no card.
+  for (const q of list) if (q && q.route === 'app-open') deeplinkOpenApp(q);
+  list = list.filter((q) => !(q && q.route === 'app-open'));
+  if (!list.length) return;
   const req = list[list.length - 1];   // several at once: the newest one is the one just clicked
   if (deeplinkCardOpen()) {
     const same = (q) => !!req.link && q.link === req.link;
@@ -171,6 +175,13 @@ async function deeplinkPull() {
     return;
   }
   deeplinkShow(req);
+}
+
+/** ATO-2459: open the app a launcher's link names; it is the person's own, so no card. */
+async function deeplinkOpenApp(req) {
+  if (!BR || typeof BR.appsOpen !== 'function' || !/^[a-z0-9-]{1,64}$/.test(String(req.id || ''))) return;
+  const r = await BR.appsOpen(req.id).catch(() => null);
+  if (!r || !r.ok) toast('Could not open the app', 'It is no longer in My apps. It may have been deleted.', 'bad');
 }
 
 function deeplinkShow(req) {
@@ -327,4 +338,4 @@ function deeplinkAct(v) {
   if (v === 'install') { deeplinkInstall(); return; }
 }
 
-if (typeof module !== 'undefined') module.exports = {deeplinkCommandLine, deeplinkMcpRows, deeplinkSkillIdentifier, deeplinkTitle, deeplinkRecipeFill, deeplinkRecipeMissing};
+if (typeof module !== 'undefined') module.exports = {deeplinkCommandLine, deeplinkMcpRows, deeplinkSkillIdentifier, deeplinkTitle, deeplinkRecipeFill, deeplinkRecipeMissing, deeplinkOpenApp, deeplinkPull};

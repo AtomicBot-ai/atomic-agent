@@ -64,6 +64,22 @@ export function instructionTrust(record: ProjectTrustRecord | undefined, path: s
   return record?.declinedInstructions.includes(path) ? "declined" : "pending";
 }
 
+/** A project slash command, by its trust key (`<path>#<hash>`, ATO-2531): this exact text. */
+export function commandTrust(record: ProjectTrustRecord | undefined, key: string): ProjectItemTrust {
+  if (record?.trustedCommands?.includes(key)) return "trusted";
+  return record?.declinedCommands?.includes(key) ? "declined" : "pending";
+}
+
+/**
+ * Live check for project slash commands: the config is reread on each
+ * call, like the skill gate, so an answer given in another window applies
+ * at the next palette refresh or run.
+ */
+export function createProjectCommandTrust(configFile: string, startup: readonly ProjectTrustRecord[] | undefined, workingDir: string): (key: string) => boolean {
+  const record = readProjectTrust(configFile, startup, workingDir);
+  return (key) => commandTrust(record, key) === "trusted";
+}
+
 export function untrustedSkillReason(trust: ProjectItemTrust): string | null {
   return trust === "trusted" ? null : trust === "declined" ? DECLINED_SKILL_REASON : UNTRUSTED_SKILL_REASON;
 }

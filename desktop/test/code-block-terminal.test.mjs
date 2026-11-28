@@ -42,9 +42,21 @@ test("a js, python or unnamed block has no button", () => {
   }
 });
 
-test("ATO-1430: Windows and Linux get the button too; another system does not", () => {
-  for (const platform of ["win32", "linux"]) assert.match(frame(platform)(pre("bash")), /data-mdterm/, platform);
+test("ATO-1430: Linux gets the button too; another system does not", () => {
+  assert.match(frame("linux")(pre("bash")), /data-mdterm/);
   for (const platform of ["freebsd", "aix"]) assert.doesNotMatch(frame(platform)(pre("bash")), /data-mdterm/, platform);
+});
+
+test("ATO-2742: Windows opens PowerShell, so a bash block keeps Copy alone and a PowerShell block gets the button", () => {
+  const f = frame("win32");
+  for (const lang of ["bash", "sh", "zsh", "shell", "console", ""]) {
+    const h = f(pre(lang));
+    assert.doesNotMatch(h, /data-mdterm/, lang || "(none)");
+    assert.match(h, /data-mdcopy/, "Copy stays");
+  }
+  for (const lang of ["powershell", "PowerShell", "pwsh", "ps1"]) assert.match(f(pre(lang, "Get-ChildItem")), /data-mdterm/, lang);
+  // macOS and Linux are unchanged: a PowerShell block there has no button.
+  for (const platform of ["darwin", "linux"]) assert.doesNotMatch(frame(platform)(pre("powershell")), /data-mdterm/, platform);
 });
 
 test("an older preload without the bridge, or the demo with none, shows no button", () => {
@@ -61,7 +73,7 @@ test("the click sends the block's text as Copy reads it, with the working folder
   assert.ok(at >= 0, "the click handler is in renderer.js");
   const body = source.slice(at, source.indexOf("\n    return;\n  }\n", at));
   assert.match(body, /textContent\.replace\(\/\\r\\n\?\/g, '\\n'\)\.replace\(\/\\n\$\/, ''\)/);
-  assert.match(body, /BR\.terminalOpenWithCommand\(\{ command: text, cwd: workingDir\(\) \|\| null \}\)/);
+  assert.match(body, /BR\.terminalOpenWithCommand\(\{ command: text, cwd: workingDir\(\) \|\| null, shell: 'powershell' \}\)/);
   assert.match(body, /toast\("Couldn't open Terminal"/);
   // Anything but {ok:true} is a failure, and main's message goes into the toast.
   assert.match(body, /if \(!r \|\| r\.ok !== true\) fail\(r && r\.message\)/);
@@ -72,6 +84,6 @@ test("the click sends the block's text as Copy reads it, with the working folder
 test("the button uses ATO-1424's one preload bridge for terminal:openWithCommand", () => {
   const preload = readFileSync(new URL("../preload/preload.ts", import.meta.url), "utf8");
   assert.equal(preload.split('"terminal:openWithCommand"').length - 1, 1, "one bridge for the channel");
-  assert.match(preload, /terminalOpenWithCommand: \(req: \{ command: string; cwd\?: string \| null \}\) => ipcRenderer\.invoke\("terminal:openWithCommand", req\)/);
+  assert.match(preload, /terminalOpenWithCommand: \(req: \{ command: string; cwd\?: string \| null; shell\?: "powershell" \}\) => ipcRenderer\.invoke\("terminal:openWithCommand", req\)/);
   assert.doesNotMatch(preload, /openInTerminal/);
 });

@@ -54,7 +54,7 @@ export interface MyAppManifest {
 }
 
 export type MyAppResult = { ok: true; app: MyAppManifest } | { ok: false; reason: MyAppRefusal };
-export type MyAppRefusal = "empty" | "too-large" | "bad-id" | "not-found" | "write-failed";
+export type MyAppRefusal = "empty" | "too-large" | "bad-id" | "not-found" | "write-failed" | "no-version" | "install-failed" | "install-unsupported";
 
 /** An app id: a lowercase slug (letters, digits, single dashes), 1-64 characters. Nothing else names a folder. */
 export function isAppId(id: unknown): id is string {

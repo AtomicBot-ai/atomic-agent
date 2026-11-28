@@ -50,6 +50,8 @@ export interface ContextUsageView {
   parts: readonly ContextUsagePart[];
   /** Tools already load on demand through `tool.search`. */
   toolSearchActive: boolean;
+  /** The reply reserve the last prompt's budget held back (ATO-1678). */
+  replyReserve?: number;
 }
 
 /**
@@ -229,6 +231,7 @@ export function selectContextUsage(state: TuiState): ContextUsageView | null {
     pairCosts,
     parts = [],
     toolSearchActive = false,
+    replyReserve,
   } = state.contextUsage;
   // Nothing has been built yet: the chip stays off the bar rather than
   // showing a zero, which would claim the window is empty when what we
@@ -265,6 +268,7 @@ export function selectContextUsage(state: TuiState): ContextUsageView | null {
     sections,
     parts,
     toolSearchActive,
+    ...(replyReserve !== undefined ? { replyReserve } : {}),
   };
 }
 

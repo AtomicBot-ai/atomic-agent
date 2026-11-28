@@ -15,8 +15,10 @@ import type {
   LocalModelsNotifyPrompt,
   LocalModelsCoreFailure,
 } from "./local-models-panel-state.js";
+import type { ModelsDirAction } from "./models-dir-state.js";
 
 export type LocalModelsAction =
+  | ModelsDirAction
   | {
       type: "local_models_snapshot_loaded";
       rows: readonly LocalModelRow[];

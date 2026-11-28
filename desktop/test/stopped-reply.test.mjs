@@ -1,7 +1,7 @@
 // ATO-2005 (GitHub #828): only the loop guard's canned stop collapses into the
 // yellow warning row. A real answer the model writes after the stop (ATO-2004
-// gives it that last step) is a normal message, with a dim "Stopped by the
-// loop guard" line over it when the turn's `loop_stopped` frame marked it or
+// gives it that last step) is a normal message, with a dim "Stopped early:
+// it kept repeating a step" line over it when the turn's `loop_stopped` frame marked it or
 // it still opens with the guard's parenthesis (an older agent).
 // The templates below are the ones src/agent/progress/loop-notices.ts
 // formatForcedLoopReply produces. No deps, no build.
@@ -49,9 +49,10 @@ test("a real answer after the stop is a message, with the dim note over it", () 
     assert.equal(R.stoppedSentence(m), "", "not collapsed into the warning row");
     assert.equal(R.stoppedReplyBody(m), ANSWER, "the canned parenthesis and sentences come off");
     const note = R.stoppedNoteHTML(m, esc);
-    assert.match(note, />Stopped by the loop guard</);
+    assert.match(note, />Stopped early: it kept repeating a step</);
     assert.match(note, /class="turn tk-stopnote"/);
-    assert.ok(note.includes('title="' + esc(head) + '"'), "the canned text stays in the tooltip");
+    assert.ok(!note.includes(esc(head)), "the agent's canned text is not shown (ATO-2754)");
+    assert.doesNotMatch(note, /loop guard|os\.fs\.list|os\.web\.fetch/, "no jargon, no tool id");
   }
   // The answer may follow the parenthesis directly, without the canned sentences.
   const direct = asst("(stopped: `os.web.fetch` hit the limit on different arguments within recent tool calls \u2014 12, counting the last call, which was not run). " + ANSWER);
@@ -67,8 +68,8 @@ test("the loop_stopped frame drives the note for the model's own summary (ATO-20
   assert.equal(R.markLoopStopped(m, { tool: "os.web.fetch", detector: "wandering" }), true);
   assert.equal(m.loopStopped, true);
   const note = R.stoppedNoteHTML(m, esc);
-  assert.match(note, />Stopped by the loop guard</);
-  assert.ok(note.includes("os.web.fetch"), "the tooltip names what the guard stopped");
+  assert.match(note, />Stopped early: it kept repeating a step</);
+  assert.doesNotMatch(note, /os\.web\.fetch|loop guard/, "never the tool id or the jargon (ATO-2754)");
   assert.equal(R.stoppedReplyBody(m), ANSWER, "the answer is drawn unchanged");
   assert.equal(R.stoppedSentence(m), "", "a marked answer is still a message, not the warning row");
   // A marked reply that is only the canned fallback stays the warning row, without a second note.
@@ -98,7 +99,9 @@ test("placeholders and other rows are never a stop", () => {
 
 test("the note escapes the tooltip text", () => {
   const m = asst("(stopped: `a\"<b>` hit the limit on different arguments within recent tool calls). " + ANSWER);
-  const note = R.stoppedNoteHTML(m, esc);
+  globalThis.toolVerb = (n) => "Used " + n;   // renderer.js's fallback words for an unknown tool
+  let note;
+  try { note = R.stoppedNoteHTML(m, esc); } finally { delete globalThis.toolVerb; }
   assert.doesNotMatch(note, /<b>/);
   assert.match(note, /&quot;&lt;b&gt;/);
 });
@@ -114,4 +117,24 @@ test("renderer.js draws the answer through these helpers, loaded before it", () 
   assert.ok(at('<script src="stopped-reply.js">') >= 0);
   assert.ok(at('<script src="stopped-reply.js">') < at('<script src="renderer.js">'));
   assert.match(src("../renderer/css/chat.css"), /\.tk-stopnote-t\{/);
+});
+
+// ATO-2754: the tooltip names the stopped step in the tool cards' words, never its id.
+test("the note's tooltip says the step in plain words when renderer.js's toolVerb is there", () => {
+  globalThis.toolVerb = (n) => (n === "os.web.fetch" ? "Opened web pages" : n === "os.fs.list" ? "Listed files" : "Used " + n);
+  try {
+    const marked = asst(ANSWER);
+    R.markLoopStopped(marked, { tool: "os.web.fetch" });
+    const note = R.stoppedNoteHTML(marked, esc);
+    assert.match(note, /title="The agent kept repeating one step \(opened web pages\) without getting further/);
+    assert.doesNotMatch(note, /os\.web\.fetch/);
+    const old = R.stoppedNoteHTML(asst(REFUSED + "\n\n" + ANSWER), esc);
+    assert.match(old, /\(listed files\)/, "an older agent's parenthesis gives the step too");
+    assert.equal(R.stoppedReplyParts(WANDERING).tool, "os.web.fetch");
+  } finally {
+    delete globalThis.toolVerb;
+  }
+  // Without the table: no step named at all, rather than its id.
+  const bare = asst(ANSWER, { loopStopped: true, loopStoppedTool: "os.web.fetch" });
+  assert.match(R.stoppedNoteHTML(bare, esc), /title="The agent kept repeating one step without getting further/);
 });

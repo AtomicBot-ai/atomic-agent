@@ -80,6 +80,16 @@
 .qchip .qefield{flex:1 1 auto;min-width:0;max-height:120px;margin:0;padding:3px 0;border:0;outline:none;resize:none;
   background:transparent;font:inherit;line-height:1.4;color:var(--ink);field-sizing:content}
 .qchip .qfiles{flex:none;color:var(--ink-2)}
+/* ATO-2476: a chip is dragged (or moved with Alt+arrow) to another place; a bar shows where it lands. */
+.qchip[draggable="true"]{position:relative;cursor:grab}
+.qchip[draggable="true"]:focus-visible{outline:none;box-shadow:inset 0 0 0 1.5px var(--bd-2),var(--focus-ring)}
+.qchip.is-dragging{opacity:.45}
+.qchip.is-drop-before::before,.qchip.is-drop-after::after{content:"";position:absolute;top:2px;bottom:2px;width:2px;
+  border-radius:1px;background:var(--accent, var(--ink));pointer-events:none}
+.qchip.is-drop-before::before{left:-5px}
+.qchip.is-drop-after::after{right:-5px}
+.qchip .qn svg{width:13px;height:13px}
+.qorder-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 
 /* ---- Voice strip -------------------------------------------------------
    Always in the DOM; `hidden` while idle, so the display rule below must
@@ -382,6 +392,9 @@
   background:var(--lift);box-shadow:var(--sh-pop)}
 .slashrow.fmrow{display:flex}
 .slashrow.fmrow .cmd{flex:1;min-width:0}
+/* ATO-2751: what a kind row reads ("Uncommitted changes"), and the rows that cannot be picked. */
+.slashrow.fmrow .ds{flex:none;max-width:45%}
+.slashrow.fmstate.fm-wait .cmd{color:var(--ink-3);font-weight:400}
 .scroller:has(~ .composerwrap > .fmmenu) .emptychat{visibility:hidden}
 
 /* ---- Narrow windows ------------------------------------------------------ */

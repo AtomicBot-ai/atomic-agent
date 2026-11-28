@@ -20,7 +20,11 @@
    its own, made by the renderer from the call's `path` (chat-files.js
    cfOfficeWrite) with a "created" or "updated" badge where the counts go, so
    the card and the Results tab name the deck or the workbook the turn made
-   and a click opens the Office preview (office-preview.js).
+   and a click opens the Office preview (office-preview.js). ATO-2518: an agent
+   with `office_file: {path, change}` on the frame names the file itself, so the
+   row no longer depends on the call's label, which is clipped to 120 characters
+   and loses `path` when the blocks or slides come first; the label stays the
+   fallback for an older agent.
 
    An older agent sends no `diffstat`: no card, and the Results tab lists
    the reply's files without counts. The session store keeps no tool
@@ -64,6 +68,24 @@ function changedFileOfOfficeWrite(w, abs) {
   return {path, added: 0, removed: 0, office: w && w.created ? 'created' : 'updated'};
 }
 
+/** ATO-2518: the frame's `office_file`, checked: `{path, change}` (the file an ok
+    Office writer made or changed, absolute, as the agent wrote it) or null. An
+    older agent sends none; the row then comes from the call's path
+    (changedFileOfOfficeWrite), which the clipped `tool_progress` label can lose. */
+function officeFileOfFrame(p) {
+  const o = p && typeof p === 'object' ? p.office_file : null;
+  if (!o || typeof o !== 'object') return null;
+  if (typeof o.path !== 'string' || !o.path || /[\0\n]/.test(o.path)) return null;
+  if (o.change !== 'created' && o.change !== 'updated') return null;
+  return {path: o.path, change: o.change};
+}
+
+/** ATO-2518: the "Changed files" row for the frame's `office_file`, or null. */
+function changedFileOfOfficeFrame(p) {
+  const o = officeFileOfFrame(p);
+  return o ? {path: o.path, added: 0, removed: 0, office: o.change} : null;
+}
+
 /** The badge a merged row keeps: a file the turn created stays "created" through its later edits. */
 function changedFilesOffice(a, b) {
   const tag = a === 'created' || b === 'created' ? 'created' : (a || b);
@@ -100,12 +122,47 @@ function changedFilesCountsHTML(f, esc) {
   return parts.length ? parts.join(' ') : '<span class="cf-none">no line changes</span>';
 }
 
-function changedFilesRowHTML(f, deps) {
+/** ATO-2753: the folders that tell apart files of the same name, by path: two
+    `index.ts` from different folders get "src" and "test" (more of the path
+    while that is still the same), as VS Code labels editor tabs of the same
+    name. A file whose name is unique gets none. Written with the path's own
+    separator, so a Windows path reads `src\app`. */
+function changedFilesDirs(paths) {
+  const out = new Map();
+  const items = [...new Set((Array.isArray(paths) ? paths : []).filter((p) => typeof p === 'string' && p))].map((p) => {
+    const parts = p.replace(/[\\/]+$/, '').split(/[\\/]+/);
+    const name = parts.pop() || '';
+    return {p, name, dirs: parts.filter(Boolean), sep: p.indexOf('\\') >= 0 ? '\\' : '/', depth: 0};
+  });
+  const label = (it) => it.dirs.slice(it.dirs.length - it.depth).join(it.sep);
+  const key = (it) => it.name.toLowerCase() + '\u0000' + label(it).toLowerCase();
+  for (let round = 0; round < 64; round++) {
+    const groups = new Map();
+    for (const it of items) groups.set(key(it), (groups.get(key(it)) || []).concat(it));
+    let grew = false;
+    for (const g of groups.values()) {
+      if (g.length < 2) continue;
+      for (const it of g) if (it.depth < it.dirs.length) { it.depth++; grew = true; }
+    }
+    if (!grew) break;
+  }
+  for (const it of items) if (it.depth > 0) out.set(it.p, label(it));
+  return out;
+}
+
+function changedFilesRowHTML(f, deps, dirs) {
   const {esc, ic} = deps;
   const name = changedFilesBase(f.path) || f.path;
   const counts = typeof f.added === 'number' ? '<span class="cf-counts mono">' + changedFilesCountsHTML(f, esc) + '</span>' : '';
+  const dir = dirs && dirs.get(f.path);
   return '<button class="filechip cf-row" data-file="' + esc(f.path) + '" title="' + esc(f.path) + '">'
-    + (ic ? ic('doc') : '') + '<span class="cf-name">' + esc(name) + '</span>' + counts + '</button>';
+    + (ic ? ic('doc') : '') + '<span class="cf-name">' + esc(name) + '</span>'
+    + (dir ? '<span class="cf-dir">' + esc(dir) + '</span>' : '') + counts + '</button>';
+}
+/** Every row of one list, with the folders that tell same-named files apart. */
+function changedFilesRowsHTML(files, deps) {
+  const dirs = changedFilesDirs(files.map((f) => f.path));
+  return files.map((f) => changedFilesRowHTML(f, deps, dirs)).join('');
 }
 
 /** The card under a reply: '' when the turn changed no file this window heard of. */
@@ -114,7 +171,7 @@ function changedFilesCardHTML(list, deps) {
   if (!files.length) return '';
   return '<div class="cf-card" data-changed-files="' + files.length + '">'
     + '<div class="cf-head">Changed files (' + files.length + ')</div>'
-    + '<div class="cf-list">' + files.map((f) => changedFilesRowHTML(f, deps)).join('') + '</div></div>';
+    + '<div class="cf-list">' + changedFilesRowsHTML(files, deps) + '</div></div>';
 }
 
 /** The paths the card already shows, for the "Saved to" strip to leave out. */
@@ -152,9 +209,9 @@ function resultsPaneHTML(log, deps) {
   const changed = files.filter((f) => typeof f.added === 'number').length;
   return '<div class="cf-pane"><div class="insp-lbl">'
     + (changed ? 'Changed files (' + changed + ')' : 'Files') + (files.length > changed && changed ? ' · ' + (files.length - changed) + ' more' : '')
-    + '</div><div class="cf-list">' + files.map((f) => changedFilesRowHTML(f, deps)).join('') + '</div></div>';
+    + '</div><div class="cf-list">' + changedFilesRowsHTML(files, deps) + '</div></div>';
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {CHANGED_FILES_MAX, changedFileOfFrame, changedFilesOfFrame, changedFileOfOfficeWrite, changedFilesAdd, changedFilesBase, changedFilesCardHTML, changedFilesPaths, turnResultFiles, latestReply, resultsPaneHTML};
+  module.exports = {CHANGED_FILES_MAX, changedFileOfFrame, changedFilesOfFrame, changedFileOfOfficeWrite, officeFileOfFrame, changedFileOfOfficeFrame, changedFilesAdd, changedFilesBase, changedFilesDirs, changedFilesCardHTML, changedFilesPaths, turnResultFiles, latestReply, resultsPaneHTML};
 }

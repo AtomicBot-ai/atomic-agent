@@ -14,6 +14,11 @@
  *     command printed and "paste with Ctrl+Shift+V".
  * No terminal found: a clear message, the command still on the clipboard.
  *
+ * ATO-2782: `shell: "powershell"` in the request (the Agents sheet sends it,
+ * its launch line is PowerShell syntax) makes Windows Terminal open a
+ * PowerShell tab, not its default profile (terminal-pick.ts). Any other
+ * value is ignored; Linux and macOS ignore it too.
+ *
  * Pure apart from the fs calls and the injected spawn, clipboard and lookup.
  */
 
@@ -74,7 +79,7 @@ export async function openOtherTerminalWithCommand(payload: unknown, deps: Other
   const { platform } = deps;
   if (platform !== "win32" && platform !== "linux") return terminalFail("unsupported");
   if (!payload || typeof payload !== "object") return terminalFail("invalid-request");
-  const { command, cwd: rawCwd } = payload as { command?: unknown; cwd?: unknown };
+  const { command, cwd: rawCwd, shell } = payload as { command?: unknown; cwd?: unknown; shell?: unknown };
   const verdict = checkCommand(command);
   if (!verdict.ok) return terminalFail(verdict.error);
   const { cwd, usedHome } = resolveFolder(rawCwd, deps.home, deps.isDir);
@@ -96,7 +101,7 @@ export async function openOtherTerminalWithCommand(payload: unknown, deps: Other
     }
   }
 
-  const choices = terminalChoices(platform, deps.which, files?.launcher);
+  const choices = terminalChoices(platform, deps.which, files?.launcher, { powershell: shell === "powershell" });
   for (const choice of choices) {
     if (await deps.spawn(choice, cwd)) {
       return { ok: true, cwd, usedHome, terminal: choice.terminal, hint: pasteHint(platform, deps.shell) };
@@ -104,5 +109,5 @@ export async function openOtherTerminalWithCommand(payload: unknown, deps: Other
   }
   if (files) rmSync(files.dir, { recursive: true, force: true });
   if (choices.length === 0) return { ok: false, error: "no-terminal", message: noTerminalMessage(platform) };
-  return terminalFail("open-failed", "The command is on your clipboard.");
+  return terminalFail("open-failed", undefined, "The command is on your clipboard.");
 }

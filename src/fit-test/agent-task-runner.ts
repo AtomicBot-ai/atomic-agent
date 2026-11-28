@@ -30,6 +30,12 @@ export interface AgentTaskRunnerOptions {
   timeoutMs: number;
   defaultMaxSteps?: number;
   /**
+   * The person's `localModels.modelSampling`, carried into the child's
+   * config (ATO-2480) so a run with it off and one with it on can be
+   * compared. Absent: the child takes the schema default.
+   */
+  modelSampling?: boolean;
+  /**
    * Aborted when the fit-test is stopped (SIGINT / SIGTERM, ATO-1498): a
    * task not started yet is skipped, a running child gets SIGTERM and,
    * if still alive after a short grace, SIGKILL. The temp dirs go once it
@@ -41,11 +47,18 @@ export interface AgentTaskRunnerOptions {
 /** How long a stopped child gets to exit on SIGTERM before SIGKILL. */
 const STOP_KILL_GRACE_MS = 3000;
 
-/** The child's config: external mode on the loaded model, traces on for token counts. */
-export function childConfig(modelUrl: string): Record<string, unknown> {
+/**
+ * The child's config: external mode on the loaded model, traces on for
+ * token counts, and the parent's model-sampling switch when given.
+ */
+export function childConfig(modelUrl: string, modelSampling?: boolean): Record<string, unknown> {
   return {
     version: USER_CONFIG_VERSION,
-    localModels: { mode: "external", url: modelUrl },
+    localModels: {
+      mode: "external",
+      url: modelUrl,
+      ...(modelSampling !== undefined ? { modelSampling } : {}),
+    },
     tracing: { trace: { enabled: true } },
   };
 }
@@ -95,7 +108,7 @@ export function createAgentTaskRunner(options: AgentTaskRunnerOptions): (task: F
     const stateDir = join(root, "state");
     try {
       for (const dir of [workDir, stateDir]) mkdirSync(dir);
-      writeFileSync(join(stateDir, "config.json"), JSON.stringify(childConfig(options.modelUrl)), { mode: 0o600 });
+      writeFileSync(join(stateDir, "config.json"), JSON.stringify(childConfig(options.modelUrl, options.modelSampling)), { mode: 0o600 });
       const self = selfInvocation({ execPath: process.execPath, argv: process.argv, execArgv: process.execArgv, isSea: isSeaBuild() });
       const maxSteps = task.maxSteps ?? options.defaultMaxSteps ?? 15;
       const args = [...self.args, "run", "--cwd", workDir, "--max-steps", String(maxSteps)];

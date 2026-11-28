@@ -70,6 +70,7 @@ function stubModel(over: Partial<ResearchModel> = {}): ResearchModel {
         ]
       : [{ claim: "The library employs 120 staff.", quote: "The library now employs 120 staff across the county." }],
     summarise: async () => "Most staff work full time [1].",
+    judge: async () => null,
     ...over,
   };
 }

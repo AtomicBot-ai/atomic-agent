@@ -129,6 +129,12 @@ const ORCHESTRATOR: RoleSpec = {
     "fusion.delegate",
     "tool.view",
     "tool.search",
+    // ATO-2497: a task's orchestrator reports on its own board card. They
+    // change only that card (declared `readonly`, as `plan.update` is),
+    // and only a task's run is offered them (`board-card-visibility.ts`).
+    "tasks.request_review",
+    "tasks.block",
+    "tasks.comment",
     REPLY,
     FINISH,
   ]),

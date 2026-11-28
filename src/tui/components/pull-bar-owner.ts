@@ -32,6 +32,7 @@ export function localModelsPanelDrawsPullBanner(
     panel.mode !== "backendUpdate" &&
     panel.mode !== "hfRef" &&
     panel.mode !== "hfPick" &&
+    panel.mode !== "modelsDir" &&
     panel.mode !== "detail"
   );
 }
@@ -44,7 +45,7 @@ export function llmPanelDrawsPullBanner(state: TuiState): boolean {
   // The modal, Hugging Face and detail branches of `LlmPanel` replace
   // the whole pane, banner included.
   if (hasLlmModal(state) || isLocalModelsHfOpen(state)) return false;
-  return panel.mode !== "detail";
+  return panel.mode !== "detail" && panel.mode !== "modelsDir";
 }
 
 /**

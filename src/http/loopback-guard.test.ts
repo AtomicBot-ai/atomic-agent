@@ -1,5 +1,5 @@
 import { request } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { checkLoopbackRequest, isLoopbackHostname } from "./loopback-guard.js";
 import { startTestHarness, type Harness } from "./test-harness.js";
@@ -43,7 +43,10 @@ function fakeReq(method: string, headers: Record<string, string>) {
 }
 
 describe("checkLoopbackRequest (ATO-1495)", () => {
-  const opts = { env: {}, machineHostname: "nadyas-mac.local" };
+  const opts = { machineHostname: "nadyas-mac.local" };
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
 
   it("accepts loopback hosts with or without a port", () => {
     for (const host of ["localhost:8787", "127.0.0.1:8787", "127.4.5.6", "[::1]:8787", "app.localhost:8787", "nadyas-mac.local:8787", "nadyas-mac"]) {
@@ -57,15 +60,19 @@ describe("checkLoopbackRequest (ATO-1495)", () => {
     }
   });
 
-  it("refuses foreign and opaque origins, honours the allow-list", () => {
+  it("refuses foreign and opaque origins", () => {
     const host = "127.0.0.1:8787";
     expect(checkLoopbackRequest(fakeReq("GET", { host, origin: "https://evil.example" }), opts)?.code).toBe("origin_not_allowed");
     expect(checkLoopbackRequest(fakeReq("GET", { host, origin: "null" }), opts)?.code).toBe("origin_not_allowed");
     expect(checkLoopbackRequest(fakeReq("GET", { host, origin: "http://localhost:3000" }), opts)).toBeNull();
-    const env = { ATOMIC_AGENT_ALLOWED_ORIGINS: "https://app.example, chrome-extension://*" };
-    expect(checkLoopbackRequest(fakeReq("GET", { host, origin: "https://app.example" }), { ...opts, env })).toBeNull();
-    expect(checkLoopbackRequest(fakeReq("GET", { host, origin: "chrome-extension://abc" }), { ...opts, env })).toBeNull();
-    expect(checkLoopbackRequest(fakeReq("GET", { host, origin: "https://other.example" }), { ...opts, env })?.code).toBe("origin_not_allowed");
+  });
+
+  it("ignores ATOMIC_AGENT_ALLOWED_ORIGINS: only /mcp reads it (ATO-2475)", () => {
+    vi.stubEnv("ATOMIC_AGENT_ALLOWED_ORIGINS", "https://app.example, chrome-extension://*, *");
+    const host = "127.0.0.1:8787";
+    for (const origin of ["https://app.example", "chrome-extension://abc", "https://evil.example"]) {
+      expect(checkLoopbackRequest(fakeReq("GET", { host, origin }), opts)?.code, origin).toBe("origin_not_allowed");
+    }
   });
 
   it("wants JSON for a body, lets a bodyless POST through", () => {
@@ -86,8 +93,19 @@ describe("checkLoopbackRequest (ATO-1495)", () => {
 describe("serve without an API key (ATO-1495)", () => {
   let harness: Harness | null = null;
   afterEach(async () => {
+    vi.unstubAllEnvs();
     if (harness) await harness.cleanup();
     harness = null;
+  });
+
+  it("an origin listed in ATOMIC_AGENT_ALLOWED_ORIGINS still gets 403 on a keyless server (ATO-2475)", async () => {
+    vi.stubEnv("ATOMIC_AGENT_ALLOWED_ORIGINS", "https://app.example, *");
+    harness = await startTestHarness();
+    const { baseUrl } = harness;
+    const host = new URL(baseUrl).host;
+    const listed = await send(baseUrl, "POST", "/api/approval/resolve", { host, origin: "https://app.example", ...JSON_HEADERS }, RESOLVE_BODY);
+    expect(listed.status).toBe(403);
+    expect(JSON.parse(listed.body).error.code).toBe("origin_not_allowed");
   });
 
   it("refuses foreign Origin, rebinding Host, text/plain and foreign preflights; lets loopback and CLI clients in", async () => {

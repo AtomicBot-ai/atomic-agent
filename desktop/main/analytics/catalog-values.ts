@@ -10,6 +10,8 @@ export const ONBOARDING_STEPS = [
   "intro", "choose", "local_pick", "local_hf_ref", "local_hf_pick", "local_download", "wait_or_jump",
   "cloud", "custom_chat_url", "custom_embedding_url", "propose_second", "import_pick", "import_preview",
   "import_done", "finished", "other",
+  // ATO-2489: the setup step listing the model servers found running here.
+  "found_server",
 ] as const;
 
 /** Provider preset ids (src/llm/provider/presets/provider-presets.ts + the built-in cloud kinds). */
@@ -98,11 +100,11 @@ export const SLASH_COMMANDS = [
     `shell_dangerous`, was counted as `other`. The renderer keeps the same
     list (analytics.js APPROVAL_CATEGORY_IDS); a test holds the three in step. */
 export const APPROVAL_CATEGORIES = [
-  "fs_write_workspace", "fs_write_home", "fs_trash", "http", "shell", "shell_dangerous", "script", "proc_kill", "publish",
+  "fs_write_workspace", "fs_write_home", "fs_trash", "http", "shell", "shell_dangerous", "shell_secret", "script", "proc_kill", "publish",
   "git_remote", "fusion_fanout", "browser_nonweb", "browser_commit", "browser_secret", "browser_offsite",
   "trust_config", "state_secret", "email", "fs_read_outside", "paid_generation", "screen_control", "screen_capture",
   "local_model_restart", "hook_ask", "http_write", "browser_site_tool", "user_question",
-    "session_cross", "browser_take_over", "logbook_cloud", "other",
+    "session_cross", "browser_take_over", "logbook_cloud", "shell_secret_input", "other",
 ] as const;
 export const SETTINGS_PANES = [
   "general", "models", "mcp", "telegram", "composio", "memory", "tasks", "webhooks", "skills", "privacy", "import", "diagnostics",
