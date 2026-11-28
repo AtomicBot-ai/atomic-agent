@@ -56,7 +56,7 @@ export type AgentJobSecretAnswer =
   | { ok: false; error: string };
 
 /**
- * The person's answer to a `shell_secret` request (ATO-2486): the value
+ * The person's answer to a `shell_secret_input` request (ATO-2486): the value
  * for `POST /api/shell/secret`, or a skip. Checked like the agent checks
  * it (one line, not empty, at most 1024 characters, one trailing line
  * break dropped); a refusal never names the value.

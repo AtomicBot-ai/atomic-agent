@@ -1395,7 +1395,7 @@ export class AgentClient extends EventEmitter {
     this.request<unknown>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/shell-jobs/${jobId}/resize`, { cols, rows });
   stopShellJob = (sessionId: string, jobId: number) =>
     this.request<unknown>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/shell-jobs/${jobId}/stop`, {});
-  /* ATO-2486: a job's password the agent asked for (`shell_secret`), as
+  /* ATO-2486: a job's password the agent asked for (`shell_secret_input`), as
      answerQuestion does: 400 keeps the request open, the body comes back
      as is. The value is never logged here. */
   answerShellSecret = async (approvalId: string, answer: { value: string } | { skip: true }): Promise<unknown> => {

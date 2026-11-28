@@ -1,4 +1,4 @@
-// ATO-2486: a job's password the agent asked for (`shell_secret`), as the
+// ATO-2486: a job's password the agent asked for (`shell_secret_input`), as the
 // chat draws it (renderer/shell-secret-card.js). The value is typed in the
 // terminal panel (agent-jobs.js) and sent to POST /api/shell/secret.
 import { test } from 'node:test';

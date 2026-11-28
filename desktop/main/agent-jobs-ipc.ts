@@ -38,7 +38,7 @@ async function answer(call: () => Promise<unknown>): Promise<Answer> {
 
 const gone: Answer = { ok: false, error: "That job is not open any more", unsupported: false };
 
-/** Told when a `shell_secret` request was answered, so the turn and the pet leave "approval". */
+/** Told when a `shell_secret_input` request was answered, so the turn and the pet leave "approval". */
 export type AgentJobSecretAnswered = (approvalId: string, skipped: boolean) => void;
 
 export function wireAgentJobsIpc(client: AgentClient, onSecretAnswered?: AgentJobSecretAnswered): void {
