@@ -31,6 +31,21 @@ is neither on its command line, which any program can read with `ps`
 read with `ps eww` or `/proc/<pid>/environ` (ATO-2538,
 [serve-launch.ts](main/serve-launch.ts)).
 
+**Connect phone (ATO-2493).** Settings › Connections › Connect phone opens
+the agent's web panel on a phone without typing the key. Off by default, as
+above. Its switch "Allow phones on this Wi-Fi" (like LM Studio's "Serve on
+Local Network") restarts the agent on `--host 0.0.0.0` and the fixed port
+19193 while it is on (a free port when 19193 is taken), so a phone's saved
+address keeps working; the per-launch key still guards every route, and a
+phone gets in only with a one-time QR link or short code made on this card
+(`POST /api/devices/pairing`), as a member that cannot change settings. The
+card lists paired phones with when each was last seen (`GET /api/devices`)
+and signs one out (`DELETE /api/devices/{id}`). The setting is
+`desktop-phone-access.json` in the state directory
+([phone-access.ts](main/phone-access.ts), [phone-ipc.ts](main/phone-ipc.ts),
+[renderer/phone-connect.js](renderer/phone-connect.js)). Reaching the phone
+away from this network (a tunnel) is not part of it yet.
+
 **Folder trust (ATO-1250).** A folder's own skills and instruction files
 (`AGENTS.md`, `.atomic-agent/skills`, …) load only after the person trusts
 that folder. Whenever the chat's folder changes, the window reads

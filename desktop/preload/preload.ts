@@ -626,6 +626,12 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1129: Settings › Connections › Phone push (main/push-ipc.ts). */
   pushStatus: () => ipcRenderer.invoke("cli:pushStatus"),
   pushSet: (op: "on" | "off" | "test" | "newTopic") => ipcRenderer.invoke("cli:pushSet", op),
+  /** ATO-2493: Settings › Connections › Connect phone (main/phone-ipc.ts). */
+  phoneStatus: () => ipcRenderer.invoke("phone:status"),
+  phoneSetEnabled: (enabled: boolean) => ipcRenderer.invoke("phone:setEnabled", { enabled }),
+  phonePair: () => ipcRenderer.invoke("phone:pair"),
+  phoneDevices: () => ipcRenderer.invoke("phone:devices"),
+  phoneRevoke: (id: string) => ipcRenderer.invoke("phone:revoke", { id }),
   pluginSet: (name: string, op: "enable" | "disable" | "allow-code" | "deny-code", part?: string) =>
     ipcRenderer.invoke("cli:pluginSet", { name, op, part }),
   pluginRemove: (name: string) => ipcRenderer.invoke("cli:pluginRemove", name),

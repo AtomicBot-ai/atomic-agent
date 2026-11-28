@@ -24,6 +24,7 @@ import {
   type TelegramPairingOp,
   type TelegramPairingResult,
 } from "./telegram-pairing.js";
+import { readPhoneAccess, serveHostFor, servePortFor, withServeHost } from "./phone-access.js";
 import {
   agentBinaryCandidates,
   bundledAgentFileName,
@@ -820,6 +821,32 @@ export class AgentClient extends EventEmitter {
     }
   }
 
+  /** ATO-2493: the host the last spawned `atag serve` listens on (phone-access.ts); loopback by default. */
+  listenHost = "127.0.0.1";
+
+  /**
+   * ATO-2493: one of the agent's paired-phone routes (`/api/devices/*`,
+   * src/http/route-devices.ts), answered as the status and the parsed JSON
+   * body (null when there is none); phone-devices.ts words the answer. A
+   * request that never got one throws.
+   */
+  async devicesRoute(method: "GET" | "POST" | "DELETE", path: string): Promise<{ status: number; body: unknown }> {
+    const res = await fetch(`${this.base()}/api/devices${path}`, {
+      method,
+      headers: this.headers(),
+      ...(method === "POST" ? { body: "{}" } : {}),
+      signal: AbortSignal.timeout(10_000),
+    });
+    let parsed: unknown = null;
+    try {
+      const raw = await res.text();
+      parsed = raw ? JSON.parse(raw) : null;
+    } catch {
+      /* not JSON */
+    }
+    return { status: res.status, body: parsed };
+  }
+
   /** The bearer token: the remote agent's, or the one this client gave its own `atag serve`. */
   private authToken(): string {
     return this.remote ? this.remote.token : this.token;
@@ -983,11 +1010,14 @@ export class AgentClient extends EventEmitter {
       this.emit("orphan-reaped");
     }
     const token = randomBytes(24).toString("hex");
-    const port = await freePort();
+    // ATO-2493: Settings › Connect phone's "Allow phones on this Wi-Fi" (phone-access.ts): 0.0.0.0 on a fixed port.
+    const phones = readPhoneAccess();
+    const port = await servePortFor(phones, freePort);
     // Backlog 41: a stop came while the port was found. Nothing was spawned, and there is nothing to say.
     if (superseded()) return gaveWay();
     this.token = token;
     this.port = port;
+    this.listenHost = serveHostFor(phones);
     this.setStatus({ state: "starting", binary, port, error: null });
     /* A "status" listener runs inside that call, and one that stopped the
        client has already looked for a child to end and found none: nothing
@@ -1001,7 +1031,7 @@ export class AgentClient extends EventEmitter {
       child = startServe(
         binary,
         // ATO-2538: the key goes on stdin, in neither the command line nor the environment.
-        serveSpawnArgs(port, serveWatchArgs(process.platform, sentinel?.pid)),
+        withServeHost(serveSpawnArgs(port, serveWatchArgs(process.platform, sentinel?.pid)), serveHostFor(phones)),
         {
           cwd: this.status.workingDir,
           // r5 item 9: `atag serve` runs on the desktop's own state directory.

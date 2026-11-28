@@ -1235,7 +1235,7 @@ const MENU_ACTS = {
 const SETTINGS_SECTIONS = [
   ['general','General','sliders',['general']],
   ['models','Models','cpu',['llm']],
-  ['connections','Connections','plug',['mcp','telegram','discord','push','composio','monid']],   // ATO-516: discord-settings.js; ATO-1630: monid.js
+  ['connections','Connections','plug',['mcp','telegram','discord','push','phone','composio','monid']],   // ATO-516: discord-settings.js; ATO-1630: monid.js; ATO-2493: phone-connect.js
   ['memory','Memory','memory',['memory']],
   ['myfiles','My files','folder',['myfiles']],   // ATO-1626: renderer/my-files.js
   ['myapps','My apps','window',['myapps']],   // ATO-2383: renderer/my-apps.js
@@ -1249,7 +1249,7 @@ const SETTINGS_SECTIONS = [
   ['diagnostics','Diagnostics','gauge',['diagnostics']],
 ];
 /* Every pane, in nav order: [pane id, the name it goes by]. */
-const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['discord','Discord'],['push','Phone push'],['composio','Composio'],['monid','Monid'],['memory','Memory'],
+const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['discord','Discord'],['push','Phone push'],['phone','Connect phone'],['composio','Composio'],['monid','Monid'],['memory','Memory'],
                        ['tasks','Scheduled tasks'],['webhooks','Webhooks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
 SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'memory') + 1, 0, ['myfiles','My files']);   // ATO-1626
 SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'myfiles') + 1, 0, ['myapps','My apps']);   // ATO-2383
@@ -2131,6 +2131,7 @@ const PAL = [
     ['send','Telegram','Settings · Connections','/telegram','settings:telegram'],
     ['chat','Discord','Settings · Connections','','settings:discord'],
     ['bell','Phone push','Settings · Connections','','settings:push'],
+    ['plug','Connect phone','Settings · Connections','','settings:phone'],   // ATO-2493
     ['link','Composio','Settings · Connections','','settings:composio'],
     ['link','Monid','Settings · Connections','','settings:monid'],
     ['memory','Memory','Settings','⌘ 4','settings:memory'],
@@ -6751,6 +6752,7 @@ function settingsPaneEntered(opened) {
   else if (pane === 'telegram') telegramTabEntered();
   else if (pane === 'discord') discordTabEntered();
   else if (pane === 'push') phonePushTabEntered();   // ATO-1129 (phone-push.js)
+  else if (pane === 'phone') phoneTabEntered();   // ATO-2493 (phone-connect.js)
   else if (pane === 'composio') composioTabEntered();
   else if (pane === 'monid') monidTabEntered();   // ATO-1630 (monid.js)
   else if (pane === 'import') importTabEntered();
@@ -6782,6 +6784,7 @@ function settingsPane() {
   if (p === 'telegram') return telegramTab();
   if (p === 'discord') return discordTab();
   if (p === 'push') return pushTab();
+  if (p === 'phone') return phoneTab();   // ATO-2493
   if (p === 'composio') return composioTab();
   if (p === 'monid') return monidTab();
   if (p === 'import') return importTab();
@@ -7881,6 +7884,7 @@ function act(a) {
   if (k === 'telegram') { close(); telegramAct(a.slice(9)); return; }
   if (k === 'discord') { close(); discordAct(a.slice(8)); return; }
   if (k === 'push') { close(); phonePushAct(a.slice(5)); return; }
+  if (k === 'phone') { close(); phoneConnectAct(a.slice(6)); return; }   // ATO-2493 (phone-connect.js)
   if (k === 'composio') { close(); composioAct(a.slice(9)); return; }
   if (k === 'monid') { close(); monidAct(a.slice(6)); return; }
   // ATO-328: Save on the Exa key card or its Settings row. No close(): the card is in the chat, the row in Settings.

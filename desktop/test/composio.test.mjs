@@ -132,8 +132,8 @@ test('the copy has no em dash and does not claim nothing leaves the machine', ()
 });
 
 test('Composio sits in Connections, in the tab list and the palette', () => {
-  assert.match(source, /\['connections','Connections','plug',\['mcp','telegram','discord','push','composio','monid'\]\]/);
-  assert.match(source, /\['telegram','Telegram'\],\['discord','Discord'\],\['push','Phone push'\],\['composio','Composio'\],\['monid','Monid'\],\['memory','Memory'\]/);
+  assert.match(source, /\['connections','Connections','plug',\['mcp','telegram','discord','push','phone','composio','monid'\]\]/);
+  assert.match(source, /\['telegram','Telegram'\],\['discord','Discord'\],\['push','Phone push'\],\['phone','Connect phone'\],\['composio','Composio'\],\['monid','Monid'\],\['memory','Memory'\]/);
   assert.match(source, /\['link','Composio','Settings · Connections','','settings:composio'\]/);
   for (const hook of ["pane === 'composio') composioTabEntered()", "p === 'composio') return composioTab()",
     "k === 'composio') { close(); composioAct(a.slice(9))", "pane === 'composio' && composioKey(e, k, inText)"]) {

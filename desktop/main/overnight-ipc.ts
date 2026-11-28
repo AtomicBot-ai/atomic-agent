@@ -24,8 +24,8 @@ export interface OvernightIpcDeps {
   client: {
     status: { state: string; workingDir: string };
     isRemote: boolean;
-    /** `GET /health?llama=0`: a remote agent reports its own folder here. */
-    turnsHealth: () => Promise<unknown>;
+    /** `GET /api/capabilities`: a remote agent reports its own folder here, to a caller with the key. */
+    capabilities: () => Promise<unknown>;
     createTask: (body: Record<string, unknown>) => Promise<unknown>;
   };
 }
@@ -48,7 +48,7 @@ export function wireOvernightIpc(deps: OvernightIpcDeps): void {
     let remoteFolder: string | undefined;
     if (deps.client.isRemote) {
       if (deps.client.status.state !== "connected") return notRunning;
-      const folder = remoteAgentFolder(await deps.client.turnsHealth().catch(() => null));
+      const folder = remoteAgentFolder(await deps.client.capabilities().catch(() => null));
       if (!folder) return { ok: false, error: "The agent on the other computer did not say which folder it works in." };
       remoteFolder = folder;
     }
