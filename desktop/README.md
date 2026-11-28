@@ -834,6 +834,12 @@ Honestly degraded, and labelled as such in the UI:
   browsers or protected apps) into the draft's `snapshots/`, shown in its
   preview under To review and deleted with the draft
   (`main/show-once-snapshots.ts`, `renderer/show-once-draft.js`).
+  Replay check: each step of the SKILL.md ends with a "Check:" line (the
+  window that should be in front after it, from the recorded titles), and
+  the replay rules stop at the first step that does not match and say
+  "Replay stopped at step N of M: expected ..., saw ...". **Test skill** in a
+  recorded draft's preview opens a new chat whose first message is a dry run
+  of the draft (it is not installed yet, so its text goes along).
 - **Memory** reads `<stateDir>/memory.sqlite` read-only (`sqlite3`, falling
   back to `node:sqlite`) with the stores' own statements, named and
   parameterised in the main process — the agent has no memory route.
