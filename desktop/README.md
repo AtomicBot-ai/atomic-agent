@@ -186,6 +186,35 @@ preview or a preview the bubble cannot show whole (more than one line, or clippe
 or the categories kept for the full card (`PET_WINDOW_ONLY_CATEGORIES`): those offer
 Review. Do Not Disturb hides the bubble and the done / failed flashes.
 
+**Desktop pet, part 2 (ATO-2513).** Turns the desktop did not start (a cron
+task, a Telegram message, the terminal on the same agent) show too: while the
+pet is up it reads the 25 newest session rows every 5 s (`GET /api/sessions`:
+`running` while a turn is in flight, then the status it ended on), skipping
+the sessions this window's own turns run in
+([pet-outside.ts](main/pet-outside.ts), [pet-outside-poll.ts](main/pet-outside-poll.ts)).
+A click on the bubble lets the pet take the keyboard: Tab between the
+buttons, Enter is Allow once, Esc is Deny (Hide for a question), with a ring
+on the focused button and the keys named under them; it gives the keyboard
+back when focus leaves or the bubble goes ([pet-window.ts](main/pet-window.ts)
+`keyboard`). Keys answer only the request that was shown when the person
+clicked, after it has been on screen half a second, never from a held key;
+mouse clicks on Allow and Deny follow the same rule, and the second click of
+a double-click never answers;
+when the shown request changes the keyboard is dropped and the next one needs
+its own click, and main refuses an answer for any request but the one its last
+view showed (`petKeyArmed` in renderer/pet.js, `shownId` in main/pet-ipc.ts). View › Desktop Pet › Make Your Own Pet… (also in the pet's
+right-click menu, under Pet) makes four pictures from a description with
+Studio's image generation, the same Core jobs `image.generate` runs: a
+downloaded local model is free, a cloud one shows its price on the Make
+button before anything runs ([pet-maker.js](renderer/pet-maker.js),
+[pet-maker-logic.js](renderer/pet-maker-logic.js)). They are kept in
+`<userData>/pets/<id>/`, the one that shows in `<userData>/pets/selected.json`
+([pet-skins.ts](main/pet-skins.ts), [pet-skins-ipc.ts](main/pet-skins-ipc.ts));
+Pet in the right-click menu and the dialog switch between them, Delete moves
+one to the Trash. The state machine is kept in step with the terminal's
+(`src/tui/pet/pet-machine.ts`, `/pet`) by one shared table of cases
+(`src/tui/pet/pet-machine.fixture.json`, [pet-fixture.test.mjs](test/pet-fixture.test.mjs)).
+
 **Why not the NDJSON sidecar.** `dist/sidecar/main.js` exists only in a source
 checkout, and the shipped single-file binary has no `sidecar` subcommand. A
 desktop app has to work against what people installed. The sidecar also has no
@@ -2114,7 +2143,7 @@ desktop/
   main/backend-switch.ts the TUI's backend/provider/model decisions, main-side
   main/main.ts           lifecycle, window, IPC, the smoke harness
   main/menu.ts           the native menu bar
-  main/pet-*.ts          the desktop pet: frames to states, the window, its routes (ATO-2391)
+  main/pet-*.ts          the desktop pet: frames to states, the window, its routes (ATO-2391), outside turns and made pets (ATO-2513)
   main/edit-context-menu.ts  the right-click edit menu and spellcheck switch
   main/speech.ts         the one voice-input child: probe, start/stop, audio, install
   main/updater.ts        app updates (electron-updater), only ever on a click

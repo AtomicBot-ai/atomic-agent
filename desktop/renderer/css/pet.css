@@ -191,3 +191,22 @@ html, body {
   cursor: pointer;
   padding: 2px 4px;
 }
+
+/* ---- ATO-2513: the bubble from the keyboard ---- */
+/* A ring on whatever has focus, also after a click (focus-visible would hide it then). */
+.b-btn:focus, .b-x:focus { outline: 2px solid var(--pet-blue-lit); outline-offset: 2px; }
+.b-primary:focus { outline-color: var(--pet-blue-lit); box-shadow: 0 0 0 1px #fff inset; }
+.bubble:focus-within { border-color: var(--pet-blue-lit); }
+/* The key hint takes the "more waiting" line's place (it repeats the count) while the bubble has focus. */
+.b-keys { display: none; margin-top: 5px; font-size: var(--fs-micro); color: var(--pet-ink-2); }
+.bubble:focus-within .b-keys { display: block; }
+.bubble:focus-within .b-more { display: none; }
+
+/* ---- ATO-2513: a pet the person made ---- */
+.skin { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; border-radius: 22px; animation: pet-bob 3.2s ease-in-out infinite; pointer-events: none; }
+.skin[hidden] { display: none; }
+.has-skin .sprite svg { display: none; }
+.has-skin.st-sleeping .skin { opacity: .75; animation-duration: 6s; }
+.has-skin.st-working .skin { animation-duration: 1.2s; }
+.has-skin.dnd .skin { opacity: .6; }
+@media (prefers-reduced-motion: reduce) { .skin { animation: none; } }

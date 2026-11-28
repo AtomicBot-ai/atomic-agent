@@ -118,6 +118,8 @@ export function reduceUiAction(
       return { ...state, showSteps: action.on };
     case "verbose_steps_set":
       return { ...state, verboseSteps: action.on };
+    case "pet_set":
+      return { ...state, pet: action.on };
     case "vim_mode_set":
       return { ...state, vimMode: action.on };
     case "menu_opened":

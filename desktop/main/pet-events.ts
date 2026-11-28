@@ -53,6 +53,8 @@ export const PET_WINDOW_ONLY_CATEGORIES: readonly string[] = [
   "trust_config",
   "browser_secret",
   "state_secret",
+  // A password the agent asks the person to type into its job (ATO-2486): Allow would type nothing.
+  "shell_secret_input",
 ];
 
 /** A turn with no frame for this long is taken as gone (its end frame was lost). */
@@ -178,6 +180,8 @@ export class PetTracker {
   private readonly turns = new Map<string, TurnRec>();
   private readonly approvals = new Map<string, PetApproval>();
   private readonly closed = new Set<string>();
+  /** ATO-2513: when this window's last turn in a session ended, so pet-outside.ts skips that session. */
+  private readonly ownEnded = new Map<string, number>();
 
   /** One `chat` event. Returns how the turn ended, when this frame ended it. */
   observeChat(raw: unknown, now: number): PetEnding | null {
@@ -213,9 +217,25 @@ export class PetTracker {
     else if (kind === "done") ending = t.heldError && !t.workAfterError ? "error" : "done";
     if (!ending) return null;
     this.turns.delete(ev.turnId);
-    // A request of a turn that is over waits for nothing any more.
-    if (t.sessionId) for (const a of [...this.approvals.values()]) if (a.sessionId === t.sessionId) this.drop(a.approvalId);
+    if (t.sessionId) {
+      this.sessionEnded(t.sessionId);
+      this.ownEnded.set(t.sessionId, now);
+      if (this.ownEnded.size > CLOSED_MAX) this.ownEnded.delete(this.ownEnded.keys().next().value as string);
+    }
     return ending;
+  }
+
+  /** A turn in that session is over (this window's, or an outside one): its requests wait for nothing any more. */
+  sessionEnded(sessionId: string): boolean {
+    let dropped = false;
+    for (const a of [...this.approvals.values()]) if (a.sessionId === sessionId) { this.drop(a.approvalId); dropped = true; }
+    return dropped;
+  }
+
+  /** ATO-2513: this window's turn runs in that session, or one ended there at or after `since`. */
+  ownSession(sessionId: string, since: number): boolean {
+    for (const t of this.turns.values()) if (t.sessionId === sessionId) return true;
+    return (this.ownEnded.get(sessionId) ?? -1) >= since;
   }
 
   /** One `approval` event. True when it is a new request for the bubble. */

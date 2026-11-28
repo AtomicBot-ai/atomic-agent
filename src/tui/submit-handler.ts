@@ -564,6 +564,18 @@ export function runSlashCommand(
         : "verbose steps off",
     });
   }
+  // `/pet` (ATO-2513): same shape as `/verbose`, written to `tui.pet`.
+  if (result.petVerb) {
+    const on = result.petVerb === "toggle" ? !state.pet : result.petVerb === "on";
+    dispatch({ type: "pet_set", on });
+    callbacks.onPetPersistRequested?.(on);
+    dispatch({
+      type: "system_message",
+      text: on
+        ? "pet on: it sits in the top bar and shows what the agent is doing (/pet off to hide)"
+        : "pet off",
+    });
+  }
   // `/vim`: same shape as `/steps`, written to `tui.vimMode` (ATO-662).
   if (result.vimVerb) {
     const on =

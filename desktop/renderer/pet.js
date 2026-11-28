@@ -42,7 +42,68 @@ function petBubbleModel(view, hidden) {
     deny: !a.question,
     openLabel: a.question ? 'Answer in Atomic Agent' : inWindow ? 'Review' : 'Open',
     more: view.more > 0 ? view.more + ' more waiting' : '',
+    keys: petKeysLine(a.canAllow === true && !a.question, !a.question, view.more),
   };
+}
+
+/* ATO-2513: the bubble from the keyboard. A click on the bubble or the
+   sprite lets the pet window take the keyboard (pet:focus); Tab moves
+   between the buttons, Enter is Allow once (on a focused button: that
+   button), Esc is Deny (Hide for a question, which the bubble never
+   answers). The line under the buttons says so while the bubble has focus. */
+
+/** The hint shown while the bubble has the keyboard. */
+function petKeysLine(allow, deny, more) {
+  const parts = [];
+  if (allow) parts.push('Enter: Allow once');
+  parts.push(deny ? 'Esc: Deny' : 'Esc: Hide');
+  if (more > 0) parts.push(more + ' more waiting');
+  return parts.join(' \u00b7 ');
+}
+
+/**
+ * What a key does in the bubble: 'allow', 'deny', 'hide', or null (let
+ * the focused button take it). `focused` is the id of the focused element.
+ */
+function petBubbleKey(key, model, focused) {
+  if (!model) return null;
+  if (key === 'Escape') return model.deny ? 'deny' : 'hide';
+  if (key !== 'Enter') return null;
+  // A focused button other than Allow does its own job on Enter.
+  if (focused && focused !== 'b-allow' && /^b-/.test(focused)) return null;
+  return model.allow ? 'allow' : null;
+}
+
+/* A key answers only the request the person clicked the bubble for, after
+   it has been on screen PET_KEY_ARM_MS, and never from a held key: when the
+   shown request changes (answered, gone, the next one in the queue), the
+   keyboard is dropped and the next one needs its own click. */
+const PET_KEY_ARM_MS = 500;
+
+/**
+ * May a key press answer `model` now? `keyFor` is the approvalId shown when
+ * the person took the keyboard, `shownAt` when the bubble first drew it.
+ */
+function petKeyArmed(repeat, model, keyFor, shownAt, now) {
+  if (repeat || !model || model.approvalId !== keyFor) return false;
+  return now - shownAt >= PET_KEY_ARM_MS;
+}
+
+/** The button the keyboard lands on: Allow once, else Deny, else Open. */
+function petFirstButton(model) {
+  if (!model) return null;
+  return model.allow ? 'b-allow' : model.deny ? 'b-deny' : 'b-open';
+}
+
+/* ATO-2513: a pet the person made. Four pictures cover the seven states,
+   as main/pet-skins.ts petSkinFrame maps them. */
+const PET_SKIN_FRAME = {working: 'working', thinking: 'working', waiting: 'waiting', error: 'waiting', sleeping: 'sleeping'};
+
+/** The picture for `state` from a made pet's frames, or null (the built-in atom). */
+function petSkinSrc(frames, state) {
+  if (!frames || typeof frames !== 'object') return null;
+  const src = frames[PET_SKIN_FRAME[state] || 'idle'];
+  return typeof src === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(src) ? src : null;
 }
 
 /** The body's class list for a view: its state, and dnd. */
@@ -61,16 +122,39 @@ function petBoot() {
   let view = null;
   let busy = null;   // approvalId whose answer is on its way
   let msg = '';
+  let skin = null;        // ATO-2513: a made pet's frames, or null for the atom
+  let keyboard = false;   // ATO-2513: the pet window has the keyboard
+  let keyFor = null;      // the approvalId the person took the keyboard for
+  let shownId = null;     // the approvalId the bubble shows, since shownAt
+  let shownAt = 0;
+  const takeKeys = () => {
+    keyFor = shownId;
+    if (!keyboard && BR.focus) { keyboard = true; BR.focus(true); }
+  };
+  const dropKeys = () => {
+    keyFor = null;
+    if (keyboard && BR.focus) { keyboard = false; BR.focus(false); }
+  };
+  const armed = (repeat) => petKeyArmed(repeat, petBubbleModel(view, hidden), keyFor, shownAt, Date.now());
 
   const paint = () => {
-    document.body.className = petBodyClass(view);
+    const src = petSkinSrc(skin, view ? view.state : 'idle');
+    document.body.className = petBodyClass(view) + (src ? ' has-skin' : '');
+    const img = $('skin');
+    if (img) { img.hidden = !src; if (src && img.getAttribute('src') !== src) img.src = src; }
     const label = (view && view.label) || 'Atomic Agent';
     sprite.setAttribute('aria-label', label);
     sprite.title = label;
     $('badge').textContent = petBadge(view);
     const m = petBubbleModel(view, hidden);
     bubble.hidden = !m;
-    if (!m) { msg = ''; return; }
+    // ATO-2513: no bubble, no keyboard: the window goes back to never taking it.
+    if (!m) { msg = ''; shownId = null; dropKeys(); return; }
+    if (m.approvalId !== shownId) {
+      shownId = m.approvalId;
+      shownAt = Date.now();
+      if (keyFor !== null) dropKeys();
+    }
     $('b-title').textContent = m.title;
     $('b-text').textContent = m.text;
     $('b-detail').textContent = m.detail;
@@ -84,6 +168,7 @@ function petBoot() {
     $('b-open').textContent = m.openLabel;
     $('b-more').textContent = m.more;
     $('b-more').hidden = !m.more;
+    $('b-keys').textContent = m.keys;
     const sending = busy === m.approvalId;
     $('b-allow').disabled = sending;
     $('b-deny').disabled = sending;
@@ -92,24 +177,51 @@ function petBoot() {
   const answer = (decision) => {
     const m = petBubbleModel(view, hidden);
     if (!m || busy) return;
+    const answering = m.approvalId;
     busy = m.approvalId;
     msg = 'Sending…';
     paint();
     BR.answer(m.approvalId, decision).then((res) => {
       busy = null;
-      if (res && res.ok) { msg = ''; hidden.add(m.approvalId); }
+      if (res && res.ok) { msg = ''; hidden.add(answering); if (keyFor === answering) dropKeys(); }
       else msg = (res && res.error) || 'The answer did not go through. Open Atomic Agent to answer it.';
       paint();
     }, () => { busy = null; msg = 'The answer did not go through. Open Atomic Agent to answer it.'; paint(); });
   };
 
-  $('b-allow').addEventListener('click', () => answer('allow'));
-  $('b-deny').addEventListener('click', () => answer('deny'));
+  // A click, by mouse or by Enter/Space on the button (detail 0), is held to the
+  // same rule as the keys: the request the press began on (pointerdown took it),
+  // shown PET_KEY_ARM_MS. The second click of a double-click never answers, so
+  // a double-click on A's Allow cannot approve B arriving under the pointer.
+  const pressed = (e) => !(e && e.detail > 1) && armed(false);
+  $('b-allow').addEventListener('click', (e) => { if (pressed(e)) answer('allow'); });
+  $('b-deny').addEventListener('click', (e) => { if (pressed(e)) answer('deny'); });
   $('b-open').addEventListener('click', () => BR.open());
-  $('b-close').addEventListener('click', () => {
+  const hide = () => {
     const m = petBubbleModel(view, hidden);
     if (m) hidden.add(m.approvalId);
     paint();
+  };
+  $('b-close').addEventListener('click', hide);
+
+  /* ATO-2513: the keyboard; main lets the window take it only after a click here. */
+  bubble.addEventListener('pointerdown', takeKeys);
+  window.addEventListener('focus', () => {
+    const m = petBubbleModel(view, hidden);
+    if (!m || bubble.contains(document.activeElement)) return;
+    const id = petFirstButton(m);
+    if (id && $(id)) $(id).focus();
+  });
+  window.addEventListener('blur', () => { keyboard = false; keyFor = null; });
+  document.addEventListener('keydown', (e) => {
+    const m = petBubbleModel(view, hidden);
+    const act = petBubbleKey(e.key, m, document.activeElement && document.activeElement.id);
+    if (!act) return;
+    e.preventDefault();
+    if (!armed(e.repeat)) return;
+    if (act === 'allow') answer('allow');
+    else if (act === 'deny') answer('deny');
+    else hide();
   });
 
   /* Click-through: main ignores the mouse until the pointer is over the sprite or the bubble. */
@@ -122,6 +234,7 @@ function petBoot() {
   /* Drag the sprite; a press that did not move is a click. */
   sprite.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
+    if (petBubbleModel(view, hidden)) takeKeys();
     drag = {x: e.screenX, y: e.screenY, moving: false, id: e.pointerId};
     try { sprite.setPointerCapture(e.pointerId); } catch (err) { /* capture is a nicety */ }
   });
@@ -151,9 +264,11 @@ function petBoot() {
     paint();
   });
   BR.attach().then((v) => { if (v && !view) { view = v; paint(); } }, () => {});
+  if (BR.onSkin) BR.onSkin((frames) => { skin = frames && typeof frames === 'object' ? frames : null; paint(); });
+  if (BR.skin) BR.skin().then((frames) => { skin = frames && typeof frames === 'object' ? frames : null; paint(); }, () => {});
   paint();
 }
 
 if (typeof document !== 'undefined' && typeof window !== 'undefined') petBoot();
 
-if (typeof module !== 'undefined') module.exports = {petBadge, petBubbleModel, petBodyClass, PET_STATE_NAMES};
+if (typeof module !== 'undefined') module.exports = {petBadge, petBubbleModel, petBodyClass, petBubbleKey, petFirstButton, petKeyArmed, petKeysLine, petSkinSrc, PET_KEY_ARM_MS, PET_STATE_NAMES};
