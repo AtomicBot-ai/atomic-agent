@@ -18,8 +18,9 @@ import {
  * those see the names inside. So, fail closed and without unpacking
  * anything: a guest's call is refused when the file it names is an
  * archive by its name or by its first and last bytes, except for the
- * two archive tools (which judge entries themselves) and the document
- * extractor on an office file (it returns the text, never the bytes).
+ * two archive tools (which judge entries themselves), the document
+ * extractor on an office file and `os.fs.xlsx {op:"read"}` on a
+ * workbook (both return the text, never the bytes).
  *
  * Detection is bounded: 512 bytes from the start and 64 KiB + 22 from
  * the end (a zip's end-of-central-directory record, which also finds a
@@ -81,6 +82,41 @@ function isV7TarHeader(head: Buffer): boolean {
   return sum === parseInt(field, 8);
 }
 
+/** "BZh", a block size digit `1`-`9`, then the first block's magic or the end-of-stream magic. */
+function isBzip2Head(head: Buffer): boolean {
+  if (!startsWith(head, [0x42, 0x5a, 0x68])) return false;
+  const level = head[3];
+  if (level === undefined || level < 0x31 || level > 0x39) return false;
+  return (
+    startsWith(head, [0x31, 0x41, 0x59, 0x26, 0x53, 0x59], 4) || // block "1AY&SY" (pi)
+    startsWith(head, [0x17, 0x72, 0x45, 0x38, 0x50, 0x90], 4) // empty stream (sqrt pi)
+  );
+}
+
+/** An ASCII cpio header: "070701" (newc), "070702" (crc) or "070707" (odc). */
+function isAsciiCpioHead(head: Buffer): boolean {
+  if (!startsWith(head, [0x30, 0x37, 0x30, 0x37, 0x30])) return false;
+  return head[5] === 0x31 || head[5] === 0x32 || head[5] === 0x37;
+}
+
+/**
+ * A binary cpio header: the 070707 magic as a 16-bit word in either byte
+ * order, a name size (offset 20, same order) of 1..4096, and the name's
+ * closing NUL where that size puts it. Two text bytes at offset 20 give a
+ * size of at least 0x2020, so text that happens to start with the magic
+ * is not taken for one. A name that runs past the bytes read counts.
+ */
+function isBinaryCpioHead(head: Buffer): boolean {
+  if (head.length < 26) return false;
+  let nameSize: number;
+  if (head[0] === 0xc7 && head[1] === 0x71) nameSize = head.readUInt16LE(20);
+  else if (head[0] === 0x71 && head[1] === 0xc7) nameSize = head.readUInt16BE(20);
+  else return false;
+  if (nameSize < 1 || nameSize > 4096) return false;
+  const nul = 26 + nameSize - 1;
+  return nul >= head.length || head[nul] === 0;
+}
+
 /** True when `head` (the first bytes) starts like an archive or a compressed stream. */
 export function hasArchiveHead(head: Buffer): boolean {
   return (
@@ -88,7 +124,7 @@ export function hasArchiveHead(head: Buffer): boolean {
     isGzipMagic(head) ||
     isTarMagic(head) ||
     isV7TarHeader(head) ||
-    startsWith(head, [0x42, 0x5a, 0x68]) || // bzip2 "BZh"
+    isBzip2Head(head) ||
     startsWith(head, [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]) || // xz
     startsWith(head, [0x5d, 0x00, 0x00]) || // lzma alone
     startsWith(head, [0x28, 0xb5, 0x2f, 0xfd]) || // zstd
@@ -101,8 +137,8 @@ export function hasArchiveHead(head: Buffer): boolean {
     startsWith(head, [0x4d, 0x53, 0x43, 0x46]) || // cab "MSCF"
     startsWith(head, [0x78, 0x61, 0x72, 0x21]) || // xar "xar!"
     startsWith(head, [0x21, 0x3c, 0x61, 0x72, 0x63, 0x68, 0x3e, 0x0a]) || // ar "!<arch>\n"
-    startsWith(head, [0x30, 0x37, 0x30, 0x37, 0x30]) || // cpio ASCII "07070"
-    startsWith(head, [0xc7, 0x71]) || startsWith(head, [0x71, 0xc7]) // cpio binary
+    isAsciiCpioHead(head) ||
+    isBinaryCpioHead(head)
   );
 }
 
@@ -173,6 +209,9 @@ const NAME_ONLY_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.glob",
 ]);
 
+/** Workbooks `os.fs.xlsx {op:"read"}` shows as cells, never as bytes. */
+const XLSX_READ_EXTENSIONS: ReadonlySet<string> = new Set(["xlsx", "xlsm"]);
+
 /** Document formats the extractor reads out of a zip container. */
 const OFFICE_FORMATS: ReadonlySet<string> = new Set(["docx", "xlsx", "pptx", "odt", "ods", "odp", "epub"]);
 
@@ -195,6 +234,12 @@ export function guestArchiveDenial(
     if (format === undefined || format === null || (typeof format === "string" && OFFICE_FORMATS.has(format))) {
       return null;
     }
+  }
+  // `read` shows a range of cells as text; the other ops write.
+  if (tool === "os.fs.xlsx" && args.op === "read") {
+    const exts = extensionsOf(absolute);
+    const last = exts[exts.length - 1];
+    if (last !== undefined && XLSX_READ_EXTENSIONS.has(last)) return null;
   }
   if (hasArchiveName(absolute) || isArchiveFileContent(absolute)) {
     return `${absolute} is an archive, and a guest gets only the entries os.fs.archive.read_entry checks`;

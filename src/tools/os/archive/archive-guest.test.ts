@@ -29,6 +29,8 @@ beforeAll(async () => {
   const innerBytes = await inner.generateAsync({ type: "nodebuffer" });
   zip.file("inner.zip", innerBytes);
   zip.file("data.bin", innerBytes);
+  // An archive name on plain text: refused by the name alone.
+  zip.file("named.tar.gz", "just text under an archive name\n");
   await writeFile(join(dir, "backup.zip"), await zip.generateAsync({ type: "nodebuffer" }));
 });
 afterAll(async () => {
@@ -57,7 +59,7 @@ describe("os.fs.archive for a guest (ATO-2805)", () => {
 
   it("refuses an entry that is itself an archive, by name or by bytes, in any encoding", async () => {
     const tool = buildOsFsArchiveReadEntryTool();
-    for (const entry of ["inner.zip", "data.bin"]) {
+    for (const entry of ["inner.zip", "data.bin", "named.tar.gz"]) {
       for (const as of ["base64", "utf8"]) {
         const result = await tool.run({ path: "backup.zip", entry, as }, ctx(true));
         expect(result.status, `${entry} ${as}`).toBe("error");

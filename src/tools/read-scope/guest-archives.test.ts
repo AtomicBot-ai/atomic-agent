@@ -33,6 +33,18 @@ function v7Tar(name: string, body: string): Buffer {
   return Buffer.concat([header, data, Buffer.alloc(1024)]);
 }
 
+/** A one-entry binary cpio header, its magic and name size in `order`. */
+function binaryCpio(order: "le" | "be", name: string): Buffer {
+  const header = Buffer.alloc(26);
+  const put = (value: number, at: number) =>
+    order === "le" ? header.writeUInt16LE(value, at) : header.writeUInt16BE(value, at);
+  put(0o070707, 0);
+  put(0o100644, 6);
+  put(1, 12);
+  put(name.length + 1, 20);
+  return Buffer.concat([header, Buffer.from(`${name}\0`, "ascii"), Buffer.from("API_KEY=x\n")]);
+}
+
 let home: string;
 let work: string;
 const guest = () => ({ guest: true as const, workingDir: work });
@@ -55,6 +67,12 @@ beforeAll(async () => {
   writeFileSync(join(work, "old.dat"), v7Tar("config/.env", "API_KEY=x\n"));
   writeFileSync(join(work, "report.docx"), bytes);
   writeFileSync(join(work, "README.md"), "hello\n");
+  // Review round 3: text that starts like a short cpio or bzip2 magic.
+  writeFileSync(join(work, "zip-codes.csv"), "07070 Rutherford NJ\n07071 Lyndhurst NJ\n");
+  writeFileSync(join(work, "bzh-notes.txt"), "BZh9 is how a bzip2 file starts\n");
+  writeFileSync(join(work, "packed.dat"), Buffer.from(`070707${"0".repeat(70)}.env\0API_KEY=x\n`, "ascii"));
+  writeFileSync(join(work, "letter.docx"), "not a zip at all\n");
+  writeFileSync(join(work, "book.xlsx"), bytes);
 });
 afterAll(() => {
   rmSync(home, { recursive: true, force: true });
@@ -87,6 +105,40 @@ describe("a guest and archives (ATO-2805)", () => {
     // `plain` reads the container as text.
     expect(checkGuestRead("os.fs.read_document", { path: "report.docx", format: "plain" }, guest(), options())).not.toBeNull();
     expect(checkGuestRead("os.fs.read_document", { path: "backup.tar", format: "plain" }, guest(), options())).not.toBeNull();
+  });
+
+  it("lets a guest read text that starts like a cpio or bzip2 magic (review round 3)", () => {
+    for (const path of ["zip-codes.csv", "bzh-notes.txt"]) {
+      expect(checkGuestRead("os.fs.read", { path }, guest(), options()), path).toBeNull();
+      expect(checkGuestRead("reply", { message: "here", attachments: [path] }, guest(), options()), path).toBeNull();
+    }
+    expect(checkGuestRead("os.fs.read", { path: "packed.dat" }, guest(), options())).not.toBeNull();
+  });
+
+  it("still knows real cpio and bzip2 headers", () => {
+    for (const magic of ["070701", "070702", "070707"]) {
+      expect(hasArchiveHead(Buffer.from(magic + "0".repeat(104), "ascii")), magic).toBe(true);
+    }
+    expect(hasArchiveHead(binaryCpio("le", ".env")), "binary cpio, little-endian").toBe(true);
+    expect(hasArchiveHead(binaryCpio("be", ".env")), "binary cpio, big-endian").toBe(true);
+    // `printf hello | bzip2` and an empty `bzip2` stream.
+    expect(hasArchiveHead(Buffer.from("425a6839314159265359c1c080e2000001410000100244a00030cd00c346", "hex"))).toBe(true);
+    expect(hasArchiveHead(Buffer.from("425a683917724538509000000000", "hex"))).toBe(true);
+    for (const text of ["07070 Rutherford NJ\n", "070700\n", "BZh is a prefix\n", "BZh9 hello\n", "BZh0" + "1AY&SY"]) {
+      expect(hasArchiveHead(Buffer.from(text, "ascii")), text).toBe(false);
+    }
+    // The binary magic followed by text: the name size is not a cpio one.
+    expect(hasArchiveHead(Buffer.from("\u00c7q and then just a line of text\n", "latin1"))).toBe(false);
+  });
+
+  it("refuses an office name on any bytes, and lets os.fs.xlsx read a workbook", () => {
+    // By name alone: the bytes are text.
+    expect(checkGuestRead("os.fs.read", { path: "letter.docx" }, guest(), options())).not.toBeNull();
+    expect(checkGuestRead("os.fs.xlsx", { path: "book.xlsx", op: "read" }, guest(), options())).toBeNull();
+    expect(checkGuestRead("os.fs.xlsx", { path: "book.xlsx", op: "write", rows: [["a"]] }, guest(), options())).not.toBeNull();
+    expect(checkGuestRead("os.fs.read", { path: "book.xlsx" }, guest(), options())).not.toBeNull();
+    // Not a workbook name: the bytes still refuse it.
+    expect(checkGuestRead("os.fs.xlsx", { path: "notes.txt", op: "read" }, guest(), options())).not.toBeNull();
   });
 
   it("does not touch the owner", () => {
