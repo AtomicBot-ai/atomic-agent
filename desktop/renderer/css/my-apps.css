@@ -1,0 +1,11 @@
+/* ============================================================
+   Settings › My apps (ATO-2383, ATO-2459): the versions under an app's row.
+   The row itself is my-files.css's (.mf-row); my-apps-more.js draws this.
+   Colours come from tokens only, so light and dark follow the theme.
+   ============================================================ */
+
+.ma-versions{display:flex;flex-direction:column;gap:2px;margin:0 8px 8px 36px;padding:6px 10px;border-radius:var(--r-card);background:var(--well)}
+.ma-vrow{display:flex;align-items:center;gap:10px;min-height:36px;min-width:0;flex-wrap:wrap}
+.ma-vtext{flex:1;min-width:0;font-size:var(--fs-cap);color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ma-vnote{font-size:var(--fs-cap);color:var(--ink-2)}
+.ma-vnote.tk-notice{margin:0}

@@ -22,9 +22,10 @@ const MA = {
   busy: null,      // app id a call runs for
   renaming: null,  // app id whose name is being edited
   confirm: null,   // app id whose Delete waits for a second click
+  installSupported: false,   // ATO-2459: this build can add a launcher (my-apps-more.js)
 };
 
-const MA_INTRO = 'Pages you saved from a chat with Save as app. Each opens in its own window and keeps working offline, without the agent.';
+const MA_INTRO = 'Pages kept as apps: saved from a chat with Save as app, or made when you ask the agent for one. Each opens in its own window and keeps working offline, without the agent.';
 
 const MA_REASONS = {
   'empty': 'This page is empty, so there is nothing to save.',
@@ -33,6 +34,10 @@ const MA_REASONS = {
   'not-found': 'That app is gone. It may have been deleted on disk.',
   'write-failed': 'The app could not be written to disk.',
   'not-main-window': 'Only the main window can do this.',
+  // ATO-2459
+  'no-version': 'That version is gone. It may have been removed after newer edits.',
+  'install-unsupported': 'Install works in the installed Atomic Agent app only.',
+  'install-failed': 'The app could not be added to your apps. Try again.',
 };
 
 /* ---- pure helpers (exported for test/my-apps.test.mjs) ---- */
@@ -95,7 +100,7 @@ async function maRefresh() {
   MA.loading = true;
   try {
     const r = await br.appsList();
-    if (r && r.ok) { MA.apps = Array.isArray(r.apps) ? r.apps : []; MA.err = null; }
+    if (r && r.ok) { MA.apps = Array.isArray(r.apps) ? r.apps : []; MA.err = null; MA.installSupported = !!(r.install && r.install.supported); }
     else MA.err = maReasonText(r && r.reason);
   } catch (e) {
     MA.err = String((e && e.message) || e);
@@ -107,6 +112,7 @@ async function maRefresh() {
 
 function myAppsTabEntered() {
   MA.confirm = null; MA.renaming = null; MA.msg = null;
+  if (typeof myAppsMoreReset === 'function') myAppsMoreReset();
   maRefresh();
 }
 
@@ -161,6 +167,8 @@ function myAppsAct(what) {
   const {verb, arg} = maParseAct(what);
   if (verb === 'save') { maSave(arg); return; }
   if (verb === 'refresh') { maRefresh(); return; }
+  // ATO-2459: versions, restore, install (my-apps-more.js checks its own args).
+  if (typeof myAppsMoreAct === 'function' && myAppsMoreAct(verb, arg)) return;
   // Every other verb names an app by its id, a slug (main checks it again).
   if (!/^(?:rename|delete)Cancel$/.test(verb) && !/^[a-z0-9-]{1,64}$/.test(arg)) return;
   if (verb === 'open') {
@@ -214,6 +222,7 @@ function maRowHTML(app) {
   } else {
     const off = MA.busy ? ' disabled' : '';
     actions = '<button class="btn btn-p sm" data-act="myapps:open:' + esc(id) + '"' + off + ' aria-label="Open ' + esc(app.name) + '">Open</button>'
+      + (typeof maxRowButtonsHTML === 'function' ? maxRowButtonsHTML(app, off) : '')
       + '<button class="btn btn-s sm" data-act="myapps:rename:' + esc(id) + '"' + off + ' aria-label="Rename ' + esc(app.name) + '">Rename</button>'
       + '<button class="btn btn-s sm" data-act="myapps:delete:' + esc(id) + '"' + off + ' aria-label="Delete ' + esc(app.name) + '">Delete</button>';
   }
@@ -223,7 +232,8 @@ function maRowHTML(app) {
   return '<div class="tk-li mf-row ma-row">'
     + '<span class="mf-ic" aria-hidden="true">' + ic('window') + '</span>'
     + '<span class="mf-main">' + name + '<span class="mf-path">' + esc(maSavedText(app)) + '</span></span>'
-    + actions + '</div>';
+    + actions + '</div>'
+    + (typeof maxVersionsHTML === 'function' ? maxVersionsHTML(app) : '');
 }
 
 function myAppsTab() {
@@ -241,11 +251,11 @@ function myAppsTab() {
   if (!MA.apps) body = MA.err ? '' : '<div class="tk-empty set-empty mf-empty"><span class="tk-spin"></span><p>Reading apps…</p></div>';
   else if (!rows.length) {
     body = '<div class="tk-empty set-empty mf-empty"><span class="tk-ico tk-ico--lg">' + ic('window') + '</span><h4>No apps yet</h4>'
-      + '<p>When the agent makes a page in a chat (a calculator, a tracker, a small game), click Save as app on it to keep it here.</p></div>';
+      + '<p>Ask the agent to make one (say, a currency converter), or click Save as app on a page it made in a chat.</p></div>';
   } else body = '<div class="tk-list mf-list">' + rows.map(maRowHTML).join('') + '</div>';
   return '<div class="set-pane mf-pane ma-pane">' + about + head + err + msg + body + '</div>';
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {MA, MA_INTRO, maReasonText, myAppsSaveButtonHTML, maSaveInput, maParseAct, maSavedText, myAppsAct, myAppsTab};
+  module.exports = {MA, MA_INTRO, maReasonText, myAppsSaveButtonHTML, maSaveInput, maParseAct, maSavedText, myAppsAct, myAppsTab, maCall, maRepaint, maRefresh};
 }

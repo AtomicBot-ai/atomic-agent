@@ -101,6 +101,11 @@ const config = {
       "from": "build/icons/32x32.png",
       "to": "tray.png"
     },
+    /* ATO-2459: the icon an installed My apps launcher shows (main/my-apps-install.ts). */
+    {
+      "from": "build/icons/256x256.png",
+      "to": "app-icon.png"
+    },
     {
       "from": "THIRD-PARTY-NOTICES.txt",
       "to": "THIRD-PARTY-NOTICES.txt"
@@ -160,6 +165,11 @@ const config = {
       "NSBonjourServices": ["_http._tcp", "_ollama._tcp", "_llm._tcp", "_openai._tcp", "_saturn._tcp", "_atomic-model._tcp"]
     },
     "extraResources": [
+      /* ATO-2459: the icon of a My apps launcher bundle (main/my-apps-install.ts). */
+      {
+        "from": "build/icon.icns",
+        "to": "app-icon.icns"
+      },
       {
         "from": "out/native/atomic-speech",
         "to": "native/atomic-speech"

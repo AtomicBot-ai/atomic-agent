@@ -721,6 +721,13 @@ export interface DeeplinkDeps {
   ready: () => boolean;
   log: (line: string) => void;
   now?: () => number;
+  /**
+   * ATO-2459: a request main handles itself (an installed My apps launcher
+   * opening its window), even with the main window closed. True: handled,
+   * the main window stays as it is and nothing is queued; false (not that
+   * kind of link, or Electron not ready yet): it is queued as any other.
+   */
+  direct?: (request: DeeplinkRequest) => boolean;
 }
 
 export interface DeeplinkController {
@@ -734,7 +741,7 @@ const QUEUE_MAX = 5;
 const SAME_LINK_MS = 2000;
 
 /** The queue and its dedupe, without the OS. */
-export function createDeeplinkQueue(deps: Pick<DeeplinkDeps, "showWindow" | "notify" | "ready" | "log" | "now">): DeeplinkController {
+export function createDeeplinkQueue(deps: Pick<DeeplinkDeps, "showWindow" | "notify" | "ready" | "log" | "now" | "direct">): DeeplinkController {
   const now = deps.now ?? Date.now;
   const queue: DeeplinkRequest[] = [];
   let last: { raw: string; at: number } | null = null;
@@ -745,6 +752,7 @@ export function createDeeplinkQueue(deps: Pick<DeeplinkDeps, "showWindow" | "not
     const r = routeDeeplink(raw);
     const request: DeeplinkRequest = r.ok ? r.request : { route: "error", link: displayLink(typeof raw === "string" ? raw : ""), error: r.error };
     deps.log(`[desktop] deeplink: ${request.route}${r.ok ? "" : ` (${r.error})`}`);   // the route only: a link may carry settings
+    if (r.ok && deps.direct && deps.direct(request)) return;
     queue.push(request);
     while (queue.length > QUEUE_MAX) queue.shift();
     if (deps.ready()) {

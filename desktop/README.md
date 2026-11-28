@@ -1891,6 +1891,21 @@ through an env var.
 - The window says which directory it owns: the diagnostics line under
   Settings carries a `state <dir>` segment beside `agent <bin>`.
 
+### My apps (`apps/`)
+
+Pages kept as apps (ATO-2383, ATO-2459) live in `<stateDir>/apps/<id>/`:
+`index.html`, `app.json`, `versions/<n>-<savedAtMs>.html` (the page before
+each edit, newest 20) and, once installed, `install.json` naming the OS
+launcher. The desktop (`main/my-apps-*.ts`) and the agent's `app.save` /
+`app.update` / `app.delete` / `app.list` tools (`src/tools/app/`) write the
+same layout, so an app made from a chat shows up under Apps in the sidebar.
+Install writes a launcher that opens `atomicagent://app/open?id=<id>`
+(`main/my-apps-deeplink.ts`; main opens the app window itself, no card):
+a small `.app` in `~/Applications/Atomic Apps` on a Mac, a Start menu `.lnk`
+on Windows (`shell.writeShortcutLink`), a `.desktop` entry in
+`~/.local/share/applications` on Linux. Only a packaged build installs,
+since only it registers the link handler.
+
 ## Building a testable .dmg
 
 **The app already installed at `/Applications/Atomic Agent.app` has none of

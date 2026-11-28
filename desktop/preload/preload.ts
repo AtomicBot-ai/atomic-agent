@@ -574,6 +574,11 @@ contextBridge.exposeInMainWorld("atomic", {
   appsRename: (id: string, name: string) => ipcRenderer.invoke("apps:rename", id, name),
   appsDelete: (id: string) => ipcRenderer.invoke("apps:delete", id),
   appsOpen: (id: string) => ipcRenderer.invoke("apps:open", id),
+  // ATO-2459: versions with restore, and an OS launcher per app.
+  appsVersions: (id: string) => ipcRenderer.invoke("apps:versions", id),
+  appsRestore: (id: string, version: number) => ipcRenderer.invoke("apps:restore", id, version),
+  appsInstall: (id: string) => ipcRenderer.invoke("apps:install", id),
+  appsUninstall: (id: string) => ipcRenderer.invoke("apps:uninstall", id),
   /** ATO-2442: Settings › Usage (main/usage-ipc.ts): `{ok, data}` or `{ok:false, error, detail, unsupported}`. */
   usageReport: (query: { days: number | "all"; compare?: string | null }) => ipcRenderer.invoke("usage:report", query),
   /** ATO-1629 / ATO-1061: facts about the person from a Claude or ChatGPT export (main/import-facts-ipc.ts). */
