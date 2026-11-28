@@ -1232,6 +1232,7 @@ const MENU_ACTS = {
 const SETTINGS_SECTIONS = [
   ['general','General','sliders',['general']],
   ['models','Models','cpu',['llm']],
+  ['usage','Usage','barchart',['usage']],   // ATO-2442: renderer/usage-tab.js
   ['connections','Connections','plug',['mcp','telegram','discord','push','composio','monid']],   // ATO-516: discord-settings.js; ATO-1630: monid.js
   ['memory','Memory','memory',['memory']],
   ['myfiles','My files','folder',['myfiles']],   // ATO-1626: renderer/my-files.js
@@ -1250,6 +1251,7 @@ const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP server
                        ['tasks','Cron jobs'],['webhooks','Webhooks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
 SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'memory') + 1, 0, ['myfiles','My files']);   // ATO-1626
 SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'myfiles') + 1, 0, ['myapps','My apps']);   // ATO-2383
+SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'llm') + 1, 0, ['usage','Usage']);   // ATO-2442
 /* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
    one shown, per viewer, like atag.theme; General the first time. */
 /* Calm (S5): which Settings disclosures are open, so a repaint keeps them. */
@@ -1864,6 +1866,7 @@ const P = {
   slash:'<path d="M10.5 2.5 5.5 13.5"/>',
   star:'<path d="M8 2.2 9.7 5.8l3.9.5-2.9 2.7.8 3.9L8 11l-3.5 1.9.8-3.9-2.9-2.7 3.9-.5z" fill="currentColor" stroke="none"/>',
 };
+P.barchart = '<path d="M2.5 13.5h11M4.5 11V8M8 11V4M11.5 11V6.5"/>';   // ATO-2442: Settings › Usage
 function ic(n, cls) {
   return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" '
     + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (cls ? ' class="' + cls + '"' : '') + '>' + (P[n] || '') + '</svg>';
@@ -6754,6 +6757,7 @@ function settingsPaneEntered(opened) {
   else if (pane === 'plugins') pluginsTabEntered();
   else if (pane === 'myfiles') myFilesTabEntered();   // ATO-1626 (my-files.js)
   else if (pane === 'myapps') myAppsTabEntered();   // ATO-2383 (my-apps.js)
+  else if (pane === 'usage') usageTabEntered();   // ATO-2442 (usage-tab.js)
   // Item 7 part C: the LLM / Telegram / Import tabs' first load on entry.
   else if (pane === 'llm') llmTabEntered();
   else if (pane === 'telegram') telegramTabEntered();
@@ -6784,6 +6788,7 @@ function settingsPane() {
   if (p === 'plugins') return pluginsTab();
   if (p === 'myfiles') return myFilesTab();   // ATO-1626 (my-files.js)
   if (p === 'myapps') return myAppsTab();   // ATO-2383 (my-apps.js)
+  if (p === 'usage') return usageTab();   // ATO-2442 (usage-tab.js)
   // Item 7 part C: the LLM, Telegram and Import tabs.
   if (p === 'llm') return llmTab();
   if (p === 'telegram') return telegramTab();
@@ -7880,6 +7885,7 @@ function act(a) {
   if (k === 'plugins') { close(); pluginsAct(a.slice(8)); return; }
   if (k === 'myfiles') { close(); myFilesAct(a.slice(8)); return; }   // ATO-1626
   if (k === 'myapps') { close(); myAppsAct(a.slice(7)); return; }   // ATO-2383 (my-apps.js)
+  if (k === 'usage') { close(); usageAct(a.slice(6)); return; }   // ATO-2442 (usage-tab.js)
   // Item 7 part C: the LLM / Telegram / Import tabs' verbs.
   if (k === 'llm') { close(); llmAct(a.slice(4)); return; }
   if (k === 'telegram') { close(); telegramAct(a.slice(9)); return; }

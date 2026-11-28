@@ -405,11 +405,13 @@ export function connectRuntimeFallback(
   };
   // ATO-2352: every metered completion's tokens into the per-day
   // history, local ones included (their tokens come from the timings).
+  // ATO-2442: with the session, for the per-project and per-day session counts.
   const recordUsageHistory = (
     result: CompletionResult,
     servedProviderId: string,
     metered: NonNullable<ReturnType<typeof completionUsageForTurn>>,
     model: ResolvedModel | undefined,
+    sessionId: string | undefined,
   ): void => {
     if (!usageHistory) return;
     const billing = linkBilling(servedProviderId);
@@ -418,6 +420,7 @@ export function connectRuntimeFallback(
       modelId: result.modelId,
       usage: metered,
       ...billing,
+      ...(sessionId ? { sessionId } : {}),
       price: priceCompletion({ ...(result.usage ? { usage: result.usage } : {}), ...(model ? { model } : {}), ...billing }),
     });
   };
@@ -496,7 +499,7 @@ export function connectRuntimeFallback(
     }
     const model = result.usage ? resolveModelPricing(result.modelId, servedProviderId) : undefined;
     recordDailySpend(result, servedProviderId, model);
-    recordUsageHistory(result, servedProviderId, metered, model);
+    recordUsageHistory(result, servedProviderId, metered, model, params.sessionId);
     recordSessionUsage(params.sessionId, result, servedProviderId, true, model);
     if (costAccumulator && result.usage) {
       costAccumulator.recordTurn({
@@ -532,7 +535,7 @@ export function connectRuntimeFallback(
     }
     const model = result.usage ? resolveModelPricing(result.modelId, servedProviderId) : undefined;
     recordDailySpend(result, servedProviderId, model);
-    recordUsageHistory(result, servedProviderId, metered, model);
+    recordUsageHistory(result, servedProviderId, metered, model, sessionId);
     // ATO-1289: most chat turns stream, so the cost accumulator must see
     // a streamed completion exactly as it sees a unary one (same gate,
     // no session required) — otherwise `costTracking` only ever counts

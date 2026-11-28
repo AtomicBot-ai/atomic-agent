@@ -1,0 +1,39 @@
+/* ============================================================
+   Settings › Usage (ATO-2442): tokens and cost per day, saved by local,
+   and tables by day, model, tool and project. usage-tab.js draws it; the
+   chart is dashboard-templates.js's bar chart. Colours come from tokens
+   only (the bars keep the chart palette), so light and dark follow the
+   theme. The header, notices, tables and empty state are settings.css's
+   and styles.css's own.
+   ============================================================ */
+
+.us-pane{display:flex;flex-direction:column;gap:12px}
+.us-head .seg{flex:none}
+.us-note{margin:0}
+.us-details{margin:0;font:400 var(--fs-cap)/1.4 var(--font-ui);color:var(--ink-2)}
+.us-details summary{cursor:pointer;width:max-content}
+.us-details pre{margin:6px 0 0;padding:8px 10px;border-radius:var(--r-card);background:var(--well);font:400 var(--fs-cap)/1.4 var(--font-mono);color:var(--ink-2);white-space:pre-wrap;word-break:break-word}
+
+.us-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.us-card{gap:4px !important;min-width:0}
+.us-card-l{font:600 var(--fs-label)/1.2 var(--font-ui);color:var(--ink-2)}
+.us-card-v{font:600 var(--fs-title)/1.2 var(--font-ui);color:var(--ink);font-variant-numeric:tabular-nums}
+.us-card-n{font:400 var(--fs-cap)/1.4 var(--font-ui);color:var(--ink-3)}
+
+.us-compare{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.us-compare-l{font:400 var(--fs-cap)/1.3 var(--font-ui);color:var(--ink-2)}
+.us-compare-in{flex:1 1 220px;min-width:0;max-width:360px}
+
+.us-chartcard{padding:12px 14px !important}
+.us-chart{display:block;width:100%;height:auto}
+.us-chart .grid{stroke:var(--divider);stroke-width:1}
+.us-chart .tick{fill:var(--ink-3);font:400 11px var(--font-ui)}
+.us-chartcard .legend{display:flex;flex-wrap:wrap;gap:14px;min-height:0;padding:4px 0 0;font:400 var(--fs-cap)/1.3 var(--font-ui);color:var(--ink-2)}
+.us-chartcard .legend span{display:inline-flex;align-items:center;gap:6px}
+.us-chartcard .legend i{display:inline-block;width:10px;height:10px;border-radius:3px}
+
+.us-sub{margin:6px 0 0}
+.us-tblwrap{overflow-x:auto}
+.us-tbl td:first-child{color:var(--ink);max-width:320px;overflow:hidden;text-overflow:ellipsis}
+.us-tbl .num{text-align:right}
+.us-foot{margin:0;font:400 var(--fs-cap)/1.4 var(--font-ui);color:var(--ink-3)}
