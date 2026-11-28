@@ -2056,6 +2056,7 @@ const SLASH = [
   // ATO-1152: POST /api/btw, as the TUI's `/btw` (side-question.js).
   ['btw','ask a quick side question; the answer is not saved to the chat','<question>'],
   ['council','ask several models; they rank each other and a chairman writes the final answer','<question>'],   // ATO-2432 (council-view.js)
+  ['research','research with checked quotes and save a report; --docs for your My files only','<question>'],   // ATO-2507 (research-card.js)
   ['quit','exit Atomic Agent'],
   ['debug','show or hide the console'],
   ['chat','back to the chat'],
@@ -3165,7 +3166,7 @@ function item(m) {
   if (m.k === 'assistant' && stoppedSentence(m)) return stoppedRowHTML(m);
   // 0.6.7 item 10: a reply nothing has reached yet has "Working…" over it.
   if (m.k === 'assistant') return workingRowHTML(m) + stoppedNoteHTML(m, esc) + '<div class="turn"><div></div>'
-    + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(stoppedReplyBody(m)) + '</div>' + replyFilesStrip(m) + changedFilesCardHTML(m.changed, {esc, ic}) + attachStrip(m) + replyDot(m) + msgActs(m)
+    + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(stoppedReplyBody(m)) + '</div>' + replyFilesStrip(m) + changedFilesCardHTML(m.changed, {esc, ic}) + (typeof researchCardsHTML === 'function' ? researchCardsHTML(m.research, {esc, ic}) : '') + attachStrip(m) + replyDot(m) + msgActs(m)
     /* Item 1 (plan hand-off): INSIDE the content column, before its two closing
        divs — appended after them the bar would leave `.turn` and lose the
        two-column grid alignment this branch exists to keep. It hangs off the
@@ -8676,6 +8677,7 @@ function runSlash(parts) {
   if (name === 'btw') { const said = btwAsk(rest, {bridge: BR, sessionId: S.agentSession, paint: render}); if (said) { S.log.push({id:nid(), k:'system', text: esc(said)}); render(); } return; }   // ATO-1152
   if (name === 'council') { const said = councilAsk(rest, {bridge: BR, paint: render}); if (said) { S.log.push({id:nid(), k:'system', text: esc(said)}); render(); } return; }   // ATO-2432
   if (name === 'incognito') { act('session:incognito'); return; }   // ATO-586
+  if (name === 'research') { const r = researchCommandFrom(rest); if (!r.ok) { S.log.push({id:nid(), k:'system', text: esc(r.error)}); render(); } else submit(r.text, {plain: true}); return; }   // ATO-2507 (research-card.js)
   if (name === 'compact') {
     const keep = compactInstructionsFrom(rest);   // ATO-661: `/compact <what to keep>`
     if (!keep.ok) { S.log.push({id:nid(), k:'system', text: esc(keep.error)}); render(); return; }
@@ -11925,6 +11927,8 @@ function onChatEvent(ev) {
     // ATO-1187: a write/edit's lines added/removed go on the turn's "Changed files" card (changed-files.js).
     // ATO-1702: a fusion.delegate's `diffstats` (its workers' files) go on the same card.
     if (item) for (const changedFile of changedFilesOfFrame(p)) item.changed = changedFilesAdd(item.changed, changedFile);
+    // ATO-2507: an ok research.deep's report card goes under the reply (research-card.js).
+    if (item && typeof researchCardAttach === 'function') researchCardAttach(item, card, p);
     // ATO-2409: an Office writer (docx, xlsx, pptx) sends no diffstat; its ok call is a "created"/"updated" row from the call's path (chat-files.js cfOfficeWrite).
     // ATO-2518: the agent's own `office_file` first; the label is the fallback for an older agent.
     const officeFrame = card.ok === true ? changedFileOfOfficeFrame(p) : null;
@@ -22144,6 +22148,7 @@ function sessionTurnsToLog(turns) {
   });
   // ATO-408: a picture read earlier whose file changed, or that failed, is read again.
   if (named.length) void revalidateChatImages(named);
+  if (typeof researchCardsLink === 'function') researchCardsLink(log);   // ATO-2507: report cards from the stored summaries
   return log;
 }
 
