@@ -27,3 +27,36 @@
 .lbkerr{margin:2px 4px 6px;padding:6px 8px;border-radius:var(--r-well);background:var(--warn-wash);color:var(--ink)}
 .lbklink{background:transparent;color:var(--accent-text);font:inherit;text-decoration:underline;padding:0}
 .lbkdetails{margin-top:4px;color:var(--ink-2);word-break:break-word}
+
+/* ATO-2526: Settings › Logbook (renderer/logbook-settings.js). */
+.lbs-pane .lbs-switch{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--bd)}
+.lbs-form{display:flex;flex-direction:column;gap:12px;padding:12px 0}
+.lbs-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.lbs-block{display:flex;flex-direction:column;gap:4px}
+.lbs-label{font-weight:500;color:var(--ink)}
+.lbs-help{display:block;color:var(--ink-2);font-size:var(--fs-cap)}
+.lbs-pane textarea{width:100%;min-height:56px;resize:vertical;font:inherit}
+.lbs-pane input[type=number]{width:72px}
+.lbs-actions{display:flex;gap:8px;flex-wrap:wrap}
+
+/* ATO-2526: the day timeline (renderer/logbook-timeline.js), drawn into #lbt-root. */
+#lbt-root{position:fixed;top:0;left:0;width:0;height:0;z-index:2147481000}
+.lbt-scrim{position:fixed;inset:0;background:var(--scrim, rgba(0,0,0,.28))}
+.lbt-sheet{position:fixed;top:48px;left:50%;transform:translateX(-50%);width:640px;max-width:calc(100vw - 32px);max-height:calc(100vh - 80px);
+  display:flex;flex-direction:column;background:var(--lift);border:1px solid var(--bd);border-radius:var(--r-sheet);box-shadow:var(--sh-pop);
+  font:400 var(--fs-cap)/1.45 var(--font-ui);color:var(--ink);-webkit-app-region:no-drag}
+.lbt-head{display:flex;align-items:center;gap:8px;padding:12px 12px 8px 16px;border-bottom:1px solid var(--bd)}
+.lbt-head h3{margin:0;font-size:var(--fs-body, 14px);font-weight:600}
+.lbt-tools{display:flex;align-items:center;gap:8px;padding:8px 16px;color:var(--ink-2)}
+.lbt-scroll{flex:1;overflow:auto;padding:0 8px 12px}
+.lbt-list{list-style:none;margin:0;padding:0}
+.lbt-row{display:flex;align-items:flex-start;gap:12px;padding:8px;border-radius:var(--r-well)}
+.lbt-row:hover{background:var(--hover)}
+.lbt-time{flex:none;width:44px;font-variant-numeric:tabular-nums;color:var(--ink-2)}
+.lbt-body{flex:1;min-width:0}
+.lbt-body p{margin:2px 0 0;word-break:break-word}
+.lbt-app{font-weight:600}
+.lbt-ask{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+.lbt-empty{padding:32px 16px;text-align:center;color:var(--ink-2)}
+.lbt-msg{margin:0 16px 6px;color:var(--ink-2)}
+.lbt-sheet .lbkerr{margin:0 16px 8px}

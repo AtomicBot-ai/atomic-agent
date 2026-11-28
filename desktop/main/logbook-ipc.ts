@@ -53,6 +53,8 @@ export interface LogbookControl {
   refresh: () => Promise<LogbookAnswer>;
   call: (method: string, path: string, body?: unknown) => Promise<CallResult>;
   push: (view: LogbookChipView | null) => void;
+  /** Tell the runtime about the mark now (a lock or unlock, ATO-2526). */
+  beat: () => Promise<void>;
 }
 
 export function wireLogbookIpc(deps: LogbookIpcDeps): LogbookControl {
@@ -135,5 +137,5 @@ export function wireLogbookIpc(deps: LogbookIpcDeps): LogbookControl {
   mark.unref?.();
   void refresh().then(beat);
 
-  return { view: () => current, act, refresh, call, push };
+  return { view: () => current, act, refresh, call, push, beat };
 }
