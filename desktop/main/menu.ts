@@ -142,6 +142,9 @@ export function menuTemplate(
         { label: "Desktop Pet", submenu: [
           { label: "Show Pet", type: "checkbox", checked: toggles.pet?.enabled === true, click: () => send("pet:toggle") },
           { label: "Do Not Disturb", type: "checkbox", checked: toggles.pet?.dnd === true, click: () => send("pet:dnd") },
+          // ATO-2513: Studio makes its pictures (renderer/pet-maker.js).
+          { type: "separator" },
+          { label: "Make Your Own Pet…", click: () => send("pet:maker") },
         ] },
         sep,
         { label: "Appearance", submenu: [

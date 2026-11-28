@@ -31,6 +31,7 @@
 <link rel="stylesheet" href="css/chat-trash.css">
 <link rel="stylesheet" href="css/chat-trash-view.css">
 <link rel="stylesheet" href="css/overnight.css">
+<link rel="stylesheet" href="css/pet-maker.css">
 <link rel="stylesheet" href="css/import-facts.css">
 <link rel="stylesheet" href="css/task-schedule-picker.css">
 <link rel="stylesheet" href="css/fit-test.css">
@@ -88,6 +89,8 @@
       <div id="overlays"></div>
       <!-- ATO-1113: the Run overnight dialog and its runs card (overnight.js draws it, render() never does). -->
       <div id="overnight"></div>
+      <!-- ATO-2513: "Make your own pet" (pet-maker.js draws it, render() never does). -->
+      <div id="pet-maker"></div>
       <!-- ATO-1629 / ATO-1061: "Here is what I learned about you" (import-facts.js draws it, render() never does). -->
       <div id="import-facts"></div>
       <div id="fittest"></div>
@@ -441,5 +444,8 @@
 <script src="pet-relay.js"></script>
 <!-- ATO-2755: tells main a chat waits for your OK (the "needs your OK" notification), and opens it on a click. -->
 <script src="approval-notify.js"></script>
+<!-- ATO-2513: "Make your own pet": Studio makes the pictures, main keeps them (main/pet-skins.ts). -->
+<script src="pet-maker-logic.js"></script>
+<script src="pet-maker.js"></script>
 </body>
 </html>

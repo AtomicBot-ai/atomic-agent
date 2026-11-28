@@ -1,0 +1,21 @@
+/* ============================================================
+   "Make your own pet" (ATO-2513): the dialog pet-maker.js draws into
+   #pet-maker. Reuses the sheet (overlays.css) and the input kit
+   (styles.css); colours come from tokens only.
+   ============================================================ */
+
+#pet-maker .petm-wrap{z-index:27}
+.petm-sheet{width:500px}
+.petm-body{display:grid;gap:12px;padding:0 22px 18px;overflow-y:auto}
+.petm-h{margin:6px 0 0;font-size:var(--fs-ui);font-weight:600;color:var(--ink)}
+.petm-pets{display:flex;flex-direction:column;gap:2px;max-height:220px;overflow-y:auto}
+.petm-pet{display:flex;align-items:center;gap:10px;min-height:44px;padding:4px 6px;border-radius:var(--r-well)}
+.petm-pet:hover{background:var(--well)}
+.petm-thumb{flex:none;width:36px;height:36px;border-radius:10px;object-fit:cover;background:var(--well)}
+/* The built-in atom: its colours, as the pet page draws it (pet.css). */
+.petm-atom{display:block;background:radial-gradient(circle at 50% 50%,#0B3D91 0 34%,transparent 36%),
+  radial-gradient(ellipse 48% 18% at 50% 50%,transparent 80%,#5B9DFF 82% 92%,transparent 94%)}
+.petm-name{flex:1;min-width:0;font-size:var(--fs-ui);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.petm-used{font-size:var(--fs-cap);color:var(--ink-2);padding:0 8px}
+.petm-details{font-size:var(--fs-cap);color:var(--ink-2);overflow-wrap:anywhere}
+.petm-details summary{cursor:pointer}

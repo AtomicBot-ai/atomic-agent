@@ -1318,6 +1318,8 @@ export class AgentClient extends EventEmitter {
   // the TUI's own scan window (chat-orchestrator.ts RAIL_SCAN_LIMIT).
   // ATO-731: chats keep their own folders; an agent from before `scope` lists this folder's, as before.
   sessions = () => this.json<unknown>("/api/sessions?limit=1000&scope=all");
+  /** ATO-2513: the newest `limit` rows of every folder; the pet reads them for turns the desktop did not start (main/pet-outside-poll.ts). */
+  recentSessions = (limit: number) => this.json<unknown>(`/api/sessions?limit=${encodeURIComponent(String(limit))}&scope=all`);
   /** GET /api/sessions/search (ATO-1149): words in past chats, every folder. */
   searchSessions = (q: string) => this.json<unknown>(`/api/sessions/search?q=${encodeURIComponent(q)}&limit=25&scope=all`);
   models = () => this.json<unknown>("/v1/models");
