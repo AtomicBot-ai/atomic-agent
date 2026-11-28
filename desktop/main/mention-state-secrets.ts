@@ -50,6 +50,8 @@ export function stateSecretFiles(stateDir: string, modelsDir: string, home: stri
     join(stateDir, "http-devices.json"),
     // ATO-2496: the token hashes `atomic-agent serve` lets callers in with.
     join(stateDir, "http-tokens.json"),
+    // ATO-2451: the lasting `atag launch --config` token (core's launchClientKeyPath).
+    join(stateDir, "launch-client.key"),
   ];
 }
 

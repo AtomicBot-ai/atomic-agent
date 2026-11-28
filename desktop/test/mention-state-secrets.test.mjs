@@ -62,7 +62,7 @@ test("the list is core's getStateSecretPaths, files only", () => {
     "/s/plugins/marketplaces.json", "/h/.curlrc", "/h/.wgetrc", "/s/pr-autofix/state.json",
     "/s/models/llama-server.key", "/s/serve-api.key", "/s/model-share.key",
     "/s/models/core/chat.json", "/s/models/core/embedding.json", "/s/atomic-mail/session.json",
-    "/s/http-devices.json", "/s/http-tokens.json",
+    "/s/http-devices.json", "/s/http-tokens.json", "/s/launch-client.key",
   ].map((p) => join(p)));
 });
 
