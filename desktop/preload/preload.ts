@@ -566,6 +566,8 @@ contextBridge.exposeInMainWorld("atomic", {
   appsRename: (id: string, name: string) => ipcRenderer.invoke("apps:rename", id, name),
   appsDelete: (id: string) => ipcRenderer.invoke("apps:delete", id),
   appsOpen: (id: string) => ipcRenderer.invoke("apps:open", id),
+  /** ATO-2442: Settings › Usage (main/usage-ipc.ts): `{ok, data}` or `{ok:false, error, detail, unsupported}`. */
+  usageReport: (query: { days: number | "all"; compare?: string | null }) => ipcRenderer.invoke("usage:report", query),
   /** ATO-1629 / ATO-1061: facts about the person from a Claude or ChatGPT export (main/import-facts-ipc.ts). */
   importFactsInfo: () => ipcRenderer.invoke("importFacts:info"),
   /** ATO-2740: `kind` on Windows and Linux, whose dialog picks a file or a folder, not both; macOS sends none. */

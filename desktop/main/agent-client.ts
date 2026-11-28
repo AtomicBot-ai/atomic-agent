@@ -1301,6 +1301,8 @@ export class AgentClient extends EventEmitter {
   config = () => this.json<unknown>("/api/config");
   /** ATO-32: Cheap / Balanced / Best picks per provider (agent presets/model-tiers.ts). 404 on an older core. */
   modelTiers = () => this.json<unknown>("/api/model-tiers");
+  /** ATO-2442: tokens and cost per day, tools, projects, saved by local (usage-ipc.ts). 404 on an older core. */
+  usageReport = (query: string) => this.json<unknown>(`/api/usage${query}`);
   skills = (sessionId?: string | null) => this.json<unknown>(`/api/skills${this.workspaceQuery(sessionId)}`);
   // Item 7 (settings surface): the TUI lists with DEFAULT_LIST_LIMIT = 200
   // (tasks-orchestrator.ts:25); route-tasks.ts defaults to 50 and caps at 500.
