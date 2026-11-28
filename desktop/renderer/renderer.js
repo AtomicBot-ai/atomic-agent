@@ -352,7 +352,7 @@ const CATEGORY_PLAIN = {
   // Categories the agent added since (approval-level.ts APPROVAL_CATEGORY_LABELS).
   http_write:'send data in a web request', browser_site_tool:'use a website\u2019s own tool',
   user_question:'ask you a question', session_cross:'read or write in another chat',
-  browser_take_over:'hand you the browser for a step', shell_secret:'have you type a password into its command',
+  browser_take_over:'hand you the browser for a step', shell_secret_input:'have you type a password into its command',
   logbook_cloud:'send your logbook notes to a cloud model',
 };
 function cleanKeyInput(raw) { return String(raw == null ? '' : raw).replace(KEY_INVISIBLE, '').trim(); }
@@ -12658,7 +12658,7 @@ function onApprovalEvent(payload) {
     // ATO-1502: an ask_user question (category user_question) is drawn and answered as one (question-card.js).
     question: payload.category === 'user_question' && typeof qcQuestion === 'function' ? qcQuestion(payload.question) : null,
     // ATO-2486: a job's password the agent asked for (shell-secret-card.js).
-    secret: payload.category === 'shell_secret' && typeof ssPrompt === 'function' ? ssPrompt(payload.secretInput) : null,
+    secret: payload.category === 'shell_secret_input' && typeof ssPrompt === 'function' ? ssPrompt(payload.secretInput) : null,
     // item 6: which chat is waiting. The agent's ApprovalRequest carries it,
     // and it is the one attention signal that works for a turn this window did
     // not start (a scheduled task's, say).
@@ -12764,7 +12764,7 @@ const CATEGORY_LABEL = {
   // Added since (approval-level.ts APPROVAL_CATEGORY_LABELS, verbatim)
   http_write:'HTTP request · sends data', browser_site_tool:'browser · the site\'s own tool',
   user_question:'question for you', session_cross:'another chat · read / send',
-  browser_take_over:'browser · your turn', shell_secret:'terminal · secret input',
+  browser_take_over:'browser · your turn', shell_secret_input:'terminal · secret input',
   logbook_cloud:'logbook · notes to a cloud model',
 };
 

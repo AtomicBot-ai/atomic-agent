@@ -880,7 +880,7 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("agentJobs:output", { sessionId, jobId, since }),
   agentJobInput: (sessionId: string, jobId: number, text: string, eof: boolean, secret?: boolean) =>
     ipcRenderer.invoke("agentJobs:input", { sessionId, jobId, text, eof, secret: secret === true }),
-  /** ATO-2486: a job's password the agent asked for (shell_secret), or a skip. */
+  /** ATO-2486: a job's password the agent asked for (shell_secret_input), or a skip. */
   answerShellSecret: (req: { approvalId: string; value?: string; skip?: boolean }) =>
     ipcRenderer.invoke("agentJobs:secret", req),
   agentJobStop: (sessionId: string, jobId: number) => ipcRenderer.invoke("agentJobs:stop", { sessionId, jobId }),

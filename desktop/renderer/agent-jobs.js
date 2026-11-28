@@ -10,7 +10,7 @@
    on by itself at a password prompt), and Stop job. An ended job keeps its
    last screen until its tab is closed. Hide typing sends as secret (the
    agent masks it for the model when it can). A prompt never takes the caret
-   from another field. A shell_secret request (ATO-2486) is typed here too.
+   from another field. A shell_secret_input request (ATO-2486) is typed here too.
 
    Like Claude Code's background shells view and Cursor's "take over" on
    the agent's terminal: the agent started the program, the person answers
@@ -37,7 +37,7 @@ function ajTypingElsewhere() {
   const host = ajHost();
   return ajIsTextField(el) && !(host && host.contains(el));
 }
-/** The open shell_secret request of this job, if any (shell-secret-card.js). */
+/** The open shell_secret_input request of this job, if any (shell-secret-card.js). */
 function ajSecretAsk(job) { return job && typeof ssOpenFor === 'function' ? ssOpenFor(AJ.sid, job.id) : null; }
 
 function ajReset(sid) {
@@ -114,7 +114,7 @@ function ajNoticePrompt(id) {
   if (typeof toast === 'function') toast(...ajPromptToast(focus, panelOpen));
 }
 
-/** The card of a shell_secret request asks for its job's tab (a click: the caret may move). */
+/** The card of a shell_secret_input request asks for its job's tab (a click: the caret may move). */
 function ajTakeSecret(id) {
   if (AJ.unsupported || !ajBridge()) return false;
   // Not listed yet: taken on the next poll.
@@ -133,7 +133,7 @@ async function ajSend(eof) {
   const job = ajSelectedJob();
   const field = ajHost() && ajHost().querySelector('.aj-input');
   if (!bridge || !job || !field || AJ.busy) return;
-  // A password the agent asked for (shell_secret) answers that request, not stdin.
+  // A password the agent asked for (shell_secret_input) answers that request, not stdin.
   const ask = eof ? null : ajSecretAsk(job);
   if (ask && typeof ssSend === 'function') {
     const value = field.value;
@@ -265,7 +265,7 @@ function ajPaint() {
   const take = host.querySelector('.aj-take');
   take.hidden = !(canType && AJ.taking);
   const field = host.querySelector('.aj-input');
-  // A password the agent asked for (shell_secret) is always typed hidden.
+  // A password the agent asked for (shell_secret_input) is always typed hidden.
   const ask = canType ? ajSecretAsk(job) : null;
   const askLine = host.querySelector('.aj-ask');
   askLine.hidden = !(ask && AJ.taking);

@@ -106,7 +106,7 @@ test('the panel is wired: its own element, scripts after renderer.js, CSS, prelo
   assert.ok(preload.includes('"agentJobs:secret"') && read('../main/agent-jobs-ipc.ts').includes('"agentJobs:secret"'));
   assert.match(read('../main/agent-client.ts'), /\/api\/shell\/secret/);
   const renderer = read('../renderer/renderer.js');
-  assert.match(renderer, /payload\.category === 'shell_secret' && typeof ssPrompt === 'function'/);
+  assert.match(renderer, /payload\.category === 'shell_secret_input' && typeof ssPrompt === 'function'/);
   assert.match(renderer, /m\.secret && typeof ssCardHTML === 'function'/);
   assert.match(renderer, /req\.secret && key !== 'esc' && typeof ssKey === 'function'/);
 });
@@ -210,7 +210,7 @@ test('with the panel open and the caret in the chat box, a password prompt still
   assert.match(toasts[0][1], /field in the terminal panel/);
 });
 
-test('a password the agent asked for (shell_secret) answers that request, not the job\'s stdin', async () => {
+test('a password the agent asked for (shell_secret_input) answers that request, not the job\'s stdin', async () => {
   const sent = [];
   const ask = {approvalId: 'a-1', secret: {jobId: 1}};
   const {ctx, calls, field} = loadPanel({ssOpenFor: (sid, id) => (sid === 's-1' && id === 1 ? ask : null), ssSend: (req, body) => sent.push([req, body])});

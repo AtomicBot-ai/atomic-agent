@@ -9,7 +9,7 @@
    question-card.js does.
 
    The agent's `{"write": id, "secret": "sudo password"}` reaches the window
-   as an approval request with `category: "shell_secret"` and `secretInput`
+   as an approval request with `category: "shell_secret_input"` and `secretInput`
    (`jobId`, `label`, `commandLine`, `promptLine`), kept, replayed and closed
    by the approval machinery like any card. Allow would type nothing (the
    agent refuses a bare approve of one), so the card has no Allow:
