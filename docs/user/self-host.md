@@ -51,7 +51,7 @@ Do not publish the port to the open internet without TLS: the API key travels in
 Then:
 
 - **Desktop app**: Agent › Connect to Another Computer, with the address and the API key.
-- **Phone**: run `atag pair --url http://<address>:8787` (in Docker: `docker compose exec agent atag pair --url http://<address>:8787`) and scan the QR code: the panel opens without the key. Or open `http://<address>:8787/panel` and enter the API key. Add it to the home screen. `atag pair --list` shows paired phones, `atag pair --revoke <id>` signs one out.
+- **Phone**: run `atag pair --url http://<address>:8787` (in Docker: `docker compose exec agent atag pair --url http://<address>:8787`) and scan the QR code: the panel opens without the key. Or open `http://<address>:8787/panel` and enter the API key. Add it to the home screen: on an iPhone that app keeps its own sign-in, apart from Safari, so tap Connect this app there and type the short code `atag pair` prints under the QR. `atag pair --list` shows paired phones, `atag pair --revoke <id>` signs one out; a phone not used for 30 days is signed out on its own.
 - **API clients**: `http://<address>:8787/v1`, bearer token = the API key.
 
 ## Without Docker

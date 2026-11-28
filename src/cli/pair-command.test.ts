@@ -4,7 +4,8 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { readDevices, redeemPairing } from "../http/device-store.js";
+import { normalizePairingCode } from "../http/device-code.js";
+import { readDevices, redeemPairing, redeemPairingCode } from "../http/device-store.js";
 import { pairCommand, parsePairArgs, type PairCommandDeps } from "./pair-command.js";
 import { REMOTE_WARNING } from "./pair-remote.js";
 import type { ServeRecord } from "./serve-reaper.js";
@@ -55,6 +56,18 @@ describe("atag pair", () => {
     expect(text).toContain("works once, for 5 minutes");
     // The printed token is a real pending link: it redeems once.
     expect(redeemPairing(dir, printedToken(), "iPhone").ok).toBe(true);
+    expect(redeemPairing(dir, printedToken(), "iPhone").ok).toBe(false);
+  });
+
+  it("prints the short code for /panel/pair too, and it redeems the same pairing (ATO-2494)", async () => {
+    expect(await pairCommand([], deps())).toBe(0);
+    const text = out.join("");
+    const match = /type this code at http:\/\/192\.168\.1\.20:8787\/panel\/pair .*: ([A-Z]{4}-[A-Z]{4})/.exec(text);
+    expect(match?.[1]).toBeTruthy();
+    const code = normalizePairingCode(match?.[1] ?? "");
+    expect(code).not.toBeNull();
+    expect(redeemPairingCode(dir, code ?? "", "iPhone").ok).toBe(true);
+    // One pairing: the code spent it, so the QR link is gone as well.
     expect(redeemPairing(dir, printedToken(), "iPhone").ok).toBe(false);
   });
 

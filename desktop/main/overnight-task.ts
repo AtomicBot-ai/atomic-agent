@@ -11,8 +11,10 @@
  * not know the limits yet ignores them; the window then stops the run itself
  * when the time is up (renderer/overnight.js).
  *
- * On a remote agent the folder is the agent's own (`GET /health`): a folder
- * from this computer's picker does not exist there, and the agent refuses it.
+ * On a remote agent the folder is the agent's own (`GET /api/capabilities`,
+ * signed in with the key; `/health` keeps the folder to the agent's own
+ * computer): a folder from this computer's picker does not exist there, and
+ * the agent refuses it.
  */
 
 import { isAbsolute } from "node:path";
@@ -53,9 +55,9 @@ export type OvernightCheck =
   | { ok: true; request: OvernightRequest; body: OvernightTaskBody }
   | { ok: false; error: string };
 
-/** The folder a remote agent reports in `GET /health`, or null when it does not say. */
-export function remoteAgentFolder(health: unknown): string | null {
-  const dir = (health as { workingDir?: unknown } | null | undefined)?.workingDir;
+/** The folder a remote agent reports in `GET /api/capabilities`, or null when it does not say. */
+export function remoteAgentFolder(answer: unknown): string | null {
+  const dir = (answer as { capabilities?: { workingDir?: unknown } | null } | null | undefined)?.capabilities?.workingDir;
   return typeof dir === "string" && dir.trim() ? dir.trim() : null;
 }
 
