@@ -73,6 +73,7 @@ function mtgPanelHTML() {
     + '<div class="mtgbody" id="mtg-body">' + mtgLinesHTML() + '</div>'
     + (MTG.failed ? '<p class="mtgwarn">' + MTG.failed + ' part' + (MTG.failed === 1 ? '' : 's') + ' could not be transcribed yet; tried again on Make notes.</p>' : '')
     + (typeof mtgSystemHTML === 'function' ? mtgSystemHTML() : '')   // ATO-2514: the other side of the call (meeting-system.js)
+    + (typeof mtgVoicesHTML === 'function' ? mtgVoicesHTML() : '')   // ATO-2514: speakers by voice (meeting-voices.js)
     + '<p class="mtgnote">Heard and transcribed on this computer. ' + esc(typeof mtgSpeakersNote === 'function' ? mtgSpeakersNote() : 'Speakers are guessed from pauses.') + ' The audio is deleted once the transcript is saved.</p>'
     + '<div class="mtgfoot">' + foot + '</div></div>';
 }

@@ -819,6 +819,11 @@ contextBridge.exposeInMainWorld("atomic", {
   meetingSystemAudio: (chunk: Uint8Array, peak: number) => ipcRenderer.send("meeting:system-audio", chunk, peak),
   meetingSystemStop: () => ipcRenderer.invoke("meeting:system-stop"),
   meetingOpenScreenSettings: () => ipcRenderer.invoke("meeting:open-screen-settings"),
+  /** ATO-2514: speakers told apart by voice (main/meeting-voices-ipc.ts). */
+  meetingVoicesStatus: () => ipcRenderer.invoke("meeting:voices-status"),
+  meetingVoicesInstall: () => ipcRenderer.invoke("meeting:voices-install"),
+  meetingVoicesCancel: () => ipcRenderer.invoke("meeting:voices-cancel"),
+  meetingVoicesRemove: () => ipcRenderer.invoke("meeting:voices-remove"),
   /** ATO-1167: the neural reading voice through Atomic Core (main/core-speech.ts). */
   ttsCoreStatus: (model: string) => ipcRenderer.invoke("tts:coreStatus", model),
   ttsCorePrepare: (model: string) => ipcRenderer.invoke("tts:corePrepare", model),
