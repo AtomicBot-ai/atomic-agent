@@ -76,15 +76,23 @@ function videoToolLine(args, ran) {
 
 /* ---------- tool_update: how far a long call got ---------- */
 
-/** The card a `tool_update` is about: the newest card of that tool still running in that turn. */
+/** The step a card's `call_id` ("3:0", step and place in its batch) names; -1 without one. */
+function toolCallStep(card) {
+  const m = /^(\d+):\d+$/.exec(String((card && card.callId) || ''));
+  return m ? Number(m[1]) : -1;
+}
+
+/** The card a `tool_update` is about, of that tool, still running, in that turn. The frame has no call id:
+    a step's batch draws every call's card first and then runs them in order (step-evidence.ts), each
+    settled by its `tool_result`, so the card at work is the first running one of the newest step
+    (ATO-2444: two decks in one step each get their own slides). Cards with no call id: the newest, as before. */
 function toolUpdateTarget(log, payload, turnId) {
   const tool = String((payload && payload.tool) || '');
   if (!tool || !Array.isArray(log)) return null;
-  for (let i = log.length - 1; i >= 0; i--) {
-    const c = log[i];
-    if (c && c.k === 'tool' && c.name === tool && c.ok === null && (turnId == null || c.turn === turnId)) return c;
-  }
-  return null;
+  const running = log.filter((c) => c && c.k === 'tool' && c.name === tool && c.ok === null && (turnId == null || c.turn === turnId));
+  if (!running.length) return null;
+  const step = Math.max(...running.map(toolCallStep));
+  return step < 0 ? running[running.length - 1] : running.find((c) => toolCallStep(c) === step);
 }
 
 /** Folds one `tool_update` into the card: `progress = {fraction 0..1, elapsedMs, label, at}`. A fraction never goes back. */
