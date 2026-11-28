@@ -792,14 +792,18 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1056/1058: roll a chat back to a question (files first), preview it, or fork it there (chat-rewind-ipc.ts). */
   rewindPreview: (sessionId: string, priorQuestions: number, expectText: string) =>
     ipcRenderer.invoke("agent:rewindPreview", { sessionId, priorQuestions, expectText }),
-  rewind: (sessionId: string, priorQuestions: number, expectText: string, files?: boolean, conversation?: boolean) =>
-    ipcRenderer.invoke("agent:rewind", { sessionId, priorQuestions, expectText, files, conversation }),
+  rewind: (sessionId: string, priorQuestions: number, expectText: string, files?: boolean, conversation?: boolean, keepBranch?: boolean) =>
+    ipcRenderer.invoke("agent:rewind", { sessionId, priorQuestions, expectText, files, conversation, keepBranch }),
   forkSession: (sessionId: string, priorQuestions: number, expectText: string) =>
     ipcRenderer.invoke("agent:forkSession", { sessionId, priorQuestions, expectText }),
   /** ATO-2114: the earlier answers kept for the last question, and putting one back (answer-versions-ipc.ts). */
   previousReplies: (sessionId: string) => ipcRenderer.invoke("agent:previousReplies", { sessionId }),
   restorePreviousReply: (sessionId: string, index: number) =>
     ipcRenderer.invoke("agent:restorePreviousReply", { sessionId, index }),
+  /** ATO-2470: every version of every question (edits, earlier answers), and switching to one (answer-versions-ipc.ts). */
+  messageVersions: (sessionId: string) => ipcRenderer.invoke("agent:messageVersions", { sessionId }),
+  switchMessageVersion: (sessionId: string, priorQuestions: number, expectText: string | undefined, ref: string) =>
+    ipcRenderer.invoke("agent:switchVersion", { sessionId, priorQuestions, expectText, ref }),
   /** ATO-448: continue a reply a restart cut off (POST /api/sessions/{id}/resume); `release` gives it back. */
   resumeInterruptedTurn: (sessionId: string, release?: boolean) =>
     ipcRenderer.invoke("agent:resumeInterruptedTurn", { sessionId, release: release === true }),

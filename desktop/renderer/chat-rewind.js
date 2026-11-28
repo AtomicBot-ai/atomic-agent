@@ -227,7 +227,8 @@ async function rewindConfirm(files, conversation) {
   const sid = REWIND.sid;
   // The spinner goes on the button that was clicked (go-chat is the only one passing files: false).
   REWIND.busy = true; REWIND.busyAct = files === false ? 'rewind:go-chat' : 'rewind:go'; REWIND.error = null; render();
-  const r = await BR.rewind(sid, REWIND.prior, REWIND.text, files).catch((err) => ({ok: false, supported: true, error: String(err)}));
+  // ATO-2470: an Edit keeps the old message and what followed it as a version (message-versions.js).
+  const r = await BR.rewind(sid, REWIND.prior, REWIND.text, files, undefined, edit).catch((err) => ({ok: false, supported: true, error: String(err)}));
   REWIND.busy = false; REWIND.busyAct = null;
   if (!r || !r.ok) { REWIND.error = rewindRefusalText(r); render(); return; }
   S.overlay = null;

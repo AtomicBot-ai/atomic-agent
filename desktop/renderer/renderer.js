@@ -3434,6 +3434,7 @@ function msgActs(m) {
     const kvc = last && m.kvCache && typeof cacheShareHTML === 'function' ? cacheShareHTML(m.kvCache) : '';   // ATO-631 (kv-cache-share.js)
     // ATO-1046: Read aloud after copy, under a finished reply (tts.js).
     return '<div class="' + cls + '">' + (typeof answerVersionsHTML === 'function' ? answerVersionsHTML(m) : '')   // ATO-2114: ‹ 2/3 › (answer-versions.js)
+      + (typeof messageVersionsAnswerHTML === 'function' ? messageVersionsAnswerHTML(m) : '')   // ATO-2470: answers to any question (message-versions.js)
       + tps + kvc + again + copy + (typeof ttsButtonHTML === 'function' && !m.placeholder ? ttsButtonHTML(m) : '')
       + (typeof rewindActsHTML === 'function' ? rewindActsHTML(m) : '') + '</div>';   // ATO-1058: Fork (chat-rewind.js)
   }
@@ -3450,7 +3451,8 @@ function msgActs(m) {
     ? '<button type="button" class="msgact msgact-off" aria-disabled="true" tabindex="-1" data-tip="' + BUSY_RETRY_HINT
       + '" aria-label="' + BUSY_RETRY_HINT + '">' + ic('retry') + '</button>'
     : '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('retry') + '</button>';
-  return '<div class="' + cls + '">' + resend + copy + (typeof rewindActsHTML === 'function' ? rewindActsHTML(m) : '') + '</div>';   // ATO-1056/1058 (chat-rewind.js)
+  const mver = typeof messageVersionsUserHTML === 'function' ? messageVersionsUserHTML(m) : '';   // ATO-2470: ‹ 2/2 › on an edited message (message-versions.js)
+  return '<div class="' + cls + '">' + mver + resend + copy + (typeof rewindActsHTML === 'function' ? rewindActsHTML(m) : '') + '</div>';   // ATO-1056/1058 (chat-rewind.js)
 }
 
 /* What is copied is `m.text` and only `m.text`. For a user message that is the
@@ -23691,7 +23693,8 @@ function sysRowHTML(m, times) {
     // ATO-448: a chat a restart cut off; continued only on this click.
     + (m.act === 'resume-turn' ? ' <button class="btn xs btn-t sysact" data-act="turn:resume" title="Continue the reply the restart cut off; the agent checks what already ran before repeating it">' + ic('play') + 'Continue</button>' : '')
     // ATO-772: no Try again while the model is down or coming back; it would only wait on it.
-    + (m.sev === 'err' && !m.noRetry && (!engine || engine === 'back') ? sysRetryHTML(m) : '');
+    + (m.sev === 'err' && !m.noRetry && (!engine || engine === 'back') ? sysRetryHTML(m) : '')
+    + (typeof messageVersionsFailHTML === 'function' ? messageVersionsFailHTML(m) : '');   // ATO-2470: ‹ 3/3 › on a failed Regenerate (message-versions.js)
   const rep = times >= 2 ? ' <span class="sysrep" title="' + times + ' times in a row">\u00d7' + times + '</span>' : '';
   if (m.tone) return '<div class="sysrow tk-sysnotice"><span></span><div class="tk-notice tk-notice--' + m.tone + '">'
     + ic(m.icon || 'info') + '<span class="grow">' + m.text + rep + acts

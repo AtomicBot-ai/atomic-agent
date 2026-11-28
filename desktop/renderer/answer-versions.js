@@ -97,6 +97,8 @@ function answerVersionsRefusalText(r) {
 const AVER = {supported: true, key: null, sid: null, data: null, view: null, busy: false};
 
 function answerVersionsHTML(m) {
+  // ATO-2470: an agent with versions of every message gets the switchers from message-versions.js instead.
+  if (typeof messageVersionsActive === 'function' && messageVersionsActive()) return '';
   if (!AVER.supported || typeof BR === 'undefined' || !BR || !BR.previousReplies) return '';
   if (!m || m.k !== 'assistant' || m.placeholder || S.busy || S.pending || !S.agentSession) return '';
   if (!isLastReply(m)) return '';
