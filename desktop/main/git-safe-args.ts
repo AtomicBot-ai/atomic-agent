@@ -27,8 +27,8 @@
  *    own `diff.external` runs (review round 2, R2-1979.A).
  *
  * Diff calls add `--no-ext-diff --no-textconv --submodule=short` themselves
- * (mention-git.ts). The system config (`GIT_CONFIG_NOSYSTEM`) is left
- * alone: it belongs to the machine's admin, not to the folder.
+ * (the agent's src/mentions/mention-git.ts since ATO-2472). The system
+ * config (`GIT_CONFIG_NOSYSTEM`) is left alone: it belongs to the machine's admin, not to the folder.
  *
  * Precedent: VS Code's Git extension and GitHub Desktop turn off the
  * fsmonitor and optional locks for background calls; the agent core does
