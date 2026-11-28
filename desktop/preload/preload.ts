@@ -289,6 +289,9 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-731: the chat on screen moves to the folder picked (sessionId), without restarting the agent.
   chooseWorkspace: (sessionId?: string | null) => ipcRenderer.invoke("app:chooseWorkspace", sessionId ?? null),
   openPath: (path: string) => ipcRenderer.invoke("app:openPath", path),
+  // ATO-2529: <stateDir>/guard.md, its state and Create / Open (main/guard-rules-ipc.ts).
+  guardRules: () => ipcRenderer.invoke("app:guardRules"),
+  guardRulesOpen: () => ipcRenderer.invoke("app:guardRulesOpen"),
   // ATO-1424 (macOS): a new Terminal window in `cwd` (home if missing) with `command` typed, not run.
   // → {ok:true, cwd, usedHome} | {ok:false, error:"unsupported"|"invalid-request"|"empty-command"|
   //   "command-too-long"|"control-characters"|"open-failed", message}

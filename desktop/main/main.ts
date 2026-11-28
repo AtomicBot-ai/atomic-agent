@@ -79,6 +79,7 @@ import { wireMiniChatIpc } from "./mini-chat-ipc.js";
 import { chatPopoutTurnRefused, isChatPopout, wireChatPopoutIpc } from "./chat-popout-ipc.js";
 import { wireChatRewindIpc } from "./chat-rewind-ipc.js";
 import { wireAnswerVersionsIpc } from "./answer-versions-ipc.js";
+import { wireGuardRulesIpc } from "./guard-rules-ipc.js";
 import { wireTraceTreeIpc } from "./trace-tree-ipc.js";
 import { wireProjectWorkersIpc } from "./project-workers-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
@@ -3138,6 +3139,7 @@ function wireIpc(client: AgentClient): void {
     if (!path) return { ok: false, error: "not a path" };
     return openWithoutRunning(path);
   });
+  wireGuardRulesIpc(openWithoutRunning);   // ATO-2529: Settings › Privacy › Security rules (guard-rules-ipc.ts)
   // Item 5 (file attachments): read-only existence check for the paths a turn's
   // write tools reported. fs.stat and nothing else — never open, never create.
   // Cap: 64 paths per call; the renderer chunks longer lists so a 65th written

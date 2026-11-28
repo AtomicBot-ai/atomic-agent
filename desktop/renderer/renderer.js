@@ -4268,6 +4268,9 @@ function apprCard(m) {
       + '<div class="apprmain"><div class="ttl">' + apprAsk(m) + '</div>'
       + (why ? '<div class="apprwhy">' + why + '</div>' : '')
       + (risk ? '<div class="apprrisk' + (m.riskLevel === 'high' ? ' high' : '') + '">' + esc(risk) + '</div>' : '')
+      // ATO-2505 / ATO-2528 (approval-security.js): what an argument check caught, and where the call sends data.
+      + (apprFindingLine(m) ? '<div class="apprrisk high apprsec">' + esc(apprFindingLine(m)) + '</div>' : '')
+      + (apprEgressLine(m) ? '<div class="apprrisk apprsec' + (apprEgressUnknown(m) ? ' high' : '') + '">' + esc(apprEgressLine(m)) + '</div>' : '')
       + (res ? '<div class="apprres">' + res + '</div>' : '')
     + '</div></div>'
     + '<div class="apprbtns">'
@@ -6627,6 +6630,15 @@ async function approvalRulesAct(v) {
   render();
   if (res && res.ok) toast('Rule deleted', 'Atomic Agent will ask about it again');
 }
+/* ATO-2528 / ATO-2529: Settings › Privacy › Known hosts and Security rules (renderer/security-settings.js). */
+const SECSET = createSecuritySettings({
+  guardRules: () => BR && BR.guardRules ? BR.guardRules() : null,
+  guardRulesOpen: () => BR && BR.guardRulesOpen ? BR.guardRulesOpen() : null,
+  config: () => LIVE_CONFIG,
+  saveHosts: async (list) => { const res = await configPatchOr({agent:{security:{knownHosts:list}}}, () => BR.configSetPath('agent.security.knownHosts', list)); await refreshLiveConfig(); return res; },
+  inputValue: () => { const el = document.getElementById('khosts-new'); return el ? el.value : ''; },
+  render: () => render(), repaint: () => { if (approvalRulesShown()) render(); }, toast: (t, d) => toast(t, d),
+});
 /* ATO-1087: Settings › Privacy › Offline mode (renderer/offline-mode.js).
    Read on entry to Privacy and every 5 s while it is open, so the "sent out"
    line is the agent's live counter; an agent without /api/offline-mode gets
@@ -6762,6 +6774,7 @@ function settingsPaneEntered(opened) {
   // ATO-1087: offline mode and its outbound counter, read again on every entry to Privacy.
   if (settingsPaneId(S.settingsPane) === 'privacy') offlineModeLoad();
   if (settingsPaneId(S.settingsPane) === 'privacy') SHIELD.refresh(); // ATO-1082
+  if (settingsPaneId(S.settingsPane) === 'privacy') SECSET.load();   // ATO-2529
   // ATO-445: the webhook routes, read again on every entry to the pane.
   if (settingsPaneId(S.settingsPane) === 'webhooks') webhooksLoad();
   // Item 7 part B: the Skills / Memory / MCP tabs start their own 5 s poll and first load on entry.
@@ -7370,6 +7383,7 @@ function privacyPane() {
       + '</div>'
     + '</div>'
     + approvalRulesSection()
+    + SECSET.html({esc})   // ATO-2528 / ATO-2529
     + '<p class="set-cap set-privnote">With a cloud model, your messages go to that provider.</p>'
     + privacyNoticesHTML()
     + '</div>';
@@ -7669,6 +7683,7 @@ function act(a) {
   if (k === 'ptrust') { projectTrustAct(v || ''); return; }
   if (k === 'alq') { appendLocalQuestionAct(v || ''); return; }
   if (k === 'arules') { approvalRulesAct(v || ''); return; }
+  if (k === 'khosts' || k === 'guard') { SECSET.act(k, v || ''); return; }   // ATO-2528 / ATO-2529
   if (k === 'offline') { offlineModeAct(v || ''); return; }
   if (k === 'shield') { SHIELD.act(v || ''); return; } // ATO-1082
   if (k === 'whk') { webhooksAct(v || ''); return; }
@@ -8917,6 +8932,8 @@ document.addEventListener('click', (e) => {
   // ATO-1145: the "Auto-approved N actions" list under a turn's summary line.
   const tsauto = t.closest('[data-tsauto]');
   if (tsauto) { const id = tsauto.dataset.tsauto; if (TURN_AUTO_OPEN.has(id)) TURN_AUTO_OPEN.delete(id); else TURN_AUTO_OPEN.add(id); if (!repaintTranscript()) render(); return; }
+  const tssec = t.closest('[data-tssec]');   // ATO-2529: the turn's "Security: N checks" list (approval-security.js)
+  if (tssec) { const id = tssec.dataset.tssec; if (TURN_SEC_OPEN.has(id)) TURN_SEC_OPEN.delete(id); else TURN_SEC_OPEN.add(id); if (!repaintTranscript()) render(); return; }
   // ATO-486: the plan bar folds to its "Plan 3/7" chip and back.
   const ptog = t.closest('[data-plan-toggle]');
   if (ptog) { planToggle(ptog.dataset.planToggle); render(); return; }
@@ -12729,6 +12746,8 @@ function onApprovalEvent(payload) {
     alwaysLabel: typeof payload.alwaysLabel === 'string' ? payload.alwaysLabel : '',
     // ATO-1268: smart approval's verdict (riskNote / riskLevel / riskReason), absent from an older agent.
     ...apprRiskFields(payload),
+    // ATO-2505 / ATO-2528: egress, securityFinding, askEveryLevel (approval-security.js), absent from an older agent.
+    ...apprSecurityFields(payload),
     affectsBase: cut >= 0 ? String(first).slice(cut + 1) : String(first),
     affectsDir: cut >= 0 ? String(first).slice(0, cut + 1) : '',
     sessionGrants: false,
@@ -22151,13 +22170,15 @@ function sessionTurnsToLog(turns) {
         log.push(card);
       }
       const receipts = (Array.isArray(t.approvals) ? t.approvals : [])
-        .filter((a) => a && (a.verdict === 'approved' || a.verdict === 'denied'))
+        .filter(apprIsPersonAnswer)   // ATO-2529: a refusal by the security rules is not "Denied by you"
         .map((a) => ({id:nid(), k:'approval', stored:true, tool:t.tool || 'tool',
           cat:a.category || 'other', kind:CATEGORY_LABEL[a.category] || a.category || 'action',
           state:a.verdict, at: Number.isFinite(a.at) ? new Date(a.at).toTimeString().slice(0, 8) : ''}));
       // ATO-1145: what the agent allowed by itself (a rule, a chat grant, the risk check), for the turn's summary line.
       const auto = autoApprovedOf(t.approvals);
       if (auto.length) card.autoApproved = auto;
+      const sec = securityRecordsOf(t.approvals);   // ATO-2505 / ATO-2529: checks and rule refusals, for the summary
+      if (sec.length) card.security = sec;
       // ATO-237: the last answer's time, so the card is timed from it (toolTook). An auto-approval is not an answer.
       const answered = (Array.isArray(t.approvals) ? t.approvals : []).filter((a) => a && a.verdict !== 'auto-approved').map((a) => a && a.at).filter(Number.isFinite);
       if (answered.length) card.apprAt = Math.max(...answered);
@@ -23905,6 +23926,8 @@ async function reconcileToolCards(attempt = 0) {
     if (result) {
       const auto = autoApprovedOf(result.approvals);
       if (auto.length) card.autoApproved = auto; else delete card.autoApproved;
+      const sec = securityRecordsOf(result.approvals);   // ATO-2505 / ATO-2529
+      if (sec.length) card.security = sec; else delete card.security;
     }
   }
   // Whatever the store still does not describe is finished, just unmeasured.
