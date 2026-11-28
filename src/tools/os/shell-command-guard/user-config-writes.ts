@@ -6,7 +6,12 @@ import type { ShellWord } from "./shell-line-lexer.js";
  * `~/.gitconfig` (`core.hooksPath`, `credential.helper`, `core.pager`
  * all run code later), `--system` the machine's git config, `--file f`
  * the file `f`; `crontab` installs a job; `launchctl load|bootstrap`
- * and `systemctl --user enable|link` start one at every login.
+ * and `systemctl --user enable|link` start one at every login. Review
+ * round 3: `npm config set|delete|edit` and `npm set` write `~/.npmrc`
+ * (a registry there reroutes every install; `--global` the global npmrc,
+ * `--location=project` the project's, `--userconfig f` the file `f`);
+ * `yarn config set|unset|delete` writes `~/.yarnrc` or `~/.yarnrc.yml`;
+ * `pnpm` and `pip config set|unset|edit` change their user config.
  *
  * `undefined` for any other command, including a `git config` that
  * only reads (`--get`, `--list`, one key alone) or writes the repo's own
@@ -46,7 +51,46 @@ export function userConfigWrites(name: string, args: readonly ShellWord[]): User
       ? { files: [], other: [`a systemd user unit (systemctl --user ${sub})`] }
       : undefined;
   }
+  if (name === "npm") return npmConfigWrites(args);
+  if (name === "yarn" || name === "pnpm" || /^pip[0-9.]*$/.test(name)) return packageConfigWrites(name, args);
   return undefined;
+}
+
+const NPM_VALUE_FLAGS = /^(?:-L|--location|--userconfig|--registry|--prefix|--cache|-w|--workspace)$/;
+const NPM_CONFIG_WRITES: ReadonlySet<string> = new Set(["set", "delete", "rm", "edit", "fix"]);
+
+function npmConfigWrites(args: readonly ShellWord[]): UserConfigWrites | undefined {
+  const operands: string[] = [];
+  let location: string | undefined;
+  let userconfig: ShellWord | undefined;
+  for (let k = 0; k < args.length; k++) {
+    const word = args[k]!;
+    const text = word.text;
+    const inline = /^(--[a-z-]+)=(.*)$/.exec(text);
+    const flag = inline?.[1] ?? text;
+    const value = inline !== null ? { ...word, text: inline[2]! } : NPM_VALUE_FLAGS.test(text) ? args[(k += 1)] : undefined;
+    if (text === "-g" || text === "--global") location = "global";
+    else if (flag === "-L" || flag === "--location") location = value?.text;
+    else if (flag === "--userconfig") userconfig = value;
+    else if (!text.startsWith("-")) operands.push(text);
+  }
+  const [sub, action] = operands;
+  const writes = sub === "set" || ((sub === "config" || sub === "c") && action !== undefined && NPM_CONFIG_WRITES.has(action));
+  if (!writes) return undefined;
+  if (location === "global") return { files: [], other: ["the global npm config (npm config --global)"] };
+  if (location === "project") return { files: [{ text: ".npmrc", dynamic: false }], other: [] };
+  return { files: [userconfig ?? { text: "~/.npmrc", dynamic: false }], other: [] };
+}
+
+function packageConfigWrites(name: string, args: readonly ShellWord[]): UserConfigWrites | undefined {
+  const operands = args.filter((arg) => !arg.text.startsWith("-")).map((arg) => arg.text);
+  const action = operands[0] === "config" ? operands[1] : undefined;
+  if (action === undefined || !["set", "unset", "delete", "edit"].includes(action)) return undefined;
+  if (name === "yarn") {
+    return { files: [{ text: "~/.yarnrc", dynamic: false }, { text: "~/.yarnrc.yml", dynamic: false }], other: [] };
+  }
+  const tool = name === "pnpm" ? "pnpm" : "pip";
+  return { files: [], other: [`the ${tool} user config (${tool} config ${action})`] };
 }
 
 function gitConfigWrites(args: readonly ShellWord[]): UserConfigWrites | undefined {

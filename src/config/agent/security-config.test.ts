@@ -54,7 +54,17 @@ describe("agent.security (ATO-2505)", () => {
   });
 
   it("keeps a wildcard over two labels", () => {
-    expect(normaliseKnownHostEntry("*.co.uk")).toBe("*.co.uk");
     expect(normaliseKnownHostEntry("*.example.com")).toBe("*.example.com");
+    expect(normaliseKnownHostEntry("*.example.co.uk")).toBe("*.example.co.uk");
+    expect(normaliseKnownHostEntry("*.github.com")).toBe("*.github.com");
   });
+
+  // Review round 3 (F2105-R3.8): `*.co.uk` made every .co.uk host known.
+  it.each(["*.co.uk", "*.com.au", "*.ne.jp", "*.github.io", "*.herokuapp.com"])(
+    "refuses a wildcard over an open suffix %j",
+    (value) => {
+      expect(normaliseKnownHostEntry(value)).toBeNull();
+      expect(() => parseAgentSecurityConfig({ knownHosts: [value] })).toThrow(/knownHosts/);
+    },
+  );
 });

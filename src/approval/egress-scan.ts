@@ -196,7 +196,7 @@ function scanSegment(
   if (program === "wget") return scanWget(args, { rerouted });
   if (program === "git") {
     const unsafe = call.gitUnsafe || options.gitStateWritten === true;
-    return scanGit(args, unsafe ? undefined : options.gitRemote, gitIndirect);
+    return scanGit(args, options.gitRemote, gitIndirect || unsafe);
   }
   if (program === "scp" || program === "rsync") return scanCopy(program, args);
   if (program === "ssh") return scanSsh(args);

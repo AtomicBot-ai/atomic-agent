@@ -79,6 +79,11 @@ describe.skipIf(process.platform === "win32")("os.shell.run: egress (ATO-2116)",
       targetPaths: [join(dir, ".git", "config")],
     });
     expect(written.map((d) => d.host)).toEqual([null]);
+    // Review round 3 (F2105-R3.7): the XDG global config and a system one count too.
+    for (const path of [join(dir, ".config", "git", "config"), join(dir, "etc", "gitconfig")]) {
+      expect(shellEgress([["git", "push", "origin"]], dir, { targetPaths: [path] }).map((d) => d.host)).toEqual([null]);
+    }
+    expect(shellEgress([["git", "push", "origin"]], dir).map((d) => d.host)).toEqual(["github.com"]);
   });
 
   it("a call that writes .curlrc sends to an unknown address", () => {
