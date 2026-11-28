@@ -68,7 +68,10 @@ import {
 } from "./shell-job-until.js";
 import { compileWatchPattern } from "./shell-job-watch.js";
 import { runShellWrite } from "./shell-job-write.js";
-import { ttyEnv, wrapForTty } from "./tty-wrap.js";
+import { hideTypedSecrets } from "./shell-job-secret.js";
+import { ttyEnv } from "./tty-wrap.js";
+import { startInteractiveJob, type TtyBackend } from "./tty-spawn.js";
+import type { NodePtyModule } from "../../../native/load-node-pty.js";
 import { ShellJobRegistry } from "./shell-jobs.js";
 import { shellEgress } from "./shell-egress.js";
 import {
@@ -183,6 +186,8 @@ export interface OsShellToolOptions extends DangerousToolOptions {
    * filled in only after approval. Omitted ⇒ none: a placeholder fails.
    */
   secrets?: ToolSecretSource;
+  /** Test seam: the pty binding for `tty: true` jobs (ATO-2484). */
+  loadPty?: () => NodePtyModule | null;
 }
 
 /**
@@ -531,10 +536,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       runArgs = filled.args;
     }
     const plainSpawn = resolveShellSpawn(runCmd, runArgs, useShell);
-    const ttySpawn = interactive ? wrapForTty(plainSpawn.command, plainSpawn.args) : null;
-    const spawnSpec = ttySpawn
-      ? { ...plainSpawn, command: ttySpawn.command, args: ttySpawn.args }
-      : plainSpawn;
+    const spawnSpec = plainSpawn;
     const facts: ShellCommandFacts = {
       cmd,
       args: execArgs,
@@ -606,21 +608,42 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         ? commandEnv
         : withSandboxCacheEnv(commandEnv, sandboxCacheRoot);
     const dropSocketEnv = sandbox.mode === "workspace" && !sandbox.network;
-    const job = startCommandJob(spawnCommand, spawnArgs, {
-      cwd,
-      // Package caches go to the private sandbox cache (ATO-1651); without
-      // network the socket variables (`SSH_AUTH_SOCK`, `DOCKER_HOST`,
-      // D-Bus) are dropped too (ATO-1652); a tty job adds its terminal
-      // variables last (ATO-2277).
-      env: (interactive ? ttyEnv : (env: NodeJS.ProcessEnv) => env)(
-        dropSocketEnv ? withoutLocalSocketEnv(cachedEnv) : cachedEnv,
-      ),
-      ...(interactive ? { keepStdinOpen: true, stopDescendants: true } : {}),
-      ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
-      ...(spawnSpec.windowsVerbatimArguments
-        ? { windowsVerbatimArguments: true }
-        : {}),
-    });
+    // Package caches go to the private sandbox cache (ATO-1651); without
+    // network the socket variables (`SSH_AUTH_SOCK`, `DOCKER_HOST`,
+    // D-Bus) are dropped too (ATO-1652); a tty job adds its terminal
+    // variables last (ATO-2277).
+    const jobEnv = (interactive ? ttyEnv : (env: NodeJS.ProcessEnv) => env)(
+      dropSocketEnv ? withoutLocalSocketEnv(cachedEnv) : cachedEnv,
+    );
+    // A `tty: true` job runs on node-pty, else `script(1)`, else pipes
+    // (tty-spawn.ts, ATO-2484). Safe Mode refused it above, so its
+    // spawn is never the sandbox wrapper.
+    const interactiveJob = interactive
+      ? startInteractiveJob(
+          {
+            command: spawnCommand,
+            args: spawnArgs,
+            ...(spawnSpec.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+          },
+          {
+            cwd,
+            env: jobEnv,
+            ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
+          },
+          options.loadPty ? { loadPty: options.loadPty } : {},
+        )
+      : null;
+    const ttyBackend: TtyBackend | null = interactiveJob?.backend ?? null;
+    const job =
+      interactiveJob?.job ??
+      startCommandJob(spawnCommand, spawnArgs, {
+        cwd,
+        env: jobEnv,
+        ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
+        ...(spawnSpec.windowsVerbatimArguments
+          ? { windowsVerbatimArguments: true }
+          : {}),
+      });
     // `node --check a b c` exits 0 having read only `a`. Said first,
     // because nothing in node's own output says it — and a reply built
     // on that exit code claims a check that never ran.
@@ -661,7 +684,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           maxJobs: jobs.maxJobs,
           notices,
           detachNotice: interactive
-            ? formatShellInteractiveNotice(record.id, ttySpawn?.tty === true)
+            ? formatShellInteractiveNotice(record.id, ttyBackend !== null && ttyBackend !== "pipes")
             : formatShellBackgroundNotice(record.id),
         });
       }
@@ -752,7 +775,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
   return {
     name: "os.shell.run",
     description:
-      "Run an OS command in the session working directory. Prefer the structured form `{cmd, args:[...]}` (argv globs `*`/`?` are expanded). Shell metacharacters (`|`, `&&`, `;`, `>`, `<`, `$`, backticks) are interpreted via the OS subshell (`sh -c` on macOS/Linux, `cmd.exe /c` on Windows) — a full command line passed as `cmd` (e.g. `\"ffprobe -v quiet … f.mp3\"` or `\"pip3 list | grep foo\"`) runs as written. Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Not for controlling web browsers (`osascript` scripts that read or set tabs and URLs, `open -a <browser> <url>`): those are refused; use the browser tools. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. Run the steps of a task yourself (installs such as `brew install`, `npm i -g`, `pip install`, `git clone`, builds, `make`, `docker run`) instead of printing them for the user to type: the approval prompt is how the user keeps control. The command has no terminal and no stdin unless started with `tty: true` (an interactive kept job on a terminal: a REPL, `npm init`, an installer's questions), which `{\"write\": id, \"text\": \"y\\n\"}` types into (end with \\n to press Enter; each input asks like a command; never type a password, hand that step to the user); otherwise a command that stops at a sign-in, a password, sudo or a terminal question comes back with \"this step needs the user: …\" — hand over only that step. Pass `background: true` for a command that keeps running (a dev server, a watcher): it is started, watched for 3 s, and returned as a kept job. Pass `until` (a case-insensitive regular expression, e.g. \"ready|error\") to come back as soon as the command or job prints a matching line instead of polling: `{cmd, until}` starts it as a kept background job, `{wait: id, until}` watches a job; each match is reported once, so the next `until` waits for the next one. " +
+      "Run an OS command in the session working directory. Prefer the structured form `{cmd, args:[...]}` (argv globs `*`/`?` are expanded). Shell metacharacters (`|`, `&&`, `;`, `>`, `<`, `$`, backticks) are interpreted via the OS subshell (`sh -c` on macOS/Linux, `cmd.exe /c` on Windows) — a full command line passed as `cmd` (e.g. `\"ffprobe -v quiet … f.mp3\"` or `\"pip3 list | grep foo\"`) runs as written. Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Not for controlling web browsers (`osascript` scripts that read or set tabs and URLs, `open -a <browser> <url>`): those are refused; use the browser tools. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. Run the steps of a task yourself (installs such as `brew install`, `npm i -g`, `pip install`, `git clone`, builds, `make`, `docker run`) instead of printing them for the user to type: the approval prompt is how the user keeps control. The command has no terminal and no stdin unless started with `tty: true` (an interactive kept job on a terminal: a REPL, `npm init`, an installer's questions), which `{\"write\": id, \"text\": \"y\\n\"}` types into (end with \\n to press Enter; each input asks like a command; never type a password: `{\"write\": id, \"secret\": \"sudo password\"}` asks the user to type it into the job, and you never see the value); otherwise a command that stops at a sign-in, a password, sudo or a terminal question comes back with \"this step needs the user: …\" — hand over only that step. Pass `background: true` for a command that keeps running (a dev server, a watcher): it is started, watched for 3 s, and returned as a kept job. Pass `until` (a case-insensitive regular expression, e.g. \"ready|error\") to come back as soon as the command or job prints a matching line instead of polling: `{cmd, until}` starts it as a kept background job, `{wait: id, until}` watches a job; each match is reported once, so the next `until` waits for the next one. " +
       describeShellTimeoutDefault(defaultTimeoutMs),
     readonly: false,
     async run(rawArgs, ctx) {
@@ -773,21 +796,26 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           details: { invalidCall: true },
         });
       }
-      if (form.kind === "jobs") return listShellJobs(jobCtx);
+      // A value the person typed into a job (ATO-2486) is hidden in every
+      // later result of the session's jobs, however weak it looks.
+      const hideTyped = (result: CompressedToolResult) => hideTypedSecrets(ctx.sessionId, result);
+      if (form.kind === "jobs") return hideTyped(await listShellJobs(jobCtx));
       if (form.kind === "wait") {
         if (hasUntil(rawArgs.until)) {
-          return runShellWaitUntilById(
-            jobCtx,
-            form.id,
-            rawArgs.until,
-            rawArgs.timeoutMs,
-            rawArgs.keep === true,
+          return hideTyped(
+            await runShellWaitUntilById(
+              jobCtx,
+              form.id,
+              rawArgs.until,
+              rawArgs.timeoutMs,
+              rawArgs.keep === true,
+            ),
           );
         }
-        return runShellWait(jobCtx, form.id, rawArgs.timeoutMs, rawArgs.keep === true);
+        return hideTyped(await runShellWait(jobCtx, form.id, rawArgs.timeoutMs, rawArgs.keep === true));
       }
-      if (form.kind === "kill") return runShellKill(jobCtx, form.id);
-      if (form.kind === "write") return runShellWrite(jobCtx, options, form.id, rawArgs);
+      if (form.kind === "kill") return hideTyped(await runShellKill(jobCtx, form.id));
+      if (form.kind === "write") return hideTyped(await runShellWrite(jobCtx, options, form.id, rawArgs));
 
       // `{"cmd": ["git", "status"]}`: an argv in `cmd` is the program and
       // its arguments (ATO-1259), when `args` does not also say them.
@@ -806,13 +834,15 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       // recovered call goes through the same guard and approval.
       const platform = process.platform;
       const recovered = recoverMissingShellCmd(rawArgs, platform);
-      if (recovered === null) return runCommand(rawArgs, ctx, null);
+      // A started command can print a value typed into a job (ATO-2486):
+      // its tail, its `until` match or its whole output.
+      if (recovered === null) return hideTyped(await runCommand(rawArgs, ctx, null));
       const result = await runCommand(
         { ...rawArgs, cmd: recovered.cmd, args: recovered.args },
         ctx,
         recovered,
       );
-      return markRecoveredResult(result, recovered, platform);
+      return hideTyped(markRecoveredResult(result, recovered, platform));
     },
   };
 }

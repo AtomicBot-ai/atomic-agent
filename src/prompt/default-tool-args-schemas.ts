@@ -240,6 +240,8 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       write: integerSchema,
       text: stringSchema,
       eof: booleanSchema,
+      // ATO-2486: what the job asks for; the user types the value.
+      secret: stringSchema,
     }),
   ],
 

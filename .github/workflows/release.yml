@@ -271,6 +271,12 @@ jobs:
             ForEach-Object { Get-ChildItem -Path $_.FullName -Filter "*.node" -ErrorAction SilentlyContinue }
           foreach ($f in $keyring) { $targets += $f.FullName }
 
+          # @lydell/node-pty prebuild (ConPTY for interactive shell jobs, ATO-2484): its
+          # addons, conpty.dll and OpenConsole.exe / winpty-agent.exe, copied into node_modules/ later.
+          $pty = Get-ChildItem -Path "node_modules\@lydell" -Directory -Filter "node-pty-win32-*" -ErrorAction SilentlyContinue |
+            ForEach-Object { Get-ChildItem -Path $_.FullName -Recurse -Include "*.node","*.dll","*.exe" -ErrorAction SilentlyContinue }
+          foreach ($f in $pty) { $targets += $f.FullName }
+
           # signtool is a native command, so a failure sets $LASTEXITCODE but does
           # not trip $ErrorActionPreference. Check it, or an unsigned binary ships
           # (v0.6.6's atomic-agent.exe did).

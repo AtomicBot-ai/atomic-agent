@@ -180,5 +180,8 @@
   },
   "volta": {
     "node": "25.7.0"
+  },
+  "optionalDependencies": {
+    "@lydell/node-pty": "1.1.0"
   }
 }

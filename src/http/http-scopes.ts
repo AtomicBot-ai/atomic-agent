@@ -128,6 +128,8 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /api/approval/resolve": "chat",
   "GET /api/events": "read",
   "POST /api/question/answer": "chat",
+  // ATO-2486: a job's password, typed by the person (never a paired device).
+  "POST /api/shell/secret": "chat",
   // ATO-1492: an MCP server's question, answered like ask_user.
   "GET /api/mcp/elicitation": "read",
   "POST /api/mcp/elicitation/answer": "chat",

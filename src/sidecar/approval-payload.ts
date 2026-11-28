@@ -11,6 +11,7 @@ import {
   validateUserQuestionAnswer,
   type UserQuestionAnswer,
 } from "../approval/user-question.js";
+import { checkShellSecretValue } from "../approval/shell-secret.js";
 import type {
   ApprovalRequestPayload,
   ApprovalResponsePayload,
@@ -52,6 +53,7 @@ export function approvalRequestPayload(
     canAlways,
     ...(canAlways ? { alwaysLabel: describeAlwaysRule(request) } : {}),
     ...(request.question !== undefined ? { question: request.question } : {}),
+    ...(request.secretInput !== undefined ? { secretInput: { ...request.secretInput } } : {}),
   };
 }
 
@@ -150,13 +152,34 @@ export function resolveApprovalResponse(
 ): boolean {
   const grant = responseGrant(payload, gate);
   const answer = questionAnswer(payload, gate);
+  const secret = shellSecret(payload, gate);
   return gate.resolve({
     approvalId: payload.approvalId,
     approved: payload.approved,
     ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
     ...(grant !== undefined ? { grant } : {}),
     ...(answer !== undefined ? { answer } : {}),
+    ...(secret !== undefined ? { secret } : {}),
   });
+}
+
+/**
+ * The value an approval of a `shell_secret_input` request carries (ATO-2486).
+ * Throws on an approve without a usable one, so the request stays open;
+ * the message names what is wrong, never the value. `undefined` for
+ * every other request: a `secret` sent with one is dropped.
+ */
+function shellSecret(
+  payload: ApprovalResponsePayload,
+  gate: Pick<ApprovalGate, "pendingRequest">,
+): string | undefined {
+  if (!payload.approved) return undefined;
+  if (gate.pendingRequest(payload.approvalId)?.secretInput === undefined) return undefined;
+  const checked = checkShellSecretValue(payload.secret);
+  if (!checked.ok) {
+    throw new Error(`secret input ${payload.approvalId}: ${checked.reason}; it is still open`);
+  }
+  return checked.value;
 }
 
 /**

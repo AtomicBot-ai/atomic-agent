@@ -325,8 +325,20 @@ atomic-agent[.exe]            # SEA binary (CLI entry)
 grammars/tool-call.gbnf      # GBNF for structured tool-call decoding
 vendor/rg[.exe]              # pinned ripgrep for os.fs.grep (sibling of binary)
 prebuilds/…                  # better-sqlite3 native prebuilds for the target
+node_modules/@lydell/node-pty*  # pty binding for `tty: true` shell jobs (ATO-2484)
 README.txt                   # short runtime note
 ```
+
+`@lydell/node-pty` is an optional dependency, external to the SEA bundle
+like `@napi-rs/keyring`: [copy-node-pty-runtime.ts](../copy-node-pty-runtime.ts)
+copies the main package and the target's prebuild
+(`node-pty-<platform>-<arch>`: the addon, `spawn-helper` on macOS, ConPTY
+files on Windows, which the Windows signing step signs). When it is missing
+or does not load (an older glibc, a blocked `.node`), `tty: true` jobs fall
+back to `script(1)` on macOS and Linux and to plain pipes on Windows; the
+result says when a job has no terminal. Not in the Linux packages' glibc
+floor (`ELF_FILES`), on purpose: a prebuild that cannot load only costs the
+fallback.
 
 ## Bundled ripgrep
 
