@@ -21,7 +21,7 @@ const APPR_FALLBACK = {
   local_model_restart:'restart the local model', hook_ask:'take a step one of your hooks asked about',
   http_write:'send data in a web request', browser_site_tool:'use a website\u2019s own tool',
   user_question:'ask you a question', session_cross:'read or write in another chat',
-  browser_take_over:'hand you the browser to finish a step',
+  browser_take_over:'hand you the browser to finish a step', shell_secret:'have you type a password into its command',
   logbook_cloud:'send your logbook notes to a cloud model',
 };
 

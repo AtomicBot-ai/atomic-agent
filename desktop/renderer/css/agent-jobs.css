@@ -1,0 +1,32 @@
+/* ATO-2485: the agent's jobs in the terminal panel (agent-jobs.js), under
+   the chat like the console drawer. Folded it is one slim bar. */
+#agentjobs{flex:none;margin:0 8px 8px;min-width:0}
+#agentjobs[hidden]{display:none}
+.aj-chip{display:flex;align-items:center;gap:8px;width:100%;padding:6px 12px;border:1px solid var(--bd);border-radius:var(--r-panel);
+  background:var(--lift);color:var(--ink);font:inherit;font-size:var(--fs-cap);text-align:left;cursor:pointer}
+.aj-chip:hover{border-color:var(--brand)}
+.aj-chip--ask{border-color:var(--amber-text);color:var(--amber-text)}
+.aj-dot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--ink-3)}
+.aj-dot--live{background:var(--success)}
+.aj-panel{display:flex;flex-direction:column;height:260px;min-height:0;background:var(--lift);border-radius:var(--r-panel);box-shadow:var(--sh-card);overflow:hidden}
+.aj-head,.aj-foot,.aj-take{flex:none;display:flex;align-items:center;gap:6px;padding:6px 8px;min-width:0}
+.aj-grow{flex:1;min-width:0}
+.aj-tabs{display:flex;gap:4px;min-width:0;overflow-x:auto}
+.aj-tab{display:flex;align-items:center;gap:6px;max-width:280px;padding:3px 10px;border:1px solid transparent;border-radius:var(--r-well);
+  background:none;color:var(--ink-2);font:inherit;font-size:var(--fs-cap);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.aj-tab--on{background:var(--well);border-color:var(--bd);color:var(--ink)}
+.aj-dropped{flex:none;padding:0 12px;font-size:var(--fs-micro);color:var(--ink-3)}
+.aj-screen{flex:1;min-height:0;margin:0 8px;padding:8px 10px;overflow:auto;border-radius:var(--r-well);background:var(--well);color:var(--ink);
+  font:400 var(--fs-label)/1.45 var(--font-mono);white-space:pre-wrap;word-break:break-word}
+.aj-state{font-size:var(--fs-cap);color:var(--ink-2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aj-take{padding-top:0}
+.aj-input{flex:1;min-width:0;padding:5px 8px;border:1px solid var(--bd);border-radius:var(--r-well);background:var(--panel);color:var(--ink);font:400 var(--fs-label) var(--font-mono)}
+.aj-input:focus{outline:none;border-color:var(--brand)}
+.aj-hide{display:flex;align-items:center;gap:4px;font-size:var(--fs-cap);color:var(--ink-2);white-space:nowrap}
+.aj-err{flex:none;padding:0 12px 6px;font-size:var(--fs-cap);color:var(--critical)}
+.aj-err:empty{display:none}
+@media (max-width:820px){.aj-panel{height:200px}}
+/* ATO-2486: the line over the field while it answers the agent's request for a job's password, and that card's prompt line. */
+.aj-ask{flex:none;padding:0 12px 4px;font-size:var(--fs-cap);color:var(--amber-text)}
+.aj-ask[hidden]{display:none}
+.ss-prompt{margin-top:4px;font-size:var(--fs-cap);color:var(--ink-2);white-space:pre-wrap;word-break:break-word}

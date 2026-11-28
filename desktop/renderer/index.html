@@ -53,6 +53,7 @@
 <link rel="stylesheet" href="css/rich-blocks.css">
 <link rel="stylesheet" href="css/answer-versions.css">
 <link rel="stylesheet" href="css/message-versions.css">
+<link rel="stylesheet" href="css/agent-jobs.css">
 </head>
 <body>
 <div id="desktop">
@@ -69,6 +70,8 @@
         <aside id="canvaspane" hidden></aside>
         <aside id="inspector"></aside>
       </div>
+      <!-- ATO-2485: the agent's shell jobs, "Take over" to type into one (agent-jobs.js draws it, render() never does). -->
+      <div id="agentjobs" hidden></div>
       <div id="console" class="hide"></div>
       <!-- Backlog 18: the download card. ATO-1185: it is the popover of the
            downloads icon in the sidebar header (dl-indicator.js), over the
@@ -265,6 +268,8 @@
 <script src="interview-card.js"></script>
 <!-- ATO-1502: the agent's ask_user question card. -->
 <script src="question-card.js"></script>
+<!-- ATO-2486: a job's password the agent asked for, typed in the terminal panel. -->
+<script src="shell-secret-card.js"></script>
 <!-- ATO-458: suggested tasks (Retry / Resume) under the start screen's starters -->
 <script src="suggestion-cards.js"></script>
 <!-- ATO-1185: the downloads icon in the sidebar header and its popover (renderDlcard). -->
@@ -386,6 +391,9 @@
 <script src="renderer.js"></script>
 <!-- ATO-2754: "Checking running chats…" while a quit waits for the agent. -->
 <script src="quit-checking.js"></script>
+<!-- ATO-2485: the agent's shell jobs in the terminal panel. -->
+<script src="agent-jobs-logic.js"></script>
+<script src="agent-jobs.js"></script>
 <!-- ATO-1063: a chat the mini window started, opened here by its "Open in big window". -->
 <script src="mini-chat-handoff.js"></script>
 <!-- ATO-561: "Open in new window" on a chat row. -->
