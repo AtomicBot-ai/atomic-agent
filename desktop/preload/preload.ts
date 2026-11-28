@@ -578,6 +578,7 @@ contextBridge.exposeInMainWorld("atomic", {
   modelsFolderInfo: () => ipcRenderer.invoke("modelsFolder:info"),
   modelsFolderChoose: () => ipcRenderer.invoke("modelsFolder:choose"),
   modelsFolderMove: (opts: { path?: string; reset?: boolean }) => ipcRenderer.invoke("modelsFolder:move", opts),
+  modelsFolderCancel: () => ipcRenderer.invoke("modelsFolder:cancel"),
   onModelsFolderProgress: (cb: (payload: unknown) => void) => on("modelsFolder:progress", cb),
   /** ATO-2489: model servers already running here, `atag local-servers --json` (local-servers-ipc.ts). */
   localServersDetect: () => ipcRenderer.invoke("localServers:detect"),
