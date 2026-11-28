@@ -7439,7 +7439,8 @@ function toastHTML(t) {
   return '<span class="tk-ico tk-ico--sm ' + (bad ? 'tk-ico--red' : info ? 'tk-ico--blue' : 'tk-ico--green') + '">'
     + ic(bad ? 'alert' : info ? 'download' : 'check') + '</span>'
     + '<span class="toast-body"><span class="toast-t">' + esc(t.t) + '</span>'
-    + (t.s ? '<span class="toast-s">' + esc(t.s) + '</span>' : '') + '</span>'
+    + (t.s ? '<span class="toast-s">' + esc(t.s) + '</span>' : '')
+    + (typeof toastActionHTML === 'function' ? toastActionHTML(t) : '') + '</span>'   // ATO-2478: one button, "Open" (toast-actions.js)
     // ATO-2747: an optional action (Undo), as Finder's and Slack's: toastact runs it and dismisses the toast.
     + (t.action ? '<button class="btn btn-s sm toast-act" data-act="toastact:' + t.id + '">' + esc(t.action.label) + '</button>' : '')
     // r2: every toast can be dismissed before its 6 s are up. Icon only, so

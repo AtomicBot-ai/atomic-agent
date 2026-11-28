@@ -177,6 +177,8 @@
 .toast .toast-x:hover{color:var(--ink)}
 /* ATO-2747: a toast's one action (Undo on "Moved to Trash"). */
 .toast .toast-act{flex:none;align-self:center;margin:0 -4px 0 0}
+/* ATO-2478: one button under a toast's text, "Open" (toast-actions.js). */
+.toast-acts{display:flex;gap:8px;margin-top:8px}
 /* ATO-229: the update toast (app-update.js). It waits for an answer, so it
    has buttons instead of a ×: Update / Not now, then a progress bar, then
    Restart / Later. "Skip this version" is a small link under them. */
