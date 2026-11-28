@@ -6781,9 +6781,9 @@ async function settingsTest(
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
   // Calm (S5): the window's own panes and nav sections, in nav order.
   // ATO-1129 (#1533): Phone push sits in Connections, after Discord. ATO-1630: Monid after Composio.
-  const PANES = ["general", "llm", "mcp", "telegram", "discord", "push", "composio", "monid", "memory", "myfiles", "myapps", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
-  const LABELS = ["General", "Models", "Connections", "Memory", "My files", "My apps", "Cron jobs", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];   // W2: Tasks reads "Cron jobs"
-  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", push: "connections", composio: "connections", monid: "connections", memory: "memory", myfiles: "myfiles", myapps: "myapps",
+  const PANES = ["general", "llm", "usage", "mcp", "telegram", "discord", "push", "composio", "monid", "memory", "myfiles", "myapps", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
+  const LABELS = ["General", "Models", "Usage", "Connections", "Memory", "My files", "My apps", "Cron jobs", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];   // W2: Tasks reads "Cron jobs"
+  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", usage: "usage", mcp: "connections", telegram: "connections", discord: "connections", push: "connections", composio: "connections", monid: "connections", memory: "memory", myfiles: "myfiles", myapps: "myapps",
     tasks: "tasks", webhooks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
 
   const groups = await js<string[]>("window.__menuGroups()");
