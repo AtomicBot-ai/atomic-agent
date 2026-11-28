@@ -16,39 +16,19 @@ import {
   scrubDiscordError,
 } from "./discord-channel-types.js";
 
-export interface DiscordUser {
-  id: string;
-  username: string;
-  discriminator?: string;
-}
+import {
+  DiscordApiError,
+  type DiscordApiOptions,
+  type DiscordComponentRow,
+  type DiscordUser,
+} from "./discord-api-types.js";
 
-export class DiscordApiError extends Error {
-  readonly status: number;
-  constructor(message: string, status: number) {
-    super(message);
-    this.name = "DiscordApiError";
-    this.status = status;
-  }
-}
-
-/** One outbound message component row (approval buttons). */
-export interface DiscordComponentRow {
-  type: 1;
-  components: ReadonlyArray<{
-    type: 2;
-    style: number;
-    label: string;
-    custom_id: string;
-  }>;
-}
-
-export interface DiscordApiOptions {
-  token: string;
-  baseUrl?: string;
-  timeoutMs?: number;
-  /** Test seam; defaults to the global `fetch`. */
-  fetchImpl?: typeof fetch;
-}
+export {
+  DiscordApiError,
+  type DiscordApiOptions,
+  type DiscordComponentRow,
+  type DiscordUser,
+} from "./discord-api-types.js";
 
 export class DiscordApi {
   private readonly base: string;
