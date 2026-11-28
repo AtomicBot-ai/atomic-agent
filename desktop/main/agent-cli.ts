@@ -531,6 +531,8 @@ export interface CatalogModel {
   purpose?: string;
   /** ATO-492: mixture of experts (catalogue `moe`). */
   moe?: boolean;
+  /** ATO-2455: fits this machine with experts in RAM (moe-fit.ts, from the agent). */
+  expertsInRam?: { tier: "fits" | "tight"; speed: string | null };
   tag?: string;
   uncensored?: boolean;
   /** A launch's model: the chat's "New: <name>" card (catalogue `spotlight`). */

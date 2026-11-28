@@ -173,7 +173,8 @@ import {
   type HuggingFaceRepoChoices,
 } from "./huggingface.js";
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
-import { quantMachine, rateRepoChoices } from "./quant-fit.js";   // ATO-450: a badge, a speed estimate and the pick per quant
+import { quantMachine, rateRepoChoices, withDedicatedGpu } from "./quant-fit.js";   // ATO-450: a badge, a speed estimate and the pick per quant
+import { forgetMoeFitFacts, moeFitFactsNow, withExpertsInRam } from "./moe-fit.js";   // ATO-2455: fits with experts in RAM
 import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";
 import { LOCAL_MODEL_SHARED_NOTE, moveProjectModel, readProjectModels, turnModelFor, writeProjectModel, type ProjectModelPick } from "./project-model.js";
 import { instructionsFileFor } from "./project-instructions-file.js";
@@ -2097,14 +2098,15 @@ function wireIpc(client: AgentClient): void {
     const res = await A.analyticsConfigWrite(key, value, via, () => configSet(key, value));
     A.telegramConfigWrite(key, value, res);
     A.composioConfigWrite(key, value, res);
+    if (key === "localModels.managed.cpuMoe") forgetMoeFitFacts();   // ATO-2455
     return res;
   });
   // The window's lists only: while a pull runs the weights are on disk before the projector is (ATO-1331).
   const listedNow = <R extends Parameters<typeof withoutLivePullGap>[0]>(list: R): R => withoutLivePullGap(list, downloadRunning()?.id ?? null);
-  ipcMain.handle("cli:modelsList", () => modelsList().then(listedNow));
+  ipcMain.handle("cli:modelsList", () => modelsList().then(listedNow).then((r) => withExpertsInRam(r, moeFitFactsNow(modelsRecommend))));
   // Review fix (item 5): the chat route's half of the catalogue, subtracted
   // by the CLI's own embedding catalogue instead of by a guess at names.
-  ipcMain.handle("cli:chatModelsList", () => chatModelsList().then(listedNow));
+  ipcMain.handle("cli:chatModelsList", () => chatModelsList().then(listedNow).then((r) => withExpertsInRam(r, moeFitFactsNow(modelsRecommend))));
   ipcMain.handle("cli:modelsUse", (_event, id: unknown) =>
     typeof id === "string" ? modelsUse(id) : { ok: false, error: "model id required" },
   );
@@ -2391,7 +2393,7 @@ function wireIpc(client: AgentClient): void {
       const listed = await resolveHuggingFaceGgufChoices(ref, { signal: controller.signal });
       if (hfLookup !== controller) return { ok: false, cancelled: true, error: "cancelled" };
       // ATO-450: rated for this machine, the pick first (the list opens on it).
-      const repo = rateRepoChoices(listed, quantMachine(process.platform, FAKE_RAM_GB ? FAKE_RAM_GB * 1024 ** 3 : totalmem()));
+      const repo = rateRepoChoices(listed, withDedicatedGpu(quantMachine(process.platform, FAKE_RAM_GB ? FAKE_RAM_GB * 1024 ** 3 : totalmem()), moeFitFactsNow(modelsRecommend)));
       hfLookup = null;
       A.hfLookupDone({ choices: repo.choices.length });
       return { ok: true, repo };
