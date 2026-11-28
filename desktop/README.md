@@ -337,7 +337,12 @@ Real, driven by the running agent:
   Linux; `-g file:line` for VS Code and Cursor, `file:line` for Zed; `renderer/file-preview-editor.js`);
   and **Compare** next to Reload from disk / Overwrite when the file changed on disk while it was
   edited (`renderer/line-diff.js` makes the diff, `diff-lines.js` draws it;
-  `renderer/file-preview-compare.js`).
+  `renderer/file-preview-compare.js`). The Files list has **This chat / Project**: Project is the
+  tree of the chat's working folder, one folder read when it is opened (`files:tree`,
+  `main/project-tree.ts`), without what .gitignore leaves out (`git check-ignore`) or, outside a
+  checkout, the mention walk's skipped folders; git marks M / A / R / U / C on files and a dot on
+  folders with changes (`main/project-tree-git.ts`); only inside the preview roots, never out of
+  the folder by `..` or a link (`renderer/project-tree.js`).
 - the transcript: your message in a bubble on the right — text-width, capped
   at 480px, with the outgoing-tail corner, the way a chat app draws your own
   side — then the streamed reply, reasoning, and tool cards on the left with no

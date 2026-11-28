@@ -300,10 +300,11 @@ function fpPaintHead() {
   }
   fpPaintTabs();
   if (!FP.path) {
-    // ATO-1256: the list of the chat's files.
+    // ATO-1256: the list of the chat's files. ATO-2445: or the project tree's folder (project-tree.js).
+    const tree = typeof ptHead === 'function' ? ptHead() : null;
     el.querySelector('.fp-head').innerHTML = '<span class="fp-ic">' + fpIcon('files') + '</span>'
-      + '<span class="fp-title"><span class="fp-name">Files in this chat</span>'
-      + '<span class="fp-meta">' + (FP.files.length ? FP.files.length + (FP.files.length === 1 ? ' file' : ' files') : 'None yet') + '</span></span>'
+      + '<span class="fp-title"><span class="fp-name">' + (tree ? fpEsc(tree.name) : 'Files in this chat') + '</span>'
+      + '<span class="fp-meta">' + (tree ? fpEsc(tree.meta) : FP.files.length ? FP.files.length + (FP.files.length === 1 ? ' file' : ' files') : 'None yet') + '</span></span>'
       + '<button class="fp-btn fp-x" data-fp="close" title="Close the panel" aria-label="Close the panel">✕</button>';
     return;
   }
@@ -341,7 +342,8 @@ function fpPaintTabs() {
 }
 function fpListHtml() {
   if (typeof chatFilesListHTML !== 'function') return '';
-  return chatFilesListHTML(FP.files, {esc: fpEsc, icon: fpIcon, home: typeof homeDir === 'function' ? homeDir() : ''});
+  const chat = chatFilesListHTML(FP.files, {esc: fpEsc, icon: fpIcon, home: typeof homeDir === 'function' ? homeDir() : ''});
+  return typeof ptListHtml === 'function' ? ptListHtml(chat) : chat;   // ATO-2445: This chat / Project (project-tree.js)
 }
 function fpRevealLabel() {
   const p = typeof navigator !== 'undefined' ? String(navigator.platform || '') : '';

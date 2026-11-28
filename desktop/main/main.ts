@@ -56,6 +56,7 @@ import { wirePhoneIpc } from "./phone-ipc.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { wireFileMentionsIpc } from "./file-mentions-ipc.js";
 import { wireLinePathIpc } from "./line-path-ipc.js";
+import { wireProjectTreeIpc } from "./project-tree-ipc.js";
 import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
 import { wireFusionReasoningIpc } from "./fusion-reasoning-ipc.js";
 import { wireFusionRolesIpc } from "./fusion-roles-ipc.js";
@@ -3469,6 +3470,9 @@ function wireIpc(client: AgentClient): void {
     expandInCore: (text, dir) => client.expandMentions(text, dir) });   // ATO-2472
   // ATO-2445: a reply's `path:line` chip, found in the chat's folder (line-path-ipc.ts).
   wireLinePathIpc({ isRemote: () => client.isRemote, defaultDir: () => client.status.workingDir,
+    sessionDir: async (s) => ((await client.skills(s)) as { workingDir?: string }).workingDir });
+  // ATO-2445: the Files panel's project tree of the chat's folder, with git marks (project-tree-ipc.ts).
+  wireProjectTreeIpc({ isRemote: () => client.isRemote, defaultDir: () => client.status.workingDir, previewRoots,
     sessionDir: async (s) => ((await client.skills(s)) as { workingDir?: string }).workingDir });
   // ATO-532: a snapshot of another app's window, attached like a pasted image (view-only).
   wireWindowSnapshotIpc();

@@ -314,6 +314,8 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-2445: the editors found ([{id, name}]) and opening a previewed file in one at a line; {ok:true} | {ok:false, reason}.
   editors: () => ipcRenderer.invoke("app:editors"),
   openInEditor: (path: string, id: string, line?: number, col?: number) => ipcRenderer.invoke("app:openInEditor", path, id, line, col),
+  // ATO-2445: one folder of the chat's project tree; {ok:true, root, name, rel, entries:[{name, rel, dir, mark?, changed?}], cut, git} | {ok:false, reason}.
+  filesTree: (sessionId: string | null, rel: string) => ipcRenderer.invoke("files:tree", { sessionId, rel }),
   // ATO-1136: an HTML artifact kept in main and served sandboxed; answers {ok:true, url:'atomic-art://…/'} | {ok:false, reason}.
   artifactPut: (html: string) => ipcRenderer.invoke("app:artifactPut", html),
   artifactDrop: (url: string) => ipcRenderer.invoke("app:artifactDrop", url),
