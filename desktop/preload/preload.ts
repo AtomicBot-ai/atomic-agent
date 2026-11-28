@@ -557,6 +557,8 @@ contextBridge.exposeInMainWorld("atomic", {
   telegramCheckToken: (value: string) => ipcRenderer.invoke("telegram:checkToken", { value }),
   // ATO-516: the Discord bot's live state (GET /api/discord/channel).
   discordChannel: () => ipcRenderer.invoke("agent:discordChannel"),
+  /** ATO-2464 (main/linear-key-check.ts): one `viewer` query before a Linear key is saved; the answer never carries the key. */
+  linearCheckKey: (value: string) => ipcRenderer.invoke("linear:checkKey", { value }),
   /** ATO-1094: the next-step suggestion stored after a chat's last turn (`{supported, text}`). */
   nextStep: (sessionId: string) => ipcRenderer.invoke("agent:nextStep", sessionId),
   taskCreate: (input: { message: string; kind: string; expression: string; tz?: string }) =>

@@ -30,8 +30,8 @@ function freshDir() {
 }
 const KEY = "exa-dummy-0123456789abcdef";
 
-test("the window may write EXA_API_KEY, TELEGRAM_BOT_TOKEN and DISCORD_BOT_TOKEN to .env, and no other name", () => {
-  assert.deepEqual([...cli.DESKTOP_DOTENV_KEYS], ["TELEGRAM_BOT_TOKEN", "EXA_API_KEY", "DISCORD_BOT_TOKEN"]);
+test("the window may write EXA_API_KEY, TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN and the two Linear secrets to .env, and no other name", () => {
+  assert.deepEqual([...cli.DESKTOP_DOTENV_KEYS], ["TELEGRAM_BOT_TOKEN", "EXA_API_KEY", "DISCORD_BOT_TOKEN", "LINEAR_API_KEY", "LINEAR_WEBHOOK_SECRET"]);
   assert.equal(cli.desktopDotenvError("EXA_API_KEY", KEY), null);
   assert.equal(cli.desktopDotenvError("EXA_API_KEY", null), null, "null removes the key");
   assert.equal(cli.desktopDotenvError("TELEGRAM_BOT_TOKEN", "123:abc"), null);
