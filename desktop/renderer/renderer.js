@@ -5616,7 +5616,7 @@ function slashMatches() {
   // The command word only: with arguments typed (`/runmode status`) the list
   // keeps showing that command and its hint instead of "no matching command".
   const q = S.draft.replace(/^\//, '').toLowerCase().split(/\s+/)[0];
-  const commands = SLASH.concat(SK.workingDir ? workspaceSkillCommands(SK.rows, SLASH) : []);
+  const commands = SLASH.concat(SK.workingDir ? workspaceSkillCommands(SK.rows, SLASH) : [], ownSlashRows());
   if (!q) return commands;
   const starts = (row) => row[0].startsWith(q) || (row[3] || []).some((al) => al.startsWith(q));
   return commands.filter(starts).concat(commands.filter((row) => !starts(row) && row[0].includes(q)));
@@ -5632,6 +5632,7 @@ function slashPopover() {
     + '<span class="cmd">/' + bold(n, q) + '</span><span class="ds">' + esc(d) + '</span>'
     + '<span class="hint">' + esc(a || (al && al.length ? 'also /' + al.join(', /') : '')) + '</span></button>').join('') + '</div>'
     + '<div class="slashfoot"><span>' + m.length + (m.length === 1 ? ' command' : ' commands') + '</span>'
+    + (OWNCMD.hint(skillContextKey()) ? '<span data-own-cmd-hint="1">· ' + esc(OWNCMD.hint(skillContextKey())) + '</span>' : '')   // ATO-2441
     + '<span class="grow"></span>' + keycaps('↑↓ tab esc') + '</div></div>';
 }
 
@@ -6481,6 +6482,13 @@ function skillSessionId() {
 }
 function skillContextKey() { return JSON.stringify([AGENT_GEN, WORKSPACE, skillSessionId()]); }
 const SK_LOADER = createSkillCatalogLoader(id => { SK.calls++; return BR.skillList(id); });
+/* ATO-2441: your own slash commands in the / menu (own-commands.js), read for the chat on screen. */
+const OWNCMD = createOwnCommands({read: id => BR && BR.commandList ? BR.commandList(id) : {supported: false},
+  render: body => BR && BR.commandRender ? BR.commandRender(body) : {ok: false, error: 'This app cannot run commands'}});
+function ownSlashRows() {
+  return OWNCMD.slashRows(skillContextKey(), SLASH, SK.workingDir ? (SK.rows || []).filter(row => row.enabled).map(row => row.name) : []);
+}
+function refreshOwnCommands() { OWNCMD.refresh(skillContextKey(), skillSessionId()).then(() => { if (S.slash) refreshSlash(); }); }
 /* ATO-1250: "Trust this folder?" — asked once per folder, for the chat's own
    folder (renderer/project-trust.js). Read again whenever the catalog's
    context moves (another chat, another folder, a new agent); an agent
@@ -8239,6 +8247,25 @@ async function submitSkillCommand(text) {
   } finally { SK_SUBMITTING = false; }
 }
 
+/* ATO-2441: `/name args` for one of your own commands. The agent renders it,
+   running its shell lines (each asks through the approval card); the draft
+   stays in the box until the text comes back, and nothing is sent when a line
+   was not allowed or the chat or the box changed meanwhile. */
+async function submitOwnCommand(text) {
+  if (OWNCMD.state.running || openHoldsComposer()) return;
+  const match = text.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/);
+  const name = match && ownCommandResolve(ownSlashRows(), match[1]);
+  if (!name) return;
+  const key = skillContextKey(), draft = S.draft, row = OWNCMD.row(name);
+  S.slash = false; render();
+  if (row && row.runsShell) toast('Running /' + name, 'Its shell lines ask for your approval as usual. Nothing is sent until they finish');
+  const res = await OWNCMD.run(name, (match[2] || '').trim(), skillSessionId());
+  if (!res.ok) { toast('/' + name + ' was not sent', res.why, 'bad'); return; }
+  if (key !== skillContextKey()) { toast('/' + name + ' was not sent', 'You opened another chat while it ran', 'bad'); return; }
+  if (draft !== S.draft) { toast('/' + name + ' was not sent', 'The message box changed while it ran. Your text stays there', 'bad'); return; }
+  submit(res.text);
+}
+
 function submit(preparedSkillText, opts) {
   // Item 2 (voice input): Enter, the Send button and Ctrl+Enter all land
   // here. While the microphone is open they stop the recording and insert
@@ -8280,8 +8307,9 @@ function submit(preparedSkillText, opts) {
      the model, so holding them for the 3-11 s of a switch (with a toast
      whose words are about a message staying in the box) was wrong copy for
      the wrong thing. They go through untouched. */
+  if (!widgetPlain && text.startsWith('/') && !preparedSkillText && ownCommandResolve(ownSlashRows(), text.slice(1).split(/\s+/)[0])) { submitOwnCommand(text); return; }   // ATO-2441
   if (!widgetPlain && text.startsWith('/') && SK.workingDir && !preparedSkillText && !SLASH.some(row => row[0] === text.slice(1).split(/\s+/)[0] || (row[3] || []).includes(text.slice(1).split(/\s+/)[0]))) { submitSkillCommand(text); return; }
-  if (!widgetPlain && text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
+  if (!widgetPlain && text.startsWith('/') && typeof preparedSkillText !== 'string') { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
   /* Backlog 24 — Enter while the chat on screen is still opening, or after
      it failed to. The draft STAYS in the box, as it does for a switch below:
      nothing here knows yet which session the message would go with, and
@@ -9009,7 +9037,7 @@ document.addEventListener('input', (e) => {
     if (typeof fmOnInput === 'function') fmOnInput(e.target);   // ATO-1596: `@word` opens the file list
     const wasSlash = S.slash;
     S.slash = S.draft.startsWith('/');
-    if (S.slash) { S.slashCur = 0; refreshSlash(); if (!wasSlash && SK.workingDir) refreshSkillList(); }
+    if (S.slash) { S.slashCur = 0; refreshSlash(); if (!wasSlash && SK.workingDir) refreshSkillList(); if (!wasSlash) refreshOwnCommands(); }
     else if (wasSlash) render();
     else refreshSend();
     return;

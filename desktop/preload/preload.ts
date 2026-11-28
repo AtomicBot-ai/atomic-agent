@@ -90,6 +90,9 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1250: GET/POST /api/project-trust — {supported:false} against an agent without the route. */
   projectTrust: (sessionId?: string | null) => ipcRenderer.invoke("agent:projectTrust", sessionId),
   projectTrustAnswer: (body: unknown) => ipcRenderer.invoke("agent:projectTrustAnswer", body),
+  /** ATO-2441: GET /api/commands and POST /api/commands/render; {supported:false} from the list against an agent without the route. */
+  commandList: (sessionId?: string | null) => ipcRenderer.invoke("agent:commandList", sessionId),
+  commandRender: (body: { name: string; args?: string; sessionId?: string | null }) => ipcRenderer.invoke("agent:commandRender", body),
   /** ATO-1461: GET/POST /api/fallback/local-question — {supported:false} against an agent without the route. */
   appendLocalQuestion: () => ipcRenderer.invoke("agent:appendLocalQuestion"),
   appendLocalQuestionAnswer: (answer: "keep" | "off") => ipcRenderer.invoke("agent:appendLocalQuestionAnswer", answer),
