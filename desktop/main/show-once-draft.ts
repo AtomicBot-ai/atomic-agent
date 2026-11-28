@@ -5,7 +5,7 @@ import { join } from "node:path";
 /**
  * ATO-2401 "Show once": a recorded routine is saved as a learned-skill
  * draft, the same kind the agent holds for review (ATO-67), so it shows in
- * Settings › Skills › Pending review with Show / Approve / Discard and is
+ * Settings › Skills › To review with Show / Approve / Discard and is
  * never loaded until the person approves it.
  *
  * The folder is the agent's own (src/skills/learning/pending-drafts.ts):

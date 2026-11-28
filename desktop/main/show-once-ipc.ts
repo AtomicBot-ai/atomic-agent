@@ -1,47 +1,53 @@
 import { join } from "node:path";
-import { BrowserWindow, Menu, Tray, app, ipcMain, nativeImage, shell, systemPreferences } from "electron";
+import { BrowserWindow, app, ipcMain, shell, systemPreferences, type Tray } from "electron";
 
 import { loadUiohook } from "./hold-key-uiohook.js";
 import { registerPrivacyPaneIpc } from "./privacy-pane.js";
-import { pendingDraftsRoot, saveShowOnceDraft } from "./show-once-draft.js";
+import { pendingDraftsRoot } from "./show-once-draft.js";
+import { saveRecording, tidyDraft, type CompleteFn } from "./show-once-finish.js";
 import type { ShowOnceHelperPush } from "./show-once-helper.js";
-import { SHOW_ONCE_LIMITS, ShowOnceLog, isShowOnceAction, type ShowOnceEvent } from "./show-once-log.js";
+import { SHOW_ONCE_LIMITS, ShowOnceLog, isShowOnceAction, type ShowOnceEvent, type ShowOnceRect } from "./show-once-log.js";
+import type { ShowOnceOptions } from "./show-once-options.js";
 import { openShowOnceProber, type ShowOnceProber } from "./show-once-prober.js";
-import { compileShowOnceSkill } from "./show-once-skill.js";
+import { wireShowOnceReviewIpc } from "./show-once-review-ipc.js";
+import { ShowOnceSnapshots } from "./show-once-snapshots.js";
 import { startShowOnceCapture } from "./show-once-start.js";
+import { showOnceTray } from "./show-once-tray.js";
 
 /**
  * ATO-2401 "Show once" (Settings › Skills): Record, do a routine once in a
- * Mac app, Stop, and the steps are saved as a skill draft under Pending
- * review. Routes:
- *
- *   showOnce:state     → what the card draws (below)
- *   showOnce:start     → starts recording; `{ok:false, reason}` when it cannot
- *   showOnce:stop      → stops and saves the draft (show-once-draft.ts)
- *   showOnce:cancel    → stops and keeps nothing
- *   showOnce:openAccessibility → macOS's Accessibility pane
- *   "showOnce:state" is also pushed to every window on each change.
+ * Mac app, Stop, and the steps are saved as a skill draft under To review.
+ * Routes: showOnce:state (what the card draws, also pushed on each change),
+ * showOnce:start (`{ok:false, reason}` when it cannot), showOnce:stop (saves,
+ * show-once-finish.ts), showOnce:cancel (keeps nothing). The switches, a
+ * draft's pictures and the permission panes: show-once-review-ipc.ts.
  *
  * Opt-in and visible: nothing listens until Record is clicked, and while it
- * records a menu bar item says so ("● Recording steps"); when that item
- * cannot be shown, nothing records (show-once-start.ts). One click on it
- * stops and saves; its right-click menu also offers Discard. The recording
- * stops on its own after SHOW_ONCE_LIMITS.maxDurationMs or maxSteps, and
- * when the app quits (keeping nothing).
+ * records a menu bar item says so (show-once-tray.ts); when that item
+ * cannot be shown, nothing records (show-once-start.ts). It stops on its
+ * own after SHOW_ONCE_LIMITS.maxDurationMs or maxSteps, and on quit
+ * (keeping nothing).
  *
- * Kept: the step log in memory while recording (no characters typed,
- * nothing in protected apps, show-once-log.ts), then only the draft's
- * SKILL.md and draft.json in `<stateDir>/skills-pending/<id>/`. No
- * screenshots, no audio. Discard in Pending review deletes the draft.
+ * Kept: the step log in memory (no characters typed, nothing in protected
+ * apps, show-once-log.ts), then the draft's SKILL.md and draft.json in
+ * `<stateDir>/skills-pending/<id>/`, plus, when switched on, pictures of the
+ * window after each step in apps that are neither browsers nor protected
+ * (show-once-snapshots.ts). Discard in To review deletes all of it.
  *
- * The listener is uiohook-napi (the module the Windows hold key already
- * uses), here on macOS, which needs Accessibility for Atomic Agent.
+ * The listener is uiohook-napi, which needs Accessibility for the app.
  * ATO-2499: what was under each event comes from show-once-prober.ts (the
- * Accessibility helper, or osascript per event without it), and the
- * helper's window and menu events go into the log in the same order.
+ * Accessibility helper, or osascript per event), the helper's window and
+ * menu events go into the log in the same order, and after the save the
+ * chat model tidies the draft when that switch is on.
  */
 
-type Deps = { stateDir: string; isRemote: () => boolean; log: (line: string) => void };
+type Deps = {
+  stateDir: string;
+  isRemote: () => boolean;
+  log: (line: string) => void;
+  /** ATO-2499: the agent's POST /api/complete (agent-client.ts plainComplete), for the tidy pass. */
+  complete?: CompleteFn;
+};
 
 interface HookMouse { button: number; clicks: number; x: number; y: number }
 interface HookKey { keycode: number; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }
@@ -54,7 +60,7 @@ interface ShowOnceHook {
 }
 
 export type ShowOnceLast =
-  | { kind: "saved"; id: string; name: string; steps: number }
+  | { kind: "saved"; id: string; name: string; steps: number; pictures: number; tidy: "off" | "running" | "done" | "failed"; tidyError?: string }
   | { kind: "empty" }
   | { kind: "cancelled" }
   | { kind: "error"; error: string; permission?: boolean };
@@ -68,19 +74,29 @@ export interface ShowOnceState {
   startedAt: number | null;
   last: ShowOnceLast | null;
   draftsDir: string;
+  options: ShowOnceOptions;
+  /** Pictures need macOS Screen Recording for the app: false shows the hint and its button. */
+  screenAllowed: boolean;
 }
+
+type Aim = { windowId?: number | null; rect?: ShowOnceRect | null };
 
 export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
   let hook: ShowOnceHook | null = null;
   let tray: Tray | null = null;
   let log: ShowOnceLog | null = null;
+  let shots: ShowOnceSnapshots | null = null;
   let startedAt: number | null = null;
   let saving = false;
   let last: ShowOnceLast | null = null;
   let timer: NodeJS.Timeout | null = null;
   let chain: Promise<void> = Promise.resolve();
   let prober: ShowOnceProber | null = null;
+  const review = wireShowOnceReviewIpc({ stateDir: deps.stateDir, isRemote: deps.isRemote, log: deps.log, changed: () => broadcast() });
   const nativeDir = () => (app.isPackaged ? join(process.resourcesPath, "native") : join(__dirname, "..", "native"));
+  const screenAllowed = () => {
+    try { return systemPreferences.getMediaAccessStatus("screen") === "granted"; } catch { return false; }
+  };
 
   const state = (): ShowOnceState => ({
     available: process.platform === "darwin" && !deps.isRemote(),
@@ -91,6 +107,8 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
     startedAt,
     last,
     draftsDir: pendingDraftsRoot(deps.stateDir),
+    options: review.options(),
+    screenAllowed: process.platform === "darwin" ? screenAllowed() : false,
   });
   const broadcast = () => {
     const payload = state();
@@ -102,9 +120,15 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
     if (tray && log) tray.setToolTip(`Show once is recording: ${log.actionCount} steps. Click to stop and save.`);
   };
 
-  const feed = (e: ShowOnceEvent) => {
+  const feed = (e: ShowOnceEvent, aim?: Aim) => {
     if (!log) return;
-    log.add(e);
+    const changed = log.add(e);
+    if (changed && shots && aim) {
+      // The window after a step a person did, in an app that is neither a browser nor protected.
+      const step = log.steps[log.steps.length - 1];
+      const inApp = [...log.steps].reverse().find((s) => s.kind === "app" || s.kind === "protected");
+      if (isShowOnceAction(step) && inApp && inApp.kind === "app" && !inApp.browser) shots.take(log.steps.length, aim);
+    }
     broadcast();
     if (log.full) void finish(true); // the step cap: stop and save what is there
   };
@@ -117,7 +141,8 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
       const pr = prober;
       if (!pr) return;
       const p = await pr.click(e.x, e.y);
-      feed({ kind: "click", at, x: e.x, y: e.y, button, clicks: e.clicks || 1, app: p.app, window: p.window, element: p.element, windowTitle: p.windowTitle });
+      feed({ kind: "click", at, x: e.x, y: e.y, button, clicks: e.clicks || 1, app: p.app, window: p.window, element: p.element, windowTitle: p.windowTitle },
+        { windowId: p.windowId, rect: p.window });
     }).catch(() => {});
   };
   const onKey = (e: HookKey) => {
@@ -129,7 +154,7 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
       const pr = prober;
       if (!pr) return;
       const p = await pr.key(at);
-      feed({ kind: "key", at, ...k, app: p.app, focused: p.focused, windowTitle: p.windowTitle });
+      feed({ kind: "key", at, ...k, app: p.app, focused: p.focused, windowTitle: p.windowTitle }, { windowId: p.windowId });
       // Tab and return move the focus: the next key asks again.
       if (k.keycode === 15 || k.keycode === 28) pr.forgetKey();
     }).catch(() => {});
@@ -179,23 +204,7 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
     }
     // The menu bar item first, the listener second: recording never runs unseen.
     const started = startShowOnceCapture<ShowOnceHook, Tray>({
-      showIndicator: () => {
-        const t = new Tray(nativeImage.createEmpty());
-        try {
-          t.setTitle(" ● Recording steps");
-          t.on("click", () => void finish(true));
-          t.on("right-click", () => {
-            t.popUpContextMenu(Menu.buildFromTemplate([
-              { label: "Stop and save as a skill draft", click: () => void finish(true) },
-              { label: "Discard this recording", click: () => void finish(false) },
-            ]));
-          });
-        } catch (err) {
-          try { t.destroy(); } catch { /* gone */ }
-          throw err;
-        }
-        return t;
-      },
+      showIndicator: () => showOnceTray(() => void finish(true), () => void finish(false)),
       startListener: () => {
         const h = loadUiohook() as unknown as ShowOnceHook;
         h.on("mousedown", onMouse);
@@ -221,6 +230,8 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
     tray = started.indicator;
     log = new ShowOnceLog(process.pid);
     startedAt = Date.now();
+    // Pictures only with the switch on and Screen Recording allowed (else macOS gives a blank desktop).
+    shots = review.options().snapshots && screenAllowed() ? new ShowOnceSnapshots(join(deps.stateDir, "show-once-shots", String(startedAt))) : null;
     last = null;
     chain = openShowOnceProber({ nativeDir: nativeDir(), platform: process.platform, onPush, log: deps.log })
       .then((p) => {
@@ -238,30 +249,38 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
     saving = save;
     broadcast();
     await chain.catch(() => {}); // the events already heard go in first
-    const steps = log ? log.steps : [];
+    const steps = log ? [...log.steps] : [];
     const recordedAt = new Date(startedAt ?? Date.now());
+    const pictures = shots;
     log = null;
+    shots = null;
     startedAt = null;
     if (!save) {
+      await pictures?.discard();
       last = { kind: "cancelled" };
       broadcast();
       return state();
     }
+    let saved: Awaited<ReturnType<typeof saveRecording>> | null = null;
     try {
-      const skill = compileShowOnceSkill(steps, recordedAt);
-      if (!skill) {
-        last = { kind: "empty" };
-      } else {
-        const count = steps.filter(isShowOnceAction).length;
-        const saved = await saveShowOnceDraft(deps.stateDir, { name: skill.name, reason: skill.description, content: skill.content });
-        last = { kind: "saved", id: saved.id, name: skill.name, steps: count };
-      }
+      saved = await saveRecording(deps.stateDir, steps, recordedAt, pictures);
+      last = saved.kind === "empty" ? { kind: "empty" }
+        : { kind: "saved", id: saved.id, name: saved.name, steps: saved.steps, pictures: saved.pictures, tidy: review.options().tidy && deps.complete ? "running" : "off" };
     } catch (err) {
       deps.log(`[desktop] show once: could not save the draft: ${err instanceof Error ? err.message : String(err)}`);
       last = { kind: "error", error: "Could not save the recording as a skill draft." };
     }
     saving = false;
     broadcast();
+    const mine = last;
+    if (saved && saved.kind === "saved" && mine && mine.kind === "saved" && mine.tidy === "running" && deps.complete) {
+      const res = await tidyDraft(deps.complete, saved, steps, recordedAt, deps.log);
+      // A newer recording's line is not overwritten by this one's tidy.
+      if (last === mine) {
+        last = res.ok ? { ...mine, tidy: "done" } : res.gone ? { ...mine, tidy: "off" } : { ...mine, tidy: "failed", tidyError: res.error };
+        broadcast();
+      }
+    }
     return state();
   }
 
@@ -271,8 +290,13 @@ export function wireShowOnceIpc(deps: Deps): { stopAndDiscard: () => void } {
   ipcMain.handle("showOnce:cancel", () => finish(false));
   // ATO-2744: the named Privacy panes (Full Disk Access for My files, Input Monitoring for Show once).
   registerPrivacyPaneIpc({ ipcMain, openExternal: (url) => shell.openExternal(url), platform: process.platform });
-  ipcMain.handle("showOnce:openAccessibility", () =>
-    shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility").then(() => true, () => false));
-  app.on("before-quit", () => { if (hook) { release(); log = null; startedAt = null; } });
+  app.on("before-quit", () => {
+    if (!hook) return;
+    release();
+    void shots?.discard();
+    log = null;
+    shots = null;
+    startedAt = null;
+  });
   return { stopAndDiscard: () => void finish(false) };
 }

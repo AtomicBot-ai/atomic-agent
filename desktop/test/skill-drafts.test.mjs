@@ -69,11 +69,11 @@ test("a plain skill list never shows a draft as a disabled skill", () => {
   assert.deepEqual(skillRowsWithoutDrafts(null), []);
 });
 
-test("grouping: Pending review with a count; nothing when there are no drafts", () => {
+test("grouping: To review (ATO-2499, was Pending review) with a count; nothing when there are no drafts", () => {
   assert.equal(skillDraftsGroup([]), null);
   assert.equal(skillDraftsGroup(null), null);
   const g = skillDraftsGroup([row("a1b2"), row("c3d4", { kind: "patch" }), row("a1b2"), row("-x")]);
-  assert.equal(g.label, "Pending review");
+  assert.equal(g.label, "To review");
   assert.equal(g.count, 2);
   assert.deepEqual(g.rows.map((r) => r.kind), ["create", "patch"]);
   assert.equal(skillDraftKindLabel("create"), "New skill");
@@ -87,7 +87,8 @@ test("the group escapes the model's reason and the skill name, and offers Show /
   assert.ok(!html.includes("<img"));
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt; &amp; more/);
   assert.match(html, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;/);
-  assert.match(html, /Pending review/);
+  assert.match(html, /To review/);
+  assert.doesNotMatch(html, /Pending review/);
   assert.match(html, /data-skill-drafts="1"/);
   assert.match(html, /New skill/);
   assert.match(html, /data-act="skills:draft:show:a1b2"[^>]*>Show</);
