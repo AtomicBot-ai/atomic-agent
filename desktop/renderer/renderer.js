@@ -8719,7 +8719,8 @@ document.addEventListener('click', (e) => {
     const fail = (why) => toast("Couldn't open Terminal", typeof why === 'string' ? why : '', 'bad');
     if (!text || !BR || typeof BR.terminalOpenWithCommand !== 'function') { fail(); return; }
     // ATO-1424 answers {ok:true, cwd, usedHome} or {ok:false, error, message}.
-    Promise.resolve().then(() => BR.terminalOpenWithCommand({ command: text, cwd: workingDir() || null }))
+    // ATO-2782: Windows shows the button on PowerShell blocks only (ATO-2742), so ask for a PowerShell tab, not the default profile.
+    Promise.resolve().then(() => BR.terminalOpenWithCommand({ command: text, cwd: workingDir() || null, shell: 'powershell' }))
       .then((r) => { if (r && r.detail) console.warn('[terminal]', r.detail); if (!r || r.ok !== true) fail(r && r.message); else if (typeof r.hint === 'string') toast('Terminal opened', r.hint); }, () => fail());
     return;
   }
