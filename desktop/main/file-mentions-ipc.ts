@@ -2,7 +2,7 @@
  * ATO-1593 / ATO-1595 — the `@file` mention routes (file-mentions.ts does the
  * work and says why it is built this way).
  *
- *   mentions:search({ sessionId, query }) → { ok: true, paths } | { ok: false, error }
+ *   mentions:search({ sessionId, query }) → { ok: true, paths, filesError? } | { ok: false, error }
  *
  * The folder is never taken from the window: main picks it from the session,
  * the way `cli:skillList` does (the agent's own `workingDir` for the chat,
@@ -66,16 +66,18 @@ export function wireFileMentionsIpc(deps: FileMentionsDeps): FileMentions {
     }
     const q = typeof query === "string" ? query.slice(0, MAX_QUERY) : "";
     if (deps.isRemote()) return { ok: true, paths: [] };
+    const sid = typeof sessionId === "string" && sessionId ? sessionId : null;
+    const folder = mentionFolder(false, (await dirOf(sid)) ?? deps.defaultDir());
+    const words = folder ? contextSuggestions(q) : [];
     try {
-      const sid = typeof sessionId === "string" && sessionId ? sessionId : null;
-      const folder = mentionFolder(false, (await dirOf(sid)) ?? deps.defaultDir());
       const found = await searchMentions(index, folder, q);
-      const words = folder ? contextSuggestions(q) : [];
       if (words.length === 0) return found;
       const paths = [...words, ...found.paths.filter((p) => !words.includes(p))];
       return { ok: true, paths: paths.slice(0, MAX_MENTION_RESULTS) };
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      // ATO-2751: a failed listing still offers `@diff` / `@git:N` / a typed link; the window says the files failed.
+      const error = err instanceof Error ? err.message : String(err);
+      return words.length ? { ok: true, paths: words, filesError: error } : { ok: false, error };
     }
   });
 

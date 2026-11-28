@@ -382,6 +382,9 @@
   background:var(--lift);box-shadow:var(--sh-pop)}
 .slashrow.fmrow{display:flex}
 .slashrow.fmrow .cmd{flex:1;min-width:0}
+/* ATO-2751: what a kind row reads ("Uncommitted changes"), and the rows that cannot be picked. */
+.slashrow.fmrow .ds{flex:none;max-width:45%}
+.slashrow.fmstate.fm-wait .cmd{color:var(--ink-3);font-weight:400}
 .scroller:has(~ .composerwrap > .fmmenu) .emptychat{visibility:hidden}
 
 /* ---- Narrow windows ------------------------------------------------------ */
