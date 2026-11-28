@@ -190,7 +190,7 @@ function fpSyncButton() {
 }
 function fpRevoke() { if (FP.blobUrl) { try { URL.revokeObjectURL(FP.blobUrl); } catch (e) { /* gone */ } FP.blobUrl = ''; } }
 
-async function fpLoad(keepScroll) {
+async function fpLoad(keepScroll, retry) {
   const br = fpBridge();
   const seq = ++FP.seq;
   const path = FP.path;
@@ -215,7 +215,7 @@ async function fpLoad(keepScroll) {
   const after = fpEl() && fpEl().querySelector('.fp-body');
   if (after && top) after.scrollTop = top;
   if (typeof fpLineGo === 'function') fpLineGo();   // ATO-2445
-  fpLoadSlides(seq, path, res);
+  fpLoadSlides(seq, path, res, retry === true);
 }
 
 /* ATO-2410: the second step for a deck. main converts it (seconds, cached per
@@ -223,17 +223,19 @@ async function fpLoad(keepScroll) {
    kept on the preview itself (`office.render`), so a repaint (Source/Preview,
    a resize) draws the pictures again without asking. A newer open, a closed
    panel or a reloaded file drops a late answer. */
-function fpLoadSlides(seq, path, res) {
+function fpLoadSlides(seq, path, res, retry) {
   const br = fpBridge();
   const o = res && res.ok && res.kind === 'office' ? res.office : null;
   if (!o || o.type !== 'pptx' || !o.renderable || !br || !br.filePreviewSlides) return;
   (async () => {
     let r = null;
-    try { r = await br.filePreviewSlides(path); } catch (e) { r = null; }
+    try { r = await br.filePreviewSlides(path, retry === true); } catch (e) { r = null; }
     if (seq !== FP.seq || !FP.open || FP.path !== path || FP.data !== res) return;
-    if (r && r.ok && (r.kind === 'pdf' || r.kind === 'html')) o.render = r; else o.renderFailed = true;
+    if (r && r.ok && (r.kind === 'pdf' || r.kind === 'html')) o.render = r;
+    else o.renderFailed = r && r.reason === 'links-out' ? 'links-out' : true;   // ATO-2517: refused on purpose, Reload will not help
     const body = fpEl() && fpEl().querySelector('.fp-body');
     const top = body ? body.scrollTop : 0;
+    fpPaintHead();   // ATO-2517: Show text appears with the pictures
     fpPaintBody(fpBodyHtml(res));
     const after = fpEl() && fpEl().querySelector('.fp-body');
     if (after && top && !o.render) after.scrollTop = top;
@@ -318,6 +320,7 @@ function fpPaintHead() {
     + (meta ? '<span class="fp-meta">' + fpEsc(meta) + '</span>' : '') + '</span>'
     + (editing ? fpEditHeadHtml() : (typeof fpEditable === 'function' && fpEditable(d) ? '<button class="fp-btn" data-fp="edit" title="Edit this file here">Edit</button>' : '')
     + (togglable ? '<button class="fp-btn fp-tog" data-fp="view" title="' + (FP.view === 'source' ? 'Show it rendered' : 'Show the source') + '">' + (FP.view === 'source' ? 'Preview' : 'Source') + '</button>' : '')
+    + (!togglable && typeof ofViewButton === 'function' ? ofViewButton(d, FP.view) : '')   // ATO-2517: a deck's Show text
     + '<button class="fp-btn" data-fp="refresh" title="Reload the file" aria-label="Reload">↻</button>'
     + '<button class="fp-btn" data-fp="open" title="Open in its default app">Open</button>'
     + '<button class="fp-btn" data-fp="reveal" title="' + fpEsc(fpRevealLabel()) + '" aria-label="' + fpEsc(fpRevealLabel()) + '">' + fpIcon('folder') + '</button>')
@@ -443,7 +446,7 @@ function fpBodyHtml(res) {
   const text = typeof d.text === 'string' ? d.text : '';
   if (d.kind === 'image') return '<div class="fp-img"><img alt="' + fpEsc(d.name) + '" src="' + fpEsc(d.dataUrl || '') + '"></div>';
   if (d.kind === 'pdf') return '<iframe class="fp-frame fp-pdf" data-fp-pdf="1" title="' + fpEsc(d.name) + '"></iframe>';
-  if (d.kind === 'office' && typeof fpOfficeHtml === 'function') return fpOfficeHtml(d);   // ATO-981: office-preview.js
+  if (d.kind === 'office' && typeof fpOfficeHtml === 'function') return fpOfficeHtml(d, FP.view);   // ATO-981: office-preview.js
   if (d.kind === 'parquet' && typeof fpParquetHtml === 'function') return fpParquetHtml(d);   // ATO-2445: parquet-table.js
   if (d.kind === 'other') return fpOtherHtml(d, d.note === 'too-large' ? 'too large to preview' : d.note === 'binary' ? 'no preview for this kind of file'
     : d.note === 'unsupported' ? 'its compression cannot be read here' : '');
@@ -504,7 +507,7 @@ if (typeof document !== 'undefined') {
       if (what === 'close') filePreviewClose();
       else if (what === 'list') filePreviewShowList();
       else if (what === 'pick') { if (pickPath) filePreviewOpen(pickPath, {listed: true}); }
-      else if (what === 'refresh') { if (FP.open) fpLoad(true); }
+      else if (what === 'refresh') { if (FP.open) fpLoad(true, true); }   // ATO-2517: and a deck's failed drawing again
       else if (what === 'open') fpOpenOutside();
       else if (what === 'reveal') fpReveal();
       else if (what === 'view') { FP.view = FP.view === 'source' ? 'render' : 'source'; fpPaintHead(); fpPaintBody(fpBodyHtml(FP.data)); }

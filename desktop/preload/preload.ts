@@ -308,7 +308,7 @@ contextBridge.exposeInMainWorld("atomic", {
   filePreviewSave: (path: string, text: string, stamp: { size: number; mtimeMs: number }, force?: boolean) =>
     ipcRenderer.invoke("app:filePreviewSave", path, text, stamp, force === true),
   // ATO-2410: a deck's slides as pictures; {ok:true, kind:'pdf', base64} | {ok:true, kind:'html', html, width} | {ok:false, reason}.
-  filePreviewSlides: (path: string) => ipcRenderer.invoke("app:filePreviewSlides", path),
+  filePreviewSlides: (path: string, retry?: boolean) => ipcRenderer.invoke("app:filePreviewSlides", path, retry === true),
   // ATO-2445: where a reply's `path:line` chip points; {ok:true, path} | {ok:false, reason:'missing'|'remote'|'bad-path'}.
   resolveLinePath: (sessionId: string | null, path: string) => ipcRenderer.invoke("app:resolveLinePath", { sessionId, path }),
   // ATO-2445: the editors found ([{id, name}]) and opening a previewed file in one at a line; {ok:true} | {ok:false, reason}.
