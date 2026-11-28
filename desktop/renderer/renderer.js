@@ -11878,7 +11878,11 @@ function onChatEvent(ev) {
     // ATO-1702: a fusion.delegate's `diffstats` (its workers' files) go on the same card.
     if (item) for (const changedFile of changedFilesOfFrame(p)) item.changed = changedFilesAdd(item.changed, changedFile);
     // ATO-2409: an Office writer (docx, xlsx, pptx) sends no diffstat; its ok call is a "created"/"updated" row from the call's path (chat-files.js cfOfficeWrite).
-    const officeWrite = item && card.ok === true && typeof cfOfficeWrite === 'function' ? cfOfficeWrite(card.name, toolArgsObj(card.args)) : null;
+    // ATO-2518: the agent's own `office_file` first; the label is the fallback for an older agent.
+    const officeFrame = card.ok === true ? changedFileOfOfficeFrame(p) : null;
+    if (officeFrame) card.officeFile = {path: officeFrame.path, change: officeFrame.office};
+    if (item && officeFrame) item.changed = changedFilesAdd(item.changed, officeFrame);
+    const officeWrite = item && !officeFrame && card.ok === true && typeof cfOfficeWrite === 'function' ? cfOfficeWrite(card.name, toolArgsObj(card.args)) : null;
     if (officeWrite) item.changed = changedFilesAdd(item.changed, changedFileOfOfficeWrite(officeWrite, cfAbsolute(officeWrite.path, workingDir(), homeDir())));
     render();
     return;
@@ -24177,7 +24181,7 @@ function resolveAgentPath(p, cwd) {
     second. Only ok cards, only the four write tools. */
 function cardWrittenPaths(m, cwd) {
   // ATO-2409: an Office writer's ok call (docx, xlsx, pptx) saved the `path` it was given (chat-files.js cfOfficeWrite).
-  const office = m.k === 'tool' && m.ok === true && !m.forced && typeof cfOfficeWrite === 'function' ? cfOfficeWrite(m.name, cardArgs(m) || {}) : null;
+  const office = m.k === 'tool' && m.ok === true && !m.forced && typeof cfOfficeWrite === 'function' ? (m.officeFile || cfOfficeWrite(m.name, cardArgs(m) || {})) : null;
   if (office) return [resolveAgentPath(office.path, cwd)];
   if (m.k !== 'tool' || m.ok !== true || m.forced || !WRITE_TOOLS.has(m.name)) return [];
   const a = cardArgs(m) || {};

@@ -335,7 +335,10 @@ Real, driven by the running agent:
   with `apply: true`, `os.fs.archive.extract`, and the Office writers
   `os.fs.docx`, `os.fs.xlsx` (not `op: read`), `os.fs.write_pptx` (ATO-2409:
   the `path` of the call; they also get a "created"/"updated" row on the
-  "Changed files" card, and a bare `sales.docx` in a reply is their chip) —
+  "Changed files" card, and a bare `sales.docx` in a reply is their chip;
+  ATO-2518: an agent that sends `office_file: {path, change}` on the
+  `tool_result` frame names the file and the badge itself, and the call's
+  clipped label is only the fallback for an older agent) —
   are attached under the reply as a `Saved to <path>` line per file plus a
   chip. The paths come from the
   session store: the call's own args and the tool's own result line (`wrote N
