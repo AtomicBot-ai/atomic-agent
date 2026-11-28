@@ -4,10 +4,10 @@
  * The window hands main a path, the new text and the size and time of the
  * file as the panel read it. main checks the path the way file-preview.ts
  * does (`~/…` or absolute, `..` and links resolved, never a URL) against the
- * same roots, which are wide: the whole home folder, the agent's state and
- * temp folders and the working folder. So Save can reach any existing text
- * file there, not only the chat's folder (narrowing it is ATO-2533). It
- * writes only a file that is already there (Save never creates one), only
+ * roots it is given. main gives only the chat's working folder and the files
+ * the panel opened, and `allows` has the final say on the checked file
+ * (preview-save-scope.ts, ATO-2533). It writes only a file that is already
+ * there (Save never creates one), only
  * UTF-8 text (file-save-check.ts notEditable, isUtf8), and only the very file
  * the check passed (the open handle's dev/inode).
  *
@@ -46,13 +46,14 @@ export async function filePreviewSave(
   roots: readonly string[],
   home: string,
   platform: Platform,
-  opts: { force?: boolean; maxBytes?: number } = {},
+  opts: { force?: boolean; maxBytes?: number; allows?: (t: { real: string; dev: number; ino: number }) => Promise<boolean> } = {},
 ): Promise<FileSaveResult> {
   if (typeof text !== "string") return { ok: false, reason: "bad-text" };
   const max = opts.maxBytes ?? PREVIEW_SAVE_MAX_BYTES;
   if (Buffer.byteLength(text, "utf8") > max) return { ok: false, reason: "too-large" };
   const target = await imageTarget(raw, roots, home, platform);
   if (!target.ok) return { ok: false, reason: target.reason };
+  if (opts.allows && !(await opts.allows(target).catch(() => false))) return { ok: false, reason: "outside" };
   const ext = pathFor(platform).extname(target.real).toLowerCase();
   // Read and write, never create; a link put in place of the file is not followed where the system allows it.
   const flags = constants.O_RDWR | (platform === "win32" ? 0 : (constants.O_NOFOLLOW ?? 0));
@@ -61,6 +62,8 @@ export async function filePreviewSave(
   try {
     const st = await fh.stat();
     if (st.dev !== target.dev || st.ino !== target.ino) return { ok: false, reason: "outside" };
+    // ATO-2533: a hard link has another name somewhere else (`ln ~/.zshrc notes.txt`); the check saw only this one.
+    if (st.nlink > 1) return { ok: false, reason: "outside" };
     if (!st.isFile()) return { ok: false, reason: "missing" };
     if (st.size > max) return { ok: false, reason: "too-large" };
     // The whole file: its encoding is checked over every byte, not just the head.
