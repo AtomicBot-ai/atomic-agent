@@ -8,9 +8,10 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const M = require("../out/main/local-servers.js");
-// The two renderer files share globals in the app (classic scripts); here
-// each one's exports are put on globalThis so the other can find them.
-const R = { ...require("../renderer/local-servers.js"), ...require("../renderer/local-servers-setup.js") };
+// The renderer files share globals in the app (classic scripts); here
+// each one's exports are put on globalThis so the others can find them.
+const R = { ...require("../renderer/local-servers.js"), ...require("../renderer/local-servers-setup.js"),
+  ...require("../renderer/local-servers-manage.js") };
 Object.assign(globalThis, R);
 
 const OLLAMA = { kind: "ollama", label: "Ollama", baseUrl: "http://127.0.0.1:11434", presetId: "ollama", models: ["qwen3:8b", "llama3.2:3b"], loaded: ["qwen3:8b"] };

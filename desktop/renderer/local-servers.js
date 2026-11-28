@@ -8,7 +8,7 @@
    Ollama on 11434, LM Studio on 1234, the Llama app or a llama-server on 9931.
 
    Two places draw it (this file: shared state, the probe and Settings;
-   local-servers-setup.js: the setup step):
+   local-servers-setup.js: the setup step; local-servers-manage.js: Manage):
    - Settings › Local: a "Running on this Mac" list. Each server says how many
      models it has and how many are loaded; Use connects it the way the app
      already connects that kind (the Ollama / LM Studio presets, or the
@@ -16,6 +16,10 @@
    - Setup: the Custom card says what it found, the cursor starts on it, and
      picking it opens a step of its own that lists what runs (a choice when
      several do), with "Something else" for the full Custom list.
+
+   ATO-2490: Manage on an Ollama or LM Studio row opens its models: Load,
+   Unload, Free memory, Download, Delete (Ollama) and Use here, and the
+   section offers Start for the one that is installed but not running.
 
    Precedent: OpenClaw finds the Llama app on 9931 and offers it first in
    onboarding; Continue, Open WebUI and Jan pick up a running Ollama or LM
@@ -31,6 +35,20 @@ const LSV = {
   obPicked: null,
   /** Setup: the cursor was put on Custom once for this run of setup. */
   obCursorSet: false,
+  /* ATO-2490: the Manage panel. */
+  /** The kind whose model list is open ('ollama' | 'lmstudio'), or null. */
+  open: null,
+  /** The running action {action, kind, model, all, key}, or null. */
+  act: null,
+  /** A download's last step {status, completed, total}. */
+  progress: null,
+  /** The last action's outcome {kind, ok, text, detail}. */
+  note: null,
+  /** A model key waiting for "Yes, delete". */
+  confirm: null,
+  /** What is typed in each Download field, kept across repaints. */
+  pull: {ollama: '', lmstudio: ''},
+  unsub: null,
 };
 
 /** A Settings visit asks again when the last answer is older than this. */
@@ -168,6 +186,12 @@ function lsvRowHTML(server, i, h) {
     ? '<span class="ann lit">In use</span>'
     : '<button class="btn btn-s sm" type="button" data-lsv="use:' + i + '"' + (h.busy ? ' disabled' : '') + '>'
       + (standing === 'added' ? 'Switch to it' : 'Use') + '</button>';
+  const manageable = typeof lsvManageable === 'function' && lsvManageable(server) && !!h.canAct;
+  const open = manageable && h.st && h.st.open === server.kind;
+  const manage = manageable
+    ? '<button class="btn btn-g sm" type="button" data-lsv="manage:' + i + '" aria-expanded="' + (open ? 'true' : 'false') + '">'
+      + (open ? 'Close' : 'Manage') + '</button>'
+    : '';
   return '<div class="tuirow tk-li llm-row lsv-row" data-lsv-kind="' + e(server.kind) + '" title="' + e(server.baseUrl) + '">'
     + lsvMark(server, '')
     + '<span class="body"><span class="t"><span class="llm-name">' + e(lsvName(server)) + '</span>'
@@ -175,7 +199,8 @@ function lsvRowHTML(server, i, h) {
     + '<span class="d">' + e(lsvFacts(server) + ' · ' + lsvHost(server.baseUrl)) + '</span>'
     + (models ? '<span class="d lsv-models">' + e(models) + '</span>' : '')
     + (empty ? '<span class="d lsv-models">' + e(lsvEmptyServerWords(server)) + '</span>' : '')
-    + '</span>' + action + '</div>';
+    + '</span>' + manage + action + '</div>'
+    + (open && typeof lsvManageHTML === 'function' ? lsvManageHTML(server, i, h) : '');
 }
 
 /** A server that answers but has no model yet. */
@@ -199,8 +224,10 @@ function lsvSectionHTML(st, h) {
   } else if (!st.servers.length) {
     body = '<p class="llm-note lsv-note">Nothing is running right now. Start Ollama, LM Studio or the Llama app, then press Check again.</p>';
   } else {
-    body = '<div class="tk-list llm-list">' + st.servers.map((s, i) => lsvRowHTML(s, i, h)).join('') + '</div>';
+    const hs = Object.assign({}, h, {st: st});
+    body = '<div class="tk-list llm-list">' + st.servers.map((s, i) => lsvRowHTML(s, i, hs)).join('') + '</div>';
   }
+  if (st.phase !== 'error' && !(loading && !st.servers.length) && typeof lsvStartHTML === 'function') body += lsvStartHTML(st, h);
   return '<section class="llm-section lsv-sec" aria-busy="' + (loading ? 'true' : 'false') + '">'
     + '<div class="tk-sh llm-sh"><span class="llm-sh-t">Running on ' + e(machine) + '</span><span class="grow"></span>'
     + '<button class="btn btn-g sm" type="button" data-lsv="recheck"' + (loading ? ' disabled' : '') + '>'
@@ -218,6 +245,7 @@ function localServersPaneHTML() {
     ctx: lsvContext(),
     busy: typeof LLMP !== 'undefined' && LLMP && !!LLMP.busy,
     machine: typeof THIS_MACHINE === 'string' ? THIS_MACHINE : 'this computer',
+    canAct: typeof lsvCanAct === 'function' && lsvCanAct(),
   });
 }
 
@@ -250,12 +278,13 @@ if (typeof document !== 'undefined') {
     const act = el.getAttribute('data-lsv');
     if (act === 'recheck') void lsvDetect(true);
     else if (act.indexOf('use:') === 0) lsvUse(Number(act.slice(4)));
+    else if (typeof lsvManageClick === 'function') lsvManageClick(act);
   });
 }
 
 if (typeof module !== 'undefined') {
   module.exports = {
     LSV, lsvFacts, lsvName, lsvHost, lsvSameUrl, lsvFoundSentence, lsvModelsLine, lsvStanding,
-    lsvSectionHTML, lsvRowHTML, lsvDetect, lsvMark,
+    lsvSectionHTML, lsvRowHTML, lsvDetect, lsvMark, lsvRepaint,
   };
 }

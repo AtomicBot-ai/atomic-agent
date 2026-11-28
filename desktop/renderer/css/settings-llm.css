@@ -328,3 +328,16 @@
 .llm-pane .tk-chip--use-reasoning{background:color-mix(in srgb,var(--reasoning) 14%,transparent);color:var(--reasoning)}
 .llm-pane .llm-techchip{display:inline-block;margin-left:6px;padding:0 5px;line-height:16px;border-radius:var(--r-badge);
   background:var(--hover);color:var(--ink-3);font-size:var(--fs-micro);vertical-align:1px;cursor:help}
+/* ATO-2490: Manage on an Ollama / LM Studio row (renderer/local-servers.js) */
+.llm-pane .lsv-manage{display:flex;flex-direction:column;gap:6px;margin:2px 8px 8px 40px;padding:8px 10px;border:1px solid var(--line, rgba(127,127,127,.25));border-radius:8px}
+.llm-pane .lsv-manage-h{display:flex;align-items:center;gap:8px;font-weight:600}
+.llm-pane .lsv-model{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:28px}
+.llm-pane .lsv-model-n{flex:1 1 160px;min-width:0;overflow-wrap:anywhere}
+.llm-pane .lsv-acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.llm-pane .lsv-ask{color:var(--ink-2)}
+.llm-pane .lsv-pull{display:flex;gap:6px;align-items:center}
+.llm-pane .lsv-pull .lsv-pull-in{flex:1;min-width:0}
+.llm-pane .lsv-pull .tk-spin,.llm-pane .lsv-manage .btn .tk-spin,.llm-pane .lsv-start .btn .tk-spin{width:12px;height:12px;margin-right:6px;vertical-align:-2px}
+.llm-pane .lsv-start{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 4px 0}
+.llm-pane .lsv-detail summary{cursor:pointer;margin-top:4px}
+.llm-pane .lsv-detail pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:4px 0 0;font-size:12px}

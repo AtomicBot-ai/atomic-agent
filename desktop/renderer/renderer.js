@@ -27971,7 +27971,7 @@ function llmEnsurePoll() {
     if (LLMP.view === 'panel' && !LLMP.inflight && !LLMP.pulling && !LLMP.daemonPhase && !LLMP.statusBusy && !llmTyping()) llmRefreshStatus(true);
   }, 5000);
 }
-function llmTyping() { const el = document.activeElement; return !!el && (el.id === 'llm-filter' || el.id === 'llm-url' || el.id === 'wiz-key' || el.id === 'wiz-url' || el.id === 'sel-key'); }
+function llmTyping() { const el = document.activeElement; return !!el && (el.id === 'llm-filter' || el.id === 'llm-url' || el.id === 'wiz-key' || el.id === 'wiz-url' || el.id === 'sel-key' || el.id.indexOf('lsv-pull-') === 0); }
 /* ATO-132: the key names Settings › Models reads keys by (a key held in .env,
    imported from the terminal or set there by hand) are read again whenever the
    live config is (refreshLiveConfig), not only when the tab refreshes itself,
