@@ -60,11 +60,13 @@ export function parsePushState(value: unknown): PushState | null {
  * agent's own client sends (src/notifications/ntfy-client.ts), to the
  * server root. The note is the native notification's text, which
  * turn-notify.ts already cleaned and clipped; the body is clipped to 200
- * again here. `null` when push is off or has no topic.
+ * again here. `null` when push is off or has no topic. ATO-2755: a note
+ * of the agent waiting for an answer (`waiting`) rings like a failure and
+ * carries a bell, not the tick of a finished turn.
  */
 export function turnPushRequest(
   push: PushState,
-  note: { title: string; body: string },
+  note: { title: string; body: string; waiting?: boolean },
   token: string | undefined,
 ): { url: string; init: { method: "POST"; headers: Record<string, string>; body: string } } | null {
   if (!push.enabled || !push.topic) return null;
@@ -78,8 +80,8 @@ export function turnPushRequest(
         topic: push.topic,
         title: clip(note.title, 80),
         message: clip(note.body, 200) || "-",
-        tags: [/fail/i.test(note.title) ? "x" : "white_check_mark"],
-        priority: /fail/i.test(note.title) ? 4 : 3,
+        tags: [note.waiting ? "bell" : /fail/i.test(note.title) ? "x" : "white_check_mark"],
+        priority: note.waiting || /fail/i.test(note.title) ? 4 : 3,
       }),
     },
   };
