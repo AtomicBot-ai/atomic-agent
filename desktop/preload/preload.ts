@@ -554,6 +554,8 @@ contextBridge.exposeInMainWorld("atomic", {
   filesRemoveFolder: (path: string) => ipcRenderer.invoke("files:removeFolder", path),
   filesListFolders: () => ipcRenderer.invoke("files:listFolders"),
   filesStatus: () => ipcRenderer.invoke("files:status"),
+  /** ATO-2501: read the skipped scans, photos and audio again. `{ok, requeued}`. */
+  filesRetry: () => ipcRenderer.invoke("files:retry"),
   /** ATO-2383: My apps (main/my-apps-ipc.ts), artifact pages kept in <stateDir>/apps and opened in their own window. */
   appsSave: (input: { name: string; html: string; chatId?: string }) => ipcRenderer.invoke("apps:save", input),
   appsList: () => ipcRenderer.invoke("apps:list"),

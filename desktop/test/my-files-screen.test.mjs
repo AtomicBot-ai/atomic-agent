@@ -75,7 +75,7 @@ test("the screen is wired: section, pane, entry, acts, styles, analytics", () =>
   assert.ok(html.indexOf('src="my-files.js"') !== -1 && html.indexOf('src="my-files.js"') < html.indexOf('src="renderer.js"'));
   assert.ok(html.includes('href="css/my-files.css"'));
   const acts = readFileSync(new URL("../renderer/analytics-acts.js", import.meta.url), "utf8");
-  assert.match(acts, /myfiles:\{refresh:L, add:L, remove:L, removeConfirm:L, removeCancel:L\}/);
+  assert.match(acts, /myfiles:\{refresh:L, add:L, remove:L, removeConfirm:L, removeCancel:L, ocr:L\}/);
 });
 
 test("the stylesheet uses theme tokens only, no fixed colours", () => {
