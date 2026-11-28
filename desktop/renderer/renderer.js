@@ -1240,6 +1240,7 @@ const SETTINGS_SECTIONS = [
   ['memory','Memory','memory',['memory']],
   ['myfiles','My files','folder',['myfiles']],   // ATO-1626: renderer/my-files.js
   ['myapps','My apps','window',['myapps']],   // ATO-2383: renderer/my-apps.js
+  ['meetings','Meetings','mic',['meetings']],   // ATO-2514: renderer/settings-meetings.js
   // ATO-445: the agent's webhook routes sit beside Tasks, since each event becomes one (renderer/webhooks.js).
   ['tasks','Scheduled tasks','tasks',['tasks','webhooks']],   // W2, ATO-2743: visible name only, the id stays
   ['skills','Skills','skills',['skills']],
@@ -1255,6 +1256,7 @@ const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP server
 SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'memory') + 1, 0, ['myfiles','My files']);   // ATO-1626
 SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'myfiles') + 1, 0, ['myapps','My apps']);   // ATO-2383
 SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'llm') + 1, 0, ['usage','Usage']);   // ATO-2442
+SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'myapps') + 1, 0, ['meetings','Meetings']);   // ATO-2514
 /* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
    one shown, per viewer, like atag.theme; General the first time. */
 /* Calm (S5): which Settings disclosures are open, so a repaint keeps them. */
@@ -6765,6 +6767,7 @@ function settingsPaneEntered(opened) {
   else if (pane === 'myfiles') myFilesTabEntered();   // ATO-1626 (my-files.js)
   else if (pane === 'myapps') myAppsTabEntered();   // ATO-2383 (my-apps.js)
   else if (pane === 'usage') usageTabEntered();   // ATO-2442 (usage-tab.js)
+  else if (pane === 'meetings') meetingsTabEntered();   // ATO-2514 (settings-meetings.js)
   // Item 7 part C: the LLM / Telegram / Import tabs' first load on entry.
   else if (pane === 'llm') llmTabEntered();
   else if (pane === 'telegram') telegramTabEntered();
@@ -6798,6 +6801,7 @@ function settingsPane() {
   if (p === 'myfiles') return myFilesTab();   // ATO-1626 (my-files.js)
   if (p === 'myapps') return myAppsTab();   // ATO-2383 (my-apps.js)
   if (p === 'usage') return usageTab();   // ATO-2442 (usage-tab.js)
+  if (p === 'meetings') return meetingsTab();   // ATO-2514 (settings-meetings.js)
   // Item 7 part C: the LLM, Telegram and Import tabs.
   if (p === 'llm') return llmTab();
   if (p === 'telegram') return telegramTab();
@@ -7901,6 +7905,7 @@ function act(a) {
   if (k === 'myfiles') { close(); myFilesAct(a.slice(8)); return; }   // ATO-1626
   if (k === 'myapps') { close(); myAppsAct(a.slice(7)); return; }   // ATO-2383 (my-apps.js)
   if (k === 'usage') { close(); usageAct(a.slice(6)); return; }   // ATO-2442 (usage-tab.js)
+  if (k === 'meetings') { close(); meetingsAct(a.slice(9)); return; }   // ATO-2514 (settings-meetings.js)
   // Item 7 part C: the LLM / Telegram / Import tabs' verbs.
   if (k === 'llm') { close(); llmAct(a.slice(4)); return; }
   if (k === 'telegram') { close(); telegramAct(a.slice(9)); return; }
