@@ -3448,6 +3448,7 @@ function msgActs(m) {
     return '<div class="' + cls + '">' + (typeof answerVersionsHTML === 'function' ? answerVersionsHTML(m) : '')   // ATO-2114: ‹ 2/3 › (answer-versions.js)
       + (typeof messageVersionsAnswerHTML === 'function' ? messageVersionsAnswerHTML(m) : '')   // ATO-2470: answers to any question (message-versions.js)
       + tps + kvc + again + copy + (typeof ttsButtonHTML === 'function' && !m.placeholder ? ttsButtonHTML(m) : '')
+      + (typeof meetingTasksButtonHTML === 'function' ? meetingTasksButtonHTML(m) : '')   // ATO-2514: Create tasks (meeting-tasks.js)
       + (typeof rewindActsHTML === 'function' ? rewindActsHTML(m) : '') + '</div>';   // ATO-1058: Fork (chat-rewind.js)
   }
   // Review fix: no `usr` modifier class here. The right-alignment the user
