@@ -1372,6 +1372,42 @@ export class AgentClient extends EventEmitter {
       { text },
     );
 
+  /* ATO-2485: the agent's kept shell jobs in the terminal panel
+     (agent-jobs-ipc.ts). An agent from before these routes answers 404
+     "No route"; the panel then never shows. The person's text in
+     `shellJobInput` goes to the job only and is never logged here. */
+  shellJobs = (sessionId: string) =>
+    this.request<unknown>("GET", `/api/sessions/${encodeURIComponent(sessionId)}/shell-jobs`);
+  shellJobOutput = (sessionId: string, jobId: number, since: number) =>
+    this.request<unknown>(
+      "GET",
+      `/api/sessions/${encodeURIComponent(sessionId)}/shell-jobs/${jobId}/output?since=${since}`,
+    );
+  /** `secret`: Hide typing is on; the agent masks the value for the model and answers `masked`. */
+  shellJobInput = (sessionId: string, jobId: number, text: string, eof: boolean, secret = false) =>
+    this.request<unknown>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/shell-jobs/${jobId}/input`, {
+      text,
+      eof,
+      ...(secret ? { secret: true } : {}),
+    });
+  /** `{resized:false}` when the job's terminal has a fixed size. */
+  resizeShellJob = (sessionId: string, jobId: number, cols: number, rows: number) =>
+    this.request<unknown>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/shell-jobs/${jobId}/resize`, { cols, rows });
+  stopShellJob = (sessionId: string, jobId: number) =>
+    this.request<unknown>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/shell-jobs/${jobId}/stop`, {});
+  /* ATO-2486: a job's password the agent asked for (`shell_secret_input`), as
+     answerQuestion does: 400 keeps the request open, the body comes back
+     as is. The value is never logged here. */
+  answerShellSecret = async (approvalId: string, answer: { value: string } | { skip: true }): Promise<unknown> => {
+    const res = await fetch(`${this.base()}/api/shell/secret`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ approvalId, ...answer }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    return res.json();
+  };
+
   /* ATO-1040: the chat's goal, read and set / paused / resumed / cleared
      (session-goal-ipc.ts). An agent from before the routes answers 404. */
   sessionGoal = (sessionId: string) =>

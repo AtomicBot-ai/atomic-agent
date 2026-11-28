@@ -351,7 +351,7 @@ const CATEGORY_PLAIN = {
   // Categories the agent added since (approval-level.ts APPROVAL_CATEGORY_LABELS).
   http_write:'send data in a web request', browser_site_tool:'use a website\u2019s own tool',
   user_question:'ask you a question', session_cross:'read or write in another chat',
-  browser_take_over:'hand you the browser for a step',
+  browser_take_over:'hand you the browser for a step', shell_secret_input:'have you type a password into its command',
   logbook_cloud:'send your logbook notes to a cloud model',
 };
 function cleanKeyInput(raw) { return String(raw == null ? '' : raw).replace(KEY_INVISIBLE, '').trim(); }
@@ -4179,6 +4179,8 @@ function toolShotHTML(m, st) {
 function apprCard(m) {
   // ATO-1502: an ask_user question is its own card (question-card.js).
   if (m.question && typeof qcCardHTML === 'function') return qcCardHTML(m, {esc, ic, keyLabel: apprKeyLabel}, m === S.pending);
+  // ATO-2486: a job's password, typed in the terminal panel (shell-secret-card.js).
+  if (m.secret && typeof ssCardHTML === 'function') return ssCardHTML(m, {esc, ic, keyLabel: apprKeyLabel}, m === S.pending);
   if (m.state) {
     const ok = m.state === 'approved';
     /* ATO-227: the deny-with-words path and its `denying` / `undelivered`
@@ -4306,7 +4308,7 @@ const APPR_FALLBACK = {
   local_model_restart:'restart the local model', hook_ask:'take a step one of your hooks asked about',
   http_write:'send data in a web request', browser_site_tool:'use a website\u2019s own tool',
   user_question:'ask you a question', session_cross:'read or write in another chat',
-  browser_take_over:'hand you the browser to finish a step',
+  browser_take_over:'hand you the browser to finish a step', shell_secret_input:'have you type a password into its command',
   logbook_cloud:'send your logbook notes to a cloud model',
 };
 /** ATO-473: whether the card offers "Allow in this chat". The agent grants
@@ -12645,6 +12647,8 @@ function onApprovalEvent(payload) {
     readRoot: payload.category === 'fs_read_outside' ? String(first) : '',
     // ATO-1502: an ask_user question (category user_question) is drawn and answered as one (question-card.js).
     question: payload.category === 'user_question' && typeof qcQuestion === 'function' ? qcQuestion(payload.question) : null,
+    // ATO-2486: a job's password the agent asked for (shell-secret-card.js).
+    secret: payload.category === 'shell_secret_input' && typeof ssPrompt === 'function' ? ssPrompt(payload.secretInput) : null,
     // item 6: which chat is waiting. The agent's ApprovalRequest carries it,
     // and it is the one attention signal that works for a turn this window did
     // not start (a scheduled task's, say).
@@ -12750,7 +12754,7 @@ const CATEGORY_LABEL = {
   // Added since (approval-level.ts APPROVAL_CATEGORY_LABELS, verbatim)
   http_write:'HTTP request · sends data', browser_site_tool:'browser · the site\'s own tool',
   user_question:'question for you', session_cross:'another chat · read / send',
-  browser_take_over:'browser · your turn',
+  browser_take_over:'browser · your turn', shell_secret_input:'terminal · secret input',
   logbook_cloud:'logbook · notes to a cloud model',
 };
 
@@ -12848,6 +12852,7 @@ function apprAlwaysSavedNote(req, data) {
 function answerLive(req, key) {
   // ATO-1502: a question is answered with a choice, never Allow; Abort run (esc) stays as below.
   if (req && req.question && key !== 'esc' && typeof qcKey === 'function') { qcKey(req, key); return; }
+  if (req && req.secret && key !== 'esc' && typeof ssKey === 'function') { ssKey(req, key); return; }   // ATO-2486
   const approve = key === 'y' || key === 's' || key === 'a' || key === 'c' || key === 'w';
   const inChat = key === 'c' && apprChatOk(req);
   const always = key === 'w' && apprAlwaysOk(req);

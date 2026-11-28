@@ -128,6 +128,13 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /api/sessions/{id}/fusion/workers/{taskId}/stop": "chat",
   "POST /api/sessions/{id}/fusion/workers/{taskId}/steer": "chat",
   "POST /api/sessions/{id}/fusion/workers/{taskId}/escalate": "chat",
+  // ATO-2485: the agent's shell jobs. Typing into one runs whatever the
+  // program does with it, past the command guard, so it needs admin.
+  "GET /api/sessions/{id}/shell-jobs": "read",
+  "GET /api/sessions/{id}/shell-jobs/{jobId}/output": "chat",
+  "POST /api/sessions/{id}/shell-jobs/{jobId}/input": "admin",
+  "POST /api/sessions/{id}/shell-jobs/{jobId}/resize": "chat",
+  "POST /api/sessions/{id}/shell-jobs/{jobId}/stop": "chat",
   // Approvals and questions: the person running a turn answers them.
   "POST /api/approval/resolve": "chat",
   "GET /api/events": "read",
