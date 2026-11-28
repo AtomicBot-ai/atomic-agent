@@ -9,7 +9,7 @@
 
 const APPR_FALLBACK = {
   fs_write_workspace:'change a file in this folder', fs_write_home:'change a file outside this folder',
-  fs_trash:'move files to the Trash', http:'send a web request', shell:'run a command', shell_dangerous:'run a dangerous command',
+  fs_trash:'move files to the Trash', http:'send a web request', shell:'run a command', shell_dangerous:'run a dangerous command', shell_secret:'use a saved secret in a command, request or script',
   script:'run a skill script', proc_kill:'stop a process', browser_nonweb:'open a non-web address',
   trust_config:'change its own settings', fusion_fanout:'hand work to its workers', publish:'publish to GitHub',
   git_remote:'talk to a git remote', email:'send an e-mail', fs_read_outside:'read outside this folder',

@@ -100,7 +100,7 @@ export const SLASH_COMMANDS = [
     `shell_dangerous`, was counted as `other`. The renderer keeps the same
     list (analytics.js APPROVAL_CATEGORY_IDS); a test holds the three in step. */
 export const APPROVAL_CATEGORIES = [
-  "fs_write_workspace", "fs_write_home", "fs_trash", "http", "shell", "shell_dangerous", "script", "proc_kill", "publish",
+  "fs_write_workspace", "fs_write_home", "fs_trash", "http", "shell", "shell_dangerous", "shell_secret", "script", "proc_kill", "publish",
   "git_remote", "fusion_fanout", "browser_nonweb", "browser_commit", "browser_secret", "browser_offsite",
   "trust_config", "state_secret", "email", "fs_read_outside", "paid_generation", "screen_control", "screen_capture",
   "local_model_restart", "hook_ask", "http_write", "browser_site_tool", "user_question",

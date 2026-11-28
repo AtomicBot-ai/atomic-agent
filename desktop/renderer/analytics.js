@@ -99,7 +99,7 @@ const ANX = (() => {
      list feeds the permission settings and leaves out kinds such as
      `shell_dangerous`, whose answers were all counted as `other`. */
   const APPROVAL_CATEGORY_IDS = [
-    'fs_write_workspace', 'fs_write_home', 'fs_trash', 'http', 'shell', 'shell_dangerous', 'script', 'proc_kill', 'publish',
+    'fs_write_workspace', 'fs_write_home', 'fs_trash', 'http', 'shell', 'shell_dangerous', 'shell_secret', 'script', 'proc_kill', 'publish',
     'git_remote', 'fusion_fanout', 'browser_nonweb', 'browser_commit', 'browser_secret', 'browser_offsite',
     'trust_config', 'state_secret', 'email', 'fs_read_outside', 'paid_generation', 'screen_control', 'screen_capture',
     'local_model_restart', 'hook_ask', 'http_write', 'browser_site_tool', 'user_question',
