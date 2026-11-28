@@ -50,7 +50,7 @@ import {
   UntrustedTaint,
 } from "./untrusted-taint.js";
 import type { UserQuestion, UserQuestionAnswer } from "./user-question.js";
-import { EgressSessionHosts, unknownOutbound } from "./egress-hold.js";
+import { durableHostsToKeep, EgressSessionHosts, unknownOutbound } from "./egress-hold.js";
 import { withUnreadableScript, type EgressDestination } from "./egress-scan.js";
 import {
   GUARD_ASK_PERSON,
@@ -451,6 +451,10 @@ export class ApprovalGate {
   private egressAllowlist: () => readonly string[] | null = () => null;
   /** Hosts each session approved data going to (`egress-hold.ts`, ATO-2116). */
   private readonly egressHosts = new EgressSessionHosts();
+  /** `agent.security.knownHosts`, read live (`setEgressKnownHosts`, ATO-2528). */
+  private egressKnownHosts: () => readonly string[] = () => [];
+  /** Keeps hosts for good when a held call is answered "allow always"; unset = not kept. */
+  private keepKnownHosts: ((hosts: string[]) => void) | undefined;
   /** Plain-text security rules (`guard-check.ts`, ATO-2111); unset = off. */
   private guard: SecurityGuard | undefined;
   /** Approval ids re-entering `request` after the guard allowed them (or failed). */
@@ -533,6 +537,18 @@ export class ApprovalGate {
   }
 
   /**
+   * The durable known hosts for the egress hold (ATO-2528): `read` gives
+   * `agent.security.knownHosts` live, `keep` adds hosts to it when the
+   * person answers a call that sends data with "allow always". Like ssh
+   * `known_hosts`, separate from `http.hostAllowlist`, which also limits
+   * `os.http.request`.
+   */
+  setEgressKnownHosts(read: () => readonly string[], keep?: (hosts: string[]) => void): void {
+    this.egressKnownHosts = read;
+    this.keepKnownHosts = keep;
+  }
+
+  /**
    * The outbound destinations of `egress` no one approved for `sessionId`
    * (`egress-hold.ts`). Non-empty means the call is put to a person
    * whatever the level, a grant or an allow rule says; a caller that
@@ -550,9 +566,16 @@ export class ApprovalGate {
     } catch {
       allowlist = null;
     }
+    let durableHosts: readonly string[] = [];
+    try {
+      durableHosts = this.egressKnownHosts();
+    } catch {
+      durableHosts = [];
+    }
     return unknownOutbound(egress, {
       allowlist,
       sessionHosts: this.egressHosts.known(sessionId, this.grantsBySession.get(sessionId)),
+      durableHosts,
     });
   }
 
@@ -1334,6 +1357,17 @@ export class ApprovalGate {
     return true;
   }
 
+  /** "Allow always" keeps the call's outbound hosts as known hosts (ATO-2528). */
+  private keepEgressHosts(request: ApprovalRequest): void {
+    const hosts = durableHostsToKeep(request.egress);
+    if (hosts.length === 0 || this.keepKnownHosts === undefined) return;
+    try {
+      this.keepKnownHosts(hosts);
+    } catch {
+      // A config that cannot be written keeps the session grant only.
+    }
+  }
+
   /**
    * Record a session grant from an approved decision. The scope comes
    * from the caller but the value comes from the gate's own pending
@@ -1352,6 +1386,7 @@ export class ApprovalGate {
     this.egressHosts.remember(request.sessionId, request.egress);
     if (scope === "always") {
       this.saveAlwaysRule(request);
+      this.keepEgressHosts(request);
       return;
     }
     if (scope === "category" && isSiteScopedCategory(request.category)) {

@@ -116,9 +116,11 @@ describe("os.http.request with a secret in what it sends (ATO-2505)", () => {
   });
 
   // Review round 1: a raised threshold reads as 0.7, so one config edit
-  // cannot quiet the bypass ask.
+  // cannot quiet the bypass ask. The host is known, so the egress hold
+  // does not ask on its own.
   it.each([0.9, 1])("still asks in bypass when the threshold is raised to %s", async (threshold) => {
     const { gate, asked } = recordingGate(5);
+    gate.setEgressKnownHosts(() => ["collector.example"]);
     await expect(buildTool(gate, "writes", threshold).run(leak, makeCtx())).rejects.toMatchObject({
       name: "ApprovalDeniedError",
     });
@@ -135,6 +137,7 @@ describe("os.http.request with a secret in what it sends (ATO-2505)", () => {
     },
   ])("asks in bypass for a token in the path or a percent-encoded body: $url", async (request) => {
     const { gate, asked } = recordingGate(5);
+    gate.setEgressKnownHosts(() => ["collector.example"]);
     await expect(buildTool(gate).run(request, makeCtx())).rejects.toMatchObject({
       name: "ApprovalDeniedError",
     });
@@ -144,8 +147,9 @@ describe("os.http.request with a secret in what it sends (ATO-2505)", () => {
     });
   });
 
-  it("runs an ordinary POST unasked in bypass", async () => {
+  it("runs an ordinary POST to a known host unasked in bypass", async () => {
     const { gate, asked } = recordingGate(5);
+    gate.setEgressKnownHosts(() => ["example.com"]);
     const result = await buildTool(gate).run(
       { url: "https://example.com/upload", method: "POST", body: '{"rows":3}' },
       makeCtx(),

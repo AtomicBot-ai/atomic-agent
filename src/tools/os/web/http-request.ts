@@ -16,6 +16,7 @@ import type {
 import type { ToolDefinition } from "../../tool-registry.js";
 import { CurlUnavailableError } from "./ensure-curl.js";
 import { httpSecretFinding, readArgScanThreshold } from "./http-body-secrets.js";
+import { httpRequestEgress } from "../../../approval/egress-tool-destinations.js";
 import {
   executeGuardedHttpRequest,
   isCurlTransportError,
@@ -150,6 +151,9 @@ export function buildOsHttpRequestTool(
                 ? urlSendReason(shownUrl, urlCheck)
                 : `${args.method} ${shownUrl}`) + (secret !== null ? ` (${secret.reason})` : ""),
             ...(secret !== null ? { securityFinding: secret } : {}),
+            // Where the request sends data (ATO-2528): the card line, and
+            // the egress hold for a host nobody approved.
+            egress: httpRequestEgress(args.urlObj, args.method),
             ...(secretAsksEveryLevel ? { askEveryLevel: true as const } : {}),
             preview: buildHttpApprovalPreview(args),
             affectedResources: [shownUrl],

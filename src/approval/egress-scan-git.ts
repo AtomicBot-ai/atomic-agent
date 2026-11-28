@@ -12,13 +12,18 @@
  */
 import { hasUrlScheme, hostOfGitUrl, normaliseHost } from "./egress-host.js";
 import type { EgressDestination } from "./egress-scan.js";
+import { recursesFor } from "./git-submodule-push.js";
 
 /**
- * Reads the URL a push to `remote` (`null`: the push default) would use,
+ * Reads the URLs a push to `remote` (`null`: the push default) would use,
  * from `chdir` (the `-C` folder, relative to the command's own folder)
- * when set. `null` when it cannot be read.
+ * when set: one, or every pushurl of the remote. `null` when it cannot be
+ * read.
  */
-export type GitRemoteResolver = (remote: string | null, chdir: string | undefined) => string | null;
+export type GitRemoteResolver = (
+  remote: string | null,
+  chdir: string | undefined,
+) => string | readonly string[] | null;
 
 const GLOBAL_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"]);
 const PUSH_VALUE = new Set(["--repo", "-o", "--push-option", "--receive-pack", "--exec"]);
@@ -34,12 +39,52 @@ export function gitSubcommand(args: readonly string[]): string | undefined {
   return undefined;
 }
 
-function remoteEntry(remote: string | null, resolver: GitRemoteResolver | undefined, chdir: string | undefined): EgressDestination | null {
+/** One entry per host the push goes to: git pushes to every pushurl of a remote. */
+function remoteEntries(
+  remote: string | null,
+  resolver: GitRemoteResolver | undefined,
+  chdir: string | undefined,
+): EgressDestination[] {
   const label = remote === null ? "the default git remote" : `git remote "${remote}"`;
-  const url = resolver?.(remote, chdir) ?? null;
-  const host = url === null ? null : hostOfGitUrl(url);
-  if (host === "local") return null;
-  return { kind: "git_remote", host, direction: "outbound", label: host ?? label };
+  const resolved = resolver?.(remote, chdir) ?? null;
+  const urls: readonly (string | null)[] =
+    resolved === null ? [null] : typeof resolved === "string" ? [resolved] : resolved.length > 0 ? resolved : [null];
+  const found: EgressDestination[] = [];
+  for (const url of urls) {
+    const host = url === null ? null : hostOfGitUrl(url);
+    if (host === "local" || found.some((entry) => entry.host === host)) continue;
+    found.push({ kind: "git_remote", host, direction: "outbound", label: host ?? label });
+  }
+  return found;
+}
+
+/**
+ * A push that also pushes the submodules (review round 2 of ATO-2528):
+ * each one goes to its own remote, read from its own config, which this
+ * scan does not follow. So it counts as a host nobody knows, and holds.
+ */
+const SUBMODULE_PUSH: EgressDestination = {
+  kind: "git_remote",
+  host: null,
+  direction: "outbound",
+  label: "the submodules' own git remotes (--recurse-submodules)",
+};
+
+/**
+ * Whether the push's own flags make it recurse: the last
+ * `--recurse-submodules=on-demand|only` (or a value git rejects) or
+ * `--no-recurse-submodules` wins; `check` sends nothing (review round 3).
+ * `undefined` when no flag says.
+ */
+function flagsPushSubmodules(rest: readonly string[]): boolean | undefined {
+  let found: boolean | undefined;
+  for (const arg of rest) {
+    if (arg === "--") break;
+    if (arg === "--no-recurse-submodules") found = false;
+    const match = /^--recurse-submodules(?:=(.*))?$/.exec(arg);
+    if (match !== null) found = recursesFor("push.recursesubmodules", match[1] ?? "on-demand");
+  }
+  return found;
 }
 
 function operandEntry(
@@ -67,6 +112,7 @@ export function scanGit(
   let chdir: string | undefined;
   let unresolvable = indirect;
   let alias = false;
+  let submodules = false;
   let i = 0;
   for (; i < args.length; i += 1) {
     const arg = args[i]!;
@@ -78,6 +124,9 @@ export function scanGit(
       chdir = chdir === undefined || value.startsWith("/") ? value : `${chdir}/${value}`;
     } else if (name === "-c" && value !== undefined) {
       if (/^(?:remote|url|branch|include|includeif|alias)\./i.test(value)) unresolvable = true;
+      const recurse = /^(push\.recursesubmodules|submodule\.recurse)(?:=(.*))?$/i.exec(value);
+      // The last -c wins over every config file (review round 3).
+      if (recurse !== null) submodules = recursesFor((recurse[1] ?? "").toLowerCase(), recurse[2] ?? "true");
       if (/^alias\./i.test(value)) alias = true;
     } else if (name !== "-C" && name !== "-c" && GLOBAL_VALUE.has(name)) {
       unresolvable = true;
@@ -92,40 +141,55 @@ export function scanGit(
     return [{ kind: "git_remote", host: null, direction: "outbound", label: "a git alias set on the command line" }];
   }
   if (sub === "push") {
-    let repo: string | undefined;
-    for (let k = 0; k < rest.length; k += 1) {
-      const arg = rest[k]!;
-      if (arg === "--") {
-        repo ??= rest[k + 1];
-        break;
-      }
-      if (arg.startsWith("--repo=")) {
-        repo = arg.slice("--repo=".length);
-        continue;
-      }
-      if (arg === "--repo") {
-        repo = rest[k + 1];
-        k += 1;
-        continue;
-      }
-      if (arg.startsWith("-")) {
-        if (PUSH_VALUE.has(arg)) k += 1;
-        continue;
-      }
-      repo ??= arg;
+    const found = pushDestinations(rest, usable, chdir, unresolvable);
+    return (flagsPushSubmodules(rest) ?? submodules) ? [...found, SUBMODULE_PUSH] : found;
+  }
+  return otherDestinations(sub, rest);
+}
+
+function pushDestinations(
+  rest: readonly string[],
+  usable: GitRemoteResolver | undefined,
+  chdir: string | undefined,
+  unresolvable: boolean,
+): EgressDestination[] {
+  let repo: string | undefined;
+  for (let k = 0; k < rest.length; k += 1) {
+    const arg = rest[k]!;
+    if (arg === "--") {
+      repo ??= rest[k + 1];
       break;
     }
-    if (repo === undefined) {
-      const entry = remoteEntry(null, usable, chdir);
-      return entry === null ? [] : [entry];
+    if (arg.startsWith("--repo=")) {
+      repo = arg.slice("--repo=".length);
+      continue;
     }
-    const entry = operandEntry(repo, "outbound");
-    if (entry === "name") {
-      const named = remoteEntry(repo, usable, chdir);
-      return named === null ? [] : [named];
+    if (arg === "--repo") {
+      repo = rest[k + 1];
+      k += 1;
+      continue;
     }
-    return entry === null ? [] : [entry];
+    if (arg.startsWith("-")) {
+      if (PUSH_VALUE.has(arg)) k += 1;
+      continue;
+    }
+    repo ??= arg;
+    break;
   }
+  if (repo === undefined) return remoteEntries(null, usable, chdir);
+  const entry = operandEntry(repo, "outbound");
+  if (entry === "name") return remoteEntries(repo, usable, chdir);
+  // A URL or a path on the line goes through the config's `insteadOf` /
+  // `pushInsteadOf` rewrites too (review round 3 of ATO-2528), so it is
+  // read with the config, and is unknown where the config cannot be.
+  if (entry !== null && entry.host === null) return [entry];
+  if (usable !== undefined) return remoteEntries(repo, usable, chdir);
+  if (unresolvable) return [{ kind: "git_remote", host: null, direction: "outbound", label: `git remote ${repo}` }];
+  return entry === null ? [] : [entry];
+}
+
+/** `git send-email` and the fetch-like subcommands. */
+function otherDestinations(sub: string | undefined, rest: readonly string[]): EgressDestination[] {
   if (sub === "send-email") {
     const server = rest.find((a) => a.startsWith("--smtp-server="));
     const host = server === undefined ? null : normaliseHost(server.slice("--smtp-server=".length));

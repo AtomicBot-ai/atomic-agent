@@ -79,6 +79,11 @@ describe.skipIf(process.platform === "win32")("os.shell.run: egress (ATO-2116)",
       targetPaths: [join(dir, ".git", "config")],
     });
     expect(written.map((d) => d.host)).toEqual([null]);
+    // Review round 3 (F2105-R3.7): the XDG global config and a system one count too.
+    for (const path of [join(dir, ".config", "git", "config"), join(dir, "etc", "gitconfig")]) {
+      expect(shellEgress([["git", "push", "origin"]], dir, { targetPaths: [path] }).map((d) => d.host)).toEqual([null]);
+    }
+    expect(shellEgress([["git", "push", "origin"]], dir).map((d) => d.host)).toEqual(["github.com"]);
   });
 
   it("a call that writes .curlrc sends to an unknown address", () => {
@@ -93,5 +98,16 @@ describe.skipIf(process.platform === "win32")("os.shell.run: egress (ATO-2116)",
     await writeFile(join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
     const egress = shellEgress([["git", "push", "origin", "main"]], dir);
     expect(egress.map((d) => d.host)).toEqual(["github.com"]);
+  });
+});
+
+// Review round 2 (ATO-2528): `NPM_CONFIG_REGISTRY` in the agent's own
+// environment, which the command inherits, beat every config file read.
+describe("shellEgress with a registry variable in the environment", () => {
+  it("counts the publish as going to an unknown host", () => {
+    const hosts = (env: NodeJS.ProcessEnv) =>
+      shellEgress([["npm", "publish"]], tmpdir(), { env }).map((destination) => destination.host);
+    expect(hosts({ NPM_CONFIG_REGISTRY: "https://evil.example/" })).toEqual([null]);
+    expect(hosts({ npm_config_userconfig: "/tmp/evil.npmrc" })).toEqual([null]);
   });
 });
