@@ -244,7 +244,7 @@ test("leaving the editor with unsaved text asks first; with none it just leaves"
   assert.equal(run("FP.edit"), null);
   run("FP.edit = fpEditState(FP.data); FP.edit.draft = 'changed';");
   assert.equal(run("fpEditGuard(() => { left++; })"), true);
-  assert.match(run("fpEditBarHtml(FP.edit)"), /Discard your unsaved changes\?/);
+  assert.match(run("fpEditBarHtml(FP.edit)"), /Save your changes to a\.md\?/);
   assert.equal(run("left"), 0);
   run("fpEditClick('edit-discard')");
   assert.equal(run("left"), 1);
@@ -279,4 +279,86 @@ test("Edit is not offered when main says the file is not editable", () => {
   const { run } = loadPanel(() => ({ ok: true }));
   assert.equal(run("fpEditable(" + JSON.stringify(doc({ editable: false })) + ")"), false);
   assert.equal(run("fpEditable(" + JSON.stringify(doc({ editable: true })) + ")"), true);
+});
+
+/* ---- ATO-2753: the leaving question, the shortcut, the error, the headers, the slides ---- */
+
+test("leaving with unsaved text asks Save / Don't save / Cancel, Save first", () => {
+  const { run } = loadPanel(() => ({ ok: true }));
+  run("FP.data = " + JSON.stringify(doc()) + "; FP.edit = fpEditState(FP.data); FP.edit.draft = 'changed';");
+  assert.equal(run("fpEditGuard(() => {})"), true);
+  const bar = run("fpEditBarHtml(FP.edit)");
+  assert.match(bar, /Save your changes to a\.md\?/);
+  assert.match(bar, /class="fp-btn fp-primary" data-fp="edit-ask-save">Save</, "Save is the main answer");
+  assert.match(bar, /data-fp="edit-discard">Don\u2019t save</);
+  assert.match(bar, /data-fp="edit-keep">Cancel</);
+  assert.doesNotMatch(bar, /Discard|Keep editing/);
+  run("fpEditClick('edit-keep')");
+  assert.equal(run("FP.edit.ask"), null, "Cancel: back to the editor, text kept");
+  assert.equal(run("fpEditDirty(FP.edit)"), true);
+});
+
+test("Save in the question saves, then leaves; a failed save stays in the editor and says why", async () => {
+  let answer = { ok: true, size: 7, mtimeMs: 500 };
+  const { run, calls } = loadPanel(() => answer);
+  run("FP.open = true; FP.path = '/h/a.md'; FP.data = " + JSON.stringify(doc()) + "; FP.edit = fpEditState(FP.data); FP.edit.draft = 'changed'; globalThis.left = 0;");
+  run("fpEditGuard(() => { left++; })");
+  await run("fpEditSaveAndLeave()");
+  assert.equal(calls.length, 1, "the text was saved");
+  assert.equal(run("left"), 1, "then the editor left as asked");
+  assert.equal(run("FP.edit"), null);
+  answer = { ok: false, reason: "missing" };
+  run("FP.edit = fpEditState(FP.data); FP.edit.draft = 'again'; left = 0; fpEditGuard(() => { left++; })");
+  await run("fpEditSaveAndLeave()");
+  assert.equal(run("left"), 0, "not saved: nothing left");
+  assert.equal(run("FP.edit.draft"), "again");
+  assert.equal(run("FP.edit.ask"), null);
+  assert.match(run("fpEditBarHtml(FP.edit)"), /no longer there/);
+});
+
+test("a save error clears once the person types again", async () => {
+  const { run } = loadPanel(() => ({ ok: false, reason: "failed" }));
+  run("FP.open = true; FP.path = '/h/a.md'; FP.data = " + JSON.stringify(doc()) + "; FP.edit = fpEditState(FP.data); FP.edit.draft = 'x';");
+  await run("fpEditSave(false)");
+  assert.match(run("fpEditBarHtml(FP.edit)"), /could not be saved/);
+  run("fpEditTyped('xy')");
+  assert.equal(run("FP.edit.error"), "");
+  assert.equal(run("FP.edit.draft"), "xy");
+  assert.match(run("fpEditBarHtml(FP.edit)"), /Edited/);
+});
+
+test("Save's tooltip goes through kbdText: Ctrl S off the Mac", () => {
+  const { run } = loadPanel(() => ({ ok: true }));
+  run("FP.data = " + JSON.stringify(doc()) + "; FP.edit = fpEditState(FP.data);");
+  assert.match(run("fpEditHeadHtml()"), /title="Save \(⌘S\)"/, "no kbdText loaded: the Mac text");
+  run("globalThis.kbdText = (t) => String(t).replace('⌘S', 'Ctrl S');");   // renderer.js's helper on Windows/Linux
+  const head = run("fpEditHeadHtml()");
+  assert.match(head, /title="Save \(Ctrl S\)"/);
+  assert.doesNotMatch(head, /⌘/);
+});
+
+test("CSV headers take the keyboard: focusable, Enter or Space sorts", () => {
+  const { run } = loadPanel(() => ({ ok: true }));
+  run("FP.data = " + JSON.stringify({ ok: true, kind: "csv", name: "t.csv", ext: ".csv", size: 9, mtimeMs: 1, path: "/h/t.csv", text: "n,v\nb,1\n" }) + "; FP.sort = null; FP.edit = null;");
+  assert.match(run("fpBodyHtml(FP.data)"), /<th class="fp-sortable" data-fp="sort" data-fp-col="0" aria-sort="none" tabindex="0"/);
+  const src = readFileSync(join(HERE, "..", "renderer", "file-preview.js"), "utf8");
+  assert.match(src, /\(e\.key === 'Enter' \|\| e\.key === ' '\)[^\n]*closest\('#fpreview th\[data-fp="sort"\]'\)/);
+  assert.match(src, /th\.click\(\); return;/);
+  const css = readFileSync(join(HERE, "..", "renderer", "css", "file-preview.css"), "utf8");
+  assert.match(css, /th\.fp-sortable:focus-visible\{/);
+});
+
+test("the slides' ground is a theme token defined for light and both dark selectors, not a fixed grey", () => {
+  const css = readFileSync(join(HERE, "..", "renderer", "css", "file-preview.css"), "utf8");
+  const m = css.match(/\.fp-slides\{background:var\((--[a-z0-9-]+)\)\}/);
+  assert.ok(m, ".fp-slides uses a var()");
+  assert.doesNotMatch(css, /\.fp-slides\{background:#/);
+  const styles = readFileSync(join(HERE, "..", "renderer", "styles.css"), "utf8");
+  const tok = m[1].replace(/-/g, "\\-");
+  const blocks = [/:root \{[\s\S]*?\n\}/, /:root:not\(\[data-theme="light"\]\) \{[\s\S]*?\}\}/, /:root\[data-theme="dark"\] \{[\s\S]*?\n\}/];
+  for (const re of blocks) {
+    const block = styles.match(re);
+    assert.ok(block, "theme block found");
+    assert.match(block[0], new RegExp(tok + ":"), m[1] + " is set in every theme block");
+  }
 });
