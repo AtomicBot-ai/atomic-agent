@@ -558,7 +558,7 @@ const OB_PHASES = [{n:'01', label:'Setup'}, {n:'02', label:'Data'}];
 const OB_PHASE_OF = {
   intro:null, choose:'01', cloud:'01', custom_chat_url:'01', custom_embedding_url:'01',
   local_pick:'01', local_hf_ref:'01', local_hf_pick:'01', local_download:'01',
-  propose_second:'01', wait_or_jump:'01',
+  propose_second:'01', wait_or_jump:'01', found_server:'01',
   import_pick:'02', import_preview:'02', import_done:'02',
   // ATO-431 (U-06): `finished` is the spinner between screens of EITHER phase
   // (before the second-backend offer as well as after import), so it keeps
@@ -575,6 +575,7 @@ const OB_TITLES = {
   cloud: 'Choose a provider',
   custom_chat_url: 'Point Atomic Agent at your endpoint',
   custom_embedding_url: 'Embeddings endpoint',
+  found_server: 'Use what already runs here',   // ATO-2489 (local-servers.js)
   local_pick: 'Choose a model to run on ' + THIS_MACHINE,
   local_hf_ref: 'Find a model on Hugging Face',
   local_hf_pick: 'Choose a file to download',
@@ -603,6 +604,7 @@ const OB_SUBTITLES = {
   cloud: 'cloud model · step 2 of 2',
   custom_chat_url: 'custom endpoint · step 2 of 2',
   custom_embedding_url: 'custom endpoint · embeddings',
+  found_server: 'found running here · step 2 of 2',
   finished: 'setting up…',
 };
 
@@ -15302,6 +15304,8 @@ function obCloudReadyLabel() {
   return OB_WIZ_ROUTE === 'custom' ? 'Model ready' : OB_COPY.cloudReadyLabel;
 }
 function obConfiguredLabel() {
+  const found = typeof lsvObConfiguredLabel === 'function' ? lsvObConfiguredLabel(OB.outcome) : '';   // ATO-2489
+  if (found) return found;
   if (OB.outcome === 'local') {
     if (OB.localStart === 'started') return 'Local model ready';
     if (OB.localStart === 'failed') return 'Local model selected, but it did not start';
@@ -15377,7 +15381,7 @@ function obChooseHTML() {
     /* Calm (S6): a click picks the card (tick); Continue, Enter or a double
        click opens it. The digit chord stays and moves to the tooltip. */
     return obRow(i, OB.cursor === i, esc(choice.label),
-      esc(choice.detail[0]) + (choice.detail[1] ? '<br>' + esc(choice.detail[1]) : ''), '',
+      esc((typeof lsvChoiceDetail === 'function' && lsvChoiceDetail(choice)) || choice.detail[0]) + (choice.detail[1] ? '<br>' + esc(choice.detail[1]) : ''), '',   // ATO-2489: what runs here
       ' title="' + esc(choice.label + ' · press ' + (i + 1)) + '"',
       '<span class="tk-ico tk-ico--lg' + l[1] + '">' + ic(l[0]) + '</span>',
       OB.cursor === i ? obTickHTML() : '');
@@ -16302,6 +16306,7 @@ function obWizardHTML() {
       + '<span class="col"><span class="nm">' + esc(k.label.split(' (')[0]) + '</span>'
       + '<span class="ds">' + esc(OB_WIZ_BLURB[k.id] || (k.baseUrl ? hostOf(k.baseUrl) : k.kind)) + '</span></span>'
       + (k.id === 'atomic-chat' && OB_ATOMIC_CHAT.running ? '<span class="ann lit">Running</span>' : '')
+      + (typeof lsvRunningBadge === 'function' ? lsvRunningBadge(k.id) : '')   // ATO-2489: Ollama / LM Studio found running
       + (taken[k.id] ? '<span class="ann lit">Configured</span>' : '')
       + (n === cur ? '<span class="prow-tick" aria-hidden="true">' + ic('check') + '</span>' : '')
       + '</button>';
@@ -16543,6 +16548,7 @@ function obHTML() {
   else if (OB.step === 'local_hf_pick') body = obHfPickHTML();
   else if (OB.step === 'local_download') body = obDownloadHTML();
   else if (OB.step === 'cloud') body = obWizardHTML();
+  else if (OB.step === 'found_server' && typeof lsvObHTML === 'function') body = lsvObHTML();   // ATO-2489
   else if (OB.step === 'custom_chat_url') body = obUrlHTML('chat');
   else if (OB.step === 'custom_embedding_url') body = obUrlHTML('embedding');
   else if (OB.step === 'propose_second') body = obProposeHTML();
@@ -16630,6 +16636,7 @@ function obKey(input, key) {
     case 'import_preview': return obImportPreviewKey(input, key);
     case 'import_done': return obImportDoneKey(input, key);
     case 'cloud': return obCloudKey(input, key);
+    case 'found_server': return typeof lsvObKey === 'function' ? lsvObKey(input, key) : false;   // ATO-2489
     case 'finished': return obFinishedKey(input, key);
     default: return false;
   }
@@ -16661,6 +16668,7 @@ function obChooseKey(input, key) {
 function obPickBackend(choice) {
   if (choice === 'cloud') { obOpenCloudWizard(); obDispatch({type:'onboarding_step_set', step:'cloud'}); return; }
   // ATO-816: Custom opens its own list (apps on this Mac, llama.cpp, any URL).
+  if (choice === 'custom' && typeof lsvObOffer === 'function' && lsvObOffer()) return;   // ATO-2489: a server runs here
   if (choice === 'custom') { obOpenCloudWizard('custom'); obDispatch({type:'onboarding_step_set', step:'cloud'}); return; }
   // Managed mode is recorded NOW so a quit mid-download does not lose
   // the choice; the model id follows when the pull completes. The promise
@@ -18145,6 +18153,7 @@ async function openOnboarding(at) {
   });
   // The out-of-reach models start folded again (obOutOpen decides).
   OB.outOpen = null;
+  if (typeof lsvObReset === 'function') lsvObReset();   // ATO-2489: look for running servers again
   obRailPhase = '01';
   // A new flow: any settle still out for the previous one must not touch it (obSettle).
   OB.openGen = (OB.openGen || 0) + 1;
@@ -29036,6 +29045,7 @@ function llmLocalHTML() {
     + lcsContextHTML() // ATO-336: local-context-slots.js
     + llmSectionHTML('Embedding models', emb, text.length, cursor, null, false, {scope: 'local',
       note: '<p class="llm-note">Used to search the agent’s memory by meaning. Without one, it searches by keyword.</p>'})
+    + (typeof localServersPaneHTML === 'function' ? localServersPaneHTML() : '')   // ATO-2489 (local-servers.js)
     + llmAppsHTML();
 }
 /* Models already on this computer that the agent does not list yet (LM
