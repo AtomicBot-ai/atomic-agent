@@ -11,7 +11,8 @@
    "Hold Fn instead" goes back. The line under it: no dictation backend
    (ATO-979, the switch is then disabled with the reason), a hold key that
    cannot be watched yet (with Open Privacy Settings on a Mac), a combo
-   another app holds, or the Accessibility the paste needs. While Change…
+   another app holds, or the Accessibility the paste needs (with the same
+   button, in either mode). While Change…
    records, main lets go of the hold key and the combo. */
 
 /** The Settings row. `st.info` is main's answer (app:dictateGet); `h` has esc and setSwitchHTML. */
@@ -33,13 +34,17 @@ function dictateAnywhereRowHTML(st, h) {
   const warn = st.error || (info && (info.holdError || info.error || (unavailable ? info.reason : null) || (on ? info.hint : null))) || '';
   const idle = info && !st.busy && !unavailable;
   let buttons;
+  const privacy = info && info.canOpenPrivacy
+    ? '<button class="btn btn-s sm" data-act="dictate:privacy" title="Open System Settings › Privacy & Security › Accessibility">Open Privacy Settings</button>'
+    : '';
   if (st.recording) {
     buttons = '<button class="btn btn-s sm" data-act="dictate:cancel">Cancel</button>';
   } else if (holding) {
-    buttons = (info.canOpenPrivacy ? '<button class="btn btn-s sm" data-act="dictate:privacy" title="Open System Settings › Privacy & Security › Accessibility">Open Privacy Settings</button>' : '')
+    buttons = privacy
       + '<button class="btn btn-s sm" data-act="dictate:record"' + (idle ? '' : ' disabled') + ' title="Start and end a take with a key combination instead">Use a key combination…</button>';
   } else {
-    buttons = (holdLabel ? '<button class="btn btn-s sm" data-act="dictate:hold"' + (idle ? '' : ' disabled') + ' title="Record while the key is held down">Hold ' + h.esc(holdLabel) + ' instead</button>' : '')
+    // ATO-2750: the shortcut mode offers it too when the paste needs Accessibility.
+    buttons = privacy + (holdLabel ? '<button class="btn btn-s sm" data-act="dictate:hold"' + (idle ? '' : ' disabled') + ' title="Record while the key is held down">Hold ' + h.esc(holdLabel) + ' instead</button>' : '')
       + '<button class="btn btn-s sm" data-act="dictate:record"' + (idle ? '' : ' disabled') + ' title="Choose another key combination">'
         + (label ? h.esc(label) + ' · Change…' : 'Change…') + '</button>';
   }

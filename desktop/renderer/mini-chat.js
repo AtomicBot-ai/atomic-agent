@@ -227,8 +227,8 @@ function mcApproval(st, payload) {
 
 const mcTitle = (st) => st.title || (st.rows.find((r) => r.k === 'user') || {}).text || '';   // the chat's title, or its first message
 function mcApprovalLine(a) {
-  if (a.question) return 'The agent is asking you a question. Open the big window to answer it.';
-  return 'The agent is asking to use ' + a.tool + '. Open the big window to approve or deny it.';
+  if (a.question) return 'The agent is asking you a question. Open the main window to answer it.';
+  return 'The agent is asking to use ' + a.tool + '. Open the main window to approve or deny it.';
 }
 
 /* ---------- markup ---------- */
@@ -318,6 +318,7 @@ function mcBoot() {
       put.disabled = true;
       BR.quickEntryReplace(row.text).then((res) => {
         if (res && (res.ok || res.hidden)) return;
+        if (res && res.copy && typeof mcReplaceFailed === 'function') { put.disabled = false; mcReplaceFailed(res.error, row.text, BR); return; }   // ATO-2750
         st.rows.push({id: ++st.seq, k: 'note', tone: 'bad', text: (res && res.error) || 'The text could not be replaced.'});
         repaint();
       }, () => { put.disabled = false; });

@@ -157,7 +157,7 @@ test("a request of this chat shows one line pointing at the big window; others d
   assert.equal(R.mcApproval(st, { approvalId: "a0", sessionId: "s2", tool: "fs.write" }), false);
   assert.equal(R.mcApproval(st, { approvalId: "a1", sessionId: "s1", tool: "shell.run" }), true);
   assert.equal(st.approval.tool, "shell.run");
-  assert.match(R.mcApprovalLine(st.approval), /big window/);
+  assert.match(R.mcApprovalLine(st.approval), /main window/, "ATO-2750: one name, the button's");
   // The call goes on (answered in the big window): the line goes.
   R.mcFrame(st, frame("t", "tool_result", { payload: {} }));
   assert.equal(st.approval, null);

@@ -16,7 +16,7 @@ import {
 } from "./quick-entry.js";
 import { MINI_CHAT_SIZE, miniChatPagePath } from "./mini-chat.js";
 import { activateApp, keystrokesAllowed, pasteIntoFrontApp } from "./keystroke-clipboard-host.js";
-import { replaceInSourceApp, replaceLabel, type SourceApp } from "./replace-selection.js";
+import { replaceInSourceApp, replaceLabel, replacementText, type SourceApp } from "./replace-selection.js";
 import { selectionMissNotice, type SelectionGrab } from "./selected-text-grab.js";
 
 /**
@@ -78,6 +78,10 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
   // ATO-2736: why the hotkey brought no selection, as the mini chat's one line (null: nothing to say).
   let notice: { text: string; settings: boolean } | null = null;
   let opening = false;
+  /* ATO-2750: true while Replace has the box out of sight and the source
+     app in front. That switch blurs the box; the blur must not destroy it,
+     or a failed paste has no window to come back to. */
+  let replacing = false;
   let disposed = false;
   let pref: QuickEntryPref = readQuickEntryPref(w.userData);
 
@@ -87,6 +91,7 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
     selection = null;
     source = null;
     notice = null;
+    replacing = false;
     if (b && !b.isDestroyed()) b.destroy();
   };
 
@@ -125,7 +130,7 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
       skipTaskbar: true,
       alwaysOnTop: true,
       backgroundColor: "#191C21",
-      title: "Ask Atomic Agent",
+      title: "Mini Chat",   // ATO-2750: the name the menu and the tray use (New Mini Chat)
       /* macOS: a panel takes the keyboard without bringing the app (and its
          main window) to the front, over full-screen apps too. */
       ...(w.platform === "darwin" ? { type: "panel" as const } : {}),
@@ -144,7 +149,7 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
     win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     win.webContents.on("will-navigate", (event) => event.preventDefault());
     // Clicking another app puts the box away; the typed text waits for next time.
-    win.on("blur", () => { if (box === win) hide(); });
+    win.on("blur", () => { if (box === win && !replacing) hide(); });
     win.on("closed", () => { if (box === win) box = null; });
     win.once("ready-to-show", () => {
       if (win.isDestroyed()) return;
@@ -213,7 +218,17 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
     if (!box || box.isDestroyed() || event.sender !== box.webContents) return { ok: false, hidden: false, error: "This window cannot replace text." };
     return replaceInSourceApp({
       allowed: (prompt) => keystrokesAllowed(prompt),
-      hide,
+      /* ATO-2750: out of sight while the paste runs, not destroyed, so a
+         failed paste brings it back with the line and "Copy answer". */
+      hide: () => { replacing = true; if (box && !box.isDestroyed()) box.hide(); },
+      bringBack: () => {
+        replacing = false;
+        if (!box || box.isDestroyed()) return false;
+        box.show();
+        box.focus();
+        return true;
+      },
+      close: hide,
       activate: activateApp,
       sleep: (ms) => new Promise<void>((r) => setTimeout(r, ms)),
       paste: pasteIntoFrontApp,
@@ -221,7 +236,15 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
       notify: (body) => {
         try { if (Notification.isSupported()) new Notification({ title: "Atomic Agent", body, silent: true }).show(); } catch { /* no notifications */ }
       },
-    }, source, raw);
+    }, source, raw).finally(() => { replacing = false; });
+  });
+  // ATO-2750: "Copy answer" beside a failed Replace. Only from the mini chat.
+  ipcMain.handle("app:quickEntryCopy", (event, raw: unknown) => {
+    if (!box || box.isDestroyed() || event.sender !== box.webContents) return { ok: false };
+    const text = replacementText(raw);
+    if (!text) return { ok: false };
+    clipboard.writeText(text);
+    return { ok: true };
   });
   ipcMain.handle("app:quickEntrySubmit", (_event, raw: unknown) => {
     const text = quickEntryText(raw);

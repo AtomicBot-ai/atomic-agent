@@ -453,6 +453,7 @@ contextBridge.exposeInMainWorld("atomic", {
   quickEntryHide: () => ipcRenderer.send("app:quickEntryHide"),
   quickEntryReplace: (text: string) => ipcRenderer.invoke("app:quickEntryReplace", text),
   quickEntryOpenSettings: () => ipcRenderer.invoke("app:quickEntryOpenSettings"),   // ATO-2736
+  quickEntryCopy: (text: string) => ipcRenderer.invoke("app:quickEntryCopy", text),   // ATO-2750
   quickEntrySubmit: (text: string) => ipcRenderer.invoke("app:quickEntrySubmit", text),
   // ATO-2478: the mini chat's ⌘↩ (Ctrl+Enter): a new chat in the background in the main window.
   quickEntryBackground: (text: string) => ipcRenderer.invoke("app:quickEntryBackground", text),
@@ -472,7 +473,8 @@ contextBridge.exposeInMainWorld("atomic", {
   dictateAudio: (chunk: Uint8Array) => ipcRenderer.send("dictate:audio", chunk),
   dictateStop: () => ipcRenderer.send("app:dictateStop"),
   dictateCancel: () => ipcRenderer.send("app:dictateCancel"),
-  dictateMicFailed: (why: string) => ipcRenderer.send("app:dictateMicFailed", why),
+  dictateMicFailed: (why: { denied: boolean; detail?: string }) => ipcRenderer.send("app:dictateMicFailed", why),
+  dictateFix: () => ipcRenderer.invoke("app:dictateFix"),   // ATO-2750: the failure pill's button
   onDictate: (cb: (payload: unknown) => void) => on("app:dictate", cb),
   dictateGet: () => ipcRenderer.invoke("app:dictateGet"),
   dictateSet: (patch: { enabled?: boolean; mode?: "hold" | "toggle"; accelerator?: string }) => ipcRenderer.invoke("app:dictateSet", patch),
