@@ -206,3 +206,27 @@ test('providerLogoKey: the sign-in entry wears the OpenAI mark; it still works w
   assert.equal(withRow.providerLogoKey('chatgpt-sub'), 'openai');
   assert.equal(withRow.providerLogoKey('openrouter'), 'openrouter');
 });
+
+/* ------------------------------------------------------------ ATO-2512 */
+
+test('on a remote agent the row has no Sign in / Sign out and says what to run there', () => {
+  const st = fresh({status: {ok: true, signedIn: false, plan: null, supported: true, remote: true}, at: Date.now()});
+  const html = R.subOauthRowHTML(CHATGPT, ctxFor(), st);
+  assert.match(html, /On the other computer/);
+  assert.match(html, /atag login chatgpt --device or atag logout chatgpt on that computer/);
+  assert.doesNotMatch(html, /llm:subOauth:sign/);
+  assert.match(html, /llm:removeAt:3/);
+  assert.doesNotMatch(R.SUB_OAUTH_REMOTE_LINE, /\u2014/);
+});
+
+test('a sign-out or sign-in main refuses as remote turns the row into that line, no error', async () => {
+  const st = fresh({status: SIGNED_IN, at: Date.now()});
+  await R.subOauthAct('signOut', {br: {chatgptOauthSignOut: async () => ({ok: false, state: 'failed', reason: 'remote'})}}, st);
+  assert.equal(st.error, null);
+  assert.equal(st.status.remote, true);
+  const st2 = fresh({status: SIGNED_OUT, at: Date.now()});
+  await R.subOauthAct('signIn', {br: {chatgptOauthStart: async () => ({ok: false, state: 'failed', reason: 'remote'})}}, st2);
+  assert.equal(st2.error, null);
+  assert.equal(st2.status.remote, true);
+  assert.match(R.subOauthRowHTML(CHATGPT, ctxFor(), st2), /on that computer/);
+});

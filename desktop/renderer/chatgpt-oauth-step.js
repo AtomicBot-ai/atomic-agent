@@ -14,9 +14,21 @@
    Leaving the step in any way (Back, Esc, closing the wizard, another row)
    cancels the sign-in: a watch asks every second whether the step is still on
    screen, as the Codex poll does (wizSubPollTick). Closing the window or
-   quitting the app is main's side (chatgpt-oauth-ipc.ts). */
+   quitting the app is main's side (chatgpt-oauth-ipc.ts).
 
-const CHATGPT_OAUTH = {supported: null, asking: false, running: false, error: null, startedAt: 0, watch: null, byUser: false, left: false, restarting: false};
+   ATO-2512: when the app drives an agent on another computer, main answers
+   `remote` (chatgpt-oauth-remote.ts): this sign-in would land on this
+   computer's agent, and the remote one cannot be signed in from here. The
+   block is then one line saying to run the sign-in on that computer, as
+   Codex (`codex login --device-auth`) and GitHub CLI ask on a remote machine.
+   A remote answer is asked again after a while (the person may switch back),
+   and a start refused as remote turns the block into that line. */
+
+const CHATGPT_OAUTH = {supported: null, asking: false, running: false, error: null, startedAt: 0, watch: null, byUser: false, left: false, restarting: false, remote: false, askedAt: 0};
+/** ATO-2512: how long a "remote agent" answer stands before the step asks again. */
+const CHATGPT_OAUTH_REMOTE_RECHECK_MS = 15000;
+/** ATO-2512: the command the line names, run on the computer the agent is on. */
+const CHATGPT_OAUTH_REMOTE_COMMAND = 'atag login chatgpt --device';
 const CHATGPT_OAUTH_WATCH_MS = 1000;
 const CHATGPT_OAUTH_REASONS = ['timeout', 'no_account', 'cancelled', 'failed'];
 /* ATO-2739: the two Codex sign-ins read differently. This one is the browser;
@@ -46,16 +58,19 @@ function chatgptOauthErrorText(reason) {
 }
 
 /** Ask main once whether the bundled agent can do this sign-in; redraw when it can. */
-function chatgptOauthAskSupported(br, onChange, st) {
+function chatgptOauthAskSupported(br, onChange, st, now) {
   const s = st || CHATGPT_OAUTH;
-  if (s.supported !== null || s.asking) return;
+  const t = (now || Date.now)();
+  // ATO-2512: a remote answer is asked again once it is old; the line stays on screen meanwhile.
+  const stale = s.remote && !s.running && t - (s.askedAt || 0) >= CHATGPT_OAUTH_REMOTE_RECHECK_MS;
+  if ((s.supported !== null && !stale) || s.asking) return;
   if (!br || typeof br.chatgptOauthStatus !== 'function') { s.supported = false; return; }
   s.asking = true;
   Promise.resolve()
     .then(() => br.chatgptOauthStatus())
-    .then((r) => { s.supported = !!(r && r.supported === true); })
-    .catch(() => { s.supported = false; })
-    .then(() => { s.asking = false; if (s.supported && onChange) onChange(); });
+    .then((r) => { s.supported = !!(r && r.supported === true); s.remote = !!(r && r.remote === true); })
+    .catch(() => { s.supported = false; s.remote = false; })
+    .then(() => { s.asking = false; s.askedAt = t; if (s.supported && onChange) onChange(); });
 }
 
 /**
@@ -83,6 +98,7 @@ function chatgptOauthIsPrimary(st, cli) {
  */
 function chatgptOauthBlockHTML(st, esc, compact, cli) {
   if (!st || st.supported !== true) return '';
+  if (st.remote) return chatgptOauthRemoteHTML(esc);   // ATO-2512
   const size = compact ? ' xs' : '';
   const btn = 'btn btn-s' + size;
   if (st.running) {
@@ -101,6 +117,14 @@ function chatgptOauthBlockHTML(st, esc, compact, cli) {
     + '<button class="' + cls + '" data-act="wiz:chatgptOauth">' + CHATGPT_OAUTH_BUTTON + '</button> '
     + '<span class="tk-chip tk-chip--sm tk-chip--amber">Experimental</span>'
     + (st.error ? '<div class="ob-err">' + esc(st.error) + '</div>' : '')
+    + '</div>';
+}
+
+/** ATO-2512: the block on a remote agent: no button, the command to run there. */
+function chatgptOauthRemoteHTML(esc) {
+  return '<div class="ob-help wiz-chatgpt-oauth" role="note">'
+    + 'This app is connected to an agent on another computer, so it cannot sign in with ChatGPT from here. '
+    + 'On that computer, run <code>' + esc(CHATGPT_OAUTH_REMOTE_COMMAND) + '</code> and follow the code it shows.'
     + '</div>';
 }
 
@@ -174,6 +198,8 @@ async function chatgptOauthStart(ctx, st, again) {
   }
   // The restart's own cancel ended it: start the new one, no ended event.
   if (restart && !left) return chatgptOauthStart(ctx, s, true);
+  // ATO-2512: main refused, the agent is on another computer: the block becomes that line, no error and no event.
+  if (!s.byUser && !s.left && res && res.reason === 'remote') { s.remote = true; s.askedAt = now(); s.error = null; if (!left) ctx.render(); return; }
   const reason = s.byUser || s.left ? 'cancelled' : chatgptOauthReason(res);
   if (anx.subscriptionOauthEnded) anx.subscriptionOauthEnded(reason, ctx.inOnboarding);
   if (left) return;
@@ -185,5 +211,6 @@ if (typeof module !== 'undefined') {
   module.exports = {
     CHATGPT_OAUTH, CHATGPT_OAUTH_ERRORS, CHATGPT_OAUTH_BUTTON, CHATGPT_OAUTH_REOPEN, chatgptOauthReason, chatgptOauthErrorText, chatgptOauthAskSupported,
     chatgptOauthCliState, chatgptOauthIsPrimary, chatgptOauthBlockHTML, chatgptOauthCancel, chatgptOauthRestart, chatgptOauthStart,
+    chatgptOauthRemoteHTML, CHATGPT_OAUTH_REMOTE_COMMAND,
   };
 }

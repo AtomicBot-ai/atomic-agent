@@ -2632,7 +2632,7 @@ function wireIpc(client: AgentClient): void {
     const status = detectSubscriptionCli(cli);
     return openLoginTerminal(cli, status.binPath);
   });
-  wireChatgptOauthIpc(); // ATO-1741: ChatGPT sign-in through the bundled agent, no terminal
+  wireChatgptOauthIpc({ isRemote: () => client.isRemote }); // ATO-1741: ChatGPT sign-in through the bundled agent, no terminal; ATO-2512: not for a remote agent
   ipcMain.handle("cli:removeProvider", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
     // ATO-1441: OpenRouter's key leaves Core too once none is left (studio-forget-key.ts), in the background.

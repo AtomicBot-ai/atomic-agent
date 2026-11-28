@@ -21,7 +21,12 @@
    one click. Loading, error and done are one line under the row, each in
    the same place; an error is a fixed sentence and the agent's own words
    sit behind Details. Copilot gets the name and the mark only: its sign-out
-   stays `atag logout copilot`. */
+   stays `atag logout copilot`.
+
+   ATO-2512: on an agent on another computer main answers `remote`
+   (chatgpt-oauth-remote.ts): this computer's sign-in says nothing about that
+   agent and cannot change it, so the row has no Sign in / Sign out and its
+   line says which commands to run on that computer. */
 
 const SUB_OAUTH_KIND = 'subscription-oauth';
 /** `atag login chatgpt` / `login copilot` ids (CHATGPT_PROVIDER_ID, COPILOT_PROVIDER_ID), and a second entry's `-2`. */
@@ -30,6 +35,8 @@ const SUB_OAUTH_NAMES = {chatgpt: 'ChatGPT (subscription)', copilot: 'GitHub Cop
 const SUB_OAUTH_MARKS = {chatgpt: 'openai', copilot: 'github'};
 /** How long a sign-in state stays fresh before the row asks again. */
 const SUB_OAUTH_STALE_MS = 15000;
+/** ATO-2512: the line on a remote agent. */
+const SUB_OAUTH_REMOTE_LINE = 'This app is connected to an agent on another computer. To sign in or out there, run atag login chatgpt --device or atag logout chatgpt on that computer.';
 
 const SUB_OAUTH = {status: null, at: 0, asking: false, busy: null, error: null, detail: null, showDetail: false, note: null};
 
@@ -88,6 +95,7 @@ function subOauthChip(service, st) {
   if (service !== 'chatgpt') return ['line', 'Uses your Copilot plan'];
   const s = st.status;
   if (!s) return ['line', 'Checking sign-in…'];
+  if (s.remote === true) return ['line', 'On the other computer'];   // ATO-2512
   if (s.ok === false) return ['line', 'Sign-in unknown'];
   if (s.supported === false) return ['line', 'Uses your ChatGPT plan'];
   // The token's plan is lower case ("plus"); ChatGPT names it "Plus".
@@ -103,6 +111,7 @@ function subOauthLine(service, st) {
   if (st.error) return {text: st.error, cls: ' is-err'};
   if (st.note) return {text: st.note, cls: ''};
   const s = st.status;
+  if (s && s.remote === true) return {text: SUB_OAUTH_REMOTE_LINE, cls: ''};   // ATO-2512
   if (s && s.ok !== false && s.supported !== false && !s.signedIn) return {text: 'Sign in again to use your ChatGPT plan here.', cls: ''};
   return null;
 }
@@ -115,7 +124,7 @@ function subOauthActions(service, st) {
   const out = [];
   if (st.error && st.detail) out.push(['llm:subOauth:details', st.showDetail ? 'Hide details' : 'Details']);
   const s = st.status;
-  if (!s || s.supported === false) return out;
+  if (!s || s.supported === false || s.remote === true) return out;
   if (s.ok === false) { out.push(['llm:subOauth:check', 'Check again']); return out; }
   out.push(s.signedIn ? ['llm:subOauth:signOut', 'Sign out'] : ['llm:subOauth:signIn', 'Sign in']);
   return out;
@@ -146,6 +155,15 @@ function subOauthRowHTML(p, ctx, st) {
     + acts + ctx.rowAct('llm:removeAt:' + ctx.index, 'Remove') + ctx.effect + '</button>';
 }
 
+/** ATO-2512: main refused because the agent is on another computer: the row turns into that line, no error. */
+function subOauthTookRemote(res, s) {
+  if (!res || res.reason !== 'remote') return false;
+  s.status = {ok: true, signedIn: false, plan: null, supported: true, remote: true};
+  s.at = Date.now();
+  s.error = null; s.detail = null; s.note = null;
+  return true;
+}
+
 /** A sign-out answer from main, as the row's state. Never the agent's words outside `detail`. */
 function subOauthTakeSignOut(res, st) {
   const s = st || SUB_OAUTH;
@@ -156,6 +174,7 @@ function subOauthTakeSignOut(res, st) {
     s.note = 'Signed out. Chats that use ChatGPT will ask you to sign in again.';
     return;
   }
+  if (subOauthTookRemote(res, s)) return;
   s.error = res && res.reason === 'unsupported' ? SUB_OAUTH_ERRORS.unsupported : SUB_OAUTH_ERRORS.signOut;
   s.detail = res && typeof res.detail === 'string' && res.detail ? res.detail : null;
 }
@@ -169,6 +188,7 @@ function subOauthTakeSignIn(res, st) {
     s.note = 'Signed in.';
     return;
   }
+  if (subOauthTookRemote(res, s)) { s.cancelled = false; return; }
   const reason = res && SUB_OAUTH_ERRORS[res.reason] && ['timeout', 'no_account', 'cancelled', 'failed'].includes(res.reason) ? res.reason : 'failed';
   // Cancel from this row is the person's own choice: no error line follows it.
   s.error = s.cancelled ? null : SUB_OAUTH_ERRORS[reason];
@@ -214,5 +234,6 @@ if (typeof module !== 'undefined') {
   module.exports = {
     SUB_OAUTH, SUB_OAUTH_ERRORS, subOauthService, subOauthServiceOf, subOauthWord, subOauthLogoKey, subOauthEnsureStatus,
     subOauthChip, subOauthLine, subOauthActions, subOauthRowHTML, subOauthTakeSignOut, subOauthTakeSignIn, subOauthAct,
+    SUB_OAUTH_REMOTE_LINE,
   };
 }
