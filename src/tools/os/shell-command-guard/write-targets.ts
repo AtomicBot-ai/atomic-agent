@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from "node:path";
 import { expandHome, resolveUserPath } from "../expand-home.js";
 import { archiveWrites } from "./archive-extract-targets.js";
 import { basenameCommand } from "./normalise.js";
+import { POWERSHELL_WRITERS, powershellWriterTargets } from "./powershell-writer-targets.js";
 import { READ_ONLY_COMMANDS } from "./read-only-commands.js";
 import { userConfigWrites } from "./user-config-writes.js";
 import {
@@ -34,7 +35,8 @@ import {
  * PowerShell line. Also named (review round 2 of ATO-2505): the folder an
  * archive unpacks into (`tar x -C dir`, `unzip -d dir`, the current one
  * when none is given), a `cp -t dir`, and the file `git config --global`
- * or `--file f` writes.
+ * or `--file f` writes. Review round 3: PowerShell content writers read
+ * failing closed (`powershell-writer-targets.ts`).
  */
 export function shellWriteTargets(commandLine: string, cwd: string): string[] {
   return shellWriteAnalysis(commandLine, cwd)?.targets ?? [];
@@ -296,6 +298,7 @@ const WINDOWS_MODELED: ReadonlySet<string> = new Set([
   ...CMD_CHANGES_EVERY_OPERAND,
   "copy",
   ...Object.keys(POWERSHELL_TARGETS),
+  ...POWERSHELL_WRITERS,
 ]);
 
 /**
@@ -446,6 +449,7 @@ function changedWords(
     const operands = cmdOperands(args);
     return operands.length > 1 ? operands.slice(-1) : [];
   }
+  if (POWERSHELL_WRITERS.has(name)) return powershellWriterTargets(args);
   const cmdlet = POWERSHELL_TARGETS[name];
   return cmdlet === undefined ? [] : powershellTargets(args, cmdlet);
 }
