@@ -1,4 +1,5 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
+import { isGuestSecretRelPath } from "../../read-scope/guest-secret-files.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import type { ArchiveEntry } from "./archive-types.js";
 import {
@@ -66,7 +67,15 @@ export function buildOsFsArchiveListTool(
         formatOverride,
         options.backends,
       );
-      const entries = await resolved.backend.list(resolved.data);
+      const all = await resolved.backend.list(resolved.data);
+      // A guest never sees a secret entry's name either (ATO-2805).
+      const entries = ctx.guest === true
+        ? all.filter(
+            (e) =>
+              !isGuestSecretRelPath(e.path) &&
+              (e.linkTarget === undefined || !isGuestSecretRelPath(e.linkTarget)),
+          )
+        : all;
       const output = formatListing(entries);
       return compressToolResult(
         {

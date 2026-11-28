@@ -12,6 +12,7 @@ import {
 } from "../../sandbox/os-sandbox.js";
 import { resolveUserPath } from "../os/expand-home.js";
 import type { ToolContext } from "../tool-registry.js";
+import { guestArchiveDenial } from "./guest-archives.js";
 import { isGuestSecretPathUnder } from "./guest-secret-files.js";
 import { canonical } from "./read-scope.js";
 import { READ_TOOL_TARGETS, URL_LIKE } from "./read-scope-targets.js";
@@ -37,7 +38,10 @@ import { READ_TOOL_TARGETS, URL_LIKE } from "./read-scope-targets.js";
  *    ones from its results itself (ATO-2703);
  *  - for a tool that walks a folder, contains one of those folders (a
  *    working directory that is the home folder cannot be grepped whole);
- *  - is a `file:` URL.
+ *  - is a `file:` URL;
+ *  - is an archive (by name or bytes) handed to a tool that would pass
+ *    its bytes on: `os.fs.read`, a `reply` attachment, a diff, a picture
+ *    (`guest-archives.ts`, ATO-2805). The archive tools judge entries.
  *
  * `files.search` without a `folder` searches the owner's "My files"
  * folders, so a guest must name a folder inside the working directory.
@@ -204,7 +208,8 @@ export function checkGuestRead(
     } catch {
       return guestRefusal(tool, `${raw} cannot be resolved`);
     }
-    const why = guestDenial(tool, absolute, ctx.workingDir, denied);
+    const why = guestDenial(tool, absolute, ctx.workingDir, denied) ??
+      guestArchiveDenial(tool, args, absolute);
     if (why !== null) return guestRefusal(tool, why);
   }
   return null;
