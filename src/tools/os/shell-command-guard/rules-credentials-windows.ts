@@ -1,6 +1,7 @@
 import type { NormalisedCommand } from "./guard-types.js";
 import type { ArgScanFinding } from "./arg-scan-finding.js";
 import {
+  HOME_MENTION,
   HOME_ONLY,
   HOME_VALUE,
   RELATIVE_SECRET_PATH,
@@ -8,8 +9,18 @@ import {
   SECRET_PIECE,
   SHORT_NAME_PATH,
   UNRESOLVED_SECRET_PATH,
+  USERS_SECRET_PATH,
 } from "./windows-credential-paths.js";
 import { COPIERS, copyOperands, homeFolderCopy } from "./windows-copy-operands.js";
+import {
+  ASSIGNMENT,
+  PIPE_READERS,
+  READERS,
+  STRING_BUILD,
+  program,
+  stageReads,
+  wordsOf,
+} from "./windows-readers.js";
 
 /**
  * `dangerous.read_credentials` for Windows paths and readers (ATO-2728).
@@ -55,33 +66,26 @@ import { COPIERS, copyOperands, homeFolderCopy } from "./windows-copy-operands.j
  * with it and asks too, and a provider variable (`${C:\Users\x\.ssh\id_rsa}`)
  * is a read on its own. Each is a `dangerous.read_credentials` finding,
  * so the reason says what the command reads.
+ *
+ * Review round 3, still failing closed:
+ * - PowerShell's backtick escape is dropped like cmd's `^` (`.s`sh`);
+ * - quoted strings joined with `+` are read as one (`'~/.s'+'sh/id_rsa'`),
+ *   and a statement that builds a string (`+` next to a quote, `-f`,
+ *   `-replace`, `-join`, `[char]`) next to a home folder spelling asks when
+ *   the line reads anything: the guard cannot tell what the string becomes;
+ * - `\Users\<name>\<entry>` counts after any prefix (`%SystemDrive%`, `..`);
+ * - .NET and object reads count as readers with no reader word
+ *   (`StreamReader`, `FileStream`, `.OpenText()`, `.OpenRead()`, `New-Object`);
+ * - a credential path stored in a variable (`$p='~/.ssh/id_rsa'`, `set
+ *   K=%USERPROFILE%\.ssh\id_rsa`) asks when the line reads anything.
  */
 
 const SECRET_CONFIDENCE = 0.9;
 const LOW_CONFIDENCE = 0.6;
 
-const READERS: ReadonlySet<string> = new Set([
-  // POSIX readers, as Git Bash and WSL run them.
-  "cat", "bat", "tac", "nl", "less", "head", "tail", "strings", "od", "xxd", "hexdump",
-  "base64", "base32", "grep", "egrep", "rg", "awk", "sed", "scp", "rsync", "tar", "zip",
-  "7z", "gzip", "curl", "wget", "nc", "ncat", "ssh-keygen", "openssl",
-  // cmd.exe
-  "type", "more", "copy", "xcopy", "robocopy", "findstr", "certutil", "move",
-  // PowerShell, with its aliases
-  "get-content", "gc", "copy-item", "cpi", "cp", "compress-archive", "select-string", "sls",
-  "move-item", "mi", "mv", "import-clixml", "invoke-webrequest", "iwr", "invoke-restmethod",
-  "irm", "start-bitstransfer", "send-mailmessage", "format-hex", "fhx",
-]);
-/** What reads the output of the stage before it in a pipeline. */
-const PIPE_READERS: ReadonlySet<string> = new Set(["xargs", "foreach-object", "foreach", "%"]);
 /** A PowerShell block or subexpression: the guard cannot tell what runs inside. */
 const STRUCTURE = /[{}]|[$@]\(/;
 const CD: ReadonlySet<string> = new Set(["cd", "chdir", "pushd", "set-location", "sl", "push-location"]);
-const CODE_RUNNER = /^(?:python[0-9.]*|py|node|perl|ruby)$/;
-const CODE_FLAG = /^(?:-[a-z]*[ce]|--eval|--print)$/;
-const DOTNET_READ = /\[(?:system\.)?io\.file\]::(?:read|copy|open)/;
-/** A PowerShell provider variable is the file's content: `${C:\Users\x\.ssh\id_rsa}`. */
-const PROVIDER_READ = /\$\{[^{}\s]*[/\\][^{}]*\}/;
 const SAVED_CREDENTIALS: readonly RegExp[] = [
   /(?:^|[\s;&|(])cmdkey(?:\.exe)?\s+[/-]list\b/,
   /(?:^|[\s;&|(])vaultcmd(?:\.exe)?\s+[/-]list(?:creds|properties)?\b/,
@@ -96,28 +100,6 @@ const nonEmpty = (parts: readonly string[]): string[] =>
 /** The joined line split into statements, each split into its pipeline stages. */
 function statementsOf(line: string): string[][] {
   return nonEmpty(line.split(/&&|\|\||[;&\n]/)).map((statement) => nonEmpty(statement.split("|")));
-}
-
-/** Words of one command, quotes respected and removed; an inner quoted command adds its words too. */
-function wordsOf(command: string): string[] {
-  const words: string[] = [];
-  for (const match of command.matchAll(/"([^"]*)"|'([^']*)'|([^\s"']+)/g)) {
-    const word = match[1] ?? match[2] ?? match[3] ?? "";
-    words.push(word);
-    if (/\s/.test(word)) words.push(...wordsOf(word));
-  }
-  return words;
-}
-
-/**
- * A word as a program name: no folder, no `.exe`, nothing up to a
- * PowerShell `(` or `{` (`&{gc`, `if(1){gc`), no closing `)` / `}`.
- */
-function program(word: string): string {
-  const open = Math.max(word.lastIndexOf("("), word.lastIndexOf("{"));
-  const base = word.slice(open + 1).replace(/^&+/, "").replace(/[)}]+$/, "");
-  const name = base.slice(Math.max(base.lastIndexOf("/"), base.lastIndexOf("\\")) + 1);
-  return name.replace(/\.exe$/, "");
 }
 
 interface SecretHit {
@@ -168,6 +150,7 @@ function secretHits(command: string, words: readonly string[], inHome: boolean):
   return [
     ...hitsOf(command, SECRET_PATH),
     ...hitsOf(command, UNRESOLVED_SECRET_PATH),
+    ...hitsOf(command, USERS_SECRET_PATH),
     ...hitsOf(command, SHORT_NAME_PATH),
     ...(inHome ? hitsOf(command, RELATIVE_SECRET_PATH) : []),
     ...pieceHits(command, words),
@@ -211,6 +194,13 @@ function stronger(best: ArgScanFinding | null, hit: ArgScanFinding | null): ArgS
   return best === null || hit.confidence > best.confidence ? hit : best;
 }
 
+function lineReads(statements: readonly (readonly string[])[]): boolean {
+  return statements.flat().some((stage) => {
+    const words = wordsOf(stage);
+    return stageReads(stage, words, words.map(program));
+  });
+}
+
 function commandFinding(command: string, inHome: boolean): ArgScanFinding | null {
   for (const pattern of SAVED_CREDENTIALS) {
     if (pattern.test(command)) {
@@ -238,14 +228,7 @@ function commandFinding(command: string, inHome: boolean): ArgScanFinding | null
     for (const hit of hits) best = stronger(best, hitFinding(hit, "enters a credential folder"));
     if (best !== null) return { ...best, confidence: SECRET_CONFIDENCE };
   }
-  const codeRunner = programs.some(
-    (name, i) => CODE_RUNNER.test(name) && words.slice(i + 1).some((w) => CODE_FLAG.test(w)),
-  );
-  const reads =
-    codeRunner ||
-    DOTNET_READ.test(command) ||
-    PROVIDER_READ.test(command) ||
-    programs.some((name) => READERS.has(name));
+  const reads = stageReads(command, words, programs);
   // Without a reader only a `<` redirect of the path itself reads it.
   const read = reads ? (onlyDestination(words, hits) ? [] : hits) : hits.filter((hit) => hit.redirected);
   return anyHit(read, "reads a credential file");
@@ -274,13 +257,27 @@ function inHomeAfter(command: string, inHome: boolean): boolean {
 export function matchWindowsCredentialRead(input: NormalisedCommand, cwd = ""): ArgScanFinding | null {
   let inHome = HOME_ONLY.test(cwd.toLowerCase());
   let best: ArgScanFinding | null = null;
-  // cmd drops `^` before the program sees its arguments: `.s^sh` is `.ssh`.
-  const line = input.joinedLower.replace(/\^/g, "");
+  // cmd drops `^` and PowerShell drops a backtick before the program sees
+  // its arguments: `.s^sh` and `.s`sh` are `.ssh`. Quoted strings joined
+  // by `+` are one string: `'~/.s'+'sh/id_rsa'` is `'~/.ssh/id_rsa'`.
+  const line = input.joinedLower.replace(/[\^`]/g, "").replace(/['"]\s*\+\s*['"]/g, "");
   // A braced variable (`${HOME}`) is a path root, read by the patterns, not a block.
   const structured = STRUCTURE.test(line.replace(/\$\{[^{}\s]*\}/g, ""));
-  for (const stages of statementsOf(line)) {
+  const statements = statementsOf(line);
+  const reads = lineReads(statements);
+  for (const stages of statements) {
+    if (reads && STRING_BUILD.test(stages.join("|")) && HOME_MENTION.test(stages.join("|"))) {
+      best = stronger(best, {
+        id: "dangerous.read_credentials",
+        reason: "reads a path built from strings next to the home folder; it may be a credential file",
+        confidence: SECRET_CONFIDENCE,
+      });
+    }
     for (const [index, stage] of stages.entries()) {
       best = stronger(best, commandFinding(stage, inHome));
+      if (reads && ASSIGNMENT.test(stage)) {
+        best = stronger(best, failClosedFinding(stage, inHome, "reads a credential path stored in a variable"));
+      }
       if (structured) best = stronger(best, failClosedFinding(stage, inHome, "reads a credential file in a block"));
       if (stages.slice(index + 1).some(readsInput)) {
         best = stronger(best, failClosedFinding(stage, inHome, "pipes a credential path into a reader"));
