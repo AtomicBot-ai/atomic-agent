@@ -6620,7 +6620,7 @@ async function offlineModeAct(v) {
   if (res && res.ok) toast(res.enabled ? 'Offline mode on' : 'Offline mode off', res.enabled ? 'The agent blocks requests to other hosts' : 'The agent can reach the network again');
 }
 // ATO-1082: Settings › Privacy › Privacy Shield; the logic lives in renderer/privacy-shield.js.
-const SHIELD = createPrivacyShield({read: () => BR && BR.privacyShield ? BR.privacyShield() : {supported: false}, set: (on) => BR && BR.privacyShieldSet ? BR.privacyShieldSet(on) : {supported: false}}, {render: () => render(), toast: (t, d) => toast(t, d), shown: () => approvalRulesShown(), gen: () => AGENT_GEN});
+const SHIELD = createPrivacyShield({read: () => BR && BR.privacyShield ? BR.privacyShield() : {supported: false}, set: (on) => BR && BR.privacyShieldSet ? BR.privacyShieldSet(on) : {supported: false}, setNames: (on) => BR && BR.privacyShieldNamesSet ? BR.privacyShieldNamesSet(on) : {supported: false}}, {render: () => render(), toast: (t, d) => toast(t, d), shown: () => approvalRulesShown(), gen: () => AGENT_GEN});
 /* ATO-445: Settings › Tasks › Webhooks (renderer/webhooks.js). Read on
    every entry to the pane; an agent without /api/webhooks says to update it. */
 const WHK = createWebhooks({
@@ -7290,6 +7290,7 @@ function privacyPane() {
       // ATO-1087: offline mode, drawn only from what the agent reports (offline-mode.js).
       + offlineModeHTML(OFFM.state, {esc})
       + privacyShieldHTML(SHIELD.state, {esc}) // ATO-1082
+      + privacyNamesHTML(SHIELD.state, {esc}) // ATO-2527
       /* B3: `agent.readScope` (agent 0.6.3). The agent reads it through its
          config cache, which a CLI write does not reset in a running
          `atag serve` (checked live: a write with the chat open still asked),

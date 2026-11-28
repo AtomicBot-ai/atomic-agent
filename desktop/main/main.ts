@@ -1634,6 +1634,11 @@ function wireIpc(client: AgentClient): void {
     if (typeof enabled !== "boolean") return { supported: true, ok: false, error: "enabled must be true or false" };
     try { return await client.privacyShield(enabled); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
   });
+  // ATO-2527: the names row under Privacy Shield (renderer/privacy-names.js).
+  ipcMain.handle("agent:privacyShieldNamesSet", async (_event, enabled: unknown) => {
+    if (typeof enabled !== "boolean") return { supported: true, ok: false, error: "enabled must be true or false" };
+    try { return await client.privacyShield(undefined, enabled); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
   ipcMain.handle("agent:offlineModeSet", async (_event, enabled: unknown) => {
     if (typeof enabled !== "boolean") return { supported: true, ok: false, error: "enabled must be true or false" };
     try { return followAnswer(await client.offlineMode(enabled)); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
