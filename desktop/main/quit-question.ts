@@ -15,6 +15,10 @@
  * What is left of that count after this window's chats and the tasks is a
  * reply in a channel (or an API call). The question names each kind, as VS
  * Code's "a task is still running" quit prompt does.
+ *
+ * ATO-2749: a meeting being recorded is named too (as Zoom and QuickTime
+ * ask before quitting mid-recording). The quit stops it; what was recorded
+ * is kept on disk and offered again at the next start.
  */
 
 import { settleWithin } from "./quit-shutdown.js";
@@ -31,6 +35,8 @@ export interface QuitWork {
   background?: number;
   /** ATO-2519: the same work named by kind (an agent that lists busyTurnOrigins); used instead of `background`. */
   named?: NamedQuitWork[];
+  /** ATO-2749: a meeting is being recorded now (main's MeetingRecorder status). */
+  recording?: boolean;
 }
 
 export interface QuitQuestion {
@@ -38,13 +44,16 @@ export interface QuitQuestion {
   detail: string;
 }
 
-type Kind = "chats" | "tasks" | "background" | NamedQuitWork;
+type Kind = "chats" | "tasks" | "background" | "meeting" | NamedQuitWork;
+
+/** ATO-2749: what happens to a meeting being recorded when the app quits. */
+export const MEETING_KEPT = "What was recorded so far is kept, and you can make notes from it when you open the app again.";
 
 /** The dialog's text, or null when the quit should go without asking. */
 export function quitQuestion(work: QuitWork): QuitQuestion | null {
   const queued = count(work.queued);
   const background: Array<[Kind, number]> = work.named ? work.named.map((w): [Kind, number] => [w, count(w.n)]) : [["background", count(work.background ?? 0)]];
-  const kinds: Array<[Kind, number]> = [["chats", count(work.working)], ["tasks", count(work.tasks ?? 0)], ...background];
+  const kinds: Array<[Kind, number]> = [["chats", count(work.working)], ["tasks", count(work.tasks ?? 0)], ...background, ["meeting", work.recording ? 1 : 0]];
   const running = kinds.filter(([, n]) => n > 0);
   if (queued === 0 && running.length === 0) return null;
   if (running.length === 0) {
@@ -61,9 +70,10 @@ export function quitQuestion(work: QuitWork): QuitQuestion | null {
     return { message: one.message, detail: `${one.stops}${drops}` };
   }
   const list = running.map(([kind, n]) => named(kind, n));
+  const kept = work.recording ? ` ${MEETING_KEPT}` : "";
   return {
     message: "Atomic Agent is still working",
-    detail: `Still running: ${joinWords(list)}. Quitting now stops all of it before it is done.${drops}`,
+    detail: `Still running: ${joinWords(list)}. Quitting now stops all of it before it is done.${kept}${drops}`,
   };
 }
 
@@ -75,6 +85,9 @@ function single(kind: Kind, n: number): { message: string; stops: string } {
       message: n === 1 ? "A chat is still working" : `${n} chats are still working`,
       stops: n === 1 ? "Quitting now stops its reply before it is done." : "Quitting now stops their replies before they are done.",
     };
+  }
+  if (kind === "meeting") {
+    return { message: "A meeting is still being recorded", stops: `Quitting now stops the recording. ${MEETING_KEPT}` };
   }
   if (kind === "tasks") {
     return {
@@ -93,6 +106,7 @@ function named(kind: Kind, n: number): string {
   if (typeof kind === "object") return kind.item;
   if (kind === "chats") return n === 1 ? "a chat" : `${n} chats`;
   if (kind === "tasks") return n === 1 ? "a scheduled task" : `${n} scheduled tasks`;
+  if (kind === "meeting") return "a meeting recording";
   return n === 1 ? "a reply in Telegram or another channel" : `${n} replies in Telegram or other channels`;
 }
 

@@ -51,3 +51,17 @@ test("turns are counted by chat; a new chat's first turn (no id yet) counts on i
     { turnId: "e", sessionId: "s2" },
   ]), 4);
 });
+
+// ATO-2749: a meeting being recorded is named in the quit question.
+test("a meeting being recorded asks, and says what is kept", () => {
+  assert.equal(quitQuestion({ queued: 0, working: 0, recording: false }), null);
+  const q = quitQuestion({ queued: 0, working: 0, recording: true });
+  assert.equal(q.message, "A meeting is still being recorded");
+  assert.match(q.detail, /^Quitting now stops the recording\. What was recorded so far is kept/);
+  const both = quitQuestion({ queued: 1, working: 1, recording: true });
+  assert.equal(both.message, "Atomic Agent is still working");
+  assert.match(both.detail, /Still running: a chat and a meeting recording\./);
+  assert.match(both.detail, /recorded so far is kept/);
+  assert.match(both.detail, /A queued message is dropped too\.$/);
+  for (const s of [q.message, q.detail, both.detail]) assert.ok(!s.includes("—"), s);
+});

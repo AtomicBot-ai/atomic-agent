@@ -310,6 +310,7 @@ import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 import { FileTranscriber, appleSpeechEngine, findOnPath, whisperFileEngine } from "./transcribe-file.js";
 // ATO-2333: Record a meeting, transcribed live in chunks on this machine.
 import { meetingRecorderFor, wireMeetingIpc } from "./meeting-ipc.js";
+import { micSettingsUrl } from "./mic-settings.js";   // ATO-2749
 // Item 7 part B (Skills / Memory / MCP tabs)
 import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
@@ -3310,8 +3311,9 @@ function wireIpc(client: AgentClient): void {
     }
   });
   ipcMain.handle("app:openMicSettings", () => {
-    if (process.platform !== "darwin") return { ok: false, error: "macOS only" };
-    void shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
+    const url = micSettingsUrl(process.platform);   // ATO-2749: Windows has its own pane too (mic-settings.ts)
+    if (!url) return { ok: false, error: "no settings pane on this platform" };
+    void shell.openExternal(url);
     return { ok: true };
   });
   ipcMain.handle("app:openExternal", (_event, url: unknown) => {
@@ -11799,7 +11801,7 @@ app.on("before-quit", (event) => {
       quitAgentProbe = probe.then((sample) => { quitAgentWork = backgroundQuitWork(workingChatCount(liveTurnRecords()), sample); app.quit(); });
       return;
     }
-    const ask = quitQuestion({ queued: queuedMessageCount(), working: workingChatCount(liveTurnRecords()), ...quitAgentWork });
+    const ask = quitQuestion({ queued: queuedMessageCount(), working: workingChatCount(liveTurnRecords()), ...quitAgentWork, recording: meeting.status().recording });   // ATO-2749: a meeting being recorded
     quitAgentWork = null;
     quitAgentProbe = null;
     if (ask) {
