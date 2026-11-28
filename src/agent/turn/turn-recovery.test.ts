@@ -220,7 +220,35 @@ describe("turn recovery decisions and shared state", () => {
     turn.truncationRetries = 6;
     const error = truncated();
     const result = recoverTurnStep(error, context({ modelMode: "cloud", stepIndex: 5 }), {}, turn);
-    expect(result).toEqual({ kind: "failure", cancelled: false, category: "model", runError: error, creditRefused: false });
+    expect(result).toMatchObject({ kind: "failure", cancelled: false, category: "model", creditRefused: false });
+    // ATO-1678: the turn says the model keeps running into the limit.
+    if (result.kind !== "failure") throw new Error("expected failure");
+    expect(result.runError).toBeInstanceOf(ModelError);
+    expect(result.runError).toMatchObject({ reason: "truncated", repeatedCut: "cut", cause: error });
+  });
+
+  it("a local step cut again after its retry fails as a repeated cut, and a twice-looped one as a loop (ATO-1678)", async () => {
+    const events: AgentLoopEvent[] = [];
+    const deps: TurnRecoveryDependencies = { onEvent: (event) => events.push(event) };
+    const turn = createTurnLoopState();
+    expect(recoverTurnStep(truncated(), context(), deps, turn)).toEqual({ kind: "retry_same" });
+    const again = truncated();
+    const failed = recoverTurnStep(again, context(), deps, turn);
+    if (failed.kind !== "failure") throw new Error("expected failure");
+    expect(failed.runError).toMatchObject({ reason: "truncated", repeatedCut: "cut", cause: again, transport: "native_tools", stage: "initial" });
+    expect(failed.runError.message).toContain("cut again after the agent asked for smaller pieces");
+    const loopFailed = events.find((event) => event.type === "loop_failed");
+    expect(loopFailed).toMatchObject({ failure: { cause: "reply_cut_off_repeated", action: "switch-model" } });
+
+    const looping = () => new ModelError("truncated", "model kept repeating", {
+      transport: "grammar", stage: "initial",
+      truncation: { cause: "reply_cap", completionTokens: 32_768, promptTokens: 9_000, requestedMaxTokens: 32_768, repetitive: true },
+    });
+    const loopTurn = createTurnLoopState();
+    expect(recoverTurnStep(looping(), context(), {}, loopTurn)).toEqual({ kind: "retry_same" });
+    const loopAgain = recoverTurnStep(looping(), context(), {}, loopTurn);
+    if (loopAgain.kind !== "failure") throw new Error("expected failure");
+    expect(loopAgain.runError).toMatchObject({ repeatedCut: "loop" });
   });
 
   it("a held-cap retry refused for the window repacks the prompt instead of blaming the cap", async () => {

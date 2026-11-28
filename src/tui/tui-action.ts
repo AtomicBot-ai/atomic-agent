@@ -31,6 +31,7 @@ import type { FallbackPanelAction } from "./llm-panel/fallback/fallback-panel-ac
 import type { WhileBusySubmitMode } from "../config/index.js";
 import type {
   ChatMessage,
+  RewindChoiceFacts,
   SessionPickerEntry,
   TuiTab,
   TuiUiMode,
@@ -38,6 +39,7 @@ import type {
 import type { ContextUsageState } from "../session/context-usage.js";
 import type { SessionUsageState } from "../session/usage-meter.js";
 import type { RewindPoint } from "../session/session-rewind.js";
+import type { ModelRingState } from "./model-ring/model-ring.js";
 
 /**
  * Every action the reducer knows how to fold into `TuiState`. All side
@@ -87,6 +89,11 @@ export type TuiAction =
    * next page of the full command, back to the excerpt after the last.
    */
   | { type: "approval_preview_paged" }
+  /**
+   * First press of the "allow always" chord: the button now asks for a
+   * second press before the rule is saved (ATO-2759).
+   */
+  | { type: "approval_always_armed"; approvalId: string }
   /** The composer gained or lost a text selection (drives Ctrl+C's meaning). */
   | { type: "composer_selection_changed"; hasSelection: boolean }
   /** Right-click on a text surface: open the cut/copy/paste menu there. */
@@ -176,12 +183,18 @@ export type TuiAction =
   | { type: "plan_handoff_dismissed" }
   /** `/think` (ATO-490): the reasoning level the next turns ask for. */
   | { type: "reasoning_level_set"; level: ReasoningLevel }
+  /** ATO-2500: the favorite models as last read (the file, or `--models` for the session). */
+  | { type: "model_ring_loaded"; ring: ModelRingState }
   /** `/rewind` (ATO-1057): show the chat's earlier questions, newest first. */
   | { type: "rewind_picker_opened"; points: readonly RewindPoint[] }
   | { type: "rewind_picker_closed" }
   | { type: "rewind_picker_cursor_moved"; delta: 1 | -1 }
   /** Put the rewind picker highlight on an absolute row (mouse click). */
   | { type: "rewind_picker_cursor_set"; row: number }
+  /** ATO-2467: a point was picked; ask what to take back while its files are checked. */
+  | { type: "rewind_choice_requested"; point: RewindPoint }
+  /** ATO-2467: what a rewind to `turnIndex` would touch; shows the choices. */
+  | { type: "rewind_choice_ready"; turnIndex: number; facts: RewindChoiceFacts }
   | { type: "coding_mode_menu_opened" }
   | { type: "coding_mode_menu_closed" }
   | { type: "coding_mode_menu_cursor_moved"; delta: number }
@@ -201,6 +214,8 @@ export type TuiAction =
    * agent events will ever arrive for a turn that never started.
    */
   | { type: "turn_gate_blocked"; text: string }
+  /** ATO-2441: a slash command's shell line was not allowed or failed, so its message was not sent. */
+  | { type: "command_not_sent"; text: string; resetRun: boolean }
   | { type: "quit_requested" }
   | {
       type: "loaded_skill";
@@ -241,6 +256,8 @@ export type TuiAction =
   | { type: "show_steps_set"; on: boolean }
   /** `/verbose on|off`: one plain note per finished step (ATO-34). */
   | { type: "verbose_steps_set"; on: boolean }
+  /** `/pet on|off`: the terminal pet in the top bar (ATO-2513). */
+  | { type: "pet_set"; on: boolean }
   /** `/vim on|off`: vim keys in the composer (`tui.vimMode`). */
   | { type: "vim_mode_set"; on: boolean }
   /** Open the slash palette with a leading-slash query. */
@@ -253,6 +270,10 @@ export type TuiAction =
   | { type: "menu_closed" }
   /** Flip the composer's context detail panel (chip click, `/context`). */
   | { type: "context_panel_toggled" }
+  /** `/context detail`: open the panel with each MCP server's tools listed (ATO-2453). */
+  | { type: "context_panel_detail_shown" }
+  /** `d` in the open panel: list or fold the per-tool rows (ATO-2453). */
+  | { type: "context_panel_detail_toggled" }
   /** `/usage`: print the session's spend and limits (ATO-569). `now` keeps the reducer pure. */
   | { type: "usage_report_requested"; now: number }
   | { type: "context_panel_closed" }

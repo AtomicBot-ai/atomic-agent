@@ -1,21 +1,11 @@
-import type { ApprovalGate } from "../../approval/approval-gate.js";
-import {
-  ApprovalDeniedError,
-  requireApproval,
-} from "../../approval/dangerous-tool.js";
-import { resolve as resolvePath } from "node:path";
-import { isInside } from "../../approval/fanout-scope.js";
-import {
-  isAutoApprovedAt,
-  type ApprovalCategory,
-  type ApprovalLevel,
-} from "../../approval/approval-level.js";
+import type { ApprovalCategory } from "../../approval/approval-level.js";
 import {
   FUSION_WORKER_APPROVAL_REFUSED,
   FUSION_WORKER_COMMAND_NOT_ASKED_REFUSED,
   workerRefusalFor,
 } from "./worker-tool-policy.js";
-import { resolveFanoutScope } from "./fanout-paths.js";
+import { askFanoutWrite } from "./fanout-approval.js";
+import { coreWorkerOptions, legWorkerWidth } from "./worker-leg-options.js";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
@@ -99,6 +89,7 @@ import {
 import type { DelegateTask } from "./delegate-args.js";
 import {
   allowedModels,
+  legKey,
   resolveTaskLegs,
   unknownModels,
   type TaskLeg,
@@ -236,53 +227,13 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
   readSessionMetadata?: (sessionId: string) => Record<string, unknown> | undefined;
 }
 
-/**
- * The scope directories that sit inside the agent's state directory,
- * or the state directory itself. A scope that merely contains it (the
- * home directory, say) is not refused here: the per-file trust-surface
- * guard already keeps config.json, .env, rules, hooks and plugins out
- * of any fan-out grant.
- */
-export function scopeInsideStateDir(
-  writeScope: readonly string[],
-  stateDir: string | undefined,
-): string[] {
-  if (stateDir === undefined || stateDir.length === 0) return [];
-  const root = resolvePath(stateDir);
-  return writeScope.filter((dir) => isInside(root, resolvePath(dir)));
-}
-
-/**
- * Whether the fan-out question is left to the standing level instead of
- * asked (ATO-1689). In auto mode (level 2, workspace writes stop asking)
- * a normal chat writes inside its folder unasked, and a fan-out whose
- * every directory sits inside that same folder hands its workers nothing
- * more than that, so asking about it is a prompt a normal chat would not
- * show.
- *
- * Only on the levels where workspace writes are silent but the fan-out
- * itself is not (2 and 3). From level 4 the ladder already silences the
- * fan-out with its full authority. A directory outside the folder is a
- * write a normal auto-mode chat would ask about, so the question stays.
- *
- * Returning true never widens what a worker may do: the caller then
- * hands the workers no fan-out scope (`scopeApproved: false`), so every
- * worker step goes to the gate under the standing level, like the
- * chat's own. Shell commands, which the fan-out's yes would cover, are
- * asked about at level 2, and a worker's refuse policy hands them back
- * to the orchestrator.
- */
-export function fanoutQuietUnderLevel(
-  level: ApprovalLevel,
-  writeScope: readonly string[],
-  workingDir: string,
-): boolean {
-  if (isAutoApprovedAt(level, "fusion_fanout")) return false;
-  if (!isAutoApprovedAt(level, "fs_write_workspace")) return false;
-  if (writeScope.length === 0) return false;
-  const root = resolvePath(workingDir);
-  return writeScope.every((dir) => isInside(root, resolvePath(dir)));
-}
+// Moved to `fanout-approval.ts` (ATO-2446), shared with `subagent.run`;
+// re-exported for the old imports.
+export {
+  describeFanoutPreview,
+  fanoutQuietUnderLevel,
+  scopeInsideStateDir,
+} from "./fanout-approval.js";
 
 function error(
   output: string,
@@ -339,32 +290,6 @@ function error(
  * the wrong place to decide. The bounds that remain are physical: the
  * task count, and the server's request slots on a slot-affine leg.
  */
-/**
- * What the operator reads before authorising a fan-out.
- *
- * The task titles, not a count: one prompt stands in for every write
- * these workers make, so the thing being approved has to be legible as
- * work, not as a number. The scope is stated last because it is the part
- * the answer actually grants.
- */
-export function describeFanoutPreview(
-  tasks: readonly { title: string }[],
-  writeScope: readonly string[],
-): string {
-  const lines = tasks.map((task) => `  • ${task.title}`);
-  const scope =
-    writeScope.length > 0
-      ? [
-          `may write files and run commands in:`,
-          ...writeScope.map((dir) => `  ${dir}`),
-        ]
-      : [
-          `no writable directory could be derived from the briefs, so the`,
-          `workers will still have to hand every write back up.`,
-        ];
-  return [...lines, "", ...scope].join("\n");
-}
-
 export function buildFusionDelegateTool(
   input: FusionDelegateDeps,
 ): ToolDefinition {
@@ -488,13 +413,18 @@ export function buildFusionDelegateTool(
         return error(modelProblem, { field: "tasks", reason: "unknown-model" });
       }
       const taskLegs = resolveTaskLegs(parsed.tasks, workerLegRef, mode.roles);
-      // The legs other than the worker leg, one per provider.
+      // The legs other than the worker leg, one per provider and model
+      // (one entry can serve two roles with a model each, roleModels).
       const roleLegs = new Map<string, TaskLeg>();
       for (const leg of taskLegs.values()) {
-        if (!leg.isWorkerLeg && !roleLegs.has(leg.providerId)) {
-          roleLegs.set(leg.providerId, leg);
+        if (!leg.isWorkerLeg && !roleLegs.has(legKey(leg))) {
+          roleLegs.set(legKey(leg), leg);
         }
       }
+      // Their providers, each once: two models on one entry share it.
+      const roleProviderIds = [
+        ...new Set([...roleLegs.values()].map((leg) => leg.providerId)),
+      ];
 
       // The turn's caps (ATO-947). Unset — the default — and nothing
       // below changes: no check, no extra signal, no timer.
@@ -534,7 +464,7 @@ export function buildFusionDelegateTool(
         const priorTrip = refusalFromTrips(
           turnBudget.trips(ctx.sessionId),
           workerProviderId,
-          [...roleLegs.keys()],
+          roleProviderIds,
         );
         if (priorTrip !== undefined) {
           return error(
@@ -584,7 +514,7 @@ export function buildFusionDelegateTool(
         });
       }
 
-      for (const providerId of roleLegs.keys()) {
+      for (const providerId of roleProviderIds) {
         try {
           await deps.warmWorkerBackend(providerId);
         } catch (err) {
@@ -663,23 +593,6 @@ export function buildFusionDelegateTool(
         tool: FUSION_DELEGATE_TOOL,
       });
 
-      // One question for the whole fan-out, asked before a single worker
-      // starts. A worker has no operator to ask — that is what made the
-      // mode unusable below full trust, with every write refused and the
-      // orchestrator left as the only party able to act — so the
-      // operator is asked here instead, once, with the task list and the
-      // directory in front of them.
-      const writeScope = resolveFanoutScope(parsed.tasks, ctx.workingDir);
-      // Never into the agent's own state directory (ATO-1267).
-      const intoState = scopeInsideStateDir(writeScope, deps.agentStateDir);
-      if (intoState.length > 0) {
-        return error(
-          `fusion.delegate did not run: the tasks would write in the agent's own state directory (${intoState.join(", ")}). ` +
-            "Workers cannot write there. Name a project directory for the work instead; " +
-            "if the user really wants a change to the agent's own files, tell them, since only they can make it.",
-          { reason: "agent-state-dir", scope: intoState },
-        );
-      }
       // A local worker's time limit is sized from the machine's measured
       // speed (F19); a cloud leg has no such measurement and keeps the
       // configured ceiling.
@@ -704,57 +617,64 @@ export function buildFusionDelegateTool(
           ),
         maxBudgetMs: mode.workerTimeoutMs * WORKER_BUDGET_CEILING_FACTOR,
       });
-      // A turn is one job. An orchestrator that reviews and re-delegates
-      // runs five fan-outs to build one library, and asking the same
-      // question five times is attrition, not consent. The operator's
-      // answer stands for the rest of the turn as long as later fan-outs
-      // stay inside the directories it named; one reaching somewhere new
-      // asks again.
+      // One question for the whole fan-out, asked before a single worker
+      // starts (`askFanoutWrite`, shared with `subagent.run`, ATO-2446). A
+      // worker has no operator to ask: that is what made the mode unusable
+      // below full trust, with every write refused and the orchestrator
+      // left as the only party able to act. So the operator is asked here,
+      // once, with the task list and the directories in front of them; the
+      // answer stands for the turn while later fan-outs stay inside them.
+      // Never into the agent's own state directory (ATO-1267).
       //
-      // Except after the user declined a file in those directories this
-      // turn: the workers would write it unasked under the standing yes,
-      // so re-delegating a declined write is asked about again.
-      //
-      // The turn state is tied to this turn (ATO-1759), so a
-      // `subagent.run` later in it reads this fan-out's answer and its
-      // refused command note instead of dropping them, and state another
-      // turn left is not read here.
-      if (ctx.turnId !== undefined) {
-        deps.approvals.fanoutScopes?.enterTurn(ctx.sessionId, ctx.turnId);
+      // The quiet branch (ATO-1689) is not taken when the question covers
+      // more than writes: a contract's checks and provide examples run
+      // commands with no gate of their own.
+      const asked = await askFanoutWrite({
+        tool: FUSION_DELEGATE_TOOL,
+        sessionId: ctx.sessionId,
+        turnId: ctx.turnId,
+        tasks: parsed.tasks,
+        workingDir: ctx.workingDir,
+        agentStateDir: deps.agentStateDir,
+        approvals: deps.approvals,
+        approvalRequired: deps.approvalRequired,
+        signal: ctx.signal,
+        renewDeclinedOnYes: true,
+        allowQuiet:
+          parsed.contract === undefined ||
+          checksWithExamples(parsed.contract).length === 0,
+        reason: (scope, quiet) =>
+          quiet
+            ? `${parsed.tasks.length} task${parsed.tasks.length === 1 ? "" : "s"} to ${maxWorkers} worker${maxWorkers === 1 ? "" : "s"} writing in ${scope.join(", ")}`
+            : `${parsed.tasks.length} task${parsed.tasks.length === 1 ? "" : "s"} to ${maxWorkers} worker${maxWorkers === 1 ? "" : "s"} on ${workerModel}${
+                roleLegs.size === 0
+                  ? ""
+                  : ` and ${[...roleLegs.values()].map((l) => l.model).join(", ")}`
+              }${tracksTurn ? describeTurnCounts(turnBudget.counts(ctx.sessionId), parsed.tasks.length, mode) : ""}`,
+      });
+      if (!asked.ok) {
+        if (asked.kind === "agent-state-dir") {
+          return error(
+            `fusion.delegate did not run: the tasks would write in the agent's own state directory (${asked.intoState.join(", ")}). ` +
+              "Workers cannot write there. Name a project directory for the work instead; " +
+              "if the user really wants a change to the agent's own files, tell them, since only they can make it.",
+            { reason: "agent-state-dir", scope: asked.intoState },
+          );
+        }
+        // The user's own no already says what happened and what to do,
+        // and so does a repeat of one they declined earlier in the turn.
+        if (asked.byUser) {
+          return error(asked.message, {
+            reason: "fan-out-denied",
+            deniedByUser: true,
+          });
+        }
+        return error(`the fan-out was not approved: ${asked.message}`, {
+          reason: "fan-out-denied",
+        });
       }
-      const declinedInScope =
-        deps.approvals.hasDeclinedUnder?.(ctx.sessionId, writeScope) ?? false;
-      const alreadyApproved =
-        !declinedInScope &&
-        (deps.approvals.fanoutScopes?.turnGrantCovers(
-          ctx.sessionId,
-          writeScope,
-        ) ??
-          false);
-      // Auto mode (ATO-1689): a fan-out that stays inside the chat's
-      // folder is no question at a level where writes there are silent.
-      // It still goes through the gate as the workspace write it is, so a
-      // saved deny or ask rule on `fusion.delegate` keeps its say, and the
-      // workers get no fan-out scope: they run under the standing level.
-      //
-      // Not when the question covers more than writes: a contract's
-      // checks and provide examples run commands with no gate of their
-      // own, a worker was refused a command under an earlier quiet
-      // fan-out this turn (the user's yes is what lets the next one run
-      // it), or the chat read outside content, which a chat at this level
-      // would be held for and its fresh worker sessions would not.
-      const approvalLevel = deps.approvals.getLevel?.();
-      const quietUnderLevel =
-        deps.approvalRequired &&
-        !alreadyApproved &&
-        !declinedInScope &&
-        approvalLevel !== undefined &&
-        fanoutQuietUnderLevel(approvalLevel, writeScope, ctx.workingDir) &&
-        (parsed.contract === undefined ||
-          checksWithExamples(parsed.contract).length === 0) &&
-        !(deps.approvals.fanoutScopes?.commandRefusedThisTurn(ctx.sessionId) ?? false) &&
-        !(deps.approvals.holdsForOutsideContent?.(ctx.sessionId, "http") ?? false);
-      const workersHoldScope = !quietUnderLevel;
+      const writeScope = asked.writeScope;
+      const workersHoldScope = asked.workersHoldScope;
       // A quiet fan-out's workers hold no scope; a command they are
       // refused is noted, so the next fan-out of the turn asks.
       const quietWorkerOptions = workersHoldScope
@@ -781,80 +701,6 @@ export function buildFusionDelegateTool(
               },
             },
           };
-      try {
-        if (quietUnderLevel) {
-          await requireApproval(
-            {
-              approvals: deps.approvals as ApprovalGate,
-              approvalRequired: deps.approvalRequired,
-            },
-            {
-              sessionId: ctx.sessionId,
-              tool: FUSION_DELEGATE_TOOL,
-              category: "fs_write_workspace",
-              reason: `${parsed.tasks.length} task${parsed.tasks.length === 1 ? "" : "s"} to ${maxWorkers} worker${maxWorkers === 1 ? "" : "s"} writing in ${writeScope.join(", ")}`,
-              preview: describeFanoutPreview(parsed.tasks, writeScope),
-              affectedResources: [...writeScope],
-            },
-            ctx.signal,
-          );
-        } else if (!alreadyApproved) {
-          // A yes from a person who was shown this fan-out is their newer
-          // answer for the files they declined in its directories; one
-          // the level gave is not, and those files stay declined.
-          const asksPerson =
-            declinedInScope &&
-            deps.approvalRequired &&
-            (deps.approvals.wouldPrompt?.(ctx.sessionId, "fusion_fanout", {
-              tool: FUSION_DELEGATE_TOOL,
-              affectedResources: [...writeScope],
-            }) ??
-              false);
-          await requireApproval(
-            {
-              approvals: deps.approvals as ApprovalGate,
-              approvalRequired: deps.approvalRequired,
-            },
-            {
-              sessionId: ctx.sessionId,
-              tool: FUSION_DELEGATE_TOOL,
-              category: "fusion_fanout",
-              reason: `${parsed.tasks.length} task${parsed.tasks.length === 1 ? "" : "s"} to ${maxWorkers} worker${maxWorkers === 1 ? "" : "s"} on ${workerModel}${
-                roleLegs.size === 0
-                  ? ""
-                  : ` and ${[...roleLegs.values()].map((l) => l.model).join(", ")}`
-              }${tracksTurn ? describeTurnCounts(turnBudget.counts(ctx.sessionId), parsed.tasks.length, mode) : ""}`,
-              preview: describeFanoutPreview(parsed.tasks, writeScope),
-              affectedResources: [...writeScope],
-            },
-            ctx.signal,
-          );
-          if (asksPerson) {
-            deps.approvals.forgetDeclinedUnder?.(ctx.sessionId, writeScope);
-          }
-        }
-        // The level's yes is not a person's: it is not remembered for the
-        // turn, so a later fan-out reaching outside the folder still asks.
-        if (workersHoldScope) {
-          deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
-        }
-      } catch (err) {
-        // The user's own no already says what happened and what to do,
-        // and so does a repeat of one they declined earlier in the turn.
-        if (
-          err instanceof ApprovalDeniedError &&
-          (err.byUser || err.declinedEarlier)
-        ) {
-          return error(err.message, {
-            reason: "fan-out-denied",
-            deniedByUser: true,
-          });
-        }
-        return error(
-          `the fan-out was not approved: ${err instanceof Error ? err.message : String(err)}`,
-          { reason: "fan-out-denied" },
-        );
-      }
 
       // The orchestrator's brief is a summary, and summaries were thin
       // enough that workers built the wrong thing or scavenged the disk
@@ -1052,18 +898,29 @@ export function buildFusionDelegateTool(
       // One failure breaker per leg (ATO-1406): a run of identical
       // failures, or one blocker, stops new starts on that leg; workers
       // already running finish. Fed by every finished row, consulted
-      // with the turn's caps before each task starts.
+      // with the turn's caps before each task starts. A leg is the
+      // provider entry AND the model it runs (legKey): two roles on one
+      // shared entry with a model each are two legs, so one role's
+      // broken model does not stop the other role's tasks.
       const breakers = new Map<string, FanoutFailureBreaker>();
-      const breakerFor = (providerId: string): FanoutFailureBreaker => {
-        let breaker = breakers.get(providerId);
+      const breakerFor = (
+        providerId: string,
+        turnModel: string | undefined,
+      ): FanoutFailureBreaker => {
+        const key = legKey({
+          providerId,
+          ...(turnModel === undefined ? {} : { turnModel }),
+        });
+        let breaker = breakers.get(key);
         if (breaker === undefined) {
           breaker = new FanoutFailureBreaker(providerId);
-          breakers.set(providerId, breaker);
+          breakers.set(key, breaker);
         }
         return breaker;
       };
       const guardOptionsFor = (
         providerId: string,
+        turnModel: string | undefined,
         pricing: WorkerPricing | undefined,
         model: string,
         tasks: readonly DelegateTask[],
@@ -1080,7 +937,7 @@ export function buildFusionDelegateTool(
           "shouldStart" | "onWorkerUsage"
         > = budgetOptionsFor(pricing);
         const checkpoint = checkpointOptionsFor(pricing);
-        const breaker = breakerFor(providerId);
+        const breaker = breakerFor(providerId, turnModel);
         // The outcome log (ATO-949): one row per finished task, counts
         // and labels only. A split's proposal is not an outcome.
         const briefs = new Map(tasks.map((t) => [t.id, t]));
@@ -1217,32 +1074,39 @@ export function buildFusionDelegateTool(
               : {}),
           },
           {
-            ...(originalRequest === undefined ? {} : { originalRequest }),
+            // The options every leg gets (ATO-2446, `worker-leg-options.ts`).
+            ...coreWorkerOptions({
+              parentSessionId: ctx.sessionId,
+              tasks,
+              maxWorkers,
+              // ATO-1560: the workers run on the model they are shown with.
+              leg: {
+                providerId: workerProviderId,
+                workerModel,
+                turnModel: mode.workerTurnModel,
+              },
+              localLeg: Number.isFinite(poolSize),
+              mode,
+              workerMaxOutputTokens,
+              originalRequest,
+              writeScope,
+              signal: runSignal,
+            }),
             ...(contract === undefined ? {} : { contract }),
-            parentSessionId: ctx.sessionId,
-            tasks,
-            maxWorkers,
-            providerId: workerProviderId,
-            workerModel,
+            // ATO-2440: the run's tool filter reaches every worker.
+            ...(ctx.toolFilter === undefined ? {} : { parentToolFilter: ctx.toolFilter }),
             // ATO-1754: a task that asked for a role or model and landed
             // here says why on its `started` line.
             taskModelNote: (id) => taskLegs.get(id)?.note,
-            // ATO-1560: the workers run on the model they are shown with.
-            ...(mode.workerTurnModel === undefined ? {} : { turnModel: mode.workerTurnModel }),
-            workerMaxSteps: mode.workerMaxSteps,
-            workerTimeoutMs: mode.workerTimeoutMs,
             localTokensPerSecond,
-            localLeg: Number.isFinite(poolSize),
-            ...(mode.workerReasoning === undefined
-              ? {}
-              : { workerReasoning: mode.workerReasoning }),
-            ...(workerMaxOutputTokens === undefined
-              ? {}
-              : { workerMaxOutputTokens }),
-            writeScope,
             ...quietWorkerOptions,
-            signal: runSignal,
-            ...guardOptionsFor(workerProviderId, workerPricing, workerModel, tasks),
+            ...guardOptionsFor(
+              workerProviderId,
+              mode.workerTurnModel,
+              workerPricing,
+              workerModel,
+              tasks,
+            ),
             ...escalationOptions,
             ...(briefSuffix === undefined ? {} : { briefSuffix }),
             ...(workerPricing === undefined ? {} : { workerPricing }),
@@ -1258,7 +1122,7 @@ export function buildFusionDelegateTool(
       // escalation target is dropped where it is this very model.
       const rolePricing = new Map(
         [...roleLegs.values()].map((leg) => [
-          leg.providerId,
+          legKey(leg),
           deps.resolveWorkerPricing?.(leg.providerId, leg.model),
         ]),
       );
@@ -1275,7 +1139,7 @@ export function buildFusionDelegateTool(
         allowSplit: boolean,
       ): Promise<WorkerTaskResult[]> => {
         const local = deps.workerSupportsSlotAffinity(leg.providerId);
-        const pricing = rolePricing.get(leg.providerId);
+        const pricing = rolePricing.get(legKey(leg));
         const roles = new Set(
           tasks.map((t) => taskLegs.get(t.id)?.role ?? "-"),
         );
@@ -1296,38 +1160,36 @@ export function buildFusionDelegateTool(
               : {}),
           },
           {
-            ...(originalRequest === undefined ? {} : { originalRequest }),
+            ...coreWorkerOptions({
+              parentSessionId: ctx.sessionId,
+              tasks,
+              maxWorkers: legWorkerWidth(local, tasks.length, mode.cloudWorkers),
+              leg: {
+                providerId: leg.providerId,
+                workerModel:
+                  onlyRole === "-" ? leg.model : `${leg.model} (${onlyRole})`,
+                turnModel: leg.turnModel,
+              },
+              localLeg: local,
+              mode,
+              workerMaxOutputTokens: mode.workerMaxOutputTokens,
+              originalRequest,
+              writeScope,
+              signal: runSignal,
+            }),
             ...(contract === undefined ? {} : { contract }),
-            parentSessionId: ctx.sessionId,
-            tasks,
-            maxWorkers: local
-              ? 1
-              : Math.max(
-                  1,
-                  Math.min(
-                    tasks.length,
-                    mode.cloudWorkers ?? DEFAULT_FUSION_CLOUD_WORKERS,
-                  ),
-                ),
-            providerId: leg.providerId,
-            workerModel:
-              onlyRole === "-" ? leg.model : `${leg.model} (${onlyRole})`,
+            // ATO-2440: the run's tool filter reaches every worker.
+            ...(ctx.toolFilter === undefined ? {} : { parentToolFilter: ctx.toolFilter }),
             taskModelNote: (id) => taskLegs.get(id)?.note,
-            ...(leg.turnModel === undefined ? {} : { turnModel: leg.turnModel }),
-            workerMaxSteps: mode.workerMaxSteps,
-            workerTimeoutMs: mode.workerTimeoutMs,
             localTokensPerSecond: null,
-            localLeg: local,
-            ...(mode.workerReasoning === undefined
-              ? {}
-              : { workerReasoning: mode.workerReasoning }),
-            ...(mode.workerMaxOutputTokens === undefined
-              ? {}
-              : { workerMaxOutputTokens: mode.workerMaxOutputTokens }),
-            writeScope,
             ...quietWorkerOptions,
-            signal: runSignal,
-            ...guardOptionsFor(leg.providerId, pricing, leg.model, tasks),
+            ...guardOptionsFor(
+              leg.providerId,
+              leg.turnModel,
+              pricing,
+              leg.model,
+              tasks,
+            ),
             // Dropped only where the target is this leg's own model: a
             // second model on the same provider still escalates (ATO-1561).
             ...(escalationTarget?.providerId === leg.providerId &&
@@ -1369,7 +1231,7 @@ export function buildFusionDelegateTool(
           ...[...roleLegs.values()].map((leg) => {
             const mine = tasks.filter((t) => {
               const own = taskLegs.get(t.id);
-              return own?.isWorkerLeg === false && own.providerId === leg.providerId;
+              return own?.isWorkerLeg === false && legKey(own) === legKey(leg);
             });
             return mine.length === 0
               ? Promise.resolve<WorkerTaskResult[]>([])
@@ -1746,6 +1608,11 @@ export function buildFusionDelegateTool(
             const diffstats = sumDiffStats([r, again]);
             return diffstats.length === 0 ? again : { ...again, diffstats };
           });
+          // The checkpoint keeps the same list (ATO-2488), or a resume
+          // would report the retry's files alone.
+          for (const r of merged) {
+            if (retryIds.has(r.id)) run?.recordFiles(r.id, r.diffstats ?? []);
+          }
           const evaluated = await evaluateContract(
             merged.filter((r) => retryIds.has(r.id)),
             merged,
@@ -1830,7 +1697,7 @@ export function buildFusionDelegateTool(
       const pricingFor = (taskId: string): WorkerPricing | undefined => {
         const leg = taskLegs.get(taskId);
         if (leg === undefined || leg.isWorkerLeg) return workerPricing;
-        return rolePricing.get(leg.providerId);
+        return rolePricing.get(legKey(leg));
       };
       const costEstimates: {
         id: string;
@@ -1908,16 +1775,16 @@ export function buildFusionDelegateTool(
         });
       }
       let roleSpendUsd = 0;
-      for (const [providerId, pricing] of rolePricing) {
+      for (const [key, leg] of roleLegs) {
+        const pricing = rolePricing.get(key);
         if (pricing === undefined) continue;
         roleSpendUsd += fanoutSpend(
-          results.filter(
-            (r) =>
-              taskLegs.get(r.id)?.providerId === providerId &&
-              taskLegs.get(r.id)?.isWorkerLeg === false,
-          ),
+          results.filter((r) => {
+            const own = taskLegs.get(r.id);
+            return own !== undefined && own.isWorkerLeg === false && legKey(own) === key;
+          }),
           pricing,
-          providerId,
+          leg.providerId,
         ).usd;
       }
 

@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
 import { LocalModelsHuggingFaceBranch } from "./local-models-hf-branch.js";
+import { ModelsDirScreen } from "./models-dir-screen.js";
 import { handleLocalModelsTabKey } from "./local-models-key-bindings.js";
 import { theme } from "../theme/theme.js";
 import { computeRowWindow } from "../row-window.js";
@@ -22,6 +23,8 @@ import { NotifyPromptBox } from "./notify-prompt-box.js";
 import { CORE_FAILURE_NOTICE_ROWS, CoreFailureNotice } from "./core-failure-notice.js";
 import type { LocalModelDef } from "../../local-llm/index.js";
 import { renderProgressBar } from "../components/render-progress-bar.js";
+import { getConfig } from "../../config/index.js";
+import { modelSamplingLine } from "./model-sampling-line.js";
 
 /**
  * Render the per-row availability badge that combines GGUF + mmproj
@@ -336,6 +339,9 @@ export function LocalModelDetail({
           GPU ~{panel.gpuBudgetGb.toFixed(1)} GB — may fail to load / crash
         </Text>
       ) : null}
+      <Text color={theme.colors.muted}>
+        {modelSamplingLine(m, getConfig().localModels)}
+      </Text>
       <Text color={theme.colors.muted}>{enterHint} · Esc back</Text>
     </Box>
   );
@@ -355,6 +361,7 @@ export function LocalModelsPanel({
   if (panel.mode === "hfRef" || panel.mode === "hfPick") {
     return <LocalModelsHuggingFaceBranch panel={panel} />;
   }
+  if (panel.mode === "modelsDir") return <ModelsDirScreen state={panel.modelsDir} />; // ATO-2504
   if (panel.mode === "detail") {
     const ref = resolveRowAt(panel);
     // Detail view is chat-only — embedding rows are intentionally
@@ -498,7 +505,7 @@ export function LocalModelsPanel({
           ) : null}
           <Text color={theme.colors.muted}>
             j/k move · Enter pull/activate (embedding: *row + Enter starts
-            server) · a add from hugging face · g gguf · p pause / x cancel download · i
+            server) · a add from hugging face · F models folder · g gguf · p pause / x cancel download · i
             info · d remove · s chat+embedding · E embeddings on/off · G gpu · U
             auto-update · B · r · L
           </Text>

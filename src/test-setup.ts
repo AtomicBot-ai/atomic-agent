@@ -26,6 +26,14 @@ if (!process.env.ATOMIC_AGENT_SHARED_SKILLS_DIR) {
 }
 
 /**
+ * Keep slash commands away from the real `~/.claude/commands` (ATO-2441):
+ * an empty value means the folder is not read.
+ */
+if (process.env.ATOMIC_AGENT_CLAUDE_COMMANDS_DIR === undefined) {
+  process.env.ATOMIC_AGENT_CLAUDE_COMMANDS_DIR = "";
+}
+
+/**
  * Never fetch a developer's real organization policy (ATO-587) from a
  * test: the loader tests pass their own env.
  */

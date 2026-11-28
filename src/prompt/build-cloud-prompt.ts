@@ -58,6 +58,9 @@ export function buildCloudPrompt(input: BuildPromptInput, stablePrefix: string):
       profile: sectionTokens("profile"), worldSnapshot: sectionTokens("world"),
       recalled: sectionTokens("recalled"), memoryIndex: sectionTokens("memory-index"),
       taskPolicy: sectionTokens("task-policy"), conversation: historyTokens, compaction: summaryTokens,
+      ...(sectionTokens("project") > 0 ? { project: sectionTokens("project") } : {}),
+      // ATO-2443: attached path rules, journal entries like the skills above.
+      ...(prefixTokens("project-rule:") > 0 ? { projectRules: prefixTokens("project-rule:") } : {}),
       ...(schemaTokens > 0 ? { toolSchema: schemaTokens } : {}), total },
     limits: defaultBudget(window ?? Number.MAX_SAFE_INTEGER, { conversation: cap, session: cap, worldSnapshot: cap }),
     truncated: false,
@@ -68,6 +71,7 @@ export function buildCloudPrompt(input: BuildPromptInput, stablePrefix: string):
     conversationPairsCap: Number.MAX_SAFE_INTEGER, conversationBoundBy: null, conversationPackStart: null,
     compactionBudget: { cap, activeTokens: historyTokens + summaryTokens, activePairs: costs.length }, pairCosts: costs,
     contextBudget: { window, replyReserve },
+    ...(schemaTokens > 0 && input.toolSchemaParts ? { toolSchemaParts: input.toolSchemaParts } : {}),
   };
 }
 

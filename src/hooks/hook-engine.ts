@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { ApprovalDecision, ApprovalRequest } from "../approval/approval-gate.js";
 import { ApprovalDeniedError } from "../approval/dangerous-tool.js";
 import { compressToolResult, type CompressedToolResult } from "../compressor/result-compressor.js";
@@ -136,6 +137,13 @@ export class ToolHookEngine {
   }
 }
 
+const toolCallScope = new AsyncLocalStorage<ToolHookCall>();
+
+/** The tool call running in this async context, if `runWithToolHooks` started it. */
+export function currentToolHookCall(): ToolHookCall | undefined {
+  return toolCallScope.getStore();
+}
+
 /**
  * Wrap one tool invocation with its hooks. `engine` absent means no hooks:
  * `invoke` runs exactly as before. Cancellation thrown by `invoke` passes
@@ -149,7 +157,9 @@ export async function runWithToolHooks(
   if (!engine) return invoke();
   const before = await engine.beforeTool(call);
   if (before.kind === "refuse") return before.result;
-  let result = await invoke();
+  // The call is in scope while the tool runs, so a PermissionRequest hook
+  // the tool's approval prompt fires reads its real input (ATO-2462).
+  let result = await toolCallScope.run(call, invoke);
   if (before.errors) result = withHookNotes(result, undefined, before.errors);
   if (call.signal.aborted) return result;
   return engine.afterTool(call, result);

@@ -40,6 +40,35 @@ describe("resolveRpcServerBinary", () => {
     expect(resolveRpcServerBinary({ ...base, exists: (p) => p === "/opt/bin/rpc-server" })).toBe("/opt/bin/rpc-server");
     expect(resolveRpcServerBinary({ ...base, exists: () => false })).toBeNull();
   });
+
+  // ATO-2454: Atomic Core is the default engine, so on most installs the
+  // only llama-server (and the rpc-server beside it) is Core's.
+  it("finds rpc-server next to the llama-server Atomic Core installed", () => {
+    const coreBackendDir = "/d/core/backends/b10298-2.2.0/macos-arm64/build/bin";
+    expect(
+      resolveRpcServerBinary({ ...base, coreBackendDir, exists: (p) => p === `${coreBackendDir}/rpc-server` }),
+    ).toBe(`${coreBackendDir}/rpc-server`);
+    // The agent's own engine folder still wins when both have one.
+    expect(resolveRpcServerBinary({ ...base, coreBackendDir, exists: () => true })).toBe("/d/backend/rpc-server");
+  });
+
+  it("looks for rpc-server.exe with Windows paths and a Path variable of any case", () => {
+    const win = {
+      env: { Path: "C:\\llama;D:\\tools" },
+      backendDir: "C:\\Users\\u\\.atomic-agent\\local-models\\backend",
+      coreBackendDir: "C:\\Users\\u\\.atomic-agent\\core\\backends\\x\\build\\bin",
+      platform: "win32" as const,
+    };
+    expect(resolveRpcServerBinary({ ...win, exists: (p) => p === `${win.backendDir}\\rpc-server.exe` })).toBe(
+      `${win.backendDir}\\rpc-server.exe`,
+    );
+    expect(resolveRpcServerBinary({ ...win, exists: (p) => p === `${win.coreBackendDir}\\rpc-server.exe` })).toBe(
+      `${win.coreBackendDir}\\rpc-server.exe`,
+    );
+    expect(resolveRpcServerBinary({ ...win, exists: (p) => p === "D:\\tools\\rpc-server.exe" })).toBe("D:\\tools\\rpc-server.exe");
+    // A POSIX name is never what Windows runs.
+    expect(resolveRpcServerBinary({ ...win, exists: (p) => p.endsWith("rpc-server") })).toBeNull();
+  });
 });
 
 describe("runModelsRpcWorker", () => {
@@ -51,7 +80,11 @@ describe("runModelsRpcWorker", () => {
       spawn: spawn as never, binary: "/b/rpc-server", stdout: (s) => out.push(s), stderr: (s) => err.push(s),
     });
     expect(code).toBe(0);
-    expect(spawn).toHaveBeenCalledWith("/b/rpc-server", ["--host", "127.0.0.1", "--port", "50052"], { stdio: "inherit" });
+    expect(spawn).toHaveBeenCalledWith(
+      "/b/rpc-server",
+      ["--host", "127.0.0.1", "--port", "50052"],
+      expect.objectContaining({ stdio: "inherit" }),
+    );
     expect(out.join("")).toContain(`rpcServers '["127.0.0.1:50052"]'`);
     expect(err.join("")).not.toContain(RPC_LAN_WARNING);
   });
@@ -66,6 +99,18 @@ describe("runModelsRpcWorker", () => {
     expect((spawn.mock.calls[0] as unknown[])[1]).toEqual(["--host", "0.0.0.0", "--port", "50052"]);
     expect(err.join("")).toContain(RPC_LAN_WARNING);
     expect(out.join("")).toContain(`rpcServers '["192.168.1.7:50052"]'`);
+  });
+
+  it("runs rpc-server with its own folder's environment, from that folder on Windows", async () => {
+    const spawn = fakeSpawn({ code: null, signal: "SIGINT" });
+    const launchEnv = vi.fn(() => ({ env: { PATH: "C:\\b;C:\\Windows" }, cwd: "C:\\b" }));
+    await runModelsRpcWorker([], {
+      spawn: spawn as never, binary: "C:\\b\\rpc-server.exe", launchEnv, stdout: () => {}, stderr: () => {},
+    });
+    expect(launchEnv).toHaveBeenCalledWith("C:\\b\\rpc-server.exe");
+    expect((spawn.mock.calls[0] as unknown[])[2]).toEqual({
+      stdio: "inherit", env: { PATH: "C:\\b;C:\\Windows" }, cwd: "C:\\b",
+    });
   });
 
   it("says where rpc-server comes from when it is missing", async () => {

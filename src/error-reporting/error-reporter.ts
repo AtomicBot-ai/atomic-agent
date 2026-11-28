@@ -1,8 +1,12 @@
 import { isBrokenPipeError } from "./broken-pipe.js";
 import { isFusionStopError } from "./fusion-stop.js";
+import { isPersonRefusal } from "./person-refusal.js";
 import { isLoopbackPeerGone, socketErrorTags } from "./socket-error.js";
+import { survivesLoopbackReset } from "./loopback-reset.js";
+import type { LoopbackResetPolicy } from "./loopback-reset.js";
 import { scrubError } from "./error-scrubber.js";
 import { isExpectedSubscriptionCliFailure } from "./subscription-cli-expected.js";
+import { isRepeatedEmptyAnswer } from "./repeated-empty-answer.js";
 import type { LlmFailureContext } from "./llm-failure-tags.js";
 import type { SentryClient } from "./sentry-client.js";
 
@@ -29,6 +33,8 @@ export type BrokenPipePolicy = "exit" | "mute";
 export interface GlobalErrorHandlerOptions {
   /** See {@link BrokenPipePolicy}. Default `exit`. */
   brokenPipe?: BrokenPipePolicy;
+  /** See {@link LoopbackResetPolicy}. Default `exit`; `serve` passes `survive`. */
+  loopbackReset?: LoopbackResetPolicy;
 }
 
 /**
@@ -53,8 +59,9 @@ export function captureError(
   // Same for a socket to this machine reset or closed under a request:
   // a local model server restarting (ATO-1735). Only an unhandled
   // rejection, which is non-fatal: an uncaught one ends the process,
-  // so it still reports. Only a proven loopback peer; a tool's own
-  // reset still reports.
+  // so it still reports (serve's `survive` policy skips the capture
+  // altogether, see loopback-reset.ts). Only a proven loopback peer; a
+  // tool's own reset still reports.
   if (opts.source === "unhandledRejection" && isLoopbackPeerGone(err)) return;
   // Atomic Chat not being open is not a defect: the operator was told in
   // plain words to open it (ATO-1278). Matched by name, so this module
@@ -67,6 +74,9 @@ export function captureError(
   // A signed-out Claude Code or Codex, a spent plan limit, or a plan
   // without the CLI: the account's state, told in chat (ATO-2417).
   if (isExpectedSubscriptionCliFailure(err)) return;
+  // The model answered nothing again after the agent's own re-ask: told
+  // in chat, and not a defect of ours (ATO-1676).
+  if (isRepeatedEmptyAnswer(err)) return;
   const error =
     err instanceof Error
       ? err
@@ -75,6 +85,9 @@ export function captureError(
         });
   const scrubbed = scrubError(error, opts);
   if (scrubbed.category === "cancelled") return;
+  // The person's own account or setup refused (a key, credit, a rate
+  // limit, a model id): told in chat, not a defect (ATO-1673).
+  if (isPersonRefusal(err, scrubbed)) return;
   if (isGlobalSource(opts.source)) {
     const socketTags = socketErrorTags(err);
     if (socketTags !== undefined) scrubbed.socketTags = socketTags;
@@ -82,8 +95,16 @@ export function captureError(
   client.capture(scrubbed);
 }
 
-/** Error names that mean "the operator has a step to take", not a bug. */
-const EXPECTED_USER_ACTION_ERRORS: ReadonlySet<string> = new Set(["AtomicChatNotRunningError"]);
+/**
+ * Error names that mean "the operator has a step to take", not a bug.
+ * `ContextWindowTooSmallError` (ATO-1678): the window cannot hold the
+ * instructions and tool schemas; a bigger context or fewer tools is
+ * the person's fix, and the chat already says so.
+ */
+const EXPECTED_USER_ACTION_ERRORS: ReadonlySet<string> = new Set([
+  "AtomicChatNotRunningError",
+  "ContextWindowTooSmallError",
+]);
 
 /** True when `err` or its `cause` chain (5 deep) is such an error. */
 function isExpectedUserActionFailure(err: unknown): boolean {
@@ -123,7 +144,40 @@ export function installGlobalErrorHandlers(
 
   installStdioErrorGuards(soleUncaughtHandler, brokenPipe);
 
-  process.on("uncaughtException", (err) => {
+  process.on(
+    "uncaughtException",
+    createUncaughtExceptionHandler(getClient, {
+      soleUncaughtHandler,
+      brokenPipe,
+      loopbackReset: options.loopbackReset ?? "exit",
+    }),
+  );
+
+  process.on("unhandledRejection", (reason) => {
+    captureError(getClient(), reason, { source: "unhandledRejection" });
+    // Deliberately non-fatal: an unhandled rejection should not tear down
+    // a long-lived agent. Capturing is enough for observability.
+  });
+}
+
+/**
+ * The `uncaughtException` listener `installGlobalErrorHandlers` adds;
+ * exported for its test. `soleUncaughtHandler` decides whether it ends
+ * the process (see there).
+ */
+export function createUncaughtExceptionHandler(
+  getClient: () => SentryClient | null,
+  policy: {
+    soleUncaughtHandler: boolean;
+    brokenPipe: BrokenPipePolicy;
+    loopbackReset: LoopbackResetPolicy;
+  },
+): (err: Error) => void {
+  const { soleUncaughtHandler, brokenPipe, loopbackReset } = policy;
+  return (err) => {
+    // Under `survive` (serve), a local model server's reset is not a
+    // crash: no report, no exit (see LoopbackResetPolicy for why).
+    if (survivesLoopbackReset(err, loopbackReset)) return;
     const client = getClient();
     captureError(client, err, { source: "uncaughtException" });
     // Belt-and-braces for the synchronous path the stream guards below
@@ -149,13 +203,7 @@ export function installGlobalErrorHandlers(
         process.exit(1);
       });
     }
-  });
-
-  process.on("unhandledRejection", (reason) => {
-    captureError(getClient(), reason, { source: "unhandledRejection" });
-    // Deliberately non-fatal: an unhandled rejection should not tear down
-    // a long-lived agent. Capturing is enough for observability.
-  });
+  };
 }
 
 /**

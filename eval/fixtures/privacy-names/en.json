@@ -1,0 +1,195 @@
+[
+  {
+    "id": "en-01",
+    "text": "Hi Daniel,\n\nThanks for the call yesterday. Could you send the signed lease for 42 Willow Crescent, Leeds LS6 2QT to my lawyer, Priya Raman, before Friday?\n\nBest,\nMegan Holloway",
+    "spans": [
+      { "text": "Daniel", "kind": "NAME" },
+      { "text": "42 Willow Crescent, Leeds LS6 2QT", "kind": "ADDRESS" },
+      { "text": "Priya Raman", "kind": "NAME" },
+      { "text": "Megan Holloway", "kind": "NAME" }
+    ]
+  },
+  {
+    "id": "en-02",
+    "text": "Dear Dr. Okafor,\n\nMy son Liam Brennan has an appointment at Riverside Pediatrics on Tuesday. He still has a fever, should we come in earlier?\n\nKind regards,\nSiobhan Brennan",
+    "spans": [
+      { "text": "Okafor", "kind": "NAME" },
+      { "text": "Liam Brennan", "kind": "NAME" },
+      { "text": "Riverside Pediatrics", "kind": "ORG" },
+      { "text": "Siobhan Brennan", "kind": "NAME" }
+    ]
+  },
+  {
+    "id": "en-03",
+    "text": "The build fails on main after the merge. Run npm ci, then check src/runtime/bootstrap.ts and the logger in StructuredLogger. Node 25 on macOS and Windows both show it.",
+    "spans": []
+  },
+  {
+    "id": "en-04",
+    "text": "Hey team, Marcus Feld from Brightwater Analytics wants a demo next week. He works out of their office at 1180 Harbor Blvd, Suite 300, Oakland. Can someone from support join?",
+    "spans": [
+      { "text": "Marcus Feld", "kind": "NAME" },
+      { "text": "Brightwater Analytics", "kind": "ORG" },
+      { "text": "1180 Harbor Blvd, Suite 300, Oakland", "kind": "ADDRESS" }
+    ]
+  },
+  {
+    "id": "en-05",
+    "text": "Reminder: parent evening at Hollins Park Primary on Thursday. Mrs. Abernathy will talk about Chloe's reading progress. Please bring her library card.",
+    "spans": [
+      { "text": "Hollins Park Primary", "kind": "ORG" },
+      { "text": "Abernathy", "kind": "NAME" },
+      { "text": "Chloe", "kind": "NAME" }
+    ]
+  },
+  {
+    "id": "en-06",
+    "text": "I bought a new Pixel phone and the Google Photos backup is stuck at 80%. I live in Berlin, does the region matter? Apple support said it is not their problem.",
+    "spans": []
+  },
+  {
+    "id": "en-07",
+    "text": "Hi Tomasz,\n\nThe invoice from Kowalczyk & Sons Plumbing was sent to the wrong address. Ours is 7 Rue des Lilas, 69003 Lyon, not the old flat.\n\nCheers,\nAnaïs",
+    "spans": [
+      { "text": "Tomasz", "kind": "NAME" },
+      { "text": "Kowalczyk & Sons Plumbing", "kind": "ORG" },
+      { "text": "7 Rue des Lilas, 69003 Lyon", "kind": "ADDRESS" },
+      { "text": "Anaïs", "kind": "NAME" }
+    ]
+  },
+  {
+    "id": "en-08",
+    "text": "Forwarding this from HR: Jennifer Liu starts on Monday as a data engineer. Her manager is Rob Castellano. Please order her a laptop.",
+    "spans": [
+      { "text": "Jennifer Liu", "kind": "NAME" },
+      { "text": "Rob Castellano", "kind": "NAME" }
+    ]
+  },
+  {
+    "id": "en-09",
+    "text": "Summarize this paper for me: it compares transformer variants on long context tasks and finds that sliding window attention loses recall after 32k tokens.",
+    "spans": []
+  },
+  {
+    "id": "en-10",
+    "text": "Can you draft a reply to Ahmed Al-Sayed? He asked whether Northgate Dental can move his cleaning to the 14th. Tell him yes, 3 pm works.",
+    "spans": [
+      { "text": "Ahmed Al-Sayed", "kind": "NAME" },
+      { "text": "Northgate Dental", "kind": "ORG" }
+    ]
+  },
+  {
+    "id": "en-11",
+    "text": "Delivery for Grace O'Connell, 15 Elm Street, Apt 4B, Brooklyn, NY 11201. Leave it with the concierge if nobody answers.",
+    "spans": [
+      { "text": "Grace O'Connell", "kind": "NAME" },
+      { "text": "15 Elm Street, Apt 4B, Brooklyn, NY 11201", "kind": "ADDRESS" }
+    ]
+  },
+  {
+    "id": "en-12",
+    "text": "My landlord, Mr. Pemberton, says the boiler repair is on us. The tenancy agreement with Castlegate Lettings says otherwise. What are my options?",
+    "spans": [
+      { "text": "Pemberton", "kind": "NAME" },
+      { "text": "Castlegate Lettings", "kind": "ORG" }
+    ]
+  },
+  {
+    "id": "en-13",
+    "text": "Write a short poem about autumn in Vermont, with maple trees, cold mornings and a quiet lake.",
+    "spans": []
+  },
+  {
+    "id": "en-14",
+    "text": "Notes from the 1:1 with Hannah Becker: she wants to move to the platform team, and mentioned that her sister Lena works at Fernwood Capital and might refer candidates.",
+    "spans": [
+      { "text": "Hannah Becker", "kind": "NAME" },
+      { "text": "Lena", "kind": "NAME" },
+      { "text": "Fernwood Capital", "kind": "ORG" }
+    ]
+  },
+  {
+    "id": "en-15",
+    "text": "Please cancel my membership at Peak Performance Gym. Name on the account: Oliver Nakamura. I moved to 220 Kingsway, Vancouver.",
+    "spans": [
+      { "text": "Peak Performance Gym", "kind": "ORG" },
+      { "text": "Oliver Nakamura", "kind": "NAME" },
+      { "text": "220 Kingsway, Vancouver", "kind": "ADDRESS" }
+    ]
+  },
+  {
+    "id": "en-16",
+    "text": "The function parseUserConfigFile throws when privacy.shield is null. Add a guard and a test next to it, then update the README.",
+    "spans": []
+  },
+  {
+    "id": "en-17",
+    "text": "Hi Sam, Grandma Rosa is staying with us at 9 Orchard Lane, Bath BA2 4QR until Sunday. Call before you come, the doorbell is broken. Love, Isabel",
+    "spans": [
+      { "text": "Sam", "kind": "NAME" },
+      { "text": "Rosa", "kind": "NAME" },
+      { "text": "9 Orchard Lane, Bath BA2 4QR", "kind": "ADDRESS" },
+      { "text": "Isabel", "kind": "NAME" }
+    ]
+  },
+  {
+    "id": "en-18",
+    "text": "Our accountant at Whitfield & Moore LLP, Deborah Kline, needs last year's receipts by the 30th.",
+    "spans": [
+      { "text": "Whitfield & Moore LLP", "kind": "ORG" },
+      { "text": "Deborah Kline", "kind": "NAME" }
+    ]
+  },
+  {
+    "id": "en-19",
+    "text": "Compare Python and Rust for a small CLI tool that reads CSV files. I care about startup time and binary size.",
+    "spans": []
+  },
+  {
+    "id": "en-20",
+    "text": "Patient: Victor Almeida. Referred by St. Brigid's Clinic for an MRI of the left knee. Contact his wife, Carla Almeida, for scheduling.",
+    "spans": [
+      { "text": "Victor Almeida", "kind": "NAME" },
+      { "text": "St. Brigid's Clinic", "kind": "ORG" },
+      { "text": "Carla Almeida", "kind": "NAME" }
+    ]
+  },
+  {
+    "id": "en-21",
+    "text": "Can you check my cover letter? I'm applying to Lumen Robotics. I mention my old boss, Kevin Doyle, as a reference.",
+    "spans": [
+      { "text": "Lumen Robotics", "kind": "ORG" },
+      { "text": "Kevin Doyle", "kind": "NAME" }
+    ]
+  },
+  {
+    "id": "en-22",
+    "text": "The wedding venue is Ashcombe Hall, Ashcombe Road, Dawlish EX7 0QP. Seating: Uncle Frank next to Aunt Beatrice, the Morrisons at table 4.",
+    "spans": [
+      { "text": "Ashcombe Hall", "kind": "ORG" },
+      { "text": "Ashcombe Road, Dawlish EX7 0QP", "kind": "ADDRESS" },
+      { "text": "Frank", "kind": "NAME" },
+      { "text": "Beatrice", "kind": "NAME" },
+      { "text": "Morrisons", "kind": "NAME" }
+    ]
+  },
+  {
+    "id": "en-23",
+    "text": "Translate to Spanish: the meeting moved to Wednesday, bring the slides and the budget numbers.",
+    "spans": []
+  },
+  {
+    "id": "en-24",
+    "text": "Hello, this is Nadine Sorensen from Clearview Insurance. Regarding claim 88213, an adjuster will visit 31 Birch Avenue, Duluth on Monday.",
+    "spans": [
+      { "text": "Nadine Sorensen", "kind": "NAME" },
+      { "text": "Clearview Insurance", "kind": "ORG" },
+      { "text": "31 Birch Avenue, Duluth", "kind": "ADDRESS" }
+    ]
+  },
+  {
+    "id": "en-25",
+    "text": "Ask the assistant to file the ticket with customer service and cc the team lead. No names in the title, please.",
+    "spans": []
+  }
+]

@@ -5,7 +5,7 @@ import type { CompletionResult } from "../../llm/llama-server-client.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
 import type { ModelProfile } from "../../llm/model-profile.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
-import { completionAssumesOpenReasoning, resolveReasoning, normalizeContent, getReasoningTagOptions, memoizeText } from "./step-reasoning.js";
+import { completionAssumesOpenReasoning, cutReadingFor, resolveReasoning, normalizeContent, getReasoningTagOptions, memoizeText } from "./step-reasoning.js";
 import { openAiToolCallAdapter } from "../../llm/provider/openai/openai-tool-call-adapter.js";
 import type { ToolCallAdapter } from "../../llm/provider/adapters/tool-call-adapter.js";
 import { parseToolCalls, extractReasoning } from "../../llm/grammar/tool-call-grammar.js";
@@ -700,6 +700,29 @@ export function prepareStepRepair(args: StepRepairArgs) {
           },
         }
       : {}),
+    // The template split must be repair-shaped too (ATO-1676). A grammar
+    // link on the model's own chat template (`useServerTemplate`, the
+    // default for every family without a hand-built profile) renders
+    // `head + chat.user + foot` and never reads `prompt`, so spreading
+    // `llmParams` alone re-sent the failed request byte for byte: the
+    // same prompt, the same empty answer, `ModelError(empty, repair)`.
+    // The template opens the assistant turn itself, so there is no
+    // prefill to strip, the same as the continuation request.
+    ...(llmParams.chat
+      ? {
+          chat: {
+            ...llmParams.chat,
+            user: buildToolCallRepairPrompt(
+              llmParams.chat.user,
+              repairError,
+              deps.profile,
+              "grammar",
+              false,
+              thinkingOff,
+            ),
+          },
+        }
+      : {}),
     // The grammar-link variant must be repair-shaped too — spreading
     // `llmParams` alone would hand a grammar fallback link the STALE
     // base prompt without the repair notice. It is repair-shaped for
@@ -796,6 +819,7 @@ export function finishStepRepair(
     defaultReplyCap: repairCapFor(args),
     stage: "repair",
     contextWindow: deps.contextWindow ?? null,
+    cutReading: cutReadingFor(deps.profile, assumesOpenReasoning(completion)),
   });
   const retryParseDeps = parseDepsFor(completion, deps);
   if (

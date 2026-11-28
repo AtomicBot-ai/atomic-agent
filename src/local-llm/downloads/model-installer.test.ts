@@ -25,6 +25,8 @@ import {
   isModelDownloaded,
   removeModel,
 } from "./model-installer.js";
+import { acquireModelsDirMoveLock } from "../models-dir-move-lock.js";
+import { setModelsDirOverride } from "../models-dir-override.js";
 
 describe("model-installer", () => {
   let dir: string;
@@ -57,6 +59,32 @@ describe("model-installer", () => {
     expect(isModelDownloaded(dir, model)).toBe(true);
   });
 
+  it("refuses a pull while the models folder is being moved (ATO-2503)", async () => {
+    const model = getLocalModelDef("qwen-3.5-4b");
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    const release = acquireModelsDirMoveLock(dir);
+    try {
+      await expect(downloadModel(dir, model)).rejects.toThrow(/being moved to another folder/);
+    } finally {
+      release();
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(existsSync(join(dir, "models", model.id))).toBe(false);
+  });
+
+  it("refuses a pull onto an unplugged models disk instead of creating its folder (ATO-2503)", async () => {
+    const model = getLocalModelDef("qwen-3.5-4b");
+    const gone = join(dir, "Volumes", "USB", "models");
+    setModelsDirOverride(gone);
+    try {
+      await expect(downloadModel(dir, model)).rejects.toThrow(/is its disk connected/);
+      expect(existsSync(gone)).toBe(false);
+    } finally {
+      setModelsDirOverride(null);
+    }
+  });
+
   it("skips download when file already exists", async () => {
     const model = getLocalModelDef("qwen-3.5-4b");
     const payload = Buffer.alloc(64, 1);
@@ -69,7 +97,12 @@ describe("model-installer", () => {
     globalThis.fetch = fn as unknown as typeof fetch;
     await downloadModel(dir, model);
     await downloadModel(dir, model);
-    expect(fn).toHaveBeenCalledTimes(1);
+    // Only the weights count: the first pull also asks Hugging Face for
+    // a generation_config.json (ATO-2482), the second asks nothing.
+    const weightCalls = fn.mock.calls.filter((call: unknown[]) =>
+      String(call[0]).endsWith(model.filename),
+    );
+    expect(weightCalls).toHaveLength(1);
   });
 
   it("downloads mmproj projector for vision-capable models", async () => {

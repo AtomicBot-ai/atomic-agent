@@ -2,6 +2,7 @@ import {
   capReadSummary,
   readStartLineOf,
 } from "../session/conversation-turn.js";
+import { clipAppListSummary } from "../tools/app/app-list-page-cut.js";
 
 /**
  * Smallest share any one result is cut to. A very wide batch would
@@ -42,6 +43,11 @@ export function capBatchSummaries(
         share,
         readStartLineOf(calls[i]?.args ?? {}),
       );
+    }
+    // app.list sized its page for a step of its own; its "current
+    // page:" line must not survive a clip (ATO-2459).
+    if (r.tool === "app.list") {
+      return clipAppListSummary(r.summary, share, capChars, (s, n) => clipToShare(s, n, capChars));
     }
     return clipToShare(r.summary, share, capChars);
   });

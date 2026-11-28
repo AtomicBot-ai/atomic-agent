@@ -24,6 +24,7 @@ import type { StepEvent } from "../step-events.js";
 import { capBatchSummaries } from "../batch-summary-cap.js";
 import { assistantToolCallTurn, toolResultTurn, assistantReplyTurn } from "../../session/conversation-turn.js";
 import { polishReply, replyChannelForAnswer, type PolishReplyOptions } from "../reply-polish.js";
+import { emitAttachedPathRules } from "./step-path-rules.js";
 export interface StepCommitArgs {
   ctx: StepContext;
   deps: StepDependencies;
@@ -209,6 +210,9 @@ export function commitStepBatch(args: StepCommitArgs): StepOutcome {
         }
       : {}),
   });
+
+  // ATO-2443: a rule this step's file tools attached is named once, under its call.
+  emitAttachedPathRules(ctx, nextSession.workingDir, ctx.session.turns, nextSession.turns, deps.onEvent);
 
   // The progress note lands after the step's tool pairs, as the reply it
   // was — flagged, so nothing reads it as the end of the macro-turn —

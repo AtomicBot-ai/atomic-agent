@@ -89,7 +89,9 @@ export type SubscriptionCliFailureKind =
   | "plan_required"
   | "not_json"
   | "reported_error"
-  | "turn_failed";
+  | "turn_failed"
+  // A streamed run that exited 0 without its final result line (ATO-2522).
+  | "no_result_envelope";
 
 /** Kinds whose message carries the CLI's own words, so a limit can show. */
 const KINDS_WITH_CLI_TEXT: ReadonlySet<SubscriptionCliFailureKind> = new Set([
@@ -317,7 +319,7 @@ export function mapCliFailure(input: CliFailureInput): Error {
     return new SubscriptionCliInvocationError(
       `"${input.binary}" stopped reading the prompt before it was fully written (exit ${
         input.exitCode ?? "null"
-      }): ${detail || "no output"}${exitHint(input.binary, detail)}`,
+      }): ${detail || "no output"}${exitHint(input.binary, detail, input.exitCode)}`,
       input.exitCode,
       "input_truncated",
     );
@@ -325,7 +327,7 @@ export function mapCliFailure(input: CliFailureInput): Error {
   return new SubscriptionCliInvocationError(
     `"${input.binary}" exited with code ${input.exitCode ?? "null"}: ${
       detail || "no output"
-    }${exitHint(input.binary, detail)}`,
+    }${exitHint(input.binary, detail, input.exitCode)}`,
     input.exitCode,
     "exited",
   );

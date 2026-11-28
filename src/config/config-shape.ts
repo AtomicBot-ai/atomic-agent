@@ -145,6 +145,9 @@ const LLM_FALLBACK_KEYS: Record<keyof UserLlmFallbackConfig, true> = {
   chain: true,
   appendLocal: true,
   localFirst: true,
+  localFirstEscalate: true,
+  localFirstMaxTurnUsd: true,
+  localFirstMaxDayUsd: true,
   failureThreshold: true,
   cooldownMs: true,
   probeThrottleMs: true,
@@ -179,6 +182,7 @@ const LLM_FUSION_KEYS: Record<keyof UserLlmFusionConfig, true> = {
   judgeProvider: true,
   autoReplan: true,
   roles: true,
+  roleModels: true,
   mixLocalModels: true,
   outcomeJournal: true,
   isolation: true,
@@ -203,8 +207,11 @@ const KNOWN_KEYS_OUTSIDE_DEFAULTS: Readonly<Record<string, readonly string[]>> =
   "llm.runMode": Object.keys(LLM_RUN_MODE_KEYS),
   "llm.runMode.fusion": Object.keys(LLM_FUSION_KEYS),
   // Optional, absent from the defaults: known so a write that drops them
-  // clears them (ATO-2106 modelsDirOverride, ATO-1106 loraAdapters).
-  "localModels.managed": ["modelsDirOverride", "loraAdapters"],
+  // clears them (ATO-2106 modelsDirOverride, ATO-1106 loraAdapters,
+  // ATO-2483 shareNetwork and sharePort).
+  "localModels.managed": ["modelsDirOverride", "loraAdapters", "shareNetwork", "sharePort"],
+  // ATO-2482: dropped when the last per-model set is reset.
+  localModels: ["modelSamplingOverrides"],
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

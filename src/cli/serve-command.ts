@@ -16,7 +16,10 @@ import {
   parseArgs,
 } from "./serve-args.js";
 import { modelShareNotice } from "./serve-model-share-notice.js";
+import { readModelShareSettings } from "../http/model-share-settings.js";
+import { createServeModelShare, type ServeModelShare } from "./serve-model-share.js";
 import { resolveServeApiKey, serveApiKeyNotice } from "./serve-api-key.js";
+import { givenServeApiKey } from "./serve-api-key-stdin.js";
 import { watchForOrphaning } from "./serve-orphan-guard.js";
 import {
   startWebhookTunnel,
@@ -26,6 +29,7 @@ import {
 } from "./serve-webhook-tunnel.js";
 import {
   formatReapOutcomes,
+  LAUNCH_SERVE_ENV,
   registerServe,
   reapOrphanedServes,
 } from "./serve-reaper.js";
@@ -67,9 +71,15 @@ export async function serveCommand(args: string[]): Promise<number> {
     return 0;
   }
 
+  // ATO-2538: under --api-key-stdin the key is the first line of stdin.
+  const given = await givenServeApiKey(parsed, process.stdin);
+  if ("error" in given) {
+    process.stderr.write(`serve: ${given.error}\n`);
+    return 1;
+  }
   // Always a key, on loopback too: the operator's, else the persisted one
   // made on the first run. No key, no server.
-  const apiKey = resolveServeApiKey(parsed.apiKey, stateDir);
+  const apiKey = resolveServeApiKey(given.key, stateDir);
   if ("error" in apiKey) {
     process.stderr.write(`serve: ${apiKey.error}\n`);
     return 1;
@@ -88,7 +98,9 @@ export async function serveCommand(args: string[]): Promise<number> {
   // otherwise inherit it, not only the shell tool that already drops it.
   // This stops inheritance only: the launch environment itself stays
   // readable by the same user (/proc/<pid>/environ on Linux, `ps eww` on
-  // macOS), since unsetenv does not touch the original env block.
+  // macOS), since unsetenv does not touch the original env block: a
+  // spawner that wants the key in no environment at all sends it with
+  // --api-key-stdin, as the desktop does (ATO-2538).
   delete process.env.ATOMIC_AGENT_API_KEY;
 
   // ATO-625: refuse the tunnel before anything boots, so a missing
@@ -125,6 +137,7 @@ export async function serveCommand(args: string[]): Promise<number> {
   let releaseRecord: (() => void) | null = null;
   let orphanWatch: OrphanWatch | null = null;
   let tunnel: WebhookTunnel | null = null;
+  let modelShare: ServeModelShare | null = null;
   try {
     runtime = await createAgentRuntime({
       workingDir: parsed.workingDir,
@@ -145,6 +158,9 @@ export async function serveCommand(args: string[]): Promise<number> {
       // store's turn ends, the serve record. Muted, serve goes on until
       // the orphan watch ends it through that teardown.
       brokenPipe: "mute",
+      // ATO-2767: a local model server restarting under a request is
+      // not a reason to drop every open session; one stderr line instead.
+      loopbackReset: "survive",
       handlers: {
         // The structured log goes to stderr, which a host running serve
         // relays into its own log (the desktop app's agent.log and its
@@ -173,6 +189,8 @@ export async function serveCommand(args: string[]): Promise<number> {
     const namedTokens = createHttpTokenSource(stateDir);
     // ATO-2308: phones paired by `atag pair` sign in with a cookie as members.
     const deviceSessions = createDeviceSessions(stateDir);
+    // ATO-2483: the shared model's own listener, with the main listener's raw handlers.
+    modelShare = createServeModelShare(runtime);
     handle = await createHttpServer({
       runtime,
       host: parsed.host,
@@ -183,6 +201,8 @@ export async function serveCommand(args: string[]): Promise<number> {
         // ATO-693: off unless --a2a; parseArgs already refused it without a key.
         a2a: parsed.a2a ? { publicUrl: a2aPublicUrl() } : null,
         devices: deviceSessions,
+        rawModelHandlers: modelShare.rawModel,
+        modelShare: modelShare.listener,
       }),
       approvalBus,
       completionRegistry,
@@ -208,7 +228,8 @@ export async function serveCommand(args: string[]): Promise<number> {
     for (const url of lanUrls(parsed.host, handle.port)) {
       process.stderr.write(`[atomic-agent] serve reachable at ${url}\n`);
     }
-    process.stderr.write(modelShareNotice(isModelShareEnabled(), isLoopbackListenHost(parsed.host)));
+    process.stderr.write(modelShareNotice(isModelShareEnabled(), isLoopbackListenHost(parsed.host), readModelShareSettings().mode));
+    await modelShare.attach({ host: handle.host, port: handle.port });
     if (parsed.tunnel && tunnelCheck) {
       tunnel = await startWebhookTunnel({
         runtime,
@@ -239,6 +260,7 @@ export async function serveCommand(args: string[]): Promise<number> {
       cwd: parsed.workingDir,
       startedAt: new Date().toISOString(),
       strongKey: apiKey.key.length >= MIN_NETWORK_KEY_LENGTH,
+      launched: process.env[LAUNCH_SERVE_ENV] === "1",
     });
     // Each new server tidies up after the generation before it. Failures
     // here are never fatal — the sweep is housekeeping, not startup — and
@@ -274,6 +296,7 @@ export async function serveCommand(args: string[]): Promise<number> {
     elicitations.closeAll();
     // The public address goes first, before the API it fronts.
     if (tunnel) await tunnel.stop().catch(() => {});
+    if (modelShare) await modelShare.stop().catch(() => {});
     if (handle) await handle.close();
     if (runtime) await runtime.shutdown();
     // Released last, and only once the port and the databases are

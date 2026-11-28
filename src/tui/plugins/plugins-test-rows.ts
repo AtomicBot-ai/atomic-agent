@@ -16,7 +16,7 @@ export function plugin(over: Partial<PluginOverview> = {}): PluginOverview {
     enabled: true,
     filesOk: true,
     error: null,
-    counts: { skills: 1, mcpServers: 1, hooks: 0, commands: 0, agents: 0 },
+    counts: { skills: 1, mcpServers: 1, hooks: 0, commands: 0, agents: 0, monitors: 0 },
     runsCode: true,
     trust: "code-off",
     codeParts: ["local MCP servers: gh"],
@@ -40,6 +40,6 @@ export const NO_CODE = plugin({
   codeParts: [],
   needsKey: false,
   missingKeys: [],
-  counts: { skills: 1, mcpServers: 0, hooks: 0, commands: 0, agents: 0 },
+  counts: { skills: 1, mcpServers: 0, hooks: 0, commands: 0, agents: 0, monitors: 0 },
   parts: [part({ id: "skill:notes", name: "notes" })],
 });

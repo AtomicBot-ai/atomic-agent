@@ -2,6 +2,8 @@ import { isAbsolute, relative, resolve } from "node:path";
 import type { ConversationTurn } from "../session/conversation-turn.js";
 import type { PathRule } from "../session/workspace-context.js";
 import { compileGlob } from "../tools/os/fs/fs-glob-pattern.js";
+import { turnTargetPaths } from "./path-rule-tool-targets.js";
+import { estimateTokens, truncateToTokens } from "./token-budget.js";
 
 /**
  * Path-scoped project rules (ATO-2247): a rule joins the prompt once a file
@@ -12,26 +14,12 @@ import { compileGlob } from "../tools/os/fs/fs-glob-pattern.js";
  * the conversation: the stable prefix never changes.
  */
 
-/** File tools whose arguments name the file they read or change. */
-const pathArgs: Record<string, (args: Record<string, unknown>) => unknown[]> = {
-  "os.fs.read": args => [args.path],
-  "os.fs.read_document": args => [args.path],
-  "os.fs.write": args => [args.path],
-  "os.fs.edit": args => [args.path],
-  "os.fs.move": args => [args.from, args.to, ...(Array.isArray(args.moves)
-    ? args.moves.flatMap(move => move && typeof move === "object" ? [(move as Record<string, unknown>).from, (move as Record<string, unknown>).to] : [])
-    : [])],
-};
-
 /** Workspace-relative paths (forward slashes) the session's file tools touched, oldest first. */
 export function touchedWorkspacePaths(turns: readonly ConversationTurn[], roots: readonly string[]): string[] {
   const out = new Set<string>();
   for (const turn of turns) {
-    if (turn.kind !== "assistant_tool_call") continue;
-    const pick = pathArgs[turn.tool];
-    if (!pick) continue;
-    for (const value of pick(turn.args ?? {})) {
-      if (typeof value !== "string" || !value.trim() || value.startsWith("~")) continue;
+    for (const value of turnTargetPaths(turn)) {
+      if (!value.trim() || value.startsWith("~")) continue;
       const rel = workspaceRelative(value.trim(), roots);
       if (rel) out.add(rel);
     }
@@ -72,4 +60,50 @@ export function activePathRules(rules: readonly PathRule[], turns: readonly Conv
 /** The journal body of an attached rule: its source, why it applies, then its text. */
 export function renderPathRule(rule: PathRule): string {
   return `Source: ${rule.path}\nApplies to files matching: ${rule.patterns.join(", ")} (relative to workspace). Attached because a matching file was opened or changed in this session; follow it when working on such files.\n${rule.body}`;
+}
+
+/**
+ * Rules the step's new turns attached: active after it, not before
+ * (ATO-2443). `after` extends `before` (the transcript is append-only), so
+ * a rule is reported once, on the step whose file tool matched it first.
+ */
+export function newlyActivePathRules(rules: readonly PathRule[], before: readonly ConversationTurn[], after: readonly ConversationTurn[], roots: readonly string[]): PathRule[] {
+  if (!rules.length || after.length <= before.length) return [];
+  const was = new Set(activePathRules(rules, before, roots).map(rule => rule.path));
+  return activePathRules(rules, after, roots).filter(rule => !was.has(rule.path));
+}
+
+/** The most a local prompt gives attached path rules, in tokens. */
+export const LOCAL_PATH_RULES_MAX_TOKENS = 2048;
+/** Share of a known local window attached path rules may take. */
+const LOCAL_PATH_RULES_WINDOW_SHARE = 0.05;
+const LOCAL_PATH_RULES_MIN_TOKENS = 256;
+
+/**
+ * The local prompt's room for attached path rules (ATO-2443): at most
+ * {@link LOCAL_PATH_RULES_MAX_TOKENS}, and 5% of a known window, so a 16K
+ * model gives them about 800 tokens and keeps the rest for the work.
+ */
+export function localPathRulesBudget(contextWindow: number | null | undefined): number {
+  if (!contextWindow || contextWindow <= 0) return LOCAL_PATH_RULES_MAX_TOKENS;
+  return Math.max(LOCAL_PATH_RULES_MIN_TOKENS, Math.min(LOCAL_PATH_RULES_MAX_TOKENS, Math.floor(contextWindow * LOCAL_PATH_RULES_WINDOW_SHARE)));
+}
+
+/**
+ * The local prompt's `### project-rules` body: every attached rule, in rule
+ * order, or null when none is attached. It goes in the tail after the
+ * conversation (`build-prompt.ts`), never in the stable prefix, and only
+ * changes on the step a new rule attaches.
+ */
+export function renderLocalPathRules(rules: readonly PathRule[], turns: readonly ConversationTurn[], roots: readonly string[]): string | null {
+  const active = activePathRules(rules, turns, roots);
+  return active.length ? active.map(renderPathRule).join("\n\n") : null;
+}
+
+const clippedMarker = "\n[... truncated: project rules budget reached]";
+
+/** The section cut to `maxTokens` with a visible marker, so the model knows a rule is incomplete. */
+export function clipLocalPathRules(text: string, maxTokens: number): string {
+  if (estimateTokens(text) <= maxTokens) return text;
+  return truncateToTokens(text, Math.max(0, maxTokens - estimateTokens(clippedMarker))) + clippedMarker;
 }

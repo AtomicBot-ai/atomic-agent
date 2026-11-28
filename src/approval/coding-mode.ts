@@ -92,7 +92,7 @@ const LOOKS: Readonly<Record<CodingMode, CodingModeLook>> = {
     detail: "almost never asks",
     tone: "error",
     summary:
-      "bypass permissions: nothing asks for the rest of this session, except a command that reads credentials (macOS/Linux paths) or runs an encoded script. Hardline shell-guard rules still block.",
+      "bypass permissions: most calls run without asking for the rest of this session. Still asks: reading credentials, an encoded script, a change to a startup or SSH file, a secret sent out, and the first send to a host that is not known yet. Hardline shell-guard rules still block.",
   },
 };
 

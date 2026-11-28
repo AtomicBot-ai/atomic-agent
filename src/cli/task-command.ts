@@ -16,6 +16,14 @@ import {
   handleRuns,
 } from "./task-pause-command.js";
 import { taskHeartbeatCommand } from "./task-heartbeat-command.js";
+import {
+  TASK_BOARD_HELP,
+  handleAssign,
+  handleBoard,
+  handleComment,
+  handleDepends,
+  handleMove,
+} from "./task-board-command.js";
 
 const HELP =
   [
@@ -57,6 +65,7 @@ const HELP =
     "                            date alone (YYYY-MM-DD) is midnight UTC.",
     "  cancel <id>               Move a task to 'cancelled' (idempotent on terminal rows)",
     ...TASK_PAUSE_HELP,
+    ...TASK_BOARD_HELP,
     "  run [<id>|--all-pending] [--session <id>]",
     "                            Manually drain — single task by id, or every pending row",
     "                            (optionally scoped to one session)",
@@ -71,6 +80,8 @@ const HELP =
     "  atomic-agent task create --message 'morning digest' --cron '0 9 * * *' --tz Europe/Berlin --notify telegram",
     "  atomic-agent task run --all-pending --session s-abc",
     "  atomic-agent task tick",
+    "  atomic-agent task board",
+    "  atomic-agent task move <id> review --note 'check the wording'",
   ].join("\n") + "\n";
 
 export async function taskCommand(args: string[]): Promise<number> {
@@ -101,6 +112,16 @@ export async function taskCommand(args: string[]): Promise<number> {
         return await handleTick(args.slice(1));
       case "heartbeat":
         return await taskHeartbeatCommand(args.slice(1));
+      case "board":
+        return handleBoard(args.slice(1), openTaskStore);
+      case "move":
+        return handleMove(args.slice(1), openTaskStore);
+      case "comment":
+        return handleComment(args.slice(1), openTaskStore);
+      case "assign":
+        return handleAssign(args.slice(1), openTaskStore);
+      case "depends":
+        return handleDepends(args.slice(1), openTaskStore);
       default:
         process.stderr.write(`unknown subcommand: ${sub}\n`);
         process.stderr.write(HELP);

@@ -84,7 +84,10 @@ import {
 import { MenuPopup } from "./menu/menu-popup.js";
 import type { MenuNode } from "./menu/menu-registry.js";
 import { ApprovalModal } from "./approval-modal.js";
+import { isShellSecretRequest, submitShellSecret } from "./secret-input/secret-input-keys.js";
 import { cycleModelRing } from "./model-ring/model-ring-actions.js";
+import { selectModelRingReadout } from "./model-ring/model-ring.js";
+import { ModelRingReadout } from "./model-ring/model-ring-readout.js";
 import { ChatLog } from "./chat/chat-log.js";
 import {
   ComposerSwitchPopup,
@@ -138,6 +141,7 @@ import { TasksCancelModal } from "./tasks/tasks-cancel-modal.js";
 import { UpdateModal } from "./update/update-modal.js";
 import { ProjectTrustModal } from "./project-trust/project-trust-modal.js";
 import { AppendLocalQuestionModal } from "./append-local-question/append-local-question-modal.js";
+import { appendLocalHotkey } from "./append-local-question/append-local-question-key-bindings.js";
 import { UpdateIndicator } from "./update/update-indicator.js";
 import { UpdateRestartPrompt } from "./update/update-restart-prompt.js";
 import { META_SLOT_SHRINK } from "./components/prompt-meta-bar.js";
@@ -273,6 +277,11 @@ export interface TuiAppCallbacks {
    */
   onQuestionAnswer?(approvalId: string, answer: UserQuestionAnswer): void;
   /**
+   * The value typed into a `shell_secret_input` request's masked field
+   * (ATO-2486), for the job's input only: never logged or echoed.
+   */
+  onSecretInput?(approvalId: string, value: string): void;
+  /**
    * Remove a session for good. Confirmed by the operator in the dialog
    * the rail's `x` opens — the host does the deleting and decides where
    * the UI lands if the current thread was the one removed.
@@ -294,12 +303,22 @@ export interface TuiAppCallbacks {
   onQuit(): void;
   onMessageSubmitted(message: string): void;
   /**
+   * An idle submit whose `@` mentions are still being read (ATO-2472):
+   * the host sends it once they are, in typing order. Absent: the
+   * expansion is awaited and handed to `onMessageSubmitted`.
+   */
+  onMessageSubmittedLater?(message: Promise<string>): void;
+  /**
    * The working directory's files for the composer's `@` palette
    * (file-mentions/). Absent: no palette.
    */
   listMentionFiles?(): Promise<readonly string[]>;
-  /** Inline the files a message `@`-mentions before it is sent. */
-  expandFileMentions?(message: string): string;
+  /**
+   * Inline what a message `@`-mentions before it is sent: a string at
+   * once for plain files, a promise for `@diff`, `@git:N`, links and
+   * `@problems` (ATO-2472).
+   */
+  expandFileMentions?(message: string): string | Promise<string>;
   /**
    * `[try again]` on the chat's last question (ATO-1302): take that
    * question and its answer back out of the session so the resend is a
@@ -311,6 +330,12 @@ export interface TuiAppCallbacks {
   onLastTurnRollbackRequested?(expect?: LastTurnRollbackOptions): LastTurnRollbackOutcome;
   /** Drop every message parked behind the running turn (`/queue clear`). */
   onQueueClearRequested?(): void;
+  /**
+   * Move parked message `from` to place `to`, 0-based (`/queue next`,
+   * `/queue move`, ATO-2476). False when the orchestrator's queue has no
+   * such message or place.
+   */
+  onQueueMoveRequested?(from: number, to: number): boolean;
   /**
    * Fold a message into the turn already running (`steer` mode). The
    * orchestrator falls back to the queue when the runtime refuses —
@@ -336,6 +361,8 @@ export interface TuiAppCallbacks {
   onReasoningLevelChanged?(level: ReasoningLevel): void;
   /** Ask the orchestrator to emit the recent-sessions list to the bus. */
   onSessionPickerRequested?(): void;
+  /** `/sessions --deleted | --restore` (ATO-2474): list Trash in the chat, or restore a chat from it. */
+  onSessionsTrashRequested?(request: import("./session-trash/session-trash-command.js").SessionsTrashRequest): void;
   /**
    * `/rewind` (ATO-1057): open the picker of the chat's earlier
    * questions, or say in the chat why it cannot (a turn is running,
@@ -344,14 +371,26 @@ export interface TuiAppCallbacks {
   onRewindPickerRequested?(): void;
   /** `/export [format] [path]` (ATO-1054): write the open chat to a file and say where. */
   onChatExportRequested?(request: import("./commands/export-command.js").ChatExportRequest): void;
+  /** `/servers [action ...]` (ATO-2490): list or act on Ollama / LM Studio / the Llama app and say the result. */
+  onLocalServersRequested?(args: readonly string[]): void;
   /**
-   * Take the chat back to just before the question at `turnIndex` of
-   * the session's turns: the session (held and saved) keeps only what
-   * came before it, the transcript is rebuilt and the question goes back
-   * in the composer. `expectText` is the question the picker showed; a
-   * different row there is refused.
+   * A question was picked in the `/rewind` list: check what a rewind to
+   * the question at `turnIndex` of the session's turns would touch and
+   * offer the choices (ATO-2467), or say in the chat why it cannot.
+   * `expectText` is the question the picker showed; a different row
+   * there is refused.
    */
   onRewindRequested?(turnIndex: number, expectText: string): void;
+  /**
+   * ATO-2467: the person chose what to take back for that question:
+   * `all` puts the files back and cuts the chat, `conversation` cuts
+   * the chat only, `files` puts the files back only.
+   */
+  onRewindScopeChosen?(
+    turnIndex: number,
+    expectText: string,
+    scope: import("../runtime/session-rewind-service.js").RewindScope,
+  ): void;
   /** Ask the orchestrator to swap to an existing persisted session. */
   onSessionSwitchRequested?(sessionId: string): void;
   /**
@@ -397,6 +436,8 @@ export interface TuiAppCallbacks {
   onPromptEnhanceCancel?(): void;
   /** `/btw <question>`: answer a side question without saving it (ATO-1152). */
   onSideQuestionRequested?(question: string): void;
+  /** `/council …`: run or stop the model council beside the chat (ATO-2432). */
+  onCouncilCommand?(command: import("./commands/council-command.js").CouncilCommand): void;
   /**
    * `/edit` (ATO-655): hand the terminal to `$VISUAL` / `$EDITOR` on
    * `draft` and return what was saved. Synchronous on purpose: the editor
@@ -417,6 +458,8 @@ export interface TuiAppCallbacks {
   onVimModePersistRequested?(on: boolean): void;
   /** Persist verbose step notes into `tui.verboseSteps` (`/verbose`). */
   onVerboseStepsPersistRequested?(on: boolean): void;
+  /** Persist the terminal pet into `tui.pet` (`/pet`, ATO-2513). */
+  onPetPersistRequested?(on: boolean): void;
   /**
    * `/mouse on|off` — flip terminal mouse reporting live. `null` asks
    * for the current state to be reported without changing it. The
@@ -515,6 +558,12 @@ export interface TuiAppCallbacks {
     repo: HuggingFaceRepoChoices,
     cursor: number,
   ): void;
+  /** ATO-2504: `F` opened the models folder screen; ask where the folder is. */
+  onLocalModelsDirLoadRequested?(): void;
+  /** Enter on it: move every model to `target` (empty: back to the default folder). */
+  onLocalModelsDirMoveRequested?(target: string): void;
+  /** Esc during that move: stop it, the models go back. */
+  onLocalModelsDirCancelRequested?(): void;
   /** Cycle the managed daemon's GPU preference (auto → devices → cpu). */
   onLocalModelsDeviceCycleRequested?(): void | Promise<void>;
   onLocalModelsAutoUpdateToggleRequested?(): void | Promise<void>;
@@ -597,7 +646,7 @@ export interface TuiAppCallbacks {
   /** Revalidate a cloud skill and format its explicit request before normal submission. */
   prepareSkillInvocation?(name: string, input: string): string;
   /** Render a plugin command (`plugin:command`) with its arguments into the message to send. */
-  preparePluginCommand?(name: string, args: string): string;
+  preparePluginCommand?(name: string, args: string, sessionId?: string): string | Promise<string>;
   /** Refresh the skills panel, count and slash catalog for the selected workspace. */
   onSkillsRefreshRequested?(): void;
   /** `/learn` (ATO-67): list the skills the agent learned, or undo one. */
@@ -673,6 +722,13 @@ export interface TuiAppCallbacks {
    * without changing the mode.
    */
   onFusionWorkersChangeRequested?(workers: number): void;
+  /** `/runmode role <role> <provider> [model] | off`: set one fusion role. */
+  onFusionRoleChangeRequested?(
+    role: import("../config/llm-run-mode-config.js").FusionRole,
+    pin: import("../config/fusion-role-pin.js").FusionRolePin,
+  ): void;
+  /** `/runmode roles`: list the fusion roles and the model each runs. */
+  onFusionRolesListRequested?(): void;
   /**
    * `/worker stop|escalate <id>` and `/worker steer <id> <note>`: the
    * person's action on one running fusion worker of `sessionId` (ATO-66,
@@ -694,6 +750,14 @@ export interface TuiAppCallbacks {
     action: "list" | "discard",
     runId: string | undefined,
   ): void;
+  /**
+   * `/ps` and `/stop [id]` (ATO-2437): list or stop `sessionId`'s
+   * background jobs; returns the line to show.
+   */
+  onBackgroundJobsCommand?(
+    sessionId: string | null,
+    command: import("./commands/ps-command.js").BackgroundJobsCommand,
+  ): string;
   /**
    * `/fusion resume [id]`: the message that makes the orchestrator
    * continue an unfinished run of `sessionId`, sent as the person's
@@ -752,6 +816,10 @@ export interface TuiAppCallbacks {
   onFallbackRemoveRequested?(providerId: string): void;
   /** Fallback pane: flip `llm.fallback.appendLocal`. */
   onFallbackAppendLocalToggleRequested?(): void;
+  /** Fallback pane `o`: flip `llm.fallback.localFirst` (ATO-2434). */
+  onFallbackLocalFirstToggleRequested?(): void;
+  /** `/llm fallback local-first on|off`: set `llm.fallback.localFirst`. */
+  onFallbackLocalFirstSetRequested?(on: boolean): void;
   /** MCP tab: open detail view for a server by name. */
   onMcpDetailRequested?(serverName: string): void;
   /**
@@ -877,6 +945,8 @@ export interface TuiAppCallbacks {
   onOfflineToggleRequested?(): void | Promise<void>;
   /** Privacy tab: toggle Privacy Shield (masking before cloud models). */
   onPrivacyShieldToggleRequested?(): void | Promise<void>;
+  /** ATO-2527: `n` in the Privacy tab flips hiding names with a local model. */
+  onPrivacyNamesToggleRequested?(): void | Promise<void>;
   /** Privacy tab: re-read the persisted `analytics.enabled` snapshot. */
   onPrivacyRefreshRequested?(): void;
   /** Integrations tab: re-read credential presence + live server state. */
@@ -1501,8 +1571,10 @@ export function TuiApp({
     // operator answers the agent in the same field they always type in,
     // and `approvalHotkey` decides per keystroke whether it is a
     // decision or text. The one exception is the prompt's own target
-    // field, which owns input while it is open.
+    // field, which owns input while it is open, and a secret's masked
+    // field (ATO-2486), which owns it the same way.
     state.approvalPathDraft === null &&
+    !isShellSecretRequest(state.pendingApproval) &&
     // The update offer claims y / n / Esc; keep the editor unfocused so
     // those keystrokes never leak into the input buffer. The post-update
     // "press any key to restart" prompt claims every key for the same reason.
@@ -1510,8 +1582,9 @@ export function TuiApp({
     state.updateStatus !== "done" &&
     // The folder trust question claims y / n / Esc the same way (ATO-1481).
     state.projectTrustPrompt === null &&
-    // So does the last-resort fallback question (ATO-1461).
-    state.appendLocalPrompt === null &&
+    // The last-resort fallback question (ATO-1461) does not: it answers
+    // to chords only, so the editor keeps focus and typing stays text
+    // (ATO-2760, `appendLocalHotkey`).
     // When the slash-command palette is open the editor must hold focus
     // regardless of the active debug tab so the operator can type the
     // command and drive ↑↓ / tab / enter selection. Panels that open the
@@ -1538,6 +1611,8 @@ export function TuiApp({
             // keystroke and the repo name would land in the chat draft.
             state.localModelsPanel.mode === "hfRef" ||
             state.localModelsPanel.mode === "hfPick" ||
+            // ATO-2504: the models folder path is typed into one too.
+            state.localModelsPanel.mode === "modelsDir" ||
             state.localModelsPanel.removeConfirmId !== null)
         )));
 
@@ -1844,7 +1919,7 @@ export function TuiApp({
       activateMenuNode,
       onStepPairs: stepConversationPairs,
       activateComposerSwitch,
-      onModelRingCycle: () => cycleModelRing(state, dispatch, callbacks),   // ATO-2169
+      onModelRingCycle: (direction) => cycleModelRing(state, dispatch, callbacks, undefined, direction),   // ATO-2169, ATO-2500
       onPlanExecute: executePlan,
       onPlanDismiss: dismissPlan,
     });
@@ -2100,6 +2175,7 @@ export function TuiApp({
         key,
         state.vimMode && vimClaimsEsc(vimEscClaim.current),
       ) !== null ||
+      appendLocalHotkey(state, input, key) !== null ||
       codingModeMenuOwnsKey(state, key),
     [state],
   );
@@ -2491,8 +2567,13 @@ export function TuiApp({
         fusion={promptBackend.kind === "fusion"}
       />
     ) : null;
+  // ATO-2500: `fav 2/3` while the next turn runs on a favorite. Measured by `selectMetaBarFit` too.
+  const ringReadout =
+    selectModelRingReadout(state) !== null ? (
+      <ModelRingReadout state={state} fusion={promptBackend.kind === "fusion"} />
+    ) : null;
   const promptContextSlot =
-    composerContextUsage || usageReadout || stepSpeedReadout || thinkReadout ? (
+    composerContextUsage || usageReadout || stepSpeedReadout || thinkReadout || ringReadout ? (
       <Box flexDirection="row" flexShrink={0}>
         {composerContextUsage ? (
           <ContextChip
@@ -2503,6 +2584,7 @@ export function TuiApp({
         ) : null}
         {stepSpeedReadout}
         {thinkReadout}
+        {ringReadout}
         {usageReadout}
       </Box>
     ) : null;
@@ -2754,6 +2836,7 @@ export function TuiApp({
                       reservedForReply={state.session.completionMaxTokens}
                       pairsDraft={state.contextPanelPairsDraft}
                       onStepPairs={stepConversationPairs}
+                      detail={state.contextPanelDetail}
                     />
                   ) : null}
                   <ComposerSwitchPopup
@@ -2831,6 +2914,18 @@ export function TuiApp({
                       onPreviewPage={() =>
                         dispatch({ type: "approval_preview_paged" })
                       }
+                      alwaysArmed={
+                        state.approvalAlwaysArmed ===
+                        state.pendingApproval.approvalId
+                      }
+                      onSecretSubmit={(value) =>
+                        state.pendingApproval
+                          ? submitShellSecret(state.pendingApproval, value, {
+                              dispatch,
+                              onSecretInput: callbacks.onSecretInput,
+                            })
+                          : false
+                      }
                     />
                   </Box>
                 ) : null}
@@ -2851,6 +2946,7 @@ export function TuiApp({
                     <RewindPicker
                       points={state.rewindPicker.points}
                       cursor={state.rewindPicker.cursor}
+                      choice={state.rewindPicker.choice ?? null}
                     />
                   </Box>
                 ) : null}

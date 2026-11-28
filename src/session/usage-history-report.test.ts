@@ -94,6 +94,34 @@ describe("formatUsageHistory", () => {
   });
 });
 
+describe("sessions per day (ATO-2442)", () => {
+  const WITH_SESSIONS: UsageHistoryFile = {
+    ...HISTORY,
+    sessions: { "2026-11-10": ["aaa", "bbb"], "2026-11-12": ["bbb", "ccc"] },
+  };
+
+  it("counts each day's sessions and the distinct ones over the window; older days have none", () => {
+    const s = summarizeUsageHistory(WITH_SESSIONS, { days: "all", today: "2026-11-12" });
+    expect(s.days.map((d) => [d.day, d.sessions])).toEqual([
+      ["2026-11-01", null],
+      ["2026-11-10", 2],
+      ["2026-11-12", 2],
+    ]);
+    expect(s.sessions).toBe(3);
+    expect(summarizeUsageHistory(HISTORY, { days: 7, today: "2026-11-12" }).sessions).toBeNull();
+  });
+
+  it("prints a Sessions column only when asked, with - for a day before the count", () => {
+    const summary = summarizeUsageHistory(WITH_SESSIONS, { days: "all", today: "2026-11-12" });
+    expect(formatUsageHistory(summary).split("\n")[1]).not.toContain("Sessions");
+    const lines = formatUsageHistory(summary, { sessions: true }).split("\n");
+    expect(lines[1]).toMatch(/Cloud cost\s+Sessions$/);
+    expect(lines.find((l) => l.startsWith("2026-11-01"))).toMatch(/\s-$/);
+    expect(lines.find((l) => l.startsWith("2026-11-10"))).toMatch(/\s2$/);
+    expect(lines.find((l) => l.startsWith("Total"))).toMatch(/\s3$/);
+  });
+});
+
 describe("helpers", () => {
   it("shifts days across month and year ends", () => {
     expect(shiftDay("2026-03-01", -1)).toBe("2026-02-28");

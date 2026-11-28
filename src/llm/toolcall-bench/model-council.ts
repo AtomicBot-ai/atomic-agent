@@ -44,14 +44,23 @@ export function councilMembers(answers: readonly ModelAnswer[]): CouncilMember[]
     .map((a, i) => ({ label: councilLabel(i), model: a.model, text: (a.text ?? "").trim() }));
 }
 
-function bounded(text: string): string {
-  if (text.length <= COUNCIL_MAX_ANSWER_CHARS) return text;
-  return `${text.slice(0, COUNCIL_MAX_ANSWER_CHARS)}\n[answer cut at ${COUNCIL_MAX_ANSWER_CHARS} characters]`;
+/** `text` cut at `max` characters with a note, so a prompt that quotes answers stays bounded. */
+export function boundedAnswer(text: string, max: number = COUNCIL_MAX_ANSWER_CHARS): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}\n[answer cut at ${max} characters]`;
 }
 
-/** The prompt the judge model gets. Model names never appear in it. */
-export function buildCouncilPrompt(question: string, members: readonly CouncilMember[]): string {
-  const answers = members.map((m) => `### Answer ${m.label}\n${bounded(m.text)}`).join("\n\n");
+/**
+ * The prompt the judge model gets. Model names never appear in it.
+ * `maxAnswerChars` lowers the per-answer cut when the whole prompt must
+ * fit a smaller request (the runtime's plain route, ATO-2432).
+ */
+export function buildCouncilPrompt(
+  question: string,
+  members: readonly CouncilMember[],
+  maxAnswerChars: number = COUNCIL_MAX_ANSWER_CHARS,
+): string {
+  const answers = members.map((m) => `### Answer ${m.label}\n${boundedAnswer(m.text, maxAnswerChars)}`).join("\n\n");
   const uniqueTemplate = members.map((m) => `### Answer ${m.label}\n- a point only answer ${m.label} makes`).join("\n");
   return [
     "You are the judge of a model council. Several models answered the same question on their own.",

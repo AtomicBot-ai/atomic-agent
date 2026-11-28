@@ -58,7 +58,16 @@ export interface ServeRecord {
    * Absent in records from older servers.
    */
   readonly strongKey?: boolean;
+  /**
+   * ATO-2447: started by `atag launch` for one CLI run (LAUNCH_SERVE_ENV),
+   * so it stops with that run; another launch must not reuse it. Absent
+   * in records from older servers.
+   */
+  readonly launched?: boolean;
 }
+
+/** Set by `atag launch` on the serve it starts; serve records it as `launched`. */
+export const LAUNCH_SERVE_ENV = "ATOMIC_AGENT_LAUNCH_SERVE";
 
 export type ReapVerdict =
   /** The record named a dead pid, or a port that is nobody we know. Dropped. */

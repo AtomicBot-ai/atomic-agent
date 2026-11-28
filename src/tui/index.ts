@@ -1,4 +1,5 @@
 export { tuiCommand } from "./tui-command.js";
+export { isBareTuiLaunchFlag } from "./tui-args.js";
 export { TuiApp, makeTuiEventBus } from "./tui-app.js";
 export type { TuiEventBus, TuiAppCallbacks, TuiAppProps } from "./tui-app.js";
 export { reduceTuiState } from "./agent-event-reducer.js";

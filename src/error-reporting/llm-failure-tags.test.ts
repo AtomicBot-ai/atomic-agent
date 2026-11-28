@@ -383,7 +383,7 @@ describe("sanitizeLlmFailureTags: the engine wait verdict (ATO-1432)", () => {
 });
 
 describe("sanitizeLlmFailureTags: why the engine's process is gone (ATO-1435)", () => {
-  it.each(["out_of_memory", "model_file_missing", "model_file_corrupt", "gpu_driver", "port_in_use", "crashed_unknown", "no_log"])(
+  it.each(["out_of_memory", "model_file_missing", "model_file_corrupt", "model_unsupported", "gpu_driver", "port_in_use", "crashed_unknown", "no_log"])(
     "sends %s for a refusal",
     (reason) => {
       expect(sanitizeLlmFailureTags({

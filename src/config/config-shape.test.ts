@@ -71,7 +71,12 @@ describe("config shape map (ATO-764)", () => {
     // Optional managed keys (ATO-2106, ATO-1106): known, so clearing them sticks.
     expect(knownConfigKeys("localModels.managed").has("modelsDirOverride")).toBe(true);
     expect(knownConfigKeys("localModels.managed").has("loraAdapters")).toBe(true);
+    // ATO-2483: the shared model's listener; turning sharing off must clear shareNetwork.
+    expect(knownConfigKeys("localModels.managed").has("shareNetwork")).toBe(true);
+    expect(knownConfigKeys("localModels.managed").has("sharePort")).toBe(true);
     expect(knownConfigKeys("localModels.managed").has("dataDirOverride")).toBe(true);
+    // ATO-2482: written only when set, so a reset of the last set sticks.
+    expect(knownConfigKeys("localModels").has("modelSamplingOverrides")).toBe(true);
   });
 
   it("descends the llm blocks and knows every pin a caller can clear", () => {

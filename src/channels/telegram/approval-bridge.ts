@@ -8,6 +8,7 @@ import {
 } from "../../approval/index.js";
 import { formatRiskLine } from "../../approval/risk-review.js";
 import { formatEgressLine } from "../../approval/egress-scan.js";
+import { formatSecurityFindingLine } from "../../approval/security-finding-line.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import {
@@ -17,6 +18,7 @@ import {
   sessionGrantScope,
   type SessionGrantOffer,
 } from "./approval-grant-buttons.js";
+import { fitButtonText } from "./button-text.js";
 import { withThread, type TelegramApi } from "./outbound-sender.js";
 
 /**
@@ -589,9 +591,6 @@ export class ApprovalBridge {
   }
 }
 
-/** Longest "Allow always" button text; Telegram cuts long buttons badly. */
-const ALWAYS_BUTTON_MAX_CHARS = 60;
-
 function buildKeyboard(
   approvalId: string,
   alwaysLabel?: string,
@@ -615,10 +614,8 @@ function buildKeyboard(
   ];
   if (alwaysLabel !== undefined) {
     // Its own row: the saved answer is never next to the one-off pair.
-    const text =
-      alwaysLabel.length <= ALWAYS_BUTTON_MAX_CHARS
-        ? alwaysLabel
-        : `${alwaysLabel.slice(0, ALWAYS_BUTTON_MAX_CHARS - 1)}…`;
+    // Shortened in the middle: "in this project" stays (ATO-2757).
+    const text = fitButtonText(alwaysLabel);
     rows.push([
       { text, callback_data: `${CALLBACK_PREFIX}${approvalId}:w` },
     ]);
@@ -722,6 +719,9 @@ function formatApprovalText(
   // Where the command sends data (ATO-2116); plain text like the rest.
   const egressLine = formatEgressLine(req.egress);
   if (egressLine !== null) head.push(egressLine);
+  // The argument check that raised the prompt (ATO-2505).
+  const findingLine = formatSecurityFindingLine(req);
+  if (findingLine !== null) head.push(findingLine);
   const tail: string[] = [];
   if (req.affectedResources && req.affectedResources.length > 0) {
     tail.push("resources:");

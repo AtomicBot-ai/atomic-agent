@@ -358,6 +358,16 @@ export function createTraceRecorder(
             ? { details: maskSecretsDeep(withoutMcpAppPage(inner.result.details), knownSecrets()) }
             : {}),
           ...(inner.result.truncated ? { toolTruncated: true } : {}),
+          // The approvals the call raised, security rules refusals
+          // included (ATO-2529); a reason can quote the command, so masked.
+          ...(inner.result.approvals !== undefined && inner.result.approvals.length > 0
+            ? {
+                approvals: maskSecretsDeep(
+                  inner.result.approvals.map((record) => ({ ...record }) as Record<string, unknown>),
+                  knownSecrets(),
+                ),
+              }
+            : {}),
           ...(inner.batchSize > 1
             ? { batchIndex: inner.batchIndex, batchSize: inner.batchSize }
             : {}),

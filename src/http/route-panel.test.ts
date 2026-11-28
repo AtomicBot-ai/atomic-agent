@@ -75,6 +75,17 @@ describe("GET /panel (ATO-1128)", () => {
     expect(js).toContain("history.replaceState");
   });
 
+  it("in the home-screen app, offers Connect this app: the code page inside the app's scope (ATO-2494)", async () => {
+    const js = await (await fetch(`${harness.baseUrl}/panel/app.js`)).text();
+    expect(js).toContain("display-mode: standalone");
+    expect(js).toContain("navigator.standalone");
+    expect(js).toContain('href="/panel/pair"');
+    expect(js).toContain("Connect this app");
+    const manifest = JSON.parse(await (await fetch(`${harness.baseUrl}/panel/manifest.webmanifest`)).text()) as { scope: string };
+    // Out of scope, iOS would open the code page outside the app, with the other cookie jar.
+    expect("/panel/pair".startsWith(manifest.scope)).toBe(true);
+  });
+
   it("the data behind it still needs the key", async () => {
     expect((await fetch(`${harness.baseUrl}/api/sessions`)).status).toBe(401);
   });

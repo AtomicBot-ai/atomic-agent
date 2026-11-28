@@ -99,6 +99,25 @@ describe("!fork on Slack", () => {
     expect(posted.at(-1)?.text).toContain("new thread");
   });
 
+  it("forks when the @mention comes after the command, with or without a number", async () => {
+    for (const text of [`!fork <@${BOT}>`, `!fork 2 <@${BOT}|atomic>`]) {
+      const source = sourceSession("s-src");
+      source.turns = [
+        ...source.turns,
+        { kind: "user", text: "make it shorter", at: 3 },
+        { kind: "assistant_reply", text: "Shorter.", at: 4 },
+      ];
+      source.turnCount = 2;
+      source.macroTurnStarts = [2, 4];
+      const { ctx, saved, posted } = makeCtx(source, "C1:20.1");
+
+      await handleSlackEvent({ type: "app_mention", channel: "C1", user: OWNER, text, ts: "20.1" }, ctx);
+
+      expect(saved, text).toHaveLength(1);
+      expect(posted.at(-1)?.text, text).not.toContain("This chat has");
+    }
+  });
+
   it("in a DM, moves the conversation to the copy", async () => {
     const source = sourceSession("s-src");
     const { ctx, saved, chats, postMessage } = makeCtx(source, "dm:D1");

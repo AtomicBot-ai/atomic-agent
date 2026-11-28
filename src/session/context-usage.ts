@@ -74,14 +74,23 @@ export interface ContextUsageState {
   /** Per-section breakdown, for the detail view. Empty before the first prompt. */
   sections: readonly ContextUsageSection[];
   /**
-   * What `prompt scaffold` and `loaded tools` are made of: prefix
-   * sections, built-in tools, one row per MCP server (ATO-2355). The
+   * What `prompt scaffold`, `loaded tools` and `tool schemas` are made
+   * of: prefix sections, built-in tools, one row per MCP server
+   * (ATO-2355; tool schemas and per-tool rows ATO-2453). The
    * parts of one parent sum to that parent's tokens. Absent on
    * snapshots saved before the field existed.
    */
   parts?: readonly ContextUsagePart[];
   /** `tool.search` was in the catalog, so tools already load on demand. */
   toolSearchActive?: boolean;
+  /**
+   * The reply reserve the prompt budget held back on this window
+   * (`BuiltPrompt.replyReserve`, `effectiveReplyReserve` with its
+   * small-window rule; the cloud prompt's `contextBudget.replyReserve`),
+   * so a client draws the agent's figure instead of recomputing it
+   * (ATO-2495). Absent on snapshots saved before the field existed.
+   */
+  replyReserve?: number;
 }
 
 export interface ContextUsageSection {
@@ -94,6 +103,12 @@ export interface ContextUsagePart extends ContextUsageSection {
   parent: string;
   /** Set when the part is one MCP server's tool entries. */
   mcpServer?: string;
+  /**
+   * That server's tools, largest first, summing to `tokens` (ATO-2453):
+   * what `/context detail` and the desktop's expanded row list. Absent on
+   * other parts and on snapshots saved before the field existed.
+   */
+  tools?: readonly ContextUsageSection[];
 }
 
 /** A window nothing has been built against yet. */
@@ -126,6 +141,9 @@ export const CONVERSATION_SECTION_LABEL = "conversation";
 /** Rows the panel breaks down into `parts`. */
 export const PROMPT_SCAFFOLD_SECTION_LABEL = "prompt scaffold";
 export const LOADED_TOOLS_SECTION_LABEL = "loaded tools";
+export const PROJECT_INSTRUCTIONS_SECTION_LABEL = "project instructions";
+export const TOOL_SCHEMA_SECTION_LABEL = "tool schemas";
+export const PROJECT_RULES_SECTION_LABEL = "project rules";
 
 /**
  * Order the sections are shown in: the fixed cost first, then the
@@ -141,13 +159,17 @@ const SECTIONS: readonly {
   { key: "stablePrefix", label: PROMPT_SCAFFOLD_SECTION_LABEL },
   { key: "conversation", label: CONVERSATION_SECTION_LABEL },
   { key: "compaction", label: "context summary" },
+  // ATO-2452: the chat's project instructions (ATO-42), counted in `total`.
+  { key: "project", label: PROJECT_INSTRUCTIONS_SECTION_LABEL },
+  // ATO-2443: path-scoped rules a file tool attached (`.atomic-agent/rules`, Cursor `globs:`).
+  { key: "projectRules", label: PROJECT_RULES_SECTION_LABEL },
   { key: "recalled", label: "recalled memory" },
   { key: "memoryIndex", label: "memory index" },
   { key: "worldSnapshot", label: "world snapshot" },
   { key: "loadedTools", label: LOADED_TOOLS_SECTION_LABEL },
   // The native `tools` payload: counted in `total`, so it gets a row,
   // or the rows would not add up to the title.
-  { key: "toolSchema", label: "tool schemas" },
+  { key: "toolSchema", label: TOOL_SCHEMA_SECTION_LABEL },
   { key: "loadedSkills", label: "loaded skills" },
   { key: "sessionFacts", label: "session facts" },
   { key: "profile", label: "profile" },
@@ -175,7 +197,17 @@ export function contextUsageFromPrompt(prompt: BuiltPrompt): ContextUsageState {
       ...part,
       parent: LOADED_TOOLS_SECTION_LABEL,
     })),
+    // The native `tools` array by MCP server (ATO-2453), measured where
+    // the array is built; only while it is counted in `total`.
+    ...((prompt.tokens.toolSchema ?? 0) > 0 ? prompt.toolSchemaParts ?? [] : []).map(
+      (part) => ({ ...part, parent: TOOL_SCHEMA_SECTION_LABEL }),
+    ),
   ];
+  // A non-finite or negative figure is not a reserve: leave it out so a
+  // reader falls back to its own (ATO-1678).
+  const reserve = prompt.replyReserve ?? prompt.contextBudget?.replyReserve;
+  const replyReserve =
+    reserve !== undefined && Number.isFinite(reserve) && reserve >= 0 ? reserve : undefined;
   return {
     tokens: prompt.tokens.total,
     contextWindow: prompt.contextWindow,
@@ -192,5 +224,6 @@ export function contextUsageFromPrompt(prompt: BuiltPrompt): ContextUsageState {
     sections,
     parts,
     toolSearchActive: prefixOffersToolSearch(prompt.stablePrefix),
+    ...(replyReserve !== undefined ? { replyReserve } : {}),
   };
 }

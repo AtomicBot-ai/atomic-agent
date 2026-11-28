@@ -37,6 +37,7 @@ import {
   type ImportReport,
 } from "../import-report.js";
 import { stripUnknownKeySources } from "../../setup-share/known-provider-env.js";
+import { disarmImportedMcpServer, IMPORTED_MCP_OFF_REASON } from "./disarm-mcp-server.js";
 import { providerImportReason } from "./provider-import-reason.js";
 
 /**
@@ -51,7 +52,9 @@ import { providerImportReason } from "./provider-import-reason.js";
  *               projects and chat folders they were in (mergeGroupingFrom).
  *  - memory     notes and profile facts.
  *  - skills     `<source>/skills/<name>/SKILL.md`.
- *  - mcp        `config.json` `mcp.servers`, added by name.
+ *  - mcp        `config.json` `mcp.servers`, added by name, switched off
+ *               and without the source's approval and trust settings
+ *               (disarm-mcp-server.ts, ATO-2473).
  *  - providers  `config.json` `llm.providers`, added by id; the active
  *               provider here is not changed. Inline keys only with secrets;
  *               an `apiKeyCommand` never, a key variable name only when it
@@ -286,8 +289,8 @@ export class AtomicAgentImporter {
           continue;
         }
         have.add(name);
-        servers.push(entry as McpServerConfig);
-        mine.push({ kind: "mcp", source: name, destination: name, status: "migrated" });
+        servers.push(disarmImportedMcpServer(entry as Record<string, unknown>));
+        mine.push({ kind: "mcp", source: name, destination: name, status: "migrated", reason: IMPORTED_MCP_OFF_REASON });
       }
     }
     if (selected.has("providers")) {

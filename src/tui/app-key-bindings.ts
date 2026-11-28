@@ -7,6 +7,8 @@ import type { IssueReportToggle } from "./issue-report/issue-report-state.js";
 import { handleComposerSwitchKey } from "./composer-switch/composer-switch-key-bindings.js";
 import type { ComposerSwitchRow } from "./composer-switch/composer-switch-rows.js";
 import { handleContextPanelKey } from "./context/context-panel-keys.js";
+import { modelRingKeyDirection } from "./model-ring/model-ring-keys.js";
+import type { ModelRingDirection } from "./model-ring/model-ring.js";
 import type { Key } from "ink";
 import {
   canGrantCategory,
@@ -40,6 +42,7 @@ import type { TuiState } from "./tui-state.js";
 import { handleUninstallKey } from "./uninstall/uninstall-key-bindings.js";
 import type { UninstallChoice } from "./uninstall/uninstall-state.js";
 import { handleIssueReportKey } from "./issue-report/issue-report-key-bindings.js";
+import { isShellSecretRequest } from "./secret-input/secret-input-keys.js";
 
 /**
  * Number of **terminal rows** a single PageUp / PageDown keypress
@@ -166,8 +169,8 @@ export interface AppKeyContext {
   onStepPairs?: (delta: number) => void;
   /** Run the row picked in one of the composer's route switches. */
   activateComposerSwitch: (row: ComposerSwitchRow) => void;
-  /** Ctrl+P: switch to the next favorite model (ATO-2169). Optional, like the hand-off chords. */
-  onModelRingCycle?: () => void;
+  /** Ctrl+P: the next favorite model (ATO-2169); alt+p (Option as Meta on a Mac) / ctrl+shift+p (kitty keyboard protocol) the previous one (ATO-2500). Optional, like the hand-off chords. */
+  onModelRingCycle?: (direction: ModelRingDirection) => void;
   /**
    * Carry out the plan on offer under `mode`, for the plan hand-off
    * chords. Optional: a surface that draws no hand-off binds no keys.
@@ -431,6 +434,12 @@ export function handleAppKey(
     state.pendingApproval &&
     state.pendingApproval.sessionId === state.session.sessionId
   ) {
+    // A secret's masked field (ATO-2486) owns the keyboard: no key of
+    // it may reach a panel, the rail or a hotkey behind the card.
+    if (isShellSecretRequest(state.pendingApproval)) {
+      handleApprovalKey(input, key, state.pendingApproval, ctx);
+      return true;
+    }
     return handleApprovalKey(input, key, state.pendingApproval, ctx);
   }
   // A settled successful self-update parks the UI on a "press any key to
@@ -603,19 +612,19 @@ export function handleAppKey(
     return true;
   }
   // Ctrl+P switches to the next favorite model (ATO-2169, pi's
-  // app.model.cycleForward). Free since the menu moved to Esc; the
-  // editor never claims it. Same guards as Ctrl+T.
+  // app.model.cycleForward); alt+p and ctrl+shift+p to the previous one
+  // (ATO-2500, model-ring-keys.ts), where the terminal can send them:
+  // Option as Meta on a Mac, the kitty keyboard protocol. Free since the menu moved to Esc; the
+  // editor never claims them. Same guards as Ctrl+T.
+  const ringStep = modelRingKeyDirection(input, key, ctx.vimClaimsEsc);
   if (
-    key.ctrl &&
-    !key.shift &&
-    !key.meta &&
-    input === "p" &&
+    ringStep !== null &&
     !state.pendingApproval &&
     !state.slashPaletteOpen &&
     !isPanelModalOpen(state) &&
     ctx.onModelRingCycle
   ) {
-    ctx.onModelRingCycle();
+    ctx.onModelRingCycle(ringStep);
     return true;
   }
   // Esc aborts a turn in flight — the binding the hint strip advertises
@@ -1076,11 +1085,15 @@ export type ApprovalHotkey =
  *
  * That leaves `ctrl+y`, `ctrl+d`, `ctrl+f` and `ctrl+b`.
  *
- * **`ctrl+n` saves an "Allow always" rule (ATO-1142).** Global, but the
- * new-window chord stands down while an approval is pending (see
- * `handleAppKey`), so a press there did nothing before; it is offered
- * only where `canGrantAlways` holds and the button names the rule it
- * saves.
+ * **`ctrl+n` saves an "Allow always" rule (ATO-1142), on the second
+ * press (ATO-2759).** Global, but the new-window chord stands down while
+ * an approval is pending (see `handleAppKey`), so a press there did
+ * nothing before; it is offered only where `canGrantAlways` holds and
+ * the button names the rule it saves. The rule is the one verb that
+ * outlives the app, and `n` reads as "no" in this program's y/n dialogs,
+ * so the first press only arms it and relabels the button; the second
+ * saves. Same shape as the "press Ctrl+C again to exit" chord in Claude
+ * Code and Codex. A click on the button is deliberate and saves at once.
  *
  * **`ctrl+z` pages the full command (ATO-876).** It is not a verdict,
  * so it may be the odd one out: it is offered only while the preview
@@ -1132,6 +1145,12 @@ export function approvalHotkey(
   if (request.sessionId !== state.session.sessionId) return null;
   // The target field owns every key while it is open.
   if (state.approvalPathDraft !== null) return null;
+  // A secret the person types (ATO-2486): the masked field takes the
+  // typing; Esc and the deny chord skip it, nothing approves it.
+  if (isShellSecretRequest(request)) {
+    if (key.escape) return "deny";
+    return key.ctrl && !key.meta && input.toLowerCase() === APPROVAL_CHORDS.deny ? "deny" : null;
+  }
   // Esc keeps the old rule, and keeps it for the old reason: it is the
   // editor's "clear the draft" key too, so only an empty buffer lets it
   // abort the run. Unlike the letters it was never a *decision* — the
@@ -1276,6 +1295,13 @@ function handleApprovalKey(
       decideApproval(request, true, ctx, "shape");
       return true;
     case "grant_always":
+      // The rule is saved for the project and outlives the app, and
+      // ctrl+n means "new window" everywhere else, so the first press
+      // only arms it; the second one saves (ATO-2759).
+      if (ctx.state.approvalAlwaysArmed !== request.approvalId) {
+        ctx.dispatch({ type: "approval_always_armed", approvalId: request.approvalId });
+        return true;
+      }
       decideApproval(request, true, ctx, "always");
       return true;
     case "edit_path":

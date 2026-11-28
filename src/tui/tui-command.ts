@@ -7,6 +7,7 @@ import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 import {
   formatDotenvReadWarning,
   getConfig,
+  getStateSecretPaths,
   setConfigNoticeSink,
   type WhileBusySubmitMode,
 } from "../config/index.js";
@@ -42,6 +43,7 @@ import {
   persistUserTuiShowSteps,
   persistUserTuiVimMode,
   persistUserTuiVerboseSteps,
+  persistUserTuiPet,
   persistUserTuiTheme,
   persistUserWhileBusySubmit,
 } from "./persist-user-tui-config.js";
@@ -77,6 +79,7 @@ import { createInterviewInviteController } from "./interview-invite/interview-in
 import { detectKittyKeyboard } from "./detect-kitty-keyboard.js";
 import { setShiftEnterNewline } from "./shift-enter-support.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
+import { createTuiCouncil } from "./council-runner.js";
 import { INDEXED_SEARCH_LIMIT } from "./session-rail/session-search.js";
 import { createSessionPickerSearchIndex } from "./session-rail/session-search-index.js";
 import { createHerdrReporter } from "./herdr-reporter.js";
@@ -92,9 +95,14 @@ import {
   resolveStartupWorkingDir,
 } from "./startup-working-dir.js";
 import { readRecentWorkingDirs } from "../session/index.js";
+import { startupModelRing } from "./model-ring/model-ring-store.js";
 import { detectLocalServers } from "../llm/provider/presets/detect-local-servers.js";
-import { createMentionFileIndex, expandFileMentions } from "./file-mentions/index.js";
+import { runLocalServersSlash } from "./local-servers/local-servers-slash.js";
+import { createMentionFileIndex } from "./file-mentions/index.js";
+import { createMentionSender } from "./file-mentions/mention-sender.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
+import { FUSION_RUNS_EMPTY } from "./run-mode/fusion-intro.js";
+import { runBackgroundJobsCommand } from "./commands/ps-command.js";
 import {
   loadUninstallPreview,
   performUninstall,
@@ -219,6 +227,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
     vimMode: config.tui.vimMode,
     // Step notes under tool cards, off unless `/verbose` turned them on (ATO-34).
     verboseSteps: config.tui.verboseSteps,
+    // The pet in the top bar, off unless `/pet` turned it on (ATO-2513).
+    pet: config.tui.pet,
     // The composer's route controls read these on the home screen, and
     // the local-models slice only refreshes while the Models tab is
     // open — unseeded, a managed install mislabels itself `custom`
@@ -327,11 +337,21 @@ export async function tuiCommand(args: string[]): Promise<number> {
 
   // One file list per working directory for the session (file-mentions/).
   const mentionFiles = createMentionFileIndex();
+  // ATO-2472: `@diff`, `@git:N`, ranges, folders, links and `@problems`, sent in typing order.
+  const mentionSender = createMentionSender(
+    runtime.mentions, () => runtime.capabilities.workingDir, getStateSecretPaths(config.paths),
+  );
   const orchestrator = new ChatOrchestrator(runtime, bus, {
     maxSteps,
     llamaUrl: config.localModels.url,
   });
   orchestratorForChannelStatus = orchestrator;
+  // ATO-2432: `/council`, the model council beside the chat (council-runner.ts).
+  const council = createTuiCouncil({
+    emit: (action) => bus.emit(action),
+    config: getConfig,
+    ...(runtime.completePlain ? { completePlain: runtime.completePlain.bind(runtime) } : {}),
+  });
 
   // First signal quits gracefully; a repeat (a wedged shutdown being
   // Ctrl-C'd again, a `kill` after a hang) restores the terminal —
@@ -341,7 +361,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // The graceful quit also unmounts Ink, which is what ends the TUI:
   // `orchestrator.quit()` alone only stops the work (ATO-1614).
   const signalQuit = makeSignalQuit({
-    stopWork: () => orchestrator.quit(),
+    stopWork: () => {
+      council.cancel();
+      orchestrator.quit();
+    },
     announce: () => bus.emit({ type: "quit_requested" }),
   });
   const onSignal = makeEscalatingSignalHandler({
@@ -546,7 +569,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
       ...(herdrReporter ? { herdrReporter } : {}),
       callbacks: {
         onAbort: () => orchestrator.abortCurrentTurn(),
-        onQuit: () => orchestrator.quit(),
+        onQuit: () => {
+          council.cancel();
+          orchestrator.quit();
+        },
         onApprovalDecision: (approvalId, approved, grant) => {
           runtime.approvals.resolve({
             approvalId,
@@ -569,6 +595,11 @@ export async function tuiCommand(args: string[]): Promise<number> {
           // ATO-489: the answer is the `ask_user` tool's result.
           runtime.approvals.resolve({ approvalId, approved: true, answer });
         },
+        onSecretInput: (approvalId, secret) => {
+          // ATO-2486: straight into the job's input; no reason string,
+          // no log line carries the value.
+          runtime.approvals.resolve({ approvalId, approved: true, secret });
+        },
         onApprovalReply: (approvalId, message) => {
           // Order matters: resolve first so the blocked tool call fails
           // fast with the operator's words, then steer. Steering before
@@ -579,16 +610,18 @@ export async function tuiCommand(args: string[]): Promise<number> {
             approved: false,
             reason: message,
           });
-          orchestrator.steerMessage(message);
+          mentionSender.send(message, (text) => orchestrator.steerMessage(text));
         },
-        onMessageSubmitted: (text) => orchestrator.sendMessage(text),
+        onMessageSubmitted: (text) => mentionSender.send(text, (sent) => orchestrator.sendMessage(sent)),
+        onMessageSubmittedLater: (pending) => mentionSender.send(pending, (sent) => orchestrator.sendMessage(sent)),
         // The `@` palette and its expansion (ATO-665) read the same folder
         // the agent's own tools are rooted at.
         listMentionFiles: () => mentionFiles.list(runtime.capabilities.workingDir),
-        expandFileMentions: (text) => expandFileMentions(text, runtime.capabilities.workingDir),
+        expandFileMentions: (text) => mentionSender.expand(text),
         onLastTurnRollbackRequested: (expect) => orchestrator.rollbackLastTurn(expect),
         onQueueClearRequested: () => orchestrator.clearQueue(),
-        onMessageSteered: (text) => orchestrator.steerMessage(text),
+        onQueueMoveRequested: (from, to) => orchestrator.moveQueued(from, to),
+        onMessageSteered: (text) => mentionSender.send(text, (sent) => orchestrator.steerMessage(sent)),
         onWhileBusyModePersistRequested: (mode) =>
           persistWhileBusyMode(mode, bus),
         // The mode is a stance for this session, so it moves the live
@@ -604,10 +637,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
         // ATO-490: `/think`, for this window's next turns; never written to config.json.
         onReasoningLevelChanged: (level) => orchestrator.setReasoningLevel(level),
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
+        onSessionsTrashRequested: (request) => orchestrator.sessionsTrash(request),
         onRewindPickerRequested: () => orchestrator.openRewindPicker(),
         onChatExportRequested: (request) => { void orchestrator.exportOpenChat(request); },
-        onRewindRequested: (turnIndex, expectText) =>
-          orchestrator.rewindTo(turnIndex, expectText),
+        onLocalServersRequested: (args) => { void runLocalServersSlash(args, (text) => bus.emit({ type: "system_message", text })); },
+        onRewindRequested: (turnIndex, expectText) => {
+          void orchestrator.openRewindChoice(turnIndex, expectText);
+        },
+        onRewindScopeChosen: (turnIndex, expectText, scope) => {
+          void orchestrator.rewindTo(turnIndex, expectText, scope);
+        },
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
         searchSessions: pickerSearch.search,
         sessionSearchStatus: pickerSearch,
@@ -625,6 +664,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onPromptEnhanceRequested: (draft) => { void orchestrator.enhancePrompt(draft); },
         onPromptEnhanceCancel: () => orchestrator.cancelPromptEnhance(),
         onSideQuestionRequested: (question) => { void orchestrator.askSideQuestion(question); },
+        onCouncilCommand: (command) => { void council.handle(command); },
         onSessionDeleteConfirmed: (sessionId) =>
           orchestrator.deleteSession(sessionId),
         onUninstallPlanRequested: () =>
@@ -651,6 +691,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onShowStepsPersistRequested: (on) => persistShowSteps(on, bus),
         onVimModePersistRequested: (on) => persistVimMode(on, bus),
         onVerboseStepsPersistRequested: (on) => persistVerboseSteps(on, bus),
+        onPetPersistRequested: (on) => persistPet(on, bus),
         onTasksAutoRefreshStart: () => orchestrator.tasks.startAutoRefresh(),
         onTasksRefreshRequested: () => orchestrator.tasks.refresh(),
         onTaskDetailRequested: (taskId) =>
@@ -683,7 +724,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onTaskCreateSubmitted: (input) => orchestrator.tasks.createTask(input),
         onSkillsAutoRefreshStart: () => orchestrator.skills.startAutoRefresh(),
         prepareSkillInvocation: (name, input) => orchestrator.skills.prepareInvocation(name, input),
-        preparePluginCommand: (name, args) => orchestrator.skills.preparePluginCommand(name, args),
+        preparePluginCommand: (name, args, sessionId) => orchestrator.skills.preparePluginCommand(name, args, sessionId),
         onSkillsRefreshRequested: () => orchestrator.skills.refresh(),
         onLearnCommand: (command) => void orchestrator.skills.runLearnCommand(command),
         onSkillDetailRequested: (name) =>
@@ -747,6 +788,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.runMode.setMode(mode, opts),
         onFusionWorkersChangeRequested: (workers) =>
           orchestrator.runMode.setWorkers(workers),
+        onFusionRoleChangeRequested: (role, pin) =>
+          orchestrator.runMode.setRole(role, pin),
+        onFusionRolesListRequested: () => orchestrator.runMode.listRoles(),
         onFusionLegsSwapRequested: () => void orchestrator.runMode.swapLegs(),
         // `/worker stop|escalate <id>` (ATO-66) and `/worker steer <id>
         // <note>` (ATO-568): one running fusion worker, through the
@@ -782,6 +826,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
               say(`worker ${taskId}: escalation failed — ${err instanceof Error ? err.message : String(err)}`),
             );
         },
+        // `/ps`, `/stop [id]` (ATO-2437): this chat's background jobs.
+        onBackgroundJobsCommand: (sessionId, command) =>
+          runBackgroundJobsCommand(command, sessionId, runtime.backgroundJobs),
         // `/fusion` and `/fusion discard [id]` (ATO-617): the runs of this
         // session that a restart cut off, from their checkpoints.
         onFusionRunAction: (sessionId, action, runId) => {
@@ -802,7 +849,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           const list = runs?.listResumable(sessionId) ?? [];
           say(
             list.length === 0
-              ? "no unfinished fusion run in this session"
+              ? FUSION_RUNS_EMPTY
               : [
                   ...list.map((run) => run.summary),
                   "/fusion resume [id] continues one · /fusion discard [id] drops it",
@@ -836,6 +883,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.fallback.remove(providerId),
         onFallbackAppendLocalToggleRequested: () =>
           orchestrator.fallback.toggleAppendLocal(),
+        onFallbackLocalFirstToggleRequested: () =>
+          orchestrator.fallback.toggleLocalFirst(),
+        onFallbackLocalFirstSetRequested: (on) =>
+          orchestrator.fallback.setLocalFirst(on),
         onOnboardingStep: (step, outcome) => {
           runtime.reportOnboardingStep(step, outcome);
         },
@@ -908,6 +959,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.localModels.cancelHuggingFaceLookup(),
         onLocalModelsHfAddRequested: (repo, cursor) =>
           void orchestrator.localModels.addHuggingFaceChoice(repo, cursor),
+        onLocalModelsDirLoadRequested: () => void orchestrator.localModels.modelsDir.load(),
+        onLocalModelsDirMoveRequested: (target) => void orchestrator.localModels.modelsDir.move(target),
+        onLocalModelsDirCancelRequested: () => orchestrator.localModels.modelsDir.cancel(),
         onLocalModelsDeviceCycleRequested: () =>
           void orchestrator.localModels.cycleManagedDevice(),
         onLocalModelsAutoUpdateToggleRequested: () =>
@@ -982,6 +1036,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.privacy.setAnalyticsEnabled(enabled, "slash"),
         onOfflineToggleRequested: () => orchestrator.privacy.toggleOffline(),
         onPrivacyShieldToggleRequested: () => orchestrator.privacy.toggleShield(),
+        onPrivacyNamesToggleRequested: () => orchestrator.privacy.toggleShieldNames(),
         onPrivacyRefreshRequested: () => orchestrator.privacy.refresh(),
         onIntegrationsRefreshRequested: () =>
           orchestrator.integrations.refresh(),
@@ -1063,6 +1118,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // chat, then send the continuation message as if it had been typed.
   if (parsed.sessionId) orchestrator.switchSession(parsed.sessionId);
   if (parsed.send) orchestrator.sendMessage(parsed.send);
+  // ATO-2500: the favorite models for the bar's `fav n/m` (`--models`, else the shared list).
+  bus.emit({ type: "model_ring_loaded", ring: startupModelRing(parsed.models, config.paths.stateDir) });
 
   bus.emit({
     type: "runtime_info",
@@ -1392,6 +1449,19 @@ function persistVerboseSteps(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     bus.emit({ type: "runtime_info", line: `verbose setting not saved: ${msg}` });
+  }
+}
+
+/** `/pet` said in the chat what changed; only a failed write is reported. */
+function persistPet(
+  on: boolean,
+  bus: ReturnType<typeof makeTuiEventBus>,
+): void {
+  try {
+    persistUserTuiPet(on);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    bus.emit({ type: "runtime_info", line: `pet setting not saved: ${msg}` });
   }
 }
 

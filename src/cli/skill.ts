@@ -173,7 +173,7 @@ function handleWorkspaceSkill(args: string[], workspace: string): number {
       trust = setProjectTrust(getConfig(), workspace, true);
     }
     const items = value === "on" ? trust.trusted : trust.declined;
-    process.stdout.write(`project skills ${value}: ${resolve(workspace)} (${value === "on" ? "trusted" : "declined"}: ${items.skills.length} skills, ${items.instructions.length} instruction files)\n`);
+    process.stdout.write(`project skills ${value}: ${resolve(workspace)} (${value === "on" ? "trusted" : "declined"}: ${items.skills.length} skills, ${items.instructions.length} instruction files, ${items.commands.length} commands)\n`);
     return 0;
   }
   if (command !== "list" && command !== "show") throw new Error("--workspace supports list, show, enable, disable and project");
@@ -190,6 +190,8 @@ function handleWorkspaceSkill(args: string[], workspace: string): number {
     const trust = inspectProjectTrust(config, workspace);
     if (trust.trusted.instructions.length + trust.pending.instructions.length + trust.declined.instructions.length)
       process.stdout.write(`instructions: ${trust.trusted.instructions.length} trusted, ${trust.pending.instructions.length} not trusted yet, ${trust.declined.instructions.length} declined\n`);
+    if (trust.trusted.commands.length + trust.pending.commands.length + trust.declined.commands.length)
+      process.stdout.write(`commands: ${trust.trusted.commands.length} trusted, ${trust.pending.commands.length} not trusted yet, ${trust.declined.commands.length} declined\n`);
     if (trust.question) process.stdout.write(`untrusted: ${trust.question.replace(/ Trust (it|them)\?$/, "")} Run ${trust.hint} to trust.\n`);
     for (const message of view.diagnostics) process.stderr.write(`WARN: ${message}\n`);
   }

@@ -106,3 +106,14 @@ function clip(value: string, limit: number): string {
   if (value.length <= limit) return value;
   return `${value.slice(0, limit - 1)}…`;
 }
+
+/**
+ * The chat line for a path-scoped project rule that joined the prompt
+ * (ATO-2443): which rule file, as Cursor and Claude Code name the rules
+ * and instruction files they picked up. The path is the rule file's
+ * (workspace relative, or `~/...` for a global rule), never the file that
+ * matched it.
+ */
+export function formatPathRuleAttached(path: string): string {
+  return `rule attached: ${path}`;
+}

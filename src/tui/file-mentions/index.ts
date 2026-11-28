@@ -6,14 +6,14 @@ export {
   splitMentionedFiles,
   typedTextOf,
   type MentionedFile,
-} from "./mention-block.js";
+} from "../../mentions/mention-block.js";
 export {
   DEFAULT_MENTION_LIMITS,
   expandFileMentions,
   mentionTokens,
   resolveMentionedFile,
   type MentionLimits,
-} from "./expand-mentions.js";
+} from "../../mentions/expand-file-mentions.js";
 export {
   createMentionFileIndex,
   DEFAULT_FILE_INDEX_LIMITS,

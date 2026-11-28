@@ -58,7 +58,7 @@ describe("project folder trust (ATO-298 soft trust)", () => {
 
     const status = inspectProjectTrust(getConfig(), repo);
     expect(status.question).toBe("This folder has 3 project skills and AGENTS.md. Trust them?");
-    expect(status.pending).toEqual({ skills: ["alpha", "beta", "gamma"], instructions: ["AGENTS.md"] });
+    expect(status.pending).toEqual({ skills: ["alpha", "beta", "gamma"], instructions: ["AGENTS.md"], commands: [] });
     expect(status.questionId).toMatch(/^[0-9a-f]{16}$/);
 
     const after = answerProjectTrust(getConfig(), repo, "trust", status.questionId!);
@@ -85,7 +85,7 @@ describe("project folder trust (ATO-298 soft trust)", () => {
     const { registry } = await local();
     expect(registry.list().map(s => s.manifest.name)).toEqual(["alpha"]);
     const status = inspectProjectTrust(getConfig(), repo);
-    expect(status.pending).toEqual({ skills: ["intruder"], instructions: ["CLAUDE.md"] });
+    expect(status.pending).toEqual({ skills: ["intruder"], instructions: ["CLAUDE.md"], commands: [] });
     expect(status.question).toBe("This folder has 1 new project skill and new CLAUDE.md. Trust them?");
 
     // "No" is remembered: the folder is not asked about again until something else is new.
@@ -94,7 +94,7 @@ describe("project folder trust (ATO-298 soft trust)", () => {
     expect(cloud().reasons.intruder).toContain("declined in this folder");
     expect(cloud().skills).toEqual(["alpha"]); expect(cloud().instructions).toEqual(["RULE TWO"]);
     skill(".agents/skills", "later");
-    expect(inspectProjectTrust(getConfig(), repo).pending).toEqual({ skills: ["later"], instructions: [] });
+    expect(inspectProjectTrust(getConfig(), repo).pending).toEqual({ skills: ["later"], instructions: [], commands: [] });
   });
 
   it("refuses an answer to a question that no longer matches the folder", () => {
@@ -147,7 +147,7 @@ describe("project folder trust (ATO-298 soft trust)", () => {
     setProjectTrust(getConfig(), repo, true);
     expect(cloud().skills).toEqual(["alpha"]);
     const off = setProjectTrust(getConfig(), repo, false);
-    expect(off.declined).toEqual({ skills: ["alpha"], instructions: ["AGENTS.md"] });
+    expect(off.declined).toEqual({ skills: ["alpha"], instructions: ["AGENTS.md"], commands: [] });
     expect(cloud().skills).toEqual([]); expect(cloud().instructions).toEqual([]);
     expect(off.question).toBeNull();
   });
@@ -160,7 +160,7 @@ describe("project folder trust (ATO-298 soft trust)", () => {
     expect(profiles().get("deploy")).toBeUndefined();
     expect(profiles().withheld).toEqual([".claude/agents/deploy.md"]);
     const status = inspectProjectTrust(getConfig(), repo);
-    expect(status.pending).toEqual({ skills: [], instructions: [".claude/agents/deploy.md"] });
+    expect(status.pending).toEqual({ skills: [], instructions: [".claude/agents/deploy.md"], commands: [] });
     answerProjectTrust(getConfig(), repo, "trust", status.questionId!);
     expect(profiles().get("deploy")?.prompt).toBe("DEPLOY PROFILE");
     setProjectTrust(getConfig(), repo, false);

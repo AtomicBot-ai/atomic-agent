@@ -75,18 +75,23 @@ const REASON_PATTERNS: ReadonlyArray<readonly [UpstreamReason, RegExp]> = [
     "context_overflow",
     /exceed_context_size|context_length_exceeded|maximum context length|context[ _-]?(?:length|window|size)[^.]{0,60}(?:exceed|too (?:long|large|small)|maximum|limit)|exceeds? (?:the |its )?(?:available )?context|prompt is too long|too many tokens in (?:the )?prompt|input token count[^.]{0,40}exceeds/i,
   ],
+  // ATO-1673: new-api / one-api gateways say `insufficient_user_quota`
+  // (a 403) for a prepaid balance that ran out, DeepSeek's 402 type is
+  // `insufficient_balance_error`.
   [
     "out_of_credit",
-    /insufficient[ _-]?(?:balance|credits?|funds|quota)|credit balance|out of (?:credits?|funds)|requires more credits|payment[ _-]required|credit_balance_exhausted/i,
+    /insufficient[ _-]?(?:user[ _-]?)?(?:balance|credits?|funds|quota)|credit balance|out of (?:credits?|funds)|requires more credits|payment[ _-]required|credit_balance_exhausted/i,
   ],
   // ATO-2419: a key the provider refused, in its words. Gemini says it
   // with a 400 ("API key not valid", `API_KEY_INVALID`), so the status
   // alone does not; Anthropic `authentication_error` "invalid x-api-key",
   // OpenAI "Incorrect API key provided", DeepSeek "Authentication Fails",
-  // OpenRouter "No auth credentials found".
+  // OpenRouter "No auth credentials found". ATO-1673: a 401 coded
+  // `activation_required` is an account the provider has not activated
+  // yet, so it does not take the key.
   [
     "key_refused",
-    /api[ _-]?key[^.]{0,40}(?:not valid|invalid|incorrect|expired|revoked|missing|required)|(?:invalid|incorrect|missing|expired|revoked)[ _-]+(?:x-)?api[ _-]?key|API_KEY_INVALID|authentication[ _-]?(?:error|fail)|no auth credentials/i,
+    /api[ _-]?key[^.]{0,40}(?:not valid|invalid|incorrect|expired|revoked|missing|required)|(?:invalid|incorrect|missing|expired|revoked)[ _-]+(?:x-)?api[ _-]?key|API_KEY_INVALID|authentication[ _-]?(?:error|fail)|no auth credentials|activation_required/i,
   ],
   ["missing_thought_signature", /thought[ _-]?signature/i],
   ["missing_reasoning_content", /reasoning_content/i],
@@ -98,9 +103,11 @@ const REASON_PATTERNS: ReadonlyArray<readonly [UpstreamReason, RegExp]> = [
     "tool_result_orphan",
     /unexpected [`'"]?tool_use_id|tool_call_id[^.]{0,60}(?:not found|unexpected|invalid|does not match|no matching)|tool messages? must be a response to|preceding message with ['"`]?tool_calls|tool_result[^.]{0,40}(?:without|no) (?:corresponding|matching) tool_use/i,
   ],
+  // ATO-1673: OpenRouter's 404 "No endpoints found that support tool
+  // use", and "<model> cannot use tools".
   [
     "tools_unsupported",
-    /does(?: not|n't) support (?:tools|tool[ _]?(?:calls?|use)|function[ _]calling)|(?:tools?|function calling) (?:is|are) not (?:supported|enabled)/i,
+    /does(?: not|n't) support (?:tools|tool[ _]?(?:calls?|use)|function[ _]calling)|(?:tools?|function calling) (?:is|are) not (?:supported|enabled)|no endpoints found that support tool use|(?:cannot|can ?not|can't) use tools/i,
   ],
   [
     "tool_schema_invalid",

@@ -122,6 +122,8 @@ export const GITHUB_TOOL_ARGS_SCHEMAS: readonly [string, Schema][] = [
         number: numberSchema,
         repo: stringSchema,
         logs: booleanSchema,
+        reviews: booleanSchema,
+        since: stringSchema,
       },
       ["number"],
     ),
@@ -132,11 +134,13 @@ export const GITHUB_TOOL_ARGS_SCHEMAS: readonly [string, Schema][] = [
       {
         action: {
           type: "string",
-          enum: ["status", "enable", "disable", "prepare", "push"],
+          enum: ["status", "enable", "disable", "prepare", "merge-base", "push", "watch", "unwatch"],
         },
         number: numberSchema,
         repo: stringSchema,
         maxAttempts: numberSchema,
+        everyMinutes: numberSchema,
+        notify: { type: "string", enum: ["telegram", "push"] },
       },
       ["action", "number"],
     ),

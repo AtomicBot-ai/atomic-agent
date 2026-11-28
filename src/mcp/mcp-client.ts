@@ -49,6 +49,10 @@ import type { McpElicitationHandler } from "./mcp-elicitation-handler.js";
 import { qualifyMcpToolName, splitMcpToolName } from "./mcp-resource-class.js";
 import { mcpServerKeepReadable } from "./mcp-sandbox-paths.js";
 import { buildMcpStdioEnv } from "./mcp-stdio-env.js";
+import { resolveMcpServerEnv } from "./mcp-env-secrets.js";
+import { resolveMcpServerHeaders } from "./mcp-header-secrets.js";
+import type { ToolSecretSource } from "../config/tool-secrets.js";
+import { maskSecrets } from "../error-reporting/secret-detector.js";
 import {
   buildOsSandboxPolicy,
   formatSandboxUnavailable,
@@ -131,6 +135,13 @@ export interface McpClientDeps {
    * server is `oauthStateDir` (it is `config.paths.stateDir`).
    */
   sandbox?: () => OsSandboxSettings;
+  /**
+   * Tool secrets a stdio server's `env` may name as `{{secret:NAME}}`,
+   * filled in at spawn (ATO-2530, `mcp-env-secrets.ts`). Omitted: none.
+   */
+  toolSecrets?: ToolSecretSource;
+  /** Which servers may use them: the person's own, not a plugin's. Omitted: every server. */
+  mayUseToolSecrets?: (config: McpServerConfig) => boolean;
 }
 
 /** Defaults — agent identity advertised to servers in `initialize`. */
@@ -225,8 +236,18 @@ export class McpClient {
     this.connecting = true;
     let stderrTail: StderrTail = { read: () => "", settle: async () => {} };
     try {
+      // Secrets in a stdio server's env are fetched here, at spawn; a
+      // server that cannot have them is never started.
+      const mayUseSecrets = this.deps.mayUseToolSecrets?.(this.config) ?? true;
+      const serverEnv = await resolveMcpServerEnv(
+        this.config,
+        this.deps.toolSecrets,
+        mayUseSecrets,
+      );
+      // Likewise a remote server's headers, at connect (`mcp-header-secrets.ts`).
+      const serverHeaders = await resolveMcpServerHeaders(this.config, this.deps.toolSecrets, mayUseSecrets);
       const transport =
-        this.deps.transportFactory?.(this.config) ?? this.buildTransport();
+        this.deps.transportFactory?.(this.config) ?? this.buildTransport(serverEnv, serverHeaders);
       // Attached before `client.connect()` starts the child: the SDK hands
       // out a PassThrough up front precisely so early output is not lost.
       stderrTail = attachStderrTail(
@@ -294,9 +315,11 @@ export class McpClient {
       err instanceof McpConnectError ? err.message : scrubErrorMessage(err);
     await stderrTail.settle(STDERR_SETTLE_MS);
     const tail = formatStderrTail(stderrTail.read());
+    // A server can print its own env: a tool secret filled into it is
+    // masked by exact value before the message reaches a log or a badge.
     return new McpConnectError(
       this.config.name,
-      tail ? `${base} · server stderr: ${tail}` : base,
+      maskSecrets(tail ? `${base} · server stderr: ${tail}` : base),
     );
   }
 
@@ -613,8 +636,10 @@ export class McpClient {
     return { command: wrapped.command, args: wrapped.args, sandboxed: true, allowDocker };
   }
 
-  private buildTransport():
-    StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport {
+  private buildTransport(
+    serverEnv: Readonly<Record<string, string>> | undefined = this.config.env,
+    serverHeaders?: Readonly<Record<string, string>>,
+  ): StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport {
     const t = this.config.transport;
     if (t.kind === "stdio") {
       this.authProvider = null;
@@ -623,7 +648,7 @@ export class McpClient {
       // agent's environment, plus the server's own configured `env`.
       // Provider keys loaded from `<stateDir>/.env` stay with the agent.
       // See `buildMcpStdioEnv` and docs/client.md.
-      let env = buildMcpStdioEnv(this.config.env);
+      let env = buildMcpStdioEnv(serverEnv);
       // On Windows a bare shim name like `npx` / `npm` is `npx.cmd`, which a
       // no-shell `spawn` cannot resolve (ENOENT). Route bare commands through
       // `cmd.exe /c` so PATHEXT resolution kicks in; absolute paths and
@@ -681,14 +706,15 @@ export class McpClient {
           })
         : null;
     const authProvider = this.authProvider ?? undefined;
+    const headers = serverHeaders ?? t.headers;
     if (t.kind === "streamable_http") {
       return new StreamableHTTPClientTransport(new URL(t.url), {
-        requestInit: t.headers ? { headers: { ...t.headers } } : undefined,
+        requestInit: headers ? { headers: { ...headers } } : undefined,
         ...(authProvider ? { authProvider } : {}),
       });
     }
     return new SSEClientTransport(new URL(t.url), {
-      requestInit: t.headers ? { headers: { ...t.headers } } : undefined,
+      requestInit: headers ? { headers: { ...headers } } : undefined,
       ...(authProvider ? { authProvider } : {}),
     });
   }

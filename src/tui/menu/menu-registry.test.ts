@@ -127,7 +127,7 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "sessions",
-    description: "open session picker to switch threads",
+    description: "open session picker to switch threads · `/sessions --deleted` lists chats in Trash · `/sessions --restore <n>` brings one back",
   },
   {
     name: "new",
@@ -166,7 +166,7 @@ const V0_2_2_SLASH_COMMANDS = [
     // handler answers has to be reachable from here, or it exists only
     // for whoever types an invalid one and reads the usage line.
     description:
-      "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm model-mode [local|cloud|inherit] [provider-id] [model-id]` select context policy · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain · `/llm restart` bounce the local model server",
+      "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm model-mode [local|cloud|inherit] [provider-id] [model-id]` select context policy · `/llm check` test the active route's streaming tool contract · `/llm fallback` edit the fallover chain · `/llm fallback local-first on|off` start each turn on the local model · `/llm restart` bounce the local model server",
   },
   {
     name: "mcp",
@@ -181,8 +181,14 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "model",
     description:
-      "open chat model picker · subcommands: pull <id> | use <id> | favorite [add|remove] | status | <base-url>",
+      "open chat model picker · subcommands: pull <id> | use <id> | favorite [add|remove] | status | <base-url> · ctrl+p switches to the next favorite",
     aliases: ["models", "local"],
+  },
+  // ATO-2490: the model servers running here, and their actions.
+  {
+    name: "servers",
+    description:
+      "Ollama, LM Studio and the Llama app running here · start | load | unload | pull | rm | adopt <ollama|lmstudio> [model]",
   },
   // Added with the reasoning level (ATO-490).
   {
@@ -222,7 +228,17 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "queue",
     description:
-      "parked messages: `/queue` list | `/queue <msg>` park one | `/queue clear` | `/queue mode` make Enter queue",
+      "parked messages: `/queue` list | `/queue <msg>` park one | `/queue next <n>` send it next | `/queue move <n> <place>` | `/queue clear` | `/queue mode` make Enter queue",
+  },
+  // ATO-2437: the agent's background jobs, and stopping them.
+  {
+    name: "ps",
+    description:
+      "background jobs the agent started in this chat: command, state, monitor | `/stop <id>` stops one",
+  },
+  {
+    name: "stop",
+    description: "stop the agent's background jobs in this chat: `/stop` all running | `/stop <id>` one",
   },
   {
     name: "steer",
@@ -250,7 +266,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "research",
     description:
-      "research a question on the web: `/research <question>` runs research.deep and saves a report with checked quotes in the working folder",
+      "research a question: `/research <question>` runs research.deep on the web (`--docs` for your My files documents only, `--both` for both) and saves a report with checked quotes in the working folder",
   },
   {
     name: "window",
@@ -275,7 +291,7 @@ const V0_2_2_SLASH_COMMANDS = [
   // ATO-569: the cost and limit breakdown behind the composer readout.
   {
     name: "usage",
-    description: "show this session's cost and the account's rate limits",
+    description: "show this session's cost and limits, and tokens per day over every chat",
     aliases: ["cost"],
   },
   // The rail's fold toggle: the mouse has the « control, this is the
@@ -305,6 +321,7 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "runmode",
     description:
       "where the chat runs: `/runmode` opens the switch · `/runmode local|cloud|fusion` sets one · `/runmode status`",
+    keywords: ["fusion", "local", "cloud"],
   },
   // The way back into first-run setup once it was skipped or finished.
   {
@@ -321,11 +338,11 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "enhance",
     description: "rewrite a prompt into a clearer one in the composer; nothing is sent",
   },
-  // ATO-1057.
+  // ATO-1057; ATO-2467 restores files too.
   {
     name: "rewind",
     description:
-      "take the chat back to an earlier message of yours and edit it; files the agent changed stay as they are",
+      "take the chat back to an earlier message of yours; choose chat and files, chat only or files only",
   },
   // ATO-1054.
   {
@@ -358,7 +375,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "fusion",
     description:
-      "a fusion run cut off by a restart: `/fusion` lists them · `/fusion resume [id]` continues from the unfinished wave · `/fusion discard [id]` drops it",
+      "a fusion run cut off by a restart: `/fusion` lists them · `/fusion resume [id]` continues from the unfinished wave · `/fusion discard [id]` drops it · to turn Fusion on, use `/runmode fusion`",
   },
   // ATO-448: a chat reply a restart cut off, continued only by the person.
   {

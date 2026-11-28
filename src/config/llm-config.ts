@@ -241,6 +241,12 @@ export type UserLlmFallbackConfig = {
   chain?: string[];
   appendLocal?: boolean;
   localFirst?: boolean;
+  /** Hand a weak local answer to the cloud mid-turn (ATO-2434). Default true. */
+  localFirstEscalate?: boolean;
+  /** Cloud spend ceiling of one local-first turn, USD (ATO-2434). Unset: none. */
+  localFirstMaxTurnUsd?: number;
+  /** Day's spend past which local-first stops sending turns to the cloud, USD (ATO-2434). Unset: none. */
+  localFirstMaxDayUsd?: number;
   failureThreshold?: number;
   cooldownMs?: number[];
   probeThrottleMs?: number;
@@ -882,6 +888,23 @@ export function parseLlmFallbackConfig(
       );
     }
     out.localFirst = obj.localFirst;
+  }
+  if (obj.localFirstEscalate !== undefined) {
+    if (typeof obj.localFirstEscalate !== "boolean") {
+      throw new ConfigValidationError(
+        `${field}.localFirstEscalate`,
+        "expected boolean",
+      );
+    }
+    out.localFirstEscalate = obj.localFirstEscalate;
+  }
+  for (const key of ["localFirstMaxTurnUsd", "localFirstMaxDayUsd"] as const) {
+    const value = obj[key];
+    if (value === undefined || value === null) continue;
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+      throw new ConfigValidationError(`${field}.${key}`, "expected a positive number of USD");
+    }
+    out[key] = value;
   }
   if (obj.failureThreshold !== undefined) {
     out.failureThreshold = parsePositiveInt(

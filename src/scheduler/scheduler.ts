@@ -2,16 +2,13 @@ import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { DrainOutcome } from "../tasks/task-runner.js";
 import type { SchedulerLeadership } from "./scheduler-leadership.js";
+import { settleWithGrace } from "./scheduler-settle.js";
 
 /**
- * Minimal clock surface the scheduler depends on. Production wiring
- * uses `Date.now` / `setInterval` / `clearInterval`; tests inject a
- * fake timer so ticks can be driven manually without real delays.
- *
- * Keeping the surface this narrow is deliberate: the scheduler is the
- * ONLY new periodic timer source introduced by Option 4, and gating
- * every `setInterval` call through this interface keeps that invariant
- * trivially greppable.
+ * Minimal clock surface the scheduler depends on: `Date.now` /
+ * `setInterval` / `clearInterval` in production, a fake timer in tests.
+ * Narrow on purpose: the scheduler is the ONLY periodic timer source
+ * introduced by Option 4, and this keeps that invariant greppable.
  */
 export interface SchedulerClock {
   now(): number;
@@ -69,6 +66,8 @@ export interface SchedulerOptions {
    * throttles itself and must not throw. With a leadership gate, not on
    * the tick that gains leadership (#1735): the previous leader may have
    * started its own on its last tick and only stands by on its next.
+   * The signal is aborted when this process stops leading or stops
+   * (ATO-2508), so a sidecar tick still running on a former leader quits.
    */
   sidecars?: readonly SchedulerSidecar[];
 }
@@ -111,16 +110,14 @@ export class Scheduler {
    * (the runner puts that task back — see `TaskRunner.handleCancelled`).
    */
   private readonly stopController = new AbortController();
+  /** One per leadership term; aborted on losing it or at `stop()` (ATO-2508). */
+  private term: AbortController | null = null;
 
   constructor(private readonly options: SchedulerOptions) {
     this.clock = options.clock ?? DEFAULT_CLOCK;
   }
 
-  /**
-   * Begin polling. Idempotent — a second call while running is a
-   * no-op. Never starts after `stop()` has been invoked (the
-   * scheduler is single-use per runtime lifetime).
-   */
+  /** Begin polling. Idempotent; never starts again after `stop()`. */
   start(): void {
     if (this.timer !== null) return;
     if (this.stopping) return;
@@ -154,15 +151,12 @@ export class Scheduler {
   /**
    * Stop polling. Clears the interval and aborts the in-flight tick
    * synchronously, then awaits that tick (if any) so callers can rely on
-   * "no more runTurn calls originate here" after the returned promise
-   * settles.
-   *
-   * The abort is what lets that wait be short: a tick used to be waited
-   * out with its task turn still running, and a turn waiting on a model
-   * server that did not answer held `serve`'s shutdown for minutes, until
-   * the desktop killed the agent. `graceMs` bounds the wait for a turn
-   * that ignores its signal; the tick then finishes on its own, and its
-   * task is taken back by the next boot (`TaskStore.recoverInterrupted`).
+   * "no more runTurn calls originate here" once the promise settles.
+   * The abort keeps that wait short: a turn waiting on a model server
+   * that did not answer once held `serve`'s shutdown for minutes.
+   * `graceMs` bounds the wait for a turn that ignores its signal; the
+   * tick then finishes on its own, and its task is taken back by the
+   * next boot (`TaskStore.recoverInterrupted`).
    */
   async stop(graceMs?: number): Promise<void> {
     this.stopping = true;
@@ -171,8 +165,9 @@ export class Scheduler {
       this.timer = null;
     }
     this.stopController.abort();
+    this.term?.abort();
     try {
-      await this.settleInFlight(graceMs);
+      await settleWithGrace(this.inFlight, graceMs);
     } finally {
       if (this.leading === true) {
         this.leading = false;
@@ -181,29 +176,6 @@ export class Scheduler {
       // After the drain, so the other process takes over only once this
       // one has stopped claiming (or the grace ran out).
       this.options.leadership?.release();
-    }
-  }
-
-  private async settleInFlight(graceMs: number | undefined): Promise<void> {
-    const inFlight = this.inFlight;
-    if (!inFlight) return;
-    const settled = inFlight.catch(() => {
-      // tickOnce already logs + metrics the error
-    });
-    if (graceMs === undefined) {
-      await settled;
-      return;
-    }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        settled,
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, graceMs);
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
     }
   }
 
@@ -226,6 +198,8 @@ export class Scheduler {
     }
     if (leader !== this.leading) {
       this.leading = leader;
+      this.term?.abort();
+      this.term = leader ? new AbortController() : null;
       if (leadership) {
         this.options.logger?.info(
           leader
@@ -236,6 +210,20 @@ export class Scheduler {
       void this.notifyLeadership(leader);
     }
     return leader;
+  }
+
+  /**
+   * Ask the gate again right before acting on a leader-only event that
+   * did not come from a tick: a file trigger hit (ATO-2508). The process
+   * that takes over writes the lock before it starts its watchers, but a
+   * former leader only notices on its next tick, so for up to `tickMs`
+   * both watch the same files. A `false` answer here also stands this
+   * process by at once (its watchers close). Never claims leadership it
+   * did not already have, and is `false` once `stop()` began.
+   */
+  confirmLeadership(): boolean {
+    if (this.stopping || this.leading !== true) return false;
+    return this.leads();
   }
 
   private async notifyLeadership(leading: boolean): Promise<void> {
@@ -252,8 +240,9 @@ export class Scheduler {
 
   private tickSidecars(): void {
     const now = this.clock.now();
+    const signal = this.term?.signal ?? this.stopController.signal;
     for (const sidecar of this.options.sidecars ?? []) {
-      void sidecar.tick(now, this.stopController.signal).catch((err: unknown) => {
+      void sidecar.tick(now, signal).catch((err: unknown) => {
         this.options.logger?.warn("scheduler sidecar failed", {
           error: err instanceof Error ? err.message : String(err),
         });

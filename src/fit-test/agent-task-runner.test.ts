@@ -10,6 +10,12 @@ describe("agent task runner helpers", () => {
     expect(parsed.localModels.url).toBe("http://127.0.0.1:9931");
   });
 
+  it("carries the parent's model-sampling switch into the child (ATO-2480)", () => {
+    expect(parseUserConfigFile(childConfig("http://127.0.0.1:9931", false)).localModels.modelSampling).toBe(false);
+    expect(parseUserConfigFile(childConfig("http://127.0.0.1:9931", true)).localModels.modelSampling).toBe(true);
+    expect(childConfig("http://127.0.0.1:9931").localModels).not.toHaveProperty("modelSampling");
+  });
+
   it("adds prompt and generated tokens from the trace", () => {
     const trace = [
       JSON.stringify({ type: "prompt_captured", tokens: { total: 1200 } }),

@@ -494,6 +494,14 @@ describe("reduceUiAction finished-turn folds (ATO-963)", () => {
     ).toBe(false);
   });
 
+  it("sets the terminal pet, off by default (ATO-2513)", () => {
+    const state = createInitialTuiState(SESSION);
+    expect(state.pet).toBe(false);
+    const on = reduceUiAction(state, { type: "pet_set", on: true });
+    expect(on?.pet).toBe(true);
+    expect(reduceUiAction(on!, { type: "pet_set", on: false })?.pet).toBe(false);
+  });
+
   it("sets the composer's vim keys, off by default (ATO-662)", () => {
     const state = createInitialTuiState(SESSION);
     expect(state.vimMode).toBe(false);

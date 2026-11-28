@@ -15,6 +15,8 @@ This feature composes Local, Cloud, External and Fallback panes. Read [TUI instr
 
 [Fallback rows](fallback/llm-fallback-rows.tsx), [state](fallback/fallback-panel-state.ts), [reducer](fallback/fallback-panel-reducer.ts), [selectors](fallback/fallback-panel-selectors.ts), [keys](fallback/fallback-key-bindings.ts) and [orchestrator](fallback/fallback-orchestrator.ts) live together. The orchestrator persists through config commands and updates the live chain; display projects the effective chain and last switch rather than inventing a retry countdown. Provider defaults and runtime fallback policy remain domain contracts.
 
+The pane also carries the local-first switch (`llm.fallback.localFirst`, ATO-2434): the line "Start on the local model: on/off", flipped with `o` or with `/llm fallback local-first on|off`, which opens the pane. Both go through `FallbackOrchestrator` into `setFallbackLocalFirstInConfig`, which writes only that field; a refused write shows on the status line like a refused chain edit. Every writer of `llm.fallback` (chain edits, the `appendLocal` toggle and question, provider removal) keeps the flag.
+
 ## Checks
 
 Run `npx vitest run src/tui/llm-panel src/tui/providers src/tui/composer-switch` for measured layouts, modal precedence, cloud/external input, local actions, fallback and activation seams. Source and tests are adjacent. Run `npm run lint`, `npm run typecheck:tests`, `npm run imports:check` and `npm run docs:check`.

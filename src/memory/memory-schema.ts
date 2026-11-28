@@ -1,3 +1,5 @@
+import { ensureConsolidationBackoffColumns } from "./consolidation-backoff-columns.js";
+
 /**
  * SQLite schema for the cross-session memory store. Lives in a file
  * separate from `sessions.sqlite` because durable facts and notes are
@@ -684,6 +686,7 @@ export function applyMigrations(db: MemoryDatabaseLike): void {
   // `profile_facts` without these columns. Idempotent.
   ensureNameGroundingColumns(db);
   ensureDisabledColumns(db);
+  ensureConsolidationBackoffColumns(db);
   if (current === MEMORY_SCHEMA_VERSION) return;
   db.prepare(
     `INSERT INTO schema_meta (key, value) VALUES ('version', ?)

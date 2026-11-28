@@ -54,7 +54,8 @@ const LOCAL_CONTENT_TOOLS: ReadonlyMap<string, string> = new Map(Object.entries(
   "os.screen.elements": "the screen",
   "vision.describe": "an image",
   "audio.transcribe": "a recording",
-  // A delegated run's result relays what it read; its own taint stays on its own session.
+  // A delegated run's result relays what it read. Outside content it read also
+  // taints the parent session (tools/fusion/worker-taint.ts, ATO-2481); local reads do not.
   "subagent.run": "a subagent's result",
   "fusion.delegate": "a delegated worker's result",
 }));

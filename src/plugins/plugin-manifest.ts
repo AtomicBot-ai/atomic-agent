@@ -24,7 +24,7 @@ const MANIFESTS: ReadonlyArray<{ format: PluginFormat; path: string }> = [
 const CONVENTIONAL_DIRS = ["skills", "commands", "agents", "hooks"];
 
 /** Manifest keys from the Claude format we know about but do not load yet. */
-const KNOWN_UNSUPPORTED = ["outputStyles", "lspServers", "monitors", "bin", "settings"];
+const KNOWN_UNSUPPORTED = ["outputStyles", "lspServers", "bin", "settings"];
 
 const MAX_MANIFEST_BYTES = 256 * 1024;
 
@@ -99,6 +99,11 @@ export function parseManifestObject(raw: unknown, root: string): PluginManifest 
   else if (obj.hooks && typeof obj.hooks === "object" && !Array.isArray(obj.hooks)) manifest.hooksInline = obj.hooks as Record<string, unknown>;
   if (typeof obj.mcpServers === "string") manifest.mcpPath = insideRoot(obj.mcpServers, root, "mcpServers");
   else if (obj.mcpServers && typeof obj.mcpServers === "object" && !Array.isArray(obj.mcpServers)) manifest.mcpInline = obj.mcpServers as Record<string, unknown>;
+  // Claude Code keeps monitors under `experimental` and still reads a top-level key (ATO-2438).
+  const experimental = obj.experimental && typeof obj.experimental === "object" && !Array.isArray(obj.experimental) ? obj.experimental as Record<string, unknown> : {};
+  const monitors = experimental.monitors ?? obj.monitors;
+  if (typeof monitors === "string") manifest.monitorsPath = insideRoot(monitors, root, "monitors");
+  else if (Array.isArray(monitors)) manifest.monitorsInline = monitors;
   return manifest;
 }
 

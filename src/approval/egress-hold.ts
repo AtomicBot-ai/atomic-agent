@@ -7,7 +7,8 @@
  * before.
  *
  * A host is known when it stays on this machine (`localhost`,
- * `127.0.0.1`, `::1`), is on `http.hostAllowlist`, or the person already
+ * `127.0.0.1`, `::1`), is on `http.hostAllowlist` or on the durable
+ * `agent.security.knownHosts` (ATO-2528), or the person already
  * said yes to it in this session: a per-site browser grant, an
  * "allow in this chat" on an HTTP request to it, or an
  * "allow in this chat" / "allow always" on an earlier command that sent
@@ -22,6 +23,8 @@ export interface EgressKnownHosts {
   allowlist: readonly string[] | null;
   /** Hosts the person said yes to in this session, lower case. */
   sessionHosts: ReadonlySet<string>;
+  /** `agent.security.knownHosts`: kept across sessions, same `*.domain` rules. */
+  durableHosts?: readonly string[];
 }
 
 /** The outbound destinations of `egress` whose host is not known. */
@@ -34,8 +37,17 @@ export function unknownOutbound(
     if (host === null) return true;
     if (isLoopbackHost(host)) return false;
     if (hostOnAllowlist(host, known.allowlist)) return false;
+    if (hostOnAllowlist(host, known.durableHosts ?? null)) return false;
     return !known.sessionHosts.has(host);
   });
+}
+
+/** The readable outbound hosts of `egress` that leave this machine, for "allow always" to keep. */
+export function durableHostsToKeep(egress: readonly EgressDestination[] | undefined): string[] {
+  const hosts = outboundDestinations(egress)
+    .map((d) => d.host)
+    .filter((h): h is string => h !== null && !isLoopbackHost(h));
+  return [...new Set(hosts)];
 }
 
 /**

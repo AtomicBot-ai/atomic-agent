@@ -102,9 +102,9 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "os.shell.run",
     summary:
-      "Run a shell command in the working directory (may require approval). Not for deleting user files (use os.fs.trash when the user wants paths removed) or for moving, renaming or sorting them into folders (use os.fs.move), or for controlling a web browser (AppleScript, `open -a <browser> <url>`: use the browser tools). To run a command, `cmd` is required: the program, with its arguments in `args`, or a full command line. Run task steps (installs, clones, builds) yourself rather than telling the user to type them; hand over only a step the result says needs the user. A command still running at the default timeout comes back as a job: wait for it, kill it, or list jobs; `background: true` starts a server or watcher as a kept job at once; `until` (a regex such as \"ready|error\") with a command or a wait comes back at the first matching output line instead of polling; `tty: true` starts an interactive job on a terminal (a REPL, `npm init`) that `{\"write\": id, \"text\": \"y\\n\"}` types into (each input asks like a command; never type a password).",
+      "Run a shell command in the working directory (may require approval). Not for deleting user files (use os.fs.trash when the user wants paths removed) or for moving, renaming or sorting them into folders (use os.fs.move), or for controlling a web browser (AppleScript, `open -a <browser> <url>`: use the browser tools). To run a command, `cmd` is required: the program, with its arguments in `args`, or a full command line. Run task steps (installs, clones, builds) yourself rather than telling the user to type them; hand over only a step the result says needs the user. A command still running at the default timeout comes back as a job: wait for it, kill it, or list jobs; `background: true` starts a server or watcher as a kept job at once; `until` (a regex such as \"ready|error\") with a command or a wait comes back at the first matching output line instead of polling; `{\"monitor\": id, \"until\": \"ready|error\"}` keeps listening to a job and later matches arrive as notices, even after the turn ends; `tty: true` starts an interactive job on a terminal (a REPL, `npm init`) that `{\"write\": id, \"text\": \"y\\n\"}` types into (each input asks like a command; never type a password: `{\"write\": id, \"secret\": \"sudo password\"}` lets the user type it, unseen by you).",
     argsSchema:
-      "{ cmd: string, args: string[], cwd?: string, timeoutMs?: number, keep?: boolean, background?: boolean } | { wait: number /* job id */, timeoutMs?: number, keep?: boolean } | { kill: number } | { jobs: true }",
+      "{ cmd: string, args: string[], cwd?: string, timeoutMs?: number, keep?: boolean, background?: boolean } | { wait: number /* job id */, timeoutMs?: number, keep?: boolean } | { kill: number } | { jobs: true } | { monitor: number /* job id */, until?: string }",
   },
   OS_FS_READ_CONTRACT.descriptor,
   OS_FS_WRITE_CONTRACT.descriptor,
@@ -269,16 +269,16 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "github.pr.checks",
     summary:
-      "CI verdict of a pull request's head: failing and pending checks plus the log tail of failing GitHub Actions jobs. Read-only.",
+      "A pull request's fix status: CI verdict, failing and pending checks, the log tail of failing GitHub Actions jobs, merge conflict with the base, and review feedback from the repo's team. Read-only.",
     argsSchema:
-      "{ number: number, repo?: string /* owner/name */, logs?: boolean }",
+      "{ number: number, repo?: string /* owner/name */, logs?: boolean, reviews?: boolean, since?: string /* ISO time */ }",
     tier: "rare",
   },
   {
     name: "github.pr.autofix",
     summary:
-      "Opt-in CI autofix for one PR: `enable` (asks the user), `prepare` (worktree of the PR branch), `push` (that worktree's commit to the PR head only, never forced, stops after maxAttempts), `status`, `disable`. May require approval.",
-    argsSchema: `{ action: "status" | "enable" | "disable" | "prepare" | "push", number: number, repo?: string /* owner/name */, maxAttempts?: number }`,
+      "Opt-in PR autofix (CI, conflicts, review comments) for one PR: `enable` (asks the user), `prepare` (worktree of the PR branch), `merge-base` (merge the base in), `push` (that worktree's commit to the PR head only, never forced, stops after maxAttempts), `watch` / `unwatch` (background check that starts a fix round only when needed), `status`, `disable`. May require approval.",
+    argsSchema: `{ action: "status" | "enable" | "disable" | "prepare" | "merge-base" | "push" | "watch" | "unwatch", number: number, repo?: string /* owner/name */, maxAttempts?: number, everyMinutes?: number, notify?: "telegram" | "push" }`,
     tier: "rare",
   },
   {

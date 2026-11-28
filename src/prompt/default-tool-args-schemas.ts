@@ -240,6 +240,10 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       write: integerSchema,
       text: stringSchema,
       eof: booleanSchema,
+      // ATO-2436: keep listening to a job; matches arrive as notices later.
+      monitor: integerSchema,
+      // ATO-2486: what the job asks for; the user types the value.
+      secret: stringSchema,
     }),
   ],
 
@@ -620,6 +624,58 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["title"],
     ),
   ],
+  // ATO-2457. Nested arrays of objects keep it off the strict path like
+  // canvas.render; the tool's parser owns bounds, bare-string labels and
+  // the kind guessed from which list is given.
+  [
+    "ui.render",
+    obj(
+      {
+        kind: { type: "string", enum: ["decision", "form", "cards"] },
+        title: stringSchema,
+        text: stringSchema,
+        options: {
+          type: "array",
+          minItems: 2,
+          maxItems: 8,
+          items: obj({ label: stringSchema, description: stringSchema, message: stringSchema }, ["label"]),
+        },
+        fields: {
+          type: "array",
+          minItems: 1,
+          maxItems: 12,
+          items: obj(
+            {
+              label: stringSchema,
+              name: stringSchema,
+              type: { type: "string", enum: ["text", "textarea", "number", "select", "checkbox", "date"] },
+              options: stringArraySchema,
+              placeholder: stringSchema,
+              required: booleanSchema,
+              value: stringSchema,
+            },
+            ["label"],
+          ),
+        },
+        submit: stringSchema,
+        cards: {
+          type: "array",
+          minItems: 1,
+          maxItems: 12,
+          items: obj(
+            {
+              title: stringSchema,
+              text: stringSchema,
+              meta: stringSchema,
+              action: obj({ label: stringSchema, message: stringSchema }, ["label"]),
+            },
+            ["title"],
+          ),
+        },
+      },
+      ["kind", "title"],
+    ),
+  ],
   [
     "skill.run_script",
     obj(
@@ -627,6 +683,12 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
         skill: stringSchema,
         script: stringSchema,
         args: stringArraySchema,
+        // The skill's own env_keys for this run (ATO-2530). A list, not
+        // a map like `verify.run.env`, so the tool keeps a strict schema.
+        env: {
+          type: "array",
+          items: obj({ name: stringSchema, value: stringSchema }, ["name", "value"]),
+        },
         timeoutMs: numberSchema,
       },
       ["skill", "script"],
@@ -650,6 +712,11 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   ["memory.profile.list", obj({})],
   ["memory.profile.history", obj({ key: stringSchema }, ["key"])],
 
+  // ── app (My apps, ATO-2459) ──────────────────────────────────────────────
+  ["app.save", obj({ name: stringSchema, html: stringSchema }, ["name", "html"])],
+  ["app.update", obj({ id: stringSchema, html: stringSchema, name: stringSchema, restoreVersion: integerSchema }, ["id"])],
+  ["app.delete", obj({ id: stringSchema }, ["id"])],
+  ["app.list", obj({ id: stringSchema })],
   // ── memory.notes ─────────────────────────────────────────────────────────
   [
     "memory.notes.store",
@@ -697,7 +764,17 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   ],
   [
     "research.deep",
-    obj({ question: stringSchema, maxSubQuestions: numberSchema, pagesPerQuestion: numberSchema }, ["question"]),
+    obj(
+      {
+        question: stringSchema,
+        sources: { type: "string", enum: ["web", "documents", "both"] },
+        folder: stringSchema,
+        maxSubQuestions: numberSchema,
+        pagesPerQuestion: numberSchema,
+        maxMinutes: numberSchema,
+      },
+      ["question"],
+    ),
   ],
   [
     "logbook.query",
@@ -747,6 +824,10 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   ],
   ["tasks.cancel", obj({ id: stringSchema }, ["id"])],
   ["tasks.show", obj({ id: stringSchema }, ["id"])],
+  // ATO-2497: the running task's board card.
+  ["tasks.request_review", obj({ note: stringSchema })],
+  ["tasks.block", obj({ reason: stringSchema }, ["reason"])],
+  ["tasks.comment", obj({ text: stringSchema }, ["text"])],
 
   // ── sessions (ATO-570) ───────────────────────────────────────────────────
   ["sessions.list", obj({ query: stringSchema, limit: numberSchema })],

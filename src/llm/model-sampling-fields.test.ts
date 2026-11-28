@@ -105,6 +105,12 @@ describe("LlamaServerClient with localModels.modelSampling (ATO-2202)", () => {
     expect(bodies[0]?.top_k).toBe(20);
   });
 
+  it("sends the model's sampling with the default config (ATO-2480)", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    await capturingClient(bodies).complete({ prompt: "p", modelSampling: QWEN_SAMPLING });
+    expect(bodies[0]).toMatchObject({ temperature: 0.6, top_k: 20, min_p: 0, repeat_penalty: 1.0 });
+  });
+
   it("keeps the request's explicit temperature over the model's", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     await capturingClient(bodies, true).complete({
@@ -116,8 +122,9 @@ describe("LlamaServerClient with localModels.modelSampling (ATO-2202)", () => {
     expect(bodies[0]?.top_k).toBe(20);
   });
 
-  it("sends the built-in sampling when the flag is off or absent", async () => {
+  it("sends the built-in sampling when the config or the client turns it off", async () => {
     const bodies: Array<Record<string, unknown>> = [];
+    getConfig().localModels.modelSampling = false;
     await capturingClient(bodies).complete({ prompt: "p", modelSampling: QWEN_SAMPLING });
     getConfig().localModels.modelSampling = true;
     await capturingClient(bodies, false).complete({ prompt: "p", modelSampling: QWEN_SAMPLING });
@@ -131,16 +138,44 @@ describe("LlamaServerClient with localModels.modelSampling (ATO-2202)", () => {
 });
 
 describe("localModels.modelSampling config", () => {
-  it("defaults to off, also for a file written before the field existed", () => {
-    expect(USER_CONFIG_DEFAULTS.localModels.modelSampling).toBe(false);
-    expect(parseUserConfigFile({}).localModels.modelSampling).toBe(false);
+  it("defaults to on, also for a file written before the field existed (ATO-2480)", () => {
+    expect(USER_CONFIG_DEFAULTS.localModels.modelSampling).toBe(true);
+    expect(parseUserConfigFile({}).localModels.modelSampling).toBe(true);
     expect(
       parseUserConfigFile({ version: 77, localModels: { thinking: "on" } }).localModels.modelSampling,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("accepts a boolean and rejects anything else", () => {
+    expect(parseUserConfigFile({ localModels: { modelSampling: false } }).localModels.modelSampling).toBe(false);
     expect(parseUserConfigFile({ localModels: { modelSampling: true } }).localModels.modelSampling).toBe(true);
     expect(() => parseUserConfigFile({ localModels: { modelSampling: 3 } })).toThrow(/localModels\.modelSampling/);
+    expect(() => parseUserConfigFile({ version: 79, localModels: { modelSampling: 3 } })).toThrow(/localModels\.modelSampling/);
+  });
+});
+
+describe("resolveSamplingFields user layer (ATO-2482)", () => {
+  it("applies the person's set even when the model's sampling is off", () => {
+    expect(
+      resolveSamplingFields({ modelSampling: QWEN_SAMPLING, userSampling: { temperature: 0.5 } }, {}, false),
+    ).toMatchObject({ temperature: 0.5, top_p: 0.95, top_k: 40 });
+  });
+
+  it("puts the person's set over the model's, under the request and the env", () => {
+    const fields = resolveSamplingFields(
+      { modelSampling: QWEN_SAMPLING, userSampling: { temperature: 0.5, topK: 30, presencePenalty: 1.5 } },
+      { topK: 7 },
+      true,
+    );
+    expect(fields).toMatchObject({ temperature: 0.5, top_k: 7, min_p: 0, presence_penalty: 1.5 });
+    expect(
+      resolveSamplingFields({ temperature: 0, userSampling: { temperature: 0.5 } }, {}, true).temperature,
+    ).toBe(0);
+  });
+
+  it("sends no presence_penalty when no set names one", () => {
+    expect(resolveSamplingFields({ modelSampling: QWEN_SAMPLING }, {}, true)).not.toHaveProperty(
+      "presence_penalty",
+    );
   });
 });

@@ -89,6 +89,11 @@ describe("task board lanes (ATO-2257)", () => {
     expect(fieldOf({ note: "x".repeat(2_001) })).toBe("note");
     expect(fieldOf({ assignee: "Coder Bot" })).toBe("assignee");
     expect(fieldOf({ assignee: "../etc" })).toBe("assignee");
+    expect(fieldOf({ assignee: "a:b:c" })).toBe("assignee");
+  });
+
+  it("takes a plugin's profile as an assignee (ATO-2498)", () => {
+    expect(validateBoardPatch({ assignee: "review-kit:checker" })).toEqual({ assignee: "review-kit:checker" });
   });
 
   it("builds cards in task order and groups them into every lane", () => {

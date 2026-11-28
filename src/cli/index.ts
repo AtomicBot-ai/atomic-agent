@@ -24,6 +24,7 @@ import { ideasCommand } from "./ideas-command.js";
 import { overnightCommand } from "./overnight-command.js";
 import { memoryCommand } from "./memory-command.js";
 import { modelsCommand } from "./models-command.js";
+import { localServersCommand } from "./local-servers-command.js";
 import { importCommand } from "./import-command.js";
 import { handoffCommand } from "./handoff-command.js";
 import { launchCommand } from "./launch-command.js";
@@ -42,8 +43,10 @@ import { pushCommand } from "./push-command.js";
 import { providersCommand } from "./providers-command.js";
 import { loginCommand, logoutCommand } from "./login-command.js";
 import { composioCommand } from "./composio-command.js";
+import { connectCommand } from "./connect-command.js";
 import { whisperCommand } from "./whisper-command.js";
-import { openUrlInBrowser, tuiCommand } from "../tui/index.js";
+import { diarizeCommand } from "./diarize-command.js";
+import { isBareTuiLaunchFlag, openUrlInBrowser, tuiCommand } from "../tui/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import { applyOfflineModeFromConfigFile } from "./offline-from-config.js";
 import { getAppVersion } from "../version.js";
@@ -152,12 +155,12 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "usage",
-    summary: "Tokens and cloud cost per day over every session, local vs cloud (--days N|--all, --models, --json)",
+    summary: "Tokens and cloud cost per day over every session, local vs cloud (--days N|--all, --models, --tools, --projects, --sessions, --compare <model>, --json)",
     run: usageCommand,
   },
   {
     name: "export",
-    summary: "Save one chat as Markdown, HTML or Word (export <sessionId>|--last [--format md|html|docx])",
+    summary: "Save one chat as Markdown, HTML, Word or PDF (export <sessionId>|--last [--format md|html|docx|pdf])",
     run: exportCommand,
   },
   {
@@ -187,6 +190,11 @@ const COMMANDS: CommandDescriptor[] = [
     run: modelsCommand,
   },
   {
+    name: "local-servers",
+    summary: "Model servers already running here: Ollama, LM Studio, the Llama app (--json)",
+    run: (args) => localServersCommand(args),
+  },
+  {
     name: "import",
     summary:
       "Import skills, sessions + more from another agent (import --help lists sources)",
@@ -200,7 +208,7 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "launch",
-    summary: "Start Claude Code, Codex or OpenCode on Atomic Agent through atag serve (launch <claude|codex|opencode>)",
+    summary: "Start Claude Code, Codex, OpenCode, Qwen Code or Cline on the local model through atag serve (--agent for Atomic Agent, --config to keep it)",
     run: (args) => launchCommand(args),
   },
   {
@@ -217,7 +225,7 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "logbook",
-    summary: "Day journal from screenshots, described by a local model only (start|stop|pause|status|today|clear|standup)",
+    summary: "Day journal from screenshots, described by a local model only; macOS only for now (start|stop|pause|status|today|clear|standup)",
     run: (args) => logbookCommand(args),
   },
   {
@@ -271,9 +279,19 @@ const COMMANDS: CommandDescriptor[] = [
     run: composioCommand,
   },
   {
+    name: "connect",
+    summary: "Connect a chat channel step by step (linear)",
+    run: (args) => connectCommand(args, { openUrl: openUrlInBrowser }),
+  },
+  {
     name: "whisper",
     summary: "Speech to text: status, download whisper.cpp and the speech model, set the default model",
     run: whisperCommand,
+  },
+  {
+    name: "diarize",
+    summary: "Who spoke when: status, download the sherpa-onnx speaker diarizer, run it on a WAV (ATO-2514)",
+    run: diarizeCommand,
   },
   {
     name: "update",
@@ -388,6 +406,8 @@ async function main(): Promise<number> {
   if (!command) {
     return tuiCommand([]);
   }
+  // ATO-2500: `atomic-agent --models a/b` is the TUI with that flag.
+  if (isBareTuiLaunchFlag(command)) return tuiCommand([command, ...rest]);
   const descriptor = COMMANDS.find((c) => c.name === command);
   if (!descriptor) {
     process.stderr.write(`unknown command: ${command}\n`);

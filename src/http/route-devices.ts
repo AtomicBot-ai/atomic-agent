@@ -1,3 +1,4 @@
+import { formatPairingCode } from "./device-code.js";
 import type { DeviceSessions } from "./device-sessions.js";
 import type { PairedDevice } from "./device-store.js";
 import { openaiError } from "./openai-errors.js";
@@ -9,9 +10,11 @@ import { sendError, sendJson, type HttpHandler } from "./request-context.js";
  *
  * - `POST /api/devices/pairing`: a new one-time link; answers the path
  *   (`/pair/<token>`) and when it expires. The caller puts its own
- *   reachable origin in front and draws the QR. The token is in this
- *   response only, never logged.
- * - `GET /api/devices`: id, name, when paired, last seen (never a hash).
+ *   reachable origin in front and draws the QR. ATO-2494: also `code`, the
+ *   same pairing as a short code to type at `/pair` (the iPhone home-screen
+ *   app). Token and code are in this response only, never logged.
+ * - `GET /api/devices`: id, name, when paired, last seen (never a hash);
+ *   devices idle past 30 days are signed out and not listed (ATO-2494).
  * - `DELETE /api/devices/{id}`: sign one device out (`all` for every one).
  */
 
@@ -31,7 +34,11 @@ export function createDevicePairingHandler(devices: DeviceSessions | null): Http
       sendError(res, 500, openaiError(result.error, "server_error"));
       return;
     }
-    sendJson(res, 201, { path: `/pair/${result.token}`, expiresAt: result.expiresAt });
+    sendJson(res, 201, {
+      path: `/pair/${result.token}`,
+      code: formatPairingCode(result.code),
+      expiresAt: result.expiresAt,
+    });
   };
 }
 

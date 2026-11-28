@@ -32,9 +32,25 @@ describe("classifyEngineExitReason", () => {
 
   it.each<[string, string]>([
     ["bad magic", "gguf_init_from_file_impl: invalid magic characters: 'PK\\x03\\x04', expected 'GGUF'\n"],
-    ["unknown architecture", "llama_model_load: error loading model: error loading model architecture: unknown model architecture: 'qwen9'\n"],
     ["truncated", "llama_model_load: error loading model: tensor 'blk.30.ffn_down.weight' data is not within the file bounds, model is corrupted or incomplete\n"],
-  ])("a model llama.cpp cannot read (%s) is model_file_corrupt", (_name, log) => {
+  ])("a damaged model file (%s) is model_file_corrupt", (_name, log) => {
+    expect(classifyEngineExitReason(LAUNCH + PREAMBLE + log)).toBe("model_file_corrupt");
+  });
+
+  // ATO-2535: llama.cpp prints these for a good file newer than the bundled
+  // engine. Not damage: the desktop's words (`main/engine-exit-words.ts`)
+  // name it model_unsupported, and so does the agent.
+  it.each<[string, string]>([
+    ["unknown architecture", "llama_model_load: error loading model: error loading model architecture: unknown model architecture: 'qwen4'\n"
+      + "llama_model_load_from_file_impl: failed to load model\n"],
+    ["unknown ggml type", "gguf_init_from_file_impl: tensor 'blk.0.ffn_down.weight' has unknown ggml type 41\n"],
+  ])("a good model the engine is too old for (%s) is model_unsupported", (_name, log) => {
+    expect(classifyEngineExitReason(LAUNCH + PREAMBLE + log)).toBe("model_unsupported");
+  });
+
+  it("a truncated file that also names an unknown architecture stays model_file_corrupt", () => {
+    const log = "llama_model_load: error loading model: tensor 'blk.30.ffn_down.weight' data is not within the file bounds, model is corrupted or incomplete\n"
+      + "unknown model architecture: 'qwen4'\n";
     expect(classifyEngineExitReason(LAUNCH + PREAMBLE + log)).toBe("model_file_corrupt");
   });
 

@@ -26,12 +26,31 @@ export interface ModelSamplingDefaults {
   minP?: number;
   repeatPenalty?: number;
   repeatLastN?: number;
+  /**
+   * OpenAI-style presence penalty (llama-server `presence_penalty`).
+   * No GGUF key or `generation_config.json` field carries it; only a
+   * catalog entry or the person's own setting names it (ATO-2482: the
+   * Qwen cards ask for 1.5 with thinking off).
+   */
+  presencePenalty?: number;
 }
 
+/** Every field of `ModelSamplingDefaults`, in wire order. */
+export const SAMPLING_FIELDS = [
+  "temperature",
+  "topP",
+  "topK",
+  "minP",
+  "presencePenalty",
+  "repeatPenalty",
+  "repeatLastN",
+] as const satisfies readonly (keyof ModelSamplingDefaults)[];
+
 type SamplingField = keyof ModelSamplingDefaults;
+type HeaderField = Exclude<SamplingField, "presencePenalty">;
 
 /** llama.cpp's key for each field (`LLM_KV_GENERAL_SAMPLING_*`). */
-export const GGUF_SAMPLING_KEYS: Readonly<Record<SamplingField, string>> = {
+export const GGUF_SAMPLING_KEYS: Readonly<Record<HeaderField, string>> = {
   temperature: "general.sampling.temp",
   topP: "general.sampling.top_p",
   topK: "general.sampling.top_k",
@@ -54,7 +73,10 @@ const GENERATION_CONFIG_KEYS: Readonly<Partial<Record<SamplingField, string>>> =
  * else (a NaN, a negative top-p, a temperature of 50) is dropped so a
  * broken header cannot steer the decode somewhere absurd.
  */
-function accept(field: SamplingField, raw: unknown): number | undefined {
+export function acceptSamplingValue(
+  field: SamplingField,
+  raw: unknown,
+): number | undefined {
   if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
   // A header stores these as FLOAT32: 0.95 reads back as 0.94999998.
   // Seven significant digits give the number the converter was given.
@@ -70,6 +92,8 @@ function accept(field: SamplingField, raw: unknown): number | undefined {
       return Number.isInteger(value) && value >= 0 ? value : undefined;
     case "repeatPenalty":
       return value > 0 && value <= 5 ? value : undefined;
+    case "presencePenalty":
+      return value >= -2 && value <= 2 ? value : undefined;
     case "repeatLastN":
       // `-1` (the whole context) is left out: over a long agent prompt it
       // would penalise copying a path or an edit's old text from context.
@@ -82,8 +106,8 @@ export function samplingFromGgufKeys(
   keys: Readonly<Record<string, GgufValue>>,
 ): ModelSamplingDefaults {
   const out: ModelSamplingDefaults = {};
-  for (const field of Object.keys(GGUF_SAMPLING_KEYS) as SamplingField[]) {
-    const value = accept(field, keys[GGUF_SAMPLING_KEYS[field]]);
+  for (const field of Object.keys(GGUF_SAMPLING_KEYS) as HeaderField[]) {
+    const value = acceptSamplingValue(field, keys[GGUF_SAMPLING_KEYS[field]]);
     if (value !== undefined) out[field] = value;
   }
   return out;
@@ -105,7 +129,8 @@ export function samplingFromGenerationConfig(
   const out: ModelSamplingDefaults = {};
   for (const field of Object.keys(GENERATION_CONFIG_KEYS) as SamplingField[]) {
     const key = GENERATION_CONFIG_KEYS[field];
-    const value = key === undefined ? undefined : accept(field, record[key]);
+    const value =
+      key === undefined ? undefined : acceptSamplingValue(field, record[key]);
     if (value !== undefined) out[field] = value;
   }
   return out;
@@ -125,8 +150,7 @@ export function sameSampling(
   a: ModelSamplingDefaults | undefined,
   b: ModelSamplingDefaults | undefined,
 ): boolean {
-  const fields = Object.keys(GGUF_SAMPLING_KEYS) as SamplingField[];
-  return fields.every((field) => a?.[field] === b?.[field]);
+  return SAMPLING_FIELDS.every((field) => a?.[field] === b?.[field]);
 }
 
 export interface ReadModelSamplingDeps {

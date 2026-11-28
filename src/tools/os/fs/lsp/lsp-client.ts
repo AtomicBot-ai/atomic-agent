@@ -24,6 +24,7 @@ import { pathToFileURL } from "node:url";
 import { buildCommandEnv } from "../../../../sandbox/command-env.js";
 import { LSP_CLIENT_CAPABILITIES } from "./lsp-capabilities.js";
 import type { LspDiagnostic } from "./lsp-delta.js";
+import { PublishedDiagnosticsStore, type PublishedDiagnostics } from "./lsp-published.js";
 import {
   createJsonRpcConnection,
   type JsonRpcConnection,
@@ -46,6 +47,11 @@ export interface DiagnosticsClient {
    * without waiting for diagnostics. Optional: fakes may leave it out.
    */
   sync?(path: string, languageId: string, text: string): void;
+  /**
+   * The latest diagnostics the server published, per file, for `@problems`
+   * (ATO-2472). Optional: fakes may leave it out.
+   */
+  published?(): readonly PublishedDiagnostics[];
   /** A plain LSP request (`textDocument/definition`, …), for navigation. */
   request?<T = unknown>(method: string, params: unknown, timeoutMs: number): Promise<T>;
   readonly alive: boolean;
@@ -89,6 +95,8 @@ export interface StartLspClientOptions {
 export class LspConnectionClient implements DiagnosticsClient {
   private readonly docs = new Map<string, OpenDoc>();
   private readonly waiters = new Map<string, Waiter>();
+  /** Every publish, waited for or not (ATO-2472). */
+  private readonly publishedStore = new PublishedDiagnosticsStore();
 
   constructor(
     private readonly connection: JsonRpcConnection,
@@ -178,6 +186,10 @@ export class LspConnectionClient implements DiagnosticsClient {
     return this.connection.request<T>(method, params, timeoutMs);
   }
 
+  published(): readonly PublishedDiagnostics[] {
+    return this.publishedStore.list();
+  }
+
   dispose(): void {
     for (const waiter of this.waiters.values()) waiter.finish(waiter.latest);
     this.waiters.clear();
@@ -217,18 +229,21 @@ export class LspConnectionClient implements DiagnosticsClient {
       diagnostics?: unknown;
     } | null;
     if (typeof p?.uri !== "string" || !Array.isArray(p.diagnostics)) return;
-    const waiter = this.waiters.get(uriKey(p.uri));
-    if (waiter === undefined) return;
-    const versioned = typeof p.version === "number";
-    // A server that tracks versions tells us when a publish is stale:
-    // a late answer to the "before" sync never counts for the "after" one.
-    if (versioned && (p.version as number) < waiter.version) return;
-    waiter.latest = p.diagnostics.filter(
+    const key = uriKey(p.uri);
+    const diagnostics = p.diagnostics.filter(
       (d): d is LspDiagnostic =>
         d !== null &&
         typeof d === "object" &&
         typeof (d as { message?: unknown }).message === "string",
     );
+    this.publishedStore.remember(key, p.uri, diagnostics);
+    const waiter = this.waiters.get(key);
+    if (waiter === undefined) return;
+    const versioned = typeof p.version === "number";
+    // A server that tracks versions tells us when a publish is stale:
+    // a late answer to the "before" sync never counts for the "after" one.
+    if (versioned && (p.version as number) < waiter.version) return;
+    waiter.latest = diagnostics;
     if (waiter.settle !== null) clearTimeout(waiter.settle);
     // Without a version the publish may be the syntax-only pass with the
     // type errors still to come, so wait longer for a later one.

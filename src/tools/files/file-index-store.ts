@@ -146,19 +146,53 @@ export class FileIndexStore {
    * the chunk ids, or `null` when the file was removed meanwhile (its
    * folder went while it was being read).
    */
-  saveChunks(fileId: number, chunks: readonly FileChunk[], at: string): number[] | null {
+  saveChunks(fileId: number, chunks: readonly FileChunk[], at: string, ocrPages = 0): number[] | null {
     return this.db.transaction(() => {
       if (this.db.prepare(`SELECT 1 FROM files WHERE id = ?`).get(fileId) === undefined) return null;
       this.deleteChunksOf(fileId);
       const insert = this.db.prepare(`INSERT INTO chunks (file_id, ord, page, time_sec, text) VALUES (?, ?, ?, ?, ?)`);
       const ids = chunks.map((c) => Number(insert.run(fileId, c.ord, c.page ?? null, c.timeSec ?? null, c.text).lastInsertRowid));
-      this.db.prepare(`UPDATE files SET status = 'indexed', reason = NULL, indexed_at = ? WHERE id = ?`).run(at, fileId);
+      this.db
+        .prepare(`UPDATE files SET status = 'indexed', reason = NULL, indexed_at = ?, ocr_pages = ? WHERE id = ?`)
+        .run(at, ocrPages > 0 ? ocrPages : null, fileId);
       return ids;
     })();
   }
 
   markFile(fileId: number, status: "failed" | "skipped", reason: string): void {
     this.db.prepare(`UPDATE files SET status = ?, reason = ? WHERE id = ?`).run(status, reason.slice(0, 500), fileId);
+  }
+
+  /**
+   * Skipped files whose reason `retry` accepts go back to `pending`, so
+   * the next pass reads them again (ATO-2501: a reader turned on or
+   * installed since). Returns how many.
+   */
+  requeueSkipped(retry: (reason: string) => boolean): number {
+    const rows = this.db.prepare(`SELECT id, reason FROM files WHERE status = 'skipped'`).all() as { id: number; reason: string | null }[];
+    const ids = rows.filter((row) => row.reason !== null && retry(row.reason)).map((row) => row.id);
+    if (ids.length === 0) return 0;
+    const update = this.db.prepare(`UPDATE files SET status = 'pending', reason = NULL WHERE id = ? AND status = 'skipped'`);
+    this.db.transaction(() => {
+      for (const id of ids) update.run(id);
+    })();
+    return ids.length;
+  }
+
+  /** The most common skip reasons, most files first. */
+  skipReasons(limit: number): { reason: string; count: number }[] {
+    return this.db
+      .prepare(
+        `SELECT COALESCE(reason, 'unknown') AS reason, COUNT(*) AS count FROM files
+          WHERE status = 'skipped' GROUP BY COALESCE(reason, 'unknown') ORDER BY count DESC, reason LIMIT ?`,
+      )
+      .all(limit) as { reason: string; count: number }[];
+  }
+
+  /** Scanned pages OCR read, over the files indexed now. */
+  ocrPages(): number {
+    const row = this.db.prepare(`SELECT COALESCE(SUM(ocr_pages), 0) AS n FROM files WHERE status = 'indexed'`).get() as { n: number };
+    return row.n;
   }
 
   counts(): FileCounts {
@@ -200,6 +234,29 @@ export class FileIndexStore {
            FROM chunks AS c JOIN files AS f ON f.id = c.file_id WHERE c.id IN (${marks})`,
       )
       .all(...ids) as ChunkRow[];
+  }
+
+  /**
+   * The indexed text of one file in chunk order, or of one PDF page of
+   * it, cut at `maxChars` (ATO-2507: what `research.deep` checks a
+   * quote against). `null` when the file has no chunks (not indexed,
+   * failed, removed) or the page has none.
+   */
+  fileText(path: string, page: number | null, maxChars: number): string | null {
+    const rows = this.db
+      .prepare(
+        `SELECT c.text AS text FROM chunks AS c JOIN files AS f ON f.id = c.file_id
+          WHERE f.path = @path AND (@page IS NULL OR c.page = @page)
+          ORDER BY c.ord ASC`,
+      )
+      .all({ path, page }) as Array<{ text: string }>;
+    if (rows.length === 0) return null;
+    let out = "";
+    for (const row of rows) {
+      out = out.length === 0 ? row.text : `${out}\n${row.text}`;
+      if (out.length >= maxChars) return out.slice(0, maxChars);
+    }
+    return out;
   }
 
   private deleteChunksOf(fileId: number): void {

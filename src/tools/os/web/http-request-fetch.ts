@@ -82,6 +82,12 @@ export type HttpMethod = "GET" | "POST";
 export interface HttpRequestArgs {
   method: HttpMethod;
   headers: Record<string, string>;
+  /**
+   * Headers sent to the caller's origin only, whatever their name: the
+   * ones a tool secret was filled into (ATO-2530). A hop elsewhere goes
+   * without them, like the credential headers below.
+   */
+  originOnlyHeaders?: readonly string[];
   body: string | undefined;
   timeoutMs: number;
   followRedirects: boolean;
@@ -308,7 +314,7 @@ async function sendGuardedRequestOnce(
     const headerFile = await writeCurlHeaderFile(
       currentUrl.origin === state.origin
         ? args.headers
-        : withoutSensitiveHeaders(args.headers),
+        : withoutSensitiveHeaders(args.headers, args.originOnlyHeaders),
     );
     const curlArgs = buildPinnedCurlArgs({
       url: currentUrl,
@@ -445,13 +451,14 @@ export function isSensitiveHeaderName(name: string): boolean {
   );
 }
 
-/** `headers` without the ones `isSensitiveHeaderName` flags. */
+/** `headers` without the ones `isSensitiveHeaderName` flags, nor those in `also`. */
 export function withoutSensitiveHeaders(
   headers: Record<string, string>,
+  also: readonly string[] = [],
 ): Record<string, string> {
   const kept: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers)) {
-    if (!isSensitiveHeaderName(key)) kept[key] = value;
+    if (!isSensitiveHeaderName(key) && !also.includes(key)) kept[key] = value;
   }
   return kept;
 }

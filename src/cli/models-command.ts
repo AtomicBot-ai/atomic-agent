@@ -32,6 +32,7 @@ import { runModelsTasks } from "./models-tasks-command.js";
 import { runModelsFitTest } from "./models-fit-test-command.js";
 import { runModelsRpcWorker } from "./models-rpc-worker.js";
 import { runModelsShare } from "./models-share-command.js";
+import { runModelsSampling } from "./models-sampling-command.js";
 import { runModelsDir } from "./models-dir-command.js";
 
 const HELP =
@@ -46,6 +47,8 @@ const HELP =
     "  pull <id> [--background]      Download a GGUF model from Hugging Face (resumes a partial;",
     "            [--mmproj] [--run]  --background keeps going after this terminal closes;",
     "                                --mmproj also fetches the vision projector;",
+    "                                --draft also fetches its speculative-decoding draft",
+    "                                model (implied when localModels.managed.draftModel is on);",
     "                                --run then makes it active and starts it, with the",
     "                                projector on a vision model (not with --background))",
     "  downloads [pause|resume|      List background downloads; pause one (partial kept),",
@@ -79,6 +82,9 @@ const HELP =
     "  share [--rotate] [--off]      Let other apps and devices use the local model through",
     "                                serve's /raw/v1 (OpenAI-compatible, its own key, off by",
     "                                default); prints the base URL and the key to paste",
+    "  sampling <id> [--temperature <n> ...] [--reset]  Show or set one model's sampling",
+    "                                (model default or your own; --thinking / --no-thinking",
+    "                                for one mode; see models sampling --help)",
     "",
     "Fit-test subcommands:",
     "  tasks collect [--last <n>]    Write your last n tasks (default 10) as a test set;",
@@ -99,12 +105,15 @@ const HELP =
     "  toolcall-bench [--models a,b] Send fixed tool-call prompts to each model --tries times",
     "            [--tries n] [--json] (default 3) and count valid JSON, right tool, required",
     "                                args, parse failures. A model is <provider> or",
-    "                                <provider>:<model>; default the active provider",
+    "                                <provider>/<model> (<provider>:<model> works too);",
+    "                                default the active provider",
     '  ask "<question>" --models a,b  One question, no tools, to several models at once;',
     "            [--json]            answers printed one after another",
-    '  council "<question>"          Ask --models a,b as above, then a judge model (the first',
-    "    --models a,b [--judge c]    listed unless --judge) compares the answers and lists",
-    "    [--json]                    Agree / Disagree / Unique per model (also: ask --council)",
+    '  council "<question>"          Ask --models a,b (model*N = one model N times; default the',
+    "    [--models a,b*2] [--judge c] active provider x3), then a judge lists Agree / Disagree /",
+    "    [--chairman d|--no-chairman] Unique, members rank each other (names hidden), and a",
+    "    [--no-rank] [--max-usd n]   chairman writes the final answer. The cost forecast prints",
+    "    [--dry-run] [--json]        first; --dry-run stops there (also: ask --council)",
     "",
     "GPU subcommands:",
     "  devices                       List GPU devices (llama-server --list-devices); active marked with *",
@@ -190,6 +199,8 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return await runModelsFitTest(args.slice(1));
       case "share":
         return await runModelsShare(args.slice(1));
+      case "sampling":
+        return await runModelsSampling(args.slice(1));
       case "dir":
         return await runModelsDir(args.slice(1));
       case "list":

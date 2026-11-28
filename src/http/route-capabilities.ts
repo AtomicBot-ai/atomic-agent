@@ -116,6 +116,10 @@ export function createCapabilitiesHandler(): HttpHandler {
         // client gets `ask_user` in its turns only when its chat request
         // sends `X-Atomic-Questions: 1` (with `X-Atomic-Extensions`).
         questions: true,
+        // ATO-2486: `shell_secret_input` requests on /api/events (a password an
+        // interactive shell job asks for) are answered with
+        // POST /api/shell/secret. Absent on an older agent.
+        shellSecret: true,
         // ATO-1492: MCP servers' questions to the person come on
         // /api/events?elicitation=1 and are answered with
         // POST /api/mcp/elicitation/answer. False when this agent has

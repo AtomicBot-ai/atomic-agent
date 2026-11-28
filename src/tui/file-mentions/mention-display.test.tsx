@@ -4,7 +4,7 @@ import { estimateMessageHeight } from "../chat/chat-message-height.js";
 import { UserBubble } from "../chat/user-bubble.js";
 import { appendUserMessage } from "../reducer-helpers.js";
 import { createInitialTuiState, type ChatMessage, type TuiSessionInfo } from "../tui-state.js";
-import { appendMentionBlock } from "./mention-block.js";
+import { appendMentionBlock } from "../../mentions/mention-block.js";
 
 const session: TuiSessionInfo = {
   sessionId: "s1",

@@ -54,6 +54,18 @@ describe("local model configuration domain seams", () => {
     expect(() => parseLocal({ managed: { share: 7 } })).toThrow();
   });
 
+  it("reads the shared model's listener as this computer on 8787 unless the file says otherwise (ATO-2483)", () => {
+    expect(parseLocal({}).managed.shareNetwork).toBeUndefined();
+    expect(parseLocal({}).managed.sharePort).toBeUndefined();
+    expect(parseLocal({ managed: { share: true, shareNetwork: true, sharePort: 9000 } }).managed).toMatchObject({ shareNetwork: true, sharePort: 9000 });
+    // An off by any path forgets the network: it is read only while sharing is on.
+    expect(parseLocal({ managed: { share: false, shareNetwork: true } }).managed.shareNetwork).toBeUndefined();
+    expect(parseLocal({ managed: { shareNetwork: true } }).managed.shareNetwork).toBeUndefined();
+    expect(() => parseLocal({ managed: { shareNetwork: "maybe" } })).toThrow();
+    expect(() => parseLocal({ managed: { sharePort: 70000 } })).toThrow();
+    expect(() => parseLocal({ managed: { sharePort: 0 } })).toThrow();
+  });
+
   it("looks for an External llama.cpp on llama-server's own default port 9931 when no url is stored", () => {
     expect(createLocalModelsDefaults().url).toBe("http://127.0.0.1:9931");
     expect(parseLocal({}).url).toBe("http://127.0.0.1:9931");
@@ -340,6 +352,33 @@ describe("local model configuration domain seams", () => {
     // The migration touches the budget only.
     expect(parsed.thinking).toBe("on");
     expect(parsed.managed.port).toBe(19555);
+  });
+
+  it.each([
+    { version: 79, raw: false, expected: true },
+    { version: 74, raw: false, expected: true },
+    { version: 79, raw: true, expected: true },
+    { version: 79, raw: undefined, expected: true },
+    { version: 80, raw: false, expected: false },
+    { version: 80, raw: true, expected: true },
+    { version: 80, raw: undefined, expected: true },
+  ])("moves the schema's old false model sampling to true at v80 (v$version / $raw)", ({ version, raw, expected }) => {
+    const input = { thinking: "on", drySampler: false, modelSampling: raw, managed: { port: 19555 } };
+    const parsed = schema.parseUserConfigFile({ version, localModels: input }).localModels;
+    expect(parsed.modelSampling).toBe(expected);
+    expect(parseLocal(input, version).modelSampling).toBe(expected);
+    // The migration touches model sampling only.
+    expect(parsed.drySampler).toBe(false);
+    expect(parsed.thinking).toBe("on");
+    expect(parsed.managed.port).toBe(19555);
+  });
+
+  it("writes v80 so a later false model sampling survives reloads (ATO-2480)", () => {
+    const migrated = schema.parseUserConfigFile({ version: 79, localModels: { modelSampling: false } });
+    expect(migrated.localModels.modelSampling).toBe(true);
+    expect(migrated.version).toBe(80);
+    migrated.localModels.modelSampling = false;
+    expect(schema.parseUserConfigFile(JSON.parse(JSON.stringify(migrated))).localModels.modelSampling).toBe(false);
   });
 
   it("writes the current version so a later 1500 choice survives reloads", () => {

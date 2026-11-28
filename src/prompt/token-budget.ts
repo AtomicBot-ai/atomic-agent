@@ -1,3 +1,5 @@
+import { crowdedReplyReserve } from "./crowded-window.js";
+
 export interface TokenBudgetLimits {
   total: number;
   /**
@@ -462,10 +464,32 @@ export const CONVERSATION_CAP_AUTO_FALLBACK = 64_000;
 export function computeEffectiveConversationCap(
   input: EffectiveConversationCapInput,
 ): number {
+  return effectiveConversationBudget(input).cap;
+}
+
+/**
+ * {@link computeEffectiveConversationCap} together with the reply reserve
+ * it held back. When the fixed sections leave no room for the full
+ * {@link effectiveReplyReserve} beside the transcript floor, the reserve
+ * shares the leftover with the transcript (`crowdedReplyReserve`,
+ * ATO-1678) instead of pinning the transcript to the floor while the
+ * request overflows the window anyway.
+ */
+export function effectiveConversationBudget(
+  input: EffectiveConversationCapInput,
+): { cap: number; replyReserve: number } {
+  const fullReserve = effectiveReplyReserve(
+    input.completionMaxTokens,
+    input.contextWindow,
+    input.reasoningBudgetTokens,
+  );
   if (!input.contextWindow || input.contextWindow <= 0) {
-    return Math.max(CONVERSATION_CAP_FLOOR, input.configuredCap);
+    return {
+      cap: Math.max(CONVERSATION_CAP_FLOOR, input.configuredCap),
+      replyReserve: fullReserve,
+    };
   }
-  const available =
+  const leftover =
     input.contextWindow -
     input.stablePrefixTokens -
     input.sessionTokens -
@@ -477,17 +501,18 @@ export function computeEffectiveConversationCap(
     (input.proceduresTokens ?? 0) -
     (input.loadedToolsTokens ?? 0) -
     (input.toolSchemaTokens ?? 0) -
-    effectiveReplyReserve(
-      input.completionMaxTokens,
-      input.contextWindow,
-      input.reasoningBudgetTokens,
-    ) -
     CONVERSATION_CAP_SAFETY_MARGIN;
-  if (input.autoFill) return Math.max(CONVERSATION_CAP_FLOOR, available);
-  return Math.max(
-    CONVERSATION_CAP_FLOOR,
-    Math.min(input.configuredCap, available),
-  );
+  const replyReserve = crowdedReplyReserve({
+    fullReserve,
+    leftover,
+    transcriptFloor: CONVERSATION_CAP_FLOOR,
+    minReserve: MIN_SMALL_WINDOW_REPLY_RESERVE,
+  });
+  const available = leftover - replyReserve;
+  const cap = input.autoFill
+    ? Math.max(CONVERSATION_CAP_FLOOR, available)
+    : Math.max(CONVERSATION_CAP_FLOOR, Math.min(input.configuredCap, available));
+  return { cap, replyReserve };
 }
 
 export function checkBudget(

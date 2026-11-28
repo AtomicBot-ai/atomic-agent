@@ -18,6 +18,8 @@ export interface PrivacyTabKeyContext {
  *  - `o` — toggle offline mode, only when the agent has the kill switch.
  *  - `m` — toggle Privacy Shield (masking before cloud models), only when
  *    the agent has it.
+ *  - `n`: toggle hiding names, addresses and organisations with a local
+ *    model (ATO-2527), only when the agent has that switch.
  *  - `r` — refresh the persisted snapshot.
  */
 export function handlePrivacyTabKey(
@@ -40,6 +42,11 @@ export function handlePrivacyTabKey(
   if (input === "m") {
     if (!state.privacyPanel.shield.supported) return true;
     void callbacks.onPrivacyShieldToggleRequested?.();
+    return true;
+  }
+  if (input === "n") {
+    if (!state.privacyPanel.shield.names) return true;
+    void callbacks.onPrivacyNamesToggleRequested?.();
     return true;
   }
   if (input === "r") {

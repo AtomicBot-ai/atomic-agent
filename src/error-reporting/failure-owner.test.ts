@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyFailureOwner, requestHostIsLocal } from "./failure-owner.js";
+import { classifyFailureOwner, requestHostIsLocal, requestUrlOf } from "./failure-owner.js";
 
 describe("classifyFailureOwner (ATO-2419)", () => {
   it.each([
@@ -13,6 +13,9 @@ describe("classifyFailureOwner (ATO-2419)", () => {
     ["rate limit", 429, "other", "person"],
     ["Gemini key on a 400", 400, "key_refused", "person"],
     ["OpenAI no quota on a 429", 429, "out_of_credit", "person"],
+    // ATO-1673: a cloud model the person picked that takes no tools.
+    ["cloud model without tools", 400, "tools_unsupported", "person"],
+    ["OpenRouter no tool endpoint", 404, "tools_unsupported", "person"],
     // A request we built wrong.
     ["tool result order", 400, "tool_result_missing", "ours"],
     ["roles", 400, "roles_must_alternate", "ours"],
@@ -26,7 +29,6 @@ describe("classifyFailureOwner (ATO-2419)", () => {
     // Nothing provable.
     ["unknown wording", 400, "other", "unknown"],
     ["no body", 400, undefined, "unknown"],
-    ["model without tools", 400, "tools_unsupported", "unknown"],
   ] as const)("%s", (_label, status, reason, expected) => {
     expect(classifyFailureOwner(status, reason, false)).toBe(expected);
   });
@@ -39,6 +41,10 @@ describe("classifyFailureOwner (ATO-2419)", () => {
     // Any other local refusal is read as usual.
     expect(classifyFailureOwner(400, "tool_result_missing", true)).toBe("ours");
     expect(classifyFailureOwner(404, undefined, true)).toBe("person");
+    // A local server without tool support may be the managed engine we
+    // started (ATO-1673): not the person's.
+    expect(classifyFailureOwner(400, "tools_unsupported", true)).toBe("unknown");
+    expect(classifyFailureOwner(404, "tools_unsupported", true)).toBe("unknown");
   });
 
   it("names no owner without an HTTP error status", () => {
@@ -58,5 +64,7 @@ describe("requestHostIsLocal", () => {
     expect(requestHostIsLocal(local)).toBe(true);
     expect(requestHostIsLocal(cloud)).toBe(false);
     expect(requestHostIsLocal(new Error("no url"))).toBe(false);
+    expect(requestUrlOf(local)).toBe("http://127.0.0.1:9931/v1/chat/completions");
+    expect(requestUrlOf(new Error("no url"))).toBeUndefined();
   });
 });

@@ -218,11 +218,26 @@ function linkModel(params: LlmStreamParams, providerId: string): string | undefi
 function prepareParams(params: LlmStreamParams, providerId: string, transport: ToolCallTransport, contextWindow?: number | null): LlmStreamParams {
   if (!params.modelModePolicy || !params.prepareForLink) return params;
   const modelMode = resolveModelMode(params.modelModePolicy, providerId);
-  if (modelMode.mode !== "cloud" && !params.contextBudget) return params;
+  if (modelMode.mode !== "cloud" && !params.contextBudget && !smallerLocalWindow(params, contextWindow)) return params;
   const rebuilt = params.prepareForLink({ modelMode, transport,
     contextWindow: contextWindow === undefined ? params.contextBudget?.window ?? null : contextWindow,
     ...(params.maxTokens !== undefined ? { maxTokens: params.maxTokens } : {}),
   });
   // The rebuilt flat prompt already has the attempted transport's framing.
   return { ...params, ...rebuilt, grammarPrompt: () => rebuilt.prompt };
+}
+
+/**
+ * A local link whose known window is smaller than the one the step's
+ * prompt was built for (ATO-1678): the prompt is rebuilt for that window,
+ * and `prepareForLink`'s window check refuses a link the tools alone
+ * fill, instead of sending a request that overflows. A same or larger
+ * window keeps the prompt as it is, so nothing is rebuilt needlessly.
+ */
+function smallerLocalWindow(params: LlmStreamParams, contextWindow: number | null | undefined): boolean {
+  return (
+    typeof contextWindow === "number" && contextWindow > 0 &&
+    typeof params.promptWindow === "number" && params.promptWindow > 0 &&
+    contextWindow < params.promptWindow
+  );
 }

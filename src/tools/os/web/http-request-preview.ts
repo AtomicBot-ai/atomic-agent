@@ -15,6 +15,11 @@
  */
 import { maskSecrets } from "../../../error-reporting/secret-detector.js";
 import { isSensitiveHeaderName } from "./http-request-fetch.js";
+import {
+  looksLikeSecretPlaceholder,
+  secretPlaceholderNames,
+  stripSecretPlaceholders,
+} from "../../../sandbox/secret-placeholders.js";
 
 /** Shown in place of a masked value. */
 export const MASK = "****";
@@ -33,7 +38,7 @@ export interface HttpPreviewArgs {
 export function buildHttpApprovalPreview(args: HttpPreviewArgs): string {
   const lines: string[] = [`${args.method} ${maskUrlSecrets(args.url)}`];
   for (const [k, v] of Object.entries(args.headers)) {
-    lines.push(`${k}: ${isSensitiveHeaderName(k) ? maskHeaderValue(v) : v}`);
+    lines.push(`${k}: ${isSensitiveHeaderName(k) ? previewCredentialValue(v) : v}`);
   }
   if (args.body !== undefined) {
     const masked = maskBodySecrets(args.body, contentType(args.headers));
@@ -234,4 +239,23 @@ export function maskHeaderValue(value: string): string {
   return scheme && AUTH_SCHEMES.has(scheme[1]!.toLowerCase())
     ? `${scheme[1]} ${MASK}`
     : MASK;
+}
+
+/**
+ * A credential header's value in the preview. A `{{secret:NAME}}`
+ * (ATO-2530) is only a name, so the human sees which secret goes out:
+ * `Bearer {{secret:GITHUB_TOKEN}}` is shown as written. Literal text
+ * next to a placeholder, other than a scheme word, is still masked.
+ */
+function previewCredentialValue(value: string): string {
+  if (!looksLikeSecretPlaceholder(value)) return maskHeaderValue(value);
+  const literal = stripSecretPlaceholders(value).trim();
+  if (literal.length === 0 || AUTH_SCHEMES.has(literal.toLowerCase())) return value;
+  let names: string[];
+  try {
+    names = secretPlaceholderNames([value]);
+  } catch {
+    return maskHeaderValue(value);
+  }
+  return `${MASK} with ${names.map((name) => `{{secret:${name}}}`).join(", ")}`;
 }

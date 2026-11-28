@@ -92,6 +92,16 @@ describe("GuardRulesSource", () => {
     expect(only.sets).toEqual([{ source: "project", rules: "No pastebin." }]);
   });
 
+  it("agent.security.guardOnFailure: block makes a failure block, and a file ask cannot loosen it (ATO-2529)", () => {
+    writeFileSync(join(stateDir, "guard.md"), "---\nonFailure: ask\n---\nBlock .env reads.");
+    expect(new GuardRulesSource(stateDir, undefined, () => "block").load(undefined)!.onFailure).toBe("block");
+    expect(new GuardRulesSource(stateDir, undefined, () => "ask").load(undefined)!.onFailure).toBe("ask");
+    const broken = new GuardRulesSource(stateDir, undefined, () => {
+      throw new Error("no config");
+    });
+    expect(broken.load(undefined)!.onFailure).toBe("ask");
+  });
+
   it("rereads a file that changed", () => {
     const path = join(stateDir, "guard.md");
     writeFileSync(path, "Rule one.");

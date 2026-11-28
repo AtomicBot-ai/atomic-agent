@@ -64,4 +64,10 @@ describe("isOutboundCall", () => {
     expect(isOutboundCall({ tool: "tasks.list", args: {} })).toBe(false);
     expect(isOutboundCall({ tool: "tasks.get", args: {} })).toBe(false);
   });
+
+  it("keeps tasks that only moved or commented on their own board card (ATO-2497)", () => {
+    for (const tool of ["tasks.request_review", "tasks.block", "tasks.comment"]) {
+      expect(isOutboundCall({ tool, args: { text: "x" } }), tool).toBe(false);
+    }
+  });
 });

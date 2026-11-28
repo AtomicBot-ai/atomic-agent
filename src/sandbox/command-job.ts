@@ -1,8 +1,7 @@
-import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 
 import { CappedOutput } from "./capped-output.js";
-import { buildCommandEnv } from "./command-env.js";
+import { spawnJobChild } from "./command-job-spawn.js";
 import { descendantPids, signalPids } from "./process-descendants.js";
 import { signalGroup } from "./signal-process-group.js";
 
@@ -40,6 +39,8 @@ export interface CommandJobOptions {
   keepStdinOpen?: boolean;
   /** POSIX: a stop also signals each descendant (a pty job's own session, ATO-2277). */
   stopDescendants?: boolean;
+  /** Fed to the child on fd 3, then closed (`spawnJobChild`; seccomp, ATO-2469). */
+  fd3Input?: Buffer;
 }
 
 export interface CommandJobExit {
@@ -144,17 +145,7 @@ export function startCommandJob(
 ): CommandJob {
   const startedAt = Date.now();
   const cap = options.maxOutputBytes ?? DEFAULT_JOB_OUTPUT_BYTES;
-  const child = spawn(command, args, {
-    cwd: options.cwd,
-    env: options.env ?? buildCommandEnv(process.env),
-    stdio: ["pipe", "pipe", "pipe"],
-    // A group of its own on POSIX; on Windows `detached` would open a
-    // console, and the tree-kill needs no group.
-    ...(IS_WINDOWS ? { windowsHide: true } : { detached: true }),
-    ...(options.windowsVerbatimArguments
-      ? { windowsVerbatimArguments: true }
-      : {}),
-  });
+  const child = spawnJobChild(command, args, options);
   const stdout = new CappedOutput(cap);
   const stderr = new CappedOutput(cap);
   let exit: CommandJobExit | null = null;

@@ -135,6 +135,56 @@ describe("FallbackOrchestrator persistence", () => {
     expect(readFallback(stateDir)?.chain).toEqual(["cloud-a"]);
   });
 
+  it("the localFirst toggle flips and persists only that flag (ATO-2434)", () => {
+    seedConfig(stateDir, {
+      chain: ["cloud-a", "cloud-b"],
+      appendLocal: true,
+      failureThreshold: 5,
+    });
+    const bus = makeBus();
+    const orch = new FallbackOrchestrator(bus);
+    orch.toggleLocalFirst();
+    expect(readFallback(stateDir)).toEqual({
+      chain: ["cloud-a", "cloud-b"],
+      appendLocal: true,
+      localFirst: true,
+      failureThreshold: 5,
+    });
+    // The write comes back as a refresh carrying the new value and a
+    // cleared status line.
+    expect(bus.emitted).toContainEqual({ type: "fallback_status", line: null });
+    const refresh = [...bus.emitted]
+      .reverse()
+      .find((a) => a.type === "fallback_refresh");
+    expect(refresh).toMatchObject({ localFirst: true, appendLocal: true });
+    orch.toggleLocalFirst();
+    expect(readFallback(stateDir)?.localFirst).toBe(false);
+  });
+
+  it("setLocalFirst writes the asked value even when it is already set", () => {
+    seedConfig(stateDir, { chain: ["cloud-a"], localFirst: true });
+    const bus = makeBus();
+    const orch = new FallbackOrchestrator(bus);
+    orch.setLocalFirst(true);
+    expect(readFallback(stateDir)?.localFirst).toBe(true);
+    orch.setLocalFirst(false);
+    expect(readFallback(stateDir)).toEqual({ chain: ["cloud-a"], localFirst: false });
+  });
+
+  it("keeps localFirst across a chain edit and an appendLocal toggle", () => {
+    seedConfig(stateDir, { chain: ["cloud-a"], appendLocal: false, localFirst: true });
+    const bus = makeBus();
+    const orch = new FallbackOrchestrator(bus);
+    orch.add("cloud-b");
+    expect(readFallback(stateDir)?.localFirst).toBe(true);
+    orch.toggleAppendLocal();
+    expect(readFallback(stateDir)).toMatchObject({
+      chain: ["cloud-a", "cloud-b"],
+      appendLocal: true,
+      localFirst: true,
+    });
+  });
+
   it("preserves hand-set timing knobs across a chain edit", () => {
     seedConfig(stateDir, {
       chain: ["cloud-a", "cloud-b"],

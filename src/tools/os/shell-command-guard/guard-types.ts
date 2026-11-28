@@ -56,6 +56,12 @@ export type GuardLayer =
 export interface ShellGuardPolicy {
   /** `false` refuses every network git verb through the shell. */
   isGitRemoteSyncEnabled: () => boolean;
+  /**
+   * `agent.security.argScanThreshold` (ATO-2505), read live: the
+   * confidence at or above which an argument finding asks at every
+   * level. Absent reads as `ASK_EVERY_LEVEL_CONFIDENCE`.
+   */
+  argScanThreshold?: () => number;
 }
 
 export interface Rule {

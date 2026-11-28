@@ -893,4 +893,19 @@ describe("configCommand", () => {
       expect(stdout.trim()).toBe(`${match![1]} = ${match![2]}`);
     });
   });
+
+  it("sets, gets and unsets localModels.managed.modelsDirOverride, moving nothing (ATO-2503)", async () => {
+    const folder = join(stateDir, "USB", "models");
+    expect(await configCommand(["get", "localModels.managed.modelsDirOverride"])).toBe(0);
+    expect(stdout.trim()).toBe("null");
+    stdout = "";
+    expect(await configCommand(["set", "localModels.managed.modelsDirOverride", folder])).toBe(0);
+    expect(stdout.trim()).toBe(`localModels.managed.modelsDirOverride = ${JSON.stringify(folder)}`);
+    expect(stderr).toContain("no model was moved");
+    const file = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+    expect(file.localModels.managed.modelsDirOverride).toBe(folder);
+    expect(await configCommand(["unset", "localModels.managed.modelsDirOverride"])).toBe(0);
+    const after = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+    expect(after.localModels?.managed?.modelsDirOverride).toBeUndefined();
+  });
 });

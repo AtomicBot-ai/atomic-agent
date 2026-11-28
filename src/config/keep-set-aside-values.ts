@@ -67,6 +67,8 @@ const PROVIDER_REF_KEYS: ReadonlyArray<readonly [string, string?]> = [
 ];
 
 const FUSION_ROLES_KEY = "llm.runMode.fusion.roles";
+/** A role's model label, kept and dropped with its pin (`roleModels`). */
+const FUSION_ROLE_MODELS_KEY = "llm.runMode.fusion.roleModels";
 
 /**
  * The write half of reading a newer build's values leniently. A
@@ -150,7 +152,9 @@ function keepSetAsideProviders(out: Tree, disk: Tree, read: UserConfigFile): Tre
   const roles = getPath(disk, FUSION_ROLES_KEY);
   if (isPlain(roles)) {
     for (const [role, id] of Object.entries(roles)) {
-      if (refers(id)) next = keepAt(next, disk, read, `${FUSION_ROLES_KEY}.${role}`);
+      if (!refers(id)) continue;
+      next = keepAt(next, disk, read, `${FUSION_ROLES_KEY}.${role}`);
+      next = keepAt(next, disk, read, `${FUSION_ROLE_MODELS_KEY}.${role}`);
     }
   }
   return next;
@@ -170,6 +174,7 @@ function keepUnknownRolePins(out: Tree, disk: Tree, read: UserConfigFile): Tree 
   for (const [role, id] of Object.entries(roles)) {
     if ((FUSION_ROLES as readonly string[]).includes(role) || !ids.has(id)) continue;
     next = keepAt(next, disk, read, `${FUSION_ROLES_KEY}.${role}`);
+    next = keepAt(next, disk, read, `${FUSION_ROLE_MODELS_KEY}.${role}`);
   }
   return next;
 }

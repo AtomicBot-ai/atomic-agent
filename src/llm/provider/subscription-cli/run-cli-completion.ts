@@ -1,5 +1,5 @@
 import { runCommand } from "../../../sandbox/command-runner.js";
-import { cliChildEnv, withBinaryDirOnPath } from "./cli-child-env.js";
+import { cliSpawnEnv } from "./cli-child-env.js";
 import { hostPlatform } from "./host-environment.js";
 import {
   isEnoent,
@@ -69,7 +69,9 @@ export const runCliCommand: CliRunner = async (options) => {
       // subscription — the agent's own provider keys among it
       // (`cliChildEnv`). Nothing is ever set: the CLI authenticates
       // from its own session.
-      env: withBinaryDirOnPath(cliChildEnv(options.stripEnv), options.binary, hostPlatform()),
+      // The toolchain folders a Dock-launched app lacks go on PATH too
+      // (`cliSpawnEnv`, ATO-1679).
+      env: cliSpawnEnv(options.stripEnv, options.binary, hostPlatform()),
       ...(options.input === undefined ? {} : { input: options.input }),
       ...(options.signal ? { signal: options.signal } : {}),
       ...(invocation.windowsVerbatimArguments

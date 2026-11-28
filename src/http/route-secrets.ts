@@ -1,8 +1,11 @@
 import {
   SecretAccessError,
+  applySavedSecretToEnvAsync,
   getConfig,
+  listSavedSecretRefs,
   readSecretsStoreState,
   saveSecret,
+  secretRefSource,
 } from "../config/index.js";
 
 import { openaiError } from "./openai-errors.js";
@@ -17,13 +20,18 @@ import { readJsonBody, sendError, sendJson, type HttpHandler } from "./request-c
  * opt-in OS keychain (ATO-474) its keys stayed in plaintext and the keys
  * the terminal kept in the keychain looked missing to it.
  *
- * - `GET /api/secrets` answers `{ store, keychainKeys }`: where keys are
- *   saved and the NAMES held in the keychain. Never values.
+ * - `GET /api/secrets` answers `{ store, keychainKeys, references }`: where
+ *   keys are saved, the NAMES held in the keychain and, for each key saved
+ *   as a reference (ATO-2339), where it comes from (`references[name]`:
+ *   `1password`, `bitwarden`, `vault` or `command`, ATO-2530). Never values.
  * - `PUT /api/secrets/{name}` with `{ value: string | null }` saves (or
  *   removes) one key through the agent's own writer, wherever keys live
  *   now, and puts it in this process's environment at once, as the
  *   terminal's provider wizard does, so the running agent uses the new key
- *   without a restart. Answers `{ name, store }`.
+ *   without a restart. A reference is resolved first (ATO-2530): the
+ *   environment gets its value, never `op://…`. Answers `{ name, store }`,
+ *   plus `reference: { source, resolved, error? }` for a reference; a
+ *   failed one is still saved and `error` says why it could not be read.
  *
  * There is no route that reads a value back. Only secret-shaped names
  * (`*_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`) are accepted, so this
@@ -46,8 +54,11 @@ function refuseRemote(req: IncomingMessage, res: Parameters<HttpHandler>[1]): bo
 export function createGetSecretsHandler(): HttpHandler {
   return async (req, res) => {
     if (refuseRemote(req, res)) return;
-    const state = readSecretsStoreState(getConfig().paths.stateDir);
-    sendJson(res, 200, { store: state.store, keychainKeys: state.keychainKeys });
+    const stateDir = getConfig().paths.stateDir;
+    const state = readSecretsStoreState(stateDir);
+    const references: Record<string, string> = {};
+    for (const entry of listSavedSecretRefs(stateDir)) references[entry.name] = entry.source;
+    sendJson(res, 200, { store: state.store, keychainKeys: state.keychainKeys, references });
   };
 }
 
@@ -75,10 +86,17 @@ export function createPutSecretHandler(
     }
     const trimmed = value === null ? null : value.trim();
     try {
-      const saved = saveSecret(getConfig().paths.stateDir, name, trimmed);
-      if (trimmed === null) delete env[name];
-      else env[name] = trimmed;
-      sendJson(res, 200, { name, store: saved.store });
+      const stateDir = getConfig().paths.stateDir;
+      const saved = saveSecret(stateDir, name, trimmed);
+      const applied = await applySavedSecretToEnvAsync(stateDir, name, trimmed, { env });
+      const source = trimmed === null ? null : secretRefSource(trimmed);
+      sendJson(res, 200, {
+        name,
+        store: saved.store,
+        ...(source === null
+          ? {}
+          : { reference: { source, resolved: applied.resolved, ...(applied.error ? { error: applied.error } : {}) } }),
+      });
     } catch (err) {
       if (err instanceof SecretAccessError) {
         sendError(res, 400, openaiError(err.message));

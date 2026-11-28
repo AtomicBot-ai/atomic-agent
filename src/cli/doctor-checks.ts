@@ -4,6 +4,7 @@ import { delimiter, isAbsolute, join } from "node:path";
 import { ConfigValidationError, parseUserConfigFile } from "../config/index.js";
 import { readRawConfigTree } from "../config/config-paths.js";
 import { checkCoreLocks } from "./doctor-core-lock.js";
+import { createSecretRefsCheck } from "./doctor-secret-refs.js";
 
 /**
  * ATO-577 — `atag doctor`: a registry of checks, each of which can find one
@@ -145,6 +146,8 @@ export const DOCTOR_CHECKS: ReadonlyArray<(ctx: DoctorContext) => DoctorFinding[
   checkConfigMode,
   checkMcpCommands,
   checkCoreLocks,
+  // Saved keys written as op://, bw://, vault://, cmd:// (ATO-2530).
+  createSecretRefsCheck(),
 ];
 
 export function runDoctorChecks(ctx: DoctorContext): DoctorFinding[] {

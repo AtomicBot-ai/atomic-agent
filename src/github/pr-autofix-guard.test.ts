@@ -26,6 +26,8 @@ function pr(over: Partial<PullRequestHead> = {}): PullRequestHead {
     headSha: "sha0",
     headRepo: "acme/widgets",
     baseRef: "main",
+    mergeable: true,
+    mergeableState: "clean",
     ...over,
   };
 }

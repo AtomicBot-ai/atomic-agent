@@ -54,6 +54,7 @@ import { getConfig } from "../config/index.js";
 import { ProfileClipWarnings, reportProfileClip } from "./profile-clip-warning.js";
 import { HistoryTrimWarnings, reportHistoryTrim } from "./history-trim-warning.js";
 import { toolDisabledEvents } from "./tool-disabled-notice.js";
+import { CliOutdatedWarnings, cliOutdatedEvent } from "./cli-outdated-notice.js";
 import { PrefixDriftTracker, reportPrefixDrift } from "./prefix-drift-warning.js";
 import { CompactPromptLatch } from "../prompt/compact-prompt.js";
 import { PersonaLatch } from "../prompt/persona-latch.js";
@@ -75,6 +76,8 @@ export class AgentLoop {
   private readonly profileClipWarnings = new ProfileClipWarnings();
   /** Once-per-cut notice that the packer left older history out (ATO-295). */
   private readonly historyTrimWarnings = new HistoryTrimWarnings();
+  /** ATO-2523: sessions told that their subscription CLI is outdated. */
+  private readonly cliOutdatedWarnings = new CliOutdatedWarnings();
   /** Stable-prefix change between steps of a session, by section (ATO-316). */
   private readonly prefixDrift = new PrefixDriftTracker();
   /**
@@ -613,6 +616,7 @@ export class AgentLoop {
           ? this.deps.resolveLlmSlice?.(contextProviderId, turnModel) ?? pinnedSlice : pinnedSlice;
         const stepDeps: StepDependencies = {
             prepareWorkspace: this.deps.prepareWorkspace,
+            preparePathRules: this.deps.preparePathRules,
             registry: this.deps.registry,
             compactPromptLatch: this.compactPromptLatch,
             personaLatch: this.personaLatch,
@@ -743,6 +747,14 @@ export class AgentLoop {
                 )) {
                   this.deps.onEvent?.(disabled);
                 }
+                // ATO-2523: an outdated subscription CLI, once per session.
+                const outdated = options.ephemeral === true ? null : cliOutdatedEvent(
+                  event.completion.cliOutdated,
+                  this.cliOutdatedWarnings,
+                  state.id,
+                  i,
+                );
+                if (outdated) this.deps.onEvent?.(outdated);
               }
               if (event.type === "prompt_built") {
                 turn.lastPromptTokens = event.prompt.tokens.total;

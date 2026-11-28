@@ -91,6 +91,20 @@ describe("FileIndex: add a folder, index it, search it", () => {
     expect(notes.cite).toBe(`[notes.md](file://${join(docs, "notes.md")})`);
   });
 
+  it("hands back the indexed text of a file or of one PDF page (ATO-2507)", async () => {
+    const fileIndex = open();
+    await fileIndex.addFolder(docs);
+    await fileIndex.idle();
+    expect(fileIndex.passageText(join(docs, "contract.pdf"), 2)).toContain("Termination needs thirty days notice.");
+    expect(fileIndex.passageText(join(docs, "contract.pdf"), 2)).not.toContain("Cover page.");
+    const whole = fileIndex.passageText(join(docs, "contract.pdf"));
+    expect(whole).toContain("Cover page.");
+    expect(whole).toContain("Signatures.");
+    expect(fileIndex.passageText(join(docs, "notes.md"))).toContain("The lease termination date is in March.");
+    expect(fileIndex.passageText(join(docs, "contract.pdf"), 9)).toBeNull();
+    expect(fileIndex.passageText(join(docs, "missing.md"))).toBeNull();
+  });
+
   it("re-reads only what changed, and drops what vanished", async () => {
     const fileIndex = open();
     await fileIndex.addFolder(docs);
@@ -394,6 +408,6 @@ describe("status maths", () => {
 
   it("leaves current and lastError out when there are none", () => {
     const status = statusFrom({ found: 1, indexed: 0, failed: 0, skipped: 0 }, { running: true, updatedAt: "t" });
-    expect(Object.keys(status).sort()).toEqual(["failed", "found", "indexed", "running", "skipped", "updatedAt"]);
+    expect(Object.keys(status).sort()).toEqual(["failed", "found", "indexed", "ocrPages", "running", "skipped", "skippedReasons", "updatedAt"]);
   });
 });

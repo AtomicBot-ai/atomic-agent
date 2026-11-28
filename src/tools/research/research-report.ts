@@ -1,4 +1,17 @@
-import type { ResearchResult, UnverifiedReason } from "./research-types.js";
+import type { ResearchSources } from "./research-args.js";
+import type { JudgeVerdict, ResearchResult, UnverifiedReason } from "./research-types.js";
+
+const SOURCES_TEXT: Record<ResearchSources, string> = {
+  web: "Sources: the web",
+  documents: "Sources: your documents in My files, nothing searched online",
+  both: "Sources: the web and your documents in My files",
+};
+
+const VERDICT_TEXT: Record<JudgeVerdict, string> = {
+  conflict: "Judge: the sources disagree on the same figure.",
+  different_measures: "Judge: they likely measure different things.",
+  unclear: "Judge: the quotes do not say enough to tell.",
+};
 
 const REASON_TEXT: Record<UnverifiedReason, string> = {
   quote_not_on_page: "the quote is not on the page",
@@ -25,10 +38,12 @@ function link(url: string, title: string | undefined): string {
 export function renderResearchReport(result: ResearchResult, generatedAt: Date): string {
   const lines: string[] = [`# Research: ${result.question.replace(/\s+/g, " ").trim()}`, ""];
   lines.push(
-    `_${generatedAt.toISOString().slice(0, 16).replace("T", " ")} UTC. ${result.pagesRead} page(s) read, ` +
+    `_${generatedAt.toISOString().slice(0, 16).replace("T", " ")} UTC. ${SOURCES_TEXT[result.sources ?? "web"]}. ` +
+      `${result.pagesRead} ${result.sources === "documents" ? "passage" : "page"}(s) read, ` +
       `${result.verified.length} verified finding(s), ${result.unverified.length} unverified._`,
     "",
   );
+  if (result.stoppedEarly !== undefined) lines.push(`**Stopped early:** ${result.stoppedEarly}`, "");
   lines.push("## Summary", "");
   lines.push(result.summary.trim().length > 0 ? result.summary.trim() : "No verified findings to summarise.", "");
   lines.push(
@@ -55,10 +70,13 @@ export function renderResearchReport(result: ResearchResult, generatedAt: Date):
   }
   for (const c of result.contradictions) {
     const where = result.subQuestions[c.subQuestion] ?? `sub-question ${c.subQuestion + 1}`;
-    lines.push(
-      `- ${where}: ${c.values[0]} (${link(c.a.url, c.a.title)}) vs ${c.values[1]} (${link(c.b.url, c.b.title)}). ` +
-        "The figures may measure different things; check both quotes.",
-    );
+    const ruling = c.judgement === undefined
+      ? "Not judged: the figures may measure different things; check both quotes."
+      : `${VERDICT_TEXT[c.judgement.verdict]}${c.judgement.note.length > 0 ? ` ${c.judgement.note}` : ""}`;
+    lines.push(`- ${where}: ${c.values[0]} (${link(c.a.url, c.a.title)}) vs ${c.values[1]} (${link(c.b.url, c.b.title)}). ${ruling}`);
+  }
+  if (result.contradictions.some((c) => c.judgement !== undefined)) {
+    lines.push("", "_Each judge line is the model's reading of the two quotes. It does not say which source is right._");
   }
   if (result.contradictions.length > 0) lines.push("");
 

@@ -1,5 +1,7 @@
 import { resolve } from "node:path";
 
+import { parseModelRingList, type ModelRingEntry } from "./model-ring/model-ring.js";
+
 /**
  * Parsed flags for the `atomic-agent tui` subcommand. Kept separate from
  * the orchestrator so argument handling can be unit-tested without
@@ -41,6 +43,12 @@ export interface TuiArgs {
    * Used by `atag handoff` for the continuation message.
    */
   send: string | null;
+  /**
+   * `--models a/b,c/d` (ATO-2500, pi's `--models`): the favorite models
+   * ctrl+p walks for this session only, in this order, instead of the
+   * saved list. `null` uses the saved list (`/model favorite`).
+   */
+  models: ModelRingEntry[] | null;
 }
 
 export type TuiArgsResult = TuiArgs | { error: string } | { help: true };
@@ -65,6 +73,8 @@ export const TUI_HELP =
     "  --fake-update <ver>  Dev: pretend version <ver> is released (no real install)",
     "  --session <id>       Open this saved chat instead of a new one",
     "  --send <text>        Send this message once the interface is up",
+    "  --models <list>      Favorite models for this session, comma-separated",
+    "                       provider/model entries (ctrl+p walks them; not saved)",
     "",
     "Needs an interactive terminal; in scripts use `atomic-agent run`.",
   ].join("\n") + "\n";
@@ -81,6 +91,7 @@ export const TUI_HELP =
  *   --skip-llama-setup             skip the startup llama URL wizard
  *   --onboarding                   run first-time setup again
  *   --mouse / --no-mouse           force mouse reporting on / off
+ *   --models <list>                this session's favorite models (ATO-2500)
  */
 export function parseTuiArgs(args: string[]): TuiArgsResult {
   let workingDir: string | null = null;
@@ -92,6 +103,7 @@ export function parseTuiArgs(args: string[]): TuiArgsResult {
   let fakeUpdateVersion: string | null = null;
   let sessionId: string | null = null;
   let send: string | null = null;
+  let models: ModelRingEntry[] | null = null;
   for (let i = 0; i < args.length; i += 1) {
     const flag = args[i];
     switch (flag) {
@@ -157,6 +169,15 @@ export function parseTuiArgs(args: string[]): TuiArgsResult {
         send = value;
         break;
       }
+      case "--models": {
+        const value = args[++i];
+        if (!value || value.startsWith("-"))
+          return { error: "--models requires a list (e.g. --models openai/gpt-5,local-llama/qwen-3.5-4b)" };
+        const list = parseModelRingList(value);
+        if ("error" in list) return { error: list.error };
+        models = list.ring;
+        break;
+      }
       default:
         return { error: `unknown flag: ${flag}` };
     }
@@ -175,6 +196,7 @@ export function parseTuiArgs(args: string[]): TuiArgsResult {
     fakeUpdateVersion,
     sessionId,
     send,
+    models,
   };
 }
 
@@ -194,6 +216,16 @@ export function nonInteractiveStdinError(
   return "atomic-agent needs an interactive terminal — use 'atomic-agent run' for scripts.";
 }
 
+/**
+ * TUI flags that may lead a bare `atomic-agent` launch (ATO-2500):
+ * `atomic-agent --models a/b,c/d` opens the TUI as `atomic-agent tui
+ * --models ...` does, the way pi takes `pi --models`. Any other leading
+ * flag is still an unknown command.
+ */
+export function isBareTuiLaunchFlag(word: string | undefined): boolean {
+  return word === "--models";
+}
+
 /** Flags whose next token is their value (see `parseTuiArgs`). */
 const VALUE_FLAGS = new Set([
   "--cwd",
@@ -202,6 +234,7 @@ const VALUE_FLAGS = new Set([
   "--fake-update",
   "--session",
   "--send",
+  "--models",
 ]);
 
 /**

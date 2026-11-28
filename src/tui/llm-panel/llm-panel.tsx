@@ -13,6 +13,8 @@ import {
   type LlmPanelMode,
 } from "./llm-panel-state.js";
 import { isLocalModelsHfOpen } from "../local-models/local-models-hf-keys.js";
+import { isModelsDirOpen } from "../local-models/models-dir-keys.js";
+import { ModelsDirScreen } from "../local-models/models-dir-screen.js";
 import { LlmModeRows } from "./llm-mode-rows.js";
 import { BrandBadge } from "../brand/brand-badge.js";
 import { providerRowBrand } from "../brand/brand-badges.js";
@@ -80,6 +82,14 @@ export function LlmPanel({
     return (
       <Box flexDirection="column" width="100%">
         <LocalModelsHuggingFaceBranch panel={state.localModelsPanel} />
+      </Box>
+    );
+  }
+  // ATO-2504: the models folder screen takes the whole pane, as the branch above does.
+  if (isModelsDirOpen(state)) {
+    return (
+      <Box flexDirection="column" width="100%">
+        <ModelsDirScreen state={state.localModelsPanel.modelsDir} />
       </Box>
     );
   }
@@ -230,7 +240,7 @@ const MODE_LABELS: Record<LlmPanelMode, string> = {
 function footerHint(mode: LlmPanelMode, useFull: boolean): string {
   if (mode === "fallback") {
     return useFull
-      ? "j/k move · < > reorder · a add link · d remove · l toggle local · ←/→ switch pane · r refresh"
+      ? "j/k move · < > reorder · a add link · d remove · l toggle local · o start on local · ←/→ switch pane · r refresh"
       : "j/k · < > reorder · a add · d remove · l local · ←/→ pane";
   }
   if (mode === "local") {

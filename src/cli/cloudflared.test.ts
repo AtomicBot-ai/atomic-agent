@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   CLOUDFLARED_INSTALL_HINT,
+  cloudflaredInstallHint,
   cloudflaredArgs,
   findOnPath,
   normalizeTunnelHostname,
@@ -108,6 +109,20 @@ describe("findOnPath", () => {
   it("the install hint never offers to download", () => {
     expect(CLOUDFLARED_INSTALL_HINT).toContain("brew install cloudflared");
     expect(CLOUDFLARED_INSTALL_HINT).toContain("never downloads");
+  });
+
+  it("the per-OS hint names only this OS's installer and the command to run again (ATO-2758)", () => {
+    const mac = cloudflaredInstallHint("atag pair --remote", "darwin");
+    expect(mac).toContain("brew install cloudflared");
+    expect(mac).not.toContain("winget");
+    expect(mac).toContain("run atag pair --remote again");
+    expect(mac).not.toContain("serve");
+    const win = cloudflaredInstallHint("atag pair --remote", "win32");
+    expect(win).toContain("winget install --id Cloudflare.cloudflared");
+    expect(win).not.toContain("brew");
+    const linux = cloudflaredInstallHint("atag pair --remote", "linux");
+    expect(linux).toContain("developers.cloudflare.com");
+    expect(linux).not.toContain("brew");
   });
 });
 

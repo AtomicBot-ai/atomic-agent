@@ -262,7 +262,7 @@ describe("the not-installed message for a named CLI", () => {
       claudeCliAdapter.productName,
     );
     expect(err.message).toMatch(
-      /^Claude Code isn't installed \(the `claude` command was not found\)\. Install Claude Code and sign in, or choose another provider\./,
+      /^Claude Code isn't installed \(the `claude` command was not found\)\. Install it in (?:Terminal|PowerShell) with `/,
     );
   });
 });

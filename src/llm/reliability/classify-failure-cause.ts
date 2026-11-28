@@ -5,6 +5,8 @@ import {
   SubscriptionCliNotInstalledError,
 } from "../provider/subscription-cli/subscription-cli-errors.js";
 import { ChatgptSignInRequiredError } from "../provider/subscription-oauth/oauth-errors.js";
+import { OpenAiHttpError } from "../provider/openai/openai-http.js";
+import { isCloudToolsUnsupported } from "../provider/openai/cloud-tools-unsupported.js";
 import { classifyFailure } from "./classify-failure.js";
 import {
   failureVerdict,
@@ -15,6 +17,7 @@ import type { LlmFailureCategory } from "./failure-category.js";
 import { GrammarError, ModelError, ToolExecutionError } from "./llm-failures.js";
 import { isLocalEngineDown } from "./local-engine-down.js";
 import { isAtomicChatNotRunning } from "./atomic-chat-not-running.js";
+import { isContextWindowTooSmall } from "./context-window-too-small.js";
 import { RequestTooLargeError } from "./request-too-large.js";
 import { DailySpendLimitError } from "./spend-limit-error.js";
 import {
@@ -78,6 +81,7 @@ function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
   if (category === "cancelled") return "cancelled";
   if (isLocalEngineDown(err)) return "local_engine_down";
   if (isAtomicChatNotRunning(err)) return "atomic_chat_not_running";
+  if (causeChain(err).some(isContextWindowTooSmall)) return "context_window_too_small";
 
   const chain = causeChain(err);
   const webSearch = chain.find(isWebSearchError);
@@ -158,6 +162,11 @@ function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
     return "daily_limit_reached";
   }
 
+  // ATO-1673: a cloud model the person picked takes no tools. OpenRouter
+  // says it with a 404, which the status alone files as a model the
+  // provider does not have; the id is fine, the request was refused.
+  if (chain.some(isCloudToolsRefusal)) return "request_rejected";
+
   if (category === "transport") {
     return waitCauseToId(classifyProviderWaitCause(err));
   }
@@ -207,6 +216,9 @@ function modelCause(err: ModelError): FailureCauseId {
   if (err.reason === "no_stop") return "unfinished_reply";
   if (err.truncation?.repetitive === true) return "repeating_output";
   if (err.truncation?.cause === "context_window") return "context_too_long";
+  // ATO-1678: cut again after the agent's own retry; "Retry" would ask
+  // the same model the same thing a third time.
+  if (err.repeatedCut === "cut") return "reply_cut_off_repeated";
   return "reply_cut_off";
 }
 
@@ -253,6 +265,15 @@ function isWebSearchError(
   link: unknown,
 ): link is Error & { keyRequired?: unknown } {
   return link instanceof Error && WEB_SEARCH_ERROR_NAMES.has(link.name);
+}
+
+function isCloudToolsRefusal(link: unknown): boolean {
+  return (
+    link instanceof OpenAiHttpError &&
+    link.status !== null &&
+    link.streamError === undefined &&
+    isCloudToolsUnsupported(link.status, link.url, `${link.body?.text ?? ""}\n${link.message}`)
+  );
 }
 
 function causeChain(err: unknown): unknown[] {
