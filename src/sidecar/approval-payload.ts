@@ -46,6 +46,10 @@ export function approvalRequestPayload(
     ...(request.egress !== undefined && request.egress.length > 0
       ? { egress: request.egress.map((d) => ({ ...d })) }
       : {}),
+    ...(request.securityFinding !== undefined
+      ? { securityFinding: { ...request.securityFinding } }
+      : {}),
+    ...(request.askEveryLevel === true ? { askEveryLevel: true as const } : {}),
     canSession,
     ...(grantHost !== null ? { grantHost } : {}),
     canShape: canGrantShape(request),

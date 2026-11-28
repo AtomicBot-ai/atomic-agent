@@ -1,4 +1,4 @@
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 
 /**
  * Which shell a command line is written for. `posix` is `sh -c`'s line;
@@ -218,6 +218,37 @@ export function lexShellLine(
       i = j + 1;
       continue;
     }
+    // Review round 3 of ATO-2505: `$'…'` (ANSI-C) is decoded, and is only
+    // known when the line runs if it has an escape; `$"…"` (locale) is.
+    if (dialect === "posix" && c === "$" && (line[i + 1] === "'" || line[i + 1] === '"')) {
+      if (line[i + 1] === '"') {
+        dynamic = true;
+        i += 1;
+        continue;
+      }
+      const end = ansiQuoteEnd(line, i + 2);
+      if (end === -1) return null;
+      const body = line.slice(i + 2, end);
+      openQuote(body[0]);
+      if (body.includes("\\")) dynamic = true;
+      word += decodeAnsiC(body);
+      i = end + 1;
+      continue;
+    }
+    // `~name/…` is that user's home: the current user's is `~`; any
+    // other (and `~-`, the last folder) is taken as home, failing closed,
+    // and only known when the line runs; `~+` is the current folder.
+    if (dialect === "posix" && c === "~" && !inWord) {
+      const user = /^~([A-Za-z0-9._-]+|[+-])(?=$|[/\s;&|<>()])/.exec(line.slice(i));
+      if (user !== null) {
+        const name = user[1]!;
+        word += name === "+" ? "." : "~";
+        if (name !== "+" && name !== currentUser()) dynamic = true;
+        inWord = true;
+        i += user[0].length;
+        continue;
+      }
+    }
     if (variables && c === "$") {
       const next = appendDollar(i);
       if (next === null) return null;
@@ -262,6 +293,46 @@ export function lexShellLine(
   endWord();
   if (pendingHeredoc !== null) return null;
   return tokens;
+}
+
+/** The current user's name, for `~name`; `""` when it cannot be told. */
+function currentUser(): string {
+  try {
+    return userInfo().username;
+  } catch {
+    return "";
+  }
+}
+
+/** The index of the `'` that closes a `$'…'` opened before `from` (a `\'` does not), or -1. */
+function ansiQuoteEnd(line: string, from: number): number {
+  for (let j = from; j < line.length; j++) {
+    if (line[j] === "\\") j += 1;
+    else if (line[j] === "'") return j;
+  }
+  return -1;
+}
+
+const ANSI_ESCAPES: Readonly<Record<string, string>> = {
+  a: "\x07", b: "\b", e: "\x1b", E: "\x1b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v",
+  "\\": "\\", "'": "'", '"': '"', "?": "?",
+};
+
+/** The text of a `$'…'` body, as bash decodes it; an unknown escape keeps its backslash. */
+function decodeAnsiC(body: string): string {
+  return body.replace(
+    /\\(x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}|c[\s\S]|[\s\S])/g,
+    (all, code: string) => {
+      const head = code[0]!;
+      if (head === "x" || head === "u" || head === "U") {
+        const point = Number.parseInt(code.slice(1), 16);
+        return point <= 0x10ffff ? String.fromCodePoint(point) : all;
+      }
+      if (/[0-7]/.test(head)) return String.fromCharCode(Number.parseInt(code, 8) & 0xff);
+      if (head === "c" && code.length === 2) return String.fromCharCode(code.charCodeAt(1) & 0x1f);
+      return ANSI_ESCAPES[code] ?? all;
+    },
+  );
 }
 
 /**

@@ -30,6 +30,7 @@ import { emitConfigNoticeOnce } from "./config-primitives.js";
 import { cloneExtraChannelsConfig } from "./extra-channel-config.js";
 import { OFFLINE_ENV, parseProxyUrl, PROXY_ENV } from "./network-config.js";
 import { DEFAULT_MAX_AUDIO_BYTES } from "./tool-config.js";
+import { createAgentSecurityDefaults } from "./agent/security-config.js";
 import type {
   LocalModelsValueSource,
   LocalModelsValueSources,
@@ -354,6 +355,7 @@ export function loadConfig(): AtomicAgentConfig {
       smartApproval: user.agent.smartApproval,
       smartApprovalModel: user.agent.smartApprovalModel,
       taintReview: user.agent.taintReview,
+      security: user.agent.security ?? createAgentSecurityDefaults(),
       stablePrefixHashSalt:
         readEnv("ATOMIC_AGENT_STABLE_PREFIX_SALT") ??
         ENV_DEFAULTS.STABLE_PREFIX_SALT,

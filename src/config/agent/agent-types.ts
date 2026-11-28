@@ -1,3 +1,4 @@
+import type { AgentSecurityConfig } from "./security-config.js";
 import type { CompactionConfig } from "./compaction-config.js";
 import type { PromptConfig } from "./prompt-config.js";
 import type { PersonasConfig } from "./persona-config.js";
@@ -74,6 +75,8 @@ export interface RuntimeAgentConfig {
   smartApprovalModel: string | null;
   /** Review after outside content (ATO-618). See the user type. */
   taintReview: boolean;
+  /** Argument-check threshold (ATO-2505). See the user type. */
+  security?: AgentSecurityConfig;
   stablePrefixHashSalt: string;
   /**
    * Safety-net ceiling for the `### conversation` section of the prompt.
@@ -337,6 +340,12 @@ export interface UserAgentConfig {
    * Read live.
    */
   taintReview: boolean;
+  /**
+   * Shell-guard argument checks (ATO-2505, see
+   * `security-config.ts`). Optional so files and fixtures written before
+   * it stay valid; the parser always fills it.
+   */
+  security?: AgentSecurityConfig;
   /**
    * Stable-prefix shape. `compact` (default `"auto"`): the short
    * scaffold for small context windows; `auto` turns it on when the

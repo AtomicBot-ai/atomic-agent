@@ -1,7 +1,11 @@
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { expandHome, resolveUserPath } from "../expand-home.js";
+import { archiveWrites } from "./archive-extract-targets.js";
 import { basenameCommand } from "./normalise.js";
+import { POWERSHELL_WRITERS, powershellWriterTargets } from "./powershell-writer-targets.js";
+import { READ_ONLY_COMMANDS } from "./read-only-commands.js";
+import { userConfigWrites } from "./user-config-writes.js";
 import {
   lexShellLine,
   type ShellDialect,
@@ -28,12 +32,60 @@ import {
  * named; and a line the lexer cannot read names nothing at all. Either
  * way that command simply asks the user, as before. Windows verbs (`del`,
  * `move`, `Set-Content`, …) count only on Windows or inside a `cmd /c` /
- * PowerShell line.
+ * PowerShell line. Also named (review round 2 of ATO-2505): the folder an
+ * archive unpacks into (`tar x -C dir`, `unzip -d dir`, the current one
+ * when none is given), a `cp -t dir`, and the file `git config --global`
+ * or `--file f` writes. Review round 3: PowerShell content writers read
+ * failing closed (`powershell-writer-targets.ts`).
  */
 export function shellWriteTargets(commandLine: string, cwd: string): string[] {
-  const windows = process.platform === "win32";
-  const targets = lineTargets(commandLine, cwd, windows ? "cmd" : "posix", windows);
-  return targets === null ? [] : unique(targets);
+  return shellWriteAnalysis(commandLine, cwd)?.targets ?? [];
+}
+
+/** A word in a write position (or of a command this does not model) that names no path yet. */
+export interface UnresolvedWrite {
+  text: string;
+  /** Where a relative one would resolve; `undefined` after a `cd` this could not follow. */
+  dir: string | undefined;
+}
+
+/**
+ * Everything `shellSecurityCheck` needs to fail closed (review round 2
+ * of ATO-2505), beyond `targets`: the folders an archive unpacks into
+ * (`trees`, also in `targets`); write-position words only known when the
+ * line runs (`tee ~/.zsh?c`, `cp x ~/.{zsh,bash}rc`); the dynamic words
+ * of a command this does not model, which may write anything it names
+ * (`opaque`: `python3 -c "…$HOME/.bashrc…"`, `$EDITOR ~/.zshrc`); and
+ * changes that are not a file in the line (`other`: a crontab, a login
+ * job, the system git config). Arguments of a read-only command
+ * (`read-only-commands.ts`) are none of these.
+ */
+export interface WriteAnalysis {
+  targets: string[];
+  trees: string[];
+  unresolved: UnresolvedWrite[];
+  opaque: UnresolvedWrite[];
+  other: string[];
+}
+
+/** `null` when the line cannot be read (see `lexShellLine`). */
+export function shellWriteAnalysis(
+  commandLine: string,
+  cwd: string,
+  dialect?: ShellDialect,
+): WriteAnalysis | null {
+  const windows = process.platform === "win32" || (dialect !== undefined && dialect !== "posix");
+  const sink = emptyAnalysis();
+  const read = lineTargets(commandLine, cwd, dialect ?? (windows ? "cmd" : "posix"), windows, sink);
+  return read ? finish(sink) : null;
+}
+
+function emptyAnalysis(): WriteAnalysis {
+  return { targets: [], trees: [], unresolved: [], opaque: [], other: [] };
+}
+
+function finish(sink: WriteAnalysis): WriteAnalysis {
+  return { ...sink, targets: unique(sink.targets), trees: unique(sink.trees), other: unique(sink.other) };
 }
 
 /**
@@ -48,9 +100,18 @@ export function execWriteTargets(
   args: readonly string[],
   cwd: string,
 ): string[] {
+  return execWriteAnalysis(cmd, args, cwd)?.targets ?? [];
+}
+
+/** `shellWriteAnalysis` for a direct exec. */
+export function execWriteAnalysis(
+  cmd: string,
+  args: readonly string[],
+  cwd: string,
+): WriteAnalysis | null {
   const words = [cmd, ...args].map((text) => ({ text, dynamic: false }));
-  const found = commandTargets(words, cwd, process.platform === "win32");
-  return found === null ? [] : unique(found.targets);
+  const sink = emptyAnalysis();
+  return commandTargets(words, cwd, process.platform === "win32", sink) === null ? null : finish(sink);
 }
 
 /** Shells whose `-c` argument is itself a command line. */
@@ -160,30 +221,29 @@ const POWERSHELL_TARGETS: Readonly<
 };
 
 /**
- * The targets of a whole command line, or `null` when it cannot be read.
- * `dir` is where relative paths resolve; `undefined` once a `cd` went
- * somewhere this cannot know (`cd -`, `cd "$X"`), after which only
- * absolute paths are named.
+ * The targets of a whole command line, into `sink`; `false` when it
+ * cannot be read. `dir` is where relative paths resolve; `undefined`
+ * once a `cd` went somewhere this cannot know (`cd -`, `cd "$X"`), after
+ * which only absolute paths are named.
  */
 function lineTargets(
   line: string,
   dir: string | undefined,
   dialect: ShellDialect,
   windows: boolean,
-): string[] | null {
+  sink: WriteAnalysis,
+): boolean {
   const tokens = lexShellLine(line, dialect);
-  if (tokens === null) return null;
-  const targets: string[] = [];
+  if (tokens === null) return false;
   // A `( … )` subshell's `cd` ends at its `)`.
   const outer: (string | undefined)[] = [];
   let cwd = dir;
   let words: ShellWord[] = [];
   const flush = (): boolean => {
     if (words.length === 0) return true;
-    const found = commandTargets(words, cwd, windows);
+    const found = commandTargets(words, cwd, windows, sink);
     words = [];
     if (found === null) return false;
-    targets.push(...found.targets);
     cwd = found.dir;
     return true;
   };
@@ -195,22 +255,51 @@ function lineTargets(
     }
     if (token.kind === "redirect") {
       const next = tokens[k + 1];
-      if (next?.kind !== "word") return null;
+      if (next?.kind !== "word") return false;
       k += 1;
       const isFile =
         token.writes === "file" ||
         (token.writes === "dup" && !/^(?:\d+|-)$/.test(next.text));
-      const target = isFile ? resolveWord(next, cwd) : undefined;
-      if (target !== undefined) targets.push(target);
+      if (isFile) addTarget(next, cwd, sink);
       continue;
     }
-    if (!flush()) return null;
+    if (!flush()) return false;
     if (token.kind === "open") outer.push(cwd);
     else if (token.kind === "close" && outer.length > 0) cwd = outer.pop();
   }
-  if (!flush()) return null;
-  return targets;
+  return flush();
 }
+
+/**
+ * A written word into `sink`: its path, or, when it names none yet (a
+ * glob, a variable, a relative path after an unknown `cd`), the word
+ * itself as unresolved. Returns the path.
+ */
+function addTarget(word: ShellWord, dir: string | undefined, sink: WriteAnalysis): string | undefined {
+  const target = resolveWord(word, dir);
+  if (target !== undefined) {
+    sink.targets.push(target);
+    return target;
+  }
+  const text = word.text;
+  if (text.length === 0 || text === "-" || text.startsWith("/dev/") || /^nul$/i.test(text)) return undefined;
+  if (word.dynamic || dir === undefined) sink.unresolved.push({ text, dir });
+  return undefined;
+}
+
+/** Commands whose writes `changedWords` spells out. */
+const MODELED: ReadonlySet<string> = new Set([
+  ...CHANGES_EVERY_OPERAND,
+  ...CHANGES_LAST_OPERAND,
+  "sed",
+  "dd",
+]);
+const WINDOWS_MODELED: ReadonlySet<string> = new Set([
+  ...CMD_CHANGES_EVERY_OPERAND,
+  "copy",
+  ...Object.keys(POWERSHELL_TARGETS),
+  ...POWERSHELL_WRITERS,
+]);
 
 /**
  * What one simple command changes, past assignments, prefix commands
@@ -222,7 +311,8 @@ function commandTargets(
   words: readonly ShellWord[],
   dir: string | undefined,
   windows: boolean,
-): { targets: string[]; dir: string | undefined } | null {
+  sink: WriteAnalysis,
+): { dir: string | undefined } | null {
   let i = 0;
   while (i < words.length) {
     const word = words[i]!.text;
@@ -235,39 +325,52 @@ function commandTargets(
     while (i < words.length && words[i]!.text.startsWith("-")) i += 1;
   }
   const head = words[i];
-  const none = { targets: [], dir };
-  if (head === undefined || head.dynamic) return none;
+  const none = { dir };
+  if (head === undefined) return none;
+  // `$EDITOR ~/.zshrc`: what runs is not known, so neither is what it writes.
+  if (head.dynamic) {
+    sink.opaque.push(...words.slice(i).map(({ text }) => ({ text, dir })));
+    return none;
+  }
   const name = commandName(head.text);
   const args = words.slice(i + 1);
 
   if (name === "cd" || name === "pushd") {
     const operands = windows ? cmdOperands(args) : plainOperands(args);
     const to = operands[0];
-    if (to === undefined) return { targets: [], dir: homedir() };
-    return { targets: [], dir: to.text === "-" ? undefined : resolveWord(to, dir) };
+    if (to === undefined) return { dir: homedir() };
+    return { dir: to.text === "-" ? undefined : resolveWord(to, dir) };
   }
-  if (name === "popd") return { targets: [], dir: undefined };
+  if (name === "popd") return { dir: undefined };
 
   const nested = nestedLine(name, args);
   if (nested !== undefined) {
-    if (nested === null) return none;
+    if (nested === null) {
+      sink.opaque.push(...args.filter((arg) => arg.dynamic).map(({ text }) => ({ text, dir })));
+      return none;
+    }
     // Its own `cd` stays inside it; a cmd.exe or PowerShell line speaks
     // Windows verbs wherever it runs.
-    const targets = lineTargets(
-      nested.line,
-      dir,
-      nested.dialect,
-      windows || nested.dialect !== "posix",
-    );
-    return targets === null ? null : { targets, dir };
+    const read = lineTargets(nested.line, dir, nested.dialect, windows || nested.dialect !== "posix", sink);
+    return read ? none : null;
   }
 
-  const targets: string[] = [];
-  for (const word of changedWords(name, args, windows)) {
-    const target = resolveWord(word, dir);
-    if (target !== undefined) targets.push(target);
+  for (const word of changedWords(name, args, windows)) addTarget(word, dir, sink);
+  const archive = archiveWrites(name, args);
+  for (const word of archive?.files ?? []) addTarget(word, dir, sink);
+  for (const word of archive?.trees ?? []) {
+    const tree = addTarget(word, dir, sink);
+    if (tree !== undefined) sink.trees.push(tree);
   }
-  return { targets, dir };
+  const config = userConfigWrites(name, args);
+  for (const word of config?.files ?? []) addTarget(word, dir, sink);
+  sink.other.push(...(config?.other ?? []));
+  const modeled =
+    MODELED.has(name) || (windows && WINDOWS_MODELED.has(name)) || archive !== undefined || config !== undefined;
+  if (!modeled && !READ_ONLY_COMMANDS.has(name)) {
+    sink.opaque.push(...args.filter((arg) => arg.dynamic).map(({ text }) => ({ text, dir })));
+  }
+  return none;
 }
 
 /**
@@ -325,8 +428,9 @@ function changedWords(
         arg.text.startsWith("--target-directory"),
     )
   ) {
-    // `cp -t dir a b`: what lands in `dir` is not spelled out.
-    return [];
+    // `cp -t dir a b`: what lands in `dir` is not spelled out, but `dir`
+    // itself is (review round 2 of ATO-2505: `cp -t ~ x/.bashrc`).
+    return targetDirectory(args);
   }
   if (CHANGES_EVERY_OPERAND.has(name)) return plainOperands(args, takesValue);
   if (CHANGES_LAST_OPERAND.has(name)) {
@@ -345,6 +449,7 @@ function changedWords(
     const operands = cmdOperands(args);
     return operands.length > 1 ? operands.slice(-1) : [];
   }
+  if (POWERSHELL_WRITERS.has(name)) return powershellWriterTargets(args);
   const cmdlet = POWERSHELL_TARGETS[name];
   return cmdlet === undefined ? [] : powershellTargets(args, cmdlet);
 }
@@ -369,6 +474,18 @@ function inPlaceFiles(name: "sed" | "perl", args: readonly ShellWord[]): ShellWo
   // `sed -i '' …` (BSD): the empty suffix is not a file.
   const operands = plainOperands(args, takesValue).filter((arg) => arg.text !== "");
   return scriptGiven ? operands : operands.slice(1);
+}
+
+/** The folder of `-t dir`, `-tdir`, `--target-directory[=]dir`; none when it cannot be told. */
+function targetDirectory(args: readonly ShellWord[]): ShellWord[] {
+  for (let k = 0; k < args.length; k++) {
+    const arg = args[k]!;
+    const text = arg.text;
+    if (text.startsWith("--target-directory=")) return [{ ...arg, text: text.slice("--target-directory=".length) }];
+    if (text === "--target-directory" || /^-[a-zA-Z]*t$/.test(text)) return args[k + 1] === undefined ? [] : [args[k + 1]!];
+    if (/^-t./.test(text)) return [{ ...arg, text: text.slice(2) }];
+  }
+  return [];
 }
 
 /** Arguments that are not flags (or their values); after `--`, all are. */
