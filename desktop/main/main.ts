@@ -311,6 +311,7 @@ import { FileTranscriber, appleSpeechEngine, findOnPath, whisperFileEngine } fro
 import { meetingRecorderFor, wireMeetingIpc } from "./meeting-ipc.js";
 import { displayCaptureAllowed, wireMeetingLoopback, wireMeetingSystemIpc } from "./meeting-system-ipc.js";   // ATO-2514: the other side of the call
 import { meetingVoicesFor, wireMeetingVoicesIpc } from "./meeting-voices-ipc.js";   // ATO-2514: speakers by voice
+import { wireMeetingLibraryIpc } from "./meeting-library-ipc.js";   // ATO-2514: Settings, Meetings
 // Item 7 part B (Skills / Memory / MCP tabs)
 import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
@@ -3422,6 +3423,7 @@ function wireIpc(client: AgentClient): void {
   wireMeetingIpc(meeting);   // ATO-2333: Record a meeting (meeting-ipc.ts)
   wireMeetingSystemIpc(meeting, { emit: (ev) => send("app:meeting", ev) });   // ATO-2514: Me and Them
   wireMeetingVoicesIpc(meetingVoicesFor((ev) => send("app:meeting", ev)));   // ATO-2514: speakers by voice (the recorder's own MeetingVoices)
+  wireMeetingLibraryIpc();   // ATO-2514: Settings, Meetings (folder, switches, saved meetings)
   // ATO-561: "Open in new window" on a chat row (chat-popout-ipc.ts); a chat being written is not popped out.
   wireChatPopoutIpc({ mainWindow: () => win, liveSessionIds: () => [...liveTurns.values()].map((t) => t.sessionId) });
   // ATO-1056/1058: Roll back here, Edit and Fork from here on a message (chat-rewind-ipc.ts).
@@ -6786,9 +6788,9 @@ async function settingsTest(
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
   // Calm (S5): the window's own panes and nav sections, in nav order.
   // ATO-1129 (#1533): Phone push sits in Connections, after Discord. ATO-1630: Monid after Composio.
-  const PANES = ["general", "llm", "mcp", "telegram", "discord", "push", "composio", "monid", "memory", "myfiles", "myapps", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
-  const LABELS = ["General", "Models", "Connections", "Memory", "My files", "My apps", "Cron jobs", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];   // W2: Tasks reads "Cron jobs"
-  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", push: "connections", composio: "connections", monid: "connections", memory: "memory", myfiles: "myfiles", myapps: "myapps",
+  const PANES = ["general", "llm", "mcp", "telegram", "discord", "push", "composio", "monid", "memory", "myfiles", "myapps", "meetings", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
+  const LABELS = ["General", "Models", "Connections", "Memory", "My files", "My apps", "Meetings", "Cron jobs", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];   // W2: Tasks reads "Cron jobs"
+  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", push: "connections", composio: "connections", monid: "connections", memory: "memory", myfiles: "myfiles", myapps: "myapps", meetings: "meetings",
     tasks: "tasks", webhooks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
 
   const groups = await js<string[]>("window.__menuGroups()");

@@ -1,7 +1,8 @@
 /* ATO-2514: Record a meeting, speakers told apart by voice.
 
    main/meeting-voices.ts runs the agent's `diarize` (sherpa-onnx, on this
-   computer). The first meeting with it on downloads the engine and two
+   computer). It is off by default (opt-in); when off, a stopped recording
+   shows one line linking to Settings, Meetings. The first meeting with it on downloads the engine and two
    small models once (about 56 to 64 MB); the panel shows that download with
    a Skip, and during Make notes "Telling speakers apart". When it cannot
    run, the meeting uses Me / Them or the pause guess; nothing fails.
@@ -10,7 +11,7 @@
    MTG and mtgPaint only at run time. The pure part is exported for
    test/meeting-voices-panel.test.mjs. */
 
-const MTGV = {on: false, download: null, failed: false, running: null, listening: false};
+const MTGV = {on: false, offer: false, download: null, failed: false, running: null, listening: false};
 
 /** `Getting the speaker model, 23 of 56 MB. It is downloaded once.` */
 function meetingDownloadText(fraction, totalBytes) {
@@ -29,8 +30,16 @@ function meetingVoicesText(v, phase) {
   return '';
 }
 
+/** Off (the default) and possible here: after a recording, one line offers it, linked to Settings, Meetings. */
+function meetingVoicesOfferHTML(v, phase) {
+  if (!v || !v.offer || v.on || phase !== 'stopped') return '';
+  return '<p class="mtgsys"><button class="set-link" data-act="settings:meetings">Tell voices apart: Download (60 MB)</button></p>';
+}
+
 function mtgVoicesHTML() {
   const phase = typeof MTG !== 'undefined' ? MTG.phase : '';
+  const offer = meetingVoicesOfferHTML(MTGV, phase);
+  if (offer) return offer;
   const text = meetingVoicesText(MTGV, phase);
   if (!text) return '';
   // Skip also in 'finishing': Make notes waits for this download, Skip lets it go on with Me / Them.
@@ -64,8 +73,9 @@ async function mtgVoicesRefresh() {
   try {
     const st = await BR.meetingVoicesStatus();
     MTGV.on = !!(st && st.enabled && st.supported);
+    MTGV.offer = !!(st && st.known && st.supported && !st.enabled);   // ATO-2514: opt-in, offered after a recording
     if (st && !st.downloading) MTGV.download = null;
-  } catch (e) { MTGV.on = false; }
+  } catch (e) { MTGV.on = false; MTGV.offer = false; }
   mtgvPaint();
 }
 
@@ -79,5 +89,5 @@ if (typeof document !== 'undefined') {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {meetingDownloadText, meetingVoicesText, mtgVoicesHTML, MTGV};
+  module.exports = {meetingDownloadText, meetingVoicesText, meetingVoicesOfferHTML, mtgVoicesHTML, MTGV};
 }
