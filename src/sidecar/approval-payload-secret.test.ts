@@ -17,26 +17,26 @@ function ask(): { gate: ApprovalGate; pending: Promise<ApprovalDecision> } {
     approvalId: "sec-1",
     sessionId: "s",
     tool: "os.shell.run",
-    category: "shell_secret",
+    category: "shell_secret_input",
     reason: "job 1 (sudo apt update) asks for sudo password",
     secretInput: { jobId: 1, label: "sudo password", commandLine: "sudo apt update", promptLine: "Password:" },
   });
   return { gate, pending };
 }
 
-describe("sidecar shell_secret payloads (ATO-2486)", () => {
+describe("sidecar shell_secret_input payloads (ATO-2486)", () => {
   it("the request carries what to draw, and offers no grant", () => {
     const request: ApprovalRequest = {
       approvalId: "sec-1",
       sessionId: "s",
       tool: "os.shell.run",
-      category: "shell_secret",
+      category: "shell_secret_input",
       reason: "asks for sudo password",
       secretInput: { jobId: 1, label: "sudo password", commandLine: "sudo apt update", promptLine: "" },
     };
     const payload = approvalRequestPayload(request, undefined);
     expect(payload.secretInput).toEqual(request.secretInput);
-    expect(payload).toMatchObject({ category: "shell_secret", canSession: false, canShape: false, canAlways: false });
+    expect(payload).toMatchObject({ category: "shell_secret_input", canSession: false, canShape: false, canAlways: false });
   });
 
   it("an approve carries the typed value to the tool", async () => {

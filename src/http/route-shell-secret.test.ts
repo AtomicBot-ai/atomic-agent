@@ -17,7 +17,7 @@ describe("POST /api/shell/secret (ATO-2486)", () => {
       approvalId: "sec-1",
       sessionId: "s-test",
       tool: "os.shell.run",
-      category: "shell_secret",
+      category: "shell_secret_input",
       reason: "job 1 (sudo apt update) asks for sudo password",
       secretInput: { jobId: 1, label: "sudo password", commandLine: "sudo apt update", promptLine: "Password:" },
     });
@@ -37,7 +37,7 @@ describe("POST /api/shell/secret (ATO-2486)", () => {
 
   it("publishes the request with what to draw", () => {
     const published = harness.approvalBus.snapshot().find((r) => r.approvalId === "sec-1");
-    expect(published?.category).toBe("shell_secret");
+    expect(published?.category).toBe("shell_secret_input");
     expect(published?.secretInput).toMatchObject({ jobId: 1, label: "sudo password" });
   });
 

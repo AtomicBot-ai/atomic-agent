@@ -5,7 +5,7 @@ import { checkShellSecretValue, SHELL_SECRET_CATEGORY } from "../../approval/she
 import type { TuiAction } from "../tui-action.js";
 
 /**
- * The masked field of a `shell_secret` request (ATO-2486): a password
+ * The masked field of a `shell_secret_input` request (ATO-2486): a password
  * an interactive shell job asks for, typed by the person and sent
  * straight into the job. The value lives only in the field's own React
  * state (`secret-input-prompt.tsx`), never in `TuiState`, the composer,

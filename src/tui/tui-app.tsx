@@ -274,7 +274,7 @@ export interface TuiAppCallbacks {
    */
   onQuestionAnswer?(approvalId: string, answer: UserQuestionAnswer): void;
   /**
-   * The value typed into a `shell_secret` request's masked field
+   * The value typed into a `shell_secret_input` request's masked field
    * (ATO-2486), for the job's input only: never logged or echoed.
    */
   onSecretInput?(approvalId: string, value: string): void;

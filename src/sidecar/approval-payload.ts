@@ -164,7 +164,7 @@ export function resolveApprovalResponse(
 }
 
 /**
- * The value an approval of a `shell_secret` request carries (ATO-2486).
+ * The value an approval of a `shell_secret_input` request carries (ATO-2486).
  * Throws on an approve without a usable one, so the request stays open;
  * the message names what is wrong, never the value. `undefined` for
  * every other request: a `secret` sent with one is dropped.

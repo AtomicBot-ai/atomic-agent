@@ -27,7 +27,7 @@ import type { ShellWriteOptions } from "./shell-job-write.js";
  * printed next: never the value, which is also added to the values
  * masked in every tool result and trace (`resolved-secret-values.ts`).
  *
- * Only a person answers (`shell_secret` is never auto-approved). A
+ * Only a person answers (`shell_secret_input` is never auto-approved). A
  * surface that cannot take a secret (a chat bridge) approves without a
  * value, and the result says nothing was typed. Precedent: `sudo`'s
  * prompt, and Claude Code / Codex handing a password step to the person.

@@ -61,7 +61,7 @@ interface ApprovalModalProps {
   /** Clicking the full-command button; `ctrl+z` does the same. */
   onPreviewPage?: () => void;
   /**
-   * The value typed into a `shell_secret` request's masked field
+   * The value typed into a `shell_secret_input` request's masked field
    * (ATO-2486); `false` keeps the field open.
    */
   onSecretSubmit?: (value: string) => boolean;
