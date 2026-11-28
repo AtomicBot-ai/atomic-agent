@@ -18,16 +18,10 @@ const DIR = new URL("../renderer/", import.meta.url);
 const FAILURE = /\b(could not|couldn['’]t|can['’]t|cannot|failed|unable to|not while|did not|didn['’]t|not sent|not saved|wasn['’]t|no longer waits)\b/i;
 
 /*
- * ATO-2747 (the Trash PR) gives the Trash's own failure toasts their kind, with
- * the rest of that work; until it lands they are listed here. Once it has
- * landed this list can be emptied (an entry that matches nothing is harmless).
+ * Failure toasts whose kind is checked somewhere else. Empty since ATO-2747
+ * (the Trash PR) gave the Trash's own failure toasts their kind.
  */
-const ELSEWHERE = new Set([
-  "chat-trash.js|Could not restore the chat",
-  "chat-trash.js|Could not delete the chat",
-  "chat-trash.js|Could not empty Trash",
-  "renderer.js|Could not move the chat to Trash",
-]);
+const ELSEWHERE = new Set([]);
 
 /** Every string literal's text inside `node`. */
 function literals(node, out = []) {
