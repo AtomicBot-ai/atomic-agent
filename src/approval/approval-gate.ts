@@ -5,6 +5,7 @@ import { resolve as resolvePath } from "node:path";
 import {
   currentApprovalLedger,
   recordAutoApproval,
+  recordGuardBlock,
   type SecurityFinding,
   type ToolApprovalRecord,
 } from "./approval-ledger.js";
@@ -622,9 +623,16 @@ export class ApprovalGate {
     ) {
       return GUARD_ASK_PERSON;
     }
-    return outcome.kind === "block"
-      ? guardBlockReason(outcome.reason)
-      : "Blocked by your security rules: the rules reviewer gave no answer, and nobody can be asked here";
+    const refusal =
+      outcome.kind === "block"
+        ? guardBlockReason(outcome.reason)
+        : "Blocked by your security rules: the rules reviewer gave no answer, and nobody can be asked here";
+    // Logged for the turn summary and the trace (ATO-2529).
+    recordGuardBlock(
+      request.category,
+      outcome.kind === "block" ? { decision: "block", reason: outcome.reason } : { decision: "no-answer", reason: refusal },
+    );
+    return refusal;
   }
 
   /** The folder the project guard file is read from: a worker's parent project, else the request's. */
@@ -653,6 +661,13 @@ export class ApprovalGate {
       throw new ApprovalGateError("approval aborted before a decision was made", request.approvalId);
     }
     if (outcome.kind === "block" || (outcome.kind === "failed" && outcome.onFailure === "block")) {
+      // Logged for the turn summary and the trace (ATO-2529).
+      recordGuardBlock(
+        request.category,
+        outcome.kind === "block"
+          ? { decision: "block", reason: outcome.reason }
+          : { decision: "no-answer", reason: GUARD_FAILURE_BLOCK_REASON },
+      );
       return {
         approvalId: request.approvalId,
         approved: false,

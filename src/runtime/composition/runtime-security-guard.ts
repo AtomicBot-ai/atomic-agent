@@ -27,8 +27,11 @@ export interface SecurityGuardWiring {
  * local model, else the session's), see `resolveRiskReviewProvider`.
  */
 export function installSecurityGuard(wiring: SecurityGuardWiring): void {
-  const source = new GuardRulesSource(wiring.stateDir, (message) =>
-    wiring.logger.warn("security rules: a listed tool is never reviewed", { message }),
+  const source = new GuardRulesSource(
+    wiring.stateDir,
+    (message) => wiring.logger.warn("security rules: a listed tool is never reviewed", { message }),
+    // ATO-2529: the config can make a reviewer failure block, never loosen a file.
+    () => wiring.readConfig().agent.security?.guardOnFailure ?? "ask",
   );
   wiring.approvals.setGuard({
     rules: (workdir) => source.load(workdir),
