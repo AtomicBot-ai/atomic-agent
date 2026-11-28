@@ -1698,11 +1698,13 @@ export class AgentClient extends EventEmitter {
 
   /**
    * ATO-758: `/api/telegram/channel` — the channel's state, and another poller
-   * of the same bot when that is what holds it off. Null on an agent without
-   * the route, or one that is not up; never throws.
+   * of the same bot when that is what holds it off, and (ATO-2520) the bot's
+   * id and @username from the agent's getMe; an older agent sends no `bot`.
+   * Null on an agent without the route, or one that is not up; never throws.
    */
   async telegramChannel(): Promise<{
     available: boolean; state: string | null; lastError: string | null;
+    bot?: { id: number; username: string | null } | null;
     otherPoller: { where: "this_computer"; pid: number | null } | { where: "elsewhere" } | null;
   } | null> {
     try {

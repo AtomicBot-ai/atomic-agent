@@ -74,6 +74,7 @@ export {
   taskCreated,
   telegramConfigWrite,
   telegramStep,
+  telegramTokenChecked,
   tuiImportDone,
   voiceEnded,
   voiceFrame,

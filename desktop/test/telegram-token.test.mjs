@@ -232,3 +232,25 @@ test('ATO-2745: tgFail gives a plain line and Details that belong to it', () => 
   assert.ok(!/TG\.lastError = 'Could not [^']*: ' \+/.test(source), 'no raw answer glued onto a Telegram line');
   assert.ok(source.includes("esc(TG.lastError) + tgErrorDetailHTML(TG, {esc})"));
 });
+
+test('ATO-2520: after a restart the tab names the bot from the running agent, not only from the last Save', () => {
+  const up = {available:true, state:'up', bot:{id:7, username:'my_bot'}};
+  // A fresh window (no check this visit): the agent's getMe names it.
+  assert.equal(T.tgBotName(null, up, false), '@my_bot');
+  // A token changed and not restarted yet: the running agent still has the old bot, the check's name wins.
+  assert.equal(T.tgBotName('@new_bot', up, true), '@new_bot');
+  assert.equal(T.tgBotName(null, up, true), null);
+  // An older agent without `bot`, a channel before getMe, no channel route: only what the check said.
+  assert.equal(T.tgBotName('@my_bot', {available:true, state:'up'}, false), '@my_bot');
+  assert.equal(T.tgBotName(null, {available:true, state:'starting', bot:null}, false), null);
+  assert.equal(T.tgBotName(null, null, false), null);
+  // The status line says "Connected as" only while the live channel is up.
+  assert.equal(T.tgConnectedLine(up), 'Connected as @my_bot. ' + T.TG_TALK_LINE);
+  assert.equal(T.tgConnectedLine({available:true, state:'down', bot:{id:7, username:'my_bot'}}), T.TG_TALK_LINE);
+  assert.equal(T.tgConnectedLine(null), T.TG_TALK_LINE);
+  // The wiring: the Bot token row and the status line read them, and a starting channel is read again.
+  assert.match(fn('tgRowsHTML'), /tgBotName\(TG\.bot, TG\.channel, tgRestartOwed\(\)\)/);
+  assert.match(fn('tgStatusHTML'), /tgConnectedLine\(TG\.channel\)/);
+  assert.match(fn('tgRefreshOnce'), /state === 'starting'[\s\S]*TG_STARTING_RECHECK_MS/);
+  assert.equal(T.TG_TALK_LINE.includes('—'), false);
+});

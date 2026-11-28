@@ -107,6 +107,15 @@ export function telegramStep(step: "enable" | "token_saved" | "token_cleared" | 
   track("telegram_setup", { step, result: ok(res) ? "ok" : "error" });
 }
 
+/**
+ * ATO-2520: the token check before Save (main/telegram-token-check.ts). `ok` Telegram named the bot,
+ * `rejected` it refused the token (or its shape), `unchecked` Telegram could not be reached. Never the token.
+ */
+export function telegramTokenChecked(res: { ok: boolean; rejected?: boolean } | null | undefined): void {
+  const result = res?.ok === true ? "ok" : res?.rejected === true ? "rejected" : "unchecked";
+  track("telegram_setup", { step: "token_checked", result });
+}
+
 /** Config writes that are Telegram steps: `telegram.enabled true`, unsetting `telegram.ownerUserId`. */
 export function telegramConfigWrite(key: string, value: string | null, res: unknown): void {
   if (key === "telegram.enabled" && value === "true") telegramStep("enable", res);
