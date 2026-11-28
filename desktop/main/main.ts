@@ -3411,7 +3411,8 @@ function wireIpc(client: AgentClient): void {
   wireAttachmentIpc({ window: () => win, stateDir: DESKTOP_STATE_DIR });
   // ATO-1593/1595: the composer's @file palette and the mentions inlined on send (file-mentions-ipc.ts).
   const fileMentions = wireFileMentionsIpc({ isRemote: () => client.isRemote, defaultDir: () => client.status.workingDir,
-    sessionDir: async (s) => ((await client.skills(s)) as { workingDir?: string }).workingDir });
+    sessionDir: async (s) => ((await client.skills(s)) as { workingDir?: string }).workingDir,
+    expandInCore: (text, dir) => client.expandMentions(text, dir) });   // ATO-2472
   // ATO-532: a snapshot of another app's window, attached like a pasted image (view-only).
   wireWindowSnapshotIpc();
   // ATO-606: the Fusion workers' reasoning level (Settings › Models, `/runmode reasoning`).

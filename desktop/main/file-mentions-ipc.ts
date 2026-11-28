@@ -10,21 +10,22 @@
  * so it gets no paths and no expansion.
  *
  * `expand` is what `agent:chat` calls on a turn's messages before they go out.
- * ATO-2241: it also inlines `@diff`, `@git:N`, `@path:10-40`, `@folder/` and
- * `@https://...` (context-mentions.ts), and the palette offers those words
- * above the files (mention-kinds.ts).
+ * ATO-2241 / ATO-2472: the agent inlines `@file`, `@diff`, `@git:N`,
+ * `@path:10-40`, `@folder/`, `@https://...` and `@problems` with the
+ * terminal's code (mention-core.ts); the palette offers those words above
+ * the files, and folders next to them (mention-kinds.ts).
  */
 
 import { ipcMain } from "electron";
 
-import { expandLastUserMessageWithContext } from "./context-mentions.js";
 import {
   MAX_MENTION_RESULTS,
   createMentionFileIndex,
   mentionFolder,
-  searchMentions,
+  rankMentionFiles,
 } from "./file-mentions.js";
-import { contextSuggestions } from "./mention-kinds.js";
+import { expandLastUserMessageViaCore, type ExpandInCore } from "./mention-core.js";
+import { contextSuggestions, foldersOf } from "./mention-kinds.js";
 
 const MAX_QUERY = 256;
 const MAX_SESSION_ID = 256;
@@ -35,6 +36,8 @@ export interface FileMentionsDeps {
   sessionDir(sessionId: string | null): Promise<string | undefined>;
   /** The agent's own folder, when a chat has none. */
   defaultDir(): string;
+  /** ATO-2472: the agent's expansion (`POST /api/mentions/expand`). */
+  expandInCore: ExpandInCore;
 }
 
 export interface FileMentions {
@@ -70,9 +73,11 @@ export function wireFileMentionsIpc(deps: FileMentionsDeps): FileMentions {
     const folder = mentionFolder(false, (await dirOf(sid)) ?? deps.defaultDir());
     const words = folder ? contextSuggestions(q) : [];
     try {
-      const found = await searchMentions(index, folder, q);
-      if (words.length === 0) return found;
-      const paths = [...words, ...found.paths.filter((p) => !words.includes(p))];
+      if (!folder) return { ok: true, paths: [] };
+      // ATO-2472: folders (`src/`) are offered next to the files, from the listed paths.
+      const files = await index.list(folder);
+      const found = rankMentionFiles(q, [...foldersOf(files), ...files], MAX_MENTION_RESULTS);
+      const paths = [...words, ...found.filter((p) => !words.includes(p))];
       return { ok: true, paths: paths.slice(0, MAX_MENTION_RESULTS) };
     } catch (err) {
       // ATO-2751: a failed listing still offers `@diff` / `@git:N` / a typed link; the window says the files failed.
@@ -86,7 +91,7 @@ export function wireFileMentionsIpc(deps: FileMentionsDeps): FileMentions {
       if (deps.isRemote() || !messages.some((m) => m.content.includes("@"))) return messages;
       try {
         const dir = (sessionId ? await dirOf(sessionId) : undefined) ?? turnDir();
-        return await expandLastUserMessageWithContext(messages, mentionFolder(false, dir));
+        return await expandLastUserMessageViaCore(messages, mentionFolder(false, dir), deps.expandInCore);
       } catch {
         return messages;
       }

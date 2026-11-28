@@ -1869,6 +1869,28 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-2472: `POST /api/mentions/expand`, the message's `@` mentions read
+   * by the agent in `workingDir` (the terminal's own expansion). `null` on
+   * an agent from before the route, a refusal or no answer in 20 s, so the
+   * caller falls back to the plain file mentions. Never throws.
+   */
+  async expandMentions(text: string, workingDir: string, timeoutMs = 20_000): Promise<string | null> {
+    try {
+      const res = await fetch(`${this.base()}/api/mentions/expand`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({ text, workingDir }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!res.ok) return null;
+      const parsed = (await res.json()) as { text?: unknown };
+      return typeof parsed.text === "string" ? parsed.text : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * ATO-1152: `POST /api/btw` — a side question beside the chat (`/btw`),
    * answered with the chat as read-only context, no tools, nothing saved.
    * The agent's own deadline is 90 s; ten more cover the queue. `supported:
