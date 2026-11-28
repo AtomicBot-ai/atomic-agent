@@ -457,6 +457,8 @@ contextBridge.exposeInMainWorld("atomic", {
   quickEntryReplace: (text: string) => ipcRenderer.invoke("app:quickEntryReplace", text),
   quickEntryOpenSettings: () => ipcRenderer.invoke("app:quickEntryOpenSettings"),   // ATO-2736
   quickEntryCopy: (text: string) => ipcRenderer.invoke("app:quickEntryCopy", text),   // ATO-2750
+  // ATO-2738: what was selected and what the answer will put there, before Replace.
+  quickEntryReplacePreview: (text: string) => ipcRenderer.invoke("app:quickEntryReplacePreview", text),
   quickEntrySubmit: (text: string) => ipcRenderer.invoke("app:quickEntrySubmit", text),
   // ATO-2478: the mini chat's ⌘↩ (Ctrl+Enter): a new chat in the background in the main window.
   quickEntryBackground: (text: string) => ipcRenderer.invoke("app:quickEntryBackground", text),
