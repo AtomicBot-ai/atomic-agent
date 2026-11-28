@@ -15,6 +15,8 @@ const MDIR = {
   info: null, asked: false,
   phase: 'idle',   // idle | choosing | moving
   progress: null, error: null, note: null, unsub: null,
+  // ATO-2742: the raw text behind Details, and the old copies a move left behind.
+  errorDetail: null, leftovers: [],
 };
 
 /* ---------- pure helpers ---------- */
@@ -25,11 +27,30 @@ function mdirProgressLine(p) {
   return 'Moving ' + p.entry + ' (' + p.index + ' of ' + p.total + ')…';
 }
 
-/** What a finished move tells the person. */
+/** What a finished move tells the person. The old copies' paths go behind Details (mdirCardHTML). */
 function mdirDoneNote(res) {
   const left = res && Array.isArray(res.leftovers) ? res.leftovers : [];
-  if (left.length) return 'Moved. The old copy could not be deleted, delete it by hand: ' + left.join(', ');
+  if (left.length) {
+    return 'Moved. The old ' + (left.length === 1 ? 'copy' : 'copies') + ' in the previous folder could not be deleted. '
+      + 'Delete ' + (left.length === 1 ? 'it' : 'them') + ' yourself to free the space.';
+  }
   return 'Moved. New downloads go to this folder too.';
+}
+
+/** The folder that holds an old copy: its path without the last part, either separator. */
+function mdirParentOf(p) {
+  const s = String(p || '').replace(/[\\/]+$/, '');
+  const at = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+  return at > 0 ? s.slice(0, at) : s;
+}
+
+/** "Show in Finder" / "Show in Explorer" / "Show in Folder", the app's own words (renderer.js fileManagerName). */
+function mdirRevealLabel() {
+  return typeof fileManagerName === 'function' ? fileManagerName() : 'Show in Finder';
+}
+
+function mdirDetails(text, esc) {
+  return '<details class="llm-note mdir-more"><summary>Details</summary><code>' + esc(text) + '</code></details>';
 }
 
 function mdirCardHTML(st, h) {
@@ -50,15 +71,35 @@ function mdirCardHTML(st, h) {
     + 'Change moves every model to the folder you pick, for example on an external disk, and the agent uses it from then on.</p>'
     + body
     + (st.error ? '<p class="llm-note fit-err" role="alert">' + esc(st.error) + '</p>' : '')
+    + (st.error && st.errorDetail ? mdirDetails(st.errorDetail, esc) : '')
     + (st.note ? '<p class="llm-note">' + esc(st.note) + '</p>' : '')
+    + mdirLeftoversHTML(st, h)
     + '</div></section>';
+}
+
+/** Under a move that left old copies: the file manager button and the paths behind Details. */
+function mdirLeftoversHTML(st, h) {
+  const left = Array.isArray(st.leftovers) ? st.leftovers : [];
+  if (!left.length || st.phase !== 'idle') return '';
+  const reveal = h.canReveal ? '<div class="fit-acts"><button class="btn sm" type="button" data-mdir="reveal">' + h.esc(h.revealLabel || 'Show in Finder') + '</button></div>' : '';
+  return reveal + mdirDetails(left.join(', '), h.esc);
 }
 
 /* ---------- wiring ---------- */
 
 function mdirBridge() { return typeof BR !== 'undefined' && BR && BR.modelsFolderInfo ? BR : null; }
 function mdirRepaint() { if (typeof llmRepaint === 'function') llmRepaint(); }
-function mdirHelpers() { return {esc: typeof esc === 'function' ? esc : (s) => String(s)}; }
+function mdirHelpers() {
+  return {esc: typeof esc === 'function' ? esc : (s) => String(s), canReveal: !!(typeof BR !== 'undefined' && BR && BR.openPath), revealLabel: mdirRevealLabel()};
+}
+
+/** Opens the previous folder, where the old copies are, in the file manager. */
+function mdirReveal() {
+  const br = typeof BR !== 'undefined' && BR && BR.openPath ? BR : null;
+  const first = MDIR.leftovers && MDIR.leftovers[0];
+  if (!br || !first) return;
+  Promise.resolve(br.openPath(mdirParentOf(first))).catch(() => {});
+}
 
 async function mdirLoad() {
   const br = mdirBridge();
@@ -77,16 +118,18 @@ function modelsFolderHTML() {
 async function mdirMove(opts) {
   const br = mdirBridge();
   if (!br || MDIR.phase === 'moving') return;
-  MDIR.phase = 'moving'; MDIR.progress = null; MDIR.error = null; MDIR.note = null;
+  MDIR.phase = 'moving'; MDIR.progress = null; MDIR.error = null; MDIR.errorDetail = null; MDIR.note = null; MDIR.leftovers = [];
   if (!MDIR.unsub && br.onModelsFolderProgress) MDIR.unsub = br.onModelsFolderProgress((p) => { MDIR.progress = p; mdirRepaint(); });
   mdirRepaint();
-  const res = await br.modelsFolderMove(opts).catch((e) => ({ok: false, error: e && e.message ? e.message : String(e)}));
+  const res = await br.modelsFolderMove(opts).catch((e) => ({ok: false, error: 'The models were not moved. Try again.', detail: e && e.message ? e.message : String(e)}));
   MDIR.phase = 'idle'; MDIR.progress = null;
   if (res && res.ok) {
     MDIR.note = mdirDoneNote(res);
+    MDIR.leftovers = Array.isArray(res.leftovers) ? res.leftovers.slice() : [];
     if (typeof toast === 'function') toast('Models moved', res.dir || '');
   } else {
     MDIR.error = (res && res.error) || 'The models were not moved.';
+    MDIR.errorDetail = (res && typeof res.detail === 'string' && res.detail) || null;
   }
   await mdirLoad();
   // Each row's "Downloaded" is read again from the new folder.
@@ -96,7 +139,7 @@ async function mdirMove(opts) {
 async function mdirChange() {
   const br = mdirBridge();
   if (!br || MDIR.phase !== 'idle') return;
-  MDIR.phase = 'choosing'; MDIR.error = null; MDIR.note = null; mdirRepaint();
+  MDIR.phase = 'choosing'; MDIR.error = null; MDIR.errorDetail = null; MDIR.note = null; MDIR.leftovers = []; mdirRepaint();
   const picked = await br.modelsFolderChoose().catch(() => null);
   MDIR.phase = 'idle';
   if (picked && !picked.ok && picked.error) MDIR.error = picked.error;
@@ -114,9 +157,10 @@ if (typeof document !== 'undefined') {
     const act = el.getAttribute('data-mdir');
     if (act === 'change') void mdirChange();
     else if (act === 'reset') void mdirMove({reset: true});
+    else if (act === 'reveal') mdirReveal();
   });
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {MDIR, mdirProgressLine, mdirDoneNote, mdirCardHTML, mdirMove, mdirChange, modelsFolderHTML};
+  module.exports = {MDIR, mdirProgressLine, mdirDoneNote, mdirParentOf, mdirCardHTML, mdirMove, mdirChange, mdirReveal, modelsFolderHTML};
 }

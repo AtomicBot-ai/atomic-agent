@@ -36,6 +36,13 @@ function simgMachine() {
   return a && a.platform && a.platform !== 'darwin' ? 'this computer' : 'this Mac';
 }
 const simgMachineCap = () => { const s = simgMachine(); return s.charAt(0).toUpperCase() + s.slice(1); };
+/** ATO-2742: the Generate chord on the button as the app spells it (renderer.js kbd):
+    "⌘ ↵" on macOS and with no bridge, "Ctrl ↵" on Windows and Linux. */
+function simgGoKey() {
+  if (typeof kbd === 'function') return kbd('⌘ ↵');
+  const a = typeof globalThis !== 'undefined' ? globalThis.atomic : null;
+  return a && a.platform && a.platform !== 'darwin' ? 'Ctrl ↵' : '⌘ ↵';
+}
 
 /** Every model of a catalog answer, cloud first, each with its group. */
 function simgModels(catalog) {
@@ -534,7 +541,7 @@ function simgPinnedList(items, more) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {simgTokenRateLine, simgCostLabel, SIMG_MODES, SIMG_MODE_HINT, simgMachine, simgMachineCap, simgModels, simgFindModel, simgPlaceOf, simgDefaultModel, simgPickModel, simgFollowLine, simgRestoreNote, simgQuantToGet, simgNotDownloaded, simgSuggestDownload, simgDownloadOf, simgDownloadLabel, simgDownloadLine, simgLocalUnsupported, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
+  module.exports = {simgTokenRateLine, simgCostLabel, SIMG_MODES, SIMG_MODE_HINT, simgMachine, simgMachineCap, simgGoKey, simgModels, simgFindModel, simgPlaceOf, simgDefaultModel, simgPickModel, simgFollowLine, simgRestoreNote, simgQuantToGet, simgNotDownloaded, simgSuggestDownload, simgDownloadOf, simgDownloadLabel, simgDownloadLine, simgLocalUnsupported, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
     simgRatios, simgRatioBox, simgRangeSize, simgModelDefaults, simgNormalize, simgBuildRequest, simgPriceParams,
     simgPriceLabel, simgGenerateLabel, simgEta, simgProgress, simgRecipeToForm, simgModelMeta, simgMaker, simgModelTags,
     simgLocalChips, simgModesLine, SIMG_PHASE_ORDER, simgFindPinned, simgPinnedList};

@@ -242,3 +242,19 @@ test("the settings' words", () => {
   assert.equal(S.ttsGb(193343328), "184 MB");
   assert.match(S.ttsCoreStatusText(null), /Checking/);
 });
+
+test("ATO-2742: no internal engine name, and each system says where its voices are added", () => {
+  for (const reason of ["core-too-old", "core-unavailable", "catalog-unavailable", "no-model", "model-not-downloaded"]) {
+    assert.doesNotMatch(S.ttsCoreStatusText({ ok: false, reason, model: { name: "MOSS", bytes: 1 } }), /Atomic Core/, reason);
+  }
+  assert.match(S.ttsVoiceHelp("darwin", "en"), /^On a Mac, add one in System Settings › Accessibility › Spoken Content/);
+  assert.match(S.ttsVoiceHelp("win32", "ru"), /^On Windows, add a Russian voice in Settings › Time & language › Speech/);
+  assert.match(S.ttsVoiceHelp("linux", "en"), /speech-dispatcher.*espeak-ng/);
+  for (const platform of ["win32", "linux"]) assert.doesNotMatch(S.ttsVoiceHelp(platform, "en"), /Mac|System Settings/, platform);
+});
+
+test("ATO-2742: the dialog's last line is true for the neural voice too", () => {
+  assert.doesNotMatch(S.ttsSettingsFootNote(true), /system's own/);
+  assert.match(S.ttsSettingsFootNote(true), /neural voice is a speech model the app downloads and runs on this computer/);
+  assert.doesNotMatch(S.ttsSettingsFootNote(false), /neural/);
+});

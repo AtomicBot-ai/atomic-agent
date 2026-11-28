@@ -104,5 +104,5 @@ export async function openOtherTerminalWithCommand(payload: unknown, deps: Other
   }
   if (files) rmSync(files.dir, { recursive: true, force: true });
   if (choices.length === 0) return { ok: false, error: "no-terminal", message: noTerminalMessage(platform) };
-  return terminalFail("open-failed", "The command is on your clipboard.");
+  return terminalFail("open-failed", undefined, "The command is on your clipboard.");
 }

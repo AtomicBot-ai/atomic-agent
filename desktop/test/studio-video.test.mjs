@@ -334,6 +334,15 @@ test('local video models say "this Mac" only on macOS, "this computer" on Window
   assert.deepEqual(strings.filter((x) => x !== "'this Mac'" && x !== "'Show in Finder'"), []);
 });
 
+test('ATO-2742: the Generate button shows Ctrl on Windows and Linux, the app\'s kbd() when it is there', () => {
+  assert.equal(V.goKey(), '⌘ ↵');
+  for (const platform of ['win32', 'linux']) assert.equal(load({ atomic: { platform } }).StudioVideo.goKey(), 'Ctrl ↵', platform);
+  assert.equal(load({ atomic: { platform: 'darwin' } }).StudioVideo.goKey(), '⌘ ↵');
+  assert.equal(load({ atomic: { platform: 'win32' }, kbd: (s) => 'K:' + s }).StudioVideo.goKey(), 'K:⌘ ↵');
+  assert.doesNotMatch(SRC, /<kbd>⌘/, 'no Mac chord written into the markup');
+  assert.match(SRC, /' <kbd>' \+ escHtml\(goKey\(\)\) \+ '<\/kbd>'/);
+});
+
 test('after Generate loads a local model the page reads the catalog again and stops saying "Not loaded" (ATO-1394)', async () => {
   let loaded = false;
   let reads = 0;

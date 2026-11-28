@@ -56,7 +56,7 @@ export type TerminalOpenError =
 
 export type TerminalOpenAnswer =
   | { ok: true; cwd: string; usedHome: boolean; terminal?: string; hint?: string }
-  | { ok: false; error: TerminalOpenError; message: string };
+  | { ok: false; error: TerminalOpenError; message: string; detail?: string };
 
 const MESSAGES: Record<TerminalOpenError, string> = {
   "unsupported": "Opening a command in a terminal is not available on this system.",
@@ -68,13 +68,18 @@ const MESSAGES: Record<TerminalOpenError, string> = {
   "no-terminal": "No terminal was found.",
 };
 
-/** The failure answer for `error`; terminal-open-other.ts (Windows, Linux) answers with it too. */
-export function terminalFail(error: TerminalOpenError, detail?: string): TerminalOpenAnswer {
-  return fail(error, detail);
+/**
+ * The failure answer for `error`; terminal-open-other.ts (Windows, Linux)
+ * answers with it too. ATO-2742: `message` is what the window shows, plain
+ * words plus an optional human `note`; `detail` (an OS error's own text) is
+ * kept apart for the log, never shown in the toast.
+ */
+export function terminalFail(error: TerminalOpenError, detail?: string, note?: string): TerminalOpenAnswer {
+  return fail(error, detail, note);
 }
 
-function fail(error: TerminalOpenError, detail?: string): TerminalOpenAnswer {
-  return { ok: false, error, message: detail ? `${MESSAGES[error]} ${detail}` : MESSAGES[error] };
+function fail(error: TerminalOpenError, detail?: string, note?: string): TerminalOpenAnswer {
+  return { ok: false, error, message: note ? `${MESSAGES[error]} ${note}` : MESSAGES[error], ...(detail ? { detail } : {}) };
 }
 
 /**
