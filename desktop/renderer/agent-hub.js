@@ -9,7 +9,9 @@
    the ones running, and the rest. Each row can be continued here (the
    existing "Continue from Claude Code / Codex" path, handoff.js) or opened
    in Terminal with the agent's own resume command typed, not run
-   (terminal-open, macOS only), or opened in Terminal with
+   (terminal-open; ATO-2782: Windows and Linux too, where the command is on
+   the clipboard to paste, and Windows opens PowerShell by name because the
+   launch line is PowerShell syntax), or opened in Terminal with
    `<the app's own agent> launch claude|codex` typed, which runs that CLI on
    Atomic Agent through `atag serve` (ATO-2172; ATO-2737: main names the
    bundled agent by full path, main/hub-launch-command.ts).
@@ -21,7 +23,7 @@ const HUB_AGENT_LABELS = {'claude-code': 'Claude Code', codex: 'Codex'};
 const HUB_GROUPS = [['waiting', 'Waiting for you'], ['running', 'Running'], ['idle', 'Recent']];
 /** Ids main hands out; anything else never reaches a command line. */
 const HUB_SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
-const HUB_TERMINAL_PLATFORMS = ['darwin'];
+const HUB_TERMINAL_PLATFORMS = ['darwin', 'win32', 'linux'];
 
 function hubEsc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
@@ -198,7 +200,7 @@ function hubOpenTerminal(row, command) {
   // A toast has no Details: only the first sentence of terminal-open's words, never the raw tail.
   const fail = (why) => toast("Couldn't open Terminal", (typeof herrSentence === 'function' ? herrSentence(why) : '') || 'Try again, or open it yourself.', 'bad');
   if (!command || !hubTerminalOk()) { fail(); return; }
-  Promise.resolve().then(() => BR.terminalOpenWithCommand({command, cwd: row.cwd || null}))
+  Promise.resolve().then(() => BR.terminalOpenWithCommand({command, cwd: row.cwd || null, shell: 'powershell'}))
     .then((r) => { if (!r || r.ok !== true) fail(r && r.message); }, () => fail());
 }
 

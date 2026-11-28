@@ -15,8 +15,9 @@
  *   - macOS and Linux (zsh, bash, sh): POSIX single quotes, a `'` inside
  *     written as `'\''`, so a space ("/Applications/Atomic Agent.app/...")
  *     or `$` stays literal.
- *   - Windows (Windows Terminal's default profile, else PowerShell,
- *     terminal-pick.ts): PowerShell's call operator with a single-quoted
+ *   - Windows (a PowerShell tab in Windows Terminal, else PowerShell;
+ *     ATO-2782 names PowerShell so a cmd.exe default profile cannot get
+ *     this line, terminal-pick.ts): PowerShell's call operator with a single-quoted
  *     path, `& 'C:\Program Files\...\atomic-agent.exe' launch claude`; a
  *     `'` inside is doubled. Single quotes, not double: PowerShell expands
  *     `$` and the backtick inside double quotes.
