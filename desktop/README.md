@@ -782,6 +782,15 @@ Honestly degraded, and labelled as such in the UI:
   saved note offers Show in Finder for the draft's folder (its path only on
   hover); an empty recording points at Privacy & Security › Input
   Monitoring (ATO-2744).
+  ATO-2499: what was under each click and key comes from one resident
+  Accessibility helper, `native/atomic-show-once.swift` (built with the Fn
+  watcher by `scripts/build-speech-helper.mjs`, skipped with the speech
+  helper under `ATOMIC_SKIP_SPEECH_HELPER=1`; `Resources/native` when
+  packaged). Its AXObserver on the frontmost app adds menu commands
+  (File > Export To > PDF, replacing the clicks that opened the menu) and
+  window titles (where a step happened, what came to the front after it;
+  never in browsers). Without the helper each event asks osascript once,
+  as before, with no menu commands or titles.
 - **Memory** reads `<stateDir>/memory.sqlite` read-only (`sqlite3`, falling
   back to `node:sqlite`) with the stores' own statements, named and
   parameterised in the main process — the agent has no memory route.

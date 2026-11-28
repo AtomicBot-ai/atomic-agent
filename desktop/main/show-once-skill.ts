@@ -1,4 +1,4 @@
-import type { ShowOnceStep } from "./show-once-log.js";
+import { isShowOnceAction, type ShowOnceStep } from "./show-once-log.js";
 
 /**
  * ATO-2401 "Show once": a recorded step log (show-once-log.ts) as a
@@ -60,6 +60,11 @@ function at(offset: { x: number; y: number } | null): string {
   return offset ? ` Recorded at (${offset.x}, ${offset.y}) from the window's top-left corner, a hint only.` : "";
 }
 
+/** A recorded menu path as the skill writes it: **File > Export To > PDF**. */
+function menuPath(path: readonly string[]): string {
+  return `**${path.join(" > ")}**`;
+}
+
 /** One step as an instruction line, or null for a step that says nothing on its own. */
 export function stepLine(s: ShowOnceStep): string | null {
   switch (s.kind) {
@@ -78,11 +83,13 @@ export function stepLine(s: ShowOnceStep): string | null {
       return `${verb} ${what} in ${s.app}.${how}${at(s.offset)}`;
     }
     case "keys":
-      return `Press \`${s.keys}\` in ${s.app} (os.screen.key { keys: "${s.keys}" }).`;
+      return `Press \`${s.keys}\` in ${s.app} (os.screen.key { keys: "${s.keys}" }).${s.menu ? ` It runs the menu command ${menuPath(s.menu)}.` : ""}`;
+    case "menu":
+      return `Choose ${menuPath(s.path)} from the menu bar in ${s.app}. Open each menu in turn: find it with os.screen.elements and press it with os.screen.press.`;
     case "text":
       return s.secure
         ? `A password goes here in ${s.app}. Never type it: ask the user to type it themselves, then go on.`
-        : `Type the text for this step in ${s.app} (os.screen.type). It was not recorded: take it from the task or ask the user.`;
+        : `Type the text for this step${s.into ? ` into the field "${s.into}"` : ""} in ${s.app} (os.screen.type). It was not recorded: take it from the task or ask the user.`;
     case "protected":
       return `The recording paused in ${s.app} (a protected app the agent cannot control). Ask the user to do this part themselves.`;
   }
@@ -90,7 +97,7 @@ export function stepLine(s: ShowOnceStep): string | null {
 
 /** The SKILL.md for a log, recorded at `recordedAt`. Null when the log has no step a person did. */
 export function compileShowOnceSkill(steps: readonly ShowOnceStep[], recordedAt: Date): CompiledShowOnceSkill | null {
-  const acted = steps.some((s) => s.kind === "click" || s.kind === "keys" || s.kind === "text");
+  const acted = steps.some(isShowOnceAction);
   if (!acted) return null;
   const apps = showOnceApps(steps);
   const where = apps.length === 0 ? "a Mac app" : apps.length === 1 ? apps[0]! : `${apps.slice(0, -1).join(", ")} and ${apps[apps.length - 1]}`;
@@ -102,7 +109,7 @@ export function compileShowOnceSkill(steps: readonly ShowOnceStep[], recordedAt:
   const body = [
     `# Routine shown once in ${where}`,
     "",
-    `The user recorded this routine once with Show once on ${day}. Only clicks, shortcuts and which app was in front were recorded: typed text and passwords were not, and nothing at all was recorded in protected apps.`,
+    `The user recorded this routine once with Show once on ${day}. Only clicks, shortcuts, menu commands and which app and window were in front were recorded: typed text and passwords were not, and nothing at all was recorded in protected apps.`,
     "",
     "## How to replay",
     "",
