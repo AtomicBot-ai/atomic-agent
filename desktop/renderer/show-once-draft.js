@@ -14,7 +14,7 @@ function showOnceTestMessage(name, skillMd) {
   const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
   const cut = body.length > SHOW_ONCE_TEST_MAX ? body.slice(0, SHOW_ONCE_TEST_MAX) + '\n\n(The rest of the draft was cut. Stop after the last step shown.)' : body;
   return 'Test the skill draft ' + JSON.stringify(String(name || 'show-once')) + ' once, as a dry run, before I approve it. '
-    + 'It is not installed yet, so its instructions are below. Do it on this Mac with the os.screen tools, step by step, '
+    + 'It is not installed yet, so its instructions are below. Do it on this computer step by step, as its How to replay section says, '
     + 'and do the replay check after every step. Stop at the first step that does not match and tell me the step number, '
     + 'what you expected and what you saw. Ask me for any text a step needs. Change nothing else.\n\n' + cut;
 }

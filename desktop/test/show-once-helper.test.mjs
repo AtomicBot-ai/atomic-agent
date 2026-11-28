@@ -116,8 +116,8 @@ test("the prober asks the helper when the build has it, osascript when it does n
   child.emit("exit", 1); // the helper crashed mid-recording
   assert.equal((await withHelper.click(5, 5)).app.name, "Safari");
   assert.equal(withHelper.via, "osascript");
-  const off = await PR.openShowOnceProber({ nativeDir: "/x", platform: "linux", onPush: () => {}, exists: () => true, osascript, spawnHelper: () => assert.fail("no helper off macOS") });
-  assert.equal(off.via, "osascript");
+  const off = await PR.openShowOnceProber({ nativeDir: "/x", platform: "linux", onPush: () => {}, exists: () => true, osascript, spawnHelper: () => assert.fail("no resident helper on Linux") });
+  assert.equal(off.via, "xdotool", "Linux asks xdotool per event");
 });
 
 const click = (app, extra = {}) => ({ kind: "click", at: 0, x: 10, y: 10, button: "left", clicks: 1, app, window: null, element: null, ...extra });

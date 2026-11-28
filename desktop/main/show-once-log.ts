@@ -117,7 +117,8 @@ export class ShowOnceLog {
   private lastClick: { at: number; x: number; y: number } | null = null;
   private lastAt = 0;
 
-  constructor(private readonly ownPid: number) {}
+  /** ATO-2499 `platform`: how keys are read (classifyKey); the Mac when not given. */
+  constructor(private readonly ownPid: number, private readonly platform: string = "darwin") {}
 
   add(e: ShowOnceEvent): boolean {
     if (this.full) return false;
@@ -228,7 +229,7 @@ export class ShowOnceLog {
   }
 
   private key(e: Extract<ShowOnceEvent, { kind: "key" }>, app: string, bundleId: string, browser: boolean): boolean {
-    const k = classifyKey(e);
+    const k = classifyKey(e, this.platform);
     if (k.kind === "ignore") return false;
     const secure = !!e.focused && e.focused.role === "AXSecureTextField";
     const last = this.steps[this.steps.length - 1];

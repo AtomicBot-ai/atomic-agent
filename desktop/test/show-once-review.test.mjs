@@ -187,7 +187,7 @@ test("a recorded draft's preview shows its step pictures; other drafts show noth
 });
 
 test("the card says the tidy pass can send the steps to a cloud model", () => {
-  assert.ok(R.SHOW_ONCE_TIDY_HINT.includes("If that model is in the cloud, this text leaves this Mac"));
+  assert.ok(R.SHOW_ONCE_TIDY_HINT.includes("If that model is in the cloud, this text leaves this computer"));
   assert.ok(R.SHOW_ONCE_KEPT.endsWith("unless you tidy it with a cloud model."), "no flat 'stays on this Mac' above a switch that is on by default");
   const html = R.showOnceOptionsHTML({ options: { tidy: true } }, (x) => x);
   assert.ok(html.includes("If that model is in the cloud"));

@@ -35,8 +35,9 @@ export async function saveRecording(
   steps: readonly ShowOnceStep[],
   recordedAt: Date,
   shots: ShowOnceSnapshots | null,
+  os = "macOS", // ATO-2499: show-once-platform.ts showOnceOsName, for the replay rules
 ): Promise<RecordingSaved> {
-  const skill = compileShowOnceSkill(steps, recordedAt);
+  const skill = compileShowOnceSkill(steps, recordedAt, null, os);
   if (!skill) {
     await shots?.discard();
     return { kind: "empty" };
@@ -68,6 +69,7 @@ export async function tidyDraft(
   steps: readonly ShowOnceStep[],
   recordedAt: Date,
   log: (line: string) => void,
+  os = "macOS",
 ): Promise<{ ok: true } | { ok: false; error: string; gone?: boolean }> {
   const prompt = showOnceTidyPrompt(showOnceApps(steps), showOnceStepLines(steps));
   let answer: AgentCompleteAnswer;
@@ -82,7 +84,7 @@ export async function tidyDraft(
     return { ok: false, error: TIDY_FAILED };
   }
   const tidy = parseShowOnceTidy(answer.text);
-  const skill = tidy ? compileShowOnceSkill(steps, recordedAt, tidy) : null;
+  const skill = tidy ? compileShowOnceSkill(steps, recordedAt, tidy, os) : null;
   if (!tidy || !skill) {
     log("[desktop] show once: tidy answer was not the JSON asked for");
     return { ok: false, error: TIDY_FAILED };

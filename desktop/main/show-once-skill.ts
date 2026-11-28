@@ -131,16 +131,48 @@ export function showOnceStepLines(steps: readonly ShowOnceStep[]): string[] {
  * description, summary and inputs (show-once-tidy.ts, already checked); the
  * steps stay as recorded either way.
  */
-export function compileShowOnceSkill(steps: readonly ShowOnceStep[], recordedAt: Date, tidy?: ShowOnceTidy | null): CompiledShowOnceSkill | null {
+/**
+ * ATO-2499 Windows and Linux: there the agent's os.screen tools only take
+ * pictures (no elements, press, click, key or type), so the replay is the
+ * agent walking the user through each step and checking a capture after it.
+ */
+function replayRules(os: string): string[] {
+  if (os === "macOS") {
+    return [
+      "- This runs on macOS with the os.screen tools. Before a step, list the window's controls with `os.screen.elements { app }` and press the matching one with `os.screen.press { app, element }`. Use `os.screen.click` only when no control matches.",
+      "- Replay check: after each step, look at the window (`os.screen.elements { app }` names it and its controls, or `os.screen.capture { app }`) and compare it with the step's \"Check:\" line, or with what the next step needs when there is none.",
+    ];
+  }
+  return [
+    `- This was recorded on ${os}. There the os.screen tools can only take a picture of the screen (\`os.screen.capture\`), not click or type, so walk the user through it: tell the user one step at a time in plain words (the app, the window, the control's name or where it was), and wait until they say it is done. Keyboard shortcuts are named as recorded (\`ctrl+s\`).`,
+    "- Replay check: after each step, take `os.screen.capture` and compare it with the step's \"Check:\" line, or with what the next step needs when there is none.",
+  ];
+}
+
+/** A step line without the Mac's tool hints, for a person to follow (Windows, Linux). */
+export function showOncePlainStep(line: string): string {
+  return line
+    .replace(/ Find it with .*?os\.screen\.(?:press|click)\./g, "")
+    .replace(/ Open each menu in turn: .*?os\.screen\.press\./g, "")
+    .replace(/ \(os\.screen\.\w+(?: \{[^}]*\})?\)/g, "");
+}
+
+export function compileShowOnceSkill(
+  steps: readonly ShowOnceStep[],
+  recordedAt: Date,
+  tidy?: ShowOnceTidy | null,
+  os: string = "macOS",
+): CompiledShowOnceSkill | null {
   const acted = steps.some(isShowOnceAction);
   if (!acted) return null;
   const apps = showOnceApps(steps);
-  const where = apps.length === 0 ? "a Mac app" : apps.length === 1 ? apps[0]! : `${apps.slice(0, -1).join(", ")} and ${apps[apps.length - 1]}`;
+  const here = os === "macOS" ? "Mac" : `${os} computer`;
+  const where = apps.length === 0 ? `a ${here} app` : apps.length === 1 ? apps[0]! : `${apps.slice(0, -1).join(", ")} and ${apps[apps.length - 1]}`;
   const name = showOnceSkillName(apps[0] ?? null, recordedAt);
   const day = `${recordedAt.getFullYear()}-${pad(recordedAt.getMonth() + 1)}-${pad(recordedAt.getDate())}`;
-  const lines = showOnceStepLines(steps);
+  const lines = showOnceStepLines(steps).map((l) => (os === "macOS" ? l : showOncePlainStep(l)));
   let description = `Repeat a routine the user showed once in ${where} (${lines.length} steps), with the os.screen tools. Use when the user asks to do that routine again.`;
-  if (description.length > 300) description = `Repeat a routine the user showed once on this Mac (${lines.length} steps), with the os.screen tools.`;
+  if (description.length > 300) description = `Repeat a routine the user showed once on this ${here} (${lines.length} steps), with the os.screen tools.`;
   if (tidy && tidy.description && tidy.description.length <= 300) description = tidy.description;
   const ask = tidy && tidy.inputs.length
     ? ["## Ask the user for", "", "Before starting, ask for anything the request did not give:", "", ...tidy.inputs.map((i) => `- ${i}`), ""]
@@ -154,8 +186,7 @@ export function compileShowOnceSkill(steps: readonly ShowOnceStep[], recordedAt:
     ...ask,
     "## How to replay",
     "",
-    "- This runs on macOS with the os.screen tools. Before a step, list the window's controls with `os.screen.elements { app }` and press the matching one with `os.screen.press { app, element }`. Use `os.screen.click` only when no control matches.",
-    "- Replay check: after each step, look at the window (`os.screen.elements { app }` names it and its controls, or `os.screen.capture { app }`) and compare it with the step's \"Check:\" line, or with what the next step needs when there is none.",
+    ...replayRules(os),
     "- At the first step that does not match, stop: do not try other clicks. Tell the user \"Replay stopped at step N of M: expected ..., saw ...\" and what you think went wrong.",
     "- When every step matched, end with \"Replay check: all M steps matched.\"",
     "- Recorded positions are hints: windows move. Go by the control's name first.",

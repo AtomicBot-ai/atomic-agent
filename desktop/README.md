@@ -888,6 +888,18 @@ Honestly degraded, and labelled as such in the UI:
   "Replay stopped at step N of M: expected ..., saw ...". **Test skill** in a
   recorded draft's preview opens a new chat whose first message is a dry run
   of the draft (it is not installed yet, so its text goes along).
+  Windows and Linux (ATO-2499): the same uiohook-napi listener (its Linux
+  prebuilds now ship), and the tray icon instead of the menu bar item.
+  Windows asks one resident Windows PowerShell (`main/show-once-win.ts`,
+  same line protocol as the helper) for the window under a click or in
+  front (user32), its title, and the UI Automation control there (type,
+  name, password or not; never its value). Linux on X11 asks `xdotool`
+  per event (`main/show-once-linux.ts`) for the window in front, its title
+  and process, with no control names. Wayland, or no `xdotool`, shows why
+  in place of the Record button (`main/show-once-platform.ts`). No step
+  pictures off macOS. Off macOS the os.screen tools only capture, so the
+  SKILL.md tells the agent to walk the user through each step and check a
+  capture after it.
 - **Memory** reads `<stateDir>/memory.sqlite` read-only (`sqlite3`, falling
   back to `node:sqlite`) with the stores' own statements, named and
   parameterised in the main process — the agent has no memory route.
