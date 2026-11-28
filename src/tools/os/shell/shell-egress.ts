@@ -21,15 +21,22 @@ export interface ShellEgressFacts {
   env?: NodeJS.ProcessEnv;
 }
 
-/** A write into a `.git` folder or a git config file can change where a push goes. */
+/**
+ * A write into a `.git` folder or a git config file can change where a
+ * push goes: `~/.gitconfig`, the XDG `~/.config/git/config` (review
+ * round 3 of ATO-2528), a system `gitconfig`, `.gitmodules`.
+ */
 function writesGitState(paths: readonly string[]): boolean {
   return paths.some((path) => {
     const name = basename(path).toLowerCase();
+    const lower = path.toLowerCase();
     return (
       name === ".git" ||
       name === ".gitconfig" ||
+      name === "gitconfig" ||
       name === ".gitmodules" ||
-      path.toLowerCase().includes(`${sep}.git${sep}`)
+      lower.includes(`${sep}.git${sep}`) ||
+      lower.endsWith(`${sep}git${sep}config`)
     );
   });
 }

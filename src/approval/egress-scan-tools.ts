@@ -10,6 +10,7 @@
  */
 import { hasUrlScheme, hostOfScpTarget, hostOfUrl, normaliseHost } from "./egress-host.js";
 import type { EgressDestination, EgressKind } from "./egress-scan.js";
+import { readsOtherConfig, setsScopedRegistry } from "./publish-other-config.js";
 
 function entry(kind: EgressKind, host: string | null, direction: EgressDestination["direction"], label: string): EgressDestination {
   return { kind, host, direction, label: host ?? label };
@@ -195,12 +196,18 @@ function publishOperand(args: readonly string[]): boolean {
   return false;
 }
 
-/** Flags before the subcommand whose value is the next word (`npm --registry x publish`). */
-const LEADING_VALUE_FLAGS = new Set([...PUBLISH_VALUE_FLAGS, "-C", "--prefix", "--cwd", "--dir", "--globalconfig", "--index", "--host"]);
+/** Flags before the subcommand whose value is the next word (`npm --registry x publish`, `cargo -Z x publish`). */
+const LEADING_VALUE_FLAGS = new Set([
+  ...PUBLISH_VALUE_FLAGS, "-C", "--prefix", "--cwd", "--dir", "--globalconfig", "--index", "--host",
+  "-Z", "--config", "--manifest-path", "--color",
+]);
 
-/** Where the subcommand starts, past leading flags (review round 2: `npm --registry=x publish`). */
+/**
+ * Where the subcommand starts, past leading flags (review round 2: `npm
+ * --registry=x publish`) and a cargo `+toolchain` (review round 3).
+ */
 function subcommandAt(args: readonly string[]): number {
-  let at = 0;
+  let at = args[0]?.startsWith("+") === true ? 1 : 0;
   while (at < args.length && args[at]!.startsWith("-")) {
     at += !args[at]!.includes("=") && LEADING_VALUE_FLAGS.has(args[at]!) ? 2 : 1;
   }
@@ -216,10 +223,11 @@ export function scanPublish(
   const args = allArgs.slice(subcommandAt(allArgs));
   const sub = args[0];
   // Another npmrc (`--userconfig f`) sets a registry this does not read.
-  const otherConfig = flagValue(allArgs, ["--userconfig", "--globalconfig"]) !== undefined;
+  const otherConfig = readsOtherConfig(program, allArgs);
   const publish = (fallback: string, flags: readonly string[]): EgressDestination[] => {
     const flag = flagValue(allArgs, flags);
-    if (flag === undefined && otherConfig) {
+    // A scoped registry beats `--registry` for a scoped package.
+    if ((flag === undefined && otherConfig) || setsScopedRegistry(program, allArgs)) {
       return [entry("package_publish", null, "outbound", `the registry ${program} is set to`)];
     }
     // A flag wins; then the project's config; then the public default.
@@ -241,7 +249,7 @@ export function scanPublish(
   if (program === "cargo" && sub === "publish") {
     const name = flagValue(allArgs, ["--registry"]);
     if (name !== undefined) {
-      const index = configured?.("cargo", name);
+      const index = otherConfig ? null : configured?.("cargo", name);
       return [entry("package_publish", typeof index === "string" ? registryHost(index, "") : null, "outbound", "a cargo registry")];
     }
     return publish("crates.io", ["--index"]);

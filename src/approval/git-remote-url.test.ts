@@ -6,6 +6,19 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { gitRemoteUrl, gitRemoteUrls, parseGitConfig } from "./git-remote-url.js";
 
+/** A version 2 index with one entry of `mode` at `path`. */
+function indexWith(mode: number, path: string): Buffer {
+  const header = Buffer.alloc(12);
+  header.write("DIRC", 0, "latin1");
+  header.writeUInt32BE(2, 4);
+  header.writeUInt32BE(1, 8);
+  const entry = Buffer.alloc((62 + path.length + 8) & ~7);
+  entry.writeUInt32BE(mode, 24);
+  entry.writeUInt16BE(path.length, 60);
+  entry.write(path, 62, "latin1");
+  return Buffer.concat([header, entry, Buffer.alloc(20)]);
+}
+
 describe("gitRemoteUrl (ATO-2116)", () => {
   let root: string;
   const noGlobal = { globalConfigPaths: [] as string[], systemConfigPaths: [] as string[], env: {} };
@@ -127,26 +140,103 @@ describe("gitRemoteUrl (ATO-2116)", () => {
     expect(gitRemoteUrls(dir, "origin", { ...noGlobal, env: { GIT_CONFIG_PARAMETERS: "'x=y'" } })).toBeNull();
   });
 
+  // Review round 3 (test mutation): the default system path list, not a seam.
+  it("reads the system config from GIT_CONFIG_SYSTEM unless GIT_CONFIG_NOSYSTEM is set", () => {
+    const dir = repo('[remote "origin"]\n  url = https://github.com/org/repo.git\n');
+    const level = join(root, "system.cfg");
+    writeFileSync(level, '[remote "origin"]\n  pushurl = https://evil.example/x.git\n');
+    expect(gitRemoteUrls(dir, "origin", { globalConfigPaths: [], env: { GIT_CONFIG_SYSTEM: level } })).toEqual([
+      "https://evil.example/x.git",
+    ]);
+    const off = { GIT_CONFIG_SYSTEM: level, GIT_CONFIG_NOSYSTEM: "1" };
+    expect(gitRemoteUrls(dir, "origin", { globalConfigPaths: [], env: off })).toEqual(["https://github.com/org/repo.git"]);
+  });
+
   // Review round 2 (F2105-R2.1): `git config push.recurseSubmodules
   // on-demand` then a plain `git push` also pushed the submodule to its
-  // own remote.
+  // own remote. Review round 3 (F2105-R3.1): the setting read last wins,
+  // and `submodule.recurse` is a git bool (checked against git 2.39).
   it.each([
     "[push]\n  recurseSubmodules = on-demand\n",
-    "[push]\n  recurseSubmodules = check\n",
+    "[push]\n  recurseSubmodules = only\n",
     "[submodule]\n  recurse = true\n",
+    "[submodule]\n  recurse = 2\n",
+    "[submodule]\n  recurse = 0x1\n",
+    "[submodule]\n  recurse\n",
+    "[push]\n  recurseSubmodules = no\n[submodule]\n  recurse = true\n",
   ])("gives up when the push recurses into submodules: %j", (extra) => {
     const dir = repo(`[remote "origin"]\n  url = https://github.com/org/repo.git\n${extra}`);
+    writeFileSync(join(dir, ".gitmodules"), '[submodule "sub"]\n  path = sub\n  url = https://evil.example/s.git\n');
     expect(gitRemoteUrls(dir, "origin", noGlobal)).toBeNull();
     const global = join(root, "global.cfg");
     rmSync(join(root, "repo"), { recursive: true, force: true });
     const plain = repo('[remote "origin"]\n  url = https://github.com/org/repo.git\n');
+    writeFileSync(join(plain, ".gitmodules"), "");
     writeFileSync(global, extra);
     expect(gitRemoteUrls(plain, "origin", { ...noGlobal, globalConfigPaths: [global] })).toBeNull();
   });
 
-  it("reads a push that does not recurse into submodules", () => {
-    const dir = repo('[remote "origin"]\n  url = https://github.com/org/repo.git\n[push]\n  recurseSubmodules = no\n[submodule]\n  recurse = true\n');
+  it("gives up on a global push.recurseSubmodules=no that the repository's submodule.recurse overrides", () => {
+    const dir = repo('[remote "origin"]\n  url = https://github.com/org/repo.git\n[submodule]\n  recurse = true\n');
+    writeFileSync(join(dir, ".gitmodules"), "");
+    const global = join(root, "global.cfg");
+    writeFileSync(global, "[push]\n  recurseSubmodules = no\n");
+    expect(gitRemoteUrls(dir, "origin", { ...noGlobal, globalConfigPaths: [global] })).toBeNull();
+  });
+
+  it.each([
+    "[submodule]\n  recurse = true\n[push]\n  recurseSubmodules = no\n",
+    "[push]\n  recurseSubmodules = on-demand\n[submodule]\n  recurse = false\n",
+    "[push]\n  recurseSubmodules = check\n",
+    "[submodule]\n  recurse = 0\n",
+  ])("reads a push that does not recurse into submodules: %j", (extra) => {
+    const dir = repo(`[remote "origin"]\n  url = https://github.com/org/repo.git\n${extra}`);
+    writeFileSync(join(dir, ".gitmodules"), "");
     expect(gitRemoteUrls(dir, "origin", noGlobal)).toEqual(["https://github.com/org/repo.git"]);
+  });
+
+  // Review round 3 (FALSE_BLOCK): a global submodule.recurse=true held
+  // every push, even in a repository with no submodules.
+  it("reads an ordinary push in a repository without submodules though submodule.recurse is on", () => {
+    const dir = repo('[remote "origin"]\n  url = https://github.com/org/repo.git\n');
+    const global = join(root, "global.cfg");
+    writeFileSync(global, "[submodule]\n  recurse = true\n");
+    const options = { ...noGlobal, globalConfigPaths: [global] };
+    expect(gitRemoteUrls(dir, "origin", options)).toEqual(["https://github.com/org/repo.git"]);
+    // A regular file in the index is no submodule.
+    writeFileSync(join(dir, ".git", "index"), indexWith(0o100644, "README.md"));
+    expect(gitRemoteUrls(dir, "origin", options)).toEqual(["https://github.com/org/repo.git"]);
+    // A submodule in the index, or an absorbed one, is.
+    writeFileSync(join(dir, ".git", "index"), indexWith(0o160000, "sub"));
+    expect(gitRemoteUrls(dir, "origin", options)).toBeNull();
+    rmSync(join(dir, ".git", "index"));
+    mkdirSync(join(dir, ".git", "modules", "sub"), { recursive: true });
+    expect(gitRemoteUrls(dir, "origin", options)).toBeNull();
+  });
+
+  // Review round 3 (F2105-R3.4): git reads config.worktree only with
+  // extensions.worktreeConfig on, so a decoy one changed nothing.
+  it("reads config.worktree only when extensions.worktreeConfig is on", () => {
+    const base = '[remote "origin"]\n  url = https://evil.example/r.git\n[remote "gh"]\n  url = https://github.com/o/r.git\n';
+    const dir = repo(base);
+    writeFileSync(join(dir, ".git", "config.worktree"), "[remote]\n  pushDefault = gh\n");
+    expect(gitRemoteUrls(dir, null, noGlobal)).toEqual(["https://evil.example/r.git"]);
+    writeFileSync(join(dir, ".git", "config"), `${base}[extensions]\n  worktreeConfig = true\n`);
+    expect(gitRemoteUrls(dir, null, noGlobal)).toEqual(["https://github.com/o/r.git"]);
+  });
+
+  // Review round 3 (F2105-R3.3): `git push <url>` takes the rewrites too,
+  // and a remote may be named like a URL (checked against git 2.39).
+  it("applies the rewrites to a URL or a path given as the remote", () => {
+    const dir = repo('[remote "https://github.com/c/d"]\n  url = https://evil.example/d.git\n');
+    const global = join(root, "global.cfg");
+    writeFileSync(global, '[url "https://evil.example/"]\n  pushInsteadOf = https://github.com/a/\n  pushInsteadOf = ../mirror\n');
+    const options = { ...noGlobal, globalConfigPaths: [global] };
+    expect(gitRemoteUrls(dir, "https://github.com/a/b", options)).toEqual(["https://evil.example/b"]);
+    expect(gitRemoteUrls(dir, "../mirror.git", options)).toEqual(["https://evil.example/.git"]);
+    expect(gitRemoteUrls(dir, "https://github.com/c/d", options)).toEqual(["https://evil.example/d.git"]);
+    expect(gitRemoteUrls(dir, "https://gitlab.com/x/y", options)).toEqual(["https://gitlab.com/x/y"]);
+    expect(gitRemoteUrls(dir, "upstream", options)).toBeNull();
   });
 
   it("follows a worktree's .git file to the common config", () => {

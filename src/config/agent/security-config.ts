@@ -37,13 +37,23 @@ export function createAgentSecurityDefaults(): AgentSecurityConfig {
 }
 
 /**
+ * Suffixes under which anyone can register a name (review round 3): a
+ * country's second level (`co.uk`, `com.au`, `ne.jp`) and shared hosting
+ * where each user gets a subdomain. A short list, not the whole public
+ * suffix list; a wildcard over one of them is refused.
+ */
+const OPEN_SUFFIX_RE =
+  /^(?:(?:co|com|net|org|gov|edu|ac|or|ne|go|gob|nic|mil|ltd|plc|sch|nom|info|biz)\.[a-z]{2}|github\.io|gitlab\.io|herokuapp\.com|vercel\.app|netlify\.app|pages\.dev|workers\.dev|r2\.dev|web\.app|firebaseapp\.com|appspot\.com|blogspot\.com|glitch\.me|fly\.dev|onrender\.com|ngrok\.io|ngrok-free\.app|trycloudflare\.com|azurewebsites\.net|cloudfront\.net|amazonaws\.com|s3\.amazonaws\.com)$/;
+
+/**
  * `GitHub.com.` → `github.com`; `null` for anything that is not a host or
  * `*.domain`. A wildcard needs two labels after `*.` (review round 2):
- * `*.com` would make every `.com` host known.
+ * `*.com` would make every `.com` host known; nor may it cover an open
+ * suffix such as `*.co.uk` (review round 3).
  */
 export function normaliseKnownHostEntry(raw: string): string | null {
   const entry = raw.trim().toLowerCase().replace(/\.+$/, "");
-  if (entry.startsWith("*.") && !entry.slice(2).includes(".")) return null;
+  if (entry.startsWith("*.") && (!entry.slice(2).includes(".") || OPEN_SUFFIX_RE.test(entry.slice(2)))) return null;
   return entry.length > 0 && entry.length <= 253 && HOST_ENTRY_RE.test(entry) ? entry : null;
 }
 

