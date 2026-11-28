@@ -2200,7 +2200,11 @@ export class AgentClient extends EventEmitter {
   async contextPreview(sessionId: string | null, message: string): Promise<{
     ok: boolean; supported: boolean; basis?: "built";
     usage?: { tokens: number; contextWindow: number | null; conversationTokens: number; conversationPairs: number;
-      droppedPairs: number; conversationPairsCap: number; sections: Array<{ label: string; tokens: number }> };
+      droppedPairs: number; conversationPairsCap: number; sections: Array<{ label: string; tokens: number }>;
+      /** ATO-2453: what each row is made of (agent 0.10.1+); read by renderer/context-parts.js. */
+      parts?: Array<{ label: string; tokens: number; parent: string; mcpServer?: string;
+        tools?: Array<{ label: string; tokens: number }> }>;
+      toolSearchActive?: boolean };
     contextWindow?: number | null; reservedForReply?: number; replyCap?: number; pairsCap?: number; error?: string;
   }> {
     try {

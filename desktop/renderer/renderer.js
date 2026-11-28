@@ -235,6 +235,7 @@ function openReplyPath(p) {
    the way MODE.supported does; `seq` drops a refresh that lost the race. */
 const CTX = { tokens:0, source:null, stablePrefix:0, tail:0, draftTokens:0, cacheHitTokens:null, modelId:null,
   window:null, windowLabel:'', baseline:null, sections:null, pairsCap:0, reserved:0, replyCap:0,
+  parts:null, toolSearchActive:false,   // ATO-2453: what each row is made of (context-parts.js)
   previewSupported:null, seq:0, chipTimer:null, draftTimer:null };
 /* Calm (S2) — the composer loader. While the agent works, a band of light
    travels the composer's rim. Its motion is CSS (composer.css); this only
@@ -6041,7 +6042,7 @@ function contextHTML() {
   let body = '';
   if (CTX.tokens) {
     if ((CTX.source === 'built' || CTX.source === 'measured') && CTX.sections && CTX.sections.length) {
-      body = CTX.sections.map((s) => row(s.label, fmtTokens(s.tokens))).join('');
+      body = CTX.sections.map((s) => row(s.label, fmtTokens(s.tokens)) + ctxPartRowsHTML(CTX.parts, s.label, {esc, fmt: fmtTokens})).join('');
     }
     else if (proj) {
       body = row('prompt scaffold', fmtTokens(CTX.stablePrefix));
@@ -6071,6 +6072,7 @@ function contextHTML() {
     + '<div class="popover ctxpop tk-pop" style="width:380px;' + anchorStyle('.cmodepick', 380) + '">'
     + '<div class="ctxin"><div class="hd ctxttl">' + esc(title) + '</div>' + meter + rows
     + ctxBoundLine()
+    + ((CTX.source === 'built' || CTX.source === 'measured') ? ctxHintHTML(CTX.parts, win, CTX.toolSearchActive, esc) : '')
     + (CTX.tokens ? '<p class="cap ctxbasis">' + esc(ctxBasisLine()) + '</p>' : '')
     + '</div>'
     /* Calm (S7, U20): agent.conversationMaxPairs is how many of your earlier
@@ -8925,6 +8927,8 @@ document.addEventListener('click', (e) => {
   }
   const ctxStep = t.closest('[data-ctx-step]');
   if (ctxStep) { ctxAdjust(ctxStep.dataset.ctxStep); return; }
+  const ctxExp = t.closest('[data-ctx-expand]');   // ATO-2453: list or fold an MCP server's tools
+  if (ctxExp) { ctxToggleServer(ctxExp.dataset.ctxExpand); render(); return; }
   const modeRow = t.closest('[data-mode]');
   if (modeRow) { setCodingMode(modeRow.dataset.mode); return; }
   const sk = t.closest('[data-skill]');
@@ -20472,6 +20476,7 @@ async function refreshContext(stateDirOverride) {
       usage = {tokens:u.tokens, source:'measured', stablePrefix:sec('prompt scaffold'),
         tail: typeof u.conversationTokens === 'number' ? u.conversationTokens : sec('conversation'),
         cacheHitTokens:null, modelId:null, baseline:null, sections:u.sections || [],
+        parts:u.parts || null, toolSearchActive:!!u.toolSearchActive,
         pairsCap: u.conversationPairsCap || 0, reserved:0, replyCap:0,
         agentReserve: typeof u.replyReserve === 'number' ? u.replyReserve : null,
         builtWindow: u.contextWindow > 0 ? u.contextWindow : null};
@@ -20489,6 +20494,7 @@ async function refreshContext(stateDirOverride) {
       const sec = (label) => { const s = (r.usage.sections || []).find((x) => x.label === label); return s ? s.tokens : 0; };
       usage = {tokens:r.usage.tokens, source:'built', stablePrefix:sec('prompt scaffold'), tail:sec('conversation'),
         cacheHitTokens:null, modelId:null, baseline:null, sections:r.usage.sections || [],
+        parts:r.usage.parts || null, toolSearchActive:!!r.usage.toolSearchActive,
         pairsCap:r.pairsCap || r.usage.conversationPairsCap || 0, reserved:r.reservedForReply || 0, replyCap:r.replyCap || 0,
         agentReserve: typeof r.usage.replyReserve === 'number' ? r.usage.replyReserve : null,
         builtWindow:r.contextWindow > 0 ? r.contextWindow : null};
@@ -20497,7 +20503,7 @@ async function refreshContext(stateDirOverride) {
   // (c) this session's trace, once a turn has run.
   if (!usage && S.agentSession && stateDir) {
     const r = await BR.traceUsage(stateDir, S.agentSession);
-    if (r && r.ok && r.usage) usage = Object.assign({}, r.usage, {baseline:null, sections:null, pairsCap:ctxPairsCap(), reserved:0, replyCap:0, builtWindow:null});
+    if (r && r.ok && r.usage) usage = Object.assign({}, r.usage, {baseline:null, sections:null, parts:null, toolSearchActive:false, pairsCap:ctxPairsCap(), reserved:0, replyCap:0, builtWindow:null});
   }
   // (d) the projection: the last scaffold this agent built here + the draft.
   if (!usage && stateDir && BR.traceBaseline) {
@@ -20507,7 +20513,7 @@ async function refreshContext(stateDirOverride) {
     if (r && r.ok && r.baseline) {
       const b = r.baseline;
       usage = {tokens:b.stablePrefix + CTX.draftTokens, source:'projected', stablePrefix:b.stablePrefix, tail:0,
-        cacheHitTokens:null, modelId:b.modelId, baseline:b, sections:null, pairsCap:ctxPairsCap(), reserved:0, replyCap:0, builtWindow:null};
+        cacheHitTokens:null, modelId:b.modelId, baseline:b, sections:null, parts:null, toolSearchActive:false, pairsCap:ctxPairsCap(), reserved:0, replyCap:0, builtWindow:null};
     }
   }
   if (seq !== CTX.seq) return; // a newer refresh is on its way
@@ -20519,7 +20525,7 @@ async function refreshContext(stateDirOverride) {
   if (!usage) {
     // Nothing measured and no trace to project from: the TUI's own
     // "not measured yet" state — chip hidden, never a zero.
-    Object.assign(CTX, {tokens:0, source:null, stablePrefix:0, tail:0, cacheHitTokens:null, modelId:null, baseline:null, sections:null, pairsCap:0, reserved:0, replyCap:0, agentReserve:null});
+    Object.assign(CTX, {tokens:0, source:null, stablePrefix:0, tail:0, cacheHitTokens:null, modelId:null, baseline:null, sections:null, parts:null, toolSearchActive:false, pairsCap:0, reserved:0, replyCap:0, agentReserve:null});
   } else {
     const builtWindow = usage.builtWindow; delete usage.builtWindow;
     Object.assign(CTX, {agentReserve:null}, usage); // ATO-2495: never a stale agent reserve
