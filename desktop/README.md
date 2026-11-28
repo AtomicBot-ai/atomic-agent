@@ -1388,8 +1388,24 @@ Honestly degraded, and labelled as such in the UI:
   Linux) and `Open Settings` on macOS and Windows (`app:openMicSettings`,
   `main/mic-settings.ts`). Quitting while a meeting is recorded is named in
   the quit question (`main/quit-question.ts`). A recording a crash or a closed
-  window cut short is offered again at the next start. Not yet: system audio
-  (ScreenCaptureKit) and real speaker recognition.
+  window cut short is offered again at the next start.
+- **Me and Them (ATO-2514).** Once the microphone is open the call's sound
+  on this computer is recorded as a second channel, so the transcript reads
+  `Me` / `Them` like Granola's. macOS: `native/atomic-system-audio.swift`
+  (ScreenCaptureKit, 16 kHz mono, the app's own sound excluded by bundle id;
+  compiled by `build-speech-helper.mjs` for macOS 14 and shipped beside
+  `atomic-speech`), run by `main/meeting-system-ipc.ts`; its stdout is cut
+  into the microphone's 100 ms frames (`meeting-system-audio.ts`). Without
+  the Screen and System Audio Recording permission the panel says
+  `Microphone only` with `Open Settings`. Windows: the page asks
+  `getDisplayMedia`, main answers with the screen and WASAPI `loopback` audio
+  only while a meeting records (`display-capture` is allowed only then), and
+  the video track is stopped at once. Linux: the PulseAudio / PipeWire
+  `Monitor of …` input when it is listed; otherwise microphone only. The
+  recorder keeps the call's chunks in `<id>/them/`, its clock starting
+  `themLead` seconds in (meta.json); `meeting-speakers.ts` puts both
+  channels on one clock and drops microphone lines that are the call heard
+  through the speakers.
 - **Logbook chip and menu bar icon (ATO-2534).** While the logbook is on or
   paused (`atomic-agent logbook start`, shared `~/.atomic-agent/logbook/settings.json`),
   the toolbar shows `● Logbook` (`renderer/logbook-chip.js`) and the menu bar
@@ -2383,6 +2399,7 @@ desktop/
   electron-builder.cjs   the packaging config, and the update feed (ATAG_UPDATE_FEED_URL)
   native/atomic-speech.swift  on-device transcription (SpeechAnalyzer), NDJSON on stdout (live, and --file for an audio file)
   native/atomic-fn-key.swift  hold Fn to dictate into any app: a listen-only event tap, down/up lines on stdout
+  native/atomic-system-audio.swift  ATO-2514: the call's sound for Record a meeting (ScreenCaptureKit), raw PCM on stdout
   main/hold-key-uiohook.ts  hold Ctrl+Win to dictate into any app on Windows (uiohook-napi, in process)
   preload/preload.ts     the window.atomic bridge
   renderer/              index.html · styles.css · renderer.js · voice-worklet.js

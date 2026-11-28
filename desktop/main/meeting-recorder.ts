@@ -18,56 +18,43 @@
  * whisper.cpp binary and model voice input found on Windows and Linux. One
  * chunk at a time, in order, so the live transcript reads top to bottom.
  *
+ * ATO-2514: two channels. "me" is the microphone; "them" is the other side
+ * of the call (system audio, meeting-system-audio.ts), recorded the same
+ * way into the meeting's `them/` folder, its clock starting `themLead`
+ * seconds into the meeting. Finish puts both on one clock and names the
+ * speakers (meeting-speakers.ts).
+ *
  * No electron: test/meeting-recorder.test.mjs drives it with a fake engine.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ChunkPlanner, checkFrame, pcmSeconds, planRecovery } from "./meeting-plan.js";
-import { isMeetingId, type MeetingMeta, type MeetingStore } from "./meeting-store.js";
-import { assembleSegments, meetingDocument, meetingFileName, minutesPrompt, shiftSegments, speakerTurns } from "./meeting-transcript.js";
-import type { TranscribeEngine, TranscribeRun, TranscriptSegment } from "./transcribe-file.js";
+import { buildTurns } from "./meeting-speakers.js";
+import { isMeetingId, type MeetingChannel, type MeetingMeta } from "./meeting-store.js";
+import { assembleSegments, meetingDocument, meetingFileName, minutesPrompt, shiftSegments } from "./meeting-transcript.js";
+import type { TranscribeRun } from "./transcribe-file.js";
+import type { MeetingFinish, MeetingRecorderDeps } from "./meeting-types.js";
 
-export type MeetingEvent =
-  /** A chunk was heard: its segments, on the meeting's clock. */
-  | { type: "segments"; id: string; index: number; segments: TranscriptSegment[] }
-  | { type: "chunk-failed"; id: string; index: number; error: string }
-  /** The recording ended: the person's Stop, the window closing, the disk. */
-  | { type: "stopped"; id: string; reason: string };
+export type { MeetingEvent, MeetingFinish, MeetingRecorderDeps } from "./meeting-types.js";
 
-export interface MeetingRecorderDeps {
-  store: MeetingStore;
-  engine: TranscribeEngine;
-  /** Where the finished transcript is saved (the person's Meetings folder). */
-  saveDir: () => string;
-  emit: (ev: MeetingEvent) => void;
-  now?: () => number;
-}
-
-export interface MeetingFinish {
-  ok: boolean;
-  error?: string;
-  message?: string;
-  id?: string;
-  /** No speech in the whole meeting: nothing saved, the folder is gone. */
-  empty?: boolean;
-  path?: string;
-  folder?: string;
-  fileName?: string;
-  document?: string;
-  /** The "Make notes" message sent with the transcript attached. */
-  prompt?: string;
-  turns?: number;
-  duration?: number;
-  /** Chunks the transcriber refused twice: their audio is kept for another try. */
-  failed?: number;
+interface ChannelState {
+  index: number;
+  planner: ChunkPlanner;
+  /** Seconds sealed so far in this channel, the next chunk's start. */
+  offset: number;
 }
 
 interface Recording {
   meta: MeetingMeta;
-  index: number;
-  planner: ChunkPlanner;
-  /** Seconds sealed so far, the next chunk's start. */
-  offset: number;
+  me: ChannelState;
+  /** The other side of the call, from its first frame on. */
+  them: ChannelState | null;
+}
+
+const CHANNELS: readonly MeetingChannel[] = ["me", "them"];
+
+function channel(): ChannelState {
+  return { index: 0, planner: new ChunkPlanner(), offset: 0 };
 }
 
 export class MeetingRecorder {
@@ -87,7 +74,7 @@ export class MeetingRecorder {
   status(): { recording: boolean; id?: string; startedAt?: number; seconds?: number } {
     const c = this.current;
     if (!c) return { recording: false };
-    return { recording: true, id: c.meta.id, startedAt: c.meta.startedAt, seconds: c.offset + pcmSeconds(c.planner.pending()) };
+    return { recording: true, id: c.meta.id, startedAt: c.meta.startedAt, seconds: c.me.offset + pcmSeconds(c.me.planner.pending()) };
   }
 
   async available(): Promise<{ ok: boolean; reason?: string; locale?: string; engine?: string }> {
@@ -110,48 +97,59 @@ export class MeetingRecorder {
       return { ok: false, error: "disk", message: err instanceof Error ? err.message : String(err) };
     }
     this.killed = false;
-    this.current = { meta, index: 0, planner: new ChunkPlanner(), offset: 0 };
+    this.current = { meta, me: channel(), them: null };
     return { ok: true, id: meta.id, startedAt: meta.startedAt, locale: meta.locale };
   }
 
-  /** One frame from the renderer. Dropped unless a recording is open and the frame is sane. */
-  audio(chunk: unknown, peak: unknown): void {
+  /** One frame from the renderer (or the macOS system-audio helper). Dropped unless a recording is open and the frame is sane. */
+  audio(chunk: unknown, peak: unknown, ch: MeetingChannel = "me"): void {
     const cur = this.current;
     if (!cur) return;
     const frame = checkFrame(chunk);
     if (!frame) return;
+    let state = ch === "them" ? cur.them : cur.me;
+    if (!state) {
+      // The other side's clock starts where the microphone's is now.
+      state = cur.them = channel();
+      cur.meta = { ...cur.meta, themLead: cur.me.offset + pcmSeconds(cur.me.planner.pending()) };
+      try { this.deps.store.writeMeta(cur.meta); } catch { /* the lead is also kept in memory for Finish */ }
+    }
     try {
-      this.deps.store.appendPcm(cur.meta.id, cur.index, frame);
+      this.deps.store.appendPcm(cur.meta.id, state.index, frame, ch);
     } catch {
       // The disk refused (full, folder gone): stop rather than pretend to record.
       this.stop("disk");
       return;
     }
-    if (cur.planner.push(frame.byteLength, typeof peak === "number" ? peak : 1)) this.cut(cur);
+    if (state.planner.push(frame.byteLength, typeof peak === "number" ? peak : 1)) this.cut(cur, ch);
   }
 
   stop(reason = "user"): { ok: boolean; error?: string; id?: string } {
     const cur = this.current;
     if (!cur) return { ok: false, error: "not-recording" };
     this.current = null;
-    this.cut(cur);
+    this.cut(cur, "me");
+    if (cur.them) this.cut(cur, "them");
     this.deps.emit({ type: "stopped", id: cur.meta.id, reason });
     return { ok: true, id: cur.meta.id };
   }
 
-  /** The chunk being written is sealed and queued; the next frame starts the next one. */
-  private cut(cur: Recording): void {
-    const index = cur.index;
-    cur.index += 1;
-    cur.planner.reset();
+  /** The channel's chunk being written is sealed and queued; the next frame starts the next one. */
+  private cut(cur: Recording, ch: MeetingChannel): void {
+    const state = ch === "them" ? cur.them : cur.me;
+    if (!state) return;
+    const index = state.index;
+    state.index += 1;
+    state.planner.reset();
     let sealed: { path: string; duration: number } | null = null;
-    try { sealed = this.deps.store.seal(cur.meta.id, index); } catch { sealed = null; }
+    try { sealed = this.deps.store.seal(cur.meta.id, index, ch); } catch { sealed = null; }
     if (!sealed) return;
-    const offset = cur.offset;
+    // On the meeting's clock: the other side's chunks start after its lead.
+    const offset = state.offset + (ch === "them" ? cur.meta.themLead ?? 0 : 0);
     const duration = sealed.duration;
-    cur.offset += duration;
+    state.offset += duration;
     const { id, locale } = cur.meta;
-    void this.serial(() => this.transcribeChunk(id, index, offset, duration, locale)).catch(() => false);
+    void this.serial(() => this.transcribeChunk(id, index, offset, duration, locale, ch)).catch(() => false);
   }
 
   /** Runs `fn` after everything queued before it; the queue survives a failure. */
@@ -162,81 +160,96 @@ export class MeetingRecorder {
   }
 
   /** One sealed chunk through the engine; its text kept, its audio deleted. True when it was heard. */
-  private async transcribeChunk(id: string, index: number, offset: number, duration: number, locale: string): Promise<boolean> {
+  private async transcribeChunk(id: string, index: number, offset: number, duration: number, locale: string, ch: MeetingChannel = "me"): Promise<boolean> {
     if (this.killed) return false;
     let run: TranscribeRun;
     try {
-      run = this.deps.engine.run(this.deps.store.wavPath(id, index), locale, () => {});
+      run = this.deps.engine.run(this.deps.store.wavPath(id, index, ch), locale, () => {});
     } catch {
-      this.deps.emit({ type: "chunk-failed", id, index, error: "spawn" });
+      this.deps.emit({ type: "chunk-failed", id, index, error: "spawn", channel: ch });
       return false;
     }
     this.running = { id, run };
     const res = await run.done.finally(() => { if (this.running?.run === run) this.running = null; });
     if (!res.ok) {
-      if (!res.cancelled) this.deps.emit({ type: "chunk-failed", id, index, error: res.error ?? "failed" });
+      if (!res.cancelled) this.deps.emit({ type: "chunk-failed", id, index, error: res.error ?? "failed", channel: ch });
       return false;
     }
     const segments = res.segments ?? [];
     try {
-      this.deps.store.writeTranscript(id, index, duration, segments);
+      this.deps.store.writeTranscript(id, index, duration, segments, ch);
     } catch {
       return false;   // the meeting was deleted meanwhile
     }
-    this.deps.emit({ type: "segments", id, index, segments: shiftSegments(segments, offset) });
+    this.deps.emit({ type: "segments", id, index, segments: shiftSegments(segments, offset), channel: ch });
     return true;
   }
 
   async finish(id: unknown): Promise<MeetingFinish> {
     if (!isMeetingId(id)) return { ok: false, error: "bad-request" };
-    if (this.current?.meta.id === id) this.stop("user");
+    const live = this.current?.meta.id === id ? this.current.meta : null;
+    if (live) this.stop("user");
     if (this.finishing.has(id)) return { ok: false, error: "busy" };
     const { store } = this.deps;
-    const meta = store.meta(id);
-    if (!meta) return { ok: false, error: "missing" };
+    const stored = store.meta(id);
+    if (!stored) return { ok: false, error: "missing" };
+    // The other side's lead, even when meta.json could not be rewritten.
+    const meta: MeetingMeta = live?.themLead !== undefined && stored.themLead === undefined ? { ...stored, themLead: live.themLead } : stored;
     this.finishing.add(id);
     try {
       await this.queue;
-      // What a crash or a refused chunk left behind.
-      store.dropStale(id);
-      for (const i of planRecovery(store.names(id)).seal) {
-        try { store.seal(id, i); } catch { /* unreadable: left as it is */ }
-      }
       let locale = meta.locale;
       if (!locale) locale = (await this.available()).locale ?? "";
-      const pending = planRecovery(store.names(id)).transcribe;
-      const durations = new Map<number, number>();
-      for (const t of store.transcripts(id)) durations.set(t.index, t.duration);
-      for (const i of pending) durations.set(i, store.wavDuration(id, i));
-      const offsetOf = (i: number) => [...durations].reduce((n, [k, d]) => (k < i ? n + d : n), 0);
       let failed = 0;
-      for (const i of pending) {
-        const heard = await this.serial(() => this.transcribeChunk(id, i, offsetOf(i), durations.get(i) ?? 0, locale));
-        if (!heard) failed++;
-      }
+      for (const ch of CHANNELS) failed += await this.recoverChannel(id, ch, locale, ch === "them" ? meta.themLead ?? 0 : 0);
       if (this.killed) return { ok: false, error: "cancelled" };
 
-      const chunks = store.transcripts(id);
-      const duration = chunks.reduce((n, c) => n + c.duration, 0);
-      const turns = speakerTurns(assembleSegments(chunks));
+      const mine = store.transcripts(id, "me");
+      const theirs = store.transcripts(id, "them");
+      const duration = mine.reduce((n, c) => n + c.duration, 0);
+      const recordedThem = meta.themLead !== undefined || theirs.length > 0;
+      const { turns, method } = buildTurns({
+        me: assembleSegments(mine),
+        them: recordedThem ? shiftSegments(assembleSegments(theirs), meta.themLead ?? 0) : null,
+      });
       if (!turns.length && !failed) {
         store.remove(id);
         return { ok: true, id, empty: true, duration };
       }
       const fileName = meetingFileName(meta.startedAt);
-      const document = meetingDocument({ startedAt: meta.startedAt, duration, locale, turns });
+      const document = meetingDocument({ startedAt: meta.startedAt, duration, locale, turns, method });
       const folder = this.deps.saveDir();
       mkdirSync(folder, { recursive: true });
       const path = join(folder, fileName);
       writeFileSync(path, document);
       // The audio goes once every chunk is text; a refused chunk keeps the folder for another Finish.
       if (!failed) store.remove(id);
-      return { ok: true, id, path, folder, fileName, document, prompt: minutesPrompt(fileName), turns: turns.length, duration, failed };
+      return { ok: true, id, path, folder, fileName, document, prompt: minutesPrompt(fileName, method), turns: turns.length, duration, failed, method };
     } catch (err) {
       return { ok: false, error: "disk", message: err instanceof Error ? err.message : String(err) };
     } finally {
       this.finishing.delete(id);
     }
+  }
+
+  /** What a crash or a refused chunk left in one channel: sealed and transcribed. Answers the chunks still refused. */
+  private async recoverChannel(id: string, ch: MeetingChannel, locale: string, lead: number): Promise<number> {
+    const { store } = this.deps;
+    store.dropStale(id, ch);
+    for (const i of planRecovery(store.names(id, ch)).seal) {
+      try { store.seal(id, i, ch); } catch { /* unreadable: left as it is */ }
+    }
+    const pending = planRecovery(store.names(id, ch)).transcribe;
+    const durations = new Map<number, number>();
+    for (const t of store.transcripts(id, ch)) durations.set(t.index, t.duration);
+    for (const i of pending) durations.set(i, store.wavDuration(id, i, ch));
+    const offsetOf = (i: number) => lead + [...durations].reduce((n, [k, d]) => (k < i ? n + d : n), 0);
+    let failed = 0;
+    for (const i of pending) {
+      const heard = await this.serial(() => this.transcribeChunk(id, i, offsetOf(i), durations.get(i) ?? 0, locale, ch));
+      if (!heard) failed++;
+    }
+    return failed;
   }
 
   discard(id: unknown): { ok: boolean } {

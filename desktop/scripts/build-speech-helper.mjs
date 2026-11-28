@@ -31,17 +31,24 @@
  * list and the targets are smallHelpers in speech-helper-plan.mjs. Without
  * it (ATOMIC_SKIP_SPEECH_HELPER=1, no swiftc) Show once still records,
  * asking osascript once per event.
+ *
+ * ATO-2514: and native/atomic-system-audio.swift into
+ * out/native/atomic-system-audio, the ScreenCaptureKit tap that records
+ * the other side of a call for "Record a meeting" (main/meeting-system-audio.ts).
+ * macOS 14 target on this Mac's arch (systemAudioTarget); same rules.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileFailureMessage, smallHelpers, speechHelperPlan, speechHelperTarget } from "./speech-helper-plan.mjs";
+import { compileFailureMessage, smallHelpers, speechHelperPlan, speechHelperTarget, systemAudioTarget } from "./speech-helper-plan.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = join(here, "..", "native", "atomic-speech.swift");
 const outDir = join(here, "..", "out", "native");
 const out = join(outDir, "atomic-speech");
+const systemAudioSrc = join(here, "..", "native", "atomic-system-audio.swift");
+const systemAudioOut = join(outDir, "atomic-system-audio");
 
 const plan = speechHelperPlan({
   platform: process.platform,
@@ -92,6 +99,21 @@ for (const helper of smallHelpers()) {
   } catch (err) {
     const first = err instanceof Error ? err.message.split("\n")[0] : String(err);
     console.error(`${helper.name}: swiftc failed (${first}).\nThe compiler output is above. ${helper.without}`);
+    process.exit(1);
+  }
+}
+
+if (existsSync(systemAudioSrc)) {
+  try {
+    execFileSync(
+      "xcrun",
+      ["swiftc", "-O", "-swift-version", "5", "-target", systemAudioTarget(), systemAudioSrc, "-o", systemAudioOut],
+      { stdio: ["ignore", "inherit", "inherit"] },
+    );
+    console.log(`system audio helper → ${systemAudioOut}`);
+  } catch (err) {
+    const first = err instanceof Error ? err.message.split("\n")[0] : String(err);
+    console.error(`system audio helper: swiftc failed (${first}).\nThe compiler output is above. Without this helper a meeting records only the microphone, not the other side of the call.`);
     process.exit(1);
   }
 }

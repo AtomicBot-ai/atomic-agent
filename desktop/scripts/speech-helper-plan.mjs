@@ -73,3 +73,12 @@ export function smallHelpers(arch = process.arch) {
     },
   ];
 }
+
+/**
+ * ATO-2514: the swiftc target for native/atomic-system-audio.swift, the
+ * meeting recorder's ScreenCaptureKit tap. Its audio capture needs macOS 13;
+ * the app's own floor is macOS 14, so that is the target, on this Mac's arch.
+ */
+export function systemAudioTarget(arch = process.arch) {
+  return `${arch === "x64" ? "x86_64" : "arm64"}-apple-macos14.0`;
+}

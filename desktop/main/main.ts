@@ -325,6 +325,7 @@ import { FileTranscriber, appleSpeechEngine, findOnPath, whisperFileEngine } fro
 // ATO-2333: Record a meeting, transcribed live in chunks on this machine.
 import { meetingRecorderFor, wireMeetingIpc } from "./meeting-ipc.js";
 import { micSettingsUrl } from "./mic-settings.js";   // ATO-2749
+import { displayCaptureAllowed, wireMeetingLoopback, wireMeetingSystemIpc } from "./meeting-system-ipc.js";   // ATO-2514: the other side of the call
 // Item 7 part B (Skills / Memory / MCP tabs)
 import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
@@ -1271,6 +1272,8 @@ function createWindow(): BrowserWindow {
       && voicePermissionVerdict(permission, details as unknown as { mediaTypes?: string[] } | undefined),
   );
 
+  wireMeetingLoopback(window.webContents.session, () => meeting.armed);   // ATO-2514: Windows loopback for a meeting
+
   void window.loadFile(join(__dirname, "..", "renderer", "index.html"));
   return window;
 }
@@ -1298,6 +1301,7 @@ function voicePermissionVerdict(
   details: { mediaTypes?: string[] } | undefined,
 ): boolean {
   if (permission === "clipboard-sanitized-write" || permission === "clipboard-read") return true;
+  if (permission === "display-capture") return displayCaptureAllowed(meeting.armed);   // ATO-2514: Windows loopback only
   if (permission !== "media" || !(voice.armed || meeting.armed)) return false;
   const types = details?.mediaTypes ?? [];
   return types.length > 0 && types.every((t) => t === "audio");
@@ -3502,6 +3506,7 @@ function wireIpc(client: AgentClient): void {
   // ATO-1063: the mini chat page (mini-chat-ipc.ts): its frames, and "Open in big window".
   wireMiniChatIpc(client, { mainWindow: () => win, showMainWindow: () => (openWindowAgain(), win) });
   wireMeetingIpc(meeting);   // ATO-2333: Record a meeting (meeting-ipc.ts)
+  wireMeetingSystemIpc(meeting, { emit: (ev) => send("app:meeting", ev) });   // ATO-2514: Me and Them
   // ATO-561: "Open in new window" on a chat row (chat-popout-ipc.ts); a chat being written is not popped out.
   wireChatPopoutIpc({ mainWindow: () => win, liveSessionIds: () => [...liveTurns.values()].map((t) => t.sessionId) });
   // ATO-1056/1058: Roll back here, Edit and Fork from here on a message (chat-rewind-ipc.ts).

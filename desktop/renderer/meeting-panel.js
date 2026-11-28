@@ -54,7 +54,8 @@ function mtgLinesHTML() {
       ? 'Listening. The first lines show up about half a minute after people start talking.'
       : 'No speech was heard yet.') + '</p>';
   }
-  return MTG.lines.map((l) => '<p class="mtgline"><span class="mtgat">' + esc(meetingClock(l.start)) + '</span>' + esc(l.text) + '</p>').join('');
+  return MTG.lines.map((l) => '<p class="mtgline"><span class="mtgat">' + esc(meetingClock(l.start)) + '</span>'
+    + (l.who ? '<span class="mtgwho">' + esc(l.who) + '</span>' : '') + esc(l.text) + '</p>').join('');   // ATO-2514: Me / Them
 }
 
 function mtgPanelHTML() {
@@ -71,7 +72,8 @@ function mtgPanelHTML() {
     + '<div class="mtghead"><span>' + esc(title) + '</span><button class="mtgx" data-mtg="toggle" aria-label="Hide">' + ic('x') + '</button></div>'
     + '<div class="mtgbody" id="mtg-body">' + mtgLinesHTML() + '</div>'
     + (MTG.failed ? '<p class="mtgwarn">' + MTG.failed + ' part' + (MTG.failed === 1 ? '' : 's') + ' could not be transcribed yet; tried again on Make notes.</p>' : '')
-    + '<p class="mtgnote">Heard and transcribed on this computer. Speakers are guessed from pauses. The audio is deleted once the transcript is saved.</p>'
+    + (typeof mtgSystemHTML === 'function' ? mtgSystemHTML() : '')   // ATO-2514: the other side of the call (meeting-system.js)
+    + '<p class="mtgnote">Heard and transcribed on this computer. ' + esc(typeof mtgSpeakersNote === 'function' ? mtgSpeakersNote() : 'Speakers are guessed from pauses.') + ' The audio is deleted once the transcript is saved.</p>'
     + '<div class="mtgfoot">' + foot + '</div></div>';
 }
 
@@ -105,7 +107,7 @@ function mtgListen() {
   MTG.listening = true;
   BR.onMeeting((ev) => {
     if (!ev || ev.id !== MTG.id) return;
-    if (ev.type === 'segments') { MTG.lines = meetingMergeLines(MTG.lines, ev.segments); mtgPaint(); }
+    if (ev.type === 'segments') { MTG.lines = meetingMergeLines(MTG.lines, ev.segments, typeof meetingWho === 'function' ? meetingWho(ev.channel, MTGS.state === 'on') : ''); mtgPaint(); }
     else if (ev.type === 'chunk-failed') { MTG.failed++; mtgPaint(); }
     else if (ev.type === 'stopped' && MTG.phase === 'recording') {
       // Main closed it (the disk refused): the microphone goes too.
@@ -136,6 +138,7 @@ async function mtgOpenMic() {
 }
 
 function mtgReleaseMic() {
+  if (typeof mtgSystemStop === 'function') mtgSystemStop();   // ATO-2514
   if (MTG.tick) { clearInterval(MTG.tick); MTG.tick = null; }
   try { if (MTG.node) MTG.node.port.onmessage = null; } catch (e) { /* gone */ }
   try { if (MTG.stream) MTG.stream.getTracks().forEach((t) => t.stop()); } catch (e) { /* gone */ }
@@ -148,6 +151,7 @@ async function meetingStart() {
   if (MTG.phase !== 'idle') { MTG.open = true; mtgPaint(); return; }
   mtgListen();
   MTG.phase = 'starting'; MTG.lines = []; MTG.failed = 0; MTG.open = true; MTG.denied = false;
+  if (typeof mtgSystemReset === 'function') mtgSystemReset();   // ATO-2514
   mtgPaint();
   let r = null;
   try { r = await BR.meetingStart(); } catch (e) { r = null; }
@@ -172,6 +176,7 @@ async function meetingStart() {
   }
   MTG.tick = setInterval(() => { const c = document.getElementById('mtg-clock'); if (c) c.textContent = meetingClock((Date.now() - MTG.startedAt) / 1000); }, 1000);
   mtgPaint();
+  if (typeof mtgSystemStart === 'function') mtgSystemStart();   // ATO-2514: the other side of the call, as a second channel
 }
 
 async function meetingStop() {
