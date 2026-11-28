@@ -157,3 +157,12 @@ test("a preview the bubble cannot show whole: no Allow, the full card decides", 
   assert.equal(a.canAllow, false);
   assert.ok("error" in petDecision({ approvalId: "ap-1", decision: "allow" }, a));
 });
+
+test("a password the agent asks for (shell_secret_input) stays window-only: no Allow from the bubble", () => {
+  const req = ask({ category: "shell_secret_input", tool: "shell.write", reason: "sudo password", preview: "sudo apt update" });
+  assert.equal(petCanAllow(req), false, "Allow would type nothing: the window's card takes the value");
+  const a = petApprovalFrom(req, 0);
+  assert.equal(a.canAllow, false);
+  assert.ok("error" in petDecision({ approvalId: "ap-1", decision: "allow" }, a));
+  assert.deepEqual(petDecision({ approvalId: "ap-1", decision: "deny" }, a), { decision: "deny" });
+});

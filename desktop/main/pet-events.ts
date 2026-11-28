@@ -53,6 +53,8 @@ export const PET_WINDOW_ONLY_CATEGORIES: readonly string[] = [
   "trust_config",
   "browser_secret",
   "state_secret",
+  // A password the agent asks the person to type into its job (ATO-2486): Allow would type nothing.
+  "shell_secret_input",
 ];
 
 /** A turn with no frame for this long is taken as gone (its end frame was lost). */
