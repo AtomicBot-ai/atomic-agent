@@ -29,7 +29,7 @@ const SENSITIVE_HOME_ENTRIES: readonly string[] = [
   ".config/autostart/", ".config/systemd/user/", ".config/environment.d/",
   "library/launchagents/",
   ".gitconfig", ".config/git/config",
-  ".curlrc", ".wgetrc", ".npmrc",
+  ".curlrc", ".wgetrc", ".npmrc", ".yarnrc", ".yarnrc.yml",
   // Review round 2: editor and multiplexer startup files, oh-my-zsh
   // plugins, pip's config (an index URL reroutes installs), the agent's
   // own config.
@@ -94,7 +94,7 @@ export function sensitiveTreeTargets(trees: readonly string[], homeDir: string =
 
 /** Variables that hold the home folder or a part of its path. */
 const HOME_VARIABLE =
-  /^(?:\$\{?(?:home|user|logname|username|zdotdir|xdg_[a-z_]+|env:(?:userprofile|home|homepath|homedrive|appdata|localappdata|username))(?![a-z0-9_])|%(?:userprofile|homepath|homedrive|homeshare|appdata|localappdata|username|onedrive)%)/;
+  /^(?:\$\{?(?:home|user|logname|username|zdotdir|profile|xdg_[a-z_]+|env:(?:userprofile|home|homepath|homedrive|appdata|localappdata|username))(?![a-z0-9_])|%(?:userprofile|homepath|homedrive|homeshare|appdata|localappdata|username|onedrive)%)/;
 
 const slashed = (path: string): string => path.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
 
