@@ -161,6 +161,16 @@ describe("contextUsageFromPrompt", () => {
     expect("replyReserve" in contextUsageFromPrompt(builtPrompt())).toBe(false);
   });
 
+  it("leaves out a reply reserve that is not finite or is negative", () => {
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+      expect("replyReserve" in contextUsageFromPrompt(builtPrompt({ replyReserve: bad }))).toBe(false);
+      expect(
+        "replyReserve" in
+          contextUsageFromPrompt(builtPrompt({ contextBudget: { window: 200_000, replyReserve: bad } })),
+      ).toBe(false);
+    }
+  });
+
   /**
    * ATO-2453: the server's part also lists its tools, and they add up
    * to the part.

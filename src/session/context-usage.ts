@@ -203,7 +203,11 @@ export function contextUsageFromPrompt(prompt: BuiltPrompt): ContextUsageState {
       (part) => ({ ...part, parent: TOOL_SCHEMA_SECTION_LABEL }),
     ),
   ];
-  const replyReserve = prompt.replyReserve ?? prompt.contextBudget?.replyReserve;
+  // A non-finite or negative figure is not a reserve: leave it out so a
+  // reader falls back to its own (ATO-1678).
+  const reserve = prompt.replyReserve ?? prompt.contextBudget?.replyReserve;
+  const replyReserve =
+    reserve !== undefined && Number.isFinite(reserve) && reserve >= 0 ? reserve : undefined;
   return {
     tokens: prompt.tokens.total,
     contextWindow: prompt.contextWindow,

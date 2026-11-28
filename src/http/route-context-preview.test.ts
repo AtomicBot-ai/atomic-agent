@@ -170,6 +170,28 @@ describe("POST /api/context-preview", () => {
     expect(json.reservedForReply).toBe(json.usage.replyReserve);
   });
 
+  /**
+   * ATO-1678: a non-finite or negative reserve is not a reservation. The
+   * readout leaves it out and the route falls back to the small-window
+   * figure from the cap.
+   */
+  it("falls back to the cap's reserve when the prompt's is not finite or negative", async () => {
+    harness = await startTestHarness();
+    const runtime = harness.runtime;
+    const real = runtime.previewPrompt.bind(runtime);
+    for (const bad of [Number.NaN, -1]) {
+      vi.spyOn(runtime, "previewPrompt").mockImplementation((input) => ({
+        ...real(input),
+        contextWindow: 32_768,
+        replyReserve: bad,
+      }));
+      const { status, json } = await preview(harness.baseUrl, {});
+      expect(status).toBe(200);
+      expect(json.usage.replyReserve).toBeUndefined();
+      expect(json.reservedForReply).toBe(effectiveReplyReserve(json.replyCap, 32_768));
+    }
+  });
+
   it("counts the draft as the user message", async () => {
     harness = await startTestHarness();
     const empty = (await preview(harness.baseUrl, {})).json;
