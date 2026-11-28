@@ -439,7 +439,9 @@ function fpBodyHtml(res) {
   if (d.kind === 'image') return '<div class="fp-img"><img alt="' + fpEsc(d.name) + '" src="' + fpEsc(d.dataUrl || '') + '"></div>';
   if (d.kind === 'pdf') return '<iframe class="fp-frame fp-pdf" data-fp-pdf="1" title="' + fpEsc(d.name) + '"></iframe>';
   if (d.kind === 'office' && typeof fpOfficeHtml === 'function') return fpOfficeHtml(d);   // ATO-981: office-preview.js
-  if (d.kind === 'other') return fpOtherHtml(d, d.note === 'too-large' ? 'too large to preview' : d.note === 'binary' ? 'no preview for this kind of file' : '');
+  if (d.kind === 'parquet' && typeof fpParquetHtml === 'function') return fpParquetHtml(d);   // ATO-2445: parquet-table.js
+  if (d.kind === 'other') return fpOtherHtml(d, d.note === 'too-large' ? 'too large to preview' : d.note === 'binary' ? 'no preview for this kind of file'
+    : d.note === 'unsupported' ? 'its compression cannot be read here' : '');
   if (!text) return fpTruncNote(d) + '<div class="fp-msg">The file is empty.</div>';
   const source = FP.view === 'source';
   if (d.kind === 'html' && !source) {
