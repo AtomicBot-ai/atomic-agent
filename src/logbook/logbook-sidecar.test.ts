@@ -4,7 +4,8 @@ import type { ProviderCapabilities } from "../llm/provider/llm-provider.js";
 import type { LogbookCaptureOutcome } from "./logbook-capture.js";
 import type { LogbookVisionProvider, PickLocalVisionResult } from "./logbook-local-vision.js";
 import { DEFAULT_LOGBOOK_SETTINGS, type LogbookSettings } from "./logbook-settings.js";
-import { createLogbookSidecar, PRUNE_EVERY_MS } from "./logbook-sidecar.js";
+import type { IndicatorState } from "./logbook-indicator.js";
+import { createLogbookSidecar, INDICATOR_AWAY_REASON, INDICATOR_HIDDEN_REASON, PRUNE_EVERY_MS } from "./logbook-sidecar.js";
 import { EMPTY_LOGBOOK_STATUS, type LogbookStatus } from "./logbook-status.js";
 import type { LogbookEntry } from "./logbook-store.js";
 
@@ -17,7 +18,8 @@ const LOCAL: LogbookVisionProvider = {
 
 const ENTRY: LogbookEntry = { at: "2026-11-27T13:00:00.000Z", app: "TextEdit", bundleId: "com.apple.TextEdit", text: "writing" };
 
-function setup(options: { settings?: Partial<LogbookSettings>; pick?: PickLocalVisionResult; outcome?: LogbookCaptureOutcome } = {}) {
+function setup(options: { settings?: Partial<LogbookSettings>; pick?: PickLocalVisionResult; outcome?: LogbookCaptureOutcome; mark?: IndicatorState } = {}) {
+  let mark: IndicatorState | undefined = options.mark;
   let settings: LogbookSettings = { ...DEFAULT_LOGBOOK_SETTINGS, excludeApps: [], enabled: true, ...options.settings };
   let status: LogbookStatus = { ...EMPTY_LOGBOOK_STATUS };
   const appended: LogbookEntry[] = [];
@@ -36,6 +38,7 @@ function setup(options: { settings?: Partial<LogbookSettings>; pick?: PickLocalV
       appended.push(entry);
     },
     prune,
+    ...(mark === undefined ? {} : { indicator: () => mark as IndicatorState }),
   });
   return {
     sidecar,
@@ -45,6 +48,9 @@ function setup(options: { settings?: Partial<LogbookSettings>; pick?: PickLocalV
     status: () => status,
     setSettings: (patch: Partial<LogbookSettings>) => {
       settings = { ...settings, ...patch };
+    },
+    setMark: (next: IndicatorState) => {
+      mark = next;
     },
   };
 }
@@ -131,5 +137,40 @@ describe("logbook sidecar", () => {
     await first;
     expect(s.capture).toHaveBeenCalledTimes(1);
     expect(s.sidecar.busy()).toBe(false);
+  });
+
+  describe("the visible mark (ATO-2534)", () => {
+    it("captures nothing while the frontend's mark is not on screen, and says so once", async () => {
+      const s = setup({ mark: "hidden" });
+      await s.sidecar.tick(T0, signal());
+      expect(s.capture).not.toHaveBeenCalled();
+      expect(s.status()).toMatchObject({ lastOutcome: "skipped", lastReason: INDICATOR_HIDDEN_REASON });
+    });
+
+    it("captures soon after the mark shows, without waiting a whole interval", async () => {
+      const s = setup({ mark: "hidden", settings: { intervalMinutes: 5 } });
+      await s.sidecar.tick(T0, signal());
+      s.setMark("visible");
+      await s.sidecar.tick(T0 + 5_000, signal());
+      expect(s.capture).toHaveBeenCalledTimes(1);
+      expect(s.appended).toEqual([ENTRY]);
+    });
+
+    it("skips the frame while the person is away", async () => {
+      const s = setup({ mark: "away" });
+      await s.sidecar.tick(T0, signal());
+      expect(s.capture).not.toHaveBeenCalled();
+      expect(s.status()).toMatchObject({ lastOutcome: "skipped", lastReason: INDICATOR_AWAY_REASON });
+    });
+
+    it("drops a frame whose mark went away while it was described", async () => {
+      const s = setup({ mark: "visible" });
+      s.capture.mockImplementationOnce(async () => {
+        s.setMark("hidden");
+        return { kind: "captured", entry: ENTRY };
+      });
+      await s.sidecar.tick(T0, signal());
+      expect(s.appended).toEqual([]);
+    });
   });
 });

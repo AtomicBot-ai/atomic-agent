@@ -10,6 +10,7 @@ import {
   formatLogbookEntries,
   listLogbookDays,
   logbookDir,
+  logbookPlatformSupport,
   parseClock,
   parseDaySpec,
   readLogbookDay,
@@ -20,6 +21,7 @@ import {
   type LogbookSettings,
 } from "../logbook/index.js";
 import { recipeToLink, renderRecipePrompt, STANDUP_RECIPE } from "../recipes/index.js";
+import { MORE_HELP_LINES, standupScheduleCommand, titleOnlyCommand } from "./logbook-command-more.js";
 
 /**
  * `atomic-agent logbook ...` (ATO-2363): the switch and the reader for
@@ -32,13 +34,13 @@ import { recipeToLink, renderRecipePrompt, STANDUP_RECIPE } from "../recipes/ind
 const HELP = [
   "atomic-agent logbook: a day journal from screenshots, described by a local model",
   "",
-  "While it is on and the Atomic Agent terminal app is open (its top bar shows it),",
+  "While it is on and the Atomic Agent terminal or desktop app is open (it shows ● logbook),",
   "it takes a screenshot every few minutes,",
   "has a vision model on THIS computer write one or two sentences about it, and",
   "deletes the picture right away. Only the sentences are kept, in",
   "<stateDir>/logbook/<day>.jsonl. Password managers, login prompts, system settings",
   "and Atomic Agent itself are never captured. No local vision model, no capture:",
-  "screenshots never go to a cloud model. macOS only for now. Off by default.",
+  "screenshots never go to a cloud model. macOS, Windows and Linux (X11). Off by default.",
   "",
   "Subcommands:",
   "  start [--every <minutes>] [--keep <days>]   Turn it on (default every 5 min, kept 14 days)",
@@ -52,6 +54,7 @@ const HELP = [
   "                                              Delete notes",
   "  exclude add|remove <app> | exclude list     Apps never captured (name or bundle id)",
   "  standup [--day <day>]                       Print the standup recipe and its link",
+  ...MORE_HELP_LINES,
   "",
   "<day> is today, yesterday or YYYY-MM-DD.",
 ].join("\n");
@@ -79,6 +82,7 @@ export async function logbookCommand(args: string[], deps: LogbookCommandDeps = 
     now: deps.now ?? (() => new Date()),
     platform: deps.platform ?? process.platform,
     write,
+    writeErr,
   };
   try {
     switch (sub) {
@@ -107,6 +111,8 @@ export async function logbookCommand(args: string[], deps: LogbookCommandDeps = 
         return exclude(env, rest);
       case "standup":
         return standup(env, rest);
+      case "title-only":
+        return titleOnlyCommand(env, rest);
       default:
         throw new UsageError(`unknown subcommand: ${sub}`);
     }
@@ -137,8 +143,9 @@ function update(env: Env, change: (s: LogbookSettings) => LogbookSettings, messa
 }
 
 function start(env: Env, args: readonly string[]): number {
-  if (env.platform !== "darwin") {
-    env.write("The logbook works on macOS only for now: it needs the front-app check that keeps password and login windows out.\n");
+  const support = logbookPlatformSupport(env.platform);
+  if (!support.supported) {
+    env.write(`${support.reason}\n`);
     return 1;
   }
   const every = option(args, "--every");
@@ -154,7 +161,7 @@ function start(env: Env, args: readonly string[]): number {
   writeLogbookSettings(env.stateDir, next);
   env.write(
     [
-      `Logbook on: a screenshot every ${next.intervalMinutes} min while the Atomic Agent terminal app is open (its top bar shows ● logbook).`,
+      `Logbook on: a screenshot every ${next.intervalMinutes} min while the Atomic Agent terminal or desktop app is open (it shows ● logbook).`,
       "Each one is described by a local vision model and deleted right after; screenshots never go to a cloud model.",
       `Notes are kept ${next.retentionDays} days in ${logbookDir(env.stateDir)}.`,
       "It needs a local model that can see images; `atomic-agent logbook status` says if one was found.",
@@ -184,7 +191,7 @@ function status(env: Env, json: boolean): number {
     const when = new Date(last.lastAttemptAt).toLocaleString();
     lines.push(`Last try: ${when}, ${last.lastOutcome ?? "unknown"}${last.lastReason ? `: ${last.lastReason}` : ""}${last.provider ? ` (model on ${last.provider})` : ""}`);
   } else if (settings.enabled) {
-    lines.push("No capture yet: it runs only while the Atomic Agent terminal app is open, where the top bar shows it. The desktop app and `serve` do not capture.");
+    lines.push("No capture yet: it runs only while the Atomic Agent terminal or desktop app is open and shows ● logbook. A bare `serve` does not capture.");
   }
   if (settings.excludeApps.length > 0) lines.push(`Never captured, by you: ${settings.excludeApps.join(", ")}`);
   env.write(`${lines.join("\n")}\n`);
@@ -242,6 +249,8 @@ function exclude(env: Env, args: readonly string[]): number {
 }
 
 function standup(env: Env, args: readonly string[]): number {
+  const scheduled = standupScheduleCommand(env, args);
+  if (scheduled !== null) return scheduled;
   const day = option(args, "--day") ?? "yesterday";
   const link = recipeToLink(STANDUP_RECIPE);
   env.write(`${renderRecipePrompt(STANDUP_RECIPE, { day })}\n\n`);

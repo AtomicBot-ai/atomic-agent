@@ -11,6 +11,7 @@ import {
   clearLogbookRange,
   dayKey,
   dayKeyOffset,
+  deleteLogbookEntries,
   listLogbookDays,
   logbookToolOffered,
   pruneLogbook,
@@ -88,5 +89,18 @@ describe("logbook store", () => {
     expect(logbookToolOffered(dir)).toBe(false);
     appendLogbookEntry(dir, entry(2026, 11, 26, 9, 0));
     expect(logbookToolOffered(dir)).toBe(true);
+  });
+
+  it("deletes chosen notes of a day by their time, and the file with the last one (ATO-2526)", () => {
+    const dir = tempState();
+    const a = entry(2026, 11, 26, 9, 0, "a");
+    const b = entry(2026, 11, 26, 9, 5, "b");
+    appendLogbookEntry(dir, a);
+    appendLogbookEntry(dir, b);
+    expect(deleteLogbookEntries(dir, "2026-11-26", [a.at, "2020-01-01T00:00:00.000Z"])).toBe(1);
+    expect(readLogbookDay(dir, "2026-11-26").map((e) => e.text)).toEqual(["b"]);
+    expect(deleteLogbookEntries(dir, "2026-11-26", [b.at])).toBe(1);
+    expect(listLogbookDays(dir)).toEqual([]);
+    expect(deleteLogbookEntries(dir, "2026-11-26", [b.at])).toBe(0);
   });
 });
