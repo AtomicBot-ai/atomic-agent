@@ -1,10 +1,13 @@
-import type { GuardVerdict, Rule } from "./guard-types.js";
+import type { GuardInput, GuardVerdict, NormalisedCommand, Rule } from "./guard-types.js";
 import { argScanVerdict, type ArgScanFinding } from "./arg-scan-finding.js";
 import { matchDangerousArgv } from "./rules-dangerous-argv.js";
 import { matchCredentialRead } from "./rules-credentials.js";
 import { matchEncodedExec } from "./rules-encoded-exec.js";
 import { matchWindowsCredentialRead } from "./rules-credentials-windows.js";
 import { matchWindowsEncodedExec } from "./rules-encoded-exec-windows.js";
+import { matchHomeArchive } from "./rules-home-archive.js";
+import { matchInlineHomeCode } from "./rules-inline-home-code.js";
+import { nestedCommandLines } from "./nested-command-lines.js";
 import { powershellCommandLines } from "./powershell-command-lines.js";
 
 interface PatternRule {
@@ -153,15 +156,7 @@ export const dangerousRule: Rule = {
     // Credential reads and encoded commands first: they carry a
     // confidence and, above the threshold, ask at every level (ATO-2126),
     // so a `sudo` or `eval` on the same line must not shadow them.
-    // Windows paths and PowerShell have their own readers (ATO-2728);
-    // the line a `powershell -c` runs is read by the POSIX rule too.
-    const finding = strongestFinding(
-      matchCredentialRead(input, raw),
-      matchEncodedExec(input),
-      matchWindowsCredentialRead(input, raw.cwd),
-      matchWindowsEncodedExec(input),
-      ...powershellCommandLines(input, raw.cwd).map((inner) => matchCredentialRead(inner, raw)),
-    );
+    const finding = argScanFinding(input, raw, 0);
     if (finding !== null) return argScanVerdict(finding);
     for (const pattern of DANGEROUS_PATTERNS) {
       const line = pattern.caseSensitive ? input.joined : input.joinedLower;
@@ -177,6 +172,37 @@ export const dangerousRule: Rule = {
     return withFullConfidence(matchDangerousArgv(input));
   },
 };
+
+/** How deep `sh -c "bash -c '...'"` is read. */
+const MAX_NESTED_DEPTH = 4;
+
+/**
+ * Every argument-pattern finding of the line, the strongest first:
+ * POSIX and Windows credential reads and encoded commands (ATO-2126,
+ * ATO-2728), a whole home folder packed or copied and inline code that
+ * builds a credential path (ATO-2730), and the same again for each line
+ * a nested `sh -c` or `eval` (ATO-2730) or a `powershell -c` runs.
+ */
+function argScanFinding(
+  input: NormalisedCommand,
+  raw: GuardInput,
+  depth: number,
+): ArgScanFinding | null {
+  let best = strongestFinding(
+    matchCredentialRead(input, raw),
+    matchEncodedExec(input),
+    matchWindowsCredentialRead(input, raw.cwd),
+    matchWindowsEncodedExec(input),
+    matchHomeArchive(input, raw),
+    matchInlineHomeCode(input),
+  );
+  if (depth >= MAX_NESTED_DEPTH) return best;
+  const inners = [...nestedCommandLines(input, raw.cwd), ...powershellCommandLines(input, raw.cwd)];
+  for (const inner of inners) {
+    best = strongestFinding(best, argScanFinding(inner, raw, depth + 1));
+  }
+  return best;
+}
 
 function strongestFinding(
   ...findings: (ArgScanFinding | null)[]
