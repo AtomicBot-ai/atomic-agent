@@ -153,6 +153,8 @@ function qeditFinish(save, quiet) {
   Object.assign(QEDIT, {open: false, key: null, at: -1, original: '', value: '', parts: null,
     wasAhead: false, wantFocus: false});
   const text = save ? qeditRebuild(e.parts, e.value) : e.original;
+  // ATO-2476: a saved change is a message action, as Steer now and × are (renderer.js clicks).
+  if (save && text && text !== e.original && typeof ANX !== 'undefined') ANX.messageAction('edit_queued');
   const owner = queueOwner(e.key) || null;
   if (owner !== (queueKey() || null)) { parkIn(e.key, [text || e.original]); return -1; }
   const ahead = e.wasAhead && STEER.ahead > 0;

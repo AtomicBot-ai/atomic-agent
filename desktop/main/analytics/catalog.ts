@@ -314,7 +314,7 @@ export const EVENTS: Record<string, EventSpec> = {
   },
   message_action: {
     owner: "ui",
-    props: { action: en(["copy", "resend", "retry", "continue", "steer", "unqueue", "stop", "copy_reply", "regenerate"]) },
+    props: { action: en(["copy", "resend", "retry", "continue", "steer", "unqueue", "stop", "copy_reply", "regenerate", "edit_queued", "reorder_queued", "send_next"]) },
   },
   approval_answered: {
     owner: "ui",

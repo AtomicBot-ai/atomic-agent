@@ -47,6 +47,10 @@ test("the window names only setup finishing and the Telegram tab; anything else 
 
 test("enum values outside the list become `other`, or the prop's fallback, or are dropped", () => {
   assert.deepEqual(V.validateEvent("message_action", { action: "nope" }, "ui").props, {});
+  // ATO-2476: editing and reordering a queued message are message actions too.
+  for (const action of ["edit_queued", "reorder_queued", "send_next"]) {
+    assert.deepEqual(V.validateEvent("message_action", { action }, "ui").props, { action });
+  }
   assert.deepEqual(V.validateEvent("agent_restarted", { trigger: "weird" }, "main").props, { trigger: "other" });
   // ATO-274: setup, a workspace change and an import are not manual restarts.
   for (const trigger of ["setup_finished", "workspace_change", "import", "telegram"]) {

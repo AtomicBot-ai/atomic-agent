@@ -2447,6 +2447,7 @@ function render() {
   imageViewerFollowsChat();   // ATO-408: the picture viewer closes when its chat is left
   const exaHeld = exaKeyHold();   // ATO-328: the Exa key field being typed in survives the rebuild
   const qeHeld = typeof qeditHold === 'function' ? qeditHold() : null;   // ATO-2132: and the queued message's edit field
+  const qoHeld = typeof qorderHold === 'function' ? qorderHold() : null;   // ATO-2476: and a focused queued chip
   ANX.paneTick(S.settings ? settingsPaneId(S.settingsPane) : null);   // analytics: settings_pane_viewed
   // 13/14: a whole render paints everything a waiting stream frame would have.
   dropStreamPaint();
@@ -2465,6 +2466,7 @@ function render() {
   obFlushDeferredSoon();
   exaKeyRestore(exaHeld);
   if (typeof qeditRestore === 'function') qeditRestore(qeHeld);
+  if (typeof qorderRestore === 'function') qorderRestore(qoHeld);
   // ATO-568: the caret goes into a worker's Steer field that was just opened.
   if (typeof fzpAfterRender === 'function') fzpAfterRender();
 }
@@ -2989,7 +2991,7 @@ function chatMenuHTML() {
 /** ATO-135: how many messages chat `sid` has queued, on screen or not. */
 function chatQueuedCount(sid) {
   if (!sid) return 0;
-  if (sid === queueKey()) return S.queued.length;
+  if (sid === queueKey()) return S.queued.length + (qeditOn() ? 1 : 0);   // ATO-2476: the one being edited is still queued
   const q = QUEUES.get(sid);
   return q ? q.queued.length : 0;
 }
@@ -4496,8 +4498,9 @@ function composer() {
        strips above stay: each carries a control (Jump, Stop) or a failure. */
     : '';
   const q = (S.queued.length || qeditOn()) ? '<div class="qtray">' + qeditTray(S.queued.map((t, i) =>   // ATO-2132: the chip being edited (queue-edit.js)
-      '<div class="qchip"><span class="qlb">' + (DRAIN_OWED ? 'Sent · waiting' : 'Queued') + '</span><span class="qtx">' + esc(attQueueLabel(t)) + '</span>'
+      qorderChip(i, t) + '<span class="qlb">' + (DRAIN_OWED ? 'Sent · waiting' : 'Queued') + '</span><span class="qtx">' + esc(attQueueLabel(t)) + '</span>'
       + (steerNowShown(t) ? steerNowButtonHTML(i, {esc}) : '')   // ATO-1183 (steer-now.js)
+      + qorderNext(i)   // ATO-2476: Send next (queue-reorder.js)
       + qeditButtonHTML(i, {esc, ic})   // ATO-2132
       + '<button class="iconbtn sm qx" data-unqueue="' + i + '" aria-label="Remove">' + ic('x') + '</button></div>'), {esc, ic}).join('') + '</div>' : '';
   const backend = selBackend();
@@ -8889,6 +8892,7 @@ document.addEventListener('click', (e) => {
   const sn = t.closest('[data-steernow]'); if (sn) { ANX.messageAction('steer'); steerQueuedNow(+sn.dataset.steernow); return; }
   const uq = t.closest('[data-unqueue]'); if (uq) { ANX.messageAction('unqueue'); unqueueMessage(+uq.dataset.unqueue); return; }
   const qe = t.closest('[data-qedit]'); if (qe) { qeditClick(qe.dataset.qedit); return; }   // ATO-2132: Edit, Save, Cancel on a queued chip
+  const qn = t.closest('[data-qnext]'); if (qn) { queueSendNext(+qn.dataset.qnext); return; }   // ATO-2476: Send next on a queued chip
   const rv = t.closest('[data-revoke]'); if (rv) { S.grants.splice(+rv.dataset.revoke, 1); render(); toast('Grant revoked'); return; }
   const ask = t.closest('[data-ask]'); if (ask) { const q = S.q; act('close'); S.draft = q; render(); submit(); return; }
   const selOpen = t.closest('[data-sel-open]');
@@ -9989,6 +9993,7 @@ document.addEventListener('keydown', (e) => {
   // ATO-568: Enter and Escape in a worker's Steer field are that field's.
   if (typeof fzpKeydown === 'function' && fzpKeydown(e)) return;
   if (typeof qeditKeydown === 'function' && qeditKeydown(e)) return;   // ATO-2132: Enter saves, Escape cancels a queued message's edit
+  if (typeof qorderKeydown === 'function' && qorderKeydown(e)) return;   // ATO-2476: Alt+arrow moves a focused queued chip
   const k = e.key;
   /* ATO-226: the key the chords and the ⌘ shortcuts below match on, by the
      physical key on a non-Latin layout (shortcutKey). `k` stays the typed
@@ -19276,7 +19281,7 @@ function restartRefusedToast(held) {
  *  has no session id yet (its queue is keyed `turn:` or not keyed at all, and
  *  queuesSnapshot leaves both out because main cannot keep them). */
 function anyChatQueued() {
-  if (S.queued.length) return true;
+  if (S.queued.length || QEDIT.open) return true;   // ATO-2476: a message being edited is still queued
   for (const q of QUEUES.values()) if (q.queued.length) return true;
   return false;
 }
