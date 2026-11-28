@@ -15,8 +15,9 @@
    "allow-scripts"> with an opaque origin. Nothing here makes a frame, sets
    `srcdoc` or opens a URL of the server's. The server's `csp`, `permissions`
    and `domain` are requests; this frame grants none of them. `toolInput` and
-   `toolResult` are for the spec's postMessage bridge, which this frame does
-   not have yet: an app draws but gets no call data and cannot call back.
+   `toolResult` go to the page through the spec's postMessage bridge
+   (ATO-2457, mcp-app-bridge.js), which also takes its ui/message and
+   ui/open-link; calls back to the server are not offered.
 
    One frame per app page per chat: a second call of the same tool loads the
    page in the frame already on screen, where it is, as a canvas of the same
@@ -50,7 +51,9 @@ function mcpAppFromToolResult(p) {
   if (!server || !uri) return null;
   if (typeof a.html !== 'string' || !a.html.trim()) return null;
   if (a.html.length > MCP_APP_MAX_BYTES || mcpAppBytes(a.html) > MCP_APP_MAX_BYTES) return null;
-  return {server, uri, title: server + ' app', html: a.html};
+  // ATO-2457: the call's data for the bridge (mcp-app-bridge.js); plain objects only.
+  const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
+  return {server, uri, title: server + ' app', html: a.html, tool: p.tool, toolInput: obj(a.toolInput), toolResult: obj(a.toolResult)};
 }
 
 /** One frame per app page in a chat. */
@@ -74,6 +77,10 @@ function chatMcpApp(item, payload, scope, log) {
   row.title = app.title;
   // A page that failed before gets a fresh try.
   if (typeof CHAT_ART !== 'undefined' && CHAT_ART.has(key) && CHAT_ART.get(key).state === 'fail') CHAT_ART.delete(key);
+  // ATO-2457: a new page in the frame first tears the old one down; the same page gets the new call's data.
+  const prev = typeof CHAT_ART !== 'undefined' ? CHAT_ART.get(key) : null;
+  if (prev && prev.html && prev.html !== app.html && typeof mcpAppBridgeTeardown === 'function') mcpAppBridgeTeardown(key);
+  if (typeof mcpAppBridgeSet === 'function') mcpAppBridgeSet(key, {tool: app.tool, toolInput: app.toolInput, toolResult: app.toolResult});
   chatArtifactSet(key, app.html, {title: app.title});
   return true;
 }

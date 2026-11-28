@@ -299,6 +299,9 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-1136: an HTML artifact kept in main and served sandboxed; answers {ok:true, url:'atomic-art://…/'} | {ok:false, reason}.
   artifactPut: (html: string) => ipcRenderer.invoke("app:artifactPut", html),
   artifactDrop: (url: string) => ipcRenderer.invoke("app:artifactDrop", url),
+  // ATO-2457: a card's box on screen saved as a PNG; {ok:true, path} | {ok:false, reason:'canceled'|'bad-rect'|'failed'}.
+  artifactPng: (rect: { x: number; y: number; width: number; height: number }, title: string) =>
+    ipcRenderer.invoke("app:artifactPng", rect, title),
   // Studio's "From chat" clip: Show in Finder / Save As… for a reply's file in the home folder.
   // {ok:true[, path]} | {ok:false, reason:'missing'|'outside'|'not-a-file'|'canceled'|'failed'}
   replyReveal: (path: string) => ipcRenderer.invoke("app:replyReveal", path),

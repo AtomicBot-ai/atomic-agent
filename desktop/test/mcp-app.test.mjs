@@ -45,7 +45,11 @@ const APP = {
 };
 
 test("the frame's mcp_app is checked: a ui:// page of an MCP tool's server, or nothing", () => {
-  assert.deepEqual(M.mcpAppFromToolResult(frame(APP)), { server: "weather", uri: "ui://weather/card", title: "weather app", html: PAGE });
+  // ATO-2457: the call's input and result ride along for the bridge (mcp-app-bridge.js).
+  assert.deepEqual(M.mcpAppFromToolResult(frame(APP)), {
+    server: "weather", uri: "ui://weather/card", title: "weather app", html: PAGE,
+    tool: "mcp.weather.forecast", toolInput: { city: "Tallinn" }, toolResult: { content: [{ type: "text", text: "5C" }] },
+  });
   // A tool name with dots in its raw part still names the server by its second segment.
   assert.equal(M.mcpAppFromToolResult(frame(APP, "mcp.my-plugin-weather.os.read")).server, "my-plugin-weather");
   // Only the core's field names: the old {server, uri} shape draws nothing.

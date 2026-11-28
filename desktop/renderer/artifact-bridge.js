@@ -109,8 +109,9 @@ function abEntryOf(source) {
   return null;
 }
 
-/** Put a widget's text in the message box. Answers 'filled' | 'draft' (the person's own draft is there) | 'none'. */
-function abFillComposer(text, title) {
+/** Put a widget's text in the message box. Answers 'filled' | 'draft' (the person's own draft is there) | 'none'.
+    ATO-2457: `opts.quiet` leaves out the "press Enter" toast (widget-send.js sends it at once). */
+function abFillComposer(text, title, opts) {
   if (typeof S === 'undefined') return 'none';
   const e = typeof $ === 'function' ? $('#entry') : null;
   const draft = String((e ? e.value : S.draft) || '').trim();
@@ -120,15 +121,16 @@ function abFillComposer(text, title) {
     return 'draft';
   }
   S.draft = text;
-  AB.lastFill = text;
   if (e) {
     e.value = text;
     if (typeof autosize === 'function') autosize(e);
     if (typeof e.setSelectionRange === 'function') e.setSelectionRange(text.length, text.length);
   }
+  // Kept as the box reads it back (a <textarea> turns CR and CRLF into LF; the draft check trims), so a held widget text is not taken for the person's draft.
+  AB.lastFill = String(e ? e.value : text).trim();
   if (typeof refreshSend === 'function') refreshSend();
   if (typeof ctxDraftChanged === 'function') ctxDraftChanged();
-  if (typeof toast === 'function') toast((title ? name : 'The widget') + ' put a message in the box', 'Press Enter to send it to the agent, or change it first.');
+  if (typeof toast === 'function' && !(opts && opts.quiet)) toast((title ? name : 'The widget') + ' put a message in the box', 'Press Enter to send it to the agent, or change it first.');
   return 'filled';
 }
 
@@ -143,12 +145,33 @@ function abPaintErrors(key) {
     if (box.dataset.chatArt !== key) return;
     let n = box.querySelector(':scope > .chat-art-err');
     if (!errs.length) { if (n) n.remove(); return; }
-    const text = errs.map((x) => 'Script error' + (x.line ? ' (line ' + x.line + ')' : '') + ': ' + x.message).join('\n');
-    if (!n) { n = document.createElement('div'); n.className = 'chat-art-err'; n.setAttribute('role', 'status'); }
-    if (n.textContent !== text) n.textContent = text;
+    const text = abErrorsText(errs);
+    if (!n) {
+      n = document.createElement('div'); n.className = 'chat-art-err'; n.setAttribute('role', 'status');
+      const t = document.createElement('span'); t.className = 'chat-art-err-t'; n.appendChild(t);
+      // ATO-2457: the person can hand the errors to the agent to fix (Claude artifacts' "Try fixing").
+      const fix = document.createElement('button'); fix.className = 'btn btn-s sm chat-art-fix'; fix.dataset.abfix = key; fix.textContent = 'Ask the agent to fix';
+      n.appendChild(fix);
+    }
+    const tn = n.querySelector('.chat-art-err-t');
+    if (tn && tn.textContent !== text) tn.textContent = text;
     // Under the frame: the frame may be put in after the lines (chatArtifactHydrate appends it).
     if (n !== box.lastElementChild) box.appendChild(n);
   });
+}
+
+/** A page's error lines as the card shows them. */
+function abErrorsText(errs) {
+  return errs.map((x) => 'Script error' + (x.line ? ' (line ' + x.line + ')' : '') + ': ' + x.message).join('\n');
+}
+
+/** ATO-2457: what "Ask the agent to fix" puts in the box for artifact `key`; '' when it has no errors. */
+function abFixMessage(key) {
+  const w = AB.widgets.get(key);
+  if (!w || !w.errors.length) return '';
+  const st = abArts().get(key);
+  const name = st && st.title ? '"' + String(st.title).slice(0, 60) + '"' : 'the widget';
+  return 'The page ' + name + ' shows script errors:\n' + abErrorsText(w.errors) + '\nPlease fix the page and show it again.';
 }
 
 /** After a repaint draws a fresh box, put its error lines back (once each; the observer settles). */
@@ -193,12 +216,26 @@ function artifactBridgeMessage(e, now) {
   const text = abPromptText(d.text);
   if (!text || !abUserActive() || !abFocusIn(st)) return false;
   if (!abPromptAllowed(w, typeof now === 'number' ? now : Date.now())) return false;
-  abFillComposer(text, st.title);
+  // ATO-2457: through widgetDeliver, which honours "Widgets send right away" (widget-send.js).
+  if (typeof widgetDeliver === 'function') widgetDeliver(text, st.title);
+  else abFillComposer(text, st.title);
   return true;
 }
 
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
   window.addEventListener('message', artifactBridgeMessage);
+}
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('[data-abfix]') : null;
+    if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    const text = abFixMessage(b.dataset.abfix);
+    if (!text) return;
+    const st = abArts().get(b.dataset.abfix);
+    if (typeof widgetDeliver === 'function') widgetDeliver(text, st && st.title);
+    else abFillComposer(text, st && st.title);
+  }, true);
 }
 if (typeof MutationObserver === 'function' && typeof document !== 'undefined') {
   new MutationObserver(() => { if (AB.widgets.size) abPaintAll(); })
@@ -207,5 +244,6 @@ if (typeof MutationObserver === 'function' && typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {AB, AB_PROMPT_MAX, AB_STATE_MAX, AB_ERROR_MAX, AB_ERRORS, AB_PROMPT_GAP_MS, AB_MAX_KEYS,
-    abPromptText, abStateOf, abErrorOf, abPromptAllowed, abEntryOf, abFocusIn, abFillComposer, abWidget, artifactBridgeMessage};
+    abPromptText, abStateOf, abErrorOf, abPromptAllowed, abEntryOf, abFocusIn, abFillComposer, abWidget, artifactBridgeMessage,
+    abUserActive, abErrorsText, abFixMessage};
 }

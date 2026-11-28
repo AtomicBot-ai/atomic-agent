@@ -6870,6 +6870,7 @@ function generalPane() {
       + '</div>'
       + nameChatsRowHTML()
       + nextStepRowHTML()   // ATO-1096 (next-step.js)
+      + (typeof widgetSendRowHTML === 'function' ? widgetSendRowHTML({esc, setSwitchHTML}) : '')   // ATO-2457 (widget-send.js)
       // ATO-328: the Exa key for web search, the field the chat card offers too (exa-key.js).
       + exaKeySettingsRowHTML(exaKeyState('settings'), {esc, ic, logo: logoHTML})
       // ATO-229: automatic update checks, the version, Check now (app-update.js).
@@ -7846,6 +7847,7 @@ function act(a) {
   if (a === 'notify:toggle') { close(); tpNotifyToggle(); return; }
   if (a === 'names:toggle') { close(); nameChatsSet(!nameChatsOn()); return; }
   if (a === 'nextstep:toggle') { close(); nextStepSet(!nextStepOn()); return; }
+  if (a === 'widgets:sendnow') { close(); widgetSendNowSet(!widgetSendNowOn()); render(); return; }   // ATO-2457 (widget-send.js)
   // ATO-464: Settings › General › Always show steps (turn-summary.js).
   if (a.startsWith('quickentry:')) { quickEntryAct(a.slice('quickentry:'.length)); return; }   // ATO-523 (quick-entry-settings.js)
   if (a.startsWith('dictate:')) { dictateAnywhereAct(a.slice('dictate:'.length)); return; }   // ATO-1064 (dictate-anywhere-settings.js)
@@ -8257,12 +8259,14 @@ function submit(preparedSkillText, opts) {
   if (typeof fitHoldsSend === 'function' && fitHoldsSend()) { toast(FIT_HOLD_TITLE, FIT_HOLD_TEXT, 'bad'); return; }
   const e = $('#entry');
   const typed = typeof preparedSkillText === 'string' ? preparedSkillText : (e ? e.value : S.draft).trim();
+  // ATO-2457: a widget's text left as it was in the box is a message, never a /command or !command (widget-send.js).
+  const widgetPlain = typeof preparedSkillText !== 'string' && typeof widgetSubmitPlain === 'function' && widgetSubmitPlain(typed, opts, e);
   // ATO-1238: `!command` opens Terminal in the chat's folder with it typed, not run (bang-command.js).
-  if (typeof preparedSkillText !== 'string' && typeof bangCommandOf === 'function' && bangTerminalOk() && bangCommandOf(typed)) { bangOpen(bangCommandOf(typed), typed, workingDir()); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
+  if (!widgetPlain && typeof preparedSkillText !== 'string' && typeof bangCommandOf === 'function' && bangTerminalOk() && bangCommandOf(typed)) { bangOpen(bangCommandOf(typed), typed, workingDir()); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
   /* ATO-405: files in the composer ride in the message itself, as the
      `[attachments]` block the channels send (attachments.js). A slash command
      typed with files waiting runs alone; the chips stay for the next message. */
-  const rawSlash = typeof preparedSkillText !== 'string' && typed.startsWith('/');
+  const rawSlash = !widgetPlain && typeof preparedSkillText !== 'string' && typed.startsWith('/');
   // Continue and the plan hand-off send their own fixed words (`plain`): the chips wait for a message of the person's.
   const withFiles = !rawSlash && !(opts && opts.plain);
   if (withFiles && attPreparing()) { toast('Attachments are still being prepared', 'Send once every chip is ready. Your message stays in the box', 'bad'); return; }
@@ -8276,8 +8280,8 @@ function submit(preparedSkillText, opts) {
      the model, so holding them for the 3-11 s of a switch (with a toast
      whose words are about a message staying in the box) was wrong copy for
      the wrong thing. They go through untouched. */
-  if (text.startsWith('/') && SK.workingDir && !preparedSkillText && !SLASH.some(row => row[0] === text.slice(1).split(/\s+/)[0] || (row[3] || []).includes(text.slice(1).split(/\s+/)[0]))) { submitSkillCommand(text); return; }
-  if (text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
+  if (!widgetPlain && text.startsWith('/') && SK.workingDir && !preparedSkillText && !SLASH.some(row => row[0] === text.slice(1).split(/\s+/)[0] || (row[3] || []).includes(text.slice(1).split(/\s+/)[0]))) { submitSkillCommand(text); return; }
+  if (!widgetPlain && text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
   /* Backlog 24 — Enter while the chat on screen is still opening, or after
      it failed to. The draft STAYS in the box, as it does for a switch below:
      nothing here knows yet which session the message would go with, and
@@ -11888,6 +11892,8 @@ function onChatEvent(ev) {
     if (p.canvas && item && typeof chatArtifactCanvas === 'function') chatArtifactCanvas(item, p, S.sessionId, S.log);
     // ATO-1010: an MCP tool's app page (`mcp_app` on the frame) runs in the same sandboxed frame (mcp-app.js).
     if (p.mcp_app && item && typeof chatMcpApp === 'function') chatMcpApp(item, p, S.sessionId, S.log);
+    // ATO-2457: a ui.render card (`ui` on the frame), drawn by this window (ui-render.js).
+    if (p.ui && item && typeof chatUiRender === 'function') chatUiRender(item, p);
     // ATO-1187: a write/edit's lines added/removed go on the turn's "Changed files" card (changed-files.js).
     // ATO-1702: a fusion.delegate's `diffstats` (its workers' files) go on the same card.
     if (item) for (const changedFile of changedFilesOfFrame(p)) item.changed = changedFilesAdd(item.changed, changedFile);
@@ -24519,6 +24525,7 @@ function replyFilesStrip(m) {
   const extra = (m.turnPics || []).filter((p) => !files.includes(p));
   // ATO-1136: the reply's artifacts (its pages and its .html files) run in sandboxed frames (chat-artifact.js).
   const arts = typeof chatArtifactEventSlots === 'function' ? chatArtifactEventSlots(m, esc) : [];
+  if (typeof uiRenderSlots === 'function') arts.push(...uiRenderSlots(m));   // ATO-2457 (ui-render.js)
   if (!files.length && !extra.length && !arts.length) return '';
   const pics = [], chips = [], shown = [];
   for (const p of extra) {
