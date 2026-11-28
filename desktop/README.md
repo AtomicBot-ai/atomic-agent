@@ -297,6 +297,18 @@ start two task schedulers against the same cron jobs.
 Real, driven by the running agent:
 
 - connection state and working directory
+- the file preview panel beside the chat (`renderer/file-preview.js`, main reads every byte in
+  `main/file-preview.ts` inside the preview roots). ATO-2445 added: a Parquet file as a sortable
+  table of its first 1,000 rows (`main/parquet-preview.ts`, hyparquet; `renderer/parquet-table.js`);
+  `src/api.py:42`, `path:42:7`, `path#L42` and `C:\x\y.ts:10` in a reply open the panel on that line
+  (`renderer/reply-line-links.js`, `main/line-path.ts`: absolute, `~/`, relative to the chat's folder,
+  or the shallowest file in its @-mention listing ending so; `renderer/file-preview-line.js`); **Open in
+  VS Code / Cursor / Zed** at that line when one is installed (`main/editor-detect.ts`: PATH, the app
+  bundles on macOS, `%LOCALAPPDATA%\Programs` and `%ProgramFiles%` on Windows, the package folders on
+  Linux; `-g file:line` for VS Code and Cursor, `file:line` for Zed; `renderer/file-preview-editor.js`);
+  and **Compare** next to Reload from disk / Overwrite when the file changed on disk while it was
+  edited (`renderer/line-diff.js` makes the diff, `diff-lines.js` draws it;
+  `renderer/file-preview-compare.js`).
 - the transcript: your message in a bubble on the right — text-width, capped
   at 480px, with the outgoing-tail corner, the way a chat app draws your own
   side — then the streamed reply, reasoning, and tool cards on the left with no

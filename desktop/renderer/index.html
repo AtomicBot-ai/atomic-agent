@@ -37,6 +37,7 @@
 <link rel="stylesheet" href="css/model-share.css">
 <link rel="stylesheet" href="css/file-preview.css">
 <link rel="stylesheet" href="css/slide-thumbs.css">
+<link rel="stylesheet" href="css/file-preview-extras.css">
 <link rel="stylesheet" href="css/canvas-pane.css">
 <link rel="stylesheet" href="css/artifact-bridge.css">
 <link rel="stylesheet" href="css/ui-render.css">
@@ -330,6 +331,8 @@
 <!-- ATO-1628: citation chips (`file://…#page=N`) in a reply; md-render.js asks it for one. -->
 <script src="citation-chip.js"></script>
 <script src="md-render.js"></script>
+<!-- ATO-2445: `path:line` in a reply opens the preview on that line. -->
+<script src="reply-line-links.js"></script>
 <!-- ATO-1140: formulas and Mermaid diagrams; KaTeX and Mermaid themselves load on first use. -->
 <script src="rich-blocks.js"></script>
 <!-- ATO-1053: the file preview panel (main reads the file; this only draws it). -->
@@ -343,6 +346,11 @@
 <script src="file-preview.js"></script>
 <!-- ATO-2347: editing a text file in that panel (main writes it). -->
 <script src="file-preview-edit.js"></script>
+<!-- ATO-2445: Compare on a disk conflict, the preview opened on a line, Open in VS Code / Cursor / Zed. -->
+<script src="line-diff.js"></script>
+<script src="file-preview-compare.js"></script>
+<script src="file-preview-line.js"></script>
+<script src="file-preview-editor.js"></script>
 <!-- ATO-464: a finished turn's steps fold into one summary line. -->
 <script src="turn-summary.js"></script>
 <!-- ATO-1272: the transcript draws its newest part; earlier rows are one "Show earlier" row. -->

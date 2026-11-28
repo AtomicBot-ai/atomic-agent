@@ -55,6 +55,7 @@ import { pushTurnNote, wirePushIpc } from "./push-ipc.js";
 import { wirePhoneIpc } from "./phone-ipc.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { wireFileMentionsIpc } from "./file-mentions-ipc.js";
+import { wireLinePathIpc } from "./line-path-ipc.js";
 import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
 import { wireFusionReasoningIpc } from "./fusion-reasoning-ipc.js";
 import { wireFusionRolesIpc } from "./fusion-roles-ipc.js";
@@ -357,6 +358,7 @@ import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
 import { filePreviewSave } from "./file-save.js";
+import { wireEditorOpenIpc } from "./editor-open-ipc.js";
 import { renderSlides, slidesRenderable } from "./slide-render.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 import { buildLocalGgufModelDef, resolveLocalGgufFile } from "./local-gguf.js";
@@ -3254,6 +3256,8 @@ function wireIpc(client: AgentClient): void {
      written when the file changed since the panel read it unless `force`. */
   ipcMain.handle("app:filePreviewSave", (_event, p: unknown, text: unknown, stamp: unknown, force: unknown) =>
     filePreviewSave(p, text, stamp, previewRoots(), homedir(), process.platform, { force: force === true }));
+  // ATO-2445: the panel's "Open in editor": VS Code, Cursor or Zed, on a file the preview may read (editor-open-ipc.ts).
+  wireEditorOpenIpc({ previewRoots });
   ipcMain.handle("app:imageSaveAs", async (event, p: unknown) => {
     const opened = await openImage(p, imageRoots(), homedir(), process.platform);
     if (!opened.ok) return { ok: false, reason: opened.reason };
@@ -3429,6 +3433,9 @@ function wireIpc(client: AgentClient): void {
   const fileMentions = wireFileMentionsIpc({ isRemote: () => client.isRemote, defaultDir: () => client.status.workingDir,
     sessionDir: async (s) => ((await client.skills(s)) as { workingDir?: string }).workingDir,
     expandInCore: (text, dir) => client.expandMentions(text, dir) });   // ATO-2472
+  // ATO-2445: a reply's `path:line` chip, found in the chat's folder (line-path-ipc.ts).
+  wireLinePathIpc({ isRemote: () => client.isRemote, defaultDir: () => client.status.workingDir,
+    sessionDir: async (s) => ((await client.skills(s)) as { workingDir?: string }).workingDir });
   // ATO-532: a snapshot of another app's window, attached like a pasted image (view-only).
   wireWindowSnapshotIpc();
   // ATO-606: the Fusion workers' reasoning level (Settings › Models, `/runmode reasoning`).

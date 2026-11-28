@@ -24001,6 +24001,8 @@ function renderProseFresh(text) {
     const href = core.startsWith('www.') ? 'https://' + core : core;
     return '<a class="msglink" href="#" data-url="' + href + '">' + core + '</a>' + trail;
   });
+  // ATO-2445: `src/api.py:42` opens the preview on that line (reply-line-links.js); before the path chips below.
+  if (typeof lineLinksInHtml === 'function') html = lineLinksInHtml(html, IS_WIN, (m) => '\u0001' + (chips.push(m) - 1) + '\u0001');
   // Chat review (Д23): a chip only for a file main found in the home folder; text until then.
   html = html.replace(FILE_RE_HERE, (p) => chip(p, p));
   if (IS_WIN) {
@@ -24018,6 +24020,8 @@ function renderProseFresh(text) {
     const code = /^<code class="mdcode">([\s\S]*)<\/code>$/.exec(h);
     const raw = code ? code[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim() : '';
     // ATO-2409: a bare name the chat wrote (`sales.docx`) is that file's chip (chat-files.js chatFilesByName; main confirms the path as ever).
+    const lnk = raw && typeof lineLinkMatch === 'function' ? lineLinkMatch(raw, IS_WIN) : null;   // ATO-2445: `src/api.py:42`
+    if (lnk) return '\u0001' + (chips.push(lineLinkChip(lnk, h)) - 1) + '\u0001';
     const known = raw && !codeSpanIsPath(raw) && typeof chatFilesByName === 'function' ? chatFilesByName(raw) : '';
     return raw && codeSpanIsPath(raw) ? chip(raw, h) : known ? chip(known, h) : h.startsWith('<pre class="mdpre"') ? codeBlockFrame(h) : h;
   });

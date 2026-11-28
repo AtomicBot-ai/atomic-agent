@@ -133,6 +133,7 @@ function filePreviewOpen(path, opts) {
   FP.open = true; FP.path = path; FP.reply = !!(opts && opts.reply); FP.listed = !!(opts && opts.listed);
   FP.cite = !!(opts && opts.cite); FP.frag = frag;
   if (!same) { FP.data = null; FP.view = 'render'; FP.edit = null; FP.sort = null; }
+  if (typeof fpLineSet === 'function') fpLineSet(opts);   // ATO-2445: opened on a line (file-preview-line.js)
   el.hidden = false;
   fpApplyWidth();
   fpPaintHead();
@@ -213,6 +214,7 @@ async function fpLoad(keepScroll) {
   fpPaintBody(fpBodyHtml(res));
   const after = fpEl() && fpEl().querySelector('.fp-body');
   if (after && top) after.scrollTop = top;
+  if (typeof fpLineGo === 'function') fpLineGo();   // ATO-2445
   fpLoadSlides(seq, path, res);
 }
 
@@ -318,6 +320,7 @@ function fpPaintHead() {
     + '<button class="fp-btn" data-fp="refresh" title="Reload the file" aria-label="Reload">↻</button>'
     + '<button class="fp-btn" data-fp="open" title="Open in its default app">Open</button>'
     + '<button class="fp-btn" data-fp="reveal" title="' + fpEsc(fpRevealLabel()) + '" aria-label="' + fpEsc(fpRevealLabel()) + '">' + fpIcon('folder') + '</button>')
+    + (typeof fpEditorButtonHtml === 'function' ? fpEditorButtonHtml(d) : '')   // ATO-2445: Open in VS Code / Cursor / Zed
     + '<button class="fp-btn fp-x" data-fp="close" title="Close the preview" aria-label="Close the preview">✕</button>';
 }
 /** ATO-1256: the row of the chat's files over a previewed file (none over the list itself). */
