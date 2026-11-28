@@ -32,7 +32,9 @@ test("a page kept in the store is served with its headers, the size reporter and
   const r = s.response(put.url);
   assert.equal(r.status, 200);
   assert.equal(r.headers["Content-Type"], "text/html; charset=utf-8");
-  assert.equal(r.headers["Content-Security-Policy"], F.ARTIFACT_CSP);
+  // ATO-2536: the artifact CSP plus Trusted Types (artifact-rtc-block.ts).
+  assert.equal(r.headers["Content-Security-Policy"], F.ARTIFACT_PAGE_CSP);
+  assert.ok(F.ARTIFACT_PAGE_CSP.startsWith(F.ARTIFACT_CSP + "; "));
   assert.equal(r.headers["X-Content-Type-Options"], "nosniff");
   assert.match(r.headers["Permissions-Policy"], /camera=\(\)/);
   assert.match(r.headers["Permissions-Policy"], /microphone=\(\)/);
@@ -93,7 +95,8 @@ test("a permission asked from a frame inside the window is refused before the vo
   assert.ok(req.indexOf("permissionFromSubframe(") > 0 && req.indexOf("permissionFromSubframe(") < req.indexOf("voicePermissionVerdict("));
   const chk = main.slice(main.indexOf("setPermissionCheckHandler("), main.indexOf("void window.loadFile("));
   assert.match(chk, /!permissionFromSubframe\([\s\S]*&& voicePermissionVerdict\(/);
-  assert.match(main, /on\("will-frame-navigate", \(event\) => \{\s*if \(!event\.isMainFrame && !subframeNavAllowed\(event\.url\)\) event\.preventDefault\(\);/);
+  // The subframe rule (artifact-nav-guard.ts, which falls back to subframeNavAllowed) is wired on the window.
+  assert.match(main, /\n {2}watchArtifactNavigation\(window\.webContents as unknown as NavContents, \{\s*frameFromId: \(processId, routingId\) => \(webFrameMain\.fromId\(processId, routingId\)/);
   // The scheme is registered before the app is ready (module scope) and served once IPC is wired.
   assert.match(main, /\nregisterArtifactScheme\(\);\n/);
   assert.match(main, /\n {2}wireArtifactIpc\(\);\n/);
