@@ -440,6 +440,8 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("recipes:save", recipe),
   recipesDelete: (id: string) => ipcRenderer.invoke("recipes:delete", id),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
+  /** ATO-2754: `{on}` while a quit waits for the agent's answer about running work (main/quit-checking.ts). */
+  onQuitChecking: (cb: (payload: unknown) => void) => on("app:quitChecking", cb),
   /* ATO-523: the global hotkey's one-line box (main/quick-entry-window.ts).
      The box's page: what it opened with, the draft kept while it is away,
      Esc, Enter. The main window: "a text is waiting" and taking it once.
