@@ -64,6 +64,7 @@ import { wireIdeasIpc } from "./ideas-ipc.js";
 import { wireSessionGoalIpc } from "./session-goal-ipc.js";
 import { wireAgentJobsIpc } from "./agent-jobs-ipc.js";
 import { wireSideQuestionIpc } from "./side-question-ipc.js";
+import { wireCouncilIpc } from "./council-ipc.js";
 import { wireIncognitoChatsIpc } from "./incognito-chats-ipc.js";
 import { wireChatTrashIpc } from "./chat-trash-ipc.js";
 import { wireMiniChatIpc } from "./mini-chat-ipc.js";
@@ -3434,6 +3435,7 @@ function wireIpc(client: AgentClient): void {
     petHub?.approvalAnswered(approvalId);
   });
   wireSideQuestionIpc(client);   // ATO-1152: /btw
+  wireCouncilIpc(client);   // ATO-2432: /council
   wireIncognitoChatsIpc(client);   // ATO-586: incognito chats
   wireChatTrashIpc(client);   // ATO-2332: Delete… moves a chat to Trash, purged after 30 days
   // ATO-1136: HTML artifacts in the chat, sandboxed (artifact-frame-ipc.ts).

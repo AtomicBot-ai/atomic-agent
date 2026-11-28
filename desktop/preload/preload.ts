@@ -378,6 +378,10 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1152: `/btw`, a side question the agent answers without saving it (main/side-question-ipc.ts). */
   askSideQuestion: (question: string, sessionId?: string) =>
     ipcRenderer.invoke("agent:btw", { question, ...(sessionId ? { sessionId } : {}) }),
+  /** ATO-2432: `/council`, the model council (main/council-ipc.ts); frames arrive on onCouncilFrame. */
+  council: (request: unknown) => ipcRenderer.invoke("agent:council", request),
+  councilStop: (id: string) => ipcRenderer.invoke("agent:council-stop", { id }),
+  onCouncilFrame: (cb: (frame: unknown) => void): Unsubscribe => on("agent:council-frame", cb),
   /** ATO-586: a new incognito chat's id, and closing one (deleted on the agent); main/incognito-chats-ipc.ts. */
   incognitoOpen: () => ipcRenderer.invoke("incognito:open"),
   incognitoClose: (id: string) => ipcRenderer.invoke("incognito:close", { id }),
