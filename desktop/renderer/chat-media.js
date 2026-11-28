@@ -210,9 +210,13 @@ function chatVideoActionNote(verb, r) {
     if (r && r.ok) return {title: 'Saved', sub: r.path || ''};
     if (r && r.reason === 'canceled') return null;
   } else if (r && r.ok) return null;
+  // ATO-2793: a failure carries the system's error (EACCES, ENOSPC…); the person reads plain words instead.
+  const code = r && r.reason === 'failed' && r.error ? String(r.error) : '';
   const why = r && r.reason === 'outside' ? 'Only a clip in your home folder can be saved or shown from a reply.'
-    : r && r.reason === 'failed' && r.error ? String(r.error)
-    : 'The clip may have been moved or deleted.';
+    : !code ? 'The clip may have been moved or deleted.'
+    : /\b(EACCES|EPERM|EROFS)\b/.test(code) ? (verb === 'save' ? 'There is no permission to write in that folder. Pick another one.' : 'There is no permission to open that folder.')
+    : /\bENOSPC\b/.test(code) ? 'The disk is full. Free some space, then try again.'
+    : verb === 'save' ? 'Something went wrong while copying it. Try another folder.' : 'Something went wrong while opening the folder.';
   return {title: verb === 'save' ? 'Could not save it' : 'Could not show it', sub: why, kind: 'bad'};
 }
 

@@ -163,7 +163,14 @@ test('Save As… says where the copy went, keeps quiet on cancel, and explains a
   assert.equal(M.chatVideoActionNote('save', { ok: false, reason: 'canceled' }), null);
   assert.equal(M.chatVideoActionNote('save', { ok: false, reason: 'missing' }).title, 'Could not save it');
   assert.match(M.chatVideoActionNote('save', { ok: false, reason: 'outside' }).sub, /home folder/);
-  assert.equal(M.chatVideoActionNote('save', { ok: false, reason: 'failed', error: 'EACCES' }).sub, 'EACCES');
+  // ATO-2793: never the bare system error.
+  assert.match(M.chatVideoActionNote('save', { ok: false, reason: 'failed', error: 'EACCES: permission denied, copyfile' }).sub, /no permission to write/);
+  assert.match(M.chatVideoActionNote('save', { ok: false, reason: 'failed', error: 'ENOSPC: no space left on device' }).sub, /disk is full/);
+  assert.match(M.chatVideoActionNote('reveal', { ok: false, reason: 'failed', error: 'EPERM' }).sub, /no permission to open/);
+  for (const error of ['EACCES', 'ENOSPC', 'EIO: i/o error, /Users/n/x.mp4']) {
+    const sub = M.chatVideoActionNote('save', { ok: false, reason: 'failed', error }).sub;
+    assert.doesNotMatch(sub, /E[A-Z]{2,}|\/Users\//, sub);
+  }
   assert.equal(M.chatVideoActionNote('reveal', { ok: true }), null);
   assert.equal(M.chatVideoActionNote('reveal', { ok: false, reason: 'missing' }).title, 'Could not show it');
   assert.equal(M.chatVideoActionNote('save', null).title, 'Could not save it');
