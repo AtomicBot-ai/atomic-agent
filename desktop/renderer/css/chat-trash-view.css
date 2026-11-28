@@ -1,0 +1,13 @@
+/* ============================================================
+   ATO-2474: a chat in Trash, read only (renderer/chat-trash-view.js): the
+   line that takes the composer's place, and the Trash row's openable title.
+   Colours come from tokens only.
+   ============================================================ */
+
+.sb-trashrow .sb-trashopen{background:none;border:0;padding:0;margin:0;text-align:left;color:inherit;font:inherit;cursor:pointer}
+.sb-trashrow .sb-trashopen:focus-visible{outline:2px solid var(--brand);outline-offset:2px;border-radius:4px}
+.trash-ro{display:flex;align-items:center;gap:10px;margin:0 auto;max-width:760px;padding:12px 14px;
+  border:1px solid var(--bd);border-radius:var(--r-pill);color:var(--ink-2);font-size:var(--fs-ui)}
+.trash-ro-ic{flex:none;display:flex;color:var(--ink-3)}
+.trash-ro-ic svg{width:15px;height:15px}
+.trash-ro-text{flex:1;min-width:0}

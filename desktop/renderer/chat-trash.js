@@ -52,7 +52,7 @@ function trashRowHTML(e, now, h) {
   const title = e.title || e.id;
   const left = trashLeftText(trashDaysLeft(e.deletedAt, now));
   return '<div class="sb-trashrow" data-trash="' + h.esc(e.id) + '" title="' + h.esc(title + ' · ' + left) + '">'
-    + '<span class="t1">' + h.esc(title) + '</span>'
+    + '<button class="t1 sb-trashopen" data-act="trashview:' + h.esc(e.id) + '" title="Open to read" aria-label="Open ' + h.esc(title) + ' to read">' + h.esc(title) + '</button>'   // ATO-2474 (chat-trash-view.js)
     + '<span class="sb-trashleft micro">' + h.esc(left) + '</span>'
     + '<button class="iconbtn" data-act="trash:restore:' + h.esc(e.id) + '" title="Restore" aria-label="Restore ' + h.esc(title) + '">' + h.ic('undo') + '</button>'
     + '<button class="iconbtn danger" data-act="trash:forgetask:' + h.esc(e.id) + '" title="Delete forever" aria-label="Delete ' + h.esc(title) + ' forever">' + h.ic('trash') + '</button>'
