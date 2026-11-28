@@ -20,6 +20,12 @@ import { SECRET_HOME_PATHS } from "../../../sandbox/os-sandbox.js";
  * does not know (`%X%`, `!X!`, `$x`, `${x}`), a `)` of a subexpression
  * (`$([Environment]::GetFolderPath(...))`), a `..` segment, or a `+`
  * string concatenation. It counts as below the home folder.
+ *
+ * Review round 3: `USERS_SECRET_PATH` is `\Users\<name>\<entry>` anywhere
+ * inside a word, whatever comes before it (`C:\Windows\..\Users\x`,
+ * `%SystemDrive%\Users\x`, `%ALLUSERSPROFILE%\..\Users\x`), and
+ * `HOME_MENTION` is any home folder spelling anywhere on the line, for the
+ * fail-closed check on strings built in PowerShell.
  */
 
 const WINDOWS_SECRET_PATHS: readonly string[] = [
@@ -77,6 +83,10 @@ export const UNRESOLVED_SECRET_PATH = new RegExp(
   String.raw`(?:(?:[)}%!]|\.\.|\$[a-z_][a-z_0-9]*(?::[a-z_0-9]+)?)${SEP}|\+\s*['"]?(?:${SEP})?)(?:\.${SEP})?(${BELOW})${END}`,
   "g",
 );
+/** `\Users\<name>\<entry>` after anything at all: group 1 the entry, 2 the rest. */
+export const USERS_SECRET_PATH = new RegExp(String.raw`[/\\]users${SEP}${NAME}${SEP}(${BELOW})${END}`, "g");
+/** Any spelling of the home folder, anywhere on the line. */
+export const HOME_MENTION = new RegExp(String.raw`${HOME_ROOT}|getfolderpath|getenvironmentvariable`);
 /** An 8.3 short name right below the home folder (`SSH~1`): group 1 the name, 2 the rest. */
 export const SHORT_NAME_PATH = new RegExp(
   String.raw`${LEFT}${HOME_ROOT}${SEP}([^/\\\s"'|;&<>~]{1,8}~[0-9])${END}`,
