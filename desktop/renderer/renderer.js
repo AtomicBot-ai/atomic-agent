@@ -2371,7 +2371,7 @@ function toolDisabledLine(p) {
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
 const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'tool_update', 'delta', 'reply_polished', 'progress_note', 'reply_attachments', 'fusion_worker',
-  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered', 'provider_switched', 'tool_disabled', 'project_instructions', 'loop_stopped', 'cli_outdated',
+  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered', 'provider_switched', 'tool_disabled', 'project_instructions', 'path_rule_attached', 'loop_stopped', 'cli_outdated',
   // ATO-259 / ATO-295: context maintenance inside the turn (context-compaction.js).
   'compaction_started', 'compaction_progress', 'compaction_completed', 'compaction_failed', 'history_trimmed']);
 /* ATO-259: the compaction row of the turn on screen (`rowId`, spinning until
@@ -11763,6 +11763,8 @@ function onChatEvent(ev) {
   if (ev.kind === 'project_instructions') { if (projectInstructionsDraw(ev.payload, S.log, item, nid, esc)) render(); return; }
   // ATO-2523: the Claude Code / Codex CLI is older than the agent supports (cli-outdated-line.js).
   if (ev.kind === 'cli_outdated') { if (typeof cliOutdatedDraw === 'function' && cliOutdatedDraw(ev.payload, S.log, item, nid, esc)) render(); return; }
+  // ATO-2443: a path-scoped project rule joined the prompt (path-rule-line.js).
+  if (ev.kind === 'path_rule_attached') { if (pathRuleDraw(ev.payload, S.log, item, nid, esc)) render(); return; }
   /* Run mode — Fusion. One leg of a fan-out started, ran a tool, ended or was
      cut short (`event: fusion_worker`, agent ≥ desktop/fusion-stream). The
      live list under the composer says what is happening; the transcript
