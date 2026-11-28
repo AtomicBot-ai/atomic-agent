@@ -106,3 +106,19 @@ test('analytics: the mode picks and the W2 sidebar verbs are allowlisted words',
   assert.match(acts, /studio:\{menu:L, open:\{images:L, video:L\}\}/);
   assert.match(acts, /cmode:\{chat:L, endGoal:L, goal:L, overnight:L, voice:L\}/);
 });
+
+test('ATO-2790: the menu spells the Voice chord through kbdText, so Windows and Linux read Ctrl Shift J', () => {
+  const offMac = (t) => String(t).replace('⇧⌘J', 'Ctrl Shift J');
+  const menu = M.cmodeMenuHTML({...deps, kbdText: offMac});
+  assert.match(menu, /Ctrl Shift J/);
+  assert.doesNotMatch(menu, /⇧⌘J/);
+  assert.match(src('../renderer/renderer.js'), /cmodeMenuHTML\(\{esc, ic, kbdText\}\)/);
+});
+
+test('ATO-2790: the unknown-command line spells ⌘K per platform and has no long dash', () => {
+  const r = src('../renderer/renderer.js');
+  const line = r.split('\n').find((l) => l.includes("'Unknown command /'"));
+  assert.ok(line, 'unknown-command line present');
+  assert.match(line, /kbd\('⌘K'\)/);
+  assert.ok(!line.includes('—'));
+});
