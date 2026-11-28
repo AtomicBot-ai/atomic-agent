@@ -96,12 +96,27 @@ test("renderer.js draws the card on the empty chat and asks before a send", () =
   assert.match(submit, /updHoldsNewChat\(S\.log\.length, S\.busy \|\| S\.pending\)/);
 });
 
-/** ATO-2414: General has no "Get beta versions" row until betas are published. */
-test("the beta row is hidden unless main offers betas, even for someone who had it on", () => {
+/** ATO-2414: General has no "Get beta versions" row until betas are published.
+    ATO-2745: except for someone who has it on: they see it, so they can turn it off. */
+test("the beta row is hidden unless main offers betas, but shown while it is on so it can be turned off", () => {
   const { c } = rendererUpdates();
-  c.setSwitchHTML = (o) => `<button data-act="${o.act}"></button>`;
+  c.setSwitchHTML = (o) => `<button data-act="${o.act}" data-on="${o.on}"></button>`;
   const base = { enabled: true, autoCheck: true, currentVersion: "0.0.11", phase: "idle" };
-  assert.equal(c.updBetaRowHTML({ ...base, beta: true, betaOffered: false }), "");
+  const stuck = c.updBetaRowHTML({ ...base, beta: true, betaOffered: false });
+  assert.match(stuck, /id="set-upd-beta"/, "on, with betas not offered: still shown");
+  assert.match(stuck, /data-act="appupd:beta" data-on="true"/);
   assert.equal(c.updBetaRowHTML({ ...base, beta: false }), "");
+  assert.equal(c.updBetaRowHTML({ ...base, beta: false, betaOffered: false }), "", "off and not offered: hidden");
   assert.match(c.updBetaRowHTML({ ...base, beta: false, betaOffered: true }), /id="set-upd-beta"/);
+  assert.equal(c.updBetaRowHTML({ ...base, enabled: false, beta: true }), "", "an install that does not update itself has no switch");
+});
+
+// ATO-2745: "You’re up to date" without a long dash (it was "You’re up to date — 0.0.11"); smoke t65 reads the same words.
+test("Check now's up-to-date line has no long dash", () => {
+  const { c } = rendererUpdates();
+  const line = c.updResultLine({ enabled: true, phase: "idle", currentVersion: "0.0.11", manualCheck: { result: { kind: "up-to-date" } } });
+  assert.equal(line.text, "You’re up to date (version 0.0.11).");
+  assert.ok(!line.text.includes("—"));
+  const t65 = readFileSync(new URL("../main/smoke-tasks/t65.ts", import.meta.url), "utf8");
+  assert.ok(t65.includes("g4.result === `You’re up to date (version ${current}).`"));
 });

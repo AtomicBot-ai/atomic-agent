@@ -128,6 +128,10 @@ function skillDraftsGroup(rows) {
     .map(r => ({id: r.id, name: String(r.name || r.id), kind: r.kind === 'patch' ? 'patch' : 'create', reason: String(r.reason || '')}));
   return list.length ? {label: 'Pending review', count: list.length, rows: list} : null;
 }
+/* ATO-2745: a failed call's raw answer, folded under its plain line. */
+function skillDraftDetailsHTML(detail, esc) {
+  return detail ? '<details class="set-errmore"><summary>Details</summary><span>' + esc(detail) + '</span></details>' : '';
+}
 function skillDraftsListHTML(st, esc) {
   const group = skillDraftsGroup(st.rows);
   if (!group) return '';
@@ -135,7 +139,7 @@ function skillDraftsListHTML(st, esc) {
   return '<div class="tk-list set-sklist set-skdrafts" data-skill-drafts="' + group.count + '">'
     + '<div class="set-tlfam"><span class="set-tlgn">' + esc(group.label) + '</span> <span class="tk-chip tk-chip--sm tk-chip--amber" aria-label="' + group.count + ' pending">' + group.count + '</span>'
     + '<span class="set-tlwhat">Learned from outside content. Nothing is saved until you approve it.</span></div>'
-    + (st.error ? '<div class="tuierr tk-help tk-help--err">' + esc(st.error) + '</div>' : '')
+    + (st.error ? '<div class="tuierr tk-help tk-help--err">' + esc(st.error) + skillDraftDetailsHTML(st.errorDetail, esc) + '</div>' : '')
     + group.rows.map(r => '<div class="tk-li set-skdraft" data-skill-draft="' + esc(r.id) + '">'
       + '<span class="t mono" title="' + esc(r.name) + '">' + esc(r.name) + '</span> '
       + '<span class="tk-chip tk-chip--sm' + (r.kind === 'patch' ? ' tk-chip--blue' : ' tk-chip--line') + '">' + skillDraftKindLabel(r.kind) + '</span>'
@@ -155,7 +159,8 @@ function skillDraftDetailHTML(st, esc) {
   const back = '<button class="btn btn-g sm set-flush" data-act="skills:draft:close" title="Back to all skills (Esc)">All skills</button>';
   if (!open.draft) {
     return '<div class="tk-bar">' + back + '</div>'
-      + (open.error ? '<div class="tuierr tk-help tk-help--err">' + esc(open.error) + '</div>' : '<div class="tk-out set-skmd set-loading"><span class="tk-spin"></span>(loading…)</div>');
+      + (open.error ? '<div class="tuierr tk-help tk-help--err">' + esc(open.error) + skillDraftDetailsHTML(open.errorDetail, esc) + '</div>'
+        : '<div class="tk-out set-skmd set-loading" role="status"><span class="tk-spin"></span>Loading the draft…</div>');
   }
   const d = open.draft, patch = d.kind === 'patch';
   const text = patch && d.diff ? d.diff : d.skillMd;
@@ -180,8 +185,8 @@ function skillDraftConfirmHTML(st, esc) {
   return '<div class="set-overlay"><div class="tk-modal tk-modal--danger set-modal" role="alertdialog" aria-label="Discard learned skill">'
     + '<div class="set-mhead"><h4>Discard learned skill</h4></div>'
     + '<p>Discard the draft <b class="mono">' + esc(c.name) + '</b>? It is deleted and cannot be restored.</p>'
-    + (c.error ? '<div class="tuierr tk-help tk-help--err">' + esc(c.error) + '</div>' : '')
-    + (c.submitting ? '<div class="acts"><span class="tk-spin"></span><span class="set-cap">discarding…</span></div>'
+    + (c.error ? '<div class="tuierr tk-help tk-help--err">' + esc(c.error) + skillDraftDetailsHTML(c.errorDetail, esc) + '</div>' : '')
+    + (c.submitting ? '<div class="acts" role="status"><span class="tk-spin"></span><span class="set-cap">Discarding the draft…</span></div>'
       : '<div class="acts"><button class="btn btn-s sm" data-act="skills:draft:cancel" title="Cancel (N)">Cancel</button>'
         + '<button class="btn btn-df sm" data-act="skills:draft:discardConfirm" title="Discard (Y)">Discard</button></div>')
     + '</div></div>';
@@ -189,7 +194,7 @@ function skillDraftConfirmHTML(st, esc) {
 /* The state and the four actions. `api()` is window.atomic (or a stand-in), `paint()` repaints the tab,
    `changed()` re-reads the skill list after an approve (the skill is now installed). */
 function createSkillDraftsController(deps) {
-  const st = {rows: [], at: 0, loading: false, error: null, open: null, confirm: null, busyId: null, seq: 0};
+  const st = {rows: [], at: 0, loading: false, error: null, errorDetail: null, open: null, confirm: null, busyId: null, seq: 0};
   const api = () => deps.api() || {};
   const now = deps.now || (() => Date.now());
   async function refresh(force) {
@@ -209,29 +214,29 @@ function createSkillDraftsController(deps) {
     const br = api();
     if (!br.skillDraftShow || !SKILL_DRAFT_ID_RE.test(id)) return;
     const seq = ++st.seq;
-    st.open = {id, name: nameOf(id), draft: null, error: null}; deps.paint();
+    st.open = {id, name: nameOf(id), draft: null, error: null, errorDetail: null}; deps.paint();
     let res = null;
     try { res = await br.skillDraftShow(id); } catch (e) { res = {ok: false, error: String((e && e.message) || e)}; }
     if (seq !== st.seq || !st.open || st.open.id !== id) return;
     if (res && res.ok && res.draft) st.open.draft = res.draft;
-    else st.open.error = (res && res.error) || 'The agent did not show this draft.';
+    else { st.open.error = 'Could not open this draft. Close it and try again.'; st.open.errorDetail = (res && res.error) || null; }
     deps.paint();
   }
   async function approve(id) {
     const br = api();
     if (!br.skillDraftApprove || st.busyId || !SKILL_DRAFT_ID_RE.test(id)) return;
-    st.busyId = id; st.error = null; deps.paint();
+    st.busyId = id; st.error = null; st.errorDetail = null; deps.paint();
     let res = null;
     try { res = await br.skillDraftApprove(id); } catch (e) { res = {ok: false, error: String((e && e.message) || e)}; }
     st.busyId = null;
     if (res && res.ok) { if (st.open && st.open.id === id) st.open = null; if (deps.changed) deps.changed(); }
-    else st.error = 'Could not approve ' + nameOf(id) + ': ' + ((res && res.error) || 'no answer');
+    else { st.error = 'Could not approve "' + nameOf(id) + '". It is still waiting for review.'; st.errorDetail = (res && res.error) || 'The agent did not answer.'; }
     await refresh(true);
     deps.paint();
   }
   function askDiscard(id) {
     if (!SKILL_DRAFT_ID_RE.test(id) || st.busyId) return;
-    st.confirm = {id, name: nameOf(id), submitting: false, error: null}; deps.paint();
+    st.confirm = {id, name: nameOf(id), submitting: false, error: null, errorDetail: null}; deps.paint();
   }
   async function discard() {
     const c = st.confirm, br = api();
@@ -241,7 +246,7 @@ function createSkillDraftsController(deps) {
     try { res = await br.skillDraftDiscard(c.id); } catch (e) { res = {ok: false, error: String((e && e.message) || e)}; }
     st.busyId = null;
     if (res && res.ok) { st.confirm = null; if (st.open && st.open.id === c.id) st.open = null; }
-    else { c.submitting = false; c.error = (res && res.error) || 'Could not discard the draft.'; }
+    else { c.submitting = false; c.error = 'Could not discard the draft. It is still waiting for review.'; c.errorDetail = (res && res.error) || null; }
     await refresh(true);
     deps.paint();
   }

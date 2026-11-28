@@ -45,7 +45,7 @@ function tgTokenClean(raw) {
 /* The token prompt's state: `shown` is the eye's position, `hasText` whether
    the field has anything in it (so Save can be disabled without the value
    ever leaving the field), `checking` while Telegram is asked about it. */
-function tgTokenInitial() { return {error:null, submitting:false, checking:false, shown:false, hasText:false}; }
+function tgTokenInitial() { return {error:null, errorDetail:null, submitting:false, checking:false, shown:false, hasText:false}; }
 
 /* Whether Save may be pressed for what is in the field. */
 function tgTokenSaveEnabled(value) { return String(value == null ? '' : value).trim().length > 0; }
@@ -63,6 +63,21 @@ function tgTokenCheckOutcome(res) {
   return {save:true, message:'Token saved. ' + TG_TOKEN_UNCHECKED, error:null, bot:null};
 }
 
+/* ATO-2745: a failed step on the tab (`st` is renderer.js TG): a plain line, and what the write or
+   read said kept beside it for a Details fold. The detail names the line it belongs to, so a later
+   line never shows an older answer. */
+function tgFail(st, what, res) {
+  st.lastError = what + '.';
+  const raw = [res && res.error, res && res.detail].filter(Boolean).join('\n');
+  st.lastErrorDetail = raw ? {for: st.lastError, text: raw} : null;
+}
+/* The Details under the tab's red line, or '' when there is none for this line. `h`: {esc}. */
+function tgErrorDetailHTML(st, h) {
+  const d = st && st.lastErrorDetail;
+  if (!st || !st.lastError || !d || d.for !== st.lastError || !d.text) return '';
+  return '<details class="set-errmore"><summary>Details</summary><span>' + h.esc(d.text) + '</span></details>';
+}
+
 /* The Connect card (no token yet): why, the steps, the two actions. `h`: {esc, ic, logo?}. */
 function tgConnectCardHTML(h) {
   const mark = (typeof h.logo === 'function' && h.logo('telegram', 'lg', 'send')) || '<span class="tk-ico tk-ico--lg tk-ico--blue">' + h.ic('send') + '</span>';
@@ -72,7 +87,7 @@ function tgConnectCardHTML(h) {
     + '<p>Talk to Atomic Agent from your phone: message your own Telegram bot and it answers from this computer. The token is stored only on this machine.</p>'
     + '<ol class="sd-steps sd-steps--left">' + TG_SETUP_STEPS.map((t) => '<li>' + h.esc(t) + '</li>').join('') + '</ol>'
     + '<div class="sd-acts"><button class="btn btn-s" data-act="telegram:botfather" title="Opens t.me/BotFather in Telegram">' + h.ic('open') + 'Open @BotFather</button>'
-    + '<button class="btn btn-p" data-act="telegram:token" title="Enter">Paste a bot token</button></div></div>';
+    + '<button class="btn btn-p" data-act="telegram:token">Paste a bot token</button></div></div>';
 }
 
 /* The token prompt: a password field with the shape as its placeholder, the
@@ -83,13 +98,15 @@ function tgTokenPromptCardHTML(t, h) {
   const eye = st.shown ? 'eyeOff' : 'eye';
   return '<div class="tk-card pad sd-tgcard" data-tg-token-prompt>'
     + '<h3 class="sd-title">Bot token</h3>'
-    + '<p>Paste the token @BotFather gave you. It is checked with Telegram once, then saved on this computer, in a file only your user account can read.</p>'
+    // ATO-2745: where it lands (keychain or file) is said after the save, from main's answer (key-stored-note.js).
+    + '<p>Paste the token @BotFather gave you. It is checked with Telegram once, then saved only on this computer.</p>'
     + '<label class="tk-inpwrap sd-tokwrap' + (st.error ? ' is-error' : '') + '">' + h.ic('key')
     + '<input id="tg-token" type="' + (st.shown ? 'text' : 'password') + '" autocomplete="off" spellcheck="false" aria-label="Bot token"'
     + ' placeholder="' + h.esc(TG_TOKEN_PLACEHOLDER) + '"' + (busy ? ' disabled' : '') + '>'
     + '<button type="button" class="iconbtn sm" data-act="telegram:tokenReveal" aria-pressed="' + (st.shown ? 'true' : 'false') + '" title="' + (st.shown ? 'Hide the token' : 'Show the token') + '" aria-label="' + (st.shown ? 'Hide the token' : 'Show the token') + '">' + h.ic(eye) + '</button>'
     + '</label>'
     + (st.error ? '<p class="tk-help tk-help--err" data-tg-token-error>' + h.esc(st.error) + '</p>' : '')
+    + (st.error && st.errorDetail ? '<details class="set-errmore"><summary>Details</summary><span>' + h.esc(st.errorDetail) + '</span></details>' : '')
     + '<div class="sd-acts">' + (st.checking ? '<span class="sd-cap">checking with Telegram…</span>' : st.submitting ? '<span class="sd-cap">saving…</span>' : '') + '<span class="sd-grow"></span>'
     + '<button class="btn btn-g sm" data-act="telegram:tokenCancel">Cancel</button>'
     + '<button class="btn btn-p sm" data-act="telegram:tokenSave"' + (busy || !st.hasText ? ' disabled' : '') + '>Save</button></div></div>';
@@ -97,5 +114,5 @@ function tgTokenPromptCardHTML(t, h) {
 
 if (typeof module !== 'undefined') {
   module.exports = {TG_BOTFATHER_URL, TG_TOKEN_RE, TG_TOKEN_PLACEHOLDER, TG_TOKEN_EMPTY, TG_TOKEN_SHAPE, TG_TOKEN_REJECTED, TG_TOKEN_UNCHECKED, TG_SETUP_STEPS,
-    tgTokenClean, tgTokenInitial, tgTokenSaveEnabled, tgTokenCheckOutcome, tgConnectCardHTML, tgTokenPromptCardHTML};
+    tgTokenClean, tgTokenInitial, tgTokenSaveEnabled, tgTokenCheckOutcome, tgConnectCardHTML, tgTokenPromptCardHTML, tgFail, tgErrorDetailHTML};
 }

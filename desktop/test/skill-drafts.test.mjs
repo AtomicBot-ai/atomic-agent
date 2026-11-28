@@ -158,7 +158,10 @@ test("controller: a failed approve says so; an older agent (no bridge, or a fail
   const c = createSkillDraftsController({ api: () => ({ skillDrafts: async () => ({ ok: true, rows: [row("a1b2")] }), skillDraftApprove: async () => ({ ok: false, error: "no such draft" }) }), paint: () => {} });
   await c.refresh(true);
   await c.act("approve:a1b2");
-  assert.match(c.state.error, /Could not approve skill-a1b2: no such draft/);
+  // ATO-2745: a plain line; the agent's own words ("no such draft") sit behind Details.
+  assert.equal(c.state.error, 'Could not approve "skill-a1b2". It is still waiting for review.');
+  assert.equal(c.state.errorDetail, "no such draft");
+  assert.match(skillDraftsListHTML(c.state, esc), /<details class="set-errmore"><summary>Details<\/summary><span>no such draft<\/span><\/details>/);
   const old = createSkillDraftsController({ api: () => null, paint: () => {} });
   await old.refresh(true);
   assert.deepEqual(old.state.rows, []);
@@ -188,4 +191,31 @@ test("wiring: preload, IPC, main, the CLI filter and the Skills tab", () => {
   assert.match(r, /SKD\.confirmHTML\(esc\)/);
   assert.match(r, /if \(verb === 'draft'\) \{ SKD\.act\(arg\); return; \}/);
   assert.match(r, /SK\.rows = skillRowsWithoutDrafts\(res\.rows\)/);
+});
+
+// ATO-2745: the loading state is a sentence (was "(loading…)"), Discard says what it is doing
+// (was "discarding…"), and no line ends in "no answer".
+test("ATO-2745: loading and discarding states in words, errors with Details", async () => {
+  const loading = skillDraftDetailHTML({ open: { id: "a1b2", draft: null, error: null } }, esc);
+  assert.match(loading, /role="status"><span class="tk-spin"><\/span>Loading the draft…<\/div>/);
+  assert.doesNotMatch(loading, /\(loading…\)/);
+  const discarding = skillDraftConfirmHTML({ confirm: { id: "a1b2", name: "x", submitting: true, error: null } }, esc);
+  assert.match(discarding, /Discarding the draft…/);
+  assert.doesNotMatch(discarding, />discarding…</);
+  const silent = createSkillDraftsController({ api: () => ({ skillDrafts: async () => ({ ok: true, rows: [row("a1b2")] }), skillDraftApprove: async () => null }), paint: () => {} });
+  await silent.refresh(true);
+  await silent.act("approve:a1b2");
+  assert.doesNotMatch(silent.state.error, /no answer/);
+  assert.equal(silent.state.errorDetail, "The agent did not answer.");
+  const shown = createSkillDraftsController({ api: () => ({ skillDrafts: async () => ({ ok: true, rows: [row("a1b2")] }), skillDraftShow: async () => ({ ok: false, error: "ENOENT draft.json" }) }), paint: () => {} });
+  await shown.refresh(true);
+  await shown.act("show:a1b2");
+  assert.equal(shown.state.open.error, "Could not open this draft. Close it and try again.");
+  assert.match(skillDraftDetailHTML(shown.state, esc), /<summary>Details<\/summary><span>ENOENT draft\.json<\/span>/);
+  const disc = createSkillDraftsController({ api: () => ({ skillDrafts: async () => ({ ok: true, rows: [row("a1b2")] }), skillDraftDiscard: async () => ({ ok: false, error: "locked" }) }), paint: () => {} });
+  await disc.refresh(true);
+  disc.act("discard:a1b2");
+  await disc.act("discardConfirm");
+  assert.equal(disc.state.confirm.error, "Could not discard the draft. It is still waiting for review.");
+  assert.equal(disc.state.confirm.errorDetail, "locked");
 });

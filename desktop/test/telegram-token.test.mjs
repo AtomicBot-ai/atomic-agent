@@ -194,3 +194,41 @@ test('the full smoke checks the new Connect card, not the old one-line text (ATO
   assert.ok(main.includes('tgBody.includes("Talk to Atomic Agent from your phone")'));
   assert.ok(T.tgConnectCardHTML(h).includes('Talk to Atomic Agent from your phone'), 'the card and the smoke agree');
 });
+
+// ATO-2745: the prompt no longer promises a file before the save (the keychain may hold it), the Connect
+// button has no useless "Enter" tooltip, a failed save keeps the raw answer behind Details, and the line
+// after a save says where the token really went.
+test('ATO-2745: honest storage words, no title="Enter", and Details for a failed save', () => {
+  const prompt = T.tgTokenPromptCardHTML(T.tgTokenInitial(), h);
+  assert.ok(!prompt.includes('a file only your user account can read'));
+  assert.match(prompt, /saved only on this computer\./);
+  assert.ok(!T.tgConnectCardHTML(h).includes('title="Enter"'));
+  const failed = T.tgTokenPromptCardHTML(Object.assign(T.tgTokenInitial(), {hasText:true, error:'Could not save the token.', errorDetail:'keychain <locked>'}), h);
+  assert.match(failed, /data-tg-token-error>Could not save the token\.<\/p><details class="set-errmore"><summary>Details<\/summary><span>keychain &lt;locked&gt;<\/span><\/details>/);
+  assert.ok(!T.tgTokenPromptCardHTML(Object.assign(T.tgTokenInitial(), {errorDetail:'stale'}), h).includes('Details'));
+  assert.ok(source.includes("const savedLine = keySavedLine(outcome.message, res);"));
+  assert.ok(source.includes("TG.token.error = 'Could not save the token.'; TG.token.errorDetail = "));
+  const note = index.indexOf('<script src="key-stored-note.js">');
+  assert.ok(note > 0 && note < index.indexOf('<script src="telegram-token.js">') && note < index.indexOf('<script src="discord-settings.js">'));
+});
+
+// ATO-2745: the tab's other failures (turn on, remove the token, clear the owner, read the token)
+// are a plain line with the raw answer behind Details, and a later line never shows an older answer.
+test('ATO-2745: tgFail gives a plain line and Details that belong to it', () => {
+  const st = {lastError: null, lastErrorDetail: null};
+  T.tgFail(st, 'Could not turn Telegram on', {ok:false, error:'config changed since it was read'});
+  assert.equal(st.lastError, 'Could not turn Telegram on.');
+  assert.equal(T.tgErrorDetailHTML(st, h), '<details class="set-errmore"><summary>Details</summary><span>config changed since it was read</span></details>');
+  T.tgFail(st, 'Could not remove the token', null);
+  assert.equal(st.lastError, 'Could not remove the token.');
+  assert.equal(T.tgErrorDetailHTML(st, h), '', 'no answer, no Details');
+  T.tgFail(st, 'Could not clear the owner', {ok:false, error:'<locked>'});
+  st.lastError = 'Something else.';
+  assert.equal(T.tgErrorDetailHTML(st, h), '', 'an older answer is not shown under a newer line');
+  for (const what of ['Could not turn Telegram on', 'Could not remove the token', 'Could not clear the owner', 'Could not read the saved token']) {
+    assert.ok(source.includes("tgFail(TG, '" + what + "'"), what);
+  }
+  assert.ok(source.includes("tgFail(TG, 'Could not turn Telegram ' + (enabled ? 'on' : 'off'), res)"));
+  assert.ok(!/TG\.lastError = 'Could not [^']*: ' \+/.test(source), 'no raw answer glued onto a Telegram line');
+  assert.ok(source.includes("esc(TG.lastError) + tgErrorDetailHTML(TG, {esc})"));
+});

@@ -192,7 +192,7 @@ function updResultLine(st) {
   const r = st.manualCheck && st.manualCheck.result;
   if (r && r.kind === 'error') return {text: r.message, tone: 'warn'};
   if (st.phase === 'available' && st.version) return {text: 'Version ' + st.version + ' is available', tone: 'ok'};
-  if (r && r.kind === 'up-to-date') return {text: 'You’re up to date — ' + st.currentVersion, tone: 'ok'};
+  if (r && r.kind === 'up-to-date') return {text: 'You’re up to date (version ' + st.currentVersion + ').', tone: 'ok'};
   return {text: '', tone: ''};
 }
 
@@ -220,9 +220,11 @@ function updAutoRowHTML(st) {
 }
 
 /* ATO-575: stable or beta. Only where the app updates itself; off, the version stays until a stable one is newer.
-   ATO-2414: hidden until betas are published (main's BETA_CHANNEL_SHIPPED). */
+   ATO-2414: hidden until betas are published (main's BETA_CHANNEL_SHIPPED).
+   ATO-2745: but shown while it is ON, so someone who turned it on earlier can turn it off (VS Code and
+   Chrome keep the channel visible to people on it). Once off, it is hidden again. */
 function updBetaRowHTML(st) {
-  if (!st || !st.enabled || !st.betaOffered) return '';
+  if (!st || !st.enabled || !(st.betaOffered || st.beta)) return '';
   const on = !!st.beta;
   return '<div class="tk-setrow" id="set-upd-beta">'
       + '<div class="body"><div class="t">Get beta versions</div>'

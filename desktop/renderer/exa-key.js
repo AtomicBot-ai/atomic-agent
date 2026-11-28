@@ -72,11 +72,17 @@ function exaKeyClean(raw) {
 function exaKeyLinkHTML(url, h, cls) {
   return '<button class="' + cls + '" data-url="' + h.esc(url) + '">' + (cls.indexOf('btn') === 0 ? h.ic('globe') : '') + 'Get a free Exa key</button>';
 }
+/* ATO-2745: a Show / Hide eye, as the Telegram token field has (telegram-token.js, U-77); `st.shown`
+   is its position. A failed save's raw answer (`st.errorDetail`) sits behind Details. */
 function exaKeyInputHTML(place, st, h) {
+  const tip = st.shown ? 'Hide the key' : 'Show the key';
   return '<label class="tk-inpwrap exak-inp' + (st.error ? ' is-error' : '') + '">' + h.ic('key')
-    + '<input type="password" data-exa-key="' + place + '" autocomplete="off" spellcheck="false"'
-    + ' placeholder="Paste your Exa API key" aria-label="Exa API key"' + (st.saving ? ' disabled' : '') + '></label>'
-    + (st.error ? '<p class="tk-help tk-help--err">' + h.esc(st.error) + '</p>' : '');
+    + '<input type="' + (st.shown ? 'text' : 'password') + '" data-exa-key="' + place + '" autocomplete="off" spellcheck="false"'
+    + ' placeholder="Paste your Exa API key" aria-label="Exa API key"' + (st.saving ? ' disabled' : '') + '>'
+    + '<button type="button" class="iconbtn sm" data-act="exakey:reveal:' + place + '" aria-pressed="' + (st.shown ? 'true' : 'false') + '"'
+    + ' title="' + tip + '" aria-label="' + tip + '">' + h.ic(st.shown ? 'eyeOff' : 'eye') + '</button></label>'
+    + (st.error ? '<p class="tk-help tk-help--err">' + h.esc(st.error) + '</p>' : '')
+    + (st.error && st.errorDetail ? '<details class="set-errmore"><summary>Details</summary><span>' + h.esc(st.errorDetail) + '</span></details>' : '');
 }
 /* After a save: the agent reads the key when it starts, so a restart is owed
    until a new agent is up. Restarting stops every running reply, so the

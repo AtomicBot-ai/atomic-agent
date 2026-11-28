@@ -28,7 +28,7 @@ import { agentBusy, appUpdater, readUpdatePrefs, updatePrefsPath } from "../upda
  *      check that fails or does not answer counts as busy (fails closed);
  *  (f) Settings › General's switch off: an automatic check finds nothing to
  *      show (it does not even look);
- *  (g) Check now says "Version X is available", "You’re up to date — <v>";
+ *  (g) Check now says "Version X is available", "You’re up to date (version <v>).";
  *  (h) macOS: an app outside /Applications, signed ad hoc, or in a folder the
  *      user cannot write to, is offered no update and Settings says why (the
  *      probe's answer stood in).
@@ -226,7 +226,7 @@ export async function checks65(js: Js, check: Check): Promise<void> {
     await click('#set-upd-ver [data-act="appupd:check"]');
     const current = u.state().currentVersion;
     const g4 = await until(settings, (g) => !!g && g.result.startsWith("You’re up to date"));
-    check("T65 (g): Check now says when the app is up to date", !!g4 && g4.result === `You’re up to date — ${current}`, show(g4));
+    check("T65 (g): Check now says when the app is up to date", !!g4 && g4.result === `You’re up to date (version ${current}).`, show(g4));
     await fresh(null);
     await openGeneral();
     const off = u.state();

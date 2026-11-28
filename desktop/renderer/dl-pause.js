@@ -74,18 +74,21 @@ function dlPausedLine(r, percent, bytesPair) {
   return parts.join(' · ');
 }
 
-/** The card's `dlc:pause` / `dlc:resume`. */
-function dlPauseAct(verb, br, repaint) {
+/** The card's `dlc:pause` / `dlc:resume`. ATO-2745: a refusal says so in a short toast
+    (`notify(title, line, kind)`, renderer.js toast by default) instead of only freeing the button. */
+function dlPauseAct(verb, br, repaint, notify) {
   if (!br || DLP.busy || !DLP.id) return false;
   const call = verb === 'pause' ? br.pausePull : verb === 'resume' ? br.resumePull : null;
   if (typeof call !== 'function') return false;
+  const say = typeof notify === 'function' ? notify : (typeof toast === 'function' ? toast : null);
   DLP.busy = true;
   if (typeof repaint === 'function') repaint();
   Promise.resolve(call(DLP.id)).catch(() => null).then((res) => {
-    // Main's frame follows a pause or resume that took; a refusal just frees the button.
+    // Main's frame follows a pause or resume that took; a refusal frees the button and says so.
     if (!res || res.ok !== true) {
       DLP.busy = false;
       if (typeof repaint === 'function') repaint();
+      if (say) say(verb === 'pause' ? 'Could not pause the download' : 'Could not resume the download', 'Try again in a moment.', 'bad');
     }
   });
   return true;
