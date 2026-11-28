@@ -55,6 +55,7 @@ import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { wireFileMentionsIpc } from "./file-mentions-ipc.js";
 import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
 import { wireFusionReasoningIpc } from "./fusion-reasoning-ipc.js";
+import { wireFusionRolesIpc } from "./fusion-roles-ipc.js";
 import { wireLanDiscoveryIpc } from "./lan-discovery-ipc.js";
 import { wireTaskControlsIpc } from "./task-controls-ipc.js";
 import { wireWorkboardIpc } from "./workboard-ipc.js";
@@ -3408,6 +3409,7 @@ function wireIpc(client: AgentClient): void {
   wireWindowSnapshotIpc();
   // ATO-606: the Fusion workers' reasoning level (Settings › Models, `/runmode reasoning`).
   wireFusionReasoningIpc();
+  wireFusionRolesIpc();   // ATO-1754: Settings › Models › Fusion › Models by role
   // ATO-1684: the subscription step's live sign-in check (subscription-cli-live-check-ipc.ts).
   wireSubscriptionLiveCheckIpc();
   // ATO-1067: "Find on my network", model servers on other PCs of this network (view-only).

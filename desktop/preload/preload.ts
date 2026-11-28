@@ -766,6 +766,8 @@ contextBridge.exposeInMainWorld("atomic", {
   fusionWorkers: (workers: number) => ipcRenderer.invoke("cli:fusionWorkers", workers),
   /** ATO-606: llm.runMode.fusion.workerReasoning, "default" removing it (main/fusion-reasoning-ipc.ts). */
   fusionWorkerReasoning: (level: string) => ipcRenderer.invoke("cli:fusionWorkerReasoning", level),
+  /** ATO-1754: one Fusion role's provider and model, providerId null clearing it (main/fusion-roles-ipc.ts). */
+  fusionRole: (req: { role: string; providerId: string | null; model?: string }) => ipcRenderer.invoke("cli:fusionRole", req),
   composerEngine: (engine: string, leg?: string) => ipcRenderer.invoke("cli:composerEngine", engine, leg),
   fusionModel: (leg: string, model: string) => ipcRenderer.invoke("cli:fusionModel", leg, model),
   fusionWorkerModel: (id: string) => ipcRenderer.invoke("cli:fusionWorkerModel", id),
