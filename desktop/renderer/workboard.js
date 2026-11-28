@@ -17,7 +17,7 @@
 const WB_LANES = [['todo', 'To do'], ['doing', 'In progress'], ['review', 'Review'], ['blocked', 'Blocked'], ['done', 'Done']];
 /** The ids the agent mints (`t-<uuid>`); anything else never reaches main. */
 const WB_SAFE_ID = /^[\w.-]{1,64}$/;
-const WB_ASSIGNEE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const WB_ASSIGNEE = /^[a-z0-9][a-z0-9_-]{0,63}(?::[a-z0-9][a-z0-9_-]{0,63})?$/;
 const WB_NOTE_MAX = 2000;
 const WB_TITLE_MAX = 140;
 const WB_REFRESH_MS = 8000;
@@ -59,10 +59,13 @@ function wbEditPatch(draft) {
   const assignee = String((draft && draft.assignee) || '').trim();
   if (note.length > WB_NOTE_MAX) return {ok: false, error: 'The note is longer than ' + WB_NOTE_MAX + ' characters.'};
   if (assignee && !WB_ASSIGNEE.test(assignee)) return {ok: false, error: 'An assignee is a profile name: lowercase letters, digits, - and _.'};
-  return {ok: true, patch: {note: note || null, assignee: assignee || null}};
+  const patch = {note: note || null, assignee: assignee || null};
+  // ATO-2498: the cards it waits on, when the form showed them.
+  if (draft && Array.isArray(draft.dependsOn)) patch.dependsOn = draft.dependsOn.filter((x) => WB_SAFE_ID.test(String(x)));
+  return {ok: true, patch};
 }
 
-/** One card. `o`: {rel, running (id being run), editing (id), draft, error}. */
+/** One card. `o`: {rel, running (id being run), editing (id), draft, error, and ATO-2498's cards, profiles, thread, confirmRun}. */
 function wbCardHTML(card, o) {
   const opts = o || {};
   const t = card.task, id = String(t.id);
@@ -75,26 +78,32 @@ function wbCardHTML(card, o) {
   const move = '<select class="wb-move" data-wb-move="' + wbEsc(id) + '" aria-label="Move to lane">'
     + WB_LANES.map(([l, label]) => '<option value="' + l + '"' + (l === card.lane ? ' selected' : '') + '>' + label + '</option>').join('') + '</select>';
   let body = '<div class="wb-t">' + wbEsc(wbTitle(card)) + '</div>'
-    + '<div class="wb-meta">' + wbEsc(meta.join(' · ')) + who + '</div>' + note;
+    + '<div class="wb-meta">' + wbEsc(meta.join(' · ')) + who + '</div>' + note
+    + (typeof wxBadgesHTML === 'function' ? wxBadgesHTML(card) : '');
   if (opts.editing === id) {
     const d = opts.draft || {};
     body += '<div class="wb-edit">'
       + '<textarea data-wb-draft="note" rows="3" maxlength="' + WB_NOTE_MAX + '" placeholder="Note for this card">' + wbEsc(d.note || '') + '</textarea>'
-      + '<input data-wb-draft="assignee" placeholder="Assignee (profile name)" value="' + wbEsc(d.assignee || '') + '" spellcheck="false">'
+      + (typeof wxAssigneeHTML === 'function' ? wxAssigneeHTML(opts.profiles, d.assignee) + wxDepsHTML(opts.cards, id, d.dependsOn)
+        : '<input data-wb-draft="assignee" placeholder="Assignee (profile name)" value="' + wbEsc(d.assignee || '') + '" spellcheck="false">')
       + (opts.error ? '<div class="wb-err">' + wbEsc(opts.error) + '</div>' : '')
       + '<div class="wb-row"><button class="btn btn-p sm" data-act="board:save:' + wbEsc(id) + '">Save</button>'
       + '<button class="btn btn-g sm" data-act="board:cancel">Cancel</button></div></div>';
+  } else if (opts.confirmRun === id && typeof wxRunConfirmHTML === 'function') {
+    body += wxRunConfirmHTML(id, wxRunQuestion(card) || 'Run it now?');
   } else {
     body += '<div class="wb-row">'
       + '<button class="btn btn-g sm" data-act="board:run:' + wbEsc(id) + '"' + (opts.running || t.status === 'running' ? ' disabled' : '') + '>'
       + (busy ? '<span class="tk-spin"></span>' : '') + 'Run now</button>'
-      + '<button class="btn btn-g sm" data-act="board:edit:' + wbEsc(id) + '">Note</button>' + move + '</div>';
+      + '<button class="btn btn-g sm" data-act="board:edit:' + wbEsc(id) + '">Edit</button>' + move + '</div>';
   }
+  if (opts.thread && opts.thread.id === id && typeof wxThreadHTML === 'function') body += wxThreadHTML(id, opts.thread, opts.rel);
   return '<div class="wb-card' + (t.status === 'running' ? ' wb-card--live' : '') + '" draggable="true" data-wb-id="' + wbEsc(id) + '">' + body + '</div>';
 }
 
 /** The lanes. */
 function wbBoardHTML(cards, o) {
+  o = Object.assign({cards}, typeof WX !== 'undefined' ? {profiles: WX.profiles, thread: WX.thread, confirmRun: WX.confirmRun} : {}, o);
   return '<div class="wb-lanes">' + wbGroup(cards).map((g) => '<section class="wb-lane" data-wb-lane="' + g.lane + '" aria-label="' + wbEsc(g.label) + '">'
     + '<div class="wb-lane-h">' + wbEsc(g.label) + ' <span class="wb-lane-n">' + g.cards.length + '</span></div>'
     + '<div class="wb-cards">' + (g.cards.length ? g.cards.map((c) => wbCardHTML(c, o)).join('') : '<div class="wb-empty">Drop a card here</div>') + '</div>'
@@ -161,7 +170,7 @@ function wbPoll() {
   if (WB.timer) return;
   WB.timer = setInterval(() => {
     if (S.room !== 'board') { clearInterval(WB.timer); WB.timer = null; return; }
-    if (!WB.editing && !WB.loading && document.visibilityState === 'visible') wbLoad();
+    if (!WB.editing && !WB.loading && !(typeof WX !== 'undefined' && WX.thread) && document.visibilityState === 'visible') wbLoad();
   }, WB_REFRESH_MS);
 }
 
@@ -183,9 +192,20 @@ function boardAct(v) {
   const verb = i < 0 ? v : v.slice(0, i), id = i < 0 ? '' : v.slice(i + 1);
   if (verb === 'open') { S.settings = null; S.room = 'board'; WB.error = null; wbPoll(); render(); wbLoad(); return; }
   if (verb === 'refresh') { wbLoad(); return; }
+  if (typeof wxAct === 'function' && (verb === 'threadclose' || verb === 'runcancel') && wxAct(verb, id)) return;
   if (!WB_SAFE_ID.test(id) && verb !== 'cancel') return;
-  if (verb === 'run') { wbRun(id); return; }
-  if (verb === 'edit') { const c = wbFind(id); WB.editing = id; WB.editError = null; WB.draft = {note: (c && c.note) || '', assignee: (c && c.assignee) || ''}; render(); return; }
+  if (typeof wxAct === 'function' && wxAct(verb, id)) return;
+  if (verb === 'run') {
+    const ask = typeof wxRunQuestion === 'function' ? wxRunQuestion(wbFind(id)) : null;
+    if (ask) { WX.confirmRun = id; render(); return; }
+    wbRun(id); return;
+  }
+  if (verb === 'edit') {
+    const c = wbFind(id); WB.editing = id; WB.editError = null;
+    WB.draft = {note: (c && c.note) || '', assignee: (c && c.assignee) || '', dependsOn: (c && Array.isArray(c.dependsOn)) ? c.dependsOn.slice() : []};
+    if (typeof wxLoadProfiles === 'function') wxLoadProfiles(id);
+    render(); return;
+  }
   if (verb === 'save') { wbSave(id); return; }
   if (verb === 'cancel') { WB.editing = null; WB.draft = null; WB.editError = null; render(); }
 }

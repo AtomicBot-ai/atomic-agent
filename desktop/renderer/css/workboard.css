@@ -22,3 +22,22 @@
 .wb-edit{display:flex;flex-direction:column;gap:6px;margin-top:8px}
 .wb-edit textarea,.wb-edit input{font:inherit;font-size:var(--fs-cap);color:var(--ink);background:var(--panel);border:1px solid var(--bd);border-radius:var(--r-well);padding:6px 8px;resize:vertical}
 .wb-err{font-size:var(--fs-cap);color:var(--red, #c0392b)}
+/* ATO-2498: comment chip, waiting badge, Run now question, profile picker, waits, thread. */
+.wb-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.wb-chip{font:inherit;font-size:var(--fs-micro);color:var(--ink-2);background:var(--well);border:1px solid var(--bd);border-radius:999px;padding:1px 8px;cursor:pointer}
+.wb-chip--wait{cursor:default;color:var(--ink);border-color:var(--amber-text)}
+.wb-ask{display:flex;flex-direction:column;gap:6px;margin-top:8px;font-size:var(--fs-cap);color:var(--ink)}
+.wb-lbl{font-size:var(--fs-micro);color:var(--ink-3);margin-top:2px}
+.wb-edit select{font:inherit;font-size:var(--fs-cap);color:var(--ink);background:var(--panel);border:1px solid var(--bd);border-radius:var(--r-well);padding:4px 6px;max-width:100%}
+.wb-hint{font-size:var(--fs-cap);color:var(--ink-3);display:flex;align-items:center;gap:6px}
+.wb-deps{display:flex;flex-direction:column;gap:4px;max-height:140px;overflow-y:auto;padding:4px 6px;border:1px solid var(--bd);border-radius:var(--r-well)}
+.wb-dep{display:flex;align-items:flex-start;gap:6px;font-size:var(--fs-cap);color:var(--ink-2);cursor:pointer}
+.wb-dep span{word-break:break-word}
+.wb-thread{display:flex;flex-direction:column;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--bd)}
+.wb-thread textarea{font:inherit;font-size:var(--fs-cap);color:var(--ink);background:var(--panel);border:1px solid var(--bd);border-radius:var(--r-well);padding:6px 8px;resize:vertical}
+.wb-c{padding:6px 8px;border-radius:var(--r-well);background:var(--well)}
+.wb-c--system{background:transparent;border:1px dashed var(--bd)}
+.wb-c-h{font-size:var(--fs-micro);color:var(--ink-3)}
+.wb-c-t{font-size:var(--fs-cap);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.wb-c-d summary{font-size:var(--fs-micro);color:var(--ink-3);cursor:pointer}
+.wb-c-d pre{margin:4px 0 0;font-size:var(--fs-micro);white-space:pre-wrap;word-break:break-word;color:var(--ink-2)}
