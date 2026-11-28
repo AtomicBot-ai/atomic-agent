@@ -82,6 +82,7 @@ import { wireAgentHubIpc } from "./agent-hub-ipc.js";
 import { wireFitTestIpc } from "./fit-test-ipc.js";
 import { wireModelsFolderIpc } from "./models-folder-ipc.js";
 import { wireLocalServersIpc } from "./local-servers-ipc.js";
+import { wireModelShareIpc } from "./model-share-ipc.js";
 import { wireInterviewInviteIpc } from "./interview-invite-ipc.js";
 import { wireModelFavoritesIpc } from "./model-favorites-ipc.js";
 import { wireRecipesIpc } from "./recipes-ipc.js";
@@ -3483,6 +3484,7 @@ function wireIpc(client: AgentClient): void {
   // ATO-2106: Settings › Models › "Models folder" (`atag models dir`).
   wireModelsFolderIpc({ window: () => win, isRemote: () => client.isRemote, pulling: () => pull !== null });
   wireLocalServersIpc({ isRemote: () => client.isRemote });   // ATO-2489: Ollama / LM Studio / Llama app running here
+  wireModelShareIpc({ client });   // ATO-2483: Settings › Models › "Share this model" and its mDNS announcement
   wireInterviewInviteIpc({ stateDir: TUI_STATE_DIR });   // ATO-1467
   wireModelFavoritesIpc({ stateDir: DESKTOP_STATE_DIR });   // ATO-2500: one favourites list with the terminal
   wireRecipesIpc({ dir: () => app.getPath("userData") });   // ATO-1072: saved recipes (recipes-ipc.ts)
