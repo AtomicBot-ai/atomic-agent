@@ -36,7 +36,13 @@ export const WORKER_REPORT_ASK = "When you finish, end with a short summary (at 
 /** Runs one program with its arguments, never a shell (child_process.execFile, promisified). */
 export type Exec = (file: string, args: string[], opts?: { cwd?: string; timeout?: number }) => Promise<{ stdout: string; stderr: string }>;
 
-export type Result<T> = ({ ok: true } & T) | { ok: false; error: string };
+/**
+ * `error` is the sentence the window shows. ATO-2744: when a tool failed,
+ * `detail` has its raw words (git's stderr, the errno) for Details, and
+ * `reason: "git"` says git refused, so the window can say which known case
+ * it is (renderer/human-error.js herrGitWorktree).
+ */
+export type Result<T> = ({ ok: true } & T) | { ok: false; error: string; detail?: string; reason?: "git" };
 
 /** The tasks the person typed: trimmed, the empty ones dropped, 1 to 3 of them, each cut to MAX_TASK_CHARS. */
 export function planWorkers(tasks: unknown): Result<{ tasks: string[] }> {
@@ -137,7 +143,7 @@ export async function makeWorkerDir(
   if (inside === "" || (!inside.startsWith("..") && !inside.startsWith(sep) && !/^[A-Za-z]:/.test(inside))) {
     return { ok: false, error: "The project folder holds the agent's own state folder" };
   }
-  try { await mkdir(base, { recursive: true }); } catch (e) { return { ok: false, error: errText(e) }; }
+  try { await mkdir(base, { recursive: true }); } catch (e) { return { ok: false, error: "Couldn't make the folder for worker copies.", detail: errRaw(e) }; }
 
   const top = await gitTop(projectFolder, exec, platform);
   if (top) {
@@ -145,7 +151,7 @@ export async function makeWorkerDir(
       // No hook of the project's own repo runs on checkout (ATO-2532).
       await exec("git", [...gitSafeArgs(platform), "-C", top, "worktree", "add", "--detach", root, "HEAD"], { timeout: 120000 });
     } catch (e) {
-      return { ok: false, error: `git worktree add failed: ${errText(e)}` };
+      return { ok: false, error: "Couldn't make a worker copy of this folder with git.", detail: errRaw(e), reason: "git" };
     }
     // A project on a subfolder of the repo works in the same subfolder of its worktree.
     const sub = relative(top, projectFolder);
@@ -161,20 +167,22 @@ export async function makeWorkerDir(
       return { ok: true, root, dir: root, kind: "copy" };
     } catch {
       // Not APFS (or a partial clone): a partial copy is not deleted here; the plain copy below refuses to overwrite it.
-      if (await exists(root)) return { ok: false, error: "The folder clone stopped halfway; its copy is left in " + root };
+      if (await exists(root)) return { ok: false, error: "The folder copy stopped halfway. The part already copied was kept.", detail: root };
     }
   }
   try {
     await cp(projectFolder, root, { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
   } catch (e) {
-    return { ok: false, error: `Could not copy the folder: ${errText(e)}` };
+    return { ok: false, error: "Couldn't copy the folder for the worker.", detail: errRaw(e) };
   }
   return { ok: true, root, dir: root, kind: "copy" };
 }
 
-function errText(e: unknown): string {
+/** What a failed call said, whole: execFile's stderr when it kept one (git's "fatal: …"), else the message. */
+function errRaw(e: unknown): string {
+  const stderr = e && typeof e === "object" && "stderr" in e ? String((e as { stderr: unknown }).stderr ?? "").trim() : "";
   const m = e instanceof Error ? e.message : String(e);
-  return m.split("\n")[0]!.slice(0, 300);
+  return (stderr || m).trim().slice(0, 2000);
 }
 
 /**

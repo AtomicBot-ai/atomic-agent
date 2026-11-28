@@ -238,7 +238,7 @@ function myAppsTab() {
   const msg = MA.msg ? '<div class="tk-notice tk-notice--blue mf-note">' + ic('info') + '<span class="grow">' + esc(MA.msg) + '</span></div>' : '';
   const err = MA.err ? '<div class="tuierr tk-notice tk-notice--red mf-note">' + ic('alert') + '<span class="grow">' + esc(MA.err) + '</span></div>' : '';
   let body;
-  if (!MA.apps) body = MA.err ? '' : '<div class="tk-empty set-empty mf-empty"><span class="tk-spin"></span><p>reading apps…</p></div>';
+  if (!MA.apps) body = MA.err ? '' : '<div class="tk-empty set-empty mf-empty"><span class="tk-spin"></span><p>Reading apps…</p></div>';
   else if (!rows.length) {
     body = '<div class="tk-empty set-empty mf-empty"><span class="tk-ico tk-ico--lg">' + ic('window') + '</span><h4>No apps yet</h4>'
       + '<p>When the agent makes a page in a chat (a calculator, a tracker, a small game), click Save as app on it to keep it here.</p></div>';

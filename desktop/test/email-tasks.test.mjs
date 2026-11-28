@@ -29,6 +29,7 @@ beforeEach(() => {
   store.clear();
   M.MAILTASKS.rows = [];
   M.MAILTASKS.dismissed = null;
+  M.MAILTASKS.confirm = null;
 });
 
 test('a task the mail trigger filed reads as a card with its sender and subject', () => {
@@ -97,4 +98,53 @@ test('index.html loads the cards before renderer.js, and the Tasks tab draws and
   const r = src('../renderer/renderer.js');
   assert.match(r, /emailTasksHTML\(\) : ''\) \+ tkListHTML\(\)/);
   assert.match(r, /emailTasksTake\(res\.data\.tasks\)/);
+});
+
+test('ATO-2744: Dismiss on a waiting task asks first; Keep leaves it; Cancel task cancels it', async () => {
+  const calls = [];
+  let renders = 0;
+  globalThis.render = () => { renders++; };
+  globalThis.BR = { cancelTask: async (id) => { calls.push(id); return { ok: true, data: { status: 'cancelled' } }; } };
+  try {
+    M.emailTasksTake([task({ id: 'w1', status: 'pending' })]);
+    await M.mailTaskAct('dismiss', 'w1');
+    assert.deepEqual(calls, [], 'nothing is cancelled by the first click');
+    assert.equal(M.MAILTASKS.confirm, 'w1');
+    assert.ok(renders > 0);
+    let html = M.emailTasksHTML();
+    assert.match(html, /Cancel this task\? It won't run\./);
+    assert.match(html, /data-mailtask="keep"[^>]*>Keep</);
+    assert.match(html, /data-mailtask="cancel"[^>]*>Cancel task</);
+    assert.doesNotMatch(html, /data-mailtask="dismiss"/);
+    await M.mailTaskAct('keep', 'w1');
+    assert.equal(M.MAILTASKS.confirm, null);
+    assert.deepEqual(calls, []);
+    assert.equal(M.emailTasksVisible().length, 1, 'kept: still shown');
+    await M.mailTaskAct('dismiss', 'w1');
+    await M.mailTaskAct('cancel', 'w1');
+    assert.deepEqual(calls, ['w1']);
+    assert.equal(M.emailTasksVisible().length, 0, 'cancelled: hidden here');
+  } finally {
+    delete globalThis.render; delete globalThis.BR;
+  }
+});
+
+test('ATO-2744: a finished task is only hidden, without asking; a cancel the agent refused keeps the card', async () => {
+  const toasts = [];
+  globalThis.render = () => {};
+  globalThis.toast = (t, s2, kind) => { toasts.push([t, s2, kind]); };
+  globalThis.BR = { cancelTask: async () => ({ ok: false, error: 'HTTP 500' }) };
+  try {
+    M.emailTasksTake([task({ id: 'd1', status: 'completed' }), task({ id: 'w2', status: 'paused', createdAt: 50 })]);
+    await M.mailTaskAct('dismiss', 'd1');
+    assert.equal(M.MAILTASKS.confirm, null);
+    assert.ok(!M.emailTasksVisible().some((r) => r.id === 'd1'));
+    await M.mailTaskAct('dismiss', 'w2');
+    await M.mailTaskAct('cancel', 'w2');
+    assert.ok(M.emailTasksVisible().some((r) => r.id === 'w2'), 'still waiting, still shown');
+    assert.deepEqual(toasts, [["Couldn't cancel this task", 'It is still waiting. Try again, or cancel it in the list below.', 'bad']]);
+    assert.ok(!toasts.some(([, s2]) => /HTTP 500/.test(s2)), 'no raw error in the toast');
+  } finally {
+    delete globalThis.render; delete globalThis.toast; delete globalThis.BR;
+  }
 });

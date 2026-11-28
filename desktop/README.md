@@ -760,7 +760,10 @@ Honestly degraded, and labelled as such in the UI:
   as a learned-skill draft in `<stateDir>/skills-pending/<id>/`, where
   Pending review shows, approves or discards (deletes) it through the
   agent's own `atag skill learned`. Needs Accessibility for Atomic Agent;
-  the listener is uiohook-napi, whose macOS prebuilds ship for this.
+  the listener is uiohook-napi, whose macOS prebuilds ship for this. The
+  saved note offers Show in Finder for the draft's folder (its path only on
+  hover); an empty recording points at Privacy & Security › Input
+  Monitoring (ATO-2744).
 - **Memory** reads `<stateDir>/memory.sqlite` read-only (`sqlite3`, falling
   back to `node:sqlite`) with the stores' own statements, named and
   parameterised in the main process — the agent has no memory route.

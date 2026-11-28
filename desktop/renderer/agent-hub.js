@@ -120,6 +120,28 @@ function hubListHTML(rows, o) {
     + '<div class="rows handoffrows">' + g.rows.map((r) => hubRowHTML(r, o)).join('') + '</div></div>').join('');
 }
 
+/** ATO-2744: the line under the title; Terminal is named only where its buttons are shown. */
+function hubCaption(terminalOk) {
+  return 'Your Claude Code and Codex sessions from the last day. Continue one here' + (terminalOk ? ', or open it in Terminal.' : '.');
+}
+
+/** ATO-2744: a failed scan as {text, detail}: main's sentence, its raw words under Details. */
+function hubScanError(res) {
+  const generic = "Couldn't read your Claude Code and Codex sessions. Try Refresh.";
+  if (!res) return {text: generic, detail: ''};
+  if (res.detail) return {text: res.message || generic, detail: String(res.detail)};
+  const msg = String(res.message || '').trim();
+  const line = typeof herrSentence === 'function' ? herrSentence(msg) : '';
+  return {text: line || generic, detail: line === msg ? '' : msg};
+}
+
+/** ATO-2744: Continue here failed (handoff.js's words): a sentence stays, raw words go under Details. */
+function hubContinueError(said) {
+  const msg = String(said || '').trim();
+  const line = typeof herrSentence === 'function' ? herrSentence(msg) : '';
+  return {text: line || "Couldn't continue this session here. Try again.", detail: line === msg ? '' : msg};
+}
+
 /* ---- renderer side (globals from renderer.js and handoff.js, read at call time) ---- */
 
 const AG_HUB = {rows: null, loading: false, error: null, starting: null, seq: 0};
@@ -133,7 +155,7 @@ async function hubLoad() {
   try { res = await BR.hubScan(); } catch { res = null; }
   if (seq !== AG_HUB.seq) return;
   AG_HUB.loading = false;
-  if (!res || !res.ok) { AG_HUB.error = (res && res.message) || 'Could not read the sessions.'; AG_HUB.rows = res && res.reason === 'remote' ? [] : AG_HUB.rows; render(); return; }
+  if (!res || !res.ok) { AG_HUB.error = hubScanError(res); AG_HUB.rows = res && res.reason === 'remote' ? [] : AG_HUB.rows; render(); return; }
   AG_HUB.rows = Array.isArray(res.sessions) ? res.sessions : [];
   render();
 }
@@ -143,8 +165,8 @@ function hubTerminalOk() {
 }
 
 function hubSheetHTML() {
-  let body = '<p class="sd-cap">Your Claude Code and Codex sessions from the last day. Continue one here, or open it in Terminal.</p>';
-  if (AG_HUB.error) body += '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(AG_HUB.error) + '</span></div>';
+  let body = '<p class="sd-cap">' + esc(hubCaption(hubTerminalOk())) + '</p>';
+  if (AG_HUB.error) body += herrNoticeHTML(AG_HUB.error, {icon: ic('alert')});
   if (AG_HUB.loading && !AG_HUB.rows) body += '<div class="tk-empty"><span class="tk-spin"></span><p>Reading sessions…</p></div>';
   else if (AG_HUB.rows) body += hubListHTML(AG_HUB.rows, {rel: relTime, terminalOk: hubTerminalOk(), starting: AG_HUB.starting});
   return sheet('Agents', body,
@@ -168,12 +190,13 @@ async function hubContinue(row) {
   AG_HUB.starting = row.agent + ':' + row.id; AG_HUB.error = null;
   render();
   try { await handoffStartRow(row.id); } finally { AG_HUB.starting = null; }
-  if (HANDOFF.error) AG_HUB.error = HANDOFF.error;
+  if (HANDOFF.error) AG_HUB.error = hubContinueError(HANDOFF.error);
   render();
 }
 
 function hubOpenTerminal(row, command) {
-  const fail = (why) => toast("Couldn't open Terminal", typeof why === 'string' ? why : '', 'bad');
+  // A toast has no Details: only the first sentence of terminal-open's words, never the raw tail.
+  const fail = (why) => toast("Couldn't open Terminal", (typeof herrSentence === 'function' ? herrSentence(why) : '') || 'Try again, or open it yourself.', 'bad');
   if (!command || !hubTerminalOk()) { fail(); return; }
   Promise.resolve().then(() => BR.terminalOpenWithCommand({command, cwd: row.cwd || null}))
     .then((r) => { if (!r || r.ok !== true) fail(r && r.message); }, () => fail());
@@ -203,3 +226,4 @@ function hubAct(v) {
 }
 
 if (typeof module !== 'undefined') module.exports = {hubEsc, hubFolder, hubGroupRows, hubDotClass, hubResumeCommand, hubLaunchAgent, hubLaunchCommand, hubLaunchTitle, hubOpenLocal, hubRowMeta, hubRowHTML, hubListHTML, HUB_GROUPS};
+if (typeof module !== 'undefined') Object.assign(module.exports, {hubCaption, hubScanError, hubContinueError});

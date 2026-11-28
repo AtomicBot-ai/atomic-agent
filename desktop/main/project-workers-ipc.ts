@@ -118,10 +118,12 @@ export function wireProjectWorkersIpc(deps: WorkersDeps): void {
       const workers: Worker[] = [];
       for (let i = 0; i < plan.tasks.length; i++) {
         const made = await makeWorkerDir(project.folder, deps.stateDir, workerKey(project.id, createdAt, i + 1), exec);
-        // The copies made so far stay on disk (nothing is removed by itself); the person is told where.
+        // The copies made so far stay on disk (nothing is removed by itself); the person is told how
+        // many, and where under Details (ATO-2744: no paths in the sentence).
         if (!made.ok) {
-          const kept = workers.length ? ` (${workers.length} cop${workers.length === 1 ? "y was" : "ies were"} made in ${workers.map((w) => w.root).join(", ")})` : "";
-          return { ok: false, error: `Worker ${i + 1}: ${made.error}${kept}` };
+          const where = workers.length ? `Copies already made and kept: ${workers.map((w) => w.root).join(", ")}` : "";
+          const detail = [`Worker ${i + 1}`, made.detail ?? "", where].filter(Boolean).join("\n");
+          return { ok: false, error: made.error, detail, kept: workers.length, ...(made.reason ? { reason: made.reason } : {}) };
         }
         workers.push({ sid: newChatSessionId(), dir: made.dir, root: made.root, kind: made.kind, task: plan.tasks[i]!, status: "working", summary: "", endedAt: 0 });
       }
@@ -129,7 +131,7 @@ export function wireProjectWorkersIpc(deps: WorkersDeps): void {
       for (const w of workers) updateProjects(deps.stateDir, (d) => assignChat(d, w.sid, project.id));
       deps.send("projects:changed");
       const group: WorkerGroup = { id: newGroupId(), coordinatorSid, projectId: project.id, createdAt, workers };
-      if (!writeWorkers(deps.stateDir, addGroup(readWorkers(deps.stateDir), group))) return { ok: false, error: "Could not save the worker chats" };
+      if (!writeWorkers(deps.stateDir, addGroup(readWorkers(deps.stateDir), group))) return { ok: false, error: "Couldn't save the worker chats. Try again." };
 
       const started = workers.map((w) => {
         const turnId = randomUUID();

@@ -7,7 +7,19 @@ function showOnceSince(startedAt) {
 }
 const SHOW_ONCE_KEPT = 'Only clicks, shortcuts and which app is in front are recorded. Never what you type, nothing in '
   + 'password managers, settings or Atomic Agent itself, no screenshots. It stays on this Mac.';
-function showOnceCardHTML(s, esc) {
+/* ATO-2744: where the saved draft is, for Show in Finder (the path is never the card's text). */
+function showOnceDraftPath(s) {
+  const last = s && s.last;
+  if (!last || last.kind !== 'saved' || !last.id || !s.draftsDir) return '';
+  const dir = String(s.draftsDir);
+  const sep = dir.includes('\\') && !dir.includes('/') ? '\\' : '/';
+  return dir.replace(/[\\/]+$/, '') + sep + last.id;
+}
+const SHOW_ONCE_NO_INPUT = 'If you did click and type, check that Atomic Agent is allowed in System Settings › Privacy & Security › Input Monitoring, then record again.';
+/* `o`: {reveal, platform, privacy}: the app's "Show in Finder" label (fileManagerName), process.platform's
+   word, and whether the bridge can open Input Monitoring (privacy:open). */
+function showOnceCardHTML(s, esc, o) {
+  const opts = o || {};
   if (!s || !s.available) return '';
   const head = '<b>Show once</b>: ';
   if (s.recording || s.saving) {
@@ -24,11 +36,19 @@ function showOnceCardHTML(s, esc) {
   const last = s.last;
   let note = '';
   if (last && last.kind === 'saved') {
+    const where = showOnceDraftPath(s);
     note = '<div class="tk-notice tk-notice--blue set-softnote show-once-last"><span class="grow">Saved ' + esc(last.name) + ' ('
       + last.steps + (last.steps === 1 ? ' step' : ' steps') + ') as a draft under Pending review: Show reads it, Approve turns it on, '
-      + 'Discard deletes it. Files: <span class="mono">' + esc(String(s.draftsDir || '') + '/' + last.id) + '</span></span></div>';
+      + 'Discard deletes it.</span>'
+      + (where ? '<button class="btn btn-s sm" data-act="skills:showOnce:reveal" title="' + esc(where) + '">' + esc(opts.reveal || 'Show in Finder') + '</button>' : '')
+      + '</div>';
   } else if (last && last.kind === 'empty') {
-    note = '<div class="tk-notice set-softnote show-once-last"><span class="grow">Nothing was saved: no clicks or keys were recorded outside Atomic Agent.</span></div>';
+    // Show once records Mac apps only; the Input Monitoring line is for macOS, where a missing grant hears nothing.
+    const mac = (opts.platform || 'darwin') === 'darwin';
+    note = '<div class="tk-notice set-softnote show-once-last"><span class="grow">Nothing was saved: no clicks or keys were recorded outside Atomic Agent.'
+      + (mac ? ' ' + esc(SHOW_ONCE_NO_INPUT) : '') + '</span>'
+      + (mac && opts.privacy ? '<button class="btn btn-s sm" data-act="skills:showOnce:inputMonitoring">Open Input Monitoring settings</button>' : '')
+      + '</div>';
   } else if (last && last.kind === 'error') {
     note = '<div class="tuierr tk-notice tk-notice--red show-once-last"><span class="grow">' + esc(last.error) + '</span>'
       + (last.permission ? '<button class="btn btn-s sm" data-act="skills:showOnce:accessibility">Open Accessibility settings</button>' : '') + '</div>';
@@ -57,7 +77,10 @@ function createShowOnceController(deps) {
   async function act(verb) {
     const br = api();
     if (st.busy) return;
-    const call = {start: br.showOnceStart, stop: br.showOnceStop, cancel: br.showOnceCancel, accessibility: br.showOnceOpenAccessibility}[verb];
+    const draft = showOnceDraftPath(st.s);
+    const reveal = draft && typeof br.openPath === 'function' ? () => br.openPath(draft) : undefined;
+    const inputMonitoring = typeof br.privacyOpen === 'function' ? () => br.privacyOpen('inputMonitoring') : undefined;
+    const call = {start: br.showOnceStart, stop: br.showOnceStop, cancel: br.showOnceCancel, accessibility: br.showOnceOpenAccessibility, reveal, inputMonitoring}[verb];
     if (typeof call !== 'function') return;
     st.busy = true;
     let res = null;
@@ -66,6 +89,11 @@ function createShowOnceController(deps) {
     // stop and cancel answer with the new state; start's state comes on the push.
     if (res && typeof res === 'object' && 'available' in res) apply(res);
   }
-  return {state: st, ensure, act, cardHTML: esc => { ensure(); return showOnceCardHTML(st.s, esc); }};
+  const cardOpts = () => ({
+    reveal: typeof fileManagerName === 'function' ? fileManagerName() : 'Show in Finder',
+    platform: typeof PLATFORM !== 'undefined' ? PLATFORM : 'darwin',
+    privacy: typeof api().privacyOpen === 'function',
+  });
+  return {state: st, ensure, act, cardHTML: esc => { ensure(); return showOnceCardHTML(st.s, esc, cardOpts()); }};
 }
-if (typeof module !== 'undefined') module.exports = {showOnceCardHTML, showOnceSince, createShowOnceController, SHOW_ONCE_KEPT};
+if (typeof module !== 'undefined') module.exports = {showOnceCardHTML, showOnceSince, showOnceDraftPath, createShowOnceController, SHOW_ONCE_KEPT, SHOW_ONCE_NO_INPUT};

@@ -103,7 +103,23 @@ test("a failed git worktree add is an error, not a copy", async () => {
   });
   const r = await W.makeWorkerDir(project, tmp("state"), "p-1-1", exec, "linux");
   assert.equal(r.ok, false);
-  assert.match(r.error, /git worktree add failed: fatal: invalid reference: HEAD$/);
+  // ATO-2744: a sentence for the sheet; git's words whole under Details, and why, for the window's wording.
+  assert.equal(r.error, "Couldn't make a worker copy of this folder with git.");
+  assert.equal(r.detail, "fatal: invalid reference: HEAD\nmore");
+  assert.equal(r.reason, "git");
+});
+
+test("ATO-2744: git's stderr is what Details keeps, not execFile's \"Command failed\" line", async () => {
+  const project = tmp("repo2");
+  const { exec } = stubExec((file, args) => {
+    if (args.includes("rev-parse")) return project;
+    throw Object.assign(new Error("Command failed: git -C " + project + " worktree add --detach /s HEAD\nfatal: invalid reference: HEAD\n"),
+      { stderr: "fatal: invalid reference: HEAD\n" });
+  });
+  const r = await W.makeWorkerDir(project, tmp("state"), "p-2-1", exec, "linux");
+  assert.equal(r.ok, false);
+  assert.equal(r.detail, "fatal: invalid reference: HEAD");
+  assert.ok(!r.error.includes(project), "no path in the sentence");
 });
 
 test("on macOS a folder without git is cloned with cp -c -R", async () => {
