@@ -10,7 +10,9 @@
  * ATO-2532: no fsmonitor, no hooks, no pager, no signature check, no
  * index write). `--no-ext-diff --no-textconv` stop the configured
  * external diff and textconv programs, `--submodule=short` keeps a
- * changed submodule from starting its own diff, and log's explicit
+ * changed submodule from starting its own diff, `--ignore-submodules=dirty`
+ * keeps git from starting a status (and its clean filters) inside each
+ * submodule, and log's explicit
  * `--pretty=medium` keeps a configured `format.pretty` from asking for a
  * signature check.
  */
@@ -43,8 +45,26 @@ export type RunGit = (cwd: string, args: readonly string[]) => Promise<GitOutput
  * so the submodule's own `diff.external` would run. `short` prints only
  * the two commit ids and starts no child diff. The safe prefix also sets
  * `diff.submodule=short`; the flag here wins over any config.
+ *
+ * `--ignore-submodules=dirty` (review round 3, F1979-R3.1): to tell
+ * whether a submodule's work tree is dirty, `git diff HEAD` starts a
+ * child `git status` inside it. That child applies the submodule's own
+ * clean filters (`filter.<name>.clean` in `.git/modules/<sub>/config`
+ * with a matching attribute) to every stat-dirty file, so the
+ * submodule's program would run. With `dirty`, git compares only the
+ * submodule's checked-out commit (read from its HEAD, no child process)
+ * and still shows a moved submodule. The flag also wins over
+ * `diff.ignoreSubmodules` and `submodule.<name>.ignore`. The parent
+ * repo's own clean filters are ATO-2785.
  */
-const DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-textconv", "--submodule=short", "--relative"];
+const DIFF_FLAGS = [
+  "--no-color",
+  "--no-ext-diff",
+  "--no-textconv",
+  "--submodule=short",
+  "--ignore-submodules=dirty",
+  "--relative",
+];
 
 /** `git diff HEAD`: staged and unstaged changes to tracked files under the folder. */
 export function diffArgs(): string[] {

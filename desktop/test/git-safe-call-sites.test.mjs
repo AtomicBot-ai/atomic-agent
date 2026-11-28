@@ -13,10 +13,13 @@
 //    `diff.submodule=diff` and a changed submodule whose own config sets
 //    `diff.external`. git starts a child diff in the submodule, where
 //    `--no-ext-diff` does not reach.
+//  - F1979-R3.1 (review round 3): `@diff` in a repo with a submodule
+//    whose own config and attributes set a clean filter on a stat-dirty
+//    file. git starts a child status in the submodule, which runs it.
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -203,3 +206,54 @@ for (const [name, args, commit] of [
     assert.equal(existsSync(prefixOnly.marker), false, "diff.submodule=short in the safe prefix");
   });
 }
+
+/**
+ * A top repo with a submodule `sub` whose own git dir sets a clean
+ * filter on every file (`filter.x.clean` plus `* filter=x` in
+ * info/attributes) that touches the marker, and `sub/a.txt` made
+ * stat-dirty (same content, new mtime) so git re-reads it.
+ */
+function repoWithSubmoduleCleanFilter(tag) {
+  const sub = repoWithProgram(`csub-${tag}`);
+  const top = repoWithProgram(`ctop-${tag}`);
+  git(top.repo, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", sub.repo, "sub"]);
+  git(top.repo, ["commit", "-q", "-m", "add sub"]);
+  const inner = join(top.repo, "sub");
+  git(inner, ["config", "filter.x.clean", `sh -c 'touch "${top.marker}"; cat'`]);
+  const innerGitDir = git(inner, ["rev-parse", "--absolute-git-dir"]).trim();
+  mkdirSync(join(innerGitDir, "info"), { recursive: true });
+  writeFileSync(join(innerGitDir, "info", "attributes"), "* filter=x\n");
+  const later = Date.now() / 1000 + 60;
+  utimesSync(join(inner, "a.txt"), later, later);
+  return top;
+}
+
+test("F1979-R3.1: @diff does not run a submodule's clean filter", { skip }, async () => {
+  // Setup is real: the round-2 argv (no --ignore-submodules=dirty) makes
+  // git start a status in the submodule, and that runs the filter.
+  const plain = repoWithSubmoduleCleanFilter("plain");
+  const round2 = G.diffArgs().filter((a) => a !== "--ignore-submodules=dirty");
+  git(plain.repo, [...G.GIT_SAFE_PREFIX, ...round2]);
+  assert.equal(existsSync(plain.marker), true, "the round-2 argv runs the submodule's clean filter (the setup is real)");
+
+  // The desktop call: no child status, no filter.
+  const guarded = repoWithSubmoduleCleanFilter("guarded");
+  await G.createRunGit()(guarded.repo, G.diffArgs());
+  assert.equal(existsSync(guarded.marker), false);
+  assert.ok(G.diffArgs().indexOf("--ignore-submodules=dirty") < G.diffArgs().indexOf("--"));
+});
+
+test("F1979-R3.1: @diff still shows a submodule moved to a new commit", { skip }, async () => {
+  const top = repoWithSubmoduleCleanFilter("moved");
+  const inner = join(top.repo, "sub");
+  git(inner, ["config", "user.name", "T"]);
+  git(inner, ["config", "user.email", "t@example.test"]);
+  git(inner, ["config", "commit.gpgsign", "false"]);
+  writeFileSync(join(inner, "b.txt"), "new\n");
+  git(inner, ["-c", "filter.x.clean=cat", "add", "b.txt"]);
+  git(inner, ["-c", "filter.x.clean=cat", "commit", "-q", "-m", "move"]);
+  utimesSync(join(inner, "a.txt"), Date.now() / 1000 + 120, Date.now() / 1000 + 120);
+  const out = await G.createRunGit()(top.repo, G.diffArgs());
+  assert.match(out.text, /\+Subproject commit [0-9a-f]{40}/);
+  assert.equal(existsSync(top.marker), false);
+});
