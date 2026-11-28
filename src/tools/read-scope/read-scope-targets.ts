@@ -12,9 +12,20 @@ function nonEmpty(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/**
+ * The `path` argument, as given and trimmed. `os.code.search`,
+ * `os.code.rewrite`, `os.code.lsp` and `os.fs.code_map` trim it before
+ * use, so a padded `" <stateDir> "` or `" ../outside"` reads what the
+ * trimmed spelling names (review round 3, F1925-R3.1). Both spellings
+ * are checked: a tool that does not trim reads the one as given. A
+ * whitespace-only path is refused by the tools that trim, so it is kept
+ * as given.
+ */
 const pathArg: ReadTargetsOf = (args) => {
   const path = nonEmpty(args.path);
-  return path === undefined ? [] : [path];
+  if (path === undefined) return [];
+  const trimmed = path.trim();
+  return trimmed.length > 0 && trimmed !== path ? [path, trimmed] : [path];
 };
 
 /**
