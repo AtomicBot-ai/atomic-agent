@@ -65,6 +65,8 @@ import { wireTaskControlsIpc } from "./task-controls-ipc.js";
 import { wireWorkboardIpc } from "./workboard-ipc.js";
 import { wireIdeasIpc } from "./ideas-ipc.js";
 import { wireUsageIpc } from "./usage-ipc.js";
+import { wireLogbookIpc } from "./logbook-ipc.js";
+import { createLogbookTray } from "./logbook-tray.js";
 import { wireSessionGoalIpc } from "./session-goal-ipc.js";
 import { wireAgentJobsIpc } from "./agent-jobs-ipc.js";
 import { wireSideQuestionIpc } from "./side-question-ipc.js";
@@ -3526,6 +3528,8 @@ function wireIpc(client: AgentClient): void {
   wireUsageIpc({ client });   // ATO-2442: Settings › Usage (usage-ipc.ts, renderer/usage-tab.js)
   // ATO-2482: Settings › Models › Sampling (`atag models sampling`).
   wireModelSamplingIpc();
+  // ATO-2534: the logbook's ● chip and menu bar icon; the runtime captures only while one is shown (logbook-ipc.ts).
+  const logbook = wireLogbookIpc({ client, window: () => win, tray: createLogbookTray({ act: (a, m) => void logbook.act(a, m), openWindow: () => openWindowAgain() }) });
   // ATO-1091: Settings › Models › "Find the best model for my tasks" (`atag models fit-test`).
   wireFitTestIpc({
     window: () => win,
