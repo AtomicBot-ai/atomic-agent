@@ -82,6 +82,7 @@ import { wireFitTestIpc } from "./fit-test-ipc.js";
 import { wireModelsFolderIpc } from "./models-folder-ipc.js";
 import { wireLocalServersIpc } from "./local-servers-ipc.js";
 import { wireInterviewInviteIpc } from "./interview-invite-ipc.js";
+import { wireModelFavoritesIpc } from "./model-favorites-ipc.js";
 import { wireRecipesIpc } from "./recipes-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
 import { wireStudioIpc } from "./studio-ipc.js";
@@ -3477,6 +3478,7 @@ function wireIpc(client: AgentClient): void {
   wireModelsFolderIpc({ window: () => win, isRemote: () => client.isRemote, pulling: () => pull !== null });
   wireLocalServersIpc({ isRemote: () => client.isRemote });   // ATO-2489: Ollama / LM Studio / Llama app running here
   wireInterviewInviteIpc({ stateDir: TUI_STATE_DIR });   // ATO-1467
+  wireModelFavoritesIpc({ stateDir: DESKTOP_STATE_DIR });   // ATO-2500: one favourites list with the terminal
   wireRecipesIpc({ dir: () => app.getPath("userData") });   // ATO-1072: saved recipes (recipes-ipc.ts)
   /* Studio (Images + Video): Core's media API for the Studio pages
      (renderer/studio/CONTRACT.md). Same Core as the agent's image tool; the
