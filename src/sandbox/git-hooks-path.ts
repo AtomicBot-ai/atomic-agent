@@ -97,6 +97,18 @@ function lstat(path: string): Stats | null {
   }
 }
 
+/**
+ * The path a `.git` file names, or null. Read the way git reads it
+ * (`read_gitfile_gently`, review F1991-R3 low): only trailing line ends
+ * are cut, the file must start with `gitdir: `, and the rest is the path,
+ * spaces and all (relative to the file's folder).
+ */
+export function readGitFile(file: string): string | null {
+  const text = (readText(file) ?? "").replace(/[\r\n]+$/, "");
+  if (!text.startsWith("gitdir: ") || text.length === 8) return null;
+  return resolve(dirname(file), text.slice(8));
+}
+
 /** The repo of a folder: its top and its git folder, or null. */
 export function findRepo(start: string): { top: string; gitDir: string } | null {
   for (let dir = resolve(start); ; dir = dirname(dir)) {
@@ -104,8 +116,8 @@ export function findRepo(start: string): { top: string; gitDir: string } | null 
     const st = lstat(dotGit);
     if (st?.isDirectory() === true) return { top: dir, gitDir: dotGit };
     if (st?.isFile() === true) {
-      const m = /^gitdir:\s*(.+)$/m.exec(readText(dotGit) ?? "");
-      if (m?.[1] !== undefined) return { top: dir, gitDir: resolve(dir, m[1].trim()) };
+      const gitDir = readGitFile(dotGit);
+      if (gitDir !== null) return { top: dir, gitDir };
     }
     if (dirname(dir) === dir) return null;
   }
@@ -113,7 +125,7 @@ export function findRepo(start: string): { top: string; gitDir: string } | null 
 
 /** The repo-level config files of a git folder (worktrees use the common one). */
 function repoConfigFiles(gitDir: string): string[] {
-  const common = readText(join(gitDir, "commondir"))?.trim();
+  const common = readText(join(gitDir, "commondir"))?.replace(/[\r\n]+$/, "");
   const commonDir = common === undefined || common === "" ? gitDir : resolve(gitDir, common);
   return [join(commonDir, "config"), join(gitDir, "config.worktree")];
 }

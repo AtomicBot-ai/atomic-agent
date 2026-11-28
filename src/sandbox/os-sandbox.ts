@@ -63,6 +63,7 @@ import {
   seatbeltGitDirRules,
   seatbeltProtectedWriteRule,
 } from "./sandbox-protected-paths.js";
+import { seatbeltNewGitDirRules } from "./seatbelt-new-git-dir.js";
 import {
   bwrapSocketMaskArgs,
   linuxLocalSocketMasks,
@@ -515,7 +516,10 @@ export function buildSeatbeltProfile(policy: OsSandboxPolicy): string {
   // stay read-only inside the writable roots (ATO-2471). After every
   // rule that allows a write (the reopened folders included).
   lines.push(seatbeltProtectedWriteRule((policy.protectedPaths ?? []).map((_, i) => `P${i}`)));
-  lines.push(...seatbeltGitDirRules(seatbeltGitDirs(policy).map((g) => g.names)));
+  const gitDirNames = seatbeltGitDirs(policy).map((g) => g.names);
+  lines.push(...seatbeltGitDirRules(gitDirNames));
+  // No new git folder: no `HEAD` outside the known ones (F1991-R3.2).
+  lines.push(...seatbeltNewGitDirRules(gitDirNames.map((n) => n.dir)));
   const sockets = policy.denySockets ?? [];
   if (policy.hideSshAgent === true || sockets.length > 0) {
     // After the reopen rules, so nothing reopens them. Fixed patterns,

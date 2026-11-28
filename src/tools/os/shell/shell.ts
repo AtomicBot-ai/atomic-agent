@@ -590,7 +590,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       const gitPart =
         process.platform === "linux"
           ? "`.git` and any other git folder (git commands that write the repo fail here; use the os.git.* tools)"
-          : "`.git` and any other git folder apart from git's own data (no `git init`, `git clone`, `git config` or `git rebase` here; use the os.git.* tools)";
+          : "`.git` and any other git folder apart from git's own data, and no new git folder may be made (no `git init`, `git clone`, `git config`, `git rebase`, or cherry-pick or revert of several commits here; use the os.git.* tools)";
       sandboxNotice += ` Even in the working folder these are read-only: ${gitPart}, hook folders (\`.husky\`, \`.githooks\`, the \`core.hooksPath\` folder), shell rc files, \`.envrc\`, git's and fish's config and editor settings (\`.vscode\`, \`.idea\`).`;
       if (policy.narrowedRoots !== undefined) {
         sandboxNotice +=

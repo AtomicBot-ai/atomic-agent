@@ -18,13 +18,19 @@
  * folder, at most 3000 folders per command.
  */
 import { lstatSync, readdirSync, readFileSync, realpathSync, type Stats } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
-import { findRepo } from "./git-hooks-path.js";
+import { findRepo, readGitFile } from "./git-hooks-path.js";
 
-/** Folders in a git folder that hold only git's data (no program names). */
+/**
+ * Folders in a git folder that hold only git's data (no program names).
+ * Not `sequencer` (review F1991-R3.1): its `opts` names a merge strategy,
+ * and `strategy = x/../evil` makes the user's `git cherry-pick --continue`
+ * run `./evil` outside the sandbox. So a cherry-pick or revert of several
+ * commits fails inside the macOS sandbox, as `git rebase` does.
+ */
 export const GIT_DATA_DIRS: readonly string[] = [
-  "objects", "refs", "logs", "lfs", "rr-cache", "reftable", "sequencer",
+  "objects", "refs", "logs", "lfs", "rr-cache", "reftable",
   "fsmonitor--daemon", "NOTES_MERGE_PARTIAL", "NOTES_MERGE_WORKTREE",
 ];
 
@@ -83,15 +89,12 @@ export function looksLikeGitDir(dir: string): boolean {
   return isFile(join(dir, "HEAD")) && isDir(join(dir, "objects")) && isDir(join(dir, "refs")) && isFile(join(dir, "config"));
 }
 
-/** The folder a `.git` file points at (`gitdir: <path>`), or null. */
-export function dotGitFileTarget(file: string): string | null {
-  const m = /^gitdir:\s*(.+?)\s*$/m.exec(readText(file) ?? "");
-  return m?.[1] === undefined ? null : resolve(dirname(file), m[1]);
-}
+/** The folder a `.git` file points at, read the way git reads it, or null. */
+export const dotGitFileTarget = readGitFile;
 
 /** A git folder and the common folder its `commondir` names, if any. */
 function withCommon(gitDir: string): string[] {
-  const common = readText(join(gitDir, "commondir"))?.trim();
+  const common = readText(join(gitDir, "commondir"))?.replace(/[\r\n]+$/, "");
   return common === undefined || common === "" ? [gitDir] : [gitDir, resolve(gitDir, common)];
 }
 

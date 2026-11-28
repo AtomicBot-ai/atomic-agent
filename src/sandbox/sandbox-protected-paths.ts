@@ -85,20 +85,25 @@ export const SEATBELT_PROTECTED_PATTERNS: readonly string[] = [
   `/(${PROTECTED_FILE_NAMES.map(escape).join("|")})$`,
   `/\\.config/(${PROTECTED_XDG_DIRS.join("|")})(/.*)?$`,
   `/(${PROTECTED_DIR_NAMES.map(escape).join("|")})(/.*)?$`,
+  // A submodule whose name ends in a data folder's name (`lib/refs`):
+  // `.git/modules/lib/refs/hooks/pre-commit` also reads as submodule
+  // `lib`'s refs, which the git rule below leaves writable. What runs
+  // code stays read-only under `modules/` whatever the reading.
+  "/\\.git/modules/.+/(hooks(/.*)?|config|config\\.worktree|commondir|gitdir|sequencer(/.*)?|rebase-merge(/.*)?|rebase-apply(/.*)?)$",
 ];
 
 /** `.git` itself (create, rename, replace, delete) and all inside it. */
 export const SEATBELT_GIT_PATTERN = "/\\.git(/.*)?$";
 
 /** A git folder: the repo's, a submodule's or a linked worktree's. */
-const GIT_PREFIX = "/\\.git/(modules/.+/|worktrees/[^/]+/)?";
+export const GIT_PREFIX = "/\\.git/(modules/.+/|worktrees/[^/]+/)?";
 
 /** State files git writes in a git folder (each with its `.lock`). */
 const GIT_STATE_FILES = [
   "HEAD", "ORIG_HEAD", "FETCH_HEAD", "MERGE_HEAD", "MERGE_MSG", "MERGE_MODE",
   "MERGE_RR", "AUTO_MERGE", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD",
   "BISECT_[A-Z_]+", "NOTES_MERGE_REF", "COMMIT_EDITMSG", "TAG_EDITMSG",
-  "SQUASH_MSG", "NOTES_EDITMSG", "packed-refs", "shallow", "gc\\.pid", "gc\\.log",
+  "SQUASH_MSG", "NOTES_EDITMSG", "packed-refs", "packed-refs\\.new", "shallow", "gc\\.pid", "gc\\.log",
   // Review round 2 (false blocks): `git add -e`'s patch, `merge --autostash`,
   // gitk's cache. Data, never a program.
   "ADD_EDIT\\.patch", "MERGE_AUTOSTASH", "gitk\\.cache",
@@ -116,7 +121,10 @@ export const SEATBELT_GIT_STATE_FILE_PATTERN = `/(${GIT_INDEX_FILES.join("|")}|(
  * `gitdir`, `hooks`, `info` and anything new stay read-only, and so do
  * `rebase-merge` and `rebase-apply` (review R2-1991.B: their todo list
  * takes `exec <command>` lines, which `git rebase --continue` runs
- * outside the sandbox; `git rebase` fails inside it instead).
+ * outside the sandbox; `git rebase` fails inside it instead) and
+ * `sequencer` (review F1991-R3.1: its `opts` names a merge strategy that
+ * `git cherry-pick --continue` runs; a cherry-pick or revert of several
+ * commits fails inside it).
  */
 export const SEATBELT_GIT_WRITABLE_PATTERNS: readonly string[] = [
   `${GIT_PREFIX}(${GIT_DATA_DIRS.join("|")})(/.*)?$`,
