@@ -81,10 +81,12 @@ test("an empty preview still says what goes and that shell changes stay", () => 
   assert.equal(s.warnings.length, 1);
 });
 
-test("refusals are worded, unknown ones keep the agent's message", () => {
+test("refusals are worded; an unknown one is one plain line, never the raw reason (ATO-2752)", () => {
   assert.match(R.rewindRefusalText({ code: "turn_in_progress" }), /still working/);
-  assert.match(R.rewindRefusalText({ code: "point_mismatch" }), /changed on the agent side/);
-  assert.equal(R.rewindRefusalText({ error: "disk full" }), "disk full");
+  assert.equal(R.rewindRefusalText({ code: "point_mismatch" }), "This chat changed since it was opened. Open the chat again, then retry.");
+  assert.equal(R.rewindRefusalText({ error: "disk full" }), "Something went wrong on the agent’s side. Try again.");
+  assert.equal(R.rewindRefusalText({ error: "Error: Error invoking remote method 'agent:rewind': Error: boom" }),
+    "Something went wrong on the agent’s side. Try again.");
 });
 
 /* ---------- Edit: the same confirmation, files and conversation or the conversation only ---------- */
@@ -132,18 +134,20 @@ test("Edit on a message with changed files lists them and offers both ways", () 
   assert.match(html, /id="rw-edit"/);
   assert.match(html, /Put back as they were/);
   assert.match(html, /src\/a\.ts/);
-  assert.match(html, /Removed \(the agent created them\)/);
+  assert.match(html, /Deleted \(the agent created them\)/);
+  assert.match(html, /Chat only keeps the files as they are now\.<\/p>/, "Edit explains its names too, without Files only");
   assert.match(html, /new\.txt/);
+  // ATO-2752: the same short names as Roll back.
   assert.deepEqual(footActs(html), [
-    ["rewind:go-chat", "Conversation only"],
-    ["rewind:go", "Roll back files and conversation, then resend"],
+    ["rewind:go-chat", "Chat only"],
+    ["rewind:go", "Chat and files"],
   ]);
 });
 
 test("while a rewind runs the spinner sits on the button that was clicked, not on the last one", () => {
   fakeWindow([]);
   startEdit(FILES_PREVIEW);
-  for (const [act, spun] of [["rewind:go-chat", "Conversation only"], ["rewind:go", "Roll back files and conversation, then resend"]]) {
+  for (const [act, spun] of [["rewind:go-chat", "Chat only"], ["rewind:go", "Chat and files"]]) {
     Object.assign(R.REWIND, { busy: true, busyAct: act });
     const foot = R.rewindSheetHTML().split("<f>")[1];
     const spinning = [...foot.matchAll(/<button[^>]*>(<span class="tk-spin"><\/span>)?([^<]*)</g)].filter((m) => m[1]).map((m) => m[2]);
@@ -168,7 +172,7 @@ test("Edit with no file changes has no file section and one button, conversation
   fakeWindow(calls);
   startEdit(NO_FILES_PREVIEW);
   const html = R.rewindSheetHTML();
-  assert.doesNotMatch(html, /Put back as they were|Removed \(the agent|Cannot be put back|No files will change|file tools/);
+  assert.doesNotMatch(html, /Put back as they were|Deleted \(the agent|Cannot be put back|No files will change|file tools/);
   assert.match(html, /1 message of yours and 1 reply will be removed/);
   assert.deepEqual(footActs(html), [["rewind:go-chat", "Send edited message"]]);
   await R.rewindAct("go-chat");

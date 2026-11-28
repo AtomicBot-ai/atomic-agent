@@ -15,6 +15,9 @@
    ATO-2112: when files change, Roll back offers three ways, like Claude
    Code's /rewind: chat and files (the default), the chat only (files: false)
    or the files only (conversation: false, the chat stays as it is).
+   ATO-2752: Edit uses the same short names (Chat only, Chat and files); a
+   failure is a plain sentence with the raw reason behind Details
+   (rewind-error.js); Files only spins like the other buttons.
 
    The agent does the work (POST /api/sessions/{id}/rewind[/preview], /fork):
    it names the question by how many questions come before it and its text,
@@ -24,6 +27,9 @@
    the confirmation says so. */
 
 /* ---- pure part (unit-tested in desktop/test/chat-rewind.test.mjs) ---- */
+
+/* rewind-error.js: a global in the window, required in the Node checks (looked up at call time). */
+function rewindErr() { return typeof rewindErrorView === 'function' ? {rewindErrorView, rewindErrorHTML} : require('./rewind-error.js'); }
 
 /** The question a message stands for: itself (a question), or the one its reply answers. */
 function rewindQuestionFor(log, m) {
@@ -108,7 +114,7 @@ function rewindButtons(mode, summary) {
     return s.filesOnly ? [['rewind:go-files', 'Files only', true], ...both] : both;
   }
   if (!changes) return [['rewind:go-chat', 'Send edited message', false]];
-  return [['rewind:go-chat', 'Conversation only', false], ['rewind:go', 'Roll back files and conversation, then resend', true]];
+  return [['rewind:go-chat', 'Chat only', false], ['rewind:go', 'Chat and files', true]];
 }
 
 /** Whether the sheet shows its file section (lists and file warnings). */
@@ -118,19 +124,25 @@ function rewindShowsFiles(mode, summary) {
   return (s.restore || []).length + (s.remove || []).length + (s.cannot || []).length > 0;
 }
 
-/** The words for the agent refusing (its 409 code). */
-function rewindRefusalText(r) {
+/** The words for a refusal the agent names by its 409 code; null for any other failure. */
+function rewindCodeText(r) {
   const code = r && r.code;
   if (code === 'turn_in_progress') return 'The agent is still working in this chat. Wait for it to finish, then try again.';
-  if (code === 'point_mismatch') return 'The chat changed on the agent side. Open it again, then try again.';
+  if (code === 'point_mismatch') return 'This chat changed since it was opened. Open the chat again, then retry.';
   if (code === 'point_compacted') return 'This part of the chat was already summarized, so it cannot be taken back.';
   if (code === 'session_not_found') return 'This chat is not saved yet.';
-  return (r && r.error) || 'The agent gave no reason. Nothing was changed.';
+  return null;
 }
+
+/** The sentence for a failed answer: the code's, or one plain line (the raw reason goes behind Details). */
+function rewindRefusalText(r) { return rewindErr().rewindErrorView(r, rewindCodeText).text; }
+/** Put a failed answer on the sheet. */
+function rewindShowFail(r) { const v = rewindErr().rewindErrorView(r, rewindCodeText); REWIND.error = v.text; REWIND.errorDetail = v.detail; }
 
 /* ---- renderer side (globals from renderer.js, read at call time) ---- */
 
-const REWIND = {supported: true, mode: null, id: null, sid: null, prior: 0, text: '', preview: null, loading: false, busy: false, busyAct: null, error: null, draft: ''};
+const REWIND = {supported: true, mode: null, id: null, sid: null, prior: 0, text: '', preview: null, loading: false, busy: false, busyAct: null,
+  error: null, errorDetail: '', draft: ''};
 
 function rewindReady() {
   return typeof BR !== 'undefined' && BR && BR.rewindPreview && REWIND.supported && S.agentSession && !S.busy && !S.pending;
@@ -162,7 +174,7 @@ function rewindStart(mode, id) {
   const q = rewindQuestionFor(S.log, m);
   if (!q || !rewindReady()) return;
   Object.assign(REWIND, {mode, id: q.id, sid: S.agentSession, prior: priorQuestions(q), text: String(q.text || ''),
-    preview: null, error: null, busy: false, busyAct: null, loading: mode !== 'fork', draft: attToEditor(String(q.text || ''))});
+    preview: null, error: null, errorDetail: '', busy: false, busyAct: null, loading: mode !== 'fork', draft: attToEditor(String(q.text || ''))});
   if (mode === 'fork') { rewindFork(); return; }
   S.overlay = 'rewind';
   render();
@@ -175,7 +187,7 @@ async function rewindLoadPreview() {
   if (REWIND.sid !== sid || S.overlay !== 'rewind') return;
   REWIND.loading = false;
   if (r && r.supported === false) { REWIND.supported = false; S.overlay = null; render(); toast('Not available', 'This agent version cannot roll a chat back. Update Atomic Agent.', 'bad'); return; }
-  if (!r || !r.ok) REWIND.error = rewindRefusalText(r);
+  if (!r || !r.ok) rewindShowFail(r);
   else REWIND.preview = r.data;
   render();
 }
@@ -184,10 +196,10 @@ function rewindSheetHTML() {
   const edit = REWIND.mode === 'edit';
   let body = '';
   if (edit) {
-    body += '<p class="sd-cap">Change your message. Sending it takes the chat back to just before it, then sends the new text.</p>'
+    body += '<p class="sd-cap">Change your message. The chat goes back to just before it, then your new text is sent.</p>'
       + '<textarea id="rw-edit" class="tk-inp" rows="5" spellcheck="true">' + esc(REWIND.draft) + '</textarea>';
   }
-  if (REWIND.error) body += '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(REWIND.error) + '</span></div>';
+  if (REWIND.error) body += rewindErr().rewindErrorHTML({text: REWIND.error, detail: REWIND.errorDetail || ''}, {esc, ic});
   if (REWIND.loading) body += '<div class="tk-empty"><span class="tk-spin"></span><p>Checking what will change…</p></div>';
   const s = REWIND.preview ? rewindSummary(REWIND.preview, typeof WORKSPACE === 'string' ? WORKSPACE : '') : null;
   if (s && !rewindShowsFiles(REWIND.mode, s)) body += '<p class="sd-cap">' + esc(s.removedText) + '</p>';
@@ -197,8 +209,8 @@ function rewindSheetHTML() {
       : '';
     body += '<p class="sd-cap">' + esc(s.removedText) + '</p>';
     body += (s.restore.length || s.remove.length) ? '' : '<p class="sd-cap">No files will change.</p>';
-    if (!edit && (s.restore.length || s.remove.length)) body += '<p class="sd-cap">Chat only keeps the files as they are now.' + (s.filesOnly ? ' Files only keeps the whole chat.' : '') + '</p>';
-    body += list('Put back as they were', s.restore) + list('Removed (the agent created them)', s.remove) + list('Cannot be put back', s.cannot);
+    if (s.restore.length || s.remove.length) body += '<p class="sd-cap">Chat only keeps the files as they are now.' + (!edit && s.filesOnly ? ' Files only keeps the whole chat.' : '') + '</p>';
+    body += list('Put back as they were', s.restore) + list('Deleted (the agent created them)', s.remove) + list('Cannot be put back', s.cannot);
     body += s.warnings.map((w) => '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(w) + '</span></div>').join('');
   }
   const disabled = REWIND.loading || REWIND.busy || !REWIND.preview;
@@ -220,17 +232,17 @@ async function rewindConfirm(files, conversation) {
   if (conversation === false) return rewindFilesOnly();
   const box = document.getElementById('rw-edit');
   const draft = edit ? String(box ? box.value : REWIND.draft) : '';
-  if (edit && !draft.trim()) { REWIND.error = 'The message is empty.'; render(); return; }
+  if (edit && !draft.trim()) { REWIND.error = 'The message is empty.'; REWIND.errorDetail = ''; render(); return; }
   const entry = $('#entry');
   const typed = String((entry ? entry.value : S.draft) || '').trim();
-  if (typed || (typeof ATT !== 'undefined' && ATT.items.length)) { REWIND.error = 'Your draft is in the way. Send or clear the composer first.'; render(); return; }
+  if (typed || (typeof ATT !== 'undefined' && ATT.items.length)) { REWIND.error = 'There is a draft in the message box. Send or clear it first.'; REWIND.errorDetail = ''; render(); return; }
   const sid = REWIND.sid;
   // The spinner goes on the button that was clicked (go-chat is the only one passing files: false).
   REWIND.busy = true; REWIND.busyAct = files === false ? 'rewind:go-chat' : 'rewind:go'; REWIND.error = null; render();
   // ATO-2470: an Edit keeps the old message and what followed it as a version (message-versions.js).
   const r = await BR.rewind(sid, REWIND.prior, REWIND.text, files, undefined, edit).catch((err) => ({ok: false, supported: true, error: String(err)}));
   REWIND.busy = false; REWIND.busyAct = null;
-  if (!r || !r.ok) { REWIND.error = rewindRefusalText(r); render(); return; }
+  if (!r || !r.ok) { rewindShowFail(r); render(); return; }
   S.overlay = null;
   await openSession(sid);
   if (S.agentSession !== sid) return;
@@ -255,10 +267,11 @@ function rewindFilesText(d) {
 /** Roll back, files only (ATO-2112): the files go back, the chat and the composer stay as they are. */
 async function rewindFilesOnly() {
   const sid = REWIND.sid;
-  REWIND.busy = true; REWIND.error = null; render();
+  // ATO-2752: the spinner sits on Files only, as on the other buttons (ATO-2468 placed it on the clicked one).
+  REWIND.busy = true; REWIND.busyAct = 'rewind:go-files'; REWIND.error = null; REWIND.errorDetail = ''; render();
   const r = await BR.rewind(sid, REWIND.prior, REWIND.text, true, false).catch((err) => ({ok: false, supported: true, error: String(err)}));
-  REWIND.busy = false;
-  if (!r || !r.ok) { REWIND.error = rewindRefusalText(r); render(); return; }
+  REWIND.busy = false; REWIND.busyAct = null;
+  if (!r || !r.ok) { rewindShowFail(r); render(); return; }
   S.overlay = null;
   render();
   const d = r.data || {};
@@ -269,7 +282,7 @@ async function rewindFork() {
   const sid = REWIND.sid;
   const r = await BR.forkSession(sid, REWIND.prior, REWIND.text).catch((err) => ({ok: false, supported: true, error: String(err)}));
   if (r && r.supported === false) { REWIND.supported = false; render(); toast('Not available', 'This agent version cannot fork a chat. Update Atomic Agent.', 'bad'); return; }
-  if (!r || !r.ok || !r.data || !r.data.id) { toast("Couldn't fork", rewindRefusalText(r), 'bad'); return; }
+  if (!r || !r.ok || !r.data || !r.data.id) { toast("Couldn't fork this chat", rewindRefusalText(r), 'bad'); return; }
   await refreshSessions();
   await openSession(r.data.id);
   toast('Forked', 'A new chat with the history up to here. The original is unchanged.');
@@ -280,5 +293,5 @@ if (typeof document !== 'undefined') {
   document.addEventListener('input', (e) => { if (e.target && e.target.id === 'rw-edit') REWIND.draft = e.target.value; });
 }
 
-if (typeof module !== 'undefined') module.exports = {rewindQuestionFor, rewindPathLabel, rewindSummary, rewindRefusalText, rewindButtons, rewindShowsFiles,
+if (typeof module !== 'undefined') module.exports = {rewindQuestionFor, rewindPathLabel, rewindSummary, rewindRefusalText, rewindCodeText, rewindButtons, rewindShowsFiles,
   REWIND, rewindSheetHTML, rewindAct, rewindConfirm};

@@ -123,3 +123,46 @@ test("main passes conversation: false on to the agent for a rollback only", () =
   assert.match(src("../main/chat-rewind-ipc.ts"), /rollback \? conversation : undefined/);
   assert.match(src("../preload/preload.ts"), /files\?: boolean, conversation\?: boolean\) =>/);
 });
+
+/* ---------- ATO-2752: the spinner on Files only, plain errors with Details ---------- */
+
+const spinning = (html) => [...html.split("<f>")[1].matchAll(/<button[^>]*>(<span class="tk-spin"><\/span>)?([^<]*)</g)]
+  .filter((m) => m[1]).map((m) => m[2]);
+
+test("Files only spins on its own button while it runs, like the other two", async () => {
+  const calls = [];
+  fakeWindow(calls);
+  startBack(FILES_PREVIEW);
+  const running = R.rewindAct("go-files");
+  assert.deepEqual(spinning(R.rewindSheetHTML()), ["Files only"]);
+  await running;
+  assert.equal(R.REWIND.busyAct, null);
+});
+
+test("a thrown IPC error is one plain sentence, the raw reason only behind Details", async () => {
+  const calls = [];
+  fakeWindow(calls);
+  globalThis.BR.rewind = async () => { throw new Error("Error invoking remote method 'agent:rewind': Error: disk is read-only"); };
+  startBack(FILES_PREVIEW);
+  await R.rewindAct("go");
+  const body = R.rewindSheetHTML().split("<b>")[1];
+  assert.match(body, /Something went wrong on the agent’s side\. Try again\.<details class="rw-det"><summary>Details<\/summary><code>disk is read-only<\/code><\/details>/);
+  assert.doesNotMatch(body, /Error invoking remote method/);
+  // A refusal the agent names keeps its own sentence and has nothing to fold away.
+  globalThis.BR.rewind = async () => ({ ok: false, supported: true, code: "turn_in_progress", error: "busy" });
+  await R.rewindAct("go");
+  const again = R.rewindSheetHTML().split("<b>")[1];
+  assert.match(again, /still working in this chat/);
+  assert.doesNotMatch(again, /rw-det/);
+});
+
+test("Roll back and Edit use one set of short names", () => {
+  fakeWindow([]);
+  startBack(FILES_PREVIEW);
+  const back = footActs(R.rewindSheetHTML()).map(([, l]) => l);
+  R.REWIND.mode = "edit";
+  const edit = footActs(R.rewindSheetHTML()).map(([, l]) => l);
+  assert.deepEqual(edit, back.filter((l) => l !== "Files only"));
+  for (const l of back.concat(edit)) assert.ok(l.length <= 16, l);
+  assert.match(src("../renderer/css/overlays.css"), /\.sheet-rewind \.sheetfoot \.btn\{white-space:nowrap\}/);
+});

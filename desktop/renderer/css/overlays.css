@@ -112,6 +112,12 @@
 .sheet-hout .hout-file{margin:0 12px 6px;font-size:var(--fs-label);color:var(--ink-2);overflow-wrap:anywhere}
 .sheet-hout .hout-preview{margin:0 12px 8px;padding:8px 10px;max-height:240px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-label);border-radius:var(--r-well);background:var(--panel-2);color:var(--ink);font-family:var(--font-mono);line-height:1.5}
 
+/* ATO-2752: Roll back / Edit. Short labels on one line; a failure's raw reason folded under Details (rewind-error.js). */
+.sheet-rewind .sheetfoot .btn{white-space:nowrap}
+.sheet-rewind .rw-det{margin-top:4px;font-size:var(--fs-label);color:var(--ink-2)}
+.sheet-rewind .rw-det > summary{width:max-content;cursor:pointer}
+.sheet-rewind .rw-det > code{display:block;margin-top:4px;font-family:var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere}
+
 /* ATO-1466: Report an issue: the text, two switches, and what the app adds under the text. */
 .sheet-bugrep .sd-cap{margin:0 12px 8px;font-size:var(--fs-cap);color:var(--ink-2)}
 .sheet-bugrep .bugrep-text{display:block;box-sizing:border-box;width:calc(100% - 24px);margin:0 12px 8px;padding:8px 10px;resize:vertical;font:inherit;font-size:var(--fs-ui);color:var(--ink);background:transparent;border:1px solid var(--divider);border-radius:8px}
