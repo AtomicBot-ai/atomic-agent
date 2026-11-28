@@ -1,0 +1,10 @@
+/* ATO-2434: the "Start on the local model" row under the last-resort switch
+   in Settings › Models › Fallback chain (renderer/local-first-switch.js). */
+.llm-pane .lf-row{align-items:flex-start;padding-top:8px;padding-bottom:8px}
+.llm-pane .lf-row > .tk-switch{margin-top:2px;flex:none}
+.llm-pane .lf-row.is-off > .tk-switch{opacity:.5;cursor:default}
+.llm-pane .lf-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+.llm-pane .lf-err{margin:4px 4px 0}
+.llm-pane .lf-more{margin-top:4px;font-size:var(--fs-cap);color:var(--ink-2)}
+.llm-pane .lf-more summary{cursor:pointer}
+.llm-pane .lf-more .mono{display:block;margin-top:2px;word-break:break-word}
